@@ -1,0 +1,91 @@
+# ============================================================
+# Go (https://github.com/github/gitignore/blob/main/Go.gitignore)
+# ============================================================
+
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/mlmforge
+
+# Test binary, built with `go test -c`
+*.test
+
+# Code coverage profiles and test artifacts
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+*.prof
+
+# Go workspace files
+go.work
+go.work.sum
+
+# Dependency directories
+# vendor/
+
+# ============================================================
+# Rust (https://github.com/github/gitignore/blob/main/Rust.gitignore)
+# ============================================================
+
+# Compiled files and executables
+debug/
+target/
+
+# Rustfmt backup files
+**/*.rs.bk
+
+# MSVC debug symbols
+*.pdb
+
+# Mutation testing output
+**/mutants.out*/
+
+# ============================================================
+# Build output
+# ============================================================
+/bin/
+/dist/
+
+# ============================================================
+# IDE / Editor
+# ============================================================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ============================================================
+# OS
+# ============================================================
+.DS_Store
+Thumbs.db
+
+# ============================================================
+# Environment / Secrets
+# ============================================================
+.env
+.env.*
+*.pem
+*.key
+credentials.json
+
+# ============================================================
+# Project internal — development process docs and tooling
+# ============================================================
+.claude/
+CLAUDE.md
+AGENTS.md
+BUGS_AND_TODOS.md
+VERSION_HISTORY.md
+DEVELOPMENT.md
+ACCESSIBILITY.md
+CHANGELOG.md
+docs/
+
+# Legacy reference codebase
+osMLM/

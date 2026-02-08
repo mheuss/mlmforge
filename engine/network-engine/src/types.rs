@@ -22,5 +22,6 @@ pub struct TreePosition {
     /// For the total branch size including the child, use
     /// `count_branch`.
     pub downline_counts: HashMap<usize, usize>,
+    /// Unix timestamp in seconds when the user was enrolled.
     pub enrolled_at: i64,
 }

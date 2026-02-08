@@ -23,5 +23,6 @@ pub struct Node {
     pub(crate) parent: Option<NodeIndex>,
     pub(crate) children: Vec<NodeIndex>,
     pub depth: u32,
+    /// Unix timestamp in seconds when the user was enrolled.
     pub enrolled_at: i64,
 }

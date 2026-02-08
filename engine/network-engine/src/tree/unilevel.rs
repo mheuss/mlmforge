@@ -177,6 +177,33 @@ impl UnilevelTree {
         Ok(())
     }
 
+    /// Walks upward from a node toward the root.
+    ///
+    /// Returns ancestors in order from immediate parent to root.
+    /// The starting node is not included in the result.
+    ///
+    /// # Depth parameter
+    ///
+    /// - `0` means walk all the way to root (no limit).
+    /// - Any other value limits the walk to that many levels up.
+    pub fn get_upline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
+        let idx = self.resolve(user_id)?;
+        let mut result = Vec::new();
+        let mut current = self.nodes[idx.0].parent;
+        let mut steps = 0u32;
+
+        while let Some(parent_idx) = current {
+            if depth > 0 && steps >= depth {
+                break;
+            }
+            result.push(&self.nodes[parent_idx.0]);
+            current = self.nodes[parent_idx.0].parent;
+            steps += 1;
+        }
+
+        Ok(result)
+    }
+
     /// Allocates a slot in the arena. Reuses tombstoned slots from the
     /// free list when available. Otherwise appends to the Vec.
     fn alloc_slot(&mut self, node: Node) -> NodeIndex {
@@ -359,5 +386,41 @@ mod tests {
         tree.add_root(test_uuid(1), 1000).unwrap();
         let children = tree.get_children(test_uuid(1)).unwrap();
         assert!(children.is_empty());
+    }
+
+    #[test]
+    fn get_upline_returns_ancestors_to_root() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), 3000).unwrap();
+        tree.add_node(test_uuid(4), test_uuid(3), 4000).unwrap();
+        // depth 0 = all the way to root
+        let upline = tree.get_upline(test_uuid(4), 0).unwrap();
+        assert_eq!(upline.len(), 3);
+        assert_eq!(upline[0].user_id, test_uuid(3)); // immediate parent
+        assert_eq!(upline[1].user_id, test_uuid(2));
+        assert_eq!(upline[2].user_id, test_uuid(1)); // root
+    }
+
+    #[test]
+    fn get_upline_with_depth_limit() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), 3000).unwrap();
+        tree.add_node(test_uuid(4), test_uuid(3), 4000).unwrap();
+        let upline = tree.get_upline(test_uuid(4), 2).unwrap();
+        assert_eq!(upline.len(), 2);
+        assert_eq!(upline[0].user_id, test_uuid(3));
+        assert_eq!(upline[1].user_id, test_uuid(2));
+    }
+
+    #[test]
+    fn get_upline_of_root_returns_empty() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        let upline = tree.get_upline(test_uuid(1), 0).unwrap();
+        assert!(upline.is_empty());
     }
 }

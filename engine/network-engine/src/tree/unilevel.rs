@@ -276,6 +276,12 @@ impl UnilevelTree {
 
         // Determine this node's position in its parent's children list.
         // Root has position 0 by convention.
+        //
+        // The expect here is intentional. A node that claims a parent
+        // but is missing from that parent's children list means the
+        // tree's internal state is corrupt. This is not a recoverable
+        // input error — every subsequent operation would be suspect.
+        // Panicking is the fail-fast response.
         let position = if let Some(parent_idx) = node.parent {
             self.nodes[parent_idx.0]
                 .children

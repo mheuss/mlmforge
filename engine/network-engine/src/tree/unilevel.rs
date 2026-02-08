@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use uuid::Uuid;
 
 use super::error::TreeError;
@@ -199,6 +199,49 @@ impl UnilevelTree {
             result.push(&self.nodes[parent_idx.0]);
             current = self.nodes[parent_idx.0].parent;
             steps += 1;
+        }
+
+        Ok(result)
+    }
+
+    /// Walks downward from a node, returning descendants in BFS order.
+    ///
+    /// BFS (breadth-first) gives level-ordered results: all level-1
+    /// children first, then level-2 grandchildren, and so on. This
+    /// matches how distributors think about their organization.
+    ///
+    /// The starting node is not included in the result.
+    ///
+    /// # Depth parameter
+    ///
+    /// - `0` means walk all levels (no limit).
+    /// - Any other value limits the walk to that many levels below
+    ///   the starting node. `1` returns direct children only.
+    pub fn get_downline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
+        let start_idx = self.resolve(user_id)?;
+        let start_depth = self.nodes[start_idx.0].depth;
+        let mut result = Vec::new();
+        let mut queue = VecDeque::new();
+
+        for &child_idx in &self.nodes[start_idx.0].children {
+            queue.push_back(child_idx);
+        }
+
+        while let Some(idx) = queue.pop_front() {
+            let node = &self.nodes[idx.0];
+            let relative_depth = node.depth - start_depth;
+
+            if depth > 0 && relative_depth > depth {
+                continue;
+            }
+
+            result.push(node);
+
+            if depth == 0 || relative_depth < depth {
+                for &child_idx in &node.children {
+                    queue.push_back(child_idx);
+                }
+            }
         }
 
         Ok(result)
@@ -422,5 +465,54 @@ mod tests {
         tree.add_root(test_uuid(1), 1000).unwrap();
         let upline = tree.get_upline(test_uuid(1), 0).unwrap();
         assert!(upline.is_empty());
+    }
+
+    #[test]
+    fn get_downline_returns_all_descendants() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
+        tree.add_node(test_uuid(4), test_uuid(2), 4000).unwrap();
+        // depth 0 = all levels
+        let downline = tree.get_downline(test_uuid(1), 0).unwrap();
+        assert_eq!(downline.len(), 3);
+    }
+
+    #[test]
+    fn get_downline_with_depth_limit() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), 3000).unwrap();
+        tree.add_node(test_uuid(4), test_uuid(3), 4000).unwrap();
+        // depth 1 = direct children only
+        let downline = tree.get_downline(test_uuid(1), 1).unwrap();
+        assert_eq!(downline.len(), 1);
+        assert_eq!(downline[0].user_id, test_uuid(2));
+    }
+
+    #[test]
+    fn get_downline_returns_bfs_order() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
+        tree.add_node(test_uuid(4), test_uuid(2), 4000).unwrap();
+        tree.add_node(test_uuid(5), test_uuid(2), 5000).unwrap();
+        let downline = tree.get_downline(test_uuid(1), 0).unwrap();
+        // BFS: level 1 first (2, 3), then level 2 (4, 5)
+        assert_eq!(downline[0].user_id, test_uuid(2));
+        assert_eq!(downline[1].user_id, test_uuid(3));
+        assert_eq!(downline[2].user_id, test_uuid(4));
+        assert_eq!(downline[3].user_id, test_uuid(5));
+    }
+
+    #[test]
+    fn get_downline_of_leaf_returns_empty() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        let downline = tree.get_downline(test_uuid(1), 0).unwrap();
+        assert!(downline.is_empty());
     }
 }

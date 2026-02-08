@@ -251,10 +251,10 @@ impl UnilevelTree {
     /// Computes a full position snapshot for a user.
     ///
     /// Unlike `get_node`, this builds an owned `TreePosition` with
-    /// derived data: branch counts (descendants per child position),
+    /// derived data: downline counts (descendants per child position),
     /// child count, and the user's position in their parent's children.
     ///
-    /// Branch counts are computed by walking each child's full subtree.
+    /// Downline counts are computed by walking each child's full subtree.
     /// For a node with many children each having deep subtrees, this
     /// can be expensive. It is a point query, not a bulk operation.
     pub fn get_position(&self, user_id: Uuid) -> Result<TreePosition, TreeError> {
@@ -277,11 +277,13 @@ impl UnilevelTree {
             0
         };
 
-        // Count descendants under each child position
-        let mut branch_counts = HashMap::new();
+        // Count descendants under each child position.
+        // Each value follows downline semantics: the child at the
+        // position is excluded, only its descendants are counted.
+        let mut downline_counts = HashMap::new();
         for (child_pos, &child_idx) in node.children.iter().enumerate() {
             let count = self.count_subtree(child_idx);
-            branch_counts.insert(child_pos, count);
+            downline_counts.insert(child_pos, count);
         }
 
         Ok(TreePosition {
@@ -290,7 +292,7 @@ impl UnilevelTree {
             position,
             depth: node.depth,
             child_count: node.children.len(),
-            branch_counts,
+            downline_counts,
             enrolled_at: node.enrolled_at,
         })
     }
@@ -438,7 +440,7 @@ impl UnilevelTree {
     }
 
     /// Counts all descendants of a node (not including the node itself).
-    /// Used internally by get_position for branch counts.
+    /// Used internally by `get_position` to populate `downline_counts`.
     fn count_subtree(&self, start_idx: NodeIndex) -> usize {
         let mut count = 0;
         let mut queue = VecDeque::new();
@@ -747,7 +749,7 @@ mod tests {
     }
 
     #[test]
-    fn get_position_includes_branch_counts() {
+    fn get_position_includes_downline_counts() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
@@ -759,8 +761,8 @@ mod tests {
         let pos = tree.get_position(test_uuid(1)).unwrap();
         // Branch 0 (under uuid(2)): uuid(4), uuid(5), uuid(6) = 3 descendants
         // Branch 1 (under uuid(3)): 0 descendants
-        assert_eq!(pos.branch_counts[&0], 3);
-        assert_eq!(pos.branch_counts[&1], 0);
+        assert_eq!(pos.downline_counts[&0], 3);
+        assert_eq!(pos.downline_counts[&1], 0);
     }
 
     #[test]

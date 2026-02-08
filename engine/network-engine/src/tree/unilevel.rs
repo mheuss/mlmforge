@@ -112,6 +112,32 @@ impl UnilevelTree {
         Ok(idx)
     }
 
+    /// Returns the parent of a node.
+    ///
+    /// Returns `Ok(None)` for the root node (no parent).
+    /// Returns `Err(UserNotFound)` if the user is not in the tree.
+    pub fn get_parent(&self, user_id: Uuid) -> Result<Option<&Node>, TreeError> {
+        let idx = self.resolve(user_id)?;
+        match self.nodes[idx.0].parent {
+            Some(parent_idx) => Ok(Some(&self.nodes[parent_idx.0])),
+            None => Ok(None),
+        }
+    }
+
+    /// Returns the direct children of a node in position order.
+    ///
+    /// Position 0 is the first enrolled child, position 1 is the second,
+    /// and so on. Returns an empty Vec for leaf nodes.
+    pub fn get_children(&self, user_id: Uuid) -> Result<Vec<&Node>, TreeError> {
+        let idx = self.resolve(user_id)?;
+        let children = self.nodes[idx.0]
+            .children
+            .iter()
+            .map(|&child_idx| &self.nodes[child_idx.0])
+            .collect();
+        Ok(children)
+    }
+
     /// Removes a leaf node from the tree.
     ///
     /// The node must have no children. Removing a node with children
@@ -286,5 +312,52 @@ mod tests {
         tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
         // Arena should still have only 2 slots, not 3
         assert_eq!(tree.nodes.len(), 2);
+    }
+
+    #[test]
+    fn get_parent_returns_parent_node() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        let parent = tree.get_parent(test_uuid(2)).unwrap();
+        assert_eq!(parent.unwrap().user_id, test_uuid(1));
+    }
+
+    #[test]
+    fn get_parent_of_root_returns_none() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        let parent = tree.get_parent(test_uuid(1)).unwrap();
+        assert!(parent.is_none());
+    }
+
+    #[test]
+    fn get_parent_of_nonexistent_user_fails() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        let result = tree.get_parent(test_uuid(99));
+        assert!(matches!(result, Err(TreeError::UserNotFound(_))));
+    }
+
+    #[test]
+    fn get_children_returns_direct_children_in_position_order() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
+        tree.add_node(test_uuid(4), test_uuid(1), 4000).unwrap();
+        let children = tree.get_children(test_uuid(1)).unwrap();
+        assert_eq!(children.len(), 3);
+        assert_eq!(children[0].user_id, test_uuid(2));
+        assert_eq!(children[1].user_id, test_uuid(3));
+        assert_eq!(children[2].user_id, test_uuid(4));
+    }
+
+    #[test]
+    fn get_children_of_leaf_returns_empty() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        let children = tree.get_children(test_uuid(1)).unwrap();
+        assert!(children.is_empty());
     }
 }

@@ -335,6 +335,76 @@ impl UnilevelTree {
         Ok(result)
     }
 
+    /// Counts descendants without allocating a result Vec.
+    ///
+    /// Same traversal as `get_downline` but only increments a counter.
+    /// Use this when you need the count but not the actual nodes.
+    ///
+    /// # Depth parameter
+    ///
+    /// - `0` means count all descendants (no limit).
+    /// - Any other value limits the count to that many levels below.
+    pub fn count_downline(&self, user_id: Uuid, depth: u32) -> Result<usize, TreeError> {
+        let start_idx = self.resolve(user_id)?;
+        let start_depth = self.nodes[start_idx.0].depth;
+        let mut count = 0;
+        let mut queue = VecDeque::new();
+
+        for &child_idx in &self.nodes[start_idx.0].children {
+            queue.push_back(child_idx);
+        }
+
+        while let Some(idx) = queue.pop_front() {
+            let node = &self.nodes[idx.0];
+            let relative_depth = node.depth - start_depth;
+
+            if depth > 0 && relative_depth > depth {
+                continue;
+            }
+
+            count += 1;
+
+            if depth == 0 || relative_depth < depth {
+                for &child_idx in &node.children {
+                    queue.push_back(child_idx);
+                }
+            }
+        }
+
+        Ok(count)
+    }
+
+    /// Counts nodes in the subtree under a specific child position.
+    ///
+    /// Same traversal as `get_branch` but only increments a counter.
+    /// Includes the child at the given position and all its descendants.
+    pub fn count_branch(&self, user_id: Uuid, position: usize) -> Result<usize, TreeError> {
+        let idx = self.resolve(user_id)?;
+        let node = &self.nodes[idx.0];
+
+        if position >= node.children.len() {
+            return Err(TreeError::PositionOutOfRange {
+                user_id,
+                position,
+                child_count: node.children.len(),
+            });
+        }
+
+        let branch_root = node.children[position];
+        let mut count = 0;
+        let mut queue = VecDeque::new();
+        queue.push_back(branch_root);
+
+        while let Some(current) = queue.pop_front() {
+            count += 1;
+            for &child_idx in &self.nodes[current.0].children {
+                queue.push_back(child_idx);
+            }
+        }
+
+        Ok(count)
+    }
+
     /// Counts all descendants of a node (not including the node itself).
     /// Used internally by get_position for branch counts.
     fn count_subtree(&self, start_idx: NodeIndex) -> usize {
@@ -707,5 +777,51 @@ mod tests {
         assert_eq!(branch[0].user_id, test_uuid(2));
         assert_eq!(branch[1].user_id, test_uuid(3));
         assert_eq!(branch[2].user_id, test_uuid(4));
+    }
+
+    #[test]
+    fn count_downline_matches_get_downline_len() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
+        tree.add_node(test_uuid(4), test_uuid(2), 4000).unwrap();
+        let count = tree.count_downline(test_uuid(1), 0).unwrap();
+        let downline = tree.get_downline(test_uuid(1), 0).unwrap();
+        assert_eq!(count, downline.len());
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn count_downline_respects_depth_limit() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), 3000).unwrap();
+        tree.add_node(test_uuid(4), test_uuid(3), 4000).unwrap();
+        assert_eq!(tree.count_downline(test_uuid(1), 1).unwrap(), 1);
+        assert_eq!(tree.count_downline(test_uuid(1), 2).unwrap(), 2);
+        assert_eq!(tree.count_downline(test_uuid(1), 0).unwrap(), 3);
+    }
+
+    #[test]
+    fn count_branch_matches_get_branch_len() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
+        tree.add_node(test_uuid(4), test_uuid(2), 4000).unwrap();
+        let count = tree.count_branch(test_uuid(1), 0).unwrap();
+        let branch = tree.get_branch(test_uuid(1), 0).unwrap();
+        assert_eq!(count, branch.len());
+        assert_eq!(count, 2); // uuid(2) + uuid(4)
+    }
+
+    #[test]
+    fn count_branch_position_out_of_range_fails() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        let result = tree.count_branch(test_uuid(1), 0);
+        assert!(matches!(result, Err(TreeError::PositionOutOfRange { .. })));
     }
 }

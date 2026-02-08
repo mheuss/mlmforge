@@ -295,6 +295,46 @@ impl UnilevelTree {
         })
     }
 
+    /// Returns all nodes in the subtree under a specific child position.
+    ///
+    /// For unilevel, position is the child's index in the parent's
+    /// children Vec. `get_branch(user, 2)` returns the subtree under
+    /// the user's 3rd personally enrolled distributor.
+    ///
+    /// Results include the child at the given position and all of
+    /// its descendants, in BFS order.
+    ///
+    /// # Errors
+    ///
+    /// - `UserNotFound` if `user_id` is not in the tree
+    /// - `PositionOutOfRange` if `position` exceeds the child count
+    pub fn get_branch(&self, user_id: Uuid, position: usize) -> Result<Vec<&Node>, TreeError> {
+        let idx = self.resolve(user_id)?;
+        let node = &self.nodes[idx.0];
+
+        if position >= node.children.len() {
+            return Err(TreeError::PositionOutOfRange {
+                user_id,
+                position,
+                child_count: node.children.len(),
+            });
+        }
+
+        let branch_root = node.children[position];
+        let mut result = Vec::new();
+        let mut queue = VecDeque::new();
+        queue.push_back(branch_root);
+
+        while let Some(current) = queue.pop_front() {
+            result.push(&self.nodes[current.0]);
+            for &child_idx in &self.nodes[current.0].children {
+                queue.push_back(child_idx);
+            }
+        }
+
+        Ok(result)
+    }
+
     /// Counts all descendants of a node (not including the node itself).
     /// Used internally by get_position for branch counts.
     fn count_subtree(&self, start_idx: NodeIndex) -> usize {
@@ -628,5 +668,44 @@ mod tests {
         let pos = tree.get_position(test_uuid(1)).unwrap();
         assert!(pos.parent_user_id.is_none());
         assert_eq!(pos.position, 0);
+    }
+
+    #[test]
+    fn get_branch_returns_subtree_under_position() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
+        tree.add_node(test_uuid(4), test_uuid(2), 4000).unwrap();
+        tree.add_node(test_uuid(5), test_uuid(2), 5000).unwrap();
+        // Branch at position 0 under root = everything under uuid(2)
+        let branch = tree.get_branch(test_uuid(1), 0).unwrap();
+        let ids: Vec<Uuid> = branch.iter().map(|n| n.user_id).collect();
+        assert!(ids.contains(&test_uuid(2)));
+        assert!(ids.contains(&test_uuid(4)));
+        assert!(ids.contains(&test_uuid(5)));
+        assert!(!ids.contains(&test_uuid(3)));
+    }
+
+    #[test]
+    fn get_branch_position_out_of_range_fails() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        let result = tree.get_branch(test_uuid(1), 5);
+        assert!(matches!(result, Err(TreeError::PositionOutOfRange { .. })));
+    }
+
+    #[test]
+    fn get_branch_returns_bfs_order() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), 3000).unwrap();
+        tree.add_node(test_uuid(4), test_uuid(3), 4000).unwrap();
+        let branch = tree.get_branch(test_uuid(1), 0).unwrap();
+        assert_eq!(branch[0].user_id, test_uuid(2));
+        assert_eq!(branch[1].user_id, test_uuid(3));
+        assert_eq!(branch[2].user_id, test_uuid(4));
     }
 }

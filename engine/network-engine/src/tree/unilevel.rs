@@ -241,10 +241,6 @@ impl UnilevelTree {
             let node = &self.nodes[idx.0];
             let relative_depth = node.depth - start_depth;
 
-            if depth > 0 && relative_depth > depth {
-                continue;
-            }
-
             result.push(node);
 
             if depth == 0 || relative_depth < depth {
@@ -374,10 +370,6 @@ impl UnilevelTree {
         while let Some(idx) = queue.pop_front() {
             let node = &self.nodes[idx.0];
             let relative_depth = node.depth - start_depth;
-
-            if depth > 0 && relative_depth > depth {
-                continue;
-            }
 
             count += 1;
 

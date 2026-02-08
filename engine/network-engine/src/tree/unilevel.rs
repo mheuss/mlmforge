@@ -901,4 +901,71 @@ mod tests {
         tree.add_root(test_uuid(1), 1000).unwrap();
         assert!(!tree.is_descendant_of(test_uuid(1), test_uuid(1)).unwrap());
     }
+
+    // --- Edge cases ---
+
+    #[test]
+    fn operations_on_empty_tree_fail() {
+        let tree = UnilevelTree::new();
+        assert!(matches!(
+            tree.get_parent(test_uuid(1)),
+            Err(TreeError::UserNotFound(_))
+        ));
+        assert!(matches!(
+            tree.get_children(test_uuid(1)),
+            Err(TreeError::UserNotFound(_))
+        ));
+        assert!(matches!(
+            tree.get_downline(test_uuid(1), 0),
+            Err(TreeError::UserNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn single_node_tree() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        assert!(tree.get_parent(test_uuid(1)).unwrap().is_none());
+        assert!(tree.get_children(test_uuid(1)).unwrap().is_empty());
+        assert!(tree.get_upline(test_uuid(1), 0).unwrap().is_empty());
+        assert!(tree.get_downline(test_uuid(1), 0).unwrap().is_empty());
+        assert_eq!(tree.count_downline(test_uuid(1), 0).unwrap(), 0);
+        assert!(!tree.is_descendant_of(test_uuid(1), test_uuid(1)).unwrap());
+    }
+
+    /// Deterministic UUID from a u16. Needed for tests with more than
+    /// 255 nodes (deep chain, wide fan).
+    fn test_uuid_u16(n: u16) -> Uuid {
+        let bytes = n.to_le_bytes();
+        Uuid::from_bytes([bytes[0], bytes[1], 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    }
+
+    #[test]
+    fn deep_chain_1000_nodes() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid_u16(0), 0).unwrap();
+        for i in 1..=1000u16 {
+            tree.add_node(test_uuid_u16(i), test_uuid_u16(i - 1), i as i64)
+                .unwrap();
+        }
+        // No stack overflow from iterative BFS
+        let downline = tree.get_downline(test_uuid_u16(0), 0).unwrap();
+        assert_eq!(downline.len(), 1000);
+        // Deepest node's upline is 1000 long
+        let upline = tree.get_upline(test_uuid_u16(1000), 0).unwrap();
+        assert_eq!(upline.len(), 1000);
+    }
+
+    #[test]
+    fn wide_fan_1000_children() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid_u16(0), 0).unwrap();
+        for i in 1..=1000u16 {
+            tree.add_node(test_uuid_u16(i), test_uuid_u16(0), i as i64)
+                .unwrap();
+        }
+        let children = tree.get_children(test_uuid_u16(0)).unwrap();
+        assert_eq!(children.len(), 1000);
+        assert_eq!(tree.count_downline(test_uuid_u16(0), 0).unwrap(), 1000);
+    }
 }

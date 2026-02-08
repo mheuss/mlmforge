@@ -62,7 +62,7 @@ impl UnilevelTree {
     }
 
     /// Returns a reference to the node for a user ID.
-    /// Internal helper used by public traversal methods.
+    /// Internal helper for tests and crate-internal callers.
     #[allow(dead_code)]
     pub(crate) fn get_node(&self, user_id: Uuid) -> Result<&Node, TreeError> {
         let idx = self.resolve(user_id)?;
@@ -453,7 +453,7 @@ impl UnilevelTree {
         let mut queue = VecDeque::new();
 
         // Seed with start node's children, not start node itself.
-        // Branch count = descendants UNDER the child, not including the child.
+        // Downline count = descendants UNDER the child, not including the child.
         for &child_idx in &self.nodes[start_idx.0].children {
             queue.push_back(child_idx);
         }

@@ -172,8 +172,17 @@ impl UnilevelTree {
             self.root = None;
         }
 
-        // Remove from index and add slot to free list
+        // Remove from index, clear the slot, and add it to the free list.
+        // Clearing releases the children Vec's heap allocation and marks
+        // the slot as dead so stale data is never accidentally read.
         self.index.remove(&user_id);
+        self.nodes[idx.0] = Node {
+            user_id: Uuid::nil(),
+            parent: None,
+            children: Vec::new(),
+            depth: 0,
+            enrolled_at: 0,
+        };
         self.free_list.push(idx);
         Ok(())
     }
@@ -272,7 +281,7 @@ impl UnilevelTree {
                 .children
                 .iter()
                 .position(|&child_idx| child_idx == idx)
-                .unwrap_or(0)
+                .expect("node not found in parent's children list — tree is corrupt")
         } else {
             0
         };

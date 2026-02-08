@@ -15,8 +15,8 @@ pub struct NodeIndex(pub(crate) usize);
 #[derive(Debug, Clone)]
 pub struct Node {
     pub user_id: Uuid,
-    pub parent: Option<NodeIndex>,
-    pub children: Vec<NodeIndex>,
+    pub(crate) parent: Option<NodeIndex>,
+    pub(crate) children: Vec<NodeIndex>,
     pub depth: u32,
     pub enrolled_at: i64,
 }

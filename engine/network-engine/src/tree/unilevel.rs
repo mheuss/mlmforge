@@ -3,6 +3,7 @@ use uuid::Uuid;
 
 use super::error::TreeError;
 use super::node::{Node, NodeIndex};
+use crate::types::TreePosition;
 
 /// Arena-backed unilevel tree.
 ///
@@ -245,6 +246,75 @@ impl UnilevelTree {
         }
 
         Ok(result)
+    }
+
+    /// Computes a full position snapshot for a user.
+    ///
+    /// Unlike `get_node`, this builds an owned `TreePosition` with
+    /// derived data: branch counts (descendants per child position),
+    /// child count, and the user's position in their parent's children.
+    ///
+    /// Branch counts are computed by walking each child's full subtree.
+    /// For a node with many children each having deep subtrees, this
+    /// can be expensive. It is a point query, not a bulk operation.
+    pub fn get_position(&self, user_id: Uuid) -> Result<TreePosition, TreeError> {
+        let idx = self.resolve(user_id)?;
+        let node = &self.nodes[idx.0];
+
+        let parent_user_id = node
+            .parent
+            .map(|parent_idx| self.nodes[parent_idx.0].user_id);
+
+        // Determine this node's position in its parent's children list.
+        // Root has position 0 by convention.
+        let position = if let Some(parent_idx) = node.parent {
+            self.nodes[parent_idx.0]
+                .children
+                .iter()
+                .position(|&child_idx| child_idx == idx)
+                .unwrap_or(0)
+        } else {
+            0
+        };
+
+        // Count descendants under each child position
+        let mut branch_counts = HashMap::new();
+        for (child_pos, &child_idx) in node.children.iter().enumerate() {
+            let count = self.count_subtree(child_idx);
+            branch_counts.insert(child_pos, count);
+        }
+
+        Ok(TreePosition {
+            user_id: node.user_id,
+            parent_user_id,
+            position,
+            depth: node.depth,
+            child_count: node.children.len(),
+            branch_counts,
+            enrolled_at: node.enrolled_at,
+        })
+    }
+
+    /// Counts all descendants of a node (not including the node itself).
+    /// Used internally by get_position for branch counts.
+    fn count_subtree(&self, start_idx: NodeIndex) -> usize {
+        let mut count = 0;
+        let mut queue = VecDeque::new();
+
+        // Seed with start node's children, not start node itself.
+        // Branch count = descendants UNDER the child, not including the child.
+        for &child_idx in &self.nodes[start_idx.0].children {
+            queue.push_back(child_idx);
+        }
+
+        while let Some(idx) = queue.pop_front() {
+            count += 1;
+            for &child_idx in &self.nodes[idx.0].children {
+                queue.push_back(child_idx);
+            }
+        }
+
+        count
     }
 
     /// Allocates a slot in the arena. Reuses tombstoned slots from the
@@ -514,5 +584,49 @@ mod tests {
         tree.add_root(test_uuid(1), 1000).unwrap();
         let downline = tree.get_downline(test_uuid(1), 0).unwrap();
         assert!(downline.is_empty());
+    }
+
+    #[test]
+    fn get_position_returns_correct_metadata() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
+        // Add grandchildren under uuid(2)
+        tree.add_node(test_uuid(4), test_uuid(2), 4000).unwrap();
+        tree.add_node(test_uuid(5), test_uuid(2), 5000).unwrap();
+
+        let pos = tree.get_position(test_uuid(2)).unwrap();
+        assert_eq!(pos.user_id, test_uuid(2));
+        assert_eq!(pos.parent_user_id, Some(test_uuid(1)));
+        assert_eq!(pos.position, 0); // first child of root
+        assert_eq!(pos.depth, 1);
+        assert_eq!(pos.child_count, 2);
+    }
+
+    #[test]
+    fn get_position_includes_branch_counts() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
+        tree.add_node(test_uuid(4), test_uuid(2), 4000).unwrap();
+        tree.add_node(test_uuid(5), test_uuid(2), 5000).unwrap();
+        tree.add_node(test_uuid(6), test_uuid(4), 6000).unwrap();
+
+        let pos = tree.get_position(test_uuid(1)).unwrap();
+        // Branch 0 (under uuid(2)): uuid(4), uuid(5), uuid(6) = 3 descendants
+        // Branch 1 (under uuid(3)): 0 descendants
+        assert_eq!(pos.branch_counts[&0], 3);
+        assert_eq!(pos.branch_counts[&1], 0);
+    }
+
+    #[test]
+    fn get_position_root_has_no_parent() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        let pos = tree.get_position(test_uuid(1)).unwrap();
+        assert!(pos.parent_user_id.is_none());
+        assert_eq!(pos.position, 0);
     }
 }

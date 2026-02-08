@@ -405,6 +405,38 @@ impl UnilevelTree {
         Ok(count)
     }
 
+    /// Checks whether `user_id` is a descendant of `ancestor_id`.
+    ///
+    /// Walks upline from `user_id` toward root. If `ancestor_id` is
+    /// encountered, returns true. If root is reached without finding
+    /// the ancestor, returns false.
+    ///
+    /// Walking upline is O(d) where d is the depth difference. This is
+    /// better than walking the ancestor's downline, which could be the
+    /// entire subtree.
+    ///
+    /// A node is not considered a descendant of itself.
+    pub fn is_descendant_of(&self, user_id: Uuid, ancestor_id: Uuid) -> Result<bool, TreeError> {
+        let ancestor_idx = self.resolve(ancestor_id)?;
+
+        if user_id == ancestor_id {
+            return Ok(false);
+        }
+
+        let mut current_idx = self.resolve(user_id)?;
+        loop {
+            match self.nodes[current_idx.0].parent {
+                Some(parent_idx) => {
+                    if parent_idx == ancestor_idx {
+                        return Ok(true);
+                    }
+                    current_idx = parent_idx;
+                }
+                None => return Ok(false),
+            }
+        }
+    }
+
     /// Counts all descendants of a node (not including the node itself).
     /// Used internally by get_position for branch counts.
     fn count_subtree(&self, start_idx: NodeIndex) -> usize {
@@ -823,5 +855,48 @@ mod tests {
         tree.add_root(test_uuid(1), 1000).unwrap();
         let result = tree.count_branch(test_uuid(1), 0);
         assert!(matches!(result, Err(TreeError::PositionOutOfRange { .. })));
+    }
+
+    #[test]
+    fn is_descendant_of_direct_child() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        assert!(tree.is_descendant_of(test_uuid(2), test_uuid(1)).unwrap());
+    }
+
+    #[test]
+    fn is_descendant_of_deep_descendant() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), 3000).unwrap();
+        tree.add_node(test_uuid(4), test_uuid(3), 4000).unwrap();
+        assert!(tree.is_descendant_of(test_uuid(4), test_uuid(1)).unwrap());
+    }
+
+    #[test]
+    fn is_descendant_of_returns_false_for_sibling() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
+        assert!(!tree.is_descendant_of(test_uuid(2), test_uuid(3)).unwrap());
+    }
+
+    #[test]
+    fn is_descendant_of_returns_false_for_ancestor() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        // Parent is not a descendant of child
+        assert!(!tree.is_descendant_of(test_uuid(1), test_uuid(2)).unwrap());
+    }
+
+    #[test]
+    fn is_descendant_of_self_returns_false() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        assert!(!tree.is_descendant_of(test_uuid(1), test_uuid(1)).unwrap());
     }
 }

@@ -16,6 +16,7 @@ MLMForge's architecture is informed by years of building and operating a product
 | [004](004-interface-contracts.md) | **Interface Contracts** | How contexts communicate through interfaces, events, and the extraction path |
 | [005](005-multi-currency.md) | **Multi-Currency** | Regional product catalogs, CV points, and the three-context currency chain |
 | [006](006-enrollment-orchestration.md) | **Enrollment Orchestration** | The saga pattern, configurable payment failure, and structure placement |
+| [007](007-unilevel-tree-implementation.md) | **Unilevel Tree Implementation** | Arena storage, UUID user IDs, iterative BFS, position-indexed model |
 
 ## Reading Order
 

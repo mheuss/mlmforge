@@ -112,6 +112,45 @@ impl UnilevelTree {
         Ok(idx)
     }
 
+    /// Removes a leaf node from the tree.
+    ///
+    /// The node must have no children. Removing a node with children
+    /// would orphan its subtree, which is a data integrity error.
+    /// The caller must remove children first, working from leaves up.
+    ///
+    /// The removed slot is added to the free list for reuse by the
+    /// next `add_root` or `add_node` call.
+    ///
+    /// # Errors
+    ///
+    /// - `UserNotFound` if `user_id` is not in the tree
+    /// - `HasChildren` if the node has children
+    pub fn remove_node(&mut self, user_id: Uuid) -> Result<(), TreeError> {
+        let idx = self.resolve(user_id)?;
+        let child_count = self.nodes[idx.0].children.len();
+
+        if child_count > 0 {
+            return Err(TreeError::HasChildren(user_id, child_count));
+        }
+
+        // Remove from parent's children list
+        if let Some(parent_idx) = self.nodes[idx.0].parent {
+            self.nodes[parent_idx.0]
+                .children
+                .retain(|&child_idx| child_idx != idx);
+        }
+
+        // Clear root if removing the root node
+        if self.root == Some(idx) {
+            self.root = None;
+        }
+
+        // Remove from index and add slot to free list
+        self.index.remove(&user_id);
+        self.free_list.push(idx);
+        Ok(())
+    }
+
     /// Allocates a slot in the arena. Reuses tombstoned slots from the
     /// free list when available. Otherwise appends to the Vec.
     fn alloc_slot(&mut self, node: Node) -> NodeIndex {
@@ -200,5 +239,52 @@ mod tests {
         tree.add_root(test_uuid(1), 1000).unwrap();
         let result = tree.add_node(test_uuid(2), test_uuid(99), 2000);
         assert!(matches!(result, Err(TreeError::UserNotFound(_))));
+    }
+
+    #[test]
+    fn remove_leaf_node() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        let result = tree.remove_node(test_uuid(2));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn remove_node_clears_from_parent_children() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.remove_node(test_uuid(2)).unwrap();
+        let parent = tree.get_node(test_uuid(1)).unwrap();
+        assert!(parent.children.is_empty());
+    }
+
+    #[test]
+    fn remove_node_with_children_fails() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        let result = tree.remove_node(test_uuid(1));
+        assert!(matches!(result, Err(TreeError::HasChildren(_, 1))));
+    }
+
+    #[test]
+    fn remove_nonexistent_user_fails() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        let result = tree.remove_node(test_uuid(99));
+        assert!(matches!(result, Err(TreeError::UserNotFound(_))));
+    }
+
+    #[test]
+    fn removed_slot_is_reused_by_next_add() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.remove_node(test_uuid(2)).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
+        // Arena should still have only 2 slots, not 3
+        assert_eq!(tree.nodes.len(), 2);
     }
 }

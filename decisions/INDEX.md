@@ -17,6 +17,13 @@ MLMForge's architecture is informed by years of building and operating a product
 | [005](005-multi-currency.md) | **Multi-Currency** | Regional product catalogs, CV points, and the three-context currency chain |
 | [006](006-enrollment-orchestration.md) | **Enrollment Orchestration** | The saga pattern, configurable payment failure, and structure placement |
 | [007](007-unilevel-tree-implementation.md) | **Unilevel Tree Implementation** | Arena storage, UUID user IDs, iterative BFS, position-indexed model |
+| [008](008-common-compensation-config.md) | **Common Compensation Config** | Periods, volume, ranks, eligibility, bonuses, payout, caps, placement, audit |
+| [009](009-unilevel-compensation-config.md) | **Unilevel Compensation Config** | Rate table, compression, pass-up variant, donated placement |
+| [010](010-binary-compensation-config.md) | **Binary Compensation Config** | Pairing bonus, volume-after-payout modes, carry-forward, cycle/step, spillover |
+| [011](011-matrix-compensation-config.md) | **Matrix Compensation Config** | Width/height, forced placement, completion bonus, position bonus, board plan |
+| [012](012-stairstep-compensation-config.md) | **Stairstep Compensation Config** | Breakaway threshold, differential overrides, generation counting |
+| [013](013-generation-compensation-config.md) | **Generation Compensation Config** | Boundary modes, generation rates, empty generations, combined level+generation |
+| [014](014-streamline-compensation-config.md) | **Streamline Compensation Config** | Dynamic compression, streams, rank expansion, freeze on demotion, monoline |
 
 ## Reading Order
 

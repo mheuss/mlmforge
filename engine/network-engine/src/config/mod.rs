@@ -11,6 +11,7 @@
 //! `docs/plans/2026-02-12-compensation-plan-config-design.md`
 
 pub mod binary;
+pub mod bonus;
 pub mod commission;
 pub mod eligibility;
 pub mod generation;

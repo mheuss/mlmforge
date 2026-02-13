@@ -15,4 +15,5 @@ pub mod commission;
 pub mod eligibility;
 pub mod period;
 pub mod rank;
+pub mod stairstep;
 pub mod volume;

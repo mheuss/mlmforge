@@ -11,4 +11,5 @@
 //! `docs/plans/2026-02-12-compensation-plan-config-design.md`
 
 pub mod period;
+pub mod rank;
 pub mod volume;

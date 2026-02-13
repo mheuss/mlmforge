@@ -13,6 +13,7 @@
 pub mod binary;
 pub mod commission;
 pub mod eligibility;
+pub mod generation;
 pub mod period;
 pub mod rank;
 pub mod stairstep;

@@ -17,4 +17,5 @@ pub mod generation;
 pub mod period;
 pub mod rank;
 pub mod stairstep;
+pub mod streamline;
 pub mod volume;

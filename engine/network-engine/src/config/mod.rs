@@ -10,6 +10,7 @@
 //! surface. See the design document for additional narrative context:
 //! `docs/plans/2026-02-12-compensation-plan-config-design.md`
 
+pub mod eligibility;
 pub mod period;
 pub mod rank;
 pub mod volume;

@@ -87,5 +87,8 @@ ACCESSIBILITY.md
 CHANGELOG.md
 docs/
 
+# Git worktrees
+.worktrees/
+
 # Legacy reference codebase
 osMLM/

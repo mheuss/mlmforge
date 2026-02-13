@@ -1,0 +1,1 @@
+//! Commission period configuration types.

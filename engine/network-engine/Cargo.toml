@@ -7,6 +7,9 @@ rust-version = "1.85.0"
 [dependencies]
 uuid = { version = "1", features = ["v4"] }
 thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
 
 [dev-dependencies]
 proptest = "1"
+serde_json = "1"

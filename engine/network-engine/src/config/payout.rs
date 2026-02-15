@@ -18,21 +18,25 @@ pub struct PayoutConfig {
     ///
     /// Should match `VolumeConfig.base_currency`. All commission amounts
     /// are denominated in this currency.
+    #[serde(rename = "base_currency")]
     pub currency: String,
 
     /// Minimum commission amount before payout is issued.
     ///
     /// Commissions below this threshold roll over to the next period.
     /// Prevents micro-payouts that cost more to process than they're worth.
+    #[serde(rename = "minimum_amount")]
     pub minimum_payout: f64,
 
     /// When true, distributors can request partial payouts above the minimum.
     ///
     /// Allows distributors to withdraw a portion of their earned commissions
     /// while leaving the rest in their account.
+    #[serde(rename = "split_payouts_enabled")]
     pub allow_partial_payout: bool,
 
     /// Available payment methods for commission disbursement.
+    #[serde(rename = "methods")]
     pub payment_methods: Vec<PaymentMethod>,
 }
 
@@ -67,6 +71,7 @@ pub struct CapsConfig {
     ///
     /// None means uncapped. When set, no distributor can earn more than
     /// this amount in a single commission period.
+    #[serde(rename = "per_distributor_per_period")]
     pub per_distributor_cap: Option<f64>,
 
     /// Maximum percentage of company volume paid as commissions.
@@ -77,6 +82,7 @@ pub struct CapsConfig {
     pub company_payout_cap_percent: f64,
 
     /// How caps are enforced when exceeded.
+    #[serde(rename = "cap_enforcement")]
     pub enforcement: CapEnforcement,
 
     /// When true, overpayments from prior periods can be deducted
@@ -84,6 +90,7 @@ pub struct CapsConfig {
     ///
     /// Provides a correction mechanism when commissions are paid
     /// before all data is finalized. Requires careful legal review.
+    #[serde(rename = "clawback_on_refund")]
     pub enable_clawback: bool,
 }
 
@@ -117,10 +124,10 @@ mod tests {
     #[test]
     fn deserialize_payout_config() {
         let json = r#"{
-            "currency": "USD",
-            "minimum_payout": 50.0,
-            "allow_partial_payout": true,
-            "payment_methods": [
+            "base_currency": "USD",
+            "minimum_amount": 50.0,
+            "split_payouts_enabled": true,
+            "methods": [
                 { "type": "bank_transfer", "fee": 2.50 },
                 { "type": "check", "fee": 5.00 },
                 { "type": "ewallet", "fee": 0.00 }
@@ -153,10 +160,10 @@ mod tests {
     #[test]
     fn deserialize_caps_config() {
         let json = r#"{
-            "per_distributor_cap": 10000.0,
+            "per_distributor_per_period": 10000.0,
             "company_payout_cap_percent": 0.42,
-            "enforcement": "pro_rata",
-            "enable_clawback": false
+            "cap_enforcement": "pro_rata",
+            "clawback_on_refund": false
         }"#;
         let config: CapsConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.per_distributor_cap, Some(10000.0));
@@ -168,10 +175,10 @@ mod tests {
     #[test]
     fn deserialize_caps_config_uncapped() {
         let json = r#"{
-            "per_distributor_cap": null,
+            "per_distributor_per_period": null,
             "company_payout_cap_percent": 0.45,
-            "enforcement": "hard_stop",
-            "enable_clawback": true
+            "cap_enforcement": "hard_stop",
+            "clawback_on_refund": true
         }"#;
         let config: CapsConfig = serde_json::from_str(json).unwrap();
         assert!(config.per_distributor_cap.is_none());

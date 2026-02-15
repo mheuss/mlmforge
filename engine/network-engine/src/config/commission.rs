@@ -36,6 +36,7 @@ pub struct LevelCommissionConfig {
     ///
     /// Determines the rate table size. A distributor can never earn
     /// beyond this depth regardless of rank. Typical values: 3-10.
+    #[serde(rename = "commissionable_depth")]
     pub max_depth: u8,
 
     /// Commission rates by rank and level.
@@ -105,7 +106,7 @@ mod tests {
         let json = r#"{
             "broad_commission_percent": 0.40,
             "volume_to_dollar_multiplier": 1.5,
-            "max_depth": 5,
+            "commissionable_depth": 5,
             "rate_table": {
                 "associate": {
                     "1": 0.05,
@@ -144,7 +145,7 @@ mod tests {
         let json = r#"{
             "broad_commission_percent": 0.35,
             "volume_to_dollar_multiplier": null,
-            "max_depth": 3,
+            "commissionable_depth": 3,
             "rate_table": {
                 "associate": {
                     "1": 0.05

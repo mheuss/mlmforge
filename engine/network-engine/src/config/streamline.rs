@@ -24,6 +24,7 @@ pub struct StreamlineCommissionConfig {
     pub volume_to_dollar_multiplier: Option<f64>,
 
     /// Maximum chain depth for commission payments.
+    #[serde(rename = "commissionable_depth")]
     pub max_depth: u8,
 
     /// Dynamic compression table.
@@ -32,9 +33,11 @@ pub struct StreamlineCommissionConfig {
     /// and commission percentage. Levels are ordered by position
     /// (level 1 first). Non-decreasing rank thresholds. Higher levels
     /// require higher ranks.
+    #[serde(rename = "dynamic_compression")]
     pub levels: Vec<StreamlineLevel>,
 
     /// Multi-stream configuration. None means single stream only.
+    #[serde(rename = "streams")]
     pub stream_config: Option<StreamConfig>,
 }
 
@@ -71,6 +74,7 @@ pub struct StreamConfig {
     /// Cumulative with lower ranks. For example, if "silver" unlocks 1
     /// and "gold" unlocks 2, a gold-ranked distributor has 1 + 2 = 3
     /// additional streams (plus the primary stream).
+    #[serde(rename = "additional_per_rank")]
     pub additional_streams: BTreeMap<String, u8>,
 
     /// How new enrollees are assigned to streams.
@@ -78,6 +82,7 @@ pub struct StreamConfig {
 
     /// When true, new enrollees can choose which of their sponsor's
     /// streams to join. When false, assignment is automatic.
+    #[serde(rename = "per_enrollment_choice")]
     pub enrollment_stream_choice: bool,
 
     /// When true, excess streams freeze on rank demotion.
@@ -116,22 +121,22 @@ mod tests {
     fn deserialize_streamline_config() {
         let json = r#"{
             "volume_to_dollar_multiplier": 1.5,
-            "max_depth": 7,
-            "levels": [
+            "commissionable_depth": 7,
+            "dynamic_compression": [
                 { "min_rank": "active", "percent": 0.05 },
                 { "min_rank": "bronze", "percent": 0.04 },
                 { "min_rank": "silver", "percent": 0.03 },
                 { "min_rank": "gold", "percent": 0.02 },
                 { "min_rank": "platinum", "percent": 0.01 }
             ],
-            "stream_config": {
-                "additional_streams": {
+            "streams": {
+                "additional_per_rank": {
                     "silver": 1,
                     "gold": 2,
                     "platinum": 4
                 },
                 "assignment_mode": "round_robin",
-                "enrollment_stream_choice": true,
+                "per_enrollment_choice": true,
                 "freeze_on_demotion": true
             }
         }"#;
@@ -171,14 +176,14 @@ mod tests {
     #[test]
     fn deserialize_stream_config() {
         let json = r#"{
-            "additional_streams": {
+            "additional_per_rank": {
                 "bronze": 1,
                 "silver": 2,
                 "gold": 3,
                 "diamond": 5
             },
             "assignment_mode": "sponsor_stream",
-            "enrollment_stream_choice": false,
+            "per_enrollment_choice": false,
             "freeze_on_demotion": false
         }"#;
         let config: StreamConfig = serde_json::from_str(json).unwrap();
@@ -210,12 +215,12 @@ mod tests {
     fn deserialize_streamline_minimal() {
         let json = r#"{
             "volume_to_dollar_multiplier": null,
-            "max_depth": 5,
-            "levels": [
+            "commissionable_depth": 5,
+            "dynamic_compression": [
                 { "min_rank": "active", "percent": 0.10 },
                 { "min_rank": "bronze", "percent": 0.05 }
             ],
-            "stream_config": null
+            "streams": null
         }"#;
         let config: StreamlineCommissionConfig = serde_json::from_str(json).unwrap();
         assert!(config.volume_to_dollar_multiplier.is_none());

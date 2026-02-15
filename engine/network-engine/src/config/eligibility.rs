@@ -13,6 +13,7 @@ pub struct CommissionEligibility {
     /// Minimum personal volume required to receive any commissions.
     ///
     /// Most plans set 100-150 PV. Zero disables the requirement.
+    #[serde(rename = "min_personal_volume")]
     pub minimum_pv: f64,
 
     /// When true, the distributor must have at least one order in the
@@ -67,7 +68,7 @@ mod tests {
     #[test]
     fn deserialize_commission_eligibility() {
         let json = r#"{
-            "minimum_pv": 100.0,
+            "min_personal_volume": 100.0,
             "require_order_in_period": true,
             "eligible_statuses": ["active", "grace"],
             "active_leg_tiers": [
@@ -115,7 +116,7 @@ mod tests {
     #[test]
     fn deserialize_eligibility_minimal() {
         let json = r#"{
-            "minimum_pv": 0.0,
+            "min_personal_volume": 0.0,
             "require_order_in_period": false,
             "eligible_statuses": [],
             "active_leg_tiers": []

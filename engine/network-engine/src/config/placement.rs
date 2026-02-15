@@ -93,12 +93,14 @@ pub struct BinaryPlacementConfig {
     ///
     /// Applied when a distributor has not specified their own placement
     /// preference and the system needs to auto-place a new enrollee.
+    #[serde(rename = "default_placement")]
     pub default_preference: BinaryPlacementPreference,
 
     /// Whether individual distributors can override the default.
     ///
     /// When true, distributors can set their own placement preference
     /// (balanced, left, or right) to control where new enrollees land.
+    #[serde(rename = "per_user_preference")]
     pub allow_user_preference: bool,
 
     /// Whether upline placements can spill into this distributor's tree.
@@ -145,8 +147,8 @@ mod tests {
                 "applicable_structures": ["binary", "unilevel"]
             },
             "binary_placement": {
-                "default_preference": "balanced",
-                "allow_user_preference": true,
+                "default_placement": "balanced",
+                "per_user_preference": true,
                 "spillover_enabled": true
             }
         }"#;
@@ -200,8 +202,8 @@ mod tests {
     #[test]
     fn deserialize_binary_placement_config() {
         let json = r#"{
-            "default_preference": "left",
-            "allow_user_preference": false,
+            "default_placement": "left",
+            "per_user_preference": false,
             "spillover_enabled": true
         }"#;
         let config: BinaryPlacementConfig = serde_json::from_str(json).unwrap();

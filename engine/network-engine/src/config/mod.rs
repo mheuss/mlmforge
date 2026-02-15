@@ -83,6 +83,7 @@ pub struct CompensationPlan {
     pub rank_features: RankFeaturesConfig,
 
     /// Who receives commissions.
+    #[serde(rename = "commission_eligibility")]
     pub eligibility: CommissionEligibility,
 
     /// All bonus programs.
@@ -271,7 +272,7 @@ mod tests {
                 "level_commission": {
                     "broad_commission_percent": 0.40,
                     "volume_to_dollar_multiplier": null,
-                    "max_depth": 5,
+                    "commissionable_depth": 5,
                     "rate_table": {
                         "associate": { "1": 0.05, "2": 0.04, "3": 0.03 },
                         "silver": { "1": 0.07, "2": 0.06, "3": 0.05, "4": 0.04, "5": 0.03 }
@@ -307,7 +308,7 @@ mod tests {
                         "pairing": {
                             "percent": 0.10,
                             "calculation": "weaker_leg",
-                            "weekly_cap": 5000.0,
+                            "cap_per_period": 5000.0,
                             "volume_after_payout": "carry_forward",
                             "carry_forward_cap": 100000.0
                         }
@@ -333,12 +334,12 @@ mod tests {
                 "matrix_params": {
                     "width": 3,
                     "height": 9,
-                    "spillover": "breadth_first"
+                    "spillover_direction": "breadth_first"
                 },
                 "level_commission": {
                     "broad_commission_percent": 0.35,
                     "volume_to_dollar_multiplier": null,
-                    "max_depth": 9,
+                    "commissionable_depth": 9,
                     "rate_table": {
                         "associate": { "1": 0.05 }
                     }
@@ -372,7 +373,7 @@ mod tests {
                 "compression": null,
                 "generation_commission": {
                     "max_generations": 4,
-                    "rates": { "1": 0.10, "2": 0.06, "3": 0.04, "4": 0.02 },
+                    "generation_rates": { "1": 0.10, "2": 0.06, "3": 0.04, "4": 0.02 },
                     "boundary_mode": "threshold_rank",
                     "boundary_rank": "director",
                     "empty_generation_consumes_number": true,
@@ -406,7 +407,7 @@ mod tests {
                         "level_commission": {
                             "broad_commission_percent": 0.40,
                             "volume_to_dollar_multiplier": null,
-                            "max_depth": 5,
+                            "commissionable_depth": 5,
                             "rate_table": {
                                 "associate": { "1": 0.05 }
                             }
@@ -424,7 +425,7 @@ mod tests {
                                 "pairing": {
                                     "percent": 0.10,
                                     "calculation": "weaker_leg",
-                                    "weekly_cap": null,
+                                    "cap_per_period": null,
                                     "volume_after_payout": "carry_forward",
                                     "carry_forward_cap": null
                                 }
@@ -465,8 +466,8 @@ mod tests {
             ],
             "rank_tracking": { "track_achieved_rank": false },
             "rank_features": { "constraints_enabled": false, "overrides_enabled": false },
-            "eligibility": {
-                "minimum_pv": 100.0,
+            "commission_eligibility": {
+                "min_personal_volume": 100.0,
                 "require_order_in_period": false,
                 "eligible_statuses": ["active"],
                 "active_leg_tiers": []
@@ -486,25 +487,25 @@ mod tests {
                 "pass_up": null
             },
             "payout": {
-                "currency": "USD",
-                "minimum_payout": 50.0,
-                "allow_partial_payout": true,
-                "payment_methods": [
+                "base_currency": "USD",
+                "minimum_amount": 50.0,
+                "split_payouts_enabled": true,
+                "methods": [
                     { "type": "bank_transfer", "fee": 2.50 }
                 ]
             },
             "caps": {
-                "per_distributor_cap": null,
+                "per_distributor_per_period": null,
                 "company_payout_cap_percent": 0.42,
-                "enforcement": "pro_rata",
-                "enable_clawback": false
+                "cap_enforcement": "pro_rata",
+                "clawback_on_refund": false
             },
             "placement": {
                 "donated_placement": null,
                 "holding_tank": null,
                 "binary_placement": {
-                    "default_preference": "balanced",
-                    "allow_user_preference": true,
+                    "default_placement": "balanced",
+                    "per_user_preference": true,
                     "spillover_enabled": true
                 }
             }
@@ -530,7 +531,7 @@ mod tests {
                         "level_commission": {
                             "broad_commission_percent": 0.40,
                             "volume_to_dollar_multiplier": null,
-                            "max_depth": 7,
+                            "commissionable_depth": 7,
                             "rate_table": {
                                 "associate": {
                                     "1": 0.05, "2": 0.04, "3": 0.03
@@ -640,8 +641,8 @@ mod tests {
                 "constraints_enabled": true,
                 "overrides_enabled": false
             },
-            "eligibility": {
-                "minimum_pv": 100.0,
+            "commission_eligibility": {
+                "min_personal_volume": 100.0,
                 "require_order_in_period": true,
                 "eligible_statuses": ["active", "grace"],
                 "active_leg_tiers": [
@@ -652,7 +653,7 @@ mod tests {
             },
             "bonuses": {
                 "matching": {
-                    "max_depth": 3,
+                    "depth": 3,
                     "rates": { "1": 0.50, "2": 0.25, "3": 0.10 },
                     "matched_commission_types": ["level"]
                 },
@@ -679,19 +680,19 @@ mod tests {
                 "pass_up": null
             },
             "payout": {
-                "currency": "USD",
-                "minimum_payout": 50.0,
-                "allow_partial_payout": true,
-                "payment_methods": [
+                "base_currency": "USD",
+                "minimum_amount": 50.0,
+                "split_payouts_enabled": true,
+                "methods": [
                     { "type": "bank_transfer", "fee": 2.50 },
                     { "type": "ewallet", "fee": 0.00 }
                 ]
             },
             "caps": {
-                "per_distributor_cap": 10000.0,
+                "per_distributor_per_period": 10000.0,
                 "company_payout_cap_percent": 0.42,
-                "enforcement": "pro_rata",
-                "enable_clawback": false
+                "cap_enforcement": "pro_rata",
+                "clawback_on_refund": false
             },
             "placement": {
                 "donated_placement": "own_downline",

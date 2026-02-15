@@ -35,6 +35,7 @@ pub struct MatrixStructureParams {
 
     /// How new enrollees are placed when their sponsor's direct
     /// positions are full.
+    #[serde(rename = "spillover_direction")]
     pub spillover: SpilloverDirection,
 }
 
@@ -104,7 +105,7 @@ mod tests {
         let json = r#"{
             "width": 3,
             "height": 9,
-            "spillover": "breadth_first"
+            "spillover_direction": "breadth_first"
         }"#;
         let params: MatrixStructureParams = serde_json::from_str(json).unwrap();
         assert_eq!(params.width, 3);

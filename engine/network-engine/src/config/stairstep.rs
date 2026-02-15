@@ -26,6 +26,7 @@ pub struct BreakawayConfig {
 
     /// When true, breakaway group volume is excluded from upline's
     /// group volume for rank qualification.
+    #[serde(rename = "group_volume_excludes_breakaway")]
     pub exclude_breakaway_gv: bool,
 
     /// How override commissions are calculated after breakaway.
@@ -39,6 +40,7 @@ pub struct BreakawayConfig {
 
     /// Optional multi-generation overrides on breakaway groups beyond
     /// the first.
+    #[serde(rename = "generation")]
     pub generation_overrides: Option<BreakawayGenerationConfig>,
 }
 
@@ -96,6 +98,7 @@ pub struct BreakawayGenerationConfig {
     ///
     /// Missing generation = no override. Keys are generation numbers.
     /// Values are percentages between 0.0 and 1.0.
+    #[serde(rename = "generation_rates")]
     pub rates: BTreeMap<u8, f64>,
 
     /// Rank that creates a generation boundary.
@@ -113,7 +116,7 @@ mod tests {
     fn deserialize_breakaway_config() {
         let json = r#"{
             "threshold_rank": "director",
-            "exclude_breakaway_gv": true,
+            "group_volume_excludes_breakaway": true,
             "override_calculation": "differential",
             "differential": {
                 "rank_rates": {
@@ -123,9 +126,9 @@ mod tests {
                 },
                 "min_override": 0.02
             },
-            "generation_overrides": {
+            "generation": {
                 "max_generations": 3,
-                "rates": {
+                "generation_rates": {
                     "1": 0.05,
                     "2": 0.03,
                     "3": 0.01
@@ -192,7 +195,7 @@ mod tests {
     fn deserialize_breakaway_generation_config() {
         let json = r#"{
             "max_generations": 5,
-            "rates": {
+            "generation_rates": {
                 "1": 0.06,
                 "2": 0.04,
                 "3": 0.02,
@@ -214,10 +217,10 @@ mod tests {
     fn deserialize_breakaway_minimal() {
         let json = r#"{
             "threshold_rank": "director",
-            "exclude_breakaway_gv": false,
+            "group_volume_excludes_breakaway": false,
             "override_calculation": "fixed_override",
             "differential": null,
-            "generation_overrides": null
+            "generation": null
         }"#;
         let config: BreakawayConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.threshold_rank, "director");

@@ -78,6 +78,7 @@ pub struct BonusConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchingBonusConfig {
     /// How many sponsor-chain levels deep to pay matching bonuses.
+    #[serde(rename = "depth")]
     pub max_depth: u8,
 
     /// Level (1-indexed) to matching percentage. Level 1 is the direct
@@ -143,6 +144,7 @@ pub struct FastStartBonusConfig {
     /// Enhanced rate table. Same structure as the level commission
     /// rate table. Outer key is rank name. Inner key is level
     /// (1-indexed). Value is the enhanced percentage.
+    #[serde(rename = "rate_table")]
     pub enhanced_rate_table: BTreeMap<String, BTreeMap<u8, f64>>,
 }
 
@@ -176,6 +178,7 @@ pub struct RankAdvancementBonusConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LeadershipDevelopmentBonusConfig {
     /// How many sponsor-chain levels deep to pay.
+    #[serde(rename = "depth")]
     pub max_depth: u8,
 
     /// Rank achieved to bonus amount or percentage.
@@ -390,9 +393,11 @@ pub enum PoolShareMode {
 pub struct MatrixCompletionBonusConfig {
     /// Level (1-indexed) to bonus amount when that level is fully
     /// filled.
+    #[serde(rename = "per_level")]
     pub per_level_amounts: BTreeMap<u8, f64>,
 
     /// Bonus paid when the entire matrix is complete.
+    #[serde(rename = "full_matrix")]
     pub full_matrix_amount: f64,
 }
 
@@ -456,7 +461,7 @@ mod tests {
     fn deserialize_bonus_config() {
         let json = r#"{
             "matching": {
-                "max_depth": 3,
+                "depth": 3,
                 "rates": { "1": 0.50, "2": 0.25, "3": 0.10 },
                 "matched_commission_types": ["level", "binary"]
             },
@@ -510,7 +515,7 @@ mod tests {
     #[test]
     fn deserialize_matching_bonus() {
         let json = r#"{
-            "max_depth": 5,
+            "depth": 5,
             "rates": { "1": 0.50, "2": 0.25, "3": 0.10, "4": 0.05, "5": 0.02 },
             "matched_commission_types": ["level"]
         }"#;
@@ -542,7 +547,7 @@ mod tests {
     fn deserialize_fast_start_bonus() {
         let json = r#"{
             "window_days": 90,
-            "enhanced_rate_table": {
+            "rate_table": {
                 "associate": {
                     "1": 0.10,
                     "2": 0.08,
@@ -670,7 +675,7 @@ mod tests {
     #[test]
     fn deserialize_leadership_development_bonus() {
         let json = r#"{
-            "max_depth": 4,
+            "depth": 4,
             "rates": {
                 "silver": 100.0,
                 "gold": 250.0,
@@ -717,8 +722,8 @@ mod tests {
     #[test]
     fn deserialize_matrix_completion_bonus() {
         let json = r#"{
-            "per_level_amounts": { "1": 100.0, "2": 200.0, "3": 500.0 },
-            "full_matrix_amount": 2000.0
+            "per_level": { "1": 100.0, "2": 200.0, "3": 500.0 },
+            "full_matrix": 2000.0
         }"#;
         let config: MatrixCompletionBonusConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.per_level_amounts.len(), 3);

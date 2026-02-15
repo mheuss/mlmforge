@@ -64,6 +64,7 @@ pub struct PairingConfig {
     ///
     /// Protects the company from outsized payouts in a single period.
     /// Applied after the pairing calculation.
+    #[serde(rename = "cap_per_period")]
     pub weekly_cap: Option<f64>,
 
     /// What happens to leg volumes after the commission run.
@@ -174,7 +175,7 @@ mod tests {
         let json = r#"{
             "percent": 0.10,
             "calculation": "weaker_leg",
-            "weekly_cap": 5000.0,
+            "cap_per_period": 5000.0,
             "volume_after_payout": "carry_forward",
             "carry_forward_cap": 100000.0
         }"#;
@@ -216,7 +217,7 @@ mod tests {
             "pairing": {
                 "percent": 0.12,
                 "calculation": "volume_ratio",
-                "weekly_cap": null,
+                "cap_per_period": null,
                 "volume_after_payout": "net_off",
                 "carry_forward_cap": null
             }

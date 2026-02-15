@@ -28,6 +28,7 @@ pub struct GenerationCommissionConfig {
     ///
     /// Missing generation = no commission. Keys are generation numbers.
     /// Values are percentages between 0.0 and 1.0.
+    #[serde(rename = "generation_rates")]
     pub rates: BTreeMap<u8, f64>,
 
     /// How generation boundaries are determined.
@@ -86,7 +87,7 @@ mod tests {
     fn deserialize_generation_config_threshold() {
         let json = r#"{
             "max_generations": 4,
-            "rates": {
+            "generation_rates": {
                 "1": 0.10,
                 "2": 0.06,
                 "3": 0.04,
@@ -117,7 +118,7 @@ mod tests {
     fn deserialize_generation_config_same_rank() {
         let json = r#"{
             "max_generations": 3,
-            "rates": {
+            "generation_rates": {
                 "1": 0.08,
                 "2": 0.05,
                 "3": 0.03
@@ -157,7 +158,7 @@ mod tests {
     fn deserialize_empty_generation_flag() {
         let json_true = r#"{
             "max_generations": 2,
-            "rates": {
+            "generation_rates": {
                 "1": 0.07
             },
             "boundary_mode": "threshold_rank",
@@ -170,7 +171,7 @@ mod tests {
 
         let json_false = r#"{
             "max_generations": 2,
-            "rates": {
+            "generation_rates": {
                 "1": 0.07
             },
             "boundary_mode": "threshold_rank",

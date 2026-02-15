@@ -1,0 +1,1921 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mlmforge.dev/schemas/compensation-plan.schema.json",
+  "title": "MLMForge Compensation Plan",
+  "description": "Configuration schema for MLMForge compensation plans.",
+  "type": "object",
+  "required": [
+    "name",
+    "version",
+    "period",
+    "volume",
+    "ranks",
+    "rank_tracking",
+    "rank_features",
+    "commission_eligibility",
+    "structures",
+    "bonuses",
+    "payout",
+    "caps",
+    "placement"
+  ],
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable name for the compensation plan."
+    },
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version. Currently always 1."
+    },
+    "period": {
+      "$ref": "#/$defs/PeriodConfig"
+    },
+    "volume": {
+      "$ref": "#/$defs/VolumeConfig"
+    },
+    "ranks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/RankDefinition"
+      },
+      "minItems": 1,
+      "description": "Rank hierarchy from lowest to highest."
+    },
+    "rank_tracking": {
+      "$ref": "#/$defs/RankTrackingConfig"
+    },
+    "rank_features": {
+      "$ref": "#/$defs/RankFeaturesConfig"
+    },
+    "commission_eligibility": {
+      "$ref": "#/$defs/CommissionEligibility"
+    },
+    "structures": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/StructureConfig"
+      },
+      "minItems": 1,
+      "description": "Compensation structures (unilevel, binary, matrix, etc.)."
+    },
+    "bonuses": {
+      "$ref": "#/$defs/BonusConfig"
+    },
+    "payout": {
+      "$ref": "#/$defs/PayoutConfig"
+    },
+    "caps": {
+      "$ref": "#/$defs/CapsConfig"
+    },
+    "placement": {
+      "$ref": "#/$defs/PlacementConfig"
+    }
+  },
+  "$defs": {
+    "PeriodConfig": {
+      "type": "object",
+      "description": "Commission period timing and payout lag configuration.",
+      "required": ["length", "payout_lag_days"],
+      "properties": {
+        "length": {
+          "$ref": "#/$defs/PeriodLength",
+          "description": "How long each commission period lasts."
+        },
+        "start_date": {
+          "type": "string",
+          "format": "date",
+          "description": "Start date for the first period. Subsequent periods auto-calculate."
+        },
+        "payout_lag_days": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 60,
+          "description": "Days after a period closes before commissions are payable. Provides a buffer for review, disputes, and payment processing."
+        }
+      }
+    },
+    "PeriodLength": {
+      "type": "string",
+      "enum": ["week", "semi_month", "month", "quarter"],
+      "description": "Duration of a commission period."
+    },
+    "VolumeConfig": {
+      "type": "object",
+      "description": "Volume calculation and currency settings.",
+      "required": [
+        "inhibit_signup_volume",
+        "base_currency",
+        "volume_to_dollar_multiplier",
+        "deduct_qualifying_volume"
+      ],
+      "properties": {
+        "inhibit_signup_volume": {
+          "type": "boolean",
+          "description": "If true, volume from the signup order does not count toward the first period."
+        },
+        "base_currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$",
+          "description": "ISO 4217 currency code for volume calculations."
+        },
+        "volume_to_dollar_multiplier": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Multiplier to convert volume points to dollar amounts."
+        },
+        "deduct_qualifying_volume": {
+          "type": "boolean",
+          "description": "If true, volume used for rank qualification is deducted before commission calculation."
+        }
+      }
+    },
+    "RankDefinition": {
+      "type": "object",
+      "description": "A single rank in the compensation plan hierarchy.",
+      "required": ["name", "ordinal", "qualification"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Display name for this rank."
+        },
+        "ordinal": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Position in the rank hierarchy. 1 is the lowest rank."
+        },
+        "qualification": {
+          "$ref": "#/$defs/RankQualification",
+          "description": "Rules a distributor must meet to achieve this rank."
+        },
+        "qualified_structures": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Which structures this rank qualifies for. Empty means all."
+        },
+        "demotion_policy": {
+          "oneOf": [
+            {
+              "type": "string",
+              "const": "promotion_only"
+            },
+            {
+              "type": "object",
+              "required": ["grace"],
+              "properties": {
+                "grace": {
+                  "$ref": "#/$defs/GracePeriod",
+                  "description": "Grace period before demotion takes effect."
+                }
+              }
+            }
+          ],
+          "description": "Controls whether distributors can lose rank."
+        }
+      }
+    },
+    "RankQualification": {
+      "type": "object",
+      "description": "Qualification requirements for achieving a rank.",
+      "properties": {
+        "structures": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/StructureQualification"
+          },
+          "description": "Per-structure qualification requirements."
+        },
+        "required_products": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Product IDs that must be on autoship."
+        }
+      }
+    },
+    "StructureQualification": {
+      "type": "object",
+      "description": "Qualification requirements for a specific compensation structure.",
+      "required": ["structure"],
+      "properties": {
+        "structure": {
+          "type": "string",
+          "description": "Name of the structure this qualification applies to."
+        },
+        "personal_volume": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Minimum personal volume required."
+        },
+        "group_volume": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Minimum group volume required."
+        },
+        "max_group_volume_per_leg": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Prevents a single strong leg from carrying the entire requirement."
+        },
+        "min_retail_volume": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Minimum retail volume required."
+        },
+        "distributor_count": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/DistributorCountRequirement"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Distributor count requirements per leg."
+        }
+      }
+    },
+    "DistributorCountRequirement": {
+      "type": "object",
+      "description": "Requirements for counting qualifying distributors in legs.",
+      "properties": {
+        "count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Minimum qualifying distributors per leg."
+        },
+        "min_rank": {
+          "type": "string",
+          "description": "Minimum rank for a distributor to count."
+        },
+        "search_mode": {
+          "type": "string",
+          "enum": ["frontline_only", "depth_search"],
+          "description": "Whether to search only the frontline or search deeper into the tree."
+        },
+        "search_depth": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How deep to search. Null means unlimited."
+        },
+        "total_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total count across all legs."
+        },
+        "min_leg_group_volume": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Minimum group volume in each qualifying leg."
+        }
+      }
+    },
+    "GracePeriod": {
+      "type": "object",
+      "description": "A time window before a rank demotion takes effect.",
+      "required": ["count", "unit"],
+      "properties": {
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of time units in the grace period."
+        },
+        "unit": {
+          "type": "string",
+          "enum": ["days", "weeks", "months"],
+          "description": "Time unit for the grace period."
+        }
+      }
+    },
+    "RankTrackingConfig": {
+      "type": "object",
+      "description": "Configuration for tracking rank history.",
+      "required": ["track_achieved_rank"],
+      "properties": {
+        "track_achieved_rank": {
+          "type": "boolean",
+          "description": "If true, the system tracks the highest rank a distributor has achieved."
+        }
+      }
+    },
+    "RankFeaturesConfig": {
+      "type": "object",
+      "description": "Feature flags for rank-related behavior.",
+      "required": ["constraints_enabled", "overrides_enabled"],
+      "properties": {
+        "constraints_enabled": {
+          "type": "boolean",
+          "description": "Enable rank qualification constraints."
+        },
+        "overrides_enabled": {
+          "type": "boolean",
+          "description": "Allow manual rank overrides by administrators."
+        }
+      }
+    },
+    "CommissionEligibility": {
+      "type": "object",
+      "description": "Rules that determine whether a distributor is eligible for commissions.",
+      "required": [
+        "min_personal_volume",
+        "require_order_in_period",
+        "eligible_statuses"
+      ],
+      "properties": {
+        "min_personal_volume": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Minimum personal volume to be eligible for commissions."
+        },
+        "require_order_in_period": {
+          "type": "boolean",
+          "description": "If true, distributor must place an order in the current period to earn commissions."
+        },
+        "eligible_statuses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "description": "Account statuses that are eligible for commissions."
+        },
+        "active_leg_tiers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ActiveLegTier"
+          },
+          "description": "Tiered commission depth based on number of active legs."
+        }
+      }
+    },
+    "ActiveLegTier": {
+      "type": "object",
+      "description": "A tier that maps active leg count to commission depth.",
+      "required": ["min_active_legs", "max_commission_depth"],
+      "properties": {
+        "min_active_legs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Minimum number of active legs to qualify for this tier."
+        },
+        "max_commission_depth": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum depth from which commissions are paid at this tier."
+        }
+      }
+    },
+    "StructureConfig": {
+      "type": "object",
+      "description": "A compensation structure definition. The type field determines which commission shape and additional fields are required.",
+      "required": ["name", "type"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Unique name for this structure."
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "unilevel",
+            "binary",
+            "matrix",
+            "stairstep",
+            "generation",
+            "streamline"
+          ],
+          "description": "The tree and commission structure type."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "unilevel"
+              }
+            }
+          },
+          "then": {
+            "required": ["commission"],
+            "properties": {
+              "commission": {
+                "$ref": "#/$defs/UnilevelCommission",
+                "description": "Unilevel commission configuration."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "binary"
+              }
+            }
+          },
+          "then": {
+            "required": ["commission"],
+            "properties": {
+              "commission": {
+                "$ref": "#/$defs/BinaryCommission",
+                "description": "Binary commission configuration."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "matrix"
+              }
+            }
+          },
+          "then": {
+            "required": ["structure", "commission"],
+            "properties": {
+              "structure": {
+                "$ref": "#/$defs/MatrixStructureParams",
+                "description": "Matrix tree shape parameters."
+              },
+              "commission": {
+                "$ref": "#/$defs/MatrixCommission",
+                "description": "Matrix commission configuration."
+              },
+              "pruning": {
+                "$ref": "#/$defs/PruningConfig",
+                "description": "Matrix pruning configuration for inactive nodes."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "stairstep"
+              }
+            }
+          },
+          "then": {
+            "required": ["commission"],
+            "properties": {
+              "commission": {
+                "$ref": "#/$defs/StairstepCommission",
+                "description": "Stairstep commission configuration."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "generation"
+              }
+            }
+          },
+          "then": {
+            "required": ["commission"],
+            "properties": {
+              "commission": {
+                "$ref": "#/$defs/GenerationCommission",
+                "description": "Generation commission configuration."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "streamline"
+              }
+            }
+          },
+          "then": {
+            "required": ["commission"],
+            "properties": {
+              "commission": {
+                "$ref": "#/$defs/StreamlineCommission",
+                "description": "Streamline commission configuration."
+              }
+            }
+          }
+        }
+      ]
+    },
+    "UnilevelCommission": {
+      "type": "object",
+      "description": "Commission configuration for unilevel compensation structures.",
+      "required": ["commissionable_depth", "rate_table"],
+      "properties": {
+        "broad_commission_percent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Flat commission rate applied across all levels."
+        },
+        "volume_to_dollar_multiplier": {
+          "oneOf": [
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Structure-specific override for the global volume-to-dollar multiplier."
+        },
+        "commissionable_depth": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum number of levels deep that commissions are paid."
+        },
+        "rate_table": {
+          "$ref": "#/$defs/RateTable",
+          "description": "Rank-by-level commission rates."
+        },
+        "compression": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/CompressionConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Skip inactive distributors when calculating commission levels."
+        }
+      }
+    },
+    "BinaryCommission": {
+      "type": "object",
+      "description": "Commission configuration for binary compensation structures.",
+      "required": ["mode"],
+      "properties": {
+        "volume_to_dollar_multiplier": {
+          "oneOf": [
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Structure-specific override for the global volume-to-dollar multiplier."
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["pairing", "cycle_step"],
+          "description": "Binary commission calculation method."
+        },
+        "pairing": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/PairingConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Pairing bonus configuration. Required when mode is pairing."
+        },
+        "cycle_step": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/CycleStepConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Cycle/step bonus configuration. Required when mode is cycle_step."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "pairing"
+              }
+            },
+            "required": ["mode"]
+          },
+          "then": {
+            "required": ["pairing"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "cycle_step"
+              }
+            },
+            "required": ["mode"]
+          },
+          "then": {
+            "required": ["cycle_step"]
+          }
+        }
+      ]
+    },
+    "MatrixCommission": {
+      "type": "object",
+      "description": "Commission configuration for matrix compensation structures.",
+      "required": ["commissionable_depth", "rate_table"],
+      "properties": {
+        "broad_commission_percent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Flat commission rate applied across all levels."
+        },
+        "volume_to_dollar_multiplier": {
+          "oneOf": [
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Structure-specific override for the global volume-to-dollar multiplier."
+        },
+        "commissionable_depth": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum number of levels deep that commissions are paid."
+        },
+        "rate_table": {
+          "$ref": "#/$defs/RateTable",
+          "description": "Rank-by-level commission rates."
+        },
+        "compression": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/CompressionConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Skip inactive distributors when calculating commission levels."
+        }
+      }
+    },
+    "StairstepCommission": {
+      "type": "object",
+      "description": "Commission configuration for stairstep breakaway compensation structures.",
+      "required": ["commissionable_depth", "rate_table"],
+      "properties": {
+        "broad_commission_percent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Flat commission rate applied across all levels."
+        },
+        "volume_to_dollar_multiplier": {
+          "oneOf": [
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Structure-specific override for the global volume-to-dollar multiplier."
+        },
+        "commissionable_depth": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum number of levels deep that commissions are paid."
+        },
+        "rate_table": {
+          "$ref": "#/$defs/RateTable",
+          "description": "Rank-by-level commission rates."
+        },
+        "compression": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/CompressionConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Skip inactive distributors when calculating commission levels."
+        },
+        "breakaway": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/BreakawayConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Breakaway configuration for stairstep plans."
+        }
+      }
+    },
+    "GenerationCommission": {
+      "type": "object",
+      "description": "Commission configuration for generation-based compensation structures.",
+      "required": ["generation", "level_commissions_enabled"],
+      "properties": {
+        "level_commissions_enabled": {
+          "type": "boolean",
+          "description": "Whether level-based commissions are also paid in addition to generation commissions."
+        },
+        "broad_commission_percent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Flat commission rate applied across all levels."
+        },
+        "volume_to_dollar_multiplier": {
+          "oneOf": [
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Structure-specific override for the global volume-to-dollar multiplier."
+        },
+        "commissionable_depth": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum number of levels deep that level-based commissions are paid."
+        },
+        "rate_table": {
+          "$ref": "#/$defs/RateTable",
+          "description": "Rank-by-level commission rates for level-based commissions."
+        },
+        "compression": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/CompressionConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Skip inactive distributors when calculating commission levels."
+        },
+        "generation": {
+          "$ref": "#/$defs/GenerationCommissionConfig",
+          "description": "Generation commission configuration."
+        }
+      }
+    },
+    "StreamlineCommission": {
+      "type": "object",
+      "description": "Commission configuration for streamline compensation structures.",
+      "required": ["commissionable_depth", "dynamic_compression"],
+      "properties": {
+        "volume_to_dollar_multiplier": {
+          "oneOf": [
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Structure-specific override for the global volume-to-dollar multiplier."
+        },
+        "commissionable_depth": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum depth for streamline commissions."
+        },
+        "dynamic_compression": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/StreamlineLevel"
+          },
+          "description": "Map of level number to commission configuration. Levels are dynamically compressed."
+        },
+        "streams": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/StreamConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Multi-stream configuration for enrollment-based streams."
+        }
+      }
+    },
+    "RateTable": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "description": "Level-to-rate mapping for a single rank."
+      },
+      "description": "Rank-by-level commission rate table. Outer keys are rank names, inner keys are level numbers."
+    },
+    "CompressionConfig": {
+      "type": "object",
+      "description": "Configuration for compressing inactive distributors out of commission calculations.",
+      "required": ["enabled", "mode"],
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether compression is active."
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["skip_inactive", "skip_below_rank"],
+          "description": "Compression strategy. skip_inactive skips non-qualifying distributors. skip_below_rank skips distributors below a threshold rank."
+        },
+        "rank_threshold": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Required when mode is skip_below_rank."
+        }
+      }
+    },
+    "PairingConfig": {
+      "type": "object",
+      "description": "Configuration for binary pairing commissions.",
+      "required": ["percent", "calculation", "volume_after_payout"],
+      "properties": {
+        "percent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Commission percentage on paired volume."
+        },
+        "calculation": {
+          "type": "string",
+          "enum": ["weaker_leg", "volume_ratio"],
+          "description": "How paired volume is calculated."
+        },
+        "cap_per_period": {
+          "oneOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Maximum commission per period from pairing."
+        },
+        "volume_after_payout": {
+          "type": "string",
+          "enum": ["full_flush", "net_off", "carry_forward"],
+          "description": "How remaining volume is handled after payout."
+        },
+        "carry_forward_cap": {
+          "oneOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Maximum volume that can carry forward."
+        }
+      }
+    },
+    "CycleStepConfig": {
+      "type": "object",
+      "description": "Configuration for binary cycle/step commissions.",
+      "required": ["steps", "flush_after_cycle"],
+      "properties": {
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CycleStep"
+          },
+          "minItems": 1,
+          "description": "Ordered list of cycle steps."
+        },
+        "flush_after_cycle": {
+          "type": "boolean",
+          "description": "If true, reset cycle counter after completing all steps."
+        }
+      }
+    },
+    "CycleStep": {
+      "type": "object",
+      "description": "A single step in a binary cycle/step commission.",
+      "required": ["threshold", "amount"],
+      "properties": {
+        "threshold": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Volume threshold to trigger this step."
+        },
+        "amount": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Commission amount paid when threshold is reached."
+        }
+      }
+    },
+    "BreakawayConfig": {
+      "type": "object",
+      "description": "Configuration for stairstep breakaway behavior.",
+      "required": [
+        "threshold_rank",
+        "group_volume_excludes_breakaway",
+        "override_calculation"
+      ],
+      "properties": {
+        "threshold_rank": {
+          "type": "string",
+          "description": "Rank at which a distributor breaks away from their upline group."
+        },
+        "group_volume_excludes_breakaway": {
+          "type": "boolean",
+          "description": "If true, volume from broken-away groups is excluded from upline group volume."
+        },
+        "override_calculation": {
+          "type": "string",
+          "enum": ["differential", "fixed_override"],
+          "description": "How override commissions are calculated for breakaway groups."
+        },
+        "differential": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/DifferentialConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Differential override configuration. Required when override_calculation is differential."
+        },
+        "generation": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/BreakawayGenerationConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Generation override configuration for broken-away groups."
+        }
+      }
+    },
+    "DifferentialConfig": {
+      "type": "object",
+      "description": "Configuration for differential override commissions in stairstep plans.",
+      "required": ["rank_rates", "min_override"],
+      "properties": {
+        "rank_rates": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "description": "Override rate by rank."
+        },
+        "min_override": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Minimum override amount regardless of differential."
+        }
+      }
+    },
+    "BreakawayGenerationConfig": {
+      "type": "object",
+      "description": "Generation override configuration for broken-away groups in stairstep plans.",
+      "required": ["max_generations", "generation_rates", "boundary_rank"],
+      "properties": {
+        "max_generations": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum number of generations to pay overrides on."
+        },
+        "generation_rates": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "description": "Override rate per generation."
+        },
+        "boundary_rank": {
+          "type": "string",
+          "description": "Rank that defines generation boundaries."
+        }
+      }
+    },
+    "GenerationCommissionConfig": {
+      "type": "object",
+      "description": "Configuration for generation-based commission calculations.",
+      "required": [
+        "max_generations",
+        "generation_rates",
+        "boundary_mode",
+        "boundary_rank",
+        "empty_generation_consumes_number"
+      ],
+      "properties": {
+        "max_generations": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum number of generations to pay commissions on."
+        },
+        "generation_rates": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "description": "Commission rate per generation."
+        },
+        "boundary_mode": {
+          "type": "string",
+          "enum": ["threshold_rank", "same_rank"],
+          "description": "How generation boundaries are determined."
+        },
+        "boundary_rank": {
+          "type": "string",
+          "description": "Rank used for boundary calculation."
+        },
+        "empty_generation_consumes_number": {
+          "type": "boolean",
+          "description": "If true, empty generations still count toward the max."
+        },
+        "volume_to_dollar_multiplier": {
+          "oneOf": [
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Generation-specific override for the volume-to-dollar multiplier."
+        }
+      }
+    },
+    "StreamlineLevel": {
+      "type": "object",
+      "description": "Commission configuration for a single streamline level.",
+      "required": ["min_rank", "percent"],
+      "properties": {
+        "min_rank": {
+          "type": "string",
+          "description": "Minimum rank to earn at this level."
+        },
+        "percent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Commission percentage at this level."
+        }
+      }
+    },
+    "StreamConfig": {
+      "type": "object",
+      "description": "Multi-stream configuration for streamline plans.",
+      "required": [
+        "assignment_mode",
+        "per_enrollment_choice",
+        "freeze_on_demotion"
+      ],
+      "properties": {
+        "additional_per_rank": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "Additional streams available per rank."
+        },
+        "assignment_mode": {
+          "type": "string",
+          "enum": ["sponsor_stream", "round_robin"],
+          "description": "How enrollees are assigned to streams."
+        },
+        "per_enrollment_choice": {
+          "type": "boolean",
+          "description": "If true, each enrollment can choose its stream."
+        },
+        "freeze_on_demotion": {
+          "type": "boolean",
+          "description": "If true, stream assignments are frozen on demotion."
+        }
+      }
+    },
+    "MatrixStructureParams": {
+      "type": "object",
+      "description": "Matrix tree shape parameters.",
+      "required": ["width", "height", "spillover_direction"],
+      "properties": {
+        "width": {
+          "type": "integer",
+          "minimum": 2,
+          "description": "Maximum children per node."
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum tree depth."
+        },
+        "spillover_direction": {
+          "type": "string",
+          "enum": ["breadth_first", "depth_first"],
+          "description": "How overflow placements are distributed."
+        }
+      }
+    },
+    "PruningConfig": {
+      "type": "object",
+      "description": "Configuration for handling inactive nodes in a matrix.",
+      "required": ["mode"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["promote_earliest", "holding_tank"],
+          "description": "How inactive nodes in the matrix are handled."
+        }
+      }
+    },
+    "BonusConfig": {
+      "type": "object",
+      "description": "Bonus programs available in the compensation plan.",
+      "properties": {
+        "matching": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/MatchingBonusConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Matching bonus configuration."
+        },
+        "sponsor": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/SponsorBonusConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Sponsor bonus configuration."
+        },
+        "fast_start": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/FastStartBonusConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Fast start bonus configuration."
+        },
+        "rank_advancement": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/RankAdvancementBonusConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Rank advancement bonus configuration."
+        },
+        "leadership_development": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/LeadershipDevelopmentBonusConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Leadership development bonus configuration."
+        },
+        "infinity": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/InfinityBonusConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Infinity bonus configuration."
+        },
+        "lifestyle": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/LifestyleBonusConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Lifestyle bonus configuration."
+        },
+        "pool": {
+          "oneOf": [
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PoolBonusConfig"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Pool bonus configurations."
+        },
+        "matrix_completion": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/MatrixCompletionBonusConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Matrix completion bonus configuration."
+        },
+        "position": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/PositionBonusConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Position bonus configuration."
+        },
+        "board_cycling": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/BoardCyclingConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Board cycling configuration."
+        },
+        "pass_up": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/PassUpConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Pass-up bonus configuration."
+        }
+      }
+    },
+    "MatchingBonusConfig": {
+      "type": "object",
+      "description": "Matching bonus pays a percentage of downline commissions.",
+      "required": ["depth", "rates", "matched_commission_types"],
+      "properties": {
+        "depth": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many levels of downline matching commissions are paid."
+        },
+        "rates": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "description": "Matching rate by level."
+        },
+        "matched_commission_types": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Which commission types are matched."
+        }
+      }
+    },
+    "SponsorBonusConfig": {
+      "type": "object",
+      "description": "Bonus paid to the sponsor when a new distributor enrolls.",
+      "required": ["amount", "amount_type"],
+      "properties": {
+        "amount": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Bonus amount or percentage."
+        },
+        "amount_type": {
+          "type": "string",
+          "enum": ["fixed", "percentage"],
+          "description": "Whether the amount is a fixed dollar value or a percentage."
+        },
+        "qualifying_products": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Product IDs that trigger the sponsor bonus."
+        }
+      }
+    },
+    "FastStartBonusConfig": {
+      "type": "object",
+      "description": "Enhanced commissions during the early enrollment window.",
+      "required": ["window_days", "rate_table"],
+      "properties": {
+        "window_days": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Number of days after enrollment during which fast start applies."
+        },
+        "rate_table": {
+          "$ref": "#/$defs/RateTable",
+          "description": "Commission rates during the fast start window."
+        }
+      }
+    },
+    "RankAdvancementBonusConfig": {
+      "type": "object",
+      "description": "One-time bonus paid when a distributor achieves a new rank.",
+      "required": ["amounts", "pay_once_only"],
+      "properties": {
+        "amounts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number",
+            "minimum": 0
+          },
+          "description": "Bonus amount per rank achieved."
+        },
+        "pay_once_only": {
+          "type": "boolean",
+          "description": "If true, each rank advancement bonus is paid only the first time."
+        }
+      }
+    },
+    "LeadershipDevelopmentBonusConfig": {
+      "type": "object",
+      "description": "Override commissions paid on downline leaders.",
+      "required": ["depth", "rates", "rank_skip_mode"],
+      "properties": {
+        "depth": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many levels of leadership overrides are paid."
+        },
+        "rates": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "Override rate by level."
+        },
+        "rank_skip_mode": {
+          "type": "string",
+          "enum": ["highest_only", "each_rank_passed"],
+          "description": "Whether to pay for each rank passed or only the highest."
+        }
+      }
+    },
+    "InfinityBonusConfig": {
+      "type": "object",
+      "description": "Commissions paid to unlimited depth until blocked by a same-or-higher rank.",
+      "required": ["blocker_mode", "rate_mode"],
+      "properties": {
+        "blocker_mode": {
+          "type": "string",
+          "enum": ["same_rank", "higher_rank", "same_or_higher"],
+          "description": "What constitutes a blocking rank."
+        },
+        "flat_rate": {
+          "oneOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Flat commission rate. Used when rate_mode is flat."
+        },
+        "decreasing_rates": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Decreasing rates by depth. Used when rate_mode is decreasing."
+        },
+        "rate_mode": {
+          "type": "string",
+          "enum": ["flat", "decreasing"],
+          "description": "Whether the infinity bonus uses a flat rate or decreasing rates by depth."
+        }
+      }
+    },
+    "LifestyleBonusConfig": {
+      "type": "object",
+      "description": "Recurring bonus paid to distributors who maintain qualifying rank.",
+      "required": ["tiers"],
+      "properties": {
+        "tiers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LifestyleTier"
+          },
+          "minItems": 1,
+          "description": "Lifestyle bonus tiers from lowest to highest."
+        }
+      }
+    },
+    "LifestyleTier": {
+      "type": "object",
+      "description": "A single tier in the lifestyle bonus program.",
+      "required": ["min_rank", "amount"],
+      "properties": {
+        "min_rank": {
+          "type": "string",
+          "description": "Minimum rank to qualify for this tier."
+        },
+        "amount": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Monthly lifestyle bonus amount."
+        },
+        "grace_periods": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Periods of grace before losing the lifestyle bonus after demotion."
+        }
+      }
+    },
+    "PoolBonusConfig": {
+      "type": "object",
+      "description": "Revenue pool shared among qualifying distributors.",
+      "required": [
+        "name",
+        "source_percent",
+        "qualification",
+        "shares",
+        "require_admin_confirmation"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Display name for this pool."
+        },
+        "source_percent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Percentage of company revenue allocated to this pool."
+        },
+        "qualification": {
+          "$ref": "#/$defs/PoolQualification",
+          "description": "How distributors qualify for this pool."
+        },
+        "shares": {
+          "$ref": "#/$defs/PoolShares",
+          "description": "How pool payouts are divided among qualifiers."
+        },
+        "require_admin_confirmation": {
+          "type": "boolean",
+          "description": "If true, pool payouts require admin confirmation before disbursement."
+        }
+      }
+    },
+    "PoolQualification": {
+      "type": "object",
+      "description": "Qualification rules for pool bonus participation.",
+      "required": ["mode"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["rank_based", "velocity_based", "combined"],
+          "description": "Qualification strategy for the pool."
+        },
+        "min_rank": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Minimum rank to qualify. Used when mode is rank_based or combined."
+        },
+        "velocity": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/VelocityQualification"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Velocity qualification rules. Used when mode is velocity_based or combined."
+        }
+      }
+    },
+    "VelocityQualification": {
+      "type": "object",
+      "description": "Volume velocity qualification for pool bonuses.",
+      "required": ["volume_target", "timeframe"],
+      "properties": {
+        "volume_target": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Volume target to achieve within the timeframe."
+        },
+        "timeframe": {
+          "type": "string",
+          "enum": ["period", "days"],
+          "description": "Whether the velocity window is a commission period or a number of days."
+        },
+        "timeframe_days": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Number of days for the velocity window. Required when timeframe is 'days'."
+        }
+      }
+    },
+    "PoolShares": {
+      "type": "object",
+      "description": "How pool bonus payouts are divided among qualifying distributors.",
+      "required": ["mode"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["equal_share", "rank_weighted", "volume_weighted"],
+          "description": "Distribution strategy for pool shares."
+        },
+        "equal_share_cap": {
+          "oneOf": [
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Maximum payout per participant when mode is equal_share."
+        }
+      }
+    },
+    "MatrixCompletionBonusConfig": {
+      "type": "object",
+      "description": "Bonus paid for completing levels of a matrix.",
+      "required": ["per_level", "full_matrix"],
+      "properties": {
+        "per_level": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number",
+            "minimum": 0
+          },
+          "description": "Bonus amount for completing each matrix level."
+        },
+        "full_matrix": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Bonus for completing the entire matrix."
+        }
+      }
+    },
+    "PositionBonusConfig": {
+      "type": "object",
+      "description": "Bonus paid based on position in the tree.",
+      "required": ["amount", "amount_type", "sponsored_only"],
+      "properties": {
+        "amount": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Bonus amount or percentage."
+        },
+        "amount_type": {
+          "type": "string",
+          "enum": ["fixed", "percentage"],
+          "description": "Whether the amount is a fixed dollar value or a percentage."
+        },
+        "sponsored_only": {
+          "type": "boolean",
+          "description": "If true, only personally sponsored positions earn this bonus."
+        }
+      }
+    },
+    "BoardCyclingConfig": {
+      "type": "object",
+      "description": "Board cycling configuration. Reserved for future implementation.",
+      "properties": {
+        "_reserved": {
+          "type": "boolean",
+          "description": "Placeholder for future board cycling implementation."
+        }
+      }
+    },
+    "PassUpConfig": {
+      "type": "object",
+      "description": "Pass-up bonus where initial sales are passed to the upline.",
+      "required": ["count", "includes_commissions"],
+      "properties": {
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of sales passed up to the upline."
+        },
+        "includes_commissions": {
+          "type": "boolean",
+          "description": "If true, commissions from pass-up sales are also passed up."
+        }
+      }
+    },
+    "PayoutConfig": {
+      "type": "object",
+      "description": "Payout processing and payment method configuration.",
+      "required": [
+        "base_currency",
+        "minimum_amount",
+        "split_payouts_enabled",
+        "methods"
+      ],
+      "properties": {
+        "base_currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$",
+          "description": "ISO 4217 currency code for payouts."
+        },
+        "minimum_amount": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Minimum commission amount before a payout is issued."
+        },
+        "split_payouts_enabled": {
+          "type": "boolean",
+          "description": "If true, payouts can be split across multiple payment methods."
+        },
+        "methods": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PaymentMethod"
+          },
+          "minItems": 1,
+          "description": "Available payment methods."
+        }
+      }
+    },
+    "PaymentMethod": {
+      "type": "object",
+      "description": "A payment method available for commission payouts.",
+      "required": ["type", "fee"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Payment method identifier (e.g., direct_deposit, check, ewallet)."
+        },
+        "fee": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Fee charged for this payment method."
+        }
+      }
+    },
+    "CapsConfig": {
+      "type": "object",
+      "description": "Commission cap and clawback configuration.",
+      "required": [
+        "company_payout_cap_percent",
+        "cap_enforcement",
+        "clawback_on_refund"
+      ],
+      "properties": {
+        "per_distributor_per_period": {
+          "oneOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Maximum commission per distributor per period. Null means uncapped."
+        },
+        "company_payout_cap_percent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Maximum percentage of company revenue paid as commissions."
+        },
+        "cap_enforcement": {
+          "type": "string",
+          "enum": ["pro_rata", "priority_reduction", "hard_stop"],
+          "description": "How caps are enforced when limits are reached."
+        },
+        "clawback_on_refund": {
+          "type": "boolean",
+          "description": "If true, commissions are clawed back when the triggering order is refunded."
+        }
+      }
+    },
+    "PlacementConfig": {
+      "type": "object",
+      "description": "Placement rules for new distributors.",
+      "required": ["donated_placement_enabled"],
+      "properties": {
+        "donated_placement_enabled": {
+          "type": "boolean",
+          "description": "If true, sponsors can donate placement positions."
+        },
+        "donated_placement_restriction": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": ["own_downline", "direct_children_only"]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Restriction on donated placement positions."
+        },
+        "holding_tank": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/HoldingTankConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Holding tank configuration for deferred placement."
+        },
+        "binary": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/BinaryPlacementConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Binary-specific placement configuration."
+        },
+        "matrix": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "spillover_direction": {
+                  "type": "string",
+                  "enum": ["breadth_first", "depth_first"],
+                  "description": "How overflow placements are distributed in the matrix."
+                }
+              },
+              "description": "Matrix-specific placement settings."
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Matrix-specific placement settings."
+        }
+      }
+    },
+    "HoldingTankConfig": {
+      "type": "object",
+      "description": "Holding tank for deferred placement of new distributors.",
+      "required": [
+        "enabled",
+        "expiration_days",
+        "allow_sponsor_change",
+        "applicable_structures"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether the holding tank is active."
+        },
+        "expiration_days": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 7,
+          "description": "Days before holding tank auto-places."
+        },
+        "allow_sponsor_change": {
+          "type": "boolean",
+          "description": "If true, the sponsor can be changed while in the holding tank."
+        },
+        "applicable_structures": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Which structures use the holding tank."
+        }
+      }
+    },
+    "BinaryPlacementConfig": {
+      "type": "object",
+      "description": "Placement rules specific to binary compensation structures.",
+      "required": [
+        "default_placement",
+        "per_user_preference",
+        "spillover_enabled"
+      ],
+      "properties": {
+        "default_placement": {
+          "type": "string",
+          "enum": ["balanced", "left", "right"],
+          "description": "Default leg for new placements."
+        },
+        "per_user_preference": {
+          "type": "boolean",
+          "description": "If true, individual distributors can set their own placement preference."
+        },
+        "spillover_enabled": {
+          "type": "boolean",
+          "description": "If true, spillover from upline is allowed."
+        }
+      }
+    }
+  }
+}

@@ -24,9 +24,9 @@ type CompensationPlan struct {
 
 // PeriodConfig controls commission period timing and payout lag.
 type PeriodConfig struct {
-	Length        string `yaml:"length"`
-	StartDate     string `yaml:"start_date"`
-	PayoutLagDays int    `yaml:"payout_lag_days"`
+	Length        string  `yaml:"length"`
+	StartDate     *string `yaml:"start_date"`
+	PayoutLagDays int     `yaml:"payout_lag_days"`
 }
 
 // --- Volume ---
@@ -146,7 +146,7 @@ type StructureConfig struct {
 	Pruning       *PruningConfig         `yaml:"pruning"`
 	// resolvedCommission holds the parsed commission config after type resolution.
 	// Not exported. Set by resolveCommissions() during pipeline execution.
-	resolvedCommission interface{}
+	resolvedCommission any
 }
 
 // Per-type commission configs. Populated by resolveCommissions() after

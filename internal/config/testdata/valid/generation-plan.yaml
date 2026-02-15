@@ -1,0 +1,130 @@
+# yaml-language-server: $schema=../../../../schemas/compensation-plan.schema.json
+#
+# Generation plan with boundary mode and generation rates. Tests generation-specific
+# commission config: boundary_mode, boundary_rank, generation_rates,
+# empty_generation_consumes_number, and optional level commissions.
+
+name: Generation Override Plan
+version: 1
+
+period:
+  length: month
+  payout_lag_days: 10
+
+volume:
+  inhibit_signup_volume: false
+  base_currency: USD
+  volume_to_dollar_multiplier: 1.0
+  deduct_qualifying_volume: false
+
+ranks:
+  - name: Associate
+    ordinal: 1
+    qualification:
+      structures:
+        - structure: GenTree
+          personal_volume: 0
+          group_volume: 0
+
+  - name: Executive
+    ordinal: 2
+    qualification:
+      structures:
+        - structure: GenTree
+          personal_volume: 150
+          group_volume: 3000
+
+  - name: Senior Executive
+    ordinal: 3
+    qualification:
+      structures:
+        - structure: GenTree
+          personal_volume: 250
+          group_volume: 10000
+          distributor_count:
+            count: 3
+            min_rank: Executive
+            search_mode: depth_search
+            search_depth: 3
+            total_count: 8
+            min_leg_group_volume: 1000
+
+rank_tracking:
+  track_achieved_rank: true
+
+rank_features:
+  constraints_enabled: true
+  overrides_enabled: false
+
+commission_eligibility:
+  min_personal_volume: 75
+  require_order_in_period: true
+  eligible_statuses:
+    - active
+
+structures:
+  - name: GenTree
+    type: generation
+    commission:
+      level_commissions_enabled: true
+      commissionable_depth: 5
+      rate_table:
+        Associate:
+          "1": 0.05
+          "2": 0.03
+        Executive:
+          "1": 0.08
+          "2": 0.06
+          "3": 0.04
+        Senior Executive:
+          "1": 0.10
+          "2": 0.08
+          "3": 0.06
+          "4": 0.04
+          "5": 0.02
+      generation:
+        max_generations: 4
+        generation_rates:
+          "1": 0.05
+          "2": 0.04
+          "3": 0.03
+          "4": 0.02
+        boundary_mode: threshold_rank
+        boundary_rank: Executive
+        empty_generation_consumes_number: true
+
+bonuses:
+  matching: null
+  sponsor: null
+  fast_start: null
+  rank_advancement: null
+  leadership_development:
+    depth: 3
+    rates:
+      "1": 0.04
+      "2": 0.02
+      "3": 0.01
+    rank_skip_mode: each_rank_passed
+  infinity: null
+  lifestyle: null
+  pool: null
+  matrix_completion: null
+  position: null
+  board_cycling: null
+  pass_up: null
+
+payout:
+  base_currency: USD
+  minimum_amount: 50.00
+  split_payouts_enabled: false
+  methods:
+    - type: bank_transfer
+      fee: 2.50
+
+caps:
+  company_payout_cap_percent: 0.40
+  cap_enforcement: pro_rata
+  clawback_on_refund: true
+
+placement:
+  donated_placement_enabled: false

@@ -1,0 +1,112 @@
+# yaml-language-server: $schema=../../../../schemas/compensation-plan.schema.json
+#
+# Matrix plan with forced 3x7 structure. Tests conditional required fields:
+# matrix type requires a structure block with width, height, spillover_direction.
+
+name: Forced Matrix 3x7
+version: 1
+
+period:
+  length: month
+  payout_lag_days: 14
+
+volume:
+  inhibit_signup_volume: false
+  base_currency: USD
+  volume_to_dollar_multiplier: 1.0
+  deduct_qualifying_volume: false
+
+ranks:
+  - name: Starter
+    ordinal: 1
+    qualification:
+      structures:
+        - structure: Matrix
+          personal_volume: 0
+          group_volume: 0
+
+  - name: Builder
+    ordinal: 2
+    qualification:
+      structures:
+        - structure: Matrix
+          personal_volume: 50
+          group_volume: 300
+
+rank_tracking:
+  track_achieved_rank: false
+
+rank_features:
+  constraints_enabled: true
+  overrides_enabled: false
+
+commission_eligibility:
+  min_personal_volume: 30
+  require_order_in_period: true
+  eligible_statuses:
+    - active
+
+structures:
+  - name: Matrix
+    type: matrix
+    structure:
+      width: 3
+      height: 7
+      spillover_direction: breadth_first
+    commission:
+      commissionable_depth: 7
+      rate_table:
+        Starter:
+          "1": 0.05
+          "2": 0.03
+          "3": 0.02
+        Builder:
+          "1": 0.08
+          "2": 0.05
+          "3": 0.04
+          "4": 0.03
+          "5": 0.02
+          "6": 0.01
+          "7": 0.01
+    pruning:
+      mode: promote_earliest
+
+bonuses:
+  matching: null
+  sponsor: null
+  fast_start: null
+  rank_advancement: null
+  leadership_development: null
+  infinity: null
+  lifestyle: null
+  pool: null
+  matrix_completion:
+    per_level:
+      "1": 10.00
+      "2": 25.00
+      "3": 50.00
+    full_matrix: 500.00
+  position:
+    amount: 5.00
+    amount_type: fixed
+    sponsored_only: true
+  board_cycling: null
+  pass_up: null
+
+payout:
+  base_currency: USD
+  minimum_amount: 10.00
+  split_payouts_enabled: false
+  methods:
+    - type: ewallet
+      fee: 0.00
+
+caps:
+  company_payout_cap_percent: 0.45
+  cap_enforcement: pro_rata
+  clawback_on_refund: false
+
+placement:
+  donated_placement_enabled: false
+  matrix:
+    spillover_direction: breadth_first

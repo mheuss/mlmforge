@@ -1,0 +1,121 @@
+# yaml-language-server: $schema=../../../../schemas/compensation-plan.schema.json
+#
+# Streamline plan with dynamic compression map. Tests map-keyed levels
+# in dynamic_compression and optional stream configuration.
+
+name: Streamline Direct
+version: 1
+
+period:
+  length: semi_month
+  payout_lag_days: 7
+
+volume:
+  inhibit_signup_volume: false
+  base_currency: USD
+  volume_to_dollar_multiplier: 1.0
+  deduct_qualifying_volume: false
+
+ranks:
+  - name: Affiliate
+    ordinal: 1
+    qualification:
+      structures:
+        - structure: StreamlineTree
+          personal_volume: 0
+          group_volume: 0
+
+  - name: Team Lead
+    ordinal: 2
+    qualification:
+      structures:
+        - structure: StreamlineTree
+          personal_volume: 100
+          group_volume: 1000
+
+  - name: Director
+    ordinal: 3
+    qualification:
+      structures:
+        - structure: StreamlineTree
+          personal_volume: 200
+          group_volume: 5000
+
+rank_tracking:
+  track_achieved_rank: false
+
+rank_features:
+  constraints_enabled: true
+  overrides_enabled: false
+
+commission_eligibility:
+  min_personal_volume: 50
+  require_order_in_period: true
+  eligible_statuses:
+    - active
+
+structures:
+  - name: StreamlineTree
+    type: streamline
+    commission:
+      commissionable_depth: 10
+      dynamic_compression:
+        "1":
+          min_rank: Affiliate
+          percent: 0.10
+        "2":
+          min_rank: Affiliate
+          percent: 0.07
+        "3":
+          min_rank: Team Lead
+          percent: 0.05
+        "4":
+          min_rank: Team Lead
+          percent: 0.04
+        "5":
+          min_rank: Director
+          percent: 0.03
+        "6":
+          min_rank: Director
+          percent: 0.02
+      streams:
+        assignment_mode: sponsor_stream
+        per_enrollment_choice: false
+        freeze_on_demotion: true
+        additional_per_rank:
+          Team Lead: 1
+          Director: 2
+
+bonuses:
+  matching: null
+  sponsor:
+    amount: 15.00
+    amount_type: fixed
+  fast_start: null
+  rank_advancement: null
+  leadership_development: null
+  infinity: null
+  lifestyle: null
+  pool: null
+  matrix_completion: null
+  position: null
+  board_cycling: null
+  pass_up: null
+
+payout:
+  base_currency: USD
+  minimum_amount: 20.00
+  split_payouts_enabled: false
+  methods:
+    - type: ewallet
+      fee: 0.00
+    - type: bank_transfer
+      fee: 2.50
+
+caps:
+  company_payout_cap_percent: 0.40
+  cap_enforcement: pro_rata
+  clawback_on_refund: false
+
+placement:
+  donated_placement_enabled: false

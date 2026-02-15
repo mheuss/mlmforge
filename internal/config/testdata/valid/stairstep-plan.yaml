@@ -1,0 +1,144 @@
+# yaml-language-server: $schema=../../../../schemas/compensation-plan.schema.json
+#
+# Stairstep breakaway plan. Tests breakaway-specific fields: threshold rank,
+# override calculation, differential config, and generation overrides.
+
+name: Classic Stairstep Breakaway
+version: 1
+
+period:
+  length: month
+  payout_lag_days: 14
+
+volume:
+  inhibit_signup_volume: false
+  base_currency: USD
+  volume_to_dollar_multiplier: 1.0
+  deduct_qualifying_volume: true
+
+ranks:
+  - name: Distributor
+    ordinal: 1
+    qualification:
+      structures:
+        - structure: StairstepTree
+          personal_volume: 0
+          group_volume: 0
+    demotion_policy: promotion_only
+
+  - name: Supervisor
+    ordinal: 2
+    qualification:
+      structures:
+        - structure: StairstepTree
+          personal_volume: 100
+          group_volume: 2000
+    demotion_policy:
+      grace:
+        count: 3
+        unit: months
+
+  - name: Manager
+    ordinal: 3
+    qualification:
+      structures:
+        - structure: StairstepTree
+          personal_volume: 200
+          group_volume: 5000
+          distributor_count:
+            count: 2
+            min_rank: Supervisor
+            search_mode: frontline_only
+            search_depth: null
+            total_count: 5
+            min_leg_group_volume: 500
+    demotion_policy:
+      grace:
+        count: 6
+        unit: months
+
+rank_tracking:
+  track_achieved_rank: true
+
+rank_features:
+  constraints_enabled: true
+  overrides_enabled: false
+
+commission_eligibility:
+  min_personal_volume: 50
+  require_order_in_period: true
+  eligible_statuses:
+    - active
+    - grace_period
+
+structures:
+  - name: StairstepTree
+    type: stairstep
+    commission:
+      commissionable_depth: 6
+      rate_table:
+        Distributor:
+          "1": 0.05
+          "2": 0.03
+        Supervisor:
+          "1": 0.10
+          "2": 0.07
+          "3": 0.05
+          "4": 0.03
+        Manager:
+          "1": 0.15
+          "2": 0.10
+          "3": 0.07
+          "4": 0.05
+          "5": 0.03
+          "6": 0.02
+      breakaway:
+        threshold_rank: Supervisor
+        group_volume_excludes_breakaway: true
+        override_calculation: differential
+        differential:
+          rank_rates:
+            Supervisor: 0.05
+            Manager: 0.08
+          min_override: 10.00
+        generation:
+          max_generations: 3
+          generation_rates:
+            "1": 0.04
+            "2": 0.03
+            "3": 0.02
+          boundary_rank: Supervisor
+
+bonuses:
+  matching: null
+  sponsor: null
+  fast_start: null
+  rank_advancement:
+    amounts:
+      Supervisor: 100.00
+      Manager: 500.00
+    pay_once_only: true
+  leadership_development: null
+  infinity: null
+  lifestyle: null
+  pool: null
+  matrix_completion: null
+  position: null
+  board_cycling: null
+  pass_up: null
+
+payout:
+  base_currency: USD
+  minimum_amount: 50.00
+  split_payouts_enabled: false
+  methods:
+    - type: bank_transfer
+      fee: 2.50
+
+caps:
+  company_payout_cap_percent: 0.45
+  cap_enforcement: priority_reduction
+  clawback_on_refund: true
+
+placement:
+  donated_placement_enabled: false

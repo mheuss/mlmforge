@@ -82,10 +82,10 @@ func validateRanks(plan *CompensationPlan) []ValidationError {
 		}
 
 		// qualified_structures must reference defined structures.
-		for _, qs := range r.QualifiedStructures {
+		for j, qs := range r.QualifiedStructures {
 			if !structs[qs] {
 				errs = append(errs, ValidationError{
-					Path:     fmt.Sprintf("/ranks/%d/qualified_structures", i),
+					Path:     fmt.Sprintf("/ranks/%d/qualified_structures/%d", i, j),
 					Code:     "undefined_reference",
 					Message:  fmt.Sprintf("rank %q references undefined structure %q in qualified_structures", r.Name, qs),
 					Severity: "error",

@@ -19,16 +19,9 @@ func TestRankOrdinalsMustBeAscending(t *testing.T) {
 	plan.Ranks[1].Ordinal = 1
 
 	errs := validateBusinessRules(plan)
-	require.NotEmpty(t, errs)
-
-	found := false
-	for _, e := range errs {
-		if e.Code == "ordering_violation" {
-			found = true
-			assert.Equal(t, "error", e.Severity)
-		}
-	}
-	assert.True(t, found, "expected ordering_violation error for duplicate ordinal")
+	require.Len(t, errs, 1)
+	assert.Equal(t, "ordering_violation", errs[0].Code)
+	assert.Equal(t, "error", errs[0].Severity)
 }
 
 func TestRankQualifiedStructuresMustExist(t *testing.T) {
@@ -37,16 +30,10 @@ func TestRankQualifiedStructuresMustExist(t *testing.T) {
 	plan.Ranks[0].QualifiedStructures = []string{"NonExistent"}
 
 	errs := validateBusinessRules(plan)
-	require.NotEmpty(t, errs)
-
-	found := false
-	for _, e := range errs {
-		if e.Code == "undefined_reference" {
-			found = true
-			assert.Equal(t, "error", e.Severity)
-		}
-	}
-	assert.True(t, found, "expected undefined_reference error for nonexistent qualified_structures entry")
+	require.Len(t, errs, 1)
+	assert.Equal(t, "undefined_reference", errs[0].Code)
+	assert.Equal(t, "error", errs[0].Severity)
+	assert.Contains(t, errs[0].Path, "qualified_structures")
 }
 
 func TestRankQualificationStructureMustExist(t *testing.T) {
@@ -57,16 +44,10 @@ func TestRankQualificationStructureMustExist(t *testing.T) {
 	}
 
 	errs := validateBusinessRules(plan)
-	require.NotEmpty(t, errs)
-
-	found := false
-	for _, e := range errs {
-		if e.Code == "undefined_reference" {
-			found = true
-			assert.Equal(t, "error", e.Severity)
-		}
-	}
-	assert.True(t, found, "expected undefined_reference error for nonexistent qualification structure")
+	require.Len(t, errs, 1)
+	assert.Equal(t, "undefined_reference", errs[0].Code)
+	assert.Equal(t, "error", errs[0].Severity)
+	assert.Contains(t, errs[0].Path, "qualification/structures")
 }
 
 func TestMaxGroupVolumePerLegMustNotExceedGroupVolume(t *testing.T) {
@@ -82,16 +63,9 @@ func TestMaxGroupVolumePerLegMustNotExceedGroupVolume(t *testing.T) {
 	}
 
 	errs := validateBusinessRules(plan)
-	require.NotEmpty(t, errs)
-
-	found := false
-	for _, e := range errs {
-		if e.Code == "cross_field_dependency" {
-			found = true
-			assert.Equal(t, "error", e.Severity)
-		}
-	}
-	assert.True(t, found, "expected cross_field_dependency error when max_group_volume_per_leg > group_volume")
+	require.Len(t, errs, 1)
+	assert.Equal(t, "cross_field_dependency", errs[0].Code)
+	assert.Equal(t, "error", errs[0].Severity)
 }
 
 func TestPayOnceOnlyRequiresTrackAchievedRank(t *testing.T) {
@@ -103,16 +77,9 @@ func TestPayOnceOnlyRequiresTrackAchievedRank(t *testing.T) {
 	}
 
 	errs := validateBusinessRules(plan)
-	require.NotEmpty(t, errs)
-
-	found := false
-	for _, e := range errs {
-		if e.Code == "cross_section_dependency" {
-			found = true
-			assert.Equal(t, "error", e.Severity)
-		}
-	}
-	assert.True(t, found, "expected cross_section_dependency error when pay_once_only is true without track_achieved_rank")
+	require.Len(t, errs, 1)
+	assert.Equal(t, "cross_section_dependency", errs[0].Code)
+	assert.Equal(t, "error", errs[0].Severity)
 }
 
 func TestPayoutLagWarning(t *testing.T) {
@@ -120,13 +87,7 @@ func TestPayoutLagWarning(t *testing.T) {
 	plan.Period.PayoutLagDays = 45
 
 	errs := validateBusinessRules(plan)
-	require.NotEmpty(t, errs)
-
-	found := false
-	for _, e := range errs {
-		if e.Severity == "warning" {
-			found = true
-		}
-	}
-	assert.True(t, found, "expected a warning when payout_lag_days > 30")
+	require.Len(t, errs, 1)
+	assert.Equal(t, "warning", errs[0].Severity)
+	assert.Equal(t, "long_payout_lag", errs[0].Code)
 }

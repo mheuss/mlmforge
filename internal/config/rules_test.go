@@ -91,3 +91,90 @@ func TestPayoutLagWarning(t *testing.T) {
 	assert.Equal(t, "warning", errs[0].Severity)
 	assert.Equal(t, "long_payout_lag", errs[0].Code)
 }
+
+func TestBoundaryRankMustExist(t *testing.T) {
+	plan := minimalPlan()
+	// Change structure to generation type with a boundary_rank that doesn't exist.
+	plan.Structures[0].Name = "Gen"
+	plan.Structures[0].Type = "generation"
+	plan.Structures[0].resolvedCommission = &GenerationCommission{
+		Generation: GenerationCommissionConfig{
+			BoundaryRank: "Platinum",
+		},
+	}
+	// Update rank references to match the new structure name.
+	plan.Ranks[0].QualifiedStructures = []string{"Gen"}
+	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Gen"}}
+	plan.Ranks[1].QualifiedStructures = []string{"Gen"}
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{Structure: "Gen", PersonalVolume: 100, GroupVolume: 3000},
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "undefined_reference", errs[0].Code)
+	assert.Equal(t, "error", errs[0].Severity)
+	assert.Contains(t, errs[0].Path, "/structures/0")
+}
+
+func TestUnlimitedDepthTierMustBeLast(t *testing.T) {
+	plan := minimalPlan()
+	// An unlimited tier (MaxCommissionDepth == 0) that is NOT last.
+	plan.CommissionEligibility.ActiveLegTiers = []ActiveLegTier{
+		{MinActiveLegs: 1, MaxCommissionDepth: 0},
+		{MinActiveLegs: 3, MaxCommissionDepth: 5},
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "ordering_violation", errs[0].Code)
+	assert.Equal(t, "error", errs[0].Severity)
+	assert.Contains(t, errs[0].Path, "active_leg_tiers")
+}
+
+func TestRateTableMissingRankWarning(t *testing.T) {
+	plan := minimalPlan()
+	// Set a resolved unilevel commission whose rate_table only covers Associate,
+	// missing Silver.
+	plan.Structures[0].resolvedCommission = &UnilevelCommission{
+		RateTable: map[string]map[string]float64{
+			"Associate": {"1": 0.05},
+		},
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "warning", errs[0].Severity)
+	assert.Equal(t, "incomplete_rate_table", errs[0].Code)
+	assert.Contains(t, errs[0].Path, "/structures/0")
+}
+
+func TestCarryForwardCapRequiresCarryForward(t *testing.T) {
+	plan := minimalPlan()
+	// Change structure to binary with carry_forward_cap set but wrong volume_after_payout.
+	cap := 5000.0
+	plan.Structures[0].Name = "Binary"
+	plan.Structures[0].Type = "binary"
+	plan.Structures[0].resolvedCommission = &BinaryCommission{
+		Mode: "pairing",
+		Pairing: &PairingConfig{
+			Percent:           10,
+			Calculation:       "lesser_leg",
+			VolumeAfterPayout: "flush",
+			CarryForwardCap:   &cap,
+		},
+	}
+	// Update rank references to match the new structure name.
+	plan.Ranks[0].QualifiedStructures = []string{"Binary"}
+	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Binary"}}
+	plan.Ranks[1].QualifiedStructures = []string{"Binary"}
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{Structure: "Binary", PersonalVolume: 100, GroupVolume: 3000},
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "cross_field_dependency", errs[0].Code)
+	assert.Equal(t, "error", errs[0].Severity)
+	assert.Contains(t, errs[0].Path, "/structures/0")
+}

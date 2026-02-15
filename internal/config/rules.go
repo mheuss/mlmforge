@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 )
 
 // validateBusinessRules runs all business-rule checks against a parsed
@@ -139,10 +140,47 @@ func validateRanks(plan *CompensationPlan) []ValidationError {
 	return errs
 }
 
-// validateStructureRefs is a placeholder for structure-level cross-references.
-// Currently, structure references from ranks are checked in validateRanks.
+// validateStructureRefs checks cross-references within structure definitions,
+// including boundary_rank references and binary pairing constraints.
 func validateStructureRefs(plan *CompensationPlan) []ValidationError {
-	return nil
+	var errs []ValidationError
+	ranks := rankNames(plan)
+
+	for i, s := range plan.Structures {
+		switch rc := s.resolvedCommission.(type) {
+		case *GenerationCommission:
+			if rc.Generation.BoundaryRank != "" && !ranks[rc.Generation.BoundaryRank] {
+				errs = append(errs, ValidationError{
+					Path:     fmt.Sprintf("/structures/%d/commission/generation/boundary_rank", i),
+					Code:     "undefined_reference",
+					Message:  fmt.Sprintf("structure %q generation boundary_rank references undefined rank %q", s.Name, rc.Generation.BoundaryRank),
+					Severity: "error",
+				})
+			}
+		case *StairstepCommission:
+			if rc.Breakaway != nil && rc.Breakaway.Generation != nil && rc.Breakaway.Generation.BoundaryRank != "" {
+				if !ranks[rc.Breakaway.Generation.BoundaryRank] {
+					errs = append(errs, ValidationError{
+						Path:     fmt.Sprintf("/structures/%d/commission/breakaway/generation/boundary_rank", i),
+						Code:     "undefined_reference",
+						Message:  fmt.Sprintf("structure %q breakaway generation boundary_rank references undefined rank %q", s.Name, rc.Breakaway.Generation.BoundaryRank),
+						Severity: "error",
+					})
+				}
+			}
+		case *BinaryCommission:
+			if rc.Pairing != nil && rc.Pairing.CarryForwardCap != nil && rc.Pairing.VolumeAfterPayout != "carry_forward" {
+				errs = append(errs, ValidationError{
+					Path:     fmt.Sprintf("/structures/%d/commission/pairing/carry_forward_cap", i),
+					Code:     "cross_field_dependency",
+					Message:  fmt.Sprintf("structure %q has carry_forward_cap set but volume_after_payout is %q, not \"carry_forward\"", s.Name, rc.Pairing.VolumeAfterPayout),
+					Severity: "error",
+				})
+			}
+		}
+	}
+
+	return errs
 }
 
 // --- Bonus rules ---
@@ -236,6 +274,19 @@ func validateEligibility(plan *CompensationPlan) []ValidationError {
 		}
 	}
 
+	// An unlimited depth tier (MaxCommissionDepth == 0) must be the last entry.
+	for i, tier := range tiers {
+		if tier.MaxCommissionDepth == 0 && i != len(tiers)-1 {
+			errs = append(errs, ValidationError{
+				Path:     fmt.Sprintf("/commission_eligibility/active_leg_tiers/%d", i),
+				Code:     "ordering_violation",
+				Message:  "active_leg_tier with unlimited depth (max_commission_depth=0) must be the last entry",
+				Severity: "error",
+			})
+			break
+		}
+	}
+
 	return errs
 }
 
@@ -254,6 +305,39 @@ func validateWarnings(plan *CompensationPlan) []ValidationError {
 			Message:  fmt.Sprintf("payout_lag_days is %d, which exceeds 30 days", plan.Period.PayoutLagDays),
 			Severity: "warning",
 		})
+	}
+
+	// Rate table completeness: every defined rank should have an entry.
+	ranks := rankNames(plan)
+	for i, s := range plan.Structures {
+		var rateTable map[string]map[string]float64
+		switch rc := s.resolvedCommission.(type) {
+		case *UnilevelCommission:
+			rateTable = rc.RateTable
+		case *MatrixCommission:
+			rateTable = rc.RateTable
+		case *StairstepCommission:
+			rateTable = rc.RateTable
+		case *GenerationCommission:
+			rateTable = rc.RateTable
+		}
+		if rateTable != nil {
+			var missing []string
+			for name := range ranks {
+				if _, ok := rateTable[name]; !ok {
+					missing = append(missing, name)
+				}
+			}
+			if len(missing) > 0 {
+				sort.Strings(missing)
+				errs = append(errs, ValidationError{
+					Path:     fmt.Sprintf("/structures/%d/commission/rate_table", i),
+					Code:     "incomplete_rate_table",
+					Message:  fmt.Sprintf("structure %q rate_table is missing ranks: %s", s.Name, strings.Join(missing, ", ")),
+					Severity: "warning",
+				})
+			}
+		}
 	}
 
 	// Matrix size warning: width^height > 1,000,000.

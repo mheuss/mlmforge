@@ -1,0 +1,275 @@
+package config
+
+import (
+	"fmt"
+	"math"
+	"sort"
+)
+
+// validateBusinessRules runs all business-rule checks against a parsed
+// CompensationPlan. Returns a slice of ValidationError. An empty slice
+// means the plan passed all checks.
+func validateBusinessRules(plan *CompensationPlan) []ValidationError {
+	var errs []ValidationError
+	errs = append(errs, validateRanks(plan)...)
+	errs = append(errs, validateStructureRefs(plan)...)
+	errs = append(errs, validateBonuses(plan)...)
+	errs = append(errs, validateEligibility(plan)...)
+	errs = append(errs, validateWarnings(plan)...)
+	return errs
+}
+
+// --- Helpers ---
+
+// structureNames returns a set of defined structure names for fast lookup.
+func structureNames(plan *CompensationPlan) map[string]bool {
+	names := make(map[string]bool, len(plan.Structures))
+	for _, s := range plan.Structures {
+		names[s.Name] = true
+	}
+	return names
+}
+
+// rankNames returns a set of defined rank names for fast lookup.
+func rankNames(plan *CompensationPlan) map[string]bool {
+	names := make(map[string]bool, len(plan.Ranks))
+	for _, r := range plan.Ranks {
+		names[r.Name] = true
+	}
+	return names
+}
+
+// rankOrdinalMap returns a map from rank name to ordinal.
+func rankOrdinalMap(plan *CompensationPlan) map[string]int {
+	m := make(map[string]int, len(plan.Ranks))
+	for _, r := range plan.Ranks {
+		m[r.Name] = r.Ordinal
+	}
+	return m
+}
+
+// --- Rank rules ---
+
+// validateRanks checks rank ordinals, structure references, and cross-field
+// constraints within rank definitions.
+func validateRanks(plan *CompensationPlan) []ValidationError {
+	var errs []ValidationError
+	structs := structureNames(plan)
+	ordinals := rankOrdinalMap(plan)
+
+	// Ordinals must be strictly ascending with no duplicates.
+	seen := make(map[int]string, len(plan.Ranks))
+	prevOrdinal := -1
+	for i, r := range plan.Ranks {
+		if existing, dup := seen[r.Ordinal]; dup {
+			errs = append(errs, ValidationError{
+				Path:     fmt.Sprintf("/ranks/%d/ordinal", i),
+				Code:     "ordering_violation",
+				Message:  fmt.Sprintf("rank %q has duplicate ordinal %d (same as %q)", r.Name, r.Ordinal, existing),
+				Severity: "error",
+			})
+		} else if r.Ordinal <= prevOrdinal {
+			errs = append(errs, ValidationError{
+				Path:     fmt.Sprintf("/ranks/%d/ordinal", i),
+				Code:     "ordering_violation",
+				Message:  fmt.Sprintf("rank %q ordinal %d is not ascending (previous was %d)", r.Name, r.Ordinal, prevOrdinal),
+				Severity: "error",
+			})
+		}
+		seen[r.Ordinal] = r.Name
+		if r.Ordinal > prevOrdinal {
+			prevOrdinal = r.Ordinal
+		}
+
+		// qualified_structures must reference defined structures.
+		for _, qs := range r.QualifiedStructures {
+			if !structs[qs] {
+				errs = append(errs, ValidationError{
+					Path:     fmt.Sprintf("/ranks/%d/qualified_structures", i),
+					Code:     "undefined_reference",
+					Message:  fmt.Sprintf("rank %q references undefined structure %q in qualified_structures", r.Name, qs),
+					Severity: "error",
+				})
+			}
+		}
+
+		// qualification.structures[].structure must reference defined structures.
+		for j, sq := range r.Qualification.Structures {
+			if !structs[sq.Structure] {
+				errs = append(errs, ValidationError{
+					Path:     fmt.Sprintf("/ranks/%d/qualification/structures/%d/structure", i, j),
+					Code:     "undefined_reference",
+					Message:  fmt.Sprintf("rank %q qualification references undefined structure %q", r.Name, sq.Structure),
+					Severity: "error",
+				})
+			}
+
+			// max_group_volume_per_leg must not exceed group_volume when both are set.
+			if sq.MaxGroupVolumePerLeg > 0 && sq.GroupVolume > 0 && sq.MaxGroupVolumePerLeg > sq.GroupVolume {
+				errs = append(errs, ValidationError{
+					Path:     fmt.Sprintf("/ranks/%d/qualification/structures/%d/max_group_volume_per_leg", i, j),
+					Code:     "cross_field_dependency",
+					Message:  fmt.Sprintf("rank %q max_group_volume_per_leg (%.0f) exceeds group_volume (%.0f)", r.Name, sq.MaxGroupVolumePerLeg, sq.GroupVolume),
+					Severity: "error",
+				})
+			}
+
+			// distributor_count.min_rank must reference a lower-ordinal rank.
+			if sq.DistributorCount != nil && sq.DistributorCount.MinRank != "" {
+				refOrd, exists := ordinals[sq.DistributorCount.MinRank]
+				if !exists {
+					errs = append(errs, ValidationError{
+						Path:     fmt.Sprintf("/ranks/%d/qualification/structures/%d/distributor_count/min_rank", i, j),
+						Code:     "undefined_reference",
+						Message:  fmt.Sprintf("rank %q distributor_count references undefined rank %q", r.Name, sq.DistributorCount.MinRank),
+						Severity: "error",
+					})
+				} else if refOrd >= r.Ordinal {
+					errs = append(errs, ValidationError{
+						Path:     fmt.Sprintf("/ranks/%d/qualification/structures/%d/distributor_count/min_rank", i, j),
+						Code:     "ordering_violation",
+						Message:  fmt.Sprintf("rank %q distributor_count.min_rank %q must be lower ordinal than %d", r.Name, sq.DistributorCount.MinRank, r.Ordinal),
+						Severity: "error",
+					})
+				}
+			}
+		}
+	}
+
+	return errs
+}
+
+// validateStructureRefs is a placeholder for structure-level cross-references.
+// Currently, structure references from ranks are checked in validateRanks.
+func validateStructureRefs(plan *CompensationPlan) []ValidationError {
+	return nil
+}
+
+// --- Bonus rules ---
+
+// validateBonuses checks bonus program configuration for referential integrity
+// and cross-section dependencies.
+func validateBonuses(plan *CompensationPlan) []ValidationError {
+	var errs []ValidationError
+	ranks := rankNames(plan)
+
+	// pay_once_only requires track_achieved_rank.
+	if plan.Bonuses.RankAdvancement != nil && plan.Bonuses.RankAdvancement.PayOnceOnly && !plan.RankTracking.TrackAchievedRank {
+		errs = append(errs, ValidationError{
+			Path:     "/bonuses/rank_advancement/pay_once_only",
+			Code:     "cross_section_dependency",
+			Message:  "pay_once_only requires rank_tracking.track_achieved_rank to be true",
+			Severity: "error",
+		})
+	}
+
+	// matched_commission_types must reference valid types.
+	if plan.Bonuses.Matching != nil {
+		validTypes := map[string]bool{
+			"level":      true,
+			"pairing":    true,
+			"generation": true,
+			"cycle_step": true,
+		}
+		for _, ct := range plan.Bonuses.Matching.MatchedCommissionTypes {
+			if !validTypes[ct] {
+				errs = append(errs, ValidationError{
+					Path:     "/bonuses/matching/matched_commission_types",
+					Code:     "undefined_reference",
+					Message:  fmt.Sprintf("matched_commission_types contains invalid type %q", ct),
+					Severity: "error",
+				})
+			}
+		}
+	}
+
+	// rank_advancement amounts must reference defined ranks.
+	if plan.Bonuses.RankAdvancement != nil {
+		for rankName := range plan.Bonuses.RankAdvancement.Amounts {
+			if !ranks[rankName] {
+				errs = append(errs, ValidationError{
+					Path:     "/bonuses/rank_advancement/amounts",
+					Code:     "undefined_reference",
+					Message:  fmt.Sprintf("rank_advancement references undefined rank %q", rankName),
+					Severity: "error",
+				})
+			}
+		}
+	}
+
+	// lifestyle tier min_rank must reference defined ranks.
+	if plan.Bonuses.Lifestyle != nil {
+		for i, tier := range plan.Bonuses.Lifestyle.Tiers {
+			if tier.MinRank != "" && !ranks[tier.MinRank] {
+				errs = append(errs, ValidationError{
+					Path:     fmt.Sprintf("/bonuses/lifestyle/tiers/%d/min_rank", i),
+					Code:     "undefined_reference",
+					Message:  fmt.Sprintf("lifestyle tier references undefined rank %q", tier.MinRank),
+					Severity: "error",
+				})
+			}
+		}
+	}
+
+	return errs
+}
+
+// --- Eligibility rules ---
+
+// validateEligibility checks commission eligibility configuration.
+func validateEligibility(plan *CompensationPlan) []ValidationError {
+	var errs []ValidationError
+
+	// Active leg tiers must be sorted by ascending min_active_legs.
+	tiers := plan.CommissionEligibility.ActiveLegTiers
+	if len(tiers) > 1 {
+		sorted := sort.SliceIsSorted(tiers, func(i, j int) bool {
+			return tiers[i].MinActiveLegs < tiers[j].MinActiveLegs
+		})
+		if !sorted {
+			errs = append(errs, ValidationError{
+				Path:     "/commission_eligibility/active_leg_tiers",
+				Code:     "ordering_violation",
+				Message:  "active_leg_tiers must be sorted by ascending min_active_legs",
+				Severity: "error",
+			})
+		}
+	}
+
+	return errs
+}
+
+// --- Warnings ---
+
+// validateWarnings produces non-fatal warnings for potentially problematic
+// configuration values.
+func validateWarnings(plan *CompensationPlan) []ValidationError {
+	var errs []ValidationError
+
+	// Long payout lag.
+	if plan.Period.PayoutLagDays > 30 {
+		errs = append(errs, ValidationError{
+			Path:     "/period/payout_lag_days",
+			Code:     "long_payout_lag",
+			Message:  fmt.Sprintf("payout_lag_days is %d, which exceeds 30 days", plan.Period.PayoutLagDays),
+			Severity: "warning",
+		})
+	}
+
+	// Matrix size warning: width^height > 1,000,000.
+	for i, s := range plan.Structures {
+		if s.Structure != nil && s.Structure.Width > 0 && s.Structure.Height > 0 {
+			size := math.Pow(float64(s.Structure.Width), float64(s.Structure.Height))
+			if size > 1_000_000 {
+				errs = append(errs, ValidationError{
+					Path:     fmt.Sprintf("/structures/%d/structure", i),
+					Code:     "large_matrix",
+					Message:  fmt.Sprintf("matrix %q has width^height = %.0f, which exceeds 1,000,000", s.Name, size),
+					Severity: "warning",
+				})
+			}
+		}
+	}
+
+	return errs
+}

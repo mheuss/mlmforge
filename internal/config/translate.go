@@ -275,6 +275,11 @@ func buildLevelCommission(broadPercent float64, multiplier *float64, depth int, 
 //   - binary key is renamed to binary_placement
 //   - matrix key is dropped (Rust PlacementConfig doesn't have it;
 //     matrix placement is configured via matrix_params.spillover_direction)
+//
+// Precondition: validatePlacement must run before this function. If
+// donated_placement_enabled is true but restriction is nil, the output
+// will contain donated_placement: null, which is incorrect. The business
+// rule in validatePlacement catches this case.
 func translatePlacement(p *PlacementConfig) map[string]any {
 	var donatedPlacement any
 	if p.DonatedPlacementEnabled && p.DonatedPlacementRestriction != nil {

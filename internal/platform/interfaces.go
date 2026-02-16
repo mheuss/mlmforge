@@ -44,3 +44,35 @@ type SessionManager interface {
 	Validate(ctx context.Context, sessionID string) (Session, error)
 	Destroy(ctx context.Context, sessionID string) error
 }
+
+// EventStore persists and retrieves domain events. Append-only.
+// Serves two purposes: event sourcing for the Network Engine (commission
+// state rebuilt from event replay) and domain event persistence for all
+// bounded contexts (cross-context communication via ADR-010).
+//
+// The default implementation uses PostgreSQL with JSONB payloads (ADR-005).
+// Enterprise deployments can swap in EventStoreDB or Kafka without code
+// changes — this interface is the abstraction boundary.
+type EventStore interface {
+	// Append writes one or more events to a stream atomically.
+	// The expectedVersion parameter enforces optimistic concurrency:
+	// if the stream's current version doesn't match, Append returns
+	// a *ConcurrencyError.
+	//
+	// Use expectedVersion=0 to assert the stream is new.
+	// Use expectedVersion=-1 to skip the version check (append unconditionally).
+	Append(ctx context.Context, stream string, expectedVersion int64, events []NewEvent) error
+
+	// ReadStream returns events from a single stream, ordered by version,
+	// starting at fromVersion (inclusive). Returns an empty slice if the
+	// stream doesn't exist or has no events at or after fromVersion.
+	ReadStream(ctx context.Context, stream string, fromVersion int64) ([]Event, error)
+
+	// ReadCategory returns events across all streams whose category matches
+	// the given prefix. Category is the part of the stream name before the
+	// first hyphen (e.g., category "order" matches streams "order-abc",
+	// "order-def"). Returns events in global insertion order.
+	//
+	// Use afterPosition=0 to read from the beginning.
+	ReadCategory(ctx context.Context, category string, afterPosition int64) ([]Event, error)
+}

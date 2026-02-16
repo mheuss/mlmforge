@@ -233,3 +233,70 @@ func TestTranslateDemotionPolicyGraceJSON(t *testing.T) {
 	assert.Equal(t, float64(2), grace["count"])
 	assert.Equal(t, "months", grace["unit"])
 }
+
+// TestSortStreamlineLevelsInvalidKey verifies that sortStreamlineLevels
+// returns an error when a map key is not a valid integer.
+func TestSortStreamlineLevelsInvalidKey(t *testing.T) {
+	levels := map[string]StreamlineLevel{
+		"1":   {MinRank: "silver", Percent: 0.05},
+		"abc": {MinRank: "gold", Percent: 0.08},
+	}
+	_, err := sortStreamlineLevels(levels)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `"abc" is not a valid level number`)
+}
+
+// TestTranslateBinaryCommissionUnknownMode verifies that
+// translateBinaryCommission returns an error for an unknown mode.
+func TestTranslateBinaryCommissionUnknownMode(t *testing.T) {
+	c := &BinaryCommission{Mode: "unknown_mode"}
+	_, err := translateBinaryCommission(c)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown binary commission mode: unknown_mode")
+}
+
+// TestTranslateBinaryCommissionEmptyMode verifies that
+// translateBinaryCommission returns an error for an empty mode string.
+func TestTranslateBinaryCommissionEmptyMode(t *testing.T) {
+	c := &BinaryCommission{Mode: ""}
+	_, err := translateBinaryCommission(c)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown binary commission mode:")
+}
+
+// TestTranslateStructureConfigUnknownType verifies that
+// translateStructureConfig returns an error for an unknown structure type.
+func TestTranslateStructureConfigUnknownType(t *testing.T) {
+	s := &StructureConfig{Name: "Bad", Type: "pyramid"}
+	_, err := translateStructureConfig(s)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown structure type: pyramid")
+}
+
+// TestTranslateStructureConfigTypeMismatch verifies that each structure type
+// returns an error when given the wrong commission type.
+func TestTranslateStructureConfigTypeMismatch(t *testing.T) {
+	wrongCommission := &UnilevelCommission{}
+	tests := []struct {
+		structType  string
+		expectedMsg string
+	}{
+		{"binary", "expected *BinaryCommission"},
+		{"matrix", "expected *MatrixCommission"},
+		{"stairstep", "expected *StairstepCommission"},
+		{"generation", "expected *GenerationCommission"},
+		{"streamline", "expected *StreamlineCommission"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.structType, func(t *testing.T) {
+			s := &StructureConfig{
+				Name:               "Bad",
+				Type:               tt.structType,
+				resolvedCommission: wrongCommission,
+			}
+			_, err := translateStructureConfig(s)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.expectedMsg)
+		})
+	}
+}

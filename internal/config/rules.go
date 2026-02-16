@@ -159,14 +159,24 @@ func validateStructureRefs(plan *CompensationPlan) []ValidationError {
 				})
 			}
 		case *StairstepCommission:
-			if rc.Breakaway != nil && rc.Breakaway.Generation != nil && rc.Breakaway.Generation.BoundaryRank != "" {
-				if !ranks[rc.Breakaway.Generation.BoundaryRank] {
+			if rc.Breakaway != nil {
+				if rc.Breakaway.ThresholdRank != "" && !ranks[rc.Breakaway.ThresholdRank] {
 					errs = append(errs, ValidationError{
-						Path:     fmt.Sprintf("/structures/%d/commission/breakaway/generation/boundary_rank", i),
+						Path:     fmt.Sprintf("/structures/%d/commission/breakaway/threshold_rank", i),
 						Code:     "undefined_reference",
-						Message:  fmt.Sprintf("structure %q breakaway generation boundary_rank references undefined rank %q", s.Name, rc.Breakaway.Generation.BoundaryRank),
+						Message:  fmt.Sprintf("structure %q breakaway threshold_rank references undefined rank %q", s.Name, rc.Breakaway.ThresholdRank),
 						Severity: SeverityError,
 					})
+				}
+				if rc.Breakaway.Generation != nil && rc.Breakaway.Generation.BoundaryRank != "" {
+					if !ranks[rc.Breakaway.Generation.BoundaryRank] {
+						errs = append(errs, ValidationError{
+							Path:     fmt.Sprintf("/structures/%d/commission/breakaway/generation/boundary_rank", i),
+							Code:     "undefined_reference",
+							Message:  fmt.Sprintf("structure %q breakaway generation boundary_rank references undefined rank %q", s.Name, rc.Breakaway.Generation.BoundaryRank),
+							Severity: SeverityError,
+						})
+					}
 				}
 			}
 		case *BinaryCommission:

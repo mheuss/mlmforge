@@ -12,12 +12,15 @@ import (
 // means the plan passed all checks.
 func validateBusinessRules(plan *CompensationPlan) []ValidationError {
 	var errs []ValidationError
-	errs = append(errs, validateRanks(plan)...)
-	errs = append(errs, validateStructureRefs(plan)...)
-	errs = append(errs, validateBonuses(plan)...)
+	ranks := rankNames(plan)
+	structs := structureNames(plan)
+
+	errs = append(errs, validateRanks(plan, structs)...)
+	errs = append(errs, validateStructureRefs(plan, ranks)...)
+	errs = append(errs, validateBonuses(plan, ranks)...)
 	errs = append(errs, validatePlacement(plan)...)
 	errs = append(errs, validateEligibility(plan)...)
-	errs = append(errs, validateWarnings(plan)...)
+	errs = append(errs, validateWarnings(plan, ranks)...)
 	return errs
 }
 
@@ -54,9 +57,8 @@ func rankOrdinalMap(plan *CompensationPlan) map[string]int {
 
 // validateRanks checks rank ordinals, structure references, and cross-field
 // constraints within rank definitions.
-func validateRanks(plan *CompensationPlan) []ValidationError {
+func validateRanks(plan *CompensationPlan, structs map[string]bool) []ValidationError {
 	var errs []ValidationError
-	structs := structureNames(plan)
 	ordinals := rankOrdinalMap(plan)
 
 	// Ordinals must be strictly ascending with no duplicates.
@@ -143,9 +145,8 @@ func validateRanks(plan *CompensationPlan) []ValidationError {
 
 // validateStructureRefs checks cross-references within structure definitions,
 // including boundary_rank references and binary pairing constraints.
-func validateStructureRefs(plan *CompensationPlan) []ValidationError {
+func validateStructureRefs(plan *CompensationPlan, ranks map[string]bool) []ValidationError {
 	var errs []ValidationError
-	ranks := rankNames(plan)
 
 	for i, s := range plan.Structures {
 		switch rc := s.resolvedCommission.(type) {
@@ -221,9 +222,8 @@ func validateStructureRefs(plan *CompensationPlan) []ValidationError {
 
 // validateBonuses checks bonus program configuration for referential integrity
 // and cross-section dependencies.
-func validateBonuses(plan *CompensationPlan) []ValidationError {
+func validateBonuses(plan *CompensationPlan, ranks map[string]bool) []ValidationError {
 	var errs []ValidationError
-	ranks := rankNames(plan)
 
 	// pay_once_only requires track_achieved_rank.
 	if plan.Bonuses.RankAdvancement != nil && plan.Bonuses.RankAdvancement.PayOnceOnly && !plan.RankTracking.TrackAchievedRank {
@@ -357,7 +357,7 @@ func validateEligibility(plan *CompensationPlan) []ValidationError {
 
 // validateWarnings produces non-fatal warnings for potentially problematic
 // configuration values.
-func validateWarnings(plan *CompensationPlan) []ValidationError {
+func validateWarnings(plan *CompensationPlan, ranks map[string]bool) []ValidationError {
 	var errs []ValidationError
 
 	// Long payout lag.
@@ -371,7 +371,6 @@ func validateWarnings(plan *CompensationPlan) []ValidationError {
 	}
 
 	// Rate table completeness: every defined rank should have an entry.
-	ranks := rankNames(plan)
 	for i, s := range plan.Structures {
 		var rateTable map[string]map[string]float64
 		switch rc := s.resolvedCommission.(type) {

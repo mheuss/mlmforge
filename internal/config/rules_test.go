@@ -13,7 +13,7 @@ func TestValidPlanPassesAllRules(t *testing.T) {
 	assert.Empty(t, errs, "minimal valid plan should produce no validation errors")
 }
 
-func TestRankOrdinalsMustBeAscending(t *testing.T) {
+func TestRankDuplicateOrdinalRejected(t *testing.T) {
 	plan := minimalPlan()
 	// Give both ranks the same ordinal.
 	plan.Ranks[1].Ordinal = 1
@@ -285,4 +285,169 @@ func TestCarryForwardCapRequiresCarryForward(t *testing.T) {
 	assert.Equal(t, "cross_field_dependency", errs[0].Code)
 	assert.Equal(t, SeverityError, errs[0].Severity)
 	assert.Contains(t, errs[0].Path, "/structures/0")
+}
+
+func TestRankDescendingOrdinalRejected(t *testing.T) {
+	plan := minimalPlan()
+	// Ordinal 2 then 1 (descending, not ascending).
+	plan.Ranks[0].Ordinal = 2
+	plan.Ranks[1].Ordinal = 1
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "ordering_violation", errs[0].Code)
+	assert.Contains(t, errs[0].Message, "not ascending")
+}
+
+func TestDistributorCountMinRankMustExist(t *testing.T) {
+	plan := minimalPlan()
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{
+			Structure:      "Primary",
+			PersonalVolume: 100,
+			GroupVolume:    3000,
+			DistributorCount: &DistributorCountRequirement{
+				Count:   2,
+				MinRank: "Nonexistent",
+			},
+		},
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "undefined_reference", errs[0].Code)
+	assert.Contains(t, errs[0].Path, "distributor_count/min_rank")
+}
+
+func TestDistributorCountMinRankMustBeLowerOrdinal(t *testing.T) {
+	plan := minimalPlan()
+	// Silver (ordinal 2) requires min_rank Silver (same ordinal — not lower).
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{
+			Structure:      "Primary",
+			PersonalVolume: 100,
+			GroupVolume:    3000,
+			DistributorCount: &DistributorCountRequirement{
+				Count:   2,
+				MinRank: "Silver",
+			},
+		},
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "ordering_violation", errs[0].Code)
+	assert.Contains(t, errs[0].Path, "distributor_count/min_rank")
+}
+
+func TestMatchedCommissionTypesMustExist(t *testing.T) {
+	plan := minimalPlan()
+	plan.Bonuses.Matching = &MatchingBonusConfig{
+		Depth:                  2,
+		Rates:                  map[string]float64{"1": 0.10},
+		MatchedCommissionTypes: []string{"unilevel", "nonexistent"},
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "undefined_reference", errs[0].Code)
+	assert.Contains(t, errs[0].Message, "nonexistent")
+}
+
+func TestRankAdvancementAmountsMustReferenceDefinedRanks(t *testing.T) {
+	plan := minimalPlan()
+	plan.RankTracking.TrackAchievedRank = true
+	plan.Bonuses.RankAdvancement = &RankAdvancementBonusConfig{
+		Amounts:     map[string]float64{"Nonexistent": 500},
+		PayOnceOnly: false,
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "undefined_reference", errs[0].Code)
+	assert.Contains(t, errs[0].Message, "Nonexistent")
+}
+
+func TestLifestyleTierMinRankMustExist(t *testing.T) {
+	plan := minimalPlan()
+	plan.Bonuses.Lifestyle = &LifestyleBonusConfig{
+		Tiers: []LifestyleTier{
+			{MinRank: "Nonexistent", Amount: 100, GracePeriods: 1},
+		},
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "undefined_reference", errs[0].Code)
+	assert.Contains(t, errs[0].Path, "lifestyle/tiers/0/min_rank")
+}
+
+func TestActiveLegTiersMustBeAscending(t *testing.T) {
+	plan := minimalPlan()
+	// Descending order: 5, 3.
+	plan.CommissionEligibility.ActiveLegTiers = []ActiveLegTier{
+		{MinActiveLegs: 5, MaxCommissionDepth: 10},
+		{MinActiveLegs: 3, MaxCommissionDepth: 5},
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "ordering_violation", errs[0].Code)
+	assert.Contains(t, errs[0].Path, "active_leg_tiers")
+}
+
+func TestLargeMatrixWarning(t *testing.T) {
+	plan := minimalPlan()
+	plan.Structures[0].Name = "BigMatrix"
+	plan.Structures[0].Type = "matrix"
+	plan.Structures[0].Structure = &MatrixStructureParams{
+		Width:  10,
+		Height: 7, // 10^7 = 10,000,000 > 1,000,000
+	}
+	plan.Structures[0].resolvedCommission = &MatrixCommission{
+		CommissionableDepth: 7,
+		RateTable:           map[string]map[string]float64{"Associate": {"1": 0.05}},
+	}
+	plan.Ranks[0].QualifiedStructures = []string{"BigMatrix"}
+	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "BigMatrix"}}
+	plan.Ranks[1].QualifiedStructures = []string{"BigMatrix"}
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{Structure: "BigMatrix", PersonalVolume: 100, GroupVolume: 3000},
+	}
+
+	errs := validateBusinessRules(plan)
+	var found bool
+	for _, e := range errs {
+		if e.Code == "large_matrix" {
+			found = true
+			assert.Equal(t, SeverityWarning, e.Severity)
+			break
+		}
+	}
+	assert.True(t, found, "expected large_matrix warning, got: %v", errs)
+}
+
+func TestStairstepBreakawayGenerationBoundaryRankMustExist(t *testing.T) {
+	plan := minimalPlan()
+	plan.Structures[0].Name = "Stairs"
+	plan.Structures[0].Type = "stairstep"
+	plan.Structures[0].resolvedCommission = &StairstepCommission{
+		Breakaway: &BreakawayConfig{
+			ThresholdRank: "Silver",
+			Generation: &BreakawayGenerationConfig{
+				BoundaryRank: "Nonexistent",
+			},
+		},
+	}
+	plan.Ranks[0].QualifiedStructures = []string{"Stairs"}
+	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stairs"}}
+	plan.Ranks[1].QualifiedStructures = []string{"Stairs"}
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{Structure: "Stairs", PersonalVolume: 100, GroupVolume: 3000},
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "undefined_reference", errs[0].Code)
+	assert.Contains(t, errs[0].Path, "breakaway/generation/boundary_rank")
 }

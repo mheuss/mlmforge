@@ -75,16 +75,24 @@ func (m *MemoryEventStore) ReadStream(_ context.Context, stream string, fromVers
 }
 
 // ReadCategory returns events across all streams matching a category prefix.
+// Category is the part before the first hyphen, matching PostgreSQL's
+// split_part(stream, '-', 1).
 func (m *MemoryEventStore) ReadCategory(_ context.Context, category string, afterPosition int64) ([]Event, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	prefix := category + "-"
 	var result []Event
 	for _, e := range m.global {
-		if e.GlobalPosition > afterPosition && strings.HasPrefix(e.Stream, prefix) {
+		if e.GlobalPosition > afterPosition && categoryOf(e.Stream) == category {
 			result = append(result, e)
 		}
 	}
 	return result, nil
+}
+
+// categoryOf extracts the category from a stream name. The category is the
+// part before the first hyphen, matching PostgreSQL's split_part(stream, '-', 1).
+func categoryOf(stream string) string {
+	cat, _, _ := strings.Cut(stream, "-")
+	return cat
 }

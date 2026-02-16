@@ -279,6 +279,39 @@ func TestMemoryEventStore_ReadCategoryGlobalOrder(t *testing.T) {
 	assert.Equal(t, int64(3), got[1].GlobalPosition)
 }
 
+func TestMemoryEventStore_ReadCategoryMultiHyphenStream(t *testing.T) {
+	store := NewMemoryEventStore()
+	ctx := context.Background()
+
+	// "commission-period-2026-01" has category "commission" (before first hyphen).
+	_ = store.Append(ctx, "commission-period-2026-01", 0, []NewEvent{
+		{ID: "evt-1", Type: "PeriodOpened", Payload: json.RawMessage(`{}`)},
+	})
+	_ = store.Append(ctx, "order-abc", 0, []NewEvent{
+		{ID: "evt-2", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+	})
+
+	got, err := store.ReadCategory(ctx, "commission", 0)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "evt-1", got[0].ID)
+}
+
+func TestMemoryEventStore_ReadCategoryStreamWithoutHyphen(t *testing.T) {
+	store := NewMemoryEventStore()
+	ctx := context.Background()
+
+	// Stream with no hyphen: category equals the whole stream name.
+	_ = store.Append(ctx, "singleton", 0, []NewEvent{
+		{ID: "evt-1", Type: "SystemStarted", Payload: json.RawMessage(`{}`)},
+	})
+
+	got, err := store.ReadCategory(ctx, "singleton", 0)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "evt-1", got[0].ID)
+}
+
 func TestMemoryEventStore_VersionsAcrossStreamsIndependent(t *testing.T) {
 	store := NewMemoryEventStore()
 	ctx := context.Background()

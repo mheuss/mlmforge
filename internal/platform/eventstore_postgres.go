@@ -57,39 +57,33 @@ func (s *PostgresEventStore) Append(ctx context.Context, stream string, expected
 	}
 	defer tx.Rollback(ctx)
 
-	// Check current version if concurrency check is requested.
-	if expectedVersion >= 0 {
-		var currentVersion int64
-		err := tx.QueryRow(ctx,
-			"SELECT COALESCE(MAX(version), 0) FROM events WHERE stream = $1",
-			stream,
-		).Scan(&currentVersion)
-		if err != nil {
-			return err
-		}
-		if currentVersion != expectedVersion {
-			return &ConcurrencyError{
-				Stream:          stream,
-				ExpectedVersion: expectedVersion,
-				ActualVersion:   currentVersion,
-			}
+	// Query current stream version once. Used for concurrency check (when
+	// expectedVersion >= 0) and as the base for version numbering (when < 0).
+	var currentVersion int64
+	err = tx.QueryRow(ctx,
+		"SELECT COALESCE(MAX(version), 0) FROM events WHERE stream = $1",
+		stream,
+	).Scan(&currentVersion)
+	if err != nil {
+		return err
+	}
+
+	if expectedVersion >= 0 && currentVersion != expectedVersion {
+		return &ConcurrencyError{
+			Stream:          stream,
+			ExpectedVersion: expectedVersion,
+			ActualVersion:   currentVersion,
 		}
 	}
 
+	// When skipping version check, base versions on the current max.
+	startVersion := expectedVersion
+	if expectedVersion < 0 {
+		startVersion = currentVersion
+	}
+
 	for i, ne := range events {
-		version := expectedVersion + int64(i) + 1
-		if expectedVersion < 0 {
-			// When skipping version check, query current max and increment.
-			var currentVersion int64
-			err := tx.QueryRow(ctx,
-				"SELECT COALESCE(MAX(version), 0) FROM events WHERE stream = $1",
-				stream,
-			).Scan(&currentVersion)
-			if err != nil {
-				return err
-			}
-			version = currentVersion + 1
-		}
+		version := startVersion + int64(i) + 1
 
 		_, err := tx.Exec(ctx,
 			`INSERT INTO events (id, stream, type, version, payload, metadata)

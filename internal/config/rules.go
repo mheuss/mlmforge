@@ -201,20 +201,18 @@ func validateBonuses(plan *CompensationPlan) []ValidationError {
 		})
 	}
 
-	// matched_commission_types must reference valid types.
+	// matched_commission_types must reference structure types in the plan.
 	if plan.Bonuses.Matching != nil {
-		validTypes := map[string]bool{
-			"level":      true,
-			"pairing":    true,
-			"generation": true,
-			"cycle_step": true,
+		structureTypes := make(map[string]bool, len(plan.Structures))
+		for _, s := range plan.Structures {
+			structureTypes[s.Type] = true
 		}
 		for _, ct := range plan.Bonuses.Matching.MatchedCommissionTypes {
-			if !validTypes[ct] {
+			if !structureTypes[ct] {
 				errs = append(errs, ValidationError{
 					Path:     "/bonuses/matching/matched_commission_types",
 					Code:     "undefined_reference",
-					Message:  fmt.Sprintf("matched_commission_types contains invalid type %q", ct),
+					Message:  fmt.Sprintf("matched_commission_types references unknown structure type %q", ct),
 					Severity: "error",
 				})
 			}

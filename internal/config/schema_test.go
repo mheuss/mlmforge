@@ -54,6 +54,25 @@ func TestSchemaValidatesHybridPlan(t *testing.T) {
 	assert.Empty(t, errs, "hybrid plan should validate without errors")
 }
 
+func TestSchemaValidatesAllValidFixtures(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+
+	fixtures := []string{
+		"valid/full-unilevel.yaml",
+		"valid/generation-plan.yaml",
+		"valid/matrix-plan.yaml",
+		"valid/stairstep-plan.yaml",
+		"valid/streamline-plan.yaml",
+	}
+	for _, f := range fixtures {
+		t.Run(f, func(t *testing.T) {
+			errs := p.validateSchema(readFixture(t, f))
+			assert.Empty(t, errs, "%s should validate without errors", f)
+		})
+	}
+}
+
 // --- Invalid fixtures: should produce errors ---
 
 func TestSchemaRejectsMissingName(t *testing.T) {

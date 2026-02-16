@@ -41,6 +41,53 @@ func TestPipelineValidFixtureProducesJSON(t *testing.T) {
 	assert.True(t, hasConfig, "structure should have a config object")
 }
 
+func TestPipelineAllValidFixtures(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+
+	tests := []struct {
+		fixture        string
+		name           string
+		structureTypes []string
+	}{
+		{"valid/minimal-unilevel.yaml", "Starter Unilevel", []string{"unilevel"}},
+		{"valid/full-unilevel.yaml", "Premium Unilevel", []string{"unilevel"}},
+		{"valid/binary-plan.yaml", "Classic Binary", []string{"binary"}},
+		{"valid/hybrid-plan.yaml", "Hybrid Unilevel-Binary", []string{"unilevel", "binary"}},
+		{"valid/matrix-plan.yaml", "Forced Matrix 3x7", []string{"matrix"}},
+		{"valid/stairstep-plan.yaml", "Classic Stairstep Breakaway", []string{"stairstep"}},
+		{"valid/generation-plan.yaml", "Generation Override Plan", []string{"generation"}},
+		{"valid/streamline-plan.yaml", "Streamline Direct", []string{"streamline"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.fixture, func(t *testing.T) {
+			yamlBytes := readFixture(t, tt.fixture)
+			jsonBytes, errs, err := p.LoadAndValidate(yamlBytes)
+
+			require.NoError(t, err, "no infrastructure error expected")
+			assert.False(t, hasErrors(errs), "no hard errors expected, got: %v", errs)
+			require.NotNil(t, jsonBytes, "valid fixture should produce JSON output")
+
+			var doc map[string]any
+			require.NoError(t, json.Unmarshal(jsonBytes, &doc))
+
+			assert.Equal(t, tt.name, doc["name"])
+
+			structures, ok := doc["structures"].([]any)
+			require.True(t, ok, "structures should be an array")
+			require.Len(t, structures, len(tt.structureTypes))
+
+			for i, expectedType := range tt.structureTypes {
+				s := structures[i].(map[string]any)
+				assert.Equal(t, expectedType, s["type"], "structure %d type", i)
+				_, hasConfig := s["config"]
+				assert.True(t, hasConfig, "structure %d should have a config object", i)
+			}
+		})
+	}
+}
+
 func TestPipelineInvalidFixtureReturnsErrors(t *testing.T) {
 	p, err := NewPipeline(schemaPath(t))
 	require.NoError(t, err)

@@ -168,6 +168,18 @@ func validateStructureRefs(plan *CompensationPlan) []ValidationError {
 						Severity: SeverityError,
 					})
 				}
+				if rc.Breakaway.Differential != nil {
+					for rankName := range rc.Breakaway.Differential.RankRates {
+						if !ranks[rankName] {
+							errs = append(errs, ValidationError{
+								Path:     fmt.Sprintf("/structures/%d/commission/breakaway/differential/rank_rates", i),
+								Code:     "undefined_reference",
+								Message:  fmt.Sprintf("structure %q breakaway differential rank_rates references undefined rank %q", s.Name, rankName),
+								Severity: SeverityError,
+							})
+						}
+					}
+				}
 				if rc.Breakaway.Generation != nil && rc.Breakaway.Generation.BoundaryRank != "" {
 					if !ranks[rc.Breakaway.Generation.BoundaryRank] {
 						errs = append(errs, ValidationError{

@@ -183,6 +183,35 @@ func TestBreakawayThresholdRankMustExist(t *testing.T) {
 	assert.Contains(t, errs[0].Path, "breakaway/threshold_rank")
 }
 
+func TestBreakawayDifferentialRankRatesMustExist(t *testing.T) {
+	plan := minimalPlan()
+	plan.Structures[0].Name = "Stairs"
+	plan.Structures[0].Type = "stairstep"
+	plan.Structures[0].resolvedCommission = &StairstepCommission{
+		Breakaway: &BreakawayConfig{
+			ThresholdRank:       "Silver",
+			OverrideCalculation: "differential",
+			Differential: &DifferentialConfig{
+				RankRates: map[string]float64{
+					"Silver": 0.05,
+					"Typo":   0.08,
+				},
+			},
+		},
+	}
+	plan.Ranks[0].QualifiedStructures = []string{"Stairs"}
+	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stairs"}}
+	plan.Ranks[1].QualifiedStructures = []string{"Stairs"}
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{Structure: "Stairs", PersonalVolume: 100, GroupVolume: 3000},
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "undefined_reference", errs[0].Code)
+	assert.Contains(t, errs[0].Path, "differential/rank_rates")
+}
+
 func TestCarryForwardCapRequiresCarryForward(t *testing.T) {
 	plan := minimalPlan()
 	// Change structure to binary with carry_forward_cap set but wrong volume_after_payout.

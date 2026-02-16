@@ -212,6 +212,51 @@ func TestBreakawayDifferentialRankRatesMustExist(t *testing.T) {
 	assert.Contains(t, errs[0].Path, "differential/rank_rates")
 }
 
+func TestPoolQualificationMinRankMustExist(t *testing.T) {
+	plan := minimalPlan()
+	badRank := "Nonexistent"
+	plan.Bonuses.Pool = []PoolBonusConfig{
+		{
+			Name:          "Leaders Pool",
+			SourcePercent: 0.02,
+			Qualification: PoolQualification{
+				Mode:    "rank",
+				MinRank: &badRank,
+			},
+			Shares: PoolShares{Mode: "equal"},
+		},
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "undefined_reference", errs[0].Code)
+	assert.Contains(t, errs[0].Path, "pool/0/qualification/min_rank")
+}
+
+func TestStreamlineDynamicCompressionMinRankMustExist(t *testing.T) {
+	plan := minimalPlan()
+	plan.Structures[0].Name = "Stream"
+	plan.Structures[0].Type = "streamline"
+	plan.Structures[0].resolvedCommission = &StreamlineCommission{
+		CommissionableDepth: 5,
+		DynamicCompression: map[string]StreamlineLevel{
+			"1": {MinRank: "Associate", Percent: 0.05},
+			"2": {MinRank: "Nonexistent", Percent: 0.03},
+		},
+	}
+	plan.Ranks[0].QualifiedStructures = []string{"Stream"}
+	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stream"}}
+	plan.Ranks[1].QualifiedStructures = []string{"Stream"}
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{Structure: "Stream", PersonalVolume: 100, GroupVolume: 3000},
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "undefined_reference", errs[0].Code)
+	assert.Contains(t, errs[0].Path, "dynamic_compression")
+}
+
 func TestCarryForwardCapRequiresCarryForward(t *testing.T) {
 	plan := minimalPlan()
 	// Change structure to binary with carry_forward_cap set but wrong volume_after_payout.

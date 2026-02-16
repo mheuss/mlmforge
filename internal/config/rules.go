@@ -191,6 +191,17 @@ func validateStructureRefs(plan *CompensationPlan) []ValidationError {
 					}
 				}
 			}
+		case *StreamlineCommission:
+			for level, sl := range rc.DynamicCompression {
+				if sl.MinRank != "" && !ranks[sl.MinRank] {
+					errs = append(errs, ValidationError{
+						Path:     fmt.Sprintf("/structures/%d/commission/dynamic_compression/%s/min_rank", i, level),
+						Code:     "undefined_reference",
+						Message:  fmt.Sprintf("structure %q dynamic_compression level %s references undefined rank %q", s.Name, level, sl.MinRank),
+						Severity: SeverityError,
+					})
+				}
+			}
 		case *BinaryCommission:
 			if rc.Pairing != nil && rc.Pairing.CarryForwardCap != nil && rc.Pairing.VolumeAfterPayout != "carry_forward" {
 				errs = append(errs, ValidationError{
@@ -267,6 +278,18 @@ func validateBonuses(plan *CompensationPlan) []ValidationError {
 					Severity: SeverityError,
 				})
 			}
+		}
+	}
+
+	// pool qualification min_rank must reference defined ranks.
+	for i, pool := range plan.Bonuses.Pool {
+		if pool.Qualification.MinRank != nil && *pool.Qualification.MinRank != "" && !ranks[*pool.Qualification.MinRank] {
+			errs = append(errs, ValidationError{
+				Path:     fmt.Sprintf("/bonuses/pool/%d/qualification/min_rank", i),
+				Code:     "undefined_reference",
+				Message:  fmt.Sprintf("pool %q qualification references undefined rank %q", pool.Name, *pool.Qualification.MinRank),
+				Severity: SeverityError,
+			})
 		}
 	}
 

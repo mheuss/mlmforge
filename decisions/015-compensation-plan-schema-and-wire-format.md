@@ -76,13 +76,15 @@ The schema catches structural mistakes immediately. Wrong type, missing field, b
 
 ### Structural Translations (Go)
 
-Three structural differences between the YAML wire format and the Rust types require Go translation. These are shape changes, not field renames.
+Five structural differences between the YAML wire format and the Rust types require Go translation. These are shape changes, not field renames.
 
 | Difference | YAML format | Rust format | Go action |
 |------------|-------------|-------------|-----------|
 | Structure tagging | Flat: `type` field is a sibling of other fields | Adjacent tagged: `type` + `config` wrapper | Wrap sibling fields into a `config` object |
 | Donated placement | Two fields: `donated_placement_enabled` + `donated_placement_restriction` | One field: `Option<DonatedPlacementRestriction>` | Collapse boolean + enum to single optional |
 | Streamline levels | Map: `1: {min_rank, percent}` | `Vec<StreamlineLevel>` | Convert map entries to ordered vector |
+| Binary mode | Flat: `mode` string + sibling config object (`pairing`, `cycle`, `step`) | Externally tagged: `mode: {pairing: {...}}` | Nest the active config under the mode key |
+| Binary placement key | `placement.binary` | `placement.binary_placement` | Rename key to avoid collision with structure type name |
 
 The YAML format favors human readability. Flat structures, maps with numeric keys. The Rust format favors type safety. Tagged enums, Option types, vectors. Go bridges the gap.
 

@@ -148,3 +148,294 @@ commission:
 	assert.Equal(t, "unilevel", s.Type)
 	assert.NotNil(t, s.CommissionRaw)
 }
+
+// TestResolveCommissionsUnilevel verifies that resolveCommissions correctly
+// decodes a unilevel commission block from raw YAML into a typed struct.
+func TestResolveCommissionsUnilevel(t *testing.T) {
+	yamlData := []byte(`
+name: Test Plan
+version: 1
+period: {length: month, payout_lag_days: 14}
+volume: {base_currency: USD, volume_to_dollar_multiplier: 1.0}
+ranks: []
+rank_tracking: {track_achieved_rank: false}
+rank_features: {constraints_enabled: false, overrides_enabled: false}
+commission_eligibility: {eligible_statuses: [active]}
+structures:
+  - name: Primary
+    type: unilevel
+    commission:
+      broad_commission_percent: 0.40
+      commissionable_depth: 5
+      rate_table:
+        Associate:
+          "1": 0.05
+          "2": 0.04
+bonuses: {}
+payout: {base_currency: USD, minimum_amount: 50, methods: [{type: bank_transfer, fee: 2.50}]}
+caps: {company_payout_cap_percent: 0.42, cap_enforcement: pro_rata}
+placement: {donated_placement_enabled: false}
+`)
+	var plan CompensationPlan
+	require.NoError(t, yaml.Unmarshal(yamlData, &plan))
+	require.NoError(t, resolveCommissions(&plan))
+
+	c, ok := plan.Structures[0].resolvedCommission.(*UnilevelCommission)
+	require.True(t, ok, "expected *UnilevelCommission, got %T", plan.Structures[0].resolvedCommission)
+	assert.Equal(t, 0.40, c.BroadCommissionPercent)
+	assert.Equal(t, 5, c.CommissionableDepth)
+	assert.Equal(t, 0.05, c.RateTable["Associate"]["1"])
+	assert.Equal(t, 0.04, c.RateTable["Associate"]["2"])
+}
+
+// TestResolveCommissionsBinary verifies that resolveCommissions correctly
+// decodes a binary commission block with pairing mode.
+func TestResolveCommissionsBinary(t *testing.T) {
+	yamlData := []byte(`
+name: Test Plan
+version: 1
+period: {length: month, payout_lag_days: 14}
+volume: {base_currency: USD, volume_to_dollar_multiplier: 1.0}
+ranks: []
+rank_tracking: {track_achieved_rank: false}
+rank_features: {constraints_enabled: false, overrides_enabled: false}
+commission_eligibility: {eligible_statuses: [active]}
+structures:
+  - name: BinaryTree
+    type: binary
+    commission:
+      mode: pairing
+      pairing:
+        percent: 0.10
+        calculation: weaker_leg
+        cap_per_period: 5000.00
+        volume_after_payout: carry_forward
+        carry_forward_cap: 20000.00
+bonuses: {}
+payout: {base_currency: USD, minimum_amount: 50, methods: [{type: bank_transfer, fee: 2.50}]}
+caps: {company_payout_cap_percent: 0.42, cap_enforcement: pro_rata}
+placement: {donated_placement_enabled: false}
+`)
+	var plan CompensationPlan
+	require.NoError(t, yaml.Unmarshal(yamlData, &plan))
+	require.NoError(t, resolveCommissions(&plan))
+
+	c, ok := plan.Structures[0].resolvedCommission.(*BinaryCommission)
+	require.True(t, ok, "expected *BinaryCommission, got %T", plan.Structures[0].resolvedCommission)
+	assert.Equal(t, "pairing", c.Mode)
+	require.NotNil(t, c.Pairing)
+	assert.Equal(t, 0.10, c.Pairing.Percent)
+	assert.Equal(t, "weaker_leg", c.Pairing.Calculation)
+	assert.Equal(t, 5000.0, *c.Pairing.CapPerPeriod)
+	assert.Equal(t, "carry_forward", c.Pairing.VolumeAfterPayout)
+	assert.Equal(t, 20000.0, *c.Pairing.CarryForwardCap)
+}
+
+// TestResolveCommissionsStreamline verifies that resolveCommissions correctly
+// decodes a streamline commission block with dynamic compression levels.
+func TestResolveCommissionsStreamline(t *testing.T) {
+	yamlData := []byte(`
+name: Test Plan
+version: 1
+period: {length: month, payout_lag_days: 14}
+volume: {base_currency: USD, volume_to_dollar_multiplier: 1.0}
+ranks: []
+rank_tracking: {track_achieved_rank: false}
+rank_features: {constraints_enabled: false, overrides_enabled: false}
+commission_eligibility: {eligible_statuses: [active]}
+structures:
+  - name: StreamlineTree
+    type: streamline
+    commission:
+      commissionable_depth: 10
+      dynamic_compression:
+        "1":
+          min_rank: Affiliate
+          percent: 0.10
+        "2":
+          min_rank: Team Lead
+          percent: 0.07
+bonuses: {}
+payout: {base_currency: USD, minimum_amount: 50, methods: [{type: bank_transfer, fee: 2.50}]}
+caps: {company_payout_cap_percent: 0.42, cap_enforcement: pro_rata}
+placement: {donated_placement_enabled: false}
+`)
+	var plan CompensationPlan
+	require.NoError(t, yaml.Unmarshal(yamlData, &plan))
+	require.NoError(t, resolveCommissions(&plan))
+
+	c, ok := plan.Structures[0].resolvedCommission.(*StreamlineCommission)
+	require.True(t, ok, "expected *StreamlineCommission, got %T", plan.Structures[0].resolvedCommission)
+	assert.Equal(t, 10, c.CommissionableDepth)
+	require.Len(t, c.DynamicCompression, 2)
+	assert.Equal(t, "Affiliate", c.DynamicCompression["1"].MinRank)
+	assert.Equal(t, 0.10, c.DynamicCompression["1"].Percent)
+	assert.Equal(t, "Team Lead", c.DynamicCompression["2"].MinRank)
+	assert.Equal(t, 0.07, c.DynamicCompression["2"].Percent)
+}
+
+// TestResolveCommissionsGeneration verifies that resolveCommissions correctly
+// decodes a generation commission block with generation config.
+func TestResolveCommissionsGeneration(t *testing.T) {
+	yamlData := []byte(`
+name: Test Plan
+version: 1
+period: {length: month, payout_lag_days: 14}
+volume: {base_currency: USD, volume_to_dollar_multiplier: 1.0}
+ranks: []
+rank_tracking: {track_achieved_rank: false}
+rank_features: {constraints_enabled: false, overrides_enabled: false}
+commission_eligibility: {eligible_statuses: [active]}
+structures:
+  - name: GenTree
+    type: generation
+    commission:
+      level_commissions_enabled: true
+      commissionable_depth: 5
+      rate_table:
+        Associate:
+          "1": 0.05
+      generation:
+        max_generations: 4
+        generation_rates:
+          "1": 0.05
+          "2": 0.04
+        boundary_mode: threshold_rank
+        boundary_rank: Executive
+        empty_generation_consumes_number: true
+bonuses: {}
+payout: {base_currency: USD, minimum_amount: 50, methods: [{type: bank_transfer, fee: 2.50}]}
+caps: {company_payout_cap_percent: 0.42, cap_enforcement: pro_rata}
+placement: {donated_placement_enabled: false}
+`)
+	var plan CompensationPlan
+	require.NoError(t, yaml.Unmarshal(yamlData, &plan))
+	require.NoError(t, resolveCommissions(&plan))
+
+	c, ok := plan.Structures[0].resolvedCommission.(*GenerationCommission)
+	require.True(t, ok, "expected *GenerationCommission, got %T", plan.Structures[0].resolvedCommission)
+	assert.True(t, c.LevelCommissionsEnabled)
+	assert.Equal(t, 5, c.CommissionableDepth)
+	assert.Equal(t, 4, c.Generation.MaxGenerations)
+	assert.Equal(t, "threshold_rank", c.Generation.BoundaryMode)
+	assert.Equal(t, "Executive", c.Generation.BoundaryRank)
+	assert.True(t, c.Generation.EmptyGenerationConsumesNumber)
+	assert.Equal(t, 0.05, c.Generation.GenerationRates["1"])
+	assert.Equal(t, 0.04, c.Generation.GenerationRates["2"])
+}
+
+// TestResolveCommissionsStairstep verifies that resolveCommissions correctly
+// decodes a stairstep commission block with breakaway config.
+func TestResolveCommissionsStairstep(t *testing.T) {
+	yamlData := []byte(`
+name: Test Plan
+version: 1
+period: {length: month, payout_lag_days: 14}
+volume: {base_currency: USD, volume_to_dollar_multiplier: 1.0}
+ranks: []
+rank_tracking: {track_achieved_rank: false}
+rank_features: {constraints_enabled: false, overrides_enabled: false}
+commission_eligibility: {eligible_statuses: [active]}
+structures:
+  - name: StairstepTree
+    type: stairstep
+    commission:
+      commissionable_depth: 6
+      rate_table:
+        Distributor:
+          "1": 0.05
+      breakaway:
+        threshold_rank: Supervisor
+        group_volume_excludes_breakaway: true
+        override_calculation: differential
+        differential:
+          rank_rates:
+            Supervisor: 0.05
+          min_override: 10.00
+bonuses: {}
+payout: {base_currency: USD, minimum_amount: 50, methods: [{type: bank_transfer, fee: 2.50}]}
+caps: {company_payout_cap_percent: 0.42, cap_enforcement: pro_rata}
+placement: {donated_placement_enabled: false}
+`)
+	var plan CompensationPlan
+	require.NoError(t, yaml.Unmarshal(yamlData, &plan))
+	require.NoError(t, resolveCommissions(&plan))
+
+	c, ok := plan.Structures[0].resolvedCommission.(*StairstepCommission)
+	require.True(t, ok, "expected *StairstepCommission, got %T", plan.Structures[0].resolvedCommission)
+	assert.Equal(t, 6, c.CommissionableDepth)
+	require.NotNil(t, c.Breakaway)
+	assert.Equal(t, "Supervisor", c.Breakaway.ThresholdRank)
+	assert.True(t, c.Breakaway.GroupVolumeExcludesBreakaway)
+	assert.Equal(t, "differential", c.Breakaway.OverrideCalculation)
+	require.NotNil(t, c.Breakaway.Differential)
+	assert.Equal(t, 0.05, c.Breakaway.Differential.RankRates["Supervisor"])
+	assert.Equal(t, 10.0, c.Breakaway.Differential.MinOverride)
+}
+
+// TestResolveCommissionsMatrix verifies that resolveCommissions correctly
+// decodes a matrix commission block.
+func TestResolveCommissionsMatrix(t *testing.T) {
+	yamlData := []byte(`
+name: Test Plan
+version: 1
+period: {length: month, payout_lag_days: 14}
+volume: {base_currency: USD, volume_to_dollar_multiplier: 1.0}
+ranks: []
+rank_tracking: {track_achieved_rank: false}
+rank_features: {constraints_enabled: false, overrides_enabled: false}
+commission_eligibility: {eligible_statuses: [active]}
+structures:
+  - name: Matrix
+    type: matrix
+    structure:
+      width: 3
+      height: 7
+      spillover_direction: breadth_first
+    commission:
+      commissionable_depth: 7
+      rate_table:
+        Starter:
+          "1": 0.05
+          "2": 0.03
+bonuses: {}
+payout: {base_currency: USD, minimum_amount: 50, methods: [{type: bank_transfer, fee: 2.50}]}
+caps: {company_payout_cap_percent: 0.42, cap_enforcement: pro_rata}
+placement: {donated_placement_enabled: false}
+`)
+	var plan CompensationPlan
+	require.NoError(t, yaml.Unmarshal(yamlData, &plan))
+	require.NoError(t, resolveCommissions(&plan))
+
+	c, ok := plan.Structures[0].resolvedCommission.(*MatrixCommission)
+	require.True(t, ok, "expected *MatrixCommission, got %T", plan.Structures[0].resolvedCommission)
+	assert.Equal(t, 7, c.CommissionableDepth)
+	assert.Equal(t, 0.05, c.RateTable["Starter"]["1"])
+	assert.Equal(t, 0.03, c.RateTable["Starter"]["2"])
+}
+
+// TestResolveCommissionsUnknownType verifies that resolveCommissions returns
+// an error for an unknown structure type.
+func TestResolveCommissionsUnknownType(t *testing.T) {
+	plan := &CompensationPlan{
+		Structures: []StructureConfig{
+			{Name: "Bad", Type: "pyramid", CommissionRaw: map[string]any{"foo": "bar"}},
+		},
+	}
+	err := resolveCommissions(plan)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown structure type: pyramid")
+}
+
+// TestResolveCommissionsNilCommissionSkipped verifies that structures
+// without a commission block are skipped without error.
+func TestResolveCommissionsNilCommissionSkipped(t *testing.T) {
+	plan := &CompensationPlan{
+		Structures: []StructureConfig{
+			{Name: "Empty", Type: "unilevel", CommissionRaw: nil},
+		},
+	}
+	err := resolveCommissions(plan)
+	require.NoError(t, err)
+	assert.Nil(t, plan.Structures[0].resolvedCommission)
+}

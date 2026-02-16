@@ -104,3 +104,35 @@ func TestSchemaRejectsPercentageOutOfRange(t *testing.T) {
 		assert.Equal(t, SeverityError, e.Severity)
 	}
 }
+
+func TestStringifyKey(t *testing.T) {
+	tests := []struct {
+		input    any
+		expected string
+	}{
+		{"hello", "hello"},
+		{42, "42"},
+		{int64(99), "99"},
+		{3.14, "3.14"},
+		{true, "true"},
+	}
+	for _, tt := range tests {
+		assert.Equal(t, tt.expected, stringifyKey(tt.input), "stringifyKey(%v)", tt.input)
+	}
+}
+
+func TestConvertYAMLToJSONMapAnyAny(t *testing.T) {
+	// Simulate a map[any]any input (yaml.v3 safety net path).
+	input := map[any]any{
+		"name":    "test",
+		42:        "numeric key",
+		int64(99): "int64 key",
+	}
+	result := convertYAMLToJSON(input)
+
+	m, ok := result.(map[string]any)
+	require.True(t, ok, "result should be map[string]any")
+	assert.Equal(t, "test", m["name"])
+	assert.Equal(t, "numeric key", m["42"])
+	assert.Equal(t, "int64 key", m["99"])
+}

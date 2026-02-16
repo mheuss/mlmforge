@@ -25,6 +25,7 @@ MLMForge's architecture is informed by years of building and operating a product
 | [013](013-generation-compensation-config.md) | **Generation Compensation Config** | Boundary modes, generation rates, empty generations, combined level+generation |
 | [014](014-streamline-compensation-config.md) | **Streamline Compensation Config** | Dynamic compression, streams, rank expansion, freeze on demotion, monoline |
 | [015](015-compensation-plan-schema-and-wire-format.md) | **Schema and Wire Format** | One wire format, JSON Schema validation, serde renames, structural translations |
+| [016](016-eventstore-design.md) | **EventStore Design** | Unified store, JSON envelope, category-ID streams, optimistic concurrency, pgx v5 |
 
 ## Reading Order
 

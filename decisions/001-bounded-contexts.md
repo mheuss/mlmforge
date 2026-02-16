@@ -10,7 +10,7 @@ The system is divided into 8 bounded contexts. Each one owns a distinct slice of
 
 | Context | Language | What It Owns |
 |---------|----------|-------------|
-| **Platform** | Go | Configuration, audit logging, job scheduling, sessions |
+| **Platform** | Go | Configuration, audit logging, event persistence, job scheduling, sessions |
 | **Identity** | Go | Users, addresses, status lifecycle, authentication |
 | **Network Engine** | Rust | Tree structures, volume attribution, rank qualification, commission calculation |
 | **Financial** | Go | Payment processing, wallet management, invoicing |

@@ -8,31 +8,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// minimalPlanWithCommission returns a minimalPlan() with the commission
-// resolved on the first structure. Translation requires resolved commissions.
-func minimalPlanWithCommission() *CompensationPlan {
-	plan := minimalPlan()
-	plan.Structures[0].resolvedCommission = &UnilevelCommission{
-		BroadCommissionPercent: 0.40,
-		CommissionableDepth:    5,
-		RateTable: map[string]map[string]float64{
-			"Associate": {"1": 0.05, "2": 0.04},
-		},
-	}
-	return plan
-}
-
 // TestTranslateStructureTagging verifies that a unilevel structure is
 // wrapped in adjacent-tagged format: {"type": "unilevel", "config": {...}}.
 func TestTranslateStructureTagging(t *testing.T) {
-	plan := minimalPlan()
-	plan.Structures[0].resolvedCommission = &UnilevelCommission{
-		BroadCommissionPercent: 0.40,
-		CommissionableDepth:    5,
-		RateTable: map[string]map[string]float64{
-			"Associate": {"1": 0.05, "2": 0.04},
-		},
-	}
+	plan := minimalPlanWithCommission()
 
 	out, err := translateToEngine(plan)
 	require.NoError(t, err)

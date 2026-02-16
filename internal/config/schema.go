@@ -9,23 +9,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Pipeline validates compensation plan YAML and translates to Rust-ready JSON.
-type Pipeline struct {
-	schema *jsonschema.Schema
-}
-
-// NewPipeline loads and compiles the JSON Schema from the given file path.
-// The path can be absolute or relative. The schema must be a valid JSON Schema
-// Draft 2020-12 document.
-func NewPipeline(schemaPath string) (*Pipeline, error) {
-	c := jsonschema.NewCompiler()
-	sch, err := c.Compile(schemaPath)
-	if err != nil {
-		return nil, err
-	}
-	return &Pipeline{schema: sch}, nil
-}
-
 // validateSchema checks YAML bytes against the JSON Schema.
 // It returns a slice of ValidationError for each schema violation found.
 // An empty slice means the document passed schema validation.
@@ -36,7 +19,7 @@ func (p *Pipeline) validateSchema(yamlBytes []byte) []ValidationError {
 			Path:     "",
 			Code:     "yaml_parse_error",
 			Message:  err.Error(),
-			Severity: "error",
+			Severity: SeverityError,
 		}}
 	}
 
@@ -53,7 +36,7 @@ func (p *Pipeline) validateSchema(yamlBytes []byte) []ValidationError {
 			Path:     "",
 			Code:     "schema_error",
 			Message:  err.Error(),
-			Severity: "error",
+			Severity: SeverityError,
 		}}
 	}
 
@@ -79,7 +62,7 @@ func collectLeafErrors(ve *jsonschema.ValidationError, out *[]ValidationError) {
 			Path:     path,
 			Code:     "schema_violation",
 			Message:  ve.Error(),
-			Severity: "error",
+			Severity: SeverityError,
 		})
 		return
 	}
@@ -109,7 +92,7 @@ func convertYAMLToJSON(v any) any {
 			result[k] = convertYAMLToJSON(v)
 		}
 		return result
-	case map[any]any:
+	case map[any]any: // yaml.v3 always produces map[string]any; this is a safety net for edge cases.
 		result := make(map[string]any, len(val))
 		for k, v := range val {
 			result[stringifyKey(k)] = convertYAMLToJSON(v)

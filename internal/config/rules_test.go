@@ -21,7 +21,7 @@ func TestRankOrdinalsMustBeAscending(t *testing.T) {
 	errs := validateBusinessRules(plan)
 	require.Len(t, errs, 1)
 	assert.Equal(t, "ordering_violation", errs[0].Code)
-	assert.Equal(t, "error", errs[0].Severity)
+	assert.Equal(t, SeverityError, errs[0].Severity)
 }
 
 func TestRankQualifiedStructuresMustExist(t *testing.T) {
@@ -32,7 +32,7 @@ func TestRankQualifiedStructuresMustExist(t *testing.T) {
 	errs := validateBusinessRules(plan)
 	require.Len(t, errs, 1)
 	assert.Equal(t, "undefined_reference", errs[0].Code)
-	assert.Equal(t, "error", errs[0].Severity)
+	assert.Equal(t, SeverityError, errs[0].Severity)
 	assert.Contains(t, errs[0].Path, "qualified_structures")
 }
 
@@ -46,7 +46,7 @@ func TestRankQualificationStructureMustExist(t *testing.T) {
 	errs := validateBusinessRules(plan)
 	require.Len(t, errs, 1)
 	assert.Equal(t, "undefined_reference", errs[0].Code)
-	assert.Equal(t, "error", errs[0].Severity)
+	assert.Equal(t, SeverityError, errs[0].Severity)
 	assert.Contains(t, errs[0].Path, "qualification/structures")
 }
 
@@ -65,7 +65,7 @@ func TestMaxGroupVolumePerLegMustNotExceedGroupVolume(t *testing.T) {
 	errs := validateBusinessRules(plan)
 	require.Len(t, errs, 1)
 	assert.Equal(t, "cross_field_dependency", errs[0].Code)
-	assert.Equal(t, "error", errs[0].Severity)
+	assert.Equal(t, SeverityError, errs[0].Severity)
 }
 
 func TestPayOnceOnlyRequiresTrackAchievedRank(t *testing.T) {
@@ -79,7 +79,7 @@ func TestPayOnceOnlyRequiresTrackAchievedRank(t *testing.T) {
 	errs := validateBusinessRules(plan)
 	require.Len(t, errs, 1)
 	assert.Equal(t, "cross_section_dependency", errs[0].Code)
-	assert.Equal(t, "error", errs[0].Severity)
+	assert.Equal(t, SeverityError, errs[0].Severity)
 }
 
 func TestPayoutLagWarning(t *testing.T) {
@@ -88,7 +88,7 @@ func TestPayoutLagWarning(t *testing.T) {
 
 	errs := validateBusinessRules(plan)
 	require.Len(t, errs, 1)
-	assert.Equal(t, "warning", errs[0].Severity)
+	assert.Equal(t, SeverityWarning, errs[0].Severity)
 	assert.Equal(t, "long_payout_lag", errs[0].Code)
 }
 
@@ -113,7 +113,7 @@ func TestBoundaryRankMustExist(t *testing.T) {
 	errs := validateBusinessRules(plan)
 	require.Len(t, errs, 1)
 	assert.Equal(t, "undefined_reference", errs[0].Code)
-	assert.Equal(t, "error", errs[0].Severity)
+	assert.Equal(t, SeverityError, errs[0].Severity)
 	assert.Contains(t, errs[0].Path, "/structures/0")
 }
 
@@ -128,7 +128,7 @@ func TestUnlimitedDepthTierMustBeLast(t *testing.T) {
 	errs := validateBusinessRules(plan)
 	require.Len(t, errs, 1)
 	assert.Equal(t, "ordering_violation", errs[0].Code)
-	assert.Equal(t, "error", errs[0].Severity)
+	assert.Equal(t, SeverityError, errs[0].Severity)
 	assert.Contains(t, errs[0].Path, "active_leg_tiers")
 }
 
@@ -144,9 +144,21 @@ func TestRateTableMissingRankWarning(t *testing.T) {
 
 	errs := validateBusinessRules(plan)
 	require.Len(t, errs, 1)
-	assert.Equal(t, "warning", errs[0].Severity)
+	assert.Equal(t, SeverityWarning, errs[0].Severity)
 	assert.Equal(t, "incomplete_rate_table", errs[0].Code)
 	assert.Contains(t, errs[0].Path, "/structures/0")
+}
+
+func TestDonatedPlacementEnabledRequiresRestriction(t *testing.T) {
+	plan := minimalPlan()
+	plan.Placement.DonatedPlacementEnabled = true
+	plan.Placement.DonatedPlacementRestriction = nil
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "cross_field_dependency", errs[0].Code)
+	assert.Equal(t, SeverityError, errs[0].Severity)
+	assert.Contains(t, errs[0].Path, "donated_placement")
 }
 
 func TestCarryForwardCapRequiresCarryForward(t *testing.T) {
@@ -175,6 +187,6 @@ func TestCarryForwardCapRequiresCarryForward(t *testing.T) {
 	errs := validateBusinessRules(plan)
 	require.Len(t, errs, 1)
 	assert.Equal(t, "cross_field_dependency", errs[0].Code)
-	assert.Equal(t, "error", errs[0].Severity)
+	assert.Equal(t, SeverityError, errs[0].Severity)
 	assert.Contains(t, errs[0].Path, "/structures/0")
 }

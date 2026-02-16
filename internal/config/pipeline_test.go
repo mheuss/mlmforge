@@ -2,44 +2,11 @@ package config
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// replaceInYAML substitutes the first occurrence of old with new in YAML bytes.
-func replaceInYAML(yamlBytes []byte, old, new string) []byte {
-	return []byte(strings.Replace(string(yamlBytes), old, new, 1))
-}
-
-func TestPipelineValidFixtureProducesJSON(t *testing.T) {
-	p, err := NewPipeline(schemaPath(t))
-	require.NoError(t, err)
-
-	yamlBytes := readFixture(t, "valid/minimal-unilevel.yaml")
-	jsonBytes, errs, err := p.LoadAndValidate(yamlBytes)
-
-	require.NoError(t, err, "no infrastructure error expected")
-	assert.False(t, hasErrors(errs), "no hard errors expected")
-	require.NotNil(t, jsonBytes, "valid fixture should produce JSON output")
-
-	var doc map[string]any
-	require.NoError(t, json.Unmarshal(jsonBytes, &doc))
-
-	assert.Equal(t, "Starter Unilevel", doc["name"])
-	assert.Equal(t, float64(1), doc["version"])
-
-	structures, ok := doc["structures"].([]any)
-	require.True(t, ok, "structures should be an array")
-	require.Len(t, structures, 1)
-
-	s := structures[0].(map[string]any)
-	assert.Equal(t, "unilevel", s["type"])
-	_, hasConfig := s["config"]
-	assert.True(t, hasConfig, "structure should have a config object")
-}
 
 func TestPipelineAllValidFixtures(t *testing.T) {
 	p, err := NewPipeline(schemaPath(t))
@@ -100,7 +67,7 @@ func TestPipelineInvalidFixtureReturnsErrors(t *testing.T) {
 	assert.Nil(t, jsonBytes, "invalid fixture should not produce JSON output")
 
 	for _, e := range errs {
-		assert.Equal(t, "error", e.Severity)
+		assert.Equal(t, SeverityError, e.Severity)
 	}
 }
 
@@ -137,7 +104,7 @@ func TestPipelineWarningsAllowJSON(t *testing.T) {
 	// Verify at least one warning exists.
 	var hasWarning bool
 	for _, e := range errs {
-		if e.Severity == "warning" {
+		if e.Severity == SeverityWarning {
 			hasWarning = true
 			break
 		}

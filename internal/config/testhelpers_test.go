@@ -1,5 +1,38 @@
 package config
 
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+// schemaPath returns the absolute path to the JSON Schema file.
+// It verifies the file exists and fails the test if not found.
+func schemaPath(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join("..", "..", "schemas", "compensation-plan.schema.json")
+	_, err := os.Stat(path)
+	require.NoError(t, err, "schema file not found at %s", path)
+	return path
+}
+
+// readFixture reads a test fixture file from the testdata directory.
+func readFixture(t *testing.T, name string) []byte {
+	t.Helper()
+	path := filepath.Join("testdata", name)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err, "fixture not found at %s", path)
+	return data
+}
+
+// replaceInYAML substitutes the first occurrence of old with new in YAML bytes.
+func replaceInYAML(yamlBytes []byte, old, new string) []byte {
+	return []byte(strings.Replace(string(yamlBytes), old, new, 1))
+}
+
 // minimalPlan returns a valid CompensationPlan for use as a baseline in
 // business-rule tests. Each test introduces one violation on top of this
 // known-good plan.
@@ -66,4 +99,18 @@ func minimalPlan() *CompensationPlan {
 			DonatedPlacementEnabled: false,
 		},
 	}
+}
+
+// minimalPlanWithCommission returns a minimalPlan() with the commission
+// resolved on the first structure. Translation requires resolved commissions.
+func minimalPlanWithCommission() *CompensationPlan {
+	plan := minimalPlan()
+	plan.Structures[0].resolvedCommission = &UnilevelCommission{
+		BroadCommissionPercent: 0.40,
+		CommissionableDepth:    5,
+		RateTable: map[string]map[string]float64{
+			"Associate": {"1": 0.05, "2": 0.04},
+		},
+	}
+	return plan
 }

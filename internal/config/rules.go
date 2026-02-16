@@ -15,6 +15,7 @@ func validateBusinessRules(plan *CompensationPlan) []ValidationError {
 	errs = append(errs, validateRanks(plan)...)
 	errs = append(errs, validateStructureRefs(plan)...)
 	errs = append(errs, validateBonuses(plan)...)
+	errs = append(errs, validatePlacement(plan)...)
 	errs = append(errs, validateEligibility(plan)...)
 	errs = append(errs, validateWarnings(plan)...)
 	return errs
@@ -67,14 +68,14 @@ func validateRanks(plan *CompensationPlan) []ValidationError {
 				Path:     fmt.Sprintf("/ranks/%d/ordinal", i),
 				Code:     "ordering_violation",
 				Message:  fmt.Sprintf("rank %q has duplicate ordinal %d (same as %q)", r.Name, r.Ordinal, existing),
-				Severity: "error",
+				Severity: SeverityError,
 			})
 		} else if r.Ordinal <= prevOrdinal {
 			errs = append(errs, ValidationError{
 				Path:     fmt.Sprintf("/ranks/%d/ordinal", i),
 				Code:     "ordering_violation",
 				Message:  fmt.Sprintf("rank %q ordinal %d is not ascending (previous was %d)", r.Name, r.Ordinal, prevOrdinal),
-				Severity: "error",
+				Severity: SeverityError,
 			})
 		}
 		seen[r.Ordinal] = r.Name
@@ -89,7 +90,7 @@ func validateRanks(plan *CompensationPlan) []ValidationError {
 					Path:     fmt.Sprintf("/ranks/%d/qualified_structures/%d", i, j),
 					Code:     "undefined_reference",
 					Message:  fmt.Sprintf("rank %q references undefined structure %q in qualified_structures", r.Name, qs),
-					Severity: "error",
+					Severity: SeverityError,
 				})
 			}
 		}
@@ -101,7 +102,7 @@ func validateRanks(plan *CompensationPlan) []ValidationError {
 					Path:     fmt.Sprintf("/ranks/%d/qualification/structures/%d/structure", i, j),
 					Code:     "undefined_reference",
 					Message:  fmt.Sprintf("rank %q qualification references undefined structure %q", r.Name, sq.Structure),
-					Severity: "error",
+					Severity: SeverityError,
 				})
 			}
 
@@ -111,7 +112,7 @@ func validateRanks(plan *CompensationPlan) []ValidationError {
 					Path:     fmt.Sprintf("/ranks/%d/qualification/structures/%d/max_group_volume_per_leg", i, j),
 					Code:     "cross_field_dependency",
 					Message:  fmt.Sprintf("rank %q max_group_volume_per_leg (%.0f) exceeds group_volume (%.0f)", r.Name, sq.MaxGroupVolumePerLeg, sq.GroupVolume),
-					Severity: "error",
+					Severity: SeverityError,
 				})
 			}
 
@@ -123,14 +124,14 @@ func validateRanks(plan *CompensationPlan) []ValidationError {
 						Path:     fmt.Sprintf("/ranks/%d/qualification/structures/%d/distributor_count/min_rank", i, j),
 						Code:     "undefined_reference",
 						Message:  fmt.Sprintf("rank %q distributor_count references undefined rank %q", r.Name, sq.DistributorCount.MinRank),
-						Severity: "error",
+						Severity: SeverityError,
 					})
 				} else if refOrd >= r.Ordinal {
 					errs = append(errs, ValidationError{
 						Path:     fmt.Sprintf("/ranks/%d/qualification/structures/%d/distributor_count/min_rank", i, j),
 						Code:     "ordering_violation",
 						Message:  fmt.Sprintf("rank %q distributor_count.min_rank %q must be lower ordinal than %d", r.Name, sq.DistributorCount.MinRank, r.Ordinal),
-						Severity: "error",
+						Severity: SeverityError,
 					})
 				}
 			}
@@ -154,7 +155,7 @@ func validateStructureRefs(plan *CompensationPlan) []ValidationError {
 					Path:     fmt.Sprintf("/structures/%d/commission/generation/boundary_rank", i),
 					Code:     "undefined_reference",
 					Message:  fmt.Sprintf("structure %q generation boundary_rank references undefined rank %q", s.Name, rc.Generation.BoundaryRank),
-					Severity: "error",
+					Severity: SeverityError,
 				})
 			}
 		case *StairstepCommission:
@@ -164,7 +165,7 @@ func validateStructureRefs(plan *CompensationPlan) []ValidationError {
 						Path:     fmt.Sprintf("/structures/%d/commission/breakaway/generation/boundary_rank", i),
 						Code:     "undefined_reference",
 						Message:  fmt.Sprintf("structure %q breakaway generation boundary_rank references undefined rank %q", s.Name, rc.Breakaway.Generation.BoundaryRank),
-						Severity: "error",
+						Severity: SeverityError,
 					})
 				}
 			}
@@ -174,7 +175,7 @@ func validateStructureRefs(plan *CompensationPlan) []ValidationError {
 					Path:     fmt.Sprintf("/structures/%d/commission/pairing/carry_forward_cap", i),
 					Code:     "cross_field_dependency",
 					Message:  fmt.Sprintf("structure %q has carry_forward_cap set but volume_after_payout is %q, not \"carry_forward\"", s.Name, rc.Pairing.VolumeAfterPayout),
-					Severity: "error",
+					Severity: SeverityError,
 				})
 			}
 		}
@@ -197,7 +198,7 @@ func validateBonuses(plan *CompensationPlan) []ValidationError {
 			Path:     "/bonuses/rank_advancement/pay_once_only",
 			Code:     "cross_section_dependency",
 			Message:  "pay_once_only requires rank_tracking.track_achieved_rank to be true",
-			Severity: "error",
+			Severity: SeverityError,
 		})
 	}
 
@@ -213,7 +214,7 @@ func validateBonuses(plan *CompensationPlan) []ValidationError {
 					Path:     "/bonuses/matching/matched_commission_types",
 					Code:     "undefined_reference",
 					Message:  fmt.Sprintf("matched_commission_types references unknown structure type %q", ct),
-					Severity: "error",
+					Severity: SeverityError,
 				})
 			}
 		}
@@ -227,7 +228,7 @@ func validateBonuses(plan *CompensationPlan) []ValidationError {
 					Path:     "/bonuses/rank_advancement/amounts",
 					Code:     "undefined_reference",
 					Message:  fmt.Sprintf("rank_advancement references undefined rank %q", rankName),
-					Severity: "error",
+					Severity: SeverityError,
 				})
 			}
 		}
@@ -241,10 +242,29 @@ func validateBonuses(plan *CompensationPlan) []ValidationError {
 					Path:     fmt.Sprintf("/bonuses/lifestyle/tiers/%d/min_rank", i),
 					Code:     "undefined_reference",
 					Message:  fmt.Sprintf("lifestyle tier references undefined rank %q", tier.MinRank),
-					Severity: "error",
+					Severity: SeverityError,
 				})
 			}
 		}
+	}
+
+	return errs
+}
+
+// --- Placement rules ---
+
+// validatePlacement checks placement configuration for cross-field consistency.
+func validatePlacement(plan *CompensationPlan) []ValidationError {
+	var errs []ValidationError
+
+	// donated_placement_enabled requires donated_placement_restriction.
+	if plan.Placement.DonatedPlacementEnabled && plan.Placement.DonatedPlacementRestriction == nil {
+		errs = append(errs, ValidationError{
+			Path:     "/placement/donated_placement_enabled",
+			Code:     "cross_field_dependency",
+			Message:  "donated_placement_enabled is true but donated_placement_restriction is not set",
+			Severity: SeverityError,
+		})
 	}
 
 	return errs
@@ -267,7 +287,7 @@ func validateEligibility(plan *CompensationPlan) []ValidationError {
 				Path:     "/commission_eligibility/active_leg_tiers",
 				Code:     "ordering_violation",
 				Message:  "active_leg_tiers must be sorted by ascending min_active_legs",
-				Severity: "error",
+				Severity: SeverityError,
 			})
 		}
 	}
@@ -279,7 +299,7 @@ func validateEligibility(plan *CompensationPlan) []ValidationError {
 				Path:     fmt.Sprintf("/commission_eligibility/active_leg_tiers/%d", i),
 				Code:     "ordering_violation",
 				Message:  "active_leg_tier with unlimited depth (max_commission_depth=0) must be the last entry",
-				Severity: "error",
+				Severity: SeverityError,
 			})
 			break
 		}
@@ -301,7 +321,7 @@ func validateWarnings(plan *CompensationPlan) []ValidationError {
 			Path:     "/period/payout_lag_days",
 			Code:     "long_payout_lag",
 			Message:  fmt.Sprintf("payout_lag_days is %d, which exceeds 30 days", plan.Period.PayoutLagDays),
-			Severity: "warning",
+			Severity: SeverityWarning,
 		})
 	}
 
@@ -332,7 +352,7 @@ func validateWarnings(plan *CompensationPlan) []ValidationError {
 					Path:     fmt.Sprintf("/structures/%d/commission/rate_table", i),
 					Code:     "incomplete_rate_table",
 					Message:  fmt.Sprintf("structure %q rate_table is missing ranks: %s", s.Name, strings.Join(missing, ", ")),
-					Severity: "warning",
+					Severity: SeverityWarning,
 				})
 			}
 		}
@@ -347,7 +367,7 @@ func validateWarnings(plan *CompensationPlan) []ValidationError {
 					Path:     fmt.Sprintf("/structures/%d/structure", i),
 					Code:     "large_matrix",
 					Message:  fmt.Sprintf("matrix %q has width^height = %.0f, which exceeds 1,000,000", s.Name, size),
-					Severity: "warning",
+					Severity: SeverityWarning,
 				})
 			}
 		}

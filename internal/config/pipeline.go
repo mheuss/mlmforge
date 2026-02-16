@@ -3,8 +3,26 @@ package config
 import (
 	"fmt"
 
+	"github.com/santhosh-tekuri/jsonschema/v6"
 	"gopkg.in/yaml.v3"
 )
+
+// Pipeline validates compensation plan YAML and translates to Rust-ready JSON.
+type Pipeline struct {
+	schema *jsonschema.Schema
+}
+
+// NewPipeline loads and compiles the JSON Schema from the given file path.
+// The path can be absolute or relative. The schema must be a valid JSON Schema
+// Draft 2020-12 document.
+func NewPipeline(schemaPath string) (*Pipeline, error) {
+	c := jsonschema.NewCompiler()
+	sch, err := c.Compile(schemaPath)
+	if err != nil {
+		return nil, err
+	}
+	return &Pipeline{schema: sch}, nil
+}
 
 // LoadAndValidate runs the full validation pipeline on compensation plan YAML.
 //
@@ -62,7 +80,7 @@ func (p *Pipeline) LoadAndValidate(yamlBytes []byte) ([]byte, []ValidationError,
 // hasErrors returns true if any ValidationError has severity "error".
 func hasErrors(errs []ValidationError) bool {
 	for _, e := range errs {
-		if e.Severity == "error" {
+		if e.Severity == SeverityError {
 			return true
 		}
 	}

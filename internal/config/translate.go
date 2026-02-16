@@ -104,9 +104,13 @@ func translateBinaryConfig(s *StructureConfig) (map[string]any, error) {
 	if !ok {
 		return nil, fmt.Errorf("expected *BinaryCommission, got %T", s.resolvedCommission)
 	}
+	bc, err := translateBinaryCommission(c)
+	if err != nil {
+		return nil, err
+	}
 	return map[string]any{
 		"name":              s.Name,
-		"binary_commission": translateBinaryCommission(c),
+		"binary_commission": bc,
 	}, nil
 }
 
@@ -114,13 +118,15 @@ func translateBinaryConfig(s *StructureConfig) (map[string]any, error) {
 // format to the Rust externally tagged enum format.
 // YAML: mode: "pairing", pairing: {...}
 // Rust: mode: {"pairing": {...}}
-func translateBinaryCommission(c *BinaryCommission) map[string]any {
+func translateBinaryCommission(c *BinaryCommission) (map[string]any, error) {
 	var modeContent any
 	switch c.Mode {
 	case "pairing":
 		modeContent = c.Pairing
 	case "cycle_step":
 		modeContent = c.CycleStep
+	default:
+		return nil, fmt.Errorf("unknown binary commission mode: %s", c.Mode)
 	}
 
 	return map[string]any{
@@ -128,7 +134,7 @@ func translateBinaryCommission(c *BinaryCommission) map[string]any {
 		"mode": map[string]any{
 			c.Mode: modeContent,
 		},
-	}
+	}, nil
 }
 
 // translateMatrixConfig builds the config for a matrix structure.
@@ -192,9 +198,13 @@ func translateStreamlineConfig(s *StructureConfig) (map[string]any, error) {
 	if !ok {
 		return nil, fmt.Errorf("expected *StreamlineCommission, got %T", s.resolvedCommission)
 	}
+	sc, err := translateStreamlineCommission(c)
+	if err != nil {
+		return nil, err
+	}
 	return map[string]any{
 		"name":                  s.Name,
-		"streamline_commission": translateStreamlineCommission(c),
+		"streamline_commission": sc,
 	}, nil
 }
 
@@ -202,18 +212,22 @@ func translateStreamlineConfig(s *StructureConfig) (map[string]any, error) {
 // map-keyed format to sorted vector format.
 // YAML: dynamic_compression: {"1": {min_rank: ..., percent: ...}, "2": ...}
 // Rust: dynamic_compression: [{level: 1, min_rank: ..., percent: ...}, ...]
-func translateStreamlineCommission(c *StreamlineCommission) map[string]any {
+func translateStreamlineCommission(c *StreamlineCommission) (map[string]any, error) {
+	levels, err := sortStreamlineLevels(c.DynamicCompression)
+	if err != nil {
+		return nil, err
+	}
 	return map[string]any{
 		"volume_to_dollar_multiplier": c.VolumeToDollarMultiplier,
 		"commissionable_depth":        c.CommissionableDepth,
-		"dynamic_compression":         sortStreamlineLevels(c.DynamicCompression),
+		"dynamic_compression":         levels,
 		"streams":                     c.Streams,
-	}
+	}, nil
 }
 
 // sortStreamlineLevels converts a map of level-string to StreamlineLevel into
 // a sorted slice with the level number included on each entry.
-func sortStreamlineLevels(levels map[string]StreamlineLevel) []map[string]any {
+func sortStreamlineLevels(levels map[string]StreamlineLevel) ([]map[string]any, error) {
 	type numbered struct {
 		level int
 		sl    StreamlineLevel
@@ -221,7 +235,10 @@ func sortStreamlineLevels(levels map[string]StreamlineLevel) []map[string]any {
 
 	sorted := make([]numbered, 0, len(levels))
 	for k, v := range levels {
-		n, _ := strconv.Atoi(k)
+		n, err := strconv.Atoi(k)
+		if err != nil {
+			return nil, fmt.Errorf("dynamic_compression key %q is not a valid level number: %w", k, err)
+		}
 		sorted = append(sorted, numbered{level: n, sl: v})
 	}
 	sort.Slice(sorted, func(i, j int) bool {
@@ -236,7 +253,7 @@ func sortStreamlineLevels(levels map[string]StreamlineLevel) []map[string]any {
 			"percent":  entry.sl.Percent,
 		})
 	}
-	return result
+	return result, nil
 }
 
 // buildLevelCommission creates the Rust-side level_commission object from

@@ -154,10 +154,12 @@ type ActiveLegTier struct {
 
 // StructureConfig holds the flat YAML representation of a structure.
 // The commission block varies by type and is deferred for two-pass parsing.
+// CommissionRaw stores the untyped commission map from initial unmarshal.
+// resolveCommissions() re-marshals and decodes it into the correct type.
 type StructureConfig struct {
 	Name          string                 `yaml:"name" json:"name"`
 	Type          string                 `yaml:"type" json:"type"`
-	CommissionRaw *yaml.Node             `yaml:"commission" json:"-"`
+	CommissionRaw any                    `yaml:"commission" json:"-"`
 	Structure     *MatrixStructureParams `yaml:"structure" json:"structure,omitempty"`
 	Pruning       *PruningConfig         `yaml:"pruning" json:"pruning,omitempty"`
 	// resolvedCommission holds the parsed commission config after type resolution.
@@ -497,40 +499,43 @@ type MatrixPlacementConfig struct {
 }
 
 // resolveCommissions does the second-pass unmarshal of structure commission
-// blocks. After the initial YAML unmarshal, CommissionRaw holds the raw YAML
-// node. This function decodes each commission block into the correct type
-// based on the structure's Type field.
+// blocks. After the initial YAML unmarshal, CommissionRaw holds the untyped
+// map. This function re-marshals it to YAML bytes and decodes into the
+// correct typed struct based on the structure's Type field.
 func resolveCommissions(plan *CompensationPlan) error {
 	for i := range plan.Structures {
 		s := &plan.Structures[i]
 		if s.CommissionRaw == nil {
 			continue
 		}
-		var err error
+		rawBytes, err := yaml.Marshal(s.CommissionRaw)
+		if err != nil {
+			return fmt.Errorf("structure %q commission marshal: %w", s.Name, err)
+		}
 		switch s.Type {
 		case "unilevel":
 			var c UnilevelCommission
-			err = s.CommissionRaw.Decode(&c)
+			err = yaml.Unmarshal(rawBytes, &c)
 			s.resolvedCommission = &c
 		case "binary":
 			var c BinaryCommission
-			err = s.CommissionRaw.Decode(&c)
+			err = yaml.Unmarshal(rawBytes, &c)
 			s.resolvedCommission = &c
 		case "matrix":
 			var c MatrixCommission
-			err = s.CommissionRaw.Decode(&c)
+			err = yaml.Unmarshal(rawBytes, &c)
 			s.resolvedCommission = &c
 		case "stairstep":
 			var c StairstepCommission
-			err = s.CommissionRaw.Decode(&c)
+			err = yaml.Unmarshal(rawBytes, &c)
 			s.resolvedCommission = &c
 		case "generation":
 			var c GenerationCommission
-			err = s.CommissionRaw.Decode(&c)
+			err = yaml.Unmarshal(rawBytes, &c)
 			s.resolvedCommission = &c
 		case "streamline":
 			var c StreamlineCommission
-			err = s.CommissionRaw.Decode(&c)
+			err = yaml.Unmarshal(rawBytes, &c)
 			s.resolvedCommission = &c
 		default:
 			err = fmt.Errorf("unknown structure type: %s", s.Type)

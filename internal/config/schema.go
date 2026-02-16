@@ -108,6 +108,9 @@ func convertYAMLToJSON(v any) any {
 		return float64(val)
 	case int64:
 		return float64(val)
+	// yaml.v3 does not produce uint, uint64, or float32. If the YAML library
+	// changes, the default case below will pass them through. JSON Schema
+	// validation will catch any type mismatches.
 	default:
 		return v
 	}

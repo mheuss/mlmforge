@@ -53,7 +53,7 @@ ranks:
           distributor_count:
             count: 2
             min_rank: Builder
-            search_mode: frontline_only
+            search_mode: first_levels
             search_depth: null
             total_count: 4
             min_leg_group_volume: 300
@@ -77,7 +77,7 @@ ranks:
           distributor_count:
             count: 3
             min_rank: Leader
-            search_mode: depth_search
+            search_mode: any_level
             search_depth: 5
             total_count: 10
             min_leg_group_volume: 1000

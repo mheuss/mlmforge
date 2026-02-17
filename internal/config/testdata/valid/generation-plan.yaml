@@ -44,7 +44,7 @@ ranks:
           distributor_count:
             count: 3
             min_rank: Executive
-            search_mode: depth_search
+            search_mode: any_level
             search_depth: 3
             total_count: 8
             min_leg_group_volume: 1000

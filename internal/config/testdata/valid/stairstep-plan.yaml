@@ -48,7 +48,7 @@ ranks:
           distributor_count:
             count: 2
             min_rank: Supervisor
-            search_mode: frontline_only
+            search_mode: first_levels
             search_depth: null
             total_count: 5
             min_leg_group_volume: 500

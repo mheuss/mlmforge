@@ -256,8 +256,8 @@
         },
         "search_mode": {
           "type": "string",
-          "enum": ["frontline_only", "depth_search"],
-          "description": "Whether to search only the frontline or search deeper into the tree."
+          "enum": ["first_levels", "any_level"],
+          "description": "Search first N levels below the distributor, or search anywhere in the downline."
         },
         "search_depth": {
           "oneOf": [

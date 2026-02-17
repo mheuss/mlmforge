@@ -82,25 +82,34 @@ func (s *PostgresEventStore) Append(ctx context.Context, stream string, expected
 		startVersion = currentVersion
 	}
 
+	batch := &pgx.Batch{}
 	for i, ne := range events {
 		version := startVersion + int64(i) + 1
-
-		_, err := tx.Exec(ctx,
+		batch.Queue(
 			`INSERT INTO events (id, stream, type, version, payload, metadata)
 			 VALUES ($1, $2, $3, $4, $5, $6)`,
 			ne.ID, stream, ne.Type, version, ne.Payload, ne.Metadata,
 		)
+	}
+
+	br := tx.SendBatch(ctx, batch)
+	for i := range events {
+		_, err := br.Exec()
 		if err != nil {
+			br.Close()
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) && pgErr.ConstraintName == "events_stream_version_key" {
 				return &ConcurrencyError{
 					Stream:          stream,
 					ExpectedVersion: expectedVersion,
-					ActualVersion:   version - 1,
+					ActualVersion:   startVersion + int64(i),
 				}
 			}
 			return err
 		}
+	}
+	if err := br.Close(); err != nil {
+		return err
 	}
 
 	return tx.Commit(ctx)

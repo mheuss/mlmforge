@@ -65,12 +65,15 @@ func (m *MemoryEventStore) ReadStream(_ context.Context, stream string, fromVers
 	defer m.mu.RUnlock()
 
 	events := m.streams[stream]
-	var result []Event
-	for _, e := range events {
-		if e.Version >= fromVersion {
-			result = append(result, e)
-		}
+	if fromVersion < 1 {
+		fromVersion = 1
 	}
+	startIdx := int(fromVersion - 1)
+	if startIdx >= len(events) {
+		return nil, nil
+	}
+	result := make([]Event, len(events)-startIdx)
+	copy(result, events[startIdx:])
 	return result, nil
 }
 

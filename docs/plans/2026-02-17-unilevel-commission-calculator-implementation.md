@@ -8,12 +8,12 @@
 
 **Tech Stack:** Rust (existing network-engine crate, uuid, thiserror)
 
-**Status:** Pending
-**Progress:** 0 complete, 0 implemented, 0 pending
+**Status:** Complete
+**Progress:** 11 complete, 0 implemented, 0 pending
 
 ---
 
-### Task 1: Module scaffolding and types [Pending]
+### Task 1: Module scaffolding and types [Complete]
 
 **Files:**
 - Create: `engine/network-engine/src/commission/mod.rs`
@@ -183,7 +183,7 @@ git commit -m "feat(engine): scaffold commission module with types"
 
 ---
 
-### Task 2: Eligibility evaluation [Pending]
+### Task 2: Eligibility evaluation [Complete]
 
 **Files:**
 - Modify: `engine/network-engine/src/commission/unilevel.rs`
@@ -653,7 +653,7 @@ git commit -m "feat(engine): implement eligibility evaluation for commission pre
 
 ---
 
-### Task 3: Basic upline walk [Pending]
+### Task 3: Basic upline walk [Complete]
 
 **Files:**
 - Modify: `engine/network-engine/src/commission/unilevel.rs`
@@ -1174,7 +1174,7 @@ git commit -m "feat(engine): implement basic unilevel commission walk with rate 
 
 ---
 
-### Task 4: Compression [Pending]
+### Task 4: Compression [Complete]
 
 **Files:**
 - Modify: `engine/network-engine/src/commission/unilevel.rs`
@@ -1411,7 +1411,7 @@ git commit -m "test(engine): add compression tests for unilevel commission walk"
 
 ---
 
-### Task 5: Active leg tier depth limits in walk [Pending]
+### Task 5: Active leg tier depth limits in walk [Complete]
 
 **Files:**
 - Modify: `engine/network-engine/src/commission/unilevel.rs`
@@ -1540,7 +1540,7 @@ git commit -m "test(engine): add active leg tier depth limit tests"
 
 ---
 
-### Task 6: Error handling [Pending]
+### Task 6: Error handling [Complete]
 
 **Files:**
 - Modify: `engine/network-engine/src/commission/unilevel.rs`
@@ -1611,7 +1611,7 @@ git commit -m "test(engine): add error handling tests for commission calculator"
 
 ---
 
-### Task 7: Edge cases [Pending]
+### Task 7: Edge cases [Complete]
 
 **Files:**
 - Modify: `engine/network-engine/src/commission/unilevel.rs`
@@ -1750,7 +1750,7 @@ git commit -m "test(engine): add edge case tests for commission calculator"
 
 ---
 
-### Task 8: Integration test with realistic config [Pending]
+### Task 8: Integration test with realistic config [Complete]
 
 **Files:**
 - Modify: `engine/network-engine/src/commission/unilevel.rs`
@@ -1874,7 +1874,7 @@ git commit -m "test(engine): add realistic integration test for unilevel commiss
 
 ---
 
-### Task 9: Property-based tests [Pending]
+### Task 9: Property-based tests [Complete]
 
 **Files:**
 - Create: `engine/network-engine/tests/unilevel_commission_properties.rs`
@@ -2043,7 +2043,7 @@ git commit -m "test(engine): add property-based tests for unilevel commission ca
 
 ---
 
-### Task 10: ADR-017 [Pending]
+### Task 10: ADR-017 [Complete]
 
 **Files:**
 - Create: `decisions/017-commission-calculation-architecture.md`
@@ -2066,7 +2066,7 @@ git commit -m "docs(decisions): add ADR-017 commission calculation architecture"
 
 ---
 
-### Task 11: Final cleanup and verification [Pending]
+### Task 11: Final cleanup and verification [Complete]
 
 **Step 1: Run full test suite**
 

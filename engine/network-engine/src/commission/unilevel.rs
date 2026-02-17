@@ -272,7 +272,7 @@ fn evaluate_eligibility(
 mod tests {
     use super::*;
     use crate::config::bonus::BonusConfig;
-    use crate::config::commission::LevelCommissionConfig;
+    use crate::config::commission::{CompressionConfig, CompressionMode, LevelCommissionConfig};
     use crate::config::eligibility::{ActiveLegTier, CommissionEligibility};
     use crate::config::payout::{CapEnforcement, CapsConfig, PaymentMethod, PayoutConfig};
     use crate::config::period::{PeriodConfig, PeriodLength};
@@ -909,5 +909,215 @@ mod tests {
         // 100 * 0.40 * 0.75 * 0.07 = 2.1
         let expected = 100.0 * 0.40 * 0.75 * 0.07;
         assert!((result[0].dollar_amount - expected).abs() < f64::EPSILON);
+    }
+
+    // --- compression tests ---
+
+    #[test]
+    fn compression_skip_inactive_preserves_level() {
+        // Tree: root(1) -> mid(2) -> leaf(3)
+        // mid(2) is ineligible (low PV), compression enabled
+        // Expected: root(1) earns at level 1 (not level 2)
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), 0).unwrap();
+
+        let mut structure = test_structure(test_rate_table());
+        structure.compression = Some(CompressionConfig {
+            enabled: true,
+            mode: CompressionMode::SkipInactive,
+            rank_threshold: None,
+        });
+        let plan = test_plan(default_eligibility());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "silver".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(
+            test_uuid(2),
+            DistributorSnapshot {
+                personal_volume: 0.0, // ineligible
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].earner_id, test_uuid(1));
+        assert_eq!(result[0].level, 1);
+    }
+
+    #[test]
+    fn compression_skip_below_rank() {
+        // Tree: root(1) -> mid(2) -> leaf(3)
+        // mid(2) is "associate" (ordinal 1), threshold is "silver" (ordinal 2)
+        // mid gets compressed out, root earns at level 1
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), 0).unwrap();
+
+        let mut structure = test_structure(test_rate_table());
+        structure.compression = Some(CompressionConfig {
+            enabled: true,
+            mode: CompressionMode::SkipBelowRank,
+            rank_threshold: Some("silver".to_string()),
+        });
+        let plan = test_plan(default_eligibility());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "silver".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(
+            test_uuid(2),
+            DistributorSnapshot {
+                rank: "associate".to_string(), // below threshold
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].earner_id, test_uuid(1));
+        assert_eq!(result[0].level, 1); // level preserved
+    }
+
+    #[test]
+    fn no_compression_ineligible_forfeits_level() {
+        // Tree: root(1) -> mid(2) -> leaf(3)
+        // mid(2) is ineligible, no compression
+        // Expected: root(1) earns at level 2 (level 1 forfeited)
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), 0).unwrap();
+
+        let structure = test_structure(test_rate_table()); // no compression
+        let plan = test_plan(default_eligibility());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "silver".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(
+            test_uuid(2),
+            DistributorSnapshot {
+                personal_volume: 0.0, // ineligible
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].earner_id, test_uuid(1));
+        assert_eq!(result[0].level, 2); // level 1 forfeited
+    }
+
+    #[test]
+    fn compression_missing_snapshot_compressed_out() {
+        // mid(2) has no snapshot. With compression, they're skipped.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), 0).unwrap();
+
+        let mut structure = test_structure(test_rate_table());
+        structure.compression = Some(CompressionConfig {
+            enabled: true,
+            mode: CompressionMode::SkipInactive,
+            rank_threshold: None,
+        });
+        let plan = test_plan(default_eligibility());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "silver".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        // test_uuid(2) intentionally missing
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].earner_id, test_uuid(1));
+        assert_eq!(result[0].level, 1); // compressed, level preserved
+    }
+
+    #[test]
+    fn no_compression_missing_snapshot_forfeits_level() {
+        // mid(2) has no snapshot. Without compression, level forfeited.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), 0).unwrap();
+
+        let structure = test_structure(test_rate_table());
+        let plan = test_plan(default_eligibility());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "silver".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        // test_uuid(2) missing
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].level, 2); // level 1 forfeited
     }
 }

@@ -1215,4 +1215,50 @@ mod tests {
         // node 2 at level 1, node 1 at level 2. Both should earn.
         assert_eq!(result.len(), 2);
     }
+
+    // --- error handling tests ---
+
+    #[test]
+    fn error_source_not_in_tree() {
+        let tree = UnilevelTree::new();
+        let structure = test_structure(test_rate_table());
+        let plan = test_plan(default_eligibility());
+        let snapshots = HashMap::new();
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(99),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume);
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            CalculationError::SourceNotInTree(id) if id == test_uuid(99)
+        ));
+    }
+
+    #[test]
+    fn error_source_not_in_snapshot() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+
+        let structure = test_structure(test_rate_table());
+        let plan = test_plan(default_eligibility());
+        let snapshots = HashMap::new(); // empty — source has no snapshot
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(1),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume);
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            CalculationError::SourceNotInSnapshot(id) if id == test_uuid(1)
+        ));
+    }
 }

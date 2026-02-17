@@ -1120,4 +1120,99 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].level, 2); // level 1 forfeited
     }
+
+    // --- active leg tier depth limit tests ---
+
+    #[test]
+    fn active_leg_tier_limits_earning_depth() {
+        // 5-node chain. Each node has 1 active leg (its child).
+        // Tier: 1 active leg -> depth 2.
+        // Volume from node 5.
+        // node 4 at level 1, node 3 at level 2 (both earn, within depth 2)
+        // node 2 at level 3, node 1 at level 4 (both skip, beyond depth 2)
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), 0).unwrap();
+        tree.add_node(test_uuid(4), test_uuid(3), 0).unwrap();
+        tree.add_node(test_uuid(5), test_uuid(4), 0).unwrap();
+
+        let elig = CommissionEligibility {
+            minimum_pv: 100.0,
+            require_order_in_period: false,
+            eligible_statuses: vec!["active".to_string()],
+            active_leg_tiers: vec![ActiveLegTier {
+                min_active_legs: 1,
+                max_commission_depth: 2,
+            }],
+        };
+        let structure = test_structure(test_rate_table());
+        let plan = test_plan_with_structure(elig, structure.clone());
+
+        let mut snapshots = HashMap::new();
+        for id in 1..=5 {
+            snapshots.insert(
+                test_uuid(id),
+                DistributorSnapshot {
+                    rank: "silver".to_string(),
+                    ..eligible_snapshot()
+                },
+            );
+        }
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(5),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // Nodes 4 and 3 earn (levels 1 and 2). Nodes 2 and 1 are beyond depth 2.
+        assert_eq!(result.len(), 2);
+        assert!(result.iter().all(|e| e.level <= 2));
+    }
+
+    #[test]
+    fn active_leg_tier_unlimited_earns_full_depth() {
+        // root(1) has 3 active legs -> tier with depth 0 (unlimited)
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(4), test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(5), test_uuid(2), 0).unwrap();
+
+        let elig = CommissionEligibility {
+            minimum_pv: 100.0,
+            require_order_in_period: false,
+            eligible_statuses: vec!["active".to_string()],
+            active_leg_tiers: vec![ActiveLegTier {
+                min_active_legs: 3,
+                max_commission_depth: 0,
+            }],
+        };
+        let structure = test_structure(test_rate_table());
+        let plan = test_plan_with_structure(elig, structure.clone());
+
+        let mut snapshots = HashMap::new();
+        for id in 1..=5 {
+            snapshots.insert(
+                test_uuid(id),
+                DistributorSnapshot {
+                    rank: "silver".to_string(),
+                    ..eligible_snapshot()
+                },
+            );
+        }
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(5),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // node 2 at level 1, node 1 at level 2. Both should earn.
+        assert_eq!(result.len(), 2);
+    }
 }

@@ -64,8 +64,7 @@ pub struct PairingConfig {
     ///
     /// Protects the company from outsized payouts in a single period.
     /// Applied after the pairing calculation.
-    #[serde(rename = "cap_per_period")]
-    pub weekly_cap: Option<f64>,
+    pub cap_per_period: Option<f64>,
 
     /// What happens to leg volumes after the commission run.
     ///
@@ -182,7 +181,7 @@ mod tests {
         let config: PairingConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.percent, 0.10);
         assert!(matches!(config.calculation, PairingCalculation::WeakerLeg));
-        assert_eq!(config.weekly_cap, Some(5000.0));
+        assert_eq!(config.cap_per_period, Some(5000.0));
         assert!(matches!(
             config.volume_after_payout,
             VolumeAfterPayout::CarryForward
@@ -230,7 +229,7 @@ mod tests {
                     config.calculation,
                     PairingCalculation::VolumeRatio
                 ));
-                assert!(config.weekly_cap.is_none());
+                assert!(config.cap_per_period.is_none());
                 assert!(matches!(
                     config.volume_after_payout,
                     VolumeAfterPayout::NetOff

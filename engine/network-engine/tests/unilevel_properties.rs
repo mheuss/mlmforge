@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 /// Generates a deterministic UUID from an index.
 fn uuid_from_index(i: usize) -> Uuid {
-    let bytes = (i as u128).to_le_bytes();
+    let bytes = (i as u128).to_be_bytes();
     Uuid::from_bytes(bytes)
 }
 

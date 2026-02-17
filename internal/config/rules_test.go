@@ -121,7 +121,7 @@ func TestUnlimitedDepthTierMustBeLast(t *testing.T) {
 	plan := minimalPlan()
 	// An unlimited tier (MaxCommissionDepth == 0) that is NOT last.
 	plan.CommissionEligibility.ActiveLegTiers = []ActiveLegTier{
-		{MinActiveLegs: 1, MaxCommissionDepth: 0},
+		{MinActiveLegs: 0, MaxCommissionDepth: 0},
 		{MinActiveLegs: 3, MaxCommissionDepth: 5},
 	}
 
@@ -384,8 +384,9 @@ func TestLifestyleTierMinRankMustExist(t *testing.T) {
 
 func TestActiveLegTiersMustBeAscending(t *testing.T) {
 	plan := minimalPlan()
-	// Descending order: 5, 3.
+	// Descending order: 5, 3 (with base tier present to isolate sorting check).
 	plan.CommissionEligibility.ActiveLegTiers = []ActiveLegTier{
+		{MinActiveLegs: 0, MaxCommissionDepth: 2},
 		{MinActiveLegs: 5, MaxCommissionDepth: 10},
 		{MinActiveLegs: 3, MaxCommissionDepth: 5},
 	}
@@ -393,6 +394,21 @@ func TestActiveLegTiersMustBeAscending(t *testing.T) {
 	errs := validateBusinessRules(plan)
 	require.Len(t, errs, 1)
 	assert.Equal(t, "ordering_violation", errs[0].Code)
+	assert.Contains(t, errs[0].Path, "active_leg_tiers")
+}
+
+func TestActiveLegTiersMustIncludeBaseTier(t *testing.T) {
+	plan := minimalPlan()
+	// Tiers without a min_active_legs=0 base tier.
+	plan.CommissionEligibility.ActiveLegTiers = []ActiveLegTier{
+		{MinActiveLegs: 3, MaxCommissionDepth: 5},
+		{MinActiveLegs: 5, MaxCommissionDepth: 7},
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "missing_base_tier", errs[0].Code)
+	assert.Equal(t, SeverityError, errs[0].Severity)
 	assert.Contains(t, errs[0].Path, "active_leg_tiers")
 }
 

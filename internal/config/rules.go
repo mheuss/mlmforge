@@ -337,6 +337,28 @@ func validateEligibility(plan *CompensationPlan) []ValidationError {
 		}
 	}
 
+	// When tiers are configured, at least one must have min_active_legs == 0
+	// to serve as the base depth. Without a catch-all tier, distributors who
+	// don't meet any tier would fall through to unlimited depth, defeating
+	// the purpose of configuring tiers.
+	if len(tiers) > 0 {
+		hasBaseTier := false
+		for _, tier := range tiers {
+			if tier.MinActiveLegs == 0 {
+				hasBaseTier = true
+				break
+			}
+		}
+		if !hasBaseTier {
+			errs = append(errs, ValidationError{
+				Path:     "/commission_eligibility/active_leg_tiers",
+				Code:     "missing_base_tier",
+				Message:  "active_leg_tiers must include a tier with min_active_legs=0 as the base depth",
+				Severity: SeverityError,
+			})
+		}
+	}
+
 	// An unlimited depth tier (MaxCommissionDepth == 0) must be the last entry.
 	for i, tier := range tiers {
 		if tier.MaxCommissionDepth == 0 && i != len(tiers)-1 {

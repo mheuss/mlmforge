@@ -1,6 +1,8 @@
 use network_engine::commission::{DistributorSnapshot, VolumeSource, calculate_unilevel};
 use network_engine::config::bonus::BonusConfig;
-use network_engine::config::commission::LevelCommissionConfig;
+use network_engine::config::commission::{
+    CompressionConfig, CompressionMode, LevelCommissionConfig,
+};
 use network_engine::config::eligibility::CommissionEligibility;
 use network_engine::config::payout::{CapEnforcement, CapsConfig, PaymentMethod, PayoutConfig};
 use network_engine::config::period::{PeriodConfig, PeriodLength};
@@ -122,6 +124,17 @@ fn build_test_plan(max_depth: u8) -> (CompensationPlan, UnilevelStructureConfig)
     (plan, structure)
 }
 
+/// Like build_test_plan but with min_personal_volume set to create
+/// eligible/ineligible distributors based on PV.
+fn build_test_plan_with_min_pv(
+    max_depth: u8,
+    min_pv: f64,
+) -> (CompensationPlan, UnilevelStructureConfig) {
+    let (mut plan, structure) = build_test_plan(max_depth);
+    plan.eligibility.minimum_pv = min_pv;
+    (plan, structure)
+}
+
 proptest! {
     /// No earning should have a level exceeding the configured max_depth.
     ///
@@ -228,6 +241,123 @@ proptest! {
             "Dollar amount {} != expected {}",
             result[0].dollar_amount,
             expected
+        );
+    }
+
+    /// Compression must never produce duplicate earnings for the same
+    /// earner-source pair. Each earner appears at most once per source.
+    ///
+    /// Builds a chain with alternating eligible/ineligible nodes and
+    /// verifies no earner is paid twice.
+    #[test]
+    fn compression_no_duplicate_earners(
+        tree_size in 5..30usize,
+        max_depth in 3..10u8,
+    ) {
+        let (plan, mut structure) = build_test_plan_with_min_pv(max_depth, 50.0);
+        structure.compression = Some(CompressionConfig {
+            enabled: true,
+            mode: CompressionMode::SkipInactive,
+            rank_threshold: None,
+        });
+
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uuid_from_index(0), 0).unwrap();
+        for i in 1..tree_size {
+            tree.add_node(uuid_from_index(i), uuid_from_index(i - 1), i as i64)
+                .unwrap();
+        }
+
+        let mut snapshots = HashMap::new();
+        for i in 0..tree_size {
+            snapshots.insert(
+                uuid_from_index(i),
+                DistributorSnapshot {
+                    rank: "member".to_string(),
+                    // Alternate: even nodes eligible, odd nodes ineligible
+                    personal_volume: if i % 2 == 0 { 100.0 } else { 0.0 },
+                    status: "active".to_string(),
+                    has_order_in_period: true,
+                },
+            );
+        }
+
+        let source_idx = tree_size - 1;
+        let volume = vec![VolumeSource {
+            source_id: uuid_from_index(source_idx),
+            cv_amount: 100.0,
+        }];
+
+        let result =
+            calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        let mut seen = std::collections::HashSet::new();
+        for earning in &result {
+            prop_assert!(
+                seen.insert(earning.earner_id),
+                "Duplicate earning for earner {:?}",
+                earning.earner_id
+            );
+        }
+    }
+
+    /// With compression enabled, eligible nodes earn at least as many
+    /// commissions as without compression. Compression preserves levels
+    /// by not consuming them for skipped nodes.
+    ///
+    /// Builds the same chain with and without compression and verifies
+    /// the compressed run produces >= the uncompressed count.
+    #[test]
+    fn compression_preserves_or_increases_earnings(
+        tree_size in 5..30usize,
+        max_depth in 3..10u8,
+    ) {
+        let (plan, structure_no_compress) = build_test_plan_with_min_pv(max_depth, 50.0);
+        let mut structure_compress = structure_no_compress.clone();
+        structure_compress.compression = Some(CompressionConfig {
+            enabled: true,
+            mode: CompressionMode::SkipInactive,
+            rank_threshold: None,
+        });
+
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uuid_from_index(0), 0).unwrap();
+        for i in 1..tree_size {
+            tree.add_node(uuid_from_index(i), uuid_from_index(i - 1), i as i64)
+                .unwrap();
+        }
+
+        let mut snapshots = HashMap::new();
+        for i in 0..tree_size {
+            snapshots.insert(
+                uuid_from_index(i),
+                DistributorSnapshot {
+                    rank: "member".to_string(),
+                    personal_volume: if i % 2 == 0 { 100.0 } else { 0.0 },
+                    status: "active".to_string(),
+                    has_order_in_period: true,
+                },
+            );
+        }
+
+        let source_idx = tree_size - 1;
+        let volume = vec![VolumeSource {
+            source_id: uuid_from_index(source_idx),
+            cv_amount: 100.0,
+        }];
+
+        let without =
+            calculate_unilevel(&tree, &plan, &structure_no_compress, &snapshots, &volume)
+                .unwrap();
+        let with =
+            calculate_unilevel(&tree, &plan, &structure_compress, &snapshots, &volume)
+                .unwrap();
+
+        prop_assert!(
+            with.len() >= without.len(),
+            "Compressed earnings ({}) < uncompressed ({}) — compression should preserve or increase count",
+            with.len(),
+            without.len()
         );
     }
 }

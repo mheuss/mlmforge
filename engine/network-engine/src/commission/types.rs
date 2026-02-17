@@ -74,4 +74,8 @@ pub enum CalculationError {
     /// A volume source references a distributor with no snapshot data.
     #[error("volume source {0} not found in snapshot data")]
     SourceNotInSnapshot(Uuid),
+
+    /// A volume source has a negative or NaN cv_amount.
+    #[error("volume source {0} has invalid cv_amount: {1}")]
+    InvalidCvAmount(Uuid, f64),
 }

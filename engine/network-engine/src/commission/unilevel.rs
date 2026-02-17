@@ -60,6 +60,14 @@ pub fn calculate_unilevel(
     let mut all_earnings = Vec::new();
 
     for source in volume {
+        // Validate cv_amount is non-negative and finite
+        if source.cv_amount < 0.0 || source.cv_amount.is_nan() {
+            return Err(CalculationError::InvalidCvAmount(
+                source.source_id,
+                source.cv_amount,
+            ));
+        }
+
         // Validate source exists in tree and get upline in one call
         let upline = tree
             .get_upline(source.source_id, 0)
@@ -93,9 +101,8 @@ pub fn calculate_unilevel(
             let node_eligible = elig.is_some_and(|e| e.eligible);
 
             // Compression check
-            let should_compress = if compression_enabled {
-                let compress = compression.unwrap();
-                match compress.mode {
+            let should_compress = match compression.filter(|c| c.enabled) {
+                Some(compress) => match compress.mode {
                     CompressionMode::SkipInactive => !node_eligible,
                     CompressionMode::SkipBelowRank => {
                         let dist_ordinal = rank_ordinals
@@ -104,9 +111,8 @@ pub fn calculate_unilevel(
                             .unwrap_or(0);
                         threshold_ordinal.map(|t| dist_ordinal < t).unwrap_or(false)
                     }
-                }
-            } else {
-                false
+                },
+                None => false,
             };
 
             if should_compress {
@@ -1259,6 +1265,54 @@ mod tests {
         assert!(matches!(
             result.unwrap_err(),
             CalculationError::SourceNotInSnapshot(id) if id == test_uuid(1)
+        ));
+    }
+
+    #[test]
+    fn error_negative_cv_amount() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+
+        let structure = test_structure(test_rate_table());
+        let plan = test_plan(default_eligibility());
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(1),
+            cv_amount: -50.0,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume);
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            CalculationError::InvalidCvAmount(id, _) if id == test_uuid(1)
+        ));
+    }
+
+    #[test]
+    fn error_nan_cv_amount() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+
+        let structure = test_structure(test_rate_table());
+        let plan = test_plan(default_eligibility());
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(1),
+            cv_amount: f64::NAN,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume);
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            CalculationError::InvalidCvAmount(id, _) if id == test_uuid(1)
         ));
     }
 

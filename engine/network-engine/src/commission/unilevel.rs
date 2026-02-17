@@ -1351,6 +1351,131 @@ mod tests {
     }
 
     #[test]
+    fn realistic_scenario_acme_wellness() {
+        // Tree structure:
+        //   company(1) [gold]
+        //     ├── leader_a(2) [silver]
+        //     │   ├── rep_a1(4) [associate]
+        //     │   │   └── rep_a1a(7) [associate]
+        //     │   └── rep_a2(5) [associate]
+        //     └── leader_b(3) [silver]
+        //         └── rep_b1(6) [associate]
+        //
+        // Volume: rep_a1a(7) generates 100 CV
+        // Walk from 7 upward:
+        //   Level 1: rep_a1(4) — associate, rate 0.05
+        //   Level 2: leader_a(2) — silver, rate 0.06
+        //   Level 3: company(1) — gold, rate 0.06
+        //
+        // broad_commission_percent = 0.40, multiplier = 1.0
+
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(4), test_uuid(2), 0).unwrap();
+        tree.add_node(test_uuid(5), test_uuid(2), 0).unwrap();
+        tree.add_node(test_uuid(6), test_uuid(3), 0).unwrap();
+        tree.add_node(test_uuid(7), test_uuid(4), 0).unwrap();
+
+        let mut rate_table = BTreeMap::new();
+        let mut associate_rates = BTreeMap::new();
+        associate_rates.insert(1, 0.05);
+        associate_rates.insert(2, 0.04);
+        associate_rates.insert(3, 0.03);
+        rate_table.insert("associate".to_string(), associate_rates);
+
+        let mut silver_rates = BTreeMap::new();
+        silver_rates.insert(1, 0.07);
+        silver_rates.insert(2, 0.06);
+        silver_rates.insert(3, 0.05);
+        silver_rates.insert(4, 0.04);
+        silver_rates.insert(5, 0.03);
+        rate_table.insert("silver".to_string(), silver_rates);
+
+        let mut gold_rates = BTreeMap::new();
+        gold_rates.insert(1, 0.08);
+        gold_rates.insert(2, 0.07);
+        gold_rates.insert(3, 0.06);
+        gold_rates.insert(4, 0.05);
+        gold_rates.insert(5, 0.04);
+        gold_rates.insert(6, 0.03);
+        gold_rates.insert(7, 0.02);
+        rate_table.insert("gold".to_string(), gold_rates);
+
+        let structure = test_structure(rate_table);
+
+        // Build plan with all three ranks (associate, silver, gold)
+        let mut plan = test_plan_with_structure(default_eligibility(), structure.clone());
+        plan.ranks.push(RankDefinition {
+            name: "gold".to_string(),
+            ordinal: 3,
+            qualification: RankQualification {
+                structures: vec![],
+                required_products: vec![],
+            },
+            qualified_structures: vec!["Test Unilevel".to_string()],
+            demotion_policy: DemotionPolicy::PromotionOnly,
+        });
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "gold".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(
+            test_uuid(2),
+            DistributorSnapshot {
+                rank: "silver".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(
+            test_uuid(3),
+            DistributorSnapshot {
+                rank: "silver".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        for id in 4..=7 {
+            snapshots.insert(
+                test_uuid(id),
+                DistributorSnapshot {
+                    rank: "associate".to_string(),
+                    ..eligible_snapshot()
+                },
+            );
+        }
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(7),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        assert_eq!(result.len(), 3);
+
+        // rep_a1(4) at level 1: associate rate = 0.05
+        let e4 = result.iter().find(|e| e.earner_id == test_uuid(4)).unwrap();
+        assert_eq!(e4.level, 1);
+        assert!((e4.dollar_amount - 100.0 * 0.40 * 1.0 * 0.05).abs() < f64::EPSILON);
+
+        // leader_a(2) at level 2: silver rate = 0.06
+        let e2 = result.iter().find(|e| e.earner_id == test_uuid(2)).unwrap();
+        assert_eq!(e2.level, 2);
+        assert!((e2.dollar_amount - 100.0 * 0.40 * 1.0 * 0.06).abs() < f64::EPSILON);
+
+        // company(1) at level 3: gold rate = 0.06
+        let e1 = result.iter().find(|e| e.earner_id == test_uuid(1)).unwrap();
+        assert_eq!(e1.level, 3);
+        assert!((e1.dollar_amount - 100.0 * 0.40 * 1.0 * 0.06).abs() < f64::EPSILON);
+    }
+
+    #[test]
     fn ineligible_source_still_generates_walk() {
         // Source doesn't need to be eligible. They generate volume,
         // they don't earn from it.

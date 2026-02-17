@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use uuid::Uuid;
 
+use crate::config::commission::CompressionMode;
 use crate::config::eligibility::{ActiveLegTier, CommissionEligibility};
 use crate::config::{CompensationPlan, UnilevelStructureConfig};
 use crate::tree::unilevel::UnilevelTree;
@@ -19,17 +20,141 @@ use super::types::{CalculationError, CommissionEarning, DistributorSnapshot, Vol
 /// Returns `CalculationError` if a volume source is not found in the
 /// tree or snapshot data.
 pub fn calculate_unilevel(
-    _tree: &UnilevelTree,
-    _plan: &CompensationPlan,
-    _structure: &UnilevelStructureConfig,
-    _snapshots: &HashMap<Uuid, DistributorSnapshot>,
-    _volume: &[VolumeSource],
+    tree: &UnilevelTree,
+    plan: &CompensationPlan,
+    structure: &UnilevelStructureConfig,
+    snapshots: &HashMap<Uuid, DistributorSnapshot>,
+    volume: &[VolumeSource],
 ) -> Result<Vec<CommissionEarning>, CalculationError> {
-    todo!()
+    // Build rank name -> ordinal map for SkipBelowRank comparison
+    let rank_ordinals: HashMap<&str, u16> = plan
+        .ranks
+        .iter()
+        .map(|r| (r.name.as_str(), r.ordinal))
+        .collect();
+
+    // Prep phase: evaluate eligibility for all distributors
+    let eligibility_cache = evaluate_eligibility(snapshots, tree, &plan.eligibility);
+
+    // Walk config
+    let max_depth = structure.level_commission.max_depth;
+    let broad_pct = structure.level_commission.broad_commission_percent;
+    let multiplier = structure
+        .level_commission
+        .volume_to_dollar_multiplier
+        .unwrap_or(plan.volume.volume_to_dollar_multiplier);
+
+    let compression = structure.compression.as_ref();
+    let compression_enabled = compression.is_some_and(|c| c.enabled);
+
+    let threshold_ordinal = compression.and_then(|c| {
+        if matches!(c.mode, CompressionMode::SkipBelowRank) {
+            c.rank_threshold
+                .as_ref()
+                .and_then(|name| rank_ordinals.get(name.as_str()).copied())
+        } else {
+            None
+        }
+    });
+
+    let mut all_earnings = Vec::new();
+
+    for source in volume {
+        // Validate source exists in tree and get upline in one call
+        let upline = tree
+            .get_upline(source.source_id, 0)
+            .map_err(|_| CalculationError::SourceNotInTree(source.source_id))?;
+
+        // Validate source exists in snapshots
+        if !snapshots.contains_key(&source.source_id) {
+            return Err(CalculationError::SourceNotInSnapshot(source.source_id));
+        }
+
+        let mut level: u8 = 1;
+
+        for node in &upline {
+            if level > max_depth {
+                break;
+            }
+
+            let snapshot = match snapshots.get(&node.user_id) {
+                Some(s) => s,
+                None => {
+                    // Missing snapshot: treat as ineligible
+                    if compression_enabled {
+                        continue; // compressed out, no level consumed
+                    }
+                    level = level.saturating_add(1);
+                    continue;
+                }
+            };
+
+            let elig = eligibility_cache.get(&node.user_id);
+            let node_eligible = elig.is_some_and(|e| e.eligible);
+
+            // Compression check
+            let should_compress = if compression_enabled {
+                let compress = compression.unwrap();
+                match compress.mode {
+                    CompressionMode::SkipInactive => !node_eligible,
+                    CompressionMode::SkipBelowRank => {
+                        let dist_ordinal = rank_ordinals
+                            .get(snapshot.rank.as_str())
+                            .copied()
+                            .unwrap_or(0);
+                        threshold_ordinal.map(|t| dist_ordinal < t).unwrap_or(false)
+                    }
+                }
+            } else {
+                false
+            };
+
+            if should_compress {
+                continue; // skip without consuming level
+            }
+
+            // Not compressed. Check if eligible.
+            if !node_eligible {
+                level = level.saturating_add(1); // forfeit level
+                continue;
+            }
+
+            // Check per-distributor depth limit from active leg tiers
+            if let Some(max_personal) = elig.and_then(|e| e.max_earning_depth) {
+                if level > max_personal {
+                    level = level.saturating_add(1);
+                    continue;
+                }
+            }
+
+            // Rate table lookup
+            let rate = structure
+                .level_commission
+                .rate_table
+                .get(&snapshot.rank)
+                .and_then(|levels| levels.get(&level))
+                .copied()
+                .unwrap_or(0.0);
+
+            if rate > 0.0 {
+                all_earnings.push(CommissionEarning {
+                    earner_id: node.user_id,
+                    source_id: source.source_id,
+                    level,
+                    rate,
+                    cv_amount: source.cv_amount,
+                    dollar_amount: source.cv_amount * broad_pct * multiplier * rate,
+                });
+            }
+
+            level = level.saturating_add(1);
+        }
+    }
+
+    Ok(all_earnings)
 }
 
 /// Check if a distributor meets basic commission eligibility.
-#[allow(dead_code)] // Used by calculate_unilevel in Task 3
 fn is_eligible(snapshot: &DistributorSnapshot, eligibility: &CommissionEligibility) -> bool {
     if snapshot.personal_volume < eligibility.minimum_pv {
         return false;
@@ -49,7 +174,6 @@ fn is_eligible(snapshot: &DistributorSnapshot, eligibility: &CommissionEligibili
 }
 
 /// Count how many direct children of a distributor are commission-eligible.
-#[allow(dead_code)] // Used by calculate_unilevel in Task 3
 fn count_active_legs(
     tree: &UnilevelTree,
     user_id: Uuid,
@@ -76,7 +200,6 @@ fn count_active_legs(
 ///
 /// Returns `Some(depth)` if a tier limits the distributor, or `None`
 /// if no tier restriction applies (use config max_depth as ceiling).
-#[allow(dead_code)] // Used by calculate_unilevel in Task 3
 fn determine_max_depth(active_leg_count: u16, tiers: &[ActiveLegTier]) -> Option<u8> {
     if tiers.is_empty() {
         return None;
@@ -103,7 +226,6 @@ fn determine_max_depth(active_leg_count: u16, tiers: &[ActiveLegTier]) -> Option
 }
 
 /// Cached eligibility result for a single distributor.
-#[allow(dead_code)] // Used by calculate_unilevel in Task 3
 struct EligibilityResult {
     eligible: bool,
     /// Per-distributor earning depth limit from active leg tiers.
@@ -115,7 +237,6 @@ struct EligibilityResult {
 ///
 /// Builds an internal cache used during the walk phase. Runs once
 /// before any upline walks begin.
-#[allow(dead_code)] // Used by calculate_unilevel in Task 3
 fn evaluate_eligibility(
     snapshots: &HashMap<Uuid, DistributorSnapshot>,
     tree: &UnilevelTree,
@@ -150,7 +271,18 @@ fn evaluate_eligibility(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::bonus::BonusConfig;
+    use crate::config::commission::LevelCommissionConfig;
     use crate::config::eligibility::{ActiveLegTier, CommissionEligibility};
+    use crate::config::payout::{CapEnforcement, CapsConfig, PaymentMethod, PayoutConfig};
+    use crate::config::period::{PeriodConfig, PeriodLength};
+    use crate::config::placement::PlacementConfig;
+    use crate::config::rank::{
+        DemotionPolicy, RankDefinition, RankFeaturesConfig, RankQualification, RankTrackingConfig,
+    };
+    use crate::config::volume::VolumeConfig;
+    use crate::config::{CompensationPlan, StructureConfig, UnilevelStructureConfig};
+    use std::collections::BTreeMap;
 
     fn test_uuid(n: u8) -> Uuid {
         Uuid::from_bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, n])
@@ -171,6 +303,130 @@ mod tests {
             personal_volume: 150.0,
             status: "active".to_string(),
             has_order_in_period: true,
+        }
+    }
+
+    fn test_rate_table() -> BTreeMap<String, BTreeMap<u8, f64>> {
+        let mut table = BTreeMap::new();
+
+        let mut associate = BTreeMap::new();
+        associate.insert(1, 0.05);
+        associate.insert(2, 0.04);
+        associate.insert(3, 0.03);
+        table.insert("associate".to_string(), associate);
+
+        let mut silver = BTreeMap::new();
+        silver.insert(1, 0.07);
+        silver.insert(2, 0.06);
+        silver.insert(3, 0.05);
+        silver.insert(4, 0.04);
+        silver.insert(5, 0.03);
+        table.insert("silver".to_string(), silver);
+
+        table
+    }
+
+    fn test_structure(rate_table: BTreeMap<String, BTreeMap<u8, f64>>) -> UnilevelStructureConfig {
+        UnilevelStructureConfig {
+            name: "Test Unilevel".to_string(),
+            level_commission: LevelCommissionConfig {
+                broad_commission_percent: 0.40,
+                volume_to_dollar_multiplier: None,
+                max_depth: 5,
+                rate_table,
+            },
+            compression: None,
+        }
+    }
+
+    fn test_plan(eligibility: CommissionEligibility) -> CompensationPlan {
+        let structure = test_structure(test_rate_table());
+        test_plan_with_structure(eligibility, structure)
+    }
+
+    fn test_plan_with_structure(
+        eligibility: CommissionEligibility,
+        structure: UnilevelStructureConfig,
+    ) -> CompensationPlan {
+        CompensationPlan {
+            name: "Test Plan".to_string(),
+            version: 1,
+            structures: vec![StructureConfig::Unilevel(structure)],
+            period: PeriodConfig {
+                length: PeriodLength::Month,
+                start_date: chrono::NaiveDate::from_ymd_opt(2026, 3, 1).unwrap(),
+                payout_lag_days: 14,
+            },
+            volume: VolumeConfig {
+                inhibit_signup_volume: false,
+                base_currency: "USD".to_string(),
+                volume_to_dollar_multiplier: 1.0,
+                deduct_qualifying_volume: false,
+            },
+            ranks: vec![
+                RankDefinition {
+                    name: "associate".to_string(),
+                    ordinal: 1,
+                    qualification: RankQualification {
+                        structures: vec![],
+                        required_products: vec![],
+                    },
+                    qualified_structures: vec!["Test Unilevel".to_string()],
+                    demotion_policy: DemotionPolicy::PromotionOnly,
+                },
+                RankDefinition {
+                    name: "silver".to_string(),
+                    ordinal: 2,
+                    qualification: RankQualification {
+                        structures: vec![],
+                        required_products: vec![],
+                    },
+                    qualified_structures: vec!["Test Unilevel".to_string()],
+                    demotion_policy: DemotionPolicy::PromotionOnly,
+                },
+            ],
+            rank_tracking: RankTrackingConfig {
+                track_achieved_rank: false,
+            },
+            rank_features: RankFeaturesConfig {
+                constraints_enabled: false,
+                overrides_enabled: false,
+            },
+            eligibility,
+            bonuses: BonusConfig {
+                matching: None,
+                sponsor: None,
+                fast_start: None,
+                rank_advancement: None,
+                leadership_development: None,
+                infinity: None,
+                lifestyle: None,
+                pool: None,
+                matrix_completion: None,
+                position: None,
+                board_cycling: None,
+                pass_up: None,
+            },
+            payout: PayoutConfig {
+                currency: "USD".to_string(),
+                minimum_payout: 50.0,
+                allow_partial_payout: true,
+                payment_methods: vec![PaymentMethod {
+                    method_type: "bank_transfer".to_string(),
+                    fee: 2.50,
+                }],
+            },
+            caps: CapsConfig {
+                per_distributor_cap: None,
+                company_payout_cap_percent: 0.42,
+                enforcement: CapEnforcement::ProRata,
+                enable_clawback: false,
+            },
+            placement: PlacementConfig {
+                donated_placement: None,
+                holding_tank: None,
+                binary_placement: None,
+            },
         }
     }
 
@@ -429,5 +685,229 @@ mod tests {
 
         let child3_elig = &cache[&test_uuid(3)];
         assert!(!child3_elig.eligible);
+    }
+
+    // --- calculate_unilevel tests ---
+
+    #[test]
+    fn basic_walk_three_node_chain() {
+        // Tree: root(1) -> mid(2) -> leaf(3)
+        // Volume source: leaf(3) generates 100 CV
+        // Expected: mid(2) earns at level 1, root(1) earns at level 2
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), 0).unwrap();
+
+        let structure = test_structure(test_rate_table());
+        let plan = test_plan(default_eligibility());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "silver".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(
+            test_uuid(2),
+            DistributorSnapshot {
+                rank: "associate".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        assert_eq!(result.len(), 2);
+
+        // mid(2) is associate at level 1: 100 * 0.40 * 1.0 * 0.05 = 2.0
+        let mid_earning = result.iter().find(|e| e.earner_id == test_uuid(2)).unwrap();
+        assert_eq!(mid_earning.level, 1);
+        assert_eq!(mid_earning.rate, 0.05);
+        assert!((mid_earning.dollar_amount - 2.0).abs() < f64::EPSILON);
+
+        // root(1) is silver at level 2: 100 * 0.40 * 1.0 * 0.06 = 2.4
+        let root_earning = result.iter().find(|e| e.earner_id == test_uuid(1)).unwrap();
+        assert_eq!(root_earning.level, 2);
+        assert_eq!(root_earning.rate, 0.06);
+        assert!((root_earning.dollar_amount - 2.4).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn walk_rank_not_in_rate_table() {
+        // Distributor with rank "bronze" which has no entry in rate table
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
+
+        let structure = test_structure(test_rate_table());
+        let plan = test_plan(default_eligibility());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "bronze".to_string(), // not in rate table
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        assert!(result.is_empty()); // no rate found, no earning
+    }
+
+    #[test]
+    fn walk_level_not_in_rate_table() {
+        // Associate only has rates for levels 1-3, walk goes to level 4
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), 0).unwrap();
+        tree.add_node(test_uuid(4), test_uuid(3), 0).unwrap();
+        tree.add_node(test_uuid(5), test_uuid(4), 0).unwrap();
+
+        let structure = test_structure(test_rate_table());
+        let plan = test_plan(default_eligibility());
+
+        let mut snapshots = HashMap::new();
+        for id in 1..=5 {
+            snapshots.insert(
+                test_uuid(id),
+                DistributorSnapshot {
+                    rank: "associate".to_string(),
+                    ..eligible_snapshot()
+                },
+            );
+        }
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(5),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // Associate has rates for levels 1-3 only.
+        assert_eq!(result.len(), 3);
+        assert!(result.iter().all(|e| e.level <= 3));
+    }
+
+    #[test]
+    fn walk_stops_at_max_depth() {
+        // max_depth=2, tree is 5 deep
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), 0).unwrap();
+        tree.add_node(test_uuid(4), test_uuid(3), 0).unwrap();
+
+        let mut structure = test_structure(test_rate_table());
+        structure.level_commission.max_depth = 2;
+        let plan = test_plan(default_eligibility());
+
+        let mut snapshots = HashMap::new();
+        for id in 1..=4 {
+            snapshots.insert(
+                test_uuid(id),
+                DistributorSnapshot {
+                    rank: "silver".to_string(),
+                    ..eligible_snapshot()
+                },
+            );
+        }
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(4),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // Only levels 1 and 2 should have earnings
+        assert_eq!(result.len(), 2);
+        assert!(result.iter().all(|e| e.level <= 2));
+    }
+
+    #[test]
+    fn walk_dollar_amount_formula() {
+        // Verify: cv * broad_pct * multiplier * rate
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
+
+        let mut structure = test_structure(test_rate_table());
+        structure.level_commission.broad_commission_percent = 0.50;
+        structure.level_commission.volume_to_dollar_multiplier = Some(0.80);
+        let plan = test_plan(default_eligibility());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "silver".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(2),
+            cv_amount: 200.0,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        assert_eq!(result.len(), 1);
+        // 200.0 * 0.50 * 0.80 * 0.07 (silver level 1) = 5.6
+        let expected = 200.0 * 0.50 * 0.80 * 0.07;
+        assert!((result[0].dollar_amount - expected).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn walk_multiplier_falls_back_to_plan_level() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
+
+        let mut structure = test_structure(test_rate_table());
+        structure.level_commission.volume_to_dollar_multiplier = None; // fallback
+        let mut plan = test_plan(default_eligibility());
+        plan.volume.volume_to_dollar_multiplier = 0.75;
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "silver".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // 100 * 0.40 * 0.75 * 0.07 = 2.1
+        let expected = 100.0 * 0.40 * 0.75 * 0.07;
+        assert!((result[0].dollar_amount - expected).abs() < f64::EPSILON);
     }
 }

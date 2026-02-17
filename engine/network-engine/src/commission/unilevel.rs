@@ -1261,4 +1261,131 @@ mod tests {
             CalculationError::SourceNotInSnapshot(id) if id == test_uuid(1)
         ));
     }
+
+    // --- edge case tests ---
+
+    #[test]
+    fn empty_volume_returns_empty_earnings() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+
+        let structure = test_structure(test_rate_table());
+        let plan = test_plan(default_eligibility());
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &[]).unwrap();
+
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn root_as_source_no_upline() {
+        // Root generates volume. No parent to walk to. No earnings.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+
+        let structure = test_structure(test_rate_table());
+        let plan = test_plan(default_eligibility());
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(1),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn multiple_volume_sources_produce_separate_earnings() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 0).unwrap();
+
+        let structure = test_structure(test_rate_table());
+        let plan = test_plan(default_eligibility());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "silver".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(2),
+                cv_amount: 100.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(3),
+                cv_amount: 200.0,
+            },
+        ];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // root earns from both sources
+        assert_eq!(result.len(), 2);
+        let from_2: Vec<_> = result
+            .iter()
+            .filter(|e| e.source_id == test_uuid(2))
+            .collect();
+        let from_3: Vec<_> = result
+            .iter()
+            .filter(|e| e.source_id == test_uuid(3))
+            .collect();
+        assert_eq!(from_2.len(), 1);
+        assert_eq!(from_3.len(), 1);
+        assert!((from_2[0].cv_amount - 100.0).abs() < f64::EPSILON);
+        assert!((from_3[0].cv_amount - 200.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn ineligible_source_still_generates_walk() {
+        // Source doesn't need to be eligible. They generate volume,
+        // they don't earn from it.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
+
+        let structure = test_structure(test_rate_table());
+        let plan = test_plan(default_eligibility());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "silver".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(
+            test_uuid(2),
+            DistributorSnapshot {
+                personal_volume: 0.0, // ineligible, but still a valid source
+                ..eligible_snapshot()
+            },
+        );
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // root should still earn from the volume
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].earner_id, test_uuid(1));
+    }
 }

@@ -51,4 +51,4 @@ The reasoning behind the architecture is documented in [decisions/](decisions/IN
 
 ## Status
 
-Early development. Project structure, CI pipeline, and bounded context interfaces are in place. The commission engine and first context implementations are next.
+Early development. Project structure, CI pipeline, bounded context interfaces, and the compensation plan configuration pipeline are in place. The unilevel commission calculator is implemented with full test coverage. Next up: additional commission calculators and the Go integration boundary.

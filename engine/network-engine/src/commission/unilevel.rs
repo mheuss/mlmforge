@@ -280,7 +280,7 @@ mod tests {
     use crate::config::bonus::BonusConfig;
     use crate::config::commission::{CompressionConfig, CompressionMode, LevelCommissionConfig};
     use crate::config::eligibility::{ActiveLegTier, CommissionEligibility};
-    use crate::config::payout::{CapEnforcement, CapsConfig, PaymentMethod, PayoutConfig};
+    use crate::config::payout::{CapEnforcement, CapsConfig, PayoutConfig, PayoutMethod};
     use crate::config::period::{PeriodConfig, PeriodLength};
     use crate::config::placement::PlacementConfig;
     use crate::config::rank::{
@@ -417,7 +417,7 @@ mod tests {
                 currency: "USD".to_string(),
                 minimum_payout: 50.0,
                 allow_partial_payout: true,
-                payment_methods: vec![PaymentMethod {
+                payment_methods: vec![PayoutMethod {
                     method_type: "bank_transfer".to_string(),
                     fee: 2.50,
                 }],

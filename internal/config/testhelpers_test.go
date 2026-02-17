@@ -89,7 +89,7 @@ func minimalPlan() *CompensationPlan {
 		Payout: PayoutConfig{
 			BaseCurrency:  "USD",
 			MinimumAmount: 50,
-			Methods:       []PaymentMethod{{Type: "bank_transfer", Fee: 2.50}},
+			Methods:       []PayoutMethod{{Type: "bank_transfer", Fee: 2.50}},
 		},
 		Caps: CapsConfig{
 			CompanyPayoutCapPercent: 0.42,

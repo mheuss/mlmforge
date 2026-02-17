@@ -443,14 +443,14 @@ type PassUpConfig struct {
 
 // PayoutConfig controls payout processing and payment methods.
 type PayoutConfig struct {
-	BaseCurrency        string          `yaml:"base_currency" json:"base_currency"`
-	MinimumAmount       float64         `yaml:"minimum_amount" json:"minimum_amount"`
-	SplitPayoutsEnabled bool            `yaml:"split_payouts_enabled" json:"split_payouts_enabled"`
-	Methods             []PaymentMethod `yaml:"methods" json:"methods"`
+	BaseCurrency        string         `yaml:"base_currency" json:"base_currency"`
+	MinimumAmount       float64        `yaml:"minimum_amount" json:"minimum_amount"`
+	SplitPayoutsEnabled bool           `yaml:"split_payouts_enabled" json:"split_payouts_enabled"`
+	Methods             []PayoutMethod `yaml:"methods" json:"methods"`
 }
 
-// PaymentMethod represents a payment method available for commission payouts.
-type PaymentMethod struct {
+// PayoutMethod represents a payment method available for commission payouts.
+type PayoutMethod struct {
 	Type string  `yaml:"type" json:"type"`
 	Fee  float64 `yaml:"fee" json:"fee"`
 }

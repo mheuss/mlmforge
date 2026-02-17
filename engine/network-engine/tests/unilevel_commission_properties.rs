@@ -4,7 +4,7 @@ use network_engine::config::commission::{
     CompressionConfig, CompressionMode, LevelCommissionConfig,
 };
 use network_engine::config::eligibility::CommissionEligibility;
-use network_engine::config::payout::{CapEnforcement, CapsConfig, PaymentMethod, PayoutConfig};
+use network_engine::config::payout::{CapEnforcement, CapsConfig, PayoutConfig, PayoutMethod};
 use network_engine::config::period::{PeriodConfig, PeriodLength};
 use network_engine::config::placement::PlacementConfig;
 use network_engine::config::rank::{
@@ -103,7 +103,7 @@ fn build_test_plan(max_depth: u8) -> (CompensationPlan, UnilevelStructureConfig)
             currency: "USD".to_string(),
             minimum_payout: 50.0,
             allow_partial_payout: true,
-            payment_methods: vec![PaymentMethod {
+            payment_methods: vec![PayoutMethod {
                 method_type: "bank_transfer".to_string(),
                 fee: 2.50,
             }],

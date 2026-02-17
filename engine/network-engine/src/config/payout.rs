@@ -37,15 +37,15 @@ pub struct PayoutConfig {
 
     /// Available payment methods for commission disbursement.
     #[serde(rename = "methods")]
-    pub payment_methods: Vec<PaymentMethod>,
+    pub payment_methods: Vec<PayoutMethod>,
 }
 
-/// A payment method available for commission disbursement.
+/// A payout method available for commission disbursement.
 ///
 /// Each method has an associated processing fee. The fee can be a flat
 /// amount or a percentage, depending on company policy.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PaymentMethod {
+pub struct PayoutMethod {
     /// Payment method identifier.
     ///
     /// Common values: "bank_transfer", "check", "ewallet".
@@ -147,12 +147,12 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_payment_method() {
+    fn deserialize_payout_method() {
         let json = r#"{
             "type": "bank_transfer",
             "fee": 2.50
         }"#;
-        let method: PaymentMethod = serde_json::from_str(json).unwrap();
+        let method: PayoutMethod = serde_json::from_str(json).unwrap();
         assert_eq!(method.method_type, "bank_transfer");
         assert_eq!(method.fee, 2.50);
     }
@@ -209,11 +209,11 @@ mod tests {
             minimum_payout: 25.0,
             allow_partial_payout: false,
             payment_methods: vec![
-                PaymentMethod {
+                PayoutMethod {
                     method_type: "bank_transfer".to_string(),
                     fee: 1.50,
                 },
-                PaymentMethod {
+                PayoutMethod {
                     method_type: "ewallet".to_string(),
                     fee: 0.0,
                 },
@@ -249,8 +249,8 @@ mod tests {
     }
 
     #[test]
-    fn payment_method_serializes_type_as_json_key() {
-        let method = PaymentMethod {
+    fn payout_method_serializes_type_as_json_key() {
+        let method = PayoutMethod {
             method_type: "check".to_string(),
             fee: 3.00,
         };

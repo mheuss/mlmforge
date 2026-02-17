@@ -97,9 +97,9 @@ type ReportRequest struct {
 type ReportResult struct {
 	ReportID  string
 	Columns   []ColumnDefinition
-	Rows      [][]interface{}
+	Rows      [][]any
 	TotalRows int
-	Summary   map[string]interface{} // Aggregate totals if applicable
+	Summary   map[string]any // Aggregate totals if applicable
 }
 
 // ColumnDefinition describes a column in a report result.

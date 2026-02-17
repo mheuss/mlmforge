@@ -153,7 +153,7 @@ The `max_depth` from config is a hard ceiling on the walk itself. The `max_earni
 
 - **Source not in tree:** Return `CalculationError`. Data integrity problem.
 - **Source not in snapshot:** Return `CalculationError`. Data integrity problem.
-- **Upline node missing from snapshot:** Treat as ineligible. Log warning. The calculation continues.
+- **Upline node missing from snapshot:** Treat as ineligible silently. The calculation continues. Logging deferred until a logging framework is adopted.
 - **Rate not found in table:** No earning at that level. Walk continues. This is normal. Not every rank earns at every level.
 
 ## Architectural Decisions (ADR-017)
@@ -192,6 +192,15 @@ Compression affects level counting during the walk itself. It cannot be applied 
 
 ### Decision 6: Defensive on missing data, strict on source data
 
-Missing volume sources are errors (the caller gave us bad input). Missing upline nodes during a walk are treated as ineligible with a warning (the calculation continues when it safely can).
+Missing volume sources are errors (the caller gave us bad input). Missing upline nodes during a walk are treated as ineligible silently (the calculation continues when it safely can).
 
 **Why:** Volume sources are the explicit input to the calculation. If they're wrong, the results are meaningless. Upline nodes missing from snapshots are a data completeness issue that shouldn't halt an entire commission run. Treating them as ineligible is safe and conservative.
+
+## Planning Discoveries
+
+Details discovered during implementation planning that the design didn't cover:
+
+- **Rank ordinal lookup:** `SkipBelowRank` compression needs a `HashMap<String, u16>` built from `plan.ranks` to compare rank ordinals.
+- **Rate > 0.0 gating:** Zero-rate entries in the table produce no `CommissionEarning` entry. Prevents zero-dollar noise in results.
+- **Level counter overflow:** Uses `saturating_add(1)` on the `u8` level counter to prevent overflow in deep trees.
+- **Property-based tests:** Required by project policy. Verifies depth ceiling and formula correctness across random inputs.

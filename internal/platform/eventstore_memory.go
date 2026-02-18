@@ -60,7 +60,8 @@ func (m *MemoryEventStore) Append(_ context.Context, stream string, expectedVers
 }
 
 // ReadStream returns events from a single stream starting at fromVersion.
-func (m *MemoryEventStore) ReadStream(_ context.Context, stream string, fromVersion int64) ([]Event, error) {
+// Pass limit=0 to read all matching events.
+func (m *MemoryEventStore) ReadStream(_ context.Context, stream string, fromVersion int64, limit int64) ([]Event, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -74,13 +75,16 @@ func (m *MemoryEventStore) ReadStream(_ context.Context, stream string, fromVers
 	}
 	result := make([]Event, len(events)-startIdx)
 	copy(result, events[startIdx:])
+	if limit > 0 && int64(len(result)) > limit {
+		result = result[:limit]
+	}
 	return result, nil
 }
 
 // ReadCategory returns events across all streams matching a category prefix.
 // Category is the part before the first hyphen, matching PostgreSQL's
-// split_part(stream, '-', 1).
-func (m *MemoryEventStore) ReadCategory(_ context.Context, category string, afterPosition int64) ([]Event, error) {
+// split_part(stream, '-', 1). Pass limit=0 to read all matching events.
+func (m *MemoryEventStore) ReadCategory(_ context.Context, category string, afterPosition int64, limit int64) ([]Event, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -89,6 +93,9 @@ func (m *MemoryEventStore) ReadCategory(_ context.Context, category string, afte
 		if e.GlobalPosition > afterPosition && categoryOf(e.Stream) == category {
 			result = append(result, e)
 		}
+	}
+	if limit > 0 && int64(len(result)) > limit {
+		result = result[:limit]
 	}
 	return result, nil
 }

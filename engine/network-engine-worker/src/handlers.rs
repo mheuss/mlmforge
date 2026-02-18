@@ -9,6 +9,11 @@ use uuid::Uuid;
 use crate::protocol::{Request, Response};
 use crate::state::WorkerState;
 
+// Note: The Rust library also provides get_branch, count_downline, and count_branch
+// operations. These are intentionally not exposed through the NDJSON protocol — they
+// are server-side operations used for internal calculations (e.g., commission walks).
+// Expose through handlers only when a Go-side caller needs them.
+
 /// Serializable representation of a tree node for JSON responses.
 ///
 /// Mirrors the public fields of `Node` but is owned and serializable.

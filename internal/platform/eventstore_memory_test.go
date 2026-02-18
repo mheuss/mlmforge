@@ -24,7 +24,7 @@ func TestMemoryEventStore_AppendAndReadBack(t *testing.T) {
 	err := store.Append(ctx, "order-abc", 0, events)
 	require.NoError(t, err)
 
-	got, err := store.ReadStream(ctx, "order-abc", 1)
+	got, err := store.ReadStream(ctx, "order-abc", 1, 0)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 
@@ -49,7 +49,7 @@ func TestMemoryEventStore_AppendMultipleEvents(t *testing.T) {
 	err := store.Append(ctx, "order-abc", 0, events)
 	require.NoError(t, err)
 
-	got, err := store.ReadStream(ctx, "order-abc", 1)
+	got, err := store.ReadStream(ctx, "order-abc", 1, 0)
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 
@@ -71,7 +71,7 @@ func TestMemoryEventStore_AppendWithMetadata(t *testing.T) {
 	err := store.Append(ctx, "order-abc", 0, events)
 	require.NoError(t, err)
 
-	got, err := store.ReadStream(ctx, "order-abc", 1)
+	got, err := store.ReadStream(ctx, "order-abc", 1, 0)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"actor":"user-123"}`, string(got[0].Metadata))
 }
@@ -87,7 +87,7 @@ func TestMemoryEventStore_AppendNilMetadata(t *testing.T) {
 	err := store.Append(ctx, "order-abc", 0, events)
 	require.NoError(t, err)
 
-	got, err := store.ReadStream(ctx, "order-abc", 1)
+	got, err := store.ReadStream(ctx, "order-abc", 1, 0)
 	require.NoError(t, err)
 	assert.Nil(t, got[0].Metadata)
 }
@@ -126,7 +126,7 @@ func TestMemoryEventStore_ConcurrencyConflictDoesNotMutateStream(t *testing.T) {
 		{ID: "evt-2", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
 	})
 
-	got, err := store.ReadStream(ctx, "order-abc", 1)
+	got, err := store.ReadStream(ctx, "order-abc", 1, 0)
 	require.NoError(t, err)
 	assert.Len(t, got, 1, "stream should still have exactly 1 event")
 }
@@ -145,7 +145,7 @@ func TestMemoryEventStore_SkipVersionCheck(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	got, err := store.ReadStream(ctx, "order-abc", 1)
+	got, err := store.ReadStream(ctx, "order-abc", 1, 0)
 	require.NoError(t, err)
 	assert.Len(t, got, 2)
 }
@@ -159,7 +159,7 @@ func TestMemoryEventStore_NewStreamExpectedVersionZero(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	got, err := store.ReadStream(ctx, "order-new", 1)
+	got, err := store.ReadStream(ctx, "order-new", 1, 0)
 	require.NoError(t, err)
 	assert.Len(t, got, 1)
 }
@@ -178,7 +178,7 @@ func TestMemoryEventStore_CorrectExpectedVersionSucceeds(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	got, err := store.ReadStream(ctx, "order-abc", 1)
+	got, err := store.ReadStream(ctx, "order-abc", 1, 0)
 	require.NoError(t, err)
 	assert.Len(t, got, 2)
 }
@@ -187,7 +187,7 @@ func TestMemoryEventStore_ReadStreamEmpty(t *testing.T) {
 	store := NewMemoryEventStore()
 	ctx := context.Background()
 
-	got, err := store.ReadStream(ctx, "nonexistent-stream", 1)
+	got, err := store.ReadStream(ctx, "nonexistent-stream", 1, 0)
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }
@@ -203,7 +203,7 @@ func TestMemoryEventStore_ReadStreamFromVersion(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	got, err := store.ReadStream(ctx, "order-abc", 2)
+	got, err := store.ReadStream(ctx, "order-abc", 2, 0)
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 	assert.Equal(t, int64(2), got[0].Version)
@@ -224,7 +224,7 @@ func TestMemoryEventStore_ReadCategoryMatchesPrefix(t *testing.T) {
 		{ID: "evt-3", Type: "AutoshipCreated", Payload: json.RawMessage(`{}`)},
 	})
 
-	got, err := store.ReadCategory(ctx, "order", 0)
+	got, err := store.ReadCategory(ctx, "order", 0, 0)
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 	assert.Equal(t, "evt-1", got[0].ID)
@@ -242,7 +242,7 @@ func TestMemoryEventStore_ReadCategoryAfterPosition(t *testing.T) {
 		{ID: "evt-2", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
 	})
 
-	got, err := store.ReadCategory(ctx, "order", 1)
+	got, err := store.ReadCategory(ctx, "order", 1, 0)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, "evt-2", got[0].ID)
@@ -252,7 +252,7 @@ func TestMemoryEventStore_ReadCategoryEmpty(t *testing.T) {
 	store := NewMemoryEventStore()
 	ctx := context.Background()
 
-	got, err := store.ReadCategory(ctx, "nonexistent", 0)
+	got, err := store.ReadCategory(ctx, "nonexistent", 0, 0)
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }
@@ -271,7 +271,7 @@ func TestMemoryEventStore_ReadCategoryGlobalOrder(t *testing.T) {
 		{ID: "evt-3", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
 	})
 
-	got, err := store.ReadCategory(ctx, "order", 0)
+	got, err := store.ReadCategory(ctx, "order", 0, 0)
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 
@@ -291,7 +291,7 @@ func TestMemoryEventStore_ReadCategoryMultiHyphenStream(t *testing.T) {
 		{ID: "evt-2", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
 	})
 
-	got, err := store.ReadCategory(ctx, "commission", 0)
+	got, err := store.ReadCategory(ctx, "commission", 0, 0)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, "evt-1", got[0].ID)
@@ -306,7 +306,7 @@ func TestMemoryEventStore_ReadCategoryStreamWithoutHyphen(t *testing.T) {
 		{ID: "evt-1", Type: "SystemStarted", Payload: json.RawMessage(`{}`)},
 	})
 
-	got, err := store.ReadCategory(ctx, "singleton", 0)
+	got, err := store.ReadCategory(ctx, "singleton", 0, 0)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, "evt-1", got[0].ID)
@@ -324,12 +324,12 @@ func TestMemoryEventStore_VersionsAcrossStreamsIndependent(t *testing.T) {
 		{ID: "evt-3", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
 	})
 
-	abc, err := store.ReadStream(ctx, "order-abc", 1)
+	abc, err := store.ReadStream(ctx, "order-abc", 1, 0)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), abc[0].Version)
 	assert.Equal(t, int64(2), abc[1].Version)
 
-	def, err := store.ReadStream(ctx, "order-def", 1)
+	def, err := store.ReadStream(ctx, "order-def", 1, 0)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), def[0].Version)
 }

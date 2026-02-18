@@ -49,7 +49,7 @@ func TestPostgresEventStore_AppendAndReadBack(t *testing.T) {
 	err := store.Append(ctx, "order-abc", 0, events)
 	require.NoError(t, err)
 
-	got, err := store.ReadStream(ctx, "order-abc", 1)
+	got, err := store.ReadStream(ctx, "order-abc", 1, 0)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 
@@ -95,7 +95,7 @@ func TestPostgresEventStore_SkipVersionCheck(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	got, err := store.ReadStream(ctx, "order-abc", 1)
+	got, err := store.ReadStream(ctx, "order-abc", 1, 0)
 	require.NoError(t, err)
 	assert.Len(t, got, 2)
 }
@@ -114,7 +114,7 @@ func TestPostgresEventStore_ReadCategory(t *testing.T) {
 		{ID: "00000000-0000-0000-0000-000000000003", Type: "AutoshipCreated", Payload: json.RawMessage(`{}`)},
 	})
 
-	got, err := store.ReadCategory(ctx, "order", 0)
+	got, err := store.ReadCategory(ctx, "order", 0, 0)
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 }
@@ -129,7 +129,7 @@ func TestPostgresEventStore_ReadStreamFromVersion(t *testing.T) {
 		{ID: "00000000-0000-0000-0000-000000000003", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
 	})
 
-	got, err := store.ReadStream(ctx, "order-abc", 2)
+	got, err := store.ReadStream(ctx, "order-abc", 2, 0)
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 	assert.Equal(t, int64(2), got[0].Version)
@@ -148,7 +148,7 @@ func TestPostgresEventStore_MultipleEventsAtomicAppend(t *testing.T) {
 	err := store.Append(ctx, "order-abc", 0, events)
 	require.NoError(t, err)
 
-	got, err := store.ReadStream(ctx, "order-abc", 1)
+	got, err := store.ReadStream(ctx, "order-abc", 1, 0)
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 	assert.Equal(t, int64(1), got[0].Version)

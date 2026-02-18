@@ -138,6 +138,12 @@ type RankEvent struct {
 }
 
 // --- Volume types ---
+//
+// Monetary values use float64 throughout the system. IEEE 754 rounding errors
+// are acceptable during intermediate calculations (tree walks, commission rates).
+// Final rounding to currency precision happens at the payout stage (ADR-013).
+// If sub-cent precision becomes a requirement, migrate to a decimal type at
+// that boundary only.
 
 // VolumeSource carries order details for volume recording.
 type VolumeSource struct {
@@ -258,8 +264,8 @@ type HoldingTankPlacement struct {
 	Position    int
 }
 
-// StructureQualification shows whether a user qualifies for a structure.
-type StructureQualification struct {
+// PlacementQualification shows whether a user qualifies for placement in a structure.
+type PlacementQualification struct {
 	StructureID   string
 	StructureName string
 	Qualified     bool

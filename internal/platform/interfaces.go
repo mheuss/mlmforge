@@ -66,7 +66,8 @@ type EventStore interface {
 	// ReadStream returns events from a single stream, ordered by version,
 	// starting at fromVersion (inclusive). Returns an empty slice if the
 	// stream doesn't exist or has no events at or after fromVersion.
-	ReadStream(ctx context.Context, stream string, fromVersion int64) ([]Event, error)
+	// Pass limit=0 to read all matching events.
+	ReadStream(ctx context.Context, stream string, fromVersion int64, limit int64) ([]Event, error)
 
 	// ReadCategory returns events across all streams whose category matches
 	// the given prefix. Category is the part of the stream name before the
@@ -74,5 +75,6 @@ type EventStore interface {
 	// "order-def"). Returns events in global insertion order.
 	//
 	// Use afterPosition=0 to read from the beginning.
-	ReadCategory(ctx context.Context, category string, afterPosition int64) ([]Event, error)
+	// Pass limit=0 to read all matching events.
+	ReadCategory(ctx context.Context, category string, afterPosition int64, limit int64) ([]Event, error)
 }

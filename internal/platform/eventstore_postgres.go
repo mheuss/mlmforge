@@ -116,14 +116,30 @@ func (s *PostgresEventStore) Append(ctx context.Context, stream string, expected
 }
 
 // ReadStream returns events from a single stream starting at fromVersion.
-func (s *PostgresEventStore) ReadStream(ctx context.Context, stream string, fromVersion int64) ([]Event, error) {
-	rows, err := s.pool.Query(ctx,
-		`SELECT global_position, id, stream, type, version, payload, metadata, timestamp
-		 FROM events
-		 WHERE stream = $1 AND version >= $2
-		 ORDER BY version`,
-		stream, fromVersion,
+// Pass limit=0 to read all matching events.
+func (s *PostgresEventStore) ReadStream(ctx context.Context, stream string, fromVersion int64, limit int64) ([]Event, error) {
+	var (
+		rows pgx.Rows
+		err  error
 	)
+	if limit > 0 {
+		rows, err = s.pool.Query(ctx,
+			`SELECT global_position, id, stream, type, version, payload, metadata, timestamp
+			 FROM events
+			 WHERE stream = $1 AND version >= $2
+			 ORDER BY version
+			 LIMIT $3`,
+			stream, fromVersion, limit,
+		)
+	} else {
+		rows, err = s.pool.Query(ctx,
+			`SELECT global_position, id, stream, type, version, payload, metadata, timestamp
+			 FROM events
+			 WHERE stream = $1 AND version >= $2
+			 ORDER BY version`,
+			stream, fromVersion,
+		)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -133,14 +149,30 @@ func (s *PostgresEventStore) ReadStream(ctx context.Context, stream string, from
 }
 
 // ReadCategory returns events across streams matching a category prefix.
-func (s *PostgresEventStore) ReadCategory(ctx context.Context, category string, afterPosition int64) ([]Event, error) {
-	rows, err := s.pool.Query(ctx,
-		`SELECT global_position, id, stream, type, version, payload, metadata, timestamp
-		 FROM events
-		 WHERE split_part(stream, '-', 1) = $1 AND global_position > $2
-		 ORDER BY global_position`,
-		category, afterPosition,
+// Pass limit=0 to read all matching events.
+func (s *PostgresEventStore) ReadCategory(ctx context.Context, category string, afterPosition int64, limit int64) ([]Event, error) {
+	var (
+		rows pgx.Rows
+		err  error
 	)
+	if limit > 0 {
+		rows, err = s.pool.Query(ctx,
+			`SELECT global_position, id, stream, type, version, payload, metadata, timestamp
+			 FROM events
+			 WHERE split_part(stream, '-', 1) = $1 AND global_position > $2
+			 ORDER BY global_position
+			 LIMIT $3`,
+			category, afterPosition, limit,
+		)
+	} else {
+		rows, err = s.pool.Query(ctx,
+			`SELECT global_position, id, stream, type, version, payload, metadata, timestamp
+			 FROM events
+			 WHERE split_part(stream, '-', 1) = $1 AND global_position > $2
+			 ORDER BY global_position`,
+			category, afterPosition,
+		)
+	}
 	if err != nil {
 		return nil, err
 	}

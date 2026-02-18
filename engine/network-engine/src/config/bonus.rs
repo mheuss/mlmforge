@@ -425,14 +425,12 @@ pub struct PositionBonusConfig {
 // Board cycling (deferred)
 // ---------------------------------------------------------------------------
 
-/// Board cycling configuration.
+/// Board cycling configuration. Deferred from initial release.
 ///
-/// Deferred from initial release. Fields reserved for future activation.
+/// This is a placeholder struct. Fields will be added when board cycling
+/// is implemented.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BoardCyclingConfig {
-    /// Placeholder field. Board cycling is deferred from initial release.
-    pub _reserved: bool,
-}
+pub struct BoardCyclingConfig {}
 
 // ---------------------------------------------------------------------------
 // Pass-up
@@ -748,11 +746,8 @@ mod tests {
 
     #[test]
     fn deserialize_board_cycling() {
-        let json = r#"{
-            "_reserved": true
-        }"#;
-        let config: BoardCyclingConfig = serde_json::from_str(json).unwrap();
-        assert!(config._reserved);
+        let json = r#"{}"#;
+        let _config: BoardCyclingConfig = serde_json::from_str(json).unwrap();
     }
 
     #[test]

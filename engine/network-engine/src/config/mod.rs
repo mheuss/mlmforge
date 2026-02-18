@@ -7,7 +7,7 @@
 //!
 //! Every type and field is documented with its business meaning.
 //! This module IS the developer reference for the configuration
-//! surface. See the design document for additional narrative context:
+//! surface. Design document (untracked, relative to project root):
 //! `docs/plans/2026-02-12-compensation-plan-config-design.md`
 
 pub mod binary;

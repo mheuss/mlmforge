@@ -62,8 +62,8 @@ impl UnilevelTree {
     }
 
     /// Returns a reference to the node for a user ID.
-    /// Internal helper for tests and crate-internal callers.
-    #[allow(dead_code)]
+    /// Internal helper for tests.
+    #[cfg(test)]
     pub(crate) fn get_node(&self, user_id: Uuid) -> Result<&Node, TreeError> {
         let idx = self.resolve(user_id)?;
         Ok(&self.nodes[idx.0])
@@ -213,6 +213,10 @@ impl UnilevelTree {
 
         Ok(result)
     }
+
+    // NOTE: This BFS traversal pattern is duplicated in get_downline, count_downline,
+    // get_branch, count_branch, and count_subtree. Extract a shared bfs_walk helper
+    // when the second tree type is implemented. See BUGS_AND_TODOS.md backlog.
 
     /// Walks downward from a node, returning descendants in BFS order.
     ///

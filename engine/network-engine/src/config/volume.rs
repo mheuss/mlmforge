@@ -33,6 +33,11 @@ pub struct VolumeConfig {
 }
 
 /// What triggered the volume event.
+///
+/// Not yet referenced by production code. Used in tests to validate
+/// deserialization. Will be referenced by volume event types when the
+/// commission engine processes real orders.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VolumeType {
@@ -51,6 +56,11 @@ pub enum VolumeType {
 /// Determined by whether a customer ID is present on the order.
 /// Affects rank qualification (plans can require minimum retail volume)
 /// and regulatory compliance (retail-to-personal ratio).
+///
+/// Not yet referenced by production code. Used in tests to validate
+/// deserialization. Will be referenced by volume event types when the
+/// commission engine processes real orders.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PurchaserType {

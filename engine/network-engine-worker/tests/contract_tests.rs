@@ -1,6 +1,6 @@
-use std::io::{BufRead, BufReader, Write};
+mod common;
+
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
 
 use serde::Deserialize;
 
@@ -52,27 +52,6 @@ fn load_fixtures() -> Vec<(String, ContractFixture)> {
 
     fixtures.sort_by(|a, b| a.0.cmp(&b.0));
     fixtures
-}
-
-fn spawn_worker() -> std::process::Child {
-    Command::new(env!("CARGO_BIN_EXE_network-engine-worker"))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("failed to spawn worker")
-}
-
-fn send_receive(child: &mut std::process::Child, request: &str) -> String {
-    let stdin = child.stdin.as_mut().unwrap();
-    writeln!(stdin, "{}", request).unwrap();
-    stdin.flush().unwrap();
-
-    let stdout = child.stdout.as_mut().unwrap();
-    let mut reader = BufReader::new(stdout);
-    let mut line = String::new();
-    reader.read_line(&mut line).unwrap();
-    line.trim().to_string()
 }
 
 /// Asserts that the actual response matches the expected response from the fixture.
@@ -138,7 +117,7 @@ fn contract_fixtures_match_worker_behavior() {
 
     for (name, fixture) in &fixtures {
         // Each fixture gets a fresh worker to avoid state leaking between tests.
-        let mut worker = spawn_worker();
+        let mut worker = common::spawn_worker();
 
         let request_line = if let Some(raw) = &fixture.request_raw {
             raw.clone()
@@ -148,7 +127,7 @@ fn contract_fixtures_match_worker_behavior() {
             panic!("[{}] fixture has neither 'request' nor 'request_raw'", name);
         };
 
-        let actual = send_receive(&mut worker, &request_line);
+        let actual = common::send_receive(&mut worker, &request_line);
         assert_response_matches(name, &fixture.expected_response, &actual);
 
         drop(worker.stdin.take());

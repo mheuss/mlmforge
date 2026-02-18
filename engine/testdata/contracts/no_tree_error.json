@@ -1,0 +1,17 @@
+{
+    "description": "get_children without a tree returns NO_TREE error",
+    "request": {
+        "id": "err-1",
+        "op": "get_children",
+        "params": {
+            "user_id": "00000000-0000-0000-0000-000000000001"
+        }
+    },
+    "expected_response": {
+        "id": "err-1",
+        "ok": false,
+        "error": {
+            "code": "NO_TREE"
+        }
+    }
+}

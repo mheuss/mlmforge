@@ -1,51 +1,66 @@
-use std::io::{BufRead, BufReader, Write};
-use std::process::{Command, Stdio};
+mod common;
 
-fn spawn_worker() -> std::process::Child {
-    Command::new(env!("CARGO_BIN_EXE_network-engine-worker"))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("failed to spawn worker")
-}
+const ROOT: &str = "00000000-0000-0000-0000-000000000001";
+const CHILD: &str = "00000000-0000-0000-0000-000000000002";
+const GRANDCHILD: &str = "00000000-0000-0000-0000-000000000003";
 
-fn send_receive(child: &mut std::process::Child, request: &str) -> String {
-    let stdin = child.stdin.as_mut().unwrap();
-    writeln!(stdin, "{}", request).unwrap();
-    stdin.flush().unwrap();
-
-    let stdout = child.stdout.as_mut().unwrap();
-    let mut reader = BufReader::new(stdout);
-    let mut line = String::new();
-    reader.read_line(&mut line).unwrap();
-    line.trim().to_string()
+/// Builds a 3-node chain: root -> child -> grandchild.
+fn build_three_node_chain(child: &mut std::process::Child) {
+    common::send_receive(
+        child,
+        &format!(
+            r#"{{"id":"setup-1","op":"add_root","params":{{"user_id":"{}","enrolled_at":100}}}}"#,
+            ROOT
+        ),
+    );
+    common::send_receive(
+        child,
+        &format!(
+            r#"{{"id":"setup-2","op":"add_node","params":{{"user_id":"{}","parent_id":"{}","enrolled_at":200}}}}"#,
+            CHILD, ROOT
+        ),
+    );
+    common::send_receive(
+        child,
+        &format!(
+            r#"{{"id":"setup-3","op":"add_node","params":{{"user_id":"{}","parent_id":"{}","enrolled_at":300}}}}"#,
+            GRANDCHILD, CHILD
+        ),
+    );
 }
 
 #[test]
 fn ping_pong() {
-    let mut child = spawn_worker();
-    let response = send_receive(&mut child, r#"{"id":"1","op":"ping"}"#);
+    let mut child = common::spawn_worker();
+    let response = common::send_receive(&mut child, r#"{"id":"1","op":"ping"}"#);
     assert!(response.contains(r#""ok":true"#));
     assert!(response.contains(r#""pong""#));
+
+    let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
+    assert_eq!(parsed["id"], "1");
+
     drop(child.stdin.take());
     child.wait().unwrap();
 }
 
 #[test]
 fn unknown_op_returns_error() {
-    let mut child = spawn_worker();
-    let response = send_receive(&mut child, r#"{"id":"2","op":"bogus"}"#);
+    let mut child = common::spawn_worker();
+    let response = common::send_receive(&mut child, r#"{"id":"2","op":"bogus"}"#);
     assert!(response.contains(r#""ok":false"#));
     assert!(response.contains("UNKNOWN_OP"));
+
+    let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
+    assert_eq!(parsed["id"], "2");
+
     drop(child.stdin.take());
     child.wait().unwrap();
 }
 
 #[test]
 fn load_plan_with_invalid_params_returns_error() {
-    let mut child = spawn_worker();
-    let response = send_receive(
+    let mut child = common::spawn_worker();
+    let response = common::send_receive(
         &mut child,
         r#"{"id":"3","op":"load_plan","params":{"not":"a plan"}}"#,
     );
@@ -57,8 +72,8 @@ fn load_plan_with_invalid_params_returns_error() {
 
 #[test]
 fn invalid_json_returns_error() {
-    let mut child = spawn_worker();
-    let response = send_receive(&mut child, "not json at all");
+    let mut child = common::spawn_worker();
+    let response = common::send_receive(&mut child, "not json at all");
     assert!(response.contains(r#""ok":false"#));
     assert!(response.contains("INVALID_REQUEST"));
     drop(child.stdin.take());
@@ -67,21 +82,27 @@ fn invalid_json_returns_error() {
 
 #[test]
 fn add_root_and_node() {
-    let mut child = spawn_worker();
+    let mut child = common::spawn_worker();
 
-    let resp = send_receive(
+    let resp = common::send_receive(
         &mut child,
         r#"{"id":"1","op":"add_root","params":{"user_id":"00000000-0000-0000-0000-000000000001","enrolled_at":100}}"#,
     );
     assert!(resp.contains(r#""ok":true"#));
     assert!(resp.contains(r#""added":true"#));
 
-    let resp = send_receive(
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(parsed["id"], "1");
+
+    let resp = common::send_receive(
         &mut child,
         r#"{"id":"2","op":"add_node","params":{"user_id":"00000000-0000-0000-0000-000000000002","parent_id":"00000000-0000-0000-0000-000000000001","enrolled_at":200}}"#,
     );
     assert!(resp.contains(r#""ok":true"#));
     assert!(resp.contains(r#""added":true"#));
+
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(parsed["id"], "2");
 
     drop(child.stdin.take());
     child.wait().unwrap();
@@ -89,33 +110,37 @@ fn add_root_and_node() {
 
 #[test]
 fn add_node_without_tree_returns_error() {
-    let mut child = spawn_worker();
-    let resp = send_receive(
+    let mut child = common::spawn_worker();
+    let resp = common::send_receive(
         &mut child,
-        r#"{"id":"1","op":"add_node","params":{"user_id":"00000000-0000-0000-0000-000000000002","parent_id":"00000000-0000-0000-0000-000000000001"}}"#,
+        r#"{"id":"1","op":"add_node","params":{"user_id":"00000000-0000-0000-0000-000000000002","parent_id":"00000000-0000-0000-0000-000000000001","enrolled_at":200}}"#,
     );
     assert!(resp.contains(r#""ok":false"#));
     assert!(resp.contains("NO_TREE"));
+
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(parsed["id"], "1");
+
     drop(child.stdin.take());
     child.wait().unwrap();
 }
 
 #[test]
 fn remove_node_success() {
-    let mut child = spawn_worker();
+    let mut child = common::spawn_worker();
 
     // Build a small tree: root -> child
-    send_receive(
+    common::send_receive(
         &mut child,
         r#"{"id":"1","op":"add_root","params":{"user_id":"00000000-0000-0000-0000-000000000001","enrolled_at":100}}"#,
     );
-    send_receive(
+    common::send_receive(
         &mut child,
         r#"{"id":"2","op":"add_node","params":{"user_id":"00000000-0000-0000-0000-000000000002","parent_id":"00000000-0000-0000-0000-000000000001","enrolled_at":200}}"#,
     );
 
     // Remove the leaf node
-    let resp = send_receive(
+    let resp = common::send_receive(
         &mut child,
         r#"{"id":"3","op":"remove_node","params":{"user_id":"00000000-0000-0000-0000-000000000002"}}"#,
     );
@@ -128,8 +153,8 @@ fn remove_node_success() {
 
 #[test]
 fn remove_node_without_tree_returns_error() {
-    let mut child = spawn_worker();
-    let resp = send_receive(
+    let mut child = common::spawn_worker();
+    let resp = common::send_receive(
         &mut child,
         r#"{"id":"1","op":"remove_node","params":{"user_id":"00000000-0000-0000-0000-000000000001"}}"#,
     );
@@ -141,8 +166,8 @@ fn remove_node_without_tree_returns_error() {
 
 #[test]
 fn add_root_missing_user_id_returns_error() {
-    let mut child = spawn_worker();
-    let resp = send_receive(&mut child, r#"{"id":"1","op":"add_root","params":{}}"#);
+    let mut child = common::spawn_worker();
+    let resp = common::send_receive(&mut child, r#"{"id":"1","op":"add_root","params":{}}"#);
     assert!(resp.contains(r#""ok":false"#));
     assert!(resp.contains("MISSING_PARAM"));
     drop(child.stdin.take());
@@ -151,17 +176,17 @@ fn add_root_missing_user_id_returns_error() {
 
 #[test]
 fn add_node_invalid_uuid_returns_error() {
-    let mut child = spawn_worker();
+    let mut child = common::spawn_worker();
 
     // First add a root so the tree exists
-    send_receive(
+    common::send_receive(
         &mut child,
         r#"{"id":"1","op":"add_root","params":{"user_id":"00000000-0000-0000-0000-000000000001","enrolled_at":100}}"#,
     );
 
-    let resp = send_receive(
+    let resp = common::send_receive(
         &mut child,
-        r#"{"id":"2","op":"add_node","params":{"user_id":"not-a-uuid","parent_id":"00000000-0000-0000-0000-000000000001"}}"#,
+        r#"{"id":"2","op":"add_node","params":{"user_id":"not-a-uuid","parent_id":"00000000-0000-0000-0000-000000000001","enrolled_at":200}}"#,
     );
     assert!(resp.contains(r#""ok":false"#));
     assert!(resp.contains("INVALID_UUID"));
@@ -174,41 +199,12 @@ fn add_node_invalid_uuid_returns_error() {
 // All query tests share the same 3-node chain: root(001) -> child(002) -> grandchild(003).
 // Each test spawns a fresh worker to avoid shared state.
 
-const ROOT: &str = "00000000-0000-0000-0000-000000000001";
-const CHILD: &str = "00000000-0000-0000-0000-000000000002";
-const GRANDCHILD: &str = "00000000-0000-0000-0000-000000000003";
-
-/// Builds a 3-node chain: root -> child -> grandchild.
-fn build_three_node_chain(child: &mut std::process::Child) {
-    send_receive(
-        child,
-        &format!(
-            r#"{{"id":"setup-1","op":"add_root","params":{{"user_id":"{}","enrolled_at":100}}}}"#,
-            ROOT
-        ),
-    );
-    send_receive(
-        child,
-        &format!(
-            r#"{{"id":"setup-2","op":"add_node","params":{{"user_id":"{}","parent_id":"{}","enrolled_at":200}}}}"#,
-            CHILD, ROOT
-        ),
-    );
-    send_receive(
-        child,
-        &format!(
-            r#"{{"id":"setup-3","op":"add_node","params":{{"user_id":"{}","parent_id":"{}","enrolled_at":300}}}}"#,
-            GRANDCHILD, CHILD
-        ),
-    );
-}
-
 #[test]
 fn get_parent_of_grandchild_returns_child() {
-    let mut worker = spawn_worker();
+    let mut worker = common::spawn_worker();
     build_three_node_chain(&mut worker);
 
-    let resp = send_receive(
+    let resp = common::send_receive(
         &mut worker,
         &format!(
             r#"{{"id":"q1","op":"get_parent","params":{{"user_id":"{}"}}}}"#,
@@ -225,10 +221,10 @@ fn get_parent_of_grandchild_returns_child() {
 
 #[test]
 fn get_parent_of_root_returns_null() {
-    let mut worker = spawn_worker();
+    let mut worker = common::spawn_worker();
     build_three_node_chain(&mut worker);
 
-    let resp = send_receive(
+    let resp = common::send_receive(
         &mut worker,
         &format!(
             r#"{{"id":"q2","op":"get_parent","params":{{"user_id":"{}"}}}}"#,
@@ -244,10 +240,10 @@ fn get_parent_of_root_returns_null() {
 
 #[test]
 fn get_children_of_root_returns_child() {
-    let mut worker = spawn_worker();
+    let mut worker = common::spawn_worker();
     build_three_node_chain(&mut worker);
 
-    let resp = send_receive(
+    let resp = common::send_receive(
         &mut worker,
         &format!(
             r#"{{"id":"q3","op":"get_children","params":{{"user_id":"{}"}}}}"#,
@@ -265,10 +261,10 @@ fn get_children_of_root_returns_child() {
 
 #[test]
 fn get_upline_of_grandchild_returns_chain_to_root() {
-    let mut worker = spawn_worker();
+    let mut worker = common::spawn_worker();
     build_three_node_chain(&mut worker);
 
-    let resp = send_receive(
+    let resp = common::send_receive(
         &mut worker,
         &format!(
             r#"{{"id":"q4","op":"get_upline","params":{{"user_id":"{}","depth":0}}}}"#,
@@ -293,10 +289,10 @@ fn get_upline_of_grandchild_returns_chain_to_root() {
 
 #[test]
 fn get_downline_of_root_with_depth_1_returns_child_only() {
-    let mut worker = spawn_worker();
+    let mut worker = common::spawn_worker();
     build_three_node_chain(&mut worker);
 
-    let resp = send_receive(
+    let resp = common::send_receive(
         &mut worker,
         &format!(
             r#"{{"id":"q5","op":"get_downline","params":{{"user_id":"{}","depth":1}}}}"#,
@@ -316,10 +312,10 @@ fn get_downline_of_root_with_depth_1_returns_child_only() {
 
 #[test]
 fn get_position_of_child_returns_correct_metadata() {
-    let mut worker = spawn_worker();
+    let mut worker = common::spawn_worker();
     build_three_node_chain(&mut worker);
 
-    let resp = send_receive(
+    let resp = common::send_receive(
         &mut worker,
         &format!(
             r#"{{"id":"q6","op":"get_position","params":{{"user_id":"{}"}}}}"#,
@@ -343,10 +339,10 @@ fn get_position_of_child_returns_correct_metadata() {
 
 #[test]
 fn is_descendant_of_grandchild_under_root_returns_true() {
-    let mut worker = spawn_worker();
+    let mut worker = common::spawn_worker();
     build_three_node_chain(&mut worker);
 
-    let resp = send_receive(
+    let resp = common::send_receive(
         &mut worker,
         &format!(
             r#"{{"id":"q7","op":"is_descendant_of","params":{{"user_id":"{}","ancestor_id":"{}"}}}}"#,
@@ -362,10 +358,10 @@ fn is_descendant_of_grandchild_under_root_returns_true() {
 
 #[test]
 fn is_descendant_of_root_under_grandchild_returns_false() {
-    let mut worker = spawn_worker();
+    let mut worker = common::spawn_worker();
     build_three_node_chain(&mut worker);
 
-    let resp = send_receive(
+    let resp = common::send_receive(
         &mut worker,
         &format!(
             r#"{{"id":"q8","op":"is_descendant_of","params":{{"user_id":"{}","ancestor_id":"{}"}}}}"#,
@@ -381,7 +377,7 @@ fn is_descendant_of_root_under_grandchild_returns_false() {
 
 #[test]
 fn query_without_tree_returns_no_tree_error() {
-    let mut worker = spawn_worker();
+    let mut worker = common::spawn_worker();
 
     // Try all query ops without initializing a tree
     for op in [
@@ -397,7 +393,7 @@ fn query_without_tree_returns_no_tree_error() {
         } else {
             format!(r#"{{"user_id":"{}"}}"#, ROOT)
         };
-        let resp = send_receive(
+        let resp = common::send_receive(
             &mut worker,
             &format!(r#"{{"id":"err-{}","op":"{}","params":{}}}"#, op, op, params),
         );
@@ -525,13 +521,13 @@ fn load_test_plan(worker: &mut std::process::Child) {
         r#"{{"id":"load-plan","op":"load_plan","params":{}}}"#,
         minified
     );
-    let resp = send_receive(worker, &request);
+    let resp = common::send_receive(worker, &request);
     assert!(resp.contains(r#""ok":true"#), "load_plan failed: {}", resp);
 }
 
 #[test]
 fn calculate_unilevel_three_node_chain() {
-    let mut worker = spawn_worker();
+    let mut worker = common::spawn_worker();
 
     // 1. Load plan
     load_test_plan(&mut worker);
@@ -557,7 +553,7 @@ fn calculate_unilevel_three_node_chain() {
         r#"{{"id":"calc-1","op":"calculate_unilevel","params":{}}}"#,
         params
     );
-    let resp = send_receive(&mut worker, &request);
+    let resp = common::send_receive(&mut worker, &request);
 
     let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
     assert!(
@@ -565,6 +561,7 @@ fn calculate_unilevel_three_node_chain() {
         "calculate_unilevel failed: {}",
         resp
     );
+    assert_eq!(parsed["id"], "calc-1");
 
     let earnings = parsed["result"].as_array().unwrap();
     assert_eq!(earnings.len(), 2, "expected 2 earnings, got: {}", resp);
@@ -603,7 +600,7 @@ fn calculate_unilevel_three_node_chain() {
 
 #[test]
 fn calculate_unilevel_without_plan_returns_no_plan() {
-    let mut worker = spawn_worker();
+    let mut worker = common::spawn_worker();
 
     // Build a tree but don't load a plan
     build_three_node_chain(&mut worker);
@@ -613,7 +610,7 @@ fn calculate_unilevel_without_plan_returns_no_plan() {
         r#"{{"id":"calc-err","op":"calculate_unilevel","params":{}}}"#,
         params
     );
-    let resp = send_receive(&mut worker, &request);
+    let resp = common::send_receive(&mut worker, &request);
     assert!(resp.contains(r#""ok":false"#));
     assert!(resp.contains("NO_PLAN"), "expected NO_PLAN, got: {}", resp);
 
@@ -623,7 +620,7 @@ fn calculate_unilevel_without_plan_returns_no_plan() {
 
 #[test]
 fn calculate_unilevel_without_tree_returns_no_tree() {
-    let mut worker = spawn_worker();
+    let mut worker = common::spawn_worker();
 
     // Load a plan but don't build a tree
     load_test_plan(&mut worker);
@@ -633,7 +630,7 @@ fn calculate_unilevel_without_tree_returns_no_tree() {
         r#"{{"id":"calc-err","op":"calculate_unilevel","params":{}}}"#,
         params
     );
-    let resp = send_receive(&mut worker, &request);
+    let resp = common::send_receive(&mut worker, &request);
     assert!(resp.contains(r#""ok":false"#));
     assert!(resp.contains("NO_TREE"), "expected NO_TREE, got: {}", resp);
 
@@ -643,7 +640,7 @@ fn calculate_unilevel_without_tree_returns_no_tree() {
 
 #[test]
 fn calculate_unilevel_unknown_structure_returns_not_found() {
-    let mut worker = spawn_worker();
+    let mut worker = common::spawn_worker();
 
     load_test_plan(&mut worker);
     build_three_node_chain(&mut worker);
@@ -653,7 +650,7 @@ fn calculate_unilevel_unknown_structure_returns_not_found() {
         r#"{{"id":"calc-err","op":"calculate_unilevel","params":{}}}"#,
         params
     );
-    let resp = send_receive(&mut worker, &request);
+    let resp = common::send_receive(&mut worker, &request);
     assert!(resp.contains(r#""ok":false"#));
     assert!(
         resp.contains("STRUCTURE_NOT_FOUND"),
@@ -667,13 +664,13 @@ fn calculate_unilevel_unknown_structure_returns_not_found() {
 
 #[test]
 fn calculate_unilevel_invalid_params_returns_error() {
-    let mut worker = spawn_worker();
+    let mut worker = common::spawn_worker();
 
     load_test_plan(&mut worker);
     build_three_node_chain(&mut worker);
 
     let request = r#"{"id":"calc-err","op":"calculate_unilevel","params":{"bad":"data"}}"#;
-    let resp = send_receive(&mut worker, request);
+    let resp = common::send_receive(&mut worker, request);
     assert!(resp.contains(r#""ok":false"#));
     assert!(
         resp.contains("INVALID_PARAMS"),
@@ -689,12 +686,12 @@ fn calculate_unilevel_invalid_params_returns_error() {
 /// processing subsequent valid requests.
 #[test]
 fn malformed_json_does_not_crash_worker() {
-    let mut child = spawn_worker();
-    let resp = send_receive(&mut child, "not json at all");
+    let mut child = common::spawn_worker();
+    let resp = common::send_receive(&mut child, "not json at all");
     assert!(resp.contains(r#""ok":false"#));
     assert!(resp.contains("INVALID_REQUEST"));
     // Worker should still be alive — send a follow-up ping
-    let resp2 = send_receive(&mut child, r#"{"id":"2","op":"ping"}"#);
+    let resp2 = common::send_receive(&mut child, r#"{"id":"2","op":"ping"}"#);
     assert!(resp2.contains(r#""ok":true"#));
     assert!(resp2.contains(r#""pong""#));
     drop(child.stdin.take());
@@ -703,7 +700,7 @@ fn malformed_json_does_not_crash_worker() {
 
 #[test]
 fn calculate_unilevel_empty_volume_returns_empty_earnings() {
-    let mut worker = spawn_worker();
+    let mut worker = common::spawn_worker();
 
     load_test_plan(&mut worker);
     build_three_node_chain(&mut worker);
@@ -713,7 +710,7 @@ fn calculate_unilevel_empty_volume_returns_empty_earnings() {
         r#"{{"id":"calc-empty","op":"calculate_unilevel","params":{}}}"#,
         params
     );
-    let resp = send_receive(&mut worker, &request);
+    let resp = common::send_receive(&mut worker, &request);
 
     let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
     assert!(parsed["ok"].as_bool().unwrap());

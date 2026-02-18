@@ -61,7 +61,7 @@ pub fn calculate_unilevel(
 
     for source in volume {
         // Validate cv_amount is non-negative and finite
-        if source.cv_amount < 0.0 || source.cv_amount.is_nan() {
+        if !source.cv_amount.is_finite() || source.cv_amount < 0.0 {
             return Err(CalculationError::InvalidCvAmount(
                 source.source_id,
                 source.cv_amount,
@@ -206,6 +206,9 @@ fn count_active_legs(
 ///
 /// Returns `Some(depth)` if a tier limits the distributor, or `None`
 /// if no tier restriction applies (use config max_depth as ceiling).
+///
+/// Tiers must be sorted ascending by `min_active_legs`. The caller (Go validation
+/// pipeline) enforces this via business rules requiring a base tier with min_active_legs=0.
 fn determine_max_depth(active_leg_count: u16, tiers: &[ActiveLegTier]) -> Option<u8> {
     if tiers.is_empty() {
         return None;
@@ -218,12 +221,7 @@ fn determine_max_depth(active_leg_count: u16, tiers: &[ActiveLegTier]) -> Option
             return if tier.max_commission_depth == 0 {
                 None // unlimited
             } else {
-                debug_assert!(
-                    tier.max_commission_depth <= u8::MAX as u16,
-                    "max_commission_depth {} exceeds u8 range",
-                    tier.max_commission_depth
-                );
-                Some(tier.max_commission_depth as u8)
+                Some(u8::try_from(tier.max_commission_depth).unwrap_or(u8::MAX))
             };
         }
     }
@@ -1305,6 +1303,54 @@ mod tests {
         let volume = vec![VolumeSource {
             source_id: test_uuid(1),
             cv_amount: f64::NAN,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume);
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            CalculationError::InvalidCvAmount(id, _) if id == test_uuid(1)
+        ));
+    }
+
+    #[test]
+    fn error_positive_infinity_cv_amount() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+
+        let structure = test_structure(test_rate_table());
+        let plan = test_plan(default_eligibility());
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(1),
+            cv_amount: f64::INFINITY,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume);
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            CalculationError::InvalidCvAmount(id, _) if id == test_uuid(1)
+        ));
+    }
+
+    #[test]
+    fn error_negative_infinity_cv_amount() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+
+        let structure = test_structure(test_rate_table());
+        let plan = test_plan(default_eligibility());
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(1),
+            cv_amount: f64::NEG_INFINITY,
         }];
 
         let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume);

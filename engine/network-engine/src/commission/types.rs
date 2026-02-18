@@ -66,7 +66,7 @@ pub struct CommissionEarning {
 /// These indicate data integrity problems in the caller's input.
 /// Recoverable issues (missing upline snapshots) are handled
 /// defensively within the calculation.
-#[derive(Debug, Error)]
+#[derive(Debug, PartialEq, Error)]
 pub enum CalculationError {
     /// A volume source references a distributor not in the tree.
     #[error("volume source {0} not found in tree")]
@@ -76,7 +76,7 @@ pub enum CalculationError {
     #[error("volume source {0} not found in snapshot data")]
     SourceNotInSnapshot(Uuid),
 
-    /// A volume source has a negative or NaN cv_amount.
+    /// A volume source has a non-finite or negative cv_amount.
     #[error("volume source {0} has invalid cv_amount: {1}")]
     InvalidCvAmount(Uuid, f64),
 }

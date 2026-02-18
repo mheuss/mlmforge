@@ -10,7 +10,7 @@ use uuid::Uuid;
 /// children list) triggers a panic via `expect`. This is deliberate:
 /// corruption means every subsequent operation is suspect, so
 /// fail-fast is the safest response.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, PartialEq, thiserror::Error)]
 pub enum TreeError {
     #[error("user {0} not found in tree")]
     UserNotFound(Uuid),

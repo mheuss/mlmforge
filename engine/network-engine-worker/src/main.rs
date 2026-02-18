@@ -5,14 +5,13 @@ mod state;
 use std::io::{self, BufRead, Write};
 use std::panic;
 
-use network_engine::config::CompensationPlan;
 use protocol::{Request, Response};
 use state::WorkerState;
 
 fn dispatch(state: &mut WorkerState, request: &Request) -> Response {
     match request.op.as_str() {
         "ping" => Response::success(request.id.clone(), serde_json::json!("pong")),
-        "load_plan" => handle_load_plan(state, request),
+        "load_plan" => handlers::handle_load_plan(state, request),
         // Tree mutations
         "add_root" => handlers::handle_add_root(state, request),
         "add_node" => handlers::handle_add_node(state, request),
@@ -30,20 +29,6 @@ fn dispatch(state: &mut WorkerState, request: &Request) -> Response {
             request.id.clone(),
             "UNKNOWN_OP",
             format!("unknown operation: {}", request.op),
-        ),
-    }
-}
-
-fn handle_load_plan(state: &mut WorkerState, request: &Request) -> Response {
-    match serde_json::from_str::<CompensationPlan>(request.params.get()) {
-        Ok(plan) => {
-            state.plan = Some(plan);
-            Response::success(request.id.clone(), serde_json::json!({"loaded": true}))
-        }
-        Err(e) => Response::error(
-            request.id.clone(),
-            "INVALID_PLAN",
-            format!("failed to deserialize plan: {}", e),
         ),
     }
 }

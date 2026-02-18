@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use network_engine::commission::{DistributorSnapshot, VolumeSource, calculate_unilevel};
-use network_engine::config::StructureConfig;
+use network_engine::config::{CompensationPlan, StructureConfig};
 use network_engine::tree::node::Node;
 use network_engine::tree::unilevel::UnilevelTree;
 use uuid::Uuid;
@@ -24,6 +24,7 @@ use crate::state::WorkerState;
 struct NodeResponse {
     user_id: String,
     depth: u32,
+    /// Unix timestamp in seconds when the user was enrolled.
     enrolled_at: i64,
 }
 
@@ -37,18 +38,43 @@ impl NodeResponse {
     }
 }
 
+// --- Plan handler ---
+
+pub fn handle_load_plan(state: &mut WorkerState, request: &Request) -> Response {
+    match serde_json::from_str::<CompensationPlan>(request.params.get()) {
+        Ok(plan) => {
+            state.plan = Some(plan);
+            Response::success(request.id.clone(), serde_json::json!({"loaded": true}))
+        }
+        Err(e) => Response::error(
+            request.id.clone(),
+            "INVALID_PLAN",
+            format!("failed to deserialize plan: {}", e),
+        ),
+    }
+}
+
 // --- Tree mutation handlers ---
 
 pub fn handle_add_root(state: &mut WorkerState, request: &Request) -> Response {
-    let params = parse_params(request);
-    let user_id = match parse_uuid(&params, "user_id") {
-        Ok(id) => id,
-        Err(resp) => return resp.with_id(&request.id),
+    let params = match parse_params(request) {
+        Ok(p) => p,
+        Err(resp) => return resp,
     };
-    let enrolled_at = params
-        .get("enrolled_at")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(0);
+    let user_id = match parse_uuid(&params, "user_id", &request.id) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    let enrolled_at = match params.get("enrolled_at").and_then(|v| v.as_i64()) {
+        Some(ts) => ts,
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "MISSING_PARAM",
+                "missing or invalid enrolled_at (must be integer)",
+            );
+        }
+    };
 
     let tree = state.unilevel_tree.get_or_insert_with(UnilevelTree::new);
     match tree.add_root(user_id, enrolled_at) {
@@ -58,19 +84,28 @@ pub fn handle_add_root(state: &mut WorkerState, request: &Request) -> Response {
 }
 
 pub fn handle_add_node(state: &mut WorkerState, request: &Request) -> Response {
-    let params = parse_params(request);
-    let user_id = match parse_uuid(&params, "user_id") {
-        Ok(id) => id,
-        Err(resp) => return resp.with_id(&request.id),
+    let params = match parse_params(request) {
+        Ok(p) => p,
+        Err(resp) => return resp,
     };
-    let parent_id = match parse_uuid(&params, "parent_id") {
+    let user_id = match parse_uuid(&params, "user_id", &request.id) {
         Ok(id) => id,
-        Err(resp) => return resp.with_id(&request.id),
+        Err(resp) => return resp,
     };
-    let enrolled_at = params
-        .get("enrolled_at")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(0);
+    let parent_id = match parse_uuid(&params, "parent_id", &request.id) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    let enrolled_at = match params.get("enrolled_at").and_then(|v| v.as_i64()) {
+        Some(ts) => ts,
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "MISSING_PARAM",
+                "missing or invalid enrolled_at (must be integer)",
+            );
+        }
+    };
 
     let tree = match state.unilevel_tree.as_mut() {
         Some(t) => t,
@@ -90,10 +125,13 @@ pub fn handle_add_node(state: &mut WorkerState, request: &Request) -> Response {
 }
 
 pub fn handle_remove_node(state: &mut WorkerState, request: &Request) -> Response {
-    let params = parse_params(request);
-    let user_id = match parse_uuid(&params, "user_id") {
+    let params = match parse_params(request) {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    let user_id = match parse_uuid(&params, "user_id", &request.id) {
         Ok(id) => id,
-        Err(resp) => return resp.with_id(&request.id),
+        Err(resp) => return resp,
     };
 
     let tree = match state.unilevel_tree.as_mut() {
@@ -110,10 +148,13 @@ pub fn handle_remove_node(state: &mut WorkerState, request: &Request) -> Respons
 // --- Tree query handlers ---
 
 pub fn handle_get_parent(state: &WorkerState, request: &Request) -> Response {
-    let params = parse_params(request);
-    let user_id = match parse_uuid(&params, "user_id") {
+    let params = match parse_params(request) {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    let user_id = match parse_uuid(&params, "user_id", &request.id) {
         Ok(id) => id,
-        Err(resp) => return resp.with_id(&request.id),
+        Err(resp) => return resp,
     };
 
     let tree = match state.unilevel_tree.as_ref() {
@@ -132,10 +173,13 @@ pub fn handle_get_parent(state: &WorkerState, request: &Request) -> Response {
 }
 
 pub fn handle_get_children(state: &WorkerState, request: &Request) -> Response {
-    let params = parse_params(request);
-    let user_id = match parse_uuid(&params, "user_id") {
+    let params = match parse_params(request) {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    let user_id = match parse_uuid(&params, "user_id", &request.id) {
         Ok(id) => id,
-        Err(resp) => return resp.with_id(&request.id),
+        Err(resp) => return resp,
     };
 
     let tree = match state.unilevel_tree.as_ref() {
@@ -154,12 +198,15 @@ pub fn handle_get_children(state: &WorkerState, request: &Request) -> Response {
 }
 
 pub fn handle_get_upline(state: &WorkerState, request: &Request) -> Response {
-    let params = parse_params(request);
-    let user_id = match parse_uuid(&params, "user_id") {
-        Ok(id) => id,
-        Err(resp) => return resp.with_id(&request.id),
+    let params = match parse_params(request) {
+        Ok(p) => p,
+        Err(resp) => return resp,
     };
-    let depth = parse_u32_param(&params, "depth");
+    let user_id = match parse_uuid(&params, "user_id", &request.id) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    let depth = parse_u32_param(&params, "depth").unwrap_or(0);
 
     let tree = match state.unilevel_tree.as_ref() {
         Some(t) => t,
@@ -177,12 +224,15 @@ pub fn handle_get_upline(state: &WorkerState, request: &Request) -> Response {
 }
 
 pub fn handle_get_downline(state: &WorkerState, request: &Request) -> Response {
-    let params = parse_params(request);
-    let user_id = match parse_uuid(&params, "user_id") {
-        Ok(id) => id,
-        Err(resp) => return resp.with_id(&request.id),
+    let params = match parse_params(request) {
+        Ok(p) => p,
+        Err(resp) => return resp,
     };
-    let depth = parse_u32_param(&params, "depth");
+    let user_id = match parse_uuid(&params, "user_id", &request.id) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    let depth = parse_u32_param(&params, "depth").unwrap_or(0);
 
     let tree = match state.unilevel_tree.as_ref() {
         Some(t) => t,
@@ -200,10 +250,13 @@ pub fn handle_get_downline(state: &WorkerState, request: &Request) -> Response {
 }
 
 pub fn handle_get_position(state: &WorkerState, request: &Request) -> Response {
-    let params = parse_params(request);
-    let user_id = match parse_uuid(&params, "user_id") {
+    let params = match parse_params(request) {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    let user_id = match parse_uuid(&params, "user_id", &request.id) {
         Ok(id) => id,
-        Err(resp) => return resp.with_id(&request.id),
+        Err(resp) => return resp,
     };
 
     let tree = match state.unilevel_tree.as_ref() {
@@ -241,14 +294,17 @@ pub fn handle_get_position(state: &WorkerState, request: &Request) -> Response {
 }
 
 pub fn handle_is_descendant_of(state: &WorkerState, request: &Request) -> Response {
-    let params = parse_params(request);
-    let user_id = match parse_uuid(&params, "user_id") {
-        Ok(id) => id,
-        Err(resp) => return resp.with_id(&request.id),
+    let params = match parse_params(request) {
+        Ok(p) => p,
+        Err(resp) => return resp,
     };
-    let ancestor_id = match parse_uuid(&params, "ancestor_id") {
+    let user_id = match parse_uuid(&params, "user_id", &request.id) {
         Ok(id) => id,
-        Err(resp) => return resp.with_id(&request.id),
+        Err(resp) => return resp,
+    };
+    let ancestor_id = match parse_uuid(&params, "ancestor_id", &request.id) {
+        Ok(id) => id,
+        Err(resp) => return resp,
     };
 
     let tree = match state.unilevel_tree.as_ref() {
@@ -318,20 +374,38 @@ pub fn handle_calculate_unilevel(state: &WorkerState, request: &Request) -> Resp
 
 // --- Helpers ---
 
-/// Parses the raw params into a serde_json::Value for handlers that access
-/// individual fields by name.
-fn parse_params(request: &Request) -> serde_json::Value {
-    serde_json::from_str(request.params.get())
-        .unwrap_or(serde_json::Value::Object(Default::default()))
+/// Parses the raw params into a `serde_json::Value` for handlers that access
+/// individual fields by name. Returns an error response if the params are not
+/// valid JSON or not a JSON object.
+fn parse_params(request: &Request) -> Result<serde_json::Value, Response> {
+    let value: serde_json::Value = serde_json::from_str(request.params.get()).map_err(|e| {
+        Response::error(
+            request.id.clone(),
+            "INVALID_PARAMS",
+            format!("params is not valid JSON: {}", e),
+        )
+    })?;
+    if !value.is_object() {
+        return Err(Response::error(
+            request.id.clone(),
+            "INVALID_PARAMS",
+            "params must be a JSON object",
+        ));
+    }
+    Ok(value)
 }
 
-fn parse_uuid(params: &serde_json::Value, field: &str) -> Result<Uuid, Response> {
+fn parse_uuid(params: &serde_json::Value, field: &str, request_id: &str) -> Result<Uuid, Response> {
     let s = params.get(field).and_then(|v| v.as_str()).ok_or_else(|| {
-        Response::error(String::new(), "MISSING_PARAM", format!("missing {}", field))
+        Response::error(
+            request_id.to_string(),
+            "MISSING_PARAM",
+            format!("missing {}", field),
+        )
     })?;
     Uuid::parse_str(s).map_err(|e| {
         Response::error(
-            String::new(),
+            request_id.to_string(),
             "INVALID_UUID",
             format!("invalid {}: {}", field, e),
         )
@@ -339,11 +413,10 @@ fn parse_uuid(params: &serde_json::Value, field: &str) -> Result<Uuid, Response>
 }
 
 /// Parses an optional u32 parameter from the request params.
-/// Returns 0 (meaning unlimited) if the field is missing or not a valid number.
-fn parse_u32_param(params: &serde_json::Value, field: &str) -> u32 {
+/// Returns `None` if the field is missing or not a valid number.
+fn parse_u32_param(params: &serde_json::Value, field: &str) -> Option<u32> {
     params
         .get(field)
         .and_then(|v| v.as_u64())
         .and_then(|v| u32::try_from(v).ok())
-        .unwrap_or(0)
 }

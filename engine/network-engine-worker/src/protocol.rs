@@ -57,11 +57,6 @@ impl Response {
             }),
         }
     }
-
-    pub fn with_id(mut self, id: &str) -> Self {
-        self.id = id.to_string();
-        self
-    }
 }
 
 #[cfg(test)]

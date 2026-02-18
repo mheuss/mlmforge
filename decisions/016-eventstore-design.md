@@ -56,6 +56,14 @@ The PostgreSQL implementation enforces concurrency at two levels. The applicatio
 
 We considered pessimistic locking (`SELECT FOR UPDATE`). Optimistic concurrency is simpler and performs better under low contention, which is the expected case for stream writes. Concurrent writes to the same stream are a bug in most scenarios, not a normal workload.
 
+### Pagination
+
+Both `ReadStream` and `ReadCategory` accept a `limit int64` parameter. A limit of 0 means "read all matching events." A positive limit caps the result set.
+
+`ReadStream` also takes `fromVersion` (inclusive start position within a stream). `ReadCategory` takes `afterPosition` (exclusive cursor against the global insertion order). Together, these support incremental consumption: read a batch, record the last position, resume from there.
+
+The 0-means-unlimited convention avoids a separate "read all" method. Callers that need full replay pass 0. Callers that need bounded reads pass a positive value. The PostgreSQL implementation adds `LIMIT $N` to the query only when the limit is positive.
+
 ### Platform Ownership
 
 The `EventStore` interface and implementations live in `internal/platform/`, alongside `ConfigStore`, `AuditWriter`, and `JobScheduler`. Platform provides infrastructure. All contexts import from Platform.

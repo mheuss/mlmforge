@@ -35,6 +35,8 @@ Code comments that reference "ADR-NNN" use the DEVELOPMENT.md numbering.
 | [015](015-compensation-plan-schema-and-wire-format.md) | **Schema and Wire Format** | One wire format, JSON Schema validation, serde renames, structural translations |
 | [016](016-eventstore-design.md) | **EventStore Design** | Unified store, JSON envelope, category-ID streams, optimistic concurrency, pgx v5 |
 | [017](017-commission-calculation-architecture.md) | **Commission Calculation Architecture** | Snapshot vs rules separation, flat earnings output, prep+walk phases, no premature abstraction |
+| [018](018-config-pipeline.md) | **Config Pipeline** | Five-stage validation, two-pass commission parsing, Commission marker interface, severity model |
+| [019](019-ndjson-protocol.md) | **NDJSON Protocol** | Request-response envelope, RawValue params, error code taxonomy, panic recovery, context cancellation |
 
 ## Reading Order
 

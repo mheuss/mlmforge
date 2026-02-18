@@ -93,4 +93,4 @@ Plus 10 domain events: 7 from Commerce (order and autoship lifecycle), 1 from En
 - **Interface stability.** Adding methods is safe. Changing existing signatures requires coordinated updates. This is by design.
 - **Go mocks for testing.** All interfaces are pure Go. Consumers can be tested with standard mocks without running any other context.
 - **Clear extraction path.** Replace a Go interface implementation with a gRPC client stub. Replace the in-process event bus with NATS. Consumer code does not change.
-- **Consistent pagination.** All list operations return the same page structure. Generic pagination helpers are straightforward to build.
+- **Consistent pagination.** `EventStore` read methods accept a `limit` parameter (0 means no limit) and a cursor parameter (`fromVersion` for streams, `afterPosition` for categories). This pattern supports both full replay and incremental consumption without requiring a separate pagination type.

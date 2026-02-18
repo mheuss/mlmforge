@@ -50,7 +50,7 @@ The schema and Go have distinct responsibilities. The schema validates structure
 
 | Check | Example |
 |-------|---------|
-| Required fields | `name`, `version`, `period` must exist |
+| Required fields | `name`, `version`, `period` must exist; `start_date` required within `period` |
 | Types | `payout_lag_days` is integer, `broad_commission_percent` is number |
 | Enums | `length` must be one of `week`, `semi_month`, `month`, `quarter` |
 | Numeric ranges | `payout_lag_days`: 0-60, percentages: 0.0-1.0 |
@@ -85,6 +85,10 @@ Five structural differences between the YAML wire format and the Rust types requ
 | Streamline levels | Map: `1: {min_rank, percent}` | `Vec<StreamlineLevel>` | Convert map entries to ordered vector |
 | Binary mode | Flat: `mode` string + sibling config object (`pairing`, `cycle`, `step`) | Externally tagged: `mode: {pairing: {...}}` | Nest the active config under the mode key |
 | Binary placement key | `placement.binary` | `placement.binary_placement` | Rename key to avoid collision with structure type name |
+
+### start_date Handling
+
+The JSON Schema requires `start_date` in `PeriodConfig`. The Rust `PeriodConfig` deserializes it as a required `NaiveDate`. The Go `PeriodConfig` stores it as `*string` (nullable pointer) because Go handles schema validation before the value reaches Rust. If the schema passes, `start_date` is always present by the time translation runs. The nullable Go type is a concession to Go's lack of a non-zero-value string type, not a signal that the field is optional.
 
 The YAML format favors human readability. Flat structures, maps with numeric keys. The Rust format favors type safety. Tagged enums, Option types, vectors. Go bridges the gap.
 

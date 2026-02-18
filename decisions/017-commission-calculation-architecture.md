@@ -56,6 +56,8 @@ Volume sources and their distributors must exist in the tree and snapshot. If th
 
 Upline nodes missing from snapshots during a walk are treated as ineligible silently. The calculation continues. Missing upline data is a completeness issue, not an integrity issue. Halting an entire commission run because one distributor's snapshot is missing would be disproportionate.
 
+Volume amounts are also validated: `cv_amount` must be finite and non-negative. NaN, positive infinity, negative infinity, and negative values all produce `InvalidCvAmount` errors. These are input integrity checks, not business rules. A non-finite CV amount is always a bug upstream.
+
 This split reflects the difference between "the caller gave us bad input" and "the data has gaps we can safely work around." Strict on the former. Defensive on the latter.
 
 ## What This Enables

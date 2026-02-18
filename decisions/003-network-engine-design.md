@@ -10,7 +10,9 @@ The engine also needs to support multiple tree types (binary, unilevel, matrix, 
 
 ### Rust for the Engine
 
-The commission engine is written in Rust. The rest of the application is Go. The Rust engine is called from Go via a subprocess with NDJSON over stdin/stdout (StdioTransport). A gRPC transport can replace this for distributed deployment.
+The commission engine is written in Rust. The rest of the application is Go. The Rust engine is called from Go via a subprocess with NDJSON over stdin/stdout (StdioTransport). See [019 NDJSON Protocol](019-ndjson-protocol.md) for the wire format, error taxonomy, and transport details.
+
+The Go side defines an `EngineTransport` interface with two methods: `Call` and `Close`. `StdioTransport` implements it for subprocess communication. A gRPC transport can implement the same interface for distributed deployment. Consumers interact with the higher-level `EngineClient`, which provides typed methods (`AddRoot`, `GetUpline`, `CalculateUnilevel`, etc.) and handles JSON marshaling. `EngineClient` accepts any `EngineTransport`, so tests use a mock transport without spawning a Rust process.
 
 Commission calculation is the one place where performance is non-negotiable. Walking a binary tree of 500,000 nodes, checking rank qualifications at each level, and computing commissions with exact decimal arithmetic is compute-bound work. Rust's zero-cost abstractions and predictable performance matter here. Go's garbage collector would introduce latency spikes during the exact operations where consistent performance is most important.
 
@@ -72,6 +74,18 @@ The `QueryTree` method supports filtered queries that span multiple structures. 
 These queries are common in compensation plans (bonuses paid on cross-structure relationships) and in reporting (downline performance across all structures).
 
 The Rust engine can evaluate cross-structure conditions in a single tree walk. Doing this from Go would require fetching the full downline from each structure and intersecting the results in memory. Pushing the query into the engine keeps the heavy lifting where the data lives.
+
+### Wire Type Separation
+
+Go types in the `networkengine` package are split into two categories. Domain types (`types.go`) represent the Go application's view of tree positions, ranks, volume, and commissions. Wire DTOs (`wire_types.go`) mirror the Rust engine's NDJSON response format. `EngineClient` translates between them.
+
+This separation prevents Rust serialization concerns from leaking into Go domain types. `EngineNode` (wire) has `enrolled_at` as a Unix timestamp. `TreeNode` (domain) has `EnrolledAt` as `time.Time`. The client handles the conversion.
+
+### Error Handling
+
+The Rust worker returns structured errors with a `code` and `message`. The Go transport wraps these in an `EngineError` type. Callers use `errors.As` to inspect the error code programmatically (e.g., `NO_TREE`, `NOT_FOUND`, `INVALID_PARAMS`).
+
+When the worker process crashes (EOF on stdout), the transport includes the worker's stderr output in the error message. This surfaces Rust panic messages and other diagnostic output without requiring separate log plumbing.
 
 ## What We Considered
 

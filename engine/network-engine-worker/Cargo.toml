@@ -1,0 +1,11 @@
+[package]
+name = "network-engine-worker"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85.0"
+
+[dependencies]
+network-engine = { path = "../network-engine" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+uuid = "1"

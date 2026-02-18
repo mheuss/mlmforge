@@ -1,0 +1,657 @@
+package networkengine
+
+import (
+	"context"
+	"encoding/json"
+	"math"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestEngineClient_StartAndPing(t *testing.T) {
+	client, err := NewEngineClient(findWorkerBinary(t))
+	require.NoError(t, err)
+	defer client.Stop()
+
+	err = client.Ping(context.Background())
+	require.NoError(t, err)
+}
+
+func TestEngineClient_StopIsIdempotent(t *testing.T) {
+	client, err := NewEngineClient(findWorkerBinary(t))
+	require.NoError(t, err)
+
+	err = client.Stop()
+	require.NoError(t, err)
+
+	// Second stop should not panic or return a surprising error.
+	// The underlying process is already gone, so we accept any error.
+	_ = client.Stop()
+}
+
+func TestEngineClient_WithMockTransport(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`"pong"`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	err := client.Ping(context.Background())
+	require.NoError(t, err)
+
+	assert.Equal(t, "ping", mock.lastOp)
+}
+
+func TestEngineClient_LoadPlan(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`null`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	planJSON := json.RawMessage(`{"structures":[]}`)
+	err := client.LoadPlan(context.Background(), planJSON)
+	require.NoError(t, err)
+
+	assert.Equal(t, "load_plan", mock.lastOp)
+	assert.JSONEq(t, `{"structures":[]}`, string(mock.lastParams))
+}
+
+func TestEngineClient_CallMarshalError(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`null`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	// Channels cannot be marshaled to JSON.
+	_, err := client.call(context.Background(), "test", make(chan int))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "marshal params")
+}
+
+// --- Tree mutation tests (mock) ---
+
+func TestEngineClient_AddRoot_MockParams(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{"added":true}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	err := client.AddRoot(context.Background(), "00000000-0000-0000-0000-000000000001", 100)
+	require.NoError(t, err)
+
+	assert.Equal(t, "add_root", mock.lastOp)
+	assert.JSONEq(t, `{"user_id":"00000000-0000-0000-0000-000000000001","enrolled_at":100}`, string(mock.lastParams))
+}
+
+func TestEngineClient_AddNode_MockParams(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{"added":true}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	err := client.AddNode(context.Background(), "00000000-0000-0000-0000-000000000002", "00000000-0000-0000-0000-000000000001", 200)
+	require.NoError(t, err)
+
+	assert.Equal(t, "add_node", mock.lastOp)
+	assert.JSONEq(t, `{"user_id":"00000000-0000-0000-0000-000000000002","parent_id":"00000000-0000-0000-0000-000000000001","enrolled_at":200}`, string(mock.lastParams))
+}
+
+func TestEngineClient_RemoveNode_MockParams(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{"removed":true}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	err := client.RemoveNode(context.Background(), "00000000-0000-0000-0000-000000000001")
+	require.NoError(t, err)
+
+	assert.Equal(t, "remove_node", mock.lastOp)
+	assert.JSONEq(t, `{"user_id":"00000000-0000-0000-0000-000000000001"}`, string(mock.lastParams))
+}
+
+// --- Tree query tests (mock) ---
+
+func TestEngineClient_GetParent_ReturnsNode(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{"user_id":"00000000-0000-0000-0000-000000000001","depth":0,"enrolled_at":100}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	node, err := client.GetParent(context.Background(), "00000000-0000-0000-0000-000000000002")
+	require.NoError(t, err)
+	require.NotNil(t, node)
+
+	assert.Equal(t, "00000000-0000-0000-0000-000000000001", node.UserID)
+	assert.Equal(t, uint32(0), node.Depth)
+	assert.Equal(t, int64(100), node.EnrolledAt)
+	assert.Equal(t, "get_parent", mock.lastOp)
+}
+
+func TestEngineClient_GetParent_ReturnsNilForRoot(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`null`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	node, err := client.GetParent(context.Background(), "00000000-0000-0000-0000-000000000001")
+	require.NoError(t, err)
+	assert.Nil(t, node)
+}
+
+func TestEngineClient_GetChildren_ReturnsNodes(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`[{"user_id":"00000000-0000-0000-0000-000000000002","depth":1,"enrolled_at":200}]`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	nodes, err := client.GetChildren(context.Background(), "00000000-0000-0000-0000-000000000001")
+	require.NoError(t, err)
+	require.Len(t, nodes, 1)
+
+	assert.Equal(t, "00000000-0000-0000-0000-000000000002", nodes[0].UserID)
+	assert.Equal(t, uint32(1), nodes[0].Depth)
+	assert.Equal(t, int64(200), nodes[0].EnrolledAt)
+}
+
+func TestEngineClient_GetChildren_EmptyList(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`[]`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	nodes, err := client.GetChildren(context.Background(), "00000000-0000-0000-0000-000000000001")
+	require.NoError(t, err)
+	assert.Empty(t, nodes)
+}
+
+func TestEngineClient_GetUpline_MockParams(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`[{"user_id":"00000000-0000-0000-0000-000000000001","depth":0,"enrolled_at":100}]`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	nodes, err := client.GetUpline(context.Background(), "00000000-0000-0000-0000-000000000002", 0)
+	require.NoError(t, err)
+	require.Len(t, nodes, 1)
+
+	assert.Equal(t, "get_upline", mock.lastOp)
+	assert.JSONEq(t, `{"user_id":"00000000-0000-0000-0000-000000000002","depth":0}`, string(mock.lastParams))
+}
+
+func TestEngineClient_GetDownline_MockParams(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`[{"user_id":"00000000-0000-0000-0000-000000000002","depth":1,"enrolled_at":200}]`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	nodes, err := client.GetDownline(context.Background(), "00000000-0000-0000-0000-000000000001", 0)
+	require.NoError(t, err)
+	require.Len(t, nodes, 1)
+
+	assert.Equal(t, "get_downline", mock.lastOp)
+	assert.JSONEq(t, `{"user_id":"00000000-0000-0000-0000-000000000001","depth":0}`, string(mock.lastParams))
+}
+
+func TestEngineClient_GetPosition_MockResponse(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{
+			"user_id":"00000000-0000-0000-0000-000000000002",
+			"parent_user_id":"00000000-0000-0000-0000-000000000001",
+			"position":0,
+			"depth":1,
+			"child_count":0,
+			"downline_counts":{},
+			"enrolled_at":200
+		}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	pos, err := client.GetPosition(context.Background(), "00000000-0000-0000-0000-000000000002")
+	require.NoError(t, err)
+
+	assert.Equal(t, "00000000-0000-0000-0000-000000000002", pos.UserID)
+	assert.NotNil(t, pos.ParentUserID)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000001", *pos.ParentUserID)
+	assert.Equal(t, 0, pos.Position)
+	assert.Equal(t, uint32(1), pos.Depth)
+	assert.Equal(t, 0, pos.ChildCount)
+	assert.Empty(t, pos.DownlineCounts)
+	assert.Equal(t, int64(200), pos.EnrolledAt)
+}
+
+func TestEngineClient_GetPosition_RootHasNilParent(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{
+			"user_id":"00000000-0000-0000-0000-000000000001",
+			"parent_user_id":null,
+			"position":0,
+			"depth":0,
+			"child_count":1,
+			"downline_counts":{"0":0},
+			"enrolled_at":100
+		}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	pos, err := client.GetPosition(context.Background(), "00000000-0000-0000-0000-000000000001")
+	require.NoError(t, err)
+
+	assert.Nil(t, pos.ParentUserID)
+	assert.Equal(t, 1, pos.ChildCount)
+}
+
+func TestEngineClient_IsDescendantOf_MockResponse(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{"is_descendant":true}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	result, err := client.IsDescendantOf(context.Background(), "00000000-0000-0000-0000-000000000002", "00000000-0000-0000-0000-000000000001")
+	require.NoError(t, err)
+	assert.True(t, result)
+
+	assert.Equal(t, "is_descendant_of", mock.lastOp)
+	assert.JSONEq(t, `{"user_id":"00000000-0000-0000-0000-000000000002","ancestor_id":"00000000-0000-0000-0000-000000000001"}`, string(mock.lastParams))
+}
+
+func TestEngineClient_IsDescendantOf_False(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{"is_descendant":false}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	result, err := client.IsDescendantOf(context.Background(), "00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002")
+	require.NoError(t, err)
+	assert.False(t, result)
+}
+
+// --- Integration tests (real binary) ---
+
+func TestEngineClient_TreeOperations(t *testing.T) {
+	client, err := NewEngineClient(findWorkerBinary(t))
+	require.NoError(t, err)
+	defer client.Stop()
+
+	ctx := context.Background()
+	rootID := "00000000-0000-0000-0000-000000000001"
+	childID := "00000000-0000-0000-0000-000000000002"
+
+	// Add root.
+	err = client.AddRoot(ctx, rootID, 100)
+	require.NoError(t, err)
+
+	// Add child.
+	err = client.AddNode(ctx, childID, rootID, 200)
+	require.NoError(t, err)
+
+	// Get children of root.
+	children, err := client.GetChildren(ctx, rootID)
+	require.NoError(t, err)
+	require.Len(t, children, 1)
+	assert.Equal(t, childID, children[0].UserID)
+	assert.Equal(t, uint32(1), children[0].Depth)
+	assert.Equal(t, int64(200), children[0].EnrolledAt)
+}
+
+func TestEngineClient_TreeQueries(t *testing.T) {
+	client, err := NewEngineClient(findWorkerBinary(t))
+	require.NoError(t, err)
+	defer client.Stop()
+
+	ctx := context.Background()
+	rootID := "00000000-0000-0000-0000-000000000001"
+	childID := "00000000-0000-0000-0000-000000000002"
+	grandchildID := "00000000-0000-0000-0000-000000000003"
+
+	// Build a 3-node chain: root -> child -> grandchild.
+	require.NoError(t, client.AddRoot(ctx, rootID, 100))
+	require.NoError(t, client.AddNode(ctx, childID, rootID, 200))
+	require.NoError(t, client.AddNode(ctx, grandchildID, childID, 300))
+
+	t.Run("GetParent_returnsParent", func(t *testing.T) {
+		parent, err := client.GetParent(ctx, childID)
+		require.NoError(t, err)
+		require.NotNil(t, parent)
+		assert.Equal(t, rootID, parent.UserID)
+		assert.Equal(t, uint32(0), parent.Depth)
+	})
+
+	t.Run("GetParent_rootReturnsNil", func(t *testing.T) {
+		parent, err := client.GetParent(ctx, rootID)
+		require.NoError(t, err)
+		assert.Nil(t, parent)
+	})
+
+	t.Run("GetUpline_fullChain", func(t *testing.T) {
+		upline, err := client.GetUpline(ctx, grandchildID, 0)
+		require.NoError(t, err)
+		require.Len(t, upline, 2)
+		// Upline should be ordered from closest ancestor to farthest.
+		assert.Equal(t, childID, upline[0].UserID)
+		assert.Equal(t, rootID, upline[1].UserID)
+	})
+
+	t.Run("GetUpline_limitedDepth", func(t *testing.T) {
+		upline, err := client.GetUpline(ctx, grandchildID, 1)
+		require.NoError(t, err)
+		require.Len(t, upline, 1)
+		assert.Equal(t, childID, upline[0].UserID)
+	})
+
+	t.Run("GetDownline_fullChain", func(t *testing.T) {
+		downline, err := client.GetDownline(ctx, rootID, 0)
+		require.NoError(t, err)
+		require.Len(t, downline, 2)
+	})
+
+	t.Run("GetDownline_limitedDepth", func(t *testing.T) {
+		downline, err := client.GetDownline(ctx, rootID, 1)
+		require.NoError(t, err)
+		require.Len(t, downline, 1)
+		assert.Equal(t, childID, downline[0].UserID)
+	})
+
+	t.Run("GetPosition_rootNode", func(t *testing.T) {
+		pos, err := client.GetPosition(ctx, rootID)
+		require.NoError(t, err)
+		assert.Equal(t, rootID, pos.UserID)
+		assert.Nil(t, pos.ParentUserID)
+		assert.Equal(t, uint32(0), pos.Depth)
+		assert.Equal(t, 1, pos.ChildCount)
+		assert.Equal(t, int64(100), pos.EnrolledAt)
+	})
+
+	t.Run("GetPosition_childNode", func(t *testing.T) {
+		pos, err := client.GetPosition(ctx, childID)
+		require.NoError(t, err)
+		assert.Equal(t, childID, pos.UserID)
+		require.NotNil(t, pos.ParentUserID)
+		assert.Equal(t, rootID, *pos.ParentUserID)
+		assert.Equal(t, 0, pos.Position)
+		assert.Equal(t, uint32(1), pos.Depth)
+		assert.Equal(t, 1, pos.ChildCount)
+	})
+
+	t.Run("IsDescendantOf_true", func(t *testing.T) {
+		result, err := client.IsDescendantOf(ctx, grandchildID, rootID)
+		require.NoError(t, err)
+		assert.True(t, result)
+	})
+
+	t.Run("IsDescendantOf_false", func(t *testing.T) {
+		result, err := client.IsDescendantOf(ctx, rootID, grandchildID)
+		require.NoError(t, err)
+		assert.False(t, result)
+	})
+
+	t.Run("RemoveNode_andVerify", func(t *testing.T) {
+		err := client.RemoveNode(ctx, grandchildID)
+		require.NoError(t, err)
+
+		children, err := client.GetChildren(ctx, childID)
+		require.NoError(t, err)
+		assert.Empty(t, children)
+	})
+}
+
+// --- Commission calculation tests (mock) ---
+
+func TestEngineClient_CalculateUnilevel_MockParams(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`[{"earner_id":"00000000-0000-0000-0000-000000000001","source_id":"00000000-0000-0000-0000-000000000002","level":1,"rate":0.05,"cv_amount":100.0,"dollar_amount":2.0}]`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	req := CalculateUnilevelRequest{
+		StructureName: "Test",
+		Snapshots: map[string]DistributorSnapshotDTO{
+			"00000000-0000-0000-0000-000000000001": {
+				Rank:             "member",
+				PersonalVolume:   100.0,
+				Status:           "active",
+				HasOrderInPeriod: true,
+			},
+		},
+		Volume: []VolumeSourceDTO{
+			{SourceID: "00000000-0000-0000-0000-000000000002", CVAmount: 100.0},
+		},
+	}
+
+	earnings, err := client.CalculateUnilevel(context.Background(), req)
+	require.NoError(t, err)
+	require.Len(t, earnings, 1)
+
+	assert.Equal(t, "calculate_unilevel", mock.lastOp)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000001", earnings[0].EarnerID)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000002", earnings[0].SourceID)
+	assert.Equal(t, 1, earnings[0].Level)
+	assert.InDelta(t, 0.05, earnings[0].Rate, 1e-9)
+	assert.InDelta(t, 100.0, earnings[0].CVAmount, 1e-9)
+	assert.InDelta(t, 2.0, earnings[0].DollarAmount, 1e-9)
+}
+
+func TestEngineClient_CalculateUnilevel_EmptyEarnings(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`[]`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	req := CalculateUnilevelRequest{
+		StructureName: "Test",
+		Snapshots:     map[string]DistributorSnapshotDTO{},
+		Volume:        []VolumeSourceDTO{},
+	}
+
+	earnings, err := client.CalculateUnilevel(context.Background(), req)
+	require.NoError(t, err)
+	assert.Empty(t, earnings)
+}
+
+// --- Commission calculation integration test (real binary) ---
+
+// testPlanJSON is a minimal compensation plan that matches the Rust
+// TEST_PLAN_JSON fixture. One rank ("member"), one unilevel structure
+// ("Test"), rate 0.05 at levels 1-3, broad_commission_percent 0.40,
+// volume_to_dollar_multiplier 1.0.
+const testPlanJSON = `{
+    "name": "Integration Test Plan",
+    "version": 1,
+    "structures": [
+        {
+            "type": "unilevel",
+            "config": {
+                "name": "Test",
+                "level_commission": {
+                    "broad_commission_percent": 0.40,
+                    "volume_to_dollar_multiplier": null,
+                    "commissionable_depth": 3,
+                    "rate_table": {
+                        "member": { "1": 0.05, "2": 0.05, "3": 0.05 }
+                    }
+                },
+                "compression": null
+            }
+        }
+    ],
+    "period": {
+        "length": "month",
+        "start_date": "2026-03-01",
+        "payout_lag_days": 14
+    },
+    "volume": {
+        "inhibit_signup_volume": false,
+        "base_currency": "USD",
+        "volume_to_dollar_multiplier": 1.0,
+        "deduct_qualifying_volume": false
+    },
+    "ranks": [
+        {
+            "name": "member",
+            "ordinal": 1,
+            "qualification": {
+                "structures": [],
+                "required_products": []
+            },
+            "qualified_structures": ["Test"],
+            "demotion_policy": "promotion_only"
+        }
+    ],
+    "rank_tracking": { "track_achieved_rank": false },
+    "rank_features": { "constraints_enabled": false, "overrides_enabled": false },
+    "commission_eligibility": {
+        "min_personal_volume": 0.0,
+        "require_order_in_period": false,
+        "eligible_statuses": [],
+        "active_leg_tiers": []
+    },
+    "bonuses": {
+        "matching": null,
+        "sponsor": null,
+        "fast_start": null,
+        "rank_advancement": null,
+        "leadership_development": null,
+        "infinity": null,
+        "lifestyle": null,
+        "pool": null,
+        "matrix_completion": null,
+        "position": null,
+        "board_cycling": null,
+        "pass_up": null
+    },
+    "payout": {
+        "base_currency": "USD",
+        "minimum_amount": 50.0,
+        "split_payouts_enabled": true,
+        "methods": [
+            { "type": "bank_transfer", "fee": 2.50 }
+        ]
+    },
+    "caps": {
+        "per_distributor_per_period": null,
+        "company_payout_cap_percent": 0.42,
+        "cap_enforcement": "pro_rata",
+        "clawback_on_refund": false
+    },
+    "placement": {
+        "donated_placement": null,
+        "holding_tank": null,
+        "binary_placement": null
+    }
+}`
+
+func TestEngineClient_CalculateUnilevel(t *testing.T) {
+	client, err := NewEngineClient(findWorkerBinary(t))
+	require.NoError(t, err)
+	defer client.Stop()
+
+	ctx := context.Background()
+	rootID := "00000000-0000-0000-0000-000000000001"
+	midID := "00000000-0000-0000-0000-000000000002"
+	leafID := "00000000-0000-0000-0000-000000000003"
+
+	// 1. Load the compensation plan.
+	err = client.LoadPlan(ctx, json.RawMessage(testPlanJSON))
+	require.NoError(t, err)
+
+	// 2. Build tree: root -> mid -> leaf.
+	require.NoError(t, client.AddRoot(ctx, rootID, 100))
+	require.NoError(t, client.AddNode(ctx, midID, rootID, 200))
+	require.NoError(t, client.AddNode(ctx, leafID, midID, 300))
+
+	// 3. Calculate commissions.
+	//    Volume source: leaf generates 100 CV.
+	//    Expected upline walk: mid at level 1, root at level 2.
+	//    Dollar amount per earning: 100 * 0.40 * 1.0 * 0.05 = 2.0
+	snap := DistributorSnapshotDTO{
+		Rank:             "member",
+		PersonalVolume:   100.0,
+		Status:           "active",
+		HasOrderInPeriod: true,
+	}
+	req := CalculateUnilevelRequest{
+		StructureName: "Test",
+		Snapshots: map[string]DistributorSnapshotDTO{
+			rootID: snap,
+			midID:  snap,
+			leafID: snap,
+		},
+		Volume: []VolumeSourceDTO{
+			{SourceID: leafID, CVAmount: 100.0},
+		},
+	}
+
+	earnings, err := client.CalculateUnilevel(ctx, req)
+	require.NoError(t, err)
+	require.Len(t, earnings, 2, "expected 2 earnings from 3-node chain")
+
+	// Find mid's earning at level 1.
+	var midEarning, rootEarning *CommissionEarningDTO
+	for i := range earnings {
+		switch earnings[i].EarnerID {
+		case midID:
+			midEarning = &earnings[i]
+		case rootID:
+			rootEarning = &earnings[i]
+		}
+	}
+
+	require.NotNil(t, midEarning, "mid should have an earning")
+	assert.Equal(t, leafID, midEarning.SourceID)
+	assert.Equal(t, 1, midEarning.Level)
+	assert.InDelta(t, 0.05, midEarning.Rate, 1e-9)
+	assert.InDelta(t, 100.0, midEarning.CVAmount, 1e-9)
+	assert.True(t, math.Abs(midEarning.DollarAmount-2.0) < 1e-9,
+		"mid dollar_amount should be 2.0, got %f", midEarning.DollarAmount)
+
+	require.NotNil(t, rootEarning, "root should have an earning")
+	assert.Equal(t, leafID, rootEarning.SourceID)
+	assert.Equal(t, 2, rootEarning.Level)
+	assert.InDelta(t, 0.05, rootEarning.Rate, 1e-9)
+	assert.InDelta(t, 100.0, rootEarning.CVAmount, 1e-9)
+	assert.True(t, math.Abs(rootEarning.DollarAmount-2.0) < 1e-9,
+		"root dollar_amount should be 2.0, got %f", rootEarning.DollarAmount)
+}
+
+func TestEngineClient_CalculateUnilevel_EmptyVolume(t *testing.T) {
+	client, err := NewEngineClient(findWorkerBinary(t))
+	require.NoError(t, err)
+	defer client.Stop()
+
+	ctx := context.Background()
+	rootID := "00000000-0000-0000-0000-000000000001"
+
+	// Load plan and build a minimal tree.
+	require.NoError(t, client.LoadPlan(ctx, json.RawMessage(testPlanJSON)))
+	require.NoError(t, client.AddRoot(ctx, rootID, 100))
+
+	req := CalculateUnilevelRequest{
+		StructureName: "Test",
+		Snapshots:     map[string]DistributorSnapshotDTO{},
+		Volume:        []VolumeSourceDTO{},
+	}
+
+	earnings, err := client.CalculateUnilevel(ctx, req)
+	require.NoError(t, err)
+	assert.Empty(t, earnings)
+}
+
+// mockTransport is a test double for EngineTransport.
+type mockTransport struct {
+	response   json.RawMessage
+	err        error
+	lastOp     string
+	lastParams json.RawMessage
+	closed     bool
+}
+
+func (m *mockTransport) Call(_ context.Context, op string, params json.RawMessage) (json.RawMessage, error) {
+	m.lastOp = op
+	m.lastParams = params
+	return m.response, m.err
+}
+
+func (m *mockTransport) Close() error {
+	m.closed = true
+	return nil
+}

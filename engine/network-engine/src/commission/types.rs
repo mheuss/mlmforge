@@ -1,5 +1,6 @@
 //! Types for commission calculation.
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -7,7 +8,7 @@ use uuid::Uuid;
 ///
 /// Contains only observable data. The calculator derives all eligibility
 /// and depth decisions from the compensation plan config.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DistributorSnapshot {
     /// Current rank name. Must match a rank in the plan's rank ladder.
     pub rank: String,
@@ -26,7 +27,7 @@ pub struct DistributorSnapshot {
 ///
 /// Each volume source produces one upline walk. The walk pays
 /// commissions to eligible ancestors based on the rate table.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VolumeSource {
     /// The distributor who generated this volume.
     pub source_id: Uuid,
@@ -39,7 +40,7 @@ pub struct VolumeSource {
 ///
 /// The dollar amount formula:
 /// `cv_amount * broad_commission_percent * volume_to_dollar_multiplier * rate`
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CommissionEarning {
     /// The distributor who earned this commission.
     pub earner_id: Uuid,

@@ -1,0 +1,11 @@
+{
+    "description": "unknown operation returns UNKNOWN_OP error",
+    "request": {"id": "c-2", "op": "bogus"},
+    "expected_response": {
+        "id": "c-2",
+        "ok": false,
+        "error": {
+            "code": "UNKNOWN_OP"
+        }
+    }
+}

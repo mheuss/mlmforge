@@ -1,0 +1,11 @@
+{
+    "description": "malformed JSON returns INVALID_REQUEST error",
+    "request_raw": "this is not valid json",
+    "expected_response": {
+        "id": "",
+        "ok": false,
+        "error": {
+            "code": "INVALID_REQUEST"
+        }
+    }
+}

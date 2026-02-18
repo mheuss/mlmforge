@@ -157,7 +157,7 @@ type StructurePlacer interface {
 
 	// EvaluateQualification checks what structures a user currently qualifies for.
 	// For upgrade flows, admin tools, periodic re-evaluation.
-	EvaluateQualification(ctx context.Context, userID string) ([]StructureQualification, error)
+	EvaluateQualification(ctx context.Context, userID string) ([]PlacementQualification, error)
 
 	// QualifyAndPlace handles post-enrollment qualification.
 	// User bought Gold Package — check stairstep requirements and place/hold if qualified.

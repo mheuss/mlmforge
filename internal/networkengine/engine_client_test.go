@@ -3,6 +3,7 @@ package networkengine
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"testing"
 
@@ -11,7 +12,7 @@ import (
 )
 
 func TestEngineClient_StartAndPing(t *testing.T) {
-	client, err := NewEngineClient(findWorkerBinary(t))
+	client, err := NewEngineClient(context.Background(), findWorkerBinary(t))
 	require.NoError(t, err)
 	defer client.Stop()
 
@@ -20,7 +21,7 @@ func TestEngineClient_StartAndPing(t *testing.T) {
 }
 
 func TestEngineClient_StopIsIdempotent(t *testing.T) {
-	client, err := NewEngineClient(findWorkerBinary(t))
+	client, err := NewEngineClient(context.Background(), findWorkerBinary(t))
 	require.NoError(t, err)
 
 	err = client.Stop()
@@ -266,10 +267,47 @@ func TestEngineClient_IsDescendantOf_False(t *testing.T) {
 	assert.False(t, result)
 }
 
+// --- Error handling tests (mock) ---
+
+func TestEngineClient_TransportErrorPropagation(t *testing.T) {
+	transportErr := fmt.Errorf("transport down")
+	mock := &mockTransport{err: transportErr}
+	client := NewEngineClientWithTransport(mock)
+
+	err := client.Ping(context.Background())
+	assert.ErrorIs(t, err, transportErr)
+
+	err = client.AddRoot(context.Background(), "user-1", 1000)
+	assert.ErrorIs(t, err, transportErr)
+
+	_, err = client.GetChildren(context.Background(), "user-1")
+	assert.ErrorIs(t, err, transportErr)
+}
+
+func TestEngineClient_UnmarshalError(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{not json}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	_, err := client.GetChildren(context.Background(), "user-1")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unmarshal")
+}
+
+func TestEngineClient_StopClosesTransport(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`"pong"`)}
+	client := NewEngineClientWithTransport(mock)
+
+	err := client.Stop()
+	require.NoError(t, err)
+	assert.True(t, mock.closed)
+}
+
 // --- Integration tests (real binary) ---
 
 func TestEngineClient_TreeOperations(t *testing.T) {
-	client, err := NewEngineClient(findWorkerBinary(t))
+	client, err := NewEngineClient(context.Background(), findWorkerBinary(t))
 	require.NoError(t, err)
 	defer client.Stop()
 
@@ -295,7 +333,7 @@ func TestEngineClient_TreeOperations(t *testing.T) {
 }
 
 func TestEngineClient_TreeQueries(t *testing.T) {
-	client, err := NewEngineClient(findWorkerBinary(t))
+	client, err := NewEngineClient(context.Background(), findWorkerBinary(t))
 	require.NoError(t, err)
 	defer client.Stop()
 
@@ -541,7 +579,7 @@ const testPlanJSON = `{
 }`
 
 func TestEngineClient_CalculateUnilevel(t *testing.T) {
-	client, err := NewEngineClient(findWorkerBinary(t))
+	client, err := NewEngineClient(context.Background(), findWorkerBinary(t))
 	require.NoError(t, err)
 	defer client.Stop()
 
@@ -614,7 +652,7 @@ func TestEngineClient_CalculateUnilevel(t *testing.T) {
 }
 
 func TestEngineClient_CalculateUnilevel_EmptyVolume(t *testing.T) {
-	client, err := NewEngineClient(findWorkerBinary(t))
+	client, err := NewEngineClient(context.Background(), findWorkerBinary(t))
 	require.NoError(t, err)
 	defer client.Stop()
 

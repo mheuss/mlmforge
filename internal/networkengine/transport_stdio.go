@@ -2,14 +2,19 @@ package networkengine
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
 	"sync"
 	"sync/atomic"
 )
+
+// ErrTransportClosed is returned when Call is invoked on a closed transport.
+var ErrTransportClosed = errors.New("transport is closed")
 
 // Compile-time check: StdioTransport implements EngineTransport.
 var _ EngineTransport = (*StdioTransport)(nil)
@@ -19,8 +24,10 @@ type StdioTransport struct {
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
 	reader *bufio.Reader
+	stderr bytes.Buffer
 	mu     sync.Mutex
 	nextID atomic.Int64
+	closed atomic.Bool
 }
 
 type protocolRequest struct {
@@ -41,6 +48,23 @@ type protocolError struct {
 	Message string `json:"message"`
 }
 
+// EngineError represents an error returned by the Rust worker.
+// Use errors.As to inspect the error code programmatically.
+type EngineError struct {
+	Code    string
+	Message string
+}
+
+func (e *EngineError) Error() string {
+	return fmt.Sprintf("engine error [%s]: %s", e.Code, e.Message)
+}
+
+// readResult holds the outcome of a ReadBytes call run in a goroutine.
+type readResult struct {
+	line []byte
+	err  error
+}
+
 // NewStdioTransport spawns the Rust worker binary and returns a transport
 // that communicates with it via NDJSON over stdin/stdout.
 func NewStdioTransport(binaryPath string) (*StdioTransport, error) {
@@ -53,14 +77,16 @@ func NewStdioTransport(binaryPath string) (*StdioTransport, error) {
 	if err != nil {
 		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start worker: %w", err)
-	}
-	return &StdioTransport{
+	transport := &StdioTransport{
 		cmd:    cmd,
 		stdin:  stdin,
 		reader: bufio.NewReader(stdout),
-	}, nil
+	}
+	cmd.Stderr = &transport.stderr
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("start worker: %w", err)
+	}
+	return transport, nil
 }
 
 // Call sends an operation to the Rust worker and waits for the response.
@@ -68,6 +94,10 @@ func NewStdioTransport(binaryPath string) (*StdioTransport, error) {
 func (t *StdioTransport) Call(ctx context.Context, op string, params json.RawMessage) (json.RawMessage, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	if t.closed.Load() {
+		return nil, ErrTransportClosed
+	}
 
 	id := fmt.Sprintf("req-%d", t.nextID.Add(1))
 
@@ -81,14 +111,34 @@ func (t *StdioTransport) Call(ctx context.Context, op string, params json.RawMes
 		return nil, fmt.Errorf("write request: %w", err)
 	}
 
-	line, err := t.reader.ReadBytes('\n')
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
+	ch := make(chan readResult, 1)
+	go func() {
+		line, readErr := t.reader.ReadBytes('\n')
+		ch <- readResult{line, readErr}
+	}()
+
+	var line []byte
+	select {
+	case res := <-ch:
+		if res.err != nil {
+			stderrOut := t.stderr.String()
+			if stderrOut != "" {
+				return nil, fmt.Errorf("read response: %w\nworker stderr: %s", res.err, stderrOut)
+			}
+			return nil, fmt.Errorf("read response: %w", res.err)
+		}
+		line = res.line
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 
 	var resp protocolResponse
 	if err := json.Unmarshal(line, &resp); err != nil {
 		return nil, fmt.Errorf("unmarshal response: %w", err)
+	}
+
+	if resp.ID != id {
+		return nil, fmt.Errorf("response ID mismatch: sent %q, got %q", id, resp.ID)
 	}
 
 	if !resp.OK {
@@ -98,7 +148,7 @@ func (t *StdioTransport) Call(ctx context.Context, op string, params json.RawMes
 			code = resp.Error.Code
 			msg = resp.Error.Message
 		}
-		return nil, fmt.Errorf("engine error [%s]: %s", code, msg)
+		return nil, &EngineError{Code: code, Message: msg}
 	}
 
 	return resp.Result, nil
@@ -106,10 +156,10 @@ func (t *StdioTransport) Call(ctx context.Context, op string, params json.RawMes
 
 // Close shuts down the worker process by closing stdin and waiting for exit.
 func (t *StdioTransport) Close() error {
+	t.closed.Store(true)
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	stdinErr := t.stdin.Close()
 	waitErr := t.cmd.Wait()
-	if waitErr != nil {
-		return waitErr
-	}
-	return stdinErr
+	return errors.Join(stdinErr, waitErr)
 }

@@ -15,10 +15,12 @@ func validateBusinessRules(plan *CompensationPlan) []ValidationError {
 	ranks := rankNames(plan)
 	structs := structureNames(plan)
 
+	errs = append(errs, validateRankNames(plan)...)
+	errs = append(errs, validateStructureNames(plan)...)
 	errs = append(errs, validateRanks(plan, structs)...)
 	errs = append(errs, validateStructureRefs(plan, ranks)...)
 	errs = append(errs, validateBonuses(plan, ranks)...)
-	errs = append(errs, validatePlacement(plan)...)
+	errs = append(errs, validatePlacement(plan, structs)...)
 	errs = append(errs, validateEligibility(plan)...)
 	errs = append(errs, validateWarnings(plan, ranks)...)
 	return errs
@@ -44,6 +46,23 @@ func rankNames(plan *CompensationPlan) map[string]bool {
 	return names
 }
 
+// getRateTable extracts the rate table from a resolved commission config.
+// Returns nil if the commission type does not have a rate table.
+func getRateTable(commission any) map[string]map[string]float64 {
+	switch rc := commission.(type) {
+	case *UnilevelCommission:
+		return rc.RateTable
+	case *MatrixCommission:
+		return rc.RateTable
+	case *StairstepCommission:
+		return rc.RateTable
+	case *GenerationCommission:
+		return rc.RateTable
+	default:
+		return nil
+	}
+}
+
 // rankOrdinalMap returns a map from rank name to ordinal.
 func rankOrdinalMap(plan *CompensationPlan) map[string]int {
 	m := make(map[string]int, len(plan.Ranks))
@@ -51,6 +70,44 @@ func rankOrdinalMap(plan *CompensationPlan) map[string]int {
 		m[r.Name] = r.Ordinal
 	}
 	return m
+}
+
+// --- Duplicate name rules ---
+
+// validateRankNames checks for duplicate rank names.
+func validateRankNames(plan *CompensationPlan) []ValidationError {
+	var errs []ValidationError
+	seen := make(map[string]bool)
+	for _, r := range plan.Ranks {
+		if seen[r.Name] {
+			errs = append(errs, ValidationError{
+				Path:     "ranks",
+				Code:     "duplicate_rank_name",
+				Message:  fmt.Sprintf("duplicate rank name: %q", r.Name),
+				Severity: SeverityError,
+			})
+		}
+		seen[r.Name] = true
+	}
+	return errs
+}
+
+// validateStructureNames checks for duplicate structure names.
+func validateStructureNames(plan *CompensationPlan) []ValidationError {
+	var errs []ValidationError
+	seen := make(map[string]bool)
+	for _, s := range plan.Structures {
+		if seen[s.Name] {
+			errs = append(errs, ValidationError{
+				Path:     "structures",
+				Code:     "duplicate_structure_name",
+				Message:  fmt.Sprintf("duplicate structure name: %q", s.Name),
+				Severity: SeverityError,
+			})
+		}
+		seen[s.Name] = true
+	}
+	return errs
 }
 
 // --- Rank rules ---
@@ -203,6 +260,18 @@ func validateStructureRefs(plan *CompensationPlan, ranks map[string]bool) []Vali
 					})
 				}
 			}
+			if rc.Streams != nil {
+				for rankName := range rc.Streams.AdditionalPerRank {
+					if !ranks[rankName] {
+						errs = append(errs, ValidationError{
+							Path:     fmt.Sprintf("structures[%s].streams.additional_per_rank", s.Name),
+							Code:     "unknown_rank_ref",
+							Message:  fmt.Sprintf("additional_per_rank references unknown rank %q", rankName),
+							Severity: SeverityError,
+						})
+					}
+				}
+			}
 		case *BinaryCommission:
 			if rc.Pairing != nil && rc.Pairing.CarryForwardCap != nil && rc.Pairing.VolumeAfterPayout != "carry_forward" {
 				errs = append(errs, ValidationError{
@@ -235,18 +304,24 @@ func validateBonuses(plan *CompensationPlan, ranks map[string]bool) []Validation
 		})
 	}
 
-	// matched_commission_types must reference structure types in the plan.
+	// matched_commission_types values are structure type names (e.g., "unilevel", "binary"),
+	// NOT commission method names (e.g., "level", "pairing"). The field name is historical.
 	if plan.Bonuses.Matching != nil {
 		structureTypes := make(map[string]bool, len(plan.Structures))
 		for _, s := range plan.Structures {
 			structureTypes[s.Type] = true
 		}
+		validTypes := make([]string, 0, len(structureTypes))
+		for t := range structureTypes {
+			validTypes = append(validTypes, t)
+		}
+		sort.Strings(validTypes)
 		for _, ct := range plan.Bonuses.Matching.MatchedCommissionTypes {
 			if !structureTypes[ct] {
 				errs = append(errs, ValidationError{
 					Path:     "/bonuses/matching/matched_commission_types",
 					Code:     "undefined_reference",
-					Message:  fmt.Sprintf("matched_commission_types references unknown structure type %q", ct),
+					Message:  fmt.Sprintf("matched_commission_types references unknown structure type %q (valid types: %v)", ct, validTypes),
 					Severity: SeverityError,
 				})
 			}
@@ -298,8 +373,9 @@ func validateBonuses(plan *CompensationPlan, ranks map[string]bool) []Validation
 
 // --- Placement rules ---
 
-// validatePlacement checks placement configuration for cross-field consistency.
-func validatePlacement(plan *CompensationPlan) []ValidationError {
+// validatePlacement checks placement configuration for cross-field consistency
+// and structure reference integrity.
+func validatePlacement(plan *CompensationPlan, structs map[string]bool) []ValidationError {
 	var errs []ValidationError
 
 	// donated_placement_enabled requires donated_placement_restriction.
@@ -310,6 +386,20 @@ func validatePlacement(plan *CompensationPlan) []ValidationError {
 			Message:  "donated_placement_enabled is true but donated_placement_restriction is not set",
 			Severity: SeverityError,
 		})
+	}
+
+	// holding_tank.applicable_structures must reference defined structures.
+	if plan.Placement.HoldingTank != nil {
+		for _, name := range plan.Placement.HoldingTank.ApplicableStructures {
+			if !structs[name] {
+				errs = append(errs, ValidationError{
+					Path:     "placement.holding_tank.applicable_structures",
+					Code:     "unknown_structure_ref",
+					Message:  fmt.Sprintf("applicable_structures references unknown structure %q", name),
+					Severity: SeverityError,
+				})
+			}
+		}
 	}
 
 	return errs
@@ -394,17 +484,7 @@ func validateWarnings(plan *CompensationPlan, ranks map[string]bool) []Validatio
 
 	// Rate table completeness: every defined rank should have an entry.
 	for i, s := range plan.Structures {
-		var rateTable map[string]map[string]float64
-		switch rc := s.resolvedCommission.(type) {
-		case *UnilevelCommission:
-			rateTable = rc.RateTable
-		case *MatrixCommission:
-			rateTable = rc.RateTable
-		case *StairstepCommission:
-			rateTable = rc.RateTable
-		case *GenerationCommission:
-			rateTable = rc.RateTable
-		}
+		rateTable := getRateTable(s.resolvedCommission)
 		if rateTable != nil {
 			var missing []string
 			for name := range ranks {
@@ -437,6 +517,32 @@ func validateWarnings(plan *CompensationPlan, ranks map[string]bool) []Validatio
 				})
 			}
 		}
+	}
+
+	// search_mode "first_levels" without search_depth is likely a misconfiguration.
+	for i, r := range plan.Ranks {
+		for j, sq := range r.Qualification.Structures {
+			if sq.DistributorCount != nil && sq.DistributorCount.SearchMode == "first_levels" {
+				if sq.DistributorCount.SearchDepth == nil || *sq.DistributorCount.SearchDepth == 0 {
+					errs = append(errs, ValidationError{
+						Path:     fmt.Sprintf("/ranks/%d/qualification/structures/%d/distributor_count/search_depth", i, j),
+						Code:     "missing_search_depth",
+						Message:  fmt.Sprintf("rank %q distributor_count uses search_mode \"first_levels\" but search_depth is not set", r.Name),
+						Severity: SeverityWarning,
+					})
+				}
+			}
+		}
+	}
+
+	// payout.base_currency must match volume.base_currency.
+	if plan.Payout.BaseCurrency != plan.Volume.BaseCurrency {
+		errs = append(errs, ValidationError{
+			Path:     "payout.base_currency",
+			Code:     "currency_mismatch",
+			Message:  fmt.Sprintf("payout base_currency %q does not match volume base_currency %q", plan.Payout.BaseCurrency, plan.Volume.BaseCurrency),
+			Severity: SeverityError,
+		})
 	}
 
 	return errs

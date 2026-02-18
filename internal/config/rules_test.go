@@ -467,3 +467,191 @@ func TestStairstepBreakawayGenerationBoundaryRankMustExist(t *testing.T) {
 	assert.Equal(t, "undefined_reference", errs[0].Code)
 	assert.Contains(t, errs[0].Path, "breakaway/generation/boundary_rank")
 }
+
+func TestValidation_DuplicateRankName(t *testing.T) {
+	plan := minimalPlan()
+	// Duplicate the first rank name on the second rank.
+	plan.Ranks[1].Name = "Associate"
+	plan.Ranks[1].Ordinal = 2
+
+	errs := validateBusinessRules(plan)
+	var found bool
+	for _, e := range errs {
+		if e.Code == "duplicate_rank_name" {
+			found = true
+			assert.Equal(t, SeverityError, e.Severity)
+			assert.Contains(t, e.Message, "Associate")
+			break
+		}
+	}
+	assert.True(t, found, "expected duplicate_rank_name error, got: %v", errs)
+}
+
+func TestValidation_DuplicateStructureName(t *testing.T) {
+	plan := minimalPlan()
+	// Add a second structure with the same name.
+	plan.Structures = append(plan.Structures, StructureConfig{
+		Name: "Primary",
+		Type: "binary",
+	})
+
+	errs := validateBusinessRules(plan)
+	var found bool
+	for _, e := range errs {
+		if e.Code == "duplicate_structure_name" {
+			found = true
+			assert.Equal(t, SeverityError, e.Severity)
+			assert.Contains(t, e.Message, "Primary")
+			break
+		}
+	}
+	assert.True(t, found, "expected duplicate_structure_name error, got: %v", errs)
+}
+
+func TestValidation_HoldingTankApplicableStructuresMustExist(t *testing.T) {
+	plan := minimalPlan()
+	plan.Placement.HoldingTank = &HoldingTankConfig{
+		Enabled:              true,
+		ExpirationDays:       30,
+		ApplicableStructures: []string{"Primary", "Nonexistent"},
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "unknown_structure_ref", errs[0].Code)
+	assert.Equal(t, SeverityError, errs[0].Severity)
+	assert.Contains(t, errs[0].Message, "Nonexistent")
+}
+
+func TestValidation_HoldingTankValidStructuresPass(t *testing.T) {
+	plan := minimalPlan()
+	plan.Placement.HoldingTank = &HoldingTankConfig{
+		Enabled:              true,
+		ExpirationDays:       30,
+		ApplicableStructures: []string{"Primary"},
+	}
+
+	errs := validateBusinessRules(plan)
+	assert.Empty(t, errs)
+}
+
+func TestValidation_StreamlineAdditionalPerRankMustExist(t *testing.T) {
+	plan := minimalPlan()
+	plan.Structures[0].Name = "Stream"
+	plan.Structures[0].Type = "streamline"
+	plan.Structures[0].resolvedCommission = &StreamlineCommission{
+		CommissionableDepth: 5,
+		DynamicCompression: map[string]StreamlineLevel{
+			"1": {MinRank: "Associate", Percent: 0.05},
+		},
+		Streams: &StreamConfig{
+			AdditionalPerRank: map[string]int{
+				"Silver":      2,
+				"Nonexistent": 3,
+			},
+			AssignmentMode: "round_robin",
+		},
+	}
+	plan.Ranks[0].QualifiedStructures = []string{"Stream"}
+	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stream"}}
+	plan.Ranks[1].QualifiedStructures = []string{"Stream"}
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{Structure: "Stream", PersonalVolume: 100, GroupVolume: 3000},
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "unknown_rank_ref", errs[0].Code)
+	assert.Equal(t, SeverityError, errs[0].Severity)
+	assert.Contains(t, errs[0].Message, "Nonexistent")
+}
+
+func TestValidation_SearchModeFirstLevelsWithoutDepthWarning(t *testing.T) {
+	plan := minimalPlan()
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{
+			Structure:      "Primary",
+			PersonalVolume: 100,
+			GroupVolume:    3000,
+			DistributorCount: &DistributorCountRequirement{
+				Count:      2,
+				MinRank:    "Associate",
+				SearchMode: "first_levels",
+				// SearchDepth intentionally nil.
+			},
+		},
+	}
+
+	errs := validateBusinessRules(plan)
+	var found bool
+	for _, e := range errs {
+		if e.Code == "missing_search_depth" {
+			found = true
+			assert.Equal(t, SeverityWarning, e.Severity)
+			assert.Contains(t, e.Message, "first_levels")
+			break
+		}
+	}
+	assert.True(t, found, "expected missing_search_depth warning, got: %v", errs)
+}
+
+func TestValidation_SearchModeFirstLevelsWithDepthPasses(t *testing.T) {
+	plan := minimalPlan()
+	depth := 3
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{
+			Structure:      "Primary",
+			PersonalVolume: 100,
+			GroupVolume:    3000,
+			DistributorCount: &DistributorCountRequirement{
+				Count:       2,
+				MinRank:     "Associate",
+				SearchMode:  "first_levels",
+				SearchDepth: &depth,
+			},
+		},
+	}
+
+	errs := validateBusinessRules(plan)
+	assert.Empty(t, errs)
+}
+
+func TestValidation_CurrencyMismatch(t *testing.T) {
+	plan := minimalPlan()
+	plan.Payout.BaseCurrency = "EUR"
+	plan.Volume.BaseCurrency = "USD"
+
+	errs := validateBusinessRules(plan)
+	var found bool
+	for _, e := range errs {
+		if e.Code == "currency_mismatch" {
+			found = true
+			assert.Equal(t, SeverityError, e.Severity)
+			assert.Contains(t, e.Message, "EUR")
+			assert.Contains(t, e.Message, "USD")
+			break
+		}
+	}
+	assert.True(t, found, "expected currency_mismatch error, got: %v", errs)
+}
+
+func TestValidation_MatchingCurrencyPasses(t *testing.T) {
+	plan := minimalPlan()
+	// Both already "USD" in minimalPlan, just verify no error.
+	errs := validateBusinessRules(plan)
+	assert.Empty(t, errs)
+}
+
+func TestValidation_MatchedCommissionTypesIncludesValidTypes(t *testing.T) {
+	plan := minimalPlan()
+	plan.Bonuses.Matching = &MatchingBonusConfig{
+		Depth:                  2,
+		Rates:                  map[string]float64{"1": 0.10},
+		MatchedCommissionTypes: []string{"nonexistent"},
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Contains(t, errs[0].Message, "valid types:")
+	assert.Contains(t, errs[0].Message, "unilevel")
+}

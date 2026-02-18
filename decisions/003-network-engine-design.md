@@ -10,7 +10,7 @@ The engine also needs to support multiple tree types (binary, unilevel, matrix, 
 
 ### Rust for the Engine
 
-The commission engine is written in Rust. The rest of the application is Go. The Rust engine is called from Go via FFI (in-process) or gRPC (distributed).
+The commission engine is written in Rust. The rest of the application is Go. The Rust engine is called from Go via a subprocess with NDJSON over stdin/stdout (StdioTransport). A gRPC transport can replace this for distributed deployment.
 
 Commission calculation is the one place where performance is non-negotiable. Walking a binary tree of 500,000 nodes, checking rank qualifications at each level, and computing commissions with exact decimal arithmetic is compute-bound work. Rust's zero-cost abstractions and predictable performance matter here. Go's garbage collector would introduce latency spikes during the exact operations where consistent performance is most important.
 

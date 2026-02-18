@@ -8,6 +8,7 @@ version: 1
 
 period:
   length: semi_month
+  start_date: "2026-01-01"
   payout_lag_days: 7
 
 volume:

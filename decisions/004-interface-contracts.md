@@ -58,7 +58,7 @@ Every parameter and return type is a named struct with documented fields. This m
 
 ### The Rust Boundary is Invisible
 
-Network Engine's 7 interfaces are pure Go. Consumers have no idea Rust is involved. The package handles FFI/gRPC communication internally.
+Network Engine's 7 interfaces are pure Go. Consumers have no idea Rust is involved. The package handles subprocess communication (NDJSON over stdin/stdout via StdioTransport) internally.
 
 Consumers do not need Rust tooling. The Rust engine can be replaced or upgraded without touching any consumer. Testing consumers requires only a Go mock, not a running Rust binary.
 

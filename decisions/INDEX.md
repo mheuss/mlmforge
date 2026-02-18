@@ -6,6 +6,14 @@ Written for developers, architects, and evaluators who want to understand the sy
 
 MLMForge's architecture is informed by years of building and operating a production MLM platform. These documents reference that predecessor as "the legacy system." The decisions here address problems we encountered firsthand.
 
+## Numbering
+
+This folder uses its own numbering sequence (001 through 017). DEVELOPMENT.md has a separate ADR sequence (ADR-001 through ADR-017).
+
+The two sequences cover different scopes. DEVELOPMENT.md ADRs document high-level architectural decisions like language choice, persistence strategy, and modularity. The `decisions/` folder documents detailed per-domain design decisions like tree implementation, compensation config, and interface contracts.
+
+Code comments that reference "ADR-NNN" use the DEVELOPMENT.md numbering.
+
 ## Documents
 
 | # | Topic | Summary |

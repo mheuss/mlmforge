@@ -15,8 +15,17 @@ type TreeNode struct {
 }
 
 // TreePosition is full position metadata for a user on a specific structure.
-// Generalized for all tree types — branch counts and volumes are keyed
+// Generalized for all tree types. Branch counts and volumes are keyed
 // by position index, not named legs.
+//
+// Fields populated by the Rust engine via StdioTransport:
+//
+//	UserID, ParentUserID, Position, Depth, ChildCount, BranchCounts
+//
+// Fields enriched by the Go application layer:
+//
+//	StructureID, StructureType, Width, BranchVolumes,
+//	PersonalVolume, GroupVolume, OpenPositions
 type TreePosition struct {
 	StructureID    string
 	StructureType  string // "unilevel", "binary", "matrix", "stairstep", "streamline"

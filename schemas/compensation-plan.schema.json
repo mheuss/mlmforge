@@ -78,7 +78,7 @@
     "PeriodConfig": {
       "type": "object",
       "description": "Commission period timing and payout lag configuration.",
-      "required": ["length", "payout_lag_days"],
+      "required": ["length", "payout_lag_days", "start_date"],
       "properties": {
         "length": {
           "$ref": "#/$defs/PeriodLength",

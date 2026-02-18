@@ -32,6 +32,8 @@ func (p *Pipeline) validateSchema(yamlBytes []byte) []ValidationError {
 
 	verr, ok := err.(*jsonschema.ValidationError)
 	if !ok {
+		// Defensive: jsonschema.Validate normally returns *jsonschema.ValidationError.
+		// This branch handles unexpected error types from the library.
 		return []ValidationError{{
 			Path:     "",
 			Code:     "schema_error",
@@ -107,6 +109,8 @@ func convertYAMLToJSON(v any) any {
 	case int:
 		return float64(val)
 	case int64:
+		// Safety net: yaml.v3 typically produces int for integers, not int64.
+		// Retained for defensive coverage against library version changes.
 		return float64(val)
 	// yaml.v3 does not produce uint, uint64, or float32. If the YAML library
 	// changes, the default case below will pass them through. JSON Schema

@@ -92,6 +92,8 @@ type DemotionPolicy struct {
 // UnmarshalYAML implements custom unmarshalling for the demotion policy union type.
 func (d *DemotionPolicy) UnmarshalYAML(value *yaml.Node) error {
 	if value.Kind == yaml.ScalarNode {
+		// String value validation (allowed values: "promotion_only", etc.) is
+		// delegated to the JSON Schema enum constraint in schema validation.
 		d.StringValue = value.Value
 		return nil
 	}
@@ -150,6 +152,23 @@ type ActiveLegTier struct {
 	MaxCommissionDepth int `yaml:"max_commission_depth" json:"max_commission_depth"`
 }
 
+// --- Commission interface ---
+
+// Commission is a marker interface for typed commission configurations.
+// It replaces the previous `any` type on StructureConfig.resolvedCommission,
+// providing compile-time safety that only commission types are stored.
+type Commission interface {
+	isCommission()
+}
+
+// Marker method implementations for all commission types.
+func (*UnilevelCommission) isCommission()   {}
+func (*BinaryCommission) isCommission()     {}
+func (*MatrixCommission) isCommission()     {}
+func (*StairstepCommission) isCommission()  {}
+func (*GenerationCommission) isCommission() {}
+func (*StreamlineCommission) isCommission() {}
+
 // --- Structures ---
 
 // StructureConfig holds the flat YAML representation of a structure.
@@ -164,7 +183,7 @@ type StructureConfig struct {
 	Pruning       *PruningConfig         `yaml:"pruning" json:"pruning,omitempty"`
 	// resolvedCommission holds the parsed commission config after type resolution.
 	// Not exported. Set by resolveCommissions() during pipeline execution.
-	resolvedCommission any
+	resolvedCommission Commission
 }
 
 // Per-type commission configs. Populated by resolveCommissions() after
@@ -506,7 +525,7 @@ func resolveCommissions(plan *CompensationPlan) error {
 	for i := range plan.Structures {
 		s := &plan.Structures[i]
 		if s.CommissionRaw == nil {
-			continue
+			return fmt.Errorf("structure %q has no commission block", s.Name)
 		}
 		rawBytes, err := yaml.Marshal(s.CommissionRaw)
 		if err != nil {

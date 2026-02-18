@@ -228,6 +228,10 @@ func translateStreamlineCommission(c *StreamlineCommission) (map[string]any, err
 // sortStreamlineLevels converts a map of level-string to StreamlineLevel into
 // a sorted slice with the level number included on each entry.
 func sortStreamlineLevels(levels map[string]StreamlineLevel) ([]map[string]any, error) {
+	if len(levels) == 0 {
+		return nil, fmt.Errorf("streamline dynamic_compression must have at least one level")
+	}
+
 	type numbered struct {
 		level int
 		sl    StreamlineLevel

@@ -96,7 +96,7 @@ func TestPipelineWarningsAllowJSON(t *testing.T) {
 
 	yamlBytes := readFixture(t, "valid/minimal-unilevel.yaml")
 	// Set payout_lag_days to 45, which triggers a warning (>30).
-	yamlBytes = replaceInYAML(yamlBytes, "payout_lag_days: 14", "payout_lag_days: 45")
+	yamlBytes = replaceInYAML(t, yamlBytes, "payout_lag_days: 14", "payout_lag_days: 45")
 
 	jsonBytes, errs, err := p.LoadAndValidate(yamlBytes)
 

@@ -121,6 +121,13 @@ func TestStringifyKey(t *testing.T) {
 	}
 }
 
+// TestValidateSchemaReturnsSchemaErrorForNonValidationError verifies the
+// defensive branch where jsonschema.Validate returns an error that is not
+// a *jsonschema.ValidationError. This is hard to trigger naturally because
+// the library consistently returns *jsonschema.ValidationError. The branch
+// exists as a safety net for unexpected error types from the library.
+// See schema.go:33-41.
+
 func TestConvertYAMLToJSONMapAnyAny(t *testing.T) {
 	// Simulate a map[any]any input (yaml.v3 safety net path).
 	input := map[any]any{

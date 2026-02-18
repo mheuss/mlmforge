@@ -427,15 +427,16 @@ func TestResolveCommissionsUnknownType(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown structure type: pyramid")
 }
 
-// TestResolveCommissionsNilCommissionSkipped verifies that structures
-// without a commission block are skipped without error.
-func TestResolveCommissionsNilCommissionSkipped(t *testing.T) {
+// TestResolveCommissionsNilCommissionReturnsError verifies that structures
+// without a commission block return an error.
+func TestResolveCommissionsNilCommissionReturnsError(t *testing.T) {
 	plan := &CompensationPlan{
 		Structures: []StructureConfig{
 			{Name: "Empty", Type: "unilevel", CommissionRaw: nil},
 		},
 	}
 	err := resolveCommissions(plan)
-	require.NoError(t, err)
-	assert.Nil(t, plan.Structures[0].resolvedCommission)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Empty")
+	assert.Contains(t, err.Error(), "no commission block")
 }

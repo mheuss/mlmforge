@@ -40,6 +40,12 @@ func NewPipeline(schemaPath string) (*Pipeline, error) {
 //
 // Schema errors block all subsequent steps. Business-rule errors block
 // translation. Warnings (severity "warning") do not block.
+//
+// Note: YAML parse errors are returned differently depending on where they occur.
+// Step 1 (schema validation) returns parse failures as ValidationError entries.
+// Step 2 (struct unmarshal) returns parse failures as the error return value.
+// In practice, the same bytes parse successfully in both steps, so step 2 parse
+// failures should not occur if step 1 passes.
 func (p *Pipeline) LoadAndValidate(yamlBytes []byte) ([]byte, []ValidationError, error) {
 	// Step 1: Schema validation.
 	schemaErrs := p.validateSchema(yamlBytes)

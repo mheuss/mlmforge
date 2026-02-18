@@ -29,8 +29,14 @@ func readFixture(t *testing.T, name string) []byte {
 }
 
 // replaceInYAML substitutes the first occurrence of old with new in YAML bytes.
-func replaceInYAML(yamlBytes []byte, old, new string) []byte {
-	return []byte(strings.Replace(string(yamlBytes), old, new, 1))
+// Fails the test if old is not found, preventing silent no-op replacements.
+func replaceInYAML(t *testing.T, yamlBytes []byte, old, new string) []byte {
+	t.Helper()
+	result := strings.Replace(string(yamlBytes), old, new, 1)
+	if result == string(yamlBytes) {
+		t.Fatalf("replaceInYAML: %q not found in input", old)
+	}
+	return []byte(result)
 }
 
 // minimalPlan returns a valid CompensationPlan for use as a baseline in
@@ -58,8 +64,7 @@ func minimalPlan() *CompensationPlan {
 					},
 					RequiredProducts: []string{},
 				},
-				QualifiedStructures: []string{"Primary"},
-				DemotionPolicy:      DemotionPolicy{StringValue: "promotion_only"},
+				DemotionPolicy: DemotionPolicy{StringValue: "promotion_only"},
 			},
 			{
 				Name:    "Silver",

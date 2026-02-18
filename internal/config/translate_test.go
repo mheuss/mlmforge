@@ -234,6 +234,15 @@ func TestTranslateDemotionPolicyGraceJSON(t *testing.T) {
 	assert.Equal(t, "months", grace["unit"])
 }
 
+// TestSortStreamlineLevelsEmptyMap verifies that sortStreamlineLevels
+// returns an error when the dynamic_compression map is empty.
+func TestSortStreamlineLevelsEmptyMap(t *testing.T) {
+	levels := map[string]StreamlineLevel{}
+	_, err := sortStreamlineLevels(levels)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must have at least one level")
+}
+
 // TestSortStreamlineLevelsInvalidKey verifies that sortStreamlineLevels
 // returns an error when a map key is not a valid integer.
 func TestSortStreamlineLevelsInvalidKey(t *testing.T) {

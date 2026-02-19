@@ -12,19 +12,25 @@ The unilevel tree was implemented first (decision 007) and makes no placement de
 
 ### Trees Are Pure Topology
 
-Tree structures enforce shape constraints and provide traversal operations. They do not contain placement logic, sponsor awareness, holding tank knowledge, or business rules.
+Tree structures enforce shape constraints and provide traversal operations. They do not contain placement logic, holding tank knowledge, or business rules.
 
 A tree knows:
 - Its structural constraints (unilevel: unbounded children; binary: max 2; matrix: fixed width)
-- Parent-child relationships
-- Depth, position indices, traversal
+- Placement topology (parent-child relationships)
+- Sponsor topology (who recruited whom)
+- Depth, position indices, traversal over both edge types
 
 A tree does not know:
-- Who sponsored a user (sponsor != placement parent)
 - Why a user was placed at a given position
 - Whether a holding tank exists
 - What spillover strategy is active
 - Whether per-user placement preferences are set
+
+### Sponsor Edges Are Data, Not Logic
+
+Trees store two edge types: placement edges (parent/children) and sponsor edges (sponsor/sponsored). The sponsor relationship is topological data. Storing it does not make the tree placement-aware.
+
+The tree never uses sponsor edges to make placement decisions. It stores them so that commission calculators can walk the sponsor upline without bouncing between separate data structures. Both edge types live in the same arena for cache-friendly traversal.
 
 ### The Caller Decides Placement
 

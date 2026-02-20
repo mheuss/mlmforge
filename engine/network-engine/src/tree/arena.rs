@@ -226,23 +226,12 @@ impl Arena {
         Ok(count)
     }
 
-    /// Counts all descendants of a node (not including the node itself).
+    /// Counts all descendants of a node, not including the node itself.
+    ///
+    /// Equivalent to `count_downline(idx, 0)` but reads more clearly
+    /// when used for branch counting where depth limits don't apply.
     pub(crate) fn count_subtree(&self, start_idx: NodeIndex) -> usize {
-        let mut count = 0;
-        let mut queue = VecDeque::new();
-
-        for &child_idx in &self.nodes[start_idx.0].children {
-            queue.push_back(child_idx);
-        }
-
-        while let Some(idx) = queue.pop_front() {
-            count += 1;
-            for &child_idx in &self.nodes[idx.0].children {
-                queue.push_back(child_idx);
-            }
-        }
-
-        count
+        self.count_downline(start_idx, 0)
     }
 
     /// Checks whether user_idx is a descendant of ancestor_idx.

@@ -791,3 +791,241 @@ fn calculate_unilevel_empty_volume_returns_empty_earnings() {
     drop(worker.stdin.take());
     worker.wait().unwrap();
 }
+
+// --- Binary tree integration tests ---
+//
+// These tests exercise binary tree operations through the NDJSON protocol
+// to verify the worker dispatches correctly to BinaryTree.
+
+const BINARY_TREE: &str = "BinaryTest";
+const NODE_A: &str = "00000000-0000-0000-0000-00000000000a";
+const NODE_B: &str = "00000000-0000-0000-0000-00000000000b";
+const NODE_C: &str = "00000000-0000-0000-0000-00000000000c";
+
+/// Creates a named binary tree on the worker.
+fn create_binary_tree(child: &mut std::process::Child, name: &str) {
+    let resp = common::send_receive(
+        child,
+        &format!(
+            r#"{{"id":"setup-bin","op":"create_tree","params":{{"structure":"{}","tree_type":"binary"}}}}"#,
+            name
+        ),
+    );
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "create_tree (binary) failed: {}",
+        resp
+    );
+}
+
+#[test]
+fn binary_create_tree_and_add_root() {
+    let mut worker = common::spawn_worker();
+    create_binary_tree(&mut worker, BINARY_TREE);
+
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"b1","op":"add_root","params":{{"structure":"{}","user_id":"{}","enrolled_at":100}}}}"#,
+            BINARY_TREE, NODE_A
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
+    assert!(resp.contains(r#""added":true"#));
+
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(parsed["id"], "b1");
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn binary_add_node_with_position() {
+    let mut worker = common::spawn_worker();
+    create_binary_tree(&mut worker, BINARY_TREE);
+
+    // Add root
+    common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"b-root","op":"add_root","params":{{"structure":"{}","user_id":"{}","enrolled_at":100}}}}"#,
+            BINARY_TREE, NODE_A
+        ),
+    );
+
+    // Add left child at position 0
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"b-left","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","position":0,"enrolled_at":200}}}}"#,
+            BINARY_TREE, NODE_B, NODE_A, NODE_A
+        ),
+    );
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "add left child failed: {}",
+        resp
+    );
+    assert!(resp.contains(r#""added":true"#));
+
+    // Add right child at position 1
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"b-right","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","position":1,"enrolled_at":300}}}}"#,
+            BINARY_TREE, NODE_C, NODE_A, NODE_A
+        ),
+    );
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "add right child failed: {}",
+        resp
+    );
+    assert!(resp.contains(r#""added":true"#));
+
+    // Verify root has 2 children
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"b-children","op":"get_children","params":{{"structure":"{}","user_id":"{}"}}}}"#,
+            BINARY_TREE, NODE_A
+        ),
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let children = parsed["result"].as_array().unwrap();
+    assert_eq!(children.len(), 2);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn binary_position_occupied_error() {
+    let mut worker = common::spawn_worker();
+    create_binary_tree(&mut worker, BINARY_TREE);
+
+    // Add root
+    common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"b-root","op":"add_root","params":{{"structure":"{}","user_id":"{}","enrolled_at":100}}}}"#,
+            BINARY_TREE, NODE_A
+        ),
+    );
+
+    // Add left child at position 0
+    common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"b-first","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","position":0,"enrolled_at":200}}}}"#,
+            BINARY_TREE, NODE_B, NODE_A, NODE_A
+        ),
+    );
+
+    // Try to add another node at position 0 — should fail with POSITION_OCCUPIED
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"b-dup","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","position":0,"enrolled_at":300}}}}"#,
+            BINARY_TREE, NODE_C, NODE_A, NODE_A
+        ),
+    );
+    assert!(resp.contains(r#""ok":false"#));
+    assert!(
+        resp.contains("POSITION_OCCUPIED"),
+        "expected POSITION_OCCUPIED, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn binary_get_position_returns_slot_positions() {
+    let mut worker = common::spawn_worker();
+    create_binary_tree(&mut worker, BINARY_TREE);
+
+    // Build: root(A) -> left(B) at 0, right(C) at 1
+    common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"b-root","op":"add_root","params":{{"structure":"{}","user_id":"{}","enrolled_at":100}}}}"#,
+            BINARY_TREE, NODE_A
+        ),
+    );
+    common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"b-left","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","position":0,"enrolled_at":200}}}}"#,
+            BINARY_TREE, NODE_B, NODE_A, NODE_A
+        ),
+    );
+    common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"b-right","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","position":1,"enrolled_at":300}}}}"#,
+            BINARY_TREE, NODE_C, NODE_A, NODE_A
+        ),
+    );
+
+    // Check left child position
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"b-pos-left","op":"get_position","params":{{"structure":"{}","user_id":"{}"}}}}"#,
+            BINARY_TREE, NODE_B
+        ),
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(
+        parsed["ok"].as_bool().unwrap(),
+        "get_position failed: {}",
+        resp
+    );
+    assert_eq!(parsed["result"]["position"].as_u64().unwrap(), 0);
+    assert_eq!(parsed["result"]["parent_user_id"].as_str().unwrap(), NODE_A);
+
+    // Check right child position
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"b-pos-right","op":"get_position","params":{{"structure":"{}","user_id":"{}"}}}}"#,
+            BINARY_TREE, NODE_C
+        ),
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(
+        parsed["ok"].as_bool().unwrap(),
+        "get_position failed: {}",
+        resp
+    );
+    assert_eq!(parsed["result"]["position"].as_u64().unwrap(), 1);
+    assert_eq!(parsed["result"]["parent_user_id"].as_str().unwrap(), NODE_A);
+
+    // Check root's downline_counts includes both slots
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"b-pos-root","op":"get_position","params":{{"structure":"{}","user_id":"{}"}}}}"#,
+            BINARY_TREE, NODE_A
+        ),
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(parsed["ok"].as_bool().unwrap());
+    let dc = &parsed["result"]["downline_counts"];
+    assert_eq!(
+        dc["0"].as_u64().unwrap(),
+        0,
+        "left child has no subtree descendants"
+    );
+    assert_eq!(
+        dc["1"].as_u64().unwrap(),
+        0,
+        "right child has no subtree descendants"
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}

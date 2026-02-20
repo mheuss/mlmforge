@@ -87,8 +87,14 @@ Each tree type wraps `Arena` and delegates traversals. Tree-specific logic (widt
 ```rust
 pub struct BinaryTree {
     arena: Arena,
+    /// Binary child slots per parent node.
+    /// Left = slots[parent][0], Right = slots[parent][1].
+    /// The Node's children Vec is rebuilt from occupied slots.
+    slots: HashMap<NodeIndex, [Option<NodeIndex>; 2]>,
 }
 ```
+
+The `slots` map tracks which binary positions are occupied. This solves a problem that surfaced during implementation planning: `Vec<NodeIndex>` cannot represent "right child without left child" without sentinels or placeholders. The slots map is the source of truth for position occupancy. The Node's `children` Vec is rebuilt from occupied slots (left first, then right) so that shared Arena traversals work correctly.
 
 Same public API shape as unilevel, with these differences:
 
@@ -96,6 +102,7 @@ Same public API shape as unilevel, with these differences:
 - Validates position is 0 or 1
 - Validates position is not already occupied
 - New error variant: `PositionOccupied { user_id: Uuid, position: usize }`
+- `get_position` overrides position and downline_counts from the slots map rather than relying on children Vec indices
 
 All traversals delegate to the shared Arena.
 
@@ -132,6 +139,8 @@ pub enum TreeInstance {
 **New error codes:** `POSITION_OCCUPIED`, `INVALID_POSITION`.
 
 **Breaking changes:** `add_root`, `add_node`, and all tree query operations gain new required parameters. Go `EngineClient` and contract test fixtures need updating.
+
+**Contract test setup steps:** With `create_tree` as a prerequisite for tree operations, contract test fixtures need a `setup` array of requests that run before the test request. Both the Go and Rust contract test runners are updated to process setup steps. This was discovered during implementation planning — existing fixtures assumed implicit tree creation on `add_root`.
 
 ### TreeNavigator Trait
 

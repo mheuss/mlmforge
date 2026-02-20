@@ -30,4 +30,7 @@ pub enum TreeError {
 
     #[error("tree already has a root node")]
     RootAlreadyExists,
+
+    #[error("position {position} already occupied for user {user_id}")]
+    PositionOccupied { user_id: Uuid, position: usize },
 }

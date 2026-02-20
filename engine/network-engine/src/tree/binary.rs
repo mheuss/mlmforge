@@ -504,4 +504,158 @@ mod tests {
         let sponsor = tree.get_sponsor(test_uuid(2)).unwrap();
         assert_eq!(sponsor.unwrap().user_id, test_uuid(1));
     }
+
+    #[test]
+    fn remove_leaf_node() {
+        let mut tree = BinaryTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0, test_uuid(1), 2000)
+            .unwrap();
+        let result = tree.remove_node(test_uuid(2));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn remove_node_with_children_fails() {
+        let mut tree = BinaryTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0, test_uuid(1), 2000)
+            .unwrap();
+        let result = tree.remove_node(test_uuid(1));
+        assert!(matches!(result, Err(TreeError::HasChildren(_, 1))));
+    }
+
+    #[test]
+    fn remove_and_readd_same_position() {
+        let mut tree = BinaryTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0, test_uuid(1), 2000)
+            .unwrap();
+        tree.remove_node(test_uuid(2)).unwrap();
+        let result = tree.add_node(test_uuid(3), test_uuid(1), 0, test_uuid(1), 3000);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn removed_slot_is_reused() {
+        let mut tree = BinaryTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0, test_uuid(1), 2000)
+            .unwrap();
+        tree.remove_node(test_uuid(2)).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 0, test_uuid(1), 3000)
+            .unwrap();
+        // Arena slot reused
+        assert_eq!(tree.arena.nodes.len(), 2);
+    }
+
+    #[test]
+    fn single_node_tree() {
+        let mut tree = BinaryTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        assert!(tree.get_parent(test_uuid(1)).unwrap().is_none());
+        assert!(tree.get_children(test_uuid(1)).unwrap().is_empty());
+        assert!(tree.get_upline(test_uuid(1), 0).unwrap().is_empty());
+        assert!(tree.get_downline(test_uuid(1), 0).unwrap().is_empty());
+        assert_eq!(tree.count_downline(test_uuid(1), 0).unwrap(), 0);
+    }
+
+    #[test]
+    fn operations_on_empty_tree_fail() {
+        let tree = BinaryTree::new();
+        assert!(matches!(
+            tree.get_parent(test_uuid(1)),
+            Err(TreeError::UserNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn deep_chain_1000_nodes_alternating() {
+        use crate::tree::test_helpers::test_uuid_u16;
+        let mut tree = BinaryTree::new();
+        tree.add_root(test_uuid_u16(0), 0).unwrap();
+        for i in 1..=1000u16 {
+            let position = (i % 2) as usize;
+            tree.add_node(
+                test_uuid_u16(i),
+                test_uuid_u16(i - 1),
+                position,
+                test_uuid_u16(0),
+                i as i64,
+            )
+            .unwrap();
+        }
+        let downline = tree.get_downline(test_uuid_u16(0), 0).unwrap();
+        assert_eq!(downline.len(), 1000);
+        let upline = tree.get_upline(test_uuid_u16(1000), 0).unwrap();
+        assert_eq!(upline.len(), 1000);
+    }
+
+    #[test]
+    fn get_position_left_child() {
+        let mut tree = BinaryTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0, test_uuid(1), 2000)
+            .unwrap();
+        let pos = tree.get_position(test_uuid(2)).unwrap();
+        assert_eq!(pos.position, 0);
+        assert_eq!(pos.parent_user_id, Some(test_uuid(1)));
+    }
+
+    #[test]
+    fn get_position_right_child() {
+        let mut tree = BinaryTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 1, test_uuid(1), 2000)
+            .unwrap();
+        let pos = tree.get_position(test_uuid(2)).unwrap();
+        assert_eq!(pos.position, 1);
+    }
+
+    #[test]
+    fn get_position_downline_counts_by_slot() {
+        let mut tree = BinaryTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0, test_uuid(1), 2000)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 1, test_uuid(1), 3000)
+            .unwrap();
+        tree.add_node(test_uuid(4), test_uuid(2), 0, test_uuid(1), 4000)
+            .unwrap();
+        tree.add_node(test_uuid(5), test_uuid(2), 1, test_uuid(1), 5000)
+            .unwrap();
+
+        let pos = tree.get_position(test_uuid(1)).unwrap();
+        assert_eq!(pos.downline_counts[&0], 2);
+        assert_eq!(pos.downline_counts[&1], 0);
+    }
+
+    #[test]
+    fn get_branch_left() {
+        let mut tree = BinaryTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0, test_uuid(1), 2000)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 1, test_uuid(1), 3000)
+            .unwrap();
+        tree.add_node(test_uuid(4), test_uuid(2), 0, test_uuid(1), 4000)
+            .unwrap();
+        let branch = tree.get_branch(test_uuid(1), 0).unwrap();
+        let ids: Vec<Uuid> = branch.iter().map(|n| n.user_id).collect();
+        assert!(ids.contains(&test_uuid(2)));
+        assert!(ids.contains(&test_uuid(4)));
+        assert!(!ids.contains(&test_uuid(3)));
+    }
+
+    #[test]
+    fn is_descendant_of_works() {
+        let mut tree = BinaryTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0, test_uuid(1), 2000)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), 1, test_uuid(1), 3000)
+            .unwrap();
+        assert!(tree.is_descendant_of(test_uuid(3), test_uuid(1)).unwrap());
+        assert!(!tree.is_descendant_of(test_uuid(1), test_uuid(3)).unwrap());
+    }
 }

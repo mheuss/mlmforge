@@ -398,9 +398,14 @@ impl BinaryTree {
 
     /// Provides read access to the arena for commission calculators
     /// and other crate-internal consumers.
-    #[allow(dead_code)] // Used by BinaryTree commission calculator (future task)
     pub(crate) fn arena(&self) -> &Arena {
         &self.arena
+    }
+
+    /// Provides read access to the binary slot map for commission
+    /// calculators and other crate-internal consumers.
+    pub(crate) fn slots(&self) -> &HashMap<NodeIndex, [Option<NodeIndex>; 2]> {
+        &self.slots
     }
 }
 

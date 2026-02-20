@@ -1,6 +1,7 @@
 pub(crate) mod arena;
 pub mod binary;
 pub mod error;
+pub mod navigator;
 pub mod node;
 pub mod unilevel;
 

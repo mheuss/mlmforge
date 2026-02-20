@@ -390,6 +390,45 @@ impl BinaryTree {
     }
 }
 
+impl crate::tree::navigator::TreeNavigator for BinaryTree {
+    fn get_parent(&self, user_id: Uuid) -> Result<Option<&Node>, TreeError> {
+        self.get_parent(user_id)
+    }
+    fn get_children(&self, user_id: Uuid) -> Result<Vec<&Node>, TreeError> {
+        self.get_children(user_id)
+    }
+    fn get_upline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
+        self.get_upline(user_id, depth)
+    }
+    fn get_downline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
+        self.get_downline(user_id, depth)
+    }
+    fn get_position(&self, user_id: Uuid) -> Result<TreePosition, TreeError> {
+        self.get_position(user_id)
+    }
+    fn get_branch(&self, user_id: Uuid, position: usize) -> Result<Vec<&Node>, TreeError> {
+        self.get_branch(user_id, position)
+    }
+    fn count_downline(&self, user_id: Uuid, depth: u32) -> Result<usize, TreeError> {
+        self.count_downline(user_id, depth)
+    }
+    fn count_branch(&self, user_id: Uuid, position: usize) -> Result<usize, TreeError> {
+        self.count_branch(user_id, position)
+    }
+    fn is_descendant_of(&self, user_id: Uuid, ancestor_id: Uuid) -> Result<bool, TreeError> {
+        self.is_descendant_of(user_id, ancestor_id)
+    }
+    fn get_sponsor(&self, user_id: Uuid) -> Result<Option<&Node>, TreeError> {
+        self.get_sponsor(user_id)
+    }
+    fn get_sponsor_upline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
+        self.get_sponsor_upline(user_id, depth)
+    }
+    fn get_sponsored(&self, user_id: Uuid) -> Result<Vec<&Node>, TreeError> {
+        self.get_sponsored(user_id)
+    }
+}
+
 impl std::fmt::Debug for BinaryTree {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let root_id = self.arena.root.map(|idx| self.arena.node(idx).user_id);

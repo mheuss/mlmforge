@@ -116,7 +116,10 @@ impl BinaryTree {
         self.slots.insert(idx, [None, None]);
 
         // Update parent's binary slots and rebuild children Vec.
-        let slots = self.slots.get_mut(&parent_idx).unwrap();
+        let slots = self
+            .slots
+            .get_mut(&parent_idx)
+            .expect("slots entry missing — arena and slots map out of sync");
         slots[position] = Some(idx);
         self.rebuild_children(parent_idx);
 
@@ -141,7 +144,10 @@ impl BinaryTree {
         }
 
         if let Some(parent_idx) = self.arena.node(idx).parent {
-            let slots = self.slots.get_mut(&parent_idx).unwrap();
+            let slots = self
+                .slots
+                .get_mut(&parent_idx)
+                .expect("slots entry missing — arena and slots map out of sync");
             for slot in slots.iter_mut() {
                 if *slot == Some(idx) {
                     *slot = None;
@@ -171,7 +177,11 @@ impl BinaryTree {
     /// Children appear in position order: left (0) first, right (1) second.
     /// Only occupied slots are included.
     fn rebuild_children(&mut self, parent_idx: NodeIndex) {
-        let slots = self.slots[&parent_idx];
+        let slots = self
+            .slots
+            .get(&parent_idx)
+            .copied()
+            .expect("slots entry missing — arena and slots map out of sync");
         let mut children = Vec::with_capacity(2);
         if let Some(left) = slots[0] {
             children.push(left);
@@ -238,7 +248,10 @@ impl BinaryTree {
 
         // For binary, position is determined by slots, not children Vec index.
         if let Some(parent_idx) = self.arena.node(idx).parent {
-            let parent_slots = self.slots.get(&parent_idx).unwrap();
+            let parent_slots = self
+                .slots
+                .get(&parent_idx)
+                .expect("slots entry missing — arena and slots map out of sync");
             if parent_slots[0] == Some(idx) {
                 pos.position = 0;
             } else if parent_slots[1] == Some(idx) {
@@ -247,7 +260,10 @@ impl BinaryTree {
         }
 
         // Override downline_counts to use slot positions, not children Vec indices.
-        let node_slots = self.slots.get(&idx).unwrap();
+        let node_slots = self
+            .slots
+            .get(&idx)
+            .expect("slots entry missing — arena and slots map out of sync");
         pos.downline_counts.clear();
         for (slot_pos, slot) in node_slots.iter().enumerate() {
             if let Some(child_idx) = slot {
@@ -265,7 +281,10 @@ impl BinaryTree {
     /// its descendants, in BFS order.
     pub fn get_branch(&self, user_id: Uuid, position: usize) -> Result<Vec<&Node>, TreeError> {
         let idx = self.arena.resolve(user_id)?;
-        let node_slots = self.slots.get(&idx).unwrap();
+        let node_slots = self
+            .slots
+            .get(&idx)
+            .expect("slots entry missing — arena and slots map out of sync");
 
         if position > 1 {
             return Err(TreeError::PositionOutOfRange {
@@ -288,11 +307,7 @@ impl BinaryTree {
                 }
                 Ok(result)
             }
-            None => Err(TreeError::PositionOutOfRange {
-                user_id,
-                position,
-                child_count: node_slots.iter().filter(|s| s.is_some()).count(),
-            }),
+            None => Ok(vec![]),
         }
     }
 
@@ -311,7 +326,10 @@ impl BinaryTree {
     /// its descendants.
     pub fn count_branch(&self, user_id: Uuid, position: usize) -> Result<usize, TreeError> {
         let idx = self.arena.resolve(user_id)?;
-        let node_slots = self.slots.get(&idx).unwrap();
+        let node_slots = self
+            .slots
+            .get(&idx)
+            .expect("slots entry missing — arena and slots map out of sync");
 
         if position > 1 {
             return Err(TreeError::PositionOutOfRange {
@@ -323,11 +341,7 @@ impl BinaryTree {
 
         match node_slots[position] {
             Some(child_idx) => Ok(1 + self.arena.count_subtree(child_idx)),
-            None => Err(TreeError::PositionOutOfRange {
-                user_id,
-                position,
-                child_count: node_slots.iter().filter(|s| s.is_some()).count(),
-            }),
+            None => Ok(0),
         }
     }
 
@@ -589,6 +603,16 @@ mod tests {
         assert_eq!(downline.len(), 1000);
         let upline = tree.get_upline(test_uuid_u16(1000), 0).unwrap();
         assert_eq!(upline.len(), 1000);
+    }
+
+    #[test]
+    fn get_position_root() {
+        let mut tree = BinaryTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        let pos = tree.get_position(test_uuid(1)).unwrap();
+        assert_eq!(pos.position, 0);
+        assert!(pos.parent_user_id.is_none());
+        assert_eq!(pos.depth, 0);
     }
 
     #[test]

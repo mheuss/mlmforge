@@ -63,32 +63,63 @@ func (c *EngineClient) call(ctx context.Context, op string, params any) (json.Ra
 	return c.transport.Call(ctx, op, data)
 }
 
+// --- Tree lifecycle methods ---
+
+// CreateTree creates a named tree instance in the engine.
+// treeType must be "unilevel" or "binary".
+func (c *EngineClient) CreateTree(ctx context.Context, structure, treeType string) error {
+	_, err := c.call(ctx, "create_tree", map[string]string{
+		"structure": structure,
+		"tree_type": treeType,
+	})
+	return err
+}
+
 // --- Tree mutation methods ---
 
-// AddRoot creates the root node of a unilevel tree in the engine.
-func (c *EngineClient) AddRoot(ctx context.Context, userID string, enrolledAt int64) error {
+// AddRoot creates the root node of a tree in the engine.
+func (c *EngineClient) AddRoot(ctx context.Context, structure, userID string, enrolledAt int64) error {
 	_, err := c.call(ctx, "add_root", map[string]any{
+		"structure":   structure,
 		"user_id":     userID,
 		"enrolled_at": enrolledAt,
 	})
 	return err
 }
 
+// AddNodeOption configures optional parameters for AddNode.
+type AddNodeOption func(map[string]any)
+
+// WithPosition sets the child position (required for binary trees).
+func WithPosition(position int) AddNodeOption {
+	return func(params map[string]any) {
+		params["position"] = position
+	}
+}
+
 // AddNode adds a child node under parentID in the engine's tree.
-func (c *EngineClient) AddNode(ctx context.Context, userID, parentID string, enrolledAt int64) error {
-	_, err := c.call(ctx, "add_node", map[string]any{
+// For binary trees, use WithPosition to specify the slot.
+func (c *EngineClient) AddNode(ctx context.Context, structure, userID, parentID, sponsorID string, enrolledAt int64, opts ...AddNodeOption) error {
+	params := map[string]any{
+		"structure":   structure,
 		"user_id":     userID,
 		"parent_id":   parentID,
+		"sponsor_id":  sponsorID,
 		"enrolled_at": enrolledAt,
-	})
+	}
+	for _, opt := range opts {
+		opt(params)
+	}
+	_, err := c.call(ctx, "add_node", params)
 	return err
 }
 
 // RemoveNode removes a leaf node from the tree. The Rust engine
 // rejects removal of nodes that have children.
-func (c *EngineClient) RemoveNode(ctx context.Context, userID string) error {
+func (c *EngineClient) RemoveNode(ctx context.Context, structure, userID string) error {
 	_, err := c.call(ctx, "remove_node", map[string]any{
-		"user_id": userID,
+		"structure": structure,
+		"user_id":   userID,
 	})
 	return err
 }
@@ -96,9 +127,10 @@ func (c *EngineClient) RemoveNode(ctx context.Context, userID string) error {
 // --- Tree query methods ---
 
 // GetParent returns the parent of a node, or nil if the node is the root.
-func (c *EngineClient) GetParent(ctx context.Context, userID string) (*EngineNode, error) {
+func (c *EngineClient) GetParent(ctx context.Context, structure, userID string) (*EngineNode, error) {
 	result, err := c.call(ctx, "get_parent", map[string]string{
-		"user_id": userID,
+		"structure": structure,
+		"user_id":   userID,
 	})
 	if err != nil {
 		return nil, err
@@ -117,9 +149,10 @@ func (c *EngineClient) GetParent(ctx context.Context, userID string) (*EngineNod
 }
 
 // GetChildren returns the direct children of a node in position order.
-func (c *EngineClient) GetChildren(ctx context.Context, userID string) ([]EngineNode, error) {
+func (c *EngineClient) GetChildren(ctx context.Context, structure, userID string) ([]EngineNode, error) {
 	result, err := c.call(ctx, "get_children", map[string]string{
-		"user_id": userID,
+		"structure": structure,
+		"user_id":   userID,
 	})
 	if err != nil {
 		return nil, err
@@ -134,10 +167,11 @@ func (c *EngineClient) GetChildren(ctx context.Context, userID string) ([]Engine
 
 // GetUpline returns ancestors from closest to farthest.
 // Depth 0 means unlimited. Depth N returns at most N ancestors.
-func (c *EngineClient) GetUpline(ctx context.Context, userID string, depth uint32) ([]EngineNode, error) {
+func (c *EngineClient) GetUpline(ctx context.Context, structure, userID string, depth uint32) ([]EngineNode, error) {
 	result, err := c.call(ctx, "get_upline", map[string]any{
-		"user_id": userID,
-		"depth":   depth,
+		"structure": structure,
+		"user_id":   userID,
+		"depth":     depth,
 	})
 	if err != nil {
 		return nil, err
@@ -152,10 +186,11 @@ func (c *EngineClient) GetUpline(ctx context.Context, userID string, depth uint3
 
 // GetDownline returns descendants in breadth-first order.
 // Depth 0 means unlimited. Depth N returns descendants up to N levels deep.
-func (c *EngineClient) GetDownline(ctx context.Context, userID string, depth uint32) ([]EngineNode, error) {
+func (c *EngineClient) GetDownline(ctx context.Context, structure, userID string, depth uint32) ([]EngineNode, error) {
 	result, err := c.call(ctx, "get_downline", map[string]any{
-		"user_id": userID,
-		"depth":   depth,
+		"structure": structure,
+		"user_id":   userID,
+		"depth":     depth,
 	})
 	if err != nil {
 		return nil, err
@@ -170,9 +205,10 @@ func (c *EngineClient) GetDownline(ctx context.Context, userID string, depth uin
 
 // GetPosition returns a full position snapshot for a user, including
 // derived data like downline counts and child count.
-func (c *EngineClient) GetPosition(ctx context.Context, userID string) (*EnginePosition, error) {
+func (c *EngineClient) GetPosition(ctx context.Context, structure, userID string) (*EnginePosition, error) {
 	result, err := c.call(ctx, "get_position", map[string]string{
-		"user_id": userID,
+		"structure": structure,
+		"user_id":   userID,
 	})
 	if err != nil {
 		return nil, err
@@ -186,8 +222,9 @@ func (c *EngineClient) GetPosition(ctx context.Context, userID string) (*EngineP
 }
 
 // IsDescendantOf checks whether userID is a descendant of ancestorID.
-func (c *EngineClient) IsDescendantOf(ctx context.Context, userID, ancestorID string) (bool, error) {
+func (c *EngineClient) IsDescendantOf(ctx context.Context, structure, userID, ancestorID string) (bool, error) {
 	result, err := c.call(ctx, "is_descendant_of", map[string]string{
+		"structure":   structure,
 		"user_id":     userID,
 		"ancestor_id": ancestorID,
 	})
@@ -202,6 +239,66 @@ func (c *EngineClient) IsDescendantOf(ctx context.Context, userID, ancestorID st
 		return false, fmt.Errorf("unmarshal is_descendant: %w", err)
 	}
 	return resp.IsDescendant, nil
+}
+
+// --- Sponsor query methods ---
+
+// GetSponsor returns the sponsor of a node, or nil if the node has no sponsor.
+func (c *EngineClient) GetSponsor(ctx context.Context, structure, userID string) (*EngineNode, error) {
+	result, err := c.call(ctx, "get_sponsor", map[string]string{
+		"structure": structure,
+		"user_id":   userID,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// The Rust handler returns JSON null for the root node (no sponsor).
+	if string(result) == "null" {
+		return nil, nil
+	}
+
+	var node EngineNode
+	if err := json.Unmarshal(result, &node); err != nil {
+		return nil, fmt.Errorf("unmarshal sponsor: %w", err)
+	}
+	return &node, nil
+}
+
+// GetSponsorUpline returns sponsor ancestors from closest to farthest.
+// Depth 0 means unlimited. Depth N returns at most N sponsor ancestors.
+func (c *EngineClient) GetSponsorUpline(ctx context.Context, structure, userID string, depth uint32) ([]EngineNode, error) {
+	result, err := c.call(ctx, "get_sponsor_upline", map[string]any{
+		"structure": structure,
+		"user_id":   userID,
+		"depth":     depth,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var nodes []EngineNode
+	if err := json.Unmarshal(result, &nodes); err != nil {
+		return nil, fmt.Errorf("unmarshal sponsor upline: %w", err)
+	}
+	return nodes, nil
+}
+
+// GetSponsored returns the nodes directly sponsored by the given user.
+func (c *EngineClient) GetSponsored(ctx context.Context, structure, userID string) ([]EngineNode, error) {
+	result, err := c.call(ctx, "get_sponsored", map[string]string{
+		"structure": structure,
+		"user_id":   userID,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var nodes []EngineNode
+	if err := json.Unmarshal(result, &nodes); err != nil {
+		return nil, fmt.Errorf("unmarshal sponsored: %w", err)
+	}
+	return nodes, nil
 }
 
 // --- Commission calculation ---

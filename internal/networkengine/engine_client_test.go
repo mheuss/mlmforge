@@ -70,6 +70,21 @@ func TestEngineClient_CallMarshalError(t *testing.T) {
 	assert.Contains(t, err.Error(), "marshal params")
 }
 
+// --- Tree lifecycle tests (mock) ---
+
+func TestEngineClient_CreateTree_MockParams(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{"created":true}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	err := client.CreateTree(context.Background(), "Test", "unilevel")
+	require.NoError(t, err)
+
+	assert.Equal(t, "create_tree", mock.lastOp)
+	assert.JSONEq(t, `{"structure":"Test","tree_type":"unilevel"}`, string(mock.lastParams))
+}
+
 // --- Tree mutation tests (mock) ---
 
 func TestEngineClient_AddRoot_MockParams(t *testing.T) {
@@ -78,11 +93,11 @@ func TestEngineClient_AddRoot_MockParams(t *testing.T) {
 	}
 	client := NewEngineClientWithTransport(mock)
 
-	err := client.AddRoot(context.Background(), "00000000-0000-0000-0000-000000000001", 100)
+	err := client.AddRoot(context.Background(), "Test", "00000000-0000-0000-0000-000000000001", 100)
 	require.NoError(t, err)
 
 	assert.Equal(t, "add_root", mock.lastOp)
-	assert.JSONEq(t, `{"user_id":"00000000-0000-0000-0000-000000000001","enrolled_at":100}`, string(mock.lastParams))
+	assert.JSONEq(t, `{"structure":"Test","user_id":"00000000-0000-0000-0000-000000000001","enrolled_at":100}`, string(mock.lastParams))
 }
 
 func TestEngineClient_AddNode_MockParams(t *testing.T) {
@@ -91,11 +106,45 @@ func TestEngineClient_AddNode_MockParams(t *testing.T) {
 	}
 	client := NewEngineClientWithTransport(mock)
 
-	err := client.AddNode(context.Background(), "00000000-0000-0000-0000-000000000002", "00000000-0000-0000-0000-000000000001", 200)
+	err := client.AddNode(context.Background(), "Test",
+		"00000000-0000-0000-0000-000000000002",
+		"00000000-0000-0000-0000-000000000001",
+		"00000000-0000-0000-0000-000000000001",
+		200)
 	require.NoError(t, err)
 
 	assert.Equal(t, "add_node", mock.lastOp)
-	assert.JSONEq(t, `{"user_id":"00000000-0000-0000-0000-000000000002","parent_id":"00000000-0000-0000-0000-000000000001","enrolled_at":200}`, string(mock.lastParams))
+	assert.JSONEq(t, `{
+		"structure":"Test",
+		"user_id":"00000000-0000-0000-0000-000000000002",
+		"parent_id":"00000000-0000-0000-0000-000000000001",
+		"sponsor_id":"00000000-0000-0000-0000-000000000001",
+		"enrolled_at":200
+	}`, string(mock.lastParams))
+}
+
+func TestEngineClient_AddNode_WithPosition(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{"added":true}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	err := client.AddNode(context.Background(), "Binary",
+		"00000000-0000-0000-0000-000000000002",
+		"00000000-0000-0000-0000-000000000001",
+		"00000000-0000-0000-0000-000000000001",
+		200, WithPosition(0))
+	require.NoError(t, err)
+
+	assert.Equal(t, "add_node", mock.lastOp)
+	assert.JSONEq(t, `{
+		"structure":"Binary",
+		"user_id":"00000000-0000-0000-0000-000000000002",
+		"parent_id":"00000000-0000-0000-0000-000000000001",
+		"sponsor_id":"00000000-0000-0000-0000-000000000001",
+		"enrolled_at":200,
+		"position":0
+	}`, string(mock.lastParams))
 }
 
 func TestEngineClient_RemoveNode_MockParams(t *testing.T) {
@@ -104,11 +153,11 @@ func TestEngineClient_RemoveNode_MockParams(t *testing.T) {
 	}
 	client := NewEngineClientWithTransport(mock)
 
-	err := client.RemoveNode(context.Background(), "00000000-0000-0000-0000-000000000001")
+	err := client.RemoveNode(context.Background(), "Test", "00000000-0000-0000-0000-000000000001")
 	require.NoError(t, err)
 
 	assert.Equal(t, "remove_node", mock.lastOp)
-	assert.JSONEq(t, `{"user_id":"00000000-0000-0000-0000-000000000001"}`, string(mock.lastParams))
+	assert.JSONEq(t, `{"structure":"Test","user_id":"00000000-0000-0000-0000-000000000001"}`, string(mock.lastParams))
 }
 
 // --- Tree query tests (mock) ---
@@ -119,7 +168,7 @@ func TestEngineClient_GetParent_ReturnsNode(t *testing.T) {
 	}
 	client := NewEngineClientWithTransport(mock)
 
-	node, err := client.GetParent(context.Background(), "00000000-0000-0000-0000-000000000002")
+	node, err := client.GetParent(context.Background(), "Test", "00000000-0000-0000-0000-000000000002")
 	require.NoError(t, err)
 	require.NotNil(t, node)
 
@@ -135,7 +184,7 @@ func TestEngineClient_GetParent_ReturnsNilForRoot(t *testing.T) {
 	}
 	client := NewEngineClientWithTransport(mock)
 
-	node, err := client.GetParent(context.Background(), "00000000-0000-0000-0000-000000000001")
+	node, err := client.GetParent(context.Background(), "Test", "00000000-0000-0000-0000-000000000001")
 	require.NoError(t, err)
 	assert.Nil(t, node)
 }
@@ -146,7 +195,7 @@ func TestEngineClient_GetChildren_ReturnsNodes(t *testing.T) {
 	}
 	client := NewEngineClientWithTransport(mock)
 
-	nodes, err := client.GetChildren(context.Background(), "00000000-0000-0000-0000-000000000001")
+	nodes, err := client.GetChildren(context.Background(), "Test", "00000000-0000-0000-0000-000000000001")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 
@@ -161,7 +210,7 @@ func TestEngineClient_GetChildren_EmptyList(t *testing.T) {
 	}
 	client := NewEngineClientWithTransport(mock)
 
-	nodes, err := client.GetChildren(context.Background(), "00000000-0000-0000-0000-000000000001")
+	nodes, err := client.GetChildren(context.Background(), "Test", "00000000-0000-0000-0000-000000000001")
 	require.NoError(t, err)
 	assert.Empty(t, nodes)
 }
@@ -172,12 +221,12 @@ func TestEngineClient_GetUpline_MockParams(t *testing.T) {
 	}
 	client := NewEngineClientWithTransport(mock)
 
-	nodes, err := client.GetUpline(context.Background(), "00000000-0000-0000-0000-000000000002", 0)
+	nodes, err := client.GetUpline(context.Background(), "Test", "00000000-0000-0000-0000-000000000002", 0)
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 
 	assert.Equal(t, "get_upline", mock.lastOp)
-	assert.JSONEq(t, `{"user_id":"00000000-0000-0000-0000-000000000002","depth":0}`, string(mock.lastParams))
+	assert.JSONEq(t, `{"structure":"Test","user_id":"00000000-0000-0000-0000-000000000002","depth":0}`, string(mock.lastParams))
 }
 
 func TestEngineClient_GetDownline_MockParams(t *testing.T) {
@@ -186,12 +235,12 @@ func TestEngineClient_GetDownline_MockParams(t *testing.T) {
 	}
 	client := NewEngineClientWithTransport(mock)
 
-	nodes, err := client.GetDownline(context.Background(), "00000000-0000-0000-0000-000000000001", 0)
+	nodes, err := client.GetDownline(context.Background(), "Test", "00000000-0000-0000-0000-000000000001", 0)
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 
 	assert.Equal(t, "get_downline", mock.lastOp)
-	assert.JSONEq(t, `{"user_id":"00000000-0000-0000-0000-000000000001","depth":0}`, string(mock.lastParams))
+	assert.JSONEq(t, `{"structure":"Test","user_id":"00000000-0000-0000-0000-000000000001","depth":0}`, string(mock.lastParams))
 }
 
 func TestEngineClient_GetPosition_MockResponse(t *testing.T) {
@@ -199,6 +248,7 @@ func TestEngineClient_GetPosition_MockResponse(t *testing.T) {
 		response: json.RawMessage(`{
 			"user_id":"00000000-0000-0000-0000-000000000002",
 			"parent_user_id":"00000000-0000-0000-0000-000000000001",
+			"sponsor_user_id":"00000000-0000-0000-0000-000000000001",
 			"position":0,
 			"depth":1,
 			"child_count":0,
@@ -208,12 +258,14 @@ func TestEngineClient_GetPosition_MockResponse(t *testing.T) {
 	}
 	client := NewEngineClientWithTransport(mock)
 
-	pos, err := client.GetPosition(context.Background(), "00000000-0000-0000-0000-000000000002")
+	pos, err := client.GetPosition(context.Background(), "Test", "00000000-0000-0000-0000-000000000002")
 	require.NoError(t, err)
 
 	assert.Equal(t, "00000000-0000-0000-0000-000000000002", pos.UserID)
 	assert.NotNil(t, pos.ParentUserID)
 	assert.Equal(t, "00000000-0000-0000-0000-000000000001", *pos.ParentUserID)
+	assert.NotNil(t, pos.SponsorUserID)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000001", *pos.SponsorUserID)
 	assert.Equal(t, 0, pos.Position)
 	assert.Equal(t, uint32(1), pos.Depth)
 	assert.Equal(t, 0, pos.ChildCount)
@@ -221,11 +273,12 @@ func TestEngineClient_GetPosition_MockResponse(t *testing.T) {
 	assert.Equal(t, int64(200), pos.EnrolledAt)
 }
 
-func TestEngineClient_GetPosition_RootHasNilParent(t *testing.T) {
+func TestEngineClient_GetPosition_RootHasNilParentAndSponsor(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`{
 			"user_id":"00000000-0000-0000-0000-000000000001",
 			"parent_user_id":null,
+			"sponsor_user_id":null,
 			"position":0,
 			"depth":0,
 			"child_count":1,
@@ -235,10 +288,11 @@ func TestEngineClient_GetPosition_RootHasNilParent(t *testing.T) {
 	}
 	client := NewEngineClientWithTransport(mock)
 
-	pos, err := client.GetPosition(context.Background(), "00000000-0000-0000-0000-000000000001")
+	pos, err := client.GetPosition(context.Background(), "Test", "00000000-0000-0000-0000-000000000001")
 	require.NoError(t, err)
 
 	assert.Nil(t, pos.ParentUserID)
+	assert.Nil(t, pos.SponsorUserID)
 	assert.Equal(t, 1, pos.ChildCount)
 }
 
@@ -248,12 +302,12 @@ func TestEngineClient_IsDescendantOf_MockResponse(t *testing.T) {
 	}
 	client := NewEngineClientWithTransport(mock)
 
-	result, err := client.IsDescendantOf(context.Background(), "00000000-0000-0000-0000-000000000002", "00000000-0000-0000-0000-000000000001")
+	result, err := client.IsDescendantOf(context.Background(), "Test", "00000000-0000-0000-0000-000000000002", "00000000-0000-0000-0000-000000000001")
 	require.NoError(t, err)
 	assert.True(t, result)
 
 	assert.Equal(t, "is_descendant_of", mock.lastOp)
-	assert.JSONEq(t, `{"user_id":"00000000-0000-0000-0000-000000000002","ancestor_id":"00000000-0000-0000-0000-000000000001"}`, string(mock.lastParams))
+	assert.JSONEq(t, `{"structure":"Test","user_id":"00000000-0000-0000-0000-000000000002","ancestor_id":"00000000-0000-0000-0000-000000000001"}`, string(mock.lastParams))
 }
 
 func TestEngineClient_IsDescendantOf_False(t *testing.T) {
@@ -262,9 +316,64 @@ func TestEngineClient_IsDescendantOf_False(t *testing.T) {
 	}
 	client := NewEngineClientWithTransport(mock)
 
-	result, err := client.IsDescendantOf(context.Background(), "00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002")
+	result, err := client.IsDescendantOf(context.Background(), "Test", "00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002")
 	require.NoError(t, err)
 	assert.False(t, result)
+}
+
+// --- Sponsor query tests (mock) ---
+
+func TestEngineClient_GetSponsor_ReturnsNode(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{"user_id":"00000000-0000-0000-0000-000000000001","depth":0,"enrolled_at":100}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	node, err := client.GetSponsor(context.Background(), "Test", "00000000-0000-0000-0000-000000000002")
+	require.NoError(t, err)
+	require.NotNil(t, node)
+
+	assert.Equal(t, "00000000-0000-0000-0000-000000000001", node.UserID)
+	assert.Equal(t, "get_sponsor", mock.lastOp)
+}
+
+func TestEngineClient_GetSponsor_ReturnsNilForRoot(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`null`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	node, err := client.GetSponsor(context.Background(), "Test", "00000000-0000-0000-0000-000000000001")
+	require.NoError(t, err)
+	assert.Nil(t, node)
+}
+
+func TestEngineClient_GetSponsorUpline_MockParams(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`[{"user_id":"00000000-0000-0000-0000-000000000001","depth":0,"enrolled_at":100}]`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	nodes, err := client.GetSponsorUpline(context.Background(), "Test", "00000000-0000-0000-0000-000000000002", 0)
+	require.NoError(t, err)
+	require.Len(t, nodes, 1)
+
+	assert.Equal(t, "get_sponsor_upline", mock.lastOp)
+	assert.JSONEq(t, `{"structure":"Test","user_id":"00000000-0000-0000-0000-000000000002","depth":0}`, string(mock.lastParams))
+}
+
+func TestEngineClient_GetSponsored_MockParams(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`[{"user_id":"00000000-0000-0000-0000-000000000002","depth":1,"enrolled_at":200}]`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	nodes, err := client.GetSponsored(context.Background(), "Test", "00000000-0000-0000-0000-000000000001")
+	require.NoError(t, err)
+	require.Len(t, nodes, 1)
+
+	assert.Equal(t, "get_sponsored", mock.lastOp)
+	assert.JSONEq(t, `{"structure":"Test","user_id":"00000000-0000-0000-0000-000000000001"}`, string(mock.lastParams))
 }
 
 // --- Error handling tests (mock) ---
@@ -277,10 +386,10 @@ func TestEngineClient_TransportErrorPropagation(t *testing.T) {
 	err := client.Ping(context.Background())
 	assert.ErrorIs(t, err, transportErr)
 
-	err = client.AddRoot(context.Background(), "user-1", 1000)
+	err = client.AddRoot(context.Background(), "Test", "user-1", 1000)
 	assert.ErrorIs(t, err, transportErr)
 
-	_, err = client.GetChildren(context.Background(), "user-1")
+	_, err = client.GetChildren(context.Background(), "Test", "user-1")
 	assert.ErrorIs(t, err, transportErr)
 }
 
@@ -290,7 +399,7 @@ func TestEngineClient_UnmarshalError(t *testing.T) {
 	}
 	client := NewEngineClientWithTransport(mock)
 
-	_, err := client.GetChildren(context.Background(), "user-1")
+	_, err := client.GetChildren(context.Background(), "Test", "user-1")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unmarshal")
 }
@@ -306,6 +415,9 @@ func TestEngineClient_StopClosesTransport(t *testing.T) {
 
 // --- Integration tests (real binary) ---
 
+// structureName is used by all integration tests that need a named tree.
+const structureName = "Test"
+
 func TestEngineClient_TreeOperations(t *testing.T) {
 	client, err := NewEngineClient(context.Background(), findWorkerBinary(t))
 	require.NoError(t, err)
@@ -315,16 +427,19 @@ func TestEngineClient_TreeOperations(t *testing.T) {
 	rootID := "00000000-0000-0000-0000-000000000001"
 	childID := "00000000-0000-0000-0000-000000000002"
 
+	// Create the tree instance.
+	require.NoError(t, client.CreateTree(ctx, structureName, "unilevel"))
+
 	// Add root.
-	err = client.AddRoot(ctx, rootID, 100)
+	err = client.AddRoot(ctx, structureName, rootID, 100)
 	require.NoError(t, err)
 
-	// Add child.
-	err = client.AddNode(ctx, childID, rootID, 200)
+	// Add child. Sponsor is root.
+	err = client.AddNode(ctx, structureName, childID, rootID, rootID, 200)
 	require.NoError(t, err)
 
 	// Get children of root.
-	children, err := client.GetChildren(ctx, rootID)
+	children, err := client.GetChildren(ctx, structureName, rootID)
 	require.NoError(t, err)
 	require.Len(t, children, 1)
 	assert.Equal(t, childID, children[0].UserID)
@@ -342,13 +457,14 @@ func TestEngineClient_TreeQueries(t *testing.T) {
 	childID := "00000000-0000-0000-0000-000000000002"
 	grandchildID := "00000000-0000-0000-0000-000000000003"
 
-	// Build a 3-node chain: root -> child -> grandchild.
-	require.NoError(t, client.AddRoot(ctx, rootID, 100))
-	require.NoError(t, client.AddNode(ctx, childID, rootID, 200))
-	require.NoError(t, client.AddNode(ctx, grandchildID, childID, 300))
+	// Create the tree instance and build a 3-node chain: root -> child -> grandchild.
+	require.NoError(t, client.CreateTree(ctx, structureName, "unilevel"))
+	require.NoError(t, client.AddRoot(ctx, structureName, rootID, 100))
+	require.NoError(t, client.AddNode(ctx, structureName, childID, rootID, rootID, 200))
+	require.NoError(t, client.AddNode(ctx, structureName, grandchildID, childID, childID, 300))
 
 	t.Run("GetParent_returnsParent", func(t *testing.T) {
-		parent, err := client.GetParent(ctx, childID)
+		parent, err := client.GetParent(ctx, structureName, childID)
 		require.NoError(t, err)
 		require.NotNil(t, parent)
 		assert.Equal(t, rootID, parent.UserID)
@@ -356,13 +472,13 @@ func TestEngineClient_TreeQueries(t *testing.T) {
 	})
 
 	t.Run("GetParent_rootReturnsNil", func(t *testing.T) {
-		parent, err := client.GetParent(ctx, rootID)
+		parent, err := client.GetParent(ctx, structureName, rootID)
 		require.NoError(t, err)
 		assert.Nil(t, parent)
 	})
 
 	t.Run("GetUpline_fullChain", func(t *testing.T) {
-		upline, err := client.GetUpline(ctx, grandchildID, 0)
+		upline, err := client.GetUpline(ctx, structureName, grandchildID, 0)
 		require.NoError(t, err)
 		require.Len(t, upline, 2)
 		// Upline should be ordered from closest ancestor to farthest.
@@ -371,63 +487,94 @@ func TestEngineClient_TreeQueries(t *testing.T) {
 	})
 
 	t.Run("GetUpline_limitedDepth", func(t *testing.T) {
-		upline, err := client.GetUpline(ctx, grandchildID, 1)
+		upline, err := client.GetUpline(ctx, structureName, grandchildID, 1)
 		require.NoError(t, err)
 		require.Len(t, upline, 1)
 		assert.Equal(t, childID, upline[0].UserID)
 	})
 
 	t.Run("GetDownline_fullChain", func(t *testing.T) {
-		downline, err := client.GetDownline(ctx, rootID, 0)
+		downline, err := client.GetDownline(ctx, structureName, rootID, 0)
 		require.NoError(t, err)
 		require.Len(t, downline, 2)
 	})
 
 	t.Run("GetDownline_limitedDepth", func(t *testing.T) {
-		downline, err := client.GetDownline(ctx, rootID, 1)
+		downline, err := client.GetDownline(ctx, structureName, rootID, 1)
 		require.NoError(t, err)
 		require.Len(t, downline, 1)
 		assert.Equal(t, childID, downline[0].UserID)
 	})
 
 	t.Run("GetPosition_rootNode", func(t *testing.T) {
-		pos, err := client.GetPosition(ctx, rootID)
+		pos, err := client.GetPosition(ctx, structureName, rootID)
 		require.NoError(t, err)
 		assert.Equal(t, rootID, pos.UserID)
 		assert.Nil(t, pos.ParentUserID)
+		assert.Nil(t, pos.SponsorUserID)
 		assert.Equal(t, uint32(0), pos.Depth)
 		assert.Equal(t, 1, pos.ChildCount)
 		assert.Equal(t, int64(100), pos.EnrolledAt)
 	})
 
 	t.Run("GetPosition_childNode", func(t *testing.T) {
-		pos, err := client.GetPosition(ctx, childID)
+		pos, err := client.GetPosition(ctx, structureName, childID)
 		require.NoError(t, err)
 		assert.Equal(t, childID, pos.UserID)
 		require.NotNil(t, pos.ParentUserID)
 		assert.Equal(t, rootID, *pos.ParentUserID)
+		require.NotNil(t, pos.SponsorUserID)
+		assert.Equal(t, rootID, *pos.SponsorUserID)
 		assert.Equal(t, 0, pos.Position)
 		assert.Equal(t, uint32(1), pos.Depth)
 		assert.Equal(t, 1, pos.ChildCount)
 	})
 
 	t.Run("IsDescendantOf_true", func(t *testing.T) {
-		result, err := client.IsDescendantOf(ctx, grandchildID, rootID)
+		result, err := client.IsDescendantOf(ctx, structureName, grandchildID, rootID)
 		require.NoError(t, err)
 		assert.True(t, result)
 	})
 
 	t.Run("IsDescendantOf_false", func(t *testing.T) {
-		result, err := client.IsDescendantOf(ctx, rootID, grandchildID)
+		result, err := client.IsDescendantOf(ctx, structureName, rootID, grandchildID)
 		require.NoError(t, err)
 		assert.False(t, result)
 	})
 
+	t.Run("GetSponsor_returnsSponsor", func(t *testing.T) {
+		sponsor, err := client.GetSponsor(ctx, structureName, childID)
+		require.NoError(t, err)
+		require.NotNil(t, sponsor)
+		assert.Equal(t, rootID, sponsor.UserID)
+	})
+
+	t.Run("GetSponsor_rootReturnsNil", func(t *testing.T) {
+		sponsor, err := client.GetSponsor(ctx, structureName, rootID)
+		require.NoError(t, err)
+		assert.Nil(t, sponsor)
+	})
+
+	t.Run("GetSponsorUpline_fullChain", func(t *testing.T) {
+		upline, err := client.GetSponsorUpline(ctx, structureName, grandchildID, 0)
+		require.NoError(t, err)
+		require.Len(t, upline, 2)
+		assert.Equal(t, childID, upline[0].UserID)
+		assert.Equal(t, rootID, upline[1].UserID)
+	})
+
+	t.Run("GetSponsored_returnsSponsored", func(t *testing.T) {
+		sponsored, err := client.GetSponsored(ctx, structureName, rootID)
+		require.NoError(t, err)
+		require.Len(t, sponsored, 1)
+		assert.Equal(t, childID, sponsored[0].UserID)
+	})
+
 	t.Run("RemoveNode_andVerify", func(t *testing.T) {
-		err := client.RemoveNode(ctx, grandchildID)
+		err := client.RemoveNode(ctx, structureName, grandchildID)
 		require.NoError(t, err)
 
-		children, err := client.GetChildren(ctx, childID)
+		children, err := client.GetChildren(ctx, structureName, childID)
 		require.NoError(t, err)
 		assert.Empty(t, children)
 	})
@@ -588,14 +735,15 @@ func TestEngineClient_CalculateUnilevel(t *testing.T) {
 	midID := "00000000-0000-0000-0000-000000000002"
 	leafID := "00000000-0000-0000-0000-000000000003"
 
-	// 1. Load the compensation plan.
+	// 1. Load the compensation plan and create the tree instance.
 	err = client.LoadPlan(ctx, json.RawMessage(testPlanJSON))
 	require.NoError(t, err)
+	require.NoError(t, client.CreateTree(ctx, structureName, "unilevel"))
 
 	// 2. Build tree: root -> mid -> leaf.
-	require.NoError(t, client.AddRoot(ctx, rootID, 100))
-	require.NoError(t, client.AddNode(ctx, midID, rootID, 200))
-	require.NoError(t, client.AddNode(ctx, leafID, midID, 300))
+	require.NoError(t, client.AddRoot(ctx, structureName, rootID, 100))
+	require.NoError(t, client.AddNode(ctx, structureName, midID, rootID, rootID, 200))
+	require.NoError(t, client.AddNode(ctx, structureName, leafID, midID, midID, 300))
 
 	// 3. Calculate commissions.
 	//    Volume source: leaf generates 100 CV.
@@ -659,9 +807,10 @@ func TestEngineClient_CalculateUnilevel_EmptyVolume(t *testing.T) {
 	ctx := context.Background()
 	rootID := "00000000-0000-0000-0000-000000000001"
 
-	// Load plan and build a minimal tree.
+	// Load plan, create tree, and build a minimal tree.
 	require.NoError(t, client.LoadPlan(ctx, json.RawMessage(testPlanJSON)))
-	require.NoError(t, client.AddRoot(ctx, rootID, 100))
+	require.NoError(t, client.CreateTree(ctx, structureName, "unilevel"))
+	require.NoError(t, client.AddRoot(ctx, structureName, rootID, 100))
 
 	req := CalculateUnilevelRequest{
 		StructureName: "Test",

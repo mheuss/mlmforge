@@ -14,6 +14,7 @@ type EngineNode struct {
 type EnginePosition struct {
 	UserID         string         `json:"user_id"`
 	ParentUserID   *string        `json:"parent_user_id"`
+	SponsorUserID  *string        `json:"sponsor_user_id"`
 	Position       int            `json:"position"`
 	Depth          uint32         `json:"depth"`
 	ChildCount     int            `json:"child_count"`

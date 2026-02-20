@@ -13,13 +13,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// contractFixtureSetup represents a setup step that runs before the main request.
+type contractFixtureSetup struct {
+	ID     string         `json:"id"`
+	Op     string         `json:"op"`
+	Params map[string]any `json:"params"`
+}
+
 // contractFixture represents a single contract test case loaded from JSON.
 // Both Rust and Go read the same fixture files to catch serialization drift.
 type contractFixture struct {
-	Description      string           `json:"description"`
-	Request          *json.RawMessage `json:"request,omitempty"`
-	RequestRaw       *string          `json:"request_raw,omitempty"`
-	ExpectedResponse json.RawMessage  `json:"expected_response"`
+	Description      string                 `json:"description"`
+	Setup            []contractFixtureSetup `json:"setup,omitempty"`
+	Request          *json.RawMessage       `json:"request,omitempty"`
+	RequestRaw       *string                `json:"request_raw,omitempty"`
+	ExpectedResponse json.RawMessage        `json:"expected_response"`
 }
 
 func loadContractFixtures(t *testing.T) []struct {
@@ -75,6 +83,19 @@ func TestContractFixtures(t *testing.T) {
 			transport, err := NewStdioTransport(binaryPath)
 			require.NoError(t, err)
 			defer transport.Close()
+
+			// Run setup steps (e.g., create_tree) before the main request.
+			for _, step := range tc.fixture.Setup {
+				setupReq := map[string]any{
+					"id":     step.ID,
+					"op":     step.Op,
+					"params": step.Params,
+				}
+				setupJSON, err := json.Marshal(setupReq)
+				require.NoError(t, err, "failed to marshal setup step %s", step.ID)
+				resp := sendRawLine(t, transport, string(setupJSON))
+				t.Logf("setup %s: %s", step.ID, resp)
+			}
 
 			// Build the request line. For structured requests, re-marshal to
 			// produce compact single-line JSON. The NDJSON protocol requires

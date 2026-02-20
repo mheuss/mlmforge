@@ -1,24 +1,17 @@
-use std::collections::{HashMap, VecDeque};
 use uuid::Uuid;
 
+use super::arena::Arena;
 use super::error::TreeError;
 use super::node::{Node, NodeIndex};
 use crate::types::TreePosition;
 
 /// Arena-backed unilevel tree.
 ///
-/// All nodes live in a contiguous `Vec<Node>`. A `HashMap<Uuid, NodeIndex>`
-/// provides O(1) lookup by user ID. Deleted nodes are tombstoned and their
-/// slots go on a free list for reuse.
-///
-/// For unilevel, width is unbounded. Every user can enroll unlimited
-/// direct children. Position is the child's index in the parent's
-/// children Vec.
+/// All nodes live in a shared `Arena`. Width is unbounded — every user
+/// can enroll unlimited direct children. Position is the child's index
+/// in the parent's children Vec.
 pub struct UnilevelTree {
-    nodes: Vec<Node>,
-    index: HashMap<Uuid, NodeIndex>,
-    free_list: Vec<NodeIndex>,
-    root: Option<NodeIndex>,
+    arena: Arena,
 }
 
 impl Default for UnilevelTree {
@@ -28,22 +21,17 @@ impl Default for UnilevelTree {
 }
 
 impl UnilevelTree {
-    /// Creates an empty tree with no nodes.
     pub fn new() -> Self {
         Self {
-            nodes: Vec::new(),
-            index: HashMap::new(),
-            free_list: Vec::new(),
-            root: None,
+            arena: Arena::new(),
         }
     }
 
-    /// Adds the root node. Fails if the tree already has a root.
     pub fn add_root(&mut self, user_id: Uuid, enrolled_at: i64) -> Result<NodeIndex, TreeError> {
-        if self.root.is_some() {
+        if self.arena.root.is_some() {
             return Err(TreeError::RootAlreadyExists);
         }
-        if self.index.contains_key(&user_id) {
+        if self.arena.index.contains_key(&user_id) {
             return Err(TreeError::UserAlreadyExists(user_id));
         }
 
@@ -57,90 +45,55 @@ impl UnilevelTree {
             enrolled_at,
         };
 
-        let idx = self.alloc_slot(node);
-        self.index.insert(user_id, idx);
-        self.root = Some(idx);
+        let idx = self.arena.alloc_slot(node);
+        self.arena.index.insert(user_id, idx);
+        self.arena.root = Some(idx);
         Ok(idx)
     }
 
-    /// Returns a reference to the node for a user ID.
     /// Internal helper for tests.
     #[cfg(test)]
     pub(crate) fn get_node(&self, user_id: Uuid) -> Result<&Node, TreeError> {
-        let idx = self.resolve(user_id)?;
-        Ok(&self.nodes[idx.0])
-    }
-
-    /// Resolves a user ID to a NodeIndex.
-    fn resolve(&self, user_id: Uuid) -> Result<NodeIndex, TreeError> {
-        self.index
-            .get(&user_id)
-            .copied()
-            .ok_or(TreeError::UserNotFound(user_id))
+        let idx = self.arena.resolve(user_id)?;
+        Ok(self.arena.node(idx))
     }
 
     /// Adds a child node under an existing parent.
     ///
     /// The child's position is determined by insertion order — it becomes
-    /// the last element in the parent's children Vec. For unilevel trees,
-    /// position equals the child's index in that Vec.
+    /// the last element in the parent's children Vec.
     ///
-    /// # Errors
-    ///
-    /// - `UserAlreadyExists` if `user_id` is already in the tree
-    /// - `UserNotFound` if `parent_id` is not in the tree
+    /// `sponsor_id` identifies who recruited this user. In unilevel trees,
+    /// this is often the same as `parent_id`, but the API does not assume that.
     pub fn add_node(
         &mut self,
         user_id: Uuid,
         parent_id: Uuid,
+        sponsor_id: Uuid,
         enrolled_at: i64,
     ) -> Result<NodeIndex, TreeError> {
-        if self.index.contains_key(&user_id) {
+        if self.arena.index.contains_key(&user_id) {
             return Err(TreeError::UserAlreadyExists(user_id));
         }
-        let parent_idx = self.resolve(parent_id)?;
-        let parent_depth = self.nodes[parent_idx.0].depth;
+        let parent_idx = self.arena.resolve(parent_id)?;
+        let sponsor_idx = self.arena.resolve(sponsor_id)?;
+        let parent_depth = self.arena.node(parent_idx).depth;
 
         let node = Node {
             user_id,
             parent: Some(parent_idx),
             children: Vec::new(),
-            sponsor: None,
+            sponsor: Some(sponsor_idx),
             sponsored: Vec::new(),
             depth: parent_depth + 1,
             enrolled_at,
         };
 
-        let idx = self.alloc_slot(node);
-        self.index.insert(user_id, idx);
-        self.nodes[parent_idx.0].children.push(idx);
+        let idx = self.arena.alloc_slot(node);
+        self.arena.index.insert(user_id, idx);
+        self.arena.node_mut(parent_idx).children.push(idx);
+        self.arena.node_mut(sponsor_idx).sponsored.push(idx);
         Ok(idx)
-    }
-
-    /// Returns the parent of a node.
-    ///
-    /// Returns `Ok(None)` for the root node (no parent).
-    /// Returns `Err(UserNotFound)` if the user is not in the tree.
-    pub fn get_parent(&self, user_id: Uuid) -> Result<Option<&Node>, TreeError> {
-        let idx = self.resolve(user_id)?;
-        match self.nodes[idx.0].parent {
-            Some(parent_idx) => Ok(Some(&self.nodes[parent_idx.0])),
-            None => Ok(None),
-        }
-    }
-
-    /// Returns the direct children of a node in position order.
-    ///
-    /// Position 0 is the first enrolled child, position 1 is the second,
-    /// and so on. Returns an empty Vec for leaf nodes.
-    pub fn get_children(&self, user_id: Uuid) -> Result<Vec<&Node>, TreeError> {
-        let idx = self.resolve(user_id)?;
-        let children = self.nodes[idx.0]
-            .children
-            .iter()
-            .map(|&child_idx| &self.nodes[child_idx.0])
-            .collect();
-        Ok(children)
     }
 
     /// Removes a leaf node from the tree.
@@ -151,46 +104,57 @@ impl UnilevelTree {
     ///
     /// The removed slot is added to the free list for reuse by the
     /// next `add_root` or `add_node` call.
-    ///
-    /// # Errors
-    ///
-    /// - `UserNotFound` if `user_id` is not in the tree
-    /// - `HasChildren` if the node has children
     pub fn remove_node(&mut self, user_id: Uuid) -> Result<(), TreeError> {
-        let idx = self.resolve(user_id)?;
-        let child_count = self.nodes[idx.0].children.len();
+        let idx = self.arena.resolve(user_id)?;
+        let child_count = self.arena.node(idx).children.len();
 
         if child_count > 0 {
             return Err(TreeError::HasChildren(user_id, child_count));
         }
 
         // Remove from parent's children list
-        if let Some(parent_idx) = self.nodes[idx.0].parent {
-            self.nodes[parent_idx.0]
+        if let Some(parent_idx) = self.arena.node(idx).parent {
+            self.arena
+                .node_mut(parent_idx)
                 .children
                 .retain(|&child_idx| child_idx != idx);
         }
 
-        // Clear root if removing the root node
-        if self.root == Some(idx) {
-            self.root = None;
+        // Remove from sponsor's sponsored list
+        if let Some(sponsor_idx) = self.arena.node(idx).sponsor {
+            self.arena
+                .node_mut(sponsor_idx)
+                .sponsored
+                .retain(|&s| s != idx);
         }
 
-        // Remove from index, clear the slot, and add it to the free list.
-        // Clearing releases the children Vec's heap allocation and marks
-        // the slot as dead so stale data is never accidentally read.
-        self.index.remove(&user_id);
-        self.nodes[idx.0] = Node {
-            user_id: Uuid::nil(),
-            parent: None,
-            children: Vec::new(),
-            sponsor: None,
-            sponsored: Vec::new(),
-            depth: 0,
-            enrolled_at: 0,
-        };
-        self.free_list.push(idx);
+        if self.arena.root == Some(idx) {
+            self.arena.root = None;
+        }
+
+        self.arena.index.remove(&user_id);
+        self.arena.tombstone(idx);
         Ok(())
+    }
+
+    pub fn get_parent(&self, user_id: Uuid) -> Result<Option<&Node>, TreeError> {
+        let idx = self.arena.resolve(user_id)?;
+        match self.arena.node(idx).parent {
+            Some(parent_idx) => Ok(Some(self.arena.node(parent_idx))),
+            None => Ok(None),
+        }
+    }
+
+    pub fn get_children(&self, user_id: Uuid) -> Result<Vec<&Node>, TreeError> {
+        let idx = self.arena.resolve(user_id)?;
+        let children = self
+            .arena
+            .node(idx)
+            .children
+            .iter()
+            .map(|&child_idx| self.arena.node(child_idx))
+            .collect();
+        Ok(children)
     }
 
     /// Walks upward from a node toward the root.
@@ -198,298 +162,107 @@ impl UnilevelTree {
     /// Returns ancestors in order from immediate parent to root.
     /// The starting node is not included in the result.
     ///
-    /// # Depth parameter
-    ///
-    /// - `0` means walk all the way to root (no limit).
-    /// - Any other value limits the walk to that many levels up.
+    /// Depth 0 means walk all the way to root. Any other value limits
+    /// the walk to that many levels up.
     pub fn get_upline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
-        let idx = self.resolve(user_id)?;
-        let mut result = Vec::new();
-        let mut current = self.nodes[idx.0].parent;
-        let mut steps = 0u32;
-
-        while let Some(parent_idx) = current {
-            if depth > 0 && steps >= depth {
-                break;
-            }
-            result.push(&self.nodes[parent_idx.0]);
-            current = self.nodes[parent_idx.0].parent;
-            steps += 1;
-        }
-
-        Ok(result)
+        let idx = self.arena.resolve(user_id)?;
+        Ok(self.arena.walk_upline(idx, depth))
     }
-
-    // NOTE: This BFS traversal pattern is duplicated in get_downline, count_downline,
-    // get_branch, count_branch, and count_subtree. Extract a shared bfs_walk helper
-    // when the second tree type is implemented. See BUGS_AND_TODOS.md backlog.
 
     /// Walks downward from a node, returning descendants in BFS order.
     ///
-    /// BFS (breadth-first) gives level-ordered results: all level-1
-    /// children first, then level-2 grandchildren, and so on. This
-    /// matches how distributors think about their organization.
-    ///
     /// The starting node is not included in the result.
     ///
-    /// # Depth parameter
-    ///
-    /// - `0` means walk all levels (no limit).
-    /// - Any other value limits the walk to that many levels below
-    ///   the starting node. `1` returns direct children only.
+    /// Depth 0 means walk all levels. Any other value limits the walk
+    /// to that many levels below the starting node.
     pub fn get_downline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
-        let start_idx = self.resolve(user_id)?;
-        let start_depth = self.nodes[start_idx.0].depth;
-        let mut result = Vec::new();
-        let mut queue = VecDeque::new();
-
-        for &child_idx in &self.nodes[start_idx.0].children {
-            queue.push_back(child_idx);
-        }
-
-        while let Some(idx) = queue.pop_front() {
-            let node = &self.nodes[idx.0];
-            let relative_depth = node.depth - start_depth;
-
-            result.push(node);
-
-            if depth == 0 || relative_depth < depth {
-                for &child_idx in &node.children {
-                    queue.push_back(child_idx);
-                }
-            }
-        }
-
-        Ok(result)
+        let idx = self.arena.resolve(user_id)?;
+        Ok(self.arena.bfs_downline(idx, depth))
     }
 
     /// Computes a full position snapshot for a user.
-    ///
-    /// Unlike `get_node`, this builds an owned `TreePosition` with
-    /// derived data: downline counts (descendants per child position),
-    /// child count, and the user's position in their parent's children.
-    ///
-    /// Downline counts are computed by walking each child's full subtree.
-    /// For a node with many children each having deep subtrees, this
-    /// can be expensive. It is a point query, not a bulk operation.
     pub fn get_position(&self, user_id: Uuid) -> Result<TreePosition, TreeError> {
-        let idx = self.resolve(user_id)?;
-        let node = &self.nodes[idx.0];
-
-        let parent_user_id = node
-            .parent
-            .map(|parent_idx| self.nodes[parent_idx.0].user_id);
-
-        // Determine this node's position in its parent's children list.
-        // Root has position 0 by convention.
-        //
-        // The expect here is intentional. A node that claims a parent
-        // but is missing from that parent's children list means the
-        // tree's internal state is corrupt. This is not a recoverable
-        // input error — every subsequent operation would be suspect.
-        // Panicking is the fail-fast response.
-        let position = if let Some(parent_idx) = node.parent {
-            self.nodes[parent_idx.0]
-                .children
-                .iter()
-                .position(|&child_idx| child_idx == idx)
-                .expect("node not found in parent's children list — tree is corrupt")
-        } else {
-            0
-        };
-
-        // Count descendants under each child position.
-        // Each value follows downline semantics: the child at the
-        // position is excluded, only its descendants are counted.
-        let mut downline_counts = HashMap::new();
-        for (child_pos, &child_idx) in node.children.iter().enumerate() {
-            let count = self.count_subtree(child_idx);
-            downline_counts.insert(child_pos, count);
-        }
-
-        Ok(TreePosition {
-            user_id: node.user_id,
-            parent_user_id,
-            sponsor_user_id: None,
-            position,
-            depth: node.depth,
-            child_count: node.children.len(),
-            downline_counts,
-            enrolled_at: node.enrolled_at,
-        })
+        let idx = self.arena.resolve(user_id)?;
+        Ok(self.arena.get_position(idx))
     }
 
     /// Returns all nodes in the subtree under a specific child position.
-    ///
-    /// For unilevel, position is the child's index in the parent's
-    /// children Vec. `get_branch(user, 2)` returns the subtree under
-    /// the user's 3rd personally enrolled distributor.
-    ///
-    /// Results include the child at the given position and all of
-    /// its descendants, in BFS order.
-    ///
-    /// # Errors
-    ///
-    /// - `UserNotFound` if `user_id` is not in the tree
-    /// - `PositionOutOfRange` if `position` exceeds the child count
     pub fn get_branch(&self, user_id: Uuid, position: usize) -> Result<Vec<&Node>, TreeError> {
-        let idx = self.resolve(user_id)?;
-        let node = &self.nodes[idx.0];
-
-        if position >= node.children.len() {
-            return Err(TreeError::PositionOutOfRange {
-                user_id,
-                position,
-                child_count: node.children.len(),
-            });
-        }
-
-        let branch_root = node.children[position];
-        let mut result = Vec::new();
-        let mut queue = VecDeque::new();
-        queue.push_back(branch_root);
-
-        while let Some(current) = queue.pop_front() {
-            result.push(&self.nodes[current.0]);
-            for &child_idx in &self.nodes[current.0].children {
-                queue.push_back(child_idx);
-            }
-        }
-
-        Ok(result)
+        let idx = self.arena.resolve(user_id)?;
+        self.arena.get_branch(idx, position)
     }
 
     /// Counts descendants without allocating a result Vec.
     ///
-    /// Same traversal as `get_downline` but only increments a counter.
-    /// Use this when you need the count but not the actual nodes.
-    ///
-    /// # Depth parameter
-    ///
-    /// - `0` means count all descendants (no limit).
-    /// - Any other value limits the count to that many levels below.
+    /// Depth 0 means count all descendants. Any other value limits
+    /// the count to that many levels below.
     pub fn count_downline(&self, user_id: Uuid, depth: u32) -> Result<usize, TreeError> {
-        let start_idx = self.resolve(user_id)?;
-        let start_depth = self.nodes[start_idx.0].depth;
-        let mut count = 0;
-        let mut queue = VecDeque::new();
-
-        for &child_idx in &self.nodes[start_idx.0].children {
-            queue.push_back(child_idx);
-        }
-
-        while let Some(idx) = queue.pop_front() {
-            let node = &self.nodes[idx.0];
-            let relative_depth = node.depth - start_depth;
-
-            count += 1;
-
-            if depth == 0 || relative_depth < depth {
-                for &child_idx in &node.children {
-                    queue.push_back(child_idx);
-                }
-            }
-        }
-
-        Ok(count)
+        let idx = self.arena.resolve(user_id)?;
+        Ok(self.arena.count_downline(idx, depth))
     }
 
     /// Counts nodes in the subtree under a specific child position.
-    ///
-    /// Same traversal as `get_branch` but only increments a counter.
-    /// Includes the child at the given position and all its descendants.
     pub fn count_branch(&self, user_id: Uuid, position: usize) -> Result<usize, TreeError> {
-        let idx = self.resolve(user_id)?;
-        let node = &self.nodes[idx.0];
-
-        if position >= node.children.len() {
-            return Err(TreeError::PositionOutOfRange {
-                user_id,
-                position,
-                child_count: node.children.len(),
-            });
-        }
-
-        let branch_root = node.children[position];
-        let mut count = 0;
-        let mut queue = VecDeque::new();
-        queue.push_back(branch_root);
-
-        while let Some(current) = queue.pop_front() {
-            count += 1;
-            for &child_idx in &self.nodes[current.0].children {
-                queue.push_back(child_idx);
-            }
-        }
-
-        Ok(count)
+        let idx = self.arena.resolve(user_id)?;
+        self.arena.count_branch(idx, position)
     }
 
     /// Checks whether `user_id` is a descendant of `ancestor_id`.
     ///
-    /// Walks upline from `user_id` toward root. If `ancestor_id` is
-    /// encountered, returns true. If root is reached without finding
-    /// the ancestor, returns false.
-    ///
-    /// Walking upline is O(d) where d is the depth difference. This is
-    /// better than walking the ancestor's downline, which could be the
-    /// entire subtree.
-    ///
     /// A node is not considered a descendant of itself.
     pub fn is_descendant_of(&self, user_id: Uuid, ancestor_id: Uuid) -> Result<bool, TreeError> {
-        let ancestor_idx = self.resolve(ancestor_id)?;
+        let ancestor_idx = self.arena.resolve(ancestor_id)?;
 
         if user_id == ancestor_id {
             return Ok(false);
         }
 
-        let mut current_idx = self.resolve(user_id)?;
-        loop {
-            match self.nodes[current_idx.0].parent {
-                Some(parent_idx) => {
-                    if parent_idx == ancestor_idx {
-                        return Ok(true);
-                    }
-                    current_idx = parent_idx;
-                }
-                None => return Ok(false),
-            }
-        }
+        let user_idx = self.arena.resolve(user_id)?;
+        Ok(self.arena.is_descendant_of(user_idx, ancestor_idx))
     }
 
-    /// Counts all descendants of a node (not including the node itself).
-    /// Used internally by `get_position` to populate `downline_counts`.
-    fn count_subtree(&self, start_idx: NodeIndex) -> usize {
-        let mut count = 0;
-        let mut queue = VecDeque::new();
+    // --- Sponsor traversals ---
 
-        // Seed with start node's children, not start node itself.
-        // Downline count = descendants UNDER the child, not including the child.
-        for &child_idx in &self.nodes[start_idx.0].children {
-            queue.push_back(child_idx);
-        }
-
-        while let Some(idx) = queue.pop_front() {
-            count += 1;
-            for &child_idx in &self.nodes[idx.0].children {
-                queue.push_back(child_idx);
-            }
-        }
-
-        count
+    /// Returns the sponsor of a node, or None if the node has no sponsor (root).
+    pub fn get_sponsor(&self, user_id: Uuid) -> Result<Option<&Node>, TreeError> {
+        let idx = self.arena.resolve(user_id)?;
+        Ok(self.arena.get_sponsor(idx))
     }
 
-    /// Allocates a slot in the arena. Reuses tombstoned slots from the
-    /// free list when available. Otherwise appends to the Vec.
-    fn alloc_slot(&mut self, node: Node) -> NodeIndex {
-        if let Some(free_idx) = self.free_list.pop() {
-            self.nodes[free_idx.0] = node;
-            free_idx
-        } else {
-            let idx = NodeIndex(self.nodes.len());
-            self.nodes.push(node);
-            idx
-        }
+    /// Walks upward following sponsor links.
+    ///
+    /// Returns sponsors in order from immediate sponsor to the root sponsor.
+    /// The starting node is not included.
+    ///
+    /// Depth 0 means walk all the way. Any other value limits the walk.
+    pub fn get_sponsor_upline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
+        let idx = self.arena.resolve(user_id)?;
+        Ok(self.arena.walk_sponsor_upline(idx, depth))
+    }
+
+    /// Returns the direct recruits of a node.
+    pub fn get_sponsored(&self, user_id: Uuid) -> Result<Vec<&Node>, TreeError> {
+        let idx = self.arena.resolve(user_id)?;
+        Ok(self.arena.get_sponsored(idx))
+    }
+
+    /// Provides read access to the arena for commission calculators
+    /// and other crate-internal consumers.
+    #[allow(dead_code)] // Used by BinaryTree commission calculator (task 5+)
+    pub(crate) fn arena(&self) -> &Arena {
+        &self.arena
+    }
+}
+
+impl std::fmt::Debug for UnilevelTree {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let root_id = self.arena.root.map(|idx| self.arena.node(idx).user_id);
+        write!(
+            f,
+            "UnilevelTree {{ nodes: {}, root: {:?} }}",
+            self.arena.node_count(),
+            root_id
+        )
     }
 }
 
@@ -525,7 +298,7 @@ mod tests {
     fn add_node_under_root() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 1000).unwrap();
-        let result = tree.add_node(test_uuid(2), test_uuid(1), 2000);
+        let result = tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000);
         assert!(result.is_ok());
     }
 
@@ -533,8 +306,10 @@ mod tests {
     fn add_node_sets_depth_from_parent() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 1000).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
-        tree.add_node(test_uuid(3), test_uuid(2), 3000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 3000)
+            .unwrap();
         let node = tree.get_node(test_uuid(3)).unwrap();
         assert_eq!(node.depth, 2);
     }
@@ -543,8 +318,10 @@ mod tests {
     fn add_node_appends_to_parent_children() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 1000).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
-        tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), test_uuid(1), 3000)
+            .unwrap();
         let parent = tree.get_node(test_uuid(1)).unwrap();
         assert_eq!(parent.children.len(), 2);
     }
@@ -553,7 +330,7 @@ mod tests {
     fn add_duplicate_user_fails() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 1000).unwrap();
-        let result = tree.add_node(test_uuid(1), test_uuid(1), 2000);
+        let result = tree.add_node(test_uuid(1), test_uuid(1), test_uuid(1), 2000);
         assert!(matches!(result, Err(TreeError::UserAlreadyExists(_))));
     }
 
@@ -561,7 +338,7 @@ mod tests {
     fn add_node_with_missing_parent_fails() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 1000).unwrap();
-        let result = tree.add_node(test_uuid(2), test_uuid(99), 2000);
+        let result = tree.add_node(test_uuid(2), test_uuid(99), test_uuid(1), 2000);
         assert!(matches!(result, Err(TreeError::UserNotFound(_))));
     }
 
@@ -569,7 +346,8 @@ mod tests {
     fn remove_leaf_node() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 1000).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
         let result = tree.remove_node(test_uuid(2));
         assert!(result.is_ok());
     }
@@ -578,7 +356,8 @@ mod tests {
     fn remove_node_clears_from_parent_children() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 1000).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
         tree.remove_node(test_uuid(2)).unwrap();
         let parent = tree.get_node(test_uuid(1)).unwrap();
         assert!(parent.children.is_empty());
@@ -588,7 +367,8 @@ mod tests {
     fn remove_node_with_children_fails() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 1000).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
         let result = tree.remove_node(test_uuid(1));
         assert!(matches!(result, Err(TreeError::HasChildren(_, 1))));
     }
@@ -605,18 +385,21 @@ mod tests {
     fn removed_slot_is_reused_by_next_add() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 1000).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
         tree.remove_node(test_uuid(2)).unwrap();
-        tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), test_uuid(1), 3000)
+            .unwrap();
         // Arena should still have only 2 slots, not 3
-        assert_eq!(tree.nodes.len(), 2);
+        assert_eq!(tree.arena.nodes.len(), 2);
     }
 
     #[test]
     fn get_parent_returns_parent_node() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 1000).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
         let parent = tree.get_parent(test_uuid(2)).unwrap();
         assert_eq!(parent.unwrap().user_id, test_uuid(1));
     }
@@ -641,9 +424,12 @@ mod tests {
     fn get_children_returns_direct_children_in_position_order() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 1000).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
-        tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
-        tree.add_node(test_uuid(4), test_uuid(1), 4000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), test_uuid(1), 3000)
+            .unwrap();
+        tree.add_node(test_uuid(4), test_uuid(1), test_uuid(1), 4000)
+            .unwrap();
         let children = tree.get_children(test_uuid(1)).unwrap();
         assert_eq!(children.len(), 3);
         assert_eq!(children[0].user_id, test_uuid(2));
@@ -663,9 +449,12 @@ mod tests {
     fn get_upline_returns_ancestors_to_root() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 1000).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
-        tree.add_node(test_uuid(3), test_uuid(2), 3000).unwrap();
-        tree.add_node(test_uuid(4), test_uuid(3), 4000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 3000)
+            .unwrap();
+        tree.add_node(test_uuid(4), test_uuid(3), test_uuid(3), 4000)
+            .unwrap();
         // depth 0 = all the way to root
         let upline = tree.get_upline(test_uuid(4), 0).unwrap();
         assert_eq!(upline.len(), 3);
@@ -678,9 +467,12 @@ mod tests {
     fn get_upline_with_depth_limit() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 1000).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
-        tree.add_node(test_uuid(3), test_uuid(2), 3000).unwrap();
-        tree.add_node(test_uuid(4), test_uuid(3), 4000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 3000)
+            .unwrap();
+        tree.add_node(test_uuid(4), test_uuid(3), test_uuid(3), 4000)
+            .unwrap();
         let upline = tree.get_upline(test_uuid(4), 2).unwrap();
         assert_eq!(upline.len(), 2);
         assert_eq!(upline[0].user_id, test_uuid(3));
@@ -699,9 +491,12 @@ mod tests {
     fn get_downline_returns_all_descendants() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 1000).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
-        tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
-        tree.add_node(test_uuid(4), test_uuid(2), 4000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), test_uuid(1), 3000)
+            .unwrap();
+        tree.add_node(test_uuid(4), test_uuid(2), test_uuid(2), 4000)
+            .unwrap();
         // depth 0 = all levels
         let downline = tree.get_downline(test_uuid(1), 0).unwrap();
         assert_eq!(downline.len(), 3);
@@ -711,9 +506,12 @@ mod tests {
     fn get_downline_with_depth_limit() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 1000).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
-        tree.add_node(test_uuid(3), test_uuid(2), 3000).unwrap();
-        tree.add_node(test_uuid(4), test_uuid(3), 4000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 3000)
+            .unwrap();
+        tree.add_node(test_uuid(4), test_uuid(3), test_uuid(3), 4000)
+            .unwrap();
         // depth 1 = direct children only
         let downline = tree.get_downline(test_uuid(1), 1).unwrap();
         assert_eq!(downline.len(), 1);
@@ -724,10 +522,14 @@ mod tests {
     fn get_downline_returns_bfs_order() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 1000).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
-        tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
-        tree.add_node(test_uuid(4), test_uuid(2), 4000).unwrap();
-        tree.add_node(test_uuid(5), test_uuid(2), 5000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), test_uuid(1), 3000)
+            .unwrap();
+        tree.add_node(test_uuid(4), test_uuid(2), test_uuid(2), 4000)
+            .unwrap();
+        tree.add_node(test_uuid(5), test_uuid(2), test_uuid(2), 5000)
+            .unwrap();
         let downline = tree.get_downline(test_uuid(1), 0).unwrap();
         // BFS: level 1 first (2, 3), then level 2 (4, 5)
         assert_eq!(downline[0].user_id, test_uuid(2));
@@ -748,11 +550,15 @@ mod tests {
     fn get_position_returns_correct_metadata() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 1000).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
-        tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), test_uuid(1), 3000)
+            .unwrap();
         // Add grandchildren under uuid(2)
-        tree.add_node(test_uuid(4), test_uuid(2), 4000).unwrap();
-        tree.add_node(test_uuid(5), test_uuid(2), 5000).unwrap();
+        tree.add_node(test_uuid(4), test_uuid(2), test_uuid(2), 4000)
+            .unwrap();
+        tree.add_node(test_uuid(5), test_uuid(2), test_uuid(2), 5000)
+            .unwrap();
 
         let pos = tree.get_position(test_uuid(2)).unwrap();
         assert_eq!(pos.user_id, test_uuid(2));
@@ -766,11 +572,16 @@ mod tests {
     fn get_position_includes_downline_counts() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 1000).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
-        tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
-        tree.add_node(test_uuid(4), test_uuid(2), 4000).unwrap();
-        tree.add_node(test_uuid(5), test_uuid(2), 5000).unwrap();
-        tree.add_node(test_uuid(6), test_uuid(4), 6000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), test_uuid(1), 3000)
+            .unwrap();
+        tree.add_node(test_uuid(4), test_uuid(2), test_uuid(2), 4000)
+            .unwrap();
+        tree.add_node(test_uuid(5), test_uuid(2), test_uuid(2), 5000)
+            .unwrap();
+        tree.add_node(test_uuid(6), test_uuid(4), test_uuid(4), 6000)
+            .unwrap();
 
         let pos = tree.get_position(test_uuid(1)).unwrap();
         // Branch 0 (under uuid(2)): uuid(4), uuid(5), uuid(6) = 3 descendants
@@ -792,10 +603,14 @@ mod tests {
     fn get_branch_returns_subtree_under_position() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 1000).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
-        tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
-        tree.add_node(test_uuid(4), test_uuid(2), 4000).unwrap();
-        tree.add_node(test_uuid(5), test_uuid(2), 5000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), test_uuid(1), 3000)
+            .unwrap();
+        tree.add_node(test_uuid(4), test_uuid(2), test_uuid(2), 4000)
+            .unwrap();
+        tree.add_node(test_uuid(5), test_uuid(2), test_uuid(2), 5000)
+            .unwrap();
         // Branch at position 0 under root = everything under uuid(2)
         let branch = tree.get_branch(test_uuid(1), 0).unwrap();
         let ids: Vec<Uuid> = branch.iter().map(|n| n.user_id).collect();
@@ -809,7 +624,8 @@ mod tests {
     fn get_branch_position_out_of_range_fails() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 1000).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
         let result = tree.get_branch(test_uuid(1), 5);
         assert!(matches!(result, Err(TreeError::PositionOutOfRange { .. })));
     }
@@ -818,9 +634,12 @@ mod tests {
     fn get_branch_returns_bfs_order() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 1000).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
-        tree.add_node(test_uuid(3), test_uuid(2), 3000).unwrap();
-        tree.add_node(test_uuid(4), test_uuid(3), 4000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 3000)
+            .unwrap();
+        tree.add_node(test_uuid(4), test_uuid(3), test_uuid(3), 4000)
+            .unwrap();
         let branch = tree.get_branch(test_uuid(1), 0).unwrap();
         assert_eq!(branch[0].user_id, test_uuid(2));
         assert_eq!(branch[1].user_id, test_uuid(3));
@@ -831,9 +650,12 @@ mod tests {
     fn count_downline_matches_get_downline_len() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 1000).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
-        tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
-        tree.add_node(test_uuid(4), test_uuid(2), 4000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), test_uuid(1), 3000)
+            .unwrap();
+        tree.add_node(test_uuid(4), test_uuid(2), test_uuid(2), 4000)
+            .unwrap();
         let count = tree.count_downline(test_uuid(1), 0).unwrap();
         let downline = tree.get_downline(test_uuid(1), 0).unwrap();
         assert_eq!(count, downline.len());
@@ -844,9 +666,12 @@ mod tests {
     fn count_downline_respects_depth_limit() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 1000).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
-        tree.add_node(test_uuid(3), test_uuid(2), 3000).unwrap();
-        tree.add_node(test_uuid(4), test_uuid(3), 4000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 3000)
+            .unwrap();
+        tree.add_node(test_uuid(4), test_uuid(3), test_uuid(3), 4000)
+            .unwrap();
         assert_eq!(tree.count_downline(test_uuid(1), 1).unwrap(), 1);
         assert_eq!(tree.count_downline(test_uuid(1), 2).unwrap(), 2);
         assert_eq!(tree.count_downline(test_uuid(1), 0).unwrap(), 3);
@@ -856,9 +681,12 @@ mod tests {
     fn count_branch_matches_get_branch_len() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 1000).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
-        tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
-        tree.add_node(test_uuid(4), test_uuid(2), 4000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), test_uuid(1), 3000)
+            .unwrap();
+        tree.add_node(test_uuid(4), test_uuid(2), test_uuid(2), 4000)
+            .unwrap();
         let count = tree.count_branch(test_uuid(1), 0).unwrap();
         let branch = tree.get_branch(test_uuid(1), 0).unwrap();
         assert_eq!(count, branch.len());
@@ -877,7 +705,8 @@ mod tests {
     fn is_descendant_of_direct_child() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 1000).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
         assert!(tree.is_descendant_of(test_uuid(2), test_uuid(1)).unwrap());
     }
 
@@ -885,9 +714,12 @@ mod tests {
     fn is_descendant_of_deep_descendant() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 1000).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
-        tree.add_node(test_uuid(3), test_uuid(2), 3000).unwrap();
-        tree.add_node(test_uuid(4), test_uuid(3), 4000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 3000)
+            .unwrap();
+        tree.add_node(test_uuid(4), test_uuid(3), test_uuid(3), 4000)
+            .unwrap();
         assert!(tree.is_descendant_of(test_uuid(4), test_uuid(1)).unwrap());
     }
 
@@ -895,8 +727,10 @@ mod tests {
     fn is_descendant_of_returns_false_for_sibling() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 1000).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
-        tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), test_uuid(1), 3000)
+            .unwrap();
         assert!(!tree.is_descendant_of(test_uuid(2), test_uuid(3)).unwrap());
     }
 
@@ -904,7 +738,8 @@ mod tests {
     fn is_descendant_of_returns_false_for_ancestor() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 1000).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
         // Parent is not a descendant of child
         assert!(!tree.is_descendant_of(test_uuid(1), test_uuid(2)).unwrap());
     }
@@ -952,8 +787,13 @@ mod tests {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid_u16(0), 0).unwrap();
         for i in 1..=1000u16 {
-            tree.add_node(test_uuid_u16(i), test_uuid_u16(i - 1), i as i64)
-                .unwrap();
+            tree.add_node(
+                test_uuid_u16(i),
+                test_uuid_u16(i - 1),
+                test_uuid_u16(i - 1),
+                i as i64,
+            )
+            .unwrap();
         }
         // No stack overflow from iterative BFS
         let downline = tree.get_downline(test_uuid_u16(0), 0).unwrap();
@@ -968,11 +808,87 @@ mod tests {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid_u16(0), 0).unwrap();
         for i in 1..=1000u16 {
-            tree.add_node(test_uuid_u16(i), test_uuid_u16(0), i as i64)
-                .unwrap();
+            tree.add_node(
+                test_uuid_u16(i),
+                test_uuid_u16(0),
+                test_uuid_u16(0),
+                i as i64,
+            )
+            .unwrap();
         }
         let children = tree.get_children(test_uuid_u16(0)).unwrap();
         assert_eq!(children.len(), 1000);
         assert_eq!(tree.count_downline(test_uuid_u16(0), 0).unwrap(), 1000);
+    }
+
+    // --- Sponsor tests ---
+
+    #[test]
+    fn sponsor_is_set_on_add_node() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
+        let sponsor = tree.get_sponsor(test_uuid(2)).unwrap();
+        assert_eq!(sponsor.unwrap().user_id, test_uuid(1));
+    }
+
+    #[test]
+    fn sponsor_different_from_parent() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(1), 3000)
+            .unwrap();
+        let parent = tree.get_parent(test_uuid(3)).unwrap().unwrap();
+        let sponsor = tree.get_sponsor(test_uuid(3)).unwrap().unwrap();
+        assert_eq!(parent.user_id, test_uuid(2));
+        assert_eq!(sponsor.user_id, test_uuid(1));
+    }
+
+    #[test]
+    fn get_sponsored_returns_recruits() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), test_uuid(1), 3000)
+            .unwrap();
+        let sponsored = tree.get_sponsored(test_uuid(1)).unwrap();
+        assert_eq!(sponsored.len(), 2);
+    }
+
+    #[test]
+    fn get_sponsor_upline_walks_sponsor_chain() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 3000)
+            .unwrap();
+        let upline = tree.get_sponsor_upline(test_uuid(3), 0).unwrap();
+        assert_eq!(upline.len(), 2);
+        assert_eq!(upline[0].user_id, test_uuid(2));
+        assert_eq!(upline[1].user_id, test_uuid(1));
+    }
+
+    #[test]
+    fn remove_node_clears_sponsor_link() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
+        tree.remove_node(test_uuid(2)).unwrap();
+        let sponsored = tree.get_sponsored(test_uuid(1)).unwrap();
+        assert!(sponsored.is_empty());
+    }
+
+    #[test]
+    fn root_has_no_sponsor() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        let sponsor = tree.get_sponsor(test_uuid(1)).unwrap();
+        assert!(sponsor.is_none());
     }
 }

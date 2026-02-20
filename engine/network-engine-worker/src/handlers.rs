@@ -123,7 +123,7 @@ pub fn handle_add_node(state: &mut WorkerState, request: &Request) -> Response {
         }
     };
 
-    match tree.add_node(user_id, parent_id, enrolled_at) {
+    match tree.add_node(user_id, parent_id, parent_id, enrolled_at) {
         Ok(_) => Response::success(request.id.clone(), serde_json::json!({"added": true})),
         Err(e) => Response::error(request.id.clone(), "TREE_ERROR", e.to_string()),
     }

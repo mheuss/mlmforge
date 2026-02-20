@@ -519,9 +519,9 @@ mod tests {
         let mut tree = UnilevelTree::new();
         let root = test_uuid(1);
         tree.add_root(root, 0).unwrap();
-        tree.add_node(test_uuid(2), root, 0).unwrap(); // eligible child
-        tree.add_node(test_uuid(3), root, 0).unwrap(); // ineligible child
-        tree.add_node(test_uuid(4), root, 0).unwrap(); // eligible child
+        tree.add_node(test_uuid(2), root, root, 0).unwrap(); // eligible child
+        tree.add_node(test_uuid(3), root, root, 0).unwrap(); // ineligible child
+        tree.add_node(test_uuid(4), root, root, 0).unwrap(); // eligible child
 
         let elig = default_eligibility();
         let mut snapshots = HashMap::new();
@@ -544,8 +544,8 @@ mod tests {
         let mut tree = UnilevelTree::new();
         let root = test_uuid(1);
         tree.add_root(root, 0).unwrap();
-        tree.add_node(test_uuid(2), root, 0).unwrap();
-        tree.add_node(test_uuid(3), root, 0).unwrap();
+        tree.add_node(test_uuid(2), root, root, 0).unwrap();
+        tree.add_node(test_uuid(3), root, root, 0).unwrap();
 
         let elig = default_eligibility();
         let mut snapshots = HashMap::new();
@@ -641,9 +641,9 @@ mod tests {
         let mut tree = UnilevelTree::new();
         let root = test_uuid(1);
         tree.add_root(root, 0).unwrap();
-        tree.add_node(test_uuid(2), root, 0).unwrap();
-        tree.add_node(test_uuid(3), root, 0).unwrap();
-        tree.add_node(test_uuid(4), root, 0).unwrap();
+        tree.add_node(test_uuid(2), root, root, 0).unwrap();
+        tree.add_node(test_uuid(3), root, root, 0).unwrap();
+        tree.add_node(test_uuid(4), root, root, 0).unwrap();
 
         let elig = CommissionEligibility {
             minimum_pv: 100.0,
@@ -700,8 +700,10 @@ mod tests {
         // Expected: mid(2) earns at level 1, root(1) earns at level 2
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(3), test_uuid(2), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 0)
+            .unwrap();
 
         let structure = test_structure(test_rate_table());
         let plan = test_plan(default_eligibility());
@@ -750,7 +752,8 @@ mod tests {
         // Distributor with rank "bronze" which has no entry in rate table
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
 
         let structure = test_structure(test_rate_table());
         let plan = test_plan(default_eligibility());
@@ -780,10 +783,14 @@ mod tests {
         // Associate only has rates for levels 1-3, walk goes to level 4
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(3), test_uuid(2), 0).unwrap();
-        tree.add_node(test_uuid(4), test_uuid(3), 0).unwrap();
-        tree.add_node(test_uuid(5), test_uuid(4), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 0)
+            .unwrap();
+        tree.add_node(test_uuid(4), test_uuid(3), test_uuid(3), 0)
+            .unwrap();
+        tree.add_node(test_uuid(5), test_uuid(4), test_uuid(4), 0)
+            .unwrap();
 
         let structure = test_structure(test_rate_table());
         let plan = test_plan(default_eligibility());
@@ -816,9 +823,12 @@ mod tests {
         // max_depth=2, tree is 5 deep
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(3), test_uuid(2), 0).unwrap();
-        tree.add_node(test_uuid(4), test_uuid(3), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 0)
+            .unwrap();
+        tree.add_node(test_uuid(4), test_uuid(3), test_uuid(3), 0)
+            .unwrap();
 
         let mut structure = test_structure(test_rate_table());
         structure.level_commission.max_depth = 2;
@@ -852,7 +862,8 @@ mod tests {
         // Verify: cv * broad_pct * multiplier * rate
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
 
         let mut structure = test_structure(test_rate_table());
         structure.level_commission.broad_commission_percent = 0.50;
@@ -886,7 +897,8 @@ mod tests {
     fn walk_multiplier_falls_back_to_plan_level() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
 
         let mut structure = test_structure(test_rate_table());
         structure.level_commission.volume_to_dollar_multiplier = None; // fallback
@@ -924,8 +936,10 @@ mod tests {
         // Expected: root(1) earns at level 1 (not level 2)
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(3), test_uuid(2), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 0)
+            .unwrap();
 
         let mut structure = test_structure(test_rate_table());
         structure.compression = Some(CompressionConfig {
@@ -971,8 +985,10 @@ mod tests {
         // mid gets compressed out, root earns at level 1
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(3), test_uuid(2), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 0)
+            .unwrap();
 
         let mut structure = test_structure(test_rate_table());
         structure.compression = Some(CompressionConfig {
@@ -1018,8 +1034,10 @@ mod tests {
         // Expected: root(1) earns at level 2 (level 1 forfeited)
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(3), test_uuid(2), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 0)
+            .unwrap();
 
         let structure = test_structure(test_rate_table()); // no compression
         let plan = test_plan(default_eligibility());
@@ -1058,8 +1076,10 @@ mod tests {
         // mid(2) has no snapshot. With compression, they're skipped.
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(3), test_uuid(2), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 0)
+            .unwrap();
 
         let mut structure = test_structure(test_rate_table());
         structure.compression = Some(CompressionConfig {
@@ -1097,8 +1117,10 @@ mod tests {
         // mid(2) has no snapshot. Without compression, level forfeited.
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(3), test_uuid(2), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 0)
+            .unwrap();
 
         let structure = test_structure(test_rate_table());
         let plan = test_plan(default_eligibility());
@@ -1136,10 +1158,14 @@ mod tests {
         // node 2 at level 3, node 1 at level 4 (both skip, beyond depth 2)
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(3), test_uuid(2), 0).unwrap();
-        tree.add_node(test_uuid(4), test_uuid(3), 0).unwrap();
-        tree.add_node(test_uuid(5), test_uuid(4), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 0)
+            .unwrap();
+        tree.add_node(test_uuid(4), test_uuid(3), test_uuid(3), 0)
+            .unwrap();
+        tree.add_node(test_uuid(5), test_uuid(4), test_uuid(4), 0)
+            .unwrap();
 
         let elig = CommissionEligibility {
             minimum_pv: 100.0,
@@ -1181,10 +1207,14 @@ mod tests {
         // root(1) has 3 active legs -> tier with depth 0 (unlimited)
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(3), test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(4), test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(5), test_uuid(2), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+        tree.add_node(test_uuid(4), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+        tree.add_node(test_uuid(5), test_uuid(2), test_uuid(2), 0)
+            .unwrap();
 
         let elig = CommissionEligibility {
             minimum_pv: 100.0,
@@ -1404,8 +1434,10 @@ mod tests {
     fn multiple_volume_sources_produce_separate_earnings() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(3), test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
 
         let structure = test_structure(test_rate_table());
         let plan = test_plan(default_eligibility());
@@ -1471,12 +1503,18 @@ mod tests {
 
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(3), test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(4), test_uuid(2), 0).unwrap();
-        tree.add_node(test_uuid(5), test_uuid(2), 0).unwrap();
-        tree.add_node(test_uuid(6), test_uuid(3), 0).unwrap();
-        tree.add_node(test_uuid(7), test_uuid(4), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+        tree.add_node(test_uuid(4), test_uuid(2), test_uuid(2), 0)
+            .unwrap();
+        tree.add_node(test_uuid(5), test_uuid(2), test_uuid(2), 0)
+            .unwrap();
+        tree.add_node(test_uuid(6), test_uuid(3), test_uuid(3), 0)
+            .unwrap();
+        tree.add_node(test_uuid(7), test_uuid(4), test_uuid(4), 0)
+            .unwrap();
 
         let mut rate_table = BTreeMap::new();
         let mut associate_rates = BTreeMap::new();
@@ -1581,7 +1619,8 @@ mod tests {
         // they don't earn from it.
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
 
         let structure = test_structure(test_rate_table());
         let plan = test_plan(default_eligibility());

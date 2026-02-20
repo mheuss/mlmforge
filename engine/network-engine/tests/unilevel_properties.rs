@@ -25,8 +25,13 @@ fn build_random_tree(node_count: usize, parent_choices: &[usize]) -> UnilevelTre
         } else {
             0
         };
-        tree.add_node(uuid_from_index(i), uuid_from_index(parent_idx), i as i64)
-            .unwrap();
+        tree.add_node(
+            uuid_from_index(i),
+            uuid_from_index(parent_idx),
+            uuid_from_index(parent_idx),
+            i as i64,
+        )
+        .unwrap();
     }
 
     tree
@@ -198,6 +203,50 @@ proptest! {
                 "Branch union != full downline for node {}",
                 uid
             );
+        }
+    }
+
+    /// Property 7: Sponsor-sponsored consistency.
+    #[test]
+    fn sponsor_consistency(
+        node_count in 1usize..100,
+        parent_choices in prop::collection::vec(0usize..1000, 0..100),
+    ) {
+        let tree = build_random_tree(node_count, &parent_choices);
+
+        for i in 1..node_count {
+            let uid = uuid_from_index(i);
+            if let Some(sponsor) = tree.get_sponsor(uid).unwrap() {
+                let sponsored = tree.get_sponsored(sponsor.user_id).unwrap();
+                prop_assert!(
+                    sponsored.iter().any(|s| s.user_id == uid),
+                    "Node {} not found in sponsor's sponsored list",
+                    uid
+                );
+            }
+        }
+    }
+
+    /// Property 8: Sponsor upline completeness.
+    #[test]
+    fn sponsor_upline_completeness(
+        node_count in 1usize..100,
+        parent_choices in prop::collection::vec(0usize..1000, 0..100),
+    ) {
+        let tree = build_random_tree(node_count, &parent_choices);
+
+        for i in 0..node_count {
+            let uid = uuid_from_index(i);
+            let upline = tree.get_sponsor_upline(uid, 0).unwrap();
+
+            if !upline.is_empty() {
+                let last = upline.last().unwrap();
+                let last_sponsor = tree.get_sponsor(last.user_id).unwrap();
+                prop_assert!(
+                    last_sponsor.is_none(),
+                    "Last node in sponsor upline should have no sponsor"
+                );
+            }
         }
     }
 }

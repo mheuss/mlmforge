@@ -151,7 +151,7 @@ proptest! {
         let mut tree = UnilevelTree::new();
         tree.add_root(uuid_from_index(0), 0).unwrap();
         for i in 1..tree_size {
-            tree.add_node(uuid_from_index(i), uuid_from_index(i - 1), i as i64)
+            tree.add_node(uuid_from_index(i), uuid_from_index(i - 1), uuid_from_index(i - 1), i as i64)
                 .unwrap();
         }
 
@@ -203,7 +203,7 @@ proptest! {
 
         let mut tree = UnilevelTree::new();
         tree.add_root(uuid_from_index(0), 0).unwrap();
-        tree.add_node(uuid_from_index(1), uuid_from_index(0), 1).unwrap();
+        tree.add_node(uuid_from_index(1), uuid_from_index(0), uuid_from_index(0), 1).unwrap();
 
         let mut snapshots = HashMap::new();
         snapshots.insert(
@@ -264,7 +264,7 @@ proptest! {
         let mut tree = UnilevelTree::new();
         tree.add_root(uuid_from_index(0), 0).unwrap();
         for i in 1..tree_size {
-            tree.add_node(uuid_from_index(i), uuid_from_index(i - 1), i as i64)
+            tree.add_node(uuid_from_index(i), uuid_from_index(i - 1), uuid_from_index(i - 1), i as i64)
                 .unwrap();
         }
 
@@ -323,7 +323,7 @@ proptest! {
         let mut tree = UnilevelTree::new();
         tree.add_root(uuid_from_index(0), 0).unwrap();
         for i in 1..tree_size {
-            tree.add_node(uuid_from_index(i), uuid_from_index(i - 1), i as i64)
+            tree.add_node(uuid_from_index(i), uuid_from_index(i - 1), uuid_from_index(i - 1), i as i64)
                 .unwrap();
         }
 

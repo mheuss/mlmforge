@@ -10,7 +10,6 @@ use crate::types::TreePosition;
 /// Owns the contiguous node Vec, UUID-to-index map, free list, and root.
 /// Tree type wrappers (UnilevelTree, BinaryTree) delegate storage and
 /// traversal operations to Arena while enforcing their own shape constraints.
-#[allow(dead_code)] // Used in task 4 (UnilevelTree retrofit) and task 5 (BinaryTree)
 pub(crate) struct Arena {
     pub(crate) nodes: Vec<Node>,
     pub(crate) index: HashMap<Uuid, NodeIndex>,
@@ -18,7 +17,6 @@ pub(crate) struct Arena {
     pub(crate) root: Option<NodeIndex>,
 }
 
-#[allow(dead_code)] // Used in task 4 (UnilevelTree retrofit) and task 5 (BinaryTree)
 impl Arena {
     pub(crate) fn new() -> Self {
         Self {

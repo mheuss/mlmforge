@@ -1,0 +1,24 @@
+{
+    "description": "add_node places a child at a binary position",
+    "setup": [
+        {"id": "s-1", "op": "create_tree", "params": {"structure": "test", "tree_type": "binary"}},
+        {"id": "s-2", "op": "add_root", "params": {"structure": "test", "user_id": "00000000-0000-0000-0000-000000000001", "enrolled_at": 1000}}
+    ],
+    "request": {
+        "id": "c-bin-1",
+        "op": "add_node",
+        "params": {
+            "structure": "test",
+            "user_id": "00000000-0000-0000-0000-000000000002",
+            "parent_id": "00000000-0000-0000-0000-000000000001",
+            "sponsor_id": "00000000-0000-0000-0000-000000000001",
+            "position": 0,
+            "enrolled_at": 2000
+        }
+    },
+    "expected_response": {
+        "id": "c-bin-1",
+        "ok": true,
+        "result": {"added": true}
+    }
+}

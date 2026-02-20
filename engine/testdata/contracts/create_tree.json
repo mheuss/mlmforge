@@ -1,0 +1,13 @@
+{
+    "description": "create_tree creates a named tree instance",
+    "request": {
+        "id": "ct-1",
+        "op": "create_tree",
+        "params": {"structure": "test", "tree_type": "binary"}
+    },
+    "expected_response": {
+        "id": "ct-1",
+        "ok": true,
+        "result": {"created": true}
+    }
+}

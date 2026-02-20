@@ -489,11 +489,7 @@ impl UnilevelTree {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Deterministic UUID for tests. The byte value makes failures readable.
-    fn test_uuid(n: u8) -> Uuid {
-        Uuid::from_bytes([n, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-    }
+    use crate::tree::test_helpers::{test_uuid, test_uuid_u16};
 
     #[test]
     fn add_root_to_empty_tree() {
@@ -942,13 +938,6 @@ mod tests {
         assert!(tree.get_downline(test_uuid(1), 0).unwrap().is_empty());
         assert_eq!(tree.count_downline(test_uuid(1), 0).unwrap(), 0);
         assert!(!tree.is_descendant_of(test_uuid(1), test_uuid(1)).unwrap());
-    }
-
-    /// Deterministic UUID from a u16. Needed for tests with more than
-    /// 255 nodes (deep chain, wide fan).
-    fn test_uuid_u16(n: u16) -> Uuid {
-        let bytes = n.to_le_bytes();
-        Uuid::from_bytes([bytes[0], bytes[1], 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
     }
 
     #[test]

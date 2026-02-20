@@ -12,6 +12,8 @@ fn dispatch(state: &mut WorkerState, request: &Request) -> Response {
     match request.op.as_str() {
         "ping" => Response::success(request.id.clone(), serde_json::json!("pong")),
         "load_plan" => handlers::handle_load_plan(state, request),
+        // Tree lifecycle
+        "create_tree" => handlers::handle_create_tree(state, request),
         // Tree mutations
         "add_root" => handlers::handle_add_root(state, request),
         "add_node" => handlers::handle_add_node(state, request),
@@ -23,6 +25,10 @@ fn dispatch(state: &mut WorkerState, request: &Request) -> Response {
         "get_downline" => handlers::handle_get_downline(state, request),
         "get_position" => handlers::handle_get_position(state, request),
         "is_descendant_of" => handlers::handle_is_descendant_of(state, request),
+        // Sponsor queries
+        "get_sponsor" => handlers::handle_get_sponsor(state, request),
+        "get_sponsor_upline" => handlers::handle_get_sponsor_upline(state, request),
+        "get_sponsored" => handlers::handle_get_sponsored(state, request),
         // Commission calculations
         "calculate_unilevel" => handlers::handle_calculate_unilevel(state, request),
         _ => Response::error(

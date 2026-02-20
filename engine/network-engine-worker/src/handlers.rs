@@ -2,17 +2,14 @@ use std::collections::HashMap;
 
 use network_engine::commission::{DistributorSnapshot, VolumeSource, calculate_unilevel};
 use network_engine::config::{CompensationPlan, StructureConfig};
+use network_engine::tree::binary::BinaryTree;
+use network_engine::tree::error::TreeError;
 use network_engine::tree::node::Node;
 use network_engine::tree::unilevel::UnilevelTree;
 use uuid::Uuid;
 
 use crate::protocol::{Request, Response};
-use crate::state::WorkerState;
-
-// Note: The Rust library also provides get_branch, count_downline, and count_branch
-// operations. These are intentionally not exposed through the NDJSON protocol — they
-// are server-side operations used for internal calculations (e.g., commission walks).
-// Expose through handlers only when a Go-side caller needs them.
+use crate::state::{TreeInstance, WorkerState};
 
 /// Serializable representation of a tree node for JSON responses.
 ///
@@ -43,6 +40,61 @@ impl NodeResponse {
     }
 }
 
+// --- Tree lookup helpers ---
+
+/// Reads the "structure" param and looks up the named tree (immutable).
+fn get_tree<'a>(
+    state: &'a WorkerState,
+    params: &serde_json::Value,
+    request_id: &str,
+) -> Result<&'a TreeInstance, Response> {
+    let structure = params
+        .get("structure")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            Response::error(
+                request_id.to_string(),
+                "MISSING_PARAM",
+                "missing structure name",
+            )
+        })?;
+    state.trees.get(structure).ok_or_else(|| {
+        Response::error(
+            request_id.to_string(),
+            "STRUCTURE_NOT_FOUND",
+            format!("no tree named '{}'", structure),
+        )
+    })
+}
+
+/// Reads the "structure" param and looks up the named tree (mutable).
+fn get_tree_mut<'a>(
+    state: &'a mut WorkerState,
+    structure: &str,
+    request_id: &str,
+) -> Result<&'a mut TreeInstance, Response> {
+    state.trees.get_mut(structure).ok_or_else(|| {
+        Response::error(
+            request_id.to_string(),
+            "STRUCTURE_NOT_FOUND",
+            format!("no tree named '{}'", structure),
+        )
+    })
+}
+
+/// Maps a `TreeError` to a `Response` with an appropriate error code.
+fn tree_error_to_response(request_id: &str, e: TreeError) -> Response {
+    let code = match &e {
+        TreeError::PositionOccupied { .. } => "POSITION_OCCUPIED",
+        TreeError::PositionOutOfRange { .. } => "INVALID_POSITION",
+        TreeError::UserNotFound(_) => "USER_NOT_FOUND",
+        TreeError::UserAlreadyExists(_) => "USER_ALREADY_EXISTS",
+        TreeError::RootAlreadyExists => "ROOT_ALREADY_EXISTS",
+        TreeError::HasChildren(_, _) => "HAS_CHILDREN",
+    };
+    Response::error(request_id.to_string(), code, e.to_string())
+}
+
 // --- Plan handler ---
 
 pub fn handle_load_plan(state: &mut WorkerState, request: &Request) -> Response {
@@ -59,12 +111,66 @@ pub fn handle_load_plan(state: &mut WorkerState, request: &Request) -> Response 
     }
 }
 
+// --- Tree lifecycle handler ---
+
+pub fn handle_create_tree(state: &mut WorkerState, request: &Request) -> Response {
+    let params = match parse_params(request) {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    let structure = match params.get("structure").and_then(|v| v.as_str()) {
+        Some(s) => s.to_string(),
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "MISSING_PARAM",
+                "missing structure name",
+            );
+        }
+    };
+    let tree_type = match params.get("tree_type").and_then(|v| v.as_str()) {
+        Some(t) => t,
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "MISSING_PARAM",
+                "missing tree_type (unilevel or binary)",
+            );
+        }
+    };
+
+    let instance = match tree_type {
+        "unilevel" => TreeInstance::Unilevel(UnilevelTree::new()),
+        "binary" => TreeInstance::Binary(BinaryTree::new()),
+        _ => {
+            return Response::error(
+                request.id.clone(),
+                "INVALID_PARAMS",
+                format!("unknown tree_type: {}", tree_type),
+            );
+        }
+    };
+
+    state.trees.insert(structure, instance);
+    Response::success(request.id.clone(), serde_json::json!({"created": true}))
+}
+
 // --- Tree mutation handlers ---
 
 pub fn handle_add_root(state: &mut WorkerState, request: &Request) -> Response {
     let params = match parse_params(request) {
         Ok(p) => p,
         Err(resp) => return resp,
+    };
+    let structure = match params.get("structure").and_then(|v| v.as_str()) {
+        Some(s) => s.to_string(),
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "MISSING_PARAM",
+                "missing structure name",
+            );
+        }
     };
     let user_id = match parse_uuid(&params, "user_id", &request.id) {
         Ok(id) => id,
@@ -81,10 +187,20 @@ pub fn handle_add_root(state: &mut WorkerState, request: &Request) -> Response {
         }
     };
 
-    let tree = state.unilevel_tree.get_or_insert_with(UnilevelTree::new);
-    match tree.add_root(user_id, enrolled_at) {
-        Ok(_) => Response::success(request.id.clone(), serde_json::json!({"added": true})),
-        Err(e) => Response::error(request.id.clone(), "TREE_ERROR", e.to_string()),
+    let tree = match get_tree_mut(state, &structure, &request.id) {
+        Ok(t) => t,
+        Err(resp) => return resp,
+    };
+
+    match tree {
+        TreeInstance::Unilevel(t) => match t.add_root(user_id, enrolled_at) {
+            Ok(_) => Response::success(request.id.clone(), serde_json::json!({"added": true})),
+            Err(e) => tree_error_to_response(&request.id, e),
+        },
+        TreeInstance::Binary(t) => match t.add_root(user_id, enrolled_at) {
+            Ok(_) => Response::success(request.id.clone(), serde_json::json!({"added": true})),
+            Err(e) => tree_error_to_response(&request.id, e),
+        },
     }
 }
 
@@ -92,6 +208,16 @@ pub fn handle_add_node(state: &mut WorkerState, request: &Request) -> Response {
     let params = match parse_params(request) {
         Ok(p) => p,
         Err(resp) => return resp,
+    };
+    let structure = match params.get("structure").and_then(|v| v.as_str()) {
+        Some(s) => s.to_string(),
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "MISSING_PARAM",
+                "missing structure name",
+            );
+        }
     };
     let user_id = match parse_uuid(&params, "user_id", &request.id) {
         Ok(id) => id,
@@ -101,6 +227,10 @@ pub fn handle_add_node(state: &mut WorkerState, request: &Request) -> Response {
         Ok(id) => id,
         Err(resp) => return resp,
     };
+    let sponsor_id = match parse_uuid(&params, "sponsor_id", &request.id) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
     let enrolled_at = match params.get("enrolled_at").and_then(|v| v.as_i64()) {
         Some(ts) => ts,
         None => {
@@ -112,20 +242,34 @@ pub fn handle_add_node(state: &mut WorkerState, request: &Request) -> Response {
         }
     };
 
-    let tree = match state.unilevel_tree.as_mut() {
-        Some(t) => t,
-        None => {
-            return Response::error(
-                request.id.clone(),
-                "NO_TREE",
-                "no tree initialized; call add_root first",
-            );
-        }
+    let tree = match get_tree_mut(state, &structure, &request.id) {
+        Ok(t) => t,
+        Err(resp) => return resp,
     };
 
-    match tree.add_node(user_id, parent_id, parent_id, enrolled_at) {
-        Ok(_) => Response::success(request.id.clone(), serde_json::json!({"added": true})),
-        Err(e) => Response::error(request.id.clone(), "TREE_ERROR", e.to_string()),
+    match tree {
+        TreeInstance::Unilevel(t) => {
+            match t.add_node(user_id, parent_id, sponsor_id, enrolled_at) {
+                Ok(_) => Response::success(request.id.clone(), serde_json::json!({"added": true})),
+                Err(e) => tree_error_to_response(&request.id, e),
+            }
+        }
+        TreeInstance::Binary(t) => {
+            let position = match params.get("position").and_then(|v| v.as_u64()) {
+                Some(p) => p as usize,
+                None => {
+                    return Response::error(
+                        request.id.clone(),
+                        "MISSING_PARAM",
+                        "missing position (required for binary)",
+                    );
+                }
+            };
+            match t.add_node(user_id, parent_id, position, sponsor_id, enrolled_at) {
+                Ok(_) => Response::success(request.id.clone(), serde_json::json!({"added": true})),
+                Err(e) => tree_error_to_response(&request.id, e),
+            }
+        }
     }
 }
 
@@ -134,19 +278,35 @@ pub fn handle_remove_node(state: &mut WorkerState, request: &Request) -> Respons
         Ok(p) => p,
         Err(resp) => return resp,
     };
+    let structure = match params.get("structure").and_then(|v| v.as_str()) {
+        Some(s) => s.to_string(),
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "MISSING_PARAM",
+                "missing structure name",
+            );
+        }
+    };
     let user_id = match parse_uuid(&params, "user_id", &request.id) {
         Ok(id) => id,
         Err(resp) => return resp,
     };
 
-    let tree = match state.unilevel_tree.as_mut() {
-        Some(t) => t,
-        None => return Response::error(request.id.clone(), "NO_TREE", "no tree initialized"),
+    let tree = match get_tree_mut(state, &structure, &request.id) {
+        Ok(t) => t,
+        Err(resp) => return resp,
     };
 
-    match tree.remove_node(user_id) {
-        Ok(()) => Response::success(request.id.clone(), serde_json::json!({"removed": true})),
-        Err(e) => Response::error(request.id.clone(), "TREE_ERROR", e.to_string()),
+    match tree {
+        TreeInstance::Unilevel(t) => match t.remove_node(user_id) {
+            Ok(()) => Response::success(request.id.clone(), serde_json::json!({"removed": true})),
+            Err(e) => tree_error_to_response(&request.id, e),
+        },
+        TreeInstance::Binary(t) => match t.remove_node(user_id) {
+            Ok(()) => Response::success(request.id.clone(), serde_json::json!({"removed": true})),
+            Err(e) => tree_error_to_response(&request.id, e),
+        },
     }
 }
 
@@ -162,18 +322,23 @@ pub fn handle_get_parent(state: &WorkerState, request: &Request) -> Response {
         Err(resp) => return resp,
     };
 
-    let tree = match state.unilevel_tree.as_ref() {
-        Some(t) => t,
-        None => return Response::error(request.id.clone(), "NO_TREE", "no tree initialized"),
+    let tree = match get_tree(state, &params, &request.id) {
+        Ok(t) => t,
+        Err(resp) => return resp,
     };
 
-    match tree.get_parent(user_id) {
+    let result = match tree {
+        TreeInstance::Unilevel(t) => t.get_parent(user_id),
+        TreeInstance::Binary(t) => t.get_parent(user_id),
+    };
+
+    match result {
         Ok(Some(node)) => Response::success(
             request.id.clone(),
             serde_json::to_value(NodeResponse::from_node(node)).unwrap(),
         ),
         Ok(None) => Response::success(request.id.clone(), serde_json::Value::Null),
-        Err(e) => Response::error(request.id.clone(), "TREE_ERROR", e.to_string()),
+        Err(e) => tree_error_to_response(&request.id, e),
     }
 }
 
@@ -187,18 +352,23 @@ pub fn handle_get_children(state: &WorkerState, request: &Request) -> Response {
         Err(resp) => return resp,
     };
 
-    let tree = match state.unilevel_tree.as_ref() {
-        Some(t) => t,
-        None => return Response::error(request.id.clone(), "NO_TREE", "no tree initialized"),
+    let tree = match get_tree(state, &params, &request.id) {
+        Ok(t) => t,
+        Err(resp) => return resp,
     };
 
-    match tree.get_children(user_id) {
+    let result = match tree {
+        TreeInstance::Unilevel(t) => t.get_children(user_id),
+        TreeInstance::Binary(t) => t.get_children(user_id),
+    };
+
+    match result {
         Ok(nodes) => {
             let items: Vec<NodeResponse> =
                 nodes.iter().map(|n| NodeResponse::from_node(n)).collect();
             Response::success(request.id.clone(), serde_json::to_value(items).unwrap())
         }
-        Err(e) => Response::error(request.id.clone(), "TREE_ERROR", e.to_string()),
+        Err(e) => tree_error_to_response(&request.id, e),
     }
 }
 
@@ -213,18 +383,23 @@ pub fn handle_get_upline(state: &WorkerState, request: &Request) -> Response {
     };
     let depth = parse_u32_param(&params, "depth").unwrap_or(0);
 
-    let tree = match state.unilevel_tree.as_ref() {
-        Some(t) => t,
-        None => return Response::error(request.id.clone(), "NO_TREE", "no tree initialized"),
+    let tree = match get_tree(state, &params, &request.id) {
+        Ok(t) => t,
+        Err(resp) => return resp,
     };
 
-    match tree.get_upline(user_id, depth) {
+    let result = match tree {
+        TreeInstance::Unilevel(t) => t.get_upline(user_id, depth),
+        TreeInstance::Binary(t) => t.get_upline(user_id, depth),
+    };
+
+    match result {
         Ok(nodes) => {
             let items: Vec<NodeResponse> =
                 nodes.iter().map(|n| NodeResponse::from_node(n)).collect();
             Response::success(request.id.clone(), serde_json::to_value(items).unwrap())
         }
-        Err(e) => Response::error(request.id.clone(), "TREE_ERROR", e.to_string()),
+        Err(e) => tree_error_to_response(&request.id, e),
     }
 }
 
@@ -239,18 +414,23 @@ pub fn handle_get_downline(state: &WorkerState, request: &Request) -> Response {
     };
     let depth = parse_u32_param(&params, "depth").unwrap_or(0);
 
-    let tree = match state.unilevel_tree.as_ref() {
-        Some(t) => t,
-        None => return Response::error(request.id.clone(), "NO_TREE", "no tree initialized"),
+    let tree = match get_tree(state, &params, &request.id) {
+        Ok(t) => t,
+        Err(resp) => return resp,
     };
 
-    match tree.get_downline(user_id, depth) {
+    let result = match tree {
+        TreeInstance::Unilevel(t) => t.get_downline(user_id, depth),
+        TreeInstance::Binary(t) => t.get_downline(user_id, depth),
+    };
+
+    match result {
         Ok(nodes) => {
             let items: Vec<NodeResponse> =
                 nodes.iter().map(|n| NodeResponse::from_node(n)).collect();
             Response::success(request.id.clone(), serde_json::to_value(items).unwrap())
         }
-        Err(e) => Response::error(request.id.clone(), "TREE_ERROR", e.to_string()),
+        Err(e) => tree_error_to_response(&request.id, e),
     }
 }
 
@@ -264,12 +444,17 @@ pub fn handle_get_position(state: &WorkerState, request: &Request) -> Response {
         Err(resp) => return resp,
     };
 
-    let tree = match state.unilevel_tree.as_ref() {
-        Some(t) => t,
-        None => return Response::error(request.id.clone(), "NO_TREE", "no tree initialized"),
+    let tree = match get_tree(state, &params, &request.id) {
+        Ok(t) => t,
+        Err(resp) => return resp,
     };
 
-    match tree.get_position(user_id) {
+    let result = match tree {
+        TreeInstance::Unilevel(t) => t.get_position(user_id),
+        TreeInstance::Binary(t) => t.get_position(user_id),
+    };
+
+    match result {
         Ok(pos) => {
             // Convert downline_counts from HashMap<usize, usize> to a JSON object
             // with string keys (JSON requires string keys).
@@ -280,12 +465,14 @@ pub fn handle_get_position(state: &WorkerState, request: &Request) -> Response {
                 .collect();
 
             let parent_user_id = pos.parent_user_id.map(|id| id.to_string());
+            let sponsor_user_id = pos.sponsor_user_id.map(|id| id.to_string());
 
             Response::success(
                 request.id.clone(),
                 serde_json::json!({
                     "user_id": pos.user_id.to_string(),
                     "parent_user_id": parent_user_id,
+                    "sponsor_user_id": sponsor_user_id,
                     "position": pos.position,
                     "depth": pos.depth,
                     "child_count": pos.child_count,
@@ -294,7 +481,7 @@ pub fn handle_get_position(state: &WorkerState, request: &Request) -> Response {
                 }),
             )
         }
-        Err(e) => Response::error(request.id.clone(), "TREE_ERROR", e.to_string()),
+        Err(e) => tree_error_to_response(&request.id, e),
     }
 }
 
@@ -312,17 +499,115 @@ pub fn handle_is_descendant_of(state: &WorkerState, request: &Request) -> Respon
         Err(resp) => return resp,
     };
 
-    let tree = match state.unilevel_tree.as_ref() {
-        Some(t) => t,
-        None => return Response::error(request.id.clone(), "NO_TREE", "no tree initialized"),
+    let tree = match get_tree(state, &params, &request.id) {
+        Ok(t) => t,
+        Err(resp) => return resp,
     };
 
-    match tree.is_descendant_of(user_id, ancestor_id) {
-        Ok(result) => Response::success(
+    let result = match tree {
+        TreeInstance::Unilevel(t) => t.is_descendant_of(user_id, ancestor_id),
+        TreeInstance::Binary(t) => t.is_descendant_of(user_id, ancestor_id),
+    };
+
+    match result {
+        Ok(is_desc) => Response::success(
             request.id.clone(),
-            serde_json::json!({"is_descendant": result}),
+            serde_json::json!({"is_descendant": is_desc}),
         ),
-        Err(e) => Response::error(request.id.clone(), "TREE_ERROR", e.to_string()),
+        Err(e) => tree_error_to_response(&request.id, e),
+    }
+}
+
+// --- Sponsor query handlers ---
+
+pub fn handle_get_sponsor(state: &WorkerState, request: &Request) -> Response {
+    let params = match parse_params(request) {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    let user_id = match parse_uuid(&params, "user_id", &request.id) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+
+    let tree = match get_tree(state, &params, &request.id) {
+        Ok(t) => t,
+        Err(resp) => return resp,
+    };
+
+    let result = match tree {
+        TreeInstance::Unilevel(t) => t.get_sponsor(user_id),
+        TreeInstance::Binary(t) => t.get_sponsor(user_id),
+    };
+
+    match result {
+        Ok(Some(node)) => Response::success(
+            request.id.clone(),
+            serde_json::to_value(NodeResponse::from_node(node)).unwrap(),
+        ),
+        Ok(None) => Response::success(request.id.clone(), serde_json::Value::Null),
+        Err(e) => tree_error_to_response(&request.id, e),
+    }
+}
+
+pub fn handle_get_sponsor_upline(state: &WorkerState, request: &Request) -> Response {
+    let params = match parse_params(request) {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    let user_id = match parse_uuid(&params, "user_id", &request.id) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    let depth = parse_u32_param(&params, "depth").unwrap_or(0);
+
+    let tree = match get_tree(state, &params, &request.id) {
+        Ok(t) => t,
+        Err(resp) => return resp,
+    };
+
+    let result = match tree {
+        TreeInstance::Unilevel(t) => t.get_sponsor_upline(user_id, depth),
+        TreeInstance::Binary(t) => t.get_sponsor_upline(user_id, depth),
+    };
+
+    match result {
+        Ok(nodes) => {
+            let items: Vec<NodeResponse> =
+                nodes.iter().map(|n| NodeResponse::from_node(n)).collect();
+            Response::success(request.id.clone(), serde_json::to_value(items).unwrap())
+        }
+        Err(e) => tree_error_to_response(&request.id, e),
+    }
+}
+
+pub fn handle_get_sponsored(state: &WorkerState, request: &Request) -> Response {
+    let params = match parse_params(request) {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    let user_id = match parse_uuid(&params, "user_id", &request.id) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+
+    let tree = match get_tree(state, &params, &request.id) {
+        Ok(t) => t,
+        Err(resp) => return resp,
+    };
+
+    let result = match tree {
+        TreeInstance::Unilevel(t) => t.get_sponsored(user_id),
+        TreeInstance::Binary(t) => t.get_sponsored(user_id),
+    };
+
+    match result {
+        Ok(nodes) => {
+            let items: Vec<NodeResponse> =
+                nodes.iter().map(|n| NodeResponse::from_node(n)).collect();
+            Response::success(request.id.clone(), serde_json::to_value(items).unwrap())
+        }
+        Err(e) => tree_error_to_response(&request.id, e),
     }
 }
 
@@ -341,15 +626,36 @@ pub fn handle_calculate_unilevel(state: &WorkerState, request: &Request) -> Resp
         Some(p) => p,
         None => return Response::error(request.id.clone(), "NO_PLAN", "no plan loaded"),
     };
-    let tree = match &state.unilevel_tree {
-        Some(t) => t,
-        None => return Response::error(request.id.clone(), "NO_TREE", "no tree initialized"),
-    };
 
     let params: CalculateUnilevelParams = match serde_json::from_str(request.params.get()) {
         Ok(p) => p,
         Err(e) => {
             return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string());
+        }
+    };
+
+    // Look up the named tree and verify it is a unilevel tree.
+    let tree_instance = match state.trees.get(&params.structure_name) {
+        Some(t) => t,
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "STRUCTURE_NOT_FOUND",
+                format!("no tree named '{}'", params.structure_name),
+            );
+        }
+    };
+    let tree = match tree_instance {
+        TreeInstance::Unilevel(t) => t,
+        TreeInstance::Binary(_) => {
+            return Response::error(
+                request.id.clone(),
+                "INVALID_PARAMS",
+                format!(
+                    "tree '{}' is binary, but calculate_unilevel requires a unilevel tree",
+                    params.structure_name
+                ),
+            );
         }
     };
 

@@ -11,6 +11,11 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize)]
 struct ContractFixture {
     description: String,
+    /// Requests to send before the main request to set up worker state.
+    /// Responses are read but not asserted. Used to create trees before
+    /// testing operations that require an existing tree.
+    #[serde(default)]
+    setup: Vec<serde_json::Value>,
     /// Structured request object. Present for well-formed requests.
     #[serde(default)]
     request: Option<serde_json::Value>,
@@ -118,6 +123,12 @@ fn contract_fixtures_match_worker_behavior() {
     for (name, fixture) in &fixtures {
         // Each fixture gets a fresh worker to avoid state leaking between tests.
         let mut worker = common::spawn_worker();
+
+        // Send setup requests to initialize worker state.
+        for setup_req in &fixture.setup {
+            let setup_line = serde_json::to_string(setup_req).unwrap();
+            let _setup_resp = common::send_receive(&mut worker, &setup_line);
+        }
 
         let request_line = if let Some(raw) = &fixture.request_raw {
             raw.clone()

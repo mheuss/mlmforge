@@ -8,8 +8,8 @@
 
 **Tech Stack:** Rust (serde, proptest, thiserror), Go (encoding/json), NDJSON protocol
 
-**Status:** Pending
-**Progress:** 0 complete, 0 implemented, 0 pending
+**Status:** In Progress
+**Progress:** 7 complete, 0 implemented, 5 pending
 
 ---
 

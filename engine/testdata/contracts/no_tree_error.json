@@ -1,9 +1,10 @@
 {
-    "description": "get_children without a tree returns NO_TREE error",
+    "description": "get_children without a tree returns STRUCTURE_NOT_FOUND error",
     "request": {
         "id": "err-1",
         "op": "get_children",
         "params": {
+            "structure": "nonexistent",
             "user_id": "00000000-0000-0000-0000-000000000001"
         }
     },
@@ -11,7 +12,7 @@
         "id": "err-1",
         "ok": false,
         "error": {
-            "code": "NO_TREE"
+            "code": "STRUCTURE_NOT_FOUND"
         }
     }
 }

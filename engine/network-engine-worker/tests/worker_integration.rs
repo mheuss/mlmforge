@@ -4,27 +4,48 @@ const ROOT: &str = "00000000-0000-0000-0000-000000000001";
 const CHILD: &str = "00000000-0000-0000-0000-000000000002";
 const GRANDCHILD: &str = "00000000-0000-0000-0000-000000000003";
 
+/// The default tree name used across integration tests.
+const TREE_NAME: &str = "Test";
+
+/// Creates a named unilevel tree on the worker.
+fn create_tree(child: &mut std::process::Child, name: &str) {
+    let resp = common::send_receive(
+        child,
+        &format!(
+            r#"{{"id":"setup-tree","op":"create_tree","params":{{"structure":"{}","tree_type":"unilevel"}}}}"#,
+            name
+        ),
+    );
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "create_tree failed: {}",
+        resp
+    );
+}
+
 /// Builds a 3-node chain: root -> child -> grandchild.
+/// Creates the tree first, then adds nodes with sponsor_id.
 fn build_three_node_chain(child: &mut std::process::Child) {
+    create_tree(child, TREE_NAME);
     common::send_receive(
         child,
         &format!(
-            r#"{{"id":"setup-1","op":"add_root","params":{{"user_id":"{}","enrolled_at":100}}}}"#,
-            ROOT
+            r#"{{"id":"setup-1","op":"add_root","params":{{"structure":"{}","user_id":"{}","enrolled_at":100}}}}"#,
+            TREE_NAME, ROOT
         ),
     );
     common::send_receive(
         child,
         &format!(
-            r#"{{"id":"setup-2","op":"add_node","params":{{"user_id":"{}","parent_id":"{}","enrolled_at":200}}}}"#,
-            CHILD, ROOT
+            r#"{{"id":"setup-2","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","enrolled_at":200}}}}"#,
+            TREE_NAME, CHILD, ROOT, ROOT
         ),
     );
     common::send_receive(
         child,
         &format!(
-            r#"{{"id":"setup-3","op":"add_node","params":{{"user_id":"{}","parent_id":"{}","enrolled_at":300}}}}"#,
-            GRANDCHILD, CHILD
+            r#"{{"id":"setup-3","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","enrolled_at":300}}}}"#,
+            TREE_NAME, GRANDCHILD, CHILD, CHILD
         ),
     );
 }
@@ -83,10 +104,14 @@ fn invalid_json_returns_error() {
 #[test]
 fn add_root_and_node() {
     let mut child = common::spawn_worker();
+    create_tree(&mut child, TREE_NAME);
 
     let resp = common::send_receive(
         &mut child,
-        r#"{"id":"1","op":"add_root","params":{"user_id":"00000000-0000-0000-0000-000000000001","enrolled_at":100}}"#,
+        &format!(
+            r#"{{"id":"1","op":"add_root","params":{{"structure":"{}","user_id":"{}","enrolled_at":100}}}}"#,
+            TREE_NAME, ROOT
+        ),
     );
     assert!(resp.contains(r#""ok":true"#));
     assert!(resp.contains(r#""added":true"#));
@@ -96,7 +121,10 @@ fn add_root_and_node() {
 
     let resp = common::send_receive(
         &mut child,
-        r#"{"id":"2","op":"add_node","params":{"user_id":"00000000-0000-0000-0000-000000000002","parent_id":"00000000-0000-0000-0000-000000000001","enrolled_at":200}}"#,
+        &format!(
+            r#"{{"id":"2","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","enrolled_at":200}}}}"#,
+            TREE_NAME, CHILD, ROOT, ROOT
+        ),
     );
     assert!(resp.contains(r#""ok":true"#));
     assert!(resp.contains(r#""added":true"#));
@@ -113,10 +141,17 @@ fn add_node_without_tree_returns_error() {
     let mut child = common::spawn_worker();
     let resp = common::send_receive(
         &mut child,
-        r#"{"id":"1","op":"add_node","params":{"user_id":"00000000-0000-0000-0000-000000000002","parent_id":"00000000-0000-0000-0000-000000000001","enrolled_at":200}}"#,
+        &format!(
+            r#"{{"id":"1","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","enrolled_at":200}}}}"#,
+            TREE_NAME, CHILD, ROOT, ROOT
+        ),
     );
     assert!(resp.contains(r#""ok":false"#));
-    assert!(resp.contains("NO_TREE"));
+    assert!(
+        resp.contains("STRUCTURE_NOT_FOUND"),
+        "expected STRUCTURE_NOT_FOUND, got: {}",
+        resp
+    );
 
     let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
     assert_eq!(parsed["id"], "1");
@@ -128,21 +163,31 @@ fn add_node_without_tree_returns_error() {
 #[test]
 fn remove_node_success() {
     let mut child = common::spawn_worker();
+    create_tree(&mut child, TREE_NAME);
 
     // Build a small tree: root -> child
     common::send_receive(
         &mut child,
-        r#"{"id":"1","op":"add_root","params":{"user_id":"00000000-0000-0000-0000-000000000001","enrolled_at":100}}"#,
+        &format!(
+            r#"{{"id":"1","op":"add_root","params":{{"structure":"{}","user_id":"{}","enrolled_at":100}}}}"#,
+            TREE_NAME, ROOT
+        ),
     );
     common::send_receive(
         &mut child,
-        r#"{"id":"2","op":"add_node","params":{"user_id":"00000000-0000-0000-0000-000000000002","parent_id":"00000000-0000-0000-0000-000000000001","enrolled_at":200}}"#,
+        &format!(
+            r#"{{"id":"2","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","enrolled_at":200}}}}"#,
+            TREE_NAME, CHILD, ROOT, ROOT
+        ),
     );
 
     // Remove the leaf node
     let resp = common::send_receive(
         &mut child,
-        r#"{"id":"3","op":"remove_node","params":{"user_id":"00000000-0000-0000-0000-000000000002"}}"#,
+        &format!(
+            r#"{{"id":"3","op":"remove_node","params":{{"structure":"{}","user_id":"{}"}}}}"#,
+            TREE_NAME, CHILD
+        ),
     );
     assert!(resp.contains(r#""ok":true"#));
     assert!(resp.contains(r#""removed":true"#));
@@ -156,10 +201,17 @@ fn remove_node_without_tree_returns_error() {
     let mut child = common::spawn_worker();
     let resp = common::send_receive(
         &mut child,
-        r#"{"id":"1","op":"remove_node","params":{"user_id":"00000000-0000-0000-0000-000000000001"}}"#,
+        &format!(
+            r#"{{"id":"1","op":"remove_node","params":{{"structure":"{}","user_id":"{}"}}}}"#,
+            TREE_NAME, ROOT
+        ),
     );
     assert!(resp.contains(r#""ok":false"#));
-    assert!(resp.contains("NO_TREE"));
+    assert!(
+        resp.contains("STRUCTURE_NOT_FOUND"),
+        "expected STRUCTURE_NOT_FOUND, got: {}",
+        resp
+    );
     drop(child.stdin.take());
     child.wait().unwrap();
 }
@@ -177,16 +229,23 @@ fn add_root_missing_user_id_returns_error() {
 #[test]
 fn add_node_invalid_uuid_returns_error() {
     let mut child = common::spawn_worker();
+    create_tree(&mut child, TREE_NAME);
 
     // First add a root so the tree exists
     common::send_receive(
         &mut child,
-        r#"{"id":"1","op":"add_root","params":{"user_id":"00000000-0000-0000-0000-000000000001","enrolled_at":100}}"#,
+        &format!(
+            r#"{{"id":"1","op":"add_root","params":{{"structure":"{}","user_id":"{}","enrolled_at":100}}}}"#,
+            TREE_NAME, ROOT
+        ),
     );
 
     let resp = common::send_receive(
         &mut child,
-        r#"{"id":"2","op":"add_node","params":{"user_id":"not-a-uuid","parent_id":"00000000-0000-0000-0000-000000000001","enrolled_at":200}}"#,
+        &format!(
+            r#"{{"id":"2","op":"add_node","params":{{"structure":"{}","user_id":"not-a-uuid","parent_id":"{}","sponsor_id":"{}","enrolled_at":200}}}}"#,
+            TREE_NAME, ROOT, ROOT
+        ),
     );
     assert!(resp.contains(r#""ok":false"#));
     assert!(resp.contains("INVALID_UUID"));
@@ -207,8 +266,8 @@ fn get_parent_of_grandchild_returns_child() {
     let resp = common::send_receive(
         &mut worker,
         &format!(
-            r#"{{"id":"q1","op":"get_parent","params":{{"user_id":"{}"}}}}"#,
-            GRANDCHILD
+            r#"{{"id":"q1","op":"get_parent","params":{{"structure":"{}","user_id":"{}"}}}}"#,
+            TREE_NAME, GRANDCHILD
         ),
     );
     assert!(resp.contains(r#""ok":true"#));
@@ -227,8 +286,8 @@ fn get_parent_of_root_returns_null() {
     let resp = common::send_receive(
         &mut worker,
         &format!(
-            r#"{{"id":"q2","op":"get_parent","params":{{"user_id":"{}"}}}}"#,
-            ROOT
+            r#"{{"id":"q2","op":"get_parent","params":{{"structure":"{}","user_id":"{}"}}}}"#,
+            TREE_NAME, ROOT
         ),
     );
     assert!(resp.contains(r#""ok":true"#));
@@ -246,8 +305,8 @@ fn get_children_of_root_returns_child() {
     let resp = common::send_receive(
         &mut worker,
         &format!(
-            r#"{{"id":"q3","op":"get_children","params":{{"user_id":"{}"}}}}"#,
-            ROOT
+            r#"{{"id":"q3","op":"get_children","params":{{"structure":"{}","user_id":"{}"}}}}"#,
+            TREE_NAME, ROOT
         ),
     );
     assert!(resp.contains(r#""ok":true"#));
@@ -267,12 +326,12 @@ fn get_upline_of_grandchild_returns_chain_to_root() {
     let resp = common::send_receive(
         &mut worker,
         &format!(
-            r#"{{"id":"q4","op":"get_upline","params":{{"user_id":"{}","depth":0}}}}"#,
-            GRANDCHILD
+            r#"{{"id":"q4","op":"get_upline","params":{{"structure":"{}","user_id":"{}","depth":0}}}}"#,
+            TREE_NAME, GRANDCHILD
         ),
     );
     assert!(resp.contains(r#""ok":true"#));
-    // Upline order: [child, root] — immediate parent first
+    // Upline order: [child, root] -- immediate parent first
     assert!(resp.contains(CHILD));
     assert!(resp.contains(ROOT));
 
@@ -295,8 +354,8 @@ fn get_downline_of_root_with_depth_1_returns_child_only() {
     let resp = common::send_receive(
         &mut worker,
         &format!(
-            r#"{{"id":"q5","op":"get_downline","params":{{"user_id":"{}","depth":1}}}}"#,
-            ROOT
+            r#"{{"id":"q5","op":"get_downline","params":{{"structure":"{}","user_id":"{}","depth":1}}}}"#,
+            TREE_NAME, ROOT
         ),
     );
     assert!(resp.contains(r#""ok":true"#));
@@ -318,8 +377,8 @@ fn get_position_of_child_returns_correct_metadata() {
     let resp = common::send_receive(
         &mut worker,
         &format!(
-            r#"{{"id":"q6","op":"get_position","params":{{"user_id":"{}"}}}}"#,
-            CHILD
+            r#"{{"id":"q6","op":"get_position","params":{{"structure":"{}","user_id":"{}"}}}}"#,
+            TREE_NAME, CHILD
         ),
     );
     assert!(resp.contains(r#""ok":true"#));
@@ -328,6 +387,7 @@ fn get_position_of_child_returns_correct_metadata() {
     let result = &parsed["result"];
     assert_eq!(result["user_id"].as_str().unwrap(), CHILD);
     assert_eq!(result["parent_user_id"].as_str().unwrap(), ROOT);
+    assert_eq!(result["sponsor_user_id"].as_str().unwrap(), ROOT);
     assert_eq!(result["position"].as_u64().unwrap(), 0); // first child of root
     assert_eq!(result["depth"].as_u64().unwrap(), 1);
     assert_eq!(result["child_count"].as_u64().unwrap(), 1); // grandchild
@@ -345,8 +405,8 @@ fn is_descendant_of_grandchild_under_root_returns_true() {
     let resp = common::send_receive(
         &mut worker,
         &format!(
-            r#"{{"id":"q7","op":"is_descendant_of","params":{{"user_id":"{}","ancestor_id":"{}"}}}}"#,
-            GRANDCHILD, ROOT
+            r#"{{"id":"q7","op":"is_descendant_of","params":{{"structure":"{}","user_id":"{}","ancestor_id":"{}"}}}}"#,
+            TREE_NAME, GRANDCHILD, ROOT
         ),
     );
     assert!(resp.contains(r#""ok":true"#));
@@ -364,8 +424,8 @@ fn is_descendant_of_root_under_grandchild_returns_false() {
     let resp = common::send_receive(
         &mut worker,
         &format!(
-            r#"{{"id":"q8","op":"is_descendant_of","params":{{"user_id":"{}","ancestor_id":"{}"}}}}"#,
-            ROOT, GRANDCHILD
+            r#"{{"id":"q8","op":"is_descendant_of","params":{{"structure":"{}","user_id":"{}","ancestor_id":"{}"}}}}"#,
+            TREE_NAME, ROOT, GRANDCHILD
         ),
     );
     assert!(resp.contains(r#""ok":true"#));
@@ -376,10 +436,10 @@ fn is_descendant_of_root_under_grandchild_returns_false() {
 }
 
 #[test]
-fn query_without_tree_returns_no_tree_error() {
+fn query_without_tree_returns_structure_not_found() {
     let mut worker = common::spawn_worker();
 
-    // Try all query ops without initializing a tree
+    // Try all query ops without creating a tree. All should return STRUCTURE_NOT_FOUND.
     for op in [
         "get_parent",
         "get_children",
@@ -389,17 +449,20 @@ fn query_without_tree_returns_no_tree_error() {
         "is_descendant_of",
     ] {
         let params = if op == "is_descendant_of" {
-            format!(r#"{{"user_id":"{}","ancestor_id":"{}"}}"#, ROOT, CHILD)
+            format!(
+                r#"{{"structure":"{}","user_id":"{}","ancestor_id":"{}"}}"#,
+                TREE_NAME, ROOT, CHILD
+            )
         } else {
-            format!(r#"{{"user_id":"{}"}}"#, ROOT)
+            format!(r#"{{"structure":"{}","user_id":"{}"}}"#, TREE_NAME, ROOT)
         };
         let resp = common::send_receive(
             &mut worker,
             &format!(r#"{{"id":"err-{}","op":"{}","params":{}}}"#, op, op, params),
         );
         assert!(
-            resp.contains("NO_TREE"),
-            "{} should return NO_TREE without initialized tree, got: {}",
+            resp.contains("STRUCTURE_NOT_FOUND"),
+            "{} should return STRUCTURE_NOT_FOUND without created tree, got: {}",
             op,
             resp
         );
@@ -619,7 +682,7 @@ fn calculate_unilevel_without_plan_returns_no_plan() {
 }
 
 #[test]
-fn calculate_unilevel_without_tree_returns_no_tree() {
+fn calculate_unilevel_without_tree_returns_structure_not_found() {
     let mut worker = common::spawn_worker();
 
     // Load a plan but don't build a tree
@@ -632,7 +695,11 @@ fn calculate_unilevel_without_tree_returns_no_tree() {
     );
     let resp = common::send_receive(&mut worker, &request);
     assert!(resp.contains(r#""ok":false"#));
-    assert!(resp.contains("NO_TREE"), "expected NO_TREE, got: {}", resp);
+    assert!(
+        resp.contains("STRUCTURE_NOT_FOUND"),
+        "expected STRUCTURE_NOT_FOUND, got: {}",
+        resp
+    );
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -690,7 +757,7 @@ fn malformed_json_does_not_crash_worker() {
     let resp = common::send_receive(&mut child, "not json at all");
     assert!(resp.contains(r#""ok":false"#));
     assert!(resp.contains("INVALID_REQUEST"));
-    // Worker should still be alive — send a follow-up ping
+    // Worker should still be alive -- send a follow-up ping
     let resp2 = common::send_receive(&mut child, r#"{"id":"2","op":"ping"}"#);
     assert!(resp2.contains(r#""ok":true"#));
     assert!(resp2.contains(r#""pong""#));

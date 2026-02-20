@@ -10,6 +10,7 @@ use uuid::Uuid;
 pub struct TreePosition {
     pub user_id: Uuid,
     pub parent_user_id: Option<Uuid>,
+    pub sponsor_user_id: Option<Uuid>,
     pub position: usize,
     pub depth: u32,
     pub child_count: usize,

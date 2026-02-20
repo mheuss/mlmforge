@@ -26,9 +26,9 @@ pub struct Node {
     pub user_id: Uuid,
     pub(crate) parent: Option<NodeIndex>,
     pub(crate) children: Vec<NodeIndex>,
-    #[allow(dead_code)] // Wired in task 4 (add_node sponsor parameter)
+    #[allow(dead_code)] // Used by Arena; wired in task 4 (UnilevelTree retrofit)
     pub(crate) sponsor: Option<NodeIndex>,
-    #[allow(dead_code)] // Wired in task 4 (add_node sponsor parameter)
+    #[allow(dead_code)] // Used by Arena; wired in task 4 (UnilevelTree retrofit)
     pub(crate) sponsored: Vec<NodeIndex>,
     pub depth: u32,
     /// Unix timestamp in seconds when the user was enrolled.

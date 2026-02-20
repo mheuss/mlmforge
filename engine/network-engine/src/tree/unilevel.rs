@@ -310,6 +310,7 @@ impl UnilevelTree {
         Ok(TreePosition {
             user_id: node.user_id,
             parent_user_id,
+            sponsor_user_id: None,
             position,
             depth: node.depth,
             child_count: node.children.len(),

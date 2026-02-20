@@ -8,14 +8,14 @@
 
 **Tech Stack:** Rust (serde, proptest, thiserror), Go (encoding/json), NDJSON protocol
 
-**Status:** In Progress
-**Progress:** 7 complete, 0 implemented, 5 pending
+**Status:** Complete
+**Progress:** 12 complete, 0 implemented, 0 pending
 
 ---
 
 ## Phase 1: Extract Shared Foundations
 
-### Task 1: Create shared test helpers module [Pending]
+### Task 1: Create shared test helpers module [Complete]
 
 **Files:**
 - Create: `engine/network-engine/src/tree/test_helpers.rs`
@@ -81,7 +81,7 @@ test(tree): extract shared test helpers to test_helpers.rs
 
 ---
 
-### Task 2: Add sponsor edges to Node struct [Pending]
+### Task 2: Add sponsor edges to Node struct [Complete]
 
 **Files:**
 - Modify: `engine/network-engine/src/tree/node.rs`
@@ -150,7 +150,7 @@ refactor(tree): add sponsor edges to Node struct
 
 ---
 
-### Task 3: Create shared Arena struct [Pending]
+### Task 3: Create shared Arena struct [Complete]
 
 **Files:**
 - Create: `engine/network-engine/src/tree/arena.rs`
@@ -674,7 +674,7 @@ refactor(tree): extract shared Arena struct with traversals and sponsor walks
 
 ---
 
-### Task 4: Retrofit UnilevelTree to use Arena [Pending]
+### Task 4: Retrofit UnilevelTree to use Arena [Complete]
 
 **Files:**
 - Modify: `engine/network-engine/src/tree/unilevel.rs`
@@ -1071,7 +1071,7 @@ refactor(tree): retrofit UnilevelTree to use shared Arena with sponsor edges
 
 ## Phase 2: Build Binary Tree
 
-### Task 5: Create BinaryTree with add_root and add_node [Pending]
+### Task 5: Create BinaryTree with add_root and add_node [Complete]
 
 **Files:**
 - Create: `engine/network-engine/src/tree/binary.rs`
@@ -1809,7 +1809,7 @@ feat(tree): implement BinaryTree with position-indexed placement
 
 ---
 
-### Task 6: Binary tree edge case tests [Pending]
+### Task 6: Binary tree edge case tests [Complete]
 
 **Files:**
 - Modify: `engine/network-engine/src/tree/binary.rs`
@@ -1972,7 +1972,7 @@ test(tree): add binary tree edge case tests
 
 ---
 
-### Task 7: Binary tree property tests [Pending]
+### Task 7: Binary tree property tests [Complete]
 
 **Files:**
 - Create: `engine/network-engine/tests/binary_properties.rs`
@@ -2252,7 +2252,7 @@ test(tree): add binary tree property tests
 
 ## Phase 3: Worker Integration
 
-### Task 8: Update WorkerState for named tree instances [Pending]
+### Task 8: Update WorkerState for named tree instances [Complete]
 
 **Files:**
 - Modify: `engine/network-engine-worker/src/state.rs`
@@ -2498,7 +2498,7 @@ feat(worker): update worker for named tree instances and sponsor operations
 
 ---
 
-### Task 9: Update Go EngineClient [Pending]
+### Task 9: Update Go EngineClient [Complete]
 
 **Files:**
 - Modify: `internal/networkengine/engine_client.go`
@@ -2598,7 +2598,7 @@ feat(networkengine): update Go EngineClient for named trees and sponsor operatio
 
 ---
 
-### Task 10: Update contract test fixtures [Pending]
+### Task 10: Update contract test fixtures [Complete]
 
 **Files:**
 - Modify: `engine/testdata/contracts/add_root.json`
@@ -2700,7 +2700,7 @@ test(contracts): update fixtures for named trees and binary operations
 
 ## Phase 4: TreeNavigator Trait
 
-### Task 11: Extract TreeNavigator trait [Pending]
+### Task 11: Extract TreeNavigator trait [Complete]
 
 **Files:**
 - Create: `engine/network-engine/src/tree/navigator.rs`
@@ -2786,7 +2786,7 @@ refactor(tree): extract TreeNavigator trait from unilevel and binary
 
 ## Phase 5: Cleanup
 
-### Task 12: Update BUGS_AND_TODOS.md and documentation [Pending]
+### Task 12: Update BUGS_AND_TODOS.md and documentation [Complete]
 
 **Files:**
 - Modify: `BUGS_AND_TODOS.md`

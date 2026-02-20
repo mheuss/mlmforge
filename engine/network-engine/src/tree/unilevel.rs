@@ -51,6 +51,8 @@ impl UnilevelTree {
             user_id,
             parent: None,
             children: Vec::new(),
+            sponsor: None,
+            sponsored: Vec::new(),
             depth: 0,
             enrolled_at,
         };
@@ -103,6 +105,8 @@ impl UnilevelTree {
             user_id,
             parent: Some(parent_idx),
             children: Vec::new(),
+            sponsor: None,
+            sponsored: Vec::new(),
             depth: parent_depth + 1,
             enrolled_at,
         };
@@ -180,6 +184,8 @@ impl UnilevelTree {
             user_id: Uuid::nil(),
             parent: None,
             children: Vec::new(),
+            sponsor: None,
+            sponsored: Vec::new(),
             depth: 0,
             enrolled_at: 0,
         };

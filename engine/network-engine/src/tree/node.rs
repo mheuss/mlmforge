@@ -9,19 +9,27 @@ pub struct NodeIndex(pub(crate) usize);
 
 /// A node in the tree arena.
 ///
-/// Stores relationships as arena indices for cache-friendly traversal.
-/// For unilevel trees, position equals the index in the parent's
-/// `children` Vec. The first enrolled child is position 0.
+/// Stores two sets of relationships as arena indices:
+/// - Placement topology: `parent` / `children` — who is above/below in the tree.
+/// - Sponsor topology: `sponsor` / `sponsored` — who recruited whom.
+///
+/// Both edge types use arena indices for cache-friendly traversal.
+/// The tree stores sponsor edges as data for traversal but does not
+/// use them to make placement decisions (decision 020).
 ///
 /// Public fields (`user_id`, `depth`, `enrolled_at`) are the read-only
 /// surface for consumers who receive `&Node` from traversal methods.
-/// Structural fields (`parent`, `children`) are crate-internal because
-/// they hold arena indices that are meaningless outside the tree.
+/// Structural fields are crate-internal because they hold arena indices
+/// that are meaningless outside the tree.
 #[derive(Debug, Clone)]
 pub struct Node {
     pub user_id: Uuid,
     pub(crate) parent: Option<NodeIndex>,
     pub(crate) children: Vec<NodeIndex>,
+    #[allow(dead_code)] // Wired in task 4 (add_node sponsor parameter)
+    pub(crate) sponsor: Option<NodeIndex>,
+    #[allow(dead_code)] // Wired in task 4 (add_node sponsor parameter)
+    pub(crate) sponsored: Vec<NodeIndex>,
     pub depth: u32,
     /// Unix timestamp in seconds when the user was enrolled.
     pub enrolled_at: i64,

@@ -14,7 +14,7 @@ import (
 func TestEngineClient_StartAndPing(t *testing.T) {
 	client, err := NewEngineClient(context.Background(), findWorkerBinary(t))
 	require.NoError(t, err)
-	defer client.Stop()
+	defer func() { _ = client.Stop() }()
 
 	err = client.Ping(context.Background())
 	require.NoError(t, err)
@@ -421,7 +421,7 @@ const structureName = "Test"
 func TestEngineClient_TreeOperations(t *testing.T) {
 	client, err := NewEngineClient(context.Background(), findWorkerBinary(t))
 	require.NoError(t, err)
-	defer client.Stop()
+	defer func() { _ = client.Stop() }()
 
 	ctx := context.Background()
 	rootID := "00000000-0000-0000-0000-000000000001"
@@ -450,7 +450,7 @@ func TestEngineClient_TreeOperations(t *testing.T) {
 func TestEngineClient_TreeQueries(t *testing.T) {
 	client, err := NewEngineClient(context.Background(), findWorkerBinary(t))
 	require.NoError(t, err)
-	defer client.Stop()
+	defer func() { _ = client.Stop() }()
 
 	ctx := context.Background()
 	rootID := "00000000-0000-0000-0000-000000000001"
@@ -585,7 +585,7 @@ func TestEngineClient_TreeQueries(t *testing.T) {
 func TestEngineClient_BinaryTreeOperations(t *testing.T) {
 	client, err := NewEngineClient(context.Background(), findWorkerBinary(t))
 	require.NoError(t, err)
-	defer client.Stop()
+	defer func() { _ = client.Stop() }()
 
 	ctx := context.Background()
 	rootID := "00000000-0000-0000-0000-000000000010"
@@ -637,7 +637,7 @@ func TestEngineClient_BinaryTreeOperations(t *testing.T) {
 func TestEngineClient_BinaryGetPosition(t *testing.T) {
 	client, err := NewEngineClient(context.Background(), findWorkerBinary(t))
 	require.NoError(t, err)
-	defer client.Stop()
+	defer func() { _ = client.Stop() }()
 
 	ctx := context.Background()
 	rootID := "00000000-0000-0000-0000-000000000020"
@@ -811,7 +811,7 @@ const testPlanJSON = `{
 func TestEngineClient_CalculateUnilevel(t *testing.T) {
 	client, err := NewEngineClient(context.Background(), findWorkerBinary(t))
 	require.NoError(t, err)
-	defer client.Stop()
+	defer func() { _ = client.Stop() }()
 
 	ctx := context.Background()
 	rootID := "00000000-0000-0000-0000-000000000001"
@@ -885,7 +885,7 @@ func TestEngineClient_CalculateUnilevel(t *testing.T) {
 func TestEngineClient_CalculateUnilevel_EmptyVolume(t *testing.T) {
 	client, err := NewEngineClient(context.Background(), findWorkerBinary(t))
 	require.NoError(t, err)
-	defer client.Stop()
+	defer func() { _ = client.Stop() }()
 
 	ctx := context.Background()
 	rootID := "00000000-0000-0000-0000-000000000001"

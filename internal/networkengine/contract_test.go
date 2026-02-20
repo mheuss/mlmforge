@@ -101,13 +101,14 @@ func TestContractFixtures(t *testing.T) {
 			// produce compact single-line JSON. The NDJSON protocol requires
 			// one JSON object per line.
 			var requestLine string
-			if tc.fixture.RequestRaw != nil {
+			switch {
+			case tc.fixture.RequestRaw != nil:
 				requestLine = *tc.fixture.RequestRaw
-			} else if tc.fixture.Request != nil {
+			case tc.fixture.Request != nil:
 				compacted, err := json.Marshal(*tc.fixture.Request)
 				require.NoError(t, err, "failed to compact request JSON")
 				requestLine = string(compacted)
-			} else {
+			default:
 				t.Fatalf("fixture %s has neither 'request' nor 'request_raw'", tc.name)
 			}
 

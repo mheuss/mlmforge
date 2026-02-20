@@ -1168,6 +1168,274 @@ mod tests {
         assert_eq!(earning.dollar_amount, 50.0);
     }
 
+    // --- Error handling tests ---
+
+    #[test]
+    fn source_not_in_tree_returns_error() {
+        let tree = three_node_tree();
+        let plan = test_plan(default_eligibility());
+        let structure = test_binary_structure();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+        snapshots.insert(test_uuid(99), eligible_snapshot()); // Not in tree
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(99), // Not in tree
+            cv_amount: 500.0,
+        }];
+
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+        );
+
+        assert!(matches!(result, Err(CalculationError::SourceNotInTree(_))));
+    }
+
+    #[test]
+    fn source_not_in_snapshot_returns_error() {
+        let tree = three_node_tree();
+        let plan = test_plan(default_eligibility());
+        let structure = test_binary_structure();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+        // Node 2 is in tree but NOT in snapshots.
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(2), // In tree, not in snapshots
+            cv_amount: 500.0,
+        }];
+
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+        );
+
+        assert!(matches!(
+            result,
+            Err(CalculationError::SourceNotInSnapshot(_))
+        ));
+    }
+
+    #[test]
+    fn negative_cv_amount_returns_error() {
+        let tree = three_node_tree();
+        let plan = test_plan(default_eligibility());
+        let structure = test_binary_structure();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(2),
+            cv_amount: -100.0,
+        }];
+
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+        );
+
+        assert!(matches!(
+            result,
+            Err(CalculationError::InvalidCvAmount(_, _))
+        ));
+    }
+
+    #[test]
+    fn nan_cv_amount_returns_error() {
+        let tree = three_node_tree();
+        let plan = test_plan(default_eligibility());
+        let structure = test_binary_structure();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(2),
+            cv_amount: f64::NAN,
+        }];
+
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+        );
+
+        assert!(matches!(
+            result,
+            Err(CalculationError::InvalidCvAmount(_, _))
+        ));
+    }
+
+    // --- Edge case tests ---
+
+    #[test]
+    fn empty_tree_returns_empty_result() {
+        let tree = BinaryTree::new();
+        let plan = test_plan(default_eligibility());
+        let structure = test_binary_structure();
+
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &HashMap::new(),
+            &[],
+            &HashMap::new(),
+        )
+        .unwrap();
+
+        assert!(result.earnings.is_empty());
+        assert!(result.carry_forward.is_empty());
+    }
+
+    #[test]
+    fn single_node_tree_no_earnings() {
+        let mut tree = BinaryTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+
+        let plan = test_plan(default_eligibility());
+        let structure = test_binary_structure();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+
+        // Root generates volume but has no children. Both legs are zero.
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(1),
+            cv_amount: 500.0,
+        }];
+
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+        )
+        .unwrap();
+
+        assert!(result.earnings.is_empty());
+        // Root should still have a carry-forward entry.
+        assert!(result.carry_forward.contains_key(&test_uuid(1)));
+    }
+
+    #[test]
+    fn deep_binary_tree() {
+        // Build a 4-level deep binary tree:
+        //       1
+        //      / \
+        //     2   3
+        //    / \
+        //   4   5
+        //  /
+        // 6
+        let mut tree = BinaryTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0, test_uuid(1), 2000)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 1, test_uuid(1), 3000)
+            .unwrap();
+        tree.add_node(test_uuid(4), test_uuid(2), 0, test_uuid(2), 4000)
+            .unwrap();
+        tree.add_node(test_uuid(5), test_uuid(2), 1, test_uuid(2), 5000)
+            .unwrap();
+        tree.add_node(test_uuid(6), test_uuid(4), 0, test_uuid(4), 6000)
+            .unwrap();
+
+        let plan = test_plan(default_eligibility());
+        let structure = test_binary_structure();
+
+        let mut snapshots = HashMap::new();
+        for i in 1..=6u8 {
+            snapshots.insert(test_uuid(i), eligible_snapshot());
+        }
+
+        // Volume at the deepest node (6) and at node 3 (right leg of root).
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(6),
+                cv_amount: 400.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(3),
+                cv_amount: 400.0,
+            },
+        ];
+
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+        )
+        .unwrap();
+
+        // Root: left leg includes node 6's volume (flows up through 4, 2).
+        // left=400, right=400. Matched=400.
+        let root_earning = result
+            .earnings
+            .iter()
+            .find(|e| e.earner_id == test_uuid(1))
+            .expect("root should earn");
+        assert_eq!(root_earning.left_volume, 400.0);
+        assert_eq!(root_earning.right_volume, 400.0);
+        assert_eq!(root_earning.dollar_amount, 40.0);
+    }
+
+    #[test]
+    fn distributor_in_tree_but_not_in_snapshot_treated_as_ineligible() {
+        let tree = three_node_tree();
+        let plan = test_plan(default_eligibility());
+        let structure = test_binary_structure();
+
+        // Only root has a snapshot. Children are in tree but not in snapshots.
+        // No volume sources reference missing-snapshot nodes, so no error.
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &[], // No volume
+            &HashMap::new(),
+        )
+        .unwrap();
+
+        // No volume, no earnings. Should not error.
+        assert!(result.earnings.is_empty());
+    }
+
     #[test]
     fn stale_carry_forward_for_removed_node_ignored() {
         let tree = three_node_tree();
@@ -1210,5 +1478,193 @@ mod tests {
 
         // Stale node should not appear in output carry-forward.
         assert!(!result.carry_forward.contains_key(&test_uuid(99)));
+    }
+
+    // --- Property-based tests ---
+
+    mod prop_tests {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// Generate a random volume amount (positive, finite).
+        fn arb_volume() -> impl Strategy<Value = f64> {
+            0.0..10000.0f64
+        }
+
+        /// Generate a pair of leg volumes for a balanced-to-unbalanced tree.
+        fn arb_leg_pair() -> impl Strategy<Value = (f64, f64)> {
+            (arb_volume(), arb_volume())
+        }
+
+        proptest! {
+            #[test]
+            fn total_payout_never_exceeds_theoretical_max(
+                (left_vol, right_vol) in arb_leg_pair()
+            ) {
+                let tree = three_node_tree();
+                let structure = test_binary_structure(); // 10%, WeakerLeg, FullFlush
+                let plan = test_plan(default_eligibility());
+
+                let mut snapshots = HashMap::new();
+                snapshots.insert(test_uuid(1), eligible_snapshot());
+                snapshots.insert(test_uuid(2), eligible_snapshot());
+                snapshots.insert(test_uuid(3), eligible_snapshot());
+
+                let volume = vec![
+                    VolumeSource { source_id: test_uuid(2), cv_amount: left_vol },
+                    VolumeSource { source_id: test_uuid(3), cv_amount: right_vol },
+                ];
+
+                let result = calculate_binary_pairing(
+                    &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(),
+                ).unwrap();
+
+                let total_payout: f64 = result.earnings.iter().map(|e| e.dollar_amount).sum();
+                let matched = left_vol.min(right_vol);
+                let theoretical_max = matched * 0.10 * 1.0; // percent * multiplier
+
+                prop_assert!(
+                    total_payout <= theoretical_max + 1e-10,
+                    "total payout {} exceeded theoretical max {}",
+                    total_payout,
+                    theoretical_max
+                );
+            }
+
+            #[test]
+            fn carry_forward_always_non_negative(
+                (left_vol, right_vol) in arb_leg_pair()
+            ) {
+                let tree = three_node_tree();
+                let structure = carry_forward_structure();
+                let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+
+                let mut snapshots = HashMap::new();
+                snapshots.insert(test_uuid(1), eligible_snapshot());
+                snapshots.insert(test_uuid(2), eligible_snapshot());
+                snapshots.insert(test_uuid(3), eligible_snapshot());
+
+                let volume = vec![
+                    VolumeSource { source_id: test_uuid(2), cv_amount: left_vol },
+                    VolumeSource { source_id: test_uuid(3), cv_amount: right_vol },
+                ];
+
+                let result = calculate_binary_pairing(
+                    &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(),
+                ).unwrap();
+
+                for (_, legs) in &result.carry_forward {
+                    prop_assert!(legs.left >= 0.0, "left carry-forward is negative: {}", legs.left);
+                    prop_assert!(legs.right >= 0.0, "right carry-forward is negative: {}", legs.right);
+                }
+            }
+
+            #[test]
+            fn full_flush_always_zero_carry_forward(
+                (left_vol, right_vol) in arb_leg_pair()
+            ) {
+                let tree = three_node_tree();
+                let structure = test_binary_structure(); // FullFlush
+                let plan = test_plan(default_eligibility());
+
+                let mut snapshots = HashMap::new();
+                snapshots.insert(test_uuid(1), eligible_snapshot());
+                snapshots.insert(test_uuid(2), eligible_snapshot());
+                snapshots.insert(test_uuid(3), eligible_snapshot());
+
+                let volume = vec![
+                    VolumeSource { source_id: test_uuid(2), cv_amount: left_vol },
+                    VolumeSource { source_id: test_uuid(3), cv_amount: right_vol },
+                ];
+
+                let result = calculate_binary_pairing(
+                    &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(),
+                ).unwrap();
+
+                for (_, legs) in &result.carry_forward {
+                    prop_assert_eq!(legs.left, 0.0);
+                    prop_assert_eq!(legs.right, 0.0);
+                }
+            }
+
+            #[test]
+            fn no_duplicate_earner_ids(
+                (left_vol, right_vol) in arb_leg_pair()
+            ) {
+                let tree = three_node_tree();
+                let structure = test_binary_structure();
+                let plan = test_plan(default_eligibility());
+
+                let mut snapshots = HashMap::new();
+                snapshots.insert(test_uuid(1), eligible_snapshot());
+                snapshots.insert(test_uuid(2), eligible_snapshot());
+                snapshots.insert(test_uuid(3), eligible_snapshot());
+
+                let volume = vec![
+                    VolumeSource { source_id: test_uuid(2), cv_amount: left_vol },
+                    VolumeSource { source_id: test_uuid(3), cv_amount: right_vol },
+                ];
+
+                let result = calculate_binary_pairing(
+                    &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(),
+                ).unwrap();
+
+                let mut seen = std::collections::HashSet::new();
+                for earning in &result.earnings {
+                    prop_assert!(
+                        seen.insert(earning.earner_id),
+                        "duplicate earner_id: {}",
+                        earning.earner_id
+                    );
+                }
+            }
+
+            #[test]
+            fn carry_forward_cap_never_exceeded(
+                (left_vol, right_vol) in arb_leg_pair()
+            ) {
+                let cap = 500.0;
+                let structure = BinaryStructureConfig {
+                    name: "Test Binary".to_string(),
+                    binary_commission: BinaryCommissionConfig {
+                        volume_to_dollar_multiplier: None,
+                        mode: BinaryCommissionMode::Pairing(PairingConfig {
+                            volume_after_payout: VolumeAfterPayout::CarryForward,
+                            carry_forward_cap: Some(cap),
+                            ..test_pairing_config()
+                        }),
+                    },
+                };
+                let tree = three_node_tree();
+                let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+
+                let mut snapshots = HashMap::new();
+                snapshots.insert(test_uuid(1), eligible_snapshot());
+                snapshots.insert(test_uuid(2), eligible_snapshot());
+                snapshots.insert(test_uuid(3), eligible_snapshot());
+
+                let volume = vec![
+                    VolumeSource { source_id: test_uuid(2), cv_amount: left_vol },
+                    VolumeSource { source_id: test_uuid(3), cv_amount: right_vol },
+                ];
+
+                let result = calculate_binary_pairing(
+                    &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(),
+                ).unwrap();
+
+                for (_, legs) in &result.carry_forward {
+                    prop_assert!(
+                        legs.left <= cap + 1e-10,
+                        "left carry-forward {} exceeded cap {}",
+                        legs.left, cap
+                    );
+                    prop_assert!(
+                        legs.right <= cap + 1e-10,
+                        "right carry-forward {} exceeded cap {}",
+                        legs.right, cap
+                    );
+                }
+            }
+        }
     }
 }

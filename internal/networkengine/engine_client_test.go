@@ -580,6 +580,89 @@ func TestEngineClient_TreeQueries(t *testing.T) {
 	})
 }
 
+// --- Binary tree integration tests (real binary) ---
+
+func TestEngineClient_BinaryTreeOperations(t *testing.T) {
+	client, err := NewEngineClient(context.Background(), findWorkerBinary(t))
+	require.NoError(t, err)
+	defer client.Stop()
+
+	ctx := context.Background()
+	rootID := "00000000-0000-0000-0000-000000000010"
+	leftID := "00000000-0000-0000-0000-000000000011"
+	rightID := "00000000-0000-0000-0000-000000000012"
+
+	// Create a binary tree instance.
+	require.NoError(t, client.CreateTree(ctx, "binary_test", "binary"))
+
+	// Add root.
+	require.NoError(t, client.AddRoot(ctx, "binary_test", rootID, 1000))
+
+	// Add left child at position 0.
+	err = client.AddNode(ctx, "binary_test", leftID, rootID, rootID, 2000, WithPosition(0))
+	require.NoError(t, err)
+
+	// Add right child at position 1.
+	err = client.AddNode(ctx, "binary_test", rightID, rootID, rootID, 3000, WithPosition(1))
+	require.NoError(t, err)
+
+	t.Run("GetChildren_returnsBothInOrder", func(t *testing.T) {
+		children, err := client.GetChildren(ctx, "binary_test", rootID)
+		require.NoError(t, err)
+		require.Len(t, children, 2)
+		assert.Equal(t, leftID, children[0].UserID, "first child should be left (position 0)")
+		assert.Equal(t, rightID, children[1].UserID, "second child should be right (position 1)")
+	})
+
+	t.Run("GetPosition_leftChildPosition0", func(t *testing.T) {
+		pos, err := client.GetPosition(ctx, "binary_test", leftID)
+		require.NoError(t, err)
+		assert.Equal(t, 0, pos.Position)
+	})
+
+	t.Run("GetPosition_rightChildPosition1", func(t *testing.T) {
+		pos, err := client.GetPosition(ctx, "binary_test", rightID)
+		require.NoError(t, err)
+		assert.Equal(t, 1, pos.Position)
+	})
+
+	t.Run("AddNode_occupiedPositionReturnsError", func(t *testing.T) {
+		dupID := "00000000-0000-0000-0000-000000000013"
+		err := client.AddNode(ctx, "binary_test", dupID, rootID, rootID, 4000, WithPosition(0))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "POSITION_OCCUPIED")
+	})
+}
+
+func TestEngineClient_BinaryGetPosition(t *testing.T) {
+	client, err := NewEngineClient(context.Background(), findWorkerBinary(t))
+	require.NoError(t, err)
+	defer client.Stop()
+
+	ctx := context.Background()
+	rootID := "00000000-0000-0000-0000-000000000020"
+	childID := "00000000-0000-0000-0000-000000000021"
+
+	// Create a binary tree and add root + one child.
+	require.NoError(t, client.CreateTree(ctx, "binary_pos_test", "binary"))
+	require.NoError(t, client.AddRoot(ctx, "binary_pos_test", rootID, 1000))
+	require.NoError(t, client.AddNode(ctx, "binary_pos_test", childID, rootID, rootID, 2000, WithPosition(1)))
+
+	// Verify that SponsorUserID comes back correctly in the position response.
+	pos, err := client.GetPosition(ctx, "binary_pos_test", childID)
+	require.NoError(t, err)
+
+	assert.Equal(t, childID, pos.UserID)
+	require.NotNil(t, pos.ParentUserID)
+	assert.Equal(t, rootID, *pos.ParentUserID)
+	require.NotNil(t, pos.SponsorUserID)
+	assert.Equal(t, rootID, *pos.SponsorUserID)
+	assert.Equal(t, 1, pos.Position)
+	assert.Equal(t, uint32(1), pos.Depth)
+	assert.Equal(t, 0, pos.ChildCount)
+	assert.Equal(t, int64(2000), pos.EnrolledAt)
+}
+
 // --- Commission calculation tests (mock) ---
 
 func TestEngineClient_CalculateUnilevel_MockParams(t *testing.T) {

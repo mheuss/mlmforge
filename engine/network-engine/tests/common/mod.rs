@@ -27,11 +27,12 @@ use uuid::Uuid;
 
 /// Generates a deterministic UUID from an index.
 ///
-/// Uses little-endian byte representation so that values below 256 produce
-/// the same UUID as the unit-test helper `tree::test_helpers::test_uuid`.
-/// Shared across all integration/property test files.
+/// Uses little-endian byte representation with the high byte set to 0xFF
+/// to avoid collisions with `Uuid::nil()`, which is used as the tombstone
+/// sentinel in the arena.
 pub fn uuid_from_index(i: usize) -> Uuid {
-    let bytes = (i as u128).to_le_bytes();
+    let mut bytes = (i as u128).to_le_bytes();
+    bytes[15] = 0xFF;
     Uuid::from_bytes(bytes)
 }
 

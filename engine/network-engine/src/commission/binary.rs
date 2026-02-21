@@ -47,7 +47,11 @@ fn aggregate_volume(
     Ok(totals)
 }
 
-/// Phase 1, Step 2: Evaluate eligibility for all distributors.
+/// Evaluate eligibility for all distributors in the binary tree.
+///
+/// Returns a simple bool per distributor. Active leg tiers are a unilevel
+/// concept (counting frontline children) and are intentionally not evaluated
+/// for binary trees, where volume flows through exactly two legs.
 fn evaluate_eligibility(
     snapshots: &HashMap<Uuid, DistributorSnapshot>,
     eligibility: &CommissionEligibility,
@@ -142,6 +146,12 @@ pub fn calculate_binary_pairing(
                 "pairing.percent out of range: {}",
                 config.percent
             );
+            if !(0.0..=1.0).contains(&config.percent) {
+                log::warn!(
+                    "pairing percent {} is outside [0.0, 1.0]; commissions may be overstated",
+                    config.percent
+                );
+            }
             config
         }
         BinaryCommissionMode::CycleStep(_) => {
@@ -279,8 +289,8 @@ mod tests {
         build_test_plan, default_eligibility, eligible_snapshot,
     };
     use crate::config::binary::{
-        BinaryCommissionConfig, BinaryCommissionMode, PairingCalculation, PairingConfig,
-        VolumeAfterPayout,
+        BinaryCommissionConfig, BinaryCommissionMode, CycleStep, CycleStepConfig,
+        PairingCalculation, PairingConfig, VolumeAfterPayout,
     };
     use crate::config::{BinaryStructureConfig, CompensationPlan, StructureConfig};
     use crate::tree::binary::BinaryTree;
@@ -1473,6 +1483,57 @@ mod tests {
             result.earnings.is_empty() || result.earnings.iter().all(|e| e.dollar_amount == 0.0),
             "zero CV should produce zero or empty earnings"
         );
+    }
+
+    // --- CycleStep mode tests ---
+
+    #[test]
+    fn cycle_step_mode_returns_empty_result() {
+        let structure = BinaryStructureConfig {
+            name: "Test Binary".to_string(),
+            binary_commission: BinaryCommissionConfig {
+                volume_to_dollar_multiplier: None,
+                mode: BinaryCommissionMode::CycleStep(CycleStepConfig {
+                    steps: vec![CycleStep {
+                        threshold: 300.0,
+                        amount: 25.0,
+                    }],
+                    flush_after_cycle: true,
+                }),
+            },
+        };
+        let tree = three_node_tree();
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(2),
+                cv_amount: 500.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(3),
+                cv_amount: 500.0,
+            },
+        ];
+
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+        )
+        .unwrap();
+
+        // CycleStep mode is not yet implemented. It returns an empty result.
+        assert!(result.earnings.is_empty());
+        assert!(result.carry_forward.is_empty());
     }
 
     // --- Property-based tests ---

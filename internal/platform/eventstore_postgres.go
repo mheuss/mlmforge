@@ -130,6 +130,10 @@ func (s *PostgresEventStore) Append(ctx context.Context, stream string, expected
 // ReadStream returns events from a single stream starting at fromVersion.
 // Pass limit=0 to read all matching events.
 func (s *PostgresEventStore) ReadStream(ctx context.Context, stream string, fromVersion int64, limit int64) ([]Event, error) {
+	if fromVersion < 1 {
+		fromVersion = 1
+	}
+
 	var (
 		rows pgx.Rows
 		err  error

@@ -112,6 +112,10 @@ func (t *StdioTransport) Call(ctx context.Context, op string, params json.RawMes
 	}
 
 	ch := make(chan readResult, 1)
+	// On context cancellation, this goroutine remains blocked on ReadBytes
+	// until the worker writes a response or the process exits. The transport
+	// is marked closed after cancellation, preventing further calls.
+	// Residual goroutine cleanup occurs when Close() kills the subprocess.
 	go func() {
 		line, readErr := t.reader.ReadBytes('\n')
 		ch <- readResult{line, readErr}

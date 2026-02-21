@@ -130,6 +130,18 @@ func TestSchemaRejectsInfinityMissingFlatRate(t *testing.T) {
 	}
 }
 
+func TestSchemaRejectsVelocityDaysMissingTimeframeDays(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+
+	errs := p.validateSchema(readFixture(t, "invalid/velocity-days-missing-timeframe-days.yaml"))
+	require.NotEmpty(t, errs, "velocity days without timeframe_days should produce errors")
+
+	for _, e := range errs {
+		assert.Equal(t, SeverityError, e.Severity)
+	}
+}
+
 func TestSchemaRejectsPercentageOutOfRange(t *testing.T) {
 	p, err := NewPipeline(schemaPath(t))
 	require.NoError(t, err)

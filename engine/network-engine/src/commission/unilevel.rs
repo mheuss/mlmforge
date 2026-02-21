@@ -45,6 +45,12 @@ pub fn calculate_unilevel(
         "broad_commission_percent out of range: {}",
         broad_pct
     );
+    if !(0.0..=1.0).contains(&broad_pct) {
+        log::warn!(
+            "broad_commission_percent {} is outside [0.0, 1.0]; commissions may be overstated",
+            broad_pct
+        );
+    }
     let multiplier = structure
         .level_commission
         .volume_to_dollar_multiplier

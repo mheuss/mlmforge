@@ -85,8 +85,8 @@ fn assert_response_matches(fixture_name: &str, expected: &serde_json::Value, act
         fixture_name, expected["id"], actual["id"]
     );
 
-    // If expected has a result, compare it.
-    if !expected["result"].is_null() && expected.get("result").is_some() {
+    // If expected has a result, compare it (including explicit null).
+    if expected.get("result").is_some() {
         assert_eq!(
             expected["result"], actual["result"],
             "[{}] 'result' mismatch",

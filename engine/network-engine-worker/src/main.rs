@@ -41,6 +41,12 @@ fn dispatch(state: &mut WorkerState, request: &Request) -> Response {
 }
 
 fn main() {
+    // The worker communicates exclusively via NDJSON on stdout. Initializing a
+    // logger (e.g. env_logger) would risk mixing log output with protocol
+    // messages on stderr, which the Go side does not parse. Log macro calls in
+    // the engine library are intentionally no-ops in subprocess mode. If engine
+    // warnings need to surface, they should be included in the response envelope.
+
     let mut state = WorkerState::default();
     let stdin = io::stdin().lock();
     let mut stdout = io::stdout().lock();

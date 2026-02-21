@@ -74,13 +74,13 @@ Consumers do not need Rust tooling. The Rust engine can be replaced or upgraded 
 
 ## Interface Inventory
 
-25 interfaces across 7 provider contexts. Portals is a pure consumer with no interfaces.
+26 interfaces across 7 provider contexts. Portals is a pure consumer with no interfaces.
 
 | Context | Interfaces |
 |---------|-----------|
 | Platform | ConfigStore, AuditWriter, EventStore, JobScheduler, SessionManager |
 | Identity | UserReader, AddressReader, StatusTransition, AuthProvider |
-| Network Engine | TreeNavigator, RankProvider, VolumeRecorder, CommissionResult, CommissionAdmin, StructurePlacer, PlanConfiguration |
+| Network Engine | TreeNavigator, RankProvider, VolumeRecorder, CommissionResult, CommissionAdmin, StructurePlacer, PlanConfiguration, EngineTransport |
 | Financial | PaymentProcessor, WalletManager, InvoiceProvider |
 | Commerce | ProductCatalog, AutoshipManager |
 | Engagement | MessageSender |

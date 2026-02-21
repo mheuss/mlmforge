@@ -37,11 +37,22 @@ impl Arena {
 
     /// Direct arena access by index.
     pub(crate) fn node(&self, idx: NodeIndex) -> &Node {
-        &self.nodes[idx.0]
+        let n = &self.nodes[idx.0];
+        debug_assert!(
+            n.user_id != uuid::Uuid::nil(),
+            "accessed tombstoned slot at index {}",
+            idx.0
+        );
+        n
     }
 
     /// Mutable arena access by index.
     pub(crate) fn node_mut(&mut self, idx: NodeIndex) -> &mut Node {
+        debug_assert!(
+            self.nodes[idx.0].user_id != uuid::Uuid::nil(),
+            "accessed tombstoned slot at index {}",
+            idx.0
+        );
         &mut self.nodes[idx.0]
     }
 
@@ -60,6 +71,11 @@ impl Arena {
 
     /// Clears a slot and adds it to the free list for reuse.
     pub(crate) fn tombstone(&mut self, idx: NodeIndex) {
+        debug_assert!(
+            !self.free_list.contains(&idx),
+            "double tombstone at index {}",
+            idx.0
+        );
         self.nodes[idx.0] = Node {
             user_id: Uuid::nil(),
             parent: None,
@@ -385,7 +401,8 @@ mod tests {
         let mut arena = Arena::new();
         let idx = arena.alloc_slot(make_node(test_uuid(1), None, 0));
         arena.tombstone(idx);
-        assert_eq!(arena.node(idx).user_id, Uuid::nil());
+        // Access the raw slot directly to avoid the debug_assert in node().
+        assert_eq!(arena.nodes[idx.0].user_id, Uuid::nil());
     }
 
     #[test]

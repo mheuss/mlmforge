@@ -8,6 +8,7 @@ use crate::config::eligibility::{ActiveLegTier, CommissionEligibility};
 use crate::config::{CompensationPlan, UnilevelStructureConfig};
 use crate::tree::unilevel::UnilevelTree;
 
+use super::is_eligible;
 use super::types::{CalculationError, CommissionEarning, DistributorSnapshot, VolumeSource};
 
 /// Calculate unilevel commissions for a set of volume events.
@@ -158,25 +159,6 @@ pub fn calculate_unilevel(
     }
 
     Ok(all_earnings)
-}
-
-/// Check if a distributor meets basic commission eligibility.
-fn is_eligible(snapshot: &DistributorSnapshot, eligibility: &CommissionEligibility) -> bool {
-    if snapshot.personal_volume < eligibility.minimum_pv {
-        return false;
-    }
-
-    if eligibility.require_order_in_period && !snapshot.has_order_in_period {
-        return false;
-    }
-
-    if !eligibility.eligible_statuses.is_empty()
-        && !eligibility.eligible_statuses.contains(&snapshot.status)
-    {
-        return false;
-    }
-
-    true
 }
 
 /// Count how many direct children of a distributor are commission-eligible.

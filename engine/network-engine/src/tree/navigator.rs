@@ -14,6 +14,8 @@ use crate::types::TreePosition;
 /// of this trait because their signatures differ per tree type (binary
 /// requires position, unilevel does not).
 pub trait TreeNavigator {
+    /// Returns true if the tree contains a node with this user_id.
+    fn contains(&self, user_id: Uuid) -> bool;
     fn get_parent(&self, user_id: Uuid) -> Result<Option<&Node>, TreeError>;
     fn get_children(&self, user_id: Uuid) -> Result<Vec<&Node>, TreeError>;
     fn get_upline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError>;

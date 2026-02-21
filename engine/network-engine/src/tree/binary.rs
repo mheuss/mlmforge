@@ -396,6 +396,11 @@ impl BinaryTree {
         Ok(self.arena.get_sponsored(idx))
     }
 
+    /// Returns true if the tree contains a node with this user_id.
+    pub fn contains(&self, user_id: Uuid) -> bool {
+        self.arena.index.contains_key(&user_id)
+    }
+
     /// Provides read access to the arena for commission calculators
     /// and other crate-internal consumers.
     pub(crate) fn arena(&self) -> &Arena {
@@ -410,6 +415,9 @@ impl BinaryTree {
 }
 
 impl crate::tree::navigator::TreeNavigator for BinaryTree {
+    fn contains(&self, user_id: Uuid) -> bool {
+        self.contains(user_id)
+    }
     fn get_parent(&self, user_id: Uuid) -> Result<Option<&Node>, TreeError> {
         self.get_parent(user_id)
     }

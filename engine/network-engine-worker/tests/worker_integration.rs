@@ -447,6 +447,9 @@ fn query_without_tree_returns_structure_not_found() {
         "get_downline",
         "get_position",
         "is_descendant_of",
+        "get_sponsor",
+        "get_sponsor_upline",
+        "get_sponsored",
     ] {
         let params = if op == "is_descendant_of" {
             format!(
@@ -1024,6 +1027,422 @@ fn binary_get_position_returns_slot_positions() {
         dc["1"].as_u64().unwrap(),
         0,
         "right child has no subtree descendants"
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+// --- Sponsor query integration tests ---
+//
+// These tests verify sponsor queries through the NDJSON protocol.
+// A 3-node unilevel tree is built where the grandchild's sponsor differs
+// from its parent to distinguish sponsor from placement lineage.
+
+const SPONSOR_TREE: &str = "SponsorTest";
+const S_ROOT: &str = "00000000-0000-0000-0000-000000000001";
+const S_CHILD: &str = "00000000-0000-0000-0000-000000000002";
+const S_GRANDCHILD: &str = "00000000-0000-0000-0000-000000000003";
+
+/// Builds a 3-node chain where the grandchild's sponsor is root (not child).
+/// Placement: root -> child -> grandchild
+/// Sponsorship: root sponsors child, root sponsors grandchild
+fn build_sponsor_test_tree(worker: &mut std::process::Child) {
+    create_tree(worker, SPONSOR_TREE);
+    common::send_receive(
+        worker,
+        &format!(
+            r#"{{"id":"ss-1","op":"add_root","params":{{"structure":"{}","user_id":"{}","enrolled_at":100}}}}"#,
+            SPONSOR_TREE, S_ROOT
+        ),
+    );
+    common::send_receive(
+        worker,
+        &format!(
+            r#"{{"id":"ss-2","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","enrolled_at":200}}}}"#,
+            SPONSOR_TREE, S_CHILD, S_ROOT, S_ROOT
+        ),
+    );
+    // Grandchild is placed under child but sponsored by root.
+    common::send_receive(
+        worker,
+        &format!(
+            r#"{{"id":"ss-3","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","enrolled_at":300}}}}"#,
+            SPONSOR_TREE, S_GRANDCHILD, S_CHILD, S_ROOT
+        ),
+    );
+}
+
+#[test]
+fn get_sponsor_returns_sponsor_node() {
+    let mut worker = common::spawn_worker();
+    build_sponsor_test_tree(&mut worker);
+
+    // Grandchild's sponsor is root, not child (parent).
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"sp1","op":"get_sponsor","params":{{"structure":"{}","user_id":"{}"}}}}"#,
+            SPONSOR_TREE, S_GRANDCHILD
+        ),
+    );
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "get_sponsor failed: {}",
+        resp
+    );
+
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(
+        parsed["result"]["user_id"].as_str().unwrap(),
+        S_ROOT,
+        "sponsor of grandchild should be root, not child"
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn get_sponsor_upline_returns_chain() {
+    let mut worker = common::spawn_worker();
+    build_sponsor_test_tree(&mut worker);
+
+    // Grandchild's sponsor upline: root only (root sponsors grandchild directly).
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"sp2","op":"get_sponsor_upline","params":{{"structure":"{}","user_id":"{}","depth":0}}}}"#,
+            SPONSOR_TREE, S_GRANDCHILD
+        ),
+    );
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "get_sponsor_upline failed: {}",
+        resp
+    );
+
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let result = parsed["result"].as_array().unwrap();
+    // Sponsor chain: grandchild -> root (root is grandchild's sponsor).
+    // Root has no sponsor, so chain length is 1.
+    assert_eq!(result.len(), 1, "sponsor upline should have 1 node");
+    assert_eq!(result[0]["user_id"].as_str().unwrap(), S_ROOT);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn get_sponsored_returns_recruits() {
+    let mut worker = common::spawn_worker();
+    build_sponsor_test_tree(&mut worker);
+
+    // Root sponsored both child and grandchild.
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"sp3","op":"get_sponsored","params":{{"structure":"{}","user_id":"{}"}}}}"#,
+            SPONSOR_TREE, S_ROOT
+        ),
+    );
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "get_sponsored failed: {}",
+        resp
+    );
+
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let result = parsed["result"].as_array().unwrap();
+    assert_eq!(result.len(), 2, "root should have sponsored 2 people");
+
+    // Verify both child and grandchild are in the results.
+    let ids: Vec<&str> = result
+        .iter()
+        .map(|n| n["user_id"].as_str().unwrap())
+        .collect();
+    assert!(ids.contains(&S_CHILD), "child should be in sponsored list");
+    assert!(
+        ids.contains(&S_GRANDCHILD),
+        "grandchild should be in sponsored list"
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+// --- create_tree overwrite guard test ---
+
+#[test]
+fn create_tree_duplicate_returns_error() {
+    let mut worker = common::spawn_worker();
+
+    // First create succeeds.
+    create_tree(&mut worker, "DupTest");
+
+    // Second create with the same name should fail.
+    let resp = common::send_receive(
+        &mut worker,
+        r#"{"id":"dup","op":"create_tree","params":{"structure":"DupTest","tree_type":"unilevel"}}"#,
+    );
+    assert!(resp.contains(r#""ok":false"#));
+    assert!(
+        resp.contains("TREE_EXISTS"),
+        "expected TREE_EXISTS, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+// --- Binary pairing commission integration tests ---
+
+/// A minimal compensation plan JSON with a single binary structure.
+///
+/// - One rank: "associate" with min PV 0, everyone eligible
+/// - Pairing config: 10%, WeakerLeg, FullFlush
+/// - No carry-forward cap
+const BINARY_PLAN_JSON: &str = r#"{
+    "name": "Binary Test Plan",
+    "version": 1,
+    "structures": [
+        {
+            "type": "binary",
+            "config": {
+                "name": "BinaryCalc",
+                "binary_commission": {
+                    "volume_to_dollar_multiplier": null,
+                    "mode": {
+                        "pairing": {
+                            "percent": 0.10,
+                            "calculation": "weaker_leg",
+                            "cap_per_period": null,
+                            "volume_after_payout": "full_flush",
+                            "carry_forward_cap": null
+                        }
+                    }
+                }
+            }
+        }
+    ],
+    "period": {
+        "length": "month",
+        "start_date": "2026-03-01",
+        "payout_lag_days": 14
+    },
+    "volume": {
+        "inhibit_signup_volume": false,
+        "base_currency": "USD",
+        "volume_to_dollar_multiplier": 1.0,
+        "deduct_qualifying_volume": false
+    },
+    "ranks": [
+        {
+            "name": "associate",
+            "ordinal": 1,
+            "qualification": {
+                "structures": [],
+                "required_products": []
+            },
+            "qualified_structures": ["BinaryCalc"],
+            "demotion_policy": "promotion_only"
+        }
+    ],
+    "rank_tracking": { "track_achieved_rank": false },
+    "rank_features": { "constraints_enabled": false, "overrides_enabled": false },
+    "commission_eligibility": {
+        "min_personal_volume": 0.0,
+        "require_order_in_period": false,
+        "eligible_statuses": [],
+        "active_leg_tiers": []
+    },
+    "bonuses": {
+        "matching": null,
+        "sponsor": null,
+        "fast_start": null,
+        "rank_advancement": null,
+        "leadership_development": null,
+        "infinity": null,
+        "lifestyle": null,
+        "pool": null,
+        "matrix_completion": null,
+        "position": null,
+        "board_cycling": null,
+        "pass_up": null
+    },
+    "payout": {
+        "base_currency": "USD",
+        "minimum_amount": 50.0,
+        "split_payouts_enabled": true,
+        "methods": [
+            { "type": "bank_transfer", "fee": 2.50 }
+        ]
+    },
+    "caps": {
+        "per_distributor_per_period": null,
+        "company_payout_cap_percent": 0.42,
+        "cap_enforcement": "pro_rata",
+        "clawback_on_refund": false
+    },
+    "placement": {
+        "donated_placement": null,
+        "holding_tank": null,
+        "binary_placement": null
+    }
+}"#;
+
+/// Loads the binary test plan into the worker. Asserts success.
+fn load_binary_test_plan(worker: &mut std::process::Child) {
+    let minified: String = BINARY_PLAN_JSON
+        .lines()
+        .map(|l| l.trim())
+        .collect::<Vec<_>>()
+        .join("");
+    let request = format!(
+        r#"{{"id":"load-bin-plan","op":"load_plan","params":{}}}"#,
+        minified
+    );
+    let resp = common::send_receive(worker, &request);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "load_plan (binary) failed: {}",
+        resp
+    );
+}
+
+/// Builds a 3-node binary tree for commission tests:
+/// root(A) -> left(B) at position 0, right(C) at position 1.
+fn build_binary_calc_tree(worker: &mut std::process::Child) {
+    let tree_name = "BinaryCalc";
+    create_binary_tree(worker, tree_name);
+
+    common::send_receive(
+        worker,
+        &format!(
+            r#"{{"id":"bc-1","op":"add_root","params":{{"structure":"{}","user_id":"{}","enrolled_at":100}}}}"#,
+            tree_name, NODE_A
+        ),
+    );
+    common::send_receive(
+        worker,
+        &format!(
+            r#"{{"id":"bc-2","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","position":0,"enrolled_at":200}}}}"#,
+            tree_name, NODE_B, NODE_A, NODE_A
+        ),
+    );
+    common::send_receive(
+        worker,
+        &format!(
+            r#"{{"id":"bc-3","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","position":1,"enrolled_at":300}}}}"#,
+            tree_name, NODE_C, NODE_A, NODE_A
+        ),
+    );
+}
+
+#[test]
+fn calculate_binary_pairing_balanced_legs() {
+    let mut worker = common::spawn_worker();
+
+    // 1. Load plan
+    load_binary_test_plan(&mut worker);
+
+    // 2. Build tree: root(A) -> left(B), right(C)
+    build_binary_calc_tree(&mut worker);
+
+    // 3. Calculate commissions
+    //    Left(B) generates 500 CV, Right(C) generates 500 CV.
+    //    Root sees left=500, right=500. Matched=500.
+    //    Earning: 500 * 0.10 * 1.0 * 1.0 = 50.0
+    let snap = r#"{"rank":"associate","personal_volume":150.0,"status":"active","has_order_in_period":true}"#;
+    let params = format!(
+        r#"{{"structure_name":"BinaryCalc","snapshots":{{"{a}":{snap},"{b}":{snap},"{c}":{snap}}},"volume":[{{"source_id":"{b}","cv_amount":500.0}},{{"source_id":"{c}","cv_amount":500.0}}]}}"#,
+        a = NODE_A,
+        b = NODE_B,
+        c = NODE_C,
+        snap = snap,
+    );
+    let request = format!(
+        r#"{{"id":"bp-1","op":"calculate_binary_pairing","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(
+        parsed["ok"].as_bool().unwrap(),
+        "calculate_binary_pairing failed: {}",
+        resp
+    );
+    assert_eq!(parsed["id"], "bp-1");
+
+    let earnings = parsed["result"]["earnings"].as_array().unwrap();
+    assert_eq!(earnings.len(), 1, "expected 1 earning, got: {}", resp);
+
+    let earning = &earnings[0];
+    assert_eq!(earning["earner_id"].as_str().unwrap(), NODE_A);
+    assert_eq!(earning["left_volume"].as_f64().unwrap(), 500.0);
+    assert_eq!(earning["right_volume"].as_f64().unwrap(), 500.0);
+    assert_eq!(earning["matched_volume"].as_f64().unwrap(), 500.0);
+    assert_eq!(earning["ratio"].as_f64().unwrap(), 1.0);
+    assert_eq!(earning["percent"].as_f64().unwrap(), 0.10);
+
+    let dollar = earning["dollar_amount"].as_f64().unwrap();
+    assert!(
+        (dollar - 50.0).abs() < f64::EPSILON,
+        "dollar_amount should be 50.0, got {}",
+        dollar
+    );
+    assert!(!earning["capped"].as_bool().unwrap());
+
+    // Verify carry_forward is present.
+    let cf = parsed["result"]["carry_forward"].as_object().unwrap();
+    assert!(!cf.is_empty(), "carry_forward should have entries");
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn calculate_binary_pairing_without_plan_returns_no_plan() {
+    let mut worker = common::spawn_worker();
+
+    // Build a tree but don't load a plan.
+    build_binary_calc_tree(&mut worker);
+
+    let params = r#"{"structure_name":"BinaryCalc","snapshots":{},"volume":[]}"#;
+    let request = format!(
+        r#"{{"id":"bp-err","op":"calculate_binary_pairing","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(resp.contains(r#""ok":false"#));
+    assert!(resp.contains("NO_PLAN"), "expected NO_PLAN, got: {}", resp);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn calculate_binary_pairing_wrong_tree_type_returns_error() {
+    let mut worker = common::spawn_worker();
+
+    load_binary_test_plan(&mut worker);
+
+    // Create a unilevel tree with the binary structure name.
+    create_tree(&mut worker, "BinaryCalc");
+
+    let params = r#"{"structure_name":"BinaryCalc","snapshots":{},"volume":[]}"#;
+    let request = format!(
+        r#"{{"id":"bp-type","op":"calculate_binary_pairing","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(resp.contains(r#""ok":false"#));
+    assert!(
+        resp.contains("INVALID_PARAMS"),
+        "expected INVALID_PARAMS for wrong tree type, got: {}",
+        resp
     );
 
     drop(worker.stdin.take());

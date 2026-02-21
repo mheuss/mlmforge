@@ -56,3 +56,39 @@ type CommissionEarningDTO struct {
 	CVAmount     float64 `json:"cv_amount"`
 	DollarAmount float64 `json:"dollar_amount"`
 }
+
+// CalculateBinaryPairingRequest is the input for binary pairing commission calculation.
+// Field names match the Rust CalculateBinaryPairingParams serde format.
+type CalculateBinaryPairingRequest struct {
+	StructureName string                            `json:"structure_name"`
+	Snapshots     map[string]DistributorSnapshotDTO `json:"snapshots"`
+	Volume        []VolumeSourceDTO                 `json:"volume"`
+	CarryForward  map[string]LegVolumesDTO          `json:"carry_forward,omitempty"`
+}
+
+// LegVolumesDTO is the wire format for binary carry-forward leg volumes.
+// Matches the Rust LegVolumes struct.
+type LegVolumesDTO struct {
+	Left  float64 `json:"left"`
+	Right float64 `json:"right"`
+}
+
+// BinaryCommissionEarningDTO is the wire format for a single binary pairing earning.
+// Matches the Rust BinaryCommissionEarning struct.
+type BinaryCommissionEarningDTO struct {
+	EarnerID      string  `json:"earner_id"`
+	LeftVolume    float64 `json:"left_volume"`
+	RightVolume   float64 `json:"right_volume"`
+	MatchedVolume float64 `json:"matched_volume"`
+	Ratio         float64 `json:"ratio"`
+	Percent       float64 `json:"percent"`
+	DollarAmount  float64 `json:"dollar_amount"`
+	Capped        bool    `json:"capped"`
+}
+
+// BinaryCalculationResultDTO is the wire format for binary pairing calculation results.
+// Matches the Rust BinaryCalculationResponse struct.
+type BinaryCalculationResultDTO struct {
+	Earnings     []BinaryCommissionEarningDTO `json:"earnings"`
+	CarryForward map[string]LegVolumesDTO     `json:"carry_forward"`
+}

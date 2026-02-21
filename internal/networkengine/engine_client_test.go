@@ -906,6 +906,77 @@ func TestEngineClient_CalculateUnilevel_EmptyVolume(t *testing.T) {
 	assert.Empty(t, earnings)
 }
 
+// --- Binary pairing commission calculation tests (mock) ---
+
+func TestEngineClient_CalculateBinaryPairing_MockParams(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{
+			"earnings":[{"earner_id":"00000000-0000-0000-0000-000000000001","left_volume":500.0,"right_volume":500.0,"matched_volume":500.0,"ratio":1.0,"percent":0.10,"dollar_amount":50.0,"capped":false}],
+			"carry_forward":{"00000000-0000-0000-0000-000000000001":{"left":0.0,"right":0.0}}
+		}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	req := CalculateBinaryPairingRequest{
+		StructureName: "BinaryCalc",
+		Snapshots: map[string]DistributorSnapshotDTO{
+			"00000000-0000-0000-0000-000000000001": {
+				Rank:             "associate",
+				PersonalVolume:   150.0,
+				Status:           "active",
+				HasOrderInPeriod: true,
+			},
+		},
+		Volume: []VolumeSourceDTO{
+			{SourceID: "00000000-0000-0000-0000-000000000002", CVAmount: 500.0},
+		},
+		CarryForward: map[string]LegVolumesDTO{
+			"00000000-0000-0000-0000-000000000001": {Left: 100.0, Right: 200.0},
+		},
+	}
+
+	result, err := client.CalculateBinaryPairing(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Equal(t, "calculate_binary_pairing", mock.lastOp)
+	require.Len(t, result.Earnings, 1)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000001", result.Earnings[0].EarnerID)
+	assert.InDelta(t, 500.0, result.Earnings[0].LeftVolume, 1e-9)
+	assert.InDelta(t, 500.0, result.Earnings[0].RightVolume, 1e-9)
+	assert.InDelta(t, 500.0, result.Earnings[0].MatchedVolume, 1e-9)
+	assert.InDelta(t, 1.0, result.Earnings[0].Ratio, 1e-9)
+	assert.InDelta(t, 0.10, result.Earnings[0].Percent, 1e-9)
+	assert.InDelta(t, 50.0, result.Earnings[0].DollarAmount, 1e-9)
+	assert.False(t, result.Earnings[0].Capped)
+
+	require.Contains(t, result.CarryForward, "00000000-0000-0000-0000-000000000001")
+	cf := result.CarryForward["00000000-0000-0000-0000-000000000001"]
+	assert.InDelta(t, 0.0, cf.Left, 1e-9)
+	assert.InDelta(t, 0.0, cf.Right, 1e-9)
+
+	// Verify carry_forward was sent in params.
+	assert.Contains(t, string(mock.lastParams), "carry_forward")
+}
+
+func TestEngineClient_CalculateBinaryPairing_EmptyResult(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{"earnings":[],"carry_forward":{}}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	req := CalculateBinaryPairingRequest{
+		StructureName: "BinaryCalc",
+		Snapshots:     map[string]DistributorSnapshotDTO{},
+		Volume:        []VolumeSourceDTO{},
+	}
+
+	result, err := client.CalculateBinaryPairing(context.Background(), req)
+	require.NoError(t, err)
+	assert.Empty(t, result.Earnings)
+	assert.Empty(t, result.CarryForward)
+}
+
 // mockTransport is a test double for EngineTransport.
 type mockTransport struct {
 	response   json.RawMessage

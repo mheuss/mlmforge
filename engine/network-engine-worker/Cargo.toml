@@ -8,4 +8,4 @@ rust-version = "1.85.0"
 network-engine = { path = "../network-engine" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
-uuid = "1"
+uuid = { version = "1", features = ["serde"] }

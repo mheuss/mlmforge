@@ -13,6 +13,13 @@ pub fn spawn_worker() -> Child {
 
 /// Sends a JSON line to the worker and reads the response.
 /// Panics if the worker exits without responding (EOF).
+///
+/// NOTE: Creates a new BufReader per call. This is safe because the NDJSON
+/// protocol guarantees one response line per request, and the underlying
+/// ChildStdout is not wrapped in a persistent BufReader. If BufReader were
+/// kept across calls, it could buffer partial data from the next response.
+/// Creating a fresh BufReader per call avoids that risk at negligible cost
+/// for integration tests.
 pub fn send_receive(child: &mut Child, request: &str) -> String {
     let stdin = child.stdin.as_mut().expect("stdin not available");
     writeln!(stdin, "{}", request).expect("failed to write to stdin");

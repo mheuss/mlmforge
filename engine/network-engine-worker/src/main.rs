@@ -31,6 +31,7 @@ fn dispatch(state: &mut WorkerState, request: &Request) -> Response {
         "get_sponsored" => handlers::handle_get_sponsored(state, request),
         // Commission calculations
         "calculate_unilevel" => handlers::handle_calculate_unilevel(state, request),
+        "calculate_binary_pairing" => handlers::handle_calculate_binary_pairing(state, request),
         _ => Response::error(
             request.id.clone(),
             "UNKNOWN_OP",

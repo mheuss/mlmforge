@@ -316,3 +316,18 @@ func (c *EngineClient) CalculateUnilevel(ctx context.Context, req CalculateUnile
 	}
 	return earnings, nil
 }
+
+// CalculateBinaryPairing runs binary pairing commission calculation.
+// Sends snapshots, volume, and optional carry-forward state to the engine.
+// Returns earnings and updated carry-forward state.
+func (c *EngineClient) CalculateBinaryPairing(ctx context.Context, req CalculateBinaryPairingRequest) (*BinaryCalculationResultDTO, error) {
+	result, err := c.call(ctx, "calculate_binary_pairing", req)
+	if err != nil {
+		return nil, err
+	}
+	var calcResult BinaryCalculationResultDTO
+	if err := json.Unmarshal(result, &calcResult); err != nil {
+		return nil, fmt.Errorf("unmarshal binary calculation result: %w", err)
+	}
+	return &calcResult, nil
+}

@@ -9,31 +9,11 @@ use crate::config::{BinaryStructureConfig, CompensationPlan};
 use crate::tree::binary::BinaryTree;
 use crate::tree::node::NodeIndex;
 
+use super::is_eligible;
 use super::types::{
     BinaryCalculationResult, BinaryCommissionEarning, CalculationError, DistributorSnapshot,
     LegVolumes, VolumeSource,
 };
-
-/// Check if a distributor meets basic commission eligibility.
-///
-/// Same logic as unilevel. Binary ignores active_leg_tiers.
-fn is_eligible(snapshot: &DistributorSnapshot, eligibility: &CommissionEligibility) -> bool {
-    if snapshot.personal_volume < eligibility.minimum_pv {
-        return false;
-    }
-
-    if eligibility.require_order_in_period && !snapshot.has_order_in_period {
-        return false;
-    }
-
-    if !eligibility.eligible_statuses.is_empty()
-        && !eligibility.eligible_statuses.contains(&snapshot.status)
-    {
-        return false;
-    }
-
-    true
-}
 
 /// Phase 1, Step 1: Aggregate volume sources into per-distributor totals.
 fn aggregate_volume(
@@ -52,8 +32,7 @@ fn aggregate_volume(
         }
 
         // Validate source exists in tree.
-        let arena = tree.arena();
-        if !arena.index.contains_key(&source.source_id) {
+        if !tree.contains(source.source_id) {
             return Err(CalculationError::SourceNotInTree(source.source_id));
         }
 
@@ -159,7 +138,9 @@ pub fn calculate_binary_pairing(
     let pairing = match &structure.binary_commission.mode {
         BinaryCommissionMode::Pairing(config) => config,
         BinaryCommissionMode::CycleStep(_) => {
-            // CycleStep is deferred. Return empty result.
+            // CycleStep mode is not yet implemented. Returns an empty result
+            // so callers receive a valid response rather than an error.
+            // Tracked in BUGS_AND_TODOS.md as a deferred feature.
             return Ok(BinaryCalculationResult {
                 earnings: Vec::new(),
                 carry_forward: HashMap::new(),

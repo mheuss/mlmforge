@@ -83,8 +83,8 @@ func buildInstancePath(tokens []string) string {
 }
 
 // convertYAMLToJSON converts YAML-decoded values to JSON Schema-compatible
-// types. YAML v3 decodes maps as map[string]interface{}, but numeric keys
-// in rate tables may produce map[interface{}]interface{} in some cases.
+// types. YAML v3 decodes maps as map[string]any, but numeric keys
+// in rate tables may produce map[any]any in some cases.
 // YAML also decodes whole numbers as int, while JSON Schema expects float64.
 func convertYAMLToJSON(v any) any {
 	switch val := v.(type) {

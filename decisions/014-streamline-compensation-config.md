@@ -4,7 +4,7 @@
 
 Streamline is architecturally different from the other five structure types. It uses linear chains called "streams" instead of trees. Each stream is a single-file line of distributors. Higher-ranked distributors earn additional streams, which is the primary growth and earning mechanic.
 
-Streamline is the only structure type where compression was actually implemented in the legacy system (all others had it configured but never active). The compression model is "dynamic" — each level has its own rank threshold.
+Streamline is the only structure type where compression was actually implemented in the legacy system (all others had it configured but never active). The compression model is "dynamic". Each level has its own rank threshold.
 
 This document covers the configurable options specific to streamline commission calculation, including the monoline variant.
 
@@ -12,7 +12,7 @@ This document covers the configurable options specific to streamline commission 
 
 Each stream is a linear chain. Width = 1. Each person has exactly one person above and one below. A distributor can have positions on multiple streams within the same structure. This one-to-many mapping (one user to many positions) is unique to streamline.
 
-**Arena storage model.** Each stream is a separate arena instance with width=1 enforced. A `StreamlineStructure` wrapper manages a collection of stream arenas with a user-to-stream index. This keeps the arena model clean — no special-casing needed.
+**Arena storage model.** Each stream is a separate arena instance with width=1 enforced. A `StreamlineStructure` wrapper manages a collection of stream arenas with a user-to-stream index. This keeps the arena model clean. No special-casing needed.
 
 ## Commission Options
 
@@ -111,7 +111,7 @@ No separate implementation is needed. The monoline.md discovery file redirects t
 
 **Placement.** Append to the bottom of the assigned stream. No position choice beyond stream selection. No holding tank. No forced placement algorithm.
 
-The legacy system supported chronological insertion by timestamp (splice into the middle of a stream). This is fragile — updating parent pointers mid-chain creates ordering dependencies and race conditions under concurrent enrollment. Append-to-end is the primary placement model. Chronological ordering for edge cases requires proper locking at the application layer.
+The legacy system supported chronological insertion by timestamp (splice into the middle of a stream). This is fragile. Updating parent pointers mid-chain creates ordering dependencies and race conditions under concurrent enrollment. Append-to-end is the primary placement model. Chronological ordering for edge cases requires proper locking at the application layer.
 
 **Uncompressed mode.** The legacy system only supported the compressed (dynamic) commission walk for streamline. A classic (uncompressed) mode, where every person earns at their actual position's level rate regardless of rank, is lower priority but configurable:
 

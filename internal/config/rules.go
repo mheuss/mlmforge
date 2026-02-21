@@ -48,7 +48,7 @@ func rankNames(plan *CompensationPlan) map[string]bool {
 
 // getRateTable extracts the rate table from a resolved commission config.
 // Returns nil if the commission type does not have a rate table.
-func getRateTable(commission any) map[string]map[string]float64 {
+func getRateTable(commission Commission) map[string]map[string]float64 {
 	switch rc := commission.(type) {
 	case *UnilevelCommission:
 		return rc.RateTable

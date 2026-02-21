@@ -48,9 +48,9 @@ We considered a separate `category` column. The naming convention is simpler. It
 `Append` takes an `expectedVersion` parameter. If the stream's current version does not match, the append fails with a `ConcurrencyError`.
 
 Three modes:
-- `expectedVersion = 0` — stream must be new (no events yet)
-- `expectedVersion = N` — stream must have exactly N events
-- `expectedVersion = -1` — skip the check, append unconditionally
+- `expectedVersion = 0`. Stream must be new (no events yet)
+- `expectedVersion = N`. Stream must have exactly N events
+- `expectedVersion = -1`. Skip the check, append unconditionally
 
 The PostgreSQL implementation enforces concurrency at two levels. The application checks `MAX(version)` before inserting. The `UNIQUE(stream, version)` constraint catches races that slip through the application check. Both produce the same `ConcurrencyError`.
 

@@ -1,5 +1,7 @@
 # Binary Tree Design
 
+**Status:** Complete
+
 ## Goal
 
 Implement a binary tree structure in Rust for the Network Engine. Binary is the second tree type after unilevel. This work also extracts shared foundations (arena, traversals, test helpers) that both tree types use, adds sponsor edges to the shared Node struct, and updates the worker integration boundary for multi-tree support.

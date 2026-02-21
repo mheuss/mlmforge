@@ -73,7 +73,7 @@ Two modes determine what rank creates a boundary:
 | **Threshold rank** | A fixed rank creates boundaries for everyone. All earners see the same generation structure. A Gold creates a boundary whether the earner is Gold, Diamond, or Double Diamond. | Simpler. One walk can serve multiple earners. Better performance. |
 | **Same rank** | The boundary rank equals the earner's own rank. A Diamond only sees other Diamonds (and above) as boundaries. A Gold sees Golds, Diamonds, and above. | Higher-ranked leaders see fewer boundaries, meaning larger generation pools and bigger payouts. Rewards advancement more aggressively. |
 
-**Same rank mode implications:** The boundary check at each node depends on which earner you are calculating for, not just the node's rank versus a fixed threshold. This turns a single walk into a per-earner calculation. The performance cost is bounded by `max_generations` — the walk stops after that many boundaries regardless.
+**Same rank mode implications:** The boundary check at each node depends on which earner you are calculating for, not just the node's rank versus a fixed threshold. This turns a single walk into a per-earner calculation. The performance cost is bounded by `max_generations`. The walk stops after that many boundaries regardless.
 
 ### Empty Generation Handling
 

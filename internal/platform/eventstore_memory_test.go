@@ -333,3 +333,70 @@ func TestMemoryEventStore_VersionsAcrossStreamsIndependent(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), def[0].Version)
 }
+
+func TestMemoryEventStore_ReadStream_WithLimit(t *testing.T) {
+	store := NewMemoryEventStore()
+	ctx := context.Background()
+
+	err := store.Append(ctx, "order-abc", 0, []NewEvent{
+		{ID: "evt-1", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+		{ID: "evt-2", Type: "OrderUpdated", Payload: json.RawMessage(`{}`)},
+		{ID: "evt-3", Type: "OrderShipped", Payload: json.RawMessage(`{}`)},
+		{ID: "evt-4", Type: "OrderDelivered", Payload: json.RawMessage(`{}`)},
+		{ID: "evt-5", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
+	})
+	require.NoError(t, err)
+
+	got, err := store.ReadStream(ctx, "order-abc", 1, 3)
+	require.NoError(t, err)
+	require.Len(t, got, 3)
+	assert.Equal(t, "evt-1", got[0].ID)
+	assert.Equal(t, "evt-2", got[1].ID)
+	assert.Equal(t, "evt-3", got[2].ID)
+}
+
+func TestMemoryEventStore_ReadCategory_WithLimit(t *testing.T) {
+	store := NewMemoryEventStore()
+	ctx := context.Background()
+
+	_ = store.Append(ctx, "order-abc", 0, []NewEvent{
+		{ID: "evt-1", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+	})
+	_ = store.Append(ctx, "order-def", 0, []NewEvent{
+		{ID: "evt-2", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+	})
+	_ = store.Append(ctx, "order-ghi", 0, []NewEvent{
+		{ID: "evt-3", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+	})
+	_ = store.Append(ctx, "order-jkl", 0, []NewEvent{
+		{ID: "evt-4", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+	})
+	_ = store.Append(ctx, "order-mno", 0, []NewEvent{
+		{ID: "evt-5", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+	})
+
+	got, err := store.ReadCategory(ctx, "order", 0, 3)
+	require.NoError(t, err)
+	require.Len(t, got, 3)
+	assert.Equal(t, "evt-1", got[0].ID)
+	assert.Equal(t, "evt-2", got[1].ID)
+	assert.Equal(t, "evt-3", got[2].ID)
+}
+
+func TestMemoryEventStore_ReadStream_FromVersionZero(t *testing.T) {
+	store := NewMemoryEventStore()
+	ctx := context.Background()
+
+	err := store.Append(ctx, "order-abc", 0, []NewEvent{
+		{ID: "evt-1", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+		{ID: "evt-2", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
+	})
+	require.NoError(t, err)
+
+	// fromVersion=0 should be clamped to 1 and return all events.
+	got, err := store.ReadStream(ctx, "order-abc", 0, 0)
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Equal(t, int64(1), got[0].Version)
+	assert.Equal(t, int64(2), got[1].Version)
+}

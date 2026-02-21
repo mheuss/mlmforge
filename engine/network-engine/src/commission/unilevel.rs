@@ -257,22 +257,13 @@ fn evaluate_eligibility(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::bonus::BonusConfig;
+    use crate::commission::test_helpers::build_test_plan;
     use crate::config::commission::{CompressionConfig, CompressionMode, LevelCommissionConfig};
     use crate::config::eligibility::{ActiveLegTier, CommissionEligibility};
-    use crate::config::payout::{CapEnforcement, CapsConfig, PayoutConfig, PayoutMethod};
-    use crate::config::period::{PeriodConfig, PeriodLength};
-    use crate::config::placement::PlacementConfig;
-    use crate::config::rank::{
-        DemotionPolicy, RankDefinition, RankFeaturesConfig, RankQualification, RankTrackingConfig,
-    };
-    use crate::config::volume::VolumeConfig;
+    use crate::config::rank::{DemotionPolicy, RankDefinition, RankQualification};
     use crate::config::{CompensationPlan, StructureConfig, UnilevelStructureConfig};
+    use crate::tree::test_helpers::test_uuid;
     use std::collections::BTreeMap;
-
-    fn test_uuid(n: u8) -> Uuid {
-        Uuid::from_bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, n])
-    }
 
     fn default_eligibility() -> CommissionEligibility {
         CommissionEligibility {
@@ -334,86 +325,35 @@ mod tests {
         eligibility: CommissionEligibility,
         structure: UnilevelStructureConfig,
     ) -> CompensationPlan {
-        CompensationPlan {
-            name: "Test Plan".to_string(),
-            version: 1,
-            structures: vec![StructureConfig::Unilevel(structure)],
-            period: PeriodConfig {
-                length: PeriodLength::Month,
-                start_date: chrono::NaiveDate::from_ymd_opt(2026, 3, 1).unwrap(),
-                payout_lag_days: 14,
-            },
-            volume: VolumeConfig {
-                inhibit_signup_volume: false,
-                base_currency: "USD".to_string(),
-                volume_to_dollar_multiplier: 1.0,
-                deduct_qualifying_volume: false,
-            },
-            ranks: vec![
-                RankDefinition {
-                    name: "associate".to_string(),
-                    ordinal: 1,
-                    qualification: RankQualification {
-                        structures: vec![],
-                        required_products: vec![],
-                    },
-                    qualified_structures: vec!["Test Unilevel".to_string()],
-                    demotion_policy: DemotionPolicy::PromotionOnly,
-                },
-                RankDefinition {
-                    name: "silver".to_string(),
-                    ordinal: 2,
-                    qualification: RankQualification {
-                        structures: vec![],
-                        required_products: vec![],
-                    },
-                    qualified_structures: vec!["Test Unilevel".to_string()],
-                    demotion_policy: DemotionPolicy::PromotionOnly,
-                },
-            ],
-            rank_tracking: RankTrackingConfig {
-                track_achieved_rank: false,
-            },
-            rank_features: RankFeaturesConfig {
-                constraints_enabled: false,
-                overrides_enabled: false,
-            },
+        let mut plan = build_test_plan(
             eligibility,
-            bonuses: BonusConfig {
-                matching: None,
-                sponsor: None,
-                fast_start: None,
-                rank_advancement: None,
-                leadership_development: None,
-                infinity: None,
-                lifestyle: None,
-                pool: None,
-                matrix_completion: None,
-                position: None,
-                board_cycling: None,
-                pass_up: None,
+            StructureConfig::Unilevel(structure),
+            "Test Unilevel",
+        );
+        // Unilevel tests need both associate and silver ranks.
+        plan.ranks = vec![
+            RankDefinition {
+                name: "associate".to_string(),
+                ordinal: 1,
+                qualification: RankQualification {
+                    structures: vec![],
+                    required_products: vec![],
+                },
+                qualified_structures: vec!["Test Unilevel".to_string()],
+                demotion_policy: DemotionPolicy::PromotionOnly,
             },
-            payout: PayoutConfig {
-                currency: "USD".to_string(),
-                minimum_payout: 50.0,
-                allow_partial_payout: true,
-                payment_methods: vec![PayoutMethod {
-                    method_type: "bank_transfer".to_string(),
-                    fee: 2.50,
-                }],
+            RankDefinition {
+                name: "silver".to_string(),
+                ordinal: 2,
+                qualification: RankQualification {
+                    structures: vec![],
+                    required_products: vec![],
+                },
+                qualified_structures: vec!["Test Unilevel".to_string()],
+                demotion_policy: DemotionPolicy::PromotionOnly,
             },
-            caps: CapsConfig {
-                per_distributor_cap: None,
-                company_payout_cap_percent: 0.42,
-                enforcement: CapEnforcement::ProRata,
-                enable_clawback: false,
-            },
-            placement: PlacementConfig {
-                donated_placement: None,
-                holding_tank: None,
-                binary_placement: None,
-            },
-        }
+        ];
+        plan
     }
 
     // --- is_eligible tests ---
@@ -1633,5 +1573,39 @@ mod tests {
         // root should still earn from the volume
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].earner_id, test_uuid(1));
+    }
+
+    #[test]
+    fn zero_cv_amount_produces_zero_earnings() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+
+        let structure = test_structure(test_rate_table());
+        let plan = test_plan(default_eligibility());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "silver".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(2),
+            cv_amount: 0.0,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // cv_amount=0.0 is valid but produces no earnings (rate * 0 = 0, filtered out).
+        assert!(
+            result.is_empty() || result.iter().all(|e| e.dollar_amount == 0.0),
+            "zero CV should produce zero or empty earnings"
+        );
     }
 }

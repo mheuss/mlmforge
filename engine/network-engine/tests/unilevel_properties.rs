@@ -1,12 +1,9 @@
+mod common;
+use common::uuid_from_index;
+
 use network_engine::tree::unilevel::UnilevelTree;
 use proptest::prelude::*;
 use uuid::Uuid;
-
-/// Generates a deterministic UUID from an index.
-fn uuid_from_index(i: usize) -> Uuid {
-    let bytes = (i as u128).to_be_bytes();
-    Uuid::from_bytes(bytes)
-}
 
 /// Builds a random unilevel tree with `node_count` nodes.
 /// Each non-root node picks a random parent from existing nodes.

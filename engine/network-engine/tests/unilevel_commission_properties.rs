@@ -1,3 +1,6 @@
+mod common;
+use common::uuid_from_index;
+
 use network_engine::commission::{DistributorSnapshot, VolumeSource, calculate_unilevel};
 use network_engine::config::bonus::BonusConfig;
 use network_engine::config::commission::{
@@ -15,13 +18,6 @@ use network_engine::config::{CompensationPlan, StructureConfig, UnilevelStructur
 use network_engine::tree::unilevel::UnilevelTree;
 use proptest::prelude::*;
 use std::collections::{BTreeMap, HashMap};
-use uuid::Uuid;
-
-/// Generates a deterministic UUID from an index.
-fn uuid_from_index(i: usize) -> Uuid {
-    let bytes = (i as u128).to_be_bytes();
-    Uuid::from_bytes(bytes)
-}
 
 /// Build a minimal compensation plan and unilevel structure for property tests.
 ///

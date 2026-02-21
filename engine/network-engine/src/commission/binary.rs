@@ -260,42 +260,16 @@ pub fn calculate_binary_pairing(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commission::test_helpers::{
+        build_test_plan, default_eligibility, eligible_snapshot,
+    };
     use crate::config::binary::{
         BinaryCommissionConfig, BinaryCommissionMode, PairingCalculation, PairingConfig,
         VolumeAfterPayout,
     };
-    use crate::config::bonus::BonusConfig;
-    use crate::config::payout::{CapEnforcement, CapsConfig, PayoutConfig, PayoutMethod};
-    use crate::config::period::{PeriodConfig, PeriodLength};
-    use crate::config::placement::PlacementConfig;
-    use crate::config::rank::{
-        DemotionPolicy, RankDefinition, RankFeaturesConfig, RankQualification, RankTrackingConfig,
-    };
-    use crate::config::volume::VolumeConfig;
     use crate::config::{BinaryStructureConfig, CompensationPlan, StructureConfig};
     use crate::tree::binary::BinaryTree;
-
-    fn test_uuid(n: u8) -> Uuid {
-        Uuid::from_bytes([n, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-    }
-
-    fn default_eligibility() -> CommissionEligibility {
-        CommissionEligibility {
-            minimum_pv: 100.0,
-            require_order_in_period: false,
-            eligible_statuses: vec!["active".to_string()],
-            active_leg_tiers: vec![],
-        }
-    }
-
-    fn eligible_snapshot() -> DistributorSnapshot {
-        DistributorSnapshot {
-            rank: "associate".to_string(),
-            personal_volume: 150.0,
-            status: "active".to_string(),
-            has_order_in_period: true,
-        }
-    }
+    use crate::tree::test_helpers::test_uuid;
 
     fn test_pairing_config() -> PairingConfig {
         PairingConfig {
@@ -325,74 +299,11 @@ mod tests {
         eligibility: CommissionEligibility,
         structure: BinaryStructureConfig,
     ) -> CompensationPlan {
-        CompensationPlan {
-            name: "Test Plan".to_string(),
-            version: 1,
-            structures: vec![StructureConfig::Binary(structure)],
-            period: PeriodConfig {
-                length: PeriodLength::Month,
-                start_date: chrono::NaiveDate::from_ymd_opt(2026, 3, 1).unwrap(),
-                payout_lag_days: 14,
-            },
-            volume: VolumeConfig {
-                inhibit_signup_volume: false,
-                base_currency: "USD".to_string(),
-                volume_to_dollar_multiplier: 1.0,
-                deduct_qualifying_volume: false,
-            },
-            ranks: vec![RankDefinition {
-                name: "associate".to_string(),
-                ordinal: 1,
-                qualification: RankQualification {
-                    structures: vec![],
-                    required_products: vec![],
-                },
-                qualified_structures: vec!["Test Binary".to_string()],
-                demotion_policy: DemotionPolicy::PromotionOnly,
-            }],
-            rank_tracking: RankTrackingConfig {
-                track_achieved_rank: false,
-            },
-            rank_features: RankFeaturesConfig {
-                constraints_enabled: false,
-                overrides_enabled: false,
-            },
+        build_test_plan(
             eligibility,
-            bonuses: BonusConfig {
-                matching: None,
-                sponsor: None,
-                fast_start: None,
-                rank_advancement: None,
-                leadership_development: None,
-                infinity: None,
-                lifestyle: None,
-                pool: None,
-                matrix_completion: None,
-                position: None,
-                board_cycling: None,
-                pass_up: None,
-            },
-            payout: PayoutConfig {
-                currency: "USD".to_string(),
-                minimum_payout: 50.0,
-                allow_partial_payout: true,
-                payment_methods: vec![PayoutMethod {
-                    method_type: "bank_transfer".to_string(),
-                    fee: 2.50,
-                }],
-            },
-            caps: CapsConfig {
-                per_distributor_cap: None,
-                company_payout_cap_percent: 0.42,
-                enforcement: CapEnforcement::ProRata,
-                enable_clawback: false,
-            },
-            placement: PlacementConfig {
-                donated_placement: None,
-                holding_tank: None,
-                binary_placement: None,
-            },
-        }
+            StructureConfig::Binary(structure),
+            "Test Binary",
+        )
     }
 
     /// Helper: build a 3-node binary tree (root with left and right children).
@@ -1459,6 +1370,94 @@ mod tests {
 
         // Stale node should not appear in output carry-forward.
         assert!(!result.carry_forward.contains_key(&test_uuid(99)));
+    }
+
+    // --- evaluate_eligibility direct tests ---
+
+    #[test]
+    fn evaluate_eligibility_eligible_distributor() {
+        let elig = default_eligibility();
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+
+        let result = evaluate_eligibility(&snapshots, &elig);
+
+        assert_eq!(result.get(&test_uuid(1)), Some(&true));
+    }
+
+    #[test]
+    fn evaluate_eligibility_low_pv_returns_false() {
+        let elig = default_eligibility(); // minimum_pv = 100.0
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                personal_volume: 50.0, // below 100 minimum
+                ..eligible_snapshot()
+            },
+        );
+
+        let result = evaluate_eligibility(&snapshots, &elig);
+
+        assert_eq!(result.get(&test_uuid(1)), Some(&false));
+    }
+
+    #[test]
+    fn evaluate_eligibility_wrong_status_returns_false() {
+        let elig = default_eligibility(); // eligible_statuses = ["active"]
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                status: "suspended".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+
+        let result = evaluate_eligibility(&snapshots, &elig);
+
+        assert_eq!(result.get(&test_uuid(1)), Some(&false));
+    }
+
+    // --- cv_amount boundary tests ---
+
+    #[test]
+    fn zero_cv_amount_produces_zero_earnings() {
+        let tree = three_node_tree();
+        let plan = test_plan(default_eligibility());
+        let structure = test_binary_structure();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(2),
+                cv_amount: 0.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(3),
+                cv_amount: 0.0,
+            },
+        ];
+
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+        )
+        .unwrap();
+
+        // cv_amount=0.0 is valid. Zero matched volume produces no earnings.
+        assert!(
+            result.earnings.is_empty() || result.earnings.iter().all(|e| e.dollar_amount == 0.0),
+            "zero CV should produce zero or empty earnings"
+        );
     }
 
     // --- Property-based tests ---

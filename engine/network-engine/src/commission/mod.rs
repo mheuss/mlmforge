@@ -4,6 +4,9 @@ pub mod binary;
 pub mod types;
 pub mod unilevel;
 
+#[cfg(test)]
+pub(crate) mod test_helpers;
+
 pub use binary::calculate_binary_pairing;
 pub use types::{
     BinaryCalculationResult, BinaryCommissionEarning, CalculationError, CommissionEarning,

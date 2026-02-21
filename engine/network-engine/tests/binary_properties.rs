@@ -1,11 +1,9 @@
+mod common;
+use common::uuid_from_index;
+
 use network_engine::tree::binary::BinaryTree;
 use proptest::prelude::*;
 use uuid::Uuid;
-
-fn uuid_from_index(i: usize) -> Uuid {
-    let bytes = (i as u128).to_be_bytes();
-    Uuid::from_bytes(bytes)
-}
 
 /// Builds a random binary tree. Each non-root node picks a random parent
 /// and a random position (0 or 1). If the chosen position is occupied,

@@ -24,7 +24,7 @@ Response (success):
 
 Response (error):
 ```json
-{"id": "req-1", "ok": false, "error": {"code": "NO_TREE", "message": "no tree loaded"}}
+{"id": "req-1", "ok": false, "error": {"code": "STRUCTURE_NOT_FOUND", "message": "no tree loaded"}}
 ```
 
 The `id` field correlates requests with responses. The Go transport generates monotonically increasing IDs (`req-1`, `req-2`, ...) and validates that the response ID matches. A mismatch indicates a protocol desynchronization and is treated as a fatal error.
@@ -45,20 +45,27 @@ The worker uses a fixed set of error codes. Handlers return these codes in the `
 
 | Code | Meaning |
 |------|---------|
-| `NO_TREE` | Operation requires a tree but none has been created |
-| `NOT_FOUND` | Referenced user or entity does not exist in the tree |
+| `STRUCTURE_NOT_FOUND` | Named structure does not exist in the loaded plan, or no tree has been created |
+| `USER_NOT_FOUND` | Referenced user does not exist in the tree |
+| `USER_ALREADY_EXISTS` | User already exists in the tree |
+| `ROOT_ALREADY_EXISTS` | Tree already has a root node |
+| `POSITION_OCCUPIED` | Target position in the tree is already taken |
+| `INVALID_POSITION` | Position value is not valid for this tree type |
+| `TREE_EXISTS` | A tree with this name already exists |
+| `INVALID_PLAN` | Compensation plan data is malformed or invalid |
 | `HAS_CHILDREN` | Cannot remove a node that has children |
-| `DUPLICATE_USER` | User already exists in the tree |
 | `NO_ROOT` | Tree operation requires a root but none has been set |
 | `NO_PLAN` | Commission calculation requires a loaded plan |
-| `STRUCTURE_NOT_FOUND` | Named structure does not exist in the loaded plan |
 | `INVALID_PARAMS` | Params are missing, malformed, or not a JSON object |
 | `MISSING_PARAM` | A required parameter is absent |
 | `INVALID_UUID` | A user ID is not a valid UUID |
 | `CALCULATION_ERROR` | Commission calculation failed (bad input data) |
 | `INVALID_REQUEST` | Request JSON itself is malformed |
 | `UNKNOWN_OP` | Unrecognized operation name |
+| `PARSE_ERROR` | JSON parsing failed on the request or params |
 | `INTERNAL_ERROR` | Handler panicked unexpectedly |
+
+The error codes evolved during implementation to be more specific. The original design used generic codes like `NO_TREE`, `NOT_FOUND`, and `DUPLICATE_USER`. Implementation revealed that callers need finer distinctions (e.g., `POSITION_OCCUPIED` vs. `USER_ALREADY_EXISTS`, `TREE_EXISTS` vs. `ROOT_ALREADY_EXISTS`).
 
 On the Go side, `EngineError` wraps these codes. Callers use `errors.As` to match on specific codes without parsing error message strings.
 

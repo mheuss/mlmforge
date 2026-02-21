@@ -480,22 +480,6 @@ proptest! {
 
     // --- Empty and single-node tree edge cases ---
 
-    /// An empty binary tree produces no earnings and no carry-forward.
-    #[test]
-    fn empty_tree_no_panic(
-        _dummy in 0..1u8,
-    ) {
-        let (plan, structure) = build_binary_plan(default_pairing());
-        let tree = BinaryTree::new();
-
-        let result = calculate_binary_pairing(
-            &tree, &plan, &structure, &HashMap::new(), &[], &HashMap::new(),
-        ).unwrap();
-
-        prop_assert!(result.earnings.is_empty());
-        prop_assert!(result.carry_forward.is_empty());
-    }
-
     /// A single-node binary tree produces no earnings. Root has no
     /// children so both legs are zero.
     #[test]
@@ -551,4 +535,24 @@ proptest! {
             "Root with only one child should produce no earnings"
         );
     }
+}
+
+/// An empty binary tree produces no earnings and no carry-forward.
+#[test]
+fn empty_tree_no_panic() {
+    let (plan, structure) = build_binary_plan(default_pairing());
+    let tree = BinaryTree::new();
+
+    let result = calculate_binary_pairing(
+        &tree,
+        &plan,
+        &structure,
+        &HashMap::new(),
+        &[],
+        &HashMap::new(),
+    )
+    .unwrap();
+
+    assert!(result.earnings.is_empty());
+    assert!(result.carry_forward.is_empty());
 }

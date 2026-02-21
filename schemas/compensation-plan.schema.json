@@ -1043,7 +1043,27 @@
           ],
           "description": "Generation override configuration for broken-away groups."
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "override_calculation": {
+                "const": "differential"
+              }
+            },
+            "required": ["override_calculation"]
+          },
+          "then": {
+            "required": ["differential"],
+            "properties": {
+              "differential": {
+                "$ref": "#/$defs/DifferentialConfig"
+              }
+            }
+          }
+        }
+      ]
     },
     "DifferentialConfig": {
       "type": "object",
@@ -1476,7 +1496,9 @@
         "rates": {
           "type": "object",
           "additionalProperties": {
-            "type": "number"
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
           },
           "propertyNames": {
             "pattern": "^[0-9]+$"
@@ -1690,7 +1712,66 @@
           ],
           "description": "Velocity qualification rules. Used when mode is velocity_based or combined."
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "rank_based"
+              }
+            },
+            "required": ["mode"]
+          },
+          "then": {
+            "required": ["min_rank"],
+            "properties": {
+              "min_rank": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "velocity_based"
+              }
+            },
+            "required": ["mode"]
+          },
+          "then": {
+            "required": ["velocity"],
+            "properties": {
+              "velocity": {
+                "$ref": "#/$defs/VelocityQualification"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "combined"
+              }
+            },
+            "required": ["mode"]
+          },
+          "then": {
+            "required": ["min_rank", "velocity"],
+            "properties": {
+              "min_rank": {
+                "type": "string"
+              },
+              "velocity": {
+                "$ref": "#/$defs/VelocityQualification"
+              }
+            }
+          }
+        }
+      ]
     },
     "VelocityQualification": {
       "type": "object",

@@ -501,143 +501,7 @@ proptest! {
         }
     }
 
-    /// When a distributor has zero active frontline legs and the only
-    /// tier requires at least 1 active leg, their depth is unrestricted
-    /// (tier doesn't match, falls back to config max_depth). This tests
-    /// that a leaf node with no children gets no tier restriction.
-    #[test]
-    fn active_leg_tiers_no_match_uses_config_depth(
-        _dummy in 0..1u8,
-    ) {
-        let max_depth: u8 = 5;
-        let eligibility = CommissionEligibility {
-            minimum_pv: 0.0,
-            require_order_in_period: false,
-            eligible_statuses: vec![],
-            active_leg_tiers: vec![
-                ActiveLegTier {
-                    min_active_legs: 3,
-                    max_commission_depth: 2,
-                },
-            ],
-        };
-        let (plan, structure) = build_unilevel_plan_with_eligibility(max_depth, eligibility);
-
-        // root -> child -> grandchild
-        // root has 1 active leg (child). Tier requires 3. No tier match.
-        // root falls back to config max_depth=5. Should earn at level 2.
-        let mut tree = UnilevelTree::new();
-        tree.add_root(uuid_from_index(0), 0).unwrap();
-        tree.add_node(uuid_from_index(1), uuid_from_index(0), uuid_from_index(0), 1).unwrap();
-        tree.add_node(uuid_from_index(2), uuid_from_index(1), uuid_from_index(1), 2).unwrap();
-
-        let mut snapshots = HashMap::new();
-        for i in 0..3 {
-            snapshots.insert(
-                uuid_from_index(i),
-                DistributorSnapshot {
-                    rank: "member".to_string(),
-                    personal_volume: 100.0,
-                    status: "active".to_string(),
-                    has_order_in_period: true,
-                },
-            );
-        }
-
-        let volume = vec![VolumeSource {
-            source_id: uuid_from_index(2),
-            cv_amount: 100.0,
-        }];
-
-        let result =
-            calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
-
-        // Both node 1 (level 1) and node 0 (level 2) should earn.
-        // Node 0 has 1 active leg but needs 3 for the tier. No restriction.
-        prop_assert_eq!(result.len(), 2, "Both upline nodes should earn when no tier matches");
-    }
-
-    /// active_leg_tiers with multiple tiers: the highest qualifying tier
-    /// determines depth. Distributors with more active legs earn deeper.
-    #[test]
-    fn active_leg_tiers_more_legs_earn_deeper(
-        _dummy in 0..1u8,
-    ) {
-        let max_depth: u8 = 10;
-        let eligibility = CommissionEligibility {
-            minimum_pv: 0.0,
-            require_order_in_period: false,
-            eligible_statuses: vec![],
-            active_leg_tiers: vec![
-                ActiveLegTier {
-                    min_active_legs: 1,
-                    max_commission_depth: 2,
-                },
-                ActiveLegTier {
-                    min_active_legs: 3,
-                    max_commission_depth: 5,
-                },
-            ],
-        };
-        let (plan, structure) = build_unilevel_plan_with_eligibility(max_depth, eligibility);
-
-        // Tree: root(0) has 3 children (1, 2, 3). Child 1 has a child (4).
-        // Volume from node 4.
-        // root: 3 active legs -> tier 2 (depth 5). Should earn at level 2.
-        // child 1: 1 active leg (node 4) -> tier 1 (depth 2). Earns at level 1.
-        let mut tree = UnilevelTree::new();
-        tree.add_root(uuid_from_index(0), 0).unwrap();
-        tree.add_node(uuid_from_index(1), uuid_from_index(0), uuid_from_index(0), 1).unwrap();
-        tree.add_node(uuid_from_index(2), uuid_from_index(0), uuid_from_index(0), 2).unwrap();
-        tree.add_node(uuid_from_index(3), uuid_from_index(0), uuid_from_index(0), 3).unwrap();
-        tree.add_node(uuid_from_index(4), uuid_from_index(1), uuid_from_index(1), 4).unwrap();
-
-        let mut snapshots = HashMap::new();
-        for i in 0..5 {
-            snapshots.insert(
-                uuid_from_index(i),
-                DistributorSnapshot {
-                    rank: "member".to_string(),
-                    personal_volume: 100.0,
-                    status: "active".to_string(),
-                    has_order_in_period: true,
-                },
-            );
-        }
-
-        let volume = vec![VolumeSource {
-            source_id: uuid_from_index(4),
-            cv_amount: 100.0,
-        }];
-
-        let result =
-            calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
-
-        // Node 1 earns at level 1, root earns at level 2.
-        prop_assert_eq!(result.len(), 2);
-        let node1_earning = result.iter().find(|e| e.earner_id == uuid_from_index(1));
-        let root_earning = result.iter().find(|e| e.earner_id == uuid_from_index(0));
-        prop_assert!(node1_earning.is_some(), "Node 1 should earn");
-        prop_assert!(root_earning.is_some(), "Root should earn");
-    }
-
     // --- Empty and single-node tree edge cases ---
-
-    /// An empty unilevel tree with no volume produces empty earnings.
-    #[test]
-    fn empty_tree_no_volume_no_panic(
-        _dummy in 0..1u8,
-    ) {
-        let (plan, structure) = build_unilevel_plan(5);
-
-        // Empty tree: no root, no nodes.
-        // Cannot produce volume for a node that doesn't exist.
-        // Passing empty volume should produce empty earnings.
-        let tree = UnilevelTree::new();
-        let result = calculate_unilevel(&tree, &plan, &structure, &HashMap::new(), &[]);
-        prop_assert!(result.is_ok());
-        prop_assert!(result.unwrap().is_empty());
-    }
 
     /// A single-node tree (root only) produces no earnings. The root
     /// has no upline to pay.
@@ -716,4 +580,170 @@ proptest! {
         prop_assert_eq!(result[0].earner_id, uuid_from_index(0));
         prop_assert_eq!(result[0].level, 1);
     }
+}
+
+/// When a distributor has zero active frontline legs and the only
+/// tier requires at least 1 active leg, their depth is unrestricted
+/// (tier doesn't match, falls back to config max_depth). This tests
+/// that a leaf node with no children gets no tier restriction.
+#[test]
+fn active_leg_tiers_no_match_uses_config_depth() {
+    let max_depth: u8 = 5;
+    let eligibility = CommissionEligibility {
+        minimum_pv: 0.0,
+        require_order_in_period: false,
+        eligible_statuses: vec![],
+        active_leg_tiers: vec![ActiveLegTier {
+            min_active_legs: 3,
+            max_commission_depth: 2,
+        }],
+    };
+    let (plan, structure) = build_unilevel_plan_with_eligibility(max_depth, eligibility);
+
+    // root -> child -> grandchild
+    // root has 1 active leg (child). Tier requires 3. No tier match.
+    // root falls back to config max_depth=5. Should earn at level 2.
+    let mut tree = UnilevelTree::new();
+    tree.add_root(uuid_from_index(0), 0).unwrap();
+    tree.add_node(
+        uuid_from_index(1),
+        uuid_from_index(0),
+        uuid_from_index(0),
+        1,
+    )
+    .unwrap();
+    tree.add_node(
+        uuid_from_index(2),
+        uuid_from_index(1),
+        uuid_from_index(1),
+        2,
+    )
+    .unwrap();
+
+    let mut snapshots = HashMap::new();
+    for i in 0..3 {
+        snapshots.insert(
+            uuid_from_index(i),
+            DistributorSnapshot {
+                rank: "member".to_string(),
+                personal_volume: 100.0,
+                status: "active".to_string(),
+                has_order_in_period: true,
+            },
+        );
+    }
+
+    let volume = vec![VolumeSource {
+        source_id: uuid_from_index(2),
+        cv_amount: 100.0,
+    }];
+
+    let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+    // Both node 1 (level 1) and node 0 (level 2) should earn.
+    // Node 0 has 1 active leg but needs 3 for the tier. No restriction.
+    assert_eq!(
+        result.len(),
+        2,
+        "Both upline nodes should earn when no tier matches"
+    );
+}
+
+/// active_leg_tiers with multiple tiers: the highest qualifying tier
+/// determines depth. Distributors with more active legs earn deeper.
+#[test]
+fn active_leg_tiers_more_legs_earn_deeper() {
+    let max_depth: u8 = 10;
+    let eligibility = CommissionEligibility {
+        minimum_pv: 0.0,
+        require_order_in_period: false,
+        eligible_statuses: vec![],
+        active_leg_tiers: vec![
+            ActiveLegTier {
+                min_active_legs: 1,
+                max_commission_depth: 2,
+            },
+            ActiveLegTier {
+                min_active_legs: 3,
+                max_commission_depth: 5,
+            },
+        ],
+    };
+    let (plan, structure) = build_unilevel_plan_with_eligibility(max_depth, eligibility);
+
+    // Tree: root(0) has 3 children (1, 2, 3). Child 1 has a child (4).
+    // Volume from node 4.
+    // root: 3 active legs -> tier 2 (depth 5). Should earn at level 2.
+    // child 1: 1 active leg (node 4) -> tier 1 (depth 2). Earns at level 1.
+    let mut tree = UnilevelTree::new();
+    tree.add_root(uuid_from_index(0), 0).unwrap();
+    tree.add_node(
+        uuid_from_index(1),
+        uuid_from_index(0),
+        uuid_from_index(0),
+        1,
+    )
+    .unwrap();
+    tree.add_node(
+        uuid_from_index(2),
+        uuid_from_index(0),
+        uuid_from_index(0),
+        2,
+    )
+    .unwrap();
+    tree.add_node(
+        uuid_from_index(3),
+        uuid_from_index(0),
+        uuid_from_index(0),
+        3,
+    )
+    .unwrap();
+    tree.add_node(
+        uuid_from_index(4),
+        uuid_from_index(1),
+        uuid_from_index(1),
+        4,
+    )
+    .unwrap();
+
+    let mut snapshots = HashMap::new();
+    for i in 0..5 {
+        snapshots.insert(
+            uuid_from_index(i),
+            DistributorSnapshot {
+                rank: "member".to_string(),
+                personal_volume: 100.0,
+                status: "active".to_string(),
+                has_order_in_period: true,
+            },
+        );
+    }
+
+    let volume = vec![VolumeSource {
+        source_id: uuid_from_index(4),
+        cv_amount: 100.0,
+    }];
+
+    let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+    // Node 1 earns at level 1, root earns at level 2.
+    assert_eq!(result.len(), 2);
+    let node1_earning = result.iter().find(|e| e.earner_id == uuid_from_index(1));
+    let root_earning = result.iter().find(|e| e.earner_id == uuid_from_index(0));
+    assert!(node1_earning.is_some(), "Node 1 should earn");
+    assert!(root_earning.is_some(), "Root should earn");
+}
+
+/// An empty unilevel tree with no volume produces empty earnings.
+#[test]
+fn empty_tree_no_volume_no_panic() {
+    let (plan, structure) = build_unilevel_plan(5);
+
+    // Empty tree: no root, no nodes.
+    // Cannot produce volume for a node that doesn't exist.
+    // Passing empty volume should produce empty earnings.
+    let tree = UnilevelTree::new();
+    let result = calculate_unilevel(&tree, &plan, &structure, &HashMap::new(), &[]);
+    assert!(result.is_ok());
+    assert!(result.unwrap().is_empty());
 }

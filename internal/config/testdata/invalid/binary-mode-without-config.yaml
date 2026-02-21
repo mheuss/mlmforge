@@ -1,0 +1,75 @@
+# Invalid: binary plan with mode "pairing" but no pairing block.
+# The schema requires "pairing" when mode is "pairing".
+# Expected error: "pairing" is a required property.
+
+name: Binary Missing Pairing Config
+version: 1
+
+period:
+  length: week
+  start_date: "2026-01-01"
+  payout_lag_days: 3
+
+volume:
+  inhibit_signup_volume: false
+  base_currency: USD
+  volume_to_dollar_multiplier: 1.0
+  deduct_qualifying_volume: false
+
+ranks:
+  - name: Member
+    ordinal: 1
+    qualification:
+      structures:
+        - structure: BinaryTree
+          personal_volume: 0
+          group_volume: 0
+
+rank_tracking:
+  track_achieved_rank: false
+
+rank_features:
+  constraints_enabled: false
+  overrides_enabled: false
+
+commission_eligibility:
+  min_personal_volume: 0
+  require_order_in_period: false
+  eligible_statuses:
+    - active
+
+structures:
+  - name: BinaryTree
+    type: binary
+    commission:
+      mode: pairing
+
+bonuses:
+  matching: null
+  sponsor: null
+  fast_start: null
+  rank_advancement: null
+  leadership_development: null
+  infinity: null
+  lifestyle: null
+  pool: null
+  matrix_completion: null
+  position: null
+  board_cycling: null
+  pass_up: null
+
+payout:
+  base_currency: USD
+  minimum_amount: 25.00
+  split_payouts_enabled: false
+  methods:
+    - type: bank_transfer
+      fee: 2.50
+
+caps:
+  company_payout_cap_percent: 0.40
+  cap_enforcement: hard_stop
+  clawback_on_refund: false
+
+placement:
+  donated_placement_enabled: false

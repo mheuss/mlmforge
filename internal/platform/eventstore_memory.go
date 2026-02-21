@@ -12,6 +12,9 @@ import (
 // ErrEmptyAppend is returned when Append is called with an empty events slice.
 var ErrEmptyAppend = errors.New("eventstore: cannot append zero events")
 
+// ErrEmptyStreamName is returned when Append is called with an empty stream name.
+var ErrEmptyStreamName = errors.New("eventstore: stream name must not be empty")
+
 // ValidateNewEvent checks that required fields on a NewEvent are populated.
 // Returns an error describing the first missing field.
 func ValidateNewEvent(e NewEvent, index int) error {
@@ -46,6 +49,9 @@ func NewMemoryEventStore() *MemoryEventStore {
 
 // Append writes events to a stream atomically with optimistic concurrency.
 func (m *MemoryEventStore) Append(_ context.Context, stream string, expectedVersion int64, events []NewEvent) error {
+	if stream == "" {
+		return ErrEmptyStreamName
+	}
 	if len(events) == 0 {
 		return ErrEmptyAppend
 	}

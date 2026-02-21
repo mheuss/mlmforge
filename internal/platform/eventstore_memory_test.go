@@ -403,6 +403,18 @@ func TestMemoryEventStore_ReadStream_FromVersionZero(t *testing.T) {
 	assert.Equal(t, int64(2), got[1].Version)
 }
 
+func TestMemoryEventStore_AppendRejectsEmptyStreamName(t *testing.T) {
+	store := NewMemoryEventStore()
+	ctx := context.Background()
+
+	events := []NewEvent{
+		{ID: "evt-1", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+	}
+	err := store.Append(ctx, "", 0, events)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrEmptyStreamName)
+}
+
 func TestMemoryEventStore_AppendRejectsEmptySlice(t *testing.T) {
 	store := NewMemoryEventStore()
 	ctx := context.Background()

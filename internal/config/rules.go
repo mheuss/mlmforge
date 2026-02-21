@@ -22,7 +22,7 @@ func validateBusinessRules(plan *CompensationPlan) []ValidationError {
 	errs = append(errs, validateBonuses(plan, ranks)...)
 	errs = append(errs, validatePlacement(plan, structs)...)
 	errs = append(errs, validateEligibility(plan)...)
-	errs = append(errs, validateAdditionalRules(plan, ranks)...)
+	errs = append(errs, validateCrossFieldRules(plan, ranks)...)
 	return errs
 }
 
@@ -467,9 +467,9 @@ func validateEligibility(plan *CompensationPlan) []ValidationError {
 
 // --- Warnings ---
 
-// validateAdditionalRules produces non-fatal warnings for potentially problematic
-// configuration values.
-func validateAdditionalRules(plan *CompensationPlan, ranks map[string]bool) []ValidationError {
+// validateCrossFieldRules checks cross-field constraints that can't be validated
+// per-field. Produces both warnings and hard errors.
+func validateCrossFieldRules(plan *CompensationPlan, ranks map[string]bool) []ValidationError {
 	var errs []ValidationError
 
 	// Long payout lag.

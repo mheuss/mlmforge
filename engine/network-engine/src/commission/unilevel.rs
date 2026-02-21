@@ -40,6 +40,11 @@ pub fn calculate_unilevel(
     // Walk config
     let max_depth = structure.level_commission.max_depth;
     let broad_pct = structure.level_commission.broad_commission_percent;
+    debug_assert!(
+        (0.0..=1.0).contains(&broad_pct),
+        "broad_commission_percent out of range: {}",
+        broad_pct
+    );
     let multiplier = structure
         .level_commission
         .volume_to_dollar_multiplier

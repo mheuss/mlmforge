@@ -136,11 +136,21 @@ pub fn calculate_binary_pairing(
     carry_forward: &HashMap<Uuid, LegVolumes>,
 ) -> Result<BinaryCalculationResult, CalculationError> {
     let pairing = match &structure.binary_commission.mode {
-        BinaryCommissionMode::Pairing(config) => config,
+        BinaryCommissionMode::Pairing(config) => {
+            debug_assert!(
+                (0.0..=1.0).contains(&config.percent),
+                "pairing.percent out of range: {}",
+                config.percent
+            );
+            config
+        }
         BinaryCommissionMode::CycleStep(_) => {
             // CycleStep mode is not yet implemented. Returns an empty result
             // so callers receive a valid response rather than an error.
             // Tracked in BUGS_AND_TODOS.md as a deferred feature.
+            log::warn!(
+                "CycleStep binary commission mode is not yet implemented; returning empty result"
+            );
             return Ok(BinaryCalculationResult {
                 earnings: Vec::new(),
                 carry_forward: HashMap::new(),

@@ -27,27 +27,30 @@ fn create_tree(child: &mut std::process::Child, name: &str) {
 /// Creates the tree first, then adds nodes with sponsor_id.
 fn build_three_node_chain(child: &mut std::process::Child) {
     create_tree(child, TREE_NAME);
-    common::send_receive(
+    let resp = common::send_receive(
         child,
         &format!(
             r#"{{"id":"setup-1","op":"add_root","params":{{"structure":"{}","user_id":"{}","enrolled_at":100}}}}"#,
             TREE_NAME, ROOT
         ),
     );
-    common::send_receive(
+    assert!(resp.contains(r#""ok":true"#), "setup failed: {}", resp);
+    let resp = common::send_receive(
         child,
         &format!(
             r#"{{"id":"setup-2","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","enrolled_at":200}}}}"#,
             TREE_NAME, CHILD, ROOT, ROOT
         ),
     );
-    common::send_receive(
+    assert!(resp.contains(r#""ok":true"#), "setup failed: {}", resp);
+    let resp = common::send_receive(
         child,
         &format!(
             r#"{{"id":"setup-3","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","enrolled_at":300}}}}"#,
             TREE_NAME, GRANDCHILD, CHILD, CHILD
         ),
     );
+    assert!(resp.contains(r#""ok":true"#), "setup failed: {}", resp);
 }
 
 #[test]
@@ -1049,28 +1052,31 @@ const S_GRANDCHILD: &str = "00000000-0000-0000-0000-000000000003";
 /// Sponsorship: root sponsors child, root sponsors grandchild
 fn build_sponsor_test_tree(worker: &mut std::process::Child) {
     create_tree(worker, SPONSOR_TREE);
-    common::send_receive(
+    let resp = common::send_receive(
         worker,
         &format!(
             r#"{{"id":"ss-1","op":"add_root","params":{{"structure":"{}","user_id":"{}","enrolled_at":100}}}}"#,
             SPONSOR_TREE, S_ROOT
         ),
     );
-    common::send_receive(
+    assert!(resp.contains(r#""ok":true"#), "setup failed: {}", resp);
+    let resp = common::send_receive(
         worker,
         &format!(
             r#"{{"id":"ss-2","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","enrolled_at":200}}}}"#,
             SPONSOR_TREE, S_CHILD, S_ROOT, S_ROOT
         ),
     );
+    assert!(resp.contains(r#""ok":true"#), "setup failed: {}", resp);
     // Grandchild is placed under child but sponsored by root.
-    common::send_receive(
+    let resp = common::send_receive(
         worker,
         &format!(
             r#"{{"id":"ss-3","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","enrolled_at":300}}}}"#,
             SPONSOR_TREE, S_GRANDCHILD, S_CHILD, S_ROOT
         ),
     );
+    assert!(resp.contains(r#""ok":true"#), "setup failed: {}", resp);
 }
 
 #[test]
@@ -1317,27 +1323,30 @@ fn build_binary_calc_tree(worker: &mut std::process::Child) {
     let tree_name = "BinaryCalc";
     create_binary_tree(worker, tree_name);
 
-    common::send_receive(
+    let resp = common::send_receive(
         worker,
         &format!(
             r#"{{"id":"bc-1","op":"add_root","params":{{"structure":"{}","user_id":"{}","enrolled_at":100}}}}"#,
             tree_name, NODE_A
         ),
     );
-    common::send_receive(
+    assert!(resp.contains(r#""ok":true"#), "setup failed: {}", resp);
+    let resp = common::send_receive(
         worker,
         &format!(
             r#"{{"id":"bc-2","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","position":0,"enrolled_at":200}}}}"#,
             tree_name, NODE_B, NODE_A, NODE_A
         ),
     );
-    common::send_receive(
+    assert!(resp.contains(r#""ok":true"#), "setup failed: {}", resp);
+    let resp = common::send_receive(
         worker,
         &format!(
             r#"{{"id":"bc-3","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","position":1,"enrolled_at":300}}}}"#,
             tree_name, NODE_C, NODE_A, NODE_A
         ),
     );
+    assert!(resp.contains(r#""ok":true"#), "setup failed: {}", resp);
 }
 
 #[test]

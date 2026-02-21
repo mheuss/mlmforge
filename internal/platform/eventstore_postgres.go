@@ -51,6 +51,9 @@ func (s *PostgresEventStore) CreateSchema(ctx context.Context) error {
 // Uses a database transaction. The (stream, version) unique constraint
 // enforces concurrency at the database level.
 func (s *PostgresEventStore) Append(ctx context.Context, stream string, expectedVersion int64, events []NewEvent) error {
+	if stream == "" {
+		return ErrEmptyStreamName
+	}
 	if len(events) == 0 {
 		return ErrEmptyAppend
 	}

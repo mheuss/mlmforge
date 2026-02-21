@@ -1,4 +1,4 @@
-// wire_types.go defines DTOs that mirror the Rust engine's NDJSON wire format.
+// Package networkengine wire_types.go defines DTOs that mirror the Rust engine's NDJSON wire format.
 package networkengine
 
 // EngineNode represents a tree node returned by the Rust engine.

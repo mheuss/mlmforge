@@ -94,6 +94,42 @@ func TestSchemaRejectsMissingCommission(t *testing.T) {
 	}
 }
 
+func TestSchemaRejectsBinaryModeWithoutConfig(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+
+	errs := p.validateSchema(readFixture(t, "invalid/binary-mode-without-config.yaml"))
+	require.NotEmpty(t, errs, "binary mode without config should produce errors")
+
+	for _, e := range errs {
+		assert.Equal(t, SeverityError, e.Severity)
+	}
+}
+
+func TestSchemaRejectsCompressionMissingRankThreshold(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+
+	errs := p.validateSchema(readFixture(t, "invalid/compression-missing-rank-threshold.yaml"))
+	require.NotEmpty(t, errs, "compression missing rank threshold should produce errors")
+
+	for _, e := range errs {
+		assert.Equal(t, SeverityError, e.Severity)
+	}
+}
+
+func TestSchemaRejectsInfinityMissingFlatRate(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+
+	errs := p.validateSchema(readFixture(t, "invalid/infinity-missing-flat-rate.yaml"))
+	require.NotEmpty(t, errs, "infinity missing flat rate should produce errors")
+
+	for _, e := range errs {
+		assert.Equal(t, SeverityError, e.Severity)
+	}
+}
+
 func TestSchemaRejectsPercentageOutOfRange(t *testing.T) {
 	p, err := NewPipeline(schemaPath(t))
 	require.NoError(t, err)

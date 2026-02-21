@@ -835,6 +835,9 @@
           "additionalProperties": {
             "$ref": "#/$defs/StreamlineLevel"
           },
+          "propertyNames": {
+            "pattern": "^[0-9]+$"
+          },
           "description": "Map of level number to commission configuration. Levels are dynamically compressed."
         },
         "streams": {
@@ -858,6 +861,9 @@
           "type": "number",
           "minimum": 0,
           "maximum": 1
+        },
+        "propertyNames": {
+          "pattern": "^[0-9]+$"
         },
         "description": "Level-to-rate mapping for a single rank."
       },
@@ -888,7 +894,27 @@
           ],
           "description": "Required when mode is skip_below_rank."
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "skip_below_rank"
+              }
+            },
+            "required": ["mode"]
+          },
+          "then": {
+            "required": ["rank_threshold"],
+            "properties": {
+              "rank_threshold": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
     },
     "PairingConfig": {
       "type": "object",
@@ -1057,6 +1083,9 @@
             "minimum": 0,
             "maximum": 1
           },
+          "propertyNames": {
+            "pattern": "^[0-9]+$"
+          },
           "description": "Override rate per generation."
         },
         "boundary_rank": {
@@ -1087,6 +1116,9 @@
             "type": "number",
             "minimum": 0,
             "maximum": 1
+          },
+          "propertyNames": {
+            "pattern": "^[0-9]+$"
           },
           "description": "Commission rate per generation."
         },
@@ -1358,6 +1390,9 @@
             "minimum": 0,
             "maximum": 1
           },
+          "propertyNames": {
+            "pattern": "^[0-9]+$"
+          },
           "description": "Matching rate by level."
         },
         "matched_commission_types": {
@@ -1443,6 +1478,9 @@
           "additionalProperties": {
             "type": "number"
           },
+          "propertyNames": {
+            "pattern": "^[0-9]+$"
+          },
           "description": "Override rate by level."
         },
         "rank_skip_mode": {
@@ -1483,6 +1521,9 @@
                 "type": "number",
                 "minimum": 0,
                 "maximum": 1
+              },
+              "propertyNames": {
+                "pattern": "^[0-9]+$"
               }
             },
             {
@@ -1496,7 +1537,55 @@
           "enum": ["flat", "decreasing"],
           "description": "Whether the infinity bonus uses a flat rate or decreasing rates by depth."
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "rate_mode": {
+                "const": "flat"
+              }
+            },
+            "required": ["rate_mode"]
+          },
+          "then": {
+            "required": ["flat_rate"],
+            "properties": {
+              "flat_rate": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "rate_mode": {
+                "const": "decreasing"
+              }
+            },
+            "required": ["rate_mode"]
+          },
+          "then": {
+            "required": ["decreasing_rates"],
+            "properties": {
+              "decreasing_rates": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "propertyNames": {
+                  "pattern": "^[0-9]+$"
+                }
+              }
+            }
+          }
+        }
+      ]
     },
     "LifestyleBonusConfig": {
       "type": "object",
@@ -1666,6 +1755,9 @@
           "additionalProperties": {
             "type": "number",
             "minimum": 0
+          },
+          "propertyNames": {
+            "pattern": "^[0-9]+$"
           },
           "description": "Bonus amount for completing each matrix level."
         },

@@ -588,6 +588,7 @@ pub fn handle_get_sponsored(state: &WorkerState, request: &Request) -> Response 
 /// Request parameters for calculating unilevel commissions.
 #[derive(serde::Deserialize)]
 struct CalculateUnilevelParams {
+    #[serde(rename = "structure")]
     structure_name: String,
     snapshots: HashMap<Uuid, DistributorSnapshot>,
     volume: Vec<VolumeSource>,
@@ -660,6 +661,7 @@ pub fn handle_calculate_unilevel(state: &WorkerState, request: &Request) -> Resp
 /// Request parameters for calculating binary pairing commissions.
 #[derive(serde::Deserialize)]
 struct CalculateBinaryPairingParams {
+    #[serde(rename = "structure")]
     structure_name: String,
     snapshots: HashMap<Uuid, DistributorSnapshot>,
     volume: Vec<VolumeSource>,

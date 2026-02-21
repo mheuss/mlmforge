@@ -250,6 +250,13 @@ impl UnilevelTree {
     pub fn contains(&self, user_id: Uuid) -> bool {
         self.arena.index.contains_key(&user_id)
     }
+
+    /// Provides read access to the arena for commission calculators
+    /// and other crate-internal consumers.
+    #[allow(dead_code)]
+    pub(crate) fn arena(&self) -> &Arena {
+        &self.arena
+    }
 }
 
 impl crate::tree::navigator::TreeNavigator for UnilevelTree {

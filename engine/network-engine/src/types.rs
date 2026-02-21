@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -6,7 +7,7 @@ use uuid::Uuid;
 /// Unlike `Node`, this is an owned output type built on demand.
 /// It includes derived data (downline counts, child count) that
 /// is not stored on the node itself.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TreePosition {
     pub user_id: Uuid,
     pub parent_user_id: Option<Uuid>,

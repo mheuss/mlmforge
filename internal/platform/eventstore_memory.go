@@ -2,10 +2,30 @@ package platform
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
 )
+
+// ErrEmptyAppend is returned when Append is called with an empty events slice.
+var ErrEmptyAppend = errors.New("eventstore: cannot append zero events")
+
+// ValidateNewEvent checks that required fields on a NewEvent are populated.
+// Returns an error describing the first missing field.
+func ValidateNewEvent(e NewEvent, index int) error {
+	if e.ID == "" {
+		return fmt.Errorf("eventstore: event at index %d has empty ID", index)
+	}
+	if e.Type == "" {
+		return fmt.Errorf("eventstore: event at index %d has empty Type", index)
+	}
+	if e.Payload == nil {
+		return fmt.Errorf("eventstore: event at index %d has nil Payload", index)
+	}
+	return nil
+}
 
 // Compile-time check: MemoryEventStore implements EventStore.
 var _ EventStore = (*MemoryEventStore)(nil)
@@ -26,6 +46,15 @@ func NewMemoryEventStore() *MemoryEventStore {
 
 // Append writes events to a stream atomically with optimistic concurrency.
 func (m *MemoryEventStore) Append(_ context.Context, stream string, expectedVersion int64, events []NewEvent) error {
+	if len(events) == 0 {
+		return ErrEmptyAppend
+	}
+	for i, e := range events {
+		if err := ValidateNewEvent(e, i); err != nil {
+			return err
+		}
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

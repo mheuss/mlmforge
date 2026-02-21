@@ -125,9 +125,19 @@ fn contract_fixtures_match_worker_behavior() {
         let mut worker = common::spawn_worker();
 
         // Send setup requests to initialize worker state.
-        for setup_req in &fixture.setup {
-            let setup_line = serde_json::to_string(setup_req).unwrap();
-            let _setup_resp = common::send_receive(&mut worker, &setup_line);
+        // Each setup response must succeed; a silent failure here would
+        // cause the main request to pass vacuously against wrong state.
+        for (i, setup_req) in fixture.setup.iter().enumerate() {
+            let setup_line = serde_json::to_string(setup_req)
+                .expect("setup request serialization is infallible");
+            let setup_resp = common::send_receive(&mut worker, &setup_line);
+            assert!(
+                setup_resp.contains(r#""ok":true"#),
+                "[{}] setup request {} failed: {}",
+                name,
+                i,
+                setup_resp
+            );
         }
 
         let request_line = if let Some(raw) = &fixture.request_raw {

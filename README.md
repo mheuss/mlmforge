@@ -51,4 +51,4 @@ The reasoning behind the architecture is documented in [decisions/](decisions/IN
 
 ## Status
 
-Early development. Project structure, CI pipeline, bounded context interfaces, and the compensation plan configuration pipeline are in place. Unilevel and binary tree structures, unilevel and binary commission calculators, and the Go/Rust integration boundary (NDJSON subprocess protocol) are implemented with full test coverage. 313 Rust tests and 137 Go tests. Next up: additional tree types (matrix, stairstep, streamline) and worker handlers for more commission operations.
+Early development. Project structure, CI pipeline, bounded context interfaces, and the compensation plan configuration pipeline are in place. Unilevel and binary tree structures, unilevel and binary commission calculators, and the Go/Rust integration boundary (NDJSON subprocess protocol) are implemented with full test coverage. 331 Rust tests and 158 Go tests. Next up: additional tree types (matrix, stairstep, streamline) and worker handlers for more commission operations.

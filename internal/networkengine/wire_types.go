@@ -23,9 +23,9 @@ type EnginePosition struct {
 }
 
 // CalculateUnilevelRequest is the input for unilevel commission calculation.
-// Field names match the Rust CalculateUnilevelParams serde format.
+// Wire field "structure" matches the Rust CalculateUnilevelParams serde rename.
 type CalculateUnilevelRequest struct {
-	StructureName string                            `json:"structure_name"`
+	StructureName string                            `json:"structure"`
 	Snapshots     map[string]DistributorSnapshotDTO `json:"snapshots"`
 	Volume        []VolumeSourceDTO                 `json:"volume"`
 }
@@ -58,9 +58,9 @@ type CommissionEarningDTO struct {
 }
 
 // CalculateBinaryPairingRequest is the input for binary pairing commission calculation.
-// Field names match the Rust CalculateBinaryPairingParams serde format.
+// Wire field "structure" matches the Rust CalculateBinaryPairingParams serde rename.
 type CalculateBinaryPairingRequest struct {
-	StructureName string                            `json:"structure_name"`
+	StructureName string                            `json:"structure"`
 	Snapshots     map[string]DistributorSnapshotDTO `json:"snapshots"`
 	Volume        []VolumeSourceDTO                 `json:"volume"`
 	CarryForward  map[string]LegVolumesDTO          `json:"carry_forward,omitempty"`

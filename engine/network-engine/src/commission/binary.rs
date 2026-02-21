@@ -251,6 +251,11 @@ pub fn calculate_binary_pairing(
         );
     }
 
+    // Sort earnings by earner_id for deterministic output.
+    // HashMap iteration order is unstable, so without sorting the
+    // earnings order varies across runs.
+    earnings.sort_by(|a, b| a.earner_id.cmp(&b.earner_id));
+
     Ok(BinaryCalculationResult {
         earnings,
         carry_forward: new_carry_forward,
@@ -365,7 +370,7 @@ mod tests {
         assert!(!earning.capped);
 
         // FullFlush: all carry-forward should be zero.
-        for (_, legs) in &result.carry_forward {
+        for legs in result.carry_forward.values() {
             assert_eq!(legs.left, 0.0);
             assert_eq!(legs.right, 0.0);
         }
@@ -1533,7 +1538,7 @@ mod tests {
                     &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(),
                 ).unwrap();
 
-                for (_, legs) in &result.carry_forward {
+                for legs in result.carry_forward.values() {
                     prop_assert!(legs.left >= 0.0, "left carry-forward is negative: {}", legs.left);
                     prop_assert!(legs.right >= 0.0, "right carry-forward is negative: {}", legs.right);
                 }
@@ -1561,7 +1566,7 @@ mod tests {
                     &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(),
                 ).unwrap();
 
-                for (_, legs) in &result.carry_forward {
+                for legs in result.carry_forward.values() {
                     prop_assert_eq!(legs.left, 0.0);
                     prop_assert_eq!(legs.right, 0.0);
                 }
@@ -1632,7 +1637,7 @@ mod tests {
                     &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(),
                 ).unwrap();
 
-                for (_, legs) in &result.carry_forward {
+                for legs in result.carry_forward.values() {
                     prop_assert!(
                         legs.left <= cap + 1e-10,
                         "left carry-forward {} exceeded cap {}",

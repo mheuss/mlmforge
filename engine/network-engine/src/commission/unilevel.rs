@@ -50,9 +50,26 @@ pub fn calculate_unilevel(
 
     let threshold_ordinal = compression.and_then(|c| {
         if matches!(c.mode, CompressionMode::SkipBelowRank) {
-            c.rank_threshold
-                .as_ref()
-                .and_then(|name| rank_ordinals.get(name.as_str()).copied())
+            match &c.rank_threshold {
+                None => {
+                    log::warn!(
+                        "SkipBelowRank compression enabled but rank_threshold is not set; \
+                         compression will have no effect"
+                    );
+                    None
+                }
+                Some(name) => {
+                    let ordinal = rank_ordinals.get(name.as_str()).copied();
+                    if ordinal.is_none() {
+                        log::warn!(
+                            "SkipBelowRank compression rank_threshold '{}' not found in \
+                             plan ranks; compression will have no effect",
+                            name
+                        );
+                    }
+                    ordinal
+                }
+            }
         } else {
             None
         }

@@ -128,7 +128,7 @@ pub struct BinaryCommissionEarning {
 ///
 /// Contains earnings for distributors who earned pairing bonuses
 /// and updated carry-forward state for every distributor in the tree.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BinaryCalculationResult {
     /// Earnings for distributors who earned a pairing bonus.
     pub earnings: Vec<BinaryCommissionEarning>,

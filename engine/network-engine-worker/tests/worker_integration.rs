@@ -609,7 +609,7 @@ fn calculate_unilevel_three_node_chain() {
     let snap =
         r#"{"rank":"member","personal_volume":100.0,"status":"active","has_order_in_period":true}"#;
     let params = format!(
-        r#"{{"structure_name":"Test","snapshots":{{"{root}":{snap},"{child}":{snap},"{gc}":{snap}}},"volume":[{{"source_id":"{gc}","cv_amount":100.0}}]}}"#,
+        r#"{{"structure":"Test","snapshots":{{"{root}":{snap},"{child}":{snap},"{gc}":{snap}}},"volume":[{{"source_id":"{gc}","cv_amount":100.0}}]}}"#,
         root = ROOT,
         child = CHILD,
         gc = GRANDCHILD,
@@ -671,7 +671,7 @@ fn calculate_unilevel_without_plan_returns_no_plan() {
     // Build a tree but don't load a plan
     build_three_node_chain(&mut worker);
 
-    let params = r#"{"structure_name":"Test","snapshots":{},"volume":[]}"#;
+    let params = r#"{"structure":"Test","snapshots":{},"volume":[]}"#;
     let request = format!(
         r#"{{"id":"calc-err","op":"calculate_unilevel","params":{}}}"#,
         params
@@ -691,7 +691,7 @@ fn calculate_unilevel_without_tree_returns_structure_not_found() {
     // Load a plan but don't build a tree
     load_test_plan(&mut worker);
 
-    let params = r#"{"structure_name":"Test","snapshots":{},"volume":[]}"#;
+    let params = r#"{"structure":"Test","snapshots":{},"volume":[]}"#;
     let request = format!(
         r#"{{"id":"calc-err","op":"calculate_unilevel","params":{}}}"#,
         params
@@ -715,7 +715,7 @@ fn calculate_unilevel_unknown_structure_returns_not_found() {
     load_test_plan(&mut worker);
     build_three_node_chain(&mut worker);
 
-    let params = r#"{"structure_name":"Nonexistent","snapshots":{},"volume":[]}"#;
+    let params = r#"{"structure":"Nonexistent","snapshots":{},"volume":[]}"#;
     let request = format!(
         r#"{{"id":"calc-err","op":"calculate_unilevel","params":{}}}"#,
         params
@@ -775,7 +775,7 @@ fn calculate_unilevel_empty_volume_returns_empty_earnings() {
     load_test_plan(&mut worker);
     build_three_node_chain(&mut worker);
 
-    let params = r#"{"structure_name":"Test","snapshots":{},"volume":[]}"#;
+    let params = r#"{"structure":"Test","snapshots":{},"volume":[]}"#;
     let request = format!(
         r#"{{"id":"calc-empty","op":"calculate_unilevel","params":{}}}"#,
         params
@@ -1356,7 +1356,7 @@ fn calculate_binary_pairing_balanced_legs() {
     //    Earning: 500 * 0.10 * 1.0 * 1.0 = 50.0
     let snap = r#"{"rank":"associate","personal_volume":150.0,"status":"active","has_order_in_period":true}"#;
     let params = format!(
-        r#"{{"structure_name":"BinaryCalc","snapshots":{{"{a}":{snap},"{b}":{snap},"{c}":{snap}}},"volume":[{{"source_id":"{b}","cv_amount":500.0}},{{"source_id":"{c}","cv_amount":500.0}}]}}"#,
+        r#"{{"structure":"BinaryCalc","snapshots":{{"{a}":{snap},"{b}":{snap},"{c}":{snap}}},"volume":[{{"source_id":"{b}","cv_amount":500.0}},{{"source_id":"{c}","cv_amount":500.0}}]}}"#,
         a = NODE_A,
         b = NODE_B,
         c = NODE_C,
@@ -1410,7 +1410,7 @@ fn calculate_binary_pairing_without_plan_returns_no_plan() {
     // Build a tree but don't load a plan.
     build_binary_calc_tree(&mut worker);
 
-    let params = r#"{"structure_name":"BinaryCalc","snapshots":{},"volume":[]}"#;
+    let params = r#"{"structure":"BinaryCalc","snapshots":{},"volume":[]}"#;
     let request = format!(
         r#"{{"id":"bp-err","op":"calculate_binary_pairing","params":{}}}"#,
         params
@@ -1432,7 +1432,7 @@ fn calculate_binary_pairing_wrong_tree_type_returns_error() {
     // Create a unilevel tree with the binary structure name.
     create_tree(&mut worker, "BinaryCalc");
 
-    let params = r#"{"structure_name":"BinaryCalc","snapshots":{},"volume":[]}"#;
+    let params = r#"{"structure":"BinaryCalc","snapshots":{},"volume":[]}"#;
     let request = format!(
         r#"{{"id":"bp-type","op":"calculate_binary_pairing","params":{}}}"#,
         params

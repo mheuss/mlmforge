@@ -32,7 +32,7 @@ A modular monolith. Eight bounded contexts in a single Go binary with the commis
 The same codebase supports multiple topologies.
 
 - **Single binary.** One process, one database. Clone, build, run.
-- **Engine separation.** The Rust commission engine runs as a separate service via gRPC, scaled independently.
+- **Engine separation.** The Rust commission engine runs as a subprocess communicating via NDJSON over stdin/stdout (StdioTransport). A gRPC transport can replace this for distributed deployment.
 - **Full decomposition.** Each bounded context runs as its own service. Same code, different wiring.
 
 Context boundaries are enforced through interfaces and schema isolation. Extraction is a deployment decision, not a rewrite.
@@ -51,4 +51,4 @@ The reasoning behind the architecture is documented in [decisions/](decisions/IN
 
 ## Status
 
-Early development. Project structure, CI pipeline, bounded context interfaces, and the compensation plan configuration pipeline are in place. The unilevel commission calculator is implemented with full test coverage. Next up: additional commission calculators and the Go integration boundary.
+Early development. Project structure, CI pipeline, bounded context interfaces, and the compensation plan configuration pipeline are in place. Unilevel and binary tree structures, unilevel and binary commission calculators, and the Go/Rust integration boundary (NDJSON subprocess protocol) are implemented with full test coverage. 313 Rust tests and 137 Go tests. Next up: additional tree types (matrix, stairstep, streamline) and worker handlers for more commission operations.

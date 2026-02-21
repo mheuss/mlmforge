@@ -6,7 +6,20 @@
 
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+/// Deserializes a value, treating JSON `null` or a missing field as
+/// `Default::default()`. Needed because Go serializes nil slices as
+/// JSON `null`, and serde's `#[serde(default)]` only handles missing
+/// fields, not explicit `null`.
+fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    let opt = Option::deserialize(deserializer)?;
+    Ok(opt.unwrap_or_default())
+}
 
 // ---------------------------------------------------------------------------
 // Top-level container
@@ -109,6 +122,7 @@ pub struct SponsorBonusConfig {
 
     /// Product IDs that qualify for the sponsor bonus. Empty means
     /// all products qualify.
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub qualifying_products: Vec<String>,
 }
 
@@ -181,8 +195,9 @@ pub struct LeadershipDevelopmentBonusConfig {
     #[serde(rename = "depth")]
     pub max_depth: u8,
 
-    /// Rank achieved to bonus amount or percentage.
-    pub rates: BTreeMap<String, f64>,
+    /// Level (1-indexed) to bonus amount or percentage. Consistent
+    /// with MatchingBonusConfig.rates which also uses `u8` keys.
+    pub rates: BTreeMap<u8, f64>,
 
     /// How to handle multi-rank jumps.
     pub rank_skip_mode: RankSkipMode,
@@ -430,7 +445,11 @@ pub struct PositionBonusConfig {
 /// This is a placeholder struct. Fields will be added when board cycling
 /// is implemented.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BoardCyclingConfig {}
+pub struct BoardCyclingConfig {
+    /// Placeholder for future board cycling implementation.
+    #[serde(default)]
+    pub _reserved: Option<bool>,
+}
 
 // ---------------------------------------------------------------------------
 // Pass-up
@@ -461,7 +480,7 @@ mod tests {
             "matching": {
                 "depth": 3,
                 "rates": { "1": 0.50, "2": 0.25, "3": 0.10 },
-                "matched_commission_types": ["level", "binary"]
+                "matched_commission_types": ["unilevel", "binary"]
             },
             "sponsor": {
                 "amount": 25.0,
@@ -515,7 +534,7 @@ mod tests {
         let json = r#"{
             "depth": 5,
             "rates": { "1": 0.50, "2": 0.25, "3": 0.10, "4": 0.05, "5": 0.02 },
-            "matched_commission_types": ["level"]
+            "matched_commission_types": ["unilevel"]
         }"#;
         let config: MatchingBonusConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.max_depth, 5);
@@ -525,7 +544,7 @@ mod tests {
         assert_eq!(config.rates[&3], 0.10);
         assert_eq!(config.rates[&4], 0.05);
         assert_eq!(config.rates[&5], 0.02);
-        assert_eq!(config.matched_commission_types, vec!["level"]);
+        assert_eq!(config.matched_commission_types, vec!["unilevel"]);
     }
 
     #[test]
@@ -538,6 +557,31 @@ mod tests {
         let config: SponsorBonusConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.amount, 50.0);
         assert!(matches!(config.amount_type, AmountType::Fixed));
+        assert!(config.qualifying_products.is_empty());
+    }
+
+    #[test]
+    fn deserialize_sponsor_bonus_null_qualifying_products() {
+        let json = r#"{
+            "amount": 25.0,
+            "amount_type": "percentage",
+            "qualifying_products": null
+        }"#;
+        let config: SponsorBonusConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.amount, 25.0);
+        assert!(matches!(config.amount_type, AmountType::Percentage));
+        assert!(config.qualifying_products.is_empty());
+    }
+
+    #[test]
+    fn deserialize_sponsor_bonus_missing_qualifying_products() {
+        let json = r#"{
+            "amount": 25.0,
+            "amount_type": "percentage"
+        }"#;
+        let config: SponsorBonusConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.amount, 25.0);
+        assert!(matches!(config.amount_type, AmountType::Percentage));
         assert!(config.qualifying_products.is_empty());
     }
 
@@ -675,16 +719,18 @@ mod tests {
         let json = r#"{
             "depth": 4,
             "rates": {
-                "silver": 100.0,
-                "gold": 250.0,
-                "diamond": 500.0
+                "1": 100.0,
+                "2": 250.0,
+                "3": 500.0
             },
             "rank_skip_mode": "highest_only"
         }"#;
         let config: LeadershipDevelopmentBonusConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.max_depth, 4);
         assert_eq!(config.rates.len(), 3);
-        assert_eq!(config.rates["silver"], 100.0);
+        assert_eq!(config.rates[&1], 100.0);
+        assert_eq!(config.rates[&2], 250.0);
+        assert_eq!(config.rates[&3], 500.0);
         assert!(matches!(config.rank_skip_mode, RankSkipMode::HighestOnly));
     }
 
@@ -872,7 +918,7 @@ mod tests {
             matching: Some(MatchingBonusConfig {
                 max_depth: 2,
                 rates,
-                matched_commission_types: vec!["level".to_string()],
+                matched_commission_types: vec!["unilevel".to_string()],
             }),
             sponsor: None,
             fast_start: None,
@@ -892,7 +938,7 @@ mod tests {
         assert_eq!(matching.max_depth, 2);
         assert_eq!(matching.rates[&1], 0.50);
         assert_eq!(matching.rates[&2], 0.25);
-        assert_eq!(matching.matched_commission_types, vec!["level"]);
+        assert_eq!(matching.matched_commission_types, vec!["unilevel"]);
     }
 
     #[test]

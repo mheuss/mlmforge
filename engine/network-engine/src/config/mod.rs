@@ -213,7 +213,7 @@ pub struct StairstepStructureConfig {
     pub compression: Option<CompressionConfig>,
 
     /// Breakaway configuration.
-    pub breakaway: BreakawayConfig,
+    pub breakaway: Option<BreakawayConfig>,
 }
 
 /// Generation structure configuration.
@@ -655,7 +655,7 @@ mod tests {
                 "matching": {
                     "depth": 3,
                     "rates": { "1": 0.50, "2": 0.25, "3": 0.10 },
-                    "matched_commission_types": ["level"]
+                    "matched_commission_types": ["unilevel"]
                 },
                 "sponsor": {
                     "amount": 25.0,

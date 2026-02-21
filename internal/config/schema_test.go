@@ -17,6 +17,7 @@ func TestSchemaValidatesAllValidFixtures(t *testing.T) {
 		"valid/minimal-unilevel.yaml",
 		"valid/full-unilevel.yaml",
 		"valid/binary-plan.yaml",
+		"valid/binary-cycle-step-plan.yaml",
 		"valid/hybrid-plan.yaml",
 		"valid/generation-plan.yaml",
 		"valid/matrix-plan.yaml",

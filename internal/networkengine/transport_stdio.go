@@ -129,6 +129,11 @@ func (t *StdioTransport) Call(ctx context.Context, op string, params json.RawMes
 		}
 		line = res.line
 	case <-ctx.Done():
+		// The goroutine reading from t.reader is still blocked and will remain
+		// so until the worker writes a response. If we allowed another Call,
+		// two goroutines would read from the same bufio.Reader, causing a data
+		// race. Mark the transport as unusable so subsequent calls fail cleanly.
+		t.closed.Store(true)
 		return nil, ctx.Err()
 	}
 
@@ -156,9 +161,9 @@ func (t *StdioTransport) Call(ctx context.Context, op string, params json.RawMes
 
 // Close shuts down the worker process by closing stdin and waiting for exit.
 func (t *StdioTransport) Close() error {
-	t.closed.Store(true)
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.closed.Store(true)
 	stdinErr := t.stdin.Close()
 	waitErr := t.cmd.Wait()
 	return errors.Join(stdinErr, waitErr)

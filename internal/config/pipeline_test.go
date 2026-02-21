@@ -22,6 +22,7 @@ func TestPipelineAllValidFixtures(t *testing.T) {
 		{"valid/minimal-unilevel.yaml", "Starter Unilevel", []string{"unilevel"}},
 		{"valid/full-unilevel.yaml", "Premium Unilevel", []string{"unilevel"}},
 		{"valid/binary-plan.yaml", "Classic Binary", []string{"binary"}},
+		{"valid/binary-cycle-step-plan.yaml", "Binary Cycle Step", []string{"binary"}},
 		{"valid/hybrid-plan.yaml", "Hybrid Unilevel-Binary", []string{"unilevel", "binary"}},
 		{"valid/matrix-plan.yaml", "Forced Matrix 3x7", []string{"matrix"}},
 		{"valid/stairstep-plan.yaml", "Classic Stairstep Breakaway", []string{"stairstep"}},

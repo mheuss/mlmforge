@@ -49,6 +49,13 @@ pub struct StreamlineCommissionConfig {
 /// rank thresholds across the levels vector.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamlineLevel {
+    /// The level number (1-indexed).
+    ///
+    /// Preserved from the Go translation layer. The Go side converts
+    /// the map-keyed YAML format into a sorted vector and includes
+    /// the level number on each entry.
+    pub level: u8,
+
     /// Minimum rank required to earn at this level.
     ///
     /// Distributors below this rank are dynamically compressed
@@ -123,11 +130,11 @@ mod tests {
             "volume_to_dollar_multiplier": 1.5,
             "commissionable_depth": 7,
             "dynamic_compression": [
-                { "min_rank": "active", "percent": 0.05 },
-                { "min_rank": "bronze", "percent": 0.04 },
-                { "min_rank": "silver", "percent": 0.03 },
-                { "min_rank": "gold", "percent": 0.02 },
-                { "min_rank": "platinum", "percent": 0.01 }
+                { "level": 1, "min_rank": "active", "percent": 0.05 },
+                { "level": 2, "min_rank": "bronze", "percent": 0.04 },
+                { "level": 3, "min_rank": "silver", "percent": 0.03 },
+                { "level": 4, "min_rank": "gold", "percent": 0.02 },
+                { "level": 5, "min_rank": "platinum", "percent": 0.01 }
             ],
             "streams": {
                 "additional_per_rank": {
@@ -144,8 +151,10 @@ mod tests {
         assert_eq!(config.volume_to_dollar_multiplier, Some(1.5));
         assert_eq!(config.max_depth, 7);
         assert_eq!(config.levels.len(), 5);
+        assert_eq!(config.levels[0].level, 1);
         assert_eq!(config.levels[0].min_rank, "active");
         assert_eq!(config.levels[0].percent, 0.05);
+        assert_eq!(config.levels[4].level, 5);
         assert_eq!(config.levels[4].min_rank, "platinum");
         assert_eq!(config.levels[4].percent, 0.01);
 
@@ -165,10 +174,12 @@ mod tests {
     #[test]
     fn deserialize_streamline_level() {
         let json = r#"{
+            "level": 4,
             "min_rank": "gold",
             "percent": 0.03
         }"#;
         let level: StreamlineLevel = serde_json::from_str(json).unwrap();
+        assert_eq!(level.level, 4);
         assert_eq!(level.min_rank, "gold");
         assert_eq!(level.percent, 0.03);
     }
@@ -217,8 +228,8 @@ mod tests {
             "volume_to_dollar_multiplier": null,
             "commissionable_depth": 5,
             "dynamic_compression": [
-                { "min_rank": "active", "percent": 0.10 },
-                { "min_rank": "bronze", "percent": 0.05 }
+                { "level": 1, "min_rank": "active", "percent": 0.10 },
+                { "level": 2, "min_rank": "bronze", "percent": 0.05 }
             ],
             "streams": null
         }"#;
@@ -226,8 +237,10 @@ mod tests {
         assert!(config.volume_to_dollar_multiplier.is_none());
         assert_eq!(config.max_depth, 5);
         assert_eq!(config.levels.len(), 2);
+        assert_eq!(config.levels[0].level, 1);
         assert_eq!(config.levels[0].min_rank, "active");
         assert_eq!(config.levels[0].percent, 0.10);
+        assert_eq!(config.levels[1].level, 2);
         assert_eq!(config.levels[1].min_rank, "bronze");
         assert_eq!(config.levels[1].percent, 0.05);
         assert!(config.stream_config.is_none());

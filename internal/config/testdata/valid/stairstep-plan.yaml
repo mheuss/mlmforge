@@ -50,7 +50,7 @@ ranks:
             count: 2
             min_rank: Supervisor
             search_mode: first_levels
-            search_depth: null
+            search_depth: 3
             total_count: 5
             min_leg_group_volume: 500
     demotion_policy:

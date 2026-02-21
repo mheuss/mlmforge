@@ -791,7 +791,22 @@
           "$ref": "#/$defs/GenerationCommissionConfig",
           "description": "Generation commission configuration."
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "level_commissions_enabled": {
+                "const": true
+              }
+            },
+            "required": ["level_commissions_enabled"]
+          },
+          "then": {
+            "required": ["commissionable_depth", "rate_table"]
+          }
+        }
+      ]
     },
     "StreamlineCommission": {
       "type": "object",

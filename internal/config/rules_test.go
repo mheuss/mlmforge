@@ -518,7 +518,7 @@ func TestValidation_HoldingTankApplicableStructuresMustExist(t *testing.T) {
 
 	errs := validateBusinessRules(plan)
 	require.Len(t, errs, 1)
-	assert.Equal(t, "unknown_structure_ref", errs[0].Code)
+	assert.Equal(t, "undefined_reference", errs[0].Code)
 	assert.Equal(t, SeverityError, errs[0].Severity)
 	assert.Contains(t, errs[0].Message, "Nonexistent")
 }
@@ -561,7 +561,7 @@ func TestValidation_StreamlineAdditionalPerRankMustExist(t *testing.T) {
 
 	errs := validateBusinessRules(plan)
 	require.Len(t, errs, 1)
-	assert.Equal(t, "unknown_rank_ref", errs[0].Code)
+	assert.Equal(t, "undefined_reference", errs[0].Code)
 	assert.Equal(t, SeverityError, errs[0].Severity)
 	assert.Contains(t, errs[0].Message, "Nonexistent")
 }

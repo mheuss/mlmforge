@@ -22,7 +22,7 @@ func validateBusinessRules(plan *CompensationPlan) []ValidationError {
 	errs = append(errs, validateBonuses(plan, ranks)...)
 	errs = append(errs, validatePlacement(plan, structs)...)
 	errs = append(errs, validateEligibility(plan)...)
-	errs = append(errs, validateWarnings(plan, ranks)...)
+	errs = append(errs, validateAdditionalRules(plan, ranks)...)
 	return errs
 }
 
@@ -81,7 +81,7 @@ func validateRankNames(plan *CompensationPlan) []ValidationError {
 	for _, r := range plan.Ranks {
 		if seen[r.Name] {
 			errs = append(errs, ValidationError{
-				Path:     "ranks",
+				Path:     "/ranks",
 				Code:     "duplicate_rank_name",
 				Message:  fmt.Sprintf("duplicate rank name: %q", r.Name),
 				Severity: SeverityError,
@@ -99,7 +99,7 @@ func validateStructureNames(plan *CompensationPlan) []ValidationError {
 	for _, s := range plan.Structures {
 		if seen[s.Name] {
 			errs = append(errs, ValidationError{
-				Path:     "structures",
+				Path:     "/structures",
 				Code:     "duplicate_structure_name",
 				Message:  fmt.Sprintf("duplicate structure name: %q", s.Name),
 				Severity: SeverityError,
@@ -264,8 +264,8 @@ func validateStructureRefs(plan *CompensationPlan, ranks map[string]bool) []Vali
 				for rankName := range rc.Streams.AdditionalPerRank {
 					if !ranks[rankName] {
 						errs = append(errs, ValidationError{
-							Path:     fmt.Sprintf("structures[%s].streams.additional_per_rank", s.Name),
-							Code:     "unknown_rank_ref",
+							Path:     fmt.Sprintf("/structures/%d/commission/streams/additional_per_rank", i),
+							Code:     "undefined_reference",
 							Message:  fmt.Sprintf("additional_per_rank references unknown rank %q", rankName),
 							Severity: SeverityError,
 						})
@@ -393,8 +393,8 @@ func validatePlacement(plan *CompensationPlan, structs map[string]bool) []Valida
 		for _, name := range plan.Placement.HoldingTank.ApplicableStructures {
 			if !structs[name] {
 				errs = append(errs, ValidationError{
-					Path:     "placement.holding_tank.applicable_structures",
-					Code:     "unknown_structure_ref",
+					Path:     "/placement/holding_tank/applicable_structures",
+					Code:     "undefined_reference",
 					Message:  fmt.Sprintf("applicable_structures references unknown structure %q", name),
 					Severity: SeverityError,
 				})
@@ -467,9 +467,9 @@ func validateEligibility(plan *CompensationPlan) []ValidationError {
 
 // --- Warnings ---
 
-// validateWarnings produces non-fatal warnings for potentially problematic
+// validateAdditionalRules produces non-fatal warnings for potentially problematic
 // configuration values.
-func validateWarnings(plan *CompensationPlan, ranks map[string]bool) []ValidationError {
+func validateAdditionalRules(plan *CompensationPlan, ranks map[string]bool) []ValidationError {
 	var errs []ValidationError
 
 	// Long payout lag.
@@ -538,7 +538,7 @@ func validateWarnings(plan *CompensationPlan, ranks map[string]bool) []Validatio
 	// payout.base_currency must match volume.base_currency.
 	if plan.Payout.BaseCurrency != plan.Volume.BaseCurrency {
 		errs = append(errs, ValidationError{
-			Path:     "payout.base_currency",
+			Path:     "/payout/base_currency",
 			Code:     "currency_mismatch",
 			Message:  fmt.Sprintf("payout base_currency %q does not match volume base_currency %q", plan.Payout.BaseCurrency, plan.Volume.BaseCurrency),
 			Severity: SeverityError,

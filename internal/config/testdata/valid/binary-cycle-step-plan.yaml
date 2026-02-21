@@ -1,0 +1,98 @@
+# yaml-language-server: $schema=../../../../schemas/compensation-plan.schema.json
+#
+# Binary plan with cycle_step mode. Tests the cycle/step binary commission
+# variant with stepped thresholds and flush-after-cycle behavior.
+
+name: Binary Cycle Step
+version: 1
+
+period:
+  length: week
+  start_date: "2026-01-01"
+  payout_lag_days: 3
+
+volume:
+  inhibit_signup_volume: false
+  base_currency: USD
+  volume_to_dollar_multiplier: 1.0
+  deduct_qualifying_volume: false
+
+ranks:
+  - name: Member
+    ordinal: 1
+    qualification:
+      structures:
+        - structure: BinaryTree
+          personal_volume: 0
+          group_volume: 0
+
+  - name: Silver
+    ordinal: 2
+    qualification:
+      structures:
+        - structure: BinaryTree
+          personal_volume: 100
+          group_volume: 1000
+
+rank_tracking:
+  track_achieved_rank: false
+
+rank_features:
+  constraints_enabled: false
+  overrides_enabled: false
+
+commission_eligibility:
+  min_personal_volume: 50
+  require_order_in_period: true
+  eligible_statuses:
+    - active
+
+structures:
+  - name: BinaryTree
+    type: binary
+    commission:
+      mode: cycle_step
+      cycle_step:
+        steps:
+          - threshold: 300.00
+            amount: 25.00
+          - threshold: 600.00
+            amount: 50.00
+          - threshold: 1200.00
+            amount: 100.00
+        flush_after_cycle: true
+
+bonuses:
+  matching: null
+  sponsor: null
+  fast_start: null
+  rank_advancement: null
+  leadership_development: null
+  infinity: null
+  lifestyle: null
+  pool: null
+  matrix_completion: null
+  position: null
+  board_cycling: null
+  pass_up: null
+
+payout:
+  base_currency: USD
+  minimum_amount: 25.00
+  split_payouts_enabled: false
+  methods:
+    - type: bank_transfer
+      fee: 2.50
+
+caps:
+  company_payout_cap_percent: 0.40
+  cap_enforcement: hard_stop
+  clawback_on_refund: false
+
+placement:
+  donated_placement_enabled: true
+  donated_placement_restriction: direct_children_only
+  binary:
+    default_placement: balanced
+    per_user_preference: true
+    spillover_enabled: true

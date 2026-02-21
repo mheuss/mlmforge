@@ -54,7 +54,7 @@ ranks:
             count: 2
             min_rank: Builder
             search_mode: first_levels
-            search_depth: null
+            search_depth: 3
             total_count: 4
             min_leg_group_volume: 300
       required_products:
@@ -214,6 +214,34 @@ bonuses:
       shares:
         mode: equal_share
         equal_share_cap: 5000.00
+      require_admin_confirmation: true
+
+    - name: Velocity Pool
+      source_percent: 0.01
+      qualification:
+        mode: velocity_based
+        min_rank: null
+        velocity:
+          volume_target: 5000.00
+          timeframe: days
+          timeframe_days: 30
+      shares:
+        mode: volume_weighted
+        equal_share_cap: null
+      require_admin_confirmation: false
+
+    - name: Combined Pool
+      source_percent: 0.015
+      qualification:
+        mode: combined
+        min_rank: Leader
+        velocity:
+          volume_target: 3000.00
+          timeframe: period
+          timeframe_days: null
+      shares:
+        mode: rank_weighted
+        equal_share_cap: null
       require_admin_confirmation: true
 
   matrix_completion: null

@@ -50,7 +50,7 @@ The schema and Go have distinct responsibilities. The schema validates structure
 
 | Check | Example |
 |-------|---------|
-| Required fields | `name`, `version`, `period` must exist; `start_date` required within `period` |
+| Required fields | `name`, `version`, `period` must exist. `start_date` required within `period`. |
 | Types | `payout_lag_days` is integer, `broad_commission_percent` is number |
 | Enums | `length` must be one of `week`, `semi_month`, `month`, `quarter` |
 | Numeric ranges | `payout_lag_days`: 0-60, percentages: 0.0-1.0 |

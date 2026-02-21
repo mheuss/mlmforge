@@ -12,8 +12,29 @@ import (
 // ErrEmptyAppend is returned when Append is called with an empty events slice.
 var ErrEmptyAppend = errors.New("eventstore: cannot append zero events")
 
-// ErrEmptyStreamName is returned when Append is called with an empty stream name.
-var ErrEmptyStreamName = errors.New("eventstore: stream name must not be empty")
+// ErrInvalidStreamName is returned when a stream name does not match the
+// required {category}-{id} format. Use errors.Is to check for this error.
+var ErrInvalidStreamName = errors.New("eventstore: invalid stream name")
+
+// ValidateStreamName checks that a stream name follows the {category}-{id}
+// convention documented in ADR-016. The category is the part before the first
+// hyphen. Both category and id must be non-empty.
+func ValidateStreamName(stream string) error {
+	if stream == "" {
+		return fmt.Errorf("%w: must not be empty", ErrInvalidStreamName)
+	}
+	cat, id, ok := strings.Cut(stream, "-")
+	if !ok {
+		return fmt.Errorf("%w: %q missing category-id separator '-'", ErrInvalidStreamName, stream)
+	}
+	if cat == "" {
+		return fmt.Errorf("%w: %q has empty category", ErrInvalidStreamName, stream)
+	}
+	if id == "" {
+		return fmt.Errorf("%w: %q has empty id", ErrInvalidStreamName, stream)
+	}
+	return nil
+}
 
 // ValidateNewEvent checks that required fields on a NewEvent are populated.
 // Returns an error describing the first missing field.
@@ -49,8 +70,8 @@ func NewMemoryEventStore() *MemoryEventStore {
 
 // Append writes events to a stream atomically with optimistic concurrency.
 func (m *MemoryEventStore) Append(_ context.Context, stream string, expectedVersion int64, events []NewEvent) error {
-	if stream == "" {
-		return ErrEmptyStreamName
+	if err := ValidateStreamName(stream); err != nil {
+		return err
 	}
 	if len(events) == 0 {
 		return ErrEmptyAppend
@@ -97,6 +118,10 @@ func (m *MemoryEventStore) Append(_ context.Context, stream string, expectedVers
 // ReadStream returns events from a single stream starting at fromVersion.
 // Pass limit=0 to read all matching events.
 func (m *MemoryEventStore) ReadStream(_ context.Context, stream string, fromVersion int64, limit int64) ([]Event, error) {
+	if err := ValidateStreamName(stream); err != nil {
+		return nil, err
+	}
+
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 

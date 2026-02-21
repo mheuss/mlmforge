@@ -1,0 +1,18 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc c4932a096d7295a74e1ebe05aefbb9dce189708170da36e4cc0e25492b6e87c0 # shrinks to (left_vol, right_vol) = (0.0, 0.0)
+cc ca7d223d7ab39fe229ab59896b8a9dad308a89010120f99e95d2341da3eb428d # shrinks to (left_vol, right_vol) = (0.0, 0.0)
+cc b95b041456aeec968ea4c05437730955913567705b83488af08692d322d98035 # shrinks to (left_vol, right_vol) = (0.0, 0.0)
+cc 2d068d9401039014605edcb9ca3001c240988bb0f4273aa79d5518036be49b8e # shrinks to (left_vol, right_vol) = (0.0, 0.0)
+cc 1da4cd75323e08b68df6038275eee3c5c14b4758d5edabfcdb3314bfcf2cd37c # shrinks to (left_vol, right_vol) = (0.0, 0.0)
+cc 694cf0a16bc337f683941440bf5e0a9a170618a0e2c1efb63f648c941d8dbed7 # shrinks to vol = 0.0
+cc 0d324538e9c171fd0ac83ece1dfdf4e3fb8cff8aed8483276d6b20b11637f33d # shrinks to vol = 1.0
+cc 54958e4a7626933a8361f3364ccd956e30122a50b8bc56cfd3a67e8729fb0528 # shrinks to (left_vol, right_vol) = (0.0, 0.0)
+cc a9ed700c769de9e8c167818b7de388d68f6e1a60e31e2b9a622cf92e4fed98c2 # shrinks to vol = 0.0
+cc d45cfcce52ff3b7f43f50f1d7ec0cc363682eb0e940a6aae0e3ddf581c22c9bb # shrinks to (left_vol, right_vol) = (0.0, 0.0)
+cc 324b710fa449b0fcc117f8c6a11ea2b642cb6f73ccadcdc9fc3ca3b4c11dfae5 # shrinks to (left_vol, right_vol) = (0.0, 0.0)
+cc b4727caf4e6bea9c86fa7f6f49addeb0fe5481556d37d94c4f7001b001534e0c # shrinks to (left_vol, right_vol) = (0.0, 0.0)

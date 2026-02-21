@@ -1721,6 +1721,110 @@ mod tests {
                     );
                 }
             }
+
+            /// With cap_per_period set, no single earner's payout should
+            /// exceed that cap.
+            #[test]
+            fn cap_per_period_never_exceeded(
+                (left_vol, right_vol) in arb_leg_pair()
+            ) {
+                let cap = 25.0;
+                let structure = capped_structure(cap);
+                let tree = three_node_tree();
+                let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+
+                let mut snapshots = HashMap::new();
+                snapshots.insert(test_uuid(1), eligible_snapshot());
+                snapshots.insert(test_uuid(2), eligible_snapshot());
+                snapshots.insert(test_uuid(3), eligible_snapshot());
+
+                let volume = vec![
+                    VolumeSource { source_id: test_uuid(2), cv_amount: left_vol },
+                    VolumeSource { source_id: test_uuid(3), cv_amount: right_vol },
+                ];
+
+                let result = calculate_binary_pairing(
+                    &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(),
+                ).unwrap();
+
+                for earning in &result.earnings {
+                    prop_assert!(
+                        earning.dollar_amount <= cap + 1e-10,
+                        "earner {} paid {} which exceeds cap_per_period {}",
+                        earning.earner_id, earning.dollar_amount, cap
+                    );
+                }
+            }
+
+            /// Carry-forward from period 1 feeds into period 2 correctly.
+            /// The stronger leg's excess volume should accumulate and
+            /// remain non-negative across periods.
+            #[test]
+            fn carry_forward_preserved_across_periods(
+                left_p1 in 0.0..5000.0f64,
+                right_p1 in 0.0..5000.0f64,
+                left_p2 in 0.0..5000.0f64,
+                right_p2 in 0.0..5000.0f64,
+            ) {
+                let tree = three_node_tree();
+                let structure = carry_forward_structure();
+                let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+
+                let mut snapshots = HashMap::new();
+                snapshots.insert(test_uuid(1), eligible_snapshot());
+                snapshots.insert(test_uuid(2), eligible_snapshot());
+                snapshots.insert(test_uuid(3), eligible_snapshot());
+
+                // Period 1
+                let volume_p1 = vec![
+                    VolumeSource { source_id: test_uuid(2), cv_amount: left_p1 },
+                    VolumeSource { source_id: test_uuid(3), cv_amount: right_p1 },
+                ];
+
+                let result_p1 = calculate_binary_pairing(
+                    &tree, &plan, &structure, &snapshots, &volume_p1, &HashMap::new(),
+                ).unwrap();
+
+                // All carry-forward values from period 1 must be non-negative.
+                for legs in result_p1.carry_forward.values() {
+                    prop_assert!(legs.left >= 0.0, "P1 left carry-forward negative: {}", legs.left);
+                    prop_assert!(legs.right >= 0.0, "P1 right carry-forward negative: {}", legs.right);
+                }
+
+                // Period 2: feed carry-forward from period 1 as input.
+                let volume_p2 = vec![
+                    VolumeSource { source_id: test_uuid(2), cv_amount: left_p2 },
+                    VolumeSource { source_id: test_uuid(3), cv_amount: right_p2 },
+                ];
+
+                let result_p2 = calculate_binary_pairing(
+                    &tree, &plan, &structure, &snapshots, &volume_p2, &result_p1.carry_forward,
+                ).unwrap();
+
+                // All carry-forward values from period 2 must be non-negative.
+                for legs in result_p2.carry_forward.values() {
+                    prop_assert!(legs.left >= 0.0, "P2 left carry-forward negative: {}", legs.left);
+                    prop_assert!(legs.right >= 0.0, "P2 right carry-forward negative: {}", legs.right);
+                }
+
+                // Total paid across both periods should never exceed total
+                // matched volume across both periods (at the configured rate).
+                let total_paid: f64 = result_p1.earnings.iter()
+                    .chain(result_p2.earnings.iter())
+                    .map(|e| e.dollar_amount)
+                    .sum();
+
+                // Total input volume across both periods.
+                let total_left = left_p1 + left_p2;
+                let total_right = right_p1 + right_p2;
+                let theoretical_max = total_left.min(total_right) * 0.10 * 1.0;
+
+                prop_assert!(
+                    total_paid <= theoretical_max + 1e-10,
+                    "two-period total payout {} exceeded theoretical max {}",
+                    total_paid, theoretical_max
+                );
+            }
         }
     }
 }

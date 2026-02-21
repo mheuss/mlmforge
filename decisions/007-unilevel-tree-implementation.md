@@ -2,7 +2,7 @@
 
 ## The Problem
 
-The unilevel tree is the first concrete tree type for the network engine. It needs to handle trees with millions of nodes, support all 11 operations from the `TreeNavigator` interface, and prove that the generalized position-indexed model from decision 003 works in practice.
+The unilevel tree is the first concrete tree type for the network engine. It needs to handle trees with millions of nodes, support all operations from the `TreeNavigator` interface, and prove that the generalized position-indexed model from decision 003 works in practice.
 
 The implementation choices here set the pattern for binary and matrix trees.
 

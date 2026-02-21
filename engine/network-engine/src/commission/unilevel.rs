@@ -186,6 +186,16 @@ pub fn calculate_unilevel(
         }
     }
 
+    // Sort earnings for deterministic output. Without sorting, the order
+    // depends on BFS traversal and volume source iteration, both of which
+    // can vary across runs. Primary sort by earner_id, secondary by
+    // source_id so multi-source earnings are also stable.
+    all_earnings.sort_by(|a, b| {
+        a.earner_id
+            .cmp(&b.earner_id)
+            .then_with(|| a.source_id.cmp(&b.source_id))
+    });
+
     Ok(all_earnings)
 }
 

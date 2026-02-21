@@ -51,8 +51,8 @@ func (s *PostgresEventStore) CreateSchema(ctx context.Context) error {
 // Uses a database transaction. The (stream, version) unique constraint
 // enforces concurrency at the database level.
 func (s *PostgresEventStore) Append(ctx context.Context, stream string, expectedVersion int64, events []NewEvent) error {
-	if stream == "" {
-		return ErrEmptyStreamName
+	if err := ValidateStreamName(stream); err != nil {
+		return err
 	}
 	if len(events) == 0 {
 		return ErrEmptyAppend
@@ -130,6 +130,10 @@ func (s *PostgresEventStore) Append(ctx context.Context, stream string, expected
 // ReadStream returns events from a single stream starting at fromVersion.
 // Pass limit=0 to read all matching events.
 func (s *PostgresEventStore) ReadStream(ctx context.Context, stream string, fromVersion int64, limit int64) ([]Event, error) {
+	if err := ValidateStreamName(stream); err != nil {
+		return nil, err
+	}
+
 	if fromVersion < 1 {
 		fromVersion = 1
 	}

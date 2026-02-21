@@ -142,6 +142,18 @@ func TestSchemaRejectsVelocityDaysMissingTimeframeDays(t *testing.T) {
 	}
 }
 
+func TestSchemaRejectsSearchDepthExceedsMax(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+
+	errs := p.validateSchema(readFixture(t, "invalid/search-depth-exceeds-max.yaml"))
+	require.NotEmpty(t, errs, "search_depth exceeding 255 should produce errors")
+
+	for _, e := range errs {
+		assert.Equal(t, SeverityError, e.Severity)
+	}
+}
+
 func TestSchemaRejectsPercentageOutOfRange(t *testing.T) {
 	p, err := NewPipeline(schemaPath(t))
 	require.NoError(t, err)

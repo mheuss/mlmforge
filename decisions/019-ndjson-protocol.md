@@ -54,7 +54,7 @@ The worker uses a fixed set of error codes. Handlers return these codes in the `
 | `TREE_EXISTS` | A tree with this name already exists |
 | `INVALID_PLAN` | Compensation plan data is malformed or invalid |
 | `HAS_CHILDREN` | Cannot remove a node that has children |
-| `NO_ROOT` | Tree operation requires a root but none has been set |
+| `NO_ROOT` | Reserved. Tree operation requires a root but none has been set. Currently handled via `STRUCTURE_NOT_FOUND`. |
 | `NO_PLAN` | Commission calculation requires a loaded plan |
 | `INVALID_PARAMS` | Params are missing, malformed, or not a JSON object |
 | `MISSING_PARAM` | A required parameter is absent |
@@ -62,7 +62,7 @@ The worker uses a fixed set of error codes. Handlers return these codes in the `
 | `CALCULATION_ERROR` | Commission calculation failed (bad input data) |
 | `INVALID_REQUEST` | Request JSON itself is malformed |
 | `UNKNOWN_OP` | Unrecognized operation name |
-| `PARSE_ERROR` | JSON parsing failed on the request or params |
+| `PARSE_ERROR` | Reserved. JSON parsing failed on the request or params. Currently handled via `INVALID_PARAMS` or `INVALID_REQUEST`. |
 | `INTERNAL_ERROR` | Handler panicked unexpectedly |
 
 The error codes evolved during implementation to be more specific. The original design used generic codes like `NO_TREE`, `NOT_FOUND`, and `DUPLICATE_USER`. Implementation revealed that callers need finer distinctions (e.g., `POSITION_OCCUPIED` vs. `USER_ALREADY_EXISTS`, `TREE_EXISTS` vs. `ROOT_ALREADY_EXISTS`).

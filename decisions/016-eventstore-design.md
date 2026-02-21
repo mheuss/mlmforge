@@ -74,7 +74,7 @@ We considered putting the interface in a shared contracts package. This contradi
 
 The PostgreSQL implementation uses `github.com/jackc/pgx/v5` with `pgxpool` for connection pooling. No `database/sql` abstraction layer.
 
-The project is committed to PostgreSQL (decision 005). There is no need for database portability. pgx provides native JSONB support, connection pooling, and direct access to PostgreSQL-specific features like `split_part` in queries. The `database/sql` abstraction would add indirection without benefit.
+The project is committed to PostgreSQL (see ADR-005 in DEVELOPMENT.md). There is no need for database portability. pgx provides native JSONB support, connection pooling, and direct access to PostgreSQL-specific features like `split_part` in queries. The `database/sql` abstraction would add indirection without benefit.
 
 ### Two Implementations
 

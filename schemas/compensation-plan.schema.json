@@ -264,7 +264,8 @@
           "oneOf": [
             {
               "type": "integer",
-              "minimum": 1
+              "minimum": 1,
+              "maximum": 255
             },
             {
               "type": "null"
@@ -895,7 +896,8 @@
         "rank_threshold": {
           "oneOf": [
             {
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             },
             {
               "type": "null"
@@ -918,7 +920,8 @@
             "required": ["rank_threshold"],
             "properties": {
               "rank_threshold": {
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               }
             }
           }

@@ -1,0 +1,101 @@
+# Invalid: search_depth is 256 which exceeds the u8 maximum of 255.
+# Expected error: search_depth must be <= 255.
+
+name: Search Depth Exceeds Max
+version: 1
+
+period:
+  length: month
+  start_date: "2026-01-01"
+  payout_lag_days: 14
+
+volume:
+  inhibit_signup_volume: false
+  base_currency: USD
+  volume_to_dollar_multiplier: 1.0
+  deduct_qualifying_volume: false
+
+ranks:
+  - name: Associate
+    ordinal: 1
+    qualification:
+      structures:
+        - structure: Primary
+          personal_volume: 0
+          group_volume: 0
+
+  - name: Leader
+    ordinal: 2
+    qualification:
+      structures:
+        - structure: Primary
+          personal_volume: 100
+          group_volume: 1000
+          distributor_count:
+            count: 2
+            min_rank: Associate
+            search_mode: first_levels
+            search_depth: 256
+            total_count: 4
+
+rank_tracking:
+  track_achieved_rank: false
+
+rank_features:
+  constraints_enabled: false
+  overrides_enabled: false
+
+commission_eligibility:
+  min_personal_volume: 0
+  require_order_in_period: false
+  eligible_statuses:
+    - active
+
+structures:
+  - name: Primary
+    type: unilevel
+    commission:
+      commissionable_depth: 5
+      rate_table:
+        Associate:
+          "1": 0.05
+          "2": 0.04
+          "3": 0.03
+          "4": 0.02
+          "5": 0.01
+        Leader:
+          "1": 0.07
+          "2": 0.05
+          "3": 0.04
+          "4": 0.03
+          "5": 0.02
+
+bonuses:
+  matching: null
+  sponsor: null
+  fast_start: null
+  rank_advancement: null
+  leadership_development: null
+  infinity: null
+  lifestyle: null
+  pool: null
+  matrix_completion: null
+  position: null
+  board_cycling: null
+  pass_up: null
+
+payout:
+  base_currency: USD
+  minimum_amount: 50.00
+  split_payouts_enabled: false
+  methods:
+    - type: bank_transfer
+      fee: 2.50
+
+caps:
+  company_payout_cap_percent: 0.42
+  cap_enforcement: pro_rata
+  clawback_on_refund: false
+
+placement:
+  donated_placement_enabled: false

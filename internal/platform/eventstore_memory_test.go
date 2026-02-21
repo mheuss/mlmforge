@@ -299,19 +299,17 @@ func TestMemoryEventStore_ReadCategoryMultiHyphenStream(t *testing.T) {
 	assert.Equal(t, "evt-1", got[0].ID)
 }
 
-func TestMemoryEventStore_ReadCategoryStreamWithoutHyphen(t *testing.T) {
+func TestMemoryEventStore_AppendRejectsStreamWithoutHyphen(t *testing.T) {
 	store := NewMemoryEventStore()
 	ctx := context.Background()
 
-	// Stream with no hyphen: category equals the whole stream name.
-	_ = store.Append(ctx, "singleton", 0, []NewEvent{
+	// Stream names must follow {category}-{id} format. A name without a
+	// hyphen is rejected because there's no id part.
+	err := store.Append(ctx, "singleton", 0, []NewEvent{
 		{ID: "evt-1", Type: "SystemStarted", Payload: json.RawMessage(`{}`)},
 	})
-
-	got, err := store.ReadCategory(ctx, "singleton", 0, 0)
-	require.NoError(t, err)
-	require.Len(t, got, 1)
-	assert.Equal(t, "evt-1", got[0].ID)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidStreamName)
 }
 
 func TestMemoryEventStore_VersionsAcrossStreamsIndependent(t *testing.T) {
@@ -412,7 +410,7 @@ func TestMemoryEventStore_AppendRejectsEmptyStreamName(t *testing.T) {
 	}
 	err := store.Append(ctx, "", 0, events)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrEmptyStreamName)
+	assert.ErrorIs(t, err, ErrInvalidStreamName)
 }
 
 func TestMemoryEventStore_AppendRejectsEmptySlice(t *testing.T) {
@@ -560,4 +558,62 @@ func TestMemoryEventStore_ConcurrentAppendAndRead(t *testing.T) {
 	allEvents, err := store.ReadCategory(ctx, "stream", 0, 0)
 	require.NoError(t, err)
 	assert.Len(t, allEvents, numWriters*eventsPerWrite)
+}
+
+func TestValidateStreamName(t *testing.T) {
+	tests := []struct {
+		name    string
+		stream  string
+		wantErr bool
+	}{
+		{name: "valid simple", stream: "order-abc", wantErr: false},
+		{name: "valid multi-hyphen", stream: "commission-period-2026-01", wantErr: false},
+		{name: "valid uuid id", stream: "order-550e8400-e29b-41d4-a716-446655440000", wantErr: false},
+		{name: "empty string", stream: "", wantErr: true},
+		{name: "no hyphen", stream: "singleton", wantErr: true},
+		{name: "hyphen only", stream: "-", wantErr: true},
+		{name: "empty category", stream: "-abc", wantErr: true},
+		{name: "empty id", stream: "order-", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateStreamName(tt.stream)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.ErrorIs(t, err, ErrInvalidStreamName)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestMemoryEventStore_ReadStreamRejectsInvalidStreamName(t *testing.T) {
+	store := NewMemoryEventStore()
+	ctx := context.Background()
+
+	got, err := store.ReadStream(ctx, "nohyphen", 1, 0)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidStreamName)
+	assert.Nil(t, got)
+}
+
+func TestMemoryEventStore_AppendRejectsEmptyID_StreamName(t *testing.T) {
+	store := NewMemoryEventStore()
+	ctx := context.Background()
+
+	events := []NewEvent{
+		{ID: "evt-1", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+	}
+
+	// Empty category part.
+	err := store.Append(ctx, "-abc", 0, events)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidStreamName)
+
+	// Empty id part.
+	err = store.Append(ctx, "order-", 0, events)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidStreamName)
 }

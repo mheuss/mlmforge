@@ -83,7 +83,7 @@ This separation prevents Rust serialization concerns from leaking into Go domain
 
 ### Error Handling
 
-The Rust worker returns structured errors with a `code` and `message`. The Go transport wraps these in an `EngineError` type. Callers use `errors.As` to inspect the error code programmatically (e.g., `NO_TREE`, `NOT_FOUND`, `INVALID_PARAMS`).
+The Rust worker returns structured errors with a `code` and `message`. The Go transport wraps these in an `EngineError` type. Callers use `errors.As` to inspect the error code programmatically (e.g., `STRUCTURE_NOT_FOUND`, `USER_NOT_FOUND`, `INVALID_PARAMS`).
 
 When the worker process crashes (EOF on stdout), the transport includes the worker's stderr output in the error message. This surfaces Rust panic messages and other diagnostic output without requiring separate log plumbing.
 

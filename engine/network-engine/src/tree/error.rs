@@ -51,4 +51,7 @@ pub enum TreeError {
 
     #[error("spillover direction not supported")]
     UnsupportedSpillover,
+
+    #[error("no open position in subtree under sponsor {0}")]
+    SubtreeFull(Uuid),
 }

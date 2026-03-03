@@ -228,7 +228,7 @@ impl MatrixTree {
 
         let (parent_idx, position) = self
             .find_spillover_slot(sponsor_idx)
-            .expect("BFS spillover found no open slot -- tree is full or corrupt");
+            .ok_or(TreeError::SubtreeFull(sponsor_id))?;
 
         let parent_depth = self.arena.node(parent_idx).depth;
 

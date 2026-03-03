@@ -99,6 +99,7 @@ fn tree_error_to_response(request_id: &str, e: TreeError) -> Response {
         TreeError::SponsorNotFound(_) => "SPONSOR_NOT_FOUND",
         TreeError::UserNotInHoldingTank(_) => "USER_NOT_IN_HOLDING_TANK",
         TreeError::UnsupportedSpillover => "UNSUPPORTED_SPILLOVER",
+        TreeError::SubtreeFull(_) => "SUBTREE_FULL",
     };
     Response::error(request_id.to_string(), code, e.to_string())
 }

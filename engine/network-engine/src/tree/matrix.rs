@@ -548,6 +548,88 @@ impl MatrixTree {
         }
     }
 
+    /// Places a user from the holding tank into the tree at a specific
+    /// parent and position.
+    ///
+    /// Validates position, parent existence, slot availability, and that
+    /// the user is in the holding tank. Restores the sponsor link if the
+    /// original sponsor still exists in the tree.
+    pub fn place_from_tank(
+        &mut self,
+        user_id: Uuid,
+        parent_id: Uuid,
+        position: u8,
+    ) -> Result<(), TreeError> {
+        if position >= self.width {
+            return Err(TreeError::PositionOutOfRange {
+                user_id: parent_id,
+                position: position as usize,
+                child_count: self.width as usize,
+            });
+        }
+
+        let parent_idx = self.arena.resolve(parent_id)?;
+
+        let parent_slots = self
+            .slots
+            .get(&parent_idx)
+            .expect("slots entry missing for node -- arena and slots map out of sync");
+        if parent_slots[position as usize].is_some() {
+            return Err(TreeError::PositionOccupied {
+                user_id: parent_id,
+                position: position as usize,
+            });
+        }
+
+        // Find user in holding tank.
+        let tank_pos = self
+            .holding_tank
+            .iter()
+            .position(|entry| entry.user_id == user_id)
+            .ok_or(TreeError::UserNotInHoldingTank(user_id))?;
+        let entry = self.holding_tank.remove(tank_pos);
+
+        // Resolve sponsor: restore if the sponsor still exists (not tombstoned).
+        let sponsor_idx = entry.sponsor.and_then(|idx| {
+            let node = &self.arena.nodes[idx.0];
+            if node.user_id != uuid::Uuid::nil() && self.arena.index.contains_key(&node.user_id) {
+                Some(idx)
+            } else {
+                None
+            }
+        });
+
+        let parent_depth = self.arena.node(parent_idx).depth;
+
+        let node = Node {
+            user_id,
+            parent: Some(parent_idx),
+            children: Vec::new(),
+            sponsor: sponsor_idx,
+            sponsored: Vec::new(),
+            depth: parent_depth + 1,
+            enrolled_at: entry.enrolled_at,
+        };
+
+        let idx = self.arena.alloc_slot(node);
+        self.arena.index.insert(user_id, idx);
+        self.slots.insert(idx, vec![None; self.width as usize]);
+
+        let parent_slots = self
+            .slots
+            .get_mut(&parent_idx)
+            .expect("slots entry missing for node -- arena and slots map out of sync");
+        parent_slots[position as usize] = Some(idx);
+        self.rebuild_children(parent_idx);
+
+        // Re-add to sponsor's sponsored list.
+        if let Some(sponsor_idx) = sponsor_idx {
+            self.arena.node_mut(sponsor_idx).sponsored.push(idx);
+        }
+
+        Ok(())
+    }
+
     /// Detaches a leaf node from the tree and tombstones it.
     fn detach_and_tombstone(
         &mut self,
@@ -1606,5 +1688,122 @@ mod tests {
         let root_idx = tree.arena.resolve(test_uuid(1)).unwrap();
         let slots = tree.slots.get(&root_idx).unwrap();
         assert!(slots[1].is_none(), "slot 1 should be cleared after removal");
+    }
+
+    // --- place_from_tank tests ---
+
+    #[test]
+    fn place_from_tank_succeeds() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+
+        tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
+            .unwrap();
+        tree.place_from_tank(test_uuid(2), test_uuid(1), 0).unwrap();
+
+        assert!(tree.contains(test_uuid(2)));
+        let parent = tree.get_parent(test_uuid(2)).unwrap().unwrap();
+        assert_eq!(parent.user_id, test_uuid(1));
+    }
+
+    #[test]
+    fn place_from_tank_removes_from_tank() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+
+        tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
+            .unwrap();
+        assert_eq!(tree.get_holding_tank(None).len(), 1);
+
+        tree.place_from_tank(test_uuid(2), test_uuid(1), 0).unwrap();
+        assert!(tree.get_holding_tank(None).is_empty());
+    }
+
+    #[test]
+    fn place_from_tank_restores_sponsor() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+
+        tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
+            .unwrap();
+        tree.place_from_tank(test_uuid(2), test_uuid(1), 0).unwrap();
+
+        let sponsor = tree.get_sponsor(test_uuid(2)).unwrap().unwrap();
+        assert_eq!(sponsor.user_id, test_uuid(1));
+
+        // Sponsor's sponsored list should contain the re-placed node.
+        let sponsored = tree.get_sponsored(test_uuid(1)).unwrap();
+        assert!(sponsored.iter().any(|n| n.user_id == test_uuid(2)));
+    }
+
+    #[test]
+    fn place_from_tank_preserves_enrolled_at() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+
+        tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
+            .unwrap();
+        tree.place_from_tank(test_uuid(2), test_uuid(1), 0).unwrap();
+
+        let node = tree.get_node(test_uuid(2)).unwrap();
+        assert_eq!(node.enrolled_at, 2000);
+    }
+
+    #[test]
+    fn place_from_tank_user_not_in_tank_fails() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+
+        let result = tree.place_from_tank(test_uuid(99), test_uuid(1), 0);
+        assert!(matches!(result, Err(TreeError::UserNotInHoldingTank(_))));
+    }
+
+    #[test]
+    fn place_from_tank_position_occupied_fails() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
+
+        // Remove node3 to holding tank.
+        tree.remove_node(test_uuid(3), PruningMode::HoldingTank)
+            .unwrap();
+
+        // Try to place at slot 0 where node2 is.
+        let result = tree.place_from_tank(test_uuid(3), test_uuid(1), 0);
+        assert!(matches!(result, Err(TreeError::PositionOccupied { .. })));
+    }
+
+    #[test]
+    fn place_from_tank_invalid_position_fails() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+
+        tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
+            .unwrap();
+
+        let result = tree.place_from_tank(test_uuid(2), test_uuid(1), 3);
+        assert!(matches!(
+            result,
+            Err(TreeError::PositionOutOfRange { position: 3, .. })
+        ));
+    }
+
+    #[test]
+    fn place_from_tank_parent_not_found_fails() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+
+        tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
+            .unwrap();
+
+        let result = tree.place_from_tank(test_uuid(2), test_uuid(99), 0);
+        assert!(matches!(result, Err(TreeError::UserNotFound(_))));
     }
 }

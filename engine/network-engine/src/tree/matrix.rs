@@ -44,7 +44,6 @@ pub struct MatrixTree {
     #[allow(dead_code)] // Used by later tasks in this feature branch.
     spillover: SpilloverDirection,
     slots: HashMap<NodeIndex, Vec<Option<NodeIndex>>>,
-    #[allow(dead_code)] // Used by later tasks in this feature branch.
     holding_tank: Vec<HoldingTankEntry>,
 }
 
@@ -422,13 +421,131 @@ impl MatrixTree {
     }
 
     /// HoldingTank removal: moves the node and its entire subtree
-    /// to the holding tank.
+    /// to the holding tank for manual re-placement.
     fn remove_to_holding_tank(
         &mut self,
-        _idx: NodeIndex,
-        _user_id: Uuid,
+        idx: NodeIndex,
+        user_id: Uuid,
     ) -> Result<RemovalResult, TreeError> {
-        todo!()
+        let parent_idx = self
+            .arena
+            .node(idx)
+            .parent
+            .expect("remove_to_holding_tank called on root -- should be caught earlier");
+
+        let parent_slot_pos = self.find_slot_position(parent_idx, idx);
+
+        // BFS collect all descendants of the removed node.
+        let mut descendants = Vec::new();
+        let mut queue = VecDeque::new();
+        for &child_idx in &self.arena.node(idx).children {
+            queue.push_back(child_idx);
+        }
+        while let Some(current) = queue.pop_front() {
+            descendants.push(current);
+            for &child_idx in &self.arena.node(current).children {
+                queue.push_back(child_idx);
+            }
+        }
+
+        // Collect IDs that are being removed (the node + all descendants).
+        let mut removed_set: Vec<NodeIndex> = vec![idx];
+        removed_set.extend(&descendants);
+
+        let mut moved_to_tank = Vec::new();
+
+        // Process descendants first (leaves before parents doesn't matter
+        // since we're doing bulk removal, but we process in BFS order).
+        for &desc_idx in &descendants {
+            let desc = self.arena.node(desc_idx);
+            let desc_user_id = desc.user_id;
+            let desc_sponsor = desc.sponsor;
+            let desc_enrolled_at = desc.enrolled_at;
+
+            // Add to holding tank.
+            self.holding_tank.push(HoldingTankEntry {
+                user_id: desc_user_id,
+                sponsor: desc_sponsor,
+                enrolled_at: desc_enrolled_at,
+            });
+            moved_to_tank.push(desc_user_id);
+
+            // Remove from sponsor's sponsored list if the sponsor is
+            // not also being removed.
+            if let Some(sponsor_idx) = desc_sponsor {
+                if !removed_set.contains(&sponsor_idx) {
+                    self.arena
+                        .node_mut(sponsor_idx)
+                        .sponsored
+                        .retain(|&s| s != desc_idx);
+                }
+            }
+
+            // Clean up.
+            self.slots.remove(&desc_idx);
+            self.arena.index.remove(&desc_user_id);
+            self.arena.tombstone(desc_idx);
+        }
+
+        // Now handle the removed node itself.
+        let node = self.arena.node(idx);
+        let node_sponsor = node.sponsor;
+        let node_enrolled_at = node.enrolled_at;
+
+        self.holding_tank.push(HoldingTankEntry {
+            user_id,
+            sponsor: node_sponsor,
+            enrolled_at: node_enrolled_at,
+        });
+        moved_to_tank.push(user_id);
+
+        // Remove from sponsor's sponsored list.
+        if let Some(sponsor_idx) = node_sponsor {
+            if !removed_set.contains(&sponsor_idx) {
+                self.arena
+                    .node_mut(sponsor_idx)
+                    .sponsored
+                    .retain(|&s| s != idx);
+            }
+        }
+
+        // Detach from parent.
+        let parent_slots = self
+            .slots
+            .get_mut(&parent_idx)
+            .expect("slots entry missing for node -- arena and slots map out of sync");
+        parent_slots[parent_slot_pos] = None;
+        self.rebuild_children(parent_idx);
+
+        // Tombstone.
+        self.slots.remove(&idx);
+        self.arena.index.remove(&user_id);
+        self.arena.tombstone(idx);
+
+        Ok(RemovalResult {
+            removed: user_id,
+            promoted: None,
+            repositioned: Vec::new(),
+            moved_to_tank,
+        })
+    }
+
+    /// Returns entries from the holding tank.
+    ///
+    /// When `sponsor_id` is Some, returns only entries whose sponsor
+    /// matches (by resolving the sponsor_id to a NodeIndex). When None,
+    /// returns all entries.
+    pub fn get_holding_tank(&self, sponsor_id: Option<Uuid>) -> Vec<&HoldingTankEntry> {
+        match sponsor_id {
+            Some(id) => {
+                let sponsor_idx = self.arena.resolve(id).ok();
+                self.holding_tank
+                    .iter()
+                    .filter(|entry| entry.sponsor == sponsor_idx)
+                    .collect()
+            }
+            None => self.holding_tank.iter().collect(),
+        }
     }
 
     /// Detaches a leaf node from the tree and tombstones it.
@@ -1389,5 +1506,105 @@ mod tests {
             !root_sponsored.iter().any(|n| n.user_id == test_uuid(2)),
             "removed node should be cleared from sponsor's sponsored list"
         );
+    }
+
+    // --- Pruning (HoldingTank) tests ---
+
+    #[test]
+    fn remove_leaf_to_holding_tank() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+
+        let result = tree
+            .remove_node(test_uuid(2), PruningMode::HoldingTank)
+            .unwrap();
+        assert_eq!(result.removed, test_uuid(2));
+        assert!(result.promoted.is_none());
+        assert!(result.repositioned.is_empty());
+        assert!(result.moved_to_tank.contains(&test_uuid(2)));
+        assert!(!tree.contains(test_uuid(2)));
+
+        let tank = tree.get_holding_tank(None);
+        assert_eq!(tank.len(), 1);
+        assert_eq!(tank[0].user_id, test_uuid(2));
+    }
+
+    #[test]
+    fn remove_node_moves_subtree_to_holding_tank() {
+        // root -> [node2]
+        // node2 -> [node3, node4]
+        // node3 -> [node5]
+        // Remove node2: nodes 2, 3, 4, 5 all go to tank.
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
+            .unwrap();
+        tree.add_node_at(test_uuid(3), test_uuid(2), test_uuid(2), 0, 3000)
+            .unwrap();
+        tree.add_node_at(test_uuid(4), test_uuid(2), test_uuid(2), 1, 4000)
+            .unwrap();
+        tree.add_node_at(test_uuid(5), test_uuid(3), test_uuid(3), 0, 5000)
+            .unwrap();
+
+        let result = tree
+            .remove_node(test_uuid(2), PruningMode::HoldingTank)
+            .unwrap();
+
+        // 3 descendants + the node itself = 4 moved to tank.
+        assert_eq!(result.moved_to_tank.len(), 4);
+        assert!(!tree.contains(test_uuid(2)));
+        assert!(!tree.contains(test_uuid(3)));
+        assert!(!tree.contains(test_uuid(4)));
+        assert!(!tree.contains(test_uuid(5)));
+
+        let tank = tree.get_holding_tank(None);
+        assert_eq!(tank.len(), 4);
+    }
+
+    #[test]
+    fn holding_tank_preserves_sponsor() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), 3000).unwrap();
+
+        // node3's sponsor is node2.
+        let sponsor_idx_before = tree.arena.resolve(test_uuid(2)).unwrap();
+
+        tree.remove_node(test_uuid(3), PruningMode::HoldingTank)
+            .unwrap();
+
+        let tank = tree.get_holding_tank(None);
+        assert_eq!(tank.len(), 1);
+        assert_eq!(tank[0].sponsor, Some(sponsor_idx_before));
+    }
+
+    #[test]
+    fn holding_tank_preserves_enrolled_at() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+
+        tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
+            .unwrap();
+
+        let tank = tree.get_holding_tank(None);
+        assert_eq!(tank[0].enrolled_at, 2000);
+    }
+
+    #[test]
+    fn remove_to_tank_clears_parent_slot() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 1, 2000)
+            .unwrap();
+
+        tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
+            .unwrap();
+
+        let root_idx = tree.arena.resolve(test_uuid(1)).unwrap();
+        let slots = tree.slots.get(&root_idx).unwrap();
+        assert!(slots[1].is_none(), "slot 1 should be cleared after removal");
     }
 }

@@ -5,6 +5,7 @@ use super::arena::Arena;
 use super::error::TreeError;
 use super::node::{Node, NodeIndex};
 use crate::config::matrix::SpilloverDirection;
+use crate::types::TreePosition;
 
 /// Entry in the holding tank for nodes removed via HoldingTank pruning
 /// or awaiting manual placement.
@@ -37,12 +38,13 @@ pub enum PruningMode {
 /// Placement is either automatic (breadth-first spillover within
 /// the sponsor's subtree) or explicit (admin override).
 /// Depth is unlimited. Width is immutable after construction.
-#[allow(dead_code)] // Fields used by later implementation tasks.
 pub struct MatrixTree {
     arena: Arena,
     width: u8,
+    #[allow(dead_code)] // Used by later tasks in this feature branch.
     spillover: SpilloverDirection,
     slots: HashMap<NodeIndex, Vec<Option<NodeIndex>>>,
+    #[allow(dead_code)] // Used by later tasks in this feature branch.
     holding_tank: Vec<HoldingTankEntry>,
 }
 
@@ -255,6 +257,252 @@ impl MatrixTree {
 
         self.arena.node_mut(sponsor_idx).sponsored.push(idx);
         Ok(idx)
+    }
+
+    // --- Delegated traversals ---
+
+    pub fn get_parent(&self, user_id: Uuid) -> Result<Option<&Node>, TreeError> {
+        let idx = self.arena.resolve(user_id)?;
+        match self.arena.node(idx).parent {
+            Some(parent_idx) => Ok(Some(self.arena.node(parent_idx))),
+            None => Ok(None),
+        }
+    }
+
+    pub fn get_children(&self, user_id: Uuid) -> Result<Vec<&Node>, TreeError> {
+        let idx = self.arena.resolve(user_id)?;
+        let children = self
+            .arena
+            .node(idx)
+            .children
+            .iter()
+            .map(|&child_idx| self.arena.node(child_idx))
+            .collect();
+        Ok(children)
+    }
+
+    /// Walks upward from a node toward the root.
+    ///
+    /// Returns ancestors in order from immediate parent to root.
+    /// The starting node is not included in the result.
+    ///
+    /// Depth 0 means walk all the way to root. Any other value limits
+    /// the walk to that many levels up.
+    pub fn get_upline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
+        let idx = self.arena.resolve(user_id)?;
+        Ok(self.arena.walk_upline(idx, depth))
+    }
+
+    /// Walks downward from a node, returning descendants in BFS order.
+    ///
+    /// The starting node is not included in the result.
+    ///
+    /// Depth 0 means walk all levels. Any other value limits the walk
+    /// to that many levels below the starting node.
+    pub fn get_downline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
+        let idx = self.arena.resolve(user_id)?;
+        Ok(self.arena.bfs_downline(idx, depth))
+    }
+
+    /// Computes a full position snapshot for a user.
+    ///
+    /// For matrix trees, position is determined by the parent's slots
+    /// map rather than children Vec index. Downline counts are keyed
+    /// by slot position (0..width-1).
+    pub fn get_position(&self, user_id: Uuid) -> Result<TreePosition, TreeError> {
+        let idx = self.arena.resolve(user_id)?;
+        let mut pos = self.arena.get_position(idx);
+
+        // For matrix, position is determined by slots, not children Vec index.
+        if let Some(parent_idx) = self.arena.node(idx).parent {
+            let parent_slots = self
+                .slots
+                .get(&parent_idx)
+                .expect("slots entry missing for node -- arena and slots map out of sync");
+            for (slot_pos, slot) in parent_slots.iter().enumerate() {
+                if *slot == Some(idx) {
+                    pos.position = slot_pos;
+                    break;
+                }
+            }
+        }
+
+        // Override downline_counts to use slot positions, not children Vec indices.
+        let node_slots = self
+            .slots
+            .get(&idx)
+            .expect("slots entry missing for node -- arena and slots map out of sync");
+        pos.downline_counts.clear();
+        for (slot_pos, slot) in node_slots.iter().enumerate() {
+            let count = match slot {
+                Some(child_idx) => self.arena.count_subtree(*child_idx),
+                None => 0,
+            };
+            pos.downline_counts.insert(slot_pos, count);
+        }
+
+        Ok(pos)
+    }
+
+    /// Returns the subtree under a matrix slot position.
+    ///
+    /// Results include the child at the given position and all of
+    /// its descendants, in BFS order.
+    pub fn get_branch(&self, user_id: Uuid, position: usize) -> Result<Vec<&Node>, TreeError> {
+        let idx = self.arena.resolve(user_id)?;
+        let node_slots = self
+            .slots
+            .get(&idx)
+            .expect("slots entry missing for node -- arena and slots map out of sync");
+
+        if position >= self.width as usize {
+            return Err(TreeError::PositionOutOfRange {
+                user_id,
+                position,
+                child_count: self.width as usize,
+            });
+        }
+
+        match node_slots[position] {
+            Some(child_idx) => {
+                let mut result = Vec::new();
+                let mut queue = VecDeque::new();
+                queue.push_back(child_idx);
+                while let Some(current) = queue.pop_front() {
+                    result.push(self.arena.node(current));
+                    for &c in &self.arena.node(current).children {
+                        queue.push_back(c);
+                    }
+                }
+                Ok(result)
+            }
+            None => Ok(vec![]),
+        }
+    }
+
+    /// Counts descendants without allocating a result Vec.
+    ///
+    /// Depth 0 means count all descendants. Any other value limits
+    /// the count to that many levels below.
+    pub fn count_downline(&self, user_id: Uuid, depth: u32) -> Result<usize, TreeError> {
+        let idx = self.arena.resolve(user_id)?;
+        Ok(self.arena.count_downline(idx, depth))
+    }
+
+    /// Counts nodes in the subtree under a matrix slot position.
+    ///
+    /// The count includes the child at the given position and all of
+    /// its descendants.
+    pub fn count_branch(&self, user_id: Uuid, position: usize) -> Result<usize, TreeError> {
+        let idx = self.arena.resolve(user_id)?;
+        let node_slots = self
+            .slots
+            .get(&idx)
+            .expect("slots entry missing for node -- arena and slots map out of sync");
+
+        if position >= self.width as usize {
+            return Err(TreeError::PositionOutOfRange {
+                user_id,
+                position,
+                child_count: self.width as usize,
+            });
+        }
+
+        match node_slots[position] {
+            Some(child_idx) => Ok(1 + self.arena.count_subtree(child_idx)),
+            None => Ok(0),
+        }
+    }
+
+    /// Checks whether `user_id` is a descendant of `ancestor_id`.
+    ///
+    /// A node is not considered a descendant of itself.
+    pub fn is_descendant_of(&self, user_id: Uuid, ancestor_id: Uuid) -> Result<bool, TreeError> {
+        let ancestor_idx = self.arena.resolve(ancestor_id)?;
+        if user_id == ancestor_id {
+            return Ok(false);
+        }
+        let user_idx = self.arena.resolve(user_id)?;
+        Ok(self.arena.is_descendant_of(user_idx, ancestor_idx))
+    }
+
+    // --- Sponsor traversals ---
+
+    /// Returns the sponsor of a node, or None if the node has no sponsor (root).
+    pub fn get_sponsor(&self, user_id: Uuid) -> Result<Option<&Node>, TreeError> {
+        let idx = self.arena.resolve(user_id)?;
+        Ok(self.arena.get_sponsor(idx))
+    }
+
+    /// Walks upward following sponsor links.
+    ///
+    /// Returns sponsors in order from immediate sponsor to the root sponsor.
+    /// The starting node is not included.
+    ///
+    /// Depth 0 means walk all the way. Any other value limits the walk.
+    pub fn get_sponsor_upline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
+        let idx = self.arena.resolve(user_id)?;
+        Ok(self.arena.walk_sponsor_upline(idx, depth))
+    }
+
+    /// Returns the direct recruits of a node.
+    pub fn get_sponsored(&self, user_id: Uuid) -> Result<Vec<&Node>, TreeError> {
+        let idx = self.arena.resolve(user_id)?;
+        Ok(self.arena.get_sponsored(idx))
+    }
+
+    /// Returns true if the tree contains a node with this user_id.
+    pub fn contains(&self, user_id: Uuid) -> bool {
+        self.arena.index.contains_key(&user_id)
+    }
+
+    /// Provides read access to the arena for commission calculators
+    /// and other crate-internal consumers.
+    #[allow(dead_code)] // Used by later tasks in this feature branch.
+    pub(crate) fn arena(&self) -> &Arena {
+        &self.arena
+    }
+}
+
+impl crate::tree::navigator::TreeNavigator for MatrixTree {
+    fn contains(&self, user_id: Uuid) -> bool {
+        self.contains(user_id)
+    }
+    fn get_parent(&self, user_id: Uuid) -> Result<Option<&Node>, TreeError> {
+        self.get_parent(user_id)
+    }
+    fn get_children(&self, user_id: Uuid) -> Result<Vec<&Node>, TreeError> {
+        self.get_children(user_id)
+    }
+    fn get_upline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
+        self.get_upline(user_id, depth)
+    }
+    fn get_downline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
+        self.get_downline(user_id, depth)
+    }
+    fn get_position(&self, user_id: Uuid) -> Result<TreePosition, TreeError> {
+        self.get_position(user_id)
+    }
+    fn get_branch(&self, user_id: Uuid, position: usize) -> Result<Vec<&Node>, TreeError> {
+        self.get_branch(user_id, position)
+    }
+    fn count_downline(&self, user_id: Uuid, depth: u32) -> Result<usize, TreeError> {
+        self.count_downline(user_id, depth)
+    }
+    fn count_branch(&self, user_id: Uuid, position: usize) -> Result<usize, TreeError> {
+        self.count_branch(user_id, position)
+    }
+    fn is_descendant_of(&self, user_id: Uuid, ancestor_id: Uuid) -> Result<bool, TreeError> {
+        self.is_descendant_of(user_id, ancestor_id)
+    }
+    fn get_sponsor(&self, user_id: Uuid) -> Result<Option<&Node>, TreeError> {
+        self.get_sponsor(user_id)
+    }
+    fn get_sponsor_upline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
+        self.get_sponsor_upline(user_id, depth)
+    }
+    fn get_sponsored(&self, user_id: Uuid) -> Result<Vec<&Node>, TreeError> {
+        self.get_sponsored(user_id)
     }
 }
 
@@ -594,5 +842,189 @@ mod tests {
         );
         // Specifically, BFS order means node4 slot 0 first.
         assert_eq!(parent_id, test_uuid(4));
+    }
+
+    // --- TreeNavigator / query tests ---
+
+    #[test]
+    fn get_position_root() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        let pos = tree.get_position(test_uuid(1)).unwrap();
+        assert_eq!(pos.position, 0);
+        assert!(pos.parent_user_id.is_none());
+        assert_eq!(pos.depth, 0);
+        assert_eq!(pos.child_count, 0);
+    }
+
+    #[test]
+    fn get_position_reports_correct_slot() {
+        // Place node at slot 2 of a 3-wide tree.
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 2, 2000)
+            .unwrap();
+        let pos = tree.get_position(test_uuid(2)).unwrap();
+        assert_eq!(pos.position, 2);
+    }
+
+    #[test]
+    fn get_position_downline_counts_by_slot() {
+        // 3-wide tree: root has 3 children, grandchild under slot 0.
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
+            .unwrap();
+        tree.add_node_at(test_uuid(3), test_uuid(1), test_uuid(1), 1, 3000)
+            .unwrap();
+        tree.add_node_at(test_uuid(4), test_uuid(1), test_uuid(1), 2, 4000)
+            .unwrap();
+        // Grandchild under node2 (slot 0 of root).
+        tree.add_node_at(test_uuid(5), test_uuid(2), test_uuid(2), 0, 5000)
+            .unwrap();
+
+        let pos = tree.get_position(test_uuid(1)).unwrap();
+        // Slot 0 has node2 which has 1 descendant (node5).
+        assert_eq!(pos.downline_counts[&0], 1);
+        // Slots 1 and 2 have nodes with no descendants.
+        assert_eq!(pos.downline_counts[&1], 0);
+        assert_eq!(pos.downline_counts[&2], 0);
+    }
+
+    #[test]
+    fn get_position_open_slots_on_leaf() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
+            .unwrap();
+
+        // Node 2 is a leaf. All 3 slot downline counts should be 0.
+        let pos = tree.get_position(test_uuid(2)).unwrap();
+        assert_eq!(pos.downline_counts.len(), 3);
+        assert_eq!(pos.downline_counts[&0], 0);
+        assert_eq!(pos.downline_counts[&1], 0);
+        assert_eq!(pos.downline_counts[&2], 0);
+    }
+
+    #[test]
+    fn get_branch_returns_subtree() {
+        // 3-wide tree: root -> [node2, node3, node4], node2 -> [node5]
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
+            .unwrap();
+        tree.add_node_at(test_uuid(3), test_uuid(1), test_uuid(1), 1, 3000)
+            .unwrap();
+        tree.add_node_at(test_uuid(4), test_uuid(1), test_uuid(1), 2, 4000)
+            .unwrap();
+        tree.add_node_at(test_uuid(5), test_uuid(2), test_uuid(2), 0, 5000)
+            .unwrap();
+
+        let branch = tree.get_branch(test_uuid(1), 0).unwrap();
+        let ids: Vec<Uuid> = branch.iter().map(|n| n.user_id).collect();
+        assert!(ids.contains(&test_uuid(2)));
+        assert!(ids.contains(&test_uuid(5)));
+        assert!(!ids.contains(&test_uuid(3)));
+        assert!(!ids.contains(&test_uuid(4)));
+    }
+
+    #[test]
+    fn get_branch_empty_slot_returns_empty() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
+            .unwrap();
+        // Slot 1 is empty.
+        let branch = tree.get_branch(test_uuid(1), 1).unwrap();
+        assert!(branch.is_empty());
+    }
+
+    #[test]
+    fn get_branch_invalid_position_fails() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        let result = tree.get_branch(test_uuid(1), 3);
+        assert!(matches!(
+            result,
+            Err(TreeError::PositionOutOfRange { position: 3, .. })
+        ));
+    }
+
+    #[test]
+    fn count_branch_matches_get_branch_len() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
+            .unwrap();
+        tree.add_node_at(test_uuid(3), test_uuid(2), test_uuid(2), 1, 3000)
+            .unwrap();
+
+        let branch = tree.get_branch(test_uuid(1), 0).unwrap();
+        let count = tree.count_branch(test_uuid(1), 0).unwrap();
+        assert_eq!(count, branch.len());
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn contains_works() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        assert!(tree.contains(test_uuid(1)));
+        assert!(!tree.contains(test_uuid(99)));
+    }
+
+    #[test]
+    fn get_upline_and_downline() {
+        // Chain: root -> node2 -> node3
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), 3000).unwrap();
+
+        let upline = tree.get_upline(test_uuid(3), 0).unwrap();
+        assert_eq!(upline.len(), 2);
+        assert_eq!(upline[0].user_id, test_uuid(2));
+        assert_eq!(upline[1].user_id, test_uuid(1));
+
+        let downline = tree.get_downline(test_uuid(1), 0).unwrap();
+        assert_eq!(downline.len(), 2);
+        assert_eq!(downline[0].user_id, test_uuid(2));
+        assert_eq!(downline[1].user_id, test_uuid(3));
+    }
+
+    #[test]
+    fn is_descendant_of_works() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), 3000).unwrap();
+
+        assert!(tree.is_descendant_of(test_uuid(3), test_uuid(1)).unwrap());
+        assert!(!tree.is_descendant_of(test_uuid(1), test_uuid(3)).unwrap());
+        assert!(!tree.is_descendant_of(test_uuid(1), test_uuid(1)).unwrap());
+    }
+
+    #[test]
+    fn sponsor_traversals() {
+        // root sponsors node2, node2 sponsors node3 (placed under root via spillover).
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), 3000).unwrap();
+
+        // get_sponsor
+        let sponsor = tree.get_sponsor(test_uuid(3)).unwrap().unwrap();
+        assert_eq!(sponsor.user_id, test_uuid(2));
+
+        // get_sponsored
+        let sponsored = tree.get_sponsored(test_uuid(1)).unwrap();
+        assert_eq!(sponsored.len(), 1);
+        assert_eq!(sponsored[0].user_id, test_uuid(2));
+
+        // get_sponsor_upline
+        let upline = tree.get_sponsor_upline(test_uuid(3), 0).unwrap();
+        assert_eq!(upline.len(), 2);
+        assert_eq!(upline[0].user_id, test_uuid(2));
+        assert_eq!(upline[1].user_id, test_uuid(1));
     }
 }

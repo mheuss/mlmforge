@@ -95,7 +95,6 @@ impl MatrixTree {
     ///
     /// Children appear in slot order: 0 first, then 1, etc.
     /// Only occupied slots are included.
-    #[allow(dead_code)] // Used by later implementation tasks (add_node, remove_node).
     fn rebuild_children(&mut self, parent_idx: NodeIndex) {
         let slots = self
             .slots
@@ -103,6 +102,76 @@ impl MatrixTree {
             .expect("slots entry missing for node -- arena and slots map out of sync");
         let children: Vec<NodeIndex> = slots.iter().flatten().copied().collect();
         self.arena.node_mut(parent_idx).children = children;
+    }
+
+    /// Adds a node at an explicit parent and position.
+    ///
+    /// This is the admin-controlled placement path. The caller
+    /// specifies exactly which parent slot receives the new node.
+    /// Position must be in 0..width-1, and the slot must be empty.
+    pub fn add_node_at(
+        &mut self,
+        user_id: Uuid,
+        sponsor_id: Uuid,
+        parent_id: Uuid,
+        position: u8,
+        enrolled_at: i64,
+    ) -> Result<NodeIndex, TreeError> {
+        if self.arena.root.is_none() {
+            return Err(TreeError::TreeEmpty);
+        }
+        if position >= self.width {
+            return Err(TreeError::PositionOutOfRange {
+                user_id: parent_id,
+                position: position as usize,
+                child_count: self.width as usize,
+            });
+        }
+        if self.arena.index.contains_key(&user_id) {
+            return Err(TreeError::UserAlreadyExists(user_id));
+        }
+        let parent_idx = self.arena.resolve(parent_id)?;
+        let sponsor_idx = self.arena.resolve(sponsor_id).map_err(|e| match e {
+            TreeError::UserNotFound(id) => TreeError::SponsorNotFound(id),
+            other => other,
+        })?;
+
+        let parent_slots = self
+            .slots
+            .get(&parent_idx)
+            .expect("slots entry missing for node -- arena and slots map out of sync");
+        if parent_slots[position as usize].is_some() {
+            return Err(TreeError::PositionOccupied {
+                user_id: parent_id,
+                position: position as usize,
+            });
+        }
+
+        let parent_depth = self.arena.node(parent_idx).depth;
+
+        let node = Node {
+            user_id,
+            parent: Some(parent_idx),
+            children: Vec::new(),
+            sponsor: Some(sponsor_idx),
+            sponsored: Vec::new(),
+            depth: parent_depth + 1,
+            enrolled_at,
+        };
+
+        let idx = self.arena.alloc_slot(node);
+        self.arena.index.insert(user_id, idx);
+        self.slots.insert(idx, vec![None; self.width as usize]);
+
+        let parent_slots = self
+            .slots
+            .get_mut(&parent_idx)
+            .expect("slots entry missing for node -- arena and slots map out of sync");
+        parent_slots[position as usize] = Some(idx);
+        self.rebuild_children(parent_idx);
+
+        self.arena.node_mut(sponsor_idx).sponsored.push(idx);
+        Ok(idx)
     }
 }
 
@@ -167,5 +236,130 @@ mod tests {
         tree.set_root(test_uuid(1), 1000).unwrap();
         let node = tree.get_node(test_uuid(1)).unwrap();
         assert_eq!(node.depth, 0);
+    }
+
+    // --- add_node_at tests ---
+
+    #[test]
+    fn add_node_at_explicit_position() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        let result = tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn add_node_at_sets_depth() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
+            .unwrap();
+        tree.add_node_at(test_uuid(3), test_uuid(1), test_uuid(2), 1, 3000)
+            .unwrap();
+        let node2 = tree.get_node(test_uuid(2)).unwrap();
+        assert_eq!(node2.depth, 1);
+        let node3 = tree.get_node(test_uuid(3)).unwrap();
+        assert_eq!(node3.depth, 2);
+    }
+
+    #[test]
+    fn add_node_at_sets_sponsor() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        // Add node2 under root, sponsored by root.
+        tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
+            .unwrap();
+        // Add node3 under root, but sponsored by node2 (sponsor != parent).
+        tree.add_node_at(test_uuid(3), test_uuid(2), test_uuid(1), 1, 3000)
+            .unwrap();
+        let node3 = tree.get_node(test_uuid(3)).unwrap();
+        let sponsor_idx = node3.sponsor.unwrap();
+        let sponsor = tree.arena.node(sponsor_idx);
+        assert_eq!(sponsor.user_id, test_uuid(2));
+    }
+
+    #[test]
+    fn add_node_at_position_occupied_fails() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
+            .unwrap();
+        let result = tree.add_node_at(test_uuid(3), test_uuid(1), test_uuid(1), 0, 3000);
+        assert!(matches!(result, Err(TreeError::PositionOccupied { .. })));
+    }
+
+    #[test]
+    fn add_node_at_invalid_position_fails() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        let result = tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 3, 2000);
+        assert!(matches!(
+            result,
+            Err(TreeError::PositionOutOfRange { position: 3, .. })
+        ));
+    }
+
+    #[test]
+    fn add_node_at_duplicate_user_fails() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
+            .unwrap();
+        let result = tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 1, 3000);
+        assert!(matches!(result, Err(TreeError::UserAlreadyExists(_))));
+    }
+
+    #[test]
+    fn add_node_at_parent_not_found_fails() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        let result = tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(99), 0, 2000);
+        assert!(matches!(result, Err(TreeError::UserNotFound(_))));
+    }
+
+    #[test]
+    fn add_node_at_sponsor_not_found_fails() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        let result = tree.add_node_at(test_uuid(2), test_uuid(99), test_uuid(1), 0, 2000);
+        assert!(matches!(result, Err(TreeError::SponsorNotFound(_))));
+    }
+
+    #[test]
+    fn add_node_at_on_empty_tree_fails() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        let result = tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000);
+        assert!(matches!(result, Err(TreeError::TreeEmpty)));
+    }
+
+    #[test]
+    fn add_node_at_fills_correct_slot() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 2, 2000)
+            .unwrap();
+        let root_idx = tree.arena.resolve(test_uuid(1)).unwrap();
+        let child_idx = tree.arena.resolve(test_uuid(2)).unwrap();
+        let slots = tree.slots.get(&root_idx).unwrap();
+        assert!(slots[0].is_none());
+        assert!(slots[1].is_none());
+        assert_eq!(slots[2], Some(child_idx));
+    }
+
+    #[test]
+    fn add_node_at_all_positions() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
+            .unwrap();
+        tree.add_node_at(test_uuid(3), test_uuid(1), test_uuid(1), 1, 3000)
+            .unwrap();
+        tree.add_node_at(test_uuid(4), test_uuid(1), test_uuid(1), 2, 4000)
+            .unwrap();
+        let root_idx = tree.arena.resolve(test_uuid(1)).unwrap();
+        let slots = tree.slots.get(&root_idx).unwrap();
+        assert!(slots.iter().all(|s| s.is_some()));
+        let children = tree.arena.node(root_idx).children.len();
+        assert_eq!(children, 3);
     }
 }

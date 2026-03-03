@@ -33,4 +33,22 @@ pub enum TreeError {
 
     #[error("position {position} already occupied for user {user_id}")]
     PositionOccupied { user_id: Uuid, position: usize },
+
+    #[error("invalid matrix width {0}: must be at least 2")]
+    InvalidWidth(u8),
+
+    #[error("tree has no root node")]
+    TreeEmpty,
+
+    #[error("cannot remove root node")]
+    CannotRemoveRoot,
+
+    #[error("sponsor {0} not found in tree")]
+    SponsorNotFound(Uuid),
+
+    #[error("user {0} not in holding tank")]
+    UserNotInHoldingTank(Uuid),
+
+    #[error("spillover direction not supported")]
+    UnsupportedSpillover,
 }

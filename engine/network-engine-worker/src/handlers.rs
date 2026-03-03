@@ -93,6 +93,12 @@ fn tree_error_to_response(request_id: &str, e: TreeError) -> Response {
         TreeError::UserAlreadyExists(_) => "USER_ALREADY_EXISTS",
         TreeError::RootAlreadyExists => "ROOT_ALREADY_EXISTS",
         TreeError::HasChildren(_, _) => "HAS_CHILDREN",
+        TreeError::InvalidWidth(_) => "INVALID_WIDTH",
+        TreeError::TreeEmpty => "TREE_EMPTY",
+        TreeError::CannotRemoveRoot => "CANNOT_REMOVE_ROOT",
+        TreeError::SponsorNotFound(_) => "SPONSOR_NOT_FOUND",
+        TreeError::UserNotInHoldingTank(_) => "USER_NOT_IN_HOLDING_TANK",
+        TreeError::UnsupportedSpillover => "UNSUPPORTED_SPILLOVER",
     };
     Response::error(request_id.to_string(), code, e.to_string())
 }

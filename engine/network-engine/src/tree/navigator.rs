@@ -69,4 +69,23 @@ mod tests {
         let parent = nav.get_parent(test_uuid(2)).unwrap();
         assert_eq!(parent.unwrap().user_id, test_uuid(1));
     }
+
+    #[test]
+    fn matrix_tree_is_object_safe() {
+        use crate::config::matrix::SpilloverDirection;
+        use crate::tree::matrix::MatrixTree;
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 1).unwrap();
+
+        let nav: Box<dyn TreeNavigator> = Box::new(tree);
+        assert!(nav.contains(test_uuid(1)));
+        assert!(nav.contains(test_uuid(2)));
+        assert!(!nav.contains(test_uuid(99)));
+
+        let children = nav.get_children(test_uuid(1)).unwrap();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].user_id, test_uuid(2));
+    }
 }

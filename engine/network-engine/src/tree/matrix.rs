@@ -946,6 +946,19 @@ impl crate::tree::navigator::TreeNavigator for MatrixTree {
     }
 }
 
+impl std::fmt::Debug for MatrixTree {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let root_id = self.arena.root.map(|idx| self.arena.node(idx).user_id);
+        write!(
+            f,
+            "MatrixTree {{ nodes: {}, root: {:?}, width: {} }}",
+            self.arena.node_count(),
+            root_id,
+            self.width
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1805,5 +1818,19 @@ mod tests {
 
         let result = tree.place_from_tank(test_uuid(2), test_uuid(99), 0);
         assert!(matches!(result, Err(TreeError::UserNotFound(_))));
+    }
+
+    // --- Debug tests ---
+
+    #[test]
+    fn debug_shows_node_count_and_width() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+
+        let debug = format!("{:?}", tree);
+        assert!(debug.contains("nodes: 2"));
+        assert!(debug.contains("width: 3"));
+        assert!(debug.contains("MatrixTree"));
     }
 }

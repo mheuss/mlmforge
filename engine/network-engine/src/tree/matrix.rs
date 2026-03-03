@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use uuid::Uuid;
 
 use super::arena::Arena;
@@ -168,6 +168,89 @@ impl MatrixTree {
             .get_mut(&parent_idx)
             .expect("slots entry missing for node -- arena and slots map out of sync");
         parent_slots[position as usize] = Some(idx);
+        self.rebuild_children(parent_idx);
+
+        self.arena.node_mut(sponsor_idx).sponsored.push(idx);
+        Ok(idx)
+    }
+
+    /// Finds the first open slot via BFS within a subtree.
+    ///
+    /// Starts at `start_idx` and scans each node's slots left to right.
+    /// The first None slot wins. If all slots are full, enqueue children
+    /// in position order and continue to the next level.
+    fn find_spillover_slot(&self, start_idx: NodeIndex) -> Option<(NodeIndex, usize)> {
+        let mut queue = VecDeque::new();
+        queue.push_back(start_idx);
+
+        while let Some(current) = queue.pop_front() {
+            let slots = self
+                .slots
+                .get(&current)
+                .expect("slots entry missing for node -- arena and slots map out of sync");
+
+            for (pos, slot) in slots.iter().enumerate() {
+                if slot.is_none() {
+                    return Some((current, pos));
+                }
+            }
+
+            // All slots full. Enqueue children in position order.
+            for child_idx in slots.iter().flatten() {
+                queue.push_back(*child_idx);
+            }
+        }
+
+        None
+    }
+
+    /// Adds a node with automatic BFS spillover placement.
+    ///
+    /// The node is placed in the first available slot within the
+    /// sponsor's subtree, found by breadth-first search. The sponsor
+    /// becomes the node's sponsor, but the placement parent may differ.
+    pub fn add_node(
+        &mut self,
+        user_id: Uuid,
+        sponsor_id: Uuid,
+        enrolled_at: i64,
+    ) -> Result<NodeIndex, TreeError> {
+        if self.arena.root.is_none() {
+            return Err(TreeError::TreeEmpty);
+        }
+        if self.arena.index.contains_key(&user_id) {
+            return Err(TreeError::UserAlreadyExists(user_id));
+        }
+        let sponsor_idx = self.arena.resolve(sponsor_id).map_err(|e| match e {
+            TreeError::UserNotFound(id) => TreeError::SponsorNotFound(id),
+            other => other,
+        })?;
+
+        let (parent_idx, position) = self
+            .find_spillover_slot(sponsor_idx)
+            .expect("BFS spillover found no open slot -- tree is full or corrupt");
+
+        let parent_depth = self.arena.node(parent_idx).depth;
+
+        let node = Node {
+            user_id,
+            parent: Some(parent_idx),
+            children: Vec::new(),
+            sponsor: Some(sponsor_idx),
+            sponsored: Vec::new(),
+            depth: parent_depth + 1,
+            enrolled_at,
+        };
+
+        let idx = self.arena.alloc_slot(node);
+        self.arena.index.insert(user_id, idx);
+        self.slots.insert(idx, vec![None; self.width as usize]);
+
+        let parent_slots = self
+            .slots
+            .get_mut(&parent_idx)
+            .expect("slots entry missing for node -- arena and slots map out of sync");
+        parent_slots[position] = Some(idx);
         self.rebuild_children(parent_idx);
 
         self.arena.node_mut(sponsor_idx).sponsored.push(idx);
@@ -361,5 +444,155 @@ mod tests {
         assert!(slots.iter().all(|s| s.is_some()));
         let children = tree.arena.node(root_idx).children.len();
         assert_eq!(children, 3);
+    }
+
+    // --- add_node (BFS spillover) tests ---
+
+    #[test]
+    fn add_node_places_in_sponsors_first_slot() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        let node2 = tree.get_node(test_uuid(2)).unwrap();
+        assert_eq!(node2.depth, 1);
+        let parent_idx = node2.parent.unwrap();
+        assert_eq!(tree.arena.node(parent_idx).user_id, test_uuid(1));
+    }
+
+    #[test]
+    fn add_node_fills_sponsor_slots_left_to_right() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
+        tree.add_node(test_uuid(4), test_uuid(1), 4000).unwrap();
+
+        let root_idx = tree.arena.resolve(test_uuid(1)).unwrap();
+        let slots = tree.slots.get(&root_idx).unwrap();
+        let child_ids: Vec<Uuid> = slots
+            .iter()
+            .map(|s| tree.arena.node(s.unwrap()).user_id)
+            .collect();
+        assert_eq!(child_ids, vec![test_uuid(2), test_uuid(3), test_uuid(4)]);
+    }
+
+    #[test]
+    fn add_node_spills_to_next_level() {
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        // Fill root's 2 slots.
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
+        // Next node should spill to node2's first slot.
+        tree.add_node(test_uuid(4), test_uuid(1), 4000).unwrap();
+        let node4 = tree.get_node(test_uuid(4)).unwrap();
+        let parent_idx = node4.parent.unwrap();
+        assert_eq!(tree.arena.node(parent_idx).user_id, test_uuid(2));
+        assert_eq!(node4.depth, 2);
+    }
+
+    #[test]
+    fn add_node_bfs_order_fills_level_before_going_deeper() {
+        // 2-wide tree, 7 nodes total (root + 6).
+        // Expected BFS layout:
+        //        1 (root)
+        //       / \
+        //      2   3
+        //     / \ / \
+        //    4  5 6  7
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        for i in 2..=7u8 {
+            tree.add_node(test_uuid(i), test_uuid(1), i as i64 * 1000)
+                .unwrap();
+        }
+
+        // Verify parents: 2 and 3 under root.
+        let node2 = tree.get_node(test_uuid(2)).unwrap();
+        assert_eq!(tree.arena.node(node2.parent.unwrap()).user_id, test_uuid(1));
+        let node3 = tree.get_node(test_uuid(3)).unwrap();
+        assert_eq!(tree.arena.node(node3.parent.unwrap()).user_id, test_uuid(1));
+
+        // Verify 4 and 5 under node2.
+        let node4 = tree.get_node(test_uuid(4)).unwrap();
+        assert_eq!(tree.arena.node(node4.parent.unwrap()).user_id, test_uuid(2));
+        let node5 = tree.get_node(test_uuid(5)).unwrap();
+        assert_eq!(tree.arena.node(node5.parent.unwrap()).user_id, test_uuid(2));
+
+        // Verify 6 and 7 under node3.
+        let node6 = tree.get_node(test_uuid(6)).unwrap();
+        assert_eq!(tree.arena.node(node6.parent.unwrap()).user_id, test_uuid(3));
+        let node7 = tree.get_node(test_uuid(7)).unwrap();
+        assert_eq!(tree.arena.node(node7.parent.unwrap()).user_id, test_uuid(3));
+    }
+
+    #[test]
+    fn add_node_sponsor_differs_from_placement_parent() {
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        // Fill root's slots with nodes sponsored by root.
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
+        // Next node: sponsored by root, but placed under node2 (spillover).
+        tree.add_node(test_uuid(4), test_uuid(1), 4000).unwrap();
+        let node4 = tree.get_node(test_uuid(4)).unwrap();
+        let parent = tree.arena.node(node4.parent.unwrap());
+        let sponsor = tree.arena.node(node4.sponsor.unwrap());
+        assert_eq!(parent.user_id, test_uuid(2), "placement parent is node2");
+        assert_eq!(sponsor.user_id, test_uuid(1), "sponsor is still root");
+    }
+
+    #[test]
+    fn add_node_on_empty_tree_fails() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        let result = tree.add_node(test_uuid(2), test_uuid(1), 2000);
+        assert!(matches!(result, Err(TreeError::TreeEmpty)));
+    }
+
+    #[test]
+    fn add_node_sponsor_not_found_fails() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        let result = tree.add_node(test_uuid(2), test_uuid(99), 2000);
+        assert!(matches!(result, Err(TreeError::SponsorNotFound(_))));
+    }
+
+    #[test]
+    fn add_node_duplicate_user_fails() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        let result = tree.add_node(test_uuid(2), test_uuid(1), 3000);
+        assert!(matches!(result, Err(TreeError::UserAlreadyExists(_))));
+    }
+
+    #[test]
+    fn add_node_spillover_stays_in_sponsor_subtree() {
+        // Build a 2-wide tree with two branches.
+        // Sponsor node2 directly. Spillover must stay in node2's subtree.
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        // Place node2 and node3 under root.
+        tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
+            .unwrap();
+        tree.add_node_at(test_uuid(3), test_uuid(1), test_uuid(1), 1, 3000)
+            .unwrap();
+        // Fill node2's slots.
+        tree.add_node_at(test_uuid(4), test_uuid(2), test_uuid(2), 0, 4000)
+            .unwrap();
+        tree.add_node_at(test_uuid(5), test_uuid(2), test_uuid(2), 1, 5000)
+            .unwrap();
+        // Now add via spillover under node2. It must go to node4 or node5,
+        // not node3 (which is outside node2's subtree).
+        tree.add_node(test_uuid(6), test_uuid(2), 6000).unwrap();
+        let node6 = tree.get_node(test_uuid(6)).unwrap();
+        let parent_id = tree.arena.node(node6.parent.unwrap()).user_id;
+        assert!(
+            parent_id == test_uuid(4) || parent_id == test_uuid(5),
+            "spillover should place within sponsor's subtree, got parent {:?}",
+            parent_id
+        );
+        // Specifically, BFS order means node4 slot 0 first.
+        assert_eq!(parent_id, test_uuid(4));
     }
 }

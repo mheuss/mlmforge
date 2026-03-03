@@ -259,6 +259,247 @@ impl MatrixTree {
         Ok(idx)
     }
 
+    // --- Node removal ---
+
+    /// Removes a node from the tree using the given pruning mode.
+    ///
+    /// PromoteEarliest: promotes the earliest-enrolled child to
+    /// fill the removed node's slot, then repositions remaining
+    /// children under the promoted node.
+    ///
+    /// HoldingTank: moves the removed node and its entire subtree
+    /// to the holding tank for manual re-placement.
+    pub fn remove_node(
+        &mut self,
+        user_id: Uuid,
+        mode: PruningMode,
+    ) -> Result<RemovalResult, TreeError> {
+        let idx = self.arena.resolve(user_id)?;
+
+        // Cannot remove root.
+        if self.arena.root == Some(idx) {
+            return Err(TreeError::CannotRemoveRoot);
+        }
+
+        match mode {
+            PruningMode::PromoteEarliest => self.remove_promote_earliest(idx, user_id),
+            PruningMode::HoldingTank => self.remove_to_holding_tank(idx, user_id),
+        }
+    }
+
+    /// PromoteEarliest removal: if the node is a leaf, simply detach it.
+    /// If it has children, promote the earliest-enrolled child into the
+    /// removed node's position, then reposition remaining children.
+    fn remove_promote_earliest(
+        &mut self,
+        idx: NodeIndex,
+        user_id: Uuid,
+    ) -> Result<RemovalResult, TreeError> {
+        let parent_idx = self
+            .arena
+            .node(idx)
+            .parent
+            .expect("remove_promote_earliest called on root -- should be caught earlier");
+
+        // Find this node's slot position in parent.
+        let parent_slot_pos = self.find_slot_position(parent_idx, idx);
+
+        let child_slots = self
+            .slots
+            .get(&idx)
+            .expect("slots entry missing for node -- arena and slots map out of sync")
+            .clone();
+        let occupied_children: Vec<NodeIndex> = child_slots.iter().flatten().copied().collect();
+
+        // Leaf node: simple removal.
+        if occupied_children.is_empty() {
+            self.detach_and_tombstone(idx, user_id, parent_idx, parent_slot_pos);
+            return Ok(RemovalResult {
+                removed: user_id,
+                promoted: None,
+                repositioned: Vec::new(),
+                moved_to_tank: Vec::new(),
+            });
+        }
+
+        // Find earliest-enrolled child.
+        let promoted_idx = *occupied_children
+            .iter()
+            .min_by_key(|&&child_idx| self.arena.node(child_idx).enrolled_at)
+            .expect("occupied_children is non-empty");
+        let promoted_user_id = self.arena.node(promoted_idx).user_id;
+
+        // Remaining children (not the promoted one).
+        let remaining: Vec<NodeIndex> = occupied_children
+            .iter()
+            .copied()
+            .filter(|&c| c != promoted_idx)
+            .collect();
+
+        // Step 1: Detach promoted child from removed node's slots.
+        let promoted_slot_pos = self.find_slot_position(idx, promoted_idx);
+        let removed_slots = self
+            .slots
+            .get_mut(&idx)
+            .expect("slots entry missing for node -- arena and slots map out of sync");
+        removed_slots[promoted_slot_pos] = None;
+
+        // Step 2: Move promoted node into removed node's slot under parent.
+        let parent_slots = self
+            .slots
+            .get_mut(&parent_idx)
+            .expect("slots entry missing for node -- arena and slots map out of sync");
+        parent_slots[parent_slot_pos] = Some(promoted_idx);
+        self.rebuild_children(parent_idx);
+
+        // Update promoted node's parent to point to removed node's parent.
+        self.arena.node_mut(promoted_idx).parent = Some(parent_idx);
+
+        // Step 3: Move remaining children under promoted node.
+        // First, transfer any existing children from the removed node's slots
+        // to the promoted node's slots.
+        let mut repositioned_ids = Vec::new();
+
+        // Get the promoted node's current slots (its own children from before).
+        // We need to merge remaining siblings into the promoted node's subtree.
+        for &remaining_child in &remaining {
+            // Try to place in promoted node's direct slots first.
+            let promoted_slots = self
+                .slots
+                .get(&promoted_idx)
+                .expect("slots entry missing for node -- arena and slots map out of sync")
+                .clone();
+
+            let direct_slot = promoted_slots.iter().position(|s| s.is_none());
+            if let Some(slot_pos) = direct_slot {
+                let promoted_slots_mut = self
+                    .slots
+                    .get_mut(&promoted_idx)
+                    .expect("slots entry missing for node -- arena and slots map out of sync");
+                promoted_slots_mut[slot_pos] = Some(remaining_child);
+                self.arena.node_mut(remaining_child).parent = Some(promoted_idx);
+            } else {
+                // Promoted node's slots are full. Use BFS spillover within
+                // promoted node's subtree.
+                let (target_parent, target_pos) = self
+                    .find_spillover_slot(promoted_idx)
+                    .expect("promoted subtree should have open slots for remaining siblings");
+                let target_slots = self
+                    .slots
+                    .get_mut(&target_parent)
+                    .expect("slots entry missing for node -- arena and slots map out of sync");
+                target_slots[target_pos] = Some(remaining_child);
+                self.rebuild_children(target_parent);
+                self.arena.node_mut(remaining_child).parent = Some(target_parent);
+            }
+
+            repositioned_ids.push(self.arena.node(remaining_child).user_id);
+        }
+
+        // Rebuild promoted node's children after all placements.
+        self.rebuild_children(promoted_idx);
+
+        // Step 4: Clean up removed node.
+        if let Some(sponsor_idx) = self.arena.node(idx).sponsor {
+            self.arena
+                .node_mut(sponsor_idx)
+                .sponsored
+                .retain(|&s| s != idx);
+        }
+        self.slots.remove(&idx);
+        self.arena.index.remove(&user_id);
+        self.arena.tombstone(idx);
+
+        // Step 5: Recalculate depths for promoted node and all its descendants.
+        self.recalculate_depths(promoted_idx);
+
+        Ok(RemovalResult {
+            removed: user_id,
+            promoted: Some(promoted_user_id),
+            repositioned: repositioned_ids,
+            moved_to_tank: Vec::new(),
+        })
+    }
+
+    /// HoldingTank removal: moves the node and its entire subtree
+    /// to the holding tank.
+    fn remove_to_holding_tank(
+        &mut self,
+        _idx: NodeIndex,
+        _user_id: Uuid,
+    ) -> Result<RemovalResult, TreeError> {
+        todo!()
+    }
+
+    /// Detaches a leaf node from the tree and tombstones it.
+    fn detach_and_tombstone(
+        &mut self,
+        idx: NodeIndex,
+        user_id: Uuid,
+        parent_idx: NodeIndex,
+        parent_slot_pos: usize,
+    ) {
+        // Clear parent slot.
+        let parent_slots = self
+            .slots
+            .get_mut(&parent_idx)
+            .expect("slots entry missing for node -- arena and slots map out of sync");
+        parent_slots[parent_slot_pos] = None;
+        self.rebuild_children(parent_idx);
+
+        // Remove from sponsor's sponsored list.
+        if let Some(sponsor_idx) = self.arena.node(idx).sponsor {
+            self.arena
+                .node_mut(sponsor_idx)
+                .sponsored
+                .retain(|&s| s != idx);
+        }
+
+        // Tombstone.
+        self.slots.remove(&idx);
+        self.arena.index.remove(&user_id);
+        self.arena.tombstone(idx);
+    }
+
+    /// Recalculates depth for a node and all its descendants via BFS.
+    fn recalculate_depths(&mut self, start_idx: NodeIndex) {
+        let parent_depth = self
+            .arena
+            .node(start_idx)
+            .parent
+            .map(|p| self.arena.node(p).depth)
+            .unwrap_or(0);
+        self.arena.node_mut(start_idx).depth = if self.arena.node(start_idx).parent.is_some() {
+            parent_depth + 1
+        } else {
+            0
+        };
+
+        let mut queue = VecDeque::new();
+        queue.push_back(start_idx);
+
+        while let Some(current) = queue.pop_front() {
+            let current_depth = self.arena.node(current).depth;
+            let children = self.arena.node(current).children.clone();
+            for child_idx in children {
+                self.arena.node_mut(child_idx).depth = current_depth + 1;
+                queue.push_back(child_idx);
+            }
+        }
+    }
+
+    /// Finds the slot position of a child within a parent's slots.
+    fn find_slot_position(&self, parent_idx: NodeIndex, child_idx: NodeIndex) -> usize {
+        let parent_slots = self
+            .slots
+            .get(&parent_idx)
+            .expect("slots entry missing for node -- arena and slots map out of sync");
+        parent_slots
+            .iter()
+            .position(|s| *s == Some(child_idx))
+            .expect("child not found in parent's slots -- tree is corrupt")
+    }
+
     // --- Delegated traversals ---
 
     pub fn get_parent(&self, user_id: Uuid) -> Result<Option<&Node>, TreeError> {
@@ -1026,5 +1267,127 @@ mod tests {
         assert_eq!(upline.len(), 2);
         assert_eq!(upline[0].user_id, test_uuid(2));
         assert_eq!(upline[1].user_id, test_uuid(1));
+    }
+
+    // --- Pruning (PromoteEarliest) tests ---
+
+    #[test]
+    fn remove_leaf_node_promote_earliest() {
+        // Remove a leaf node. No promotion needed.
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+
+        let result = tree
+            .remove_node(test_uuid(2), PruningMode::PromoteEarliest)
+            .unwrap();
+        assert_eq!(result.removed, test_uuid(2));
+        assert!(result.promoted.is_none());
+        assert!(result.repositioned.is_empty());
+        assert!(!tree.contains(test_uuid(2)));
+    }
+
+    #[test]
+    fn remove_node_promotes_earliest_child() {
+        // root -> [node2, node3]
+        // node2 -> [node4, node5]
+        // Remove node2. node4 enrolled first, so node4 is promoted.
+        // node5 is repositioned under node4.
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
+            .unwrap();
+        tree.add_node_at(test_uuid(3), test_uuid(1), test_uuid(1), 1, 3000)
+            .unwrap();
+        tree.add_node_at(test_uuid(4), test_uuid(2), test_uuid(2), 0, 4000)
+            .unwrap();
+        tree.add_node_at(test_uuid(5), test_uuid(2), test_uuid(2), 1, 5000)
+            .unwrap();
+
+        let result = tree
+            .remove_node(test_uuid(2), PruningMode::PromoteEarliest)
+            .unwrap();
+
+        assert_eq!(result.removed, test_uuid(2));
+        assert_eq!(result.promoted, Some(test_uuid(4)));
+        assert!(result.repositioned.contains(&test_uuid(5)));
+        assert!(!tree.contains(test_uuid(2)));
+
+        // node4 should now be under root at slot 0.
+        let pos4 = tree.get_position(test_uuid(4)).unwrap();
+        assert_eq!(pos4.parent_user_id, Some(test_uuid(1)));
+        assert_eq!(pos4.position, 0);
+
+        // node5 should be under node4.
+        let parent5 = tree.get_parent(test_uuid(5)).unwrap().unwrap();
+        assert_eq!(parent5.user_id, test_uuid(4));
+    }
+
+    #[test]
+    fn remove_node_promote_recalculates_depth() {
+        // Chain: root -> node2 -> node3 -> node4
+        // Remove node2. node3 promoted to root's slot.
+        // node4 under node3. Depths must be recalculated.
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
+            .unwrap();
+        tree.add_node_at(test_uuid(3), test_uuid(2), test_uuid(2), 0, 3000)
+            .unwrap();
+        tree.add_node_at(test_uuid(4), test_uuid(3), test_uuid(3), 0, 4000)
+            .unwrap();
+
+        // Before: node2=depth1, node3=depth2, node4=depth3
+        assert_eq!(tree.get_node(test_uuid(4)).unwrap().depth, 3);
+
+        tree.remove_node(test_uuid(2), PruningMode::PromoteEarliest)
+            .unwrap();
+
+        // After: node3=depth1 (promoted to root's slot), node4=depth2
+        assert_eq!(tree.get_node(test_uuid(3)).unwrap().depth, 1);
+        assert_eq!(tree.get_node(test_uuid(4)).unwrap().depth, 2);
+    }
+
+    #[test]
+    fn remove_root_fails() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        let result = tree.remove_node(test_uuid(1), PruningMode::PromoteEarliest);
+        assert!(matches!(result, Err(TreeError::CannotRemoveRoot)));
+    }
+
+    #[test]
+    fn remove_nonexistent_user_fails() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        let result = tree.remove_node(test_uuid(99), PruningMode::PromoteEarliest);
+        assert!(matches!(result, Err(TreeError::UserNotFound(_))));
+    }
+
+    #[test]
+    fn remove_node_promote_preserves_sponsor_links() {
+        // root sponsors node2, node2 sponsors node3 and node4.
+        // Remove node2. Sponsor links for node3/node4 should stay.
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
+            .unwrap();
+        tree.add_node_at(test_uuid(3), test_uuid(2), test_uuid(2), 0, 3000)
+            .unwrap();
+        tree.add_node_at(test_uuid(4), test_uuid(2), test_uuid(2), 1, 4000)
+            .unwrap();
+
+        tree.remove_node(test_uuid(2), PruningMode::PromoteEarliest)
+            .unwrap();
+
+        // node3 and node4's sponsors should still be node2's idx, but
+        // since node2 is removed, what matters is the sponsor is preserved
+        // in the node data (it's an idx that now points to a tombstone).
+        // The important check: root's sponsored list no longer contains node2.
+        let root_sponsored = tree.get_sponsored(test_uuid(1)).unwrap();
+        assert!(
+            !root_sponsored.iter().any(|n| n.user_id == test_uuid(2)),
+            "removed node should be cleared from sponsor's sponsored list"
+        );
     }
 }

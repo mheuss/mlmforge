@@ -3,9 +3,11 @@ use std::collections::HashMap;
 use network_engine::commission::{
     DistributorSnapshot, LegVolumes, VolumeSource, calculate_binary_pairing, calculate_unilevel,
 };
+use network_engine::config::matrix::SpilloverDirection;
 use network_engine::config::{BinaryStructureConfig, CompensationPlan, StructureConfig};
 use network_engine::tree::binary::BinaryTree;
 use network_engine::tree::error::TreeError;
+use network_engine::tree::matrix::MatrixTree;
 use network_engine::tree::node::Node;
 use network_engine::tree::unilevel::UnilevelTree;
 use uuid::Uuid;
@@ -153,6 +155,47 @@ pub fn handle_create_tree(state: &mut WorkerState, request: &Request) -> Respons
     let instance = match tree_type {
         "unilevel" => TreeInstance::Unilevel(UnilevelTree::new()),
         "binary" => TreeInstance::Binary(BinaryTree::new()),
+        "matrix" => {
+            let width = match params
+                .get("width")
+                .and_then(|v| v.as_u64())
+                .and_then(|v| u8::try_from(v).ok())
+            {
+                Some(w) => w,
+                None => {
+                    return Response::error(
+                        request.id.clone(),
+                        "MISSING_PARAM",
+                        "missing or invalid width (must be integer >= 2)",
+                    );
+                }
+            };
+            let spillover_str = match params.get("spillover").and_then(|v| v.as_str()) {
+                Some(s) => s,
+                None => {
+                    return Response::error(
+                        request.id.clone(),
+                        "MISSING_PARAM",
+                        "missing spillover (must be \"breadth_first\")",
+                    );
+                }
+            };
+            let spillover = match spillover_str {
+                "breadth_first" => SpilloverDirection::BreadthFirst,
+                "depth_first" => SpilloverDirection::DepthFirst,
+                other => {
+                    return Response::error(
+                        request.id.clone(),
+                        "INVALID_PARAMS",
+                        format!("unknown spillover: {}", other),
+                    );
+                }
+            };
+            match MatrixTree::new(width, spillover) {
+                Ok(t) => TreeInstance::Matrix(t),
+                Err(e) => return tree_error_to_response(&request.id, e),
+            }
+        }
         _ => {
             return Response::error(
                 request.id.clone(),
@@ -203,6 +246,10 @@ pub fn handle_add_root(state: &mut WorkerState, request: &Request) -> Response {
             Err(e) => tree_error_to_response(&request.id, e),
         },
         TreeInstance::Binary(t) => match t.add_root(user_id, enrolled_at) {
+            Ok(_) => Response::success(request.id.clone(), serde_json::json!({"added": true})),
+            Err(e) => tree_error_to_response(&request.id, e),
+        },
+        TreeInstance::Matrix(t) => match t.set_root(user_id, enrolled_at) {
             Ok(_) => Response::success(request.id.clone(), serde_json::json!({"added": true})),
             Err(e) => tree_error_to_response(&request.id, e),
         },
@@ -278,6 +325,11 @@ pub fn handle_add_node(state: &mut WorkerState, request: &Request) -> Response {
                 Err(e) => tree_error_to_response(&request.id, e),
             }
         }
+        TreeInstance::Matrix(_) => Response::error(
+            request.id.clone(),
+            "NOT_IMPLEMENTED",
+            "matrix add_node not yet implemented",
+        ),
     }
 }
 
@@ -309,6 +361,11 @@ pub fn handle_remove_node(state: &mut WorkerState, request: &Request) -> Respons
             Ok(()) => Response::success(request.id.clone(), serde_json::json!({"removed": true})),
             Err(e) => tree_error_to_response(&request.id, e),
         },
+        TreeInstance::Matrix(_) => Response::error(
+            request.id.clone(),
+            "NOT_IMPLEMENTED",
+            "matrix remove_node not yet implemented",
+        ),
     }
 }
 
@@ -637,6 +694,16 @@ pub fn handle_calculate_unilevel(state: &WorkerState, request: &Request) -> Resp
                 ),
             );
         }
+        TreeInstance::Matrix(_) => {
+            return Response::error(
+                request.id.clone(),
+                "INVALID_PARAMS",
+                format!(
+                    "tree '{}' is matrix, but calculate_unilevel requires a unilevel tree",
+                    params.structure_name
+                ),
+            );
+        }
     };
 
     // Find the matching unilevel structure config by name.
@@ -719,6 +786,16 @@ pub fn handle_calculate_binary_pairing(state: &WorkerState, request: &Request) -
                 "INVALID_PARAMS",
                 format!(
                     "tree '{}' is unilevel, but calculate_binary_pairing requires a binary tree",
+                    params.structure_name
+                ),
+            );
+        }
+        TreeInstance::Matrix(_) => {
+            return Response::error(
+                request.id.clone(),
+                "INVALID_PARAMS",
+                format!(
+                    "tree '{}' is matrix, but calculate_binary_pairing requires a binary tree",
                     params.structure_name
                 ),
             );

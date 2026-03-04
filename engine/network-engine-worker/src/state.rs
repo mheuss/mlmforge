@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use network_engine::config::CompensationPlan;
 use network_engine::tree::binary::BinaryTree;
+use network_engine::tree::matrix::MatrixTree;
 use network_engine::tree::navigator::TreeNavigator;
 use network_engine::tree::unilevel::UnilevelTree;
 
@@ -13,6 +14,7 @@ use network_engine::tree::unilevel::UnilevelTree;
 pub enum TreeInstance {
     Unilevel(UnilevelTree),
     Binary(BinaryTree),
+    Matrix(MatrixTree),
 }
 
 impl TreeInstance {
@@ -22,6 +24,7 @@ impl TreeInstance {
         match self {
             TreeInstance::Unilevel(t) => t,
             TreeInstance::Binary(t) => t,
+            TreeInstance::Matrix(t) => t,
         }
     }
 }

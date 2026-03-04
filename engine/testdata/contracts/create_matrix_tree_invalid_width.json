@@ -1,0 +1,18 @@
+{
+    "description": "create_tree rejects matrix with width < 2",
+    "request": {
+        "id": "cm-2",
+        "op": "create_tree",
+        "params": {
+            "structure": "test",
+            "tree_type": "matrix",
+            "width": 1,
+            "spillover": "breadth_first"
+        }
+    },
+    "expected_response": {
+        "id": "cm-2",
+        "ok": false,
+        "error": {"code": "INVALID_WIDTH"}
+    }
+}

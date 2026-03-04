@@ -1,0 +1,18 @@
+{
+    "description": "create_tree creates a matrix tree with width and spillover",
+    "request": {
+        "id": "cm-1",
+        "op": "create_tree",
+        "params": {
+            "structure": "test",
+            "tree_type": "matrix",
+            "width": 3,
+            "spillover": "breadth_first"
+        }
+    },
+    "expected_response": {
+        "id": "cm-1",
+        "ok": true,
+        "result": {"created": true}
+    }
+}

@@ -193,6 +193,86 @@ proptest! {
         }
     }
 
+    /// Property: Upline completeness.
+    /// get_upline(node, 0) returns exactly `depth` nodes and ends at root.
+    #[test]
+    fn upline_completeness(
+        node_count in 1usize..50,
+        width in 2u8..6,
+        sponsor_hints in proptest::collection::vec(0usize..100, 50),
+    ) {
+        let tree = build_random_matrix_tree(width, node_count, sponsor_hints);
+        for i in 0..node_count {
+            let uid = uuid_from_index(i);
+            let pos = tree.get_position(uid).unwrap();
+            let upline = tree.get_upline(uid, 0).unwrap();
+
+            prop_assert_eq!(
+                upline.len(),
+                pos.depth as usize,
+                "Upline length should equal depth for node {}",
+                uid
+            );
+
+            if !upline.is_empty() {
+                let last = upline.last().unwrap();
+                let last_parent = tree.get_parent(last.user_id).unwrap();
+                prop_assert!(
+                    last_parent.is_none(),
+                    "Last node in upline should be root"
+                );
+            }
+        }
+    }
+
+    /// Property: Downline containment.
+    /// Every node in get_downline(user, 0) satisfies is_descendant_of.
+    #[test]
+    fn downline_containment(
+        node_count in 1usize..30,
+        width in 2u8..6,
+        sponsor_hints in proptest::collection::vec(0usize..100, 50),
+    ) {
+        let tree = build_random_matrix_tree(width, node_count, sponsor_hints);
+        for i in 0..node_count {
+            let uid = uuid_from_index(i);
+            let downline = tree.get_downline(uid, 0).unwrap();
+
+            for desc in &downline {
+                prop_assert!(
+                    tree.is_descendant_of(desc.user_id, uid).unwrap(),
+                    "{} in downline of {} but is_descendant_of returned false",
+                    desc.user_id,
+                    uid
+                );
+            }
+        }
+    }
+
+    /// Property: Count matches collection.
+    /// count_downline equals get_downline.len() for any depth.
+    #[test]
+    fn count_matches_collection(
+        node_count in 1usize..50,
+        width in 2u8..6,
+        sponsor_hints in proptest::collection::vec(0usize..100, 50),
+        depth in 0u32..10,
+    ) {
+        let tree = build_random_matrix_tree(width, node_count, sponsor_hints);
+        for i in 0..node_count {
+            let uid = uuid_from_index(i);
+            let count = tree.count_downline(uid, depth).unwrap();
+            let downline = tree.get_downline(uid, depth).unwrap();
+            prop_assert_eq!(
+                count,
+                downline.len(),
+                "count_downline != get_downline.len() for node {} at depth {}",
+                uid,
+                depth
+            );
+        }
+    }
+
     #[test]
     fn holding_tank_and_arena_are_disjoint(
         node_count in 5usize..30,

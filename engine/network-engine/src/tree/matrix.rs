@@ -41,7 +41,7 @@ pub enum PruningMode {
 pub struct MatrixTree {
     arena: Arena,
     width: u8,
-    #[allow(dead_code)] // Used by later tasks in this feature branch.
+    #[allow(dead_code)] // Validated at construction; read when depth-first spillover is added.
     spillover: SpilloverDirection,
     slots: HashMap<NodeIndex, Vec<Option<NodeIndex>>>,
     holding_tank: Vec<HoldingTankEntry>,
@@ -51,6 +51,9 @@ impl MatrixTree {
     pub fn new(width: u8, spillover: SpilloverDirection) -> Result<Self, TreeError> {
         if width < 2 {
             return Err(TreeError::InvalidWidth(width));
+        }
+        if matches!(spillover, SpilloverDirection::DepthFirst) {
+            return Err(TreeError::UnsupportedSpillover);
         }
         Ok(Self {
             arena: Arena::new(),
@@ -981,6 +984,12 @@ mod tests {
     fn new_with_width_two_succeeds() {
         let tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst);
         assert!(tree.is_ok());
+    }
+
+    #[test]
+    fn new_with_depth_first_spillover_fails() {
+        let tree = MatrixTree::new(3, SpilloverDirection::DepthFirst);
+        assert!(matches!(tree, Err(TreeError::UnsupportedSpillover)));
     }
 
     #[test]

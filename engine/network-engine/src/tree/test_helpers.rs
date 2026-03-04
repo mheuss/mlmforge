@@ -2,7 +2,7 @@ use uuid::Uuid;
 
 /// Deterministic UUID for tests. The byte value makes failures readable.
 pub fn test_uuid(n: u8) -> Uuid {
-    Uuid::from_bytes([n, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    Uuid::from_bytes([n, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF])
 }
 
 /// Deterministic UUID from a u16. Needed for tests with more than

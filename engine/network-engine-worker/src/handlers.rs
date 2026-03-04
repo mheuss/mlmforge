@@ -7,7 +7,7 @@ use network_engine::config::matrix::SpilloverDirection;
 use network_engine::config::{BinaryStructureConfig, CompensationPlan, StructureConfig};
 use network_engine::tree::binary::BinaryTree;
 use network_engine::tree::error::TreeError;
-use network_engine::tree::matrix::MatrixTree;
+use network_engine::tree::matrix::{MatrixTree, PruningMode};
 use network_engine::tree::node::Node;
 use network_engine::tree::unilevel::UnilevelTree;
 use uuid::Uuid;
@@ -336,6 +336,77 @@ pub fn handle_add_node(state: &mut WorkerState, request: &Request) -> Response {
     }
 }
 
+pub fn handle_add_node_at(state: &mut WorkerState, request: &Request) -> Response {
+    let params = match parse_params(request) {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    let structure = match extract_structure_name(&params, &request.id) {
+        Ok(s) => s,
+        Err(resp) => return resp,
+    };
+    let user_id = match parse_uuid(&params, "user_id", &request.id) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    let sponsor_id = match parse_uuid(&params, "sponsor_id", &request.id) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    let parent_id = match parse_uuid(&params, "parent_id", &request.id) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    let position = match params.get("position").and_then(|v| v.as_u64()) {
+        Some(p) => match u8::try_from(p) {
+            Ok(pos) => pos,
+            Err(_) => {
+                return Response::error(
+                    request.id.clone(),
+                    "INVALID_PARAMS",
+                    format!("position {} exceeds u8 limit", p),
+                );
+            }
+        },
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "MISSING_PARAM",
+                "missing position (required for add_node_at)",
+            );
+        }
+    };
+    let enrolled_at = match params.get("enrolled_at").and_then(|v| v.as_i64()) {
+        Some(ts) => ts,
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "MISSING_PARAM",
+                "missing or invalid enrolled_at (must be integer)",
+            );
+        }
+    };
+
+    let tree = match get_tree_mut(state, &structure, &request.id) {
+        Ok(t) => t,
+        Err(resp) => return resp,
+    };
+
+    match tree {
+        TreeInstance::Matrix(t) => {
+            match t.add_node_at(user_id, sponsor_id, parent_id, position, enrolled_at) {
+                Ok(_) => Response::success(request.id.clone(), serde_json::json!({"added": true})),
+                Err(e) => tree_error_to_response(&request.id, e),
+            }
+        }
+        _ => Response::error(
+            request.id.clone(),
+            "INVALID_PARAMS",
+            "add_node_at is only supported for matrix trees",
+        ),
+    }
+}
+
 pub fn handle_remove_node(state: &mut WorkerState, request: &Request) -> Response {
     let params = match parse_params(request) {
         Ok(p) => p,
@@ -364,11 +435,31 @@ pub fn handle_remove_node(state: &mut WorkerState, request: &Request) -> Respons
             Ok(()) => Response::success(request.id.clone(), serde_json::json!({"removed": true})),
             Err(e) => tree_error_to_response(&request.id, e),
         },
-        TreeInstance::Matrix(_) => Response::error(
-            request.id.clone(),
-            "NOT_IMPLEMENTED",
-            "matrix remove_node not yet implemented",
-        ),
+        TreeInstance::Matrix(t) => {
+            let mode = match parse_pruning_mode(&params, &request.id) {
+                Ok(m) => m,
+                Err(resp) => return resp,
+            };
+            match t.remove_node(user_id, mode) {
+                Ok(result) => {
+                    let promoted = result.promoted.map(|u| u.to_string());
+                    let repositioned: Vec<String> =
+                        result.repositioned.iter().map(|u| u.to_string()).collect();
+                    let moved_to_tank: Vec<String> =
+                        result.moved_to_tank.iter().map(|u| u.to_string()).collect();
+                    Response::success(
+                        request.id.clone(),
+                        serde_json::json!({
+                            "removed": result.removed.to_string(),
+                            "promoted": promoted,
+                            "repositioned": repositioned,
+                            "moved_to_tank": moved_to_tank,
+                        }),
+                    )
+                }
+                Err(e) => tree_error_to_response(&request.id, e),
+            }
+        }
     }
 }
 
@@ -914,6 +1005,33 @@ fn parse_uuid(params: &serde_json::Value, field: &str, request_id: &str) -> Resu
             format!("invalid {}: {}", field, e),
         )
     })
+}
+
+/// Parses the `pruning_mode` parameter for matrix remove_node.
+/// Returns an error response if the field is missing or has an unknown value.
+fn parse_pruning_mode(
+    params: &serde_json::Value,
+    request_id: &str,
+) -> Result<PruningMode, Response> {
+    let mode_str = params
+        .get("pruning_mode")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            Response::error(
+                request_id.to_string(),
+                "MISSING_PARAM",
+                "missing pruning_mode (must be \"promote_earliest\" or \"holding_tank\")",
+            )
+        })?;
+    match mode_str {
+        "promote_earliest" => Ok(PruningMode::PromoteEarliest),
+        "holding_tank" => Ok(PruningMode::HoldingTank),
+        other => Err(Response::error(
+            request_id.to_string(),
+            "INVALID_PARAMS",
+            format!("unknown pruning_mode: {}", other),
+        )),
+    }
 }
 
 /// Parses an optional u32 parameter from the request params.

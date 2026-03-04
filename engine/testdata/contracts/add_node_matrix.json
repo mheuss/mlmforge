@@ -1,0 +1,22 @@
+{
+    "description": "add_node places a matrix node via BFS spillover",
+    "setup": [
+        {"id": "s-1", "op": "create_tree", "params": {"structure": "test", "tree_type": "matrix", "width": 2, "spillover": "breadth_first"}},
+        {"id": "s-2", "op": "add_root", "params": {"structure": "test", "user_id": "00000000-0000-0000-0000-000000000001", "enrolled_at": 1000}}
+    ],
+    "request": {
+        "id": "mn-1",
+        "op": "add_node",
+        "params": {
+            "structure": "test",
+            "user_id": "00000000-0000-0000-0000-000000000002",
+            "sponsor_id": "00000000-0000-0000-0000-000000000001",
+            "enrolled_at": 2000
+        }
+    },
+    "expected_response": {
+        "id": "mn-1",
+        "ok": true,
+        "result": {"added": true}
+    }
+}

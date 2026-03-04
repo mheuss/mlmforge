@@ -176,7 +176,7 @@ pub fn handle_create_tree(state: &mut WorkerState, request: &Request) -> Respons
                     return Response::error(
                         request.id.clone(),
                         "MISSING_PARAM",
-                        "missing spillover (must be \"breadth_first\")",
+                        "missing spillover (must be \"breadth_first\" or \"depth_first\")",
                     );
                 }
             };
@@ -269,10 +269,6 @@ pub fn handle_add_node(state: &mut WorkerState, request: &Request) -> Response {
         Ok(id) => id,
         Err(resp) => return resp,
     };
-    let parent_id = match parse_uuid(&params, "parent_id", &request.id) {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     let sponsor_id = match parse_uuid(&params, "sponsor_id", &request.id) {
         Ok(id) => id,
         Err(resp) => return resp,
@@ -295,12 +291,20 @@ pub fn handle_add_node(state: &mut WorkerState, request: &Request) -> Response {
 
     match tree {
         TreeInstance::Unilevel(t) => {
+            let parent_id = match parse_uuid(&params, "parent_id", &request.id) {
+                Ok(id) => id,
+                Err(resp) => return resp,
+            };
             match t.add_node(user_id, parent_id, sponsor_id, enrolled_at) {
                 Ok(_) => Response::success(request.id.clone(), serde_json::json!({"added": true})),
                 Err(e) => tree_error_to_response(&request.id, e),
             }
         }
         TreeInstance::Binary(t) => {
+            let parent_id = match parse_uuid(&params, "parent_id", &request.id) {
+                Ok(id) => id,
+                Err(resp) => return resp,
+            };
             let position = match params.get("position").and_then(|v| v.as_u64()) {
                 Some(p) => match usize::try_from(p) {
                     Ok(pos) => pos,
@@ -325,11 +329,10 @@ pub fn handle_add_node(state: &mut WorkerState, request: &Request) -> Response {
                 Err(e) => tree_error_to_response(&request.id, e),
             }
         }
-        TreeInstance::Matrix(_) => Response::error(
-            request.id.clone(),
-            "NOT_IMPLEMENTED",
-            "matrix add_node not yet implemented",
-        ),
+        TreeInstance::Matrix(t) => match t.add_node(user_id, sponsor_id, enrolled_at) {
+            Ok(_) => Response::success(request.id.clone(), serde_json::json!({"added": true})),
+            Err(e) => tree_error_to_response(&request.id, e),
+        },
     }
 }
 

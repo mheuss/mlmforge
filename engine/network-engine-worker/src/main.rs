@@ -17,6 +17,7 @@ fn dispatch(state: &mut WorkerState, request: &Request) -> Response {
         // Tree mutations
         "add_root" => handlers::handle_add_root(state, request),
         "add_node" => handlers::handle_add_node(state, request),
+        "add_node_at" => handlers::handle_add_node_at(state, request),
         "remove_node" => handlers::handle_remove_node(state, request),
         // Tree queries
         "get_parent" => handlers::handle_get_parent(state, request),

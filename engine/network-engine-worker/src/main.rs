@@ -19,6 +19,8 @@ fn dispatch(state: &mut WorkerState, request: &Request) -> Response {
         "add_node" => handlers::handle_add_node(state, request),
         "add_node_at" => handlers::handle_add_node_at(state, request),
         "remove_node" => handlers::handle_remove_node(state, request),
+        "place_from_tank" => handlers::handle_place_from_tank(state, request),
+        "get_holding_tank" => handlers::handle_get_holding_tank(state, request),
         // Tree queries
         "get_parent" => handlers::handle_get_parent(state, request),
         "get_children" => handlers::handle_get_children(state, request),

@@ -463,6 +463,124 @@ pub fn handle_remove_node(state: &mut WorkerState, request: &Request) -> Respons
     }
 }
 
+// --- Holding tank handlers (matrix-only) ---
+
+pub fn handle_get_holding_tank(state: &WorkerState, request: &Request) -> Response {
+    let params = match parse_params(request) {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+
+    let tree = match get_tree(state, &params, &request.id) {
+        Ok(t) => t,
+        Err(resp) => return resp,
+    };
+
+    match tree {
+        TreeInstance::Matrix(t) => {
+            let sponsor_id = match params.get("sponsor_id") {
+                Some(v) => {
+                    let s = match v.as_str() {
+                        Some(s) => s,
+                        None => {
+                            return Response::error(
+                                request.id.clone(),
+                                "INVALID_UUID",
+                                "invalid sponsor_id",
+                            );
+                        }
+                    };
+                    match Uuid::parse_str(s) {
+                        Ok(id) => Some(id),
+                        Err(_) => {
+                            return Response::error(
+                                request.id.clone(),
+                                "INVALID_UUID",
+                                format!("invalid sponsor_id: {}", s),
+                            );
+                        }
+                    }
+                }
+                None => None,
+            };
+
+            let entries = t.get_holding_tank(sponsor_id);
+            let items: Vec<serde_json::Value> = entries
+                .iter()
+                .map(|e| {
+                    serde_json::json!({
+                        "user_id": e.user_id.to_string(),
+                        "sponsor_user_id": e.sponsor_user_id.map(|id| id.to_string()),
+                        "enrolled_at": e.enrolled_at,
+                    })
+                })
+                .collect();
+
+            Response::success(
+                request.id.clone(),
+                serde_json::to_value(items)
+                    .expect("serialization of holding tank entries is infallible"),
+            )
+        }
+        _ => Response::error(
+            request.id.clone(),
+            "INVALID_PARAMS",
+            "get_holding_tank is only supported for matrix trees",
+        ),
+    }
+}
+
+pub fn handle_place_from_tank(state: &mut WorkerState, request: &Request) -> Response {
+    let params = match parse_params(request) {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    let structure = match extract_structure_name(&params, &request.id) {
+        Ok(s) => s,
+        Err(resp) => return resp,
+    };
+    let user_id = match parse_uuid(&params, "user_id", &request.id) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    let parent_id = match parse_uuid(&params, "parent_id", &request.id) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    let position = match params.get("position").and_then(|v| v.as_u64()) {
+        Some(p) => match u8::try_from(p) {
+            Ok(pos) => pos,
+            Err(_) => {
+                return Response::error(
+                    request.id.clone(),
+                    "INVALID_PARAMS",
+                    format!("position {} exceeds u8 limit", p),
+                );
+            }
+        },
+        None => {
+            return Response::error(request.id.clone(), "MISSING_PARAM", "missing position");
+        }
+    };
+
+    let tree = match get_tree_mut(state, &structure, &request.id) {
+        Ok(t) => t,
+        Err(resp) => return resp,
+    };
+
+    match tree {
+        TreeInstance::Matrix(t) => match t.place_from_tank(user_id, parent_id, position) {
+            Ok(_) => Response::success(request.id.clone(), serde_json::json!({"placed": true})),
+            Err(e) => tree_error_to_response(&request.id, e),
+        },
+        _ => Response::error(
+            request.id.clone(),
+            "INVALID_PARAMS",
+            "place_from_tank is only supported for matrix trees",
+        ),
+    }
+}
+
 // --- Tree query handlers ---
 
 pub fn handle_get_parent(state: &WorkerState, request: &Request) -> Response {

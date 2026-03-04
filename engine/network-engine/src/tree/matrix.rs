@@ -12,7 +12,7 @@ use crate::types::TreePosition;
 #[derive(Debug, Clone)]
 pub struct HoldingTankEntry {
     pub user_id: Uuid,
-    pub sponsor: Option<NodeIndex>,
+    pub sponsor_user_id: Option<Uuid>,
     pub enrolled_at: i64,
 }
 
@@ -382,7 +382,7 @@ impl MatrixTree {
                 // promoted node's subtree.
                 let (target_parent, target_pos) = self
                     .find_spillover_slot(promoted_idx)
-                    .expect("promoted subtree should have open slots for remaining siblings");
+                    .ok_or(TreeError::SubtreeFull(promoted_user_id))?;
                 let target_slots = self
                     .slots
                     .get_mut(&target_parent)
@@ -452,27 +452,42 @@ impl MatrixTree {
         let mut removed_set: Vec<NodeIndex> = vec![idx];
         removed_set.extend(&descendants);
 
-        let mut moved_to_tank = Vec::new();
-
-        // Process descendants first (leaves before parents doesn't matter
-        // since we're doing bulk removal, but we process in BFS order).
+        // Pass 1: Build holding tank entries while all nodes are still live.
+        // Sponsor user_ids must be resolved before any tombstoning.
+        let mut tank_entries: Vec<(NodeIndex, HoldingTankEntry)> = Vec::new();
         for &desc_idx in &descendants {
             let desc = self.arena.node(desc_idx);
-            let desc_user_id = desc.user_id;
-            let desc_sponsor = desc.sponsor;
-            let desc_enrolled_at = desc.enrolled_at;
+            tank_entries.push((
+                desc_idx,
+                HoldingTankEntry {
+                    user_id: desc.user_id,
+                    sponsor_user_id: desc.sponsor.map(|s| self.arena.node(s).user_id),
+                    enrolled_at: desc.enrolled_at,
+                },
+            ));
+        }
+        let node = self.arena.node(idx);
+        let node_sponsor_idx = node.sponsor;
+        tank_entries.push((
+            idx,
+            HoldingTankEntry {
+                user_id,
+                sponsor_user_id: node.sponsor.map(|s| self.arena.node(s).user_id),
+                enrolled_at: node.enrolled_at,
+            },
+        ));
 
-            // Add to holding tank.
-            self.holding_tank.push(HoldingTankEntry {
-                user_id: desc_user_id,
-                sponsor: desc_sponsor,
-                enrolled_at: desc_enrolled_at,
-            });
-            moved_to_tank.push(desc_user_id);
+        // Pass 2: Populate holding tank and collect moved_to_tank ids.
+        let mut moved_to_tank = Vec::new();
+        for (_, entry) in &tank_entries {
+            moved_to_tank.push(entry.user_id);
+            self.holding_tank.push(entry.clone());
+        }
 
-            // Remove from sponsor's sponsored list if the sponsor is
-            // not also being removed.
-            if let Some(sponsor_idx) = desc_sponsor {
+        // Pass 3: Clean up sponsor links and tombstone.
+        for &desc_idx in &descendants {
+            let desc_sponsor_idx = self.arena.node(desc_idx).sponsor;
+            if let Some(sponsor_idx) = desc_sponsor_idx {
                 if !removed_set.contains(&sponsor_idx) {
                     self.arena
                         .node_mut(sponsor_idx)
@@ -480,27 +495,14 @@ impl MatrixTree {
                         .retain(|&s| s != desc_idx);
                 }
             }
-
-            // Clean up.
+            let desc_user_id = self.arena.node(desc_idx).user_id;
             self.slots.remove(&desc_idx);
             self.arena.index.remove(&desc_user_id);
             self.arena.tombstone(desc_idx);
         }
 
-        // Now handle the removed node itself.
-        let node = self.arena.node(idx);
-        let node_sponsor = node.sponsor;
-        let node_enrolled_at = node.enrolled_at;
-
-        self.holding_tank.push(HoldingTankEntry {
-            user_id,
-            sponsor: node_sponsor,
-            enrolled_at: node_enrolled_at,
-        });
-        moved_to_tank.push(user_id);
-
-        // Remove from sponsor's sponsored list.
-        if let Some(sponsor_idx) = node_sponsor {
+        // Clean up the removed node itself.
+        if let Some(sponsor_idx) = node_sponsor_idx {
             if !removed_set.contains(&sponsor_idx) {
                 self.arena
                     .node_mut(sponsor_idx)
@@ -533,17 +535,14 @@ impl MatrixTree {
     /// Returns entries from the holding tank.
     ///
     /// When `sponsor_id` is Some, returns only entries whose sponsor
-    /// matches (by resolving the sponsor_id to a NodeIndex). When None,
-    /// returns all entries.
+    /// matches by Uuid comparison. When None, returns all entries.
     pub fn get_holding_tank(&self, sponsor_id: Option<Uuid>) -> Vec<&HoldingTankEntry> {
         match sponsor_id {
-            Some(id) => {
-                let sponsor_idx = self.arena.resolve(id).ok();
-                self.holding_tank
-                    .iter()
-                    .filter(|entry| entry.sponsor == sponsor_idx)
-                    .collect()
-            }
+            Some(id) => self
+                .holding_tank
+                .iter()
+                .filter(|entry| entry.sponsor_user_id == Some(id))
+                .collect(),
             None => self.holding_tank.iter().collect(),
         }
     }
@@ -589,15 +588,10 @@ impl MatrixTree {
             .ok_or(TreeError::UserNotInHoldingTank(user_id))?;
         let entry = self.holding_tank.remove(tank_pos);
 
-        // Resolve sponsor: restore if the sponsor still exists (not tombstoned).
-        let sponsor_idx = entry.sponsor.and_then(|idx| {
-            let node = &self.arena.nodes[idx.0];
-            if node.user_id != uuid::Uuid::nil() && self.arena.index.contains_key(&node.user_id) {
-                Some(idx)
-            } else {
-                None
-            }
-        });
+        // Resolve sponsor: restore if the sponsor still exists in the tree.
+        let sponsor_idx = entry
+            .sponsor_user_id
+            .and_then(|id| self.arena.resolve(id).ok());
 
         let parent_depth = self.arena.node(parent_idx).depth;
 
@@ -1603,6 +1597,59 @@ mod tests {
         );
     }
 
+    #[test]
+    fn remove_node_promote_with_promoted_child_having_full_slots() {
+        // Width-2 tree. Root has children A(2) and B(3).
+        // A has children C(4) and D(5) -- A's slots are full.
+        // Remove root is not allowed, so we set up:
+        //   root -> [X(2)]
+        //   X -> [A(3), B(4)]
+        //   A -> [C(5), D(6)]   (A's slots are full)
+        //
+        // Remove X. A is promoted (enrolled_at=3000 < B's 4000).
+        // B must spill into A's subtree via BFS (into C or D's slots).
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
+            .unwrap(); // X
+        tree.add_node_at(test_uuid(3), test_uuid(2), test_uuid(2), 0, 3000)
+            .unwrap(); // A
+        tree.add_node_at(test_uuid(4), test_uuid(2), test_uuid(2), 1, 4000)
+            .unwrap(); // B
+        tree.add_node_at(test_uuid(5), test_uuid(3), test_uuid(3), 0, 5000)
+            .unwrap(); // C
+        tree.add_node_at(test_uuid(6), test_uuid(3), test_uuid(3), 1, 6000)
+            .unwrap(); // D
+
+        let result = tree
+            .remove_node(test_uuid(2), PruningMode::PromoteEarliest)
+            .unwrap();
+
+        assert_eq!(result.removed, test_uuid(2));
+        assert_eq!(result.promoted, Some(test_uuid(3))); // A promoted
+        assert!(result.repositioned.contains(&test_uuid(4))); // B repositioned
+
+        // A (test_uuid(3)) should now be under root at slot 0.
+        let pos_a = tree.get_position(test_uuid(3)).unwrap();
+        assert_eq!(pos_a.parent_user_id, Some(test_uuid(1)));
+        assert_eq!(pos_a.position, 0);
+
+        // B (test_uuid(4)) should have spilled into A's subtree.
+        // A's direct slots are full (C and D), so B goes under C at slot 0.
+        let parent_b = tree.get_parent(test_uuid(4)).unwrap().unwrap();
+        let b_parent_id = parent_b.user_id;
+        assert!(
+            b_parent_id == test_uuid(5) || b_parent_id == test_uuid(6),
+            "B should be placed under C or D (A's children), got {:?}",
+            b_parent_id
+        );
+        // BFS order: C's slot 0 is checked first.
+        assert_eq!(b_parent_id, test_uuid(5));
+
+        // X should be gone.
+        assert!(!tree.contains(test_uuid(2)));
+    }
+
     // --- Pruning (HoldingTank) tests ---
 
     #[test]
@@ -1665,14 +1712,12 @@ mod tests {
         tree.add_node(test_uuid(3), test_uuid(2), 3000).unwrap();
 
         // node3's sponsor is node2.
-        let sponsor_idx_before = tree.arena.resolve(test_uuid(2)).unwrap();
-
         tree.remove_node(test_uuid(3), PruningMode::HoldingTank)
             .unwrap();
 
         let tank = tree.get_holding_tank(None);
         assert_eq!(tank.len(), 1);
-        assert_eq!(tank[0].sponsor, Some(sponsor_idx_before));
+        assert_eq!(tank[0].sponsor_user_id, Some(test_uuid(2)));
     }
 
     #[test]
@@ -1818,6 +1863,60 @@ mod tests {
 
         let result = tree.place_from_tank(test_uuid(2), test_uuid(99), 0);
         assert!(matches!(result, Err(TreeError::UserNotFound(_))));
+    }
+
+    // --- get_holding_tank filter tests ---
+
+    #[test]
+    fn get_holding_tank_filters_by_sponsor() {
+        // Build tree: root -> [A, B], A sponsors C, B sponsors D.
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
+            .unwrap(); // A
+        tree.add_node_at(test_uuid(3), test_uuid(1), test_uuid(1), 1, 3000)
+            .unwrap(); // B
+        tree.add_node_at(test_uuid(4), test_uuid(2), test_uuid(2), 0, 4000)
+            .unwrap(); // C, sponsored by A
+        tree.add_node_at(test_uuid(5), test_uuid(3), test_uuid(3), 0, 5000)
+            .unwrap(); // D, sponsored by B
+
+        // Remove C and D to holding tank.
+        tree.remove_node(test_uuid(4), PruningMode::HoldingTank)
+            .unwrap();
+        tree.remove_node(test_uuid(5), PruningMode::HoldingTank)
+            .unwrap();
+
+        // All entries.
+        assert_eq!(tree.get_holding_tank(None).len(), 2);
+
+        // Filter by sponsor A (test_uuid(2)): only C.
+        let a_entries = tree.get_holding_tank(Some(test_uuid(2)));
+        assert_eq!(a_entries.len(), 1);
+        assert_eq!(a_entries[0].user_id, test_uuid(4));
+
+        // Filter by sponsor B (test_uuid(3)): only D.
+        let b_entries = tree.get_holding_tank(Some(test_uuid(3)));
+        assert_eq!(b_entries.len(), 1);
+        assert_eq!(b_entries[0].user_id, test_uuid(5));
+    }
+
+    #[test]
+    fn get_holding_tank_unknown_sponsor_returns_empty() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+
+        tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
+            .unwrap();
+
+        // Filter by a sponsor_id that doesn't exist in the tree.
+        let entries = tree.get_holding_tank(Some(test_uuid(99)));
+        assert!(
+            entries.is_empty(),
+            "unknown sponsor should return empty, got {} entries",
+            entries.len()
+        );
     }
 
     // --- Debug tests ---

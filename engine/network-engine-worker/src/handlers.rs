@@ -249,7 +249,7 @@ pub fn handle_add_root(state: &mut WorkerState, request: &Request) -> Response {
             Ok(_) => Response::success(request.id.clone(), serde_json::json!({"added": true})),
             Err(e) => tree_error_to_response(&request.id, e),
         },
-        TreeInstance::Matrix(t) => match t.set_root(user_id, enrolled_at) {
+        TreeInstance::Matrix(t) => match t.add_root(user_id, enrolled_at) {
             Ok(_) => Response::success(request.id.clone(), serde_json::json!({"added": true})),
             Err(e) => tree_error_to_response(&request.id, e),
         },

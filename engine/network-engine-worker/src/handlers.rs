@@ -176,18 +176,17 @@ pub fn handle_create_tree(state: &mut WorkerState, request: &Request) -> Respons
                     return Response::error(
                         request.id.clone(),
                         "MISSING_PARAM",
-                        "missing spillover (must be \"breadth_first\" or \"depth_first\")",
+                        "missing spillover (must be \"breadth_first\")",
                     );
                 }
             };
             let spillover = match spillover_str {
                 "breadth_first" => SpilloverDirection::BreadthFirst,
-                "depth_first" => SpilloverDirection::DepthFirst,
                 other => {
                     return Response::error(
                         request.id.clone(),
                         "INVALID_PARAMS",
-                        format!("unknown spillover: {}", other),
+                        format!("unsupported spillover: {}", other),
                     );
                 }
             };
@@ -516,17 +515,7 @@ pub fn handle_get_holding_tank(state: &WorkerState, request: &Request) -> Respon
                 })
                 .collect();
 
-            let value = match serde_json::to_value(items) {
-                Ok(v) => v,
-                Err(e) => {
-                    return Response::error(
-                        request.id.clone(),
-                        "INTERNAL_ERROR",
-                        format!("failed to serialize holding tank entries: {}", e),
-                    );
-                }
-            };
-            Response::success(request.id.clone(), value)
+            Response::success(request.id.clone(), serde_json::Value::Array(items))
         }
         _ => Response::error(
             request.id.clone(),

@@ -139,7 +139,7 @@ pub fn handle_create_tree(state: &mut WorkerState, request: &Request) -> Respons
             return Response::error(
                 request.id.clone(),
                 "MISSING_PARAM",
-                "missing tree_type (unilevel or binary)",
+                "missing tree_type (unilevel, binary, or matrix)",
             );
         }
     };
@@ -516,11 +516,17 @@ pub fn handle_get_holding_tank(state: &WorkerState, request: &Request) -> Respon
                 })
                 .collect();
 
-            Response::success(
-                request.id.clone(),
-                serde_json::to_value(items)
-                    .expect("serialization of holding tank entries is infallible"),
-            )
+            let value = match serde_json::to_value(items) {
+                Ok(v) => v,
+                Err(e) => {
+                    return Response::error(
+                        request.id.clone(),
+                        "INTERNAL_ERROR",
+                        format!("failed to serialize holding tank entries: {}", e),
+                    );
+                }
+            };
+            Response::success(request.id.clone(), value)
         }
         _ => Response::error(
             request.id.clone(),

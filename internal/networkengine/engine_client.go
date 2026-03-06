@@ -78,7 +78,7 @@ func (c *EngineClient) CreateTree(ctx context.Context, structure, treeType strin
 
 // CreateMatrixTree creates a named matrix tree instance in the engine.
 // Width is the fixed number of child slots per node (must be >= 2).
-// Spillover must be "breadth_first".
+// Spillover must be "breadth_first" (the engine rejects "depth_first").
 func (c *EngineClient) CreateMatrixTree(ctx context.Context, structure string, width int, spillover string) error {
 	_, err := c.call(ctx, "create_tree", map[string]any{
 		"structure": structure,

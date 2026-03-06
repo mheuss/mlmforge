@@ -1,6 +1,6 @@
 module github.com/mlmforge/mlmforge
 
-go 1.25
+go 1.24.0
 
 require (
 	github.com/jackc/pgx/v5 v5.8.0

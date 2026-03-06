@@ -75,6 +75,19 @@ func (c *EngineClient) CreateTree(ctx context.Context, structure, treeType strin
 	return err
 }
 
+// CreateMatrixTree creates a named matrix tree instance in the engine.
+// Width is the fixed number of child slots per node (must be >= 2).
+// Spillover must be "breadth_first".
+func (c *EngineClient) CreateMatrixTree(ctx context.Context, structure string, width int, spillover string) error {
+	_, err := c.call(ctx, "create_tree", map[string]any{
+		"structure": structure,
+		"tree_type": "matrix",
+		"width":     width,
+		"spillover": spillover,
+	})
+	return err
+}
+
 // --- Tree mutation methods ---
 
 // AddRoot creates the root node of a tree in the engine.
@@ -122,6 +135,82 @@ func (c *EngineClient) RemoveNode(ctx context.Context, structure, userID string)
 		"user_id":   userID,
 	})
 	return err
+}
+
+// AddMatrixNode adds a node to a matrix tree using automatic spillover placement.
+// The engine determines the placement parent via BFS within the sponsor's subtree.
+func (c *EngineClient) AddMatrixNode(ctx context.Context, structure, userID, sponsorID string, enrolledAt int64) error {
+	_, err := c.call(ctx, "add_node", map[string]any{
+		"structure":   structure,
+		"user_id":     userID,
+		"sponsor_id":  sponsorID,
+		"enrolled_at": enrolledAt,
+	})
+	return err
+}
+
+// AddNodeAt places a node at an explicit position in a matrix tree.
+// This is an admin override that bypasses spillover.
+func (c *EngineClient) AddNodeAt(ctx context.Context, structure, userID, sponsorID, parentID string, position int, enrolledAt int64) error {
+	_, err := c.call(ctx, "add_node_at", map[string]any{
+		"structure":   structure,
+		"user_id":     userID,
+		"sponsor_id":  sponsorID,
+		"parent_id":   parentID,
+		"position":    position,
+		"enrolled_at": enrolledAt,
+	})
+	return err
+}
+
+// RemoveMatrixNode removes a node from a matrix tree using the specified pruning mode.
+// pruningMode must be "promote_earliest" or "holding_tank".
+func (c *EngineClient) RemoveMatrixNode(ctx context.Context, structure, userID, pruningMode string) (*MatrixRemovalResult, error) {
+	result, err := c.call(ctx, "remove_node", map[string]any{
+		"structure":    structure,
+		"user_id":      userID,
+		"pruning_mode": pruningMode,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var removal MatrixRemovalResult
+	if err := json.Unmarshal(result, &removal); err != nil {
+		return nil, fmt.Errorf("unmarshal removal result: %w", err)
+	}
+	return &removal, nil
+}
+
+// PlaceFromTank moves a holding tank entry back into the matrix tree
+// at the specified parent and position.
+func (c *EngineClient) PlaceFromTank(ctx context.Context, structure, userID, parentID string, position int) error {
+	_, err := c.call(ctx, "place_from_tank", map[string]any{
+		"structure": structure,
+		"user_id":   userID,
+		"parent_id": parentID,
+		"position":  position,
+	})
+	return err
+}
+
+// GetHoldingTank returns holding tank entries for a matrix tree.
+// If sponsorID is non-empty, only entries sponsored by that user are returned.
+func (c *EngineClient) GetHoldingTank(ctx context.Context, structure, sponsorID string) ([]HoldingTankEntryDTO, error) {
+	params := map[string]any{
+		"structure": structure,
+	}
+	if sponsorID != "" {
+		params["sponsor_id"] = sponsorID
+	}
+	result, err := c.call(ctx, "get_holding_tank", params)
+	if err != nil {
+		return nil, err
+	}
+	var entries []HoldingTankEntryDTO
+	if err := json.Unmarshal(result, &entries); err != nil {
+		return nil, fmt.Errorf("unmarshal holding tank: %w", err)
+	}
+	return entries, nil
 }
 
 // --- Tree query methods ---

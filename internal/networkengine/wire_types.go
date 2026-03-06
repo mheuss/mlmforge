@@ -92,3 +92,20 @@ type BinaryCalculationResultDTO struct {
 	Earnings     []BinaryCommissionEarningDTO `json:"earnings"`
 	CarryForward map[string]LegVolumesDTO     `json:"carry_forward"`
 }
+
+// MatrixRemovalResult is the wire format for matrix node removal results.
+// Matches the Rust RemovalResult struct serialized in handle_remove_node.
+type MatrixRemovalResult struct {
+	Removed      string   `json:"removed"`
+	Promoted     *string  `json:"promoted"`
+	Repositioned []string `json:"repositioned"`
+	MovedToTank  []string `json:"moved_to_tank"`
+}
+
+// HoldingTankEntryDTO is the wire format for a matrix holding tank entry.
+// Matches the Rust get_holding_tank response items.
+type HoldingTankEntryDTO struct {
+	UserID        string  `json:"user_id"`
+	SponsorUserID *string `json:"sponsor_user_id"`
+	EnrolledAt    int64   `json:"enrolled_at"`
+}

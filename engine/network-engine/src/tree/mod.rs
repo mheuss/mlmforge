@@ -1,9 +1,11 @@
+#[macro_use]
 pub(crate) mod arena;
-pub mod binary;
 pub mod error;
-pub mod matrix;
-pub mod navigator;
 pub mod node;
+#[macro_use]
+pub mod navigator;
+pub mod binary;
+pub mod matrix;
 pub mod unilevel;
 
 #[cfg(test)]

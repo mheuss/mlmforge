@@ -64,7 +64,7 @@ impl MatrixTree {
         })
     }
 
-    pub fn set_root(&mut self, user_id: Uuid, enrolled_at: i64) -> Result<NodeIndex, TreeError> {
+    pub fn add_root(&mut self, user_id: Uuid, enrolled_at: i64) -> Result<NodeIndex, TreeError> {
         if self.arena.root.is_some() {
             return Err(TreeError::RootAlreadyExists);
         }
@@ -89,6 +89,7 @@ impl MatrixTree {
         Ok(idx)
     }
 
+    /// Internal helper for tests.
     #[cfg(test)]
     pub(crate) fn get_node(&self, user_id: Uuid) -> Result<&Node, TreeError> {
         let idx = self.arena.resolve(user_id)?;
@@ -696,50 +697,7 @@ impl MatrixTree {
             .expect("child not found in parent's slots -- tree is corrupt")
     }
 
-    // --- Delegated traversals ---
-
-    pub fn get_parent(&self, user_id: Uuid) -> Result<Option<&Node>, TreeError> {
-        let idx = self.arena.resolve(user_id)?;
-        match self.arena.node(idx).parent {
-            Some(parent_idx) => Ok(Some(self.arena.node(parent_idx))),
-            None => Ok(None),
-        }
-    }
-
-    pub fn get_children(&self, user_id: Uuid) -> Result<Vec<&Node>, TreeError> {
-        let idx = self.arena.resolve(user_id)?;
-        let children = self
-            .arena
-            .node(idx)
-            .children
-            .iter()
-            .map(|&child_idx| self.arena.node(child_idx))
-            .collect();
-        Ok(children)
-    }
-
-    /// Walks upward from a node toward the root.
-    ///
-    /// Returns ancestors in order from immediate parent to root.
-    /// The starting node is not included in the result.
-    ///
-    /// Depth 0 means walk all the way to root. Any other value limits
-    /// the walk to that many levels up.
-    pub fn get_upline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
-        let idx = self.arena.resolve(user_id)?;
-        Ok(self.arena.walk_upline(idx, depth))
-    }
-
-    /// Walks downward from a node, returning descendants in BFS order.
-    ///
-    /// The starting node is not included in the result.
-    ///
-    /// Depth 0 means walk all levels. Any other value limits the walk
-    /// to that many levels below the starting node.
-    pub fn get_downline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
-        let idx = self.arena.resolve(user_id)?;
-        Ok(self.arena.bfs_downline(idx, depth))
-    }
+    // --- Custom position methods (slot-based logic) ---
 
     /// Computes a full position snapshot for a user.
     ///
@@ -801,29 +759,9 @@ impl MatrixTree {
         }
 
         match node_slots[position] {
-            Some(child_idx) => {
-                let mut result = Vec::new();
-                let mut queue = VecDeque::new();
-                queue.push_back(child_idx);
-                while let Some(current) = queue.pop_front() {
-                    result.push(self.arena.node(current));
-                    for &c in &self.arena.node(current).children {
-                        queue.push_back(c);
-                    }
-                }
-                Ok(result)
-            }
+            Some(child_idx) => Ok(self.arena.collect_subtree(child_idx)),
             None => Ok(vec![]),
         }
-    }
-
-    /// Counts descendants without allocating a result Vec.
-    ///
-    /// Depth 0 means count all descendants. Any other value limits
-    /// the count to that many levels below.
-    pub fn count_downline(&self, user_id: Uuid, depth: u32) -> Result<usize, TreeError> {
-        let idx = self.arena.resolve(user_id)?;
-        Ok(self.arena.count_downline(idx, depth))
     }
 
     /// Counts nodes in the subtree under a matrix slot position.
@@ -851,97 +789,16 @@ impl MatrixTree {
         }
     }
 
-    /// Checks whether `user_id` is a descendant of `ancestor_id`.
-    ///
-    /// A node is not considered a descendant of itself.
-    pub fn is_descendant_of(&self, user_id: Uuid, ancestor_id: Uuid) -> Result<bool, TreeError> {
-        let ancestor_idx = self.arena.resolve(ancestor_id)?;
-        if user_id == ancestor_id {
-            return Ok(false);
-        }
-        let user_idx = self.arena.resolve(user_id)?;
-        Ok(self.arena.is_descendant_of(user_idx, ancestor_idx))
-    }
-
-    // --- Sponsor traversals ---
-
-    /// Returns the sponsor of a node, or None if the node has no sponsor (root).
-    pub fn get_sponsor(&self, user_id: Uuid) -> Result<Option<&Node>, TreeError> {
-        let idx = self.arena.resolve(user_id)?;
-        Ok(self.arena.get_sponsor(idx))
-    }
-
-    /// Walks upward following sponsor links.
-    ///
-    /// Returns sponsors in order from immediate sponsor to the root sponsor.
-    /// The starting node is not included.
-    ///
-    /// Depth 0 means walk all the way. Any other value limits the walk.
-    pub fn get_sponsor_upline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
-        let idx = self.arena.resolve(user_id)?;
-        Ok(self.arena.walk_sponsor_upline(idx, depth))
-    }
-
-    /// Returns the direct recruits of a node.
-    pub fn get_sponsored(&self, user_id: Uuid) -> Result<Vec<&Node>, TreeError> {
-        let idx = self.arena.resolve(user_id)?;
-        Ok(self.arena.get_sponsored(idx))
-    }
-
-    /// Returns true if the tree contains a node with this user_id.
-    pub fn contains(&self, user_id: Uuid) -> bool {
-        self.arena.index.contains_key(&user_id)
-    }
-
     /// Provides read access to the arena for commission calculators
     /// and other crate-internal consumers.
-    #[allow(dead_code)] // Used by later tasks in this feature branch.
+    #[allow(dead_code)] // Will be used by commission calculators.
     pub(crate) fn arena(&self) -> &Arena {
         &self.arena
     }
 }
 
-impl crate::tree::navigator::TreeNavigator for MatrixTree {
-    fn contains(&self, user_id: Uuid) -> bool {
-        self.contains(user_id)
-    }
-    fn get_parent(&self, user_id: Uuid) -> Result<Option<&Node>, TreeError> {
-        self.get_parent(user_id)
-    }
-    fn get_children(&self, user_id: Uuid) -> Result<Vec<&Node>, TreeError> {
-        self.get_children(user_id)
-    }
-    fn get_upline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
-        self.get_upline(user_id, depth)
-    }
-    fn get_downline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
-        self.get_downline(user_id, depth)
-    }
-    fn get_position(&self, user_id: Uuid) -> Result<TreePosition, TreeError> {
-        self.get_position(user_id)
-    }
-    fn get_branch(&self, user_id: Uuid, position: usize) -> Result<Vec<&Node>, TreeError> {
-        self.get_branch(user_id, position)
-    }
-    fn count_downline(&self, user_id: Uuid, depth: u32) -> Result<usize, TreeError> {
-        self.count_downline(user_id, depth)
-    }
-    fn count_branch(&self, user_id: Uuid, position: usize) -> Result<usize, TreeError> {
-        self.count_branch(user_id, position)
-    }
-    fn is_descendant_of(&self, user_id: Uuid, ancestor_id: Uuid) -> Result<bool, TreeError> {
-        self.is_descendant_of(user_id, ancestor_id)
-    }
-    fn get_sponsor(&self, user_id: Uuid) -> Result<Option<&Node>, TreeError> {
-        self.get_sponsor(user_id)
-    }
-    fn get_sponsor_upline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
-        self.get_sponsor_upline(user_id, depth)
-    }
-    fn get_sponsored(&self, user_id: Uuid) -> Result<Vec<&Node>, TreeError> {
-        self.get_sponsored(user_id)
-    }
-}
+impl_arena_delegations!(MatrixTree);
+impl_tree_navigator!(MatrixTree);
 
 impl std::fmt::Debug for MatrixTree {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -993,24 +850,24 @@ mod tests {
     }
 
     #[test]
-    fn set_root_succeeds() {
+    fn add_root_succeeds() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        let result = tree.set_root(test_uuid(1), 1000);
+        let result = tree.add_root(test_uuid(1), 1000);
         assert!(result.is_ok());
     }
 
     #[test]
-    fn set_root_twice_fails() {
+    fn add_root_twice_fails() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
-        let result = tree.set_root(test_uuid(2), 2000);
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        let result = tree.add_root(test_uuid(2), 2000);
         assert!(matches!(result, Err(TreeError::RootAlreadyExists)));
     }
 
     #[test]
-    fn set_root_initializes_slots() {
+    fn add_root_initializes_slots() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         let idx = tree.arena.resolve(test_uuid(1)).unwrap();
         let slots = tree.slots.get(&idx).unwrap();
         assert_eq!(slots.len(), 3);
@@ -1018,9 +875,9 @@ mod tests {
     }
 
     #[test]
-    fn set_root_depth_is_zero() {
+    fn add_root_depth_is_zero() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         let node = tree.get_node(test_uuid(1)).unwrap();
         assert_eq!(node.depth, 0);
     }
@@ -1030,7 +887,7 @@ mod tests {
     #[test]
     fn add_node_at_explicit_position() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         let result = tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000);
         assert!(result.is_ok());
     }
@@ -1038,7 +895,7 @@ mod tests {
     #[test]
     fn add_node_at_sets_depth() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
             .unwrap();
         tree.add_node_at(test_uuid(3), test_uuid(1), test_uuid(2), 1, 3000)
@@ -1052,7 +909,7 @@ mod tests {
     #[test]
     fn add_node_at_sets_sponsor() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         // Add node2 under root, sponsored by root.
         tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
             .unwrap();
@@ -1068,7 +925,7 @@ mod tests {
     #[test]
     fn add_node_at_position_occupied_fails() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
             .unwrap();
         let result = tree.add_node_at(test_uuid(3), test_uuid(1), test_uuid(1), 0, 3000);
@@ -1078,7 +935,7 @@ mod tests {
     #[test]
     fn add_node_at_invalid_position_fails() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         let result = tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 3, 2000);
         assert!(matches!(
             result,
@@ -1089,7 +946,7 @@ mod tests {
     #[test]
     fn add_node_at_duplicate_user_fails() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
             .unwrap();
         let result = tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 1, 3000);
@@ -1099,7 +956,7 @@ mod tests {
     #[test]
     fn add_node_at_parent_not_found_fails() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         let result = tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(99), 0, 2000);
         assert!(matches!(result, Err(TreeError::UserNotFound(_))));
     }
@@ -1107,7 +964,7 @@ mod tests {
     #[test]
     fn add_node_at_sponsor_not_found_fails() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         let result = tree.add_node_at(test_uuid(2), test_uuid(99), test_uuid(1), 0, 2000);
         assert!(matches!(result, Err(TreeError::SponsorNotFound(_))));
     }
@@ -1122,7 +979,7 @@ mod tests {
     #[test]
     fn add_node_at_fills_correct_slot() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 2, 2000)
             .unwrap();
         let root_idx = tree.arena.resolve(test_uuid(1)).unwrap();
@@ -1136,7 +993,7 @@ mod tests {
     #[test]
     fn add_node_at_all_positions() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
             .unwrap();
         tree.add_node_at(test_uuid(3), test_uuid(1), test_uuid(1), 1, 3000)
@@ -1155,7 +1012,7 @@ mod tests {
     #[test]
     fn add_node_places_in_sponsors_first_slot() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
         let node2 = tree.get_node(test_uuid(2)).unwrap();
         assert_eq!(node2.depth, 1);
@@ -1166,7 +1023,7 @@ mod tests {
     #[test]
     fn add_node_fills_sponsor_slots_left_to_right() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
         tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
         tree.add_node(test_uuid(4), test_uuid(1), 4000).unwrap();
@@ -1183,7 +1040,7 @@ mod tests {
     #[test]
     fn add_node_spills_to_next_level() {
         let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         // Fill root's 2 slots.
         tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
         tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
@@ -1205,7 +1062,7 @@ mod tests {
         //     / \ / \
         //    4  5 6  7
         let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         for i in 2..=7u8 {
             tree.add_node(test_uuid(i), test_uuid(1), i as i64 * 1000)
                 .unwrap();
@@ -1233,7 +1090,7 @@ mod tests {
     #[test]
     fn add_node_sponsor_differs_from_placement_parent() {
         let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         // Fill root's slots with nodes sponsored by root.
         tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
         tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
@@ -1256,7 +1113,7 @@ mod tests {
     #[test]
     fn add_node_sponsor_not_found_fails() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         let result = tree.add_node(test_uuid(2), test_uuid(99), 2000);
         assert!(matches!(result, Err(TreeError::SponsorNotFound(_))));
     }
@@ -1264,7 +1121,7 @@ mod tests {
     #[test]
     fn add_node_duplicate_user_fails() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
         let result = tree.add_node(test_uuid(2), test_uuid(1), 3000);
         assert!(matches!(result, Err(TreeError::UserAlreadyExists(_))));
@@ -1275,7 +1132,7 @@ mod tests {
         // Build a 2-wide tree with two branches.
         // Sponsor node2 directly. Spillover must stay in node2's subtree.
         let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         // Place node2 and node3 under root.
         tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
             .unwrap();
@@ -1305,7 +1162,7 @@ mod tests {
     #[test]
     fn get_position_root() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         let pos = tree.get_position(test_uuid(1)).unwrap();
         assert_eq!(pos.position, 0);
         assert!(pos.parent_user_id.is_none());
@@ -1317,7 +1174,7 @@ mod tests {
     fn get_position_reports_correct_slot() {
         // Place node at slot 2 of a 3-wide tree.
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 2, 2000)
             .unwrap();
         let pos = tree.get_position(test_uuid(2)).unwrap();
@@ -1328,7 +1185,7 @@ mod tests {
     fn get_position_downline_counts_by_slot() {
         // 3-wide tree: root has 3 children, grandchild under slot 0.
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
             .unwrap();
         tree.add_node_at(test_uuid(3), test_uuid(1), test_uuid(1), 1, 3000)
@@ -1350,7 +1207,7 @@ mod tests {
     #[test]
     fn get_position_open_slots_on_leaf() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
             .unwrap();
 
@@ -1366,7 +1223,7 @@ mod tests {
     fn get_branch_returns_subtree() {
         // 3-wide tree: root -> [node2, node3, node4], node2 -> [node5]
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
             .unwrap();
         tree.add_node_at(test_uuid(3), test_uuid(1), test_uuid(1), 1, 3000)
@@ -1387,7 +1244,7 @@ mod tests {
     #[test]
     fn get_branch_empty_slot_returns_empty() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
             .unwrap();
         // Slot 1 is empty.
@@ -1398,7 +1255,7 @@ mod tests {
     #[test]
     fn get_branch_invalid_position_fails() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         let result = tree.get_branch(test_uuid(1), 3);
         assert!(matches!(
             result,
@@ -1409,7 +1266,7 @@ mod tests {
     #[test]
     fn count_branch_matches_get_branch_len() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
             .unwrap();
         tree.add_node_at(test_uuid(3), test_uuid(2), test_uuid(2), 1, 3000)
@@ -1424,7 +1281,7 @@ mod tests {
     #[test]
     fn contains_works() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         assert!(tree.contains(test_uuid(1)));
         assert!(!tree.contains(test_uuid(99)));
     }
@@ -1433,7 +1290,7 @@ mod tests {
     fn get_upline_and_downline() {
         // Chain: root -> node2 -> node3
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
         tree.add_node(test_uuid(3), test_uuid(2), 3000).unwrap();
 
@@ -1451,7 +1308,7 @@ mod tests {
     #[test]
     fn is_descendant_of_works() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
         tree.add_node(test_uuid(3), test_uuid(2), 3000).unwrap();
 
@@ -1464,7 +1321,7 @@ mod tests {
     fn sponsor_traversals() {
         // root sponsors node2, node2 sponsors node3 (placed under root via spillover).
         let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
         tree.add_node(test_uuid(3), test_uuid(2), 3000).unwrap();
 
@@ -1490,7 +1347,7 @@ mod tests {
     fn remove_leaf_node_promote_earliest() {
         // Remove a leaf node. No promotion needed.
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
 
         let result = tree
@@ -1509,7 +1366,7 @@ mod tests {
         // Remove node2. node4 enrolled first, so node4 is promoted.
         // node5 is repositioned under node4.
         let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
             .unwrap();
         tree.add_node_at(test_uuid(3), test_uuid(1), test_uuid(1), 1, 3000)
@@ -1544,7 +1401,7 @@ mod tests {
         // Remove node2. node3 promoted to root's slot.
         // node4 under node3. Depths must be recalculated.
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
             .unwrap();
         tree.add_node_at(test_uuid(3), test_uuid(2), test_uuid(2), 0, 3000)
@@ -1566,7 +1423,7 @@ mod tests {
     #[test]
     fn remove_root_fails() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         let result = tree.remove_node(test_uuid(1), PruningMode::PromoteEarliest);
         assert!(matches!(result, Err(TreeError::CannotRemoveRoot)));
     }
@@ -1574,7 +1431,7 @@ mod tests {
     #[test]
     fn remove_nonexistent_user_fails() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         let result = tree.remove_node(test_uuid(99), PruningMode::PromoteEarliest);
         assert!(matches!(result, Err(TreeError::UserNotFound(_))));
     }
@@ -1584,7 +1441,7 @@ mod tests {
         // root sponsors node2, node2 sponsors node3 and node4.
         // Remove node2. Sponsor links for node3/node4 should stay.
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
             .unwrap();
         tree.add_node_at(test_uuid(3), test_uuid(2), test_uuid(2), 0, 3000)
@@ -1618,7 +1475,7 @@ mod tests {
         // Remove X. A is promoted (enrolled_at=3000 < B's 4000).
         // B must spill into A's subtree via BFS (into C or D's slots).
         let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
             .unwrap(); // X
         tree.add_node_at(test_uuid(3), test_uuid(2), test_uuid(2), 0, 3000)
@@ -1664,7 +1521,7 @@ mod tests {
     #[test]
     fn remove_leaf_to_holding_tank() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
 
         let result = tree
@@ -1688,7 +1545,7 @@ mod tests {
         // node3 -> [node5]
         // Remove node2: nodes 2, 3, 4, 5 all go to tank.
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
             .unwrap();
         tree.add_node_at(test_uuid(3), test_uuid(2), test_uuid(2), 0, 3000)
@@ -1716,7 +1573,7 @@ mod tests {
     #[test]
     fn holding_tank_preserves_sponsor() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
         tree.add_node(test_uuid(3), test_uuid(2), 3000).unwrap();
 
@@ -1732,7 +1589,7 @@ mod tests {
     #[test]
     fn holding_tank_preserves_enrolled_at() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
 
         tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
@@ -1745,7 +1602,7 @@ mod tests {
     #[test]
     fn remove_to_tank_clears_parent_slot() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 1, 2000)
             .unwrap();
 
@@ -1762,7 +1619,7 @@ mod tests {
     #[test]
     fn place_from_tank_succeeds() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
 
         tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
@@ -1777,7 +1634,7 @@ mod tests {
     #[test]
     fn place_from_tank_removes_from_tank() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
 
         tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
@@ -1791,7 +1648,7 @@ mod tests {
     #[test]
     fn place_from_tank_restores_sponsor() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
 
         tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
@@ -1809,7 +1666,7 @@ mod tests {
     #[test]
     fn place_from_tank_preserves_enrolled_at() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
 
         tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
@@ -1823,7 +1680,7 @@ mod tests {
     #[test]
     fn place_from_tank_user_not_in_tank_fails() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
 
         let result = tree.place_from_tank(test_uuid(99), test_uuid(1), 0);
         assert!(matches!(result, Err(TreeError::UserNotInHoldingTank(_))));
@@ -1832,7 +1689,7 @@ mod tests {
     #[test]
     fn place_from_tank_position_occupied_fails() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
         tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
 
@@ -1848,7 +1705,7 @@ mod tests {
     #[test]
     fn place_from_tank_invalid_position_fails() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
 
         tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
@@ -1864,7 +1721,7 @@ mod tests {
     #[test]
     fn place_from_tank_parent_not_found_fails() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
 
         tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
@@ -1880,7 +1737,7 @@ mod tests {
     fn get_holding_tank_filters_by_sponsor() {
         // Build tree: root -> [A, B], A sponsors C, B sponsors D.
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
             .unwrap(); // A
         tree.add_node_at(test_uuid(3), test_uuid(1), test_uuid(1), 1, 3000)
@@ -1913,7 +1770,7 @@ mod tests {
     #[test]
     fn get_holding_tank_unknown_sponsor_returns_empty() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
 
         tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
@@ -1933,7 +1790,7 @@ mod tests {
     #[test]
     fn debug_shows_node_count_and_width() {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.set_root(test_uuid(1), 1000).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
 
         let debug = format!("{:?}", tree);

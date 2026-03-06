@@ -59,6 +59,7 @@ impl BinaryTree {
         Ok(idx)
     }
 
+    /// Internal helper for tests.
     #[cfg(test)]
     pub(crate) fn get_node(&self, user_id: Uuid) -> Result<&Node, TreeError> {
         let idx = self.arena.resolve(user_id)?;
@@ -192,50 +193,7 @@ impl BinaryTree {
         self.arena.node_mut(parent_idx).children = children;
     }
 
-    // --- Delegated traversals ---
-
-    pub fn get_parent(&self, user_id: Uuid) -> Result<Option<&Node>, TreeError> {
-        let idx = self.arena.resolve(user_id)?;
-        match self.arena.node(idx).parent {
-            Some(parent_idx) => Ok(Some(self.arena.node(parent_idx))),
-            None => Ok(None),
-        }
-    }
-
-    pub fn get_children(&self, user_id: Uuid) -> Result<Vec<&Node>, TreeError> {
-        let idx = self.arena.resolve(user_id)?;
-        let children = self
-            .arena
-            .node(idx)
-            .children
-            .iter()
-            .map(|&child_idx| self.arena.node(child_idx))
-            .collect();
-        Ok(children)
-    }
-
-    /// Walks upward from a node toward the root.
-    ///
-    /// Returns ancestors in order from immediate parent to root.
-    /// The starting node is not included in the result.
-    ///
-    /// Depth 0 means walk all the way to root. Any other value limits
-    /// the walk to that many levels up.
-    pub fn get_upline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
-        let idx = self.arena.resolve(user_id)?;
-        Ok(self.arena.walk_upline(idx, depth))
-    }
-
-    /// Walks downward from a node, returning descendants in BFS order.
-    ///
-    /// The starting node is not included in the result.
-    ///
-    /// Depth 0 means walk all levels. Any other value limits the walk
-    /// to that many levels below the starting node.
-    pub fn get_downline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
-        let idx = self.arena.resolve(user_id)?;
-        Ok(self.arena.bfs_downline(idx, depth))
-    }
+    // --- Custom position methods (slot-based logic) ---
 
     /// Computes a full position snapshot for a user.
     ///
@@ -296,29 +254,9 @@ impl BinaryTree {
         }
 
         match node_slots[position] {
-            Some(child_idx) => {
-                let mut result = Vec::new();
-                let mut queue = std::collections::VecDeque::new();
-                queue.push_back(child_idx);
-                while let Some(current) = queue.pop_front() {
-                    result.push(self.arena.node(current));
-                    for &c in &self.arena.node(current).children {
-                        queue.push_back(c);
-                    }
-                }
-                Ok(result)
-            }
+            Some(child_idx) => Ok(self.arena.collect_subtree(child_idx)),
             None => Ok(vec![]),
         }
-    }
-
-    /// Counts descendants without allocating a result Vec.
-    ///
-    /// Depth 0 means count all descendants. Any other value limits
-    /// the count to that many levels below.
-    pub fn count_downline(&self, user_id: Uuid, depth: u32) -> Result<usize, TreeError> {
-        let idx = self.arena.resolve(user_id)?;
-        Ok(self.arena.count_downline(idx, depth))
     }
 
     /// Counts nodes in the subtree under a binary position (0=left, 1=right).
@@ -346,48 +284,6 @@ impl BinaryTree {
         }
     }
 
-    /// Checks whether `user_id` is a descendant of `ancestor_id`.
-    ///
-    /// A node is not considered a descendant of itself.
-    pub fn is_descendant_of(&self, user_id: Uuid, ancestor_id: Uuid) -> Result<bool, TreeError> {
-        let ancestor_idx = self.arena.resolve(ancestor_id)?;
-        if user_id == ancestor_id {
-            return Ok(false);
-        }
-        let user_idx = self.arena.resolve(user_id)?;
-        Ok(self.arena.is_descendant_of(user_idx, ancestor_idx))
-    }
-
-    // --- Sponsor traversals ---
-
-    /// Returns the sponsor of a node, or None if the node has no sponsor (root).
-    pub fn get_sponsor(&self, user_id: Uuid) -> Result<Option<&Node>, TreeError> {
-        let idx = self.arena.resolve(user_id)?;
-        Ok(self.arena.get_sponsor(idx))
-    }
-
-    /// Walks upward following sponsor links.
-    ///
-    /// Returns sponsors in order from immediate sponsor to the root sponsor.
-    /// The starting node is not included.
-    ///
-    /// Depth 0 means walk all the way. Any other value limits the walk.
-    pub fn get_sponsor_upline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
-        let idx = self.arena.resolve(user_id)?;
-        Ok(self.arena.walk_sponsor_upline(idx, depth))
-    }
-
-    /// Returns the direct recruits of a node.
-    pub fn get_sponsored(&self, user_id: Uuid) -> Result<Vec<&Node>, TreeError> {
-        let idx = self.arena.resolve(user_id)?;
-        Ok(self.arena.get_sponsored(idx))
-    }
-
-    /// Returns true if the tree contains a node with this user_id.
-    pub fn contains(&self, user_id: Uuid) -> bool {
-        self.arena.index.contains_key(&user_id)
-    }
-
     /// Provides read access to the arena for commission calculators
     /// and other crate-internal consumers.
     pub(crate) fn arena(&self) -> &Arena {
@@ -401,47 +297,8 @@ impl BinaryTree {
     }
 }
 
-impl crate::tree::navigator::TreeNavigator for BinaryTree {
-    fn contains(&self, user_id: Uuid) -> bool {
-        self.contains(user_id)
-    }
-    fn get_parent(&self, user_id: Uuid) -> Result<Option<&Node>, TreeError> {
-        self.get_parent(user_id)
-    }
-    fn get_children(&self, user_id: Uuid) -> Result<Vec<&Node>, TreeError> {
-        self.get_children(user_id)
-    }
-    fn get_upline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
-        self.get_upline(user_id, depth)
-    }
-    fn get_downline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
-        self.get_downline(user_id, depth)
-    }
-    fn get_position(&self, user_id: Uuid) -> Result<TreePosition, TreeError> {
-        self.get_position(user_id)
-    }
-    fn get_branch(&self, user_id: Uuid, position: usize) -> Result<Vec<&Node>, TreeError> {
-        self.get_branch(user_id, position)
-    }
-    fn count_downline(&self, user_id: Uuid, depth: u32) -> Result<usize, TreeError> {
-        self.count_downline(user_id, depth)
-    }
-    fn count_branch(&self, user_id: Uuid, position: usize) -> Result<usize, TreeError> {
-        self.count_branch(user_id, position)
-    }
-    fn is_descendant_of(&self, user_id: Uuid, ancestor_id: Uuid) -> Result<bool, TreeError> {
-        self.is_descendant_of(user_id, ancestor_id)
-    }
-    fn get_sponsor(&self, user_id: Uuid) -> Result<Option<&Node>, TreeError> {
-        self.get_sponsor(user_id)
-    }
-    fn get_sponsor_upline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
-        self.get_sponsor_upline(user_id, depth)
-    }
-    fn get_sponsored(&self, user_id: Uuid) -> Result<Vec<&Node>, TreeError> {
-        self.get_sponsored(user_id)
-    }
-}
+impl_arena_delegations!(BinaryTree);
+impl_tree_navigator!(BinaryTree);
 
 impl std::fmt::Debug for BinaryTree {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

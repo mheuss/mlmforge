@@ -250,6 +250,23 @@ impl Arena {
         self.count_downline(start_idx, 0)
     }
 
+    /// Collects a node and all its descendants in BFS order.
+    ///
+    /// Unlike `bfs_downline`, this includes the starting node itself.
+    /// Used by slot-based trees (binary, matrix) for branch collection.
+    pub(crate) fn collect_subtree(&self, root_idx: NodeIndex) -> Vec<&Node> {
+        let mut result = Vec::new();
+        let mut queue = VecDeque::new();
+        queue.push_back(root_idx);
+        while let Some(current) = queue.pop_front() {
+            result.push(self.node(current));
+            for &child_idx in &self.node(current).children {
+                queue.push_back(child_idx);
+            }
+        }
+        result
+    }
+
     /// Checks whether user_idx is a descendant of ancestor_idx.
     pub(crate) fn is_descendant_of(&self, user_idx: NodeIndex, ancestor_idx: NodeIndex) -> bool {
         if user_idx == ancestor_idx {
@@ -350,6 +367,117 @@ impl Arena {
             .map(|&child_idx| &self.nodes[child_idx.0])
             .collect()
     }
+}
+
+/// Generates shared UUID-accepting query methods that delegate to Arena.
+///
+/// All tree types share these exact implementations. Methods that vary
+/// per tree type (get_position, get_branch, count_branch) are NOT
+/// included and must be implemented manually.
+macro_rules! impl_arena_delegations {
+    ($tree_type:ty) => {
+        impl $tree_type {
+            /// Returns true if the tree contains a node with this user_id.
+            pub fn contains(&self, user_id: Uuid) -> bool {
+                self.arena.index.contains_key(&user_id)
+            }
+
+            pub fn get_parent(&self, user_id: Uuid) -> Result<Option<&Node>, TreeError> {
+                let idx = self.arena.resolve(user_id)?;
+                match self.arena.node(idx).parent {
+                    Some(parent_idx) => Ok(Some(self.arena.node(parent_idx))),
+                    None => Ok(None),
+                }
+            }
+
+            pub fn get_children(&self, user_id: Uuid) -> Result<Vec<&Node>, TreeError> {
+                let idx = self.arena.resolve(user_id)?;
+                let children = self
+                    .arena
+                    .node(idx)
+                    .children
+                    .iter()
+                    .map(|&child_idx| self.arena.node(child_idx))
+                    .collect();
+                Ok(children)
+            }
+
+            /// Walks upward from a node toward the root.
+            ///
+            /// Returns ancestors in order from immediate parent to root.
+            /// The starting node is not included in the result.
+            ///
+            /// Depth 0 means walk all the way to root. Any other value limits
+            /// the walk to that many levels up.
+            pub fn get_upline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
+                let idx = self.arena.resolve(user_id)?;
+                Ok(self.arena.walk_upline(idx, depth))
+            }
+
+            /// Walks downward from a node, returning descendants in BFS order.
+            ///
+            /// The starting node is not included in the result.
+            ///
+            /// Depth 0 means walk all levels. Any other value limits the walk
+            /// to that many levels below the starting node.
+            pub fn get_downline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
+                let idx = self.arena.resolve(user_id)?;
+                Ok(self.arena.bfs_downline(idx, depth))
+            }
+
+            /// Counts descendants without allocating a result Vec.
+            ///
+            /// Depth 0 means count all descendants. Any other value limits
+            /// the count to that many levels below.
+            pub fn count_downline(&self, user_id: Uuid, depth: u32) -> Result<usize, TreeError> {
+                let idx = self.arena.resolve(user_id)?;
+                Ok(self.arena.count_downline(idx, depth))
+            }
+
+            /// Checks whether `user_id` is a descendant of `ancestor_id`.
+            ///
+            /// A node is not considered a descendant of itself.
+            pub fn is_descendant_of(
+                &self,
+                user_id: Uuid,
+                ancestor_id: Uuid,
+            ) -> Result<bool, TreeError> {
+                let ancestor_idx = self.arena.resolve(ancestor_id)?;
+                if user_id == ancestor_id {
+                    return Ok(false);
+                }
+                let user_idx = self.arena.resolve(user_id)?;
+                Ok(self.arena.is_descendant_of(user_idx, ancestor_idx))
+            }
+
+            /// Returns the sponsor of a node, or None if the node has no sponsor (root).
+            pub fn get_sponsor(&self, user_id: Uuid) -> Result<Option<&Node>, TreeError> {
+                let idx = self.arena.resolve(user_id)?;
+                Ok(self.arena.get_sponsor(idx))
+            }
+
+            /// Walks upward following sponsor links.
+            ///
+            /// Returns sponsors in order from immediate sponsor to the root sponsor.
+            /// The starting node is not included.
+            ///
+            /// Depth 0 means walk all the way. Any other value limits the walk.
+            pub fn get_sponsor_upline(
+                &self,
+                user_id: Uuid,
+                depth: u32,
+            ) -> Result<Vec<&Node>, TreeError> {
+                let idx = self.arena.resolve(user_id)?;
+                Ok(self.arena.walk_sponsor_upline(idx, depth))
+            }
+
+            /// Returns the direct recruits of a node.
+            pub fn get_sponsored(&self, user_id: Uuid) -> Result<Vec<&Node>, TreeError> {
+                let idx = self.arena.resolve(user_id)?;
+                Ok(self.arena.get_sponsored(idx))
+            }
+        }
+    };
 }
 
 #[cfg(test)]

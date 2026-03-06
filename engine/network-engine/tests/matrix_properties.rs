@@ -12,7 +12,7 @@ fn build_random_matrix_tree(width: u8, node_count: usize, sponsor_hints: Vec<usi
     if node_count == 0 {
         return tree;
     }
-    tree.set_root(uuid_from_index(0), 0).unwrap();
+    tree.add_root(uuid_from_index(0), 0).unwrap();
     for i in 1..node_count {
         let sponsor_hint = sponsor_hints.get(i).copied().unwrap_or(0);
         let sponsor_idx = sponsor_hint % i;
@@ -88,7 +88,7 @@ proptest! {
         if node_count == 0 {
             return Ok(());
         }
-        tree.set_root(uuid_from_index(0), 0).unwrap();
+        tree.add_root(uuid_from_index(0), 0).unwrap();
         for i in 1..node_count {
             tree.add_node(uuid_from_index(i), uuid_from_index(0), i as i64).unwrap();
         }
@@ -270,6 +270,81 @@ proptest! {
                 uid,
                 depth
             );
+        }
+    }
+
+    /// Property: PromoteEarliest removal preserves tree invariants.
+    /// After removing a non-root node with PromoteEarliest, the remaining
+    /// tree still satisfies parent-child consistency, depth consistency,
+    /// and width constraints.
+    #[test]
+    fn promote_earliest_preserves_invariants(
+        node_count in 5usize..30,
+        width in 2u8..5,
+        sponsor_hints in proptest::collection::vec(0usize..100, 30),
+        remove_target in 1usize..5,
+    ) {
+        let mut tree = build_random_matrix_tree(width, node_count, sponsor_hints);
+        let target = remove_target % (node_count - 1) + 1; // skip root
+        let uid = uuid_from_index(target);
+
+        if !tree.contains(uid) {
+            return Ok(());
+        }
+
+        let result = tree.remove_node(uid, PruningMode::PromoteEarliest);
+        // Remove can fail if it's the root (we skip root) or other edge cases.
+        // If it succeeds, verify invariants.
+        if let Ok(removal) = result {
+            // Removed node should be gone.
+            prop_assert!(!tree.contains(removal.removed));
+
+            // Collect all remaining nodes by walking downline from root.
+            let root_id = uuid_from_index(0);
+            prop_assert!(tree.contains(root_id), "root should still exist");
+
+            let downline = tree.get_downline(root_id, 0).unwrap();
+            let all_nodes: Vec<_> = std::iter::once(root_id)
+                .chain(downline.iter().map(|n| n.user_id))
+                .collect();
+
+            for &nid in &all_nodes {
+                // Parent-child consistency: every child's parent should be this node.
+                let children = tree.get_children(nid).unwrap();
+                for child in &children {
+                    let parent = tree.get_parent(child.user_id).unwrap();
+                    prop_assert_eq!(
+                        parent.unwrap().user_id,
+                        nid,
+                        "child {}'s parent should be {}",
+                        child.user_id,
+                        nid
+                    );
+                }
+
+                // Width constraint: no node exceeds the matrix width.
+                prop_assert!(
+                    children.len() <= width as usize,
+                    "node {} has {} children but width is {}",
+                    nid,
+                    children.len(),
+                    width
+                );
+
+                // Depth consistency: child depth = parent depth + 1.
+                let pos = tree.get_position(nid).unwrap();
+                if let Some(parent_id) = pos.parent_user_id {
+                    let parent_pos = tree.get_position(parent_id).unwrap();
+                    prop_assert_eq!(
+                        pos.depth,
+                        parent_pos.depth + 1,
+                        "depth mismatch for node {} after removal",
+                        nid
+                    );
+                } else {
+                    prop_assert_eq!(pos.depth, 0, "root depth should be 0");
+                }
+            }
         }
     }
 

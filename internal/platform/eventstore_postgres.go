@@ -67,7 +67,7 @@ func (s *PostgresEventStore) Append(ctx context.Context, stream string, expected
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Query current stream version once. Used for concurrency check (when
 	// expectedVersion >= 0) and as the base for version numbering (when < 0).

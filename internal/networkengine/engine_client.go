@@ -67,6 +67,7 @@ func (c *EngineClient) call(ctx context.Context, op string, params any) (json.Ra
 
 // CreateTree creates a named tree instance in the engine.
 // treeType must be "unilevel" or "binary".
+// For matrix trees, use CreateMatrixTree instead.
 func (c *EngineClient) CreateTree(ctx context.Context, structure, treeType string) error {
 	_, err := c.call(ctx, "create_tree", map[string]string{
 		"structure": structure,

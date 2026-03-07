@@ -1,6 +1,7 @@
 //! Commission calculation.
 
 pub mod binary;
+pub mod matrix;
 pub mod types;
 pub mod unilevel;
 
@@ -8,6 +9,7 @@ pub mod unilevel;
 pub(crate) mod test_helpers;
 
 pub use binary::calculate_binary_pairing;
+pub use matrix::calculate_matrix;
 pub use types::{
     BinaryCalculationResult, BinaryCommissionEarning, CalculationError, CommissionEarning,
     DistributorSnapshot, LegVolumes, VolumeSource,

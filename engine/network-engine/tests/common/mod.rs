@@ -275,3 +275,139 @@ pub fn build_two_rank_unilevel_plan(
 
     (plan, structure)
 }
+
+// --- Matrix plan builder ---
+
+/// Build a matrix plan for property tests.
+///
+/// Rate table: single rank "member" with 5% at every level up to `max_depth`.
+/// Eligibility is fully permissive.
+pub fn build_matrix_plan(
+    width: u8,
+    height: u8,
+    max_depth: u8,
+) -> (
+    CompensationPlan,
+    network_engine::config::MatrixStructureConfig,
+) {
+    build_matrix_plan_with_eligibility(width, height, max_depth, permissive_eligibility())
+}
+
+/// Build a matrix plan with custom eligibility for property tests.
+pub fn build_matrix_plan_with_eligibility(
+    width: u8,
+    height: u8,
+    max_depth: u8,
+    eligibility: CommissionEligibility,
+) -> (
+    CompensationPlan,
+    network_engine::config::MatrixStructureConfig,
+) {
+    use network_engine::config::MatrixStructureConfig;
+    use network_engine::config::commission::LevelCommissionConfig;
+    use network_engine::config::matrix::{MatrixStructureParams, SpilloverDirection};
+
+    let mut rate_table = BTreeMap::new();
+    let mut rates = BTreeMap::new();
+    for level in 1..=max_depth {
+        rates.insert(level, 0.05);
+    }
+    rate_table.insert("member".to_string(), rates);
+
+    let structure = MatrixStructureConfig {
+        name: "Test".to_string(),
+        matrix_params: MatrixStructureParams {
+            width,
+            height,
+            spillover: SpilloverDirection::BreadthFirst,
+        },
+        level_commission: LevelCommissionConfig {
+            broad_commission_percent: 0.40,
+            volume_to_dollar_multiplier: None,
+            max_depth,
+            rate_table,
+        },
+        compression: None,
+        pruning: None,
+    };
+
+    let plan = build_base_plan(
+        eligibility,
+        StructureConfig::Matrix(structure.clone()),
+        "Test",
+    );
+
+    (plan, structure)
+}
+
+/// Build a matrix plan with two ranks for SkipBelowRank tests.
+pub fn build_two_rank_matrix_plan(
+    width: u8,
+    height: u8,
+    max_depth: u8,
+    eligibility: CommissionEligibility,
+) -> (
+    CompensationPlan,
+    network_engine::config::MatrixStructureConfig,
+) {
+    use network_engine::config::MatrixStructureConfig;
+    use network_engine::config::commission::LevelCommissionConfig;
+    use network_engine::config::matrix::{MatrixStructureParams, SpilloverDirection};
+
+    let mut rate_table = BTreeMap::new();
+    for rank_name in &["associate", "silver"] {
+        let mut rates = BTreeMap::new();
+        for level in 1..=max_depth {
+            rates.insert(level, 0.05);
+        }
+        rate_table.insert(rank_name.to_string(), rates);
+    }
+
+    let structure = MatrixStructureConfig {
+        name: "Test".to_string(),
+        matrix_params: MatrixStructureParams {
+            width,
+            height,
+            spillover: SpilloverDirection::BreadthFirst,
+        },
+        level_commission: LevelCommissionConfig {
+            broad_commission_percent: 0.40,
+            volume_to_dollar_multiplier: None,
+            max_depth,
+            rate_table,
+        },
+        compression: None,
+        pruning: None,
+    };
+
+    let mut plan = build_base_plan(
+        eligibility,
+        StructureConfig::Matrix(structure.clone()),
+        "Test",
+    );
+
+    plan.ranks = vec![
+        RankDefinition {
+            name: "associate".to_string(),
+            ordinal: 1,
+            qualification: RankQualification {
+                structures: vec![],
+                required_products: vec![],
+            },
+            qualified_structures: vec!["Test".to_string()],
+            demotion_policy: DemotionPolicy::PromotionOnly,
+        },
+        RankDefinition {
+            name: "silver".to_string(),
+            ordinal: 2,
+            qualification: RankQualification {
+                structures: vec![],
+                required_products: vec![],
+            },
+            qualified_structures: vec!["Test".to_string()],
+            demotion_policy: DemotionPolicy::PromotionOnly,
+        },
+    ];
+
+    (plan, structure)
+}

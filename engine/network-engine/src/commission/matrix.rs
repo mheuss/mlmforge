@@ -308,13 +308,13 @@ mod tests {
 
     fn test_rate_table() -> BTreeMap<String, BTreeMap<u8, f64>> {
         let mut table = BTreeMap::new();
-        let mut member = BTreeMap::new();
-        member.insert(1, 0.05);
-        member.insert(2, 0.04);
-        member.insert(3, 0.03);
-        member.insert(4, 0.02);
-        member.insert(5, 0.01);
-        table.insert("member".to_string(), member);
+        let mut associate = BTreeMap::new();
+        associate.insert(1, 0.05);
+        associate.insert(2, 0.04);
+        associate.insert(3, 0.03);
+        associate.insert(4, 0.02);
+        associate.insert(5, 0.01);
+        table.insert("associate".to_string(), associate);
         table
     }
 
@@ -348,7 +348,7 @@ mod tests {
 
     fn eligible_snapshot() -> DistributorSnapshot {
         DistributorSnapshot {
-            rank: "member".to_string(),
+            rank: "associate".to_string(),
             personal_volume: 150.0,
             status: "active".to_string(),
             has_order_in_period: true,

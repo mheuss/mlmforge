@@ -836,4 +836,44 @@ mod tests {
         // (100 + 200) * 0.40 * 1.0 * 0.05 = 6.0
         assert!((total - 6.0).abs() < 1e-10);
     }
+
+    #[test]
+    fn walk_follows_placement_not_sponsor() {
+        // 3-wide matrix. root(0) sponsors 1, 2, 3, 4.
+        // Nodes 1-3 fill root's slots. Node 4 spills under node 1.
+        // Volume from 4. The placement upline is 4 -> 1 -> 0.
+        // Node 0 earns at level 2, node 1 earns at level 1.
+        let structure = test_matrix_structure(3, 9, 5);
+        let plan = test_plan(structure.clone());
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), 1).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(0), 2).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(0), 3).unwrap();
+        // Node 4 sponsored by root, but root's slots are full.
+        // BFS spillover places under node 1.
+        tree.add_node(test_uuid(4), test_uuid(0), 4).unwrap();
+
+        let mut snapshots = HashMap::new();
+        for i in 0..5 {
+            snapshots.insert(test_uuid(i), eligible_snapshot());
+        }
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(4),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // Placement walk: 4 -> 1 (level 1) -> 0 (level 2)
+        assert_eq!(result.len(), 2);
+
+        let node1 = result.iter().find(|e| e.earner_id == test_uuid(1)).unwrap();
+        assert_eq!(node1.level, 1);
+
+        let root = result.iter().find(|e| e.earner_id == test_uuid(0)).unwrap();
+        assert_eq!(root.level, 2);
+    }
 }

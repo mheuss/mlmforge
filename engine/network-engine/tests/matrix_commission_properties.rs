@@ -243,6 +243,53 @@ proptest! {
             );
         }
     }
+
+    /// Total payout never exceeds sum(cv) * broad_pct * multiplier * max_rate.
+    #[test]
+    fn total_payout_bounded(
+        tree_size in 2..30usize,
+        cv in 1.0..10000.0f64,
+    ) {
+        let (plan, structure) = build_matrix_plan(3, 9, 5);
+        let broad_pct = structure.level_commission.broad_commission_percent;
+        let multiplier = plan.volume.volume_to_dollar_multiplier;
+        let max_rate = 0.05;
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(uuid_from_index(0), 0).unwrap();
+        for i in 1..tree_size {
+            tree.add_node(uuid_from_index(i), uuid_from_index(0), i as i64).unwrap();
+        }
+
+        let mut snapshots = HashMap::new();
+        for i in 0..tree_size {
+            snapshots.insert(
+                uuid_from_index(i),
+                DistributorSnapshot {
+                    rank: "member".to_string(),
+                    personal_volume: 100.0,
+                    status: "active".to_string(),
+                    has_order_in_period: true,
+                },
+            );
+        }
+
+        let source_idx = tree_size - 1;
+        let volume = vec![VolumeSource {
+            source_id: uuid_from_index(source_idx),
+            cv_amount: cv,
+        }];
+
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        let total: f64 = result.iter().map(|e| e.dollar_amount).sum();
+        let upper_bound = cv * broad_pct * multiplier * max_rate * (tree_size as f64);
+        prop_assert!(
+            total <= upper_bound + 1e-10,
+            "Total payout {} exceeds upper bound {}",
+            total, upper_bound
+        );
+    }
 }
 
 /// Single-node tree produces no earnings.

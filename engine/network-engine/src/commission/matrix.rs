@@ -876,4 +876,104 @@ mod tests {
         let root = result.iter().find(|e| e.earner_id == test_uuid(0)).unwrap();
         assert_eq!(root.level, 2);
     }
+
+    #[test]
+    fn zero_cv_amount_produces_zero_earnings() {
+        let structure = test_matrix_structure(3, 9, 5);
+        let plan = test_plan(structure.clone());
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), 1).unwrap();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(0), eligible_snapshot());
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(1),
+            cv_amount: 0.0,
+        }];
+
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        // Zero CV passes validation but produces zero dollar amounts.
+        // The rate > 0.0 check passes, so an earning is emitted with dollar_amount = 0.
+        assert_eq!(result.len(), 1);
+        assert!((result[0].dollar_amount).abs() < 1e-10);
+    }
+
+    #[test]
+    fn nan_cv_amount_returns_error() {
+        let structure = test_matrix_structure(3, 9, 5);
+        let plan = test_plan(structure.clone());
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), 1).unwrap();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(0), eligible_snapshot());
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(1),
+            cv_amount: f64::NAN,
+        }];
+
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume);
+        assert!(matches!(
+            result,
+            Err(CalculationError::InvalidCvAmount(_, _))
+        ));
+    }
+
+    #[test]
+    fn positive_infinity_cv_amount_returns_error() {
+        let structure = test_matrix_structure(3, 9, 5);
+        let plan = test_plan(structure.clone());
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), 1).unwrap();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(0), eligible_snapshot());
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(1),
+            cv_amount: f64::INFINITY,
+        }];
+
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume);
+        assert!(matches!(
+            result,
+            Err(CalculationError::InvalidCvAmount(_, _))
+        ));
+    }
+
+    #[test]
+    fn negative_infinity_cv_amount_returns_error() {
+        let structure = test_matrix_structure(3, 9, 5);
+        let plan = test_plan(structure.clone());
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), 1).unwrap();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(0), eligible_snapshot());
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(1),
+            cv_amount: f64::NEG_INFINITY,
+        }];
+
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume);
+        assert!(matches!(
+            result,
+            Err(CalculationError::InvalidCvAmount(_, _))
+        ));
+    }
 }

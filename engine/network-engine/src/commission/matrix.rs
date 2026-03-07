@@ -503,4 +503,337 @@ mod tests {
         assert!(earner_ids.contains(&test_uuid(2))); // level 1 from source
         assert!(earner_ids.contains(&test_uuid(1))); // level 2 from source
     }
+
+    #[test]
+    fn ineligible_distributor_does_not_earn() {
+        // root(0, ineligible) -> child(1). Volume from 1.
+        // Root is ineligible (low PV). No earnings.
+        let structure = test_matrix_structure(3, 9, 5);
+        let plan = test_plan(structure.clone());
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), 1).unwrap();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(0),
+            DistributorSnapshot {
+                rank: "associate".to_string(),
+                personal_volume: 10.0, // below min 100
+                status: "active".to_string(),
+                has_order_in_period: true,
+            },
+        );
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(1),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn compression_skip_inactive() {
+        // Chain: root(0) -> 1(ineligible) -> 2. Volume from 2.
+        // With compression, node 1 is skipped. Root earns at level 1.
+        use crate::config::commission::{CompressionConfig, CompressionMode};
+
+        let mut structure = test_matrix_structure(3, 9, 5);
+        structure.compression = Some(CompressionConfig {
+            enabled: true,
+            mode: CompressionMode::SkipInactive,
+            rank_threshold: None,
+        });
+        let plan = test_plan(structure.clone());
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), 1).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2).unwrap();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(0), eligible_snapshot());
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "associate".to_string(),
+                personal_volume: 10.0, // ineligible
+                status: "active".to_string(),
+                has_order_in_period: true,
+            },
+        );
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].earner_id, test_uuid(0));
+        assert_eq!(result[0].level, 1); // level 1, not 2 — compression preserved the level
+    }
+
+    #[test]
+    fn without_compression_ineligible_forfeits_level() {
+        // Chain: root(0) -> 1(ineligible) -> 2. Volume from 2.
+        // Without compression, node 1 forfeits level 1. Root earns at level 2.
+        let structure = test_matrix_structure(3, 9, 5);
+        let plan = test_plan(structure.clone());
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), 1).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2).unwrap();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(0), eligible_snapshot());
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "associate".to_string(),
+                personal_volume: 10.0, // ineligible
+                status: "active".to_string(),
+                has_order_in_period: true,
+            },
+        );
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].earner_id, test_uuid(0));
+        assert_eq!(result[0].level, 2); // level 2 — node 1 consumed level 1
+    }
+
+    #[test]
+    fn source_is_root_no_earnings() {
+        let structure = test_matrix_structure(3, 9, 5);
+        let plan = test_plan(structure.clone());
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(0), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(0),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn empty_volume_returns_empty() {
+        let structure = test_matrix_structure(3, 9, 5);
+        let plan = test_plan(structure.clone());
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+
+        let snapshots = HashMap::new();
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &[]).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn source_not_in_tree_returns_error() {
+        let structure = test_matrix_structure(3, 9, 5);
+        let plan = test_plan(structure.clone());
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+
+        let snapshots = HashMap::new();
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(99),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume);
+        assert!(matches!(result, Err(CalculationError::SourceNotInTree(_))));
+    }
+
+    #[test]
+    fn source_not_in_snapshot_returns_error() {
+        let structure = test_matrix_structure(3, 9, 5);
+        let plan = test_plan(structure.clone());
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), 1).unwrap();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(0), eligible_snapshot());
+        // test_uuid(1) intentionally missing from snapshots
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(1),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume);
+        assert!(matches!(
+            result,
+            Err(CalculationError::SourceNotInSnapshot(_))
+        ));
+    }
+
+    #[test]
+    fn invalid_cv_amount_returns_error() {
+        let structure = test_matrix_structure(3, 9, 5);
+        let plan = test_plan(structure.clone());
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), 1).unwrap();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(0), eligible_snapshot());
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(1),
+            cv_amount: -50.0,
+        }];
+
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume);
+        assert!(matches!(
+            result,
+            Err(CalculationError::InvalidCvAmount(_, _))
+        ));
+    }
+
+    #[test]
+    fn missing_rank_in_rate_table_no_earning() {
+        // Distributor has rank "gold" which is not in rate table.
+        let structure = test_matrix_structure(3, 9, 5);
+        let plan = test_plan(structure.clone());
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), 1).unwrap();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(0),
+            DistributorSnapshot {
+                rank: "gold".to_string(), // not in rate table
+                personal_volume: 150.0,
+                status: "active".to_string(),
+                has_order_in_period: true,
+            },
+        );
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(1),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn multiplier_fallback_to_plan_level() {
+        // Structure has no volume_to_dollar_multiplier. Falls back to plan level (1.0).
+        let structure = test_matrix_structure(3, 9, 5);
+        let plan = test_plan(structure.clone());
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), 1).unwrap();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(0), eligible_snapshot());
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(1),
+            cv_amount: 200.0,
+        }];
+
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        assert_eq!(result.len(), 1);
+        // 200.0 * 0.40 * 1.0 * 0.05 = 4.0
+        assert!((result[0].dollar_amount - 4.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn structure_multiplier_overrides_plan() {
+        let mut structure = test_matrix_structure(3, 9, 5);
+        structure.level_commission.volume_to_dollar_multiplier = Some(2.0);
+        let plan = test_plan(structure.clone());
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), 1).unwrap();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(0), eligible_snapshot());
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(1),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        assert_eq!(result.len(), 1);
+        // 100.0 * 0.40 * 2.0 * 0.05 = 4.0
+        assert!((result[0].dollar_amount - 4.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn multiple_volume_sources_independent_walks() {
+        // root(0) -> 1, root(0) -> 2. Volume from both 1 and 2.
+        // Root earns twice — once from each source.
+        let structure = test_matrix_structure(3, 9, 5);
+        let plan = test_plan(structure.clone());
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), 1).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(0), 2).unwrap();
+
+        let mut snapshots = HashMap::new();
+        for i in 0..3 {
+            snapshots.insert(test_uuid(i), eligible_snapshot());
+        }
+
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(1),
+                cv_amount: 100.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(2),
+                cv_amount: 200.0,
+            },
+        ];
+
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        assert_eq!(result.len(), 2);
+        let total: f64 = result.iter().map(|e| e.dollar_amount).sum();
+        // (100 + 200) * 0.40 * 1.0 * 0.05 = 6.0
+        assert!((total - 6.0).abs() < 1e-10);
+    }
 }

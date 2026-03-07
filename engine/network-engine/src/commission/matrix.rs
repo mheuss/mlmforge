@@ -411,11 +411,25 @@ mod tests {
         let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
 
         assert_eq!(result.len(), 3);
-        // Earnings sorted by earner_id. Verify levels are 1, 2, 3 from source.
-        let levels: Vec<u8> = result.iter().map(|e| e.level).collect();
-        assert!(levels.contains(&1));
-        assert!(levels.contains(&2));
-        assert!(levels.contains(&3));
+
+        // Verify each earner got the correct level, rate, and dollar amount
+        let e2 = result.iter().find(|e| e.earner_id == test_uuid(2)).unwrap();
+        assert_eq!(e2.level, 1);
+        assert_eq!(e2.rate, 0.05);
+        // 100.0 * 0.40 * 1.0 * 0.05 = 2.0
+        assert!((e2.dollar_amount - 2.0).abs() < 1e-10);
+
+        let e1 = result.iter().find(|e| e.earner_id == test_uuid(1)).unwrap();
+        assert_eq!(e1.level, 2);
+        assert_eq!(e1.rate, 0.04);
+        // 100.0 * 0.40 * 1.0 * 0.04 = 1.6
+        assert!((e1.dollar_amount - 1.6).abs() < 1e-10);
+
+        let e0 = result.iter().find(|e| e.earner_id == test_uuid(0)).unwrap();
+        assert_eq!(e0.level, 3);
+        assert_eq!(e0.rate, 0.03);
+        // 100.0 * 0.40 * 1.0 * 0.03 = 1.2
+        assert!((e0.dollar_amount - 1.2).abs() < 1e-10);
     }
 
     #[test]
@@ -448,6 +462,10 @@ mod tests {
         for earning in &result {
             assert!(earning.level <= 2);
         }
+        // Verify the correct earners received earnings
+        let earner_ids: Vec<_> = result.iter().map(|e| e.earner_id).collect();
+        assert!(earner_ids.contains(&test_uuid(2))); // level 1 from source
+        assert!(earner_ids.contains(&test_uuid(1))); // level 2 from source
     }
 
     #[test]
@@ -480,5 +498,9 @@ mod tests {
         for earning in &result {
             assert!(earning.level <= 2);
         }
+        // Verify the correct earners received earnings
+        let earner_ids: Vec<_> = result.iter().map(|e| e.earner_id).collect();
+        assert!(earner_ids.contains(&test_uuid(2))); // level 1 from source
+        assert!(earner_ids.contains(&test_uuid(1))); // level 2 from source
     }
 }

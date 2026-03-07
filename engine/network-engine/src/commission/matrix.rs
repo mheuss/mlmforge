@@ -384,4 +384,101 @@ mod tests {
         // 100.0 * 0.40 * 1.0 * 0.05 = 2.0
         assert!((result[0].dollar_amount - 2.0).abs() < 1e-10);
     }
+
+    #[test]
+    fn walk_multiple_levels() {
+        // Chain: root(0) -> 1 -> 2 -> 3. Volume from 3.
+        // Expect earnings at levels 1, 2, 3.
+        let structure = test_matrix_structure(3, 9, 5);
+        let plan = test_plan(structure.clone());
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), 1).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), 3).unwrap();
+
+        let mut snapshots = HashMap::new();
+        for i in 0..4 {
+            snapshots.insert(test_uuid(i), eligible_snapshot());
+        }
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        assert_eq!(result.len(), 3);
+        // Earnings sorted by earner_id. Verify levels are 1, 2, 3 from source.
+        let levels: Vec<u8> = result.iter().map(|e| e.level).collect();
+        assert!(levels.contains(&1));
+        assert!(levels.contains(&2));
+        assert!(levels.contains(&3));
+    }
+
+    #[test]
+    fn depth_limited_by_height() {
+        // height=2, max_depth=5. Effective depth = 2.
+        // Chain: root(0) -> 1 -> 2 -> 3. Volume from 3.
+        // Only levels 1 and 2 should earn.
+        let structure = test_matrix_structure(3, 2, 5);
+        let plan = test_plan(structure.clone());
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), 1).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), 3).unwrap();
+
+        let mut snapshots = HashMap::new();
+        for i in 0..4 {
+            snapshots.insert(test_uuid(i), eligible_snapshot());
+        }
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        assert_eq!(result.len(), 2);
+        for earning in &result {
+            assert!(earning.level <= 2);
+        }
+    }
+
+    #[test]
+    fn depth_limited_by_max_depth() {
+        // height=9, max_depth=2. Effective depth = 2.
+        // Chain: root(0) -> 1 -> 2 -> 3. Volume from 3.
+        // Only levels 1 and 2 should earn.
+        let structure = test_matrix_structure(3, 9, 2);
+        let plan = test_plan(structure.clone());
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), 1).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), 3).unwrap();
+
+        let mut snapshots = HashMap::new();
+        for i in 0..4 {
+            snapshots.insert(test_uuid(i), eligible_snapshot());
+        }
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        assert_eq!(result.len(), 2);
+        for earning in &result {
+            assert!(earning.level <= 2);
+        }
+    }
 }

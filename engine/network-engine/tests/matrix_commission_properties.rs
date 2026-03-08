@@ -1,8 +1,9 @@
 mod common;
-use common::{build_matrix_plan, uuid_from_index};
+use common::{build_matrix_plan, build_matrix_plan_with_eligibility, uuid_from_index};
 
 use network_engine::commission::{DistributorSnapshot, VolumeSource, calculate_matrix};
 use network_engine::config::commission::{CompressionConfig, CompressionMode};
+use network_engine::config::eligibility::CommissionEligibility;
 use network_engine::config::matrix::SpilloverDirection;
 use network_engine::tree::matrix::MatrixTree;
 use proptest::prelude::*;
@@ -113,7 +114,15 @@ proptest! {
         tree_size in 5..30usize,
         max_depth in 3..10u8,
     ) {
-        let (plan, mut structure) = build_matrix_plan(3, 9, max_depth);
+        // Use stricter eligibility (min PV 50) so nodes with PV 0 are
+        // actually ineligible and SkipInactive compression fires.
+        let eligibility = CommissionEligibility {
+            minimum_pv: 50.0,
+            require_order_in_period: false,
+            eligible_statuses: vec![],
+            active_leg_tiers: vec![],
+        };
+        let (plan, mut structure) = build_matrix_plan_with_eligibility(3, 9, max_depth, eligibility);
         structure.compression = Some(CompressionConfig {
             enabled: true,
             mode: CompressionMode::SkipInactive,
@@ -244,7 +253,11 @@ proptest! {
         }
     }
 
-    /// Total payout never exceeds sum(cv) * broad_pct * multiplier * max_rate.
+    /// Total payout never exceeds cv * broad_pct * multiplier * max_rate * effective_depth.
+    ///
+    /// Each volume source produces at most one earner per level, so the
+    /// maximum number of earnings is bounded by the effective depth, not
+    /// the tree size.
     #[test]
     fn total_payout_bounded(
         tree_size in 2..30usize,
@@ -254,6 +267,8 @@ proptest! {
         let broad_pct = structure.level_commission.broad_commission_percent;
         let multiplier = plan.volume.volume_to_dollar_multiplier;
         let max_rate = 0.05;
+        let effective_depth = structure.level_commission.max_depth
+            .min(structure.matrix_params.height);
 
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
         tree.add_root(uuid_from_index(0), 0).unwrap();
@@ -283,7 +298,7 @@ proptest! {
         let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
 
         let total: f64 = result.iter().map(|e| e.dollar_amount).sum();
-        let upper_bound = cv * broad_pct * multiplier * max_rate * (tree_size as f64);
+        let upper_bound = cv * broad_pct * multiplier * max_rate * (effective_depth as f64);
         prop_assert!(
             total <= upper_bound + 1e-10,
             "Total payout {} exceeds upper bound {}",

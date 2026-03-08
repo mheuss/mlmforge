@@ -203,19 +203,23 @@ pub fn calculate_matrix(
     Ok(all_earnings)
 }
 
-/// Count how many direct children of a distributor are commission-eligible.
+/// Count how many personally sponsored distributors are commission-eligible.
+///
+/// Active leg tiers are defined in terms of personally sponsored frontline
+/// legs, not placement children. In a matrix with spillover, placement parent
+/// can differ from sponsor, so this must use `get_sponsored`.
 fn count_active_legs(
     tree: &MatrixTree,
     user_id: Uuid,
     snapshots: &HashMap<Uuid, DistributorSnapshot>,
     eligibility: &CommissionEligibility,
 ) -> u16 {
-    let children = match tree.get_children(user_id) {
-        Ok(children) => children,
+    let sponsored = match tree.get_sponsored(user_id) {
+        Ok(sponsored) => sponsored,
         Err(_) => return 0,
     };
 
-    children
+    sponsored
         .iter()
         .filter(|child| {
             snapshots

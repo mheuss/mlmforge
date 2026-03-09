@@ -1,5 +1,7 @@
 //! Shared test helpers for commission calculators.
 
+use uuid::Uuid;
+
 use crate::config::bonus::BonusConfig;
 use crate::config::eligibility::CommissionEligibility;
 use crate::config::payout::{CapEnforcement, CapsConfig, PayoutConfig, PayoutMethod};
@@ -102,6 +104,17 @@ pub fn default_eligibility() -> CommissionEligibility {
         eligible_statuses: vec!["active".to_string()],
         active_leg_tiers: vec![],
     }
+}
+
+/// Deterministic UUID from a test index.
+///
+/// Byte 15 is set to 0xFF to avoid collisions with the arena tombstone
+/// sentinel (`Uuid::nil`). The index is encoded as a little-endian u128
+/// in the remaining bytes.
+pub fn uuid_from_index(i: usize) -> Uuid {
+    let mut bytes = (i as u128).to_le_bytes();
+    bytes[15] = 0xFF;
+    Uuid::from_bytes(bytes)
 }
 
 /// Default eligible distributor snapshot.

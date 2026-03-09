@@ -237,6 +237,82 @@ proptest! {
         );
     }
 
+    /// Total payout is bounded even with breakaway overrides active.
+    #[test]
+    fn total_payout_bounded_with_overrides(
+        tree_size in 3..30usize,
+        cv in 1.0..10000.0f64,
+    ) {
+        use network_engine::config::stairstep::{
+            BreakawayConfig, DifferentialConfig, OverrideCalculation,
+        };
+
+        let (plan, mut structure) = build_stairstep_plan(5);
+        let broad_pct = structure.level_commission.broad_commission_percent;
+        let multiplier = plan.volume.volume_to_dollar_multiplier;
+        let max_depth = structure.level_commission.max_depth;
+
+        structure.breakaway = Some(BreakawayConfig {
+            threshold_rank: "director".to_string(),
+            exclude_breakaway_gv: false,
+            override_calculation: OverrideCalculation::Differential,
+            differential: Some(DifferentialConfig {
+                rank_rates: {
+                    let mut m = std::collections::BTreeMap::new();
+                    m.insert("member".to_string(), 0.05);
+                    m.insert("director".to_string(), 0.10);
+                    m
+                },
+                min_override: 0.02,
+            }),
+            generation_overrides: None,
+        });
+
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uuid_from_index(0), 0).unwrap();
+        for i in 1..tree_size {
+            let parent = i - 1;
+            tree.add_node(uuid_from_index(i), uuid_from_index(parent), uuid_from_index(parent), i as i64).unwrap();
+        }
+
+        let mut snapshots = HashMap::new();
+        for i in 0..tree_size {
+            let rank = if i % 3 == 0 { "director" } else { "member" };
+            snapshots.insert(
+                uuid_from_index(i),
+                DistributorSnapshot {
+                    rank: rank.to_string(),
+                    personal_volume: 100.0,
+                    status: "active".to_string(),
+                    has_order_in_period: true,
+                },
+            );
+        }
+
+        let source_idx = tree_size - 1;
+        let volume = vec![VolumeSource {
+            source_id: uuid_from_index(source_idx),
+            cv_amount: cv,
+        }];
+
+        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        let total: f64 = result.iter().map(|e| e.dollar_amount).sum();
+        // Level bound: up to max_depth levels at 0.05 each, based on CV.
+        let level_bound = cv * broad_pct * multiplier * 0.05 * max_depth as f64;
+        // Override bound: overrides use group volume (personal_volume sums),
+        // not the CV from volume sources. Total group volume across all
+        // breakaways equals total personal volume = tree_size * 100.
+        let total_pv = tree_size as f64 * 100.0;
+        let override_bound = total_pv * broad_pct * multiplier * 0.10;
+        let upper_bound = level_bound + override_bound;
+        prop_assert!(
+            total <= upper_bound + 1e-10,
+            "Total payout {} exceeds upper bound {}",
+            total, upper_bound
+        );
+    }
+
     /// Level and override earnings partition cleanly: no earner receives
     /// both a level commission and an override on the same volume source.
     #[test]

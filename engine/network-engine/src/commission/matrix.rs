@@ -1091,7 +1091,7 @@ mod tests {
         //
         // Volume from node 4. Placement walk: 4 -> 1 (level 1) -> 0 (level 2).
         // Root should earn at level 2 (within depth 3 from sponsored count).
-        let mut structure = test_matrix_structure(3, 9, 5);
+        let structure = test_matrix_structure(3, 9, 5);
         let eligibility = CommissionEligibility {
             minimum_pv: 100.0,
             require_order_in_period: false,

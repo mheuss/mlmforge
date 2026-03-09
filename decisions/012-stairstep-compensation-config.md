@@ -24,8 +24,8 @@ These level commissions continue to apply to the portion of the downline that ha
 
 | Option | Type | What it controls |
 |--------|------|-----------------|
-| **Threshold rank** | rank ref | The rank at which a downline leader's group breaks away. When a downline distributor achieves this rank, their group separates from the upline's group volume calculation. |
-| **Group volume excludes breakaway** | boolean (default: true) | Whether breakaway group volume is excluded from the upline's GV for rank qualification purposes. Should always be true. Without this exclusion, there is no meaningful distinction between stairstep and unilevel with override bonuses. The volume boundary at breakaway is what creates the economic incentive structure. |
+| **Threshold rank** | rank ref | The rank at which a downline leader's group breaks away. A distributor whose rank ordinal is greater than or equal to the threshold rank's ordinal is considered broken away. A senior_director breaks away when the threshold is director. |
+| **Group volume excludes breakaway** | boolean (default: true) | Whether breakaway group volume is excluded from the upline's GV for rank qualification purposes. This is a rank qualification concern enforced upstream of the commission calculator. The calculator receives snapshots with final ranks already determined and does not use this flag directly. Should always be true. Without this exclusion, there is no meaningful distinction between stairstep and unilevel with override bonuses. The volume boundary at breakaway is what creates the economic incentive structure. |
 
 **Before breakaway:** The upline earns level commissions on every order in their downline. The downline leader's volume counts toward the upline's group volume for rank qualification.
 

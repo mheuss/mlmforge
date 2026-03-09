@@ -141,7 +141,17 @@ fn identify_breakaways(
         None => return HashSet::new(),
     };
 
-    let threshold_ordinal = rank_ordinals.get(threshold.as_str()).copied().unwrap_or(0);
+    let threshold_ordinal = match rank_ordinals.get(threshold.as_str()).copied() {
+        Some(ord) => ord,
+        None => {
+            log::warn!(
+                "breakaway threshold_rank '{}' not found in plan ranks; \
+                 no distributors will be treated as breakaway",
+                threshold
+            );
+            return HashSet::new();
+        }
+    };
 
     snapshots
         .iter()
@@ -283,20 +293,34 @@ fn walk_overrides(
     // Pre-build generation override candidates if configured. This set
     // is the same for every breakaway, so we build it once rather than
     // per-iteration.
-    let gen_override_candidates = breakaway_cfg.generation_overrides.as_ref().map(|gen_cfg| {
-        let boundary_ordinal = rank_ordinals
-            .get(gen_cfg.boundary_rank.as_str())
-            .copied()
-            .unwrap_or(0);
+    let gen_override_candidates = breakaway_cfg
+        .generation_overrides
+        .as_ref()
+        .and_then(|gen_cfg| {
+            let boundary_ordinal = match rank_ordinals.get(gen_cfg.boundary_rank.as_str()).copied()
+            {
+                Some(ord) => ord,
+                None => {
+                    log::warn!(
+                        "generation override boundary_rank '{}' not found in plan ranks; \
+                                 generation overrides will be skipped",
+                        gen_cfg.boundary_rank
+                    );
+                    return None;
+                }
+            };
 
-        snapshots
-            .iter()
-            .filter(|(_, snap)| {
-                rank_ordinals.get(snap.rank.as_str()).copied().unwrap_or(0) >= boundary_ordinal
-            })
-            .map(|(id, _)| *id)
-            .collect::<HashSet<Uuid>>()
-    });
+            Some(
+                snapshots
+                    .iter()
+                    .filter(|(_, snap)| {
+                        rank_ordinals.get(snap.rank.as_str()).copied().unwrap_or(0)
+                            >= boundary_ordinal
+                    })
+                    .map(|(id, _)| *id)
+                    .collect::<HashSet<Uuid>>(),
+            )
+        });
 
     for &breakaway_id in &prep.breakaways {
         let group_vol = prep
@@ -320,13 +344,15 @@ fn walk_overrides(
             .copied()
             .unwrap_or(0.0);
 
-        if let Some(gen_cfg) = &breakaway_cfg.generation_overrides {
+        if let (Some(gen_cfg), Some(override_candidates)) = (
+            &breakaway_cfg.generation_overrides,
+            gen_override_candidates.as_ref(),
+        ) {
             // --- Generation override mode ---
             // The candidate set contains all distributors at or above the
             // boundary rank. This is broader than the prep breakaway set
             // because a senior_director (above the director threshold)
             // should count as a generation boundary.
-            let override_candidates = gen_override_candidates.as_ref().unwrap();
 
             // boundary_check always returns true because the candidate
             // set already filters by rank. Every candidate is a boundary.

@@ -372,18 +372,17 @@ proptest! {
 
         let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
 
-        // Level earnings have source_id == volume source (the original order).
-        // Override earnings have source_id == a breakaway distributor.
+        // Partition level earners and override earners.
+        // Level earnings: source_id == original volume source.
+        // Override earnings: source_id == a breakaway distributor.
+        let mut level_earners = std::collections::HashSet::new();
+        let mut override_earners = std::collections::HashSet::new();
+
         for earning in &result {
             if earning.source_id == uuid_from_index(source_idx) {
-                // Level earning — earner should be in the source's group
-                prop_assert!(
-                    tree.contains(earning.earner_id),
-                    "Level earner {:?} not in tree",
-                    earning.earner_id
-                );
+                level_earners.insert(earning.earner_id);
             } else {
-                // Override earning — source_id should be a breakaway
+                // Override source_id should be a breakaway
                 let is_breakaway = snapshots
                     .get(&earning.source_id)
                     .map(|s| s.rank == "director")
@@ -393,8 +392,20 @@ proptest! {
                     "Override source {:?} is not a breakaway distributor",
                     earning.source_id
                 );
+                override_earners.insert(earning.earner_id);
             }
         }
+
+        // The partition property: no earner receives both a level
+        // commission and an override commission. Walk 1 stays within
+        // the source's personal group while Walk 2 pays ancestors
+        // above breakaway boundaries.
+        let overlap: Vec<_> = level_earners.intersection(&override_earners).collect();
+        prop_assert!(
+            overlap.is_empty(),
+            "Earners received both level and override commissions: {:?}",
+            overlap
+        );
     }
 }
 

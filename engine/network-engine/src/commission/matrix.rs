@@ -304,8 +304,9 @@ fn evaluate_eligibility(
 mod tests {
     use super::*;
     use crate::commission::test_helpers::build_test_plan;
-    use crate::config::commission::LevelCommissionConfig;
+    use crate::config::commission::{CompressionConfig, CompressionMode, LevelCommissionConfig};
     use crate::config::matrix::{MatrixStructureParams, SpilloverDirection};
+    use crate::config::rank::{DemotionPolicy, RankDefinition, RankQualification};
     use crate::config::{MatrixStructureConfig, StructureConfig};
     use crate::tree::test_helpers::test_uuid;
     use std::collections::BTreeMap;
@@ -319,6 +320,18 @@ mod tests {
         associate.insert(4, 0.02);
         associate.insert(5, 0.01);
         table.insert("associate".to_string(), associate);
+        table
+    }
+
+    fn multi_rank_rate_table() -> BTreeMap<String, BTreeMap<u8, f64>> {
+        let mut table = test_rate_table();
+        let mut silver = BTreeMap::new();
+        silver.insert(1, 0.07);
+        silver.insert(2, 0.06);
+        silver.insert(3, 0.05);
+        silver.insert(4, 0.04);
+        silver.insert(5, 0.03);
+        table.insert("silver".to_string(), silver);
         table
     }
 
@@ -348,6 +361,40 @@ mod tests {
             StructureConfig::Matrix(structure),
             "Test Matrix",
         )
+    }
+
+    fn multi_rank_plan(
+        structure: MatrixStructureConfig,
+        eligibility: CommissionEligibility,
+    ) -> CompensationPlan {
+        let mut plan = build_test_plan(
+            eligibility,
+            StructureConfig::Matrix(structure),
+            "Test Matrix",
+        );
+        plan.ranks = vec![
+            RankDefinition {
+                name: "associate".to_string(),
+                ordinal: 1,
+                qualification: RankQualification {
+                    structures: vec![],
+                    required_products: vec![],
+                },
+                qualified_structures: vec!["Test Matrix".to_string()],
+                demotion_policy: DemotionPolicy::PromotionOnly,
+            },
+            RankDefinition {
+                name: "silver".to_string(),
+                ordinal: 2,
+                qualification: RankQualification {
+                    structures: vec![],
+                    required_products: vec![],
+                },
+                qualified_structures: vec!["Test Matrix".to_string()],
+                demotion_policy: DemotionPolicy::PromotionOnly,
+            },
+        ];
+        plan
     }
 
     fn eligible_snapshot() -> DistributorSnapshot {
@@ -979,5 +1026,116 @@ mod tests {
             result,
             Err(CalculationError::InvalidCvAmount(_, _))
         ));
+    }
+
+    #[test]
+    fn compression_skip_below_rank() {
+        // Chain: root(0, silver) -> mid(1, associate) -> leaf(2).
+        // Threshold is "silver" (ordinal 2). Mid is "associate" (ordinal 1),
+        // below threshold, so mid gets compressed out. Root earns at level 1.
+        let mut structure = test_matrix_structure(3, 9, 5);
+        structure.level_commission.rate_table = multi_rank_rate_table();
+        structure.compression = Some(CompressionConfig {
+            enabled: true,
+            mode: CompressionMode::SkipBelowRank,
+            rank_threshold: Some("silver".to_string()),
+        });
+        let eligibility = crate::commission::test_helpers::default_eligibility();
+        let plan = multi_rank_plan(structure.clone(), eligibility);
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), 1).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2).unwrap();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(0),
+            DistributorSnapshot {
+                rank: "silver".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "associate".to_string(), // below threshold
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // Mid compressed out. Root earns at level 1 (not level 2).
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].earner_id, test_uuid(0));
+        assert_eq!(result[0].level, 1);
+        assert_eq!(result[0].rate, 0.07); // silver rate at level 1
+    }
+
+    #[test]
+    fn active_leg_tiers_count_sponsored_not_placed() {
+        // 3-wide matrix. Root(0) sponsors 1, 2, 3, 4.
+        // Nodes 1-3 fill root's placement slots. Node 4 spills under node 1.
+        // Root has 4 sponsored recruits but only 3 placement children.
+        //
+        // Active leg tier: need 4 active legs for depth 3, otherwise depth 1.
+        // If counting placement children (3), root would be limited to depth 1.
+        // If counting sponsored recruits (4), root earns up to depth 3.
+        //
+        // Volume from node 4. Placement walk: 4 -> 1 (level 1) -> 0 (level 2).
+        // Root should earn at level 2 (within depth 3 from sponsored count).
+        let mut structure = test_matrix_structure(3, 9, 5);
+        let eligibility = CommissionEligibility {
+            minimum_pv: 100.0,
+            require_order_in_period: false,
+            eligible_statuses: vec!["active".to_string()],
+            active_leg_tiers: vec![
+                ActiveLegTier {
+                    min_active_legs: 0,
+                    max_commission_depth: 1,
+                },
+                ActiveLegTier {
+                    min_active_legs: 4,
+                    max_commission_depth: 3,
+                },
+            ],
+        };
+        let plan = multi_rank_plan(structure.clone(), eligibility);
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), 1).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(0), 2).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(0), 3).unwrap();
+        // Node 4: sponsored by root, but placed under node 1 (spillover).
+        tree.add_node(test_uuid(4), test_uuid(0), 4).unwrap();
+
+        let mut snapshots = HashMap::new();
+        for i in 0..5 {
+            snapshots.insert(test_uuid(i), eligible_snapshot());
+        }
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(4),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // Node 1 earns at level 1. Root earns at level 2 (within depth 3).
+        assert_eq!(result.len(), 2);
+
+        let node1 = result.iter().find(|e| e.earner_id == test_uuid(1)).unwrap();
+        assert_eq!(node1.level, 1);
+
+        let root = result.iter().find(|e| e.earner_id == test_uuid(0)).unwrap();
+        assert_eq!(root.level, 2);
     }
 }

@@ -79,21 +79,8 @@ pub fn count_generations_upward(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commission::test_helpers::uuid_from_index as uuid;
     use crate::tree::unilevel::UnilevelTree;
-
-    /// Deterministic UUID from index. Byte 15 is 0xFF to avoid
-    /// collisions with the arena tombstone sentinel (Uuid::nil).
-    fn uuid(i: usize) -> Uuid {
-        let mut bytes = [0u8; 16];
-        bytes[15] = 0xFF;
-        // Encode the index into the first bytes for readability.
-        let idx_bytes = (i as u32).to_le_bytes();
-        bytes[0] = idx_bytes[0];
-        bytes[1] = idx_bytes[1];
-        bytes[2] = idx_bytes[2];
-        bytes[3] = idx_bytes[3];
-        Uuid::from_bytes(bytes)
-    }
 
     /// Build a linear chain: 0 -> 1 -> 2 -> ... -> (len-1).
     /// Each node's parent and sponsor are the previous node.

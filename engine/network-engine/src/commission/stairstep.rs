@@ -280,6 +280,24 @@ fn walk_overrides(
 
     let mut earnings = Vec::new();
 
+    // Pre-build generation override candidates if configured. This set
+    // is the same for every breakaway, so we build it once rather than
+    // per-iteration.
+    let gen_override_candidates = breakaway_cfg.generation_overrides.as_ref().map(|gen_cfg| {
+        let boundary_ordinal = rank_ordinals
+            .get(gen_cfg.boundary_rank.as_str())
+            .copied()
+            .unwrap_or(0);
+
+        snapshots
+            .iter()
+            .filter(|(_, snap)| {
+                rank_ordinals.get(snap.rank.as_str()).copied().unwrap_or(0) >= boundary_ordinal
+            })
+            .map(|(id, _)| *id)
+            .collect::<HashSet<Uuid>>()
+    });
+
     for &breakaway_id in &prep.breakaways {
         let group_vol = prep
             .group_volumes
@@ -304,24 +322,11 @@ fn walk_overrides(
 
         if let Some(gen_cfg) = &breakaway_cfg.generation_overrides {
             // --- Generation override mode ---
-            // Use count_generations_upward to find generation earners.
-            // Build a candidate set of all distributors at or above the
+            // The candidate set contains all distributors at or above the
             // boundary rank. This is broader than the prep breakaway set
             // because a senior_director (above the director threshold)
-            // should count as a generation boundary even though they
-            // aren't in the exact-match breakaway set.
-            let boundary_ordinal = rank_ordinals
-                .get(gen_cfg.boundary_rank.as_str())
-                .copied()
-                .unwrap_or(0);
-
-            let override_candidates: HashSet<Uuid> = snapshots
-                .iter()
-                .filter(|(_, snap)| {
-                    rank_ordinals.get(snap.rank.as_str()).copied().unwrap_or(0) >= boundary_ordinal
-                })
-                .map(|(id, _)| *id)
-                .collect();
+            // should count as a generation boundary.
+            let override_candidates = gen_override_candidates.as_ref().unwrap();
 
             // boundary_check always returns true because the candidate
             // set already filters by rank. Every candidate is a boundary.
@@ -330,7 +335,7 @@ fn walk_overrides(
             let gen_entries = count_generations_upward(
                 tree,
                 breakaway_id,
-                &override_candidates,
+                override_candidates,
                 &boundary_check,
                 gen_cfg.max_generations,
                 false, // stairstep doesn't use empty_generation_consumes_number
@@ -347,14 +352,13 @@ fn walk_overrides(
 
                 if entry.generation == 1 {
                     // Generation 1: differential rate
+                    let ancestor_rank = snapshots
+                        .get(&entry.earner_id)
+                        .map(|s| s.rank.as_str())
+                        .unwrap_or("");
                     let ancestor_rate = differential_cfg
                         .rank_rates
-                        .get(
-                            &snapshots
-                                .get(&entry.earner_id)
-                                .map(|s| s.rank.clone())
-                                .unwrap_or_default(),
-                        )
+                        .get(ancestor_rank)
                         .copied()
                         .unwrap_or(0.0);
 
@@ -572,14 +576,14 @@ pub fn calculate_stairstep(
 
             // Breakaway boundary check: stop if this ancestor belongs
             // to a different group than the source. This prevents level
-            // commissions from crossing breakaway boundaries.
-            let ancestor_leader = prep
-                .group_leaders
-                .get(&node.user_id)
-                .copied()
-                .unwrap_or(node.user_id);
-            if ancestor_leader != source_leader {
-                break;
+            // commissions from crossing breakaway boundaries. Ancestors
+            // without snapshots have no group leader entry and are
+            // transparent to boundaries (they can't be breakaway without
+            // a rank).
+            if let Some(&ancestor_leader) = prep.group_leaders.get(&node.user_id) {
+                if ancestor_leader != source_leader {
+                    break;
+                }
             }
 
             let snapshot = match snapshots.get(&node.user_id) {
@@ -688,11 +692,7 @@ mod tests {
     use crate::config::{StairstepStructureConfig, StructureConfig};
     use std::collections::BTreeMap;
 
-    fn uuid(i: usize) -> Uuid {
-        let mut bytes = (i as u128).to_le_bytes();
-        bytes[15] = 0xFF;
-        Uuid::from_bytes(bytes)
-    }
+    use crate::commission::test_helpers::uuid_from_index as uuid;
 
     fn build_chain(len: usize) -> UnilevelTree {
         let mut tree = UnilevelTree::new();
@@ -1038,6 +1038,40 @@ mod tests {
         assert!(earner_ids.contains(&uuid(1)));
         assert!(earner_ids.contains(&uuid(2)));
         assert!(!earner_ids.contains(&uuid(0)));
+    }
+
+    #[test]
+    fn missing_snapshot_ancestor_does_not_block_walk() {
+        // Tree: 0 -> 1 -> 2 -> 3
+        // No breakaway config. Node 1 has no snapshot.
+        // Walk from node 3: node 2 earns at level 1, node 1 is skipped
+        // (no snapshot = ineligible), node 0 earns at level 3.
+        // The walk must not treat node 1 as a group boundary.
+        let tree = build_chain(4);
+        let mut structure = test_stairstep_structure();
+        structure.breakaway = None;
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), snapshot_with_rank("associate", 150.0));
+        // uuid(1) intentionally omitted — no snapshot
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", 150.0));
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // Node 0 should still earn despite node 1 missing a snapshot.
+        let earner_ids: Vec<Uuid> = result.iter().map(|e| e.earner_id).collect();
+        assert!(
+            earner_ids.contains(&uuid(0)),
+            "node 0 should earn — missing snapshot on node 1 must not block the walk"
+        );
+        assert!(earner_ids.contains(&uuid(2)));
     }
 
     #[test]

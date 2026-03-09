@@ -14,9 +14,11 @@ use network_engine::config::placement::PlacementConfig;
 use network_engine::config::rank::{
     DemotionPolicy, RankDefinition, RankFeaturesConfig, RankQualification, RankTrackingConfig,
 };
+use network_engine::config::stairstep::{BreakawayConfig, DifferentialConfig, OverrideCalculation};
 use network_engine::config::volume::VolumeConfig;
 use network_engine::config::{
-    BinaryStructureConfig, CompensationPlan, StructureConfig, UnilevelStructureConfig,
+    BinaryStructureConfig, CompensationPlan, StairstepStructureConfig, StructureConfig,
+    UnilevelStructureConfig,
 };
 use std::collections::BTreeMap;
 use uuid::Uuid;
@@ -272,6 +274,85 @@ pub fn build_two_rank_unilevel_plan(
             demotion_policy: DemotionPolicy::PromotionOnly,
         },
     ];
+
+    (plan, structure)
+}
+
+// --- Stairstep plan builder ---
+
+/// Build a stairstep plan for property tests.
+///
+/// Rate table: two ranks "member" and "director" with 5% at every level.
+/// Breakaway threshold: "director". Differential: director=0.10, min_override=0.0.
+/// No generation overrides. Eligibility is fully permissive.
+pub fn build_stairstep_plan(
+    max_depth: u8,
+) -> (
+    CompensationPlan,
+    network_engine::config::StairstepStructureConfig,
+) {
+    build_stairstep_plan_with_eligibility(max_depth, permissive_eligibility())
+}
+
+pub fn build_stairstep_plan_with_eligibility(
+    max_depth: u8,
+    eligibility: CommissionEligibility,
+) -> (
+    CompensationPlan,
+    network_engine::config::StairstepStructureConfig,
+) {
+    use network_engine::config::commission::LevelCommissionConfig;
+
+    let mut rate_table = BTreeMap::new();
+    for rank_name in &["member", "director"] {
+        let mut rates = BTreeMap::new();
+        for level in 1..=max_depth {
+            rates.insert(level, 0.05);
+        }
+        rate_table.insert(rank_name.to_string(), rates);
+    }
+
+    let structure = StairstepStructureConfig {
+        name: "Test".to_string(),
+        level_commission: LevelCommissionConfig {
+            broad_commission_percent: 0.40,
+            volume_to_dollar_multiplier: None,
+            max_depth,
+            rate_table,
+        },
+        compression: None,
+        breakaway: Some(BreakawayConfig {
+            threshold_rank: "director".to_string(),
+            exclude_breakaway_gv: false,
+            override_calculation: OverrideCalculation::Differential,
+            differential: Some(DifferentialConfig {
+                rank_rates: {
+                    let mut m = BTreeMap::new();
+                    m.insert("director".to_string(), 0.10);
+                    m
+                },
+                min_override: 0.0,
+            }),
+            generation_overrides: None,
+        }),
+    };
+
+    let mut plan = build_base_plan(
+        eligibility,
+        StructureConfig::Stairstep(structure.clone()),
+        "Test",
+    );
+
+    plan.ranks.push(RankDefinition {
+        name: "director".to_string(),
+        ordinal: 2,
+        qualification: RankQualification {
+            structures: vec![],
+            required_products: vec![],
+        },
+        qualified_structures: vec!["Test".to_string()],
+        demotion_policy: DemotionPolicy::PromotionOnly,
+    });
 
     (plan, structure)
 }

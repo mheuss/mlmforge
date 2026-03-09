@@ -159,9 +159,9 @@ proptest! {
         let mut seen = std::collections::HashSet::new();
         for earning in &result {
             prop_assert!(
-                seen.insert(earning.earner_id),
-                "Duplicate earning for earner {:?}",
-                earning.earner_id
+                seen.insert((earning.source_id, earning.earner_id)),
+                "Duplicate earning for source {:?} earner {:?}",
+                earning.source_id, earning.earner_id
             );
         }
     }

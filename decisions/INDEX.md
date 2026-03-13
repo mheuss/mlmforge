@@ -38,6 +38,7 @@ Code comments that reference "ADR-NNN" use the DEVELOPMENT.md numbering.
 | [018](018-config-pipeline.md) | **Config Pipeline** | Five-stage validation, two-pass commission parsing, Commission marker interface, severity model |
 | [019](019-ndjson-protocol.md) | **NDJSON Protocol** | Request-response envelope, RawValue params, error code taxonomy, panic recovery, context cancellation |
 | [020](020-tree-topology-separation.md) | **Tree Topology Separation** | Trees enforce shape, callers decide placement, position validation vs placement logic |
+| [021](021-sponsor-vs-placement-in-commission.md) | **Sponsor vs. Placement in Commission** | Placement edges determine commission flow, sponsor edges determine personal qualification |
 
 ## Reading Order
 

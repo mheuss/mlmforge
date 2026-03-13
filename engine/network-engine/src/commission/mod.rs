@@ -2,6 +2,7 @@
 
 pub mod binary;
 pub mod generation;
+pub mod matrix;
 pub mod stairstep;
 pub mod types;
 pub mod unilevel;
@@ -10,6 +11,7 @@ pub mod unilevel;
 pub(crate) mod test_helpers;
 
 pub use binary::calculate_binary_pairing;
+pub use matrix::calculate_matrix;
 pub use stairstep::calculate_stairstep;
 pub use types::{
     BinaryCalculationResult, BinaryCommissionEarning, CalculationError, CommissionEarning,

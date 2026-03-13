@@ -1,5 +1,8 @@
 mod common;
-use common::{build_matrix_plan, build_matrix_plan_with_eligibility, uuid_from_index};
+use common::{
+    build_matrix_plan, build_matrix_plan_with_eligibility, build_two_rank_matrix_plan,
+    uuid_from_index,
+};
 
 use network_engine::commission::{DistributorSnapshot, VolumeSource, calculate_matrix};
 use network_engine::config::commission::{CompressionConfig, CompressionMode};
@@ -333,4 +336,201 @@ fn single_node_no_earnings() {
 
     let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
     assert!(result.is_empty());
+}
+
+/// SkipBelowRank compression skips below-threshold nodes without consuming a level.
+///
+/// Tree: root(silver) -> A(associate) -> B(silver) -> C(silver)
+/// Volume at C. With SkipBelowRank threshold "silver", A is skipped.
+/// B earns at level 1, root earns at level 2. A earns nothing.
+#[test]
+fn skip_below_rank_skips_low_rank_nodes() {
+    let eligibility = CommissionEligibility {
+        minimum_pv: 0.0,
+        require_order_in_period: false,
+        eligible_statuses: vec![],
+        active_leg_tiers: vec![],
+    };
+    let (plan, mut structure) = build_two_rank_matrix_plan(3, 9, 5, eligibility);
+    structure.compression = Some(CompressionConfig {
+        enabled: true,
+        mode: CompressionMode::SkipBelowRank,
+        rank_threshold: Some("silver".to_string()),
+    });
+
+    let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+    tree.add_root(uuid_from_index(0), 0).unwrap(); // root
+    tree.add_node(uuid_from_index(1), uuid_from_index(0), 1)
+        .unwrap(); // A
+    tree.add_node(uuid_from_index(2), uuid_from_index(1), 2)
+        .unwrap(); // B
+    tree.add_node(uuid_from_index(3), uuid_from_index(2), 3)
+        .unwrap(); // C
+
+    let mut snapshots = HashMap::new();
+    snapshots.insert(
+        uuid_from_index(0),
+        DistributorSnapshot {
+            rank: "silver".to_string(),
+            personal_volume: 100.0,
+            status: "active".to_string(),
+            has_order_in_period: true,
+        },
+    );
+    snapshots.insert(
+        uuid_from_index(1),
+        DistributorSnapshot {
+            rank: "associate".to_string(), // below threshold
+            personal_volume: 100.0,
+            status: "active".to_string(),
+            has_order_in_period: true,
+        },
+    );
+    snapshots.insert(
+        uuid_from_index(2),
+        DistributorSnapshot {
+            rank: "silver".to_string(),
+            personal_volume: 100.0,
+            status: "active".to_string(),
+            has_order_in_period: true,
+        },
+    );
+    snapshots.insert(
+        uuid_from_index(3),
+        DistributorSnapshot {
+            rank: "silver".to_string(),
+            personal_volume: 100.0,
+            status: "active".to_string(),
+            has_order_in_period: true,
+        },
+    );
+
+    let volume = vec![VolumeSource {
+        source_id: uuid_from_index(3),
+        cv_amount: 100.0,
+    }];
+
+    let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+    // A (associate) should be skipped — no earning for uuid_from_index(1)
+    assert!(
+        !result.iter().any(|e| e.earner_id == uuid_from_index(1)),
+        "Associate node should be skipped by SkipBelowRank"
+    );
+
+    // B earns at level 1 (A was compressed out, doesn't consume a level)
+    let b_earning = result.iter().find(|e| e.earner_id == uuid_from_index(2));
+    assert!(b_earning.is_some(), "B (silver) should earn");
+    assert_eq!(b_earning.unwrap().level, 1);
+
+    // Root earns at level 2
+    let root_earning = result.iter().find(|e| e.earner_id == uuid_from_index(0));
+    assert!(root_earning.is_some(), "Root (silver) should earn");
+    assert_eq!(root_earning.unwrap().level, 2);
+}
+
+/// Active leg tiers use sponsor edges, not placement children.
+///
+/// In a matrix with spillover, a sponsor's recruit may be placed under
+/// a different parent. Active leg counting must use the sponsor relationship
+/// to determine frontline legs.
+///
+/// Tree (placement):
+///   root -> A -> B (spillover: C placed under A, not root)
+///   root -> C (sponsored by root, placed under A by spillover)
+///
+/// Root sponsors both A and C, so root has 2 active legs via sponsor edges.
+/// A is the placement parent of C, but A only sponsors B.
+#[test]
+fn active_leg_tiers_use_sponsor_not_placement() {
+    use network_engine::config::eligibility::ActiveLegTier;
+
+    let eligibility = CommissionEligibility {
+        minimum_pv: 10.0,
+        require_order_in_period: false,
+        eligible_statuses: vec![],
+        active_leg_tiers: vec![
+            ActiveLegTier {
+                min_active_legs: 0,
+                max_commission_depth: 1, // 0 legs = depth 1
+            },
+            ActiveLegTier {
+                min_active_legs: 2,
+                max_commission_depth: 3, // 2+ legs = depth 3
+            },
+        ],
+    };
+    let (plan, structure) = build_matrix_plan_with_eligibility(2, 9, 5, eligibility);
+
+    // Width-2 matrix. Root sponsors A and C.
+    // A is placed directly under root. C is also sponsored by root but
+    // spillover places C under A (root's slots are full after A and D).
+    let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+    tree.add_root(uuid_from_index(0), 0).unwrap(); // root
+    // Root sponsors A, placed under root
+    tree.add_node(uuid_from_index(1), uuid_from_index(0), 1)
+        .unwrap(); // A
+    // Root sponsors D, placed under root (fills root's 2 slots)
+    tree.add_node(uuid_from_index(3), uuid_from_index(0), 3)
+        .unwrap(); // D
+    // Root sponsors C, but root is full — spillover places C under A
+    tree.add_node(uuid_from_index(2), uuid_from_index(0), 2)
+        .unwrap(); // C (sponsor=root, parent=A)
+    // A sponsors B, placed under A's remaining slot or spills further
+    tree.add_node(uuid_from_index(4), uuid_from_index(1), 4)
+        .unwrap(); // B (sponsor=A)
+    // Add a deep node as volume source
+    tree.add_node(uuid_from_index(5), uuid_from_index(2), 5)
+        .unwrap(); // E (sponsor=C)
+
+    let mut snapshots = HashMap::new();
+    for i in 0..6 {
+        snapshots.insert(
+            uuid_from_index(i),
+            DistributorSnapshot {
+                rank: "member".to_string(),
+                personal_volume: 100.0,
+                status: "active".to_string(),
+                has_order_in_period: true,
+            },
+        );
+    }
+
+    let volume = vec![VolumeSource {
+        source_id: uuid_from_index(5), // E
+        cv_amount: 100.0,
+    }];
+
+    let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+    // Root has 3 sponsored recruits (A, D, C) — all eligible.
+    // That's >= 2 active legs, so root gets max_depth=3.
+    // If active legs were counted by placement children (only A, D),
+    // root would still have 2 legs and qualify. But A only has 1
+    // sponsored recruit (B) via sponsor edge, even though C is placed
+    // under A. So A has 1 active leg = max_depth 1.
+    //
+    // The key assertion: verify earnings exist at the depths the
+    // sponsor-based counting allows.
+
+    // Root should be able to earn (has enough active legs for deeper depth).
+    let root_earning = result.iter().find(|e| e.earner_id == uuid_from_index(0));
+    assert!(
+        root_earning.is_some(),
+        "Root should earn — has 3 sponsored legs"
+    );
+
+    // A has only 1 sponsored recruit (B), so max_depth=1 from tiers.
+    // A can only earn at level 1 from volume sources directly below.
+    let a_earnings: Vec<_> = result
+        .iter()
+        .filter(|e| e.earner_id == uuid_from_index(1))
+        .collect();
+    for earning in &a_earnings {
+        assert!(
+            earning.level <= 1,
+            "A has 1 sponsored leg, should be limited to depth 1, but earned at level {}",
+            earning.level
+        );
+    }
 }

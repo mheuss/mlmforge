@@ -141,7 +141,17 @@ fn identify_breakaways(
         None => return HashSet::new(),
     };
 
-    let threshold_ordinal = rank_ordinals.get(threshold.as_str()).copied().unwrap_or(0);
+    let threshold_ordinal = match rank_ordinals.get(threshold.as_str()).copied() {
+        Some(ord) => ord,
+        None => {
+            log::warn!(
+                "breakaway threshold_rank '{}' not found in plan ranks; \
+                 no distributors will be treated as breakaway",
+                threshold
+            );
+            return HashSet::new();
+        }
+    };
 
     snapshots
         .iter()
@@ -283,20 +293,34 @@ fn walk_overrides(
     // Pre-build generation override candidates if configured. This set
     // is the same for every breakaway, so we build it once rather than
     // per-iteration.
-    let gen_override_candidates = breakaway_cfg.generation_overrides.as_ref().map(|gen_cfg| {
-        let boundary_ordinal = rank_ordinals
-            .get(gen_cfg.boundary_rank.as_str())
-            .copied()
-            .unwrap_or(0);
+    let gen_override_candidates = breakaway_cfg
+        .generation_overrides
+        .as_ref()
+        .and_then(|gen_cfg| {
+            let boundary_ordinal = match rank_ordinals.get(gen_cfg.boundary_rank.as_str()).copied()
+            {
+                Some(ord) => ord,
+                None => {
+                    log::warn!(
+                        "generation override boundary_rank '{}' not found in plan ranks; \
+                                 generation overrides will be skipped",
+                        gen_cfg.boundary_rank
+                    );
+                    return None;
+                }
+            };
 
-        snapshots
-            .iter()
-            .filter(|(_, snap)| {
-                rank_ordinals.get(snap.rank.as_str()).copied().unwrap_or(0) >= boundary_ordinal
-            })
-            .map(|(id, _)| *id)
-            .collect::<HashSet<Uuid>>()
-    });
+            Some(
+                snapshots
+                    .iter()
+                    .filter(|(_, snap)| {
+                        rank_ordinals.get(snap.rank.as_str()).copied().unwrap_or(0)
+                            >= boundary_ordinal
+                    })
+                    .map(|(id, _)| *id)
+                    .collect::<HashSet<Uuid>>(),
+            )
+        });
 
     for &breakaway_id in &prep.breakaways {
         let group_vol = prep
@@ -320,13 +344,15 @@ fn walk_overrides(
             .copied()
             .unwrap_or(0.0);
 
-        if let Some(gen_cfg) = &breakaway_cfg.generation_overrides {
+        if let (Some(gen_cfg), Some(override_candidates)) = (
+            &breakaway_cfg.generation_overrides,
+            gen_override_candidates.as_ref(),
+        ) {
             // --- Generation override mode ---
             // The candidate set contains all distributors at or above the
             // boundary rank. This is broader than the prep breakaway set
             // because a senior_director (above the director threshold)
             // should count as a generation boundary.
-            let override_candidates = gen_override_candidates.as_ref().unwrap();
 
             // boundary_check always returns true because the candidate
             // set already filters by rank. Every candidate is a boundary.
@@ -351,7 +377,11 @@ fn walk_overrides(
                 }
 
                 if entry.generation == 1 {
-                    // Generation 1: differential rate
+                    // Generation 1 uses the differential rate: the gap
+                    // between the ancestor's rank rate and the breakaway's
+                    // rank rate. If the gap is zero or negative, fall back
+                    // to min_override. If neither applies, this ancestor
+                    // earns nothing on this breakaway.
                     let ancestor_rank = snapshots
                         .get(&entry.earner_id)
                         .map(|s| s.rank.as_str())
@@ -426,13 +456,19 @@ fn walk_overrides(
                     .copied()
                     .unwrap_or(0.0);
 
+                // Differential rate: the ancestor earns the gap between
+                // their rank rate and the highest rate already paid in
+                // this override chain. If the gap is zero or negative
+                // (same or lower rank), fall back to min_override when
+                // configured. If neither applies, skip this ancestor
+                // but track their rate so the next ancestor computes
+                // against the correct baseline.
                 let diff = ancestor_rate - highest_rate_paid;
                 let rate = if diff > 0.0 {
                     diff
                 } else if ancestor_rate > 0.0 && differential_cfg.min_override > 0.0 {
                     differential_cfg.min_override
                 } else {
-                    // No positive differential and no min_override. Skip.
                     if ancestor_rate > highest_rate_paid {
                         highest_rate_paid = ancestor_rate;
                     }
@@ -463,15 +499,37 @@ fn walk_overrides(
 
 /// Calculate stairstep commissions for a set of volume events.
 ///
-/// Two-phase approach (ADR-017):
-/// 1. Prep: eligibility, breakaway detection, group volume aggregation
-/// 2. Walk 1: level commissions within groups, stopping at breakaway boundaries
-/// 3. Walk 2: differential and generation overrides on breakaway group volume
+/// Three-phase approach (ADR-017):
+/// 1. **Prep** — evaluate eligibility, detect breakaways by rank ordinal,
+///    aggregate personal volume into group buckets, assign group leaders.
+/// 2. **Walk 1** — level commissions within each group. Walks upline from
+///    each volume source, stopping at breakaway boundaries. Supports
+///    SkipInactive and SkipBelowRank compression.
+/// 3. **Walk 2** — differential and generation overrides on breakaway group
+///    volume. Each breakaway's qualified upline earns the rate differential
+///    between their rank and the breakaway's rank.
+///
+/// # Parameters
+///
+/// * `tree` — the unilevel placement tree.
+/// * `plan` — the full compensation plan (used for rank ordinals,
+///   eligibility rules, and volume multiplier).
+/// * `structure` — stairstep-specific config (level rates, breakaway
+///   thresholds, differential rates, generation overrides).
+/// * `snapshots` — current-period distributor data (rank, PV, status).
+/// * `volume` — volume events to process. Each produces level earnings
+///   and may trigger override earnings on breakaway groups.
+///
+/// # Returns
+///
+/// A flat `Vec<CommissionEarning>` sorted by `(earner_id, source_id)`.
+/// Level earnings have `source_id` equal to the original volume source.
+/// Override earnings have `source_id` equal to the breakaway distributor.
 ///
 /// # Errors
 ///
-/// Returns `CalculationError` if a volume source is not found in the
-/// tree or snapshot data, or has an invalid cv_amount.
+/// Returns [`CalculationError`] if a volume source is not found in the
+/// tree or snapshot data, or has a non-finite or negative cv_amount.
 pub fn calculate_stairstep(
     tree: &UnilevelTree,
     plan: &CompensationPlan,

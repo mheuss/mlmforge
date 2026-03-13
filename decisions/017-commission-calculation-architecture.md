@@ -50,6 +50,8 @@ Binary calculation has fundamentally different inputs. It pairs volume from two 
 
 The project follows the rule of three. Extract common patterns when we have three concrete implementations. Two is not enough to see the real shape.
 
+**Status update:** Three calculators now exist: unilevel, matrix, and stairstep. The rule of three is satisfied. Common patterns are visible: all three share the prep+walk structure, eligibility evaluation, active leg counting, compression handling, and the flat earnings output contract. HEU-200 tracks the extraction of a shared calculator abstraction. The standalone functions will remain as the implementation behind whatever trait emerges.
+
 ### Compression Is Part of the Walk
 
 Compression affects level counting during the walk itself. When compression is enabled and a node is skipped, the level counter does not increment. This changes the level number for every subsequent node in the upline path.
@@ -73,4 +75,4 @@ This split reflects the difference between "the caller gave us bad input" and "t
 - **Consistent calculator behavior.** All plan types follow the same input/output contract. Code that consumes commission results works regardless of which calculator produced them.
 - **Independent calculator development.** Each calculator is a standalone function with no shared abstraction to coordinate. Teams or sessions can build different calculators in parallel.
 - **Clean testing boundaries.** Snapshot-in, earnings-out. No hidden state. No setup beyond providing the input data. Property-based testing works naturally against the flat output list.
-- **Future trait extraction.** When the third calculator is built, the common patterns will be visible. The standalone functions can be wrapped in a trait without changing their internals.
+- **Trait extraction ready.** Three calculators (unilevel, matrix, stairstep) now exist. The common patterns are visible. HEU-200 tracks extracting a shared abstraction. The standalone functions can be wrapped in a trait without changing their internals.

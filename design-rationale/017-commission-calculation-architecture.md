@@ -34,6 +34,14 @@ Active leg counting requires querying the tree for each distributor's children a
 
 The two phases also separate concerns. Prep answers "who can earn and how deep?" Walk answers "who earns what from this volume?" Testing each phase in isolation is straightforward.
 
+### Matrix Reuses the Unilevel Walk
+
+The matrix calculator uses the same level-based upline walk as unilevel. Same prep phase, same walk loop, same compression logic, same rate table lookup. The only structural difference is the effective depth ceiling: `min(matrix_params.height, level_commission.max_depth)` instead of just `max_depth`.
+
+This was not a foregone conclusion. Matrix has forced placement, fixed width, and spillover. It would be reasonable to expect a fundamentally different calculation approach. But matrix commissions are level-based. The walk up the placement tree works the same way. The tree shape constrains how nodes are placed, not how commissions are calculated.
+
+This reinforces the decision to keep calculators as standalone functions. The unilevel and matrix calculators share almost all their logic, but extracting a shared abstraction now would be premature. Wait for the third level-based calculator (generation or stairstep) to see if the pattern holds.
+
 ### No Shared Calculator Abstraction Yet
 
 Each calculator is a standalone public function. No `CommissionCalculator` trait. No shared interface. The unilevel calculator is `calculate_unilevel`. The binary calculator will be `calculate_binary`. Each takes the inputs it needs and returns `Vec<CommissionEarning>`.

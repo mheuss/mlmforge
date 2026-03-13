@@ -199,19 +199,24 @@ pub fn calculate_unilevel(
     Ok(all_earnings)
 }
 
-/// Count how many direct children of a distributor are commission-eligible.
+/// Count how many personally sponsored distributors are commission-eligible.
+///
+/// Active leg tiers are defined in terms of personally sponsored frontline
+/// legs, not placement children. In unilevel trees the two are typically
+/// identical, but using `get_sponsored` keeps the semantics correct and
+/// consistent with the matrix calculator (decision 021).
 fn count_active_legs(
     tree: &UnilevelTree,
     user_id: Uuid,
     snapshots: &HashMap<Uuid, DistributorSnapshot>,
     eligibility: &CommissionEligibility,
 ) -> u16 {
-    let children = match tree.get_children(user_id) {
-        Ok(children) => children,
+    let sponsored = match tree.get_sponsored(user_id) {
+        Ok(sponsored) => sponsored,
         Err(_) => return 0,
     };
 
-    children
+    sponsored
         .iter()
         .filter(|child| {
             snapshots

@@ -157,7 +157,7 @@ pub fn calculate_binary_pairing(
         BinaryCommissionMode::CycleStep(_) => {
             // CycleStep mode is not yet implemented. Returns an empty result
             // so callers receive a valid response rather than an error.
-            // Tracked in BUGS_AND_TODOS.md as a deferred feature.
+            // Tracked in Linear as a deferred feature.
             log::warn!(
                 "CycleStep binary commission mode is not yet implemented; returning empty result"
             );

@@ -8,10 +8,8 @@
 //! Binary uses pairing mechanics, not level-based walks. It is
 //! not a consumer of this module.
 
-// All items are pub(crate) and consumed by tests within this module.
-// External consumers (unilevel, matrix, stairstep) are wired in
-// tasks 4-6. Remove this allow once any calculator delegates here.
-#![allow(dead_code)]
+// All items are pub(crate) and consumed by unilevel, matrix, and
+// stairstep calculators.
 
 use std::collections::{BTreeMap, HashMap};
 use uuid::Uuid;

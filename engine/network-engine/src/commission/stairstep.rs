@@ -8,30 +8,20 @@
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
-use crate::config::commission::CompressionMode;
-use crate::config::eligibility::{ActiveLegTier, CommissionEligibility};
 use crate::config::{CompensationPlan, StairstepStructureConfig};
 use crate::tree::unilevel::UnilevelTree;
 
 use super::generation::count_generations_upward;
-use super::is_eligible;
 use super::types::{CalculationError, CommissionEarning, DistributorSnapshot, VolumeSource};
+use super::walk;
 
 // ---------------------------------------------------------------------------
 // Prep phase internal types
 // ---------------------------------------------------------------------------
 
-/// Cached eligibility result for a single distributor.
-struct EligibilityEntry {
-    eligible: bool,
-    /// Per-distributor earning depth limit from active leg tiers.
-    /// None means no tier restriction (use config max_depth).
-    max_earning_depth: Option<u8>,
-}
-
 /// Aggregated prep phase results used by the walk phases.
 struct PrepResult {
-    eligibility: HashMap<Uuid, EligibilityEntry>,
+    eligibility: HashMap<Uuid, walk::EligibilityResult>,
     breakaways: HashSet<Uuid>,
     group_volumes: HashMap<Uuid, f64>,
     group_leaders: HashMap<Uuid, Uuid>,
@@ -40,89 +30,6 @@ struct PrepResult {
 // ---------------------------------------------------------------------------
 // Prep phase functions
 // ---------------------------------------------------------------------------
-
-/// Count how many directly sponsored recruits of a distributor are
-/// commission-eligible.
-///
-/// Uses `get_sponsored()` (sponsor edges) not `get_children()` (placement
-/// edges) per decision 021.
-fn count_active_legs(
-    tree: &UnilevelTree,
-    user_id: Uuid,
-    snapshots: &HashMap<Uuid, DistributorSnapshot>,
-    eligibility: &CommissionEligibility,
-) -> u16 {
-    let sponsored = match tree.get_sponsored(user_id) {
-        Ok(s) => s,
-        Err(_) => return 0,
-    };
-
-    sponsored
-        .iter()
-        .filter(|node| {
-            snapshots
-                .get(&node.user_id)
-                .map(|s| is_eligible(s, eligibility))
-                .unwrap_or(false)
-        })
-        .count() as u16
-}
-
-/// Determine per-distributor max earning depth from active leg tiers.
-///
-/// Returns `Some(depth)` if a tier limits the distributor, or `None`
-/// if no tier restriction applies (use config max_depth as ceiling).
-///
-/// Tiers must be sorted ascending by `min_active_legs`.
-fn determine_max_depth(active_leg_count: u16, tiers: &[ActiveLegTier]) -> Option<u8> {
-    if tiers.is_empty() {
-        return None;
-    }
-
-    for tier in tiers.iter().rev() {
-        if active_leg_count >= tier.min_active_legs {
-            return if tier.max_commission_depth == 0 {
-                None
-            } else {
-                Some(u8::try_from(tier.max_commission_depth).unwrap_or(u8::MAX))
-            };
-        }
-    }
-
-    None
-}
-
-/// Evaluate eligibility for all distributors in the snapshot map.
-fn evaluate_eligibility(
-    snapshots: &HashMap<Uuid, DistributorSnapshot>,
-    tree: &UnilevelTree,
-    eligibility: &CommissionEligibility,
-) -> HashMap<Uuid, EligibilityEntry> {
-    let mut results = HashMap::with_capacity(snapshots.len());
-
-    for (user_id, snapshot) in snapshots {
-        let eligible = is_eligible(snapshot, eligibility);
-
-        let active_leg_count = if eligible && !eligibility.active_leg_tiers.is_empty() {
-            count_active_legs(tree, *user_id, snapshots, eligibility)
-        } else {
-            0
-        };
-
-        let max_earning_depth =
-            determine_max_depth(active_leg_count, &eligibility.active_leg_tiers);
-
-        results.insert(
-            *user_id,
-            EligibilityEntry {
-                eligible,
-                max_earning_depth,
-            },
-        );
-    }
-
-    results
-}
 
 /// Identify distributors whose rank meets or exceeds the breakaway threshold.
 ///
@@ -228,7 +135,7 @@ fn prep(
     snapshots: &HashMap<Uuid, DistributorSnapshot>,
     rank_ordinals: &HashMap<&str, u16>,
 ) -> PrepResult {
-    let eligibility = evaluate_eligibility(snapshots, tree, &plan.eligibility);
+    let eligibility = walk::evaluate_eligibility(snapshots, tree, &plan.eligibility);
     let breakaways = identify_breakaways(structure, snapshots, rank_ordinals);
     let (group_volumes, group_leaders) = build_group_volumes(tree, snapshots, &breakaways);
 
@@ -537,204 +444,76 @@ pub fn calculate_stairstep(
     snapshots: &HashMap<Uuid, DistributorSnapshot>,
     volume: &[VolumeSource],
 ) -> Result<Vec<CommissionEarning>, CalculationError> {
-    // Build rank name -> ordinal map for SkipBelowRank comparison
-    let rank_ordinals: HashMap<&str, u16> = plan
-        .ranks
-        .iter()
-        .map(|r| (r.name.as_str(), r.ordinal))
-        .collect();
+    let rank_ordinals = walk::build_rank_ordinals(plan);
+    let prep_result = prep(tree, plan, structure, snapshots, &rank_ordinals);
 
-    // Prep phase
-    let prep = prep(tree, plan, structure, snapshots, &rank_ordinals);
-
-    // Walk config
-    let max_depth = structure.level_commission.max_depth;
     let broad_pct = structure.level_commission.broad_commission_percent;
-    debug_assert!(
-        (0.0..=1.0).contains(&broad_pct),
-        "broad_commission_percent out of range: {}",
-        broad_pct
-    );
-    if !(0.0..=1.0).contains(&broad_pct) {
-        log::warn!(
-            "broad_commission_percent {} is outside [0.0, 1.0]; commissions may be overstated",
-            broad_pct
-        );
-    }
+    walk::validate_broad_pct(broad_pct);
+
     let multiplier = structure
         .level_commission
         .volume_to_dollar_multiplier
         .unwrap_or(plan.volume.volume_to_dollar_multiplier);
 
     let compression = structure.compression.as_ref();
-    let compression_enabled = compression.is_some_and(|c| c.enabled);
+    let threshold_ordinal = walk::resolve_threshold_ordinal(compression, &rank_ordinals);
 
-    let threshold_ordinal = compression.and_then(|c| {
-        if matches!(c.mode, CompressionMode::SkipBelowRank) {
-            match &c.rank_threshold {
-                None => {
-                    log::warn!(
-                        "SkipBelowRank compression enabled but rank_threshold is not set; \
-                         compression will have no effect"
-                    );
-                    None
-                }
-                Some(name) => {
-                    let ordinal = rank_ordinals.get(name.as_str()).copied();
-                    if ordinal.is_none() {
-                        log::warn!(
-                            "SkipBelowRank compression rank_threshold '{}' not found in \
-                             plan ranks; compression will have no effect",
-                            name
-                        );
-                    }
-                    ordinal
-                }
-            }
-        } else {
-            None
-        }
-    });
+    let config = walk::LevelWalkConfig {
+        max_depth: structure.level_commission.max_depth,
+        broad_pct,
+        multiplier,
+        compression,
+        compression_enabled: compression.is_some_and(|c| c.enabled),
+        threshold_ordinal,
+        rank_ordinals: &rank_ordinals,
+        rate_table: &structure.level_commission.rate_table,
+    };
 
+    // Walk 1: level commissions, stopping at breakaway boundaries.
+    //
+    // The breakaway boundary check depends on which source is being
+    // walked (each source has its own group leader). We call
+    // walk_level_commissions per-source so the stop closure captures
+    // the correct source_leader for each iteration.
     let mut all_earnings = Vec::new();
 
-    // --- Walk 1: Level commissions with breakaway boundaries ---
     for source in volume {
-        // Validate cv_amount is non-negative and finite
-        if !source.cv_amount.is_finite() || source.cv_amount < 0.0 {
-            return Err(CalculationError::InvalidCvAmount(
-                source.source_id,
-                source.cv_amount,
-            ));
-        }
-
-        // Validate source exists in tree and get upline
-        let upline = tree
-            .get_upline(source.source_id, 0)
-            .map_err(|_| CalculationError::SourceNotInTree(source.source_id))?;
-
-        // Validate source exists in snapshots
-        if !snapshots.contains_key(&source.source_id) {
-            return Err(CalculationError::SourceNotInSnapshot(source.source_id));
-        }
-
-        // Find the source's group leader for breakaway boundary detection
-        let source_leader = prep
+        let source_leader = prep_result
             .group_leaders
             .get(&source.source_id)
             .copied()
             .unwrap_or(source.source_id);
 
-        let mut level: u8 = 1;
-
-        for node in &upline {
-            if level > max_depth {
-                break;
-            }
-
-            // Breakaway boundary check: stop if this ancestor belongs
-            // to a different group than the source. This prevents level
-            // commissions from crossing breakaway boundaries. Ancestors
-            // without snapshots have no group leader entry and are
-            // transparent to boundaries (they can't be breakaway without
-            // a rank).
-            if let Some(&ancestor_leader) = prep.group_leaders.get(&node.user_id) {
-                if ancestor_leader != source_leader {
-                    break;
-                }
-            }
-
-            let snapshot = match snapshots.get(&node.user_id) {
-                Some(s) => s,
-                None => {
-                    // Missing snapshot: treat as ineligible
-                    if compression_enabled {
-                        continue; // compressed out, no level consumed
-                    }
-                    level = level.saturating_add(1);
-                    continue;
-                }
-            };
-
-            let elig = prep.eligibility.get(&node.user_id);
-            let node_eligible = elig.is_some_and(|e| e.eligible);
-
-            // Compression check
-            let should_compress = match compression.filter(|c| c.enabled) {
-                Some(compress) => match compress.mode {
-                    CompressionMode::SkipInactive => !node_eligible,
-                    CompressionMode::SkipBelowRank => {
-                        let dist_ordinal = rank_ordinals
-                            .get(snapshot.rank.as_str())
-                            .copied()
-                            .unwrap_or(0);
-                        threshold_ordinal.map(|t| dist_ordinal < t).unwrap_or(false)
-                    }
-                },
-                None => false,
-            };
-
-            if should_compress {
-                continue; // skip without consuming level
-            }
-
-            // Not compressed. Check if eligible.
-            if !node_eligible {
-                level = level.saturating_add(1); // forfeit level
-                continue;
-            }
-
-            // Check per-distributor depth limit from active leg tiers
-            if let Some(max_personal) = elig.and_then(|e| e.max_earning_depth) {
-                if level > max_personal {
-                    level = level.saturating_add(1);
-                    continue;
-                }
-            }
-
-            // Rate table lookup
-            let rate = structure
-                .level_commission
-                .rate_table
-                .get(&snapshot.rank)
-                .and_then(|levels| levels.get(&level))
-                .copied()
-                .unwrap_or(0.0);
-
-            if rate > 0.0 {
-                all_earnings.push(CommissionEarning {
-                    earner_id: node.user_id,
-                    source_id: source.source_id,
-                    level,
-                    rate,
-                    cv_amount: source.cv_amount,
-                    dollar_amount: source.cv_amount * broad_pct * multiplier * rate,
-                });
-            }
-
-            level = level.saturating_add(1);
-        }
+        let source_earnings = walk::walk_level_commissions(
+            tree,
+            &config,
+            &prep_result.eligibility,
+            snapshots,
+            std::slice::from_ref(source),
+            |id| {
+                prep_result
+                    .group_leaders
+                    .get(&id)
+                    .map(|&leader| leader != source_leader)
+                    .unwrap_or(false)
+            },
+        )?;
+        all_earnings.extend(source_earnings);
     }
 
-    // --- Walk 2: Differential/generation overrides ---
+    // Walk 2: differential and generation overrides (stairstep-specific)
     let override_earnings = walk_overrides(
         tree,
         structure,
         snapshots,
-        &prep,
+        &prep_result,
         &rank_ordinals,
         broad_pct,
         multiplier,
     );
     all_earnings.extend(override_earnings);
 
-    // Sort earnings for deterministic output.
-    all_earnings.sort_by(|a, b| {
-        a.earner_id
-            .cmp(&b.earner_id)
-            .then_with(|| a.source_id.cmp(&b.source_id))
-    });
-
+    walk::sort_earnings(&mut all_earnings);
     Ok(all_earnings)
 }
 
@@ -743,6 +522,7 @@ mod tests {
     use super::*;
     use crate::commission::test_helpers::{build_test_plan, default_eligibility};
     use crate::config::commission::LevelCommissionConfig;
+    use crate::config::eligibility::CommissionEligibility;
     use crate::config::rank::{DemotionPolicy, RankDefinition, RankQualification};
     use crate::config::stairstep::{
         BreakawayConfig, BreakawayGenerationConfig, DifferentialConfig, OverrideCalculation,
@@ -1311,7 +1091,7 @@ mod tests {
         let mut structure = test_stairstep_structure();
         structure.compression = Some(CompressionConfig {
             enabled: true,
-            mode: CompressionMode::SkipInactive,
+            mode: crate::config::commission::CompressionMode::SkipInactive,
             rank_threshold: None,
         });
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());

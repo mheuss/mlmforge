@@ -44,11 +44,16 @@ pub(crate) struct EligibilityResult {
 /// stairstep Walk 1. The caller computes any plan-specific values
 /// (e.g., matrix height ceiling) before constructing this struct.
 pub(crate) struct LevelWalkConfig<'a> {
+    /// u8 is sufficient because realistic max_depth values are 1-20. A
+    /// 255-level commission plan doesn't exist. If level saturates at
+    /// u8::MAX due to a pathological config, the walk would emit extra
+    /// earnings at level 255. The Go validation pipeline enforces
+    /// reasonable max_depth values upstream, so we accept this as a
+    /// known non-risk rather than widening to u16.
     pub max_depth: u8,
     pub broad_pct: f64,
     pub multiplier: f64,
     pub compression: Option<&'a CompressionConfig>,
-    pub compression_enabled: bool,
     pub threshold_ordinal: Option<u16>,
     pub rank_ordinals: &'a HashMap<&'a str, u16>,
     pub rate_table: &'a BTreeMap<String, BTreeMap<u8, f64>>,
@@ -301,7 +306,7 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
                     // Missing snapshot: treat as ineligible.
                     // With compression, skip without consuming a level.
                     // Without compression, forfeit the level.
-                    if config.compression_enabled {
+                    if config.compression.is_some_and(|c| c.enabled) {
                         continue;
                     }
                     level = level.saturating_add(1);
@@ -693,7 +698,6 @@ mod tests {
             broad_pct: 0.40,
             multiplier: 1.0,
             compression: None,
-            compression_enabled: false,
             threshold_ordinal: None,
             rank_ordinals,
             rate_table,

@@ -463,7 +463,6 @@ pub fn calculate_stairstep(
         broad_pct,
         multiplier,
         compression,
-        compression_enabled: compression.is_some_and(|c| c.enabled),
         threshold_ordinal,
         rank_ordinals: &rank_ordinals,
         rate_table: &structure.level_commission.rate_table,

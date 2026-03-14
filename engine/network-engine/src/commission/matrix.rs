@@ -1,6 +1,7 @@
 //! Matrix commission calculator.
 
 use std::collections::HashMap;
+use uuid::Uuid;
 
 use crate::config::{CompensationPlan, MatrixStructureConfig};
 use crate::tree::matrix::MatrixTree;
@@ -22,7 +23,7 @@ pub fn calculate_matrix(
     tree: &MatrixTree,
     plan: &CompensationPlan,
     structure: &MatrixStructureConfig,
-    snapshots: &HashMap<uuid::Uuid, DistributorSnapshot>,
+    snapshots: &HashMap<Uuid, DistributorSnapshot>,
     volume: &[VolumeSource],
 ) -> Result<Vec<CommissionEarning>, CalculationError> {
     let rank_ordinals = walk::build_rank_ordinals(plan);

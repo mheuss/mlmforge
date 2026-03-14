@@ -8,8 +8,8 @@
 //! Binary uses pairing mechanics, not level-based walks. It is
 //! not a consumer of this module.
 
-// These imports are consumed by Tasks 2-3 (generic eligibility and
-// walk_level_commissions). Suppressed until then.
+// BTreeMap, CompensationPlan, CompressionConfig, CompressionMode, and
+// CommissionEarning are consumed by Task 3 (walk_level_commissions).
 #![allow(unused_imports, dead_code)]
 
 use std::collections::{BTreeMap, HashMap};
@@ -157,12 +157,81 @@ pub(crate) fn sort_earnings(earnings: &mut [CommissionEarning]) {
     });
 }
 
+// ---------------------------------------------------------------------------
+// Prep functions (generic over TreeNavigator)
+// ---------------------------------------------------------------------------
+
+/// Count how many personally sponsored distributors are commission-eligible.
+///
+/// Active leg tiers are defined in terms of personally sponsored frontline
+/// legs, not placement children. In a matrix with spillover, placement
+/// parent can differ from sponsor. Uses `get_sponsored` (sponsor edges)
+/// per decision 021.
+pub(crate) fn count_active_legs<T: TreeNavigator>(
+    tree: &T,
+    user_id: Uuid,
+    snapshots: &HashMap<Uuid, DistributorSnapshot>,
+    eligibility: &CommissionEligibility,
+) -> u16 {
+    let sponsored = match tree.get_sponsored(user_id) {
+        Ok(s) => s,
+        Err(_) => return 0,
+    };
+
+    sponsored
+        .iter()
+        .filter(|node| {
+            snapshots
+                .get(&node.user_id)
+                .map(|s| is_eligible(s, eligibility))
+                .unwrap_or(false)
+        })
+        .count() as u16
+}
+
+/// Evaluate eligibility for all distributors in the snapshot map.
+///
+/// Builds a cache of eligibility + depth limits used by the walk phase.
+/// Runs once before any upline walks begin.
+pub(crate) fn evaluate_eligibility<T: TreeNavigator>(
+    snapshots: &HashMap<Uuid, DistributorSnapshot>,
+    tree: &T,
+    eligibility: &CommissionEligibility,
+) -> HashMap<Uuid, EligibilityResult> {
+    let mut results = HashMap::with_capacity(snapshots.len());
+
+    for (user_id, snapshot) in snapshots {
+        let eligible = is_eligible(snapshot, eligibility);
+
+        let active_leg_count = if eligible && !eligibility.active_leg_tiers.is_empty() {
+            count_active_legs(tree, *user_id, snapshots, eligibility)
+        } else {
+            0
+        };
+
+        let max_earning_depth =
+            determine_max_depth(active_leg_count, &eligibility.active_leg_tiers);
+
+        results.insert(
+            *user_id,
+            EligibilityResult {
+                eligible,
+                max_earning_depth,
+            },
+        );
+    }
+
+    results
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::commission::test_helpers::uuid_from_index;
     use crate::config::commission::{CompressionConfig, CompressionMode};
     use crate::config::eligibility::ActiveLegTier;
+    use crate::tree::test_helpers::test_uuid;
+    use crate::tree::unilevel::UnilevelTree;
 
     // --- build_rank_ordinals ---
 
@@ -357,5 +426,98 @@ mod tests {
         assert_eq!(earnings[1].earner_id, uuid_from_index(1));
         assert_eq!(earnings[1].source_id, uuid_from_index(2));
         assert_eq!(earnings[2].earner_id, uuid_from_index(2));
+    }
+
+    // --- count_active_legs ---
+
+    #[test]
+    fn count_active_legs_counts_eligible_sponsored() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+
+        let elig = crate::commission::test_helpers::default_eligibility();
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            crate::commission::test_helpers::eligible_snapshot(),
+        );
+        snapshots.insert(
+            test_uuid(2),
+            crate::commission::test_helpers::eligible_snapshot(),
+        );
+        snapshots.insert(
+            test_uuid(3),
+            DistributorSnapshot {
+                personal_volume: 0.0, // below min
+                ..crate::commission::test_helpers::eligible_snapshot()
+            },
+        );
+
+        assert_eq!(count_active_legs(&tree, test_uuid(1), &snapshots, &elig), 1);
+    }
+
+    #[test]
+    fn count_active_legs_user_not_in_tree() {
+        let tree = UnilevelTree::new();
+        let elig = crate::commission::test_helpers::default_eligibility();
+        let snapshots = HashMap::new();
+        assert_eq!(
+            count_active_legs(&tree, test_uuid(99), &snapshots, &elig),
+            0
+        );
+    }
+
+    // --- evaluate_eligibility ---
+
+    #[test]
+    fn evaluate_eligibility_caches_all_distributors() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+
+        let elig = crate::commission::test_helpers::default_eligibility();
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            crate::commission::test_helpers::eligible_snapshot(),
+        );
+        snapshots.insert(
+            test_uuid(2),
+            DistributorSnapshot {
+                personal_volume: 0.0, // ineligible
+                ..crate::commission::test_helpers::eligible_snapshot()
+            },
+        );
+
+        let cache = evaluate_eligibility(&snapshots, &tree, &elig);
+
+        assert!(cache.get(&test_uuid(1)).unwrap().eligible);
+        assert!(!cache.get(&test_uuid(2)).unwrap().eligible);
+    }
+
+    // --- Additional tests from code quality review ---
+
+    #[test]
+    fn validate_cv_rejects_negative_infinity() {
+        let source = VolumeSource {
+            source_id: uuid_from_index(1),
+            cv_amount: f64::NEG_INFINITY,
+        };
+        assert!(validate_cv(&source).is_err());
+    }
+
+    #[test]
+    fn determine_max_depth_no_tier_matches_with_nonempty_tiers() {
+        // Tiers exist but active_leg_count is below all thresholds
+        let tiers = vec![ActiveLegTier {
+            min_active_legs: 5,
+            max_commission_depth: 10,
+        }];
+        assert_eq!(determine_max_depth(2, &tiers), None);
     }
 }

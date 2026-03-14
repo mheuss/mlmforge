@@ -8,8 +8,9 @@
 //! Binary uses pairing mechanics, not level-based walks. It is
 //! not a consumer of this module.
 
-// BTreeMap, CompensationPlan, CompressionConfig, CompressionMode, and
-// CommissionEarning are consumed by Task 3 (walk_level_commissions).
+// All items are pub(crate) and consumed by tests within this module.
+// External consumers (unilevel, matrix, stairstep) are wired in
+// tasks 4-6. Remove this allow once any calculator delegates here.
 #![allow(dead_code)]
 
 use std::collections::{BTreeMap, HashMap};
@@ -222,6 +223,158 @@ pub(crate) fn evaluate_eligibility<T: TreeNavigator>(
     }
 
     results
+}
+
+// ---------------------------------------------------------------------------
+// Walk function
+// ---------------------------------------------------------------------------
+
+/// Log a warning if broad_commission_percent is outside [0.0, 1.0].
+///
+/// Called once during config construction. The debug_assert catches
+/// this in development; the log::warn surfaces it in production.
+pub(crate) fn validate_broad_pct(broad_pct: f64) {
+    debug_assert!(
+        (0.0..=1.0).contains(&broad_pct),
+        "broad_commission_percent out of range: {}",
+        broad_pct
+    );
+    if !(0.0..=1.0).contains(&broad_pct) {
+        log::warn!(
+            "broad_commission_percent {} is outside [0.0, 1.0]; commissions may be overstated",
+            broad_pct
+        );
+    }
+}
+
+/// Walk the upline from each volume source, producing level commission earnings.
+///
+/// This is the shared walk loop used by unilevel, matrix, and stairstep
+/// (Walk 1). Each calculator builds a `LevelWalkConfig` with its own
+/// parameters and delegates to this function.
+///
+/// The `should_stop` callback is checked for each upline node before any
+/// other logic. If it returns `true`, the walk breaks immediately for
+/// this volume source. Unilevel and matrix pass `|_| false`. Stairstep
+/// passes a closure that checks breakaway set membership.
+///
+/// Returns earnings unsorted. The caller is responsible for calling
+/// `sort_earnings` after combining results from multiple walk phases
+/// (e.g., stairstep combines Walk 1 and Walk 2 before sorting).
+pub(crate) fn walk_level_commissions<T: TreeNavigator>(
+    tree: &T,
+    config: &LevelWalkConfig,
+    eligibility_cache: &HashMap<Uuid, EligibilityResult>,
+    snapshots: &HashMap<Uuid, DistributorSnapshot>,
+    volume: &[VolumeSource],
+    // Takes Uuid, not &Node. The closure only needs the ID for set
+    // membership checks (e.g., breakaway detection). Passing Uuid
+    // keeps captures simple — just &HashSet<Uuid>. If a future use
+    // case needs node data in the stop decision, widen then.
+    should_stop: impl Fn(Uuid) -> bool,
+) -> Result<Vec<CommissionEarning>, CalculationError> {
+    let mut all_earnings = Vec::new();
+
+    for source in volume {
+        validate_cv(source)?;
+
+        let upline = tree
+            .get_upline(source.source_id, 0)
+            .map_err(|_| CalculationError::SourceNotInTree(source.source_id))?;
+
+        if !snapshots.contains_key(&source.source_id) {
+            return Err(CalculationError::SourceNotInSnapshot(source.source_id));
+        }
+
+        let mut level: u8 = 1;
+
+        for node in &upline {
+            if level > config.max_depth {
+                break;
+            }
+
+            if should_stop(node.user_id) {
+                break;
+            }
+
+            let snapshot = match snapshots.get(&node.user_id) {
+                Some(s) => s,
+                None => {
+                    // Missing snapshot: treat as ineligible.
+                    // With compression, skip without consuming a level.
+                    // Without compression, forfeit the level.
+                    if config.compression_enabled {
+                        continue;
+                    }
+                    level = level.saturating_add(1);
+                    continue;
+                }
+            };
+
+            let elig = eligibility_cache.get(&node.user_id);
+            let node_eligible = elig.is_some_and(|e| e.eligible);
+
+            // Compression check
+            let should_compress = match config.compression.filter(|c| c.enabled) {
+                Some(compress) => match compress.mode {
+                    CompressionMode::SkipInactive => !node_eligible,
+                    CompressionMode::SkipBelowRank => {
+                        let dist_ordinal = config
+                            .rank_ordinals
+                            .get(snapshot.rank.as_str())
+                            .copied()
+                            .unwrap_or(0);
+                        config
+                            .threshold_ordinal
+                            .map(|t| dist_ordinal < t)
+                            .unwrap_or(false)
+                    }
+                },
+                None => false,
+            };
+
+            if should_compress {
+                continue; // skip without consuming level
+            }
+
+            // Not compressed. Check if eligible.
+            if !node_eligible {
+                level = level.saturating_add(1); // forfeit level
+                continue;
+            }
+
+            // Check per-distributor depth limit from active leg tiers
+            if let Some(max_personal) = elig.and_then(|e| e.max_earning_depth) {
+                if level > max_personal {
+                    level = level.saturating_add(1);
+                    continue;
+                }
+            }
+
+            // Rate table lookup
+            let rate = config
+                .rate_table
+                .get(&snapshot.rank)
+                .and_then(|levels| levels.get(&level))
+                .copied()
+                .unwrap_or(0.0);
+
+            if rate > 0.0 {
+                all_earnings.push(CommissionEarning {
+                    earner_id: node.user_id,
+                    source_id: source.source_id,
+                    level,
+                    rate,
+                    cv_amount: source.cv_amount,
+                    dollar_amount: source.cv_amount * config.broad_pct * config.multiplier * rate,
+                });
+            }
+
+            level = level.saturating_add(1);
+        }
+    }
+
+    Ok(all_earnings)
 }
 
 #[cfg(test)]
@@ -519,5 +672,169 @@ mod tests {
             max_commission_depth: 10,
         }];
         assert_eq!(determine_max_depth(2, &tiers), None);
+    }
+
+    // --- walk_level_commissions ---
+
+    fn test_rate_table() -> BTreeMap<String, BTreeMap<u8, f64>> {
+        let mut table = BTreeMap::new();
+        let mut rates = BTreeMap::new();
+        rates.insert(1, 0.05);
+        rates.insert(2, 0.04);
+        rates.insert(3, 0.03);
+        table.insert("associate".to_string(), rates);
+        table
+    }
+
+    fn test_walk_config<'a>(
+        rank_ordinals: &'a HashMap<&'a str, u16>,
+        rate_table: &'a BTreeMap<String, BTreeMap<u8, f64>>,
+    ) -> LevelWalkConfig<'a> {
+        LevelWalkConfig {
+            max_depth: 5,
+            broad_pct: 0.40,
+            multiplier: 1.0,
+            compression: None,
+            compression_enabled: false,
+            threshold_ordinal: None,
+            rank_ordinals,
+            rate_table,
+        }
+    }
+
+    #[test]
+    fn walk_basic_single_level() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), test_uuid(0), 1)
+            .unwrap();
+
+        let elig = crate::commission::test_helpers::default_eligibility();
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(0),
+            crate::commission::test_helpers::eligible_snapshot(),
+        );
+        snapshots.insert(
+            test_uuid(1),
+            crate::commission::test_helpers::eligible_snapshot(),
+        );
+
+        let cache = evaluate_eligibility(&snapshots, &tree, &elig);
+        let rank_ordinals = HashMap::from([("associate", 1u16)]);
+        let rate_table = test_rate_table();
+        let config = test_walk_config(&rank_ordinals, &rate_table);
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(1),
+            cv_amount: 100.0,
+        }];
+
+        let result =
+            walk_level_commissions(&tree, &config, &cache, &snapshots, &volume, |_| false).unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].earner_id, test_uuid(0));
+        assert_eq!(result[0].level, 1);
+        assert_eq!(result[0].rate, 0.05);
+        assert!((result[0].dollar_amount - 2.0).abs() < 1e-10); // 100 * 0.40 * 1.0 * 0.05
+    }
+
+    #[test]
+    fn walk_should_stop_breaks_at_callback() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), test_uuid(0), 1)
+            .unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2)
+            .unwrap();
+
+        let elig = crate::commission::test_helpers::default_eligibility();
+        let mut snapshots = HashMap::new();
+        for i in 0..3u8 {
+            snapshots.insert(
+                test_uuid(i),
+                crate::commission::test_helpers::eligible_snapshot(),
+            );
+        }
+
+        let cache = evaluate_eligibility(&snapshots, &tree, &elig);
+        let rank_ordinals = HashMap::from([("associate", 1u16)]);
+        let rate_table = test_rate_table();
+        let config = test_walk_config(&rank_ordinals, &rate_table);
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        // Stop at node 0 (the root). Only node 1 should earn.
+        let stop_set: std::collections::HashSet<Uuid> = [test_uuid(0)].into_iter().collect();
+        let result = walk_level_commissions(&tree, &config, &cache, &snapshots, &volume, |id| {
+            stop_set.contains(&id)
+        })
+        .unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].earner_id, test_uuid(1));
+        assert_eq!(result[0].level, 1);
+    }
+
+    #[test]
+    fn walk_source_not_in_tree_returns_error() {
+        let tree = UnilevelTree::new();
+        let rank_ordinals = HashMap::new();
+        let rate_table = BTreeMap::new();
+        let config = test_walk_config(&rank_ordinals, &rate_table);
+        let snapshots = HashMap::new();
+        let cache = HashMap::new();
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(99),
+            cv_amount: 100.0,
+        }];
+
+        let result = walk_level_commissions(&tree, &config, &cache, &snapshots, &volume, |_| false);
+        assert!(matches!(result, Err(CalculationError::SourceNotInTree(_))));
+    }
+
+    #[test]
+    fn walk_respects_max_depth() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        for i in 1..=5u8 {
+            tree.add_node(test_uuid(i), test_uuid(i - 1), test_uuid(i - 1), i as i64)
+                .unwrap();
+        }
+
+        let elig = crate::commission::test_helpers::default_eligibility();
+        let mut snapshots = HashMap::new();
+        for i in 0..=5u8 {
+            snapshots.insert(
+                test_uuid(i),
+                crate::commission::test_helpers::eligible_snapshot(),
+            );
+        }
+
+        let cache = evaluate_eligibility(&snapshots, &tree, &elig);
+        let rank_ordinals = HashMap::from([("associate", 1u16)]);
+        let rate_table = test_rate_table(); // only has levels 1-3
+
+        let mut config = test_walk_config(&rank_ordinals, &rate_table);
+        config.max_depth = 2;
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(5),
+            cv_amount: 100.0,
+        }];
+
+        let result =
+            walk_level_commissions(&tree, &config, &cache, &snapshots, &volume, |_| false).unwrap();
+
+        // max_depth=2, so only levels 1 and 2 earn
+        assert_eq!(result.len(), 2);
+        for earning in &result {
+            assert!(earning.level <= 2);
+        }
     }
 }

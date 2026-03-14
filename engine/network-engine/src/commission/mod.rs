@@ -6,6 +6,7 @@ pub mod matrix;
 pub mod stairstep;
 pub mod types;
 pub mod unilevel;
+pub(crate) mod walk;
 
 #[cfg(test)]
 pub(crate) mod test_helpers;

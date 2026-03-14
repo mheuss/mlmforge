@@ -3,13 +3,11 @@
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use crate::config::commission::CompressionMode;
-use crate::config::eligibility::{ActiveLegTier, CommissionEligibility};
 use crate::config::{CompensationPlan, UnilevelStructureConfig};
 use crate::tree::unilevel::UnilevelTree;
 
-use super::is_eligible;
 use super::types::{CalculationError, CommissionEarning, DistributorSnapshot, VolumeSource};
+use super::walk;
 
 /// Calculate unilevel commissions for a set of volume events.
 ///
@@ -27,279 +25,43 @@ pub fn calculate_unilevel(
     snapshots: &HashMap<Uuid, DistributorSnapshot>,
     volume: &[VolumeSource],
 ) -> Result<Vec<CommissionEarning>, CalculationError> {
-    // Build rank name -> ordinal map for SkipBelowRank comparison
-    let rank_ordinals: HashMap<&str, u16> = plan
-        .ranks
-        .iter()
-        .map(|r| (r.name.as_str(), r.ordinal))
-        .collect();
+    let rank_ordinals = walk::build_rank_ordinals(plan);
+    let eligibility_cache = walk::evaluate_eligibility(snapshots, tree, &plan.eligibility);
 
-    // Prep phase: evaluate eligibility for all distributors
-    let eligibility_cache = evaluate_eligibility(snapshots, tree, &plan.eligibility);
-
-    // Walk config
-    let max_depth = structure.level_commission.max_depth;
     let broad_pct = structure.level_commission.broad_commission_percent;
-    debug_assert!(
-        (0.0..=1.0).contains(&broad_pct),
-        "broad_commission_percent out of range: {}",
-        broad_pct
-    );
-    if !(0.0..=1.0).contains(&broad_pct) {
-        log::warn!(
-            "broad_commission_percent {} is outside [0.0, 1.0]; commissions may be overstated",
-            broad_pct
-        );
-    }
+    walk::validate_broad_pct(broad_pct);
+
     let multiplier = structure
         .level_commission
         .volume_to_dollar_multiplier
         .unwrap_or(plan.volume.volume_to_dollar_multiplier);
 
     let compression = structure.compression.as_ref();
-    let compression_enabled = compression.is_some_and(|c| c.enabled);
+    let threshold_ordinal = walk::resolve_threshold_ordinal(compression, &rank_ordinals);
 
-    let threshold_ordinal = compression.and_then(|c| {
-        if matches!(c.mode, CompressionMode::SkipBelowRank) {
-            match &c.rank_threshold {
-                None => {
-                    log::warn!(
-                        "SkipBelowRank compression enabled but rank_threshold is not set; \
-                         compression will have no effect"
-                    );
-                    None
-                }
-                Some(name) => {
-                    let ordinal = rank_ordinals.get(name.as_str()).copied();
-                    if ordinal.is_none() {
-                        log::warn!(
-                            "SkipBelowRank compression rank_threshold '{}' not found in \
-                             plan ranks; compression will have no effect",
-                            name
-                        );
-                    }
-                    ordinal
-                }
-            }
-        } else {
-            None
-        }
-    });
-
-    let mut all_earnings = Vec::new();
-
-    for source in volume {
-        // Validate cv_amount is non-negative and finite
-        if !source.cv_amount.is_finite() || source.cv_amount < 0.0 {
-            return Err(CalculationError::InvalidCvAmount(
-                source.source_id,
-                source.cv_amount,
-            ));
-        }
-
-        // Validate source exists in tree and get upline in one call
-        let upline = tree
-            .get_upline(source.source_id, 0)
-            .map_err(|_| CalculationError::SourceNotInTree(source.source_id))?;
-
-        // Validate source exists in snapshots
-        if !snapshots.contains_key(&source.source_id) {
-            return Err(CalculationError::SourceNotInSnapshot(source.source_id));
-        }
-
-        let mut level: u8 = 1;
-
-        for node in &upline {
-            if level > max_depth {
-                break;
-            }
-
-            let snapshot = match snapshots.get(&node.user_id) {
-                Some(s) => s,
-                None => {
-                    // Missing snapshot: treat as ineligible
-                    if compression_enabled {
-                        continue; // compressed out, no level consumed
-                    }
-                    level = level.saturating_add(1);
-                    continue;
-                }
-            };
-
-            let elig = eligibility_cache.get(&node.user_id);
-            let node_eligible = elig.is_some_and(|e| e.eligible);
-
-            // Compression check
-            let should_compress = match compression.filter(|c| c.enabled) {
-                Some(compress) => match compress.mode {
-                    CompressionMode::SkipInactive => !node_eligible,
-                    CompressionMode::SkipBelowRank => {
-                        let dist_ordinal = rank_ordinals
-                            .get(snapshot.rank.as_str())
-                            .copied()
-                            .unwrap_or(0);
-                        threshold_ordinal.map(|t| dist_ordinal < t).unwrap_or(false)
-                    }
-                },
-                None => false,
-            };
-
-            if should_compress {
-                continue; // skip without consuming level
-            }
-
-            // Not compressed. Check if eligible.
-            if !node_eligible {
-                level = level.saturating_add(1); // forfeit level
-                continue;
-            }
-
-            // Check per-distributor depth limit from active leg tiers
-            if let Some(max_personal) = elig.and_then(|e| e.max_earning_depth) {
-                if level > max_personal {
-                    level = level.saturating_add(1);
-                    continue;
-                }
-            }
-
-            // Rate table lookup
-            let rate = structure
-                .level_commission
-                .rate_table
-                .get(&snapshot.rank)
-                .and_then(|levels| levels.get(&level))
-                .copied()
-                .unwrap_or(0.0);
-
-            if rate > 0.0 {
-                all_earnings.push(CommissionEarning {
-                    earner_id: node.user_id,
-                    source_id: source.source_id,
-                    level,
-                    rate,
-                    cv_amount: source.cv_amount,
-                    dollar_amount: source.cv_amount * broad_pct * multiplier * rate,
-                });
-            }
-
-            level = level.saturating_add(1);
-        }
-    }
-
-    // Sort earnings for deterministic output. Without sorting, the order
-    // depends on BFS traversal and volume source iteration, both of which
-    // can vary across runs. Primary sort by earner_id, secondary by
-    // source_id so multi-source earnings are also stable.
-    all_earnings.sort_by(|a, b| {
-        a.earner_id
-            .cmp(&b.earner_id)
-            .then_with(|| a.source_id.cmp(&b.source_id))
-    });
-
-    Ok(all_earnings)
-}
-
-/// Count how many personally sponsored distributors are commission-eligible.
-///
-/// Active leg tiers are defined in terms of personally sponsored frontline
-/// legs, not placement children. In unilevel trees the two are typically
-/// identical, but using `get_sponsored` keeps the semantics correct and
-/// consistent with the matrix calculator (decision 021).
-fn count_active_legs(
-    tree: &UnilevelTree,
-    user_id: Uuid,
-    snapshots: &HashMap<Uuid, DistributorSnapshot>,
-    eligibility: &CommissionEligibility,
-) -> u16 {
-    let sponsored = match tree.get_sponsored(user_id) {
-        Ok(sponsored) => sponsored,
-        Err(_) => return 0,
+    let config = walk::LevelWalkConfig {
+        max_depth: structure.level_commission.max_depth,
+        broad_pct,
+        multiplier,
+        compression,
+        threshold_ordinal,
+        rank_ordinals: &rank_ordinals,
+        rate_table: &structure.level_commission.rate_table,
     };
 
-    sponsored
-        .iter()
-        .filter(|child| {
-            snapshots
-                .get(&child.user_id)
-                .map(|s| is_eligible(s, eligibility))
-                .unwrap_or(false)
-        })
-        .count() as u16
-}
+    let mut earnings =
+        walk::walk_level_commissions(tree, &config, &eligibility_cache, snapshots, volume, |_| {
+            false
+        })?;
 
-/// Determine per-distributor max earning depth from active leg tiers.
-///
-/// Returns `Some(depth)` if a tier limits the distributor, or `None`
-/// if no tier restriction applies (use config max_depth as ceiling).
-///
-/// Tiers must be sorted ascending by `min_active_legs`. The caller (Go validation
-/// pipeline) enforces this via business rules requiring a base tier with min_active_legs=0.
-fn determine_max_depth(active_leg_count: u16, tiers: &[ActiveLegTier]) -> Option<u8> {
-    if tiers.is_empty() {
-        return None;
-    }
-
-    // Tiers are sorted ascending by min_active_legs.
-    // Walk in reverse to find the highest qualifying tier.
-    for tier in tiers.iter().rev() {
-        if active_leg_count >= tier.min_active_legs {
-            return if tier.max_commission_depth == 0 {
-                None // unlimited
-            } else {
-                Some(u8::try_from(tier.max_commission_depth).unwrap_or(u8::MAX))
-            };
-        }
-    }
-
-    None // no tier matched, use config max_depth
-}
-
-/// Cached eligibility result for a single distributor.
-struct EligibilityResult {
-    eligible: bool,
-    /// Per-distributor earning depth limit from active leg tiers.
-    /// None means no tier restriction (use config max_depth).
-    max_earning_depth: Option<u8>,
-}
-
-/// Evaluate eligibility for all distributors in the snapshot map.
-///
-/// Builds an internal cache used during the walk phase. Runs once
-/// before any upline walks begin.
-fn evaluate_eligibility(
-    snapshots: &HashMap<Uuid, DistributorSnapshot>,
-    tree: &UnilevelTree,
-    eligibility: &CommissionEligibility,
-) -> HashMap<Uuid, EligibilityResult> {
-    let mut results = HashMap::with_capacity(snapshots.len());
-
-    for (user_id, snapshot) in snapshots {
-        let eligible = is_eligible(snapshot, eligibility);
-
-        let active_leg_count = if eligible && !eligibility.active_leg_tiers.is_empty() {
-            count_active_legs(tree, *user_id, snapshots, eligibility)
-        } else {
-            0
-        };
-
-        let max_earning_depth =
-            determine_max_depth(active_leg_count, &eligibility.active_leg_tiers);
-
-        results.insert(
-            *user_id,
-            EligibilityResult {
-                eligible,
-                max_earning_depth,
-            },
-        );
-    }
-
-    results
+    walk::sort_earnings(&mut earnings);
+    Ok(earnings)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commission::is_eligible;
     use crate::commission::test_helpers::build_test_plan;
     use crate::config::commission::{CompressionConfig, CompressionMode, LevelCommissionConfig};
     use crate::config::eligibility::{ActiveLegTier, CommissionEligibility};
@@ -475,185 +237,6 @@ mod tests {
             ..eligible_snapshot()
         };
         assert!(is_eligible(&snap, &elig));
-    }
-
-    // --- count_active_legs tests ---
-
-    #[test]
-    fn count_active_legs_with_mixed_children() {
-        let mut tree = UnilevelTree::new();
-        let root = test_uuid(1);
-        tree.add_root(root, 0).unwrap();
-        tree.add_node(test_uuid(2), root, root, 0).unwrap(); // eligible child
-        tree.add_node(test_uuid(3), root, root, 0).unwrap(); // ineligible child
-        tree.add_node(test_uuid(4), root, root, 0).unwrap(); // eligible child
-
-        let elig = default_eligibility();
-        let mut snapshots = HashMap::new();
-        snapshots.insert(root, eligible_snapshot());
-        snapshots.insert(test_uuid(2), eligible_snapshot());
-        snapshots.insert(
-            test_uuid(3),
-            DistributorSnapshot {
-                personal_volume: 0.0, // below min
-                ..eligible_snapshot()
-            },
-        );
-        snapshots.insert(test_uuid(4), eligible_snapshot());
-
-        assert_eq!(count_active_legs(&tree, root, &snapshots, &elig), 2);
-    }
-
-    #[test]
-    fn count_active_legs_missing_child_snapshot() {
-        let mut tree = UnilevelTree::new();
-        let root = test_uuid(1);
-        tree.add_root(root, 0).unwrap();
-        tree.add_node(test_uuid(2), root, root, 0).unwrap();
-        tree.add_node(test_uuid(3), root, root, 0).unwrap();
-
-        let elig = default_eligibility();
-        let mut snapshots = HashMap::new();
-        snapshots.insert(root, eligible_snapshot());
-        snapshots.insert(test_uuid(2), eligible_snapshot());
-        // test_uuid(3) has no snapshot — counts as not active
-
-        assert_eq!(count_active_legs(&tree, root, &snapshots, &elig), 1);
-    }
-
-    #[test]
-    fn count_active_legs_user_not_in_tree() {
-        let tree = UnilevelTree::new();
-        let elig = default_eligibility();
-        let snapshots = HashMap::new();
-
-        assert_eq!(
-            count_active_legs(&tree, test_uuid(99), &snapshots, &elig),
-            0
-        );
-    }
-
-    // --- determine_max_depth tests ---
-
-    #[test]
-    fn determine_max_depth_no_tiers() {
-        assert_eq!(determine_max_depth(5, &[]), None);
-    }
-
-    #[test]
-    fn determine_max_depth_matches_highest_qualifying_tier() {
-        let tiers = vec![
-            ActiveLegTier {
-                min_active_legs: 2,
-                max_commission_depth: 3,
-            },
-            ActiveLegTier {
-                min_active_legs: 5,
-                max_commission_depth: 5,
-            },
-            ActiveLegTier {
-                min_active_legs: 8,
-                max_commission_depth: 0,
-            },
-        ];
-
-        // 6 legs qualifies for tier 2 (min 5) but not tier 3 (min 8)
-        assert_eq!(determine_max_depth(6, &tiers), Some(5));
-    }
-
-    #[test]
-    fn determine_max_depth_unlimited_tier() {
-        let tiers = vec![
-            ActiveLegTier {
-                min_active_legs: 2,
-                max_commission_depth: 3,
-            },
-            ActiveLegTier {
-                min_active_legs: 8,
-                max_commission_depth: 0,
-            },
-        ];
-
-        // 10 legs qualifies for unlimited tier (depth 0)
-        assert_eq!(determine_max_depth(10, &tiers), None);
-    }
-
-    #[test]
-    fn determine_max_depth_no_tier_matches() {
-        let tiers = vec![ActiveLegTier {
-            min_active_legs: 5,
-            max_commission_depth: 3,
-        }];
-
-        // 2 legs doesn't meet min 5
-        assert_eq!(determine_max_depth(2, &tiers), None);
-    }
-
-    #[test]
-    fn determine_max_depth_exact_match() {
-        let tiers = vec![ActiveLegTier {
-            min_active_legs: 3,
-            max_commission_depth: 4,
-        }];
-
-        assert_eq!(determine_max_depth(3, &tiers), Some(4));
-    }
-
-    // --- evaluate_eligibility tests ---
-
-    #[test]
-    fn evaluate_eligibility_builds_cache_for_all_distributors() {
-        let mut tree = UnilevelTree::new();
-        let root = test_uuid(1);
-        tree.add_root(root, 0).unwrap();
-        tree.add_node(test_uuid(2), root, root, 0).unwrap();
-        tree.add_node(test_uuid(3), root, root, 0).unwrap();
-        tree.add_node(test_uuid(4), root, root, 0).unwrap();
-
-        let elig = CommissionEligibility {
-            minimum_pv: 100.0,
-            require_order_in_period: false,
-            eligible_statuses: vec!["active".to_string()],
-            active_leg_tiers: vec![
-                ActiveLegTier {
-                    min_active_legs: 1,
-                    max_commission_depth: 3,
-                },
-                ActiveLegTier {
-                    min_active_legs: 2,
-                    max_commission_depth: 0,
-                },
-            ],
-        };
-
-        let mut snapshots = HashMap::new();
-        // Root has 2 eligible children (uuid(2), uuid(4)) -> tier 2 (unlimited)
-        snapshots.insert(root, eligible_snapshot());
-        // Child 2 is eligible, no children -> 0 legs -> no tier
-        snapshots.insert(test_uuid(2), eligible_snapshot());
-        // Child 3 is ineligible (low PV)
-        snapshots.insert(
-            test_uuid(3),
-            DistributorSnapshot {
-                personal_volume: 10.0,
-                ..eligible_snapshot()
-            },
-        );
-        // Child 4 is eligible, no children -> 0 legs -> no tier
-        snapshots.insert(test_uuid(4), eligible_snapshot());
-
-        let cache = evaluate_eligibility(&snapshots, &tree, &elig);
-
-        let root_elig = &cache[&root];
-        assert!(root_elig.eligible);
-        assert_eq!(root_elig.max_earning_depth, None); // unlimited tier
-
-        let child2_elig = &cache[&test_uuid(2)];
-        assert!(child2_elig.eligible);
-        assert_eq!(child2_elig.max_earning_depth, None); // no legs, no tier
-
-        let child3_elig = &cache[&test_uuid(3)];
-        assert!(!child3_elig.eligible);
     }
 
     // --- calculate_unilevel tests ---

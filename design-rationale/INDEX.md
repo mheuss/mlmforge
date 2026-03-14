@@ -8,7 +8,7 @@ MLMForge's architecture is informed by years of building and operating a product
 
 ## Numbering
 
-This folder uses its own numbering sequence (001 through 021). DEVELOPMENT.md has a separate ADR sequence (ADR-001 through ADR-020).
+This folder uses its own numbering sequence (001 through 022). DEVELOPMENT.md has a separate ADR sequence (ADR-001 through ADR-020).
 
 The two sequences cover different scopes. DEVELOPMENT.md ADRs document high-level architectural decisions like language choice, persistence strategy, and modularity. The `design-rationale/` folder documents detailed per-domain design decisions like tree implementation, compensation config, and interface contracts.
 
@@ -39,6 +39,7 @@ Code comments that reference "ADR-NNN" use the DEVELOPMENT.md numbering.
 | [019](019-ndjson-protocol.md) | **NDJSON Protocol** | Request-response envelope, RawValue params, error code taxonomy, panic recovery, context cancellation |
 | [020](020-tree-topology-separation.md) | **Tree Topology Separation** | Trees enforce shape, callers decide placement, position validation vs placement logic |
 | [021](021-sponsor-vs-placement-in-commission.md) | **Sponsor vs. Placement in Commission** | Placement edges determine commission flow, sponsor edges determine personal qualification |
+| [022](022-shared-commission-walk.md) | **Shared Commission Walk** | Generic functions over TreeNavigator, no CommissionCalculator trait, callback injection for plan-specific behavior |
 
 ## Reading Order
 

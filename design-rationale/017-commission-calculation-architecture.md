@@ -50,7 +50,7 @@ Binary calculation has fundamentally different inputs. It pairs volume from two 
 
 The project follows the rule of three. Extract common patterns when we have three concrete implementations. Two is not enough to see the real shape.
 
-**Status update:** Three calculators now exist: unilevel, matrix, and stairstep. The rule of three is satisfied. Common patterns are visible: all three share the prep+walk structure, eligibility evaluation, active leg counting, compression handling, and the flat earnings output contract. HEU-200 tracks the extraction of a shared calculator abstraction. The standalone functions will remain as the implementation behind whatever trait emerges.
+**Status update (HEU-200 complete):** Three calculators now exist: unilevel, matrix, and stairstep. The rule of three was satisfied. Shared logic was extracted into `commission/walk.rs` as generic functions over `TreeNavigator`. No `CommissionCalculator` trait was created — the duplication was internal (walk loop, prep phase), not external (calling convention). Callers already know which calculator to use from the config type, so polymorphic dispatch adds no value. The standalone public functions remain. See decision 022 for the full rationale.
 
 ### Compression Is Part of the Walk
 

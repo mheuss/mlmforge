@@ -10,7 +10,7 @@
 
 // BTreeMap, CompensationPlan, CompressionConfig, CompressionMode, and
 // CommissionEarning are consumed by Task 3 (walk_level_commissions).
-#![allow(unused_imports, dead_code)]
+#![allow(dead_code)]
 
 use std::collections::{BTreeMap, HashMap};
 use uuid::Uuid;

@@ -148,7 +148,7 @@ fn prep(
 }
 
 // ---------------------------------------------------------------------------
-// Walk 2: Differential and generation overrides
+// Walk 2: Override earnings (differential or fixed)
 // ---------------------------------------------------------------------------
 
 /// Resolve the override rate for a generation-1 ancestor.
@@ -182,16 +182,16 @@ fn resolve_gen1_rate(
 
 /// Walk 2 produces override earnings on breakaway group volume.
 ///
-/// For each breakaway distributor, walk upline to find ancestors who
-/// earn differential overrides. The differential is the ancestor's rank
-/// rate minus the highest rate already paid in the walk. When the
-/// differential is zero or negative but the ancestor has a rank rate,
-/// `min_override` applies as a floor.
+/// Two override modes determine how the rate is resolved:
+/// - **Differential:** ancestor_rate - breakaway_rate, floored at
+///   `min_override` when the gap is zero or negative.
+/// - **FixedOverride:** flat per-rank rate lookup, independent of the
+///   breakaway leader's rank.
 ///
-/// When generation overrides are configured, the generation counting
-/// utility finds additional earners beyond the first. Generation 1 uses
-/// the differential rate. Generations 2+ use rates from the generation
-/// override table.
+/// Both modes use `resolve_gen1_rate` for generation-1 (or non-generation)
+/// rate resolution. When generation overrides are configured, generation 1
+/// uses the mode-specific rate. Generations 2+ use rates from the
+/// generation override table regardless of mode.
 ///
 /// Dollar amounts use `broad_pct` (broad commission percent) because
 /// overrides pay from the same commission pool as level commissions.

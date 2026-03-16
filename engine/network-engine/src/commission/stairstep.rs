@@ -341,7 +341,7 @@ fn walk_overrides(
                     .unwrap_or(0.0),
                 crate::config::stairstep::OverrideMode::FixedOverride(_) => 0.0,
             };
-            let mut highest_rate_paid = breakaway_base_rate;
+            let highest_rate_paid = breakaway_base_rate;
 
             for node in &upline {
                 let ancestor_eligible = prep
@@ -367,9 +367,6 @@ fn walk_overrides(
                         } else if ancestor_rate > 0.0 && diff.min_override > 0.0 {
                             diff.min_override
                         } else {
-                            if ancestor_rate > highest_rate_paid {
-                                highest_rate_paid = ancestor_rate;
-                            }
                             continue;
                         }
                     }

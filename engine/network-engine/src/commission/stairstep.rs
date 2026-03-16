@@ -182,17 +182,10 @@ fn walk_overrides(
     };
 
     // FixedOverride uses flat per-rank percentages, not differential
-    // rates. That mode is not yet implemented (out of scope for HEU-32).
-    if matches!(
-        breakaway_cfg.override_calculation,
-        crate::config::stairstep::OverrideCalculation::FixedOverride
-    ) {
-        return Vec::new();
-    }
-
-    let differential_cfg = match &breakaway_cfg.differential {
-        Some(d) => d,
-        None => return Vec::new(),
+    // rates. That mode is not yet implemented (see HEU-195).
+    let differential_cfg = match &breakaway_cfg.override_mode {
+        crate::config::stairstep::OverrideMode::Differential(cfg) => cfg,
+        crate::config::stairstep::OverrideMode::FixedOverride => return Vec::new(),
     };
 
     let mut earnings = Vec::new();
@@ -524,7 +517,7 @@ mod tests {
     use crate::config::eligibility::CommissionEligibility;
     use crate::config::rank::{DemotionPolicy, RankDefinition, RankQualification};
     use crate::config::stairstep::{
-        BreakawayConfig, BreakawayGenerationConfig, DifferentialConfig, OverrideCalculation,
+        BreakawayConfig, BreakawayGenerationConfig, DifferentialConfig, OverrideMode,
     };
     use crate::config::{StairstepStructureConfig, StructureConfig};
     use std::collections::BTreeMap;
@@ -581,8 +574,7 @@ mod tests {
             breakaway: Some(BreakawayConfig {
                 threshold_rank: "director".to_string(),
                 exclude_breakaway_gv: true,
-                override_calculation: OverrideCalculation::Differential,
-                differential: Some(DifferentialConfig {
+                override_mode: OverrideMode::Differential(DifferentialConfig {
                     rank_rates: {
                         let mut m = BTreeMap::new();
                         m.insert("director".to_string(), 0.10);
@@ -986,14 +978,11 @@ mod tests {
         // No override earnings should be produced.
         let tree = build_chain(3);
         let mut structure = test_stairstep_structure();
-        structure
-            .breakaway
-            .as_mut()
-            .unwrap()
-            .differential
-            .as_mut()
-            .unwrap()
-            .min_override = 0.0;
+        if let OverrideMode::Differential(ref mut diff) =
+            structure.breakaway.as_mut().unwrap().override_mode
+        {
+            diff.min_override = 0.0;
+        }
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();

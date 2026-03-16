@@ -16,7 +16,13 @@ use serde::{Deserialize, Serialize};
 /// away. The upline stops earning level commissions on individual orders
 /// in that group and earns differential overrides on total group volume
 /// instead.
+///
+/// Wire format keeps `override_calculation` and `differential` as
+/// separate fields for backwards compatibility with Go types and the
+/// JSON schema. Rust collapses them into `OverrideMode` so invalid
+/// states (e.g. Differential without config) are unrepresentable.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(from = "BreakawayConfigWire", into = "BreakawayConfigWire")]
 pub struct BreakawayConfig {
     /// Rank at which a downline group breaks away.
     ///
@@ -26,37 +32,28 @@ pub struct BreakawayConfig {
 
     /// When true, breakaway group volume is excluded from upline's
     /// group volume for rank qualification.
-    #[serde(rename = "group_volume_excludes_breakaway")]
     pub exclude_breakaway_gv: bool,
 
     /// How override commissions are calculated after breakaway.
-    pub override_calculation: OverrideCalculation,
-
-    /// Differential override settings.
-    ///
-    /// Required when `override_calculation` is `Differential`. Ignored
-    /// for `FixedOverride`.
-    pub differential: Option<DifferentialConfig>,
+    pub override_mode: OverrideMode,
 
     /// Optional multi-generation overrides on breakaway groups beyond
     /// the first.
-    #[serde(rename = "generation")]
     pub generation_overrides: Option<BreakawayGenerationConfig>,
 }
 
 /// How override commissions are calculated after breakaway.
 ///
-/// Two mutually exclusive approaches. Differential derives the override
-/// from rate differences between ranks. Fixed override uses a flat
-/// percentage per rank.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OverrideCalculation {
+/// Differential carries its configuration inline so the type system
+/// prevents constructing a Differential mode without the required
+/// rank rates and min override.
+#[derive(Debug, Clone)]
+pub enum OverrideMode {
     /// Override = sponsor's rank rate minus breakaway leader's rank rate.
     ///
     /// If equal rank, override is zero (floored at `min_override`).
     /// Never negative.
-    Differential,
+    Differential(DifferentialConfig),
 
     /// Fixed percentage per rank, not derived from rate differences.
     FixedOverride,
@@ -108,6 +105,74 @@ pub struct BreakawayGenerationConfig {
     pub boundary_rank: String,
 }
 
+// ---------------------------------------------------------------------------
+// Wire format bridge
+//
+// The Go layer and JSON schema use `override_calculation` (string enum)
+// alongside a separate `differential` object. These types translate
+// between that flat representation and the Rust OverrideMode enum.
+// ---------------------------------------------------------------------------
+
+/// Wire-format tag for `override_calculation`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum OverrideCalculationTag {
+    Differential,
+    FixedOverride,
+}
+
+/// Wire-format representation of `BreakawayConfig`. Matches the JSON
+/// shape that Go produces and the JSON schema validates.
+#[derive(Serialize, Deserialize)]
+struct BreakawayConfigWire {
+    threshold_rank: String,
+    #[serde(rename = "group_volume_excludes_breakaway")]
+    exclude_breakaway_gv: bool,
+    override_calculation: OverrideCalculationTag,
+    differential: Option<DifferentialConfig>,
+    #[serde(rename = "generation")]
+    generation_overrides: Option<BreakawayGenerationConfig>,
+}
+
+impl From<BreakawayConfigWire> for BreakawayConfig {
+    fn from(wire: BreakawayConfigWire) -> Self {
+        let override_mode = match wire.override_calculation {
+            OverrideCalculationTag::Differential => {
+                // The JSON schema requires `differential` when
+                // override_calculation is "differential". If it's
+                // missing here, the validation pipeline has a bug.
+                let diff = wire.differential.expect(
+                    "differential config is required when override_calculation is differential",
+                );
+                OverrideMode::Differential(diff)
+            }
+            OverrideCalculationTag::FixedOverride => OverrideMode::FixedOverride,
+        };
+        BreakawayConfig {
+            threshold_rank: wire.threshold_rank,
+            exclude_breakaway_gv: wire.exclude_breakaway_gv,
+            override_mode,
+            generation_overrides: wire.generation_overrides,
+        }
+    }
+}
+
+impl From<BreakawayConfig> for BreakawayConfigWire {
+    fn from(config: BreakawayConfig) -> Self {
+        let (override_calculation, differential) = match config.override_mode {
+            OverrideMode::Differential(diff) => (OverrideCalculationTag::Differential, Some(diff)),
+            OverrideMode::FixedOverride => (OverrideCalculationTag::FixedOverride, None),
+        };
+        BreakawayConfigWire {
+            threshold_rank: config.threshold_rank,
+            exclude_breakaway_gv: config.exclude_breakaway_gv,
+            override_calculation,
+            differential,
+            generation_overrides: config.generation_overrides,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,12 +204,11 @@ mod tests {
         let config: BreakawayConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.threshold_rank, "director");
         assert!(config.exclude_breakaway_gv);
-        assert!(matches!(
-            config.override_calculation,
-            OverrideCalculation::Differential
-        ));
 
-        let diff = config.differential.as_ref().unwrap();
+        let diff = match &config.override_mode {
+            OverrideMode::Differential(d) => d,
+            OverrideMode::FixedOverride => panic!("expected Differential"),
+        };
         assert_eq!(diff.rank_rates.len(), 3);
         assert_eq!(diff.rank_rates["director"], 0.10);
         assert_eq!(diff.rank_rates["senior_director"], 0.15);
@@ -163,12 +227,12 @@ mod tests {
     #[test]
     fn deserialize_override_calculation_variants() {
         let json_diff = r#""differential""#;
-        let calc: OverrideCalculation = serde_json::from_str(json_diff).unwrap();
-        assert!(matches!(calc, OverrideCalculation::Differential));
+        let calc: OverrideCalculationTag = serde_json::from_str(json_diff).unwrap();
+        assert!(matches!(calc, OverrideCalculationTag::Differential));
 
         let json_fixed = r#""fixed_override""#;
-        let calc: OverrideCalculation = serde_json::from_str(json_fixed).unwrap();
-        assert!(matches!(calc, OverrideCalculation::FixedOverride));
+        let calc: OverrideCalculationTag = serde_json::from_str(json_fixed).unwrap();
+        assert!(matches!(calc, OverrideCalculationTag::FixedOverride));
     }
 
     #[test]
@@ -225,11 +289,50 @@ mod tests {
         let config: BreakawayConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.threshold_rank, "director");
         assert!(!config.exclude_breakaway_gv);
-        assert!(matches!(
-            config.override_calculation,
-            OverrideCalculation::FixedOverride
-        ));
-        assert!(config.differential.is_none());
+        assert!(matches!(config.override_mode, OverrideMode::FixedOverride));
         assert!(config.generation_overrides.is_none());
+    }
+
+    #[test]
+    fn round_trip_differential() {
+        let config = BreakawayConfig {
+            threshold_rank: "director".to_string(),
+            exclude_breakaway_gv: true,
+            override_mode: OverrideMode::Differential(DifferentialConfig {
+                rank_rates: BTreeMap::from([("director".to_string(), 0.10)]),
+                min_override: 0.02,
+            }),
+            generation_overrides: None,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        // Wire format should contain separate fields
+        assert!(json.contains("\"override_calculation\":\"differential\""));
+        assert!(json.contains("\"differential\":{"));
+
+        let restored: BreakawayConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.threshold_rank, "director");
+        assert!(matches!(
+            restored.override_mode,
+            OverrideMode::Differential(_)
+        ));
+    }
+
+    #[test]
+    fn round_trip_fixed_override() {
+        let config = BreakawayConfig {
+            threshold_rank: "director".to_string(),
+            exclude_breakaway_gv: false,
+            override_mode: OverrideMode::FixedOverride,
+            generation_overrides: None,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("\"override_calculation\":\"fixed_override\""));
+        assert!(json.contains("\"differential\":null"));
+
+        let restored: BreakawayConfig = serde_json::from_str(&json).unwrap();
+        assert!(matches!(
+            restored.override_mode,
+            OverrideMode::FixedOverride
+        ));
     }
 }

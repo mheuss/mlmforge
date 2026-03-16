@@ -21,8 +21,8 @@ use serde::{Deserialize, Serialize};
 /// separate fields for backwards compatibility with Go types and the
 /// JSON schema. Rust collapses them into `OverrideMode` so invalid
 /// states (e.g. Differential without config) are unrepresentable.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(from = "BreakawayConfigWire", into = "BreakawayConfigWire")]
+#[derive(Debug, Clone, Serialize)]
+#[serde(into = "BreakawayConfigWire")]
 pub struct BreakawayConfig {
     /// Rank at which a downline group breaks away.
     ///
@@ -134,26 +134,26 @@ struct BreakawayConfigWire {
     generation_overrides: Option<BreakawayGenerationConfig>,
 }
 
-impl From<BreakawayConfigWire> for BreakawayConfig {
-    fn from(wire: BreakawayConfigWire) -> Self {
+impl<'de> serde::Deserialize<'de> for BreakawayConfig {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let wire = BreakawayConfigWire::deserialize(deserializer)?;
         let override_mode = match wire.override_calculation {
             OverrideCalculationTag::Differential => {
-                // The JSON schema requires `differential` when
-                // override_calculation is "differential". If it's
-                // missing here, the validation pipeline has a bug.
-                let diff = wire.differential.expect(
-                    "differential config is required when override_calculation is differential",
-                );
+                let diff = wire.differential.ok_or_else(|| {
+                    serde::de::Error::custom(
+                        "differential config is required when override_calculation is \"differential\"",
+                    )
+                })?;
                 OverrideMode::Differential(diff)
             }
             OverrideCalculationTag::FixedOverride => OverrideMode::FixedOverride,
         };
-        BreakawayConfig {
+        Ok(BreakawayConfig {
             threshold_rank: wire.threshold_rank,
             exclude_breakaway_gv: wire.exclude_breakaway_gv,
             override_mode,
             generation_overrides: wire.generation_overrides,
-        }
+        })
     }
 }
 
@@ -334,5 +334,23 @@ mod tests {
             restored.override_mode,
             OverrideMode::FixedOverride
         ));
+    }
+
+    #[test]
+    fn differential_without_config_returns_error() {
+        let json = r#"{
+            "threshold_rank": "director",
+            "group_volume_excludes_breakaway": true,
+            "override_calculation": "differential",
+            "differential": null,
+            "generation": null
+        }"#;
+        let result: Result<BreakawayConfig, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("differential config is required"),
+            "unexpected error: {err}"
+        );
     }
 }

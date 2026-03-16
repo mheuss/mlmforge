@@ -146,7 +146,14 @@ impl<'de> serde::Deserialize<'de> for BreakawayConfig {
                 })?;
                 OverrideMode::Differential(diff)
             }
-            OverrideCalculationTag::FixedOverride => OverrideMode::FixedOverride,
+            OverrideCalculationTag::FixedOverride => {
+                if wire.differential.is_some() {
+                    return Err(serde::de::Error::custom(
+                        "differential config must be null when override_calculation is \"fixed_override\"",
+                    ));
+                }
+                OverrideMode::FixedOverride
+            }
         };
         Ok(BreakawayConfig {
             threshold_rank: wire.threshold_rank,
@@ -350,6 +357,27 @@ mod tests {
         let err = result.unwrap_err().to_string();
         assert!(
             err.contains("differential config is required"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn fixed_override_with_differential_returns_error() {
+        let json = r#"{
+            "threshold_rank": "director",
+            "group_volume_excludes_breakaway": false,
+            "override_calculation": "fixed_override",
+            "differential": {
+                "rank_rates": { "director": 0.10 },
+                "min_override": 0.02
+            },
+            "generation": null
+        }"#;
+        let result: Result<BreakawayConfig, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("differential config must be null"),
             "unexpected error: {err}"
         );
     }

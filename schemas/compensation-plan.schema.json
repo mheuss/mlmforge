@@ -1044,6 +1044,17 @@
           ],
           "description": "Differential override configuration. Required when override_calculation is differential."
         },
+        "fixed_override": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/FixedOverrideConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Fixed override configuration. Required when override_calculation is fixed_override."
+        },
         "generation": {
           "oneOf": [
             {
@@ -1071,13 +1082,20 @@
             "properties": {
               "differential": {
                 "$ref": "#/$defs/DifferentialConfig"
+              },
+              "fixed_override": {
+                "type": "null"
               }
             }
           },
           "else": {
+            "required": ["fixed_override"],
             "properties": {
               "differential": {
                 "type": "null"
+              },
+              "fixed_override": {
+                "$ref": "#/$defs/FixedOverrideConfig"
               }
             }
           }
@@ -1102,6 +1120,22 @@
           "type": "number",
           "minimum": 0,
           "description": "Minimum override amount regardless of differential."
+        }
+      }
+    },
+    "FixedOverrideConfig": {
+      "type": "object",
+      "description": "Configuration for fixed override commissions in stairstep plans. Each rank has a flat override percentage.",
+      "required": ["rank_rates"],
+      "properties": {
+        "rank_rates": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "description": "Fixed override rate by rank."
         }
       }
     },

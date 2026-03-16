@@ -56,7 +56,7 @@ pub enum OverrideMode {
     Differential(DifferentialConfig),
 
     /// Fixed percentage per rank, not derived from rate differences.
-    FixedOverride,
+    FixedOverride(FixedOverrideConfig),
 }
 
 /// Configuration for differential override calculation.
@@ -77,6 +77,20 @@ pub struct DifferentialConfig {
     /// Prevents zero overrides at equal rank. Typical range 0.01-0.03
     /// (1-3%).
     pub min_override: f64,
+}
+
+/// Configuration for fixed override calculation.
+///
+/// Each rank has a flat override percentage applied to breakaway group
+/// volume. Unlike Differential, the rate does not depend on the
+/// breakaway leader's rank.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FixedOverrideConfig {
+    /// Override rate per rank.
+    ///
+    /// The ancestor's rank determines the override rate directly.
+    /// Keys are rank names. Values are percentages between 0.0 and 1.0.
+    pub rank_rates: BTreeMap<String, f64>,
 }
 
 /// Multi-generation override configuration for breakaway groups.
@@ -130,6 +144,7 @@ struct BreakawayConfigWire {
     exclude_breakaway_gv: bool,
     override_calculation: OverrideCalculationTag,
     differential: Option<DifferentialConfig>,
+    fixed_override: Option<FixedOverrideConfig>,
     #[serde(rename = "generation")]
     generation_overrides: Option<BreakawayGenerationConfig>,
 }
@@ -139,6 +154,11 @@ impl<'de> serde::Deserialize<'de> for BreakawayConfig {
         let wire = BreakawayConfigWire::deserialize(deserializer)?;
         let override_mode = match wire.override_calculation {
             OverrideCalculationTag::Differential => {
+                if wire.fixed_override.is_some() {
+                    return Err(serde::de::Error::custom(
+                        "fixed_override config must be null when override_calculation is \"differential\"",
+                    ));
+                }
                 let diff = wire.differential.ok_or_else(|| {
                     serde::de::Error::custom(
                         "differential config is required when override_calculation is \"differential\"",
@@ -152,7 +172,12 @@ impl<'de> serde::Deserialize<'de> for BreakawayConfig {
                         "differential config must be null when override_calculation is \"fixed_override\"",
                     ));
                 }
-                OverrideMode::FixedOverride
+                let fixed = wire.fixed_override.ok_or_else(|| {
+                    serde::de::Error::custom(
+                        "fixed_override config is required when override_calculation is \"fixed_override\"",
+                    )
+                })?;
+                OverrideMode::FixedOverride(fixed)
             }
         };
         Ok(BreakawayConfig {
@@ -166,15 +191,20 @@ impl<'de> serde::Deserialize<'de> for BreakawayConfig {
 
 impl From<BreakawayConfig> for BreakawayConfigWire {
     fn from(config: BreakawayConfig) -> Self {
-        let (override_calculation, differential) = match config.override_mode {
-            OverrideMode::Differential(diff) => (OverrideCalculationTag::Differential, Some(diff)),
-            OverrideMode::FixedOverride => (OverrideCalculationTag::FixedOverride, None),
+        let (override_calculation, differential, fixed_override) = match config.override_mode {
+            OverrideMode::Differential(diff) => {
+                (OverrideCalculationTag::Differential, Some(diff), None)
+            }
+            OverrideMode::FixedOverride(fixed) => {
+                (OverrideCalculationTag::FixedOverride, None, Some(fixed))
+            }
         };
         BreakawayConfigWire {
             threshold_rank: config.threshold_rank,
             exclude_breakaway_gv: config.exclude_breakaway_gv,
             override_calculation,
             differential,
+            fixed_override,
             generation_overrides: config.generation_overrides,
         }
     }
@@ -214,7 +244,7 @@ mod tests {
 
         let diff = match &config.override_mode {
             OverrideMode::Differential(d) => d,
-            OverrideMode::FixedOverride => panic!("expected Differential"),
+            OverrideMode::FixedOverride(_) => panic!("expected Differential"),
         };
         assert_eq!(diff.rank_rates.len(), 3);
         assert_eq!(diff.rank_rates["director"], 0.10);
@@ -285,18 +315,30 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_breakaway_minimal() {
+    fn deserialize_breakaway_fixed_override() {
         let json = r#"{
             "threshold_rank": "director",
             "group_volume_excludes_breakaway": false,
             "override_calculation": "fixed_override",
             "differential": null,
+            "fixed_override": {
+                "rank_rates": {
+                    "director": 0.05,
+                    "senior_director": 0.08
+                }
+            },
             "generation": null
         }"#;
         let config: BreakawayConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.threshold_rank, "director");
         assert!(!config.exclude_breakaway_gv);
-        assert!(matches!(config.override_mode, OverrideMode::FixedOverride));
+        let fixed = match &config.override_mode {
+            OverrideMode::FixedOverride(f) => f,
+            OverrideMode::Differential(_) => panic!("expected FixedOverride"),
+        };
+        assert_eq!(fixed.rank_rates.len(), 2);
+        assert_eq!(fixed.rank_rates["director"], 0.05);
+        assert_eq!(fixed.rank_rates["senior_director"], 0.08);
         assert!(config.generation_overrides.is_none());
     }
 
@@ -329,17 +371,20 @@ mod tests {
         let config = BreakawayConfig {
             threshold_rank: "director".to_string(),
             exclude_breakaway_gv: false,
-            override_mode: OverrideMode::FixedOverride,
+            override_mode: OverrideMode::FixedOverride(FixedOverrideConfig {
+                rank_rates: BTreeMap::from([("director".to_string(), 0.05)]),
+            }),
             generation_overrides: None,
         };
         let json = serde_json::to_string(&config).unwrap();
         assert!(json.contains("\"override_calculation\":\"fixed_override\""));
         assert!(json.contains("\"differential\":null"));
+        assert!(json.contains("\"fixed_override\":{"));
 
         let restored: BreakawayConfig = serde_json::from_str(&json).unwrap();
         assert!(matches!(
             restored.override_mode,
-            OverrideMode::FixedOverride
+            OverrideMode::FixedOverride(_)
         ));
     }
 
@@ -371,6 +416,9 @@ mod tests {
                 "rank_rates": { "director": 0.10 },
                 "min_override": 0.02
             },
+            "fixed_override": {
+                "rank_rates": { "director": 0.05 }
+            },
             "generation": null
         }"#;
         let result: Result<BreakawayConfig, _> = serde_json::from_str(json);
@@ -380,5 +428,40 @@ mod tests {
             err.contains("differential config must be null"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn fixed_override_without_config_returns_error() {
+        let json = r#"{
+            "threshold_rank": "director",
+            "group_volume_excludes_breakaway": false,
+            "override_calculation": "fixed_override",
+            "differential": null,
+            "fixed_override": null,
+            "generation": null
+        }"#;
+        let result: Result<BreakawayConfig, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("fixed_override config is required"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn deserialize_fixed_override_config() {
+        let json = r#"{
+            "rank_rates": {
+                "director": 0.05,
+                "senior_director": 0.08,
+                "executive": 0.12
+            }
+        }"#;
+        let config: FixedOverrideConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.rank_rates.len(), 3);
+        assert_eq!(config.rank_rates["director"], 0.05);
+        assert_eq!(config.rank_rates["senior_director"], 0.08);
+        assert_eq!(config.rank_rates["executive"], 0.12);
     }
 }

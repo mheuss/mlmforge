@@ -280,6 +280,7 @@ type BreakawayConfig struct {
 	GroupVolumeExcludesBreakaway bool                       `yaml:"group_volume_excludes_breakaway" json:"group_volume_excludes_breakaway"`
 	OverrideCalculation          string                     `yaml:"override_calculation" json:"override_calculation"`
 	Differential                 *DifferentialConfig        `yaml:"differential" json:"differential"`
+	FixedOverride                *FixedOverrideConfig       `yaml:"fixed_override" json:"fixed_override"`
 	Generation                   *BreakawayGenerationConfig `yaml:"generation" json:"generation"`
 }
 
@@ -287,6 +288,12 @@ type BreakawayConfig struct {
 type DifferentialConfig struct {
 	RankRates   map[string]float64 `yaml:"rank_rates" json:"rank_rates"`
 	MinOverride float64            `yaml:"min_override" json:"min_override"`
+}
+
+// FixedOverrideConfig holds fixed override commission configuration.
+// Each rank has a flat override percentage applied to breakaway group volume.
+type FixedOverrideConfig struct {
+	RankRates map[string]float64 `yaml:"rank_rates" json:"rank_rates"`
 }
 
 // BreakawayGenerationConfig holds generation override configuration for breakaway groups.

@@ -330,19 +330,6 @@ fn walk_overrides(
                 Err(_) => continue,
             };
 
-            // Differential mode tracks the highest rate paid so the next
-            // ancestor computes against the correct baseline. FixedOverride
-            // doesn't need this but it doesn't hurt to maintain it.
-            let breakaway_base_rate = match override_mode {
-                crate::config::stairstep::OverrideMode::Differential(diff) => diff
-                    .rank_rates
-                    .get(breakaway_rank.as_str())
-                    .copied()
-                    .unwrap_or(0.0),
-                crate::config::stairstep::OverrideMode::FixedOverride(_) => 0.0,
-            };
-            let highest_rate_paid = breakaway_base_rate;
-
             for node in &upline {
                 let ancestor_eligible = prep
                     .eligibility
@@ -357,27 +344,10 @@ fn walk_overrides(
                     None => continue,
                 };
 
-                let rate = match override_mode {
-                    crate::config::stairstep::OverrideMode::Differential(diff) => {
-                        let ancestor_rate =
-                            diff.rank_rates.get(ancestor_rank).copied().unwrap_or(0.0);
-                        let gap = ancestor_rate - highest_rate_paid;
-                        if gap > 0.0 {
-                            gap
-                        } else if ancestor_rate > 0.0 && diff.min_override > 0.0 {
-                            diff.min_override
-                        } else {
-                            continue;
-                        }
-                    }
-                    crate::config::stairstep::OverrideMode::FixedOverride(fixed) => {
-                        let rate = fixed.rank_rates.get(ancestor_rank).copied().unwrap_or(0.0);
-                        if rate <= 0.0 {
-                            continue;
-                        }
-                        rate
-                    }
-                };
+                let rate = resolve_gen1_rate(override_mode, ancestor_rank, breakaway_rank);
+                if rate <= 0.0 {
+                    continue;
+                }
 
                 earnings.push(CommissionEarning {
                     earner_id: node.user_id,
@@ -1349,5 +1319,69 @@ mod tests {
             override_earnings.is_empty(),
             "associate has no fixed override rate, should earn nothing"
         );
+    }
+
+    #[test]
+    fn fixed_override_with_generation_overrides() {
+        // Tree: 0(sr_dir) -> 1(director) -> 2(director) -> 3(assoc)
+        // Node 2 is a breakaway. Node 1 is also a breakaway (generation boundary).
+        // From node 2's perspective:
+        //   Gen 1 = node 1 (director, rate = 0.05 from fixed_override)
+        //   Gen 2 = node 0 (sr_director, generation rate = 0.03)
+        // Group vol for node 2 = 150 (node 2) + 150 (node 3) = 300
+        // Gen 1 dollar = 300 * 0.40 * 1.0 * 0.05 = 6.00
+        // Gen 2 dollar = 300 * 0.40 * 1.0 * 0.03 = 3.60
+        let tree = build_chain(4);
+        let mut structure = test_fixed_override_structure();
+        structure.breakaway.as_mut().unwrap().generation_overrides =
+            Some(BreakawayGenerationConfig {
+                max_generations: 3,
+                rates: {
+                    let mut m = BTreeMap::new();
+                    m.insert(1, 0.05); // unused for gen 1 (uses fixed rate)
+                    m.insert(2, 0.03);
+                    m
+                },
+                boundary_rank: "director".to_string(),
+            });
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", 150.0));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(2), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", 150.0));
+
+        let volume = vec![
+            VolumeSource {
+                source_id: uuid(2),
+                cv_amount: 150.0,
+            },
+            VolumeSource {
+                source_id: uuid(3),
+                cv_amount: 150.0,
+            },
+        ];
+
+        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // Override earnings on breakaway node 2's group
+        let mut override_earnings: Vec<_> =
+            result.iter().filter(|e| e.source_id == uuid(2)).collect();
+        override_earnings.sort_by_key(|e| e.level);
+
+        const FP_TOL: f64 = 1e-10;
+
+        // Gen 1: node 1 earns flat fixed rate for director
+        let gen1 = override_earnings.iter().find(|e| e.level == 1).unwrap();
+        assert_eq!(gen1.earner_id, uuid(1));
+        assert!((gen1.rate - 0.05).abs() < FP_TOL);
+        assert!((gen1.dollar_amount - 6.00).abs() < FP_TOL);
+
+        // Gen 2: node 0 earns generation override rate
+        let gen2 = override_earnings.iter().find(|e| e.level == 2).unwrap();
+        assert_eq!(gen2.earner_id, uuid(0));
+        assert!((gen2.rate - 0.03).abs() < FP_TOL);
+        assert!((gen2.dollar_amount - 3.60).abs() < FP_TOL);
     }
 }

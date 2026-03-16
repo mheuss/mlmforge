@@ -464,4 +464,28 @@ mod tests {
         assert_eq!(config.rank_rates["senior_director"], 0.08);
         assert_eq!(config.rank_rates["executive"], 0.12);
     }
+
+    #[test]
+    fn differential_with_fixed_override_returns_error() {
+        let json = r#"{
+            "threshold_rank": "director",
+            "group_volume_excludes_breakaway": true,
+            "override_calculation": "differential",
+            "differential": {
+                "rank_rates": { "director": 0.10 },
+                "min_override": 0.02
+            },
+            "fixed_override": {
+                "rank_rates": { "director": 0.05 }
+            },
+            "generation": null
+        }"#;
+        let result: Result<BreakawayConfig, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("fixed_override config must be null"),
+            "unexpected error: {err}"
+        );
+    }
 }

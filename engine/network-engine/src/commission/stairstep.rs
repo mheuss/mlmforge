@@ -978,10 +978,9 @@ mod tests {
         // No override earnings should be produced.
         let tree = build_chain(3);
         let mut structure = test_stairstep_structure();
-        if let OverrideMode::Differential(ref mut diff) =
-            structure.breakaway.as_mut().unwrap().override_mode
-        {
-            diff.min_override = 0.0;
+        match &mut structure.breakaway.as_mut().unwrap().override_mode {
+            OverrideMode::Differential(diff) => diff.min_override = 0.0,
+            OverrideMode::FixedOverride => panic!("expected Differential override mode"),
         }
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 

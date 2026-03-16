@@ -244,7 +244,7 @@ proptest! {
         cv in 1.0..10000.0f64,
     ) {
         use network_engine::config::stairstep::{
-            BreakawayConfig, DifferentialConfig, OverrideCalculation,
+            BreakawayConfig, DifferentialConfig, OverrideMode,
         };
 
         let (plan, mut structure) = build_stairstep_plan(5);
@@ -255,8 +255,7 @@ proptest! {
         structure.breakaway = Some(BreakawayConfig {
             threshold_rank: "director".to_string(),
             exclude_breakaway_gv: false,
-            override_calculation: OverrideCalculation::Differential,
-            differential: Some(DifferentialConfig {
+            override_mode: OverrideMode::Differential(DifferentialConfig {
                 rank_rates: {
                     let mut m = std::collections::BTreeMap::new();
                     m.insert("member".to_string(), 0.05);
@@ -320,7 +319,7 @@ proptest! {
         tree_size in 3..30usize,
     ) {
         use network_engine::config::stairstep::{
-            BreakawayConfig, DifferentialConfig, OverrideCalculation,
+            BreakawayConfig, DifferentialConfig, OverrideMode,
         };
 
         let (plan, mut structure) = build_stairstep_plan(5);
@@ -330,8 +329,7 @@ proptest! {
         structure.breakaway = Some(BreakawayConfig {
             threshold_rank: "director".to_string(),
             exclude_breakaway_gv: false,
-            override_calculation: OverrideCalculation::Differential,
-            differential: Some(DifferentialConfig {
+            override_mode: OverrideMode::Differential(DifferentialConfig {
                 rank_rates: {
                     let mut m = std::collections::BTreeMap::new();
                     m.insert("member".to_string(), 0.05);

@@ -14,7 +14,7 @@ use network_engine::config::placement::PlacementConfig;
 use network_engine::config::rank::{
     DemotionPolicy, RankDefinition, RankFeaturesConfig, RankQualification, RankTrackingConfig,
 };
-use network_engine::config::stairstep::{BreakawayConfig, DifferentialConfig, OverrideCalculation};
+use network_engine::config::stairstep::{BreakawayConfig, DifferentialConfig, OverrideMode};
 use network_engine::config::volume::VolumeConfig;
 use network_engine::config::{
     BinaryStructureConfig, CompensationPlan, StairstepStructureConfig, StructureConfig,
@@ -324,8 +324,7 @@ pub fn build_stairstep_plan_with_eligibility(
         breakaway: Some(BreakawayConfig {
             threshold_rank: "director".to_string(),
             exclude_breakaway_gv: false,
-            override_calculation: OverrideCalculation::Differential,
-            differential: Some(DifferentialConfig {
+            override_mode: OverrideMode::Differential(DifferentialConfig {
                 rank_rates: {
                     let mut m = BTreeMap::new();
                     m.insert("director".to_string(), 0.10);

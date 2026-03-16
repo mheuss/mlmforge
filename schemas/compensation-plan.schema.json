@@ -1073,6 +1073,13 @@
                 "$ref": "#/$defs/DifferentialConfig"
               }
             }
+          },
+          "else": {
+            "properties": {
+              "differential": {
+                "type": "null"
+              }
+            }
           }
         }
       ]

@@ -27,7 +27,7 @@ pub mod volume;
 use serde::{Deserialize, Serialize};
 
 pub use binary::BinaryCommissionConfig;
-pub use bonus::BonusConfig;
+pub use bonus::{BonusConfig, PassUpConfig};
 pub use commission::{CompressionConfig, LevelCommissionConfig};
 pub use eligibility::CommissionEligibility;
 pub use generation::GenerationCommissionConfig;
@@ -157,6 +157,11 @@ pub struct UnilevelStructureConfig {
     /// Optional compression removes unqualified distributors from the
     /// payout chain.
     pub compression: Option<CompressionConfig>,
+
+    /// Optional Australian X-Up pass-up. First N sponsored recruits are
+    /// passed to the sponsor for commission purposes.
+    #[serde(default)]
+    pub pass_up: Option<PassUpConfig>,
 }
 
 /// Binary structure configuration.
@@ -483,8 +488,7 @@ mod tests {
                 "pool": null,
                 "matrix_completion": null,
                 "position": null,
-                "board_cycling": null,
-                "pass_up": null
+                "board_cycling": null
             },
             "payout": {
                 "base_currency": "USD",
@@ -676,8 +680,7 @@ mod tests {
                 "pool": null,
                 "matrix_completion": null,
                 "position": null,
-                "board_cycling": null,
-                "pass_up": null
+                "board_cycling": null
             },
             "payout": {
                 "base_currency": "USD",

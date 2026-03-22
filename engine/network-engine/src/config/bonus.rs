@@ -73,10 +73,6 @@ pub struct BonusConfig {
 
     /// Board cycling bonus. Deferred from initial release.
     pub board_cycling: Option<BoardCyclingConfig>,
-
-    /// Pass-up bonus. First N recruits are passed to the sponsor.
-    /// Only for unilevel/generation structures.
-    pub pass_up: Option<PassUpConfig>,
 }
 
 // ---------------------------------------------------------------------------
@@ -510,8 +506,7 @@ mod tests {
             ],
             "matrix_completion": null,
             "position": null,
-            "board_cycling": null,
-            "pass_up": null
+            "board_cycling": null
         }"#;
         let config: BonusConfig = serde_json::from_str(json).unwrap();
         assert!(config.matching.is_some());
@@ -526,7 +521,6 @@ mod tests {
         assert!(config.matrix_completion.is_none());
         assert!(config.position.is_none());
         assert!(config.board_cycling.is_none());
-        assert!(config.pass_up.is_none());
     }
 
     #[test]
@@ -930,7 +924,6 @@ mod tests {
             matrix_completion: None,
             position: None,
             board_cycling: None,
-            pass_up: None,
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: BonusConfig = serde_json::from_str(&json).unwrap();

@@ -291,7 +291,7 @@ mod tests {
     };
     use crate::config::binary::{
         BinaryCommissionConfig, BinaryCommissionMode, CycleStep, CycleStepConfig,
-        PairingCalculation, PairingConfig, VolumeAfterPayout,
+        MultiPositionCapMode, PairingCalculation, PairingConfig, VolumeAfterPayout,
     };
     use crate::config::{BinaryStructureConfig, CompensationPlan, StructureConfig};
     use crate::tree::binary::BinaryTree;
@@ -304,6 +304,7 @@ mod tests {
             cap_per_period: None,
             volume_after_payout: VolumeAfterPayout::FullFlush,
             carry_forward_cap: None,
+            multi_position_cap_mode: MultiPositionCapMode::PerPosition,
         }
     }
 

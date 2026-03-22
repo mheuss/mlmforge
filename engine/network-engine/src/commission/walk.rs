@@ -43,7 +43,6 @@ pub(crate) struct EligibilityResult {
 /// For each distributor with sponsored recruits, maps their user_id
 /// to the set of volume source IDs that should cause this distributor
 /// to be skipped during the walk.
-#[allow(dead_code)] // Consumed in Task 3 when wired into the walk loop.
 pub(crate) struct PassUpContext {
     pub skip_sets: HashMap<Uuid, HashSet<Uuid>>,
 }
@@ -68,6 +67,10 @@ pub(crate) struct LevelWalkConfig<'a> {
     pub threshold_ordinal: Option<u16>,
     pub rank_ordinals: &'a HashMap<&'a str, u16>,
     pub rate_table: &'a BTreeMap<String, BTreeMap<u8, f64>>,
+    /// Optional pass-up skip sets. When present, distributors are
+    /// skipped (without consuming a level) for volume sources in
+    /// their skip set.
+    pub pass_up: Option<&'a PassUpContext>,
 }
 
 // ---------------------------------------------------------------------------
@@ -408,6 +411,17 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
 
             if should_compress {
                 continue; // skip without consuming level
+            }
+
+            // Pass-up check: skip without consuming level, same as compression.
+            if let Some(ctx) = config.pass_up {
+                if ctx
+                    .skip_sets
+                    .get(&node.user_id)
+                    .is_some_and(|set| set.contains(&source.source_id))
+                {
+                    continue;
+                }
             }
 
             // Not compressed. Check if eligible.
@@ -773,6 +787,7 @@ mod tests {
             threshold_ordinal: None,
             rank_ordinals,
             rate_table,
+            pass_up: None,
         }
     }
 

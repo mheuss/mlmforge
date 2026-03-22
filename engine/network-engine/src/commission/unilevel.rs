@@ -47,6 +47,7 @@ pub fn calculate_unilevel(
         threshold_ordinal,
         rank_ordinals: &rank_ordinals,
         rate_table: &structure.level_commission.rate_table,
+        pass_up: None,
     };
 
     let mut earnings =

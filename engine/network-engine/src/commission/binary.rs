@@ -218,6 +218,7 @@ pub fn calculate_binary_pairing(
 
         earnings.push(BinaryCommissionEarning {
             earner_id: *uid,
+            position_id: *uid,
             left_volume: legs.left,
             right_volume: legs.right,
             matched_volume: matched,

@@ -809,6 +809,133 @@ proptest! {
             total_with, total_without
         );
     }
+
+    /// Pass-up skip set invariant with branching trees. Unlike the chain
+    /// topology tests above, this builds a tree where each node sponsors
+    /// 2-3 children, exercising the enrollment ordering and count-based
+    /// slicing logic more thoroughly.
+    #[test]
+    fn pass_up_skip_set_invariant_branching_tree(
+        depth in 2..5usize,
+        width in 2..4usize,
+        max_depth in 3..10u8,
+        pass_up_count in 1..3u8,
+    ) {
+        let pass_up_cfg = PassUpConfig {
+            count: pass_up_count,
+            includes_commissions: false,
+        };
+        let (plan, structure) = build_unilevel_plan_with_pass_up(max_depth, pass_up_cfg);
+
+        // Build a balanced tree with the given width and depth.
+        let mut tree = UnilevelTree::new();
+        let mut all_ids = Vec::new();
+        let mut next_id: usize = 0;
+
+        // Root
+        tree.add_root(uuid_from_index(next_id), next_id as i64).unwrap();
+        all_ids.push(next_id);
+        next_id += 1;
+
+        // BFS-style construction: each node at level < depth gets `width` children.
+        let mut current_level_start = 0;
+        let mut current_level_end = 1;
+
+        for _level in 0..depth {
+            let mut next_level_start = next_id;
+            for parent_pos in current_level_start..current_level_end {
+                let parent = uuid_from_index(parent_pos);
+                for _child in 0..width {
+                    tree.add_node(
+                        uuid_from_index(next_id),
+                        parent,
+                        parent,
+                        next_id as i64,
+                    )
+                    .unwrap();
+                    all_ids.push(next_id);
+                    next_id += 1;
+                }
+            }
+            current_level_start = next_level_start;
+            current_level_end = next_id;
+        }
+
+        let total_nodes = next_id;
+
+        let mut snapshots = HashMap::new();
+        for &id in &all_ids {
+            snapshots.insert(
+                uuid_from_index(id),
+                DistributorSnapshot {
+                    rank: "member".to_string(),
+                    personal_volume: 100.0,
+                    status: "active".to_string(),
+                    has_order_in_period: true,
+                },
+            );
+        }
+
+        // Volume from the last (deepest) node.
+        let source_idx = total_nodes - 1;
+        let volume = vec![VolumeSource {
+            source_id: uuid_from_index(source_idx),
+            cv_amount: 100.0,
+        }];
+
+        let result =
+            calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // Independently compute skip sets. Each node's children are
+        // sponsored in enrolled_at order (which equals their index).
+        let mut children_map: HashMap<usize, Vec<usize>> = HashMap::new();
+        // Root is 0, its children are 1..=width, etc.
+        let mut cid: usize = 1;
+        for &pid in &all_ids {
+            if cid >= total_nodes {
+                break;
+            }
+            // Check how many children this node actually has.
+            let children_count = if cid + width <= total_nodes {
+                width
+            } else {
+                total_nodes - cid
+            };
+            let mut children = Vec::new();
+            for _ in 0..children_count {
+                if cid < total_nodes {
+                    children.push(cid);
+                    cid += 1;
+                }
+            }
+            if !children.is_empty() {
+                children_map.insert(pid, children);
+            }
+        }
+
+        for earning in &result {
+            let earner_idx = all_ids.iter()
+                .find(|&&i| uuid_from_index(i) == earning.earner_id)
+                .copied()
+                .unwrap();
+            let source_node_idx = all_ids.iter()
+                .find(|&&i| uuid_from_index(i) == earning.source_id)
+                .copied()
+                .unwrap();
+
+            if let Some(children) = children_map.get(&earner_idx) {
+                // Children are already sorted by enrolled_at (index order).
+                let skip_count = (pass_up_count as usize).min(children.len());
+                let skip_set: HashSet<usize> = children[..skip_count].iter().copied().collect();
+
+                prop_assert!(
+                    !skip_set.contains(&source_node_idx),
+                    "Earner {} (index {}) earned from source {} (index {}) in skip set {:?}",
+                    earning.earner_id, earner_idx, earning.source_id, source_node_idx, skip_set
+                );
+            }
+        }
+    }
 }
 
 /// When a distributor has zero active frontline legs and the only

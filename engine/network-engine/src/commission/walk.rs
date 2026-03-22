@@ -11,10 +11,11 @@
 // All items are pub(crate) and consumed by unilevel, matrix, and
 // stairstep calculators.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use uuid::Uuid;
 
 use crate::config::CompensationPlan;
+use crate::config::PassUpConfig;
 use crate::config::commission::{CompressionConfig, CompressionMode};
 use crate::config::eligibility::{ActiveLegTier, CommissionEligibility};
 use crate::tree::navigator::TreeNavigator;
@@ -35,6 +36,16 @@ pub(crate) struct EligibilityResult {
     /// Per-distributor earning depth limit from active leg tiers.
     /// None means no tier restriction (use config max_depth).
     pub max_earning_depth: Option<u8>,
+}
+
+/// Precomputed pass-up skip sets for the walk loop.
+///
+/// For each distributor with sponsored recruits, maps their user_id
+/// to the set of volume source IDs that should cause this distributor
+/// to be skipped during the walk.
+#[allow(dead_code)] // Consumed in Task 3 when wired into the walk loop.
+pub(crate) struct PassUpContext {
+    pub skip_sets: HashMap<Uuid, HashSet<Uuid>>,
 }
 
 /// Configuration for a level-based commission walk.
@@ -228,6 +239,65 @@ pub(crate) fn evaluate_eligibility<T: TreeNavigator>(
     results
 }
 
+/// Build pass-up context by computing skip sets for each distributor.
+///
+/// For each participant, determines their first N sponsored recruits
+/// (ordered by enrolled_at with UUID tiebreak) and builds a set of
+/// source IDs that should cause this distributor to be skipped in the walk.
+///
+/// With includes_commissions = false, only direct recruit IDs are in the set.
+/// With includes_commissions = true, the full subtree of each passed-up
+/// recruit is included.
+#[allow(dead_code)] // Consumed in Task 3 when wired into the walk loop.
+pub(crate) fn build_pass_up_context<T: TreeNavigator>(
+    tree: &T,
+    pass_up: &PassUpConfig,
+    participant_ids: &[Uuid],
+) -> PassUpContext {
+    let mut skip_sets = HashMap::new();
+
+    for &user_id in participant_ids {
+        let mut sponsored = match tree.get_sponsored(user_id) {
+            Ok(nodes) => nodes,
+            Err(_) => continue,
+        };
+
+        if sponsored.is_empty() {
+            continue;
+        }
+
+        // Sort by enrolled_at, tiebreak by UUID for determinism.
+        sponsored.sort_by(|a, b| {
+            a.enrolled_at
+                .cmp(&b.enrolled_at)
+                .then_with(|| a.user_id.cmp(&b.user_id))
+        });
+
+        let count = (pass_up.count as usize).min(sponsored.len());
+        let passed_up_recruits = &sponsored[..count];
+
+        let mut skip_set = HashSet::new();
+
+        for recruit in passed_up_recruits {
+            skip_set.insert(recruit.user_id);
+
+            if pass_up.includes_commissions {
+                if let Ok(descendants) = tree.get_downline(recruit.user_id, 0) {
+                    for desc in descendants {
+                        skip_set.insert(desc.user_id);
+                    }
+                }
+            }
+        }
+
+        if !skip_set.is_empty() {
+            skip_sets.insert(user_id, skip_set);
+        }
+    }
+
+    PassUpContext { skip_sets }
+}
+
 // ---------------------------------------------------------------------------
 // Walk function
 // ---------------------------------------------------------------------------
@@ -384,6 +454,7 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
 mod tests {
     use super::*;
     use crate::commission::test_helpers::uuid_from_index;
+    use crate::config::PassUpConfig;
     use crate::config::commission::{CompressionConfig, CompressionMode};
     use crate::config::eligibility::ActiveLegTier;
     use crate::tree::test_helpers::test_uuid;
@@ -839,5 +910,229 @@ mod tests {
         for earning in &result {
             assert!(earning.level <= 2);
         }
+    }
+
+    // --- build_pass_up_context ---
+
+    #[test]
+    fn build_pass_up_basic_two_up() {
+        // S->A->[R1(t=100), R2(t=200), R3(t=300)], count=2, includes=false.
+        // A's skip set = {R1, R2}.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap(); // S
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap(); // A
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 100)
+            .unwrap(); // R1
+        tree.add_node(test_uuid(4), test_uuid(2), test_uuid(2), 200)
+            .unwrap(); // R2
+        tree.add_node(test_uuid(5), test_uuid(2), test_uuid(2), 300)
+            .unwrap(); // R3
+
+        let config = PassUpConfig {
+            count: 2,
+            includes_commissions: false,
+        };
+
+        let participants = vec![test_uuid(1), test_uuid(2)];
+        let ctx = build_pass_up_context(&tree, &config, &participants);
+
+        let skip = ctx
+            .skip_sets
+            .get(&test_uuid(2))
+            .expect("A should have a skip set");
+        assert_eq!(skip.len(), 2);
+        assert!(skip.contains(&test_uuid(3))); // R1
+        assert!(skip.contains(&test_uuid(4))); // R2
+        assert!(!skip.contains(&test_uuid(5))); // R3 not passed
+    }
+
+    #[test]
+    fn build_pass_up_enrollment_order_not_insertion_order() {
+        // R1 inserted first (t=300), R2 inserted second (t=200).
+        // count=1. A's skip set = {R2} (earlier enrollment).
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap(); // S
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap(); // A
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 300)
+            .unwrap(); // R1 (later enrollment)
+        tree.add_node(test_uuid(4), test_uuid(2), test_uuid(2), 200)
+            .unwrap(); // R2 (earlier enrollment)
+
+        let config = PassUpConfig {
+            count: 1,
+            includes_commissions: false,
+        };
+
+        let participants = vec![test_uuid(2)];
+        let ctx = build_pass_up_context(&tree, &config, &participants);
+
+        let skip = ctx
+            .skip_sets
+            .get(&test_uuid(2))
+            .expect("A should have a skip set");
+        assert_eq!(skip.len(), 1);
+        assert!(skip.contains(&test_uuid(4))); // R2 enrolled earlier
+    }
+
+    #[test]
+    fn build_pass_up_exactly_count_recruits_all_passed() {
+        // A has exactly 2 recruits, count=2. Both passed.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap(); // S
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap(); // A
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 100)
+            .unwrap(); // R1
+        tree.add_node(test_uuid(4), test_uuid(2), test_uuid(2), 200)
+            .unwrap(); // R2
+
+        let config = PassUpConfig {
+            count: 2,
+            includes_commissions: false,
+        };
+
+        let participants = vec![test_uuid(2)];
+        let ctx = build_pass_up_context(&tree, &config, &participants);
+
+        let skip = ctx
+            .skip_sets
+            .get(&test_uuid(2))
+            .expect("A should have a skip set");
+        assert_eq!(skip.len(), 2);
+        assert!(skip.contains(&test_uuid(3)));
+        assert!(skip.contains(&test_uuid(4)));
+    }
+
+    #[test]
+    fn build_pass_up_includes_commissions_true_includes_descendants() {
+        // S->A->R1->D1, count=1, includes=true.
+        // A's skip set = {R1, D1}.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap(); // S
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap(); // A
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 100)
+            .unwrap(); // R1
+        tree.add_node(test_uuid(4), test_uuid(3), test_uuid(3), 200)
+            .unwrap(); // D1 (child of R1)
+
+        let config = PassUpConfig {
+            count: 1,
+            includes_commissions: true,
+        };
+
+        let participants = vec![test_uuid(2)];
+        let ctx = build_pass_up_context(&tree, &config, &participants);
+
+        let skip = ctx
+            .skip_sets
+            .get(&test_uuid(2))
+            .expect("A should have a skip set");
+        assert_eq!(skip.len(), 2);
+        assert!(skip.contains(&test_uuid(3))); // R1
+        assert!(skip.contains(&test_uuid(4))); // D1
+    }
+
+    #[test]
+    fn build_pass_up_includes_commissions_false_excludes_descendants() {
+        // Same tree as above, but includes=false. A's skip set = {R1} only.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap(); // S
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap(); // A
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 100)
+            .unwrap(); // R1
+        tree.add_node(test_uuid(4), test_uuid(3), test_uuid(3), 200)
+            .unwrap(); // D1 (child of R1)
+
+        let config = PassUpConfig {
+            count: 1,
+            includes_commissions: false,
+        };
+
+        let participants = vec![test_uuid(2)];
+        let ctx = build_pass_up_context(&tree, &config, &participants);
+
+        let skip = ctx
+            .skip_sets
+            .get(&test_uuid(2))
+            .expect("A should have a skip set");
+        assert_eq!(skip.len(), 1);
+        assert!(skip.contains(&test_uuid(3))); // R1 only
+        assert!(!skip.contains(&test_uuid(4))); // D1 excluded
+    }
+
+    #[test]
+    fn build_pass_up_fewer_recruits_than_count() {
+        // A has 1 recruit, count=3. That 1 is passed.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap(); // S
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap(); // A
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 100)
+            .unwrap(); // R1
+
+        let config = PassUpConfig {
+            count: 3,
+            includes_commissions: false,
+        };
+
+        let participants = vec![test_uuid(2)];
+        let ctx = build_pass_up_context(&tree, &config, &participants);
+
+        let skip = ctx
+            .skip_sets
+            .get(&test_uuid(2))
+            .expect("A should have a skip set");
+        assert_eq!(skip.len(), 1);
+        assert!(skip.contains(&test_uuid(3)));
+    }
+
+    #[test]
+    fn build_pass_up_no_sponsored_recruits_no_entry() {
+        // S has no sponsored recruits (only a root). No entry in skip_sets.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap(); // S
+
+        let config = PassUpConfig {
+            count: 2,
+            includes_commissions: false,
+        };
+
+        let participants = vec![test_uuid(1)];
+        let ctx = build_pass_up_context(&tree, &config, &participants);
+
+        assert!(ctx.skip_sets.get(&test_uuid(1)).is_none());
+    }
+
+    #[test]
+    fn build_pass_up_enrolled_at_tiebreak_by_uuid() {
+        // Two recruits with the same enrolled_at. Deterministic tiebreak by UUID.
+        // test_uuid(3) < test_uuid(4) in UUID ordering, so test_uuid(3) is passed.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap(); // S
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap(); // A
+        tree.add_node(test_uuid(4), test_uuid(2), test_uuid(2), 100)
+            .unwrap(); // R2 (higher UUID)
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 100)
+            .unwrap(); // R1 (lower UUID, same enrolled_at)
+
+        let config = PassUpConfig {
+            count: 1,
+            includes_commissions: false,
+        };
+
+        let participants = vec![test_uuid(2)];
+        let ctx = build_pass_up_context(&tree, &config, &participants);
+
+        let skip = ctx
+            .skip_sets
+            .get(&test_uuid(2))
+            .expect("A should have a skip set");
+        assert_eq!(skip.len(), 1);
+        assert!(skip.contains(&test_uuid(3))); // lower UUID wins tiebreak
     }
 }

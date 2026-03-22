@@ -1766,8 +1766,8 @@ fn calculate_binary_pairing_multi_position_ownership() {
         .map(|e| e["dollar_amount"].as_f64().unwrap())
         .sum();
     assert!(
-        owner_a_total <= 500.0 + 1e-10,
-        "owner_a aggregate should be capped at 500.0, got {}",
+        (owner_a_total - 500.0).abs() < 1e-10,
+        "owner_a aggregate should be exactly 500.0 after pro-rata cap, got {}",
         owner_a_total
     );
 

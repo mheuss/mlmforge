@@ -3,8 +3,8 @@
 #![allow(dead_code)]
 
 use network_engine::config::binary::{
-    BinaryCommissionConfig, BinaryCommissionMode, PairingCalculation, PairingConfig,
-    VolumeAfterPayout,
+    BinaryCommissionConfig, BinaryCommissionMode, MultiPositionCapMode, PairingCalculation,
+    PairingConfig, VolumeAfterPayout,
 };
 use network_engine::config::bonus::BonusConfig;
 use network_engine::config::eligibility::CommissionEligibility;
@@ -248,6 +248,7 @@ pub fn default_pairing() -> PairingConfig {
         cap_per_period: None,
         volume_after_payout: VolumeAfterPayout::FullFlush,
         carry_forward_cap: None,
+        multi_position_cap_mode: MultiPositionCapMode::PerPosition,
     }
 }
 

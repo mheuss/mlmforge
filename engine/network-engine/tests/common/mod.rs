@@ -180,6 +180,43 @@ pub fn build_unilevel_plan_with_eligibility(
     (plan, structure)
 }
 
+// --- Unilevel plan builder with pass-up ---
+
+/// Build a unilevel plan with pass-up configuration for property tests.
+pub fn build_unilevel_plan_with_pass_up(
+    max_depth: u8,
+    pass_up: network_engine::config::PassUpConfig,
+) -> (CompensationPlan, UnilevelStructureConfig) {
+    use network_engine::config::commission::LevelCommissionConfig;
+
+    let mut rate_table = BTreeMap::new();
+    let mut rates = BTreeMap::new();
+    for level in 1..=max_depth {
+        rates.insert(level, 0.05);
+    }
+    rate_table.insert("member".to_string(), rates);
+
+    let structure = UnilevelStructureConfig {
+        name: "Test".to_string(),
+        level_commission: LevelCommissionConfig {
+            broad_commission_percent: 0.40,
+            volume_to_dollar_multiplier: None,
+            max_depth,
+            rate_table,
+        },
+        compression: None,
+        pass_up: Some(pass_up),
+    };
+
+    let plan = build_base_plan(
+        permissive_eligibility(),
+        StructureConfig::Unilevel(structure.clone()),
+        "Test",
+    );
+
+    (plan, structure)
+}
+
 // --- Binary plan builder ---
 
 /// Build a binary plan with default pairing config for property tests.

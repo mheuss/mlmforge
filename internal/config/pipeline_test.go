@@ -311,7 +311,7 @@ func TestPipelinePassUpOnBinaryRejected(t *testing.T) {
 			break
 		}
 	}
-	assert.True(t, found, "expected unsupported_field error for pass_up on binary, got: %v", errs)
+	assert.Truef(t, found, "expected unsupported_field error for pass_up on binary, got: %v", errs)
 }
 
 func TestNewPipelineInvalidSchemaPath(t *testing.T) {

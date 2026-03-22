@@ -1,6 +1,6 @@
 # MLMForge
 
-An open source platform for network marketing companies. Works out of the box for a startup. Scales to millions of distributors for enterprise deployments.
+An open source platform for network marketing companies. The goal is software that works out of the box for a startup. Scales to millions of distributors for enterprise deployments.
 
 ## What It Does
 

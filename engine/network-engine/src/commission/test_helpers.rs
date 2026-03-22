@@ -69,7 +69,6 @@ pub fn build_test_plan(
             matrix_completion: None,
             position: None,
             board_cycling: None,
-            pass_up: None,
         },
         payout: PayoutConfig {
             currency: "USD".to_string(),

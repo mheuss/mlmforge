@@ -118,6 +118,7 @@ mod tests {
                 rate_table,
             },
             compression: None,
+            pass_up: None,
         }
     }
 

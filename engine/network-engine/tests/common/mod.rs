@@ -98,7 +98,6 @@ pub fn build_base_plan(
             matrix_completion: None,
             position: None,
             board_cycling: None,
-            pass_up: None,
         },
         payout: PayoutConfig {
             currency: "USD".to_string(),
@@ -169,6 +168,7 @@ pub fn build_unilevel_plan_with_eligibility(
             rate_table,
         },
         compression: None,
+        pass_up: None,
     };
 
     let plan = build_base_plan(
@@ -244,6 +244,7 @@ pub fn build_two_rank_unilevel_plan(
             rate_table,
         },
         compression: None,
+        pass_up: None,
     };
 
     let mut plan = build_base_plan(

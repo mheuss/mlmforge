@@ -404,6 +404,7 @@ mod tests {
                     rate_table: std::collections::BTreeMap::new(),
                 },
                 compression: None,
+                pass_up: None,
             }),
             "Test",
         );

@@ -2,7 +2,9 @@ mod common;
 use common::{build_binary_plan, default_pairing, uuid_from_index};
 
 use network_engine::commission::{DistributorSnapshot, VolumeSource, calculate_binary_pairing};
-use network_engine::config::binary::{PairingCalculation, PairingConfig, VolumeAfterPayout};
+use network_engine::config::binary::{
+    MultiPositionCapMode, PairingCalculation, PairingConfig, VolumeAfterPayout,
+};
 use network_engine::tree::binary::BinaryTree;
 use proptest::prelude::*;
 use std::collections::HashMap;
@@ -556,4 +558,204 @@ fn empty_tree_no_panic() {
 
     assert!(result.earnings.is_empty());
     assert!(result.carry_forward.is_empty());
+}
+
+// --- Multi-position property tests ---
+
+/// Build a 7-node binary tree for multi-position property tests:
+///
+/// ```text
+///        root (0)
+///       /        \
+///    pos1 (1)   pos2 (2)
+///    /    \       /    \
+///  (3)   (4)    (5)   (6)
+/// ```
+fn multi_position_tree() -> BinaryTree {
+    let mut tree = BinaryTree::new();
+    tree.add_root(uuid_from_index(0), 0).unwrap();
+    tree.add_node(
+        uuid_from_index(1),
+        uuid_from_index(0),
+        0,
+        uuid_from_index(0),
+        1,
+    )
+    .unwrap();
+    tree.add_node(
+        uuid_from_index(2),
+        uuid_from_index(0),
+        1,
+        uuid_from_index(0),
+        2,
+    )
+    .unwrap();
+    tree.add_node(
+        uuid_from_index(3),
+        uuid_from_index(1),
+        0,
+        uuid_from_index(1),
+        3,
+    )
+    .unwrap();
+    tree.add_node(
+        uuid_from_index(4),
+        uuid_from_index(1),
+        1,
+        uuid_from_index(1),
+        4,
+    )
+    .unwrap();
+    tree.add_node(
+        uuid_from_index(5),
+        uuid_from_index(2),
+        0,
+        uuid_from_index(2),
+        5,
+    )
+    .unwrap();
+    tree.add_node(
+        uuid_from_index(6),
+        uuid_from_index(2),
+        1,
+        uuid_from_index(2),
+        6,
+    )
+    .unwrap();
+    tree
+}
+
+/// Owner UUID that isn't a tree node.
+fn owner_uuid() -> uuid::Uuid {
+    uuid_from_index(200)
+}
+
+proptest! {
+    /// With aggregate cap mode and an ownership map, the per-owner total
+    /// payout never exceeds the cap regardless of volume distribution.
+    #[test]
+    fn multi_position_total_payout_respects_aggregate_cap(
+        cap in 10.0..1000.0f64,
+        left1 in 0.0..5000.0f64,
+        right1 in 0.0..5000.0f64,
+        left2 in 0.0..5000.0f64,
+        right2 in 0.0..5000.0f64,
+    ) {
+        let pairing = PairingConfig {
+            cap_per_period: Some(cap),
+            multi_position_cap_mode: MultiPositionCapMode::Aggregate,
+            ..default_pairing()
+        };
+        let (plan, structure) = build_binary_plan(pairing);
+        let tree = multi_position_tree();
+
+        let owner = owner_uuid();
+        let mut ownership = HashMap::new();
+        ownership.insert(uuid_from_index(1), owner);
+        ownership.insert(uuid_from_index(2), owner);
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(owner, member_snapshot());
+        snapshots.insert(uuid_from_index(0), member_snapshot());
+        for i in 3..=6 {
+            snapshots.insert(uuid_from_index(i), member_snapshot());
+        }
+
+        let volume = vec![
+            VolumeSource { source_id: uuid_from_index(3), cv_amount: left1 },
+            VolumeSource { source_id: uuid_from_index(4), cv_amount: right1 },
+            VolumeSource { source_id: uuid_from_index(5), cv_amount: left2 },
+            VolumeSource { source_id: uuid_from_index(6), cv_amount: right2 },
+        ];
+
+        let result = calculate_binary_pairing(
+            &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(), Some(&ownership),
+        ).unwrap();
+
+        let owner_total: f64 = result.earnings.iter()
+            .filter(|e| e.earner_id == owner)
+            .map(|e| e.dollar_amount)
+            .sum();
+
+        prop_assert!(
+            owner_total <= cap + 1e-10,
+            "owner total {} exceeded aggregate cap {}",
+            owner_total, cap
+        );
+    }
+
+    /// Each position's carry-forward is independent of other positions
+    /// owned by the same person.
+    #[test]
+    fn multi_position_carry_forward_independent_per_position(
+        left1 in 0.0..5000.0f64,
+        right1 in 0.0..5000.0f64,
+        left2 in 0.0..5000.0f64,
+        right2 in 0.0..5000.0f64,
+    ) {
+        let pairing = PairingConfig {
+            volume_after_payout: VolumeAfterPayout::CarryForward,
+            ..default_pairing()
+        };
+        let (plan, structure) = build_binary_plan(pairing);
+        let tree = multi_position_tree();
+
+        let owner = owner_uuid();
+        let mut ownership = HashMap::new();
+        ownership.insert(uuid_from_index(1), owner);
+        ownership.insert(uuid_from_index(2), owner);
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(owner, member_snapshot());
+        snapshots.insert(uuid_from_index(0), member_snapshot());
+        for i in 3..=6 {
+            snapshots.insert(uuid_from_index(i), member_snapshot());
+        }
+
+        let volume = vec![
+            VolumeSource { source_id: uuid_from_index(3), cv_amount: left1 },
+            VolumeSource { source_id: uuid_from_index(4), cv_amount: right1 },
+            VolumeSource { source_id: uuid_from_index(5), cv_amount: left2 },
+            VolumeSource { source_id: uuid_from_index(6), cv_amount: right2 },
+        ];
+
+        let result = calculate_binary_pairing(
+            &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(), Some(&ownership),
+        ).unwrap();
+
+        // Each position must have its own carry-forward entry keyed by position_id.
+        let cf1 = result.carry_forward.get(&uuid_from_index(1));
+        let cf2 = result.carry_forward.get(&uuid_from_index(2));
+
+        prop_assert!(cf1.is_some(), "pos1 carry-forward missing");
+        prop_assert!(cf2.is_some(), "pos2 carry-forward missing");
+
+        let cf1 = cf1.unwrap();
+        let cf2 = cf2.unwrap();
+
+        // pos1 carry-forward is derived only from its own legs (left1, right1).
+        // CarryForward mode: weaker leg zeroed, stronger keeps excess.
+        let matched1 = left1.min(right1);
+        if left1 <= right1 {
+            prop_assert!(cf1.left.abs() < 1e-10, "pos1 left should be 0, got {}", cf1.left);
+            prop_assert!((cf1.right - (right1 - matched1)).abs() < 1e-10,
+                "pos1 right carry should be {}, got {}", right1 - matched1, cf1.right);
+        } else {
+            prop_assert!((cf1.left - (left1 - matched1)).abs() < 1e-10,
+                "pos1 left carry should be {}, got {}", left1 - matched1, cf1.left);
+            prop_assert!(cf1.right.abs() < 1e-10, "pos1 right should be 0, got {}", cf1.right);
+        }
+
+        // pos2 carry-forward is derived only from its own legs (left2, right2).
+        let matched2 = left2.min(right2);
+        if left2 <= right2 {
+            prop_assert!(cf2.left.abs() < 1e-10, "pos2 left should be 0, got {}", cf2.left);
+            prop_assert!((cf2.right - (right2 - matched2)).abs() < 1e-10,
+                "pos2 right carry should be {}, got {}", right2 - matched2, cf2.right);
+        } else {
+            prop_assert!((cf2.left - (left2 - matched2)).abs() < 1e-10,
+                "pos2 left carry should be {}, got {}", left2 - matched2, cf2.left);
+            prop_assert!(cf2.right.abs() < 1e-10, "pos2 right should be 0, got {}", cf2.right);
+        }
+    }
 }

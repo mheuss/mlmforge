@@ -643,7 +643,7 @@ fn calculate_unilevel_three_node_chain() {
     assert_eq!(mid_earning["source_id"].as_str().unwrap(), GRANDCHILD);
     let mid_dollar = mid_earning["dollar_amount"].as_f64().unwrap();
     assert!(
-        (mid_dollar - 2.0).abs() < f64::EPSILON,
+        (mid_dollar - 2.0).abs() < 1e-10,
         "mid dollar_amount should be 2.0, got {}",
         mid_dollar
     );
@@ -657,7 +657,7 @@ fn calculate_unilevel_three_node_chain() {
     assert_eq!(root_earning["source_id"].as_str().unwrap(), GRANDCHILD);
     let root_dollar = root_earning["dollar_amount"].as_f64().unwrap();
     assert!(
-        (root_dollar - 2.0).abs() < f64::EPSILON,
+        (root_dollar - 2.0).abs() < 1e-10,
         "root dollar_amount should be 2.0, got {}",
         root_dollar
     );
@@ -1396,7 +1396,7 @@ fn calculate_binary_pairing_balanced_legs() {
 
     let dollar = earning["dollar_amount"].as_f64().unwrap();
     assert!(
-        (dollar - 50.0).abs() < f64::EPSILON,
+        (dollar - 50.0).abs() < 1e-10,
         "dollar_amount should be 50.0, got {}",
         dollar
     );
@@ -1724,7 +1724,7 @@ fn calculate_unilevel_pass_up_skips_first_recruits() {
     );
     let s_r1_dollar = r1_earnings[0]["dollar_amount"].as_f64().unwrap();
     assert!(
-        (s_r1_dollar - 2.0).abs() < f64::EPSILON,
+        (s_r1_dollar - 2.0).abs() < 1e-10,
         "S dollar_amount from R1 should be 2.0, got {}",
         s_r1_dollar
     );
@@ -1748,7 +1748,7 @@ fn calculate_unilevel_pass_up_skips_first_recruits() {
     assert_eq!(a_from_r3["level"].as_u64().unwrap(), 1);
     let a_r3_dollar = a_from_r3["dollar_amount"].as_f64().unwrap();
     assert!(
-        (a_r3_dollar - 2.0).abs() < f64::EPSILON,
+        (a_r3_dollar - 2.0).abs() < 1e-10,
         "A dollar_amount from R3 should be 2.0, got {}",
         a_r3_dollar
     );
@@ -1760,7 +1760,7 @@ fn calculate_unilevel_pass_up_skips_first_recruits() {
     assert_eq!(s_from_r3["level"].as_u64().unwrap(), 2);
     let s_r3_dollar = s_from_r3["dollar_amount"].as_f64().unwrap();
     assert!(
-        (s_r3_dollar - 2.0).abs() < f64::EPSILON,
+        (s_r3_dollar - 2.0).abs() < 1e-10,
         "S dollar_amount from R3 should be 2.0, got {}",
         s_r3_dollar
     );

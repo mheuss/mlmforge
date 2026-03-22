@@ -39,6 +39,11 @@ pub fn calculate_unilevel(
     let compression = structure.compression.as_ref();
     let threshold_ordinal = walk::resolve_threshold_ordinal(compression, &rank_ordinals);
 
+    // Build pass-up context if configured.
+    let pass_up_context = structure.pass_up.as_ref().map(|pu| {
+        walk::build_pass_up_context(tree, pu, &snapshots.keys().copied().collect::<Vec<_>>())
+    });
+
     let config = walk::LevelWalkConfig {
         max_depth: structure.level_commission.max_depth,
         broad_pct,
@@ -47,7 +52,7 @@ pub fn calculate_unilevel(
         threshold_ordinal,
         rank_ordinals: &rank_ordinals,
         rate_table: &structure.level_commission.rate_table,
-        pass_up: None,
+        pass_up: pass_up_context.as_ref(),
     };
 
     let mut earnings =
@@ -64,6 +69,7 @@ mod tests {
     use super::*;
     use crate::commission::is_eligible;
     use crate::commission::test_helpers::build_test_plan;
+    use crate::config::PassUpConfig;
     use crate::config::commission::{CompressionConfig, CompressionMode, LevelCommissionConfig};
     use crate::config::eligibility::{ActiveLegTier, CommissionEligibility};
     use crate::config::rank::{DemotionPolicy, RankDefinition, RankQualification};
@@ -1235,5 +1241,479 @@ mod tests {
             result.is_empty() || result.iter().all(|e| e.dollar_amount == 0.0),
             "zero CV should produce zero or empty earnings"
         );
+    }
+
+    // --- pass-up integration tests ---
+
+    fn pass_up_rate_table() -> BTreeMap<String, BTreeMap<u8, f64>> {
+        let mut table = BTreeMap::new();
+        let mut silver = BTreeMap::new();
+        silver.insert(1, 0.05);
+        silver.insert(2, 0.04);
+        silver.insert(3, 0.03);
+        silver.insert(4, 0.02);
+        silver.insert(5, 0.01);
+        table.insert("silver".to_string(), silver);
+        table
+    }
+
+    fn structure_with_pass_up(
+        rate_table: BTreeMap<String, BTreeMap<u8, f64>>,
+        pass_up: PassUpConfig,
+    ) -> UnilevelStructureConfig {
+        UnilevelStructureConfig {
+            name: "Test".to_string(),
+            level_commission: LevelCommissionConfig {
+                broad_commission_percent: 0.40,
+                volume_to_dollar_multiplier: None,
+                max_depth: 5,
+                rate_table,
+            },
+            compression: None,
+            pass_up: Some(pass_up),
+        }
+    }
+
+    #[test]
+    fn pass_up_skips_sponsor_for_passed_recruit() {
+        // Tree: S(1)->A(2)->[R1(3, t=200), R2(4, t=300), R3(5, t=400)]
+        // count=2, includes=false. Volume from R1.
+        // A is skipped for R1 (passed up). S earns at level 1.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap(); // S
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 100)
+            .unwrap(); // A
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 200)
+            .unwrap(); // R1
+        tree.add_node(test_uuid(4), test_uuid(2), test_uuid(2), 300)
+            .unwrap(); // R2
+        tree.add_node(test_uuid(5), test_uuid(2), test_uuid(2), 400)
+            .unwrap(); // R3
+
+        let structure = structure_with_pass_up(
+            pass_up_rate_table(),
+            PassUpConfig {
+                count: 2,
+                includes_commissions: false,
+            },
+        );
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        for id in 1..=5 {
+            snapshots.insert(test_uuid(id), eligible_snapshot());
+        }
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3), // R1
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // A should not earn (R1 is passed up from A).
+        assert!(
+            result.iter().all(|e| e.earner_id != test_uuid(2)),
+            "A should be skipped for passed-up recruit R1"
+        );
+
+        // S earns at level 1 (A was skipped without consuming a level).
+        let s_earning = result
+            .iter()
+            .find(|e| e.earner_id == test_uuid(1))
+            .expect("S should earn");
+        assert_eq!(s_earning.level, 1);
+    }
+
+    #[test]
+    fn pass_up_retains_after_count() {
+        // Same tree: S(1)->A(2)->[R1(3, t=200), R2(4, t=300), R3(5, t=400)]
+        // count=2, includes=false. Volume from R3 (3rd recruit, retained).
+        // A earns at level 1 (R3 is not passed up). S earns at level 2.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 100)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 200)
+            .unwrap();
+        tree.add_node(test_uuid(4), test_uuid(2), test_uuid(2), 300)
+            .unwrap();
+        tree.add_node(test_uuid(5), test_uuid(2), test_uuid(2), 400)
+            .unwrap();
+
+        let structure = structure_with_pass_up(
+            pass_up_rate_table(),
+            PassUpConfig {
+                count: 2,
+                includes_commissions: false,
+            },
+        );
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        for id in 1..=5 {
+            snapshots.insert(test_uuid(id), eligible_snapshot());
+        }
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(5), // R3
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // A earns at level 1 (R3 is retained, not passed up).
+        let a_earning = result
+            .iter()
+            .find(|e| e.earner_id == test_uuid(2))
+            .expect("A should earn from retained recruit R3");
+        assert_eq!(a_earning.level, 1);
+
+        // S earns at level 2.
+        let s_earning = result
+            .iter()
+            .find(|e| e.earner_id == test_uuid(1))
+            .expect("S should earn");
+        assert_eq!(s_earning.level, 2);
+    }
+
+    #[test]
+    fn pass_up_with_includes_commissions_skips_branch() {
+        // Tree: S(1)->[B(5, t=50), A(2, t=100)]->R1(3)->D1(4)
+        // count=1, includes=true. Volume from D1.
+        //
+        // Skip sets with includes_commissions=true:
+        //   R1: {D1} (R1 sponsored D1)
+        //   A:  {R1, D1} (A sponsored R1, subtree includes D1)
+        //   S:  {B} (S's first recruit by enrolled_at is B, not A)
+        //
+        // Walk from D1: R1 skipped (D1 in set), A skipped (D1 in set),
+        //   S earns at level 1 (D1 not in S's skip set).
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap(); // S
+        tree.add_node(test_uuid(5), test_uuid(1), test_uuid(1), 50)
+            .unwrap(); // B (S's first recruit)
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 100)
+            .unwrap(); // A (S's second recruit, retained)
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 200)
+            .unwrap(); // R1
+        tree.add_node(test_uuid(4), test_uuid(3), test_uuid(3), 300)
+            .unwrap(); // D1
+
+        let structure = structure_with_pass_up(
+            pass_up_rate_table(),
+            PassUpConfig {
+                count: 1,
+                includes_commissions: true,
+            },
+        );
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        for id in 1..=5 {
+            snapshots.insert(test_uuid(id), eligible_snapshot());
+        }
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(4), // D1
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // A should not earn (D1 is in A's skip set via includes_commissions).
+        assert!(
+            result.iter().all(|e| e.earner_id != test_uuid(2)),
+            "A should be skipped for volume from D1 (in passed-up branch)"
+        );
+
+        // R1 should not earn (D1 is R1's first recruit).
+        assert!(
+            result.iter().all(|e| e.earner_id != test_uuid(3)),
+            "R1 should be skipped for volume from its passed-up recruit D1"
+        );
+
+        // S earns at level 1 (R1 and A skipped without consuming levels).
+        let s_earning = result
+            .iter()
+            .find(|e| e.earner_id == test_uuid(1))
+            .expect("S should earn");
+        assert_eq!(s_earning.level, 1);
+    }
+
+    #[test]
+    fn pass_up_without_includes_commissions_does_not_skip_branch() {
+        // Tree: S(1)->[B(5, t=50), A(2, t=100)]->R1(3)->D1(4)
+        // count=1, includes=false. Volume from D1.
+        //
+        // Skip sets with includes_commissions=false:
+        //   R1: {D1} (R1 sponsored D1)
+        //   A:  {R1} (only direct recruit, not subtree)
+        //   S:  {B} (S's first recruit is B)
+        //
+        // Walk from D1: R1 skipped (D1 in set), A earns at level 1
+        //   (D1 not in A's skip set), S at level 2.
+        // Contrast with includes=true where A would also be skipped.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(5), test_uuid(1), test_uuid(1), 50)
+            .unwrap(); // B (S's first recruit)
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 100)
+            .unwrap(); // A (S's second recruit, retained)
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 200)
+            .unwrap();
+        tree.add_node(test_uuid(4), test_uuid(3), test_uuid(3), 300)
+            .unwrap();
+
+        let structure = structure_with_pass_up(
+            pass_up_rate_table(),
+            PassUpConfig {
+                count: 1,
+                includes_commissions: false,
+            },
+        );
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        for id in 1..=5 {
+            snapshots.insert(test_uuid(id), eligible_snapshot());
+        }
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(4), // D1
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // R1 should not earn (D1 is R1's first recruit, in R1's skip set).
+        assert!(
+            result.iter().all(|e| e.earner_id != test_uuid(3)),
+            "R1 should be skipped for volume from its passed-up recruit D1"
+        );
+
+        // A earns at level 1 (D1 is not A's direct recruit, not in skip set).
+        // R1 was skipped without consuming a level.
+        let a_earning = result
+            .iter()
+            .find(|e| e.earner_id == test_uuid(2))
+            .expect("A should earn (D1 not in A's skip set)");
+        assert_eq!(a_earning.level, 1);
+
+        // S earns at level 2.
+        let s_earning = result
+            .iter()
+            .find(|e| e.earner_id == test_uuid(1))
+            .expect("S should earn");
+        assert_eq!(s_earning.level, 2);
+    }
+
+    #[test]
+    fn pass_up_and_compression_both_active() {
+        // Tree: S(1)->B(2, inactive)->A(3)->R1(4)
+        // compression=SkipInactive, count=1, includes=false.
+        // Volume from R1.
+        // A skipped (pass-up, R1 is A's first recruit).
+        // B skipped (compression, inactive).
+        // S earns at level 1.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap(); // S
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 100)
+            .unwrap(); // B
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 200)
+            .unwrap(); // A
+        tree.add_node(test_uuid(4), test_uuid(3), test_uuid(3), 300)
+            .unwrap(); // R1
+
+        let mut structure = structure_with_pass_up(
+            pass_up_rate_table(),
+            PassUpConfig {
+                count: 1,
+                includes_commissions: false,
+            },
+        );
+        structure.compression = Some(CompressionConfig {
+            enabled: true,
+            mode: CompressionMode::SkipInactive,
+            rank_threshold: None,
+        });
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot()); // S: eligible
+        snapshots.insert(
+            test_uuid(2),
+            DistributorSnapshot {
+                personal_volume: 0.0, // B: ineligible (below min PV 100)
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(test_uuid(3), eligible_snapshot()); // A: eligible
+        snapshots.insert(test_uuid(4), eligible_snapshot()); // R1: eligible
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(4), // R1
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // A skipped (pass-up), B skipped (compression). S earns at level 1.
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].earner_id, test_uuid(1));
+        assert_eq!(result[0].level, 1);
+    }
+
+    #[test]
+    fn pass_up_no_double_counting() {
+        // Tree: S(1)->A(2)->R1(3), count=1. Volume from R1.
+        // S earns exactly once (at level 1), not at multiple levels.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap(); // S
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 100)
+            .unwrap(); // A
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 200)
+            .unwrap(); // R1
+
+        let structure = structure_with_pass_up(
+            pass_up_rate_table(),
+            PassUpConfig {
+                count: 1,
+                includes_commissions: false,
+            },
+        );
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        for id in 1..=3 {
+            snapshots.insert(test_uuid(id), eligible_snapshot());
+        }
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3), // R1
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // S should earn exactly once.
+        let s_count = result
+            .iter()
+            .filter(|e| e.earner_id == test_uuid(1))
+            .count();
+        assert_eq!(
+            s_count, 1,
+            "S should earn exactly once, not at multiple levels"
+        );
+
+        // S earns at level 1 (A was skipped).
+        let s_earning = result
+            .iter()
+            .find(|e| e.earner_id == test_uuid(1))
+            .expect("S should earn");
+        assert_eq!(s_earning.level, 1);
+    }
+
+    #[test]
+    fn pass_up_recursive_independent() {
+        // Tree: S(1)->A(2)->R1(3)->R1a(4), count=1, includes=false.
+        // Volume from R1a.
+        // R1's first recruit is R1a, so R1 is skipped for R1a's volume (passed to A).
+        // A's first recruit is R1, so A is skipped for R1's volume, but R1a is
+        // NOT A's direct recruit, so A is NOT skipped for R1a's volume.
+        // Result: R1 skipped, A earns at level 1, S at level 2.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap(); // S
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 100)
+            .unwrap(); // A
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 200)
+            .unwrap(); // R1
+        tree.add_node(test_uuid(4), test_uuid(3), test_uuid(3), 300)
+            .unwrap(); // R1a
+
+        let structure = structure_with_pass_up(
+            pass_up_rate_table(),
+            PassUpConfig {
+                count: 1,
+                includes_commissions: false,
+            },
+        );
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        for id in 1..=4 {
+            snapshots.insert(test_uuid(id), eligible_snapshot());
+        }
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(4), // R1a
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // R1 skipped (R1a is R1's first recruit, passed up to A).
+        assert!(
+            result.iter().all(|e| e.earner_id != test_uuid(3)),
+            "R1 should be skipped for its first recruit R1a"
+        );
+
+        // A earns at level 1 (R1a is not A's direct recruit, not in A's skip set).
+        let a_earning = result
+            .iter()
+            .find(|e| e.earner_id == test_uuid(2))
+            .expect("A should earn from R1a (not in A's skip set)");
+        assert_eq!(a_earning.level, 1);
+
+        // S earns at level 2.
+        let s_earning = result
+            .iter()
+            .find(|e| e.earner_id == test_uuid(1))
+            .expect("S should earn");
+        assert_eq!(s_earning.level, 2);
+    }
+
+    #[test]
+    fn pass_up_none_is_noop() {
+        // Standard tree with no pass_up. Normal walk behavior.
+        // Tree: root(1)->mid(2)->leaf(3). Volume from leaf.
+        // mid earns at level 1, root at level 2.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 100)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 200)
+            .unwrap();
+
+        let structure = test_structure(test_rate_table()); // no pass_up
+        let plan = test_plan(default_eligibility());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        assert_eq!(result.len(), 2);
+
+        // mid earns at level 1.
+        let mid_earning = result
+            .iter()
+            .find(|e| e.earner_id == test_uuid(2))
+            .expect("mid should earn");
+        assert_eq!(mid_earning.level, 1);
+
+        // root earns at level 2.
+        let root_earning = result
+            .iter()
+            .find(|e| e.earner_id == test_uuid(1))
+            .expect("root should earn");
+        assert_eq!(root_earning.level, 2);
     }
 }

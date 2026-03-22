@@ -251,7 +251,6 @@ pub(crate) fn evaluate_eligibility<T: TreeNavigator>(
 /// With includes_commissions = false, only direct recruit IDs are in the set.
 /// With includes_commissions = true, the full subtree of each passed-up
 /// recruit is included.
-#[allow(dead_code)] // Consumed in Task 3 when wired into the walk loop.
 pub(crate) fn build_pass_up_context<T: TreeNavigator>(
     tree: &T,
     pass_up: &PassUpConfig,

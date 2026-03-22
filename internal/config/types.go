@@ -262,12 +262,22 @@ const (
 
 // PairingConfig holds binary pairing commission configuration.
 type PairingConfig struct {
-	Percent              float64  `yaml:"percent" json:"percent"`
-	Calculation          string   `yaml:"calculation" json:"calculation"`
-	CapPerPeriod         *float64 `yaml:"cap_per_period" json:"cap_per_period"`
-	VolumeAfterPayout    string   `yaml:"volume_after_payout" json:"volume_after_payout"`
-	CarryForwardCap      *float64 `yaml:"carry_forward_cap" json:"carry_forward_cap"`
-	MultiPositionCapMode string   `yaml:"multi_position_cap_mode" json:"multi_position_cap_mode"`
+	Percent           float64  `yaml:"percent" json:"percent"`
+	Calculation       string   `yaml:"calculation" json:"calculation"`
+	CapPerPeriod      *float64 `yaml:"cap_per_period" json:"cap_per_period"`
+	VolumeAfterPayout string   `yaml:"volume_after_payout" json:"volume_after_payout"`
+	CarryForwardCap   *float64 `yaml:"carry_forward_cap" json:"carry_forward_cap"`
+	// Empty string means the Rust engine's serde default ("per_position") applies.
+	// Go callers should use GetMultiPositionCapMode() for a consistent default.
+	MultiPositionCapMode string `yaml:"multi_position_cap_mode,omitempty" json:"multi_position_cap_mode,omitempty"`
+}
+
+// GetMultiPositionCapMode returns the cap mode, defaulting to PerPosition if empty.
+func (p *PairingConfig) GetMultiPositionCapMode() string {
+	if p.MultiPositionCapMode == "" {
+		return MultiPositionCapModePerPosition
+	}
+	return p.MultiPositionCapMode
 }
 
 // CycleStepConfig holds binary cycle/step commission configuration.

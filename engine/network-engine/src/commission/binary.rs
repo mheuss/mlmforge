@@ -53,7 +53,7 @@ fn aggregate_volume(
         // Validate source exists in snapshots (keyed by owner_id).
         let owner = resolve_owner(&source.source_id, ownership);
         if !snapshots.contains_key(&owner) {
-            return Err(CalculationError::SourceNotInSnapshot(source.source_id));
+            return Err(CalculationError::SourceNotInSnapshot(owner));
         }
 
         *totals.entry(source.source_id).or_insert(0.0) += source.cv_amount;
@@ -2396,6 +2396,9 @@ mod tests {
                 }
             }
 
+            /// In single-position mode (ownership=None), each position owns itself,
+            /// so no duplicate earner_ids should appear. Multi-position mode with
+            /// shared ownership intentionally allows duplicate earner_ids.
             #[test]
             fn no_duplicate_earner_ids(
                 (left_vol, right_vol) in arb_leg_pair()

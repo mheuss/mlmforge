@@ -83,7 +83,7 @@ proptest! {
         ];
 
         let result = calculate_binary_pairing(
-            &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(),
+            &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(), None,
         ).unwrap();
 
         // Every earner should be one whose own subtrees had volume on both sides.
@@ -127,7 +127,7 @@ proptest! {
         ];
 
         let result = calculate_binary_pairing(
-            &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(),
+            &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(), None,
         ).unwrap();
 
         for (uid, legs) in &result.carry_forward {
@@ -167,7 +167,7 @@ proptest! {
         ];
 
         let result = calculate_binary_pairing(
-            &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(),
+            &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(), None,
         ).unwrap();
 
         let matched = left_vol.min(right_vol);
@@ -212,7 +212,7 @@ proptest! {
         ];
 
         let result = calculate_binary_pairing(
-            &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(),
+            &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(), None,
         ).unwrap();
 
         for earning in &result.earnings {
@@ -251,7 +251,7 @@ proptest! {
         ];
 
         let result = calculate_binary_pairing(
-            &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(),
+            &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(), None,
         ).unwrap();
 
         let root_cf = result.carry_forward.get(&uuid_from_index(0)).unwrap();
@@ -296,7 +296,7 @@ proptest! {
         ];
 
         let result = calculate_binary_pairing(
-            &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(),
+            &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(), None,
         ).unwrap();
 
         for (uid, legs) in &result.carry_forward {
@@ -337,7 +337,7 @@ proptest! {
         ];
 
         let result = calculate_binary_pairing(
-            &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(),
+            &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(), None,
         ).unwrap();
 
         let root_cf = result.carry_forward.get(&uuid_from_index(0)).unwrap();
@@ -380,10 +380,10 @@ proptest! {
         ];
 
         let result_wl = calculate_binary_pairing(
-            &tree, &plan_wl, &structure_wl, &snapshots, &volume, &HashMap::new(),
+            &tree, &plan_wl, &structure_wl, &snapshots, &volume, &HashMap::new(), None,
         ).unwrap();
         let result_vr = calculate_binary_pairing(
-            &tree, &plan_vr, &structure_vr, &snapshots, &volume, &HashMap::new(),
+            &tree, &plan_vr, &structure_vr, &snapshots, &volume, &HashMap::new(), None,
         ).unwrap();
 
         let payout_wl: f64 = result_wl.earnings.iter().map(|e| e.dollar_amount).sum();
@@ -424,10 +424,10 @@ proptest! {
         ];
 
         let result_wl = calculate_binary_pairing(
-            &tree, &plan_wl, &structure_wl, &snapshots, &volume, &HashMap::new(),
+            &tree, &plan_wl, &structure_wl, &snapshots, &volume, &HashMap::new(), None,
         ).unwrap();
         let result_vr = calculate_binary_pairing(
-            &tree, &plan_vr, &structure_vr, &snapshots, &volume, &HashMap::new(),
+            &tree, &plan_vr, &structure_vr, &snapshots, &volume, &HashMap::new(), None,
         ).unwrap();
 
         prop_assert_eq!(result_wl.earnings.len(), 1);
@@ -466,7 +466,7 @@ proptest! {
         ];
 
         let result = calculate_binary_pairing(
-            &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(),
+            &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(), None,
         ).unwrap();
 
         for earning in &result.earnings {
@@ -498,7 +498,7 @@ proptest! {
         ];
 
         let result = calculate_binary_pairing(
-            &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(),
+            &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(), None,
         ).unwrap();
 
         prop_assert!(
@@ -527,7 +527,7 @@ proptest! {
         ];
 
         let result = calculate_binary_pairing(
-            &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(),
+            &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(), None,
         ).unwrap();
 
         prop_assert!(
@@ -550,6 +550,7 @@ fn empty_tree_no_panic() {
         &HashMap::new(),
         &[],
         &HashMap::new(),
+        None,
     )
     .unwrap();
 

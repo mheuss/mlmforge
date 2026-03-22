@@ -1029,6 +1029,7 @@ pub fn handle_calculate_binary_pairing(state: &WorkerState, request: &Request) -
         &params.snapshots,
         &params.volume,
         &params.carry_forward,
+        None,
     ) {
         Ok(result) => {
             let response = BinaryCalculationResponse {

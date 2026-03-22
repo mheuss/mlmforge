@@ -948,6 +948,8 @@ struct CalculateBinaryPairingParams {
     volume: Vec<VolumeSource>,
     #[serde(default)]
     carry_forward: HashMap<Uuid, LegVolumes>,
+    #[serde(default)]
+    ownership: Option<HashMap<Uuid, Uuid>>,
 }
 
 /// Wire response for a binary pairing calculation result.
@@ -1029,7 +1031,7 @@ pub fn handle_calculate_binary_pairing(state: &WorkerState, request: &Request) -
         &params.snapshots,
         &params.volume,
         &params.carry_forward,
-        None,
+        params.ownership.as_ref(),
     ) {
         Ok(result) => {
             let response = BinaryCalculationResponse {

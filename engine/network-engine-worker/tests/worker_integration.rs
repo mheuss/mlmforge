@@ -1455,3 +1455,316 @@ fn calculate_binary_pairing_wrong_tree_type_returns_error() {
     drop(worker.stdin.take());
     worker.wait().unwrap();
 }
+
+// --- Pass-up (Australian X-Up) commission integration test ---
+//
+// Verifies end-to-end: a JSON config with pass_up on the unilevel structure
+// deserializes correctly and produces the expected earnings with pass-up skip
+// behavior.
+
+/// UUIDs for the pass-up test tree.
+const PU_S: &str = "00000000-0000-0000-0000-000000000010";
+const PU_A: &str = "00000000-0000-0000-0000-000000000020";
+const PU_R1: &str = "00000000-0000-0000-0000-000000000031";
+const PU_R2: &str = "00000000-0000-0000-0000-000000000032";
+const PU_R3: &str = "00000000-0000-0000-0000-000000000033";
+
+/// Pass-up tree name used across the test.
+const PU_TREE: &str = "PassUpTest";
+
+/// A compensation plan with pass_up configured on the unilevel structure.
+///
+/// - count: 2, includes_commissions: false
+/// - One rank: "member" with rate 0.05 at levels 1-3
+/// - commissionable_depth: 3
+/// - No compression
+const PASS_UP_PLAN_JSON: &str = r#"{
+    "name": "Pass-Up Test Plan",
+    "version": 1,
+    "structures": [
+        {
+            "type": "unilevel",
+            "config": {
+                "name": "PassUpTest",
+                "level_commission": {
+                    "broad_commission_percent": 0.40,
+                    "volume_to_dollar_multiplier": null,
+                    "commissionable_depth": 3,
+                    "rate_table": {
+                        "member": { "1": 0.05, "2": 0.05, "3": 0.05 }
+                    }
+                },
+                "compression": null,
+                "pass_up": {
+                    "count": 2,
+                    "includes_commissions": false
+                }
+            }
+        }
+    ],
+    "period": {
+        "length": "month",
+        "start_date": "2026-03-01",
+        "payout_lag_days": 14
+    },
+    "volume": {
+        "inhibit_signup_volume": false,
+        "base_currency": "USD",
+        "volume_to_dollar_multiplier": 1.0,
+        "deduct_qualifying_volume": false
+    },
+    "ranks": [
+        {
+            "name": "member",
+            "ordinal": 1,
+            "qualification": {
+                "structures": [],
+                "required_products": []
+            },
+            "qualified_structures": ["PassUpTest"],
+            "demotion_policy": "promotion_only"
+        }
+    ],
+    "rank_tracking": { "track_achieved_rank": false },
+    "rank_features": { "constraints_enabled": false, "overrides_enabled": false },
+    "commission_eligibility": {
+        "min_personal_volume": 0.0,
+        "require_order_in_period": false,
+        "eligible_statuses": [],
+        "active_leg_tiers": []
+    },
+    "bonuses": {
+        "matching": null,
+        "sponsor": null,
+        "fast_start": null,
+        "rank_advancement": null,
+        "leadership_development": null,
+        "infinity": null,
+        "lifestyle": null,
+        "pool": null,
+        "matrix_completion": null,
+        "position": null,
+        "board_cycling": null
+    },
+    "payout": {
+        "base_currency": "USD",
+        "minimum_amount": 50.0,
+        "split_payouts_enabled": true,
+        "methods": [
+            { "type": "bank_transfer", "fee": 2.50 }
+        ]
+    },
+    "caps": {
+        "per_distributor_per_period": null,
+        "company_payout_cap_percent": 0.42,
+        "cap_enforcement": "pro_rata",
+        "clawback_on_refund": false
+    },
+    "placement": {
+        "donated_placement": null,
+        "holding_tank": null,
+        "binary_placement": null
+    }
+}"#;
+
+/// Loads the pass-up test plan into the worker. Asserts success.
+fn load_pass_up_plan(worker: &mut std::process::Child) {
+    let minified: String = PASS_UP_PLAN_JSON
+        .lines()
+        .map(|l| l.trim())
+        .collect::<Vec<_>>()
+        .join("");
+    let request = format!(
+        r#"{{"id":"load-pu-plan","op":"load_plan","params":{}}}"#,
+        minified
+    );
+    let resp = common::send_receive(worker, &request);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "load_plan (pass-up) failed: {}",
+        resp
+    );
+}
+
+/// Builds the pass-up test tree:
+///
+///   S(010) -> A(020) -> R1(031, t=100), R2(032, t=200), R3(033, t=300)
+///
+/// A sponsors R1, R2, R3. With pass_up count=2, A's skip set = {R1, R2}.
+fn build_pass_up_tree(worker: &mut std::process::Child) {
+    create_tree(worker, PU_TREE);
+
+    let resp = common::send_receive(
+        worker,
+        &format!(
+            r#"{{"id":"pu-1","op":"add_root","params":{{"structure":"{}","user_id":"{}","enrolled_at":50}}}}"#,
+            PU_TREE, PU_S
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "setup failed: {}", resp);
+
+    let resp = common::send_receive(
+        worker,
+        &format!(
+            r#"{{"id":"pu-2","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","enrolled_at":60}}}}"#,
+            PU_TREE, PU_A, PU_S, PU_S
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "setup failed: {}", resp);
+
+    let resp = common::send_receive(
+        worker,
+        &format!(
+            r#"{{"id":"pu-3","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","enrolled_at":100}}}}"#,
+            PU_TREE, PU_R1, PU_A, PU_A
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "setup failed: {}", resp);
+
+    let resp = common::send_receive(
+        worker,
+        &format!(
+            r#"{{"id":"pu-4","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","enrolled_at":200}}}}"#,
+            PU_TREE, PU_R2, PU_A, PU_A
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "setup failed: {}", resp);
+
+    let resp = common::send_receive(
+        worker,
+        &format!(
+            r#"{{"id":"pu-5","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","enrolled_at":300}}}}"#,
+            PU_TREE, PU_R3, PU_A, PU_A
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "setup failed: {}", resp);
+}
+
+#[test]
+fn calculate_unilevel_pass_up_skips_first_recruits() {
+    let mut worker = common::spawn_worker();
+
+    // 1. Load pass-up plan (count=2, includes_commissions=false)
+    load_pass_up_plan(&mut worker);
+
+    // 2. Build tree: S -> A -> [R1(t=100), R2(t=200), R3(t=300)]
+    build_pass_up_tree(&mut worker);
+
+    // 3. Calculate commissions with volume from R1 and R3.
+    //
+    //    R1 volume (100 CV):
+    //      Walking upline from R1: A is next but R1 is in A's skip set
+    //      (pass-up count=2, R1 is the 1st recruit). A is skipped without
+    //      consuming a level. S earns at level 1.
+    //      Dollar: 100 * 0.40 * 1.0 * 0.05 = 2.0
+    //
+    //    R3 volume (100 CV):
+    //      Walking upline from R3: A is next. R3 is NOT in A's skip set
+    //      (only R1 and R2 are). A earns at level 1.
+    //      S earns at level 2.
+    //      Dollar: 100 * 0.40 * 1.0 * 0.05 = 2.0 each
+    let snap =
+        r#"{"rank":"member","personal_volume":100.0,"status":"active","has_order_in_period":true}"#;
+    let params = format!(
+        r#"{{"structure":"{tree}","snapshots":{{"{s}":{snap},"{a}":{snap},"{r1}":{snap},"{r2}":{snap},"{r3}":{snap}}},"volume":[{{"source_id":"{r1}","cv_amount":100.0}},{{"source_id":"{r3}","cv_amount":100.0}}]}}"#,
+        tree = PU_TREE,
+        s = PU_S,
+        a = PU_A,
+        r1 = PU_R1,
+        r2 = PU_R2,
+        r3 = PU_R3,
+        snap = snap,
+    );
+    let request = format!(
+        r#"{{"id":"pu-calc","op":"calculate_unilevel","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(
+        parsed["ok"].as_bool().unwrap(),
+        "calculate_unilevel (pass-up) failed: {}",
+        resp
+    );
+
+    let earnings = parsed["result"].as_array().unwrap();
+
+    // Expected earnings:
+    //   From R1: S at level 1 (2.0)          -- A was skipped
+    //   From R3: A at level 1 (2.0), S at level 2 (2.0) -- A earned normally
+    // Total: 3 earnings
+    assert_eq!(
+        earnings.len(),
+        3,
+        "expected 3 earnings (S from R1, A from R3, S from R3), got: {}",
+        resp
+    );
+
+    // --- Verify R1 volume: only S earns (A is skipped) ---
+    let r1_earnings: Vec<&serde_json::Value> = earnings
+        .iter()
+        .filter(|e| e["source_id"].as_str().unwrap() == PU_R1)
+        .collect();
+    assert_eq!(
+        r1_earnings.len(),
+        1,
+        "R1 volume should produce exactly 1 earning (A skipped), got: {:?}",
+        r1_earnings
+    );
+    assert_eq!(
+        r1_earnings[0]["earner_id"].as_str().unwrap(),
+        PU_S,
+        "S should earn from R1 volume"
+    );
+    assert_eq!(
+        r1_earnings[0]["level"].as_u64().unwrap(),
+        1,
+        "S should earn at level 1 (A skipped without consuming a level)"
+    );
+    let s_r1_dollar = r1_earnings[0]["dollar_amount"].as_f64().unwrap();
+    assert!(
+        (s_r1_dollar - 2.0).abs() < f64::EPSILON,
+        "S dollar_amount from R1 should be 2.0, got {}",
+        s_r1_dollar
+    );
+
+    // --- Verify R3 volume: A earns at level 1, S earns at level 2 ---
+    let r3_earnings: Vec<&serde_json::Value> = earnings
+        .iter()
+        .filter(|e| e["source_id"].as_str().unwrap() == PU_R3)
+        .collect();
+    assert_eq!(
+        r3_earnings.len(),
+        2,
+        "R3 volume should produce 2 earnings (A and S), got: {:?}",
+        r3_earnings
+    );
+
+    let a_from_r3 = r3_earnings
+        .iter()
+        .find(|e| e["earner_id"].as_str().unwrap() == PU_A)
+        .expect("A should earn from R3 volume");
+    assert_eq!(a_from_r3["level"].as_u64().unwrap(), 1);
+    let a_r3_dollar = a_from_r3["dollar_amount"].as_f64().unwrap();
+    assert!(
+        (a_r3_dollar - 2.0).abs() < f64::EPSILON,
+        "A dollar_amount from R3 should be 2.0, got {}",
+        a_r3_dollar
+    );
+
+    let s_from_r3 = r3_earnings
+        .iter()
+        .find(|e| e["earner_id"].as_str().unwrap() == PU_S)
+        .expect("S should earn from R3 volume");
+    assert_eq!(s_from_r3["level"].as_u64().unwrap(), 2);
+    let s_r3_dollar = s_from_r3["dollar_amount"].as_f64().unwrap();
+    assert!(
+        (s_r3_dollar - 2.0).abs() < f64::EPSILON,
+        "S dollar_amount from R3 should be 2.0, got {}",
+        s_r3_dollar
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}

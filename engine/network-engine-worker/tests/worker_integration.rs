@@ -1793,6 +1793,10 @@ fn calculate_binary_pairing_multi_position_ownership() {
         "carry_forward should contain pos1"
     );
     assert!(
+        cf.contains_key(MP_POS2),
+        "carry_forward should contain pos2"
+    );
+    assert!(
         cf.contains_key(MP_POS3),
         "carry_forward should contain pos3"
     );

@@ -1456,6 +1456,357 @@ fn calculate_binary_pairing_wrong_tree_type_returns_error() {
     worker.wait().unwrap();
 }
 
+// --- Multi-position binary commission integration test ---
+
+/// UUIDs for multi-position test nodes.
+const MP_ROOT: &str = "00000000-0000-0000-0000-000000000050";
+const MP_POS1: &str = "00000000-0000-0000-0000-000000000051";
+const MP_POS2: &str = "00000000-0000-0000-0000-000000000052";
+const MP_POS3: &str = "00000000-0000-0000-0000-000000000053";
+const MP_LEFT1: &str = "00000000-0000-0000-0000-000000000054";
+const MP_RIGHT1: &str = "00000000-0000-0000-0000-000000000055";
+const MP_LEFT2: &str = "00000000-0000-0000-0000-000000000056";
+const MP_RIGHT2: &str = "00000000-0000-0000-0000-000000000057";
+const MP_LEFT3: &str = "00000000-0000-0000-0000-000000000058";
+const MP_RIGHT3: &str = "00000000-0000-0000-0000-000000000059";
+/// Owner UUIDs (not in the tree).
+const OWNER_A: &str = "00000000-0000-0000-0000-0000000000a0";
+const OWNER_B: &str = "00000000-0000-0000-0000-0000000000b0";
+
+/// Multi-position binary test plan: 10%, WeakerLeg, FullFlush, aggregate cap 500.
+const MP_BINARY_PLAN_JSON: &str = r#"{
+    "name": "Multi-Position Binary Plan",
+    "version": 1,
+    "structures": [
+        {
+            "type": "binary",
+            "config": {
+                "name": "MPBinary",
+                "binary_commission": {
+                    "volume_to_dollar_multiplier": null,
+                    "mode": {
+                        "pairing": {
+                            "percent": 0.10,
+                            "calculation": "weaker_leg",
+                            "cap_per_period": 500.0,
+                            "volume_after_payout": "full_flush",
+                            "carry_forward_cap": null,
+                            "multi_position_cap_mode": "aggregate"
+                        }
+                    }
+                }
+            }
+        }
+    ],
+    "period": {
+        "length": "month",
+        "start_date": "2026-03-01",
+        "payout_lag_days": 14
+    },
+    "volume": {
+        "inhibit_signup_volume": false,
+        "base_currency": "USD",
+        "volume_to_dollar_multiplier": 1.0,
+        "deduct_qualifying_volume": false
+    },
+    "ranks": [
+        {
+            "name": "associate",
+            "ordinal": 1,
+            "qualification": {
+                "structures": [],
+                "required_products": []
+            },
+            "qualified_structures": ["MPBinary"],
+            "demotion_policy": "promotion_only"
+        }
+    ],
+    "rank_tracking": { "track_achieved_rank": false },
+    "rank_features": { "constraints_enabled": false, "overrides_enabled": false },
+    "commission_eligibility": {
+        "min_personal_volume": 0.0,
+        "require_order_in_period": false,
+        "eligible_statuses": [],
+        "active_leg_tiers": []
+    },
+    "bonuses": {
+        "matching": null,
+        "sponsor": null,
+        "fast_start": null,
+        "rank_advancement": null,
+        "leadership_development": null,
+        "infinity": null,
+        "lifestyle": null,
+        "pool": null,
+        "matrix_completion": null,
+        "position": null,
+        "board_cycling": null
+    },
+    "payout": {
+        "base_currency": "USD",
+        "minimum_amount": 50.0,
+        "split_payouts_enabled": true,
+        "methods": [
+            { "type": "bank_transfer", "fee": 2.50 }
+        ]
+    },
+    "caps": {
+        "per_distributor_per_period": null,
+        "company_payout_cap_percent": 0.42,
+        "cap_enforcement": "pro_rata",
+        "clawback_on_refund": false
+    },
+    "placement": {
+        "donated_placement": null,
+        "holding_tank": null,
+        "binary_placement": null
+    }
+}"#;
+
+/// Builds the multi-position tree:
+///
+/// ```text
+///           root (MP_ROOT)
+///          /              \
+///       pos1 (MP_POS1)   pos2 (MP_POS2)
+///       /    \            /    \
+///    left1  right1     left2  right2
+/// ```
+///
+/// pos3 is under pos2's right child:
+/// ```text
+///     pos2 (MP_POS2)
+///       /    \
+///    left2   pos3 (MP_POS3)
+///            /    \
+///         left3  right3
+/// ```
+fn build_multi_position_tree(worker: &mut std::process::Child) {
+    let tree = "MPBinary";
+    create_binary_tree(worker, tree);
+
+    // Root
+    let resp = common::send_receive(
+        worker,
+        &format!(
+            r#"{{"id":"mp-1","op":"add_root","params":{{"structure":"{}","user_id":"{}","enrolled_at":100}}}}"#,
+            tree, MP_ROOT
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "setup failed: {}", resp);
+
+    // pos1 under root left
+    let resp = common::send_receive(
+        worker,
+        &format!(
+            r#"{{"id":"mp-2","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","position":0,"enrolled_at":200}}}}"#,
+            tree, MP_POS1, MP_ROOT, MP_ROOT
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "setup failed: {}", resp);
+
+    // pos2 under root right
+    let resp = common::send_receive(
+        worker,
+        &format!(
+            r#"{{"id":"mp-3","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","position":1,"enrolled_at":200}}}}"#,
+            tree, MP_POS2, MP_ROOT, MP_ROOT
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "setup failed: {}", resp);
+
+    // Children under pos1
+    let resp = common::send_receive(
+        worker,
+        &format!(
+            r#"{{"id":"mp-4","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","position":0,"enrolled_at":300}}}}"#,
+            tree, MP_LEFT1, MP_POS1, MP_POS1
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "setup failed: {}", resp);
+
+    let resp = common::send_receive(
+        worker,
+        &format!(
+            r#"{{"id":"mp-5","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","position":1,"enrolled_at":300}}}}"#,
+            tree, MP_RIGHT1, MP_POS1, MP_POS1
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "setup failed: {}", resp);
+
+    // Children under pos2
+    let resp = common::send_receive(
+        worker,
+        &format!(
+            r#"{{"id":"mp-6","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","position":0,"enrolled_at":300}}}}"#,
+            tree, MP_LEFT2, MP_POS2, MP_POS2
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "setup failed: {}", resp);
+
+    let resp = common::send_receive(
+        worker,
+        &format!(
+            r#"{{"id":"mp-7","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","position":1,"enrolled_at":300}}}}"#,
+            tree, MP_POS3, MP_POS2, MP_POS2
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "setup failed: {}", resp);
+
+    // Children under pos3
+    let resp = common::send_receive(
+        worker,
+        &format!(
+            r#"{{"id":"mp-8","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","position":0,"enrolled_at":400}}}}"#,
+            tree, MP_LEFT3, MP_POS3, MP_POS3
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "setup failed: {}", resp);
+
+    let resp = common::send_receive(
+        worker,
+        &format!(
+            r#"{{"id":"mp-9","op":"add_node","params":{{"structure":"{}","user_id":"{}","parent_id":"{}","sponsor_id":"{}","position":1,"enrolled_at":400}}}}"#,
+            tree, MP_RIGHT3, MP_POS3, MP_POS3
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "setup failed: {}", resp);
+}
+
+#[test]
+fn calculate_binary_pairing_multi_position_ownership() {
+    let mut worker = common::spawn_worker();
+
+    // 1. Load plan with aggregate cap mode
+    let minified: String = MP_BINARY_PLAN_JSON
+        .lines()
+        .map(|l| l.trim())
+        .collect::<Vec<_>>()
+        .join("");
+    let request = format!(
+        r#"{{"id":"load-mp","op":"load_plan","params":{}}}"#,
+        minified
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "load_plan (multi-position) failed: {}",
+        resp
+    );
+
+    // 2. Build multi-position tree
+    build_multi_position_tree(&mut worker);
+
+    // 3. Calculate with ownership map:
+    //    pos1 -> owner_A, pos2 -> owner_A, pos3 -> owner_B
+    let snap = r#"{"rank":"associate","personal_volume":150.0,"status":"active","has_order_in_period":true}"#;
+
+    // Volume: 3000 CV under each child (balanced legs for pos1, pos2, pos3)
+    let params = format!(
+        concat!(
+            r#"{{"structure":"MPBinary","snapshots":{{"{owner_a}":{snap},"{owner_b}":{snap},"#,
+            r#""{root}":{snap},"{left1}":{snap},"{right1}":{snap},"{left2}":{snap},"#,
+            r#""{left3}":{snap},"{right3}":{snap}}},"#,
+            r#""volume":[{{"source_id":"{left1}","cv_amount":3000.0}},"#,
+            r#"{{"source_id":"{right1}","cv_amount":3000.0}},"#,
+            r#"{{"source_id":"{left2}","cv_amount":3000.0}},"#,
+            r#"{{"source_id":"{left3}","cv_amount":3000.0}},"#,
+            r#"{{"source_id":"{right3}","cv_amount":3000.0}}],"#,
+            r#""ownership":{{"{pos1}":"{owner_a}","{pos2}":"{owner_a}","{pos3}":"{owner_b}"}}}}"#
+        ),
+        owner_a = OWNER_A,
+        owner_b = OWNER_B,
+        root = MP_ROOT,
+        pos1 = MP_POS1,
+        pos2 = MP_POS2,
+        pos3 = MP_POS3,
+        left1 = MP_LEFT1,
+        right1 = MP_RIGHT1,
+        left2 = MP_LEFT2,
+        left3 = MP_LEFT3,
+        right3 = MP_RIGHT3,
+        snap = snap,
+    );
+    let request = format!(
+        r#"{{"id":"mp-calc","op":"calculate_binary_pairing","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(
+        parsed["ok"].as_bool().unwrap(),
+        "calculate_binary_pairing failed: {}",
+        resp
+    );
+
+    let earnings = parsed["result"]["earnings"].as_array().unwrap();
+
+    // Owner A's earnings (pos1 and pos2).
+    let owner_a_earnings: Vec<_> = earnings
+        .iter()
+        .filter(|e| e["earner_id"].as_str().unwrap() == OWNER_A)
+        .collect();
+
+    // Owner A should have earnings from positions they own.
+    assert!(
+        !owner_a_earnings.is_empty(),
+        "owner_a should have earnings, got: {}",
+        resp
+    );
+
+    // Verify position_id is present and differs from earner_id.
+    for e in &owner_a_earnings {
+        assert_eq!(e["earner_id"].as_str().unwrap(), OWNER_A);
+        let pos_id = e["position_id"].as_str().unwrap();
+        assert!(
+            pos_id == MP_POS1 || pos_id == MP_POS2,
+            "position_id should be pos1 or pos2, got: {}",
+            pos_id
+        );
+    }
+
+    // Owner A aggregate cap: total should not exceed 500.0.
+    let owner_a_total: f64 = owner_a_earnings
+        .iter()
+        .map(|e| e["dollar_amount"].as_f64().unwrap())
+        .sum();
+    assert!(
+        owner_a_total <= 500.0 + 1e-10,
+        "owner_a aggregate should be capped at 500.0, got {}",
+        owner_a_total
+    );
+
+    // Owner B's earnings (pos3).
+    let owner_b_earnings: Vec<_> = earnings
+        .iter()
+        .filter(|e| e["earner_id"].as_str().unwrap() == OWNER_B)
+        .collect();
+    assert_eq!(
+        owner_b_earnings.len(),
+        1,
+        "owner_b should have 1 earning from pos3"
+    );
+    assert_eq!(
+        owner_b_earnings[0]["position_id"].as_str().unwrap(),
+        MP_POS3
+    );
+
+    // Carry-forward should be keyed by position_id, not owner_id.
+    let cf = parsed["result"]["carry_forward"].as_object().unwrap();
+    assert!(
+        cf.contains_key(MP_POS1),
+        "carry_forward should contain pos1"
+    );
+    assert!(
+        cf.contains_key(MP_POS3),
+        "carry_forward should contain pos3"
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 // --- Pass-up (Australian X-Up) commission integration test ---
 //
 // Verifies end-to-end: a JSON config with pass_up on the unilevel structure

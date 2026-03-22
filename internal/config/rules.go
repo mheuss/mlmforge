@@ -468,10 +468,31 @@ func validateEligibility(plan *CompensationPlan) []ValidationError {
 
 // --- Pass-up rules ---
 
-// validatePassUp checks pass_up configuration on unilevel structures.
+// validatePassUp checks pass_up configuration on unilevel structures and
+// rejects pass_up on non-unilevel structures.
 func validatePassUp(plan *CompensationPlan) []ValidationError {
 	var errs []ValidationError
 
+	// Reject pass_up on non-unilevel structures. Only UnilevelCommission
+	// has a PassUp field in Go; other commission types silently drop it
+	// during deserialization. Check the raw commission map to catch it.
+	for i, s := range plan.Structures {
+		if s.Type == "unilevel" {
+			continue
+		}
+		if rawMap, ok := s.CommissionRaw.(map[string]any); ok {
+			if _, hasPassUp := rawMap["pass_up"]; hasPassUp {
+				errs = append(errs, ValidationError{
+					Path:     fmt.Sprintf("/structures/%d/commission/pass_up", i),
+					Code:     "unsupported_field",
+					Message:  "pass_up is only supported on unilevel structures",
+					Severity: SeverityError,
+				})
+			}
+		}
+	}
+
+	// Validate pass_up configuration on unilevel structures.
 	for i, s := range plan.Structures {
 		if s.Type != "unilevel" {
 			continue
@@ -491,6 +512,15 @@ func validatePassUp(plan *CompensationPlan) []ValidationError {
 				Path:     fmt.Sprintf("/structures/%d/commission/pass_up/count", i),
 				Code:     "value_out_of_range",
 				Message:  "pass_up count must be >= 1",
+				Severity: SeverityError,
+			})
+		}
+
+		if commission.PassUp.Count > 255 {
+			errs = append(errs, ValidationError{
+				Path:     fmt.Sprintf("/structures/%d/commission/pass_up/count", i),
+				Code:     "value_out_of_range",
+				Message:  "pass_up count must be <= 255",
 				Severity: SeverityError,
 			})
 		}

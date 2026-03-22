@@ -642,6 +642,97 @@ func TestValidation_MatchingCurrencyPasses(t *testing.T) {
 	assert.Empty(t, errs)
 }
 
+func TestValidatePassUp_CountZero(t *testing.T) {
+	plan := minimalPlan()
+	plan.Structures[0].resolvedCommission = &UnilevelCommission{
+		CommissionableDepth: 5,
+		RateTable: map[string]map[string]float64{
+			"Associate": {"1": 0.05},
+		},
+		PassUp: &PassUpConfig{
+			Count:               0,
+			IncludesCommissions: false,
+		},
+	}
+
+	errs := validateBusinessRules(plan)
+	var found bool
+	for _, e := range errs {
+		if e.Code == "value_out_of_range" {
+			found = true
+			assert.Equal(t, SeverityError, e.Severity)
+			assert.Contains(t, e.Path, "pass_up/count")
+			assert.Contains(t, e.Message, ">= 1")
+			break
+		}
+	}
+	assert.True(t, found, "expected value_out_of_range error for pass_up count=0, got: %v", errs)
+}
+
+func TestValidatePassUp_ValidConfig(t *testing.T) {
+	plan := minimalPlan()
+	plan.Structures[0].resolvedCommission = &UnilevelCommission{
+		CommissionableDepth: 5,
+		RateTable: map[string]map[string]float64{
+			"Associate": {"1": 0.05},
+			"Silver":    {"1": 0.07, "2": 0.05},
+		},
+		PassUp: &PassUpConfig{
+			Count:               2,
+			IncludesCommissions: false,
+		},
+	}
+
+	errs := validateBusinessRules(plan)
+	for _, e := range errs {
+		assert.NotEqual(t, "value_out_of_range", e.Code,
+			"valid pass_up config should not produce value_out_of_range, got: %s", e.Message)
+	}
+}
+
+func TestValidatePassUp_NilPassUpIsValid(t *testing.T) {
+	plan := minimalPlan()
+	plan.Structures[0].resolvedCommission = &UnilevelCommission{
+		CommissionableDepth: 5,
+		RateTable: map[string]map[string]float64{
+			"Associate": {"1": 0.05},
+			"Silver":    {"1": 0.07},
+		},
+	}
+
+	errs := validateBusinessRules(plan)
+	for _, e := range errs {
+		assert.NotContains(t, e.Path, "pass_up",
+			"nil pass_up should not produce pass_up errors, got: %s", e.Message)
+	}
+}
+
+func TestValidatePassUp_SkippedOnNonUnilevel(t *testing.T) {
+	plan := minimalPlan()
+	plan.Structures[0].Name = "Binary"
+	plan.Structures[0].Type = "binary"
+	plan.Structures[0].resolvedCommission = &BinaryCommission{
+		Mode: "pairing",
+		Pairing: &PairingConfig{
+			Percent:           10,
+			Calculation:       "weaker_leg",
+			VolumeAfterPayout: "carry_forward",
+		},
+	}
+	plan.Ranks[0].QualifiedStructures = []string{"Binary"}
+	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Binary"}}
+	plan.Ranks[1].QualifiedStructures = []string{"Binary"}
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{Structure: "Binary", PersonalVolume: 100, GroupVolume: 3000},
+	}
+
+	errs := validateBusinessRules(plan)
+	for _, e := range errs {
+		assert.NotContains(t, e.Path, "pass_up",
+			"pass_up validation should not fire on binary structures, got: %s", e.Message)
+	}
+}
+
 func TestValidation_MatchedCommissionTypesIncludesValidTypes(t *testing.T) {
 	plan := minimalPlan()
 	plan.Bonuses.Matching = &MatchingBonusConfig{

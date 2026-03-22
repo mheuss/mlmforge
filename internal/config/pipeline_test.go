@@ -142,6 +142,21 @@ func TestPipelineCommissionContentRoundTrip(t *testing.T) {
 			},
 		},
 		{
+			fixture: "valid/full-unilevel.yaml",
+			verify: func(t *testing.T, doc map[string]any) {
+				cfg := structureConfig(t, doc, 0)
+				lc := cfg["level_commission"].(map[string]any)
+				assert.Equal(t, float64(7), lc["commissionable_depth"])
+
+				// Verify pass_up survives the round trip. pass_up is a sibling
+				// of level_commission in the translated config, not nested inside it.
+				pu, ok := cfg["pass_up"].(map[string]any)
+				require.True(t, ok, "full-unilevel should have pass_up in config")
+				assert.Equal(t, float64(2), pu["count"])
+				assert.Equal(t, false, pu["includes_commissions"])
+			},
+		},
+		{
 			fixture: "valid/binary-plan.yaml",
 			verify: func(t *testing.T, doc map[string]any) {
 				cfg := structureConfig(t, doc, 0)
@@ -258,6 +273,45 @@ func structureConfig(t *testing.T, doc map[string]any, index int) map[string]any
 	cfg, ok := s["config"].(map[string]any)
 	require.True(t, ok, "structure %d should have a config object", index)
 	return cfg
+}
+
+func TestPipelinePassUpCountZeroRejected(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+
+	yamlBytes := readFixture(t, "invalid/pass-up-count-zero.yaml")
+	jsonBytes, errs, err := p.LoadAndValidate(yamlBytes)
+
+	require.NoError(t, err, "no infrastructure error expected")
+	require.NotEmpty(t, errs, "pass_up count=0 should produce validation errors")
+	assert.Nil(t, jsonBytes, "invalid fixture should not produce JSON output")
+
+	// Schema catches this before business rules run.
+	for _, e := range errs {
+		assert.Equal(t, SeverityError, e.Severity)
+	}
+}
+
+func TestPipelinePassUpOnBinarySilentlyDropped(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+
+	yamlBytes := readFixture(t, "invalid/pass-up-on-binary.yaml")
+	jsonBytes, errs, err := p.LoadAndValidate(yamlBytes)
+
+	require.NoError(t, err, "no infrastructure error expected")
+	assert.False(t, hasErrors(errs), "pass_up on binary should not cause hard errors, got: %v", errs)
+	require.NotNil(t, jsonBytes, "fixture should produce JSON output")
+
+	// Verify the output does not contain pass_up. BinaryCommission has no
+	// PassUp field, so the deserialized struct drops it.
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(jsonBytes, &doc))
+	cfg := structureConfig(t, doc, 0)
+	bc, ok := cfg["binary_commission"].(map[string]any)
+	require.True(t, ok, "binary structure should have binary_commission config")
+	_, hasPassUp := bc["pass_up"]
+	assert.False(t, hasPassUp, "pass_up should not appear in binary commission output")
 }
 
 func TestNewPipelineInvalidSchemaPath(t *testing.T) {

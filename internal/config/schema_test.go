@@ -166,6 +166,30 @@ func TestSchemaRejectsPercentageOutOfRange(t *testing.T) {
 	}
 }
 
+func TestSchemaRejectsPassUpCountZero(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+
+	errs := p.validateSchema(readFixture(t, "invalid/pass-up-count-zero.yaml"))
+	require.NotEmpty(t, errs, "pass_up count=0 should produce schema errors")
+
+	for _, e := range errs {
+		assert.Equal(t, SeverityError, e.Severity)
+	}
+}
+
+func TestSchemaAcceptsPassUpOnBinary(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+
+	// The JSON schema does not use additionalProperties: false on commission
+	// types, so pass_up on a binary commission is silently accepted. The field
+	// is dropped during Go deserialization because BinaryCommission has no
+	// PassUp field. This test documents that behavior.
+	errs := p.validateSchema(readFixture(t, "invalid/pass-up-on-binary.yaml"))
+	assert.Empty(t, errs, "pass_up on binary should not produce schema errors (extra properties are allowed)")
+}
+
 func TestStringifyKey(t *testing.T) {
 	tests := []struct {
 		input    any

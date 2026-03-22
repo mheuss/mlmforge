@@ -842,7 +842,7 @@ proptest! {
         let mut current_level_end = 1;
 
         for _level in 0..depth {
-            let mut next_level_start = next_id;
+            let next_level_start = next_id;
             for parent_pos in current_level_start..current_level_end {
                 let parent = uuid_from_index(parent_pos);
                 for _child in 0..width {

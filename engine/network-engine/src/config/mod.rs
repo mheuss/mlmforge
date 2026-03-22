@@ -158,8 +158,13 @@ pub struct UnilevelStructureConfig {
     /// payout chain.
     pub compression: Option<CompressionConfig>,
 
-    /// Optional Australian X-Up pass-up. First N sponsored recruits are
-    /// passed to the sponsor for commission purposes.
+    /// Optional Australian X-Up pass-up. First N sponsored recruits
+    /// are credited to the distributor's upline sponsor rather than the
+    /// distributor, for commission purposes.
+    ///
+    /// `serde(default)` because existing JSON payloads predate this field.
+    /// Other `Option` fields on this struct don't need it because they
+    /// were present from the initial schema.
     #[serde(default)]
     pub pass_up: Option<PassUpConfig>,
 }

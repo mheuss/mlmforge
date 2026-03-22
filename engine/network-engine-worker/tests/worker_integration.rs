@@ -1566,20 +1566,13 @@ const MP_BINARY_PLAN_JSON: &str = r#"{
 /// Builds the multi-position tree:
 ///
 /// ```text
-///           root (MP_ROOT)
-///          /              \
-///       pos1 (MP_POS1)   pos2 (MP_POS2)
-///       /    \            /    \
-///    left1  right1     left2  right2
-/// ```
-///
-/// pos3 is under pos2's right child:
-/// ```text
-///     pos2 (MP_POS2)
-///       /    \
-///    left2   pos3 (MP_POS3)
-///            /    \
-///         left3  right3
+///              root (MP_ROOT)
+///             /              \
+///       pos1 (MP_POS1)      pos2 (MP_POS2)
+///       /    \               /    \
+///    left1  right1        left2   pos3 (MP_POS3)
+///                                 /    \
+///                              left3  right3
 /// ```
 fn build_multi_position_tree(worker: &mut std::process::Child) {
     let tree = "MPBinary";

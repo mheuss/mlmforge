@@ -228,9 +228,23 @@ pub fn calculate_binary_pairing(
 
         let raw_amount = matched * pairing.percent * multiplier * ratio;
 
-        let (dollar_amount, capped) = match pairing.cap_per_period {
-            Some(cap) if raw_amount > cap => (cap, true),
-            _ => (raw_amount, false),
+        // In aggregate mode with an ownership map, skip per-position cap here.
+        // The aggregate post-processing (Phase 2b) enforces the cap across
+        // all of an owner's positions with pro-rata scaling, which preserves
+        // relative distribution. Applying per-position cap first would distort
+        // the proportions before pro-rata scaling.
+        let use_aggregate_cap = matches!(
+            pairing.multi_position_cap_mode,
+            MultiPositionCapMode::Aggregate
+        ) && ownership.is_some();
+
+        let (dollar_amount, capped) = if use_aggregate_cap {
+            (raw_amount, false)
+        } else {
+            match pairing.cap_per_period {
+                Some(cap) if raw_amount > cap => (cap, true),
+                _ => (raw_amount, false),
+            }
         };
 
         earnings.push(BinaryCommissionEarning {
@@ -247,9 +261,9 @@ pub fn calculate_binary_pairing(
     }
 
     // Phase 2b: Aggregate cap post-processing for multi-position mode.
-    // Per-position cap is already applied above. If the plan uses aggregate
-    // mode and an ownership map is present, scale each position's earning
-    // pro-rata when the owner's total exceeds cap.
+    // Per-position cap was skipped above when aggregate mode is active.
+    // Scale each position's earning pro-rata when the owner's total
+    // exceeds cap, preserving relative distribution across positions.
     if let Some(cap) = pairing.cap_per_period {
         if matches!(
             pairing.multi_position_cap_mode,
@@ -2105,6 +2119,113 @@ mod tests {
             );
             assert!(!e.capped);
         }
+    }
+
+    #[test]
+    fn multi_position_aggregate_cap_preserves_proportions_with_unequal_earnings() {
+        // Two positions owned by same person. Unequal raw earnings.
+        // pos_a: left=200, right=200 -> matched=200, raw=200*0.10=20
+        // pos_b: left=3000, right=3000 -> matched=3000, raw=3000*0.10=300
+        // Owner total raw = 320. Aggregate cap = 100.
+        // Pro-rata: pos_a = 100 * (20/320) = 6.25, pos_b = 100 * (300/320) = 93.75
+        // Without the fix, per-position cap would fire first (but both are under
+        // 100, so it wouldn't change anything in this case). Test with cap < total
+        // to exercise the pro-rata path.
+        let tree = multi_position_tree();
+
+        let structure = BinaryStructureConfig {
+            name: "Test Binary".to_string(),
+            binary_commission: BinaryCommissionConfig {
+                volume_to_dollar_multiplier: None,
+                mode: BinaryCommissionMode::Pairing(PairingConfig {
+                    cap_per_period: Some(100.0),
+                    multi_position_cap_mode: MultiPositionCapMode::Aggregate,
+                    ..test_pairing_config()
+                }),
+            },
+        };
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+
+        let owner_a = test_uuid(100);
+        let mut ownership = HashMap::new();
+        ownership.insert(test_uuid(2), owner_a);
+        ownership.insert(test_uuid(3), owner_a);
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(owner_a, eligible_snapshot());
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+        snapshots.insert(test_uuid(4), eligible_snapshot());
+        snapshots.insert(test_uuid(5), eligible_snapshot());
+        snapshots.insert(test_uuid(6), eligible_snapshot());
+        snapshots.insert(test_uuid(7), eligible_snapshot());
+
+        // pos_a (2): balanced 200 each side. pos_b (3): balanced 3000 each side.
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(4),
+                cv_amount: 200.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(5),
+                cv_amount: 200.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(6),
+                cv_amount: 3000.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(7),
+                cv_amount: 3000.0,
+            },
+        ];
+
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            Some(&ownership),
+        )
+        .unwrap();
+
+        let owner_earnings: Vec<_> = result
+            .earnings
+            .iter()
+            .filter(|e| e.earner_id == owner_a)
+            .collect();
+        assert_eq!(owner_earnings.len(), 2);
+
+        let total: f64 = owner_earnings.iter().map(|e| e.dollar_amount).sum();
+        assert!(
+            (total - 100.0).abs() < 1e-10,
+            "aggregate total should be 100.0, got {}",
+            total
+        );
+
+        // Pro-rata from raw: pos_a raw=20, pos_b raw=300. Total=320.
+        // pos_a share = 100 * 20/320 = 6.25
+        // pos_b share = 100 * 300/320 = 93.75
+        let pos_a = owner_earnings
+            .iter()
+            .find(|e| e.position_id == test_uuid(2))
+            .unwrap();
+        let pos_b = owner_earnings
+            .iter()
+            .find(|e| e.position_id == test_uuid(3))
+            .unwrap();
+
+        assert!(
+            (pos_a.dollar_amount - 6.25).abs() < 1e-10,
+            "pos_a should get 6.25, got {}",
+            pos_a.dollar_amount
+        );
+        assert!(
+            (pos_b.dollar_amount - 93.75).abs() < 1e-10,
+            "pos_b should get 93.75, got {}",
+            pos_b.dollar_amount
+        );
     }
 
     #[test]

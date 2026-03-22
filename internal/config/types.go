@@ -254,6 +254,12 @@ type CompressionConfig struct {
 	RankThreshold *string `yaml:"rank_threshold" json:"rank_threshold"`
 }
 
+// Multi-position cap mode constants for PairingConfig.
+const (
+	MultiPositionCapModePerPosition = "per_position"
+	MultiPositionCapModeAggregate   = "aggregate"
+)
+
 // PairingConfig holds binary pairing commission configuration.
 type PairingConfig struct {
 	Percent              float64  `yaml:"percent" json:"percent"`

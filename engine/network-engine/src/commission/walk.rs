@@ -275,7 +275,7 @@ pub(crate) fn build_pass_up_context<T: TreeNavigator>(
                 .then_with(|| a.user_id.cmp(&b.user_id))
         });
 
-        let count = (pass_up.count as usize).min(sponsored.len());
+        let count = usize::from(pass_up.count).min(sponsored.len());
         let passed_up_recruits = &sponsored[..count];
 
         let mut skip_set = HashSet::new();
@@ -412,7 +412,9 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
                 continue; // skip without consuming level
             }
 
-            // Pass-up check: skip without consuming level, same as compression.
+            // Pass-up check: if this non-compressed node's skip set contains
+            // the source, skip without consuming a level. Runs after
+            // compression, so compressed nodes never reach this check.
             if let Some(ctx) = config.pass_up {
                 if ctx
                     .skip_sets

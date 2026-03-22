@@ -67,7 +67,6 @@ bonuses:
   matrix_completion: null
   position: null
   board_cycling: null
-  pass_up: null
 payout:
   base_currency: USD
   minimum_amount: 50.0

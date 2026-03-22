@@ -92,7 +92,6 @@ bonuses:
     amount_type: fixed
     sponsored_only: true
   board_cycling: null
-  pass_up: null
 
 payout:
   base_currency: USD

@@ -784,8 +784,7 @@ const testPlanJSON = `{
         "pool": null,
         "matrix_completion": null,
         "position": null,
-        "board_cycling": null,
-        "pass_up": null
+        "board_cycling": null
     },
     "payout": {
         "base_currency": "USD",

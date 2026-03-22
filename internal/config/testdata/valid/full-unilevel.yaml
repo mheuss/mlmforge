@@ -145,6 +145,9 @@ structures:
         enabled: true
         mode: skip_inactive
         rank_threshold: null
+      pass_up:
+        count: 2
+        includes_commissions: false
 
 bonuses:
   matching:
@@ -247,10 +250,6 @@ bonuses:
   matrix_completion: null
   position: null
   board_cycling: null
-
-  pass_up:
-    count: 2
-    includes_commissions: false
 
 payout:
   base_currency: USD

@@ -22,6 +22,7 @@ func validateBusinessRules(plan *CompensationPlan) []ValidationError {
 	errs = append(errs, validateBonuses(plan, ranks)...)
 	errs = append(errs, validatePlacement(plan, structs)...)
 	errs = append(errs, validateEligibility(plan)...)
+	errs = append(errs, validatePassUp(plan)...)
 	errs = append(errs, validateCrossFieldRules(plan, ranks)...)
 	return errs
 }
@@ -459,6 +460,39 @@ func validateEligibility(plan *CompensationPlan) []ValidationError {
 				Severity: SeverityError,
 			})
 			break
+		}
+	}
+
+	return errs
+}
+
+// --- Pass-up rules ---
+
+// validatePassUp checks pass_up configuration on unilevel structures.
+func validatePassUp(plan *CompensationPlan) []ValidationError {
+	var errs []ValidationError
+
+	for i, s := range plan.Structures {
+		if s.Type != "unilevel" {
+			continue
+		}
+
+		commission, ok := s.resolvedCommission.(*UnilevelCommission)
+		if !ok || commission == nil {
+			continue
+		}
+
+		if commission.PassUp == nil {
+			continue
+		}
+
+		if commission.PassUp.Count < 1 {
+			errs = append(errs, ValidationError{
+				Path:     fmt.Sprintf("/structures/%d/commission/pass_up/count", i),
+				Code:     "value_out_of_range",
+				Message:  "pass_up count must be >= 1",
+				Severity: SeverityError,
+			})
 		}
 	}
 

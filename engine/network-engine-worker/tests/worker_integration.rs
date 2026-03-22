@@ -1466,7 +1466,7 @@ const MP_POS3: &str = "00000000-0000-0000-0000-000000000053";
 const MP_LEFT1: &str = "00000000-0000-0000-0000-000000000054";
 const MP_RIGHT1: &str = "00000000-0000-0000-0000-000000000055";
 const MP_LEFT2: &str = "00000000-0000-0000-0000-000000000056";
-
+// 0057 unused: pos3 occupies the right slot under pos2 instead of a leaf node.
 const MP_LEFT3: &str = "00000000-0000-0000-0000-000000000058";
 const MP_RIGHT3: &str = "00000000-0000-0000-0000-000000000059";
 /// Owner UUIDs (not in the tree).
@@ -1694,7 +1694,8 @@ fn calculate_binary_pairing_multi_position_ownership() {
     //    pos1 -> owner_A, pos2 -> owner_A, pos3 -> owner_B
     let snap = r#"{"rank":"associate","personal_volume":150.0,"status":"active","has_order_in_period":true}"#;
 
-    // Volume: 3000 CV under each child (balanced legs for pos1, pos2, pos3)
+    // Volume: 3000 CV from each leaf. pos1 balanced (3000/3000),
+    // pos2 unbalanced (left2=3000 vs pos3 subtree=6000), pos3 balanced (3000/3000).
     let params = format!(
         concat!(
             r#"{{"structure":"MPBinary","snapshots":{{"{owner_a}":{snap},"{owner_b}":{snap},"#,

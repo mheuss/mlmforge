@@ -264,6 +264,11 @@ pub fn calculate_binary_pairing(
     // Per-position cap was skipped above when aggregate mode is active.
     // Scale each position's earning pro-rata when the owner's total
     // exceeds cap, preserving relative distribution across positions.
+    //
+    // For single-position self-owned earners (not in the ownership map),
+    // resolve_owner returns identity, so their "aggregate" total is just
+    // their single earning. The pro-rata scale factor (cap / total)
+    // produces the same result as a hard cap. Mathematically equivalent.
     if let Some(cap) = pairing.cap_per_period {
         if matches!(
             pairing.multi_position_cap_mode,

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -729,8 +730,74 @@ func TestValidatePassUp_SkippedOnNonUnilevel(t *testing.T) {
 	errs := validateBusinessRules(plan)
 	for _, e := range errs {
 		assert.NotContains(t, e.Path, "pass_up",
-			"pass_up validation should not fire on binary structures, got: %s", e.Message)
+			"pass_up validation should not fire on binary structures without raw pass_up, got: %s", e.Message)
 	}
+}
+
+func TestValidatePassUp_RejectedOnNonUnilevelViaRaw(t *testing.T) {
+	plan := minimalPlan()
+	plan.Structures[0].Name = "Binary"
+	plan.Structures[0].Type = "binary"
+	plan.Structures[0].CommissionRaw = map[string]any{
+		"mode": "pairing",
+		"pass_up": map[string]any{
+			"count":                2,
+			"includes_commissions": false,
+		},
+	}
+	plan.Structures[0].resolvedCommission = &BinaryCommission{
+		Mode: "pairing",
+		Pairing: &PairingConfig{
+			Percent:           10,
+			Calculation:       "weaker_leg",
+			VolumeAfterPayout: "carry_forward",
+		},
+	}
+	plan.Ranks[0].QualifiedStructures = []string{"Binary"}
+	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Binary"}}
+	plan.Ranks[1].QualifiedStructures = []string{"Binary"}
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{Structure: "Binary", PersonalVolume: 100, GroupVolume: 3000},
+	}
+
+	errs := validateBusinessRules(plan)
+	var found bool
+	for _, e := range errs {
+		if e.Code == "unsupported_field" {
+			found = true
+			assert.Equal(t, SeverityError, e.Severity)
+			assert.Contains(t, e.Path, "pass_up")
+			assert.Contains(t, e.Message, "only supported on unilevel")
+			break
+		}
+	}
+	assert.True(t, found, "expected unsupported_field error for pass_up on binary, got: %v", errs)
+}
+
+func TestValidatePassUp_CountExceeds255(t *testing.T) {
+	plan := minimalPlan()
+	plan.Structures[0].resolvedCommission = &UnilevelCommission{
+		CommissionableDepth: 5,
+		RateTable: map[string]map[string]float64{
+			"Associate": {"1": 0.05},
+		},
+		PassUp: &PassUpConfig{
+			Count:               256,
+			IncludesCommissions: false,
+		},
+	}
+
+	errs := validateBusinessRules(plan)
+	var found bool
+	for _, e := range errs {
+		if e.Code == "value_out_of_range" && strings.Contains(e.Message, "<= 255") {
+			found = true
+			assert.Equal(t, SeverityError, e.Severity)
+			assert.Contains(t, e.Path, "pass_up/count")
+			break
+		}
+	}
+	assert.True(t, found, "expected value_out_of_range error for pass_up count=256, got: %v", errs)
 }
 
 func TestValidation_MatchedCommissionTypesIncludesValidTypes(t *testing.T) {

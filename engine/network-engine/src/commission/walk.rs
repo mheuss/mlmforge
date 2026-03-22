@@ -372,6 +372,19 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
                 break;
             }
 
+            // Pass-up check: structural skip based on tree relationships,
+            // independent of snapshot presence. Skip without consuming a
+            // level, same as compression.
+            if let Some(ctx) = config.pass_up {
+                if ctx
+                    .skip_sets
+                    .get(&node.user_id)
+                    .is_some_and(|set| set.contains(&source.source_id))
+                {
+                    continue;
+                }
+            }
+
             let snapshot = match snapshots.get(&node.user_id) {
                 Some(s) => s,
                 None => {
@@ -410,19 +423,6 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
 
             if should_compress {
                 continue; // skip without consuming level
-            }
-
-            // Pass-up check: if this non-compressed node's skip set contains
-            // the source, skip without consuming a level. Runs after
-            // compression, so compressed nodes never reach this check.
-            if let Some(ctx) = config.pass_up {
-                if ctx
-                    .skip_sets
-                    .get(&node.user_id)
-                    .is_some_and(|set| set.contains(&source.source_id))
-                {
-                    continue;
-                }
             }
 
             // Not compressed. Check if eligible.

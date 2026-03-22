@@ -155,6 +155,14 @@ impl UnilevelTree {
         self.arena.count_branch(idx, position)
     }
 
+    /// Returns all user IDs currently in the tree.
+    ///
+    /// Used by pass-up context building to ensure skip sets cover
+    /// all distributors in the tree, not just those with snapshots.
+    pub fn user_ids(&self) -> Vec<Uuid> {
+        self.arena.index.keys().copied().collect()
+    }
+
     /// Provides read access to the arena for commission calculators
     /// and other crate-internal consumers.
     #[allow(dead_code)] // Will be used by commission calculators.

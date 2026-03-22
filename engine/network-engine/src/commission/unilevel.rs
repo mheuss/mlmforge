@@ -39,10 +39,13 @@ pub fn calculate_unilevel(
     let compression = structure.compression.as_ref();
     let threshold_ordinal = walk::resolve_threshold_ordinal(compression, &rank_ordinals);
 
-    // Build pass-up context if configured.
-    let pass_up_context = structure.pass_up.as_ref().map(|pu| {
-        walk::build_pass_up_context(tree, pu, &snapshots.keys().copied().collect::<Vec<_>>())
-    });
+    // Build pass-up context if configured. Use tree.user_ids() instead of
+    // snapshot keys so skip sets cover all distributors in the tree, including
+    // intermediate sponsors that may be missing from snapshots.
+    let pass_up_context = structure
+        .pass_up
+        .as_ref()
+        .map(|pu| walk::build_pass_up_context(tree, pu, &tree.user_ids()));
 
     let config = walk::LevelWalkConfig {
         max_depth: structure.level_commission.max_depth,
@@ -1715,5 +1718,58 @@ mod tests {
             .find(|e| e.earner_id == test_uuid(1))
             .expect("root should earn");
         assert_eq!(root_earning.level, 2);
+    }
+
+    #[test]
+    fn pass_up_works_with_missing_snapshot_for_sponsor() {
+        // Tree: S(1) -> A(2) -> R1(3, t=200)
+        // A has NO snapshot. Pass-up should still build A's skip set from
+        // the tree structure (via user_ids()), so A is skipped for R1's
+        // volume. Without compression, missing snapshot forfeits the level.
+        // But pass-up fires before the snapshot lookup, so A is skipped
+        // entirely without consuming a level. S earns at level 1.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap(); // S
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 100)
+            .unwrap(); // A
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 200)
+            .unwrap(); // R1
+
+        let structure = structure_with_pass_up(
+            pass_up_rate_table(),
+            PassUpConfig {
+                count: 1,
+                includes_commissions: false,
+            },
+        );
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+        // Deliberately omit A (test_uuid(2)) from snapshots.
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3), // R1
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // A should not earn (no snapshot, and pass-up skips before lookup).
+        assert!(
+            result.iter().all(|e| e.earner_id != test_uuid(2)),
+            "A should not earn — skipped by pass-up before snapshot lookup"
+        );
+
+        // S earns at level 1 (A was skipped without consuming a level).
+        let s_earning = result
+            .iter()
+            .find(|e| e.earner_id == test_uuid(1))
+            .expect("S should earn");
+        assert_eq!(
+            s_earning.level, 1,
+            "S should earn at level 1 because pass-up skipped A without consuming a level"
+        );
     }
 }

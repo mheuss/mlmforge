@@ -292,7 +292,7 @@ func TestPipelinePassUpCountZeroRejected(t *testing.T) {
 	}
 }
 
-func TestPipelinePassUpOnBinarySilentlyDropped(t *testing.T) {
+func TestPipelinePassUpOnBinaryRejected(t *testing.T) {
 	p, err := NewPipeline(schemaPath(t))
 	require.NoError(t, err)
 
@@ -300,18 +300,18 @@ func TestPipelinePassUpOnBinarySilentlyDropped(t *testing.T) {
 	jsonBytes, errs, err := p.LoadAndValidate(yamlBytes)
 
 	require.NoError(t, err, "no infrastructure error expected")
-	assert.False(t, hasErrors(errs), "pass_up on binary should not cause hard errors, got: %v", errs)
-	require.NotNil(t, jsonBytes, "fixture should produce JSON output")
+	assert.True(t, hasErrors(errs), "pass_up on binary should produce a validation error")
+	assert.Nil(t, jsonBytes, "invalid fixture should not produce JSON output")
 
-	// Verify the output does not contain pass_up. BinaryCommission has no
-	// PassUp field, so the deserialized struct drops it.
-	var doc map[string]any
-	require.NoError(t, json.Unmarshal(jsonBytes, &doc))
-	cfg := structureConfig(t, doc, 0)
-	bc, ok := cfg["binary_commission"].(map[string]any)
-	require.True(t, ok, "binary structure should have binary_commission config")
-	_, hasPassUp := bc["pass_up"]
-	assert.False(t, hasPassUp, "pass_up should not appear in binary commission output")
+	var found bool
+	for _, e := range errs {
+		if e.Code == "unsupported_field" {
+			found = true
+			assert.Contains(t, e.Message, "only supported on unilevel")
+			break
+		}
+	}
+	assert.True(t, found, "expected unsupported_field error for pass_up on binary, got: %v", errs)
 }
 
 func TestNewPipelineInvalidSchemaPath(t *testing.T) {

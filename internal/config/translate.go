@@ -94,6 +94,7 @@ func translateUnilevelConfig(s *StructureConfig) (map[string]any, error) {
 		"name":             s.Name,
 		"level_commission": buildLevelCommission(c.BroadCommissionPercent, c.VolumeToDollarMultiplier, c.CommissionableDepth, c.RateTable),
 		"compression":      c.Compression,
+		"pass_up":          c.PassUp,
 	}, nil
 }
 

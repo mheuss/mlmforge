@@ -196,6 +196,7 @@ type UnilevelCommission struct {
 	CommissionableDepth      int                           `yaml:"commissionable_depth" json:"commissionable_depth"`
 	RateTable                map[string]map[string]float64 `yaml:"rate_table" json:"rate_table"`
 	Compression              *CompressionConfig            `yaml:"compression" json:"compression"`
+	PassUp                   *PassUpConfig                 `yaml:"pass_up" json:"pass_up"`
 }
 
 // BinaryCommission holds commission configuration for binary structures.
@@ -356,7 +357,6 @@ type BonusConfig struct {
 	MatrixCompletion      *MatrixCompletionBonusConfig      `yaml:"matrix_completion" json:"matrix_completion"`
 	Position              *PositionBonusConfig              `yaml:"position" json:"position"`
 	BoardCycling          *BoardCyclingConfig               `yaml:"board_cycling" json:"board_cycling"`
-	PassUp                *PassUpConfig                     `yaml:"pass_up" json:"pass_up"`
 }
 
 // MatchingBonusConfig pays a percentage of downline commissions.

@@ -568,6 +568,17 @@
             }
           ],
           "description": "Skip inactive distributors when calculating commission levels."
+        },
+        "pass_up": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/PassUpConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Australian X-Up pass-up configuration. First N recruits are credited to the upline."
         }
       }
     },
@@ -1437,17 +1448,6 @@
             }
           ],
           "description": "Board cycling configuration."
-        },
-        "pass_up": {
-          "oneOf": [
-            {
-              "$ref": "#/$defs/PassUpConfig"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Pass-up bonus configuration."
         }
       }
     },

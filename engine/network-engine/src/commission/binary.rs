@@ -15,11 +15,23 @@ use super::types::{
     LegVolumes, VolumeSource,
 };
 
+/// Resolve a position_id to its owner_id.
+///
+/// When ownership is None (single-position mode) or the position isn't
+/// in the map, the position is its own owner.
+fn resolve_owner(position_id: &Uuid, ownership: Option<&HashMap<Uuid, Uuid>>) -> Uuid {
+    ownership
+        .and_then(|map| map.get(position_id))
+        .copied()
+        .unwrap_or(*position_id)
+}
+
 /// Phase 1, Step 1: Aggregate volume sources into per-distributor totals.
 fn aggregate_volume(
     tree: &BinaryTree,
     snapshots: &HashMap<Uuid, DistributorSnapshot>,
     volume: &[VolumeSource],
+    ownership: Option<&HashMap<Uuid, Uuid>>,
 ) -> Result<HashMap<Uuid, f64>, CalculationError> {
     let mut totals: HashMap<Uuid, f64> = HashMap::new();
 
@@ -36,8 +48,9 @@ fn aggregate_volume(
             return Err(CalculationError::SourceNotInTree(source.source_id));
         }
 
-        // Validate source exists in snapshots.
-        if !snapshots.contains_key(&source.source_id) {
+        // Validate source exists in snapshots (keyed by owner_id).
+        let owner = resolve_owner(&source.source_id, ownership);
+        if !snapshots.contains_key(&owner) {
             return Err(CalculationError::SourceNotInSnapshot(source.source_id));
         }
 
@@ -138,6 +151,7 @@ pub fn calculate_binary_pairing(
     snapshots: &HashMap<Uuid, DistributorSnapshot>,
     volume: &[VolumeSource],
     carry_forward: &HashMap<Uuid, LegVolumes>,
+    ownership: Option<&HashMap<Uuid, Uuid>>,
 ) -> Result<BinaryCalculationResult, CalculationError> {
     let pairing = match &structure.binary_commission.mode {
         BinaryCommissionMode::Pairing(config) => {
@@ -174,7 +188,7 @@ pub fn calculate_binary_pairing(
         .unwrap_or(plan.volume.volume_to_dollar_multiplier);
 
     // Phase 1: Prep
-    let volume_totals = aggregate_volume(tree, snapshots, volume)?;
+    let volume_totals = aggregate_volume(tree, snapshots, volume, ownership)?;
     let eligibility_cache = evaluate_eligibility(snapshots, &plan.eligibility);
     let working_legs = accumulate_leg_volumes(tree, &volume_totals, carry_forward);
 
@@ -182,7 +196,8 @@ pub fn calculate_binary_pairing(
     let mut earnings = Vec::new();
 
     for (uid, legs) in &working_legs {
-        let eligible = eligibility_cache.get(uid).copied().unwrap_or(false);
+        let owner = resolve_owner(uid, ownership);
+        let eligible = eligibility_cache.get(&owner).copied().unwrap_or(false);
         if !eligible {
             continue;
         }
@@ -217,7 +232,7 @@ pub fn calculate_binary_pairing(
         };
 
         earnings.push(BinaryCommissionEarning {
-            earner_id: *uid,
+            earner_id: owner,
             position_id: *uid,
             left_volume: legs.left,
             right_volume: legs.right,
@@ -234,7 +249,8 @@ pub fn calculate_binary_pairing(
 
     for (uid, legs) in &working_legs {
         let matched = legs.left.min(legs.right);
-        let eligible = eligibility_cache.get(uid).copied().unwrap_or(false);
+        let owner = resolve_owner(uid, ownership);
+        let eligible = eligibility_cache.get(&owner).copied().unwrap_or(false);
 
         // Non-eligible distributors: nothing was matched/paid, so
         // matched is effectively 0 for carry-forward purposes.
@@ -272,10 +288,14 @@ pub fn calculate_binary_pairing(
         );
     }
 
-    // Sort earnings by earner_id for deterministic output.
+    // Sort earnings by earner_id then position_id for deterministic output.
     // HashMap iteration order is unstable, so without sorting the
     // earnings order varies across runs.
-    earnings.sort_by(|a, b| a.earner_id.cmp(&b.earner_id));
+    earnings.sort_by(|a, b| {
+        a.earner_id
+            .cmp(&b.earner_id)
+            .then_with(|| a.position_id.cmp(&b.position_id))
+    });
 
     Ok(BinaryCalculationResult {
         earnings,
@@ -376,6 +396,7 @@ mod tests {
             &snapshots,
             &volume,
             &HashMap::new(),
+            None,
         )
         .unwrap();
 
@@ -428,6 +449,7 @@ mod tests {
             &snapshots,
             &volume,
             &HashMap::new(),
+            None,
         )
         .unwrap();
 
@@ -484,6 +506,7 @@ mod tests {
             &snapshots,
             &volume,
             &HashMap::new(),
+            None,
         )
         .unwrap();
 
@@ -529,6 +552,7 @@ mod tests {
             &snapshots,
             &volume,
             &HashMap::new(),
+            None,
         )
         .unwrap();
 
@@ -570,6 +594,7 @@ mod tests {
             &snapshots,
             &volume,
             &HashMap::new(),
+            None,
         )
         .unwrap();
 
@@ -626,6 +651,7 @@ mod tests {
             &snapshots,
             &volume,
             &HashMap::new(),
+            None,
         )
         .unwrap();
 
@@ -666,6 +692,7 @@ mod tests {
             &snapshots,
             &volume,
             &HashMap::new(),
+            None,
         )
         .unwrap();
 
@@ -720,6 +747,7 @@ mod tests {
             &snapshots,
             &volume,
             &HashMap::new(),
+            None,
         )
         .unwrap();
 
@@ -757,6 +785,7 @@ mod tests {
             &snapshots,
             &volume,
             &HashMap::new(),
+            None,
         )
         .unwrap();
 
@@ -795,6 +824,7 @@ mod tests {
             &snapshots,
             &volume,
             &HashMap::new(),
+            None,
         )
         .unwrap();
 
@@ -849,6 +879,7 @@ mod tests {
             &snapshots,
             &volume,
             &HashMap::new(),
+            None,
         )
         .unwrap();
 
@@ -887,6 +918,7 @@ mod tests {
             &snapshots,
             &volume,
             &HashMap::new(),
+            None,
         )
         .unwrap();
 
@@ -942,6 +974,7 @@ mod tests {
             &snapshots,
             &volume,
             &HashMap::new(),
+            None,
         )
         .unwrap();
 
@@ -981,6 +1014,7 @@ mod tests {
             &snapshots,
             &volume,
             &HashMap::new(),
+            None,
         )
         .unwrap();
 
@@ -1030,6 +1064,7 @@ mod tests {
             &snapshots,
             &volume,
             &HashMap::new(),
+            None,
         )
         .unwrap();
 
@@ -1074,9 +1109,10 @@ mod tests {
             },
         );
 
-        let result =
-            calculate_binary_pairing(&tree, &plan, &structure, &snapshots, &volume, &prior_cf)
-                .unwrap();
+        let result = calculate_binary_pairing(
+            &tree, &plan, &structure, &snapshots, &volume, &prior_cf, None,
+        )
+        .unwrap();
 
         // Root legs: left = 200 + 300 = 500, right = 100 + 400 = 500.
         assert_eq!(result.earnings.len(), 1);
@@ -1113,6 +1149,7 @@ mod tests {
             &snapshots,
             &volume,
             &HashMap::new(),
+            None,
         );
 
         assert!(matches!(result, Err(CalculationError::SourceNotInTree(_))));
@@ -1141,6 +1178,7 @@ mod tests {
             &snapshots,
             &volume,
             &HashMap::new(),
+            None,
         );
 
         assert!(matches!(
@@ -1172,6 +1210,7 @@ mod tests {
             &snapshots,
             &volume,
             &HashMap::new(),
+            None,
         );
 
         assert!(matches!(
@@ -1203,6 +1242,7 @@ mod tests {
             &snapshots,
             &volume,
             &HashMap::new(),
+            None,
         );
 
         assert!(matches!(
@@ -1226,6 +1266,7 @@ mod tests {
             &HashMap::new(),
             &[],
             &HashMap::new(),
+            None,
         )
         .unwrap();
 
@@ -1257,6 +1298,7 @@ mod tests {
             &snapshots,
             &volume,
             &HashMap::new(),
+            None,
         )
         .unwrap();
 
@@ -1315,6 +1357,7 @@ mod tests {
             &snapshots,
             &volume,
             &HashMap::new(),
+            None,
         )
         .unwrap();
 
@@ -1348,6 +1391,7 @@ mod tests {
             &snapshots,
             &[], // No volume
             &HashMap::new(),
+            None,
         )
         .unwrap();
 
@@ -1387,9 +1431,10 @@ mod tests {
             },
         );
 
-        let result =
-            calculate_binary_pairing(&tree, &plan, &structure, &snapshots, &volume, &prior_cf)
-                .unwrap();
+        let result = calculate_binary_pairing(
+            &tree, &plan, &structure, &snapshots, &volume, &prior_cf, None,
+        )
+        .unwrap();
 
         // Should not crash. Result should be same as without carry-forward.
         assert_eq!(result.earnings.len(), 1);
@@ -1477,6 +1522,7 @@ mod tests {
             &snapshots,
             &volume,
             &HashMap::new(),
+            None,
         )
         .unwrap();
 
@@ -1530,6 +1576,7 @@ mod tests {
             &snapshots,
             &volume,
             &HashMap::new(),
+            None,
         )
         .unwrap();
 
@@ -1574,7 +1621,7 @@ mod tests {
                 ];
 
                 let result = calculate_binary_pairing(
-                    &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(),
+                    &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(), None,
                 ).unwrap();
 
                 let total_payout: f64 = result.earnings.iter().map(|e| e.dollar_amount).sum();
@@ -1608,7 +1655,7 @@ mod tests {
                 ];
 
                 let result = calculate_binary_pairing(
-                    &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(),
+                    &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(), None,
                 ).unwrap();
 
                 for legs in result.carry_forward.values() {
@@ -1636,7 +1683,7 @@ mod tests {
                 ];
 
                 let result = calculate_binary_pairing(
-                    &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(),
+                    &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(), None,
                 ).unwrap();
 
                 for legs in result.carry_forward.values() {
@@ -1664,7 +1711,7 @@ mod tests {
                 ];
 
                 let result = calculate_binary_pairing(
-                    &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(),
+                    &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(), None,
                 ).unwrap();
 
                 let mut seen = std::collections::HashSet::new();
@@ -1707,7 +1754,7 @@ mod tests {
                 ];
 
                 let result = calculate_binary_pairing(
-                    &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(),
+                    &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(), None,
                 ).unwrap();
 
                 for legs in result.carry_forward.values() {
@@ -1746,7 +1793,7 @@ mod tests {
                 ];
 
                 let result = calculate_binary_pairing(
-                    &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(),
+                    &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(), None,
                 ).unwrap();
 
                 for earning in &result.earnings {
@@ -1784,7 +1831,7 @@ mod tests {
                 ];
 
                 let result_p1 = calculate_binary_pairing(
-                    &tree, &plan, &structure, &snapshots, &volume_p1, &HashMap::new(),
+                    &tree, &plan, &structure, &snapshots, &volume_p1, &HashMap::new(), None,
                 ).unwrap();
 
                 // All carry-forward values from period 1 must be non-negative.
@@ -1800,7 +1847,7 @@ mod tests {
                 ];
 
                 let result_p2 = calculate_binary_pairing(
-                    &tree, &plan, &structure, &snapshots, &volume_p2, &result_p1.carry_forward,
+                    &tree, &plan, &structure, &snapshots, &volume_p2, &result_p1.carry_forward, None,
                 ).unwrap();
 
                 // All carry-forward values from period 2 must be non-negative.

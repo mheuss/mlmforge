@@ -84,7 +84,7 @@ func translateStructureConfig(s *StructureConfig) (map[string]any, error) {
 }
 
 // translateUnilevelConfig builds the config for a unilevel structure.
-// Rust expects: name, level_commission, compression.
+// Rust expects: name, level_commission, compression, pass_up.
 func translateUnilevelConfig(s *StructureConfig) (map[string]any, error) {
 	c, ok := s.resolvedCommission.(*UnilevelCommission)
 	if !ok {

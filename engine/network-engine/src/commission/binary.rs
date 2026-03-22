@@ -1612,6 +1612,295 @@ mod tests {
         assert!(result.carry_forward.is_empty());
     }
 
+    // --- Multi-position ownership resolution tests ---
+
+    #[test]
+    fn multi_position_earner_id_is_owner() {
+        // Two positions (2, 3) owned by same person (owner_A).
+        // Both earnings should have earner_id = owner_A, distinct position_ids.
+        let tree = three_node_tree();
+        let plan = test_plan(default_eligibility());
+        let structure = test_binary_structure();
+
+        let owner_a = test_uuid(100);
+        let mut ownership = HashMap::new();
+        ownership.insert(test_uuid(1), owner_a);
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(owner_a, eligible_snapshot());
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(2),
+                cv_amount: 500.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(3),
+                cv_amount: 500.0,
+            },
+        ];
+
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            Some(&ownership),
+        )
+        .unwrap();
+
+        assert_eq!(result.earnings.len(), 1);
+        let earning = &result.earnings[0];
+        assert_eq!(earning.earner_id, owner_a);
+        assert_eq!(earning.position_id, test_uuid(1));
+    }
+
+    #[test]
+    fn multi_position_eligibility_uses_owner_snapshot() {
+        // pos1 (test_uuid(1)) owned by owner_A. Snapshot exists for
+        // owner_A (eligible), NOT for pos1. Pos1 should earn because
+        // eligibility resolves through owner_A.
+        let tree = three_node_tree();
+        let plan = test_plan(default_eligibility());
+        let structure = test_binary_structure();
+
+        let owner_a = test_uuid(100);
+        let mut ownership = HashMap::new();
+        ownership.insert(test_uuid(1), owner_a);
+
+        // No snapshot for test_uuid(1), only for owner_a.
+        let mut snapshots = HashMap::new();
+        snapshots.insert(owner_a, eligible_snapshot());
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(2),
+                cv_amount: 500.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(3),
+                cv_amount: 500.0,
+            },
+        ];
+
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            Some(&ownership),
+        )
+        .unwrap();
+
+        // Owner_a earns through position 1.
+        assert_eq!(result.earnings.len(), 1);
+        assert_eq!(result.earnings[0].earner_id, owner_a);
+        assert_eq!(result.earnings[0].dollar_amount, 50.0);
+    }
+
+    #[test]
+    fn multi_position_no_ownership_map_is_identity() {
+        // Standard test, no ownership map. earner_id == position_id.
+        let tree = three_node_tree();
+        let plan = test_plan(default_eligibility());
+        let structure = test_binary_structure();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(2),
+                cv_amount: 500.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(3),
+                cv_amount: 500.0,
+            },
+        ];
+
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(result.earnings.len(), 1);
+        assert_eq!(result.earnings[0].earner_id, test_uuid(1));
+        assert_eq!(result.earnings[0].position_id, test_uuid(1));
+    }
+
+    #[test]
+    fn multi_position_position_missing_from_map_falls_back() {
+        // Ownership map exists but doesn't include test_uuid(1).
+        // test_uuid(1) should fall back to self-ownership.
+        let tree = three_node_tree();
+        let plan = test_plan(default_eligibility());
+        let structure = test_binary_structure();
+
+        // Map only has an entry for test_uuid(99) — unrelated.
+        let mut ownership = HashMap::new();
+        ownership.insert(test_uuid(99), test_uuid(200));
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(2),
+                cv_amount: 500.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(3),
+                cv_amount: 500.0,
+            },
+        ];
+
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            Some(&ownership),
+        )
+        .unwrap();
+
+        // Falls back to self-ownership: earner_id == position_id.
+        assert_eq!(result.earnings.len(), 1);
+        assert_eq!(result.earnings[0].earner_id, test_uuid(1));
+        assert_eq!(result.earnings[0].position_id, test_uuid(1));
+    }
+
+    #[test]
+    fn multi_position_carry_forward_keyed_by_position() {
+        // Two positions (2, 3) owned by same person. Run with
+        // CarryForward mode and unbalanced legs. Verify carry-forward
+        // is keyed by position_id, not owner_id.
+        let mut tree = BinaryTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0, test_uuid(1), 2000)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 1, test_uuid(1), 3000)
+            .unwrap();
+        // Children under pos 2
+        tree.add_node(test_uuid(4), test_uuid(2), 0, test_uuid(2), 4000)
+            .unwrap();
+        tree.add_node(test_uuid(5), test_uuid(2), 1, test_uuid(2), 5000)
+            .unwrap();
+        // Children under pos 3
+        tree.add_node(test_uuid(6), test_uuid(3), 0, test_uuid(3), 6000)
+            .unwrap();
+        tree.add_node(test_uuid(7), test_uuid(3), 1, test_uuid(3), 7000)
+            .unwrap();
+
+        let structure = BinaryStructureConfig {
+            name: "Test Binary".to_string(),
+            binary_commission: BinaryCommissionConfig {
+                volume_to_dollar_multiplier: None,
+                mode: BinaryCommissionMode::Pairing(PairingConfig {
+                    volume_after_payout: VolumeAfterPayout::CarryForward,
+                    ..test_pairing_config()
+                }),
+            },
+        };
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+
+        let owner_a = test_uuid(100);
+        let mut ownership = HashMap::new();
+        ownership.insert(test_uuid(2), owner_a);
+        ownership.insert(test_uuid(3), owner_a);
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(owner_a, eligible_snapshot());
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+        snapshots.insert(test_uuid(4), eligible_snapshot());
+        snapshots.insert(test_uuid(5), eligible_snapshot());
+        snapshots.insert(test_uuid(6), eligible_snapshot());
+        snapshots.insert(test_uuid(7), eligible_snapshot());
+
+        // Unbalanced: pos2 left=1000, right=500; pos3 left=200, right=800
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(4),
+                cv_amount: 1000.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(5),
+                cv_amount: 500.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(6),
+                cv_amount: 200.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(7),
+                cv_amount: 800.0,
+            },
+        ];
+
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            Some(&ownership),
+        )
+        .unwrap();
+
+        // Carry-forward should be keyed by position_id (2, 3), not owner_id.
+        assert!(result.carry_forward.contains_key(&test_uuid(2)));
+        assert!(result.carry_forward.contains_key(&test_uuid(3)));
+
+        // pos2: left=1000, right=500, matched=500. CarryForward: left keeps
+        // excess (1000-500=500), right zeroed.
+        let cf2 = &result.carry_forward[&test_uuid(2)];
+        assert!(
+            (cf2.left - 500.0).abs() < 1e-10,
+            "pos2 left carry: expected 500.0, got {}",
+            cf2.left
+        );
+        assert!(
+            cf2.right.abs() < 1e-10,
+            "pos2 right carry: expected 0.0, got {}",
+            cf2.right
+        );
+
+        // pos3: left=200, right=800, matched=200. CarryForward: right keeps
+        // excess (800-200=600), left zeroed.
+        let cf3 = &result.carry_forward[&test_uuid(3)];
+        assert!(
+            cf3.left.abs() < 1e-10,
+            "pos3 left carry: expected 0.0, got {}",
+            cf3.left
+        );
+        assert!(
+            (cf3.right - 600.0).abs() < 1e-10,
+            "pos3 right carry: expected 600.0, got {}",
+            cf3.right
+        );
+    }
+
     // --- Multi-position aggregate cap tests ---
 
     /// Build a binary tree with 2 positions under root, each having

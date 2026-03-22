@@ -1,15 +1,16 @@
 mod common;
 use common::{
     build_two_rank_unilevel_plan, build_unilevel_plan, build_unilevel_plan_with_eligibility,
-    permissive_eligibility, uuid_from_index,
+    build_unilevel_plan_with_pass_up, permissive_eligibility, uuid_from_index,
 };
 
 use network_engine::commission::{DistributorSnapshot, VolumeSource, calculate_unilevel};
+use network_engine::config::PassUpConfig;
 use network_engine::config::commission::{CompressionConfig, CompressionMode};
 use network_engine::config::eligibility::{ActiveLegTier, CommissionEligibility};
 use network_engine::tree::unilevel::UnilevelTree;
 use proptest::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Like build_unilevel_plan but with min_personal_volume set to create
 /// eligible/ineligible distributors based on PV.
@@ -579,6 +580,234 @@ proptest! {
         prop_assert_eq!(result.len(), 1);
         prop_assert_eq!(result[0].earner_id, uuid_from_index(0));
         prop_assert_eq!(result[0].level, 1);
+    }
+
+    // --- Pass-up property tests ---
+
+    /// No distributor earns from a volume source that falls in their
+    /// skip set. Pass-up means the first N sponsored recruits' volume
+    /// is redirected to the sponsor. This test independently computes
+    /// skip sets and verifies no earning violates the rule.
+    #[test]
+    fn pass_up_never_earns_from_skip_set(
+        tree_size in 5..30usize,
+        max_depth in 3..10u8,
+        pass_up_count in 1..3u8,
+    ) {
+        let pass_up_cfg = PassUpConfig {
+            count: pass_up_count,
+            includes_commissions: false,
+        };
+        let (plan, structure) = build_unilevel_plan_with_pass_up(max_depth, pass_up_cfg);
+
+        // Build a chain: 0 -> 1 -> 2 -> ... -> tree_size-1
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uuid_from_index(0), 0).unwrap();
+        for i in 1..tree_size {
+            tree.add_node(
+                uuid_from_index(i),
+                uuid_from_index(i - 1),
+                uuid_from_index(i - 1),
+                i as i64,
+            )
+            .unwrap();
+        }
+
+        let mut snapshots = HashMap::new();
+        for i in 0..tree_size {
+            snapshots.insert(
+                uuid_from_index(i),
+                DistributorSnapshot {
+                    rank: "member".to_string(),
+                    personal_volume: 100.0,
+                    status: "active".to_string(),
+                    has_order_in_period: true,
+                },
+            );
+        }
+
+        // Volume from the deepest node.
+        let source_idx = tree_size - 1;
+        let volume = vec![VolumeSource {
+            source_id: uuid_from_index(source_idx),
+            cv_amount: 100.0,
+        }];
+
+        let result =
+            calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // Independently compute skip sets. In a chain, each node sponsors
+        // exactly one child (the next node). With count >= 1, every node's
+        // single child is in its skip set.
+        let mut skip_sets: HashMap<usize, HashSet<usize>> = HashMap::new();
+        for i in 0..tree_size {
+            // Each node i sponsors node i+1 (if it exists). In a chain,
+            // each node has at most 1 sponsored recruit.
+            let mut sponsored_indices: Vec<usize> = Vec::new();
+            if i + 1 < tree_size {
+                sponsored_indices.push(i + 1);
+            }
+            // Sort by enrolled_at (already in order for a chain).
+            let count = (pass_up_count as usize).min(sponsored_indices.len());
+            let skip: HashSet<usize> = sponsored_indices[..count].iter().copied().collect();
+            if !skip.is_empty() {
+                skip_sets.insert(i, skip);
+            }
+        }
+
+        for earning in &result {
+            // Find the earner's index.
+            let earner_idx = (0..tree_size)
+                .find(|&i| uuid_from_index(i) == earning.earner_id)
+                .unwrap();
+            let source_node_idx = (0..tree_size)
+                .find(|&i| uuid_from_index(i) == earning.source_id)
+                .unwrap();
+
+            if let Some(skip) = skip_sets.get(&earner_idx) {
+                prop_assert!(
+                    !skip.contains(&source_node_idx),
+                    "Earner {} (index {}) earned from source {} (index {}) which is in their skip set",
+                    earning.earner_id, earner_idx, earning.source_id, source_node_idx
+                );
+            }
+        }
+    }
+
+    /// Earnings from a single volume source should have contiguous
+    /// levels (1, 2, 3, ...) with no gaps. Pass-up skips without
+    /// consuming a level, so the sequence must still be gapless.
+    #[test]
+    fn pass_up_levels_are_contiguous(
+        tree_size in 5..30usize,
+        max_depth in 3..10u8,
+        pass_up_count in 1..3u8,
+    ) {
+        let pass_up_cfg = PassUpConfig {
+            count: pass_up_count,
+            includes_commissions: false,
+        };
+        let (plan, structure) = build_unilevel_plan_with_pass_up(max_depth, pass_up_cfg);
+
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uuid_from_index(0), 0).unwrap();
+        for i in 1..tree_size {
+            tree.add_node(
+                uuid_from_index(i),
+                uuid_from_index(i - 1),
+                uuid_from_index(i - 1),
+                i as i64,
+            )
+            .unwrap();
+        }
+
+        let mut snapshots = HashMap::new();
+        for i in 0..tree_size {
+            snapshots.insert(
+                uuid_from_index(i),
+                DistributorSnapshot {
+                    rank: "member".to_string(),
+                    personal_volume: 100.0,
+                    status: "active".to_string(),
+                    has_order_in_period: true,
+                },
+            );
+        }
+
+        let source_idx = tree_size - 1;
+        let volume = vec![VolumeSource {
+            source_id: uuid_from_index(source_idx),
+            cv_amount: 100.0,
+        }];
+
+        let result =
+            calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // Group by source_id, sort by level, verify contiguous.
+        let mut by_source: HashMap<uuid::Uuid, Vec<u8>> = HashMap::new();
+        for earning in &result {
+            by_source
+                .entry(earning.source_id)
+                .or_default()
+                .push(earning.level);
+        }
+
+        for (source_id, mut levels) in by_source {
+            levels.sort();
+            for (i, &level) in levels.iter().enumerate() {
+                let expected = (i as u8) + 1;
+                prop_assert_eq!(
+                    level, expected,
+                    "Non-contiguous levels for source {}: expected {} at position {}, got {}",
+                    source_id, expected, i, level
+                );
+            }
+        }
+    }
+
+    /// Total payout with pass-up enabled must be less than or equal to
+    /// total payout without pass-up. Pass-up redistributes earnings
+    /// (skipping some nodes), it should never create more total money.
+    #[test]
+    fn pass_up_total_payout_less_or_equal(
+        tree_size in 5..30usize,
+        max_depth in 3..10u8,
+        pass_up_count in 1..3u8,
+    ) {
+        let pass_up_cfg = PassUpConfig {
+            count: pass_up_count,
+            includes_commissions: false,
+        };
+        let (plan_with, structure_with) =
+            build_unilevel_plan_with_pass_up(max_depth, pass_up_cfg);
+        let (plan_without, structure_without) = build_unilevel_plan(max_depth);
+
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uuid_from_index(0), 0).unwrap();
+        for i in 1..tree_size {
+            tree.add_node(
+                uuid_from_index(i),
+                uuid_from_index(i - 1),
+                uuid_from_index(i - 1),
+                i as i64,
+            )
+            .unwrap();
+        }
+
+        let mut snapshots = HashMap::new();
+        for i in 0..tree_size {
+            snapshots.insert(
+                uuid_from_index(i),
+                DistributorSnapshot {
+                    rank: "member".to_string(),
+                    personal_volume: 100.0,
+                    status: "active".to_string(),
+                    has_order_in_period: true,
+                },
+            );
+        }
+
+        let source_idx = tree_size - 1;
+        let volume = vec![VolumeSource {
+            source_id: uuid_from_index(source_idx),
+            cv_amount: 100.0,
+        }];
+
+        let result_with =
+            calculate_unilevel(&tree, &plan_with, &structure_with, &snapshots, &volume)
+                .unwrap();
+        let result_without =
+            calculate_unilevel(&tree, &plan_without, &structure_without, &snapshots, &volume)
+                .unwrap();
+
+        let total_with: f64 = result_with.iter().map(|e| e.dollar_amount).sum();
+        let total_without: f64 = result_without.iter().map(|e| e.dollar_amount).sum();
+
+        prop_assert!(
+            total_with <= total_without + 1e-10,
+            "Pass-up total ({}) exceeds no-pass-up total ({})",
+            total_with, total_without
+        );
     }
 }
 

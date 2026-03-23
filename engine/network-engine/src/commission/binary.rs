@@ -1596,7 +1596,10 @@ mod tests {
                         threshold: 300.0,
                         amount: 25.0,
                     }],
-                    flush_after_cycle: true,
+                    volume_after_cycle: VolumeAfterPayout::FullFlush,
+                    cap_per_period: None,
+                    carry_forward_cap: None,
+                    multi_position_cap_mode: MultiPositionCapMode::PerPosition,
                 }),
             },
         };

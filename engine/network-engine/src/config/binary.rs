@@ -157,7 +157,8 @@ pub enum VolumeAfterPayout {
 ///
 /// Instead of percentages, pays fixed dollar amounts when both legs
 /// reach volume thresholds. A "cycle" is one pass through all steps.
-/// Once the highest step is reached, the cycle may reset.
+/// Once the highest step is reached, volume handling depends on the
+/// `volume_after_cycle` mode.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CycleStepConfig {
     /// Volume thresholds and fixed payouts, ordered ascending.
@@ -167,11 +168,32 @@ pub struct CycleStepConfig {
     /// evaluated in order from lowest to highest threshold.
     pub steps: Vec<CycleStep>,
 
-    /// Whether to reset leg volumes after completing a full cycle.
+    /// What happens to leg volumes after completing a full cycle.
     ///
-    /// When true, both legs flush to zero after the highest step is
-    /// reached. When false, excess volume carries into the next cycle.
-    pub flush_after_cycle: bool,
+    /// `FullFlush`: both legs reset to zero. Excess above the highest
+    /// threshold is lost. `CarryForward`: subtract the highest threshold
+    /// from both legs; excess carries into the next cycle. `NetOff` is
+    /// not supported for CycleStep and is rejected at validation.
+    pub volume_after_cycle: VolumeAfterPayout,
+
+    /// Maximum commission per period. None means uncapped.
+    ///
+    /// Applied after all cycles are calculated. Limits total CycleStep
+    /// earnings for a single position in one period.
+    pub cap_per_period: Option<f64>,
+
+    /// Maximum volume that can carry forward between periods.
+    ///
+    /// Only applies when `volume_after_cycle` is `CarryForward`.
+    /// None means unlimited carry. Prevents excessive accumulation
+    /// on the stronger leg.
+    pub carry_forward_cap: Option<f64>,
+
+    /// How caps apply when one owner has multiple positions.
+    /// Defaults to PerPosition. Only meaningful when ownership map
+    /// is provided.
+    #[serde(default)]
+    pub multi_position_cap_mode: MultiPositionCapMode,
 }
 
 /// A single step in a cycle/step binary commission.
@@ -219,7 +241,9 @@ mod tests {
                 { "threshold": 600.0, "amount": 50.0 },
                 { "threshold": 1200.0, "amount": 100.0 }
             ],
-            "flush_after_cycle": true
+            "volume_after_cycle": "full_flush",
+            "cap_per_period": 5000.0,
+            "carry_forward_cap": 50000.0
         }"#;
         let config: CycleStepConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.steps.len(), 3);
@@ -229,7 +253,16 @@ mod tests {
         assert_eq!(config.steps[1].amount, 50.0);
         assert_eq!(config.steps[2].threshold, 1200.0);
         assert_eq!(config.steps[2].amount, 100.0);
-        assert!(config.flush_after_cycle);
+        assert!(matches!(
+            config.volume_after_cycle,
+            VolumeAfterPayout::FullFlush
+        ));
+        assert_eq!(config.cap_per_period, Some(5000.0));
+        assert_eq!(config.carry_forward_cap, Some(50000.0));
+        assert_eq!(
+            config.multi_position_cap_mode,
+            MultiPositionCapMode::PerPosition
+        );
     }
 
     #[test]
@@ -269,7 +302,7 @@ mod tests {
                 "steps": [
                     { "threshold": 500.0, "amount": 40.0 }
                 ],
-                "flush_after_cycle": false
+                "volume_after_cycle": "carry_forward"
             }
         }"#;
         let mode: BinaryCommissionMode = serde_json::from_str(json).unwrap();
@@ -278,7 +311,16 @@ mod tests {
                 assert_eq!(config.steps.len(), 1);
                 assert_eq!(config.steps[0].threshold, 500.0);
                 assert_eq!(config.steps[0].amount, 40.0);
-                assert!(!config.flush_after_cycle);
+                assert!(matches!(
+                    config.volume_after_cycle,
+                    VolumeAfterPayout::CarryForward
+                ));
+                assert!(config.cap_per_period.is_none());
+                assert!(config.carry_forward_cap.is_none());
+                assert_eq!(
+                    config.multi_position_cap_mode,
+                    MultiPositionCapMode::PerPosition
+                );
             }
             _ => panic!("expected CycleStep variant"),
         }

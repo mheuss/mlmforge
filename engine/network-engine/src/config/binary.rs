@@ -209,6 +209,47 @@ pub struct CycleStep {
     pub amount: f64,
 }
 
+impl CycleStepConfig {
+    /// Validate and normalize cycle step configuration.
+    ///
+    /// Checks that steps are non-empty, all thresholds and amounts are
+    /// positive, no duplicate thresholds exist, and NetOff is not used.
+    /// Sorts steps ascending by threshold so the calculator can assume
+    /// ordering.
+    pub fn validate(&mut self) -> Result<(), String> {
+        if self.steps.is_empty() {
+            return Err("cycle step config must have at least one step".into());
+        }
+
+        for step in &self.steps {
+            if step.threshold <= 0.0 {
+                return Err("step threshold must be positive".into());
+            }
+            if step.amount <= 0.0 {
+                return Err("step amount must be positive".into());
+            }
+        }
+
+        // Sort before duplicate check so adjacent comparison works.
+        self.steps
+            .sort_by(|a, b| a.threshold.partial_cmp(&b.threshold).unwrap());
+
+        for pair in self.steps.windows(2) {
+            if pair[0].threshold == pair[1].threshold {
+                return Err(format!("duplicate step threshold: {}", pair[0].threshold));
+            }
+        }
+
+        if matches!(self.volume_after_cycle, VolumeAfterPayout::NetOff) {
+            return Err(
+                "net_off is not supported for cycle step; use full_flush or carry_forward".into(),
+            );
+        }
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -377,5 +418,138 @@ mod tests {
             config.multi_position_cap_mode,
             MultiPositionCapMode::PerPosition
         );
+    }
+
+    // --- CycleStepConfig validation ---
+
+    fn make_cycle_step_config(
+        steps: Vec<CycleStep>,
+        volume_after_cycle: VolumeAfterPayout,
+    ) -> CycleStepConfig {
+        CycleStepConfig {
+            steps,
+            volume_after_cycle,
+            cap_per_period: None,
+            carry_forward_cap: None,
+            multi_position_cap_mode: MultiPositionCapMode::default(),
+        }
+    }
+
+    #[test]
+    fn validate_cycle_step_empty_steps_fails() {
+        let mut config = make_cycle_step_config(vec![], VolumeAfterPayout::FullFlush);
+        let result = config.validate();
+        assert_eq!(
+            result.unwrap_err(),
+            "cycle step config must have at least one step"
+        );
+    }
+
+    #[test]
+    fn validate_cycle_step_zero_threshold_fails() {
+        let mut config = make_cycle_step_config(
+            vec![CycleStep {
+                threshold: 0.0,
+                amount: 25.0,
+            }],
+            VolumeAfterPayout::FullFlush,
+        );
+        let result = config.validate();
+        assert_eq!(result.unwrap_err(), "step threshold must be positive");
+    }
+
+    #[test]
+    fn validate_cycle_step_negative_amount_fails() {
+        let mut config = make_cycle_step_config(
+            vec![CycleStep {
+                threshold: 300.0,
+                amount: -10.0,
+            }],
+            VolumeAfterPayout::FullFlush,
+        );
+        let result = config.validate();
+        assert_eq!(result.unwrap_err(), "step amount must be positive");
+    }
+
+    #[test]
+    fn validate_cycle_step_duplicate_threshold_fails() {
+        let mut config = make_cycle_step_config(
+            vec![
+                CycleStep {
+                    threshold: 300.0,
+                    amount: 25.0,
+                },
+                CycleStep {
+                    threshold: 300.0,
+                    amount: 50.0,
+                },
+            ],
+            VolumeAfterPayout::FullFlush,
+        );
+        let result = config.validate();
+        assert_eq!(result.unwrap_err(), "duplicate step threshold: 300");
+    }
+
+    #[test]
+    fn validate_cycle_step_net_off_fails() {
+        let mut config = make_cycle_step_config(
+            vec![CycleStep {
+                threshold: 300.0,
+                amount: 25.0,
+            }],
+            VolumeAfterPayout::NetOff,
+        );
+        let result = config.validate();
+        assert_eq!(
+            result.unwrap_err(),
+            "net_off is not supported for cycle step; use full_flush or carry_forward"
+        );
+    }
+
+    #[test]
+    fn validate_cycle_step_sorts_steps() {
+        let mut config = make_cycle_step_config(
+            vec![
+                CycleStep {
+                    threshold: 1200.0,
+                    amount: 100.0,
+                },
+                CycleStep {
+                    threshold: 300.0,
+                    amount: 25.0,
+                },
+                CycleStep {
+                    threshold: 600.0,
+                    amount: 50.0,
+                },
+            ],
+            VolumeAfterPayout::FullFlush,
+        );
+        config.validate().unwrap();
+        assert_eq!(config.steps[0].threshold, 300.0);
+        assert_eq!(config.steps[1].threshold, 600.0);
+        assert_eq!(config.steps[2].threshold, 1200.0);
+    }
+
+    #[test]
+    fn validate_cycle_step_valid_config_passes() {
+        let mut config = make_cycle_step_config(
+            vec![
+                CycleStep {
+                    threshold: 300.0,
+                    amount: 25.0,
+                },
+                CycleStep {
+                    threshold: 600.0,
+                    amount: 50.0,
+                },
+                CycleStep {
+                    threshold: 1200.0,
+                    amount: 100.0,
+                },
+            ],
+            VolumeAfterPayout::CarryForward,
+        );
+        assert!(config.validate().is_ok());
     }
 }

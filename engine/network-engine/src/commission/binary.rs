@@ -382,7 +382,7 @@ fn calculate_binary_cycle_step(
     // Defensive sort: steps should already be sorted by validation,
     // but sort again to guarantee ascending threshold order.
     let mut steps = config.steps.clone();
-    steps.sort_by(|a, b| a.threshold.partial_cmp(&b.threshold).unwrap());
+    steps.sort_by(|a, b| a.threshold.total_cmp(&b.threshold));
 
     // Phase 2: Calculate
     // Track post-cycle leg volumes for carry-forward computation.

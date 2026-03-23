@@ -113,7 +113,7 @@ Same options as unilevel. Compression controls what happens when an inactive or 
 
 ### Rate table
 
-Same structure as unilevel. A grid of percentages where each rank has a row and each level has a column. Higher ranks earn at more levels and sometimes at higher rates. The rate table is how you express the financial value of advancement.
+Same structure as unilevel. A grid of percentages where each rank has a row and each level has a column. Higher ranks earn at more levels and sometimes at higher rates. The broad commission percent and commission depth settings also apply. See the [unilevel guide](unilevel.md) for details on those.
 
 ### Pruning
 

@@ -96,7 +96,7 @@ Phase 1 handles the inside of each group. Phase 2 handles the connections betwee
 
 **Choices:** On or off.
 
-**What it means:** When on, the upline cannot use a breakaway group's volume to qualify for their own rank. This forces senior leaders to keep building new legs instead of coasting on one strong breakaway group. When off, breakaway group volume still counts toward the upline's qualification totals. This is easier on leaders but can create situations where someone maintains a high rank purely from one breakaway group's production.
+**What it means:** When on, the upline cannot use a breakaway group's volume to qualify for their own rank. This forces senior leaders to keep building new legs instead of coasting on one strong breakaway group. When off, breakaway group volume still counts toward the upline's qualification totals. This is easier on leaders but can create situations where someone maintains a high rank purely from one breakaway group's production. See [Fundamentals](fundamentals.md) for how group volume works.
 
 **Most common:** On. Most plans force continued building.
 
@@ -196,16 +196,17 @@ Beth is directly under Gina. Only one level in this walk.
 
 ### Phase 2 — Override commissions across the breakaway boundary
 
-Gina's total group volume is 500 CV (Carol's 300 plus Beth's 200). The system now walks up from Gina to find upline sponsors.
+Gina's total group volume is 500 CV (Carol's 300 plus Beth's 200). The system now walks up from Gina to find the first qualifying upline sponsor.
 
-Platinum Pat is generation 1 from Gina. Diamond Dan is generation 2 from Gina.
+Platinum Pat is generation 1 from Gina.
 
 | Generation | Distributor | Rank rate | Leader rate (Gold) | Override rate | Calculation | Earnings |
 |------------|-------------|-----------|-------------------|---------------|-------------|----------|
 | Gen 1 | Platinum Pat | 7% | 5% | 2% | 500 x 0.40 x 1.0 x 0.02 | $4.00 |
-| Gen 2 | Diamond Dan | 9% | 5% | 4% | 500 x 0.40 x 1.0 x 0.04 | $8.00 |
 
-Pat's override is 7% minus 5% = 2%. Dan's override is 9% minus 5% = 4%. If Pat were also a Gold (same rank as Gina), the differential would be zero. The 1% minimum override would kick in, and Pat would earn 1% instead of zero.
+Pat's override is 7% minus 5% = 2%. If Pat were also a Gold (same rank as Gina), the differential would be zero. The 1% minimum override would kick in, and Pat would earn 1% instead of zero.
+
+Diamond Dan could earn a generation 2 override on Gina's group if generation rates are configured. Generation 2+ overrides use a separate rate table rather than the differential formula. The rate table lets you set different override percentages for each generation depth. This keeps the math predictable as groups stack multiple levels deep.
 
 ### Summary
 
@@ -216,9 +217,8 @@ Pat's override is 7% minus 5% = 2%. Dan's override is 9% minus 5% = 4%. If Pat w
 | Gold Gina | $10.00 | -- | $10.00 |
 | Bronze Beth | -- | -- | -- |
 | Platinum Pat | -- | $4.00 | $4.00 |
-| Diamond Dan | -- | $8.00 | $8.00 |
 
-Gina earns the most in level commissions because she collects from both Carol's and Beth's volume. Pat and Dan earn nothing from level commissions on this group because of the breakaway boundary. Their income comes entirely from overrides.
+Gina earns the most in level commissions because she collects from both Carol's and Beth's volume. Pat earns nothing from level commissions on this group because of the breakaway boundary. Her income comes entirely from the override.
 
 ---
 

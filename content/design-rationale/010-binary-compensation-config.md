@@ -70,9 +70,12 @@ An alternative to percentage-based pairing. Volume thresholds trigger fixed-doll
 | Option | Type | What it controls |
 |--------|------|-----------------|
 | **Steps** | list of {threshold, amount} | Each step defines a volume threshold and a fixed dollar payout. When the weaker leg reaches the threshold, the step amount is paid. |
-| **Flush on cycle complete** | boolean | Whether volume resets after all steps in a cycle are completed. |
+| **Volume after cycle** | `full_flush` or `carry_forward` | What happens to leg volume after all steps in a cycle are completed. Full flush resets both legs. Carry forward keeps the stronger leg's excess. |
+| **Cap per period** | float | Maximum total cycle/step payout per distributor per period. 0 = no cap. |
+| **Carry forward cap** | float | Maximum volume that can carry in the strong leg between cycles. 0 = no cap. Only applies when volume after cycle is `carry_forward`. |
+| **Multi-position cap mode** | `per_position` or `aggregate` | How the cap applies when a distributor holds multiple positions. Per-position caps each position independently. Aggregate caps the combined total. |
 
-Example: Step 1 at 1,000 volume = $50. Step 2 at 2,500 = $100. Step 3 at 5,000 = $200. Step 4 at 10,000 = $500. After step 4, the cycle completes. If flush is enabled, both legs reset and the cycle restarts.
+Example: Step 1 at 1,000 volume = $50. Step 2 at 2,500 = $100. Step 3 at 5,000 = $200. Step 4 at 10,000 = $500. After step 4, the cycle completes. With `volume_after_cycle: full_flush`, both legs reset and the cycle restarts.
 
 The percentage-based pairing and cycle/step models are two modes of the same configuration. Only one is active at a time.
 

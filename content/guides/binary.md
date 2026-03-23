@@ -93,8 +93,8 @@ This is the most important choice in a binary plan. It determines what happens t
 | Choice | What happens | What it means |
 |--------|-------------|--------------|
 | Full flush | Both legs reset to zero | Start fresh every period. No momentum carries over. Rare in modern plans because it discourages long-term building. |
-| Net off | Subtract the matched amount from both legs | Both legs keep their excess. If left had 3,000 and right had 5,000, and 3,000 was matched, left becomes 0 and right becomes 2,000. A moderate approach. |
-| Carry forward | Weaker leg zeroes out, stronger leg keeps the unmatched excess | The stronger leg accumulates across periods. Creates momentum. The industry standard. |
+| Net off | Subtract the matched amount from both legs | For eligible distributors, the weaker leg becomes zero and the stronger keeps its excess. Same as carry forward in most cases. The difference: when a distributor is ineligible, net off preserves both legs as-is (nothing was matched). Carry forward always zeroes the weaker leg. |
+| Carry forward | Weaker leg zeroes out, stronger leg keeps the unmatched excess | The stronger leg accumulates across periods. Creates momentum. The industry standard. Even ineligible distributors lose their weaker leg volume. |
 
 With carry forward, a distributor who builds one strong leg can let volume pile up on that side. When the weaker leg finally gets volume, there is already a large balance waiting to match against. This is the "power leg" strategy and it is why most binary companies use carry forward.
 

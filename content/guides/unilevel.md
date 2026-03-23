@@ -122,6 +122,8 @@ There are three choices.
 
 **How it works:** Say the pass-up count is 2. When you sponsor your first two recruits, the commissions from those recruits go to your sponsor instead of you. Starting with recruit number 3, you earn directly. Your first two recruits build your sponsor's income. Your later recruits are fully yours.
 
+You can also configure whether just the recruits themselves pass up, or whether the commissions from their entire downline also go to your sponsor. The second option is more aggressive but creates a stronger incentive for sponsors to support new distributors.
+
 **The trade-off:** Early recruits do not earn you commissions. This can feel discouraging at first. But it creates a powerful dynamic. Your sponsor has a financial stake in helping you succeed because your first recruits pay them. And once you pass the threshold, every new recruit pays you directly with no sharing.
 
 This option originated in Australian MLM companies. It is less common than standard unilevel but popular in certain markets.

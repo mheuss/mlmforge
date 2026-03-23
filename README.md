@@ -45,6 +45,10 @@ Three layers of customization.
 - **WASM plugins.** Custom logic inside the Rust engine, sandboxed and in-process.
 - **Webhooks and NATS.** Synchronous extension points and async event integrations.
 
+## Compensation Structure Guides
+
+New to MLMForge? The [compensation structure guides](content/guides/INDEX.md) explain what each structure does, how commissions flow, and what options you have. Written for plan designers. No code, no config syntax. Just how things work.
+
 ## Design Decisions
 
 The reasoning behind the architecture is documented in [content/design-rationale/](content/design-rationale/INDEX.md). Why 8 contexts, how they communicate, the currency-free commission engine, and the trade-offs along the way. Start there to understand the *why* before the *how*.

@@ -44,9 +44,9 @@ See [Fundamentals](fundamentals.md) for eligibility.
 
 ### Phase 2 — Override commissions
 
-After all level commissions are calculated, the system runs a second pass. This time it walks up from each breakaway leader to find their upline sponsors.
+After all level commissions are calculated, the system runs a second pass. This time it walks up the upline chain from each breakaway leader.
 
-The upline sponsor earns an override on the breakaway leader's total group volume. This is how senior leaders get paid for developing other leaders. They gave up level commissions when the group broke away. Overrides replace that income.
+The upline leader earns an override on the breakaway leader's total group volume. This is how senior leaders get paid for developing other leaders. They gave up level commissions when the group broke away. Overrides replace that income.
 
 There are two modes for calculating overrides.
 

@@ -35,7 +35,7 @@ If the answer to both is yes, the distributor earns a commission. The formula is
 
 > CV x broad commission percent x volume-to-dollar multiplier x rank rate for that level
 
-The **broad commission percent** is the base pool. It is the percentage of volume the company allocates to level commissions. Typical values are 30-50%. If a product generates 100 CV and the broad commission percent is 40%, then 40 CV worth of value is available for the level commission pool.
+The **broad commission percent** is a uniform multiplier applied to every commission calculation. Most plans set it to 1.0, which means the rate table values are used as-is. Setting it lower scales all commissions down proportionally. It gives the company a single dial to adjust total payout without editing individual rate table cells.
 
 See [Fundamentals](fundamentals.md) for how eligibility works.
 
@@ -147,7 +147,7 @@ flowchart LR
 
 Top Leader is a Diamond. Sponsor is a Gold. Distributor A is a Silver. Distributor B is a Member. Distributor D is a Silver on a separate branch under Sponsor. Customer C buys from Distributor B.
 
-Customer C buys a product worth **200 CV**. The broad commission percent is **40%**. The volume-to-dollar multiplier is **1.0**. No compression is in play. Everyone is eligible.
+Customer C buys a product worth **200 CV**. The broad commission percent is **0.40** (used here to show how the multiplier scales commissions down from rate table values; the typical default is 1.0). The volume-to-dollar multiplier is **1.0**. No compression is in play. Everyone is eligible.
 
 The rate table:
 

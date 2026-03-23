@@ -64,6 +64,7 @@ type CalculateBinaryPairingRequest struct {
 	Snapshots     map[string]DistributorSnapshotDTO `json:"snapshots"`
 	Volume        []VolumeSourceDTO                 `json:"volume"`
 	CarryForward  map[string]LegVolumesDTO          `json:"carry_forward,omitempty"`
+	Ownership     map[string]string                 `json:"ownership,omitempty"`
 }
 
 // LegVolumesDTO is the wire format for binary carry-forward leg volumes.
@@ -77,6 +78,7 @@ type LegVolumesDTO struct {
 // Matches the Rust BinaryCommissionEarning struct.
 type BinaryCommissionEarningDTO struct {
 	EarnerID      string  `json:"earner_id"`
+	PositionID    string  `json:"position_id"`
 	LeftVolume    float64 `json:"left_volume"`
 	RightVolume   float64 `json:"right_volume"`
 	MatchedVolume float64 `json:"matched_volume"`

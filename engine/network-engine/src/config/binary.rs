@@ -78,6 +78,28 @@ pub struct PairingConfig {
     /// None means unlimited carry. Prevents excessive accumulation
     /// on the stronger leg.
     pub carry_forward_cap: Option<f64>,
+
+    /// How caps apply when one owner has multiple positions.
+    /// Defaults to PerPosition. Only meaningful when ownership map
+    /// is provided.
+    #[serde(default)]
+    pub multi_position_cap_mode: MultiPositionCapMode,
+}
+
+/// How per-distributor commission caps apply in multi-position mode.
+///
+/// Only meaningful when an ownership map is provided. In single-position
+/// mode (no ownership map), caps always apply per-node regardless of
+/// this setting.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MultiPositionCapMode {
+    /// Cap applies to each income center independently.
+    #[default]
+    PerPosition,
+    /// Cap applies to the owner's aggregate across all positions.
+    /// Pro-rata scaling preserves relative distribution.
+    Aggregate,
 }
 
 /// How pairing commission is calculated from leg volumes.
@@ -286,5 +308,32 @@ mod tests {
         let json_ratio = r#""volume_ratio""#;
         let calc: PairingCalculation = serde_json::from_str(json_ratio).unwrap();
         assert!(matches!(calc, PairingCalculation::VolumeRatio));
+    }
+
+    #[test]
+    fn deserialize_multi_position_cap_mode_variants() {
+        let json_pp = r#""per_position""#;
+        let mode: MultiPositionCapMode = serde_json::from_str(json_pp).unwrap();
+        assert_eq!(mode, MultiPositionCapMode::PerPosition);
+
+        let json_agg = r#""aggregate""#;
+        let mode: MultiPositionCapMode = serde_json::from_str(json_agg).unwrap();
+        assert_eq!(mode, MultiPositionCapMode::Aggregate);
+    }
+
+    #[test]
+    fn multi_position_cap_mode_default_is_per_position() {
+        let config: PairingConfig = serde_json::from_str(
+            r#"{
+                "percent": 0.10,
+                "calculation": "weaker_leg",
+                "volume_after_payout": "full_flush"
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.multi_position_cap_mode,
+            MultiPositionCapMode::PerPosition
+        );
     }
 }

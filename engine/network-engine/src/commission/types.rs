@@ -99,8 +99,13 @@ pub struct LegVolumes {
 /// zero matched volume or ineligible distributors.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BinaryCommissionEarning {
-    /// The distributor (tree position) who earned this commission.
+    /// The distributor who owns this position and receives the payout.
+    /// In single-position mode, same as position_id.
     pub earner_id: Uuid,
+
+    /// The tree position (income center) that generated this earning.
+    /// In single-position mode, same as earner_id.
+    pub position_id: Uuid,
 
     /// Total volume in the left leg (current period + carry-forward).
     pub left_volume: f64,

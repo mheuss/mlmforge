@@ -983,6 +983,12 @@
             }
           ],
           "description": "Maximum volume that can carry forward."
+        },
+        "multi_position_cap_mode": {
+          "type": "string",
+          "enum": ["per_position", "aggregate"],
+          "default": "per_position",
+          "description": "How caps apply when one owner has multiple positions. Per-position caps each income center independently. Aggregate caps the owner's total across all positions with pro-rata scaling."
         }
       }
     },

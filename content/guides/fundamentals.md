@@ -92,7 +92,7 @@ What gives depends on the **cap enforcement mode** you choose. There are three o
 
 **Priority reduction** protects higher-ranked distributors. Lower ranks take the cut first. If that is not enough, the next rank up takes a cut, and so on. Top earners are the last to be reduced. This rewards achievement but can feel unfair to newer distributors.
 
-**Hard stop** is first-come, first-served. The system processes commissions in order. Once the cap is reached, it stops paying. Whoever was processed first gets paid in full. Whoever was processed last might get nothing. This is the simplest to understand but the least predictable.
+**Hard stop** holds everything for admin review. When the cap is hit, no commissions are paid automatically. An administrator reviews the run, decides how to handle the overage, and releases payouts manually. This is the most conservative option. It guarantees nothing goes out until a human approves it.
 
 One more tool: **clawback**. When enabled, if a customer returns a product or a charge is reversed, the commissions that were paid on that order can be deducted from future payouts. The distributor does not write a check back. The system simply reduces their next commission. This protects the company from paying commissions on revenue it did not keep.
 
@@ -106,7 +106,7 @@ flowchart TD
     C -- Yes --> E{Which enforcement mode?}
     E --> F[Pro-rata: reduce everyone equally]
     E --> G[Priority: reduce lower ranks first]
-    E --> H[Hard stop: pay until the cap is reached]
+    E --> H[Hard stop: hold for admin review]
     F --> I[Final payouts issued]
     G --> I
     H --> I

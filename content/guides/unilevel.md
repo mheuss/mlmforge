@@ -77,13 +77,13 @@ These are the settings that shape how your unilevel plan behaves. Each one contr
 
 ### Broad commission percent
 
-**What it controls:** The base percentage of volume allocated to the level commission pool.
+**What it controls:** A base multiplier applied to all level commissions before the rank/level rate is applied.
 
-**Choices:** Any percentage, typically 30-50%.
+**Choices:** Any value from 0.0 to 1.0.
 
-**What it means:** This is the slice of every sale that goes to level commissions before individual rates are applied. A 40% broad commission percent means 40% of CV feeds the pool. Higher values make your plan more attractive to distributors but leave less margin for the company and other bonus programs.
+**What it means:** This scales the entire rate table uniformly. At 1.0, rates are used as-is. At 0.8, every rate in the table is effectively reduced by 20%. It is a single dial that adjusts all level commissions up or down without editing individual rate table cells. Useful for seasonal promotions or across-the-board adjustments.
 
-**Most common:** 40%.
+**Most common:** 1.0 (no effect).
 
 ### Rate table
 

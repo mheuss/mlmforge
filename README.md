@@ -47,7 +47,7 @@ Three layers of customization.
 
 ## Design Decisions
 
-The reasoning behind the architecture is documented in [design-rationale/](design-rationale/INDEX.md). Why 8 contexts, how they communicate, the currency-free commission engine, and the trade-offs along the way. Start there to understand the *why* before the *how*.
+The reasoning behind the architecture is documented in [content/design-rationale/](content/design-rationale/INDEX.md). Why 8 contexts, how they communicate, the currency-free commission engine, and the trade-offs along the way. Start there to understand the *why* before the *how*.
 
 ## Status
 

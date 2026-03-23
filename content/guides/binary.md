@@ -15,7 +15,7 @@ The structure rewards teamwork. When your sponsor recruits someone new and their
 The diagram below shows a simple binary tree. Alice is at the top. Her left leg goes three levels deep. Her right leg goes two levels deep.
 
 ```mermaid
-flowchart LR
+flowchart TD
     Alice --> Bob
     Alice --> Carol
     Bob --> Dave
@@ -150,7 +150,7 @@ This example uses a 7-node tree across two commission periods. The pairing perce
 The tree below shows the structure. "You" is the root. L1, L2, and L3 are in your left leg. R1, R2, and R3 are in your right leg.
 
 ```mermaid
-flowchart LR
+flowchart TD
     You --> L1
     You --> R1
     L1 --> L2

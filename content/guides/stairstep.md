@@ -153,7 +153,7 @@ flowchart LR
 
 Diamond Dan is the top leader. Platinum Pat is the senior leader. Gold Gina is the breakaway leader. Her group includes Silver Sam, Bronze Beth, Member Mike, and Customer Carol. The dashed line marks the breakaway boundary.
 
-Settings: broad commission percent is **40%**, volume-to-dollar multiplier is **1.0**, override mode is **differential**, minimum override is **1%**, generation depth is **3**.
+Settings: broad commission percent is **0.40** (used here to show how the multiplier scales commissions; the typical default is 1.0), volume-to-dollar multiplier is **1.0**, override mode is **differential**, minimum override is **1%**, generation depth is **3**.
 
 The rate table for level commissions (Phase 1):
 

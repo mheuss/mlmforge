@@ -2465,6 +2465,345 @@ mod tests {
         assert_eq!(root_cf.right, 300.0);
     }
 
+    #[test]
+    fn cycle_step_per_period_cap() {
+        // Both legs at 5000, steps at 300/$25, 600/$50, 1200/$100. CarryForward.
+        // Cycle 1: all qualify ($175), subtract 1200 -> 3800 each.
+        // Cycle 2: all qualify ($175), subtract 1200 -> 2600 each.
+        // Cycle 3: all qualify ($175), subtract 1200 -> 1400 each.
+        // Cycle 4: all qualify ($175), subtract 1200 -> 200 each.
+        // 200 < 300, no more cycles. Total uncapped = $700.
+        // Cap = $400, so earnings clamped to $400.
+        let steps = vec![
+            CycleStep {
+                threshold: 300.0,
+                amount: 25.0,
+            },
+            CycleStep {
+                threshold: 600.0,
+                amount: 50.0,
+            },
+            CycleStep {
+                threshold: 1200.0,
+                amount: 100.0,
+            },
+        ];
+        let structure = BinaryStructureConfig {
+            name: "Test Binary".to_string(),
+            binary_commission: BinaryCommissionConfig {
+                volume_to_dollar_multiplier: None,
+                mode: BinaryCommissionMode::CycleStep(CycleStepConfig {
+                    steps,
+                    volume_after_cycle: VolumeAfterPayout::CarryForward,
+                    cap_per_period: Some(400.0),
+                    carry_forward_cap: None,
+                    multi_position_cap_mode: MultiPositionCapMode::PerPosition,
+                }),
+            },
+        };
+        let tree = three_node_tree();
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(2),
+                cv_amount: 5000.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(3),
+                cv_amount: 5000.0,
+            },
+        ];
+
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(result.earnings.len(), 1);
+        let earning = &result.earnings[0];
+        assert_eq!(earning.dollar_amount, 400.0);
+        assert!(earning.capped);
+
+        // Carry-forward should reflect post-cycle legs (200 each),
+        // not affected by the cap.
+        let root_cf = result.carry_forward.get(&test_uuid(1)).unwrap();
+        assert_eq!(root_cf.left, 200.0);
+        assert_eq!(root_cf.right, 200.0);
+    }
+
+    #[test]
+    fn cycle_step_multi_position_per_position_cap() {
+        // Two positions owned by same person. Each has balanced 1500 CV legs.
+        // Steps: 300/$25, 600/$50, 1200/$100. CarryForward.
+        // Per position: cycle 1 all qualify ($175), subtract 1200, remaining 300.
+        // Cycle 2: 300 >= 300 ($25), 300 < 600. Incomplete, no subtraction.
+        // Total per position = $200. Cap per position = $150.
+        // Each position capped independently to $150.
+        let steps = vec![
+            CycleStep {
+                threshold: 300.0,
+                amount: 25.0,
+            },
+            CycleStep {
+                threshold: 600.0,
+                amount: 50.0,
+            },
+            CycleStep {
+                threshold: 1200.0,
+                amount: 100.0,
+            },
+        ];
+        let structure = BinaryStructureConfig {
+            name: "Test Binary".to_string(),
+            binary_commission: BinaryCommissionConfig {
+                volume_to_dollar_multiplier: None,
+                mode: BinaryCommissionMode::CycleStep(CycleStepConfig {
+                    steps,
+                    volume_after_cycle: VolumeAfterPayout::CarryForward,
+                    cap_per_period: Some(150.0),
+                    carry_forward_cap: None,
+                    multi_position_cap_mode: MultiPositionCapMode::PerPosition,
+                }),
+            },
+        };
+        let tree = multi_position_tree();
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+
+        let owner_a = test_uuid(100);
+        let mut ownership = HashMap::new();
+        ownership.insert(test_uuid(2), owner_a);
+        ownership.insert(test_uuid(3), owner_a);
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(owner_a, eligible_snapshot());
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+        snapshots.insert(test_uuid(4), eligible_snapshot());
+        snapshots.insert(test_uuid(5), eligible_snapshot());
+        snapshots.insert(test_uuid(6), eligible_snapshot());
+        snapshots.insert(test_uuid(7), eligible_snapshot());
+
+        // 1500 CV under each leg of each position.
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(4),
+                cv_amount: 1500.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(5),
+                cv_amount: 1500.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(6),
+                cv_amount: 1500.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(7),
+                cv_amount: 1500.0,
+            },
+        ];
+
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            Some(&ownership),
+        )
+        .unwrap();
+
+        let owner_earnings: Vec<_> = result
+            .earnings
+            .iter()
+            .filter(|e| e.earner_id == owner_a)
+            .collect();
+        assert_eq!(owner_earnings.len(), 2);
+
+        // Each position independently capped to $150.
+        for e in &owner_earnings {
+            assert!(
+                (e.dollar_amount - 150.0).abs() < 1e-10,
+                "each position should be capped to 150.0, got {}",
+                e.dollar_amount
+            );
+            assert!(e.capped);
+        }
+    }
+
+    #[test]
+    fn cycle_step_multi_position_aggregate_cap() {
+        // Two positions owned by same person. Each has balanced 1200 CV legs.
+        // Steps: 300/$25, 600/$50, 1200/$100. FullFlush.
+        // Per position: all steps qualify ($175), cycle completes, flush to 0.
+        // No more cycles. Total per position = $175. Owner total = $350.
+        // Aggregate cap = $300. Pro-rata: each gets 300 * (175/350) = $150.
+        let steps = vec![
+            CycleStep {
+                threshold: 300.0,
+                amount: 25.0,
+            },
+            CycleStep {
+                threshold: 600.0,
+                amount: 50.0,
+            },
+            CycleStep {
+                threshold: 1200.0,
+                amount: 100.0,
+            },
+        ];
+        let structure = BinaryStructureConfig {
+            name: "Test Binary".to_string(),
+            binary_commission: BinaryCommissionConfig {
+                volume_to_dollar_multiplier: None,
+                mode: BinaryCommissionMode::CycleStep(CycleStepConfig {
+                    steps,
+                    volume_after_cycle: VolumeAfterPayout::FullFlush,
+                    cap_per_period: Some(300.0),
+                    carry_forward_cap: None,
+                    multi_position_cap_mode: MultiPositionCapMode::Aggregate,
+                }),
+            },
+        };
+        let tree = multi_position_tree();
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+
+        let owner_a = test_uuid(100);
+        let mut ownership = HashMap::new();
+        ownership.insert(test_uuid(2), owner_a);
+        ownership.insert(test_uuid(3), owner_a);
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(owner_a, eligible_snapshot());
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+        snapshots.insert(test_uuid(4), eligible_snapshot());
+        snapshots.insert(test_uuid(5), eligible_snapshot());
+        snapshots.insert(test_uuid(6), eligible_snapshot());
+        snapshots.insert(test_uuid(7), eligible_snapshot());
+
+        // 1200 CV under each leg of each position.
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(4),
+                cv_amount: 1200.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(5),
+                cv_amount: 1200.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(6),
+                cv_amount: 1200.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(7),
+                cv_amount: 1200.0,
+            },
+        ];
+
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            Some(&ownership),
+        )
+        .unwrap();
+
+        let owner_earnings: Vec<_> = result
+            .earnings
+            .iter()
+            .filter(|e| e.earner_id == owner_a)
+            .collect();
+        assert_eq!(owner_earnings.len(), 2);
+
+        let total: f64 = owner_earnings.iter().map(|e| e.dollar_amount).sum();
+        assert!(
+            (total - 300.0).abs() < 1e-10,
+            "aggregate total should be 300.0, got {}",
+            total
+        );
+
+        // Pro-rata: each position had equal raw earnings ($175),
+        // so each gets half the cap: $150.
+        for e in &owner_earnings {
+            assert!(
+                (e.dollar_amount - 150.0).abs() < 1e-10,
+                "each position should earn 150.0, got {}",
+                e.dollar_amount
+            );
+            assert!(e.capped);
+        }
+    }
+
+    #[test]
+    fn cycle_step_zero_volume_no_crash() {
+        // Both legs at zero volume. No earnings, no crash.
+        let steps = vec![
+            CycleStep {
+                threshold: 300.0,
+                amount: 25.0,
+            },
+            CycleStep {
+                threshold: 600.0,
+                amount: 50.0,
+            },
+        ];
+        let structure = test_cycle_step_structure(steps, VolumeAfterPayout::CarryForward);
+        let tree = three_node_tree();
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        // Zero volume on both legs.
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(2),
+                cv_amount: 0.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(3),
+                cv_amount: 0.0,
+            },
+        ];
+
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            None,
+        )
+        .unwrap();
+
+        // No earnings when both legs are zero.
+        assert!(result.earnings.is_empty());
+
+        // Carry-forward should have zero on both legs.
+        let root_cf = result.carry_forward.get(&test_uuid(1)).unwrap();
+        assert_eq!(root_cf.left, 0.0);
+        assert_eq!(root_cf.right, 0.0);
+    }
+
     // --- Multi-position ownership resolution tests ---
 
     #[test]

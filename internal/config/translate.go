@@ -125,6 +125,9 @@ func translateBinaryCommission(c *BinaryCommission) (map[string]any, error) {
 	case "pairing":
 		modeContent = c.Pairing
 	case "cycle_step":
+		if c.CycleStep != nil && c.CycleStep.VolumeAfterCycle == "net_off" {
+			return nil, fmt.Errorf("net_off is not supported for cycle_step volume_after_cycle; use full_flush or carry_forward")
+		}
 		modeContent = c.CycleStep
 	default:
 		return nil, fmt.Errorf("unknown binary commission mode: %s", c.Mode)

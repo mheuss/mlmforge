@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=../../../../schemas/compensation-plan.schema.json
 #
 # Binary plan with cycle_step mode. Tests the cycle/step binary commission
-# variant with stepped thresholds and flush-after-cycle behavior.
+# variant with stepped thresholds and volume-after-cycle behavior.
 
 name: Binary Cycle Step
 version: 1
@@ -60,7 +60,7 @@ structures:
             amount: 50.00
           - threshold: 1200.00
             amount: 100.00
-        flush_after_cycle: true
+        volume_after_cycle: full_flush
 
 bonuses:
   matching: null

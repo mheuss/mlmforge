@@ -10,7 +10,7 @@ Every distributor has a fixed number of spots below them. That number is the mat
 
 The matrix also has a fixed depth. This is the height. No commissions are paid beyond this level. A 3x7 matrix means 3 wide and 7 deep. A 5x5 means 5 wide and 5 deep. A 2x12 means 2 wide and 12 deep.
 
-The total number of positions in a full matrix is width raised to the power of height. A 3x7 matrix has 3^7 = 2,187 positions. A 2x12 has 4,096. These are theoretical maximums. Most trees never fill completely.
+The total number of positions across all levels is a geometric sum: width + width^2 + ... + width^height. A 3x7 matrix has 3 + 9 + 27 + 81 + 243 + 729 + 2,187 = 3,279 total positions. A 2x12 has 8,190 total positions. These are theoretical maximums. Most trees never fill completely.
 
 Spillover is the defining feature. When you recruit someone and your spots are full, the system places that recruit in an open position below one of your existing team members. That team member did not recruit anyone. But they now have someone in their downline because of your work. Their tree grew because you were active.
 
@@ -37,7 +37,7 @@ You have three direct spots and all three are filled by Alice, Bob, and Carol. A
 
 ## How Earning Works
 
-Matrix uses the same level-based commission mechanism as unilevel. When someone generates volume, the system walks up the sponsor chain level by level. At each level, it checks whether the distributor is eligible and whether their rank covers that depth. If both are true, the distributor earns a commission.
+Matrix uses the same level-based commission mechanism as unilevel. When someone generates volume, the system walks up the upline chain level by level. At each level, it checks whether the distributor is eligible and whether their rank covers that depth. If both are true, the distributor earns a commission.
 
 The key difference is the height ceiling. In unilevel, depth is limited only by the plan's maximum commission depth setting. In matrix, depth is limited by the structure itself. The tree physically stops at the height limit. No positions exist beyond it. No commissions flow beyond it.
 
@@ -50,7 +50,7 @@ The diagram below shows the commission walk with a height ceiling check.
 ```mermaid
 flowchart TD
     A[A sale occurs] --> B[CV is generated]
-    B --> C[Walk up the sponsor chain]
+    B --> C[Walk up the upline chain]
     C --> D{Within height ceiling?}
     D -- No --> E[Walk complete]
     D -- Yes --> F{Is this distributor eligible?}

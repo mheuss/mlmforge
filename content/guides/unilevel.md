@@ -8,7 +8,7 @@ Unilevel is the simplest compensation structure in MLM. It is also the most comm
 
 Every distributor can sponsor as many people as they want. There is no limit on how wide a single level can grow. This is the defining trait of unilevel. Width is unlimited.
 
-Commissions flow upward through the sponsor chain, level by level. When someone makes a purchase, each person above them in the chain can earn a percentage of that sale. How far up depends on the plan's maximum depth and each distributor's rank.
+Commissions flow upward through the upline chain, level by level. When someone makes a purchase, each person above them in the chain can earn a percentage of that sale. How far up depends on the plan's maximum depth and each distributor's rank.
 
 The levels are counted from the perspective of each earner. Level 1 is your direct recruits. Level 2 is their recruits. Level 3 is one step further. And so on.
 
@@ -29,7 +29,7 @@ You sponsored Alice, Bob, and Carol. They are your level 1. Alice then sponsored
 
 ## How Earning Works
 
-When someone buys a product, that purchase generates commissionable volume (CV). The system walks up the sponsor chain from the buyer, one level at a time, checking each ancestor. At each level, it asks two questions. Is this distributor eligible? And does their rank allow them to earn at this depth?
+When someone buys a product, that purchase generates commissionable volume (CV). The system walks up the upline chain from the buyer, one level at a time, checking each ancestor. At each level, it asks two questions. Is this distributor eligible? And does their rank allow them to earn at this depth?
 
 If the answer to both is yes, the distributor earns a commission. The formula is:
 
@@ -44,7 +44,7 @@ The diagram below shows the step-by-step flow when a sale happens.
 ```mermaid
 flowchart TD
     A[A sale occurs] --> B[CV is generated]
-    B --> C[Walk up the sponsor chain]
+    B --> C[Walk up the upline chain]
     C --> D{Is this distributor eligible?}
     D -- No --> E[Skip or compress]
     D -- Yes --> F{Does their rank cover this level?}
@@ -102,7 +102,7 @@ The rate table is where you express the financial value of each rank. It is the 
 
 ### Compression
 
-**What it controls:** What happens when an inactive or low-rank distributor sits in the middle of the sponsor chain.
+**What it controls:** What happens when an inactive or low-rank distributor sits in the middle of the upline chain.
 
 Without compression, an ineligible distributor still occupies their level. The people above them earn at a deeper level number because the ineligible person is taking up a slot. Commissions "leak" through empty layers.
 

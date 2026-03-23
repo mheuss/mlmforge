@@ -36,7 +36,7 @@ Stairstep breakaway runs in two phases. Phase 1 handles level commissions within
 
 ### Phase 1 — Level commissions
 
-This works exactly like unilevel. Volume from a sale walks up the sponsor chain, paying each eligible distributor based on their rank and rate. Compression can apply. Skip-inactive and skip-below-rank work the same way they do in unilevel.
+This works exactly like unilevel. Volume from a sale walks up the upline chain, paying each eligible distributor based on their rank and rate. Compression can apply. Skip-inactive and skip-below-rank work the same way they do in unilevel.
 
 The walk stops at breakaway boundaries. When the system hits a distributor whose group has broken away, it does not cross that line. The breakaway leader's group is its own commission unit. Level commissions stay inside the group.
 
@@ -206,7 +206,7 @@ Platinum Pat is generation 1 from Gina.
 
 Pat's override is 7% minus 5% = 2%. If Pat were also a Gold (same rank as Gina), the differential would be zero. The 1% minimum override would kick in, and Pat would earn 1% instead of zero.
 
-Diamond Dan could earn a generation 2 override on Gina's group if generation rates are configured. Generation 2+ overrides use a separate rate table rather than the differential formula. The rate table lets you set different override percentages for each generation depth. This keeps the math predictable as groups stack multiple levels deep.
+What about Diamond Dan? By default, only generation 1 earns overrides. Dan would earn nothing on Gina's group unless you explicitly configure generation overrides. Generation overrides are opt-in. When configured, you set a separate rate table with specific percentages for each generation depth (generation 2, 3, etc.). These rates apply regardless of whether you chose differential or fixed override mode for generation 1. Without that configuration, the override walk stops after the first qualifying ancestor.
 
 ### Summary
 

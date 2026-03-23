@@ -15,7 +15,7 @@ The levels are counted from the perspective of each earner. Level 1 is your dire
 The diagram below shows a small unilevel tree with three levels.
 
 ```mermaid
-flowchart LR
+flowchart TD
     You --> Alice
     You --> Bob
     You --> Carol
@@ -137,7 +137,7 @@ This option originated in Australian MLM companies. It is less common than stand
 Here is a concrete example with real numbers. The tree has six people.
 
 ```mermaid
-flowchart LR
+flowchart TD
     TL[Top Leader - Diamond] --> S[Sponsor - Gold]
     S --> A[Distributor A - Silver]
     S --> D[Distributor D - Silver]

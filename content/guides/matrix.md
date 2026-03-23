@@ -19,7 +19,7 @@ Common configurations are 3x7, 5x5, and 2x12. Narrower matrices create more spil
 The diagram below shows a 3-wide, 2-deep matrix. Some positions are filled and some are still open.
 
 ```mermaid
-flowchart LR
+flowchart TD
     You --> Alice
     You --> Bob
     You --> Carol
@@ -136,7 +136,7 @@ The tree has 5 people. Root recruited A, B, and C. Root's three spots are full. 
 The diagram below shows the tree after spillover.
 
 ```mermaid
-flowchart LR
+flowchart TD
     Root --> A
     Root --> B
     Root --> C

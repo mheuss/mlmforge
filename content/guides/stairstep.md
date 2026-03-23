@@ -17,7 +17,7 @@ One thing to understand clearly: breakaway is a commission boundary, not a struc
 The diagram below shows a tree with a breakaway boundary. Diamond Dan is the senior leader. Gold Gina has reached the breakaway threshold. Her group is now a separate commission unit.
 
 ```mermaid
-flowchart LR
+flowchart TD
     DD[Diamond Dan] --> PP[Platinum Pat]
     PP -.->|breakaway boundary| GG[Gold Gina]
     GG --> SS[Silver Sam]
@@ -69,7 +69,7 @@ flowchart TD
     D -- Yes --> F[Stop the level walk]
     E --> D
     F --> G[Phase 2: Override walk across boundaries]
-    G --> H[Find upline sponsors above breakaway leader]
+    G --> H[Find upline leaders above breakaway leader]
     H --> I[Calculate override on group volume]
     I --> J[Continue up through generation depth]
 ```
@@ -142,7 +142,7 @@ Differential creates a natural incentive to outrank your leaders. The bigger the
 Here is a concrete example with real numbers. The tree has seven people and one breakaway boundary.
 
 ```mermaid
-flowchart LR
+flowchart TD
     DD[Diamond Dan] --> PP[Platinum Pat]
     PP -.->|breakaway| GG[Gold Gina]
     GG --> SS[Silver Sam]

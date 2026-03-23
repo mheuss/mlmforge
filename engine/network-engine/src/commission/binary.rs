@@ -4,7 +4,8 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::config::binary::{
-    BinaryCommissionMode, MultiPositionCapMode, PairingCalculation, VolumeAfterPayout,
+    BinaryCommissionMode, CycleStepConfig, MultiPositionCapMode, PairingCalculation,
+    VolumeAfterPayout,
 };
 use crate::config::eligibility::CommissionEligibility;
 use crate::config::{BinaryStructureConfig, CompensationPlan};
@@ -174,17 +175,17 @@ pub fn calculate_binary_pairing(
             }
             config
         }
-        BinaryCommissionMode::CycleStep(_) => {
-            // CycleStep mode is not yet implemented. Returns an empty result
-            // so callers receive a valid response rather than an error.
-            // Tracked in Linear as a deferred feature.
-            log::warn!(
-                "CycleStep binary commission mode is not yet implemented; returning empty result"
+        BinaryCommissionMode::CycleStep(config) => {
+            return calculate_binary_cycle_step(
+                tree,
+                plan,
+                structure,
+                config,
+                snapshots,
+                volume,
+                carry_forward,
+                ownership,
             );
-            return Ok(BinaryCalculationResult {
-                earnings: Vec::new(),
-                carry_forward: HashMap::new(),
-            });
         }
     };
 
@@ -341,6 +342,201 @@ pub fn calculate_binary_pairing(
     // Sort earnings by earner_id then position_id for deterministic output.
     // HashMap iteration order is unstable, so without sorting the
     // earnings order varies across runs.
+    earnings.sort_by(|a, b| {
+        a.earner_id
+            .cmp(&b.earner_id)
+            .then_with(|| a.position_id.cmp(&b.position_id))
+    });
+
+    Ok(BinaryCalculationResult {
+        earnings,
+        carry_forward: new_carry_forward,
+    })
+}
+
+/// Calculate binary cycle/step commissions for a commission period.
+///
+/// Pays fixed dollar amounts when both legs reach volume thresholds.
+/// Steps are evaluated in ascending order. All qualifying steps pay
+/// (not just the highest). When the highest step is reached, the cycle
+/// completes and volume is handled according to `volume_after_cycle`.
+///
+/// Shares the prep phase (volume aggregation, eligibility, leg
+/// accumulation) with the pairing calculator.
+#[allow(clippy::too_many_arguments)]
+fn calculate_binary_cycle_step(
+    tree: &BinaryTree,
+    plan: &CompensationPlan,
+    _structure: &BinaryStructureConfig,
+    config: &CycleStepConfig,
+    snapshots: &HashMap<Uuid, DistributorSnapshot>,
+    volume: &[VolumeSource],
+    carry_forward: &HashMap<Uuid, LegVolumes>,
+    ownership: Option<&HashMap<Uuid, Uuid>>,
+) -> Result<BinaryCalculationResult, CalculationError> {
+    // Phase 1: Prep (shared with pairing calculator)
+    let volume_totals = aggregate_volume(tree, snapshots, volume, ownership)?;
+    let eligibility_cache = evaluate_eligibility(snapshots, &plan.eligibility);
+    let working_legs = accumulate_leg_volumes(tree, &volume_totals, carry_forward);
+
+    // Defensive sort: steps should already be sorted by validation,
+    // but sort again to guarantee ascending threshold order.
+    let mut steps = config.steps.clone();
+    steps.sort_by(|a, b| a.threshold.partial_cmp(&b.threshold).unwrap());
+
+    // Phase 2: Calculate
+    // Track post-cycle leg volumes for carry-forward computation.
+    let mut post_cycle_legs: HashMap<Uuid, (f64, f64)> = HashMap::new();
+    let mut earnings = Vec::new();
+
+    for (uid, legs) in &working_legs {
+        let owner = resolve_owner(uid, ownership);
+        let eligible = eligibility_cache.get(&owner).copied().unwrap_or(false);
+
+        if !eligible {
+            // Ineligible: preserve original leg volumes for carry-forward.
+            post_cycle_legs.insert(*uid, (legs.left, legs.right));
+            continue;
+        }
+
+        let original_left = legs.left;
+        let original_right = legs.right;
+        let mut left = legs.left;
+        let mut right = legs.right;
+        let mut total_earnings = 0.0;
+
+        // Cycle loop: evaluate steps, handle volume after each complete cycle.
+        loop {
+            let matched = left.min(right);
+            let mut cycle_payout = 0.0;
+            let mut cycle_complete = false;
+
+            for (i, step) in steps.iter().enumerate() {
+                if matched >= step.threshold {
+                    cycle_payout += step.amount;
+                    if i == steps.len() - 1 {
+                        cycle_complete = true;
+                    }
+                }
+            }
+
+            if cycle_payout == 0.0 {
+                break;
+            }
+
+            total_earnings += cycle_payout;
+
+            if cycle_complete {
+                match config.volume_after_cycle {
+                    VolumeAfterPayout::FullFlush => {
+                        left = 0.0;
+                        right = 0.0;
+                        break;
+                    }
+                    VolumeAfterPayout::CarryForward => {
+                        let highest = steps.last().unwrap().threshold;
+                        left -= highest;
+                        right -= highest;
+                        // Check if another cycle can start.
+                        if left.min(right) >= steps[0].threshold {
+                            continue;
+                        } else {
+                            break;
+                        }
+                    }
+                    VolumeAfterPayout::NetOff => {
+                        unreachable!("net_off is validated out for cycle step")
+                    }
+                }
+            } else {
+                // Incomplete cycle: no volume subtraction.
+                break;
+            }
+        }
+
+        // Store post-cycle leg volumes for carry-forward.
+        post_cycle_legs.insert(*uid, (left, right));
+
+        // No earnings to emit if nothing was earned.
+        if total_earnings == 0.0 {
+            continue;
+        }
+
+        // Apply per-position cap.
+        // In aggregate mode with an ownership map, skip per-position cap here.
+        // The aggregate post-processing enforces the cap across all of an
+        // owner's positions with pro-rata scaling.
+        let use_aggregate_cap = matches!(
+            config.multi_position_cap_mode,
+            MultiPositionCapMode::Aggregate
+        ) && ownership.is_some();
+
+        let (dollar_amount, capped) = if use_aggregate_cap {
+            (total_earnings, false)
+        } else {
+            match config.cap_per_period {
+                Some(cap) if total_earnings > cap => (cap, true),
+                _ => (total_earnings, false),
+            }
+        };
+
+        earnings.push(BinaryCommissionEarning {
+            earner_id: owner,
+            position_id: *uid,
+            left_volume: original_left,
+            right_volume: original_right,
+            matched_volume: original_left.min(original_right),
+            ratio: 0.0,
+            percent: 0.0,
+            dollar_amount,
+            capped,
+        });
+    }
+
+    // Phase 2b: Aggregate cap post-processing for multi-position mode.
+    if let Some(cap) = config.cap_per_period {
+        if matches!(
+            config.multi_position_cap_mode,
+            MultiPositionCapMode::Aggregate
+        ) && ownership.is_some()
+        {
+            let mut owner_totals: HashMap<Uuid, f64> = HashMap::new();
+            for e in &earnings {
+                *owner_totals.entry(e.earner_id).or_insert(0.0) += e.dollar_amount;
+            }
+            for e in &mut earnings {
+                let total = owner_totals[&e.earner_id];
+                if total > cap {
+                    let scale = cap / total;
+                    e.dollar_amount *= scale;
+                    e.capped = true;
+                }
+            }
+        }
+    }
+
+    // Phase 3: Post-payout carry-forward
+    let mut new_carry_forward = HashMap::new();
+
+    for uid in working_legs.keys() {
+        let (new_left, new_right) = post_cycle_legs.get(uid).copied().unwrap_or((0.0, 0.0));
+
+        // Apply carry_forward_cap if set.
+        let (capped_left, capped_right) = match config.carry_forward_cap {
+            Some(cap) => (new_left.min(cap), new_right.min(cap)),
+            None => (new_left, new_right),
+        };
+
+        new_carry_forward.insert(
+            *uid,
+            LegVolumes {
+                left: capped_left.max(0.0),
+                right: capped_right.max(0.0),
+            },
+        );
+    }
+
+    // Sort earnings by earner_id then position_id for deterministic output.
     earnings.sort_by(|a, b| {
         a.earner_id
             .cmp(&b.earner_id)
@@ -1583,26 +1779,35 @@ mod tests {
         );
     }
 
-    // --- CycleStep mode tests ---
+    // --- CycleStep calculator tests ---
 
-    #[test]
-    fn cycle_step_mode_returns_empty_result() {
-        let structure = BinaryStructureConfig {
+    fn test_cycle_step_structure(
+        steps: Vec<CycleStep>,
+        volume_after_cycle: VolumeAfterPayout,
+    ) -> BinaryStructureConfig {
+        BinaryStructureConfig {
             name: "Test Binary".to_string(),
             binary_commission: BinaryCommissionConfig {
                 volume_to_dollar_multiplier: None,
                 mode: BinaryCommissionMode::CycleStep(CycleStepConfig {
-                    steps: vec![CycleStep {
-                        threshold: 300.0,
-                        amount: 25.0,
-                    }],
-                    volume_after_cycle: VolumeAfterPayout::FullFlush,
+                    steps,
+                    volume_after_cycle,
                     cap_per_period: None,
                     carry_forward_cap: None,
                     multi_position_cap_mode: MultiPositionCapMode::PerPosition,
                 }),
             },
-        };
+        }
+    }
+
+    #[test]
+    fn cycle_step_single_step_both_legs_meet() {
+        // Both legs at 500, step at 300/$25. Earns $25.
+        let steps = vec![CycleStep {
+            threshold: 300.0,
+            amount: 25.0,
+        }];
+        let structure = test_cycle_step_structure(steps, VolumeAfterPayout::FullFlush);
         let tree = three_node_tree();
         let plan = test_plan_with_structure(default_eligibility(), structure.clone());
 
@@ -1633,9 +1838,190 @@ mod tests {
         )
         .unwrap();
 
-        // CycleStep mode is not yet implemented. It returns an empty result.
-        assert!(result.earnings.is_empty());
-        assert!(result.carry_forward.is_empty());
+        assert_eq!(result.earnings.len(), 1);
+        let earning = &result.earnings[0];
+        assert_eq!(earning.earner_id, test_uuid(1));
+        assert_eq!(earning.dollar_amount, 25.0);
+        assert_eq!(earning.left_volume, 500.0);
+        assert_eq!(earning.right_volume, 500.0);
+        assert_eq!(earning.matched_volume, 500.0);
+        assert_eq!(earning.percent, 0.0);
+        assert_eq!(earning.ratio, 0.0);
+        assert!(!earning.capped);
+
+        // FullFlush after complete cycle: carry-forward legs should be zero.
+        let root_cf = result.carry_forward.get(&test_uuid(1)).unwrap();
+        assert_eq!(root_cf.left, 0.0);
+        assert_eq!(root_cf.right, 0.0);
+    }
+
+    #[test]
+    fn cycle_step_single_step_one_leg_below() {
+        // Left at 500, right at 200, step at 300/$25. Earns nothing.
+        let steps = vec![CycleStep {
+            threshold: 300.0,
+            amount: 25.0,
+        }];
+        let structure = test_cycle_step_structure(steps, VolumeAfterPayout::FullFlush);
+        let tree = three_node_tree();
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(2),
+                cv_amount: 500.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(3),
+                cv_amount: 200.0,
+            },
+        ];
+
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            None,
+        )
+        .unwrap();
+
+        // matched = min(500, 200) = 200 < 300 threshold. No step qualifies.
+        assert!(
+            result.earnings.is_empty() || result.earnings.iter().all(|e| e.dollar_amount == 0.0),
+            "should earn nothing when weaker leg is below threshold"
+        );
+
+        // Legs carry forward unchanged (no cycle started).
+        let root_cf = result.carry_forward.get(&test_uuid(1)).unwrap();
+        assert_eq!(root_cf.left, 500.0);
+        assert_eq!(root_cf.right, 200.0);
+    }
+
+    #[test]
+    fn cycle_step_multiple_steps_all_qualify() {
+        // Both legs at 1500, steps at 300/$25, 600/$50, 1200/$100.
+        // All three steps qualify. Earns $25 + $50 + $100 = $175.
+        let steps = vec![
+            CycleStep {
+                threshold: 300.0,
+                amount: 25.0,
+            },
+            CycleStep {
+                threshold: 600.0,
+                amount: 50.0,
+            },
+            CycleStep {
+                threshold: 1200.0,
+                amount: 100.0,
+            },
+        ];
+        let structure = test_cycle_step_structure(steps, VolumeAfterPayout::FullFlush);
+        let tree = three_node_tree();
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(2),
+                cv_amount: 1500.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(3),
+                cv_amount: 1500.0,
+            },
+        ];
+
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(result.earnings.len(), 1);
+        let earning = &result.earnings[0];
+        assert_eq!(earning.dollar_amount, 175.0);
+
+        // FullFlush: legs zeroed after complete cycle.
+        let root_cf = result.carry_forward.get(&test_uuid(1)).unwrap();
+        assert_eq!(root_cf.left, 0.0);
+        assert_eq!(root_cf.right, 0.0);
+    }
+
+    #[test]
+    fn cycle_step_multiple_steps_partial() {
+        // Both legs at 800, steps at 300/$25, 600/$50, 1200/$100.
+        // Steps 1 and 2 qualify (800 >= 300, 800 >= 600). Step 3 does not (800 < 1200).
+        // Earns $25 + $50 = $75. Incomplete cycle, no flush.
+        let steps = vec![
+            CycleStep {
+                threshold: 300.0,
+                amount: 25.0,
+            },
+            CycleStep {
+                threshold: 600.0,
+                amount: 50.0,
+            },
+            CycleStep {
+                threshold: 1200.0,
+                amount: 100.0,
+            },
+        ];
+        let structure = test_cycle_step_structure(steps, VolumeAfterPayout::FullFlush);
+        let tree = three_node_tree();
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(2),
+                cv_amount: 800.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(3),
+                cv_amount: 800.0,
+            },
+        ];
+
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(result.earnings.len(), 1);
+        let earning = &result.earnings[0];
+        assert_eq!(earning.dollar_amount, 75.0);
+
+        // Incomplete cycle: legs carry forward unchanged.
+        let root_cf = result.carry_forward.get(&test_uuid(1)).unwrap();
+        assert_eq!(root_cf.left, 800.0);
+        assert_eq!(root_cf.right, 800.0);
     }
 
     // --- Multi-position ownership resolution tests ---

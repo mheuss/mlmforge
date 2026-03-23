@@ -28,7 +28,11 @@ fn resolve_owner(position_id: &Uuid, ownership: Option<&HashMap<Uuid, Uuid>>) ->
         .unwrap_or(*position_id)
 }
 
-/// Phase 1, Step 1: Aggregate volume sources into per-distributor totals.
+/// Phase 1, Step 1: Aggregate volume sources into per-position totals.
+///
+/// Totals are keyed by position_id (source_id). Snapshot validation
+/// resolves through the ownership map when provided, so snapshots are
+/// keyed by owner_id while volume is keyed by position_id.
 fn aggregate_volume(
     tree: &BinaryTree,
     snapshots: &HashMap<Uuid, DistributorSnapshot>,

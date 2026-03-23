@@ -84,7 +84,7 @@ Caps protect the company from paying out more than it can afford. There are two 
 
 **Per-distributor per-period cap.** This is a ceiling on what any single person can earn in one commission period. If the cap is $50,000 and the math says a distributor earned $62,000, they get $50,000. The excess is not carried forward. It is simply not paid. This prevents a single top earner from consuming a disproportionate share of the commission budget.
 
-**Company payout cap.** This is the big one. It sets the maximum percentage of total volume the company pays out as commissions. The industry standard is 40-45%. If total volume for the period is $1,000,000 and the cap is 42%, the company will not pay more than $420,000 in total commissions. If the raw commission calculations add up to $480,000, something has to give.
+**Company payout cap.** This is the big one. It sets the maximum percentage of total commissionable sales the company pays out as commissions. The industry standard is 40-45%. If total commissionable sales for the period are $1,000,000 and the cap is 42%, the company will not pay more than $420,000 in total commissions. If the raw commission calculations add up to $480,000, something has to give.
 
 What gives depends on the **cap enforcement mode** you choose. There are three options.
 

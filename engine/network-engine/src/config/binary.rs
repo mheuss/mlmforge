@@ -222,11 +222,11 @@ impl CycleStepConfig {
         }
 
         for step in &self.steps {
-            if step.threshold <= 0.0 {
-                return Err("step threshold must be positive".into());
+            if !step.threshold.is_finite() || step.threshold <= 0.0 {
+                return Err("step threshold must be positive and finite".into());
             }
-            if step.amount <= 0.0 {
-                return Err("step amount must be positive".into());
+            if !step.amount.is_finite() || step.amount <= 0.0 {
+                return Err("step amount must be positive and finite".into());
             }
         }
 
@@ -467,7 +467,10 @@ mod tests {
             VolumeAfterPayout::FullFlush,
         );
         let result = config.validate();
-        assert_eq!(result.unwrap_err(), "step threshold must be positive");
+        assert_eq!(
+            result.unwrap_err(),
+            "step threshold must be positive and finite"
+        );
     }
 
     #[test]
@@ -480,7 +483,10 @@ mod tests {
             VolumeAfterPayout::FullFlush,
         );
         let result = config.validate();
-        assert_eq!(result.unwrap_err(), "step amount must be positive");
+        assert_eq!(
+            result.unwrap_err(),
+            "step amount must be positive and finite"
+        );
     }
 
     #[test]

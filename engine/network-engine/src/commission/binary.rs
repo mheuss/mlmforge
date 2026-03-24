@@ -426,7 +426,9 @@ fn calculate_binary_cycle_step(
                 }
                 VolumeAfterPayout::CarryForward => {
                     // Compute how many full cycles fit in O(1).
-                    let full_cycles = (matched / highest).floor() as u64;
+                    // Add epsilon before floor to avoid IEEE 754 undercounting
+                    // (e.g., 0.3/0.1 = 2.999... should floor to 3, not 2).
+                    let full_cycles = (matched / highest + 1e-9).floor() as u64;
                     total_earnings += full_cycles as f64 * sum_of_amounts;
                     left -= full_cycles as f64 * highest;
                     right -= full_cycles as f64 * highest;

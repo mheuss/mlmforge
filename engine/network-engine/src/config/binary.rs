@@ -157,7 +157,8 @@ pub enum VolumeAfterPayout {
 ///
 /// Instead of percentages, pays fixed dollar amounts when both legs
 /// reach volume thresholds. A "cycle" is one pass through all steps.
-/// Once the highest step is reached, the cycle may reset.
+/// Once the highest step is reached, volume handling depends on the
+/// `volume_after_cycle` mode.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CycleStepConfig {
     /// Volume thresholds and fixed payouts, ordered ascending.
@@ -167,11 +168,32 @@ pub struct CycleStepConfig {
     /// evaluated in order from lowest to highest threshold.
     pub steps: Vec<CycleStep>,
 
-    /// Whether to reset leg volumes after completing a full cycle.
+    /// What happens to leg volumes after completing a full cycle.
     ///
-    /// When true, both legs flush to zero after the highest step is
-    /// reached. When false, excess volume carries into the next cycle.
-    pub flush_after_cycle: bool,
+    /// `FullFlush`: both legs reset to zero. Excess above the highest
+    /// threshold is lost. `CarryForward`: subtract the highest threshold
+    /// from both legs; excess carries into the next cycle. `NetOff` is
+    /// not supported for CycleStep and is rejected at validation.
+    pub volume_after_cycle: VolumeAfterPayout,
+
+    /// Maximum commission per period. None means uncapped.
+    ///
+    /// Applied after all cycles are calculated. Limits total CycleStep
+    /// earnings for a single position in one period.
+    pub cap_per_period: Option<f64>,
+
+    /// Maximum volume that can carry forward into the next period.
+    ///
+    /// Applied when computing next-period carry-forward state,
+    /// regardless of `volume_after_cycle`. None means unlimited carry.
+    /// Prevents excessive accumulation on either leg.
+    pub carry_forward_cap: Option<f64>,
+
+    /// How caps apply when one owner has multiple positions.
+    /// Defaults to PerPosition. Only meaningful when ownership map
+    /// is provided.
+    #[serde(default)]
+    pub multi_position_cap_mode: MultiPositionCapMode,
 }
 
 /// A single step in a cycle/step binary commission.
@@ -185,6 +207,59 @@ pub struct CycleStep {
 
     /// Fixed dollar amount paid when the threshold is reached.
     pub amount: f64,
+}
+
+impl CycleStepConfig {
+    /// Validate and normalize cycle step configuration.
+    ///
+    /// Checks that steps are non-empty, all thresholds and amounts are
+    /// positive, no duplicate thresholds exist, and NetOff is not used.
+    /// Sorts steps ascending by threshold so the calculator can assume
+    /// ordering.
+    pub fn validate(&mut self) -> Result<(), String> {
+        if self.steps.is_empty() {
+            return Err("cycle step config must have at least one step".into());
+        }
+
+        for step in &self.steps {
+            if !step.threshold.is_finite() || step.threshold <= 0.0 {
+                return Err("step threshold must be positive and finite".into());
+            }
+            if !step.amount.is_finite() || step.amount <= 0.0 {
+                return Err("step amount must be positive and finite".into());
+            }
+        }
+
+        // Sort before duplicate check so adjacent comparison works.
+        self.steps
+            .sort_by(|a, b| a.threshold.total_cmp(&b.threshold));
+
+        for pair in self.steps.windows(2) {
+            if pair[0].threshold == pair[1].threshold {
+                return Err(format!("duplicate step threshold: {}", pair[0].threshold));
+            }
+        }
+
+        if matches!(self.volume_after_cycle, VolumeAfterPayout::NetOff) {
+            return Err(
+                "net_off is not supported for cycle step; use full_flush or carry_forward".into(),
+            );
+        }
+
+        if let Some(cap) = self.cap_per_period {
+            if cap < 0.0 || !cap.is_finite() {
+                return Err("cap_per_period must be non-negative and finite".into());
+            }
+        }
+
+        if let Some(cap) = self.carry_forward_cap {
+            if cap < 0.0 || !cap.is_finite() {
+                return Err("carry_forward_cap must be non-negative and finite".into());
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -219,7 +294,9 @@ mod tests {
                 { "threshold": 600.0, "amount": 50.0 },
                 { "threshold": 1200.0, "amount": 100.0 }
             ],
-            "flush_after_cycle": true
+            "volume_after_cycle": "full_flush",
+            "cap_per_period": 5000.0,
+            "carry_forward_cap": 50000.0
         }"#;
         let config: CycleStepConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.steps.len(), 3);
@@ -229,7 +306,16 @@ mod tests {
         assert_eq!(config.steps[1].amount, 50.0);
         assert_eq!(config.steps[2].threshold, 1200.0);
         assert_eq!(config.steps[2].amount, 100.0);
-        assert!(config.flush_after_cycle);
+        assert!(matches!(
+            config.volume_after_cycle,
+            VolumeAfterPayout::FullFlush
+        ));
+        assert_eq!(config.cap_per_period, Some(5000.0));
+        assert_eq!(config.carry_forward_cap, Some(50000.0));
+        assert_eq!(
+            config.multi_position_cap_mode,
+            MultiPositionCapMode::PerPosition
+        );
     }
 
     #[test]
@@ -269,7 +355,7 @@ mod tests {
                 "steps": [
                     { "threshold": 500.0, "amount": 40.0 }
                 ],
-                "flush_after_cycle": false
+                "volume_after_cycle": "carry_forward"
             }
         }"#;
         let mode: BinaryCommissionMode = serde_json::from_str(json).unwrap();
@@ -278,7 +364,16 @@ mod tests {
                 assert_eq!(config.steps.len(), 1);
                 assert_eq!(config.steps[0].threshold, 500.0);
                 assert_eq!(config.steps[0].amount, 40.0);
-                assert!(!config.flush_after_cycle);
+                assert!(matches!(
+                    config.volume_after_cycle,
+                    VolumeAfterPayout::CarryForward
+                ));
+                assert!(config.cap_per_period.is_none());
+                assert!(config.carry_forward_cap.is_none());
+                assert_eq!(
+                    config.multi_position_cap_mode,
+                    MultiPositionCapMode::PerPosition
+                );
             }
             _ => panic!("expected CycleStep variant"),
         }
@@ -335,5 +430,172 @@ mod tests {
             config.multi_position_cap_mode,
             MultiPositionCapMode::PerPosition
         );
+    }
+
+    // --- CycleStepConfig validation ---
+
+    fn make_cycle_step_config(
+        steps: Vec<CycleStep>,
+        volume_after_cycle: VolumeAfterPayout,
+    ) -> CycleStepConfig {
+        CycleStepConfig {
+            steps,
+            volume_after_cycle,
+            cap_per_period: None,
+            carry_forward_cap: None,
+            multi_position_cap_mode: MultiPositionCapMode::default(),
+        }
+    }
+
+    #[test]
+    fn validate_cycle_step_empty_steps_fails() {
+        let mut config = make_cycle_step_config(vec![], VolumeAfterPayout::FullFlush);
+        let result = config.validate();
+        assert_eq!(
+            result.unwrap_err(),
+            "cycle step config must have at least one step"
+        );
+    }
+
+    #[test]
+    fn validate_cycle_step_zero_threshold_fails() {
+        let mut config = make_cycle_step_config(
+            vec![CycleStep {
+                threshold: 0.0,
+                amount: 25.0,
+            }],
+            VolumeAfterPayout::FullFlush,
+        );
+        let result = config.validate();
+        assert_eq!(
+            result.unwrap_err(),
+            "step threshold must be positive and finite"
+        );
+    }
+
+    #[test]
+    fn validate_cycle_step_negative_amount_fails() {
+        let mut config = make_cycle_step_config(
+            vec![CycleStep {
+                threshold: 300.0,
+                amount: -10.0,
+            }],
+            VolumeAfterPayout::FullFlush,
+        );
+        let result = config.validate();
+        assert_eq!(
+            result.unwrap_err(),
+            "step amount must be positive and finite"
+        );
+    }
+
+    #[test]
+    fn validate_cycle_step_duplicate_threshold_fails() {
+        let mut config = make_cycle_step_config(
+            vec![
+                CycleStep {
+                    threshold: 300.0,
+                    amount: 25.0,
+                },
+                CycleStep {
+                    threshold: 300.0,
+                    amount: 50.0,
+                },
+            ],
+            VolumeAfterPayout::FullFlush,
+        );
+        let result = config.validate();
+        assert_eq!(result.unwrap_err(), "duplicate step threshold: 300");
+    }
+
+    #[test]
+    fn validate_cycle_step_net_off_fails() {
+        let mut config = make_cycle_step_config(
+            vec![CycleStep {
+                threshold: 300.0,
+                amount: 25.0,
+            }],
+            VolumeAfterPayout::NetOff,
+        );
+        let result = config.validate();
+        assert_eq!(
+            result.unwrap_err(),
+            "net_off is not supported for cycle step; use full_flush or carry_forward"
+        );
+    }
+
+    #[test]
+    fn validate_cycle_step_sorts_steps() {
+        let mut config = make_cycle_step_config(
+            vec![
+                CycleStep {
+                    threshold: 1200.0,
+                    amount: 100.0,
+                },
+                CycleStep {
+                    threshold: 300.0,
+                    amount: 25.0,
+                },
+                CycleStep {
+                    threshold: 600.0,
+                    amount: 50.0,
+                },
+            ],
+            VolumeAfterPayout::FullFlush,
+        );
+        config.validate().unwrap();
+        assert_eq!(config.steps[0].threshold, 300.0);
+        assert_eq!(config.steps[1].threshold, 600.0);
+        assert_eq!(config.steps[2].threshold, 1200.0);
+    }
+
+    #[test]
+    fn validate_cycle_step_valid_config_passes() {
+        let mut config = make_cycle_step_config(
+            vec![
+                CycleStep {
+                    threshold: 300.0,
+                    amount: 25.0,
+                },
+                CycleStep {
+                    threshold: 600.0,
+                    amount: 50.0,
+                },
+                CycleStep {
+                    threshold: 1200.0,
+                    amount: 100.0,
+                },
+            ],
+            VolumeAfterPayout::CarryForward,
+        );
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_cycle_step_negative_cap_per_period_fails() {
+        let mut config = make_cycle_step_config(
+            vec![CycleStep {
+                threshold: 300.0,
+                amount: 25.0,
+            }],
+            VolumeAfterPayout::FullFlush,
+        );
+        config.cap_per_period = Some(-100.0);
+        let err = config.validate().unwrap_err();
+        assert!(err.contains("cap_per_period must be non-negative"));
+    }
+
+    #[test]
+    fn validate_cycle_step_negative_carry_forward_cap_fails() {
+        let mut config = make_cycle_step_config(
+            vec![CycleStep {
+                threshold: 300.0,
+                amount: 25.0,
+            }],
+            VolumeAfterPayout::CarryForward,
+        );
+        config.carry_forward_cap = Some(-50.0);
+        let err = config.validate().unwrap_err();
+        assert!(err.contains("carry_forward_cap must be non-negative"));
     }
 }

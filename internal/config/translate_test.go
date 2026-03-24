@@ -273,6 +273,21 @@ func TestTranslateBinaryCommissionEmptyMode(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown binary commission mode:")
 }
 
+// TestTranslateCycleStepNetOffRejected verifies that
+// translateBinaryCommission returns an error when cycle_step uses net_off.
+func TestTranslateCycleStepNetOffRejected(t *testing.T) {
+	c := &BinaryCommission{
+		Mode: "cycle_step",
+		CycleStep: &CycleStepConfig{
+			VolumeAfterCycle: "net_off",
+			Steps:            []CycleStep{{Threshold: 300, Amount: 25}},
+		},
+	}
+	_, err := translateBinaryCommission(c)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "net_off is not supported for cycle_step")
+}
+
 // TestTranslateStructureConfigUnknownType verifies that
 // translateStructureConfig returns an error for an unknown structure type.
 func TestTranslateStructureConfigUnknownType(t *testing.T) {

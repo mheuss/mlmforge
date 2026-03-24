@@ -80,6 +80,10 @@ pub enum CalculationError {
     /// A volume source has a non-finite or negative cv_amount.
     #[error("volume source {0} has invalid cv_amount: {1}")]
     InvalidCvAmount(Uuid, f64),
+
+    /// Commission config failed validation.
+    #[error("config error: {0}")]
+    ConfigError(String),
 }
 
 /// Per-distributor leg volumes carried from the previous period.

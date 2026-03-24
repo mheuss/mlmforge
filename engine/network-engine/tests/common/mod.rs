@@ -3,8 +3,8 @@
 #![allow(dead_code)]
 
 use network_engine::config::binary::{
-    BinaryCommissionConfig, BinaryCommissionMode, MultiPositionCapMode, PairingCalculation,
-    PairingConfig, VolumeAfterPayout,
+    BinaryCommissionConfig, BinaryCommissionMode, CycleStepConfig, MultiPositionCapMode,
+    PairingCalculation, PairingConfig, VolumeAfterPayout,
 };
 use network_engine::config::bonus::BonusConfig;
 use network_engine::config::eligibility::CommissionEligibility;
@@ -250,6 +250,27 @@ pub fn default_pairing() -> PairingConfig {
         carry_forward_cap: None,
         multi_position_cap_mode: MultiPositionCapMode::PerPosition,
     }
+}
+
+// --- Binary CycleStep plan builder ---
+
+/// Build a binary plan with CycleStep config for property tests.
+pub fn build_binary_cycle_step_plan(
+    config: CycleStepConfig,
+) -> (CompensationPlan, BinaryStructureConfig) {
+    let structure = BinaryStructureConfig {
+        name: "Test Binary".to_string(),
+        binary_commission: BinaryCommissionConfig {
+            volume_to_dollar_multiplier: None,
+            mode: BinaryCommissionMode::CycleStep(config),
+        },
+    };
+    let plan = build_base_plan(
+        permissive_eligibility(),
+        StructureConfig::Binary(structure.clone()),
+        "Test Binary",
+    );
+    (plan, structure)
 }
 
 // --- Multi-rank unilevel plan builder ---

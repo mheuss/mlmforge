@@ -126,6 +126,45 @@ This protects company margins. Without it, a top earner with massive legs could 
 
 **Most common:** Capped.
 
+### CycleStep mode (alternative to pairing)
+
+CycleStep is an alternative to percentage-based pairing. Instead of earning a percentage of matched volume, distributors earn fixed dollar amounts when both legs reach volume thresholds. This approach dates back to 1990s and 2000s plan designs. Most modern plans use pairing, but CycleStep is still in use.
+
+#### How steps work
+
+Steps are defined in ascending order by volume threshold. Each step has a threshold and a fixed dollar payout. When both legs have enough volume, every qualifying step pays. Not just the highest one.
+
+For example, a plan might define three steps:
+
+| Step | Threshold | Payout |
+|------|-----------|--------|
+| 1 | 300 | $25 |
+| 2 | 600 | $50 |
+| 3 | 1,200 | $100 |
+
+If both legs have 700 volume, steps 1 and 2 qualify. The distributor earns $25 + $50 = $75. Step 3 does not qualify because 700 is less than 1,200.
+
+#### Cycle completion
+
+When the highest step is reached, the cycle completes. What happens next depends on the volume-after-cycle setting.
+
+| Choice | What happens | What it means |
+|--------|-------------|--------------|
+| Full flush | Both legs reset to zero | Clean slate after each cycle. Excess volume above the highest threshold is lost. No further cycling is possible this period. |
+| Carry forward | Subtract the highest threshold from both legs | Excess volume carries into a new cycle. If the remaining volume still exceeds the lowest threshold, another cycle starts immediately within the same period. |
+
+If the highest step is not reached, no volume is subtracted. The legs carry forward as-is into the next period. The distributor can continue working toward completing the cycle.
+
+#### CycleStep worked example
+
+This example uses the three steps above (300/$25, 600/$50, 1,200/$100) with carry forward. The distributor has 1,500 on each leg.
+
+**First cycle:** Both legs have 1,500. All three thresholds are met (300, 600, and 1,200 are all less than or equal to 1,500). The distributor earns $25 + $50 + $100 = $175. The cycle completes. Subtract 1,200 from each leg. Remaining: 300 on each side.
+
+**Second cycle:** Both legs have 300. Step 1 qualifies (300 >= 300). The distributor earns $25. Step 2 does not qualify (300 < 600). The cycle is incomplete, so no volume is subtracted.
+
+**Period total:** $175 + $25 = $200. Both legs carry 300 into the next period.
+
 ### Multi-position income centers
 
 One person can own multiple positions in the binary tree. Each position is an independent income center with its own left leg and right leg. The tree does not know about ownership. It just sees positions. A separate mapping tells the system which person owns which positions.
@@ -210,8 +249,6 @@ Carry forward turns prior success into future momentum.
 ---
 
 ## What It Doesn't Do
-
-**CycleStep mode is not yet available.** CycleStep is a legacy calculation method where fixed dollar amounts are paid at specific volume thresholds instead of percentages. The configuration types exist, but the calculation engine does not support it yet.
 
 **No unlimited width.** Binary means exactly two positions. If you need unlimited frontline width, use a unilevel structure instead.
 

@@ -282,8 +282,11 @@ func (p *PairingConfig) GetMultiPositionCapMode() string {
 
 // CycleStepConfig holds binary cycle/step commission configuration.
 type CycleStepConfig struct {
-	Steps           []CycleStep `yaml:"steps" json:"steps"`
-	FlushAfterCycle bool        `yaml:"flush_after_cycle" json:"flush_after_cycle"`
+	Steps                []CycleStep `yaml:"steps" json:"steps"`
+	VolumeAfterCycle     string      `yaml:"volume_after_cycle" json:"volume_after_cycle"`
+	CapPerPeriod         *float64    `yaml:"cap_per_period" json:"cap_per_period"`
+	CarryForwardCap      *float64    `yaml:"carry_forward_cap" json:"carry_forward_cap"`
+	MultiPositionCapMode string      `yaml:"multi_position_cap_mode,omitempty" json:"multi_position_cap_mode,omitempty"`
 }
 
 // CycleStep represents a single step in a binary cycle/step commission.

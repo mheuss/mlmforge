@@ -995,7 +995,7 @@
     "CycleStepConfig": {
       "type": "object",
       "description": "Configuration for binary cycle/step commissions.",
-      "required": ["steps", "flush_after_cycle"],
+      "required": ["steps", "volume_after_cycle"],
       "properties": {
         "steps": {
           "type": "array",
@@ -1005,9 +1005,30 @@
           "minItems": 1,
           "description": "Ordered list of cycle steps."
         },
-        "flush_after_cycle": {
-          "type": "boolean",
-          "description": "If true, reset cycle counter after completing all steps."
+        "volume_after_cycle": {
+          "type": "string",
+          "enum": ["full_flush", "carry_forward"],
+          "description": "What happens to leg volumes after completing a full cycle. full_flush: both legs reset to zero. carry_forward: subtract highest threshold, keep excess."
+        },
+        "cap_per_period": {
+          "oneOf": [
+            { "type": "number", "minimum": 0 },
+            { "type": "null" }
+          ],
+          "description": "Maximum commission per period. Null means uncapped."
+        },
+        "carry_forward_cap": {
+          "oneOf": [
+            { "type": "number", "minimum": 0 },
+            { "type": "null" }
+          ],
+          "description": "Maximum volume that can carry forward into the next period. Null means unlimited."
+        },
+        "multi_position_cap_mode": {
+          "type": "string",
+          "enum": ["per_position", "aggregate"],
+          "default": "per_position",
+          "description": "How caps apply when one owner has multiple positions."
         }
       }
     },

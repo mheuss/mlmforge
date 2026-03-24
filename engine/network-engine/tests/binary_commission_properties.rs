@@ -1,9 +1,10 @@
 mod common;
-use common::{build_binary_plan, default_pairing, uuid_from_index};
+use common::{build_binary_cycle_step_plan, build_binary_plan, default_pairing, uuid_from_index};
 
 use network_engine::commission::{DistributorSnapshot, VolumeSource, calculate_binary_pairing};
 use network_engine::config::binary::{
-    MultiPositionCapMode, PairingCalculation, PairingConfig, VolumeAfterPayout,
+    CycleStep, CycleStepConfig, MultiPositionCapMode, PairingCalculation, PairingConfig,
+    VolumeAfterPayout,
 };
 use network_engine::tree::binary::BinaryTree;
 use proptest::prelude::*;
@@ -756,6 +757,277 @@ proptest! {
             prop_assert!((cf2.left - (left2 - matched2)).abs() < 1e-10,
                 "pos2 left carry should be {}, got {}", left2 - matched2, cf2.left);
             prop_assert!(cf2.right.abs() < 1e-10, "pos2 right should be 0, got {}", cf2.right);
+        }
+    }
+}
+
+// --- CycleStep property tests ---
+
+/// Generate a random CycleStep config with 1-4 steps.
+///
+/// Steps are sorted ascending by threshold and deduplicated to avoid
+/// near-duplicate thresholds that would fail validation.
+fn arb_cycle_step_config() -> impl Strategy<Value = CycleStepConfig> {
+    (
+        prop::collection::vec((100.0..5000.0f64, 10.0..500.0f64), 1..=4),
+        prop::bool::ANY,
+    )
+        .prop_map(|(pairs, use_flush)| {
+            let mut steps: Vec<CycleStep> = pairs
+                .into_iter()
+                .map(|(threshold, amount)| CycleStep { threshold, amount })
+                .collect();
+            steps.sort_by(|a, b| a.threshold.total_cmp(&b.threshold));
+            // Deduplicate thresholds that are too close together.
+            steps.dedup_by(|a, b| (a.threshold - b.threshold).abs() < 1.0);
+            CycleStepConfig {
+                steps,
+                volume_after_cycle: if use_flush {
+                    VolumeAfterPayout::FullFlush
+                } else {
+                    VolumeAfterPayout::CarryForward
+                },
+                cap_per_period: None,
+                carry_forward_cap: None,
+                multi_position_cap_mode: MultiPositionCapMode::PerPosition,
+            }
+        })
+}
+
+proptest! {
+    /// All CycleStep earnings are non-negative for any valid config and
+    /// any non-negative leg volumes.
+    #[test]
+    fn cycle_step_earnings_never_negative(
+        config in arb_cycle_step_config(),
+        left_vol in arb_volume(),
+        right_vol in arb_volume(),
+    ) {
+        let (plan, structure) = build_binary_cycle_step_plan(config);
+        let tree = three_node_tree();
+
+        let mut snapshots = HashMap::new();
+        for i in 0..3 {
+            snapshots.insert(uuid_from_index(i), member_snapshot());
+        }
+
+        let volume = vec![
+            VolumeSource { source_id: uuid_from_index(1), cv_amount: left_vol },
+            VolumeSource { source_id: uuid_from_index(2), cv_amount: right_vol },
+        ];
+
+        let result = calculate_binary_pairing(
+            &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(), None,
+        ).unwrap();
+
+        for earning in &result.earnings {
+            prop_assert!(
+                earning.dollar_amount >= 0.0,
+                "CycleStep earning {} is negative",
+                earning.dollar_amount
+            );
+        }
+    }
+
+    /// Total earnings never exceed sum_of_all_step_amounts * max_possible_cycles.
+    ///
+    /// For FullFlush mode, at most 1 cycle can complete because volume is
+    /// zeroed after the cycle. For CarryForward, an upper bound on cycles
+    /// is floor(min(left, right) / highest_threshold) + 1.
+    #[test]
+    fn cycle_step_earnings_bounded_by_max_cycles(
+        config in arb_cycle_step_config(),
+        left_vol in arb_volume(),
+        right_vol in arb_volume(),
+    ) {
+        let is_flush = matches!(config.volume_after_cycle, VolumeAfterPayout::FullFlush);
+        let sum_of_amounts: f64 = config.steps.iter().map(|s| s.amount).sum();
+        let highest_threshold = config.steps.iter()
+            .map(|s| s.threshold)
+            .fold(0.0f64, f64::max);
+
+        let (plan, structure) = build_binary_cycle_step_plan(config);
+        let tree = three_node_tree();
+
+        let mut snapshots = HashMap::new();
+        for i in 0..3 {
+            snapshots.insert(uuid_from_index(i), member_snapshot());
+        }
+
+        let volume = vec![
+            VolumeSource { source_id: uuid_from_index(1), cv_amount: left_vol },
+            VolumeSource { source_id: uuid_from_index(2), cv_amount: right_vol },
+        ];
+
+        let result = calculate_binary_pairing(
+            &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(), None,
+        ).unwrap();
+
+        let total_payout: f64 = result.earnings.iter().map(|e| e.dollar_amount).sum();
+
+        let max_cycles = if is_flush {
+            1.0
+        } else {
+            let matched = left_vol.min(right_vol);
+            if highest_threshold > 0.0 {
+                (matched / highest_threshold).floor() + 1.0
+            } else {
+                1.0
+            }
+        };
+
+        let upper_bound = sum_of_amounts * max_cycles;
+        prop_assert!(
+            total_payout <= upper_bound + 1e-10,
+            "Total payout {} exceeded upper bound {} (sum_amounts={}, max_cycles={})",
+            total_payout, upper_bound, sum_of_amounts, max_cycles
+        );
+    }
+
+    /// When volume_after_cycle is FullFlush and a cycle completes (both
+    /// legs >= highest threshold), carry-forward legs for root are both 0.
+    #[test]
+    fn cycle_step_full_flush_zeroes_carry_forward(
+        config in arb_cycle_step_config(),
+        extra in 0.0..5000.0f64,
+    ) {
+        let mut config = config;
+        config.volume_after_cycle = VolumeAfterPayout::FullFlush;
+
+        let highest_threshold = config.steps.iter()
+            .map(|s| s.threshold)
+            .fold(0.0f64, f64::max);
+
+        // Ensure both legs meet the highest threshold to guarantee cycle completion.
+        let left_vol = highest_threshold + extra;
+        let right_vol = highest_threshold + extra;
+
+        let (plan, structure) = build_binary_cycle_step_plan(config);
+        let tree = three_node_tree();
+
+        let mut snapshots = HashMap::new();
+        for i in 0..3 {
+            snapshots.insert(uuid_from_index(i), member_snapshot());
+        }
+
+        let volume = vec![
+            VolumeSource { source_id: uuid_from_index(1), cv_amount: left_vol },
+            VolumeSource { source_id: uuid_from_index(2), cv_amount: right_vol },
+        ];
+
+        let result = calculate_binary_pairing(
+            &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(), None,
+        ).unwrap();
+
+        let root_cf = result.carry_forward.get(&uuid_from_index(0)).unwrap();
+        prop_assert!(
+            root_cf.left.abs() < 1e-10,
+            "FullFlush: root left carry-forward should be 0, got {}",
+            root_cf.left
+        );
+        prop_assert!(
+            root_cf.right.abs() < 1e-10,
+            "FullFlush: root right carry-forward should be 0, got {}",
+            root_cf.right
+        );
+    }
+
+    /// When CarryForward mode and a cycle completes, the weaker leg in
+    /// carry-forward is less than the highest step threshold. If both
+    /// legs were still >= highest threshold, another cycle would have
+    /// been processed and subtracted.
+    #[test]
+    fn cycle_step_carry_forward_legs_below_highest_threshold(
+        config in arb_cycle_step_config(),
+        extra in 0.0..5000.0f64,
+    ) {
+        let highest_threshold = config.steps.iter()
+            .map(|s| s.threshold)
+            .fold(0.0f64, f64::max);
+
+        // Ensure both legs meet the highest threshold.
+        let left_vol = highest_threshold + extra;
+        let right_vol = highest_threshold + extra;
+
+        // Override to CarryForward mode.
+        let cf_config = CycleStepConfig {
+            volume_after_cycle: VolumeAfterPayout::CarryForward,
+            ..config
+        };
+
+        let (plan, structure) = build_binary_cycle_step_plan(cf_config);
+        let tree = three_node_tree();
+
+        let mut snapshots = HashMap::new();
+        for i in 0..3 {
+            snapshots.insert(uuid_from_index(i), member_snapshot());
+        }
+
+        let volume = vec![
+            VolumeSource { source_id: uuid_from_index(1), cv_amount: left_vol },
+            VolumeSource { source_id: uuid_from_index(2), cv_amount: right_vol },
+        ];
+
+        let result = calculate_binary_pairing(
+            &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(), None,
+        ).unwrap();
+
+        // After all cycles, the weaker leg must be below the highest
+        // threshold. Otherwise another cycle would have completed.
+        let root_cf = result.carry_forward.get(&uuid_from_index(0)).unwrap();
+        let weaker = root_cf.left.min(root_cf.right);
+        prop_assert!(
+            weaker < highest_threshold + 1e-10,
+            "CarryForward: weaker leg {} still >= highest threshold {}",
+            weaker, highest_threshold
+        );
+    }
+
+    /// When carry_forward_cap is set, neither leg in carry-forward
+    /// exceeds the cap.
+    #[test]
+    fn cycle_step_carry_forward_cap_respected(
+        config in arb_cycle_step_config(),
+        left_vol in arb_volume(),
+        right_vol in arb_volume(),
+    ) {
+        let cap = 100.0;
+
+        // Override to CarryForward mode with a cap.
+        let cf_config = CycleStepConfig {
+            volume_after_cycle: VolumeAfterPayout::CarryForward,
+            carry_forward_cap: Some(cap),
+            ..config
+        };
+
+        let (plan, structure) = build_binary_cycle_step_plan(cf_config);
+        let tree = three_node_tree();
+
+        let mut snapshots = HashMap::new();
+        for i in 0..3 {
+            snapshots.insert(uuid_from_index(i), member_snapshot());
+        }
+
+        let volume = vec![
+            VolumeSource { source_id: uuid_from_index(1), cv_amount: left_vol },
+            VolumeSource { source_id: uuid_from_index(2), cv_amount: right_vol },
+        ];
+
+        let result = calculate_binary_pairing(
+            &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(), None,
+        ).unwrap();
+
+        for (uid, legs) in &result.carry_forward {
+            prop_assert!(
+                legs.left <= cap + 1e-10,
+                "Distributor {} left carry-forward {} exceeds cap {}",
+                uid, legs.left, cap
+            );
+            prop_assert!(
+                legs.right <= cap + 1e-10,
+                "Distributor {} right carry-forward {} exceeds cap {}",
+                uid, legs.right, cap
+            );
         }
     }
 }

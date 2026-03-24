@@ -232,7 +232,7 @@ impl CycleStepConfig {
 
         // Sort before duplicate check so adjacent comparison works.
         self.steps
-            .sort_by(|a, b| a.threshold.partial_cmp(&b.threshold).unwrap());
+            .sort_by(|a, b| a.threshold.total_cmp(&b.threshold));
 
         for pair in self.steps.windows(2) {
             if pair[0].threshold == pair[1].threshold {

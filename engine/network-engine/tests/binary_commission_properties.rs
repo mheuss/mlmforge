@@ -768,22 +768,30 @@ proptest! {
 /// Steps are sorted ascending by threshold and deduplicated to avoid
 /// near-duplicate thresholds that would fail validation.
 fn arb_cycle_step_config() -> impl Strategy<Value = CycleStepConfig> {
-    prop::collection::vec((100.0..5000.0f64, 10.0..500.0f64), 1..=4).prop_map(|pairs| {
-        let mut steps: Vec<CycleStep> = pairs
-            .into_iter()
-            .map(|(threshold, amount)| CycleStep { threshold, amount })
-            .collect();
-        steps.sort_by(|a, b| a.threshold.total_cmp(&b.threshold));
-        // Deduplicate thresholds that are too close together.
-        steps.dedup_by(|a, b| (a.threshold - b.threshold).abs() < 1.0);
-        CycleStepConfig {
-            steps,
-            volume_after_cycle: VolumeAfterPayout::FullFlush,
-            cap_per_period: None,
-            carry_forward_cap: None,
-            multi_position_cap_mode: MultiPositionCapMode::PerPosition,
-        }
-    })
+    (
+        prop::collection::vec((100.0..5000.0f64, 10.0..500.0f64), 1..=4),
+        prop::bool::ANY,
+    )
+        .prop_map(|(pairs, use_flush)| {
+            let mut steps: Vec<CycleStep> = pairs
+                .into_iter()
+                .map(|(threshold, amount)| CycleStep { threshold, amount })
+                .collect();
+            steps.sort_by(|a, b| a.threshold.total_cmp(&b.threshold));
+            // Deduplicate thresholds that are too close together.
+            steps.dedup_by(|a, b| (a.threshold - b.threshold).abs() < 1.0);
+            CycleStepConfig {
+                steps,
+                volume_after_cycle: if use_flush {
+                    VolumeAfterPayout::FullFlush
+                } else {
+                    VolumeAfterPayout::CarryForward
+                },
+                cap_per_period: None,
+                carry_forward_cap: None,
+                multi_position_cap_mode: MultiPositionCapMode::PerPosition,
+            }
+        })
 }
 
 proptest! {
@@ -883,6 +891,9 @@ proptest! {
         config in arb_cycle_step_config(),
         extra in 0.0..5000.0f64,
     ) {
+        let mut config = config;
+        config.volume_after_cycle = VolumeAfterPayout::FullFlush;
+
         let highest_threshold = config.steps.iter()
             .map(|s| s.threshold)
             .fold(0.0f64, f64::max);

@@ -374,15 +374,19 @@ fn calculate_binary_cycle_step(
     carry_forward: &HashMap<Uuid, LegVolumes>,
     ownership: Option<&HashMap<Uuid, Uuid>>,
 ) -> Result<BinaryCalculationResult, CalculationError> {
+    // Validate config (catches duplicate thresholds, sorts steps).
+    let mut validated_config = config.clone();
+    validated_config
+        .validate()
+        .map_err(CalculationError::ConfigError)?;
+
     // Phase 1: Prep (shared with pairing calculator)
     let volume_totals = aggregate_volume(tree, snapshots, volume, ownership)?;
     let eligibility_cache = evaluate_eligibility(snapshots, &plan.eligibility);
     let working_legs = accumulate_leg_volumes(tree, &volume_totals, carry_forward);
 
-    // Defensive sort: steps should already be sorted by validation,
-    // but sort again to guarantee ascending threshold order.
-    let mut steps = config.steps.clone();
-    steps.sort_by(|a, b| a.threshold.total_cmp(&b.threshold));
+    // Steps are sorted by validate() above. Use the validated copy.
+    let steps = &validated_config.steps;
 
     // Phase 2: Calculate
     // Track post-cycle leg volumes for carry-forward computation.
@@ -427,7 +431,7 @@ fn calculate_binary_cycle_step(
             total_earnings += cycle_payout;
 
             if cycle_complete {
-                match config.volume_after_cycle {
+                match validated_config.volume_after_cycle {
                     VolumeAfterPayout::FullFlush => {
                         left = 0.0;
                         right = 0.0;
@@ -467,14 +471,14 @@ fn calculate_binary_cycle_step(
         // The aggregate post-processing enforces the cap across all of an
         // owner's positions with pro-rata scaling.
         let use_aggregate_cap = matches!(
-            config.multi_position_cap_mode,
+            validated_config.multi_position_cap_mode,
             MultiPositionCapMode::Aggregate
         ) && ownership.is_some();
 
         let (dollar_amount, capped) = if use_aggregate_cap {
             (total_earnings, false)
         } else {
-            match config.cap_per_period {
+            match validated_config.cap_per_period {
                 Some(cap) if total_earnings > cap => (cap, true),
                 _ => (total_earnings, false),
             }
@@ -494,9 +498,9 @@ fn calculate_binary_cycle_step(
     }
 
     // Phase 2b: Aggregate cap post-processing for multi-position mode.
-    if let Some(cap) = config.cap_per_period {
+    if let Some(cap) = validated_config.cap_per_period {
         if matches!(
-            config.multi_position_cap_mode,
+            validated_config.multi_position_cap_mode,
             MultiPositionCapMode::Aggregate
         ) && ownership.is_some()
         {
@@ -522,7 +526,7 @@ fn calculate_binary_cycle_step(
         let (new_left, new_right) = post_cycle_legs.get(uid).copied().unwrap_or((0.0, 0.0));
 
         // Apply carry_forward_cap if set.
-        let (capped_left, capped_right) = match config.carry_forward_cap {
+        let (capped_left, capped_right) = match validated_config.carry_forward_cap {
             Some(cap) => (new_left.min(cap), new_right.min(cap)),
             None => (new_left, new_right),
         };

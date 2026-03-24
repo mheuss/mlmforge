@@ -409,53 +409,43 @@ fn calculate_binary_cycle_step(
         let mut right = legs.right;
         let mut total_earnings = 0.0;
 
-        // Cycle loop: evaluate steps, handle volume after each complete cycle.
-        loop {
-            let matched = left.min(right);
-            let mut cycle_payout = 0.0;
-            let mut cycle_complete = false;
+        // Compute full cycle payout (all steps qualify) and highest threshold.
+        let sum_of_amounts: f64 = steps.iter().map(|s| s.amount).sum();
+        let highest = steps.last().unwrap().threshold;
 
-            for (i, step) in steps.iter().enumerate() {
-                if matched >= step.threshold {
-                    cycle_payout += step.amount;
-                    if i == steps.len() - 1 {
-                        cycle_complete = true;
-                    }
+        // Closed-form full-cycle calculation for CarryForward mode.
+        // Avoids O(cycles × steps) loop for large volumes.
+        let matched = left.min(right);
+        if matched >= highest {
+            match validated_config.volume_after_cycle {
+                VolumeAfterPayout::FullFlush => {
+                    // At most one complete cycle. Pay all steps, zero legs.
+                    total_earnings += sum_of_amounts;
+                    left = 0.0;
+                    right = 0.0;
+                }
+                VolumeAfterPayout::CarryForward => {
+                    // Compute how many full cycles fit in O(1).
+                    let full_cycles = (matched / highest).floor() as u64;
+                    total_earnings += full_cycles as f64 * sum_of_amounts;
+                    left -= full_cycles as f64 * highest;
+                    right -= full_cycles as f64 * highest;
+                }
+                VolumeAfterPayout::NetOff => {
+                    unreachable!("net_off is validated out for cycle step")
                 }
             }
+        }
 
-            if cycle_payout == 0.0 {
-                break;
-            }
-
-            total_earnings += cycle_payout;
-
-            if cycle_complete {
-                match validated_config.volume_after_cycle {
-                    VolumeAfterPayout::FullFlush => {
-                        left = 0.0;
-                        right = 0.0;
-                        break;
-                    }
-                    VolumeAfterPayout::CarryForward => {
-                        let highest = steps.last().unwrap().threshold;
-                        left -= highest;
-                        right -= highest;
-                        // Check if another cycle can start.
-                        if left.min(right) >= steps[0].threshold {
-                            continue;
-                        } else {
-                            break;
-                        }
-                    }
-                    VolumeAfterPayout::NetOff => {
-                        unreachable!("net_off is validated out for cycle step")
-                    }
+        // Handle one remaining partial cycle (if any volume remains).
+        let remaining_matched = left.min(right);
+        if remaining_matched >= steps[0].threshold {
+            for step in steps.iter() {
+                if remaining_matched >= step.threshold {
+                    total_earnings += step.amount;
                 }
-            } else {
-                // Incomplete cycle: no volume subtraction.
-                break;
             }
+            // Partial cycle: no volume subtraction.
         }
 
         // Store post-cycle leg volumes for carry-forward.

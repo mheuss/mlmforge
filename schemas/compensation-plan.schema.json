@@ -1011,12 +1011,18 @@
           "description": "What happens to leg volumes after completing a full cycle. full_flush: both legs reset to zero. carry_forward: subtract highest threshold, keep excess."
         },
         "cap_per_period": {
-          "type": ["number", "null"],
+          "oneOf": [
+            { "type": "number", "minimum": 0 },
+            { "type": "null" }
+          ],
           "description": "Maximum commission per period. Null means uncapped."
         },
         "carry_forward_cap": {
-          "type": ["number", "null"],
-          "description": "Maximum volume that can carry forward between periods. Null means unlimited."
+          "oneOf": [
+            { "type": "number", "minimum": 0 },
+            { "type": "null" }
+          ],
+          "description": "Maximum volume that can carry forward into the next period. Null means unlimited."
         },
         "multi_position_cap_mode": {
           "type": "string",

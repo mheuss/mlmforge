@@ -182,11 +182,11 @@ pub struct CycleStepConfig {
     /// earnings for a single position in one period.
     pub cap_per_period: Option<f64>,
 
-    /// Maximum volume that can carry forward between periods.
+    /// Maximum volume that can carry forward into the next period.
     ///
-    /// Only applies when `volume_after_cycle` is `CarryForward`.
-    /// None means unlimited carry. Prevents excessive accumulation
-    /// on the stronger leg.
+    /// Applied when computing next-period carry-forward state,
+    /// regardless of `volume_after_cycle`. None means unlimited carry.
+    /// Prevents excessive accumulation on either leg.
     pub carry_forward_cap: Option<f64>,
 
     /// How caps apply when one owner has multiple positions.
@@ -244,6 +244,18 @@ impl CycleStepConfig {
             return Err(
                 "net_off is not supported for cycle step; use full_flush or carry_forward".into(),
             );
+        }
+
+        if let Some(cap) = self.cap_per_period {
+            if cap < 0.0 || !cap.is_finite() {
+                return Err("cap_per_period must be non-negative and finite".into());
+            }
+        }
+
+        if let Some(cap) = self.carry_forward_cap {
+            if cap < 0.0 || !cap.is_finite() {
+                return Err("carry_forward_cap must be non-negative and finite".into());
+            }
         }
 
         Ok(())
@@ -551,5 +563,33 @@ mod tests {
             VolumeAfterPayout::CarryForward,
         );
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_cycle_step_negative_cap_per_period_fails() {
+        let mut config = make_cycle_step_config(
+            vec![CycleStep {
+                threshold: 300.0,
+                amount: 25.0,
+            }],
+            VolumeAfterPayout::FullFlush,
+        );
+        config.cap_per_period = Some(-100.0);
+        let err = config.validate().unwrap_err();
+        assert!(err.contains("cap_per_period must be non-negative"));
+    }
+
+    #[test]
+    fn validate_cycle_step_negative_carry_forward_cap_fails() {
+        let mut config = make_cycle_step_config(
+            vec![CycleStep {
+                threshold: 300.0,
+                amount: 25.0,
+            }],
+            VolumeAfterPayout::CarryForward,
+        );
+        config.carry_forward_cap = Some(-50.0);
+        let err = config.validate().unwrap_err();
+        assert!(err.contains("carry_forward_cap must be non-negative"));
     }
 }

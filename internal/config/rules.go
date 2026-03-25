@@ -23,6 +23,7 @@ func validateBusinessRules(plan *CompensationPlan) []ValidationError {
 	errs = append(errs, validatePlacement(plan, structs)...)
 	errs = append(errs, validateEligibility(plan)...)
 	errs = append(errs, validatePassUp(plan)...)
+	errs = append(errs, validateBoardPlanCompanion(plan)...)
 	errs = append(errs, validateCrossFieldRules(plan, ranks)...)
 	return errs
 }
@@ -527,6 +528,38 @@ func validatePassUp(plan *CompensationPlan) []ValidationError {
 	}
 
 	return errs
+}
+
+// --- Board plan rules ---
+
+// validateBoardPlanCompanion checks that any board_plan structure has at least
+// one companion unilevel structure. Board plans use cycling-based commissions
+// and need a unilevel structure to handle non-cycling commissions like level
+// overrides and matching bonuses.
+func validateBoardPlanCompanion(plan *CompensationPlan) []ValidationError {
+	var hasBoardPlan bool
+	for _, s := range plan.Structures {
+		if s.Type == "board_plan" {
+			hasBoardPlan = true
+			break
+		}
+	}
+	if !hasBoardPlan {
+		return nil
+	}
+
+	for _, s := range plan.Structures {
+		if s.Type == "unilevel" {
+			return nil
+		}
+	}
+
+	return []ValidationError{{
+		Path:     "/structures",
+		Code:     "missing_companion_structure",
+		Message:  "board_plan structures require at least one companion unilevel structure",
+		Severity: SeverityError,
+	}}
 }
 
 // --- Warnings ---

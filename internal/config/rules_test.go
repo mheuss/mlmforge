@@ -813,3 +813,60 @@ func TestValidation_MatchedCommissionTypesIncludesValidTypes(t *testing.T) {
 	assert.Contains(t, errs[0].Message, "valid types:")
 	assert.Contains(t, errs[0].Message, "unilevel")
 }
+
+func TestValidation_BoardPlanWithoutUnilevelRejected(t *testing.T) {
+	plan := minimalPlan()
+	// Replace the unilevel structure with a board_plan.
+	plan.Structures = []StructureConfig{
+		{
+			Name:               "Sales Board",
+			Type:               "board_plan",
+			resolvedCommission: &BoardPlanCommission{},
+		},
+	}
+	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Sales Board"}}
+	plan.Ranks[0].QualifiedStructures = nil
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{Structure: "Sales Board", PersonalVolume: 100, GroupVolume: 3000},
+	}
+	plan.Ranks[1].QualifiedStructures = []string{"Sales Board"}
+
+	errs := validateBusinessRules(plan)
+	var found bool
+	for _, e := range errs {
+		if e.Code == "missing_companion_structure" {
+			found = true
+			assert.Equal(t, SeverityError, e.Severity)
+			assert.Contains(t, e.Message, "companion unilevel")
+			break
+		}
+	}
+	assert.True(t, found, "expected missing_companion_structure error, got: %v", errs)
+}
+
+func TestValidation_BoardPlanWithUnilevelPasses(t *testing.T) {
+	plan := minimalPlan()
+	// Add a board_plan alongside the existing unilevel.
+	plan.Structures = append(plan.Structures, StructureConfig{
+		Name:               "Sales Board",
+		Type:               "board_plan",
+		resolvedCommission: &BoardPlanCommission{},
+	})
+
+	errs := validateBusinessRules(plan)
+	for _, e := range errs {
+		assert.NotEqual(t, "missing_companion_structure", e.Code,
+			"board_plan with companion unilevel should not produce missing_companion_structure, got: %s", e.Message)
+	}
+}
+
+func TestValidation_NoBoardPlanSkipsCompanionCheck(t *testing.T) {
+	plan := minimalPlan()
+	// Default plan has only unilevel, no board_plan.
+
+	errs := validateBusinessRules(plan)
+	for _, e := range errs {
+		assert.NotEqual(t, "missing_companion_structure", e.Code,
+			"plan without board_plan should not produce missing_companion_structure, got: %s", e.Message)
+	}
+}

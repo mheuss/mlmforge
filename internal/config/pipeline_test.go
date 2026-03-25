@@ -314,6 +314,28 @@ func TestPipelinePassUpOnBinaryRejected(t *testing.T) {
 	assert.Truef(t, found, "expected unsupported_field error for pass_up on binary, got: %v", errs)
 }
 
+func TestPipelineBoardPlanNoUnilevelRejected(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+
+	yamlBytes := readFixture(t, "invalid/board-plan-no-unilevel.yaml")
+	jsonBytes, errs, err := p.LoadAndValidate(yamlBytes)
+
+	require.NoError(t, err, "no infrastructure error expected")
+	assert.True(t, hasErrors(errs), "board_plan without unilevel should produce a validation error")
+	assert.Nil(t, jsonBytes, "invalid fixture should not produce JSON output")
+
+	var found bool
+	for _, e := range errs {
+		if e.Code == "missing_companion_structure" {
+			found = true
+			assert.Contains(t, e.Message, "companion unilevel")
+			break
+		}
+	}
+	assert.Truef(t, found, "expected missing_companion_structure error, got: %v", errs)
+}
+
 func TestNewPipelineInvalidSchemaPath(t *testing.T) {
 	_, err := NewPipeline("/nonexistent/schema.json")
 	require.Error(t, err)

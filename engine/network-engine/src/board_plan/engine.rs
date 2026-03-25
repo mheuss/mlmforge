@@ -1525,4 +1525,45 @@ mod tests {
         // The existing member is unaffected.
         assert!(engine.get_member_board(test_uuid(10)).is_some());
     }
+
+    #[test]
+    fn engine_snapshot_round_trip() {
+        let mut engine = BoardPlanEngine::new(2, 2, test_config(), 1000).unwrap();
+        let sponsor = test_uuid(1);
+
+        // First member bootstraps the sponsor relationship.
+        engine.add_member(test_uuid(10), sponsor, 2000).unwrap();
+        // Subsequent members use the first member as sponsor.
+        engine
+            .add_member(test_uuid(11), test_uuid(10), 3000)
+            .unwrap();
+        engine
+            .add_member(test_uuid(12), test_uuid(10), 4000)
+            .unwrap();
+
+        let json = serde_json::to_string(&engine).unwrap();
+        let restored: BoardPlanEngine = serde_json::from_str(&json).unwrap();
+
+        // Verify dimensions are preserved.
+        assert_eq!(restored.dimensions(), (2, 2));
+
+        // Verify board count is preserved.
+        assert_eq!(restored.board_count(), engine.board_count());
+
+        // Verify member boards are preserved.
+        assert!(restored.get_member_board(test_uuid(10)).is_some());
+        assert!(restored.get_member_board(test_uuid(11)).is_some());
+        assert!(restored.get_member_board(test_uuid(12)).is_some());
+        assert!(restored.get_member_board(test_uuid(99)).is_none());
+
+        // Verify board content is the same.
+        let original_boards = engine.list_boards();
+        let restored_boards = restored.list_boards();
+        assert_eq!(original_boards.len(), restored_boards.len());
+        for (orig, rest) in original_boards.iter().zip(restored_boards.iter()) {
+            assert_eq!(orig.id, rest.id);
+            assert_eq!(orig.filled_count, rest.filled_count);
+            assert_eq!(orig.total_positions, rest.total_positions);
+        }
+    }
 }

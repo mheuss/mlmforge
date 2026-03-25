@@ -28,6 +28,7 @@ func TestPipelineAllValidFixtures(t *testing.T) {
 		{"valid/stairstep-plan.yaml", "Classic Stairstep Breakaway", []string{"stairstep"}},
 		{"valid/generation-plan.yaml", "Generation Override Plan", []string{"generation"}},
 		{"valid/streamline-plan.yaml", "Streamline Direct", []string{"streamline"}},
+		{"valid/board-plan.yaml", "Sales Board Plan", []string{"unilevel", "board_plan"}},
 	}
 
 	for _, tt := range tests {
@@ -242,6 +243,24 @@ func TestPipelineCommissionContentRoundTrip(t *testing.T) {
 				assert.Equal(t, float64(6), l6["level"])
 				assert.Equal(t, "Director", l6["min_rank"])
 				assert.Equal(t, 0.02, l6["percent"])
+			},
+		},
+		{
+			fixture: "valid/board-plan.yaml",
+			verify: func(t *testing.T, doc map[string]any) {
+				// Board plan is the second structure (index 1).
+				cfg := structureConfig(t, doc, 1)
+				assert.Equal(t, "Sales Board", cfg["name"])
+				assert.Equal(t, float64(2), cfg["width"])
+				assert.Equal(t, float64(2), cfg["height"])
+				bc := cfg["board_cycling"].(map[string]any)
+				assert.Equal(t, 500.0, bc["cycle_commission"])
+				assert.Equal(t, true, bc["re_entry_enabled"])
+				assert.Equal(t, "bottom", bc["re_entry_position"])
+				assert.Equal(t, float64(5), bc["max_cycles_per_period"])
+				assert.Equal(t, float64(10), bc["max_cascade_depth"])
+				assert.Equal(t, float64(3), bc["stall_threshold_periods"])
+				assert.Equal(t, true, bc["inactive_compression"])
 			},
 		},
 	}

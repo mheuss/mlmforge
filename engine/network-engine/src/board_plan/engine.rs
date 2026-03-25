@@ -1526,6 +1526,63 @@ mod tests {
         assert!(engine.get_member_board(test_uuid(10)).is_some());
     }
 
+    // --- commission run integration test ---
+
+    #[test]
+    fn full_commission_flow_with_cycling() {
+        use crate::commission::board_plan::calculate_board_commissions;
+        use std::collections::HashMap;
+
+        // Create a 2x2 board plan engine.
+        // test_config() gives cycle_commission=500, max_cycles_per_period=4.
+        let config = test_config();
+        let mut engine = BoardPlanEngine::new(2, 2, config.clone(), 1000).unwrap();
+        let sponsor = test_uuid(1);
+
+        // Add 7 members to fill the board and trigger cycling.
+        let mut all_cycle_events = Vec::new();
+        for i in 0..7u8 {
+            let user = test_uuid(10 + i);
+            let s = if i == 0 { sponsor } else { test_uuid(10) };
+            let result = engine.add_member(user, s, 2000 + i as i64).unwrap();
+            all_cycle_events.extend(result.cycle_events);
+        }
+
+        // A full 2x2 board triggers at least one cycle event.
+        assert!(
+            !all_cycle_events.is_empty(),
+            "filling a board should produce at least one cycle event"
+        );
+
+        // Calculate commissions from the cycle events.
+        let period_counts = HashMap::new();
+        let result = calculate_board_commissions(&all_cycle_events, &period_counts, &config);
+
+        // Each cycle event should produce an earning.
+        assert_eq!(
+            result.earnings.len(),
+            all_cycle_events.len(),
+            "one earning per cycle event"
+        );
+
+        for earning in &result.earnings {
+            assert_eq!(
+                earning.dollar_amount, 500.0,
+                "each earning should match cycle_commission"
+            );
+            assert!(
+                !earning.capped,
+                "earnings should not be capped within max_cycles_per_period"
+            );
+        }
+
+        // Cycle counts should be updated for each member who cycled.
+        assert!(
+            !result.updated_cycle_counts.is_empty(),
+            "cycle counts should track cycled members"
+        );
+    }
+
     #[test]
     fn engine_snapshot_round_trip() {
         let mut engine = BoardPlanEngine::new(2, 2, test_config(), 1000).unwrap();

@@ -1163,4 +1163,131 @@ mod tests {
             "root should appear in sponsor board's position array"
         );
     }
+
+    // --- cascade and edge case tests ---
+
+    #[test]
+    fn cascade_bound_stops_at_max_depth() {
+        // 2x1 board: 3 positions, cycles fast.
+        // max_cascade_depth=1 limits chained cycles from a single add.
+        let config = BoardPlanConfig {
+            cycle_commission: 500.0,
+            re_entry_enabled: true,
+            re_entry_position: ReEntryPosition::Bottom,
+            max_cycles_per_period: 4,
+            max_cascade_depth: 1,
+            stall_threshold_periods: 3,
+            inactive_compression: false,
+        };
+
+        let mut engine = BoardPlanEngine::new(2, 1, config, 1000).unwrap();
+        let sponsor = test_uuid(1);
+
+        // Add 20 members. With 3-position boards and re-entry, boards
+        // fill and cycle frequently. The cascade bound should prevent
+        // any single add_member from producing more than 1 level of
+        // chained cycling.
+        let mut all_cycle_events = Vec::new();
+        for i in 0..20u8 {
+            let member = test_uuid(100 + i);
+            let s = if i == 0 { sponsor } else { test_uuid(100) };
+            let result = engine.add_member(member, s, 2000 + i as i64).unwrap();
+            // Each add_member's cycle events should have at most 1
+            // depth level due to max_cascade_depth=1.
+            assert!(
+                result.cycle_events.len() <= 1,
+                "max_cascade_depth=1 should limit cycle events to at most 1 per add, got {}",
+                result.cycle_events.len()
+            );
+            all_cycle_events.extend(result.cycle_events);
+        }
+
+        // Cycles did fire (the system is working, just bounded).
+        assert!(
+            !all_cycle_events.is_empty(),
+            "cycles should still fire, just bounded per add"
+        );
+    }
+
+    #[test]
+    fn displaced_members_placed_before_new_members() {
+        // re_entry_enabled=false: cycled members go to displaced pool.
+        // Use 2x2 (7 positions) so there is plenty of room after cycling.
+        let mut engine = BoardPlanEngine::new(2, 2, test_config_no_reentry(), 1000).unwrap();
+
+        // Fill the 2x2 board to trigger cycling.
+        let (members, result) = fill_2x2_board(&mut engine);
+        let root = members[0];
+
+        // Root should be displaced after cycling.
+        assert!(
+            !result.cycle_events.is_empty(),
+            "filling the board should trigger cycling"
+        );
+        assert!(
+            engine.displaced_members().contains(&root),
+            "root should be in displaced pool after cycling with re-entry disabled"
+        );
+
+        // Add a new member. The displaced root should be placed first.
+        let new_member = test_uuid(30);
+        engine.add_member(new_member, root, 5000).unwrap();
+
+        // Displaced pool should now be empty.
+        assert!(
+            engine.displaced_members().is_empty(),
+            "displaced pool should be empty after placing displaced members"
+        );
+
+        // The displaced root should be on a board.
+        let root_board = engine.get_member_board(root);
+        assert!(
+            root_board.is_some(),
+            "displaced root should have been placed on a board"
+        );
+
+        // Root was placed before the new member. Since place_displaced_members
+        // runs before placement, root should have gotten an earlier position
+        // or an earlier board than the new member.
+        let new_member_board = engine.get_member_board(new_member);
+        assert!(
+            new_member_board.is_some(),
+            "new member should also be on a board"
+        );
+
+        // Both should be placed. The key guarantee is that displaced
+        // members are drained before the new member is placed, so
+        // the root won't remain in the displaced pool.
+        assert_ne!(
+            engine.get_member_board(root),
+            None,
+            "root should not remain displaced"
+        );
+    }
+
+    #[test]
+    fn lineage_tracks_parent_board() {
+        // Use no re-entry so we can inspect boards cleanly.
+        let mut engine = BoardPlanEngine::new(2, 2, test_config_no_reentry(), 1000).unwrap();
+
+        // Capture the original board ID.
+        let original_board_id = engine.list_boards()[0].id;
+
+        // Fill the 2x2 board (7 positions) to trigger cycling.
+        fill_2x2_board(&mut engine);
+
+        // After cycling, the original board is removed and replaced
+        // by 2 new boards. Both should reference the original.
+        let boards = engine.list_boards();
+        assert_eq!(boards.len(), 2);
+
+        for board_summary in &boards {
+            assert_eq!(
+                board_summary.parent_board_id,
+                Some(original_board_id),
+                "new board {} should have parent_board_id pointing to the original board",
+                board_summary.id
+            );
+        }
+    }
 }

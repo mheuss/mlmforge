@@ -9,7 +9,7 @@ use crate::config::board_plan::{BoardPlanConfig, ReEntryPosition};
 
 use super::board::{self, Board};
 use super::error::BoardPlanError;
-use super::types::{AddMemberResult, BoardSummary, CycleEvent};
+use super::types::{AddMemberResult, BoardSummary, CycleEvent, RemoveMemberResult};
 
 /// Manages all boards for a single board plan structure.
 ///
@@ -244,6 +244,101 @@ impl BoardPlanEngine {
             }
         }
         Ok(())
+    }
+
+    /// Removes a member from their board and compacts the remaining
+    /// members to fill the gap.
+    ///
+    /// Returns the list of members who were shifted during compaction
+    /// and any cycle events triggered if compaction filled the board.
+    pub fn remove_member(
+        &mut self,
+        user_id: Uuid,
+        timestamp: i64,
+    ) -> Result<RemoveMemberResult, BoardPlanError> {
+        // Find the member's board.
+        let board_id = self
+            .member_boards
+            .get(&user_id)
+            .copied()
+            .ok_or(BoardPlanError::MemberNotFound(user_id))?;
+
+        // Find their position and clear it.
+        let board = self
+            .boards
+            .get_mut(&board_id)
+            .ok_or(BoardPlanError::BoardNotFound(board_id))?;
+        if let Some(pos) = board.positions.iter().position(|p| *p == Some(user_id)) {
+            board.positions[pos] = None;
+        }
+
+        // Remove from member_boards.
+        self.member_boards.remove(&user_id);
+
+        // Update last activity.
+        let board = self
+            .boards
+            .get_mut(&board_id)
+            .ok_or(BoardPlanError::BoardNotFound(board_id))?;
+        board.last_activity_at = timestamp;
+
+        // Compact the board.
+        let compacted = self.compact_board(board_id);
+
+        // Check if compaction filled the board.
+        let mut cycle_events = Vec::new();
+        let board = self
+            .boards
+            .get(&board_id)
+            .ok_or(BoardPlanError::BoardNotFound(board_id))?;
+        if board.is_full() {
+            self.process_cycles(board_id, timestamp, &mut cycle_events, 0);
+        }
+
+        Ok(RemoveMemberResult {
+            compacted,
+            cycle_events,
+        })
+    }
+
+    /// Compacts a board after a removal by shifting remaining members
+    /// to fill gaps.
+    ///
+    /// Collects all members in position order, clears all positions,
+    /// then re-places members sequentially from position 0. Returns
+    /// the list of members whose position changed.
+    fn compact_board(&mut self, board_id: Uuid) -> Vec<Uuid> {
+        let board = match self.boards.get(&board_id) {
+            Some(b) => b,
+            None => return Vec::new(),
+        };
+
+        // Collect members in their current position order, noting
+        // their original positions.
+        let members_with_positions: Vec<(usize, Uuid)> = board
+            .positions
+            .iter()
+            .enumerate()
+            .filter_map(|(i, p)| p.map(|uid| (i, uid)))
+            .collect();
+
+        // Clear all positions.
+        let board = self.boards.get_mut(&board_id).unwrap();
+        for pos in board.positions.iter_mut() {
+            *pos = None;
+        }
+
+        // Re-place members sequentially and track who moved.
+        let mut moved = Vec::new();
+        for (new_pos, &(old_pos, member_id)) in members_with_positions.iter().enumerate() {
+            board.positions[new_pos] = Some(member_id);
+            self.member_boards.insert(member_id, board_id);
+            if new_pos != old_pos {
+                moved.push(member_id);
+            }
+        }
+
+        moved
     }
 
     /// Processes cycling when a board fills.
@@ -556,5 +651,120 @@ mod tests {
         // board is full).
         assert_eq!(result.board_id, fallback_id);
         assert_eq!(result.position, 0);
+    }
+
+    // --- remove_member tests ---
+
+    #[test]
+    fn remove_member_clears_position_and_compacts() {
+        // 2x2 board has 7 positions.
+        let mut engine = BoardPlanEngine::new(2, 2, test_config(), 1000).unwrap();
+        let sponsor = test_uuid(1);
+
+        // Add 3 members at positions 0, 1, 2.
+        let r0 = engine.add_member(test_uuid(10), sponsor, 2000).unwrap();
+        let board_id = r0.board_id;
+        engine
+            .add_member(test_uuid(11), test_uuid(10), 2001)
+            .unwrap();
+        engine
+            .add_member(test_uuid(12), test_uuid(10), 2002)
+            .unwrap();
+
+        // Remove member at position 1.
+        let result = engine.remove_member(test_uuid(11), 3000).unwrap();
+
+        // Member at position 2 should compact into position 1.
+        assert!(result.compacted.contains(&test_uuid(12)));
+        assert!(result.cycle_events.is_empty());
+
+        // Removed member is no longer on any board.
+        assert_eq!(engine.get_member_board(test_uuid(11)), None);
+
+        // Board has 2 members at positions 0 and 1.
+        let board = engine.get_board(board_id).unwrap();
+        assert_eq!(board.positions[0], Some(test_uuid(10)));
+        assert_eq!(board.positions[1], Some(test_uuid(12)));
+        assert_eq!(board.positions[2], None);
+        assert_eq!(board.filled_count(), 2);
+    }
+
+    #[test]
+    fn remove_member_not_found() {
+        let mut engine = BoardPlanEngine::new(2, 2, test_config(), 1000).unwrap();
+        let nonexistent = test_uuid(99);
+
+        let result = engine.remove_member(nonexistent, 3000);
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            BoardPlanError::MemberNotFound(id) if id == nonexistent
+        ));
+    }
+
+    #[test]
+    fn remove_last_member_no_compaction_needed() {
+        // 2x2 board has 7 positions.
+        let mut engine = BoardPlanEngine::new(2, 2, test_config(), 1000).unwrap();
+        let sponsor = test_uuid(1);
+
+        // Add 3 members at positions 0, 1, 2.
+        engine.add_member(test_uuid(10), sponsor, 2000).unwrap();
+        engine
+            .add_member(test_uuid(11), test_uuid(10), 2001)
+            .unwrap();
+        engine
+            .add_member(test_uuid(12), test_uuid(10), 2002)
+            .unwrap();
+
+        // Remove the last member (position 2). No gap to compact.
+        let result = engine.remove_member(test_uuid(12), 3000).unwrap();
+
+        assert!(result.compacted.is_empty());
+        assert!(result.cycle_events.is_empty());
+
+        // Remaining members still in positions 0 and 1.
+        let board_id = engine.get_member_board(test_uuid(10)).unwrap();
+        let board = engine.get_board(board_id).unwrap();
+        assert_eq!(board.positions[0], Some(test_uuid(10)));
+        assert_eq!(board.positions[1], Some(test_uuid(11)));
+        assert_eq!(board.positions[2], None);
+    }
+
+    #[test]
+    fn compact_preserves_member_board_mapping() {
+        // 2x2 board has 7 positions.
+        let mut engine = BoardPlanEngine::new(2, 2, test_config(), 1000).unwrap();
+        let sponsor = test_uuid(1);
+
+        // Add 4 members at positions 0, 1, 2, 3.
+        engine.add_member(test_uuid(10), sponsor, 2000).unwrap();
+        engine
+            .add_member(test_uuid(11), test_uuid(10), 2001)
+            .unwrap();
+        engine
+            .add_member(test_uuid(12), test_uuid(10), 2002)
+            .unwrap();
+        engine
+            .add_member(test_uuid(13), test_uuid(10), 2003)
+            .unwrap();
+
+        let board_id = engine.get_member_board(test_uuid(10)).unwrap();
+
+        // Remove member at position 1 to create a gap.
+        engine.remove_member(test_uuid(11), 3000).unwrap();
+
+        // All remaining members should still map to this board.
+        assert_eq!(engine.get_member_board(test_uuid(10)), Some(board_id));
+        assert_eq!(engine.get_member_board(test_uuid(12)), Some(board_id));
+        assert_eq!(engine.get_member_board(test_uuid(13)), Some(board_id));
+
+        // Verify positions are correctly compacted.
+        let board = engine.get_board(board_id).unwrap();
+        assert_eq!(board.positions[0], Some(test_uuid(10)));
+        assert_eq!(board.positions[1], Some(test_uuid(12)));
+        assert_eq!(board.positions[2], Some(test_uuid(13)));
+        assert_eq!(board.positions[3], None);
     }
 }

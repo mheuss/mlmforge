@@ -388,7 +388,12 @@ impl BoardPlanEngine {
 
         // Handle re-entry or displacement.
         let re_entry_board = if self.config.re_entry_enabled {
-            match self.find_placement_board(cycled_member) {
+            let sponsor_id = self
+                .sponsor_map
+                .get(&cycled_member)
+                .copied()
+                .unwrap_or(cycled_member);
+            match self.find_placement_board(sponsor_id) {
                 Ok(target_board_id) => {
                     let target = self.boards.get_mut(&target_board_id);
                     if let Some(target) = target {
@@ -1093,5 +1098,69 @@ mod tests {
                 "new board should reference the original as parent"
             );
         }
+    }
+
+    #[test]
+    fn cycle_reentry_sponsor_board_mode_uses_sponsors_board() {
+        // SponsorBoard re-entry: the cycled root should land on their
+        // sponsor's board, not just the oldest board with an opening.
+        let mut engine = BoardPlanEngine::new(2, 1, test_config_sponsor_board(), 1000).unwrap();
+
+        // 2x1 board has 3 positions (root + 2 children).
+        // Sponsor sits on a separate board so we can verify the
+        // cycled root lands there instead of falling back to Bottom.
+
+        let sponsor = test_uuid(1);
+        let root = test_uuid(10);
+
+        // Bootstrap: root's sponsor is `sponsor`.
+        engine.add_member(root, sponsor, 2000).unwrap();
+        let _root_board = engine.get_member_board(root).unwrap();
+
+        // The sponsor was auto-registered in sponsor_map by the
+        // bootstrap path but is not on any board yet. Place the
+        // sponsor on a second board so SponsorBoard mode has a
+        // target to find.
+        let sponsor_board = Board::new(engine.total_positions, 1500, None);
+        let sponsor_board_id = sponsor_board.id;
+        engine.boards.insert(sponsor_board_id, sponsor_board);
+        engine.boards.get_mut(&sponsor_board_id).unwrap().positions[0] = Some(sponsor);
+        engine.member_boards.insert(sponsor, sponsor_board_id);
+
+        // Fill the remaining 2 positions on root's board to trigger
+        // cycling.
+        let child_a = test_uuid(11);
+        let child_b = test_uuid(12);
+        engine.add_member(child_a, root, 3000).unwrap();
+        let result = engine.add_member(child_b, root, 4000).unwrap();
+
+        // Cycling should have fired.
+        assert!(
+            !result.cycle_events.is_empty(),
+            "filling the board should trigger cycling"
+        );
+
+        let event = &result.cycle_events[0];
+        assert_eq!(event.cycled_member, root, "root should cycle out");
+
+        // The root should re-enter on the sponsor's board, not one
+        // of the newly split boards.
+        assert_eq!(
+            event.re_entry_board,
+            Some(sponsor_board_id),
+            "SponsorBoard mode should place cycled root on sponsor's board"
+        );
+        assert_eq!(
+            engine.get_member_board(root),
+            Some(sponsor_board_id),
+            "root should be tracked on the sponsor's board"
+        );
+
+        // Verify root is actually in the sponsor board's positions.
+        let sb = engine.get_board(sponsor_board_id).unwrap();
+        assert!(
+            sb.positions.iter().any(|p| *p == Some(root)),
+            "root should appear in sponsor board's position array"
+        );
     }
 }

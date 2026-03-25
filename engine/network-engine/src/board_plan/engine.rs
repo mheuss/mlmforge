@@ -343,8 +343,16 @@ impl BoardPlanEngine {
 
     /// Processes cycling when a board fills.
     ///
-    /// Stub for now. Cycling logic is implemented in Task 6.
-    #[allow(unused_variables, clippy::ptr_arg)]
+    /// When a board is full, the root (position 0) cycles out and
+    /// earns commission. The board is split into `width` new boards,
+    /// one per child subtree of the root. The original board is
+    /// removed.
+    ///
+    /// If re-entry is enabled, the cycled member is placed on a
+    /// board with an open slot. If no slot is available, they go to
+    /// displaced_members.
+    ///
+    /// Recursion is bounded by `max_cascade_depth` from config.
     fn process_cycles(
         &mut self,
         board_id: Uuid,
@@ -352,7 +360,131 @@ impl BoardPlanEngine {
         cycle_events: &mut Vec<CycleEvent>,
         depth: u32,
     ) {
-        // Cycling is implemented in Task 6.
+        // Cascade bound: prevent runaway chain reactions.
+        if depth >= self.config.max_cascade_depth {
+            return;
+        }
+
+        // Get the board and verify it is full.
+        let board = match self.boards.get(&board_id) {
+            Some(b) if b.is_full() => b.clone(),
+            _ => return,
+        };
+
+        // Root (position 0) cycles out.
+        let cycled_member = match board.positions[0] {
+            Some(member) => member,
+            None => return,
+        };
+
+        // Split the board into child subtree boards.
+        let new_board_ids = self.split_board(&board, timestamp);
+
+        // Remove the original board.
+        self.boards.remove(&board_id);
+
+        // Remove cycled member from member_boards.
+        self.member_boards.remove(&cycled_member);
+
+        // Handle re-entry or displacement.
+        let re_entry_board = if self.config.re_entry_enabled {
+            match self.find_placement_board(cycled_member) {
+                Ok(target_board_id) => {
+                    let target = self.boards.get_mut(&target_board_id);
+                    if let Some(target) = target {
+                        if let Some(pos) = target.first_open_position() {
+                            target.positions[pos] = Some(cycled_member);
+                            target.last_activity_at = timestamp;
+                            self.member_boards.insert(cycled_member, target_board_id);
+                            Some(target_board_id)
+                        } else {
+                            self.displaced_members.push(cycled_member);
+                            None
+                        }
+                    } else {
+                        self.displaced_members.push(cycled_member);
+                        None
+                    }
+                }
+                Err(_) => {
+                    self.displaced_members.push(cycled_member);
+                    None
+                }
+            }
+        } else {
+            self.displaced_members.push(cycled_member);
+            None
+        };
+
+        // Emit cycle event.
+        cycle_events.push(CycleEvent {
+            board_id,
+            cycled_member,
+            earned_commission: true,
+            new_boards: new_board_ids.clone(),
+            re_entry_board,
+        });
+
+        // Cascade: check if the re-entry board is now full.
+        if let Some(re_board_id) = re_entry_board {
+            let is_full = self
+                .boards
+                .get(&re_board_id)
+                .map(|b| b.is_full())
+                .unwrap_or(false);
+            if is_full {
+                self.process_cycles(re_board_id, timestamp, cycle_events, depth + 1);
+            }
+        }
+
+        // Cascade: check if any new board is now full.
+        for new_id in &new_board_ids {
+            let is_full = self
+                .boards
+                .get(new_id)
+                .map(|b| b.is_full())
+                .unwrap_or(false);
+            if is_full {
+                self.process_cycles(*new_id, timestamp, cycle_events, depth + 1);
+            }
+        }
+    }
+
+    /// Splits a full board into `width` new boards, one per child
+    /// subtree of the root.
+    ///
+    /// Each child of the root becomes position 0 in a new board.
+    /// The subtree members are mapped to sequential BFS positions
+    /// in the new board. The original board's members have their
+    /// `member_boards` entries updated to point to the new board.
+    ///
+    /// Returns the IDs of the newly created boards.
+    fn split_board(&mut self, board: &Board, timestamp: i64) -> Vec<Uuid> {
+        let w = self.width as usize;
+        let max_index = self.total_positions - 1;
+        let mut new_board_ids = Vec::with_capacity(w);
+
+        for child_index in 1..=w {
+            // Get the subtree indices in BFS order.
+            let subtree = board::subtree_indices(child_index, self.width, max_index);
+
+            // Create a new board with the same total_positions.
+            let mut new_board = Board::new(self.total_positions, timestamp, Some(board.id));
+
+            // Map each subtree member to sequential positions in the
+            // new board, preserving BFS order.
+            for (new_pos, &old_index) in subtree.iter().enumerate() {
+                if let Some(member_id) = board.positions[old_index] {
+                    new_board.positions[new_pos] = Some(member_id);
+                    self.member_boards.insert(member_id, new_board.id);
+                }
+            }
+
+            new_board_ids.push(new_board.id);
+            self.boards.insert(new_board.id, new_board);
+        }
+
+        new_board_ids
     }
 }
 
@@ -623,21 +755,27 @@ mod tests {
 
     #[test]
     fn add_member_sponsor_board_mode_falls_back_to_oldest() {
-        let mut engine = BoardPlanEngine::new(2, 1, test_config_sponsor_board(), 1000).unwrap();
-        // 2x1 board has 3 positions (root + 2 children).
+        let mut engine = BoardPlanEngine::new(2, 2, test_config_sponsor_board(), 1000).unwrap();
+        // 2x2 board has 7 positions.
 
         let sponsor = test_uuid(1);
 
-        // Fill the initial board completely to trigger cycling stub.
-        // Position 0: sponsor (bootstrap).
-        engine.add_member(sponsor, test_uuid(99), 2000).unwrap();
-        // Position 1.
-        engine.add_member(test_uuid(2), sponsor, 2001).unwrap();
-        // Position 2 — board is now full (cycling stub does nothing).
-        engine.add_member(test_uuid(3), sponsor, 2002).unwrap();
+        // Add sponsor as first member (bootstrap).
+        let sponsor_result = engine.add_member(sponsor, test_uuid(99), 2000).unwrap();
+        let sponsor_board = sponsor_result.board_id;
 
-        // Sponsor's board is full. Add a second board manually so
-        // there's somewhere to fall back to.
+        // Manually fill the rest of the sponsor's board without
+        // going through add_member (which would trigger cycling).
+        // This simulates a full board for fallback testing.
+        let board = engine.boards.get_mut(&sponsor_board).unwrap();
+        for i in 1..engine.total_positions {
+            let filler = test_uuid(50 + i as u8);
+            board.positions[i] = Some(filler);
+            engine.member_boards.insert(filler, sponsor_board);
+            engine.sponsor_map.insert(filler, sponsor);
+        }
+
+        // Add a fallback board with open slots.
         let fallback_board = Board::new(engine.total_positions, 3000, None);
         let fallback_id = fallback_board.id;
         engine.boards.insert(fallback_id, fallback_board);
@@ -646,9 +784,8 @@ mod tests {
         let member = test_uuid(4);
         let result = engine.add_member(member, sponsor, 4000).unwrap();
 
-        // Should fall back to the oldest board with an opening,
-        // which is the manually added fallback board (the original
-        // board is full).
+        // SponsorBoard mode tries sponsor's board first, but it's
+        // full, so it falls back to the oldest board with an opening.
         assert_eq!(result.board_id, fallback_id);
         assert_eq!(result.position, 0);
     }
@@ -766,5 +903,195 @@ mod tests {
         assert_eq!(board.positions[1], Some(test_uuid(12)));
         assert_eq!(board.positions[2], Some(test_uuid(13)));
         assert_eq!(board.positions[3], None);
+    }
+
+    // --- cycling tests ---
+
+    /// Creates a config with re-entry disabled.
+    fn test_config_no_reentry() -> BoardPlanConfig {
+        BoardPlanConfig {
+            cycle_commission: 500.0,
+            re_entry_enabled: false,
+            re_entry_position: ReEntryPosition::Bottom,
+            max_cycles_per_period: 4,
+            max_cascade_depth: 10,
+            stall_threshold_periods: 3,
+            inactive_compression: false,
+        }
+    }
+
+    /// Fills a 2x2 board (7 positions) by adding members one at a
+    /// time. Returns (members, last_result) where members is the
+    /// ordered list of UUIDs placed at positions 0-6, and
+    /// last_result is the AddMemberResult from the 7th (final) add.
+    fn fill_2x2_board(engine: &mut BoardPlanEngine) -> (Vec<Uuid>, AddMemberResult) {
+        let sponsor = test_uuid(1);
+        let mut members = Vec::new();
+        let mut last_result = None;
+
+        for i in 0..7u8 {
+            let member = test_uuid(10 + i);
+            let s = if i == 0 { sponsor } else { test_uuid(10) };
+            let result = engine.add_member(member, s, 2000 + i as i64).unwrap();
+            members.push(member);
+            last_result = Some(result);
+        }
+
+        (members, last_result.unwrap())
+    }
+
+    #[test]
+    fn full_board_triggers_cycle() {
+        // 2x2 board, re-entry enabled. Add 7 members to fill it.
+        let mut engine = BoardPlanEngine::new(2, 2, test_config(), 1000).unwrap();
+        let (members, last_result) = fill_2x2_board(&mut engine);
+
+        // The 7th add_member should return at least one cycle event.
+        assert!(
+            !last_result.cycle_events.is_empty(),
+            "filling the board should trigger at least one cycle event"
+        );
+
+        let event = &last_result.cycle_events[0];
+
+        // The cycled member should be the root (first member placed).
+        assert_eq!(
+            event.cycled_member, members[0],
+            "root (position 0) should cycle out"
+        );
+
+        // The event should list 2 new boards (width=2).
+        assert_eq!(
+            event.new_boards.len(),
+            2,
+            "split should create width (2) new boards"
+        );
+
+        // Commission should be earned.
+        assert!(event.earned_commission);
+
+        // Since re_entry_enabled is true, root should have been
+        // re-entered on one of the new boards.
+        assert!(
+            event.re_entry_board.is_some(),
+            "with re-entry enabled, root should have a re-entry board"
+        );
+        assert!(
+            engine.get_member_board(members[0]).is_some(),
+            "with re-entry enabled, root should be on a board"
+        );
+
+        // Original board replaced by 2 new boards.
+        assert_eq!(engine.board_count(), 2);
+    }
+
+    #[test]
+    fn split_creates_correct_subtrees() {
+        // Use re_entry_enabled=false to keep the cycled root out.
+        let mut engine = BoardPlanEngine::new(2, 2, test_config_no_reentry(), 1000).unwrap();
+        let (members, _) = fill_2x2_board(&mut engine);
+
+        // After cycling: root (members[0]) is displaced.
+        assert!(
+            engine.displaced_members().contains(&members[0]),
+            "root should be displaced when re-entry is disabled"
+        );
+
+        // 2 new boards, each with 3 members.
+        assert_eq!(engine.board_count(), 2);
+
+        // Identify boards by their root member (position 0) since
+        // board ordering in list_boards is not deterministic when
+        // timestamps are equal.
+        let left_board_id = engine.get_member_board(members[1]).unwrap();
+        let right_board_id = engine.get_member_board(members[2]).unwrap();
+        assert_ne!(
+            left_board_id, right_board_id,
+            "subtrees go to different boards"
+        );
+
+        let left_board = engine.get_board(left_board_id).unwrap();
+        let right_board = engine.get_board(right_board_id).unwrap();
+
+        assert_eq!(left_board.filled_count(), 3);
+        assert_eq!(right_board.filled_count(), 3);
+
+        // Left subtree: members[1] (root), members[3], members[4].
+        assert_eq!(left_board.positions[0], Some(members[1]));
+        assert_eq!(left_board.positions[1], Some(members[3]));
+        assert_eq!(left_board.positions[2], Some(members[4]));
+
+        // Right subtree: members[2] (root), members[5], members[6].
+        assert_eq!(right_board.positions[0], Some(members[2]));
+        assert_eq!(right_board.positions[1], Some(members[5]));
+        assert_eq!(right_board.positions[2], Some(members[6]));
+    }
+
+    #[test]
+    fn cycle_with_reentry_places_cycled_member() {
+        // Default config has re_entry_enabled=true, Bottom mode.
+        let mut engine = BoardPlanEngine::new(2, 2, test_config(), 1000).unwrap();
+        let (members, _) = fill_2x2_board(&mut engine);
+
+        // Root (members[0]) should have been re-entered.
+        let root_board = engine.get_member_board(members[0]);
+        assert!(
+            root_board.is_some(),
+            "cycled root should be re-entered when re_entry_enabled"
+        );
+
+        // Root should be on one of the new boards, not displaced.
+        assert!(
+            engine.displaced_members().is_empty(),
+            "no members should be displaced with re-entry enabled"
+        );
+
+        // Verify root is actually in a board's positions.
+        let board_id = root_board.unwrap();
+        let board = engine.get_board(board_id).unwrap();
+        assert!(
+            board.positions.iter().any(|p| *p == Some(members[0])),
+            "root should appear in the board's position array"
+        );
+    }
+
+    #[test]
+    fn cycle_without_reentry_displaces_member() {
+        let mut engine = BoardPlanEngine::new(2, 2, test_config_no_reentry(), 1000).unwrap();
+        let (members, _) = fill_2x2_board(&mut engine);
+
+        // Root should be displaced, not on any board.
+        assert_eq!(
+            engine.get_member_board(members[0]),
+            None,
+            "cycled root should not be on any board"
+        );
+        assert!(
+            engine.displaced_members().contains(&members[0]),
+            "cycled root should be in displaced_members"
+        );
+    }
+
+    #[test]
+    fn new_boards_have_correct_lineage() {
+        let mut engine = BoardPlanEngine::new(2, 2, test_config_no_reentry(), 1000).unwrap();
+
+        // Capture the original board ID before cycling destroys it.
+        let original_board_id = engine.list_boards()[0].id;
+
+        fill_2x2_board(&mut engine);
+
+        // After cycling, both new boards should have parent_board_id
+        // pointing to the original board.
+        let boards = engine.list_boards();
+        assert_eq!(boards.len(), 2);
+
+        for board_summary in &boards {
+            assert_eq!(
+                board_summary.parent_board_id,
+                Some(original_board_id),
+                "new board should reference the original as parent"
+            );
+        }
     }
 }

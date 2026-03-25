@@ -421,3 +421,195 @@ func (c *EngineClient) CalculateBinaryPairing(ctx context.Context, req Calculate
 	}
 	return &calcResult, nil
 }
+
+// --- Board plan methods ---
+
+// CreateBoardPlan creates a board plan structure in the engine.
+// Width and height define the board dimensions. Config is the raw JSON
+// for BoardPlanConfig (cycle commission, re-entry rules, etc.).
+func (c *EngineClient) CreateBoardPlan(ctx context.Context, structure string, width, height int, config json.RawMessage) error {
+	_, err := c.call(ctx, "create_board_plan", map[string]any{
+		"structure": structure,
+		"width":     width,
+		"height":    height,
+		"config":    json.RawMessage(config),
+	})
+	return err
+}
+
+// BoardAddMember adds a member to a board plan structure.
+// The engine places the member using BFS into the oldest board with space.
+func (c *EngineClient) BoardAddMember(ctx context.Context, structure, userID, sponsorID string, timestamp int64) (*BoardAddMemberResultDTO, error) {
+	result, err := c.call(ctx, "board_add_member", map[string]any{
+		"structure":  structure,
+		"user_id":    userID,
+		"sponsor_id": sponsorID,
+		"timestamp":  timestamp,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var addResult BoardAddMemberResultDTO
+	if err := json.Unmarshal(result, &addResult); err != nil {
+		return nil, fmt.Errorf("unmarshal board add member result: %w", err)
+	}
+	return &addResult, nil
+}
+
+// BoardRemoveMember removes a member from a board plan structure.
+// Remaining members compact upward to fill the gap.
+func (c *EngineClient) BoardRemoveMember(ctx context.Context, structure, userID string, timestamp int64) (*BoardRemoveMemberResultDTO, error) {
+	result, err := c.call(ctx, "board_remove_member", map[string]any{
+		"structure": structure,
+		"user_id":   userID,
+		"timestamp": timestamp,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var removeResult BoardRemoveMemberResultDTO
+	if err := json.Unmarshal(result, &removeResult); err != nil {
+		return nil, fmt.Errorf("unmarshal board remove member result: %w", err)
+	}
+	return &removeResult, nil
+}
+
+// BoardCompressInactive compresses inactive members out of their boards.
+// Returns which members were removed and any cycle events from compaction.
+func (c *EngineClient) BoardCompressInactive(ctx context.Context, structure string, memberIDs []string, timestamp int64) (*CompressionResultDTO, error) {
+	result, err := c.call(ctx, "board_compress_inactive", map[string]any{
+		"structure":  structure,
+		"member_ids": memberIDs,
+		"timestamp":  timestamp,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var compResult CompressionResultDTO
+	if err := json.Unmarshal(result, &compResult); err != nil {
+		return nil, fmt.Errorf("unmarshal compression result: %w", err)
+	}
+	return &compResult, nil
+}
+
+// BoardDetectStalled finds boards with no activity since the cutoff timestamp.
+func (c *EngineClient) BoardDetectStalled(ctx context.Context, structure string, cutoffTimestamp int64) ([]StalledBoardDTO, error) {
+	result, err := c.call(ctx, "board_detect_stalled", map[string]any{
+		"structure":        structure,
+		"cutoff_timestamp": cutoffTimestamp,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var stalled []StalledBoardDTO
+	if err := json.Unmarshal(result, &stalled); err != nil {
+		return nil, fmt.Errorf("unmarshal stalled boards: %w", err)
+	}
+	return stalled, nil
+}
+
+// BoardDissolve dissolves a stalled board, displacing its members.
+func (c *EngineClient) BoardDissolve(ctx context.Context, structure, boardID string, timestamp int64) (*DissolutionResultDTO, error) {
+	result, err := c.call(ctx, "board_dissolve", map[string]any{
+		"structure": structure,
+		"board_id":  boardID,
+		"timestamp": timestamp,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var dissolution DissolutionResultDTO
+	if err := json.Unmarshal(result, &dissolution); err != nil {
+		return nil, fmt.Errorf("unmarshal dissolution result: %w", err)
+	}
+	return &dissolution, nil
+}
+
+// BoardGetState returns the full state of a board as raw JSON.
+func (c *EngineClient) BoardGetState(ctx context.Context, structure, boardID string) (json.RawMessage, error) {
+	result, err := c.call(ctx, "board_get_state", map[string]any{
+		"structure": structure,
+		"board_id":  boardID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// BoardGetMember returns which board a member is on, or nil if not found.
+func (c *EngineClient) BoardGetMember(ctx context.Context, structure, userID string) (*BoardMemberInfoDTO, error) {
+	result, err := c.call(ctx, "board_get_member", map[string]any{
+		"structure": structure,
+		"user_id":   userID,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// The handler returns JSON null when the member is not on any board.
+	if string(result) == "null" {
+		return nil, nil
+	}
+
+	var info BoardMemberInfoDTO
+	if err := json.Unmarshal(result, &info); err != nil {
+		return nil, fmt.Errorf("unmarshal board member info: %w", err)
+	}
+	return &info, nil
+}
+
+// BoardListBoards returns summaries of all boards in a board plan structure.
+func (c *EngineClient) BoardListBoards(ctx context.Context, structure string) ([]BoardSummaryDTO, error) {
+	result, err := c.call(ctx, "board_list", map[string]any{
+		"structure": structure,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var boards []BoardSummaryDTO
+	if err := json.Unmarshal(result, &boards); err != nil {
+		return nil, fmt.Errorf("unmarshal board list: %w", err)
+	}
+	return boards, nil
+}
+
+// CalculateBoardCommissions computes cycle commissions for a set of board cycle events.
+// This is a stateless calculation: pass cycle events, prior counts, and config.
+func (c *EngineClient) CalculateBoardCommissions(ctx context.Context, req CalculateBoardCommissionsRequest) (*BoardCommissionResultDTO, error) {
+	result, err := c.call(ctx, "board_calculate_commissions", req)
+	if err != nil {
+		return nil, err
+	}
+	var commResult BoardCommissionResultDTO
+	if err := json.Unmarshal(result, &commResult); err != nil {
+		return nil, fmt.Errorf("unmarshal board commission result: %w", err)
+	}
+	return &commResult, nil
+}
+
+// TakeSnapshot serializes a structure's state for persistence.
+// Returns the snapshot result containing tree type and serialized data.
+func (c *EngineClient) TakeSnapshot(ctx context.Context, structure string) (*SnapshotResultDTO, error) {
+	result, err := c.call(ctx, "take_snapshot", map[string]any{
+		"structure": structure,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var snapshot SnapshotResultDTO
+	if err := json.Unmarshal(result, &snapshot); err != nil {
+		return nil, fmt.Errorf("unmarshal snapshot: %w", err)
+	}
+	return &snapshot, nil
+}
+
+// RestoreSnapshot restores a structure from a previously taken snapshot.
+func (c *EngineClient) RestoreSnapshot(ctx context.Context, structure, treeType string, data json.RawMessage) error {
+	_, err := c.call(ctx, "restore_snapshot", map[string]any{
+		"structure": structure,
+		"tree_type": treeType,
+		"data":      json.RawMessage(data),
+	})
+	return err
+}

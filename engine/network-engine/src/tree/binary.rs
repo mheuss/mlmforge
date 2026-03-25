@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::arena::Arena;
@@ -12,6 +14,7 @@ use crate::types::TreePosition;
 /// position 1 (right). Placement requires an explicit position.
 /// The tree validates positions but never picks alternatives
 /// (decision 020).
+#[derive(Serialize, Deserialize)]
 pub struct BinaryTree {
     arena: Arena,
     /// Binary child slots per parent node.
@@ -625,5 +628,46 @@ mod tests {
             .unwrap();
         assert!(tree.is_descendant_of(test_uuid(3), test_uuid(1)).unwrap());
         assert!(!tree.is_descendant_of(test_uuid(1), test_uuid(3)).unwrap());
+    }
+
+    #[test]
+    fn snapshot_round_trip() {
+        let mut tree = BinaryTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0, test_uuid(1), 2000)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 1, test_uuid(1), 3000)
+            .unwrap();
+        tree.add_node(test_uuid(4), test_uuid(2), 0, test_uuid(1), 4000)
+            .unwrap();
+
+        let json = serde_json::to_string(&tree).unwrap();
+        let restored: BinaryTree = serde_json::from_str(&json).unwrap();
+
+        // Verify all nodes exist in restored tree.
+        assert!(restored.contains(test_uuid(1)));
+        assert!(restored.contains(test_uuid(2)));
+        assert!(restored.contains(test_uuid(3)));
+        assert!(restored.contains(test_uuid(4)));
+
+        // Verify binary structure is preserved.
+        let children = restored.get_children(test_uuid(1)).unwrap();
+        assert_eq!(children.len(), 2);
+        assert_eq!(children[0].user_id, test_uuid(2));
+        assert_eq!(children[1].user_id, test_uuid(3));
+
+        // Verify slot positions are preserved.
+        let pos = restored.get_position(test_uuid(2)).unwrap();
+        assert_eq!(pos.position, 0);
+        let pos = restored.get_position(test_uuid(3)).unwrap();
+        assert_eq!(pos.position, 1);
+
+        // Verify depths are preserved.
+        let pos = restored.get_position(test_uuid(4)).unwrap();
+        assert_eq!(pos.depth, 2);
+
+        // Verify sponsor links are preserved.
+        let sponsor = restored.get_sponsor(test_uuid(4)).unwrap();
+        assert_eq!(sponsor.unwrap().user_id, test_uuid(1));
     }
 }

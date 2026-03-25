@@ -35,6 +35,22 @@ fn dispatch(state: &mut WorkerState, request: &Request) -> Response {
         // Commission calculations
         "calculate_unilevel" => handlers::handle_calculate_unilevel(state, request),
         "calculate_binary_pairing" => handlers::handle_calculate_binary_pairing(state, request),
+        // Board plan operations
+        "create_board_plan" => handlers::handle_create_board_plan(state, request),
+        "board_add_member" => handlers::handle_board_add_member(state, request),
+        "board_remove_member" => handlers::handle_board_remove_member(state, request),
+        "board_compress_inactive" => handlers::handle_board_compress_inactive(state, request),
+        "board_detect_stalled" => handlers::handle_board_detect_stalled(state, request),
+        "board_dissolve" => handlers::handle_board_dissolve(state, request),
+        "board_get_state" => handlers::handle_board_get_state(state, request),
+        "board_get_member" => handlers::handle_board_get_member(state, request),
+        "board_list" => handlers::handle_board_list(state, request),
+        "board_calculate_commissions" => {
+            handlers::handle_board_calculate_commissions(state, request)
+        }
+        // Snapshot operations
+        "take_snapshot" => handlers::handle_take_snapshot(state, request),
+        "restore_snapshot" => handlers::handle_restore_snapshot(state, request),
         _ => Response::error(
             request.id.clone(),
             "UNKNOWN_OP",

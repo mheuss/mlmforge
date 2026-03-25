@@ -28,6 +28,7 @@ func TestPipelineAllValidFixtures(t *testing.T) {
 		{"valid/stairstep-plan.yaml", "Classic Stairstep Breakaway", []string{"stairstep"}},
 		{"valid/generation-plan.yaml", "Generation Override Plan", []string{"generation"}},
 		{"valid/streamline-plan.yaml", "Streamline Direct", []string{"streamline"}},
+		{"valid/board-plan.yaml", "Sales Board Plan", []string{"unilevel", "board_plan"}},
 	}
 
 	for _, tt := range tests {
@@ -244,6 +245,24 @@ func TestPipelineCommissionContentRoundTrip(t *testing.T) {
 				assert.Equal(t, 0.02, l6["percent"])
 			},
 		},
+		{
+			fixture: "valid/board-plan.yaml",
+			verify: func(t *testing.T, doc map[string]any) {
+				// Board plan is the second structure (index 1).
+				cfg := structureConfig(t, doc, 1)
+				assert.Equal(t, "Sales Board", cfg["name"])
+				assert.Equal(t, float64(2), cfg["width"])
+				assert.Equal(t, float64(2), cfg["height"])
+				bc := cfg["board_cycling"].(map[string]any)
+				assert.Equal(t, 500.0, bc["cycle_commission"])
+				assert.Equal(t, true, bc["re_entry_enabled"])
+				assert.Equal(t, "bottom", bc["re_entry_position"])
+				assert.Equal(t, float64(5), bc["max_cycles_per_period"])
+				assert.Equal(t, float64(10), bc["max_cascade_depth"])
+				assert.Equal(t, float64(3), bc["stall_threshold_periods"])
+				assert.Equal(t, true, bc["inactive_compression"])
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -312,6 +331,28 @@ func TestPipelinePassUpOnBinaryRejected(t *testing.T) {
 		}
 	}
 	assert.Truef(t, found, "expected unsupported_field error for pass_up on binary, got: %v", errs)
+}
+
+func TestPipelineBoardPlanNoUnilevelRejected(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+
+	yamlBytes := readFixture(t, "invalid/board-plan-no-unilevel.yaml")
+	jsonBytes, errs, err := p.LoadAndValidate(yamlBytes)
+
+	require.NoError(t, err, "no infrastructure error expected")
+	assert.True(t, hasErrors(errs), "board_plan without unilevel should produce a validation error")
+	assert.Nil(t, jsonBytes, "invalid fixture should not produce JSON output")
+
+	var found bool
+	for _, e := range errs {
+		if e.Code == "missing_companion_structure" {
+			found = true
+			assert.Contains(t, e.Message, "companion unilevel")
+			break
+		}
+	}
+	assert.Truef(t, found, "expected missing_companion_structure error, got: %v", errs)
 }
 
 func TestNewPipelineInvalidSchemaPath(t *testing.T) {

@@ -288,6 +288,80 @@ func TestTranslateCycleStepNetOffRejected(t *testing.T) {
 	assert.Contains(t, err.Error(), "net_off is not supported for cycle_step")
 }
 
+// TestTranslateBoardPlanConfig verifies that a board plan structure is
+// translated with name, width, height, and board_cycling at the top level.
+func TestTranslateBoardPlanConfig(t *testing.T) {
+	plan := minimalPlan()
+	// Add a board_plan structure alongside the existing unilevel.
+	plan.Structures = append(plan.Structures, StructureConfig{
+		Name: "Sales Board",
+		Type: "board_plan",
+		Structure: &MatrixStructureParams{
+			Width:  2,
+			Height: 2,
+		},
+		resolvedCommission: &BoardPlanCommission{
+			BoardCycling: BoardCyclingConfig{
+				CycleCommission:       500.0,
+				ReEntryEnabled:        true,
+				ReEntryPosition:       "bottom",
+				MaxCyclesPerPeriod:    5,
+				MaxCascadeDepth:       10,
+				StallThresholdPeriods: 3,
+				InactiveCompression:   true,
+			},
+		},
+	})
+	// The first structure (unilevel) needs a resolved commission for translation.
+	plan.Structures[0].resolvedCommission = &UnilevelCommission{
+		BroadCommissionPercent: 0.40,
+		CommissionableDepth:    5,
+		RateTable: map[string]map[string]float64{
+			"Associate": {"1": 0.05},
+		},
+	}
+
+	out, err := translateToEngine(plan)
+	require.NoError(t, err)
+
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(out, &doc))
+
+	structures := doc["structures"].([]any)
+	require.Len(t, structures, 2)
+
+	// Second structure should be board_plan.
+	s := structures[1].(map[string]any)
+	assert.Equal(t, "board_plan", s["type"])
+
+	cfg := s["config"].(map[string]any)
+	assert.Equal(t, "Sales Board", cfg["name"])
+	assert.Equal(t, float64(2), cfg["width"])
+	assert.Equal(t, float64(2), cfg["height"])
+
+	bc := cfg["board_cycling"].(map[string]any)
+	assert.Equal(t, 500.0, bc["cycle_commission"])
+	assert.Equal(t, true, bc["re_entry_enabled"])
+	assert.Equal(t, "bottom", bc["re_entry_position"])
+	assert.Equal(t, float64(5), bc["max_cycles_per_period"])
+	assert.Equal(t, float64(10), bc["max_cascade_depth"])
+	assert.Equal(t, float64(3), bc["stall_threshold_periods"])
+	assert.Equal(t, true, bc["inactive_compression"])
+}
+
+// TestTranslateBoardPlanConfigTypeMismatch verifies that
+// translateBoardPlanConfig returns an error when given the wrong commission type.
+func TestTranslateBoardPlanConfigTypeMismatch(t *testing.T) {
+	s := &StructureConfig{
+		Name:               "Bad",
+		Type:               "board_plan",
+		resolvedCommission: &UnilevelCommission{},
+	}
+	_, err := translateStructureConfig(s)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "expected *BoardPlanCommission")
+}
+
 // TestTranslateStructureConfigUnknownType verifies that
 // translateStructureConfig returns an error for an unknown structure type.
 func TestTranslateStructureConfigUnknownType(t *testing.T) {

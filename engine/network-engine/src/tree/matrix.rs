@@ -1,4 +1,6 @@
 use std::collections::{HashMap, VecDeque};
+
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::arena::Arena;
@@ -9,7 +11,7 @@ use crate::types::TreePosition;
 
 /// Entry in the holding tank for nodes removed via HoldingTank pruning
 /// or awaiting manual placement.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HoldingTankEntry {
     pub user_id: Uuid,
     pub sponsor_user_id: Option<Uuid>,
@@ -17,7 +19,7 @@ pub struct HoldingTankEntry {
 }
 
 /// Result of a remove_node operation, describing what changed.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RemovalResult {
     pub removed: Uuid,
     pub promoted: Option<Uuid>,
@@ -26,7 +28,7 @@ pub struct RemovalResult {
 }
 
 /// Pruning mode for matrix node removal.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PruningMode {
     PromoteEarliest,
     HoldingTank,
@@ -38,6 +40,7 @@ pub enum PruningMode {
 /// Placement is either automatic (breadth-first spillover within
 /// the sponsor's subtree) or explicit (admin override).
 /// Depth is unlimited. Width is immutable after construction.
+#[derive(Serialize, Deserialize)]
 pub struct MatrixTree {
     arena: Arena,
     width: u8,
@@ -1797,5 +1800,67 @@ mod tests {
         assert!(debug.contains("nodes: 2"));
         assert!(debug.contains("width: 3"));
         assert!(debug.contains("MatrixTree"));
+    }
+
+    #[test]
+    fn snapshot_round_trip() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
+        tree.add_node(test_uuid(4), test_uuid(1), 4000).unwrap();
+        // Spillover: next node goes under test_uuid(2).
+        tree.add_node(test_uuid(5), test_uuid(1), 5000).unwrap();
+
+        let json = serde_json::to_string(&tree).unwrap();
+        let restored: MatrixTree = serde_json::from_str(&json).unwrap();
+
+        // Verify all nodes exist in restored tree.
+        assert!(restored.contains(test_uuid(1)));
+        assert!(restored.contains(test_uuid(2)));
+        assert!(restored.contains(test_uuid(3)));
+        assert!(restored.contains(test_uuid(4)));
+        assert!(restored.contains(test_uuid(5)));
+
+        // Verify structure is preserved.
+        let children = restored.get_children(test_uuid(1)).unwrap();
+        assert_eq!(children.len(), 3);
+
+        // Verify spillover placement is preserved.
+        let children_of_2 = restored.get_children(test_uuid(2)).unwrap();
+        assert_eq!(children_of_2.len(), 1);
+        assert_eq!(children_of_2[0].user_id, test_uuid(5));
+
+        // Verify depths are preserved.
+        let pos = restored.get_position(test_uuid(5)).unwrap();
+        assert_eq!(pos.depth, 2);
+
+        // Verify sponsor links are preserved.
+        let sponsor = restored.get_sponsor(test_uuid(5)).unwrap();
+        assert_eq!(sponsor.unwrap().user_id, test_uuid(1));
+    }
+
+    #[test]
+    fn snapshot_round_trip_with_holding_tank() {
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 3000).unwrap();
+        tree.add_node(test_uuid(4), test_uuid(2), 4000).unwrap();
+
+        // Remove node 2 to holding tank, which moves it and its subtree.
+        tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
+            .unwrap();
+
+        let json = serde_json::to_string(&tree).unwrap();
+        let restored: MatrixTree = serde_json::from_str(&json).unwrap();
+
+        // Verify holding tank entries are preserved.
+        let tank = restored.get_holding_tank(None);
+        assert_eq!(tank.len(), 2);
+
+        let tank_ids: Vec<Uuid> = tank.iter().map(|e| e.user_id).collect();
+        assert!(tank_ids.contains(&test_uuid(2)));
+        assert!(tank_ids.contains(&test_uuid(4)));
     }
 }

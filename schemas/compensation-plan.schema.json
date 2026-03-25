@@ -401,7 +401,8 @@
             "matrix",
             "stairstep",
             "generation",
-            "streamline"
+            "streamline",
+            "board_plan"
           ],
           "description": "The tree and commission structure type."
         }
@@ -519,6 +520,28 @@
               "commission": {
                 "$ref": "#/$defs/StreamlineCommission",
                 "description": "Streamline commission configuration."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "board_plan"
+              }
+            }
+          },
+          "then": {
+            "required": ["structure", "commission"],
+            "properties": {
+              "structure": {
+                "$ref": "#/$defs/BoardPlanStructureParams",
+                "description": "Board plan dimensions."
+              },
+              "commission": {
+                "$ref": "#/$defs/BoardPlanCommission",
+                "description": "Board plan commission configuration."
               }
             }
           }
@@ -1983,13 +2006,77 @@
     },
     "BoardCyclingConfig": {
       "type": "object",
-      "description": "Board cycling configuration. Reserved for future implementation.",
+      "description": "Board cycling configuration for board plan structures.",
+      "required": ["cycle_commission", "re_entry_enabled", "re_entry_position", "max_cycles_per_period", "stall_threshold_periods", "inactive_compression"],
       "properties": {
-        "_reserved": {
+        "cycle_commission": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Fixed dollar amount earned when cycling out of a board."
+        },
+        "re_entry_enabled": {
           "type": "boolean",
-          "description": "Placeholder for future board cycling implementation."
+          "description": "Whether cycled-out members automatically re-enter a new board."
+        },
+        "re_entry_position": {
+          "type": "string",
+          "enum": ["bottom", "sponsor_board"],
+          "description": "Where re-entered members are placed."
+        },
+        "max_cycles_per_period": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum times a member can earn cycle commission per period."
+        },
+        "max_cascade_depth": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 10,
+          "description": "Maximum cascade depth from a single operation. Limits how many levels of chained cycling can occur."
+        },
+        "stall_threshold_periods": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of inactive periods before a board is considered stalled."
+        },
+        "inactive_compression": {
+          "type": "boolean",
+          "description": "Whether inactive members are compressed out of boards."
         }
-      }
+      },
+      "additionalProperties": false
+    },
+    "BoardPlanStructureParams": {
+      "type": "object",
+      "description": "Board plan dimension parameters.",
+      "required": ["width", "height"],
+      "properties": {
+        "width": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 5,
+          "description": "Children per node in the board."
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4,
+          "description": "Depth of each board."
+        }
+      },
+      "additionalProperties": false
+    },
+    "BoardPlanCommission": {
+      "type": "object",
+      "description": "Commission configuration for board plan structures.",
+      "required": ["board_cycling"],
+      "properties": {
+        "board_cycling": {
+          "$ref": "#/$defs/BoardCyclingConfig",
+          "description": "Board cycling configuration."
+        }
+      },
+      "additionalProperties": false
     },
     "PassUpConfig": {
       "type": "object",

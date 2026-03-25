@@ -78,6 +78,8 @@ func translateStructureConfig(s *StructureConfig) (map[string]any, error) {
 		return translateGenerationConfig(s)
 	case "streamline":
 		return translateStreamlineConfig(s)
+	case "board_plan":
+		return translateBoardPlanConfig(s)
 	default:
 		return nil, fmt.Errorf("unknown structure type: %s", s.Type)
 	}
@@ -210,6 +212,25 @@ func translateStreamlineConfig(s *StructureConfig) (map[string]any, error) {
 		"name":                  s.Name,
 		"streamline_commission": sc,
 	}, nil
+}
+
+// translateBoardPlanConfig builds the config for a board plan structure.
+// Rust expects: name, width, height, board_cycling.
+func translateBoardPlanConfig(s *StructureConfig) (map[string]any, error) {
+	c, ok := s.resolvedCommission.(*BoardPlanCommission)
+	if !ok {
+		return nil, fmt.Errorf("expected *BoardPlanCommission, got %T", s.resolvedCommission)
+	}
+	if s.Structure == nil {
+		return nil, fmt.Errorf("board plan structure %q requires width and height but Structure is nil", s.Name)
+	}
+	cfg := map[string]any{
+		"name":          s.Name,
+		"width":         s.Structure.Width,
+		"height":        s.Structure.Height,
+		"board_cycling": c.BoardCycling,
+	}
+	return cfg, nil
 }
 
 // translateStreamlineCommission converts the streamline commission from

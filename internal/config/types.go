@@ -168,6 +168,7 @@ func (*MatrixCommission) isCommission()     {}
 func (*StairstepCommission) isCommission()  {}
 func (*GenerationCommission) isCommission() {}
 func (*StreamlineCommission) isCommission() {}
+func (*BoardPlanCommission) isCommission()  {}
 
 // --- Structures ---
 
@@ -243,6 +244,13 @@ type StreamlineCommission struct {
 	CommissionableDepth      int                        `yaml:"commissionable_depth" json:"commissionable_depth"`
 	DynamicCompression       map[string]StreamlineLevel `yaml:"dynamic_compression" json:"dynamic_compression"`
 	Streams                  *StreamConfig              `yaml:"streams" json:"streams"`
+}
+
+// BoardPlanCommission holds commission configuration for board plan structures.
+// Board plans use cycling-based commissions instead of level-based rate tables.
+// The board_cycling block defines the fixed payout and cycling behavior.
+type BoardPlanCommission struct {
+	BoardCycling BoardCyclingConfig `yaml:"board_cycling" json:"board_cycling"`
 }
 
 // --- Shared commission sub-types ---
@@ -474,9 +482,15 @@ type PositionBonusConfig struct {
 	SponsoredOnly bool    `yaml:"sponsored_only" json:"sponsored_only"`
 }
 
-// BoardCyclingConfig is reserved for future board cycling implementation.
+// BoardCyclingConfig controls cycling behavior for board plan structures.
 type BoardCyclingConfig struct {
-	Reserved bool `yaml:"_reserved" json:"_reserved"`
+	CycleCommission       float64 `yaml:"cycle_commission" json:"cycle_commission"`
+	ReEntryEnabled        bool    `yaml:"re_entry_enabled" json:"re_entry_enabled"`
+	ReEntryPosition       string  `yaml:"re_entry_position" json:"re_entry_position"`
+	MaxCyclesPerPeriod    int     `yaml:"max_cycles_per_period" json:"max_cycles_per_period"`
+	MaxCascadeDepth       int     `yaml:"max_cascade_depth" json:"max_cascade_depth,omitempty"`
+	StallThresholdPeriods int     `yaml:"stall_threshold_periods" json:"stall_threshold_periods"`
+	InactiveCompression   bool    `yaml:"inactive_compression" json:"inactive_compression"`
 }
 
 // PassUpConfig defines pass-up bonus behavior where initial sales go to the upline.
@@ -581,6 +595,10 @@ func resolveCommissions(plan *CompensationPlan) error {
 			s.resolvedCommission = &c
 		case "streamline":
 			var c StreamlineCommission
+			err = yaml.Unmarshal(rawBytes, &c)
+			s.resolvedCommission = &c
+		case "board_plan":
+			var c BoardPlanCommission
 			err = yaml.Unmarshal(rawBytes, &c)
 			s.resolvedCommission = &c
 		default:

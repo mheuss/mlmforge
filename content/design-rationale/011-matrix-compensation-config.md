@@ -89,7 +89,7 @@ The sponsored-only distinction is critical. In forced matrix, most positions are
 
 ## Board Plan (Revolving Matrix) Variant
 
-A board plan is a cycling variant of matrix. Not a separate tree type. The matrix is configured with a small size (commonly 2x2 or 3x3). When a board fills completely, it cycles.
+A board plan is a cycling matrix variant implemented as its own structure type (`board_plan`). It uses lightweight flat arrays instead of the shared matrix tree. Boards are configured with a small size (commonly 2x2 or 3x3). When a board fills completely, it cycles.
 
 ### How Cycling Works
 
@@ -109,7 +109,11 @@ A board plan is a cycling variant of matrix. Not a separate tree type. The matri
 
 ### Board Plan Status
 
-**Deferred from the initial release.** The configuration schema reserves these fields. The engine will not process cycling in the first release. Standard matrix commission calculation, completion bonuses, and placement must be solid before adding cycling complexity.
+**Implemented in HEU-30.** Configuration schema fully populated. Engine handles board lifecycle, cycling, re-entry, stall detection, and inactive compression.
+
+Board plan dimensions are capped at width 2-5 and height 1-4. A 5x4 board has 781 positions, which is already impractically large for cycling.
+
+Board plan structures require a companion unilevel structure for sponsor-based commissions.
 
 Board cycling adds board splitting, re-entry tracking, and cycle event recording. Board plan companies face higher regulatory scrutiny because the cycling mechanic can resemble a pyramid scheme when not paired with genuine product sales requirements. Every cycle event must be recorded as a domain event for audit.
 
@@ -118,4 +122,4 @@ Board cycling adds board splitting, re-entry tracking, and cycle event recording
 - Standard matrix plans are fully configurable through width, height, rate table, compression, and placement direction.
 - Matrix completion bonuses incentivize fill-out at each level, which is the primary motivational mechanic for matrix plans.
 - Position bonuses with sponsor-only filtering correctly distinguish personal recruiting from spillover placement.
-- Board plan cycling is designed and schema-reserved for a future release without breaking changes.
+- Board plan cycling handles board lifecycle, splitting, re-entry, stall detection, and inactive compression.

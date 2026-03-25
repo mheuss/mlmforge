@@ -1,10 +1,11 @@
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// Index into the arena's node Vec.
 ///
 /// Lightweight handle (one `usize`). Not a pointer.
 /// Only meaningful within the tree that created it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NodeIndex(pub(crate) usize);
 
 /// A node in the tree arena.
@@ -21,7 +22,7 @@ pub struct NodeIndex(pub(crate) usize);
 /// surface for consumers who receive `&Node` from traversal methods.
 /// Structural fields are crate-internal because they hold arena indices
 /// that are meaningless outside the tree.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Node {
     pub user_id: Uuid,
     pub(crate) parent: Option<NodeIndex>,

@@ -439,3 +439,75 @@ func TestResolveCommissionsNilCommissionReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "Empty")
 	assert.Contains(t, err.Error(), "no commission block")
 }
+
+// TestResolveCommissionsBoardPlan verifies that resolveCommissions correctly
+// decodes a board plan commission block with board cycling config.
+func TestResolveCommissionsBoardPlan(t *testing.T) {
+	yamlData := []byte(`
+name: Test Plan
+version: 1
+period: {length: month, payout_lag_days: 14}
+volume: {base_currency: USD, volume_to_dollar_multiplier: 1.0}
+ranks: []
+rank_tracking: {track_achieved_rank: false}
+rank_features: {constraints_enabled: false, overrides_enabled: false}
+commission_eligibility: {eligible_statuses: [active]}
+structures:
+  - name: Sales Board
+    type: board_plan
+    structure:
+      width: 2
+      height: 2
+    commission:
+      board_cycling:
+        cycle_commission: 500.0
+        re_entry_enabled: true
+        re_entry_position: bottom
+        max_cycles_per_period: 5
+        max_cascade_depth: 10
+        stall_threshold_periods: 3
+        inactive_compression: true
+bonuses: {}
+payout: {base_currency: USD, minimum_amount: 50, methods: [{type: bank_transfer, fee: 2.50}]}
+caps: {company_payout_cap_percent: 0.42, cap_enforcement: pro_rata}
+placement: {donated_placement_enabled: false}
+`)
+	var plan CompensationPlan
+	require.NoError(t, yaml.Unmarshal(yamlData, &plan))
+	require.NoError(t, resolveCommissions(&plan))
+
+	c, ok := plan.Structures[0].resolvedCommission.(*BoardPlanCommission)
+	require.True(t, ok, "expected *BoardPlanCommission, got %T", plan.Structures[0].resolvedCommission)
+	assert.Equal(t, 500.0, c.BoardCycling.CycleCommission)
+	assert.True(t, c.BoardCycling.ReEntryEnabled)
+	assert.Equal(t, "bottom", c.BoardCycling.ReEntryPosition)
+	assert.Equal(t, 5, c.BoardCycling.MaxCyclesPerPeriod)
+	assert.Equal(t, 10, c.BoardCycling.MaxCascadeDepth)
+	assert.Equal(t, 3, c.BoardCycling.StallThresholdPeriods)
+	assert.True(t, c.BoardCycling.InactiveCompression)
+}
+
+// TestBoardCyclingConfigDeserialization verifies that BoardCyclingConfig
+// deserializes correctly from YAML with all fields populated.
+func TestBoardCyclingConfigDeserialization(t *testing.T) {
+	yamlData := []byte(`
+cycle_commission: 250.0
+re_entry_enabled: false
+re_entry_position: sponsor_board
+max_cycles_per_period: 3
+max_cascade_depth: 15
+stall_threshold_periods: 6
+inactive_compression: false
+`)
+	var cfg BoardCyclingConfig
+	err := yaml.Unmarshal(yamlData, &cfg)
+	require.NoError(t, err)
+
+	assert.Equal(t, 250.0, cfg.CycleCommission)
+	assert.False(t, cfg.ReEntryEnabled)
+	assert.Equal(t, "sponsor_board", cfg.ReEntryPosition)
+	assert.Equal(t, 3, cfg.MaxCyclesPerPeriod)
+	assert.Equal(t, 15, cfg.MaxCascadeDepth)
+	assert.Equal(t, 6, cfg.StallThresholdPeriods)
+	assert.False(t, cfg.InactiveCompression)
+}

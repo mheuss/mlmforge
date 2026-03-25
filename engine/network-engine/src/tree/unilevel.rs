@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::arena::Arena;
@@ -10,6 +11,7 @@ use crate::types::TreePosition;
 /// All nodes live in a shared `Arena`. Width is unbounded — every user
 /// can enroll unlimited direct children. Position is the child's index
 /// in the parent's children Vec.
+#[derive(Serialize, Deserialize)]
 pub struct UnilevelTree {
     arena: Arena,
 }
@@ -810,5 +812,44 @@ mod tests {
         tree.add_root(test_uuid(1), 1000).unwrap();
         let sponsor = tree.get_sponsor(test_uuid(1)).unwrap();
         assert!(sponsor.is_none());
+    }
+
+    #[test]
+    fn snapshot_round_trip() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), test_uuid(1), 3000)
+            .unwrap();
+        tree.add_node(test_uuid(4), test_uuid(2), test_uuid(2), 4000)
+            .unwrap();
+
+        let json = serde_json::to_string(&tree).unwrap();
+        let restored: UnilevelTree = serde_json::from_str(&json).unwrap();
+
+        // Verify all nodes exist in restored tree.
+        assert!(restored.contains(test_uuid(1)));
+        assert!(restored.contains(test_uuid(2)));
+        assert!(restored.contains(test_uuid(3)));
+        assert!(restored.contains(test_uuid(4)));
+
+        // Verify structure is preserved.
+        let children = restored.get_children(test_uuid(1)).unwrap();
+        assert_eq!(children.len(), 2);
+        assert_eq!(children[0].user_id, test_uuid(2));
+        assert_eq!(children[1].user_id, test_uuid(3));
+
+        let grandchild = restored.get_children(test_uuid(2)).unwrap();
+        assert_eq!(grandchild.len(), 1);
+        assert_eq!(grandchild[0].user_id, test_uuid(4));
+
+        // Verify depths are preserved.
+        let pos = restored.get_position(test_uuid(4)).unwrap();
+        assert_eq!(pos.depth, 2);
+
+        // Verify sponsor links are preserved.
+        let sponsor = restored.get_sponsor(test_uuid(4)).unwrap();
+        assert_eq!(sponsor.unwrap().user_id, test_uuid(2));
     }
 }

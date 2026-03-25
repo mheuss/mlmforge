@@ -1,4 +1,6 @@
 use std::collections::{HashMap, VecDeque};
+
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::error::TreeError;
@@ -10,6 +12,7 @@ use crate::types::TreePosition;
 /// Owns the contiguous node Vec, UUID-to-index map, free list, and root.
 /// Tree type wrappers (UnilevelTree, BinaryTree) delegate storage and
 /// traversal operations to Arena while enforcing their own shape constraints.
+#[derive(Serialize, Deserialize)]
 pub(crate) struct Arena {
     pub(crate) nodes: Vec<Node>,
     pub(crate) index: HashMap<Uuid, NodeIndex>,

@@ -539,6 +539,42 @@ impl BoardPlanEngine {
             displaced_members: members,
         })
     }
+
+    /// Removes inactive members from their boards and compacts the
+    /// remaining members.
+    ///
+    /// For each member in `inactive_members`: if they occupy a board
+    /// position, `remove_member` is called (which handles compaction
+    /// and may trigger cycling). Members not on any board are silently
+    /// skipped.
+    pub fn compress_inactive(
+        &mut self,
+        inactive_members: Vec<Uuid>,
+        timestamp: i64,
+    ) -> Result<super::types::CompressionResult, BoardPlanError> {
+        let mut compressed = Vec::new();
+        let mut cycle_events = Vec::new();
+
+        for member_id in inactive_members {
+            // Skip members not on any board.
+            let board_id = match self.member_boards.get(&member_id) {
+                Some(&bid) => bid,
+                None => continue,
+            };
+
+            let result = self.remove_member(member_id, timestamp)?;
+            compressed.push(super::types::CompressedMember {
+                user_id: member_id,
+                board_id,
+            });
+            cycle_events.extend(result.cycle_events);
+        }
+
+        Ok(super::types::CompressionResult {
+            compressed,
+            cycle_events,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -1427,5 +1463,66 @@ mod tests {
             result.unwrap_err(),
             BoardPlanError::BoardNotFound(id) if id == unknown
         ));
+    }
+
+    // --- inactive compression tests ---
+
+    #[test]
+    fn compress_inactive_removes_and_compacts() {
+        let mut engine = BoardPlanEngine::new(2, 2, test_config(), 1000).unwrap();
+        let sponsor = test_uuid(1);
+
+        // Add 4 members at positions 0, 1, 2, 3.
+        engine.add_member(test_uuid(10), sponsor, 2000).unwrap();
+        engine
+            .add_member(test_uuid(11), test_uuid(10), 2001)
+            .unwrap();
+        engine
+            .add_member(test_uuid(12), test_uuid(10), 2002)
+            .unwrap();
+        engine
+            .add_member(test_uuid(13), test_uuid(10), 2003)
+            .unwrap();
+
+        let board_id = engine.get_member_board(test_uuid(10)).unwrap();
+
+        // Compress member at position 1 (test_uuid(11)).
+        let result = engine.compress_inactive(vec![test_uuid(11)], 3000).unwrap();
+
+        assert_eq!(result.compressed.len(), 1);
+        assert_eq!(result.compressed[0].user_id, test_uuid(11));
+        assert_eq!(result.compressed[0].board_id, board_id);
+
+        // Removed member is no longer on any board.
+        assert_eq!(engine.get_member_board(test_uuid(11)), None);
+
+        // Remaining members are compacted: positions 0, 1, 2 filled.
+        let board = engine.get_board(board_id).unwrap();
+        assert_eq!(board.filled_count(), 3);
+        assert_eq!(board.positions[0], Some(test_uuid(10)));
+        assert_eq!(board.positions[1], Some(test_uuid(12)));
+        assert_eq!(board.positions[2], Some(test_uuid(13)));
+        assert_eq!(board.positions[3], None);
+    }
+
+    #[test]
+    fn compress_inactive_skips_unknown_members() {
+        let mut engine = BoardPlanEngine::new(2, 2, test_config(), 1000).unwrap();
+        let sponsor = test_uuid(1);
+
+        // Add one member so the engine is not empty.
+        engine.add_member(test_uuid(10), sponsor, 2000).unwrap();
+
+        // Compress with members that are not on any board.
+        let result = engine
+            .compress_inactive(vec![test_uuid(99), test_uuid(98)], 3000)
+            .unwrap();
+
+        // Nothing was compressed.
+        assert!(result.compressed.is_empty());
+        assert!(result.cycle_events.is_empty());
+
+        // The existing member is unaffected.
+        assert!(engine.get_member_board(test_uuid(10)).is_some());
     }
 }

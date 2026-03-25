@@ -16,7 +16,6 @@ pub enum TreeInstance {
     Unilevel(UnilevelTree),
     Binary(BinaryTree),
     Matrix(MatrixTree),
-    #[allow(dead_code)] // Constructed in board plan handlers (added in next commit).
     BoardPlan(BoardPlanEngine),
 }
 

@@ -491,6 +491,54 @@ impl BoardPlanEngine {
 
         new_board_ids
     }
+
+    /// Detects boards that have not had activity since the cutoff
+    /// timestamp.
+    ///
+    /// Returns a list of `StalledBoard` summaries for boards where
+    /// `last_activity_at < cutoff_timestamp`. The Go layer converts
+    /// the `stall_threshold_periods` config value into a concrete
+    /// timestamp before calling this method.
+    pub fn detect_stalled_boards(&self, cutoff_timestamp: i64) -> Vec<super::types::StalledBoard> {
+        self.boards
+            .values()
+            .filter(|b| b.last_activity_at < cutoff_timestamp)
+            .map(|b| super::types::StalledBoard {
+                board_id: b.id,
+                last_activity_at: b.last_activity_at,
+                filled_positions: b.filled_count(),
+                total_positions: self.total_positions,
+                members: b.members(),
+            })
+            .collect()
+    }
+
+    /// Dissolves a board, moving all its members to the displaced pool.
+    ///
+    /// Removes the board from the engine and pushes every occupant
+    /// into `displaced_members`. Returns a `DissolutionResult`
+    /// listing the dissolved board and the displaced members.
+    pub fn dissolve_board(
+        &mut self,
+        board_id: Uuid,
+        _timestamp: i64,
+    ) -> Result<super::types::DissolutionResult, BoardPlanError> {
+        let board = self
+            .boards
+            .remove(&board_id)
+            .ok_or(BoardPlanError::BoardNotFound(board_id))?;
+
+        let members = board.members();
+        for &member in &members {
+            self.member_boards.remove(&member);
+            self.displaced_members.push(member);
+        }
+
+        Ok(super::types::DissolutionResult {
+            dissolved_board_id: board_id,
+            displaced_members: members,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -1289,5 +1337,95 @@ mod tests {
                 board_summary.id
             );
         }
+    }
+
+    // --- stall detection and dissolution tests ---
+
+    #[test]
+    fn detect_stalled_boards_returns_boards_before_cutoff() {
+        let mut engine = BoardPlanEngine::new(2, 2, test_config(), 1000).unwrap();
+        let sponsor = test_uuid(1);
+
+        // Add a member to update last_activity_at to 2000.
+        engine.add_member(test_uuid(10), sponsor, 2000).unwrap();
+
+        // Cutoff at 3000: the board's last_activity_at is 2000, which
+        // is before the cutoff.
+        let stalled = engine.detect_stalled_boards(3000);
+        assert_eq!(stalled.len(), 1);
+        assert_eq!(stalled[0].last_activity_at, 2000);
+        assert_eq!(stalled[0].filled_positions, 1);
+        assert_eq!(stalled[0].total_positions, 7);
+        assert_eq!(stalled[0].members, vec![test_uuid(10)]);
+    }
+
+    #[test]
+    fn detect_stalled_boards_excludes_active_boards() {
+        let mut engine = BoardPlanEngine::new(2, 2, test_config(), 1000).unwrap();
+        let sponsor = test_uuid(1);
+
+        // Add a member at timestamp 5000.
+        engine.add_member(test_uuid(10), sponsor, 5000).unwrap();
+
+        // Cutoff at 3000: the board's last_activity_at is 5000, which
+        // is after the cutoff. No stalled boards.
+        let stalled = engine.detect_stalled_boards(3000);
+        assert!(
+            stalled.is_empty(),
+            "boards with activity after cutoff should not be stalled"
+        );
+    }
+
+    #[test]
+    fn dissolve_board_returns_displaced_members() {
+        let mut engine = BoardPlanEngine::new(2, 2, test_config(), 1000).unwrap();
+        let sponsor = test_uuid(1);
+
+        // Add 3 members.
+        engine.add_member(test_uuid(10), sponsor, 2000).unwrap();
+        engine
+            .add_member(test_uuid(11), test_uuid(10), 2001)
+            .unwrap();
+        engine
+            .add_member(test_uuid(12), test_uuid(10), 2002)
+            .unwrap();
+
+        let board_id = engine.get_member_board(test_uuid(10)).unwrap();
+
+        // Dissolve the board.
+        let result = engine.dissolve_board(board_id, 3000).unwrap();
+
+        assert_eq!(result.dissolved_board_id, board_id);
+        assert_eq!(result.displaced_members.len(), 3);
+        assert!(result.displaced_members.contains(&test_uuid(10)));
+        assert!(result.displaced_members.contains(&test_uuid(11)));
+        assert!(result.displaced_members.contains(&test_uuid(12)));
+
+        // Members are no longer on any board.
+        assert_eq!(engine.get_member_board(test_uuid(10)), None);
+        assert_eq!(engine.get_member_board(test_uuid(11)), None);
+        assert_eq!(engine.get_member_board(test_uuid(12)), None);
+
+        // Members are in the displaced pool.
+        assert!(engine.displaced_members().contains(&test_uuid(10)));
+        assert!(engine.displaced_members().contains(&test_uuid(11)));
+        assert!(engine.displaced_members().contains(&test_uuid(12)));
+
+        // Board no longer exists.
+        assert!(engine.get_board(board_id).is_none());
+    }
+
+    #[test]
+    fn dissolve_unknown_board_errors() {
+        let mut engine = BoardPlanEngine::new(2, 2, test_config(), 1000).unwrap();
+        let unknown = Uuid::new_v4();
+
+        let result = engine.dissolve_board(unknown, 3000);
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            BoardPlanError::BoardNotFound(id) if id == unknown
+        ));
     }
 }

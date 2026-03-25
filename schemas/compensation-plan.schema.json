@@ -2032,7 +2032,7 @@
           "type": "integer",
           "minimum": 1,
           "default": 10,
-          "description": "Maximum chained cycles from a single operation."
+          "description": "Maximum cascade depth from a single operation. Limits how many levels of chained cycling can occur."
         },
         "stall_threshold_periods": {
           "type": "integer",

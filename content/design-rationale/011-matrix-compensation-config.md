@@ -89,7 +89,7 @@ The sponsored-only distinction is critical. In forced matrix, most positions are
 
 ## Board Plan (Revolving Matrix) Variant
 
-A board plan is a cycling variant of matrix. Not a separate tree type. The matrix is configured with a small size (commonly 2x2 or 3x3). When a board fills completely, it cycles.
+A board plan is a cycling matrix variant implemented as its own structure type (`board_plan`). It uses lightweight flat arrays instead of the shared matrix tree. Boards are configured with a small size (commonly 2x2 or 3x3). When a board fills completely, it cycles.
 
 ### How Cycling Works
 

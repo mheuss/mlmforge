@@ -221,13 +221,14 @@ func translateBoardPlanConfig(s *StructureConfig) (map[string]any, error) {
 	if !ok {
 		return nil, fmt.Errorf("expected *BoardPlanCommission, got %T", s.resolvedCommission)
 	}
+	if s.Structure == nil {
+		return nil, fmt.Errorf("board plan structure %q requires width and height but Structure is nil", s.Name)
+	}
 	cfg := map[string]any{
 		"name":          s.Name,
+		"width":         s.Structure.Width,
+		"height":        s.Structure.Height,
 		"board_cycling": c.BoardCycling,
-	}
-	if s.Structure != nil {
-		cfg["width"] = s.Structure.Width
-		cfg["height"] = s.Structure.Height
 	}
 	return cfg, nil
 }

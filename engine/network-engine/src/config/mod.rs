@@ -11,6 +11,7 @@
 //! `docs/plans/2026-02-12-compensation-plan-config-design.md`
 
 pub mod binary;
+pub mod board_plan;
 pub mod bonus;
 pub mod commission;
 pub mod eligibility;
@@ -27,6 +28,7 @@ pub mod volume;
 use serde::{Deserialize, Serialize};
 
 pub use binary::BinaryCommissionConfig;
+pub use board_plan::{BoardPlanConfig, ReEntryPosition};
 pub use bonus::{BonusConfig, PassUpConfig};
 pub use commission::{CompressionConfig, LevelCommissionConfig};
 pub use eligibility::CommissionEligibility;
@@ -135,6 +137,9 @@ pub enum StructureConfig {
 
     /// Streamline structure. Linear chains with rank-based positioning.
     Streamline(StreamlineStructureConfig),
+
+    /// Board plan structure. Small cycling matrix with fixed payouts.
+    BoardPlan(BoardPlanStructureConfig),
 }
 
 // ---------------------------------------------------------------------------
@@ -267,6 +272,26 @@ pub struct StreamlineStructureConfig {
 
     /// Streamline commission configuration.
     pub streamline_commission: StreamlineCommissionConfig,
+}
+
+/// Board plan structure configuration.
+///
+/// Small fixed-size cycling matrix. When a board fills, the top position
+/// cycles out and earns a fixed commission. Requires a companion unilevel
+/// structure for sponsor-based commissions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BoardPlanStructureConfig {
+    /// Display name for this structure instance.
+    pub name: String,
+
+    /// Board dimensions: width (children per node).
+    pub width: u8,
+
+    /// Board depth in levels.
+    pub height: u8,
+
+    /// Board cycling configuration.
+    pub board_cycling: BoardPlanConfig,
 }
 
 #[cfg(test)]
@@ -780,5 +805,39 @@ mod tests {
         assert!(plan.placement.donated_placement.is_some());
         assert!(plan.placement.holding_tank.is_none());
         assert!(plan.placement.binary_placement.is_none());
+    }
+
+    #[test]
+    fn deserialize_structure_config_board_plan() {
+        let json = r#"{
+            "type": "board_plan",
+            "config": {
+                "name": "Sales Board",
+                "width": 2,
+                "height": 2,
+                "board_cycling": {
+                    "cycle_commission": 500.0,
+                    "re_entry_enabled": true,
+                    "re_entry_position": "bottom",
+                    "max_cycles_per_period": 5,
+                    "max_cascade_depth": 10,
+                    "stall_threshold_periods": 3,
+                    "inactive_compression": true
+                }
+            }
+        }"#;
+        let config: StructureConfig = serde_json::from_str(json).unwrap();
+        match config {
+            StructureConfig::BoardPlan(bp) => {
+                assert_eq!(bp.name, "Sales Board");
+                assert_eq!(bp.width, 2);
+                assert_eq!(bp.height, 2);
+                assert_eq!(bp.board_cycling.cycle_commission, 500.0);
+                assert!(bp.board_cycling.re_entry_enabled);
+                assert_eq!(bp.board_cycling.re_entry_position, ReEntryPosition::Bottom);
+                assert_eq!(bp.board_cycling.max_cycles_per_period, 5);
+            }
+            _ => panic!("expected BoardPlan variant"),
+        }
     }
 }

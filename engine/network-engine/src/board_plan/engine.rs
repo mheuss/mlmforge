@@ -166,7 +166,7 @@ impl BoardPlanEngine {
 
         // Place displaced members first.
         let mut cycle_events = Vec::new();
-        self.place_displaced_members(timestamp, &mut cycle_events)?;
+        self.place_displaced_members(timestamp, &mut cycle_events);
 
         // Find the board to place this member on.
         let board_id = self.find_placement_board(sponsor_id)?;
@@ -235,29 +235,37 @@ impl BoardPlanEngine {
     /// with an opening. If a placement fills a board, cycling is
     /// triggered and the resulting events are appended to
     /// `cycle_events`.
-    fn place_displaced_members(
-        &mut self,
-        timestamp: i64,
-        cycle_events: &mut Vec<CycleEvent>,
-    ) -> Result<(), BoardPlanError> {
+    ///
+    /// Members that cannot be placed (no boards available, board not
+    /// found, no open position) are pushed back into
+    /// `self.displaced_members` so they are retried on the next call.
+    fn place_displaced_members(&mut self, timestamp: i64, cycle_events: &mut Vec<CycleEvent>) {
         let displaced = std::mem::take(&mut self.displaced_members);
         for member_id in displaced {
-            let board_id = self.oldest_board_with_opening()?;
-            let board = self
-                .boards
-                .get_mut(&board_id)
-                .ok_or(BoardPlanError::BoardNotFound(board_id))?;
-            if let Some(pos) = board.first_open_position() {
-                board.positions[pos] = Some(member_id);
-                board.last_activity_at = timestamp;
-                self.member_boards.insert(member_id, board_id);
-
-                if board.is_full() {
-                    self.process_cycles(board_id, timestamp, cycle_events, 0);
+            let placed = if let Ok(board_id) = self.oldest_board_with_opening() {
+                if let Some(board) = self.boards.get_mut(&board_id) {
+                    if let Some(pos) = board.first_open_position() {
+                        board.positions[pos] = Some(member_id);
+                        board.last_activity_at = timestamp;
+                        self.member_boards.insert(member_id, board_id);
+                        if board.is_full() {
+                            self.process_cycles(board_id, timestamp, cycle_events, 0);
+                        }
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
                 }
+            } else {
+                false
+            };
+
+            if !placed {
+                self.displaced_members.push(member_id);
             }
         }
-        Ok(())
     }
 
     /// Removes a member from their board and compacts the remaining

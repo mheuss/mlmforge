@@ -20,14 +20,15 @@ structures:
     structure:
       width: 2
       height: 2
-    board_cycling:
-      cycle_commission: 500.00
-      re_entry_enabled: true
-      re_entry_position: bottom
-      max_cycles_per_period: 5
-      max_cascade_depth: 10
-      stall_threshold_periods: 3
-      inactive_compression: true
+    commission:
+      board_cycling:
+        cycle_commission: 500.00
+        re_entry_enabled: true
+        re_entry_position: bottom
+        max_cycles_per_period: 5
+        max_cascade_depth: 10
+        stall_threshold_periods: 3
+        inactive_compression: true
   - name: Sponsor Tree
     type: unilevel
     # ... unilevel config required

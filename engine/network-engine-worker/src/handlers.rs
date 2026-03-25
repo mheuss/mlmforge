@@ -252,6 +252,11 @@ pub fn handle_add_root(state: &mut WorkerState, request: &Request) -> Response {
             Ok(_) => Response::success(request.id.clone(), serde_json::json!({"added": true})),
             Err(e) => tree_error_to_response(&request.id, e),
         },
+        TreeInstance::BoardPlan(_) => Response::error(
+            request.id.clone(),
+            "UNSUPPORTED_OP",
+            "add_root is not supported for board plan structures",
+        ),
     }
 }
 
@@ -332,6 +337,11 @@ pub fn handle_add_node(state: &mut WorkerState, request: &Request) -> Response {
             Ok(_) => Response::success(request.id.clone(), serde_json::json!({"added": true})),
             Err(e) => tree_error_to_response(&request.id, e),
         },
+        TreeInstance::BoardPlan(_) => Response::error(
+            request.id.clone(),
+            "UNSUPPORTED_OP",
+            "add_node is not supported for board plan structures; use board_add_member",
+        ),
     }
 }
 
@@ -459,6 +469,11 @@ pub fn handle_remove_node(state: &mut WorkerState, request: &Request) -> Respons
                 Err(e) => tree_error_to_response(&request.id, e),
             }
         }
+        TreeInstance::BoardPlan(_) => Response::error(
+            request.id.clone(),
+            "UNSUPPORTED_OP",
+            "remove_node is not supported for board plan structures; use board_remove_member",
+        ),
     }
 }
 
@@ -593,7 +608,18 @@ pub fn handle_get_parent(state: &WorkerState, request: &Request) -> Response {
         Err(resp) => return resp,
     };
 
-    match tree.as_navigator().get_parent(user_id) {
+    let nav = match tree.as_navigator() {
+        Some(n) => n,
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "UNSUPPORTED_OP",
+                "operation not supported for board plan structures",
+            );
+        }
+    };
+
+    match nav.get_parent(user_id) {
         Ok(Some(node)) => Response::success(
             request.id.clone(),
             serde_json::to_value(NodeResponse::from_node(node))
@@ -619,7 +645,18 @@ pub fn handle_get_children(state: &WorkerState, request: &Request) -> Response {
         Err(resp) => return resp,
     };
 
-    match tree.as_navigator().get_children(user_id) {
+    let nav = match tree.as_navigator() {
+        Some(n) => n,
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "UNSUPPORTED_OP",
+                "operation not supported for board plan structures",
+            );
+        }
+    };
+
+    match nav.get_children(user_id) {
         Ok(nodes) => {
             let items: Vec<NodeResponse> =
                 nodes.iter().map(|n| NodeResponse::from_node(n)).collect();
@@ -649,7 +686,18 @@ pub fn handle_get_upline(state: &WorkerState, request: &Request) -> Response {
         Err(resp) => return resp,
     };
 
-    match tree.as_navigator().get_upline(user_id, depth) {
+    let nav = match tree.as_navigator() {
+        Some(n) => n,
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "UNSUPPORTED_OP",
+                "operation not supported for board plan structures",
+            );
+        }
+    };
+
+    match nav.get_upline(user_id, depth) {
         Ok(nodes) => {
             let items: Vec<NodeResponse> =
                 nodes.iter().map(|n| NodeResponse::from_node(n)).collect();
@@ -679,7 +727,18 @@ pub fn handle_get_downline(state: &WorkerState, request: &Request) -> Response {
         Err(resp) => return resp,
     };
 
-    match tree.as_navigator().get_downline(user_id, depth) {
+    let nav = match tree.as_navigator() {
+        Some(n) => n,
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "UNSUPPORTED_OP",
+                "operation not supported for board plan structures",
+            );
+        }
+    };
+
+    match nav.get_downline(user_id, depth) {
         Ok(nodes) => {
             let items: Vec<NodeResponse> =
                 nodes.iter().map(|n| NodeResponse::from_node(n)).collect();
@@ -708,7 +767,18 @@ pub fn handle_get_position(state: &WorkerState, request: &Request) -> Response {
         Err(resp) => return resp,
     };
 
-    match tree.as_navigator().get_position(user_id) {
+    let nav = match tree.as_navigator() {
+        Some(n) => n,
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "UNSUPPORTED_OP",
+                "operation not supported for board plan structures",
+            );
+        }
+    };
+
+    match nav.get_position(user_id) {
         Ok(pos) => {
             // Convert downline_counts from HashMap<usize, usize> to a JSON object
             // with string keys (JSON requires string keys).
@@ -758,7 +828,18 @@ pub fn handle_is_descendant_of(state: &WorkerState, request: &Request) -> Respon
         Err(resp) => return resp,
     };
 
-    match tree.as_navigator().is_descendant_of(user_id, ancestor_id) {
+    let nav = match tree.as_navigator() {
+        Some(n) => n,
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "UNSUPPORTED_OP",
+                "operation not supported for board plan structures",
+            );
+        }
+    };
+
+    match nav.is_descendant_of(user_id, ancestor_id) {
         Ok(is_desc) => Response::success(
             request.id.clone(),
             serde_json::json!({"is_descendant": is_desc}),
@@ -784,7 +865,18 @@ pub fn handle_get_sponsor(state: &WorkerState, request: &Request) -> Response {
         Err(resp) => return resp,
     };
 
-    match tree.as_navigator().get_sponsor(user_id) {
+    let nav = match tree.as_navigator() {
+        Some(n) => n,
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "UNSUPPORTED_OP",
+                "operation not supported for board plan structures",
+            );
+        }
+    };
+
+    match nav.get_sponsor(user_id) {
         Ok(Some(node)) => Response::success(
             request.id.clone(),
             serde_json::to_value(NodeResponse::from_node(node))
@@ -811,7 +903,18 @@ pub fn handle_get_sponsor_upline(state: &WorkerState, request: &Request) -> Resp
         Err(resp) => return resp,
     };
 
-    match tree.as_navigator().get_sponsor_upline(user_id, depth) {
+    let nav = match tree.as_navigator() {
+        Some(n) => n,
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "UNSUPPORTED_OP",
+                "operation not supported for board plan structures",
+            );
+        }
+    };
+
+    match nav.get_sponsor_upline(user_id, depth) {
         Ok(nodes) => {
             let items: Vec<NodeResponse> =
                 nodes.iter().map(|n| NodeResponse::from_node(n)).collect();
@@ -840,7 +943,18 @@ pub fn handle_get_sponsored(state: &WorkerState, request: &Request) -> Response 
         Err(resp) => return resp,
     };
 
-    match tree.as_navigator().get_sponsored(user_id) {
+    let nav = match tree.as_navigator() {
+        Some(n) => n,
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "UNSUPPORTED_OP",
+                "operation not supported for board plan structures",
+            );
+        }
+    };
+
+    match nav.get_sponsored(user_id) {
         Ok(nodes) => {
             let items: Vec<NodeResponse> =
                 nodes.iter().map(|n| NodeResponse::from_node(n)).collect();
@@ -907,6 +1021,16 @@ pub fn handle_calculate_unilevel(state: &WorkerState, request: &Request) -> Resp
                 "INVALID_PARAMS",
                 format!(
                     "tree '{}' is matrix, but calculate_unilevel requires a unilevel tree",
+                    params.structure_name
+                ),
+            );
+        }
+        TreeInstance::BoardPlan(_) => {
+            return Response::error(
+                request.id.clone(),
+                "INVALID_PARAMS",
+                format!(
+                    "structure '{}' is a board plan, but calculate_unilevel requires a unilevel tree",
                     params.structure_name
                 ),
             );
@@ -1005,6 +1129,16 @@ pub fn handle_calculate_binary_pairing(state: &WorkerState, request: &Request) -
                 "INVALID_PARAMS",
                 format!(
                     "tree '{}' is matrix, but calculate_binary_pairing requires a binary tree",
+                    params.structure_name
+                ),
+            );
+        }
+        TreeInstance::BoardPlan(_) => {
+            return Response::error(
+                request.id.clone(),
+                "INVALID_PARAMS",
+                format!(
+                    "structure '{}' is a board plan, but calculate_binary_pairing requires a binary tree",
                     params.structure_name
                 ),
             );

@@ -67,22 +67,18 @@ impl Board {
 /// Computes the total number of positions in a complete tree with
 /// the given width and height.
 ///
-/// Formula: sum of w^k for k = 0..=h. Uses iterative multiplication
-/// to avoid overflow on intermediate values.
-///
-/// Returns `None` if the result would overflow `usize`.
-pub fn total_positions(width: u8, height: u8) -> Option<usize> {
+/// Formula: sum of w^k for k = 0..=h. Board plan dimensions are
+/// validated at engine creation (width 2-5, height 1-4), so the
+/// maximum result is 781. Overflow is impossible for valid inputs.
+pub fn total_positions(width: u8, height: u8) -> usize {
     let w = width as usize;
-    let mut sum: usize = 0;
-    let mut level_size: usize = 1; // w^0
+    let mut total = 0usize;
+    let mut level_size = 1usize;
     for _ in 0..=height {
-        sum = sum.checked_add(level_size)?;
-        // Prepare next level size, but only if we need another iteration.
-        // On the last iteration the result is unused, but we still guard
-        // against overflow so that callers get None for truly huge inputs.
-        level_size = level_size.checked_mul(w)?;
+        total += level_size;
+        level_size *= w;
     }
-    Some(sum)
+    total
 }
 
 /// Returns the parent index for a given position in a tree with the
@@ -141,37 +137,37 @@ mod tests {
     #[test]
     fn total_positions_width2_height2() {
         // 1 + 2 + 4 = 7
-        assert_eq!(total_positions(2, 2), Some(7));
+        assert_eq!(total_positions(2, 2), 7);
     }
 
     #[test]
     fn total_positions_width3_height2() {
         // 1 + 3 + 9 = 13
-        assert_eq!(total_positions(3, 2), Some(13));
+        assert_eq!(total_positions(3, 2), 13);
     }
 
     #[test]
     fn total_positions_width2_height3() {
         // 1 + 2 + 4 + 8 = 15
-        assert_eq!(total_positions(2, 3), Some(15));
+        assert_eq!(total_positions(2, 3), 15);
     }
 
     #[test]
     fn total_positions_width3_height3() {
         // 1 + 3 + 9 + 27 = 40
-        assert_eq!(total_positions(3, 3), Some(40));
+        assert_eq!(total_positions(3, 3), 40);
     }
 
     #[test]
     fn total_positions_width1_height0() {
         // Just the root.
-        assert_eq!(total_positions(1, 0), Some(1));
+        assert_eq!(total_positions(1, 0), 1);
     }
 
     #[test]
     fn total_positions_width2_height0() {
         // Just the root.
-        assert_eq!(total_positions(2, 0), Some(1));
+        assert_eq!(total_positions(2, 0), 1);
     }
 
     // --- parent_index tests ---

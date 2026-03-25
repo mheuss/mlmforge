@@ -49,3 +49,57 @@ pub enum ReEntryPosition {
 fn default_max_cascade_depth() -> u32 {
     10
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deserialize_board_plan_config() {
+        let json = r#"{
+            "cycle_commission": 500.0,
+            "re_entry_enabled": true,
+            "re_entry_position": "sponsor_board",
+            "max_cycles_per_period": 4,
+            "max_cascade_depth": 15,
+            "stall_threshold_periods": 3,
+            "inactive_compression": true
+        }"#;
+        let config: BoardPlanConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.cycle_commission, 500.0);
+        assert!(config.re_entry_enabled);
+        assert!(matches!(
+            config.re_entry_position,
+            ReEntryPosition::SponsorBoard
+        ));
+        assert_eq!(config.max_cycles_per_period, 4);
+        assert_eq!(config.max_cascade_depth, 15);
+        assert_eq!(config.stall_threshold_periods, 3);
+        assert!(config.inactive_compression);
+    }
+
+    #[test]
+    fn deserialize_re_entry_position_variants() {
+        let json_bottom = r#""bottom""#;
+        let pos: ReEntryPosition = serde_json::from_str(json_bottom).unwrap();
+        assert!(matches!(pos, ReEntryPosition::Bottom));
+
+        let json_sponsor = r#""sponsor_board""#;
+        let pos: ReEntryPosition = serde_json::from_str(json_sponsor).unwrap();
+        assert!(matches!(pos, ReEntryPosition::SponsorBoard));
+    }
+
+    #[test]
+    fn max_cascade_depth_defaults_to_10() {
+        let json = r#"{
+            "cycle_commission": 250.0,
+            "re_entry_enabled": false,
+            "re_entry_position": "bottom",
+            "max_cycles_per_period": 2,
+            "stall_threshold_periods": 5,
+            "inactive_compression": false
+        }"#;
+        let config: BoardPlanConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.max_cascade_depth, 10);
+    }
+}

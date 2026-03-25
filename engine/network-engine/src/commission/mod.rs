@@ -1,6 +1,7 @@
 //! Commission calculation.
 
 pub mod binary;
+pub mod board_plan;
 pub mod generation;
 pub mod matrix;
 pub mod stairstep;
@@ -12,6 +13,7 @@ pub(crate) mod walk;
 pub(crate) mod test_helpers;
 
 pub use binary::calculate_binary_pairing;
+pub use board_plan::calculate_board_commissions;
 pub use matrix::calculate_matrix;
 pub use stairstep::calculate_stairstep;
 pub use types::{

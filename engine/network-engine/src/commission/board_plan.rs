@@ -74,7 +74,6 @@ mod tests {
         CycleEvent {
             board_id: Uuid::new_v4(),
             cycled_member: member,
-            earned_commission: true,
             new_boards: vec![],
             re_entry_board: None,
         }

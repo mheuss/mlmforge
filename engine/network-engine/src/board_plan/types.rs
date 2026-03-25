@@ -27,9 +27,6 @@ pub struct CycleEvent {
     /// The member who cycled out of the top position.
     pub cycled_member: Uuid,
 
-    /// Whether the member earned commission for this cycle.
-    pub earned_commission: bool,
-
     /// New boards created from the split.
     pub new_boards: Vec<Uuid>,
 

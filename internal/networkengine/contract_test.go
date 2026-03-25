@@ -289,7 +289,6 @@ func TestContractBoardPlan_CycleOnFill(t *testing.T) {
 	// The cycled member is the one at position 0 (the top). That's member1.
 	cycleEvent := result.CycleEvents[0]
 	assert.Equal(t, member1, cycleEvent.CycledMember, "top position should cycle out")
-	assert.True(t, cycleEvent.EarnedCommission, "cycled member should earn commission")
 
 	// After cycling, new boards should be created from the split.
 	assert.NotEmpty(t, cycleEvent.NewBoards, "cycling should produce new boards")

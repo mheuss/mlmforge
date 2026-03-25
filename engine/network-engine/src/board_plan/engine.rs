@@ -151,9 +151,13 @@ impl BoardPlanEngine {
         if self.member_boards.is_empty() && self.sponsor_map.is_empty() {
             self.sponsor_map.insert(user_id, sponsor_id);
         } else {
-            // Validate: sponsor must exist in sponsor_map.
-            if !self.sponsor_map.contains_key(&sponsor_id)
-                && !self.member_boards.contains_key(&sponsor_id)
+            // Validate: sponsor must be an active participant. Check
+            // member_boards (on a board) or displaced_members (awaiting
+            // reassignment). The sponsor_map is permanent enrollment
+            // data and can't be used for validation because removed
+            // members remain in it for re-entry routing.
+            if !self.member_boards.contains_key(&sponsor_id)
+                && !self.displaced_members.contains(&sponsor_id)
             {
                 return Err(BoardPlanError::SponsorNotFound(sponsor_id));
             }
@@ -161,7 +165,8 @@ impl BoardPlanEngine {
         }
 
         // Place displaced members first.
-        self.place_displaced_members(timestamp)?;
+        let mut cycle_events = Vec::new();
+        self.place_displaced_members(timestamp, &mut cycle_events)?;
 
         // Find the board to place this member on.
         let board_id = self.find_placement_board(sponsor_id)?;
@@ -180,8 +185,7 @@ impl BoardPlanEngine {
         // Track membership.
         self.member_boards.insert(user_id, board_id);
 
-        // Check if board is full. If so, trigger cycling (stub).
-        let mut cycle_events = Vec::new();
+        // Check if board is full. If so, trigger cycling.
         if board.is_full() {
             self.process_cycles(board_id, timestamp, &mut cycle_events, 0);
         }
@@ -228,8 +232,14 @@ impl BoardPlanEngine {
     }
 
     /// Drains displaced members and places each in the oldest board
-    /// with an opening.
-    fn place_displaced_members(&mut self, timestamp: i64) -> Result<(), BoardPlanError> {
+    /// with an opening. If a placement fills a board, cycling is
+    /// triggered and the resulting events are appended to
+    /// `cycle_events`.
+    fn place_displaced_members(
+        &mut self,
+        timestamp: i64,
+        cycle_events: &mut Vec<CycleEvent>,
+    ) -> Result<(), BoardPlanError> {
         let displaced = std::mem::take(&mut self.displaced_members);
         for member_id in displaced {
             let board_id = self.oldest_board_with_opening()?;
@@ -241,6 +251,10 @@ impl BoardPlanEngine {
                 board.positions[pos] = Some(member_id);
                 board.last_activity_at = timestamp;
                 self.member_boards.insert(member_id, board_id);
+
+                if board.is_full() {
+                    self.process_cycles(board_id, timestamp, cycle_events, 0);
+                }
             }
         }
         Ok(())
@@ -425,7 +439,6 @@ impl BoardPlanEngine {
         cycle_events.push(CycleEvent {
             board_id,
             cycled_member,
-            earned_commission: true,
             new_boards: new_board_ids.clone(),
             re_entry_board,
         });
@@ -741,7 +754,7 @@ mod tests {
     fn add_member_fills_bfs_order() {
         // 2x2 board has 7 positions. Add 6 members (0-5) to fill
         // positions 0-5 sequentially. Don't fill all 7 because
-        // cycling is still a stub.
+        // a full board triggers cycling.
         let mut engine = BoardPlanEngine::new(2, 2, test_config(), 1000).unwrap();
         let sponsor = test_uuid(1);
 
@@ -1055,9 +1068,6 @@ mod tests {
             2,
             "split should create width (2) new boards"
         );
-
-        // Commission should be earned.
-        assert!(event.earned_commission);
 
         // Since re_entry_enabled is true, root should have been
         // re-entered on one of the new boards.

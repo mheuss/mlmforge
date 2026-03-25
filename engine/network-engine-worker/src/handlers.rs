@@ -1758,6 +1758,17 @@ pub fn handle_restore_snapshot(state: &mut WorkerState, request: &Request) -> Re
         }
     };
 
+    if state.trees.contains_key(&params.structure) {
+        return Response::error(
+            request.id.clone(),
+            "TREE_EXISTS",
+            format!(
+                "structure '{}' already exists; remove it first to restore a snapshot",
+                params.structure
+            ),
+        );
+    }
+
     let instance = match params.tree_type.as_str() {
         "unilevel" => match serde_json::from_value::<UnilevelTree>(params.data) {
             Ok(t) => TreeInstance::Unilevel(t),

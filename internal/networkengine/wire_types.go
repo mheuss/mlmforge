@@ -127,11 +127,10 @@ type BoardAddMemberResultDTO struct {
 // CycleEventDTO is the wire format for a board cycle event.
 // Matches the Rust CycleEvent struct.
 type CycleEventDTO struct {
-	BoardID          string   `json:"board_id"`
-	CycledMember     string   `json:"cycled_member"`
-	EarnedCommission bool     `json:"earned_commission"`
-	NewBoards        []string `json:"new_boards"`
-	ReEntryBoard     *string  `json:"re_entry_board"`
+	BoardID      string   `json:"board_id"`
+	CycledMember string   `json:"cycled_member"`
+	NewBoards    []string `json:"new_boards"`
+	ReEntryBoard *string  `json:"re_entry_board"`
 }
 
 // BoardRemoveMemberResultDTO is the wire format for removing a member from a board.

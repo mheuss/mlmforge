@@ -51,11 +51,13 @@ proptest! {
             }
         }
 
-        // Every tree member appears in user_streams.
+        // Every tree member's user_streams entry includes this stream.
         for stream in engine.active_streams() {
             for uid in stream.tree.user_ids() {
-                assert!(engine.contains_member(uid),
-                    "user {:?} in stream {} tree but not in user_streams", uid, stream.id);
+                let member_streams = engine.get_member_streams(uid);
+                assert!(member_streams.is_some_and(|ids| ids.contains(&stream.id)),
+                    "user {:?} in stream {} tree but user_streams doesn't reference that stream",
+                    uid, stream.id);
             }
         }
     }
@@ -68,11 +70,28 @@ proptest! {
 proptest! {
     #[test]
     fn frozen_streams_reject_placement(member_count in 1_usize..10) {
-        let mut engine = build_engine(member_count);
+        let choice_config = StreamlineConfig {
+            assignment_mode: StreamAssignmentMode::SponsorStream,
+            enrollment_stream_choice: true,
+            freeze_on_demotion: true,
+        };
+        let mut engine = StreamlineEngine::new(choice_config, 1000);
+        for i in 1..=member_count {
+            let sponsor = if i == 1 { uuid_from_index(0) } else { uuid_from_index(1) };
+            engine
+                .add_member(uuid_from_index(i), sponsor, 1000 + i as i64, None)
+                .expect("fixture construction should succeed");
+        }
 
         // Expand and freeze.
         engine.expand_streams(uuid_from_index(1), 3, 2000).expect("expansion should succeed");
         engine.update_stream_allowance(uuid_from_index(1), 1, 2000).expect("freeze should succeed");
+
+        // Assert freeze precondition: exactly 2 frozen streams.
+        let frozen_count = (2..=3_u32)
+            .filter(|&sid| engine.get_stream(sid).is_some_and(|s| s.frozen))
+            .count();
+        prop_assert_eq!(frozen_count, 2, "expected 2 frozen streams after freeze to 1");
 
         // Attempting to place in any frozen stream should fail.
         let new_user = uuid_from_index(100);
@@ -82,7 +101,7 @@ proptest! {
                     let result = engine.add_member(
                         new_user, uuid_from_index(1), 3000, Some(sid),
                     );
-                    assert!(result.is_err(), "placement in frozen stream {} should fail", sid);
+                    prop_assert!(result.is_err(), "placement in frozen stream {} should fail", sid);
                 }
             }
         }

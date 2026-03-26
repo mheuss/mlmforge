@@ -244,7 +244,11 @@ impl StreamlineEngine {
             // Transfer ownership if the removed user owned this stream.
             if stream.owner_id == user_id {
                 // First remaining member becomes owner, or mark as unowned.
-                let new_owner = stream.tree.user_ids().first().copied();
+                let new_owner = stream
+                    .tree
+                    .user_ids()
+                    .into_iter()
+                    .find(|uid| stream.tree.get_parent(*uid).ok().flatten().is_none());
                 match new_owner {
                     Some(nid) => {
                         stream.owner_id = nid;
@@ -265,7 +269,11 @@ impl StreamlineEngine {
             for oid in owned_ids {
                 if let Some(stream) = self.streams.get_mut(&oid) {
                     if stream.owner_id == user_id {
-                        let new_owner = stream.tree.user_ids().first().copied();
+                        let new_owner = stream
+                            .tree
+                            .user_ids()
+                            .into_iter()
+                            .find(|uid| stream.tree.get_parent(*uid).ok().flatten().is_none());
                         match new_owner {
                             Some(nid) => {
                                 stream.owner_id = nid;

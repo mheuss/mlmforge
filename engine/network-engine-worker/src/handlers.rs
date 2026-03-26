@@ -2083,6 +2083,17 @@ pub fn handle_calculate_streamline(state: &WorkerState, request: &Request) -> Re
         }
     };
 
+    if params.structure_config.name != params.structure {
+        return Response::error(
+            request.id.clone(),
+            "INVALID_PARAMS",
+            format!(
+                "structure_config.name '{}' does not match structure '{}'",
+                params.structure_config.name, params.structure
+            ),
+        );
+    }
+
     let engine = match get_streamline_ref(state, &params.structure, &request.id) {
         Ok(e) => e,
         Err(resp) => return resp,

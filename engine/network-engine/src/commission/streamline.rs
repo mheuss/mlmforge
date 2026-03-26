@@ -83,7 +83,7 @@ pub fn calculate_streamline(
 
         let config = walk::LevelWalkConfig {
             max_depth,
-            broad_pct: 0.0,
+            broad_pct: 1.0,
             multiplier,
             compression: None,
             threshold_ordinal: None,

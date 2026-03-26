@@ -9,7 +9,7 @@ use crate::config::streamline::StreamAssignmentMode;
 use crate::tree::unilevel::UnilevelTree;
 
 use super::error::StreamlineError;
-use super::types::AddMemberResult;
+use super::types::{AddMemberResult, ExpansionResult, FreezeResult};
 
 /// A single stream in the streamline structure.
 #[derive(Debug, Serialize, Deserialize)]
@@ -210,10 +210,124 @@ impl StreamlineEngine {
         })
     }
 
-    /// Creates a new empty stream owned by the given user.
+    /// Expands a user's stream count to match their rank allowance.
     ///
-    /// Used internally by expand_streams (Task 3). Also exposed for test setup.
-    #[allow(dead_code)]
+    /// Go computes the total allowed count from rank config and passes
+    /// it here. The engine is rank-agnostic.
+    pub fn expand_streams(
+        &mut self,
+        user_id: Uuid,
+        total_allowed: u32,
+        timestamp: i64,
+    ) -> Result<ExpansionResult, StreamlineError> {
+        let current_count = self
+            .stream_owners
+            .get(&user_id)
+            .map(|v| v.len() as u32)
+            .unwrap_or(0);
+
+        if total_allowed <= current_count {
+            return Ok(ExpansionResult {
+                new_stream_ids: Vec::new(),
+            });
+        }
+
+        let to_create = total_allowed - current_count;
+        let mut new_ids = Vec::with_capacity(to_create as usize);
+        for _ in 0..to_create {
+            let id = self.create_stream(user_id, timestamp);
+            new_ids.push(id);
+        }
+
+        Ok(ExpansionResult {
+            new_stream_ids: new_ids,
+        })
+    }
+
+    /// Updates a user's active stream count based on rank changes.
+    ///
+    /// Freezes excess streams (newest first) or unfreezes/creates
+    /// streams to match the new allowance.
+    pub fn update_stream_allowance(
+        &mut self,
+        user_id: Uuid,
+        total_allowed: u32,
+    ) -> Result<FreezeResult, StreamlineError> {
+        let owned_ids = self
+            .stream_owners
+            .get(&user_id)
+            .ok_or(StreamlineError::NoOwnedStreams(user_id))?
+            .clone();
+
+        // Sort by created_at for deterministic ordering.
+        let mut sorted: Vec<(u32, i64, bool)> = owned_ids
+            .iter()
+            .filter_map(|&id| {
+                self.streams
+                    .get(&id)
+                    .map(|s| (s.id, s.created_at, s.frozen))
+            })
+            .collect();
+        sorted.sort_by_key(|&(_, created_at, _)| created_at);
+
+        let active_count = sorted.iter().filter(|&&(_, _, frozen)| !frozen).count() as u32;
+
+        let mut result = FreezeResult {
+            frozen: Vec::new(),
+            unfrozen: Vec::new(),
+            created: Vec::new(),
+        };
+
+        if total_allowed < active_count {
+            // Freeze excess — newest unfrozen first.
+            let to_freeze = active_count - total_allowed;
+            let mut unfrozen_ids: Vec<u32> = sorted
+                .iter()
+                .filter(|&&(_, _, frozen)| !frozen)
+                .map(|&(id, _, _)| id)
+                .collect();
+            // Reverse to freeze newest first.
+            unfrozen_ids.reverse();
+
+            for &id in unfrozen_ids.iter().take(to_freeze as usize) {
+                if let Some(stream) = self.streams.get_mut(&id) {
+                    stream.frozen = true;
+                    result.frozen.push(id);
+                }
+            }
+        } else if total_allowed > active_count {
+            let deficit = total_allowed - active_count;
+
+            // Unfreeze oldest frozen first.
+            let frozen_ids: Vec<u32> = sorted
+                .iter()
+                .filter(|&&(_, _, frozen)| frozen)
+                .map(|&(id, _, _)| id)
+                .collect();
+
+            let mut remaining = deficit;
+            for &id in &frozen_ids {
+                if remaining == 0 {
+                    break;
+                }
+                if let Some(stream) = self.streams.get_mut(&id) {
+                    stream.frozen = false;
+                    result.unfrozen.push(id);
+                    remaining -= 1;
+                }
+            }
+
+            // Create new streams if still under the target.
+            for _ in 0..remaining {
+                let id = self.create_stream(user_id, 0);
+                result.created.push(id);
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Creates a new empty stream owned by the given user.
     pub(crate) fn create_stream(&mut self, owner_id: Uuid, timestamp: i64) -> u32 {
         let id = self.next_stream_id;
         self.next_stream_id += 1;
@@ -428,5 +542,116 @@ mod tests {
             .add_member(test_uuid(2), test_uuid(50), 1001, None)
             .unwrap_err();
         assert_eq!(err, StreamlineError::SponsorNotFound(test_uuid(50)));
+    }
+
+    // --- Task 3: expand_streams and update_stream_allowance ---
+
+    #[test]
+    fn expand_streams_creates_new() {
+        let mut engine = StreamlineEngine::new(default_config(), 1000);
+        engine
+            .add_member(test_uuid(1), test_uuid(99), 1000, None)
+            .unwrap();
+        // User has 1 stream, expand to 3.
+        let result = engine.expand_streams(test_uuid(1), 3, 1001).unwrap();
+        assert_eq!(result.new_stream_ids.len(), 2);
+        assert_eq!(engine.stream_count(), 3);
+        // New streams are owned by user 1.
+        for &id in &result.new_stream_ids {
+            let stream = engine.get_stream(id).unwrap();
+            assert_eq!(stream.owner_id, test_uuid(1));
+            assert!(!stream.frozen);
+        }
+    }
+
+    #[test]
+    fn expand_streams_noop_at_limit() {
+        let mut engine = StreamlineEngine::new(default_config(), 1000);
+        engine
+            .add_member(test_uuid(1), test_uuid(99), 1000, None)
+            .unwrap();
+        let result = engine.expand_streams(test_uuid(1), 1, 1001).unwrap();
+        assert!(result.new_stream_ids.is_empty());
+        assert_eq!(engine.stream_count(), 1);
+    }
+
+    #[test]
+    fn freeze_excess_streams_newest_first() {
+        let mut engine = StreamlineEngine::new(default_config(), 1000);
+        engine
+            .add_member(test_uuid(1), test_uuid(99), 1000, None)
+            .unwrap();
+        // Expand to 4 streams.
+        engine.expand_streams(test_uuid(1), 4, 1001).unwrap();
+        assert_eq!(engine.stream_count(), 4);
+
+        // Drop allowance to 2. Streams 3 and 4 should freeze (newest first).
+        let result = engine.update_stream_allowance(test_uuid(1), 2).unwrap();
+        assert_eq!(result.frozen.len(), 2);
+        // Newest first means stream 4 frozen before stream 3.
+        assert!(result.frozen.contains(&4));
+        assert!(result.frozen.contains(&3));
+        assert!(engine.get_stream(3).unwrap().frozen);
+        assert!(engine.get_stream(4).unwrap().frozen);
+        assert!(!engine.get_stream(1).unwrap().frozen);
+        assert!(!engine.get_stream(2).unwrap().frozen);
+    }
+
+    #[test]
+    fn unfreeze_oldest_first() {
+        let mut engine = StreamlineEngine::new(default_config(), 1000);
+        engine
+            .add_member(test_uuid(1), test_uuid(99), 1000, None)
+            .unwrap();
+        engine.expand_streams(test_uuid(1), 4, 1001).unwrap();
+        // Freeze down to 1.
+        engine.update_stream_allowance(test_uuid(1), 1).unwrap();
+        // All 3 extra streams frozen.
+        assert!(engine.get_stream(2).unwrap().frozen);
+        assert!(engine.get_stream(3).unwrap().frozen);
+        assert!(engine.get_stream(4).unwrap().frozen);
+
+        // Unfreeze back to 3. Oldest frozen first = stream 2, then 3.
+        let result = engine.update_stream_allowance(test_uuid(1), 3).unwrap();
+        assert_eq!(result.unfrozen.len(), 2);
+        assert!(!engine.get_stream(2).unwrap().frozen);
+        assert!(!engine.get_stream(3).unwrap().frozen);
+        assert!(engine.get_stream(4).unwrap().frozen);
+    }
+
+    #[test]
+    fn freeze_then_unfreeze_round_trip() {
+        let mut engine = StreamlineEngine::new(default_config(), 1000);
+        engine
+            .add_member(test_uuid(1), test_uuid(99), 1000, None)
+            .unwrap();
+        engine.expand_streams(test_uuid(1), 3, 1001).unwrap();
+
+        // Freeze to 1, then back to 3.
+        engine.update_stream_allowance(test_uuid(1), 1).unwrap();
+        let result = engine.update_stream_allowance(test_uuid(1), 3).unwrap();
+        assert_eq!(result.unfrozen.len(), 2);
+        // All streams should be active again.
+        for id in 1..=3 {
+            assert!(!engine.get_stream(id).unwrap().frozen);
+        }
+    }
+
+    #[test]
+    fn frozen_stream_rejects_placement() {
+        let mut engine = StreamlineEngine::new(default_config(), 1000);
+        engine
+            .add_member(test_uuid(1), test_uuid(99), 1000, None)
+            .unwrap();
+        engine.expand_streams(test_uuid(1), 2, 1001).unwrap();
+
+        // Freeze stream 2.
+        engine.update_stream_allowance(test_uuid(1), 1).unwrap();
+
+        // Try to place in frozen stream 2 via override.
+        let err = engine
+            .add_member(test_uuid(2), test_uuid(1), 1002, Some(2))
+            .unwrap_err();
+        assert_eq!(err, StreamlineError::StreamFrozen(2));
     }
 }

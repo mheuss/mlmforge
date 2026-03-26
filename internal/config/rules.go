@@ -24,6 +24,8 @@ func validateBusinessRules(plan *CompensationPlan) []ValidationError {
 	errs = append(errs, validateEligibility(plan)...)
 	errs = append(errs, validatePassUp(plan)...)
 	errs = append(errs, validateBoardPlanCompanion(plan)...)
+	errs = append(errs, validateStreamlineCompanion(plan)...)
+	errs = append(errs, validateStreamlineCommission(plan, ranks)...)
 	errs = append(errs, validateCrossFieldRules(plan, ranks)...)
 	return errs
 }
@@ -560,6 +562,138 @@ func validateBoardPlanCompanion(plan *CompensationPlan) []ValidationError {
 		Message:  "board_plan structures require at least one companion unilevel structure",
 		Severity: SeverityError,
 	}}
+}
+
+// validateStreamlineCompanion checks that streamline structures have a companion unilevel.
+func validateStreamlineCompanion(plan *CompensationPlan) []ValidationError {
+	var hasStreamline bool
+	for _, s := range plan.Structures {
+		if s.Type == "streamline" {
+			hasStreamline = true
+			break
+		}
+	}
+	if !hasStreamline {
+		return nil
+	}
+
+	for _, s := range plan.Structures {
+		if s.Type == "unilevel" {
+			return nil
+		}
+	}
+
+	return []ValidationError{{
+		Path:     "/structures",
+		Code:     "missing_companion_structure",
+		Message:  "streamline structures require at least one companion unilevel structure",
+		Severity: SeverityError,
+	}}
+}
+
+// validateStreamlineCommission checks streamline-specific commission rules.
+func validateStreamlineCommission(plan *CompensationPlan, ranks map[string]bool) []ValidationError {
+	var errs []ValidationError
+
+	for i, s := range plan.Structures {
+		if s.Type != "streamline" {
+			continue
+		}
+		c, ok := s.resolvedCommission.(*StreamlineCommission)
+		if !ok {
+			continue
+		}
+
+		path := fmt.Sprintf("/structures/%d/commission", i)
+
+		// At least one level.
+		if len(c.DynamicCompression) == 0 {
+			errs = append(errs, ValidationError{
+				Path:     path + "/dynamic_compression",
+				Code:     "empty_compression_table",
+				Message:  "streamline requires at least one level in dynamic_compression",
+				Severity: SeverityError,
+			})
+			continue
+		}
+
+		// Sort level keys to check sequentiality.
+		var levelNums []int
+		for key := range c.DynamicCompression {
+			var n int
+			if _, err := fmt.Sscanf(key, "%d", &n); err != nil {
+				errs = append(errs, ValidationError{
+					Path:     path + "/dynamic_compression/" + key,
+					Code:     "invalid_level_key",
+					Message:  fmt.Sprintf("level key %q is not a valid integer", key),
+					Severity: SeverityError,
+				})
+				continue
+			}
+			levelNums = append(levelNums, n)
+		}
+		sort.Ints(levelNums)
+
+		// Check sequential from 1.
+		for j, n := range levelNums {
+			if n != j+1 {
+				errs = append(errs, ValidationError{
+					Path:     path + "/dynamic_compression",
+					Code:     "non_sequential_levels",
+					Message:  fmt.Sprintf("levels must be sequential starting from 1, got %v", levelNums),
+					Severity: SeverityError,
+				})
+				break
+			}
+		}
+
+		// Check percent values and rank references.
+		for key, level := range c.DynamicCompression {
+			levelPath := path + "/dynamic_compression/" + key
+			if level.Percent < 0 || level.Percent > 100 {
+				errs = append(errs, ValidationError{
+					Path:     levelPath + "/percent",
+					Code:     "percent_out_of_range",
+					Message:  fmt.Sprintf("percent must be 0-100, got %f", level.Percent),
+					Severity: SeverityError,
+				})
+			}
+			if level.MinRank != "" && !ranks[level.MinRank] {
+				errs = append(errs, ValidationError{
+					Path:     levelPath + "/min_rank",
+					Code:     "invalid_rank_reference",
+					Message:  fmt.Sprintf("min_rank %q does not exist in plan ranks", level.MinRank),
+					Severity: SeverityError,
+				})
+			}
+		}
+
+		// Depth must accommodate all levels.
+		if c.CommissionableDepth < len(c.DynamicCompression) {
+			errs = append(errs, ValidationError{
+				Path:     path + "/commissionable_depth",
+				Code:     "depth_less_than_levels",
+				Message:  fmt.Sprintf("commissionable_depth (%d) must be >= number of levels (%d)", c.CommissionableDepth, len(c.DynamicCompression)),
+				Severity: SeverityError,
+			})
+		}
+
+		// Validate stream config rank references.
+		if c.Streams != nil {
+			for rankName := range c.Streams.AdditionalPerRank {
+				if !ranks[rankName] {
+					errs = append(errs, ValidationError{
+						Path:     path + "/streams/additional_per_rank/" + rankName,
+						Code:     "invalid_rank_reference",
+						Message:  fmt.Sprintf("rank %q in additional_per_rank does not exist in plan ranks", rankName),
+						Severity: SeverityError,
+					})
+				}
+			}
+		}
+	}
+
+	return errs
 }
 
 // --- Warnings ---

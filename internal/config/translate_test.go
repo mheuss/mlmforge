@@ -398,3 +398,75 @@ func TestTranslateStructureConfigTypeMismatch(t *testing.T) {
 		})
 	}
 }
+
+func TestTranslateStreamlineConfigWithStreams(t *testing.T) {
+	plan := minimalPlan()
+	plan.Structures[0].Type = "streamline"
+	plan.Structures[0].resolvedCommission = &StreamlineCommission{
+		CommissionableDepth:      7,
+		VolumeToDollarMultiplier: floatPtr(1.5),
+		DynamicCompression: map[string]StreamlineLevel{
+			"1": {MinRank: "active", Percent: 0.05},
+			"2": {MinRank: "bronze", Percent: 0.04},
+		},
+		Streams: &StreamConfig{
+			AdditionalPerRank:   map[string]int{"silver": 1, "gold": 2},
+			AssignmentMode:      "round_robin",
+			PerEnrollmentChoice: true,
+			FreezeOnDemotion:    true,
+		},
+	}
+
+	out, err := translateToEngine(plan)
+	require.NoError(t, err)
+
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(out, &doc))
+
+	structures := doc["structures"].([]any)
+	s := structures[0].(map[string]any)
+	cfg := s["config"].(map[string]any)
+
+	assert.Equal(t, "Primary", cfg["name"])
+
+	sc := cfg["streamline_commission"].(map[string]any)
+	assert.Equal(t, float64(7), sc["commissionable_depth"])
+	assert.Equal(t, 1.5, sc["volume_to_dollar_multiplier"])
+
+	streams := sc["streams"].(map[string]any)
+	assert.Equal(t, "round_robin", streams["assignment_mode"])
+	assert.Equal(t, true, streams["per_enrollment_choice"])
+	assert.Equal(t, true, streams["freeze_on_demotion"])
+
+	apr := streams["additional_per_rank"].(map[string]any)
+	assert.Equal(t, float64(1), apr["silver"])
+	assert.Equal(t, float64(2), apr["gold"])
+}
+
+func TestTranslateStreamlineConfigNilStreams(t *testing.T) {
+	plan := minimalPlan()
+	plan.Structures[0].Type = "streamline"
+	plan.Structures[0].resolvedCommission = &StreamlineCommission{
+		CommissionableDepth: 5,
+		DynamicCompression: map[string]StreamlineLevel{
+			"1": {MinRank: "active", Percent: 0.10},
+		},
+		Streams: nil,
+	}
+
+	out, err := translateToEngine(plan)
+	require.NoError(t, err)
+
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(out, &doc))
+
+	structures := doc["structures"].([]any)
+	s := structures[0].(map[string]any)
+	cfg := s["config"].(map[string]any)
+	sc := cfg["streamline_commission"].(map[string]any)
+
+	// streams should be nil/absent.
+	assert.Nil(t, sc["streams"])
+}
+
+func floatPtr(f float64) *float64 { return &f }

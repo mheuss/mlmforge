@@ -236,26 +236,33 @@ func TestPoolQualificationMinRankMustExist(t *testing.T) {
 
 func TestStreamlineDynamicCompressionMinRankMustExist(t *testing.T) {
 	plan := minimalPlan()
-	plan.Structures[0].Name = "Stream"
-	plan.Structures[0].Type = "streamline"
-	plan.Structures[0].resolvedCommission = &StreamlineCommission{
-		CommissionableDepth: 5,
-		DynamicCompression: map[string]StreamlineLevel{
-			"1": {MinRank: "Associate", Percent: 0.05},
-			"2": {MinRank: "Nonexistent", Percent: 0.03},
+	// Add streamline alongside the existing unilevel companion.
+	plan.Structures = append(plan.Structures, StructureConfig{
+		Name: "Stream",
+		Type: "streamline",
+		resolvedCommission: &StreamlineCommission{
+			CommissionableDepth: 5,
+			DynamicCompression: map[string]StreamlineLevel{
+				"1": {MinRank: "Associate", Percent: 0.05},
+				"2": {MinRank: "Nonexistent", Percent: 0.03},
+			},
 		},
-	}
-	plan.Ranks[0].QualifiedStructures = []string{"Stream"}
-	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stream"}}
-	plan.Ranks[1].QualifiedStructures = []string{"Stream"}
-	plan.Ranks[1].Qualification.Structures = []StructureQualification{
-		{Structure: "Stream", PersonalVolume: 100, GroupVolume: 3000},
-	}
+	})
 
 	errs := validateBusinessRules(plan)
-	require.Len(t, errs, 1)
-	assert.Equal(t, "undefined_reference", errs[0].Code)
-	assert.Contains(t, errs[0].Path, "dynamic_compression")
+	// Expect both the existing undefined_reference and the new invalid_rank_reference.
+	var foundUndefinedRef bool
+	var foundInvalidRank bool
+	for _, e := range errs {
+		if e.Code == "undefined_reference" {
+			foundUndefinedRef = true
+		}
+		if e.Code == "invalid_rank_reference" {
+			foundInvalidRank = true
+		}
+	}
+	assert.True(t, foundUndefinedRef, "should find undefined_reference for Nonexistent rank")
+	assert.True(t, foundInvalidRank, "should find invalid_rank_reference for Nonexistent rank")
 }
 
 func TestCarryForwardCapRequiresCarryForward(t *testing.T) {
@@ -538,33 +545,39 @@ func TestValidation_HoldingTankValidStructuresPass(t *testing.T) {
 
 func TestValidation_StreamlineAdditionalPerRankMustExist(t *testing.T) {
 	plan := minimalPlan()
-	plan.Structures[0].Name = "Stream"
-	plan.Structures[0].Type = "streamline"
-	plan.Structures[0].resolvedCommission = &StreamlineCommission{
-		CommissionableDepth: 5,
-		DynamicCompression: map[string]StreamlineLevel{
-			"1": {MinRank: "Associate", Percent: 0.05},
-		},
-		Streams: &StreamConfig{
-			AdditionalPerRank: map[string]int{
-				"Silver":      2,
-				"Nonexistent": 3,
+	// Add streamline structure while keeping the companion unilevel.
+	plan.Structures = append(plan.Structures, StructureConfig{
+		Name: "Stream",
+		Type: "streamline",
+		resolvedCommission: &StreamlineCommission{
+			CommissionableDepth: 5,
+			DynamicCompression: map[string]StreamlineLevel{
+				"1": {MinRank: "Associate", Percent: 0.05},
 			},
-			AssignmentMode: "round_robin",
+			Streams: &StreamConfig{
+				AdditionalPerRank: map[string]int{
+					"Silver":      2,
+					"Nonexistent": 3,
+				},
+				AssignmentMode: "round_robin",
+			},
 		},
-	}
-	plan.Ranks[0].QualifiedStructures = []string{"Stream"}
-	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stream"}}
-	plan.Ranks[1].QualifiedStructures = []string{"Stream"}
-	plan.Ranks[1].Qualification.Structures = []StructureQualification{
-		{Structure: "Stream", PersonalVolume: 100, GroupVolume: 3000},
-	}
+	})
 
 	errs := validateBusinessRules(plan)
-	require.Len(t, errs, 1)
-	assert.Equal(t, "undefined_reference", errs[0].Code)
-	assert.Equal(t, SeverityError, errs[0].Severity)
-	assert.Contains(t, errs[0].Message, "Nonexistent")
+	// Expect both the existing undefined_reference and the new invalid_rank_reference.
+	var foundUndefinedRef bool
+	var foundInvalidRank bool
+	for _, e := range errs {
+		if e.Code == "undefined_reference" {
+			foundUndefinedRef = true
+		}
+		if e.Code == "invalid_rank_reference" {
+			foundInvalidRank = true
+		}
+	}
+	assert.True(t, foundUndefinedRef, "should find undefined_reference for Nonexistent rank in additional_per_rank")
+	assert.True(t, foundInvalidRank, "should find invalid_rank_reference for Nonexistent rank in additional_per_rank")
 }
 
 func TestValidation_SearchModeFirstLevelsWithoutDepthWarning(t *testing.T) {
@@ -868,5 +881,123 @@ func TestValidation_NoBoardPlanSkipsCompanionCheck(t *testing.T) {
 	for _, e := range errs {
 		assert.NotEqual(t, "missing_companion_structure", e.Code,
 			"plan without board_plan should not produce missing_companion_structure, got: %s", e.Message)
+	}
+}
+
+// --- Streamline validation tests ---
+
+func streamlinePlan() *CompensationPlan {
+	plan := minimalPlan()
+	plan.Ranks = append(plan.Ranks, RankDefinition{
+		Name:    "Bronze",
+		Ordinal: 3,
+		Qualification: RankQualification{
+			Structures:       []StructureQualification{},
+			RequiredProducts: []string{},
+		},
+		DemotionPolicy: DemotionPolicy{StringValue: "promotion_only"},
+	})
+	plan.Structures = append(plan.Structures, StructureConfig{
+		Name: "Stream",
+		Type: "streamline",
+		resolvedCommission: &StreamlineCommission{
+			CommissionableDepth: 5,
+			DynamicCompression: map[string]StreamlineLevel{
+				"1": {MinRank: "Associate", Percent: 0.05},
+				"2": {MinRank: "Silver", Percent: 0.04},
+				"3": {MinRank: "Bronze", Percent: 0.03},
+			},
+		},
+	})
+	return plan
+}
+
+func TestValidation_StreamlineRequiresCompanionUnilevel(t *testing.T) {
+	plan := streamlinePlan()
+	// Remove the unilevel structure.
+	plan.Structures = []StructureConfig{plan.Structures[1]}
+
+	errs := validateBusinessRules(plan)
+	found := false
+	for _, e := range errs {
+		if e.Code == "missing_companion_structure" {
+			found = true
+		}
+	}
+	assert.True(t, found, "streamline without unilevel should produce missing_companion_structure")
+}
+
+func TestValidation_StreamlineEmptyCompressionTableFails(t *testing.T) {
+	plan := streamlinePlan()
+	c := plan.Structures[1].resolvedCommission.(*StreamlineCommission)
+	c.DynamicCompression = map[string]StreamlineLevel{}
+
+	errs := validateBusinessRules(plan)
+	found := false
+	for _, e := range errs {
+		if e.Code == "empty_compression_table" {
+			found = true
+		}
+	}
+	assert.True(t, found, "empty dynamic_compression should produce empty_compression_table")
+}
+
+func TestValidation_StreamlineNonSequentialLevelsFails(t *testing.T) {
+	plan := streamlinePlan()
+	c := plan.Structures[1].resolvedCommission.(*StreamlineCommission)
+	c.DynamicCompression = map[string]StreamlineLevel{
+		"1": {MinRank: "Associate", Percent: 0.05},
+		"3": {MinRank: "Silver", Percent: 0.04},
+		"4": {MinRank: "Bronze", Percent: 0.03},
+	}
+
+	errs := validateBusinessRules(plan)
+	found := false
+	for _, e := range errs {
+		if e.Code == "non_sequential_levels" {
+			found = true
+		}
+	}
+	assert.True(t, found, "non-sequential levels should produce non_sequential_levels")
+}
+
+func TestValidation_StreamlineInvalidRankReferenceFails(t *testing.T) {
+	plan := streamlinePlan()
+	c := plan.Structures[1].resolvedCommission.(*StreamlineCommission)
+	c.DynamicCompression["1"] = StreamlineLevel{MinRank: "Nonexistent", Percent: 0.05}
+
+	errs := validateBusinessRules(plan)
+	found := false
+	for _, e := range errs {
+		if e.Code == "invalid_rank_reference" {
+			found = true
+		}
+	}
+	assert.True(t, found, "invalid min_rank should produce invalid_rank_reference")
+}
+
+func TestValidation_StreamlineDepthLessThanLevelsFails(t *testing.T) {
+	plan := streamlinePlan()
+	c := plan.Structures[1].resolvedCommission.(*StreamlineCommission)
+	c.CommissionableDepth = 2 // 3 levels but only 2 depth
+
+	errs := validateBusinessRules(plan)
+	found := false
+	for _, e := range errs {
+		if e.Code == "depth_less_than_levels" {
+			found = true
+		}
+	}
+	assert.True(t, found, "depth < levels should produce depth_less_than_levels")
+}
+
+func TestValidation_StreamlineValidConfigPasses(t *testing.T) {
+	plan := streamlinePlan()
+
+	errs := validateBusinessRules(plan)
+	for _, e := range errs {
+		if e.Severity == SeverityError {
+			assert.Failf(t, "unexpected error", "valid streamline config produced error: %s (%s)", e.Message, e.Code)
+		}
 	}
 }

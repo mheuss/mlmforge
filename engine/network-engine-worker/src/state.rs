@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use network_engine::board_plan::BoardPlanEngine;
 use network_engine::config::CompensationPlan;
+use network_engine::streamline::StreamlineEngine;
 use network_engine::tree::binary::BinaryTree;
 use network_engine::tree::matrix::MatrixTree;
 use network_engine::tree::navigator::TreeNavigator;
@@ -17,20 +18,21 @@ pub enum TreeInstance {
     Binary(BinaryTree),
     Matrix(MatrixTree),
     BoardPlan(BoardPlanEngine),
+    Streamline(StreamlineEngine),
 }
 
 impl TreeInstance {
     /// Returns a reference to the tree as a `dyn TreeNavigator`.
     ///
-    /// Returns `None` for board plan structures because `BoardPlanEngine`
-    /// does not implement `TreeNavigator`. Board plans use their own
-    /// query interface instead of tree traversals.
+    /// Returns `None` for board plan and streamline structures because
+    /// they do not implement `TreeNavigator`.
     pub fn as_navigator(&self) -> Option<&dyn TreeNavigator> {
         match self {
             TreeInstance::Unilevel(t) => Some(t),
             TreeInstance::Binary(t) => Some(t),
             TreeInstance::Matrix(t) => Some(t),
             TreeInstance::BoardPlan(_) => None,
+            TreeInstance::Streamline(_) => None,
         }
     }
 }

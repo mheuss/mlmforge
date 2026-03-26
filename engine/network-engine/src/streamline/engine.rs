@@ -9,7 +9,10 @@ use crate::config::streamline::StreamAssignmentMode;
 use crate::tree::unilevel::UnilevelTree;
 
 use super::error::StreamlineError;
-use super::types::{AddMemberResult, ExpansionResult, FreezeResult};
+use super::types::{
+    AddMemberResult, ExpansionResult, FreezeResult, MemberInfo, RemoveMemberResult, StreamPosition,
+    StreamSummary,
+};
 
 /// A single stream in the streamline structure.
 #[derive(Debug, Serialize, Deserialize)]
@@ -112,6 +115,156 @@ impl StreamlineEngine {
     /// Returns the stream IDs a member has positions on.
     pub fn get_member_streams(&self, user_id: Uuid) -> Option<&Vec<u32>> {
         self.user_streams.get(&user_id)
+    }
+
+    /// Removes a member from all streams they have positions on.
+    ///
+    /// In a linear chain, removing a non-leaf node requires chain
+    /// compaction: collect descendants, remove from leaf up, re-add
+    /// descendants under the removed node's parent.
+    pub fn remove_member(
+        &mut self,
+        user_id: Uuid,
+        _timestamp: i64,
+    ) -> Result<RemoveMemberResult, StreamlineError> {
+        let stream_ids = self
+            .user_streams
+            .remove(&user_id)
+            .ok_or(StreamlineError::MemberNotFound(user_id))?;
+
+        let mut removed_from = Vec::new();
+
+        for &stream_id in &stream_ids {
+            let stream = match self.streams.get_mut(&stream_id) {
+                Some(s) => s,
+                None => continue,
+            };
+
+            if !stream.tree.contains(user_id) {
+                continue;
+            }
+
+            // Collect the chain below the target for compaction.
+            let descendants: Vec<(Uuid, Uuid, i64)> = stream
+                .tree
+                .get_downline(user_id, 0)
+                .unwrap_or_default()
+                .iter()
+                .map(|node| {
+                    let sponsor_id = stream
+                        .tree
+                        .get_sponsor(node.user_id)
+                        .ok()
+                        .flatten()
+                        .map(|s| s.user_id)
+                        .unwrap_or(node.user_id);
+                    (node.user_id, sponsor_id, node.enrolled_at)
+                })
+                .collect();
+
+            // Get the parent of the target for re-attachment.
+            let parent_id = stream
+                .tree
+                .get_parent(user_id)
+                .ok()
+                .flatten()
+                .map(|p| p.user_id);
+
+            // Remove from leaf up: descendants in reverse, then the target.
+            for &(desc_id, _, _) in descendants.iter().rev() {
+                let _ = stream.tree.remove_node(desc_id);
+                // Clean up user_streams for descendants.
+                if let Some(streams) = self.user_streams.get_mut(&desc_id) {
+                    streams.retain(|&id| id != stream_id);
+                    if streams.is_empty() {
+                        self.user_streams.remove(&desc_id);
+                    }
+                }
+            }
+            let _ = stream.tree.remove_node(user_id);
+
+            // Re-add descendants under the removed node's parent.
+            let mut current_parent = parent_id;
+            for (i, &(desc_id, sponsor_id, enrolled_at)) in descendants.iter().enumerate() {
+                match current_parent {
+                    Some(pid) => {
+                        let _ = stream.tree.add_node(desc_id, pid, sponsor_id, enrolled_at);
+                    }
+                    None => {
+                        // Target was the root. First descendant becomes root.
+                        let _ = stream.tree.add_root(desc_id, enrolled_at);
+                    }
+                }
+                // Re-record in user_streams.
+                self.user_streams
+                    .entry(desc_id)
+                    .or_default()
+                    .push(stream_id);
+                current_parent = Some(desc_id);
+
+                // Update bottom pointer if this is the last descendant.
+                if i == descendants.len() - 1 {
+                    stream.bottom = Some(desc_id);
+                }
+            }
+
+            // If no descendants, update bottom pointer.
+            if descendants.is_empty() {
+                stream.bottom = parent_id;
+            }
+
+            // If the tree is now empty (target was only member), clear bottom.
+            if stream.tree.user_ids().is_empty() {
+                stream.bottom = None;
+            }
+
+            removed_from.push(stream_id);
+        }
+
+        // Also remove from stream_owners if they own any.
+        self.stream_owners.remove(&user_id);
+
+        Ok(RemoveMemberResult { removed_from })
+    }
+
+    /// Returns summaries of all streams, sorted by created_at.
+    pub fn list_streams(&self) -> Vec<StreamSummary> {
+        let mut summaries: Vec<StreamSummary> = self
+            .streams
+            .values()
+            .map(|s| StreamSummary {
+                id: s.id,
+                owner_id: s.owner_id,
+                member_count: s.tree.user_ids().len(),
+                frozen: s.frozen,
+                created_at: s.created_at,
+            })
+            .collect();
+        summaries.sort_by_key(|s| s.created_at);
+        summaries
+    }
+
+    /// Returns info about a member's positions across all streams.
+    pub fn get_member_info(&self, user_id: Uuid) -> Result<MemberInfo, StreamlineError> {
+        let stream_ids = self
+            .user_streams
+            .get(&user_id)
+            .ok_or(StreamlineError::MemberNotFound(user_id))?;
+
+        let mut positions = Vec::new();
+        for &stream_id in stream_ids {
+            if let Some(stream) = self.streams.get(&stream_id) {
+                if let Ok(pos) = stream.tree.get_position(user_id) {
+                    positions.push(StreamPosition {
+                        stream_id,
+                        position: pos.depth as usize,
+                        frozen: stream.frozen,
+                    });
+                }
+            }
+        }
+
+        Ok(MemberInfo { streams: positions })
     }
 
     /// Adds a member to the engine.
@@ -653,5 +806,95 @@ mod tests {
             .add_member(test_uuid(2), test_uuid(1), 1002, Some(2))
             .unwrap_err();
         assert_eq!(err, StreamlineError::StreamFrozen(2));
+    }
+
+    // --- Task 4: remove_member and query methods ---
+
+    #[test]
+    fn remove_member_from_single_stream() {
+        let mut engine = StreamlineEngine::new(default_config(), 1000);
+        engine
+            .add_member(test_uuid(1), test_uuid(99), 1000, None)
+            .unwrap();
+        engine
+            .add_member(test_uuid(2), test_uuid(1), 1001, None)
+            .unwrap();
+        engine
+            .add_member(test_uuid(3), test_uuid(1), 1002, None)
+            .unwrap();
+        // Chain: 1 → 2 → 3. Remove middle node (2).
+        let result = engine.remove_member(test_uuid(2), 1003).unwrap();
+        assert_eq!(result.removed_from, vec![1]);
+        assert!(!engine.contains_member(test_uuid(2)));
+        // Chain should be 1 → 3 after compaction.
+        assert!(engine.contains_member(test_uuid(1)));
+        assert!(engine.contains_member(test_uuid(3)));
+        let stream = engine.get_stream(1).unwrap();
+        assert_eq!(stream.tree.user_ids().len(), 2);
+    }
+
+    #[test]
+    fn remove_member_from_multiple_streams() {
+        let mut engine = StreamlineEngine::new(default_config(), 1000);
+        engine
+            .add_member(test_uuid(1), test_uuid(99), 1000, None)
+            .unwrap();
+        engine.create_stream(test_uuid(1), 1001);
+
+        // Place user 2 in stream 1 via sponsor.
+        engine
+            .add_member(test_uuid(2), test_uuid(1), 1002, None)
+            .unwrap();
+        // Manually add user 2 to stream 2 as well (simulate multi-stream position).
+        let stream2 = engine.streams.get_mut(&2).unwrap();
+        stream2.tree.add_root(test_uuid(2), 1002).unwrap();
+        stream2.bottom = Some(test_uuid(2));
+        engine.user_streams.get_mut(&test_uuid(2)).unwrap().push(2);
+
+        let result = engine.remove_member(test_uuid(2), 1003).unwrap();
+        assert_eq!(result.removed_from.len(), 2);
+        assert!(!engine.contains_member(test_uuid(2)));
+    }
+
+    #[test]
+    fn remove_nonexistent_member_errors() {
+        let mut engine = StreamlineEngine::new(default_config(), 1000);
+        engine
+            .add_member(test_uuid(1), test_uuid(99), 1000, None)
+            .unwrap();
+        let err = engine.remove_member(test_uuid(50), 1001).unwrap_err();
+        assert_eq!(err, StreamlineError::MemberNotFound(test_uuid(50)));
+    }
+
+    #[test]
+    fn list_streams_returns_sorted_summaries() {
+        let mut engine = StreamlineEngine::new(default_config(), 1000);
+        engine
+            .add_member(test_uuid(1), test_uuid(99), 1000, None)
+            .unwrap();
+        engine.expand_streams(test_uuid(1), 3, 1001).unwrap();
+
+        let summaries = engine.list_streams();
+        assert_eq!(summaries.len(), 3);
+        // Sorted by created_at.
+        assert!(summaries[0].created_at <= summaries[1].created_at);
+        assert!(summaries[1].created_at <= summaries[2].created_at);
+        assert_eq!(summaries[0].id, 1);
+    }
+
+    #[test]
+    fn get_member_info_returns_all_positions() {
+        let mut engine = StreamlineEngine::new(default_config(), 1000);
+        engine
+            .add_member(test_uuid(1), test_uuid(99), 1000, None)
+            .unwrap();
+        engine
+            .add_member(test_uuid(2), test_uuid(1), 1001, None)
+            .unwrap();
+
+        let info = engine.get_member_info(test_uuid(2)).unwrap();
+        assert_eq!(info.streams.len(), 1);
+        assert_eq!(info.streams[0].stream_id, 1);
+        assert_eq!(info.streams[0].position, 1);
     }
 }

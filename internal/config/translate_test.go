@@ -465,8 +465,8 @@ func TestTranslateStreamlineConfigNilStreams(t *testing.T) {
 	cfg := s["config"].(map[string]any)
 	sc := cfg["streamline_commission"].(map[string]any)
 
-	// streams should be nil/absent.
-	assert.Nil(t, sc["streams"])
+	// streams should be null when stream_config is nil.
+	assert.Nil(t, sc["streams"], "streams should be null when stream_config is nil")
 }
 
 func floatPtr(f float64) *float64 { return &f }

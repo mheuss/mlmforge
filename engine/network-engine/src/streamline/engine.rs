@@ -531,10 +531,17 @@ impl StreamlineEngine {
                         }
                         result.frozen.push(id); // report as removed
                     }
-                    // Remove from owner's list.
+                    // Remove from owner's list. Clean up empty entries.
                     if let Some(owned) = self.stream_owners.get_mut(&user_id) {
                         owned.retain(|&sid| sid != id);
                     }
+                }
+                if self
+                    .stream_owners
+                    .get(&user_id)
+                    .is_some_and(|v| v.is_empty())
+                {
+                    self.stream_owners.remove(&user_id);
                 }
             }
         } else if total_allowed > active_count {

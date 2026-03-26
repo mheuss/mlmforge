@@ -130,6 +130,10 @@ Most streamline plans use dynamic compression. Uncompressed mode is the exceptio
 5. Commission cap
 6. Classic (uncompressed) mode (lower priority)
 
+## Implementation Status
+
+Implemented in HEU-9. StreamlineEngine manages multiple streams per structure using width-1 UnilevelTrees. Dynamic compression walk extends the shared walk in walk.rs with per-level rank thresholds. Stream freeze/unfreeze on rank change is supported. All three placement modes implemented (sponsor_stream, round_robin, explicit choice). Monoline is validated as a zero-config streamline variant. Chain compaction handles mid-chain member removal.
+
 ## What This Enables
 
 - A complete streamline plan configurable through per-level rank thresholds, stream expansion per rank, assignment modes, and demotion freeze behavior.

@@ -56,6 +56,7 @@ pub fn calculate_unilevel(
         rank_ordinals: &rank_ordinals,
         rate_table: &structure.level_commission.rate_table,
         pass_up: pass_up_context.as_ref(),
+        dynamic_thresholds: None,
     };
 
     let mut earnings =

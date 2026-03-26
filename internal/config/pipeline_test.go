@@ -27,7 +27,7 @@ func TestPipelineAllValidFixtures(t *testing.T) {
 		{"valid/matrix-plan.yaml", "Forced Matrix 3x7", []string{"matrix"}},
 		{"valid/stairstep-plan.yaml", "Classic Stairstep Breakaway", []string{"stairstep"}},
 		{"valid/generation-plan.yaml", "Generation Override Plan", []string{"generation"}},
-		{"valid/streamline-plan.yaml", "Streamline Direct", []string{"streamline"}},
+		{"valid/streamline-plan.yaml", "Streamline Direct", []string{"unilevel", "streamline"}},
 		{"valid/board-plan.yaml", "Sales Board Plan", []string{"unilevel", "board_plan"}},
 	}
 
@@ -229,7 +229,8 @@ func TestPipelineCommissionContentRoundTrip(t *testing.T) {
 		{
 			fixture: "valid/streamline-plan.yaml",
 			verify: func(t *testing.T, doc map[string]any) {
-				cfg := structureConfig(t, doc, 0)
+				// Streamline is at index 1 (companion unilevel is at index 0).
+				cfg := structureConfig(t, doc, 1)
 				sc := cfg["streamline_commission"].(map[string]any)
 				assert.Equal(t, float64(10), sc["commissionable_depth"])
 				levels := sc["dynamic_compression"].([]any)

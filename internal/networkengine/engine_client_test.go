@@ -995,3 +995,163 @@ func (m *mockTransport) Close() error {
 	m.closed = true
 	return nil
 }
+
+// --- Streamline contract tests ---
+
+func TestEngineClient_StreamlineLifecycle(t *testing.T) {
+	client, err := NewEngineClient(context.Background(), findWorkerBinary(t))
+	require.NoError(t, err)
+	defer func() { _ = client.Stop() }()
+
+	ctx := context.Background()
+	structure := "TestStreamline"
+	user1 := "00000000-0000-0000-0000-000000000011"
+	user2 := "00000000-0000-0000-0000-000000000012"
+	user3 := "00000000-0000-0000-0000-000000000013"
+
+	// Create streamline.
+	err = client.CreateStreamline(ctx, structure, "sponsor_stream", false, true, 1000)
+	require.NoError(t, err)
+
+	// Add 3 members.
+	r1, err := client.StreamlineAddMember(ctx, structure, StreamlineAddMemberRequest{
+		UserID: user1, SponsorID: "00000000-0000-0000-0000-000000000099", Timestamp: 1001,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, r1.StreamID)
+	assert.Equal(t, 0, r1.Position)
+
+	r2, err := client.StreamlineAddMember(ctx, structure, StreamlineAddMemberRequest{
+		UserID: user2, SponsorID: user1, Timestamp: 1002,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, r2.StreamID)
+	assert.Equal(t, 1, r2.Position)
+
+	r3, err := client.StreamlineAddMember(ctx, structure, StreamlineAddMemberRequest{
+		UserID: user3, SponsorID: user1, Timestamp: 1003,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, r3.StreamID)
+
+	// Verify member info.
+	info, err := client.StreamlineGetMember(ctx, structure, user2)
+	require.NoError(t, err)
+	assert.Len(t, info.Streams, 1)
+	assert.Equal(t, 1, info.Streams[0].StreamID)
+
+	// List streams.
+	streams, err := client.StreamlineListStreams(ctx, structure)
+	require.NoError(t, err)
+	assert.Len(t, streams, 1)
+	assert.Equal(t, 3, streams[0].MemberCount)
+
+	// Get stream detail.
+	stream, err := client.StreamlineGetStream(ctx, structure, 1)
+	require.NoError(t, err)
+	assert.Equal(t, 3, stream.MemberCount)
+	assert.False(t, stream.Frozen)
+}
+
+func TestEngineClient_StreamlineExpandFreeze(t *testing.T) {
+	client, err := NewEngineClient(context.Background(), findWorkerBinary(t))
+	require.NoError(t, err)
+	defer func() { _ = client.Stop() }()
+
+	ctx := context.Background()
+	structure := "TestStreamline"
+	user1 := "00000000-0000-0000-0000-000000000011"
+
+	err = client.CreateStreamline(ctx, structure, "sponsor_stream", false, true, 1000)
+	require.NoError(t, err)
+
+	_, err = client.StreamlineAddMember(ctx, structure, StreamlineAddMemberRequest{
+		UserID: user1, SponsorID: "00000000-0000-0000-0000-000000000099", Timestamp: 1001,
+	})
+	require.NoError(t, err)
+
+	// Expand to 3 streams.
+	expandResult, err := client.StreamlineExpandStreams(ctx, structure, StreamlineExpandRequest{
+		UserID: user1, TotalAllowed: 3, Timestamp: 1002,
+	})
+	require.NoError(t, err)
+	assert.Len(t, expandResult.NewStreamIDs, 2)
+
+	// Freeze back to 1.
+	freezeResult, err := client.StreamlineUpdateAllowance(ctx, structure, StreamlineUpdateAllowanceRequest{
+		UserID: user1, TotalAllowed: 1, Timestamp: 2000,
+	})
+	require.NoError(t, err)
+	assert.Len(t, freezeResult.Frozen, 2)
+
+	// Verify frozen.
+	stream2, err := client.StreamlineGetStream(ctx, structure, 2)
+	require.NoError(t, err)
+	assert.True(t, stream2.Frozen)
+}
+
+func TestEngineClient_StreamlineRemoveMember(t *testing.T) {
+	client, err := NewEngineClient(context.Background(), findWorkerBinary(t))
+	require.NoError(t, err)
+	defer func() { _ = client.Stop() }()
+
+	ctx := context.Background()
+	structure := "TestStreamline"
+	user1 := "00000000-0000-0000-0000-000000000011"
+	user2 := "00000000-0000-0000-0000-000000000012"
+
+	err = client.CreateStreamline(ctx, structure, "sponsor_stream", false, true, 1000)
+	require.NoError(t, err)
+
+	_, err = client.StreamlineAddMember(ctx, structure, StreamlineAddMemberRequest{
+		UserID: user1, SponsorID: "00000000-0000-0000-0000-000000000099", Timestamp: 1001,
+	})
+	require.NoError(t, err)
+
+	_, err = client.StreamlineAddMember(ctx, structure, StreamlineAddMemberRequest{
+		UserID: user2, SponsorID: user1, Timestamp: 1002,
+	})
+	require.NoError(t, err)
+
+	// Remove user2.
+	removeResult, err := client.StreamlineRemoveMember(ctx, structure, user2, 1003)
+	require.NoError(t, err)
+	assert.Len(t, removeResult.RemovedFrom, 1)
+
+	// Verify stream now has 1 member.
+	stream, err := client.StreamlineGetStream(ctx, structure, 1)
+	require.NoError(t, err)
+	assert.Equal(t, 1, stream.MemberCount)
+}
+
+func TestEngineClient_StreamlineSnapshotRoundTrip(t *testing.T) {
+	client, err := NewEngineClient(context.Background(), findWorkerBinary(t))
+	require.NoError(t, err)
+	defer func() { _ = client.Stop() }()
+
+	ctx := context.Background()
+	structure := "TestStreamline"
+	user1 := "00000000-0000-0000-0000-000000000011"
+
+	err = client.CreateStreamline(ctx, structure, "sponsor_stream", false, true, 1000)
+	require.NoError(t, err)
+
+	_, err = client.StreamlineAddMember(ctx, structure, StreamlineAddMemberRequest{
+		UserID: user1, SponsorID: "00000000-0000-0000-0000-000000000099", Timestamp: 1001,
+	})
+	require.NoError(t, err)
+
+	// Take snapshot.
+	snapshot, err := client.TakeSnapshot(ctx, structure)
+	require.NoError(t, err)
+	assert.Equal(t, "streamline", snapshot.TreeType)
+
+	// Restore under different name.
+	err = client.RestoreSnapshot(ctx, "Restored", snapshot.TreeType, snapshot.Data)
+	require.NoError(t, err)
+
+	// Verify restored.
+	info, err := client.StreamlineGetMember(ctx, "Restored", user1)
+	require.NoError(t, err)
+	assert.Len(t, info.Streams, 1)
+}

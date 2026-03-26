@@ -588,6 +588,155 @@ func (c *EngineClient) CalculateBoardCommissions(ctx context.Context, req Calcul
 	return &commResult, nil
 }
 
+// --- Streamline methods ---
+
+// CreateStreamline creates a streamline structure in the engine.
+func (c *EngineClient) CreateStreamline(ctx context.Context, structure string, assignmentMode string, enrollmentStreamChoice bool, freezeOnDemotion bool, timestamp int64) error {
+	_, err := c.call(ctx, "create_streamline", map[string]any{
+		"structure":                structure,
+		"assignment_mode":          assignmentMode,
+		"enrollment_stream_choice": enrollmentStreamChoice,
+		"freeze_on_demotion":       freezeOnDemotion,
+		"timestamp":                timestamp,
+	})
+	return err
+}
+
+// StreamlineAddMember adds a member to a streamline structure.
+func (c *EngineClient) StreamlineAddMember(ctx context.Context, structure string, req StreamlineAddMemberRequest) (*StreamlineAddMemberResultDTO, error) {
+	params := map[string]any{
+		"structure":  structure,
+		"user_id":    req.UserID,
+		"sponsor_id": req.SponsorID,
+		"timestamp":  req.Timestamp,
+	}
+	if req.StreamIDOverride != nil {
+		params["stream_id_override"] = *req.StreamIDOverride
+	}
+	result, err := c.call(ctx, "streamline_add_member", params)
+	if err != nil {
+		return nil, err
+	}
+	var addResult StreamlineAddMemberResultDTO
+	if err := json.Unmarshal(result, &addResult); err != nil {
+		return nil, fmt.Errorf("unmarshal streamline add member result: %w", err)
+	}
+	return &addResult, nil
+}
+
+// StreamlineRemoveMember removes a member from all streams.
+func (c *EngineClient) StreamlineRemoveMember(ctx context.Context, structure, userID string, timestamp int64) (*StreamlineRemoveMemberResultDTO, error) {
+	result, err := c.call(ctx, "streamline_remove_member", map[string]any{
+		"structure": structure,
+		"user_id":   userID,
+		"timestamp": timestamp,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var removeResult StreamlineRemoveMemberResultDTO
+	if err := json.Unmarshal(result, &removeResult); err != nil {
+		return nil, fmt.Errorf("unmarshal streamline remove member result: %w", err)
+	}
+	return &removeResult, nil
+}
+
+// StreamlineExpandStreams expands a user's stream count on rank promotion.
+func (c *EngineClient) StreamlineExpandStreams(ctx context.Context, structure string, req StreamlineExpandRequest) (*StreamlineExpandResultDTO, error) {
+	result, err := c.call(ctx, "streamline_expand_streams", map[string]any{
+		"structure":     structure,
+		"user_id":       req.UserID,
+		"total_allowed": req.TotalAllowed,
+		"timestamp":     req.Timestamp,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var expandResult StreamlineExpandResultDTO
+	if err := json.Unmarshal(result, &expandResult); err != nil {
+		return nil, fmt.Errorf("unmarshal streamline expand result: %w", err)
+	}
+	return &expandResult, nil
+}
+
+// StreamlineUpdateAllowance freezes/unfreezes streams on rank change.
+func (c *EngineClient) StreamlineUpdateAllowance(ctx context.Context, structure string, req StreamlineUpdateAllowanceRequest) (*StreamlineFreezeResultDTO, error) {
+	result, err := c.call(ctx, "streamline_update_allowance", map[string]any{
+		"structure":     structure,
+		"user_id":       req.UserID,
+		"total_allowed": req.TotalAllowed,
+		"timestamp":     req.Timestamp,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var freezeResult StreamlineFreezeResultDTO
+	if err := json.Unmarshal(result, &freezeResult); err != nil {
+		return nil, fmt.Errorf("unmarshal streamline freeze result: %w", err)
+	}
+	return &freezeResult, nil
+}
+
+// StreamlineListStreams returns summaries of all streams.
+func (c *EngineClient) StreamlineListStreams(ctx context.Context, structure string) ([]StreamSummaryDTO, error) {
+	result, err := c.call(ctx, "streamline_list_streams", map[string]any{
+		"structure": structure,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var streams []StreamSummaryDTO
+	if err := json.Unmarshal(result, &streams); err != nil {
+		return nil, fmt.Errorf("unmarshal streamline list streams: %w", err)
+	}
+	return streams, nil
+}
+
+// StreamlineGetMember returns a member's positions across all streams.
+func (c *EngineClient) StreamlineGetMember(ctx context.Context, structure, userID string) (*StreamlineMemberInfoDTO, error) {
+	result, err := c.call(ctx, "streamline_get_member", map[string]any{
+		"structure": structure,
+		"user_id":   userID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var info StreamlineMemberInfoDTO
+	if err := json.Unmarshal(result, &info); err != nil {
+		return nil, fmt.Errorf("unmarshal streamline member info: %w", err)
+	}
+	return &info, nil
+}
+
+// StreamlineGetStream returns a single stream's summary.
+func (c *EngineClient) StreamlineGetStream(ctx context.Context, structure string, streamID int) (*StreamSummaryDTO, error) {
+	result, err := c.call(ctx, "streamline_get_stream", map[string]any{
+		"structure": structure,
+		"stream_id": streamID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var summary StreamSummaryDTO
+	if err := json.Unmarshal(result, &summary); err != nil {
+		return nil, fmt.Errorf("unmarshal streamline stream summary: %w", err)
+	}
+	return &summary, nil
+}
+
+// CalculateStreamline runs streamline commission calculation.
+func (c *EngineClient) CalculateStreamline(ctx context.Context, req CalculateStreamlineRequest) ([]CommissionEarningDTO, error) {
+	result, err := c.call(ctx, "calculate_streamline", req)
+	if err != nil {
+		return nil, err
+	}
+	var earnings []CommissionEarningDTO
+	if err := json.Unmarshal(result, &earnings); err != nil {
+		return nil, fmt.Errorf("unmarshal streamline earnings: %w", err)
+	}
+	return earnings, nil
+}
+
 // TakeSnapshot serializes a structure's state for persistence.
 // Returns the snapshot result containing tree type and serialized data.
 func (c *EngineClient) TakeSnapshot(ctx context.Context, structure string) (*SnapshotResultDTO, error) {

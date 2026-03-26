@@ -2117,3 +2117,184 @@ fn calculate_unilevel_pass_up_skips_first_recruits() {
     drop(worker.stdin.take());
     worker.wait().unwrap();
 }
+
+// --- Streamline integration tests ---
+
+const SL_USER1: &str = "00000000-0000-0000-0000-000000000011";
+const SL_USER2: &str = "00000000-0000-0000-0000-000000000012";
+const SL_USER3: &str = "00000000-0000-0000-0000-000000000013";
+const SL_STRUCTURE: &str = "TestStreamline";
+
+fn create_streamline(worker: &mut std::process::Child) {
+    let resp = common::send_receive(
+        worker,
+        &format!(
+            r#"{{"id":"sl-create","op":"create_streamline","params":{{"structure":"{}","assignment_mode":"sponsor_stream","freeze_on_demotion":true,"timestamp":1000}}}}"#,
+            SL_STRUCTURE
+        ),
+    );
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "create_streamline failed: {}",
+        resp
+    );
+}
+
+fn sl_add_member(worker: &mut std::process::Child, id: &str, user: &str, sponsor: &str, ts: i64) {
+    let resp = common::send_receive(
+        worker,
+        &format!(
+            r#"{{"id":"{}","op":"streamline_add_member","params":{{"structure":"{}","user_id":"{}","sponsor_id":"{}","timestamp":{}}}}}"#,
+            id, SL_STRUCTURE, user, sponsor, ts
+        ),
+    );
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "streamline_add_member failed: {}",
+        resp
+    );
+}
+
+#[test]
+fn streamline_create_and_add_members() {
+    let mut worker = common::spawn_worker();
+    create_streamline(&mut worker);
+
+    sl_add_member(&mut worker, "sl-add-1", SL_USER1, ROOT, 1001);
+    sl_add_member(&mut worker, "sl-add-2", SL_USER2, SL_USER1, 1002);
+    sl_add_member(&mut worker, "sl-add-3", SL_USER3, SL_USER1, 1003);
+
+    // Verify list_streams shows 1 stream with 3 members.
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"sl-list","op":"streamline_list_streams","params":{{"structure":"{}"}}}}"#,
+            SL_STRUCTURE
+        ),
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(parsed["ok"].as_bool().unwrap());
+    let streams = parsed["result"].as_array().unwrap();
+    assert_eq!(streams.len(), 1);
+    assert_eq!(streams[0]["member_count"].as_u64().unwrap(), 3);
+
+    // Verify get_member shows user2's position.
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"sl-member","op":"streamline_get_member","params":{{"structure":"{}","user_id":"{}"}}}}"#,
+            SL_STRUCTURE, SL_USER2
+        ),
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(parsed["ok"].as_bool().unwrap());
+    let streams = parsed["result"]["streams"].as_array().unwrap();
+    assert_eq!(streams.len(), 1);
+    assert_eq!(streams[0]["stream_id"].as_u64().unwrap(), 1);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn streamline_expand_and_freeze() {
+    let mut worker = common::spawn_worker();
+    create_streamline(&mut worker);
+    sl_add_member(&mut worker, "sl-add-1", SL_USER1, ROOT, 1001);
+
+    // Expand to 3 streams.
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"sl-expand","op":"streamline_expand_streams","params":{{"structure":"{}","user_id":"{}","total_allowed":3,"timestamp":1002}}}}"#,
+            SL_STRUCTURE, SL_USER1
+        ),
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(parsed["ok"].as_bool().unwrap());
+    let new_ids = parsed["result"]["new_stream_ids"].as_array().unwrap();
+    assert_eq!(new_ids.len(), 2);
+
+    // Freeze back to 1.
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"sl-freeze","op":"streamline_update_allowance","params":{{"structure":"{}","user_id":"{}","total_allowed":1,"timestamp":2000}}}}"#,
+            SL_STRUCTURE, SL_USER1
+        ),
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(parsed["ok"].as_bool().unwrap());
+    let frozen = parsed["result"]["frozen"].as_array().unwrap();
+    assert_eq!(frozen.len(), 2);
+
+    // Verify stream 2 is frozen.
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"sl-stream2","op":"streamline_get_stream","params":{{"structure":"{}","stream_id":2}}}}"#,
+            SL_STRUCTURE
+        ),
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(parsed["ok"].as_bool().unwrap());
+    assert!(parsed["result"]["frozen"].as_bool().unwrap());
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn streamline_snapshot_round_trip() {
+    let mut worker = common::spawn_worker();
+    create_streamline(&mut worker);
+    sl_add_member(&mut worker, "sl-add-1", SL_USER1, ROOT, 1001);
+    sl_add_member(&mut worker, "sl-add-2", SL_USER2, SL_USER1, 1002);
+
+    // Take snapshot.
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"sl-snap","op":"take_snapshot","params":{{"structure":"{}"}}}}"#,
+            SL_STRUCTURE
+        ),
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(parsed["ok"].as_bool().unwrap());
+    assert_eq!(
+        parsed["result"]["tree_type"].as_str().unwrap(),
+        "streamline"
+    );
+    let snapshot_data = &parsed["result"]["data"];
+
+    // Restore under a different name.
+    let restore_name = "Restored";
+    let restore_req = serde_json::json!({
+        "id": "sl-restore",
+        "op": "restore_snapshot",
+        "params": {
+            "structure": restore_name,
+            "tree_type": "streamline",
+            "data": snapshot_data,
+        }
+    });
+    let resp = common::send_receive(&mut worker, &restore_req.to_string());
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(parsed["ok"].as_bool().unwrap(), "restore failed: {}", resp);
+
+    // Verify the restored structure has the right member.
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"sl-verify","op":"streamline_get_member","params":{{"structure":"{}","user_id":"{}"}}}}"#,
+            restore_name, SL_USER2
+        ),
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(parsed["ok"].as_bool().unwrap());
+    let streams = parsed["result"]["streams"].as_array().unwrap();
+    assert_eq!(streams.len(), 1);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}

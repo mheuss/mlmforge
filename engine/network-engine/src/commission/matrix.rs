@@ -55,6 +55,7 @@ pub fn calculate_matrix(
         rank_ordinals: &rank_ordinals,
         rate_table: &structure.level_commission.rate_table,
         pass_up: None,
+        dynamic_thresholds: None,
     };
 
     let mut earnings =

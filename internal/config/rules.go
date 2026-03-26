@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -24,6 +25,8 @@ func validateBusinessRules(plan *CompensationPlan) []ValidationError {
 	errs = append(errs, validateEligibility(plan)...)
 	errs = append(errs, validatePassUp(plan)...)
 	errs = append(errs, validateBoardPlanCompanion(plan)...)
+	errs = append(errs, validateStreamlineCompanion(plan)...)
+	errs = append(errs, validateStreamlineCommission(plan)...)
 	errs = append(errs, validateCrossFieldRules(plan, ranks)...)
 	return errs
 }
@@ -560,6 +563,118 @@ func validateBoardPlanCompanion(plan *CompensationPlan) []ValidationError {
 		Message:  "board_plan structures require at least one companion unilevel structure",
 		Severity: SeverityError,
 	}}
+}
+
+// validateStreamlineCompanion checks that streamline structures have a companion unilevel.
+func validateStreamlineCompanion(plan *CompensationPlan) []ValidationError {
+	var hasStreamline bool
+	for _, s := range plan.Structures {
+		if s.Type == "streamline" {
+			hasStreamline = true
+			break
+		}
+	}
+	if !hasStreamline {
+		return nil
+	}
+
+	for _, s := range plan.Structures {
+		if s.Type == "unilevel" {
+			return nil
+		}
+	}
+
+	return []ValidationError{{
+		Path:     "/structures",
+		Code:     "missing_companion_structure",
+		Message:  "streamline structures require at least one companion unilevel structure",
+		Severity: SeverityError,
+	}}
+}
+
+// validateStreamlineCommission checks streamline-specific commission rules.
+// Rank references are validated by validateStructureRefs, not here.
+func validateStreamlineCommission(plan *CompensationPlan) []ValidationError {
+	var errs []ValidationError
+
+	for i, s := range plan.Structures {
+		if s.Type != "streamline" {
+			continue
+		}
+		c, ok := s.resolvedCommission.(*StreamlineCommission)
+		if !ok {
+			continue
+		}
+
+		path := fmt.Sprintf("/structures/%d/commission", i)
+
+		// At least one level.
+		if len(c.DynamicCompression) == 0 {
+			errs = append(errs, ValidationError{
+				Path:     path + "/dynamic_compression",
+				Code:     "empty_compression_table",
+				Message:  "streamline requires at least one level in dynamic_compression",
+				Severity: SeverityError,
+			})
+			continue
+		}
+
+		// Sort level keys to check sequentiality.
+		var levelNums []int
+		for key := range c.DynamicCompression {
+			n, err := strconv.Atoi(key)
+			if err != nil || n < 1 {
+				errs = append(errs, ValidationError{
+					Path:     path + "/dynamic_compression/" + key,
+					Code:     "invalid_level_key",
+					Message:  fmt.Sprintf("level key %q must be a positive integer", key),
+					Severity: SeverityError,
+				})
+				continue
+			}
+			levelNums = append(levelNums, n)
+		}
+		sort.Ints(levelNums)
+
+		// Check sequential from 1.
+		for j, n := range levelNums {
+			if n != j+1 {
+				errs = append(errs, ValidationError{
+					Path:     path + "/dynamic_compression",
+					Code:     "non_sequential_levels",
+					Message:  fmt.Sprintf("levels must be sequential starting from 1, got %v", levelNums),
+					Severity: SeverityError,
+				})
+				break
+			}
+		}
+
+		// Check percent values. Rank references are already validated
+		// by validateStructureRefs, so no duplicate check here.
+		for key, level := range c.DynamicCompression {
+			levelPath := path + "/dynamic_compression/" + key
+			if level.Percent < 0 || level.Percent > 1 {
+				errs = append(errs, ValidationError{
+					Path:     levelPath + "/percent",
+					Code:     "percent_out_of_range",
+					Message:  fmt.Sprintf("percent must be between 0 and 1, got %f", level.Percent),
+					Severity: SeverityError,
+				})
+			}
+		}
+
+		// Depth must accommodate all valid levels.
+		if c.CommissionableDepth < len(levelNums) {
+			errs = append(errs, ValidationError{
+				Path:     path + "/commissionable_depth",
+				Code:     "depth_less_than_levels",
+				Message:  fmt.Sprintf("commissionable_depth (%d) must be >= number of valid levels (%d)", c.CommissionableDepth, len(levelNums)),
+				Severity: SeverityError,
+			})
+		}
+	}
+
+	return errs
 }
 
 // --- Warnings ---

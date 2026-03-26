@@ -434,6 +434,7 @@ pub fn calculate_stairstep(
         rank_ordinals: &rank_ordinals,
         rate_table: &structure.level_commission.rate_table,
         pass_up: None,
+        dynamic_thresholds: None,
     };
 
     // Walk 1: level commissions, stopping at breakaway boundaries.

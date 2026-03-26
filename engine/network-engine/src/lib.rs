@@ -6,5 +6,6 @@
 pub mod board_plan;
 pub mod commission;
 pub mod config;
+pub mod streamline;
 pub mod tree;
 pub mod types;

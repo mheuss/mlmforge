@@ -213,6 +213,84 @@ type CalculateBoardCommissionsRequest struct {
 	Config            json.RawMessage `json:"config"`
 }
 
+// --- Streamline wire types ---
+
+// StreamlineAddMemberRequest is the input for adding a member to a streamline.
+type StreamlineAddMemberRequest struct {
+	UserID           string  `json:"user_id"`
+	SponsorID        string  `json:"sponsor_id"`
+	Timestamp        int64   `json:"timestamp"`
+	StreamIDOverride *uint32 `json:"stream_id_override,omitempty"`
+}
+
+// StreamlineAddMemberResultDTO is the result of adding a member.
+type StreamlineAddMemberResultDTO struct {
+	StreamID int `json:"stream_id"`
+	Position int `json:"position"`
+}
+
+// StreamlineExpandRequest is the input for expanding a user's streams.
+type StreamlineExpandRequest struct {
+	UserID       string `json:"user_id"`
+	TotalAllowed int    `json:"total_allowed"`
+	Timestamp    int64  `json:"timestamp"`
+}
+
+// StreamlineExpandResultDTO is the result of stream expansion.
+type StreamlineExpandResultDTO struct {
+	NewStreamIDs []int `json:"new_stream_ids"`
+}
+
+// StreamlineUpdateAllowanceRequest is the input for freeze/unfreeze.
+type StreamlineUpdateAllowanceRequest struct {
+	UserID       string `json:"user_id"`
+	TotalAllowed int    `json:"total_allowed"`
+	Timestamp    int64  `json:"timestamp"`
+}
+
+// StreamlineFreezeResultDTO is the result of updating stream allowance.
+type StreamlineFreezeResultDTO struct {
+	Frozen    []int `json:"frozen"`
+	Unfrozen  []int `json:"unfrozen"`
+	Created   []int `json:"created"`
+	Destroyed []int `json:"destroyed"`
+}
+
+// StreamlineRemoveMemberResultDTO is the result of removing a member.
+type StreamlineRemoveMemberResultDTO struct {
+	RemovedFrom []int `json:"removed_from"`
+}
+
+// StreamlineMemberInfoDTO contains a member's positions across streams.
+type StreamlineMemberInfoDTO struct {
+	Streams []StreamPositionDTO `json:"streams"`
+}
+
+// StreamPositionDTO is a member's position in a single stream.
+type StreamPositionDTO struct {
+	StreamID int  `json:"stream_id"`
+	Position int  `json:"position"`
+	Frozen   bool `json:"frozen"`
+}
+
+// StreamSummaryDTO summarizes a single stream.
+type StreamSummaryDTO struct {
+	ID          int    `json:"id"`
+	OwnerID     string `json:"owner_id"`
+	MemberCount int    `json:"member_count"`
+	Frozen      bool   `json:"frozen"`
+	CreatedAt   int64  `json:"created_at"`
+}
+
+// CalculateStreamlineRequest is the input for streamline commission calculation.
+type CalculateStreamlineRequest struct {
+	Structure       string                     `json:"structure"`
+	Plan            json.RawMessage            `json:"plan"`
+	StructureConfig json.RawMessage            `json:"structure_config"`
+	Snapshots       map[string]json.RawMessage `json:"snapshots"`
+	Volume          []json.RawMessage          `json:"volume"`
+}
+
 // SnapshotResultDTO is the wire format for a take_snapshot response.
 // Contains the tree type and the serialized engine state.
 type SnapshotResultDTO struct {

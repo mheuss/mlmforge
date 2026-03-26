@@ -5,6 +5,7 @@ pub mod board_plan;
 pub mod generation;
 pub mod matrix;
 pub mod stairstep;
+pub mod streamline;
 pub mod types;
 pub mod unilevel;
 pub(crate) mod walk;
@@ -16,6 +17,7 @@ pub use binary::calculate_binary_pairing;
 pub use board_plan::calculate_board_commissions;
 pub use matrix::calculate_matrix;
 pub use stairstep::calculate_stairstep;
+pub use streamline::calculate_streamline;
 pub use types::{
     BinaryCalculationResult, BinaryCommissionEarning, CalculationError, CommissionEarning,
     DistributorSnapshot, LegVolumes, VolumeSource,

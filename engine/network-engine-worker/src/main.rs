@@ -48,6 +48,18 @@ fn dispatch(state: &mut WorkerState, request: &Request) -> Response {
         "board_calculate_commissions" => {
             handlers::handle_board_calculate_commissions(state, request)
         }
+        // Streamline operations
+        "create_streamline" => handlers::handle_create_streamline(state, request),
+        "streamline_add_member" => handlers::handle_streamline_add_member(state, request),
+        "streamline_remove_member" => handlers::handle_streamline_remove_member(state, request),
+        "streamline_expand_streams" => handlers::handle_streamline_expand_streams(state, request),
+        "streamline_update_allowance" => {
+            handlers::handle_streamline_update_allowance(state, request)
+        }
+        "streamline_list_streams" => handlers::handle_streamline_list_streams(state, request),
+        "streamline_get_member" => handlers::handle_streamline_get_member(state, request),
+        "streamline_get_stream" => handlers::handle_streamline_get_stream(state, request),
+        "calculate_streamline" => handlers::handle_calculate_streamline(state, request),
         // Snapshot operations
         "take_snapshot" => handlers::handle_take_snapshot(state, request),
         "restore_snapshot" => handlers::handle_restore_snapshot(state, request),

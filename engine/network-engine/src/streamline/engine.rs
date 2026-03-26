@@ -107,6 +107,11 @@ impl StreamlineEngine {
         self.streams.get(&stream_id)
     }
 
+    /// Returns an iterator over active (unfrozen) streams.
+    pub fn active_streams(&self) -> impl Iterator<Item = &Stream> {
+        self.streams.values().filter(|s| !s.frozen)
+    }
+
     /// Returns true if the user has a position in any stream.
     pub fn contains_member(&self, user_id: Uuid) -> bool {
         self.user_streams.contains_key(&user_id)

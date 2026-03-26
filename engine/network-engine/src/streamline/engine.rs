@@ -259,7 +259,26 @@ impl StreamlineEngine {
             removed_from.push(stream_id);
         }
 
-        self.stream_owners.remove(&user_id);
+        // Handle owned streams not visited in the loop above (e.g., empty
+        // expanded streams the user never got placed into).
+        if let Some(owned_ids) = self.stream_owners.remove(&user_id) {
+            for oid in owned_ids {
+                if let Some(stream) = self.streams.get_mut(&oid) {
+                    if stream.owner_id == user_id {
+                        let new_owner = stream.tree.user_ids().first().copied();
+                        match new_owner {
+                            Some(nid) => {
+                                stream.owner_id = nid;
+                                self.stream_owners.entry(nid).or_default().push(oid);
+                            }
+                            None => {
+                                stream.owner_id = Uuid::nil();
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         Ok(RemoveMemberResult { removed_from })
     }
@@ -948,6 +967,32 @@ mod tests {
             .unwrap();
         let err = engine.remove_member(test_uuid(50), 1001).unwrap_err();
         assert_eq!(err, StreamlineError::MemberNotFound(test_uuid(50)));
+    }
+
+    #[test]
+    fn remove_owner_transfers_empty_stream_ownership() {
+        let mut engine = StreamlineEngine::new(default_config(), 1000);
+        engine
+            .add_member(test_uuid(1), test_uuid(99), 1000, None)
+            .unwrap();
+        // Expand: user 1 now owns streams 1, 2, 3. Streams 2 and 3 are empty.
+        engine.expand_streams(test_uuid(1), 3, 1001).unwrap();
+        // Add a second member to stream 1 so it's not empty after removal.
+        engine
+            .add_member(test_uuid(2), test_uuid(1), 1002, None)
+            .unwrap();
+
+        // Remove user 1 (stream owner).
+        engine.remove_member(test_uuid(1), 1003).unwrap();
+
+        // Stream 1 should transfer ownership to user 2.
+        let s1 = engine.get_stream(1).unwrap();
+        assert_eq!(s1.owner_id, test_uuid(2));
+        // Empty streams 2 and 3 should have nil owner (no members to transfer to).
+        let s2 = engine.get_stream(2).unwrap();
+        assert!(s2.owner_id.is_nil());
+        let s3 = engine.get_stream(3).unwrap();
+        assert!(s3.owner_id.is_nil());
     }
 
     #[test]

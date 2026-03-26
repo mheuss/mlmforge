@@ -71,6 +71,11 @@ pub(crate) struct LevelWalkConfig<'a> {
     /// skipped (without consuming a level) for volume sources in
     /// their skip set.
     pub pass_up: Option<&'a PassUpContext>,
+    /// Per-level minimum rank thresholds for dynamic compression.
+    /// When present, overrides the uniform compression check.
+    /// Index = level-1 (0-based), value = minimum rank ordinal.
+    /// Used by streamline. None for all other calculators.
+    pub dynamic_thresholds: Option<&'a [u16]>,
 }
 
 // ---------------------------------------------------------------------------
@@ -402,27 +407,47 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
             let elig = eligibility_cache.get(&node.user_id);
             let node_eligible = elig.is_some_and(|e| e.eligible);
 
-            // Compression check
-            let should_compress = match config.compression.filter(|c| c.enabled) {
-                Some(compress) => match compress.mode {
-                    CompressionMode::SkipInactive => !node_eligible,
-                    CompressionMode::SkipBelowRank => {
+            // Dynamic compression check (streamline).
+            // When dynamic thresholds are configured, each level has its own
+            // minimum rank ordinal. Replaces the standard compression check.
+            if let Some(thresholds) = config.dynamic_thresholds {
+                let threshold_idx = level.saturating_sub(1) as usize;
+                if threshold_idx < thresholds.len() {
+                    let min_ordinal = thresholds[threshold_idx];
+                    if min_ordinal > 0 {
                         let dist_ordinal = config
                             .rank_ordinals
                             .get(snapshot.rank.as_str())
                             .copied()
                             .unwrap_or(0);
-                        config
-                            .threshold_ordinal
-                            .map(|t| dist_ordinal < t)
-                            .unwrap_or(false)
+                        if dist_ordinal < min_ordinal {
+                            continue; // skip without consuming level
+                        }
                     }
-                },
-                None => false,
-            };
+                }
+            } else {
+                // Standard compression check (unilevel, matrix, stairstep).
+                let should_compress = match config.compression.filter(|c| c.enabled) {
+                    Some(compress) => match compress.mode {
+                        CompressionMode::SkipInactive => !node_eligible,
+                        CompressionMode::SkipBelowRank => {
+                            let dist_ordinal = config
+                                .rank_ordinals
+                                .get(snapshot.rank.as_str())
+                                .copied()
+                                .unwrap_or(0);
+                            config
+                                .threshold_ordinal
+                                .map(|t| dist_ordinal < t)
+                                .unwrap_or(false)
+                        }
+                    },
+                    None => false,
+                };
 
-            if should_compress {
-                continue; // skip without consuming level
+                if should_compress {
+                    continue; // skip without consuming level
+                }
             }
 
             // Not compressed. Check if eligible.
@@ -789,6 +814,7 @@ mod tests {
             rank_ordinals,
             rate_table,
             pass_up: None,
+            dynamic_thresholds: None,
         }
     }
 
@@ -1150,5 +1176,285 @@ mod tests {
             .expect("A should have a skip set");
         assert_eq!(skip.len(), 1);
         assert!(skip.contains(&test_uuid(3))); // lower UUID wins tiebreak
+    }
+
+    // --- Dynamic threshold tests (streamline) ---
+
+    fn snapshot_with_rank(rank: &str) -> DistributorSnapshot {
+        DistributorSnapshot {
+            rank: rank.to_string(),
+            personal_volume: 150.0,
+            status: "active".to_string(),
+            has_order_in_period: true,
+        }
+    }
+
+    fn test_walk_config_with_thresholds<'a>(
+        rank_ordinals: &'a HashMap<&'a str, u16>,
+        rate_table: &'a BTreeMap<String, BTreeMap<u8, f64>>,
+        thresholds: &'a [u16],
+    ) -> LevelWalkConfig<'a> {
+        LevelWalkConfig {
+            max_depth: 5,
+            broad_pct: 0.0,
+            multiplier: 1.0,
+            compression: None,
+            threshold_ordinal: None,
+            rank_ordinals,
+            rate_table,
+            pass_up: None,
+            dynamic_thresholds: Some(thresholds),
+        }
+    }
+
+    #[test]
+    fn dynamic_thresholds_skips_below_rank() {
+        // Chain: 0 → 1 → 2 → 3 → 4
+        // Volume at node 0. Walk upline from 0.
+        // Thresholds: level 1 requires ordinal 1 (bronze), level 2 requires ordinal 2 (silver).
+        // Node 1 is bronze (ordinal 1) → qualifies for level 1.
+        // Node 2 is associate (ordinal 0) → below threshold for level 1 → skipped.
+        // Node 3 is silver (ordinal 2) → qualifies for level 1 (because level counter didn't advance).
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), test_uuid(0), 1)
+            .unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(0), 2)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(0), 3)
+            .unwrap();
+        tree.add_node(test_uuid(4), test_uuid(3), test_uuid(0), 4)
+            .unwrap();
+
+        let elig = crate::commission::test_helpers::default_eligibility();
+        let mut snapshots = HashMap::new();
+        let ranks = ["associate", "bronze", "associate", "silver", "associate"];
+        for (i, rank) in ranks.iter().enumerate() {
+            snapshots.insert(test_uuid(i as u8), snapshot_with_rank(rank));
+        }
+        let eligibility_cache = evaluate_eligibility(&snapshots, &tree, &elig);
+
+        let rank_ordinals: HashMap<&str, u16> =
+            [("associate", 0_u16), ("bronze", 1), ("silver", 2)]
+                .into_iter()
+                .collect();
+
+        let mut rate_table = BTreeMap::new();
+        let mut rates = BTreeMap::new();
+        rates.insert(1, 0.05);
+        rates.insert(2, 0.04);
+        for rank in ["associate", "bronze", "silver"] {
+            rate_table.insert(rank.to_string(), rates.clone());
+        }
+
+        // Level 1 needs ordinal >= 1 (bronze), level 2 also needs >= 1 (bronze).
+        let thresholds = [1_u16, 1];
+        let config = test_walk_config_with_thresholds(&rank_ordinals, &rate_table, &thresholds);
+        // Volume at node 4 (bottom). Walk goes upline: 3, 2, 1, 0.
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(4),
+            cv_amount: 100.0,
+        }];
+
+        let earnings = walk_level_commissions(
+            &tree,
+            &config,
+            &eligibility_cache,
+            &snapshots,
+            &volume,
+            |_| false,
+        )
+        .unwrap();
+
+        // Node 3 (silver, ordinal 2) earns at level 1.
+        // Node 2 (associate, ordinal 0) skipped — below threshold for level 2.
+        // Node 1 (bronze, ordinal 1) earns at level 2.
+        // Node 0 (associate) skipped — no more rate table levels.
+        assert_eq!(earnings.len(), 2);
+        let earner_ids: Vec<Uuid> = earnings.iter().map(|e| e.earner_id).collect();
+        assert!(earner_ids.contains(&test_uuid(3)));
+        assert!(earner_ids.contains(&test_uuid(1)));
+        assert!(!earner_ids.contains(&test_uuid(2)));
+    }
+
+    #[test]
+    fn dynamic_thresholds_all_zero_everyone_qualifies() {
+        // Monoline behavior: all thresholds are 0, everyone qualifies.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), test_uuid(0), 1)
+            .unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(0), 2)
+            .unwrap();
+
+        let elig = crate::commission::test_helpers::default_eligibility();
+        let mut snapshots = HashMap::new();
+        for i in 0..3 {
+            snapshots.insert(test_uuid(i), snapshot_with_rank("associate"));
+        }
+        let eligibility_cache = evaluate_eligibility(&snapshots, &tree, &elig);
+
+        let rank_ordinals: HashMap<&str, u16> = [("associate", 0_u16)].into_iter().collect();
+        let mut rate_table = BTreeMap::new();
+        let mut rates = BTreeMap::new();
+        rates.insert(1, 0.05);
+        rates.insert(2, 0.04);
+        rate_table.insert("associate".to_string(), rates);
+
+        let thresholds = [0_u16, 0];
+        let config = test_walk_config_with_thresholds(&rank_ordinals, &rate_table, &thresholds);
+        // Volume at node 2 (bottom). Walk goes upline: 1, 0.
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let earnings = walk_level_commissions(
+            &tree,
+            &config,
+            &eligibility_cache,
+            &snapshots,
+            &volume,
+            |_| false,
+        )
+        .unwrap();
+
+        // Both nodes 1 and 0 earn (everyone qualifies with zero thresholds).
+        assert_eq!(earnings.len(), 2);
+    }
+
+    #[test]
+    fn dynamic_thresholds_none_existing_behavior_unchanged() {
+        // Regression: when dynamic_thresholds is None, standard compression still works.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), test_uuid(0), 1)
+            .unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(0), 2)
+            .unwrap();
+
+        // Node 1 is ineligible, compression enabled with SkipInactive.
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(0),
+            crate::commission::test_helpers::eligible_snapshot(),
+        );
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "associate".to_string(),
+                personal_volume: 0.0,
+                status: "inactive".to_string(),
+                has_order_in_period: false,
+            },
+        );
+        snapshots.insert(
+            test_uuid(2),
+            crate::commission::test_helpers::eligible_snapshot(),
+        );
+
+        let elig = crate::commission::test_helpers::default_eligibility();
+        let eligibility_cache = evaluate_eligibility(&snapshots, &tree, &elig);
+
+        let rank_ordinals: HashMap<&str, u16> = [("associate", 1_u16)].into_iter().collect();
+        let rate_table = test_rate_table();
+        let compression = CompressionConfig {
+            enabled: true,
+            mode: CompressionMode::SkipInactive,
+            rank_threshold: None,
+        };
+
+        let config = LevelWalkConfig {
+            max_depth: 5,
+            broad_pct: 0.0,
+            multiplier: 1.0,
+            compression: Some(&compression),
+            threshold_ordinal: None,
+            rank_ordinals: &rank_ordinals,
+            rate_table: &rate_table,
+            pass_up: None,
+            dynamic_thresholds: None,
+        };
+
+        // Volume at node 2 (bottom). Walk goes upline: 1, 0.
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let earnings = walk_level_commissions(
+            &tree,
+            &config,
+            &eligibility_cache,
+            &snapshots,
+            &volume,
+            |_| false,
+        )
+        .unwrap();
+
+        // Node 1 is compressed (inactive). Node 0 earns at level 1.
+        assert_eq!(earnings.len(), 1);
+        assert_eq!(earnings[0].earner_id, test_uuid(0));
+        assert_eq!(earnings[0].level, 1);
+    }
+
+    #[test]
+    fn dynamic_thresholds_level_counter_does_not_advance_on_skip() {
+        // 3-node chain: 0 → 1 → 2
+        // Threshold for level 1 = ordinal 2 (silver).
+        // Node 1 is bronze (ordinal 1) → skipped, level stays at 1.
+        // Node 2 is silver (ordinal 2) → earns at level 1 (not 2).
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), test_uuid(0), 1)
+            .unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(0), 2)
+            .unwrap();
+
+        let elig = crate::commission::test_helpers::default_eligibility();
+        let mut snapshots = HashMap::new();
+        // Node 0 = silver (will earn), node 1 = bronze (will be skipped), node 2 = associate (volume source).
+        snapshots.insert(test_uuid(0), snapshot_with_rank("silver"));
+        snapshots.insert(test_uuid(1), snapshot_with_rank("bronze"));
+        snapshots.insert(test_uuid(2), snapshot_with_rank("associate"));
+        let eligibility_cache = evaluate_eligibility(&snapshots, &tree, &elig);
+
+        let rank_ordinals: HashMap<&str, u16> =
+            [("associate", 0_u16), ("bronze", 1), ("silver", 2)]
+                .into_iter()
+                .collect();
+
+        let mut rate_table = BTreeMap::new();
+        let mut rates = BTreeMap::new();
+        rates.insert(1, 0.05);
+        rates.insert(2, 0.04);
+        for rank in ["associate", "bronze", "silver"] {
+            rate_table.insert(rank.to_string(), rates.clone());
+        }
+
+        // Level 1 needs silver (ordinal 2).
+        let thresholds = [2_u16, 2];
+        let config = test_walk_config_with_thresholds(&rank_ordinals, &rate_table, &thresholds);
+        // Volume at node 2 (bottom). Walk goes upline: 1, 0.
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let earnings = walk_level_commissions(
+            &tree,
+            &config,
+            &eligibility_cache,
+            &snapshots,
+            &volume,
+            |_| false,
+        )
+        .unwrap();
+
+        // Node 1 (bronze, ordinal 1) skipped — below threshold for level 1.
+        // Node 0 (silver, ordinal 2) earns at level 1 (not 2, because level didn't advance on skip).
+        assert_eq!(earnings.len(), 1);
+        assert_eq!(earnings[0].earner_id, test_uuid(0));
+        assert_eq!(earnings[0].level, 1);
     }
 }

@@ -663,12 +663,12 @@ func validateStreamlineCommission(plan *CompensationPlan) []ValidationError {
 			}
 		}
 
-		// Depth must accommodate all levels.
-		if c.CommissionableDepth < len(c.DynamicCompression) {
+		// Depth must accommodate all valid levels.
+		if c.CommissionableDepth < len(levelNums) {
 			errs = append(errs, ValidationError{
 				Path:     path + "/commissionable_depth",
 				Code:     "depth_less_than_levels",
-				Message:  fmt.Sprintf("commissionable_depth (%d) must be >= number of levels (%d)", c.CommissionableDepth, len(c.DynamicCompression)),
+				Message:  fmt.Sprintf("commissionable_depth (%d) must be >= number of valid levels (%d)", c.CommissionableDepth, len(levelNums)),
 				Severity: SeverityError,
 			})
 		}

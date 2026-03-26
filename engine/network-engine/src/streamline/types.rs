@@ -31,6 +31,8 @@ pub struct FreezeResult {
     pub unfrozen: Vec<u32>,
     /// Streams that were newly created.
     pub created: Vec<u32>,
+    /// Streams that were destroyed (when freeze_on_demotion is false).
+    pub destroyed: Vec<u32>,
 }
 
 /// Result of removing a member.

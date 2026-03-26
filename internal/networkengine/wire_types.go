@@ -250,9 +250,10 @@ type StreamlineUpdateAllowanceRequest struct {
 
 // StreamlineFreezeResultDTO is the result of updating stream allowance.
 type StreamlineFreezeResultDTO struct {
-	Frozen   []int `json:"frozen"`
-	Unfrozen []int `json:"unfrozen"`
-	Created  []int `json:"created"`
+	Frozen    []int `json:"frozen"`
+	Unfrozen  []int `json:"unfrozen"`
+	Created   []int `json:"created"`
+	Destroyed []int `json:"destroyed"`
 }
 
 // StreamlineRemoveMemberResultDTO is the result of removing a member.

@@ -499,6 +499,7 @@ impl StreamlineEngine {
             frozen: Vec::new(),
             unfrozen: Vec::new(),
             created: Vec::new(),
+            destroyed: Vec::new(),
         };
 
         if total_allowed < active_count {
@@ -529,7 +530,7 @@ impl StreamlineEngine {
                                 }
                             }
                         }
-                        result.frozen.push(id); // report as removed
+                        result.destroyed.push(id);
                     }
                     // Remove from owner's list. Clean up empty entries.
                     if let Some(owned) = self.stream_owners.get_mut(&user_id) {

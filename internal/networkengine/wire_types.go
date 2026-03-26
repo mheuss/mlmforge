@@ -245,6 +245,7 @@ type StreamlineExpandResultDTO struct {
 type StreamlineUpdateAllowanceRequest struct {
 	UserID       string `json:"user_id"`
 	TotalAllowed int    `json:"total_allowed"`
+	Timestamp    int64  `json:"timestamp"`
 }
 
 // StreamlineFreezeResultDTO is the result of updating stream allowance.

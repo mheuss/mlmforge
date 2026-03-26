@@ -591,12 +591,13 @@ func (c *EngineClient) CalculateBoardCommissions(ctx context.Context, req Calcul
 // --- Streamline methods ---
 
 // CreateStreamline creates a streamline structure in the engine.
-func (c *EngineClient) CreateStreamline(ctx context.Context, structure string, assignmentMode string, freezeOnDemotion bool, timestamp int64) error {
+func (c *EngineClient) CreateStreamline(ctx context.Context, structure string, assignmentMode string, enrollmentStreamChoice bool, freezeOnDemotion bool, timestamp int64) error {
 	_, err := c.call(ctx, "create_streamline", map[string]any{
-		"structure":          structure,
-		"assignment_mode":    assignmentMode,
-		"freeze_on_demotion": freezeOnDemotion,
-		"timestamp":          timestamp,
+		"structure":                structure,
+		"assignment_mode":          assignmentMode,
+		"enrollment_stream_choice": enrollmentStreamChoice,
+		"freeze_on_demotion":       freezeOnDemotion,
+		"timestamp":                timestamp,
 	})
 	return err
 }
@@ -664,6 +665,7 @@ func (c *EngineClient) StreamlineUpdateAllowance(ctx context.Context, structure 
 		"structure":     structure,
 		"user_id":       req.UserID,
 		"total_allowed": req.TotalAllowed,
+		"timestamp":     req.Timestamp,
 	})
 	if err != nil {
 		return nil, err

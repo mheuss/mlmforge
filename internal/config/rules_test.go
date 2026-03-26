@@ -250,19 +250,13 @@ func TestStreamlineDynamicCompressionMinRankMustExist(t *testing.T) {
 	})
 
 	errs := validateBusinessRules(plan)
-	// Expect both the existing undefined_reference and the new invalid_rank_reference.
 	var foundUndefinedRef bool
-	var foundInvalidRank bool
 	for _, e := range errs {
 		if e.Code == "undefined_reference" {
 			foundUndefinedRef = true
 		}
-		if e.Code == "invalid_rank_reference" {
-			foundInvalidRank = true
-		}
 	}
 	assert.True(t, foundUndefinedRef, "should find undefined_reference for Nonexistent rank")
-	assert.True(t, foundInvalidRank, "should find invalid_rank_reference for Nonexistent rank")
 }
 
 func TestCarryForwardCapRequiresCarryForward(t *testing.T) {
@@ -565,19 +559,14 @@ func TestValidation_StreamlineAdditionalPerRankMustExist(t *testing.T) {
 	})
 
 	errs := validateBusinessRules(plan)
-	// Expect both the existing undefined_reference and the new invalid_rank_reference.
+	// Rank reference errors come from validateStructureRefs.
 	var foundUndefinedRef bool
-	var foundInvalidRank bool
 	for _, e := range errs {
 		if e.Code == "undefined_reference" {
 			foundUndefinedRef = true
 		}
-		if e.Code == "invalid_rank_reference" {
-			foundInvalidRank = true
-		}
 	}
 	assert.True(t, foundUndefinedRef, "should find undefined_reference for Nonexistent rank in additional_per_rank")
-	assert.True(t, foundInvalidRank, "should find invalid_rank_reference for Nonexistent rank in additional_per_rank")
 }
 
 func TestValidation_SearchModeFirstLevelsWithoutDepthWarning(t *testing.T) {
@@ -969,11 +958,12 @@ func TestValidation_StreamlineInvalidRankReferenceFails(t *testing.T) {
 	errs := validateBusinessRules(plan)
 	found := false
 	for _, e := range errs {
-		if e.Code == "invalid_rank_reference" {
+		// Rank reference errors come from validateStructureRefs.
+		if e.Code == "undefined_reference" {
 			found = true
 		}
 	}
-	assert.True(t, found, "invalid min_rank should produce invalid_rank_reference")
+	assert.True(t, found, "invalid min_rank should produce undefined_reference")
 }
 
 func TestValidation_StreamlineDepthLessThanLevelsFails(t *testing.T) {

@@ -1010,7 +1010,7 @@ func TestEngineClient_StreamlineLifecycle(t *testing.T) {
 	user3 := "00000000-0000-0000-0000-000000000013"
 
 	// Create streamline.
-	err = client.CreateStreamline(ctx, structure, "sponsor_stream", true, 1000)
+	err = client.CreateStreamline(ctx, structure, "sponsor_stream", false, true, 1000)
 	require.NoError(t, err)
 
 	// Add 3 members.
@@ -1062,7 +1062,7 @@ func TestEngineClient_StreamlineExpandFreeze(t *testing.T) {
 	structure := "TestStreamline"
 	user1 := "00000000-0000-0000-0000-000000000011"
 
-	err = client.CreateStreamline(ctx, structure, "sponsor_stream", true, 1000)
+	err = client.CreateStreamline(ctx, structure, "sponsor_stream", false, true, 1000)
 	require.NoError(t, err)
 
 	_, err = client.StreamlineAddMember(ctx, structure, StreamlineAddMemberRequest{
@@ -1079,7 +1079,7 @@ func TestEngineClient_StreamlineExpandFreeze(t *testing.T) {
 
 	// Freeze back to 1.
 	freezeResult, err := client.StreamlineUpdateAllowance(ctx, structure, StreamlineUpdateAllowanceRequest{
-		UserID: user1, TotalAllowed: 1,
+		UserID: user1, TotalAllowed: 1, Timestamp: 2000,
 	})
 	require.NoError(t, err)
 	assert.Len(t, freezeResult.Frozen, 2)
@@ -1100,7 +1100,7 @@ func TestEngineClient_StreamlineRemoveMember(t *testing.T) {
 	user1 := "00000000-0000-0000-0000-000000000011"
 	user2 := "00000000-0000-0000-0000-000000000012"
 
-	err = client.CreateStreamline(ctx, structure, "sponsor_stream", true, 1000)
+	err = client.CreateStreamline(ctx, structure, "sponsor_stream", false, true, 1000)
 	require.NoError(t, err)
 
 	_, err = client.StreamlineAddMember(ctx, structure, StreamlineAddMemberRequest{
@@ -1133,7 +1133,7 @@ func TestEngineClient_StreamlineSnapshotRoundTrip(t *testing.T) {
 	structure := "TestStreamline"
 	user1 := "00000000-0000-0000-0000-000000000011"
 
-	err = client.CreateStreamline(ctx, structure, "sponsor_stream", true, 1000)
+	err = client.CreateStreamline(ctx, structure, "sponsor_stream", false, true, 1000)
 	require.NoError(t, err)
 
 	_, err = client.StreamlineAddMember(ctx, structure, StreamlineAddMemberRequest{

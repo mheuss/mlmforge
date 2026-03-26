@@ -2219,7 +2219,7 @@ fn streamline_expand_and_freeze() {
     let resp = common::send_receive(
         &mut worker,
         &format!(
-            r#"{{"id":"sl-freeze","op":"streamline_update_allowance","params":{{"structure":"{}","user_id":"{}","total_allowed":1}}}}"#,
+            r#"{{"id":"sl-freeze","op":"streamline_update_allowance","params":{{"structure":"{}","user_id":"{}","total_allowed":1,"timestamp":2000}}}}"#,
             SL_STRUCTURE, SL_USER1
         ),
     );

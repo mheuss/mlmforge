@@ -23,7 +23,9 @@ fn build_engine(member_count: usize) -> StreamlineEngine {
         } else {
             uuid_from_index(1)
         };
-        let _ = engine.add_member(uuid_from_index(i), sponsor, 1000 + i as i64, None);
+        engine
+            .add_member(uuid_from_index(i), sponsor, 1000 + i as i64, None)
+            .expect("fixture construction should succeed");
     }
     engine
 }
@@ -69,8 +71,8 @@ proptest! {
         let mut engine = build_engine(member_count);
 
         // Expand and freeze.
-        let _ = engine.expand_streams(uuid_from_index(1), 3, 2000);
-        let _ = engine.update_stream_allowance(uuid_from_index(1), 1);
+        engine.expand_streams(uuid_from_index(1), 3, 2000).expect("expansion should succeed");
+        engine.update_stream_allowance(uuid_from_index(1), 1, 2000).expect("freeze should succeed");
 
         // Attempting to place in any frozen stream should fail.
         let new_user = uuid_from_index(100);
@@ -100,12 +102,12 @@ proptest! {
         let mut engine = build_engine(1);
         let user = uuid_from_index(1);
 
-        let _ = engine.expand_streams(user, initial_expand, 2000);
+        engine.expand_streams(user, initial_expand, 2000).expect("expansion should succeed");
         let active_before = engine.active_streams().count() as u32;
         prop_assert_eq!(active_before, initial_expand);
 
         let target = freeze_to.min(initial_expand);
-        let _ = engine.update_stream_allowance(user, target);
+        let _ = engine.update_stream_allowance(user, target, 2000).expect("allowance update should succeed");
         let active_after = engine.active_streams().count() as u32;
         prop_assert_eq!(active_after, target);
     }
@@ -119,7 +121,7 @@ proptest! {
     #[test]
     fn no_orphan_streams(member_count in 1_usize..15) {
         let mut engine = build_engine(member_count);
-        let _ = engine.expand_streams(uuid_from_index(1), 3, 2000);
+        engine.expand_streams(uuid_from_index(1), 3, 2000).expect("expansion should succeed");
 
         let summaries = engine.list_streams();
         let mut all_owner_ids = HashSet::new();

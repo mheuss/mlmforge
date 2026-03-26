@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -25,7 +26,7 @@ func validateBusinessRules(plan *CompensationPlan) []ValidationError {
 	errs = append(errs, validatePassUp(plan)...)
 	errs = append(errs, validateBoardPlanCompanion(plan)...)
 	errs = append(errs, validateStreamlineCompanion(plan)...)
-	errs = append(errs, validateStreamlineCommission(plan, ranks)...)
+	errs = append(errs, validateStreamlineCommission(plan)...)
 	errs = append(errs, validateCrossFieldRules(plan, ranks)...)
 	return errs
 }
@@ -592,7 +593,8 @@ func validateStreamlineCompanion(plan *CompensationPlan) []ValidationError {
 }
 
 // validateStreamlineCommission checks streamline-specific commission rules.
-func validateStreamlineCommission(plan *CompensationPlan, ranks map[string]bool) []ValidationError {
+// Rank references are validated by validateStructureRefs, not here.
+func validateStreamlineCommission(plan *CompensationPlan) []ValidationError {
 	var errs []ValidationError
 
 	for i, s := range plan.Structures {
@@ -620,12 +622,12 @@ func validateStreamlineCommission(plan *CompensationPlan, ranks map[string]bool)
 		// Sort level keys to check sequentiality.
 		var levelNums []int
 		for key := range c.DynamicCompression {
-			var n int
-			if _, err := fmt.Sscanf(key, "%d", &n); err != nil {
+			n, err := strconv.Atoi(key)
+			if err != nil || n < 1 {
 				errs = append(errs, ValidationError{
 					Path:     path + "/dynamic_compression/" + key,
 					Code:     "invalid_level_key",
-					Message:  fmt.Sprintf("level key %q is not a valid integer", key),
+					Message:  fmt.Sprintf("level key %q must be a positive integer", key),
 					Severity: SeverityError,
 				})
 				continue
@@ -647,22 +649,15 @@ func validateStreamlineCommission(plan *CompensationPlan, ranks map[string]bool)
 			}
 		}
 
-		// Check percent values and rank references.
+		// Check percent values. Rank references are already validated
+		// by validateStructureRefs, so no duplicate check here.
 		for key, level := range c.DynamicCompression {
 			levelPath := path + "/dynamic_compression/" + key
-			if level.Percent < 0 || level.Percent > 100 {
+			if level.Percent < 0 || level.Percent > 1 {
 				errs = append(errs, ValidationError{
 					Path:     levelPath + "/percent",
 					Code:     "percent_out_of_range",
-					Message:  fmt.Sprintf("percent must be 0-100, got %f", level.Percent),
-					Severity: SeverityError,
-				})
-			}
-			if level.MinRank != "" && !ranks[level.MinRank] {
-				errs = append(errs, ValidationError{
-					Path:     levelPath + "/min_rank",
-					Code:     "invalid_rank_reference",
-					Message:  fmt.Sprintf("min_rank %q does not exist in plan ranks", level.MinRank),
+					Message:  fmt.Sprintf("percent must be between 0 and 1, got %f", level.Percent),
 					Severity: SeverityError,
 				})
 			}
@@ -676,20 +671,6 @@ func validateStreamlineCommission(plan *CompensationPlan, ranks map[string]bool)
 				Message:  fmt.Sprintf("commissionable_depth (%d) must be >= number of levels (%d)", c.CommissionableDepth, len(c.DynamicCompression)),
 				Severity: SeverityError,
 			})
-		}
-
-		// Validate stream config rank references.
-		if c.Streams != nil {
-			for rankName := range c.Streams.AdditionalPerRank {
-				if !ranks[rankName] {
-					errs = append(errs, ValidationError{
-						Path:     path + "/streams/additional_per_rank/" + rankName,
-						Code:     "invalid_rank_reference",
-						Message:  fmt.Sprintf("rank %q in additional_per_rank does not exist in plan ranks", rankName),
-						Severity: SeverityError,
-					})
-				}
-			}
 		}
 	}
 

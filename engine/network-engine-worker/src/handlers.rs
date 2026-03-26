@@ -1766,9 +1766,20 @@ pub fn handle_create_streamline(state: &mut WorkerState, request: &Request) -> R
         );
     }
 
-    let assignment_mode = match params.assignment_mode.as_deref() {
-        Some("round_robin") => StreamAssignmentMode::RoundRobin,
-        _ => StreamAssignmentMode::SponsorStream,
+    let assignment_mode = match params
+        .assignment_mode
+        .as_deref()
+        .unwrap_or("sponsor_stream")
+    {
+        "sponsor_stream" => StreamAssignmentMode::SponsorStream,
+        "round_robin" => StreamAssignmentMode::RoundRobin,
+        other => {
+            return Response::error(
+                request.id.clone(),
+                "INVALID_PARAMS",
+                format!("unknown assignment_mode: {}", other),
+            );
+        }
     };
 
     let config = StreamlineConfig {
@@ -1801,10 +1812,16 @@ pub fn handle_streamline_add_member(state: &mut WorkerState, request: &Request) 
         Ok(id) => id,
         Err(resp) => return resp,
     };
-    let timestamp = params
-        .get("timestamp")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(0);
+    let timestamp = match params.get("timestamp").and_then(|v| v.as_i64()) {
+        Some(ts) => ts,
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "MISSING_PARAM",
+                "missing or invalid timestamp (must be integer)",
+            );
+        }
+    };
     let stream_id_override = parse_u32_param(&params, "stream_id_override");
 
     let engine = match get_streamline_mut(state, &structure, &request.id) {
@@ -1834,10 +1851,16 @@ pub fn handle_streamline_remove_member(state: &mut WorkerState, request: &Reques
         Ok(id) => id,
         Err(resp) => return resp,
     };
-    let timestamp = params
-        .get("timestamp")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(0);
+    let timestamp = match params.get("timestamp").and_then(|v| v.as_i64()) {
+        Some(ts) => ts,
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "MISSING_PARAM",
+                "missing or invalid timestamp (must be integer)",
+            );
+        }
+    };
 
     let engine = match get_streamline_mut(state, &structure, &request.id) {
         Ok(e) => e,
@@ -1876,10 +1899,16 @@ pub fn handle_streamline_expand_streams(state: &mut WorkerState, request: &Reque
             );
         }
     };
-    let timestamp = params
-        .get("timestamp")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(0);
+    let timestamp = match params.get("timestamp").and_then(|v| v.as_i64()) {
+        Some(ts) => ts,
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "MISSING_PARAM",
+                "missing or invalid timestamp (must be integer)",
+            );
+        }
+    };
 
     let engine = match get_streamline_mut(state, &structure, &request.id) {
         Ok(e) => e,
@@ -1918,13 +1947,23 @@ pub fn handle_streamline_update_allowance(state: &mut WorkerState, request: &Req
             );
         }
     };
+    let timestamp = match params.get("timestamp").and_then(|v| v.as_i64()) {
+        Some(ts) => ts,
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "MISSING_PARAM",
+                "missing or invalid timestamp (must be integer)",
+            );
+        }
+    };
 
     let engine = match get_streamline_mut(state, &structure, &request.id) {
         Ok(e) => e,
         Err(resp) => return resp,
     };
 
-    match engine.update_stream_allowance(user_id, total_allowed) {
+    match engine.update_stream_allowance(user_id, total_allowed, timestamp) {
         Ok(result) => Response::success(
             request.id.clone(),
             serde_json::to_value(&result).expect("serialization infallible"),

@@ -394,9 +394,12 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
                 Some(s) => s,
                 None => {
                     // Missing snapshot: treat as ineligible.
-                    // With compression, skip without consuming a level.
+                    // With any form of compression (standard or dynamic
+                    // thresholds), skip without consuming a level.
                     // Without compression, forfeit the level.
-                    if config.compression.is_some_and(|c| c.enabled) {
+                    if config.dynamic_thresholds.is_some()
+                        || config.compression.is_some_and(|c| c.enabled)
+                    {
                         continue;
                     }
                     level = level.saturating_add(1);

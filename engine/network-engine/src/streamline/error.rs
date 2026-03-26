@@ -32,4 +32,10 @@ pub enum StreamlineError {
 
     #[error("user {0} has no owned streams")]
     NoOwnedStreams(Uuid),
+
+    #[error("stream choice override not allowed (enrollment_stream_choice is disabled)")]
+    StreamChoiceNotAllowed,
+
+    #[error("tree operation failed: {0}")]
+    TreeError(String),
 }

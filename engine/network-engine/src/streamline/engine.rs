@@ -126,7 +126,9 @@ impl StreamlineEngine {
     ///
     /// In a linear chain, removing a non-leaf node requires chain
     /// compaction: collect descendants, remove from leaf up, re-add
-    /// descendants under the removed node's parent.
+    /// descendants under the removed node's parent. When the removed
+    /// user was a descendant's sponsor, the new parent becomes the
+    /// sponsor instead.
     pub fn remove_member(
         &mut self,
         user_id: Uuid,
@@ -177,8 +179,9 @@ impl StreamlineEngine {
 
             // Remove from leaf up: descendants in reverse, then the target.
             for &(desc_id, _, _) in descendants.iter().rev() {
-                let _ = stream.tree.remove_node(desc_id);
-                // Clean up user_streams for descendants.
+                stream.tree.remove_node(desc_id).map_err(|e| {
+                    StreamlineError::TreeError(format!("remove descendant {desc_id}: {e}"))
+                })?;
                 if let Some(streams) = self.user_streams.get_mut(&desc_id) {
                     streams.retain(|&id| id != stream_id);
                     if streams.is_empty() {
@@ -186,47 +189,76 @@ impl StreamlineEngine {
                     }
                 }
             }
-            let _ = stream.tree.remove_node(user_id);
+            stream
+                .tree
+                .remove_node(user_id)
+                .map_err(|e| StreamlineError::TreeError(format!("remove target {user_id}: {e}")))?;
 
             // Re-add descendants under the removed node's parent.
+            // When a descendant's sponsor was the removed user, use the
+            // new parent as sponsor instead.
             let mut current_parent = parent_id;
-            for (i, &(desc_id, sponsor_id, enrolled_at)) in descendants.iter().enumerate() {
+            for (i, &(desc_id, original_sponsor, enrolled_at)) in descendants.iter().enumerate() {
+                let sponsor = if original_sponsor == user_id {
+                    current_parent.unwrap_or(desc_id)
+                } else {
+                    original_sponsor
+                };
+
                 match current_parent {
                     Some(pid) => {
-                        let _ = stream.tree.add_node(desc_id, pid, sponsor_id, enrolled_at);
+                        stream
+                            .tree
+                            .add_node(desc_id, pid, sponsor, enrolled_at)
+                            .map_err(|e| {
+                                StreamlineError::TreeError(format!(
+                                    "re-add descendant {desc_id}: {e}"
+                                ))
+                            })?;
                     }
                     None => {
-                        // Target was the root. First descendant becomes root.
-                        let _ = stream.tree.add_root(desc_id, enrolled_at);
+                        stream.tree.add_root(desc_id, enrolled_at).map_err(|e| {
+                            StreamlineError::TreeError(format!("re-root descendant {desc_id}: {e}"))
+                        })?;
                     }
                 }
-                // Re-record in user_streams.
                 self.user_streams
                     .entry(desc_id)
                     .or_default()
                     .push(stream_id);
                 current_parent = Some(desc_id);
 
-                // Update bottom pointer if this is the last descendant.
                 if i == descendants.len() - 1 {
                     stream.bottom = Some(desc_id);
                 }
             }
 
-            // If no descendants, update bottom pointer.
             if descendants.is_empty() {
                 stream.bottom = parent_id;
             }
 
-            // If the tree is now empty (target was only member), clear bottom.
             if stream.tree.user_ids().is_empty() {
                 stream.bottom = None;
+            }
+
+            // Transfer ownership if the removed user owned this stream.
+            if stream.owner_id == user_id {
+                // First remaining member becomes owner, or mark as unowned.
+                let new_owner = stream.tree.user_ids().first().copied();
+                match new_owner {
+                    Some(nid) => {
+                        stream.owner_id = nid;
+                        self.stream_owners.entry(nid).or_default().push(stream_id);
+                    }
+                    None => {
+                        stream.owner_id = Uuid::nil();
+                    }
+                }
             }
 
             removed_from.push(stream_id);
         }
 
-        // Also remove from stream_owners if they own any.
         self.stream_owners.remove(&user_id);
 
         Ok(RemoveMemberResult { removed_from })
@@ -378,6 +410,10 @@ impl StreamlineEngine {
         total_allowed: u32,
         timestamp: i64,
     ) -> Result<ExpansionResult, StreamlineError> {
+        if !self.user_streams.contains_key(&user_id) && !self.stream_owners.contains_key(&user_id) {
+            return Err(StreamlineError::MemberNotFound(user_id));
+        }
+
         let current_count = self
             .stream_owners
             .get(&user_id)
@@ -404,12 +440,14 @@ impl StreamlineEngine {
 
     /// Updates a user's active stream count based on rank changes.
     ///
-    /// Freezes excess streams (newest first) or unfreezes/creates
-    /// streams to match the new allowance.
+    /// When `freeze_on_demotion` is true, excess streams are frozen
+    /// (newest first). When false, excess streams are destroyed.
+    /// Unfreezes or creates streams to increase the count.
     pub fn update_stream_allowance(
         &mut self,
         user_id: Uuid,
         total_allowed: u32,
+        timestamp: i64,
     ) -> Result<FreezeResult, StreamlineError> {
         let owned_ids = self
             .stream_owners
@@ -437,26 +475,44 @@ impl StreamlineEngine {
         };
 
         if total_allowed < active_count {
-            // Freeze excess — newest unfrozen first.
-            let to_freeze = active_count - total_allowed;
+            let to_remove = active_count - total_allowed;
             let mut unfrozen_ids: Vec<u32> = sorted
                 .iter()
                 .filter(|&&(_, _, frozen)| !frozen)
                 .map(|&(id, _, _)| id)
                 .collect();
-            // Reverse to freeze newest first.
-            unfrozen_ids.reverse();
+            unfrozen_ids.reverse(); // newest first
 
-            for &id in unfrozen_ids.iter().take(to_freeze as usize) {
-                if let Some(stream) = self.streams.get_mut(&id) {
-                    stream.frozen = true;
-                    result.frozen.push(id);
+            if self.config.freeze_on_demotion {
+                for &id in unfrozen_ids.iter().take(to_remove as usize) {
+                    if let Some(stream) = self.streams.get_mut(&id) {
+                        stream.frozen = true;
+                        result.frozen.push(id);
+                    }
+                }
+            } else {
+                // Destroy excess streams. Remove members from user_streams.
+                for &id in unfrozen_ids.iter().take(to_remove as usize) {
+                    if let Some(stream) = self.streams.remove(&id) {
+                        for member_id in stream.tree.user_ids() {
+                            if let Some(streams) = self.user_streams.get_mut(&member_id) {
+                                streams.retain(|&sid| sid != id);
+                                if streams.is_empty() {
+                                    self.user_streams.remove(&member_id);
+                                }
+                            }
+                        }
+                        result.frozen.push(id); // report as removed
+                    }
+                    // Remove from owner's list.
+                    if let Some(owned) = self.stream_owners.get_mut(&user_id) {
+                        owned.retain(|&sid| sid != id);
+                    }
                 }
             }
         } else if total_allowed > active_count {
             let deficit = total_allowed - active_count;
 
-            // Unfreeze oldest frozen first.
             let frozen_ids: Vec<u32> = sorted
                 .iter()
                 .filter(|&&(_, _, frozen)| frozen)
@@ -475,9 +531,8 @@ impl StreamlineEngine {
                 }
             }
 
-            // Create new streams if still under the target.
             for _ in 0..remaining {
-                let id = self.create_stream(user_id, 0);
+                let id = self.create_stream(user_id, timestamp);
                 result.created.push(id);
             }
         }
@@ -509,6 +564,10 @@ impl StreamlineEngine {
         stream_id_override: Option<u32>,
     ) -> Result<u32, StreamlineError> {
         if let Some(override_id) = stream_id_override {
+            // Reject explicit choice when config disables it.
+            if !self.config.enrollment_stream_choice {
+                return Err(StreamlineError::StreamChoiceNotAllowed);
+            }
             // Explicit stream choice. Validate sponsor owns it and it's not frozen.
             let stream = self
                 .streams
@@ -583,6 +642,14 @@ mod tests {
         }
     }
 
+    fn choice_config() -> StreamlineConfig {
+        StreamlineConfig {
+            assignment_mode: StreamAssignmentMode::SponsorStream,
+            enrollment_stream_choice: true,
+            freeze_on_demotion: true,
+        }
+    }
+
     fn round_robin_config() -> StreamlineConfig {
         StreamlineConfig {
             assignment_mode: StreamAssignmentMode::RoundRobin,
@@ -649,7 +716,7 @@ mod tests {
 
     #[test]
     fn add_member_explicit_stream_override() {
-        let mut engine = StreamlineEngine::new(default_config(), 1000);
+        let mut engine = StreamlineEngine::new(choice_config(), 1000);
         engine
             .add_member(test_uuid(1), test_uuid(99), 1000, None)
             .unwrap();
@@ -675,7 +742,7 @@ mod tests {
 
     #[test]
     fn reject_frozen_stream_override() {
-        let mut engine = StreamlineEngine::new(default_config(), 1000);
+        let mut engine = StreamlineEngine::new(choice_config(), 1000);
         engine
             .add_member(test_uuid(1), test_uuid(99), 1000, None)
             .unwrap();
@@ -744,7 +811,9 @@ mod tests {
         assert_eq!(engine.stream_count(), 4);
 
         // Drop allowance to 2. Streams 3 and 4 should freeze (newest first).
-        let result = engine.update_stream_allowance(test_uuid(1), 2).unwrap();
+        let result = engine
+            .update_stream_allowance(test_uuid(1), 2, 2000)
+            .unwrap();
         assert_eq!(result.frozen.len(), 2);
         // Newest first means stream 4 frozen before stream 3.
         assert!(result.frozen.contains(&4));
@@ -763,14 +832,18 @@ mod tests {
             .unwrap();
         engine.expand_streams(test_uuid(1), 4, 1001).unwrap();
         // Freeze down to 1.
-        engine.update_stream_allowance(test_uuid(1), 1).unwrap();
+        engine
+            .update_stream_allowance(test_uuid(1), 1, 2000)
+            .unwrap();
         // All 3 extra streams frozen.
         assert!(engine.get_stream(2).unwrap().frozen);
         assert!(engine.get_stream(3).unwrap().frozen);
         assert!(engine.get_stream(4).unwrap().frozen);
 
         // Unfreeze back to 3. Oldest frozen first = stream 2, then 3.
-        let result = engine.update_stream_allowance(test_uuid(1), 3).unwrap();
+        let result = engine
+            .update_stream_allowance(test_uuid(1), 3, 2000)
+            .unwrap();
         assert_eq!(result.unfrozen.len(), 2);
         assert!(!engine.get_stream(2).unwrap().frozen);
         assert!(!engine.get_stream(3).unwrap().frozen);
@@ -786,8 +859,12 @@ mod tests {
         engine.expand_streams(test_uuid(1), 3, 1001).unwrap();
 
         // Freeze to 1, then back to 3.
-        engine.update_stream_allowance(test_uuid(1), 1).unwrap();
-        let result = engine.update_stream_allowance(test_uuid(1), 3).unwrap();
+        engine
+            .update_stream_allowance(test_uuid(1), 1, 2000)
+            .unwrap();
+        let result = engine
+            .update_stream_allowance(test_uuid(1), 3, 2000)
+            .unwrap();
         assert_eq!(result.unfrozen.len(), 2);
         // All streams should be active again.
         for id in 1..=3 {
@@ -797,14 +874,16 @@ mod tests {
 
     #[test]
     fn frozen_stream_rejects_placement() {
-        let mut engine = StreamlineEngine::new(default_config(), 1000);
+        let mut engine = StreamlineEngine::new(choice_config(), 1000);
         engine
             .add_member(test_uuid(1), test_uuid(99), 1000, None)
             .unwrap();
         engine.expand_streams(test_uuid(1), 2, 1001).unwrap();
 
         // Freeze stream 2.
-        engine.update_stream_allowance(test_uuid(1), 1).unwrap();
+        engine
+            .update_stream_allowance(test_uuid(1), 1, 2000)
+            .unwrap();
 
         // Try to place in frozen stream 2 via override.
         let err = engine

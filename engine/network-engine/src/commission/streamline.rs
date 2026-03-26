@@ -27,18 +27,25 @@ pub fn calculate_streamline(
     let rank_ordinals = walk::build_rank_ordinals(plan);
 
     // Build dynamic threshold array from the per-level config.
-    // Convert each level's min_rank name to its ordinal.
-    let thresholds: Vec<u16> = structure
-        .streamline_commission
-        .levels
-        .iter()
-        .map(|level| {
-            rank_ordinals
+    // Convert each level's min_rank name to its ordinal. Empty
+    // min_rank means no threshold (ordinal 0).
+    let mut thresholds: Vec<u16> = Vec::with_capacity(structure.streamline_commission.levels.len());
+    for level in &structure.streamline_commission.levels {
+        if level.min_rank.is_empty() {
+            thresholds.push(0);
+        } else {
+            let ordinal = rank_ordinals
                 .get(level.min_rank.as_str())
                 .copied()
-                .unwrap_or(0)
-        })
-        .collect();
+                .ok_or_else(|| {
+                    CalculationError::ConfigError(format!(
+                        "streamline level {} references unknown rank {:?}",
+                        level.level, level.min_rank
+                    ))
+                })?;
+            thresholds.push(ordinal);
+        }
+    }
 
     let multiplier = structure
         .streamline_commission
@@ -258,7 +265,9 @@ mod tests {
             .unwrap();
         engine.expand_streams(test_uuid(1), 2, 1002).unwrap();
         // Freeze stream 2.
-        engine.update_stream_allowance(test_uuid(1), 1).unwrap();
+        engine
+            .update_stream_allowance(test_uuid(1), 1, 2000)
+            .unwrap();
 
         let levels = vec![StreamlineLevel {
             level: 1,

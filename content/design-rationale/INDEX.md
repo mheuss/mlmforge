@@ -8,7 +8,7 @@ MLMForge's architecture is informed by years of building and operating a product
 
 ## Numbering
 
-This folder uses its own numbering sequence (001 through 023). DEVELOPMENT.md has a separate ADR sequence (ADR-001 through ADR-020).
+This folder uses its own numbering sequence (001 through 024). DEVELOPMENT.md has a separate ADR sequence (ADR-001 through ADR-020).
 
 The two sequences cover different scopes. DEVELOPMENT.md ADRs document high-level architectural decisions like language choice, persistence strategy, and modularity. The `content/design-rationale/` folder documents detailed per-domain design decisions like tree implementation, compensation config, and interface contracts.
 
@@ -41,6 +41,7 @@ Code comments that reference "ADR-NNN" use the DEVELOPMENT.md numbering.
 | [021](021-sponsor-vs-placement-in-commission.md) | **Sponsor vs. Placement in Commission** | Placement edges determine commission flow, sponsor edges determine personal qualification |
 | [022](022-shared-commission-walk.md) | **Shared Commission Walk** | Generic functions over TreeNavigator, no CommissionCalculator trait, callback injection for plan-specific behavior |
 | [023](023-snapshot-persistence.md) | **Snapshot Persistence** | Serde-based serialization for all tree types, JSON format, Go-managed storage |
+| [024](024-generation-calculator-reuse.md) | **Generation Calculator Reuse** | Why the standalone generation calculator reuses `count_generations_upward()` with a semantic mismatch instead of extracting a shared interface |
 
 ## Reading Order
 

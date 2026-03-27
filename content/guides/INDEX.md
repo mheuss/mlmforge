@@ -11,3 +11,4 @@ Read them in order. Each guide builds on concepts from the ones before it.
 | 3 | [Binary](binary.md) | Two legs per distributor. Commissions based on matching volume between legs. |
 | 4 | [Matrix](matrix.md) | Fixed width and depth. A constrained version of unilevel with spillover placement. |
 | 5 | [Stairstep Breakaway](stairstep.md) | Groups break away at rank thresholds. The most complex structure. |
+| 6 | [Generation](generation.md) | Commissions based on leadership depth, not tree depth. The generation walk and its configuration options. |

@@ -340,7 +340,7 @@ type GenerationCommissionConfig struct {
 	BoundaryRank                  string             `yaml:"boundary_rank" json:"boundary_rank"`
 	EmptyGenerationConsumesNumber bool               `yaml:"empty_generation_consumes_number" json:"empty_generation_consumes_number"`
 	VolumeToDollarMultiplier      *float64           `yaml:"volume_to_dollar_multiplier" json:"volume_to_dollar_multiplier"`
-	IneligibleCreatesBoundary     *bool              `yaml:"ineligible_creates_boundary" json:"ineligible_creates_boundary"`
+	IneligibleCreatesBoundary     *bool              `yaml:"ineligible_creates_boundary" json:"ineligible_creates_boundary,omitempty"`
 }
 
 // StreamlineLevel holds commission configuration for a single streamline level.

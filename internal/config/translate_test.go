@@ -504,4 +504,39 @@ func TestTranslateGenerationIneligibleCreatesBoundary(t *testing.T) {
 	assert.Equal(t, false, gc["ineligible_creates_boundary"])
 }
 
+func TestTranslateGenerationIneligibleCreatesBoundaryNil(t *testing.T) {
+	plan := minimalPlan()
+	plan.Structures[0].Name = "Gen"
+	plan.Structures[0].Type = "generation"
+	plan.Structures[0].resolvedCommission = &GenerationCommission{
+		LevelCommissionsEnabled: false,
+		Generation: GenerationCommissionConfig{
+			MaxGenerations: 3,
+			GenerationRates: map[string]float64{
+				"1": 0.05,
+			},
+			BoundaryMode:                  "threshold_rank",
+			BoundaryRank:                  "Executive",
+			EmptyGenerationConsumesNumber: true,
+			IneligibleCreatesBoundary:     nil, // user omitted the field
+		},
+	}
+
+	out, err := translateToEngine(plan)
+	require.NoError(t, err)
+
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(out, &doc))
+
+	structures := doc["structures"].([]any)
+	s := structures[0].(map[string]any)
+	cfg := s["config"].(map[string]any)
+	gc := cfg["generation_commission"].(map[string]any)
+
+	// With omitempty, nil *bool is omitted from JSON entirely.
+	// Rust's serde(default) kicks in, defaulting to true.
+	_, exists := gc["ineligible_creates_boundary"]
+	assert.False(t, exists, "nil *bool should be omitted from JSON so Rust serde default applies")
+}
+
 func floatPtr(f float64) *float64 { return &f }

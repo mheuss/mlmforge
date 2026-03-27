@@ -9,24 +9,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const createEventsTableSQL = `
-CREATE TABLE IF NOT EXISTS events (
-    global_position BIGSERIAL    PRIMARY KEY,
-    id              UUID         NOT NULL UNIQUE,
-    stream          TEXT         NOT NULL,
-    type            TEXT         NOT NULL,
-    version         BIGINT       NOT NULL,
-    payload         JSONB        NOT NULL,
-    metadata        JSONB,
-    timestamp       TIMESTAMPTZ  NOT NULL DEFAULT now(),
-
-    CONSTRAINT events_stream_version_key UNIQUE (stream, version)
-);
-
-CREATE INDEX IF NOT EXISTS idx_events_category
-    ON events (split_part(stream, '-', 1), global_position);
-`
-
 // Compile-time check: PostgresEventStore implements EventStore.
 var _ EventStore = (*PostgresEventStore)(nil)
 
@@ -39,12 +21,6 @@ type PostgresEventStore struct {
 // NewPostgresEventStore creates a PostgreSQL-backed event store.
 func NewPostgresEventStore(pool *pgxpool.Pool) *PostgresEventStore {
 	return &PostgresEventStore{pool: pool}
-}
-
-// CreateSchema creates the events table and indexes if they don't exist.
-func (s *PostgresEventStore) CreateSchema(ctx context.Context) error {
-	_, err := s.pool.Exec(ctx, createEventsTableSQL)
-	return err
 }
 
 // Append writes events to a stream atomically with optimistic concurrency.

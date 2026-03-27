@@ -16,14 +16,15 @@ type PostgresTreeStore struct {
 	pool *pgxpool.Pool
 }
 
+const insertNodeSQL = `INSERT INTO tree_nodes (id, tree_id, user_id, parent_id, sponsor_id, position, depth, enrolled_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+
 func NewPostgresTreeStore(pool *pgxpool.Pool) *PostgresTreeStore {
 	return &PostgresTreeStore{pool: pool}
 }
 
 func (s *PostgresTreeStore) InsertNode(ctx context.Context, node TreeNodeRow) error {
-	_, err := s.pool.Exec(ctx,
-		`INSERT INTO tree_nodes (id, tree_id, user_id, parent_id, sponsor_id, position, depth, enrolled_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+	_, err := s.pool.Exec(ctx, insertNodeSQL,
 		node.ID, node.TreeID, node.UserID, node.ParentID, node.SponsorID, node.Position, node.Depth, node.EnrolledAt,
 	)
 	return err
@@ -99,9 +100,7 @@ func (s *PostgresTreeStore) BulkInsert(ctx context.Context, nodes []TreeNodeRow)
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	for _, node := range nodes {
-		_, err := tx.Exec(ctx,
-			`INSERT INTO tree_nodes (id, tree_id, user_id, parent_id, sponsor_id, position, depth, enrolled_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		_, err := tx.Exec(ctx, insertNodeSQL,
 			node.ID, node.TreeID, node.UserID, node.ParentID, node.SponsorID, node.Position, node.Depth, node.EnrolledAt,
 		)
 		if err != nil {

@@ -1155,7 +1155,7 @@ mod calculate_tests {
                 max_generations,
                 rates,
                 boundary_mode: GenerationBoundaryMode::SameRank,
-                boundary_rank: String::new(),
+                boundary_rank: "unused_in_same_rank_mode".to_string(),
                 empty_generation_consumes_number: false,
                 volume_to_dollar_multiplier: None,
                 ineligible_creates_boundary: true,
@@ -1307,6 +1307,61 @@ mod calculate_tests {
 
         // low (Associate): gen 1 — first Associate+ boundary above source
         let earn_low = result.iter().find(|e| e.earner_id == uuid(3)).unwrap();
+        assert_eq!(earn_low.level, 1);
+    }
+
+    fn inactive_gold_snapshot() -> DistributorSnapshot {
+        DistributorSnapshot {
+            rank: "gold".to_string(),
+            personal_volume: 0.0,
+            status: "inactive".to_string(),
+            has_order_in_period: false,
+        }
+    }
+
+    /// Tree: root(Diamond) -> mid(Gold, inactive) -> low(Associate) -> leaf(source).
+    /// SameRank mode, ineligible_creates_boundary = false.
+    ///
+    /// Gold walk (ordinal 2): mid is in boundary_set but fails boundary_check
+    /// (ineligible). With empty_consumes=false, mid is invisible. root (Diamond,
+    /// ordinal 3, >= 2) passes check → gen 1. Filter to ordinal 2: no earners.
+    /// Diamond walk (ordinal 3): root → gen 1. Filter to ordinal 3: root earns gen 1.
+    /// Associate walk (ordinal 1): mid fails check (invisible), so boundary_set
+    /// for ordinal 1 is everyone, but mid fails check. low (ordinal 1) passes → gen 1.
+    /// root passes → gen 2. Filter to ordinal 1: low earns gen 1.
+    #[test]
+    fn same_rank_ineligible_creates_boundary_false() {
+        let tree = build_chain(4);
+        let rates = BTreeMap::from([(1, 0.10), (2, 0.05)]);
+        let mut structure = same_rank_structure(5, rates);
+        structure.generation_commission.ineligible_creates_boundary = false;
+        let plan = three_rank_plan(structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), diamond_snapshot());
+        snapshots.insert(uuid(1), inactive_gold_snapshot());
+        snapshots.insert(uuid(2), eligible_snapshot()); // associate
+        snapshots.insert(uuid(3), eligible_snapshot()); // associate (source)
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // mid (Gold, inactive) does not earn and is invisible to boundary check.
+        assert!(
+            !result.iter().any(|e| e.earner_id == uuid(1)),
+            "inactive Gold should not earn"
+        );
+
+        // root (Diamond): gen 1 from Diamond walk
+        let earn_root = result.iter().find(|e| e.earner_id == uuid(0)).unwrap();
+        assert_eq!(earn_root.level, 1);
+
+        // low (Associate): gen 1 from Associate walk
+        let earn_low = result.iter().find(|e| e.earner_id == uuid(2)).unwrap();
         assert_eq!(earn_low.level, 1);
     }
 }

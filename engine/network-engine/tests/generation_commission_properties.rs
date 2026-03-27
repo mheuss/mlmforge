@@ -1,6 +1,6 @@
 mod common;
 
-use common::{build_generation_plan, uuid_from_index};
+use common::{build_generation_plan, build_same_rank_generation_plan, uuid_from_index};
 
 use network_engine::commission::{DistributorSnapshot, VolumeSource, calculate_generation};
 use network_engine::tree::unilevel::UnilevelTree;
@@ -410,6 +410,191 @@ proptest! {
         prop_assert!(
             total_payout <= upper_bound + 1e-6,
             "Total payout {} exceeds upper bound {}",
+            total_payout, upper_bound
+        );
+    }
+}
+
+// ===========================================================================
+// SameRank mode property tests
+// ===========================================================================
+
+/// Build a random chain tree with three rank levels (associate/silver/director).
+fn build_multi_rank_chain(
+    size: usize,
+    rank_assignments: &[u8],
+) -> (UnilevelTree, HashMap<uuid::Uuid, DistributorSnapshot>) {
+    let mut tree = UnilevelTree::new();
+    tree.add_root(uuid_from_index(0), 0).unwrap();
+    for i in 1..size {
+        tree.add_node(
+            uuid_from_index(i),
+            uuid_from_index(i - 1),
+            uuid_from_index(i - 1),
+            i as i64,
+        )
+        .unwrap();
+    }
+
+    let rank_names = ["associate", "silver", "director"];
+    let mut snapshots = HashMap::new();
+    for i in 0..size {
+        let rank_idx = if i < rank_assignments.len() {
+            (rank_assignments[i] as usize) % 3
+        } else {
+            0 // default to associate
+        };
+        snapshots.insert(
+            uuid_from_index(i),
+            DistributorSnapshot {
+                rank: rank_names[rank_idx].to_string(),
+                personal_volume: 150.0,
+                status: "active".to_string(),
+                has_order_in_period: true,
+            },
+        );
+    }
+
+    (tree, snapshots)
+}
+
+/// Strategy for SameRank mode: tree size + rank assignments per node.
+fn same_rank_inputs() -> impl Strategy<Value = (usize, Vec<u8>, f64, u8)> {
+    (3..20usize).prop_flat_map(|size| {
+        let ranks = proptest::collection::vec(0..3u8, size..=size);
+        let cv = 0.0..5000.0f64;
+        let max_gen = 1..5u8;
+        (Just(size), ranks, cv, max_gen)
+    })
+}
+
+proptest! {
+    /// SameRank: no earning has a generation exceeding max_generations.
+    #[test]
+    fn same_rank_generation_bounded(
+        (size, ranks, cv, max_gen) in same_rank_inputs()
+    ) {
+        let (plan, structure) = build_same_rank_generation_plan(max_gen);
+        let (tree, snapshots) = build_multi_rank_chain(size, &ranks);
+        let source_idx = size - 1;
+        let volume = vec![VolumeSource {
+            source_id: uuid_from_index(source_idx),
+            cv_amount: cv,
+        }];
+
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        for earning in &result {
+            prop_assert!(
+                earning.level <= max_gen,
+                "SameRank: earning at gen {} exceeds max {}",
+                earning.level, max_gen
+            );
+        }
+    }
+
+    /// SameRank: all earnings have non-negative dollar amounts.
+    #[test]
+    fn same_rank_all_earnings_non_negative(
+        (size, ranks, cv, max_gen) in same_rank_inputs()
+    ) {
+        let (plan, structure) = build_same_rank_generation_plan(max_gen);
+        let (tree, snapshots) = build_multi_rank_chain(size, &ranks);
+        let source_idx = size - 1;
+        let volume = vec![VolumeSource {
+            source_id: uuid_from_index(source_idx),
+            cv_amount: cv,
+        }];
+
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        for earning in &result {
+            prop_assert!(
+                earning.dollar_amount >= 0.0,
+                "SameRank: negative earning: {}",
+                earning.dollar_amount
+            );
+        }
+    }
+
+    /// SameRank: no duplicate (earner, source) pairs in the result.
+    #[test]
+    fn same_rank_no_duplicate_earner_source_pairs(
+        (size, ranks, cv, max_gen) in same_rank_inputs()
+    ) {
+        let (plan, structure) = build_same_rank_generation_plan(max_gen);
+        let (tree, snapshots) = build_multi_rank_chain(size, &ranks);
+        let source_idx = size - 1;
+        let volume = vec![VolumeSource {
+            source_id: uuid_from_index(source_idx),
+            cv_amount: cv,
+        }];
+
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let mut seen = HashSet::new();
+        for earning in &result {
+            let key = (earning.earner_id, earning.source_id);
+            prop_assert!(
+                seen.insert(key),
+                "SameRank: duplicate (earner, source): ({}, {})",
+                earning.earner_id, earning.source_id
+            );
+        }
+    }
+
+    /// SameRank: every earner_id in results has a node in the tree.
+    #[test]
+    fn same_rank_every_earner_exists_in_tree(
+        (size, ranks, cv, max_gen) in same_rank_inputs()
+    ) {
+        let (plan, structure) = build_same_rank_generation_plan(max_gen);
+        let (tree, snapshots) = build_multi_rank_chain(size, &ranks);
+        let source_idx = size - 1;
+        let volume = vec![VolumeSource {
+            source_id: uuid_from_index(source_idx),
+            cv_amount: cv,
+        }];
+
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let tree_ids: HashSet<_> = (0..size).map(uuid_from_index).collect();
+        for earning in &result {
+            prop_assert!(
+                tree_ids.contains(&earning.earner_id),
+                "SameRank: earner {} not in tree",
+                earning.earner_id
+            );
+        }
+    }
+
+    /// SameRank: total payout bounded by sum of rates * CV * multiplier * num_ranks.
+    /// In SameRank mode, each rank level gets its own walk, so the upper bound
+    /// is rates_sum * CV * multiplier * number_of_rank_levels.
+    #[test]
+    fn same_rank_total_payout_bounded(
+        (size, ranks, cv, max_gen) in same_rank_inputs()
+    ) {
+        let (plan, structure) = build_same_rank_generation_plan(max_gen);
+        let (tree, snapshots) = build_multi_rank_chain(size, &ranks);
+        let source_idx = size - 1;
+        let volume = vec![VolumeSource {
+            source_id: uuid_from_index(source_idx),
+            cv_amount: cv,
+        }];
+
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let total_payout: f64 = result.iter().map(|e| e.dollar_amount).sum();
+
+        // Upper bound: each of the 3 rank ordinals can produce up to
+        // (cv * multiplier * sum_of_rates) earnings independently.
+        let rate_sum: f64 = structure.generation_commission.rates.values().sum();
+        let multiplier = structure
+            .generation_commission
+            .volume_to_dollar_multiplier
+            .unwrap_or(plan.volume.volume_to_dollar_multiplier);
+        let num_ranks = 3u32; // associate, silver, director
+        let upper_bound = cv * multiplier * rate_sum * num_ranks as f64;
+
+        prop_assert!(
+            total_payout <= upper_bound + 1e-6,
+            "SameRank: total payout {} exceeds upper bound {}",
             total_payout, upper_bound
         );
     }

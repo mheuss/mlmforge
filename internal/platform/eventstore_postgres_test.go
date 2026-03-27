@@ -26,7 +26,7 @@ func newTestPostgresStore(t *testing.T) *PostgresEventStore {
 
 	// Drop existing tables and apply migrations for a clean slate.
 	_, _ = pool.Exec(ctx, "DROP TABLE IF EXISTS schema_migrations, tree_nodes, events")
-	cleanup := runMigrationsForTest(t, dsn)
+	cleanup := RunMigrationsForTest(t, dsn)
 	t.Cleanup(cleanup)
 
 	// Truncate events for test isolation (migrations create the table,
@@ -171,11 +171,11 @@ func TestMigrateUpIdempotent(t *testing.T) {
 
 	_, _ = pool.Exec(ctx, "DROP TABLE IF EXISTS schema_migrations, tree_nodes, events")
 
-	cleanup := runMigrationsForTest(t, dsn)
+	cleanup := RunMigrationsForTest(t, dsn)
 	defer cleanup()
 
 	// Running MigrateUp again should not error (ErrNoChange is swallowed).
-	migrationsPath := findMigrationsDir(t)
+	migrationsPath := FindMigrationsDir(t)
 	err = MigrateUp(dsn, migrationsPath)
 	require.NoError(t, err)
 }

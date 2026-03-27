@@ -504,6 +504,89 @@ pub fn build_generation_plan_with_eligibility(
     (plan, structure)
 }
 
+/// Build a SameRank generation plan for property tests.
+///
+/// Three ranks: "associate" (1), "silver" (2), "director" (3).
+/// SameRank boundary mode. Eligibility is fully permissive.
+pub fn build_same_rank_generation_plan(
+    max_generations: u8,
+) -> (
+    CompensationPlan,
+    network_engine::config::GenerationStructureConfig,
+) {
+    use network_engine::config::GenerationStructureConfig;
+    use network_engine::config::generation::{GenerationBoundaryMode, GenerationCommissionConfig};
+
+    let mut rates = BTreeMap::new();
+    for g in 1..=max_generations {
+        let rate = match g {
+            1 => 0.10,
+            2 => 0.07,
+            3 => 0.05,
+            4 => 0.03,
+            _ => 0.02,
+        };
+        rates.insert(g, rate);
+    }
+
+    let structure = GenerationStructureConfig {
+        name: "Generation".to_string(),
+        level_commission: None,
+        compression: None,
+        generation_commission: GenerationCommissionConfig {
+            max_generations,
+            rates,
+            boundary_mode: GenerationBoundaryMode::SameRank,
+            boundary_rank: "unused_in_same_rank_mode".to_string(),
+            empty_generation_consumes_number: false,
+            volume_to_dollar_multiplier: None,
+            ineligible_creates_boundary: true,
+        },
+        level_commissions_enabled: false,
+    };
+
+    let mut plan = build_base_plan(
+        permissive_eligibility(),
+        StructureConfig::Generation(structure.clone()),
+        "Generation",
+    );
+
+    plan.ranks = vec![
+        RankDefinition {
+            name: "associate".to_string(),
+            ordinal: 1,
+            qualification: RankQualification {
+                structures: vec![],
+                required_products: vec![],
+            },
+            qualified_structures: vec!["Generation".to_string()],
+            demotion_policy: DemotionPolicy::PromotionOnly,
+        },
+        RankDefinition {
+            name: "silver".to_string(),
+            ordinal: 2,
+            qualification: RankQualification {
+                structures: vec![],
+                required_products: vec![],
+            },
+            qualified_structures: vec!["Generation".to_string()],
+            demotion_policy: DemotionPolicy::PromotionOnly,
+        },
+        RankDefinition {
+            name: "director".to_string(),
+            ordinal: 3,
+            qualification: RankQualification {
+                structures: vec![],
+                required_products: vec![],
+            },
+            qualified_structures: vec!["Generation".to_string()],
+            demotion_policy: DemotionPolicy::PromotionOnly,
+        },
+    ];
+
+    (plan, structure)
+}
+
 // --- Matrix plan builder ---
 
 /// Build a matrix plan for property tests.

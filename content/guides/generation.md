@@ -50,7 +50,7 @@ Each earner's own rank determines what counts as a boundary. A Diamond earner on
 
 This rewards rank advancement aggressively. A Diamond sees the whole tree divided into fewer, larger generations than a Gold does. Moving from Gold to Diamond changes the earning structure.
 
-The trade-off is computational cost. Each earner needs their own walk because their boundary set is different.
+The trade-off is computational cost. Each rank level needs its own walk because its boundary set is different. Earners at the same rank share a walk.
 
 ---
 

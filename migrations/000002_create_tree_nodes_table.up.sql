@@ -12,7 +12,7 @@ CREATE TABLE tree_nodes (
     removed_at   TIMESTAMPTZ
 );
 
-CREATE INDEX idx_tree_nodes_tree_user ON tree_nodes(tree_id, user_id)
+CREATE UNIQUE INDEX idx_tree_nodes_tree_user ON tree_nodes(tree_id, user_id)
     WHERE removed_at IS NULL;
 
 CREATE INDEX idx_tree_nodes_parent ON tree_nodes(parent_id);

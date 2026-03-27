@@ -146,6 +146,58 @@ func TestTreeConsumer_HandleNodeRemoved(t *testing.T) {
 	assert.Equal(t, "remove_node", transport.calls[0].op)
 }
 
+func TestTreeConsumer_NodePlacedMissingParent(t *testing.T) {
+	store := NewMemoryTreeStore()
+	transport := newRecordingTransport()
+	engine := NewEngineClientWithTransport(transport)
+	consumer := NewTreeEventConsumer(store, engine)
+
+	// No parent in store — should error, not silently default to depth 0.
+	payload := NodePlacedPayload{
+		TreeID:     "tree1",
+		UserID:     "user-child",
+		ParentID:   "nonexistent-parent",
+		SponsorID:  "nonexistent-parent",
+		EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
+	}
+	event := makeEvent(EventTypeNodePlaced, payload)
+
+	err := consumer.HandleEvent(context.Background(), event)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parent node nonexistent-parent not found")
+	assert.Empty(t, transport.calls, "engine should not be called when parent is missing")
+}
+
+func TestTreeConsumer_ContextCancellation(t *testing.T) {
+	store := NewMemoryTreeStore()
+	transport := newFailNTransport(10) // Fail all attempts.
+	engine := NewEngineClientWithTransport(transport)
+	consumer := NewTreeEventConsumer(store, engine)
+	consumer.retryDelay = 500 * time.Millisecond // Slow enough to cancel during wait.
+
+	payload := RootAddedPayload{
+		TreeID:     "tree1",
+		UserID:     "user-root",
+		SponsorID:  "user-root",
+		EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	}
+	event := makeEvent(EventTypeRootAdded, payload)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	// Cancel after a short delay so we interrupt the retry wait.
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	err := consumer.HandleEvent(ctx, event)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cancelled")
+
+	// Should have been interrupted before exhausting all retries.
+	assert.Less(t, len(transport.calls), 3, "should not exhaust all retries when cancelled")
+}
+
 func TestTreeConsumer_UnknownEventType(t *testing.T) {
 	store := NewMemoryTreeStore()
 	transport := newRecordingTransport()

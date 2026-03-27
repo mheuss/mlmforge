@@ -407,6 +407,20 @@ func (c *EngineClient) CalculateUnilevel(ctx context.Context, req CalculateUnile
 	return earnings, nil
 }
 
+// CalculateGeneration runs commission calculation for a generation structure.
+// Sends snapshots and volume to the engine and returns the earnings.
+func (c *EngineClient) CalculateGeneration(ctx context.Context, req CalculateGenerationRequest) ([]CommissionEarningDTO, error) {
+	result, err := c.call(ctx, "calculate_generation", req)
+	if err != nil {
+		return nil, err
+	}
+	var earnings []CommissionEarningDTO
+	if err := json.Unmarshal(result, &earnings); err != nil {
+		return nil, fmt.Errorf("unmarshal earnings: %w", err)
+	}
+	return earnings, nil
+}
+
 // CalculateBinaryPairing runs binary pairing commission calculation.
 // Sends snapshots, volume, and optional carry-forward state to the engine.
 // Returns earnings and updated carry-forward state.

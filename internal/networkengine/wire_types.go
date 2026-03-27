@@ -59,6 +59,14 @@ type CommissionEarningDTO struct {
 	DollarAmount float64 `json:"dollar_amount"`
 }
 
+// CalculateGenerationRequest is the input for generation commission calculation.
+// Wire field "structure" matches the Rust CalculateGenerationParams serde rename.
+type CalculateGenerationRequest struct {
+	StructureName string                            `json:"structure"`
+	Snapshots     map[string]DistributorSnapshotDTO `json:"snapshots"`
+	Volume        []VolumeSourceDTO                 `json:"volume"`
+}
+
 // CalculateBinaryPairingRequest is the input for binary pairing commission calculation.
 // Wire field "structure" matches the Rust CalculateBinaryPairingParams serde rename.
 type CalculateBinaryPairingRequest struct {

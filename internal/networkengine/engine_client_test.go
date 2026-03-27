@@ -716,6 +716,59 @@ func TestEngineClient_CalculateUnilevel_EmptyEarnings(t *testing.T) {
 	assert.Empty(t, earnings)
 }
 
+// --- Generation commission calculation tests (mock) ---
+
+func TestEngineClient_CalculateGeneration_MockParams(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`[{"earner_id":"00000000-0000-0000-0000-000000000001","source_id":"00000000-0000-0000-0000-000000000002","level":1,"rate":0.10,"cv_amount":100.0,"dollar_amount":10.0}]`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	req := CalculateGenerationRequest{
+		StructureName: "GenTree",
+		Snapshots: map[string]DistributorSnapshotDTO{
+			"00000000-0000-0000-0000-000000000001": {
+				Rank:             "director",
+				PersonalVolume:   150.0,
+				Status:           "active",
+				HasOrderInPeriod: true,
+			},
+		},
+		Volume: []VolumeSourceDTO{
+			{SourceID: "00000000-0000-0000-0000-000000000002", CVAmount: 100.0},
+		},
+	}
+
+	earnings, err := client.CalculateGeneration(context.Background(), req)
+	require.NoError(t, err)
+	require.Len(t, earnings, 1)
+
+	assert.Equal(t, "calculate_generation", mock.lastOp)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000001", earnings[0].EarnerID)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000002", earnings[0].SourceID)
+	assert.Equal(t, 1, earnings[0].Level)
+	assert.InDelta(t, 0.10, earnings[0].Rate, 1e-9)
+	assert.InDelta(t, 100.0, earnings[0].CVAmount, 1e-9)
+	assert.InDelta(t, 10.0, earnings[0].DollarAmount, 1e-9)
+}
+
+func TestEngineClient_CalculateGeneration_EmptyEarnings(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`[]`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	req := CalculateGenerationRequest{
+		StructureName: "GenTree",
+		Snapshots:     map[string]DistributorSnapshotDTO{},
+		Volume:        []VolumeSourceDTO{},
+	}
+
+	earnings, err := client.CalculateGeneration(context.Background(), req)
+	require.NoError(t, err)
+	assert.Empty(t, earnings)
+}
+
 // --- Commission calculation integration test (real binary) ---
 
 // testPlanJSON is a minimal compensation plan that matches the Rust

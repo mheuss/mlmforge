@@ -15,6 +15,7 @@ pub(crate) mod test_helpers;
 
 pub use binary::calculate_binary_pairing;
 pub use board_plan::calculate_board_commissions;
+pub use generation::calculate_generation;
 pub use matrix::calculate_matrix;
 pub use stairstep::calculate_stairstep;
 pub use streamline::calculate_streamline;

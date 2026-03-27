@@ -53,6 +53,20 @@ pub struct GenerationCommissionConfig {
     /// Per-structure CV override. None uses the plan-level multiplier
     /// from `VolumeConfig`.
     pub volume_to_dollar_multiplier: Option<f64>,
+
+    /// Whether ineligible boundary-rank distributors still create generation
+    /// boundaries.
+    ///
+    /// When true (default): rank defines structure, eligibility defines payout.
+    /// An inactive Director still separates Gen 1 from Gen 2, but doesn't earn.
+    /// When false: ineligible boundary-rank nodes are invisible to the generation
+    /// walk. Their boundary behavior is governed by `empty_generation_consumes_number`.
+    #[serde(default = "default_ineligible_creates_boundary")]
+    pub ineligible_creates_boundary: bool,
+}
+
+fn default_ineligible_creates_boundary() -> bool {
+    true
 }
 
 /// How generation boundaries are determined.
@@ -112,6 +126,7 @@ mod tests {
         assert_eq!(config.boundary_rank, "director");
         assert!(config.empty_generation_consumes_number);
         assert_eq!(config.volume_to_dollar_multiplier, Some(1.25));
+        assert!(config.ineligible_creates_boundary);
     }
 
     #[test]
@@ -141,6 +156,7 @@ mod tests {
         assert_eq!(config.boundary_rank, "ignored_in_same_rank_mode");
         assert!(!config.empty_generation_consumes_number);
         assert!(config.volume_to_dollar_multiplier.is_none());
+        assert!(config.ineligible_creates_boundary);
     }
 
     #[test]
@@ -168,6 +184,7 @@ mod tests {
         }"#;
         let config: GenerationCommissionConfig = serde_json::from_str(json_true).unwrap();
         assert!(config.empty_generation_consumes_number);
+        assert!(config.ineligible_creates_boundary);
 
         let json_false = r#"{
             "max_generations": 2,
@@ -181,5 +198,35 @@ mod tests {
         }"#;
         let config: GenerationCommissionConfig = serde_json::from_str(json_false).unwrap();
         assert!(!config.empty_generation_consumes_number);
+        assert!(config.ineligible_creates_boundary);
+    }
+
+    #[test]
+    fn ineligible_creates_boundary_defaults_to_true() {
+        let json = r#"{
+            "max_generations": 2,
+            "generation_rates": { "1": 0.05 },
+            "boundary_mode": "threshold_rank",
+            "boundary_rank": "director",
+            "empty_generation_consumes_number": false,
+            "volume_to_dollar_multiplier": null
+        }"#;
+        let config: GenerationCommissionConfig = serde_json::from_str(json).unwrap();
+        assert!(config.ineligible_creates_boundary);
+    }
+
+    #[test]
+    fn ineligible_creates_boundary_explicit_false() {
+        let json = r#"{
+            "max_generations": 2,
+            "generation_rates": { "1": 0.05 },
+            "boundary_mode": "threshold_rank",
+            "boundary_rank": "director",
+            "empty_generation_consumes_number": false,
+            "volume_to_dollar_multiplier": null,
+            "ineligible_creates_boundary": false
+        }"#;
+        let config: GenerationCommissionConfig = serde_json::from_str(json).unwrap();
+        assert!(!config.ineligible_creates_boundary);
     }
 }

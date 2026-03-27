@@ -157,6 +157,41 @@ pub fn calculate_generation(
 
     let mut earnings = Vec::new();
 
+    // Optional level commissions. When enabled, these run alongside
+    // generation commissions on the same volume. Level earnings use
+    // broad_commission_percent; generation earnings do not.
+    if structure.level_commissions_enabled {
+        if let Some(ref lc) = structure.level_commission {
+            let lc_multiplier = lc
+                .volume_to_dollar_multiplier
+                .unwrap_or(plan.volume.volume_to_dollar_multiplier);
+            let threshold_ordinal =
+                walk::resolve_threshold_ordinal(structure.compression.as_ref(), &rank_ordinals);
+
+            let level_config = walk::LevelWalkConfig {
+                max_depth: lc.max_depth,
+                broad_pct: lc.broad_commission_percent,
+                multiplier: lc_multiplier,
+                compression: structure.compression.as_ref(),
+                threshold_ordinal,
+                rank_ordinals: &rank_ordinals,
+                rate_table: &lc.rate_table,
+                pass_up: None,
+                dynamic_thresholds: None,
+            };
+
+            let level_earnings = walk::walk_level_commissions(
+                tree,
+                &level_config,
+                &eligibility_cache,
+                snapshots,
+                volume,
+                |_| false, // no breakaway boundaries in generation plans
+            )?;
+            earnings.extend(level_earnings);
+        }
+    }
+
     match gen_config.boundary_mode {
         GenerationBoundaryMode::ThresholdRank => {
             // Resolve boundary rank ordinal. If the boundary rank doesn't
@@ -499,6 +534,7 @@ mod calculate_tests {
         build_test_plan, default_eligibility, eligible_snapshot, uuid_from_index as uuid,
     };
     use crate::commission::types::{CalculationError, DistributorSnapshot, VolumeSource};
+    use crate::config::commission::LevelCommissionConfig;
     use crate::config::generation::{GenerationBoundaryMode, GenerationCommissionConfig};
     use crate::config::rank::{DemotionPolicy, RankDefinition, RankQualification};
     use crate::config::{GenerationStructureConfig, StructureConfig};
@@ -968,6 +1004,141 @@ mod calculate_tests {
         assert_eq!(earn_mid.level, 1);
         let earn_root = result.iter().find(|e| e.earner_id == uuid(0)).unwrap();
         assert_eq!(earn_root.level, 2);
+    }
+
+    // -- Combined level + generation tests --
+
+    /// Tree: root(Dir) -> mid(Assoc) -> leaf(Assoc, source).
+    /// level_commissions_enabled = true with max_depth=3, broad_pct=0.40.
+    /// gen rate: gen1=0.10. level rate: associate level1=0.05, level2=0.08.
+    /// Volume = 100 CV, multiplier = 1.0.
+    ///
+    /// Level earnings: mid earns level 1 (100 * 0.40 * 1.0 * 0.05 = 2.0),
+    ///   root earns level 2 (100 * 0.40 * 1.0 * 0.08 = 3.2).
+    /// Generation earnings: root earns gen 1 (100 * 1.0 * 0.10 = 10.0).
+    #[test]
+    fn combined_level_and_generation() {
+        let tree = build_chain(3);
+
+        let level_config = LevelCommissionConfig {
+            broad_commission_percent: 0.40,
+            volume_to_dollar_multiplier: None,
+            max_depth: 3,
+            rate_table: BTreeMap::from([
+                (
+                    "associate".to_string(),
+                    BTreeMap::from([(1, 0.05), (2, 0.08)]),
+                ),
+                (
+                    "director".to_string(),
+                    BTreeMap::from([(1, 0.05), (2, 0.08)]),
+                ),
+            ]),
+        };
+
+        let structure = GenerationStructureConfig {
+            name: "Generation".to_string(),
+            level_commission: Some(level_config),
+            compression: None,
+            generation_commission: GenerationCommissionConfig {
+                max_generations: 3,
+                rates: BTreeMap::from([(1, 0.10)]),
+                boundary_mode: GenerationBoundaryMode::ThresholdRank,
+                boundary_rank: "director".to_string(),
+                empty_generation_consumes_number: false,
+                volume_to_dollar_multiplier: None,
+                ineligible_creates_boundary: true,
+            },
+            level_commissions_enabled: true,
+        };
+
+        let plan_structure = StructureConfig::Generation(structure.clone());
+        let mut plan = build_test_plan(default_eligibility(), plan_structure, "Generation");
+        plan.ranks = vec![
+            RankDefinition {
+                name: "associate".to_string(),
+                ordinal: 1,
+                qualification: RankQualification {
+                    structures: vec![],
+                    required_products: vec![],
+                },
+                qualified_structures: vec!["Generation".to_string()],
+                demotion_policy: DemotionPolicy::PromotionOnly,
+            },
+            RankDefinition {
+                name: "director".to_string(),
+                ordinal: 2,
+                qualification: RankQualification {
+                    structures: vec![],
+                    required_products: vec![],
+                },
+                qualified_structures: vec!["Generation".to_string()],
+                demotion_policy: DemotionPolicy::PromotionOnly,
+            },
+        ];
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), director_snapshot());
+        snapshots.insert(uuid(1), eligible_snapshot()); // associate
+        snapshots.insert(uuid(2), eligible_snapshot()); // associate (leaf)
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // Level earnings (2) + generation earnings (1) = 3 total
+        assert_eq!(result.len(), 3);
+
+        // mid: level 1 from walk = 100 * 0.40 * 1.0 * 0.05 = 2.0
+        let mid_level = result
+            .iter()
+            .find(|e| e.earner_id == uuid(1) && e.rate == 0.05)
+            .unwrap();
+        assert!((mid_level.dollar_amount - 2.0).abs() < f64::EPSILON);
+
+        // root: level 2 from walk = 100 * 0.40 * 1.0 * 0.08 = 3.2
+        let root_level = result
+            .iter()
+            .find(|e| e.earner_id == uuid(0) && e.rate == 0.08)
+            .unwrap();
+        assert!((root_level.dollar_amount - 3.2).abs() < f64::EPSILON);
+
+        // root: gen 1 = 100 * 1.0 * 0.10 = 10.0
+        let root_gen = result
+            .iter()
+            .find(|e| e.earner_id == uuid(0) && e.rate == 0.10)
+            .unwrap();
+        assert!((root_gen.dollar_amount - 10.0).abs() < f64::EPSILON);
+    }
+
+    /// Same tree, but level_commissions_enabled = false.
+    /// Only generation earnings should appear.
+    #[test]
+    fn generation_only_level_disabled() {
+        let tree = build_chain(3);
+        let plan = two_rank_plan();
+        let structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
+        // level_commissions_enabled defaults to false in threshold_structure
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), director_snapshot());
+        snapshots.insert(uuid(1), eligible_snapshot());
+        snapshots.insert(uuid(2), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // Only generation earning: root gen 1
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].earner_id, uuid(0));
+        assert_eq!(result[0].level, 1);
     }
 
     // -- SameRank mode helpers and tests --

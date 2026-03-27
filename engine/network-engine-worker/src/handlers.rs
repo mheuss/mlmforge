@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use network_engine::board_plan::BoardPlanEngine;
 use network_engine::commission::{
     DistributorSnapshot, LegVolumes, VolumeSource, calculate_binary_pairing,
-    calculate_board_commissions, calculate_streamline, calculate_unilevel,
+    calculate_board_commissions, calculate_generation, calculate_streamline, calculate_unilevel,
 };
 use network_engine::config::board_plan::BoardPlanConfig;
 use network_engine::config::matrix::SpilloverDirection;
@@ -1062,6 +1062,79 @@ pub fn handle_calculate_unilevel(state: &WorkerState, request: &Request) -> Resp
     };
 
     match calculate_unilevel(tree, plan, structure, &params.snapshots, &params.volume) {
+        Ok(earnings) => Response::success(
+            request.id.clone(),
+            serde_json::to_value(&earnings)
+                .expect("serialization of Vec<CommissionEarning> is infallible"),
+        ),
+        Err(e) => Response::error(request.id.clone(), "CALCULATION_ERROR", e.to_string()),
+    }
+}
+
+/// Request parameters for calculating generation commissions.
+#[derive(serde::Deserialize)]
+struct CalculateGenerationParams {
+    #[serde(rename = "structure")]
+    structure_name: String,
+    snapshots: HashMap<Uuid, DistributorSnapshot>,
+    volume: Vec<VolumeSource>,
+}
+
+pub fn handle_calculate_generation(state: &WorkerState, request: &Request) -> Response {
+    let plan = match &state.plan {
+        Some(p) => p,
+        None => return Response::error(request.id.clone(), "NO_PLAN", "no plan loaded"),
+    };
+
+    let params: CalculateGenerationParams = match serde_json::from_str(request.params.get()) {
+        Ok(p) => p,
+        Err(e) => {
+            return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string());
+        }
+    };
+
+    // Look up the named tree and verify it is a unilevel tree.
+    let tree_instance = match state.trees.get(&params.structure_name) {
+        Some(t) => t,
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "STRUCTURE_NOT_FOUND",
+                format!("no tree named '{}'", params.structure_name),
+            );
+        }
+    };
+    let tree = match tree_instance {
+        TreeInstance::Unilevel(t) => t,
+        _ => {
+            return Response::error(
+                request.id.clone(),
+                "INVALID_PARAMS",
+                format!(
+                    "structure '{}' is not a unilevel tree; calculate_generation requires one",
+                    params.structure_name
+                ),
+            );
+        }
+    };
+
+    // Find the matching generation structure config by name.
+    let structure = plan.structures.iter().find_map(|s| match s {
+        StructureConfig::Generation(g) if g.name == params.structure_name => Some(g),
+        _ => None,
+    });
+    let structure = match structure {
+        Some(s) => s,
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "STRUCTURE_NOT_FOUND",
+                format!("no generation structure named '{}'", params.structure_name),
+            );
+        }
+    };
+
+    match calculate_generation(tree, plan, structure, &params.snapshots, &params.volume) {
         Ok(earnings) => Response::success(
             request.id.clone(),
             serde_json::to_value(&earnings)

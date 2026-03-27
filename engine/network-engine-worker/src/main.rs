@@ -35,6 +35,7 @@ fn dispatch(state: &mut WorkerState, request: &Request) -> Response {
         // Commission calculations
         "calculate_unilevel" => handlers::handle_calculate_unilevel(state, request),
         "calculate_binary_pairing" => handlers::handle_calculate_binary_pairing(state, request),
+        "calculate_generation" => handlers::handle_calculate_generation(state, request),
         // Board plan operations
         "create_board_plan" => handlers::handle_create_board_plan(state, request),
         "board_add_member" => handlers::handle_board_add_member(state, request),

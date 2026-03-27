@@ -87,6 +87,26 @@ When two boundary-rank leaders are direct parent-child with no one between them,
 
 **Skip (false):** Empty generations do not advance the counter. Deeper volumes stay at higher-paying tiers. Rewards deep building regardless of leader clustering.
 
+### Ineligible Boundary Behavior
+
+| Option | Type | Default | What it controls |
+|--------|------|---------|-----------------|
+| **Ineligible creates boundary** | boolean | true | Whether ineligible boundary-rank distributors still create generation boundaries. |
+
+When true (default): rank defines structure, eligibility defines payout. An inactive Director still separates Generation 1 from Generation 2 but does not earn. The generation structure is stable across periods regardless of who is active.
+
+When false: ineligible boundary-rank nodes are invisible to the generation walk. Their boundary behavior is then governed by `empty_generation_consumes_number`.
+
+**Interaction with empty generation handling:**
+
+| ineligible_creates_boundary | empty_generation_consumes_number | Ineligible boundary-rank node behavior |
+|---|---|---|
+| true | (irrelevant) | Creates boundary, does not earn. Structure is stable. |
+| false | false | Invisible. No boundary created, no generation consumed. |
+| false | true | Fails boundary check but consumes a generation number. Deeper earners shift to lower-paying tiers. |
+
+The two flags compose. When `ineligible_creates_boundary` is true, the `empty_generation_consumes_number` flag never fires because all boundary-rank nodes pass the boundary check (eligibility filtering happens at earning time, not boundary detection time).
+
 ### Combined Level and Generation Mode
 
 Many generation plans pay BOTH level commissions and generation overrides on the same volume events.

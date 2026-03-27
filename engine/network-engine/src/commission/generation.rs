@@ -207,7 +207,11 @@ pub fn calculate_generation(
                          no generation commissions will be paid",
                         gen_config.boundary_rank
                     );
-                    return Ok(Vec::new());
+                    // Return any level earnings already collected. Don't
+                    // discard them just because the generation boundary
+                    // rank is misconfigured.
+                    walk::sort_earnings(&mut earnings);
+                    return Ok(earnings);
                 }
             };
 
@@ -1139,6 +1143,77 @@ mod calculate_tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].earner_id, uuid(0));
         assert_eq!(result[0].level, 1);
+    }
+
+    /// Combined level + generation with an invalid generation boundary_rank.
+    /// Level earnings should still be returned even though generation
+    /// commissions can't be calculated.
+    #[test]
+    fn missing_boundary_rank_preserves_level_earnings() {
+        let tree = build_chain(3);
+
+        let level_config = LevelCommissionConfig {
+            broad_commission_percent: 0.40,
+            volume_to_dollar_multiplier: None,
+            max_depth: 3,
+            rate_table: BTreeMap::from([(
+                "associate".to_string(),
+                BTreeMap::from([(1, 0.05), (2, 0.08)]),
+            )]),
+        };
+
+        let structure = GenerationStructureConfig {
+            name: "Generation".to_string(),
+            level_commission: Some(level_config),
+            compression: None,
+            generation_commission: GenerationCommissionConfig {
+                max_generations: 3,
+                rates: BTreeMap::from([(1, 0.10)]),
+                boundary_mode: GenerationBoundaryMode::ThresholdRank,
+                boundary_rank: "nonexistent_rank".to_string(),
+                empty_generation_consumes_number: false,
+                volume_to_dollar_multiplier: None,
+                ineligible_creates_boundary: true,
+            },
+            level_commissions_enabled: true,
+        };
+
+        let plan_structure = StructureConfig::Generation(structure.clone());
+        let mut plan = build_test_plan(default_eligibility(), plan_structure, "Generation");
+        plan.ranks = vec![RankDefinition {
+            name: "associate".to_string(),
+            ordinal: 1,
+            qualification: RankQualification {
+                structures: vec![],
+                required_products: vec![],
+            },
+            qualified_structures: vec!["Generation".to_string()],
+            demotion_policy: DemotionPolicy::PromotionOnly,
+        }];
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), eligible_snapshot());
+        snapshots.insert(uuid(1), eligible_snapshot());
+        snapshots.insert(uuid(2), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // Level earnings should be preserved despite the invalid boundary_rank.
+        // No generation earnings (boundary_rank not found in plan ranks).
+        assert_eq!(result.len(), 2, "level earnings should be preserved");
+
+        // mid: level 1 = 100 * 0.40 * 1.0 * 0.05 = 2.0
+        let mid = result.iter().find(|e| e.earner_id == uuid(1)).unwrap();
+        assert!((mid.dollar_amount - 2.0).abs() < 1e-10);
+
+        // root: level 2 = 100 * 0.40 * 1.0 * 0.08 = 3.2
+        let root = result.iter().find(|e| e.earner_id == uuid(0)).unwrap();
+        assert!((root.dollar_amount - 3.2).abs() < 1e-10);
     }
 
     // -- SameRank mode helpers and tests --

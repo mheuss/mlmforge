@@ -81,6 +81,50 @@ pub fn count_generations_upward(
     results
 }
 
+/// Convert generation entries into commission earnings, filtering by
+/// eligibility. Shared by ThresholdRank and SameRank modes.
+///
+/// For SameRank mode, callers pre-filter `gen_entries` to earners at
+/// exactly the target ordinal before calling this function.
+fn emit_generation_earnings(
+    gen_entries: &[GenerationEntry],
+    source: &VolumeSource,
+    gen_config: &crate::config::generation::GenerationCommissionConfig,
+    eligibility_cache: &HashMap<Uuid, walk::EligibilityResult>,
+    multiplier: f64,
+    earnings: &mut Vec<CommissionEarning>,
+) {
+    for entry in gen_entries {
+        // Ineligible earners are in the boundary set (they define structure)
+        // but must not earn.
+        let earner_eligible = eligibility_cache
+            .get(&entry.earner_id)
+            .is_some_and(|e| e.eligible);
+        if !earner_eligible {
+            continue;
+        }
+
+        let rate = gen_config
+            .rates
+            .get(&entry.generation)
+            .copied()
+            .unwrap_or(0.0);
+
+        if rate <= 0.0 {
+            continue;
+        }
+
+        earnings.push(CommissionEarning {
+            earner_id: entry.earner_id,
+            source_id: source.source_id,
+            level: entry.generation,
+            rate,
+            cv_amount: source.cv_amount,
+            dollar_amount: source.cv_amount * multiplier * rate,
+        });
+    }
+}
+
 /// Calculate generation commissions for a set of volume events.
 ///
 /// Generation plans pay commissions on generations of qualified leaders,
@@ -111,15 +155,17 @@ pub fn calculate_generation(
         .volume_to_dollar_multiplier
         .unwrap_or(plan.volume.volume_to_dollar_multiplier);
 
-    // Resolve the boundary rank ordinal. If the boundary rank doesn't exist
-    // in the plan's rank ladder, no one can be a boundary and we return empty.
-    let boundary_ordinal = match gen_config.boundary_mode {
+    let mut earnings = Vec::new();
+
+    match gen_config.boundary_mode {
         GenerationBoundaryMode::ThresholdRank => {
-            match rank_ordinals
+            // Resolve boundary rank ordinal. If the boundary rank doesn't
+            // exist in the plan's rank ladder, no one can be a boundary.
+            let threshold = match rank_ordinals
                 .get(gen_config.boundary_rank.as_str())
                 .copied()
             {
-                Some(ord) => Some(ord),
+                Some(ord) => ord,
                 None => {
                     log::warn!(
                         "generation boundary_rank '{}' not found in plan ranks; \
@@ -128,92 +174,115 @@ pub fn calculate_generation(
                     );
                     return Ok(Vec::new());
                 }
+            };
+
+            let boundary_set: HashSet<Uuid> = snapshots
+                .iter()
+                .filter(|(_, snap)| {
+                    rank_ordinals.get(snap.rank.as_str()).copied().unwrap_or(0) >= threshold
+                })
+                .map(|(id, _)| *id)
+                .collect();
+
+            let boundary_check: Box<dyn Fn(Uuid) -> bool + '_> =
+                if gen_config.ineligible_creates_boundary {
+                    Box::new(|_| true)
+                } else {
+                    Box::new(|id: Uuid| eligibility_cache.get(&id).is_some_and(|e| e.eligible))
+                };
+
+            for source in volume {
+                walk::validate_cv(source)?;
+                tree.get_upline(source.source_id, 0)
+                    .map_err(|_| CalculationError::SourceNotInTree(source.source_id))?;
+
+                let gen_entries = count_generations_upward(
+                    tree,
+                    source.source_id,
+                    &boundary_set,
+                    &boundary_check,
+                    gen_config.max_generations,
+                    gen_config.empty_generation_consumes_number,
+                );
+
+                emit_generation_earnings(
+                    &gen_entries,
+                    source,
+                    gen_config,
+                    &eligibility_cache,
+                    multiplier,
+                    &mut earnings,
+                );
             }
         }
-        // SameRank mode resolves per-earner, handled in Task 4.
-        // Returns no earnings until implemented.
+
         GenerationBoundaryMode::SameRank => {
-            log::warn!(
-                "SameRank boundary mode is not yet implemented; \
-                 no generation commissions will be paid for structure '{}'",
-                structure.name
-            );
-            None
-        }
-    };
+            // Collect unique rank ordinals from all snapshots. Each ordinal
+            // gets its own boundary set and walk pass.
+            let mut unique_ordinals: Vec<u16> = snapshots
+                .values()
+                .filter_map(|snap| rank_ordinals.get(snap.rank.as_str()).copied())
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect();
+            unique_ordinals.sort_unstable();
 
-    // Build boundary set: nodes whose rank ordinal meets or exceeds the
-    // boundary threshold. For ThresholdRank, this is computed once for all
-    // volume sources. For SameRank, this would be per-earner (future task).
-    let boundary_set: HashSet<Uuid> = if let Some(threshold) = boundary_ordinal {
-        snapshots
-            .iter()
-            .filter(|(_, snap)| {
-                rank_ordinals.get(snap.rank.as_str()).copied().unwrap_or(0) >= threshold
-            })
-            .map(|(id, _)| *id)
-            .collect()
-    } else {
-        HashSet::new()
-    };
-
-    // Build boundary_check closure. When ineligible_creates_boundary is true,
-    // all boundary-rank nodes count as boundaries (they're filtered at earning
-    // time). When false, only eligible boundary-rank nodes create boundaries.
-    let boundary_check: Box<dyn Fn(Uuid) -> bool + '_> = if gen_config.ineligible_creates_boundary {
-        Box::new(|_| true)
-    } else {
-        Box::new(|id: Uuid| eligibility_cache.get(&id).is_some_and(|e| e.eligible))
-    };
-
-    let mut earnings = Vec::new();
-
-    for source in volume {
-        walk::validate_cv(source)?;
-
-        // Verify the source exists in the tree. get_upline returns Err
-        // for unknown nodes. For the root (no parents), it returns Ok
-        // with an empty Vec, so this check is safe.
-        tree.get_upline(source.source_id, 0)
-            .map_err(|_| CalculationError::SourceNotInTree(source.source_id))?;
-
-        let gen_entries = count_generations_upward(
-            tree,
-            source.source_id,
-            &boundary_set,
-            &boundary_check,
-            gen_config.max_generations,
-            gen_config.empty_generation_consumes_number,
-        );
-
-        for entry in &gen_entries {
-            // When ineligible_creates_boundary is true, ineligible earners
-            // are in the boundary set but must be filtered at earning time.
-            let earner_eligible = eligibility_cache
-                .get(&entry.earner_id)
-                .is_some_and(|e| e.eligible);
-            if !earner_eligible {
-                continue;
+            // Validate sources once before the per-ordinal loops.
+            for source in volume {
+                walk::validate_cv(source)?;
+                tree.get_upline(source.source_id, 0)
+                    .map_err(|_| CalculationError::SourceNotInTree(source.source_id))?;
             }
 
-            let rate = gen_config
-                .rates
-                .get(&entry.generation)
-                .copied()
-                .unwrap_or(0.0);
+            for &ordinal in &unique_ordinals {
+                // Boundary set for this rank level: all nodes at or above ordinal.
+                let boundary_set: HashSet<Uuid> = snapshots
+                    .iter()
+                    .filter(|(_, snap)| {
+                        rank_ordinals.get(snap.rank.as_str()).copied().unwrap_or(0) >= ordinal
+                    })
+                    .map(|(id, _)| *id)
+                    .collect();
 
-            if rate <= 0.0 {
-                continue;
+                let boundary_check: Box<dyn Fn(Uuid) -> bool + '_> =
+                    if gen_config.ineligible_creates_boundary {
+                        Box::new(|_| true)
+                    } else {
+                        Box::new(|id: Uuid| eligibility_cache.get(&id).is_some_and(|e| e.eligible))
+                    };
+
+                for source in volume {
+                    let gen_entries = count_generations_upward(
+                        tree,
+                        source.source_id,
+                        &boundary_set,
+                        &boundary_check,
+                        gen_config.max_generations,
+                        gen_config.empty_generation_consumes_number,
+                    );
+
+                    // Pre-filter to earners at exactly this rank ordinal.
+                    let filtered: Vec<_> = gen_entries
+                        .into_iter()
+                        .filter(|entry| {
+                            snapshots
+                                .get(&entry.earner_id)
+                                .and_then(|snap| rank_ordinals.get(snap.rank.as_str()).copied())
+                                .unwrap_or(0)
+                                == ordinal
+                        })
+                        .collect();
+
+                    emit_generation_earnings(
+                        &filtered,
+                        source,
+                        gen_config,
+                        &eligibility_cache,
+                        multiplier,
+                        &mut earnings,
+                    );
+                }
             }
-
-            earnings.push(CommissionEarning {
-                earner_id: entry.earner_id,
-                source_id: source.source_id,
-                level: entry.generation,
-                rate,
-                cv_amount: source.cv_amount,
-                dollar_amount: source.cv_amount * multiplier * rate,
-            });
         }
     }
 
@@ -752,5 +821,174 @@ mod calculate_tests {
 
         let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume);
         assert!(matches!(result, Err(CalculationError::InvalidCvAmount(..))));
+    }
+
+    // -- SameRank mode helpers and tests --
+
+    fn same_rank_structure(
+        max_generations: u8,
+        rates: BTreeMap<u8, f64>,
+    ) -> GenerationStructureConfig {
+        GenerationStructureConfig {
+            name: "Generation".to_string(),
+            level_commission: None,
+            compression: None,
+            generation_commission: GenerationCommissionConfig {
+                max_generations,
+                rates,
+                boundary_mode: GenerationBoundaryMode::SameRank,
+                boundary_rank: String::new(),
+                empty_generation_consumes_number: false,
+                volume_to_dollar_multiplier: None,
+                ineligible_creates_boundary: true,
+            },
+            level_commissions_enabled: false,
+        }
+    }
+
+    fn three_rank_plan(structure: GenerationStructureConfig) -> crate::config::CompensationPlan {
+        let structure_config = StructureConfig::Generation(structure);
+        let mut plan = build_test_plan(default_eligibility(), structure_config, "Generation");
+        plan.ranks = vec![
+            RankDefinition {
+                name: "associate".to_string(),
+                ordinal: 1,
+                qualification: RankQualification {
+                    structures: vec![],
+                    required_products: vec![],
+                },
+                qualified_structures: vec!["Generation".to_string()],
+                demotion_policy: DemotionPolicy::PromotionOnly,
+            },
+            RankDefinition {
+                name: "gold".to_string(),
+                ordinal: 2,
+                qualification: RankQualification {
+                    structures: vec![],
+                    required_products: vec![],
+                },
+                qualified_structures: vec!["Generation".to_string()],
+                demotion_policy: DemotionPolicy::PromotionOnly,
+            },
+            RankDefinition {
+                name: "diamond".to_string(),
+                ordinal: 3,
+                qualification: RankQualification {
+                    structures: vec![],
+                    required_products: vec![],
+                },
+                qualified_structures: vec!["Generation".to_string()],
+                demotion_policy: DemotionPolicy::PromotionOnly,
+            },
+        ];
+        plan
+    }
+
+    fn gold_snapshot() -> DistributorSnapshot {
+        DistributorSnapshot {
+            rank: "gold".to_string(),
+            personal_volume: 150.0,
+            status: "active".to_string(),
+            has_order_in_period: true,
+        }
+    }
+
+    fn diamond_snapshot() -> DistributorSnapshot {
+        DistributorSnapshot {
+            rank: "diamond".to_string(),
+            personal_volume: 150.0,
+            status: "active".to_string(),
+            has_order_in_period: true,
+        }
+    }
+
+    /// Tree: root(Diamond/3) -> mid(Gold/2) -> low(Associate/1) -> leaf(Associate, source).
+    /// SameRank mode. Each earner's own rank determines boundaries.
+    ///
+    /// Associate walk (ordinal 1): everyone is a boundary. low=gen1.
+    /// Gold walk (ordinal 2): {root,mid} are boundaries. mid=gen1.
+    /// Diamond walk (ordinal 3): {root} is a boundary. root=gen1.
+    #[test]
+    fn same_rank_mode_different_earner_ranks() {
+        let tree = build_chain(4);
+        let rates = BTreeMap::from([(1, 0.10), (2, 0.05), (3, 0.03)]);
+        let structure = same_rank_structure(5, rates);
+        let plan = three_rank_plan(structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), diamond_snapshot());
+        snapshots.insert(uuid(1), gold_snapshot());
+        snapshots.insert(uuid(2), eligible_snapshot());
+        snapshots.insert(uuid(3), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        assert_eq!(result.len(), 3);
+
+        let earn_low = result.iter().find(|e| e.earner_id == uuid(2)).unwrap();
+        assert_eq!(earn_low.level, 1);
+        assert_eq!(earn_low.rate, 0.10);
+        assert!((earn_low.dollar_amount - 10.0).abs() < f64::EPSILON);
+
+        let earn_mid = result.iter().find(|e| e.earner_id == uuid(1)).unwrap();
+        assert_eq!(earn_mid.level, 1);
+        assert_eq!(earn_mid.rate, 0.10);
+        assert!((earn_mid.dollar_amount - 10.0).abs() < f64::EPSILON);
+
+        let earn_root = result.iter().find(|e| e.earner_id == uuid(0)).unwrap();
+        assert_eq!(earn_root.level, 1);
+        assert_eq!(earn_root.rate, 0.10);
+        assert!((earn_root.dollar_amount - 10.0).abs() < f64::EPSILON);
+    }
+
+    /// Tree: root(Diamond) -> g1(Gold) -> g2(Gold) -> low(Associate) -> leaf(source).
+    /// SameRank mode. Higher-ranked earners see fewer boundaries.
+    ///
+    /// Gold walk: g2=gen1, g1=gen2 (two Gold+ boundaries).
+    /// Diamond walk: root=gen1 (one Diamond+ boundary).
+    #[test]
+    fn same_rank_higher_rank_sees_fewer_boundaries() {
+        let tree = build_chain(5);
+        let rates = BTreeMap::from([(1, 0.10), (2, 0.05), (3, 0.03)]);
+        let structure = same_rank_structure(5, rates);
+        let plan = three_rank_plan(structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), diamond_snapshot());
+        snapshots.insert(uuid(1), gold_snapshot());
+        snapshots.insert(uuid(2), gold_snapshot());
+        snapshots.insert(uuid(3), eligible_snapshot());
+        snapshots.insert(uuid(4), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(4),
+            cv_amount: 200.0,
+        }];
+
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // g2 (Gold): gen 1 — first Gold+ boundary above source
+        let earn_g2 = result.iter().find(|e| e.earner_id == uuid(2)).unwrap();
+        assert_eq!(earn_g2.level, 1);
+        assert_eq!(earn_g2.rate, 0.10);
+
+        // g1 (Gold): gen 2 — second Gold+ boundary above source
+        let earn_g1 = result.iter().find(|e| e.earner_id == uuid(1)).unwrap();
+        assert_eq!(earn_g1.level, 2);
+        assert_eq!(earn_g1.rate, 0.05);
+
+        // root (Diamond): gen 1 — only Diamond+ boundary
+        let earn_root = result.iter().find(|e| e.earner_id == uuid(0)).unwrap();
+        assert_eq!(earn_root.level, 1);
+        assert_eq!(earn_root.rate, 0.10);
+
+        // low (Associate): gen 1 — first Associate+ boundary above source
+        let earn_low = result.iter().find(|e| e.earner_id == uuid(3)).unwrap();
+        assert_eq!(earn_low.level, 1);
     }
 }

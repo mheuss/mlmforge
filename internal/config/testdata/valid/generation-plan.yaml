@@ -93,6 +93,7 @@ structures:
         boundary_mode: threshold_rank
         boundary_rank: Executive
         empty_generation_consumes_number: true
+        ineligible_creates_boundary: true
 
 bonuses:
   matching: null

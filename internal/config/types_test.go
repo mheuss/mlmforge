@@ -302,6 +302,7 @@ structures:
         boundary_mode: threshold_rank
         boundary_rank: Executive
         empty_generation_consumes_number: true
+        ineligible_creates_boundary: true
 bonuses: {}
 payout: {base_currency: USD, minimum_amount: 50, methods: [{type: bank_transfer, fee: 2.50}]}
 caps: {company_payout_cap_percent: 0.42, cap_enforcement: pro_rata}
@@ -319,6 +320,8 @@ placement: {donated_placement_enabled: false}
 	assert.Equal(t, "threshold_rank", c.Generation.BoundaryMode)
 	assert.Equal(t, "Executive", c.Generation.BoundaryRank)
 	assert.True(t, c.Generation.EmptyGenerationConsumesNumber)
+	require.NotNil(t, c.Generation.IneligibleCreatesBoundary)
+	assert.True(t, *c.Generation.IneligibleCreatesBoundary)
 	assert.Equal(t, 0.05, c.Generation.GenerationRates["1"])
 	assert.Equal(t, 0.04, c.Generation.GenerationRates["2"])
 }

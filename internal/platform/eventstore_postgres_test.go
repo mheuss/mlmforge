@@ -24,14 +24,17 @@ func newTestPostgresStore(t *testing.T) *PostgresEventStore {
 	require.NoError(t, err)
 	t.Cleanup(func() { pool.Close() })
 
-	// Drop and recreate for a clean slate.
-	_, err = pool.Exec(ctx, "DROP TABLE IF EXISTS events")
+	// Drop existing tables and apply migrations for a clean slate.
+	_, _ = pool.Exec(ctx, "DROP TABLE IF EXISTS schema_migrations, tree_nodes, events")
+	cleanup := runMigrationsForTest(t, dsn)
+	t.Cleanup(cleanup)
+
+	// Truncate events for test isolation (migrations create the table,
+	// but previous test data may linger within the same migration cycle).
+	_, err = pool.Exec(ctx, "TRUNCATE events RESTART IDENTITY")
 	require.NoError(t, err)
 
-	store := NewPostgresEventStore(pool)
-	require.NoError(t, store.CreateSchema(ctx))
-
-	return store
+	return NewPostgresEventStore(pool)
 }
 
 func TestPostgresEventStore_AppendAndReadBack(t *testing.T) {
@@ -155,12 +158,24 @@ func TestPostgresEventStore_MultipleEventsAtomicAppend(t *testing.T) {
 	assert.Equal(t, int64(2), got[1].Version)
 }
 
-func TestPostgresEventStore_CreateSchemaIdempotent(t *testing.T) {
-	store := newTestPostgresStore(t)
-	ctx := context.Background()
+func TestMigrateUpIdempotent(t *testing.T) {
+	dsn := os.Getenv("EVENTSTORE_TEST_DSN")
+	if dsn == "" {
+		t.Skip("EVENTSTORE_TEST_DSN not set, skipping migration tests")
+	}
 
-	// CreateSchema was already called in newTestPostgresStore.
-	// Calling it again should not error.
-	err := store.CreateSchema(ctx)
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { pool.Close() })
+
+	_, _ = pool.Exec(ctx, "DROP TABLE IF EXISTS schema_migrations, tree_nodes, events")
+
+	cleanup := runMigrationsForTest(t, dsn)
+	defer cleanup()
+
+	// Running MigrateUp again should not error (ErrNoChange is swallowed).
+	migrationsPath := findMigrationsDir(t)
+	err = MigrateUp(dsn, migrationsPath)
 	require.NoError(t, err)
 }

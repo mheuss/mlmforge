@@ -823,6 +823,153 @@ mod calculate_tests {
         assert!(matches!(result, Err(CalculationError::InvalidCvAmount(..))));
     }
 
+    // -- ineligible_creates_boundary tests --
+
+    fn inactive_director_snapshot() -> DistributorSnapshot {
+        DistributorSnapshot {
+            rank: "director".to_string(),
+            personal_volume: 0.0,
+            status: "inactive".to_string(),
+            has_order_in_period: false,
+        }
+    }
+
+    /// Tree: root(Dir, active) -> mid(Dir, inactive) -> leaf(source).
+    /// ineligible_creates_boundary = true (default).
+    /// mid creates boundary (gen 1) but doesn't earn (ineligible).
+    /// Root earns at gen 2.
+    #[test]
+    fn ineligible_creates_boundary_true() {
+        let tree = build_chain(3);
+        let rates = BTreeMap::from([(1, 0.10), (2, 0.05)]);
+        let plan = two_rank_plan();
+        let structure = threshold_structure("director", 3, rates);
+        // ineligible_creates_boundary defaults to true in threshold_structure
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), director_snapshot());
+        snapshots.insert(uuid(1), inactive_director_snapshot());
+        snapshots.insert(uuid(2), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // mid creates boundary but is filtered at earning time.
+        // Root earns gen 2 (mid consumed gen 1 as structure-only boundary).
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].earner_id, uuid(0));
+        assert_eq!(result[0].level, 2);
+        assert_eq!(result[0].rate, 0.05);
+        assert!((result[0].dollar_amount - 5.0).abs() < f64::EPSILON);
+    }
+
+    /// Tree: root(Dir, active) -> mid(Dir, inactive) -> leaf(source).
+    /// ineligible_creates_boundary = false, empty_consumes = false.
+    /// mid is invisible to the walk. Root earns at gen 1.
+    #[test]
+    fn ineligible_creates_boundary_false() {
+        let tree = build_chain(3);
+        let rates = BTreeMap::from([(1, 0.10), (2, 0.05)]);
+        let plan = two_rank_plan();
+        let mut structure = threshold_structure("director", 3, rates);
+        structure.generation_commission.ineligible_creates_boundary = false;
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), director_snapshot());
+        snapshots.insert(uuid(1), inactive_director_snapshot());
+        snapshots.insert(uuid(2), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // mid fails boundary_check (ineligible) and empty_consumes=false
+        // means no gen number consumed. Root earns gen 1.
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].earner_id, uuid(0));
+        assert_eq!(result[0].level, 1);
+        assert_eq!(result[0].rate, 0.10);
+        assert!((result[0].dollar_amount - 10.0).abs() < f64::EPSILON);
+    }
+
+    /// Tree: root(Dir, active) -> mid(Dir, inactive) -> leaf(source).
+    /// ineligible_creates_boundary = false, empty_consumes = true.
+    /// mid fails boundary_check but consumes a generation number.
+    /// Root earns at gen 2.
+    #[test]
+    fn ineligible_false_empty_consumes_true() {
+        let tree = build_chain(3);
+        let rates = BTreeMap::from([(1, 0.10), (2, 0.05)]);
+        let plan = two_rank_plan();
+        let mut structure = threshold_structure("director", 3, rates);
+        structure.generation_commission.ineligible_creates_boundary = false;
+        structure
+            .generation_commission
+            .empty_generation_consumes_number = true;
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), director_snapshot());
+        snapshots.insert(uuid(1), inactive_director_snapshot());
+        snapshots.insert(uuid(2), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // mid fails check, but empty_consumes=true advances the counter.
+        // Gen 1 consumed by ineligible mid. Root earns gen 2.
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].earner_id, uuid(0));
+        assert_eq!(result[0].level, 2);
+        assert_eq!(result[0].rate, 0.05);
+        assert!((result[0].dollar_amount - 5.0).abs() < f64::EPSILON);
+    }
+
+    /// Tree: root(Dir, active) -> mid(Dir, active) -> leaf(source).
+    /// ineligible_creates_boundary = true, empty_consumes = true.
+    /// Both are eligible, so boundary_check always returns true and
+    /// empty_consumes never triggers. Verifies the flags don't interfere
+    /// when everyone is eligible.
+    #[test]
+    fn empty_consumes_irrelevant_when_all_eligible() {
+        let tree = build_chain(3);
+        let rates = BTreeMap::from([(1, 0.10), (2, 0.05)]);
+        let plan = two_rank_plan();
+        let mut structure = threshold_structure("director", 3, rates);
+        structure
+            .generation_commission
+            .empty_generation_consumes_number = true;
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), director_snapshot());
+        snapshots.insert(uuid(1), director_snapshot());
+        snapshots.insert(uuid(2), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // Both Directors pass boundary_check. mid=gen1, root=gen2.
+        assert_eq!(result.len(), 2);
+        let earn_mid = result.iter().find(|e| e.earner_id == uuid(1)).unwrap();
+        assert_eq!(earn_mid.level, 1);
+        let earn_root = result.iter().find(|e| e.earner_id == uuid(0)).unwrap();
+        assert_eq!(earn_root.level, 2);
+    }
+
     // -- SameRank mode helpers and tests --
 
     fn same_rank_structure(

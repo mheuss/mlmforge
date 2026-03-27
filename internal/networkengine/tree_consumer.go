@@ -84,10 +84,10 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform
 	if err != nil {
 		return fmt.Errorf("get parent node: %w", err)
 	}
-	depth := 0
-	if parent != nil {
-		depth = parent.Depth + 1
+	if parent == nil {
+		return fmt.Errorf("parent node %s not found in tree %s", payload.ParentID, payload.TreeID)
 	}
+	depth := parent.Depth + 1
 
 	node := TreeNodeRow{
 		ID:         event.ID,
@@ -130,15 +130,20 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 	})
 }
 
-// withRetry executes fn with retries. Logs at ERROR level when all retries
-// are exhausted (interim notification path until HEU-296).
-func (c *TreeEventConsumer) withRetry(_ context.Context, op, treeID, userID string, fn func() error) error {
+// withRetry executes fn with retries. Respects context cancellation between
+// attempts. Logs at ERROR level when all retries are exhausted (interim
+// notification path until HEU-296).
+func (c *TreeEventConsumer) withRetry(ctx context.Context, op, treeID, userID string, fn func() error) error {
 	var lastErr error
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
 		if err := fn(); err != nil {
 			lastErr = err
 			if attempt < c.maxRetries {
-				time.Sleep(c.retryDelay)
+				select {
+				case <-ctx.Done():
+					return fmt.Errorf("engine %s cancelled during retry: %w", op, ctx.Err())
+				case <-time.After(c.retryDelay):
+				}
 			}
 			continue
 		}

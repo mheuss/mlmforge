@@ -1282,6 +1282,11 @@
             }
           ],
           "description": "Generation-specific override for the volume-to-dollar multiplier."
+        },
+        "ineligible_creates_boundary": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether ineligible boundary-rank distributors still create generation boundaries. Defaults to true."
         }
       }
     },

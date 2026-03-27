@@ -469,4 +469,39 @@ func TestTranslateStreamlineConfigNilStreams(t *testing.T) {
 	assert.Nil(t, sc["streams"], "streams should be null when stream_config is nil")
 }
 
+// TestTranslateGenerationIneligibleCreatesBoundary verifies that the
+// ineligible_creates_boundary field on GenerationCommissionConfig is
+// included in the translated output.
+func TestTranslateGenerationIneligibleCreatesBoundary(t *testing.T) {
+	plan := minimalPlan()
+	plan.Structures[0].Type = "generation"
+	icb := false
+	plan.Structures[0].resolvedCommission = &GenerationCommission{
+		LevelCommissionsEnabled: false,
+		Generation: GenerationCommissionConfig{
+			MaxGenerations: 3,
+			GenerationRates: map[string]float64{
+				"1": 0.05,
+			},
+			BoundaryMode:                  "threshold_rank",
+			BoundaryRank:                  "Executive",
+			EmptyGenerationConsumesNumber: true,
+			IneligibleCreatesBoundary:     &icb,
+		},
+	}
+
+	out, err := translateToEngine(plan)
+	require.NoError(t, err)
+
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(out, &doc))
+
+	structures := doc["structures"].([]any)
+	s := structures[0].(map[string]any)
+	cfg := s["config"].(map[string]any)
+	gc := cfg["generation_commission"].(map[string]any)
+
+	assert.Equal(t, false, gc["ineligible_creates_boundary"])
+}
+
 func floatPtr(f float64) *float64 { return &f }

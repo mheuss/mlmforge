@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -213,24 +212,24 @@ func TestTreeConsumer_UnknownEventType(t *testing.T) {
 
 // failNTransport fails the first N calls, then succeeds.
 type failNTransport struct {
-	failCount int32
-	maxFails  int32
+	failCount int
+	maxFails  int
 	response  json.RawMessage
 	calls     []transportCall
 }
 
 func newFailNTransport(maxFails int) *failNTransport {
 	return &failNTransport{
-		maxFails: int32(maxFails),
+		maxFails: maxFails,
 		response: json.RawMessage(`{"ok":true}`),
 	}
 }
 
 func (f *failNTransport) Call(_ context.Context, op string, params json.RawMessage) (json.RawMessage, error) {
 	f.calls = append(f.calls, transportCall{op: op, params: params})
-	count := atomic.AddInt32(&f.failCount, 1)
-	if count <= f.maxFails {
-		return nil, fmt.Errorf("simulated engine failure %d", count)
+	f.failCount++
+	if f.failCount <= f.maxFails {
+		return nil, fmt.Errorf("simulated engine failure %d", f.failCount)
 	}
 	return f.response, nil
 }

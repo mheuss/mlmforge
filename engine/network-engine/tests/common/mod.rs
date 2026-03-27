@@ -416,6 +416,94 @@ pub fn build_stairstep_plan_with_eligibility(
     (plan, structure)
 }
 
+// --- Generation plan builder ---
+
+/// Build a generation plan for property and integration tests.
+///
+/// ThresholdRank mode with "director" as boundary rank. Two ranks:
+/// "associate" (ordinal 1) and "director" (ordinal 2). No level
+/// commissions. Eligibility is fully permissive by default.
+pub fn build_generation_plan(
+    max_generations: u8,
+) -> (
+    CompensationPlan,
+    network_engine::config::GenerationStructureConfig,
+) {
+    build_generation_plan_with_eligibility(max_generations, permissive_eligibility())
+}
+
+/// Build a generation plan with custom eligibility.
+pub fn build_generation_plan_with_eligibility(
+    max_generations: u8,
+    eligibility: CommissionEligibility,
+) -> (
+    CompensationPlan,
+    network_engine::config::GenerationStructureConfig,
+) {
+    use network_engine::config::GenerationStructureConfig;
+    use network_engine::config::generation::{GenerationBoundaryMode, GenerationCommissionConfig};
+
+    let mut rates = BTreeMap::new();
+    for g in 1..=max_generations {
+        // Decreasing rates: gen 1 = 0.10, gen 2 = 0.07, gen 3 = 0.05, gen 4 = 0.03
+        let rate = match g {
+            1 => 0.10,
+            2 => 0.07,
+            3 => 0.05,
+            4 => 0.03,
+            _ => 0.02,
+        };
+        rates.insert(g, rate);
+    }
+
+    let structure = GenerationStructureConfig {
+        name: "Generation".to_string(),
+        level_commission: None,
+        compression: None,
+        generation_commission: GenerationCommissionConfig {
+            max_generations,
+            rates,
+            boundary_mode: GenerationBoundaryMode::ThresholdRank,
+            boundary_rank: "director".to_string(),
+            empty_generation_consumes_number: false,
+            volume_to_dollar_multiplier: None,
+            ineligible_creates_boundary: true,
+        },
+        level_commissions_enabled: false,
+    };
+
+    let mut plan = build_base_plan(
+        eligibility,
+        StructureConfig::Generation(structure.clone()),
+        "Generation",
+    );
+
+    plan.ranks = vec![
+        RankDefinition {
+            name: "associate".to_string(),
+            ordinal: 1,
+            qualification: RankQualification {
+                structures: vec![],
+                required_products: vec![],
+            },
+            qualified_structures: vec!["Generation".to_string()],
+            demotion_policy: DemotionPolicy::PromotionOnly,
+        },
+        RankDefinition {
+            name: "director".to_string(),
+            ordinal: 2,
+            qualification: RankQualification {
+                structures: vec![],
+                required_products: vec![],
+            },
+            qualified_structures: vec!["Generation".to_string()],
+            demotion_policy: DemotionPolicy::PromotionOnly,
+        },
+    ];
+
+    (plan, structure)
+}
+
 // --- Matrix plan builder ---
 
 /// Build a matrix plan for property tests.

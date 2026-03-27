@@ -130,8 +130,16 @@ pub fn calculate_generation(
                 }
             }
         }
-        // SameRank mode resolves per-earner, handled in a future task.
-        GenerationBoundaryMode::SameRank => None,
+        // SameRank mode resolves per-earner, handled in Task 4.
+        // Returns no earnings until implemented.
+        GenerationBoundaryMode::SameRank => {
+            log::warn!(
+                "SameRank boundary mode is not yet implemented; \
+                 no generation commissions will be paid for structure '{}'",
+                structure.name
+            );
+            None
+        }
     };
 
     // Build boundary set: nodes whose rank ordinal meets or exceeds the
@@ -421,7 +429,7 @@ mod calculate_tests {
     use crate::commission::test_helpers::{
         build_test_plan, default_eligibility, eligible_snapshot, uuid_from_index as uuid,
     };
-    use crate::commission::types::{DistributorSnapshot, VolumeSource};
+    use crate::commission::types::{CalculationError, DistributorSnapshot, VolumeSource};
     use crate::config::generation::{GenerationBoundaryMode, GenerationCommissionConfig};
     use crate::config::rank::{DemotionPolicy, RankDefinition, RankQualification};
     use crate::config::{GenerationStructureConfig, StructureConfig};
@@ -709,5 +717,40 @@ mod calculate_tests {
 
         // Node 1 should not appear in results.
         assert!(!result.iter().any(|e| e.earner_id == uuid(1)));
+    }
+
+    /// Source not in tree returns CalculationError::SourceNotInTree.
+    #[test]
+    fn source_not_in_tree_returns_error() {
+        let tree = UnilevelTree::new();
+        let plan = two_rank_plan();
+        let structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
+        let snapshots = HashMap::new();
+        let volume = vec![VolumeSource {
+            source_id: uuid(99),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume);
+        assert!(matches!(result, Err(CalculationError::SourceNotInTree(_))));
+    }
+
+    /// Negative CV amount returns CalculationError::InvalidCvAmount.
+    #[test]
+    fn negative_cv_returns_error() {
+        let tree = build_chain(2);
+        let plan = two_rank_plan();
+        let structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), director_snapshot());
+        snapshots.insert(uuid(1), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(1),
+            cv_amount: -50.0,
+        }];
+
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume);
+        assert!(matches!(result, Err(CalculationError::InvalidCvAmount(..))));
     }
 }

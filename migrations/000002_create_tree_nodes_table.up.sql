@@ -15,9 +15,11 @@ CREATE TABLE tree_nodes (
 CREATE UNIQUE INDEX idx_tree_nodes_tree_user ON tree_nodes(tree_id, user_id)
     WHERE removed_at IS NULL;
 
-CREATE INDEX idx_tree_nodes_parent ON tree_nodes(parent_id);
+CREATE INDEX idx_tree_nodes_tree_parent_active ON tree_nodes(tree_id, parent_id)
+    WHERE removed_at IS NULL;
 
-CREATE INDEX idx_tree_nodes_sponsor ON tree_nodes(sponsor_id);
+CREATE INDEX idx_tree_nodes_tree_sponsor_active ON tree_nodes(tree_id, sponsor_id)
+    WHERE removed_at IS NULL;
 
 CREATE INDEX idx_tree_nodes_depth ON tree_nodes(tree_id, depth);
 

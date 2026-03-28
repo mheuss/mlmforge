@@ -22,7 +22,7 @@ func RunMigrationsForTest(t *testing.T, dbURL string) func() {
 		for {
 			err := MigrateDown(dbURL, migrationsPath)
 			if err != nil {
-				break
+				return
 			}
 		}
 	}

@@ -63,7 +63,7 @@ func TestMigrateUpDown(t *testing.T) {
 	for {
 		err := MigrateDown(dsn, migrationsPath)
 		if err != nil {
-			break
+			break // ErrNoChange means fully rolled back; real errors also stop.
 		}
 	}
 

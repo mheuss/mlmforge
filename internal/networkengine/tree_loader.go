@@ -42,14 +42,11 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string) erro
 			continue
 		}
 
-		parentID := ""
-		if node.ParentID != nil {
-			parentID = *node.ParentID
+		if node.ParentID == nil || node.SponsorID == nil {
+			return fmt.Errorf("node %s in tree %s has nil parent or sponsor (data corruption?)", node.UserID, treeID)
 		}
-		sponsorID := ""
-		if node.SponsorID != nil {
-			sponsorID = *node.SponsorID
-		}
+		parentID := *node.ParentID
+		sponsorID := *node.SponsorID
 
 		var opts []AddNodeOption
 		if node.Position != nil {

@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 
@@ -39,6 +40,7 @@ func TestMigrateUp(t *testing.T) {
 	defer cleanup()
 
 	assert.True(t, tableExists(t, pool, "events"), "events table should exist after MigrateUp")
+	assert.True(t, tableExists(t, pool, "tree_nodes"), "tree_nodes table should exist after MigrateUp")
 }
 
 func TestMigrateUpDown(t *testing.T) {
@@ -59,13 +61,19 @@ func TestMigrateUpDown(t *testing.T) {
 	err = MigrateUp(dsn, migrationsPath)
 	require.NoError(t, err)
 	assert.True(t, tableExists(t, pool, "events"), "events table should exist after up")
+	assert.True(t, tableExists(t, pool, "tree_nodes"), "tree_nodes table should exist after up")
 
 	for {
 		err := MigrateDown(dsn, migrationsPath)
-		if err != nil {
-			break // ErrNoChange means fully rolled back; real errors also stop.
+		if err == nil {
+			continue
 		}
+		if errors.Is(err, ErrNoChange) {
+			break
+		}
+		require.NoError(t, err, "unexpected rollback error")
 	}
 
 	assert.False(t, tableExists(t, pool, "events"), "events table should not exist after full rollback")
+	assert.False(t, tableExists(t, pool, "tree_nodes"), "tree_nodes table should not exist after full rollback")
 }

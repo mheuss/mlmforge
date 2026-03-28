@@ -20,10 +20,13 @@ func NewMemoryTreeStore() *MemoryTreeStore {
 }
 
 func (s *MemoryTreeStore) InsertNode(_ context.Context, node TreeNodeRow) error {
-	// Enforce same uniqueness as the Postgres partial unique index.
-	for _, n := range s.nodes {
-		if n.TreeID == node.TreeID && n.UserID == node.UserID && n.RemovedAt == nil {
-			return fmt.Errorf("duplicate active node: tree=%s user=%s", node.TreeID, node.UserID)
+	// Enforce same uniqueness as the Postgres partial unique index
+	// (only active nodes are constrained).
+	if node.RemovedAt == nil {
+		for _, n := range s.nodes {
+			if n.TreeID == node.TreeID && n.UserID == node.UserID && n.RemovedAt == nil {
+				return fmt.Errorf("duplicate active node: tree=%s user=%s", node.TreeID, node.UserID)
+			}
 		}
 	}
 	s.nodes = append(s.nodes, node)
@@ -45,7 +48,8 @@ func (s *MemoryTreeStore) DeleteNode(_ context.Context, treeID, userID string) e
 func (s *MemoryTreeStore) GetNode(_ context.Context, treeID, userID string) (*TreeNodeRow, error) {
 	for i := range s.nodes {
 		if s.nodes[i].TreeID == treeID && s.nodes[i].UserID == userID && s.nodes[i].RemovedAt == nil {
-			return &s.nodes[i], nil
+			node := s.nodes[i] // detached copy to match Postgres semantics
+			return &node, nil
 		}
 	}
 	return nil, nil

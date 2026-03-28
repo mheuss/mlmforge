@@ -25,7 +25,11 @@ func MigrateUp(dbURL, migrationsPath string) error {
 	return nil
 }
 
+// ErrNoChange is returned by MigrateDown when there are no migrations to roll back.
+var ErrNoChange = migrate.ErrNoChange
+
 // MigrateDown rolls back the most recent migration.
+// Returns ErrNoChange when there are no migrations left to roll back.
 func MigrateDown(dbURL, migrationsPath string) error {
 	m, err := migrate.New(
 		fmt.Sprintf("file://%s", migrationsPath),
@@ -36,7 +40,10 @@ func MigrateDown(dbURL, migrationsPath string) error {
 	}
 	defer m.Close()
 
-	if err := m.Steps(-1); err != nil && err != migrate.ErrNoChange {
+	if err := m.Steps(-1); err != nil {
+		if err == migrate.ErrNoChange {
+			return ErrNoChange
+		}
 		return fmt.Errorf("rollback migration: %w", err)
 	}
 	return nil

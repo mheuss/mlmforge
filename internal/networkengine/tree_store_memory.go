@@ -2,6 +2,7 @@ package networkengine
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"time"
 )
@@ -19,6 +20,12 @@ func NewMemoryTreeStore() *MemoryTreeStore {
 }
 
 func (s *MemoryTreeStore) InsertNode(_ context.Context, node TreeNodeRow) error {
+	// Enforce same uniqueness as the Postgres partial unique index.
+	for _, n := range s.nodes {
+		if n.TreeID == node.TreeID && n.UserID == node.UserID && n.RemovedAt == nil {
+			return fmt.Errorf("duplicate active node: tree=%s user=%s", node.TreeID, node.UserID)
+		}
+	}
 	s.nodes = append(s.nodes, node)
 	return nil
 }
@@ -36,9 +43,9 @@ func (s *MemoryTreeStore) DeleteNode(_ context.Context, treeID, userID string) e
 }
 
 func (s *MemoryTreeStore) GetNode(_ context.Context, treeID, userID string) (*TreeNodeRow, error) {
-	for _, n := range s.nodes {
-		if n.TreeID == treeID && n.UserID == userID && n.RemovedAt == nil {
-			return &n, nil
+	for i := range s.nodes {
+		if s.nodes[i].TreeID == treeID && s.nodes[i].UserID == userID && s.nodes[i].RemovedAt == nil {
+			return &s.nodes[i], nil
 		}
 	}
 	return nil, nil

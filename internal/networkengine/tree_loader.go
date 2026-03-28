@@ -33,6 +33,9 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string) erro
 
 	for i, node := range nodes {
 		if i == 0 {
+			if node.Depth != 0 {
+				return fmt.Errorf("first node in tree %s has depth %d, expected 0 (data corruption?)", treeID, node.Depth)
+			}
 			if err := l.engine.AddRoot(ctx, treeID, node.UserID, node.EnrolledAt.Unix()); err != nil {
 				return fmt.Errorf("add root %s: %w", node.UserID, err)
 			}

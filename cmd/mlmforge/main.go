@@ -19,38 +19,52 @@ func main() {
 		Short: "Database migration commands",
 	}
 
-	dbURL := migrateCmd.PersistentFlags().String("db-url", "", "PostgreSQL connection URL (required)")
+	dbURL := migrateCmd.PersistentFlags().String("db-url", "", "PostgreSQL connection URL (or set DATABASE_URL env var)")
 	migrationsPath := migrateCmd.PersistentFlags().String("migrations", "./migrations", "Path to migration files")
+
+	// resolveDBURL returns the database URL from the flag or DATABASE_URL env var.
+	resolveDBURL := func() (string, error) {
+		if *dbURL != "" {
+			return *dbURL, nil
+		}
+		if env := os.Getenv("DATABASE_URL"); env != "" {
+			return env, nil
+		}
+		return "", fmt.Errorf("--db-url flag or DATABASE_URL env var is required")
+	}
 
 	migrateCmd.AddCommand(
 		&cobra.Command{
 			Use:   "up",
 			Short: "Apply all pending migrations",
 			RunE: func(cmd *cobra.Command, args []string) error {
-				if *dbURL == "" {
-					return fmt.Errorf("--db-url is required")
+				url, err := resolveDBURL()
+				if err != nil {
+					return err
 				}
-				return platform.MigrateUp(*dbURL, *migrationsPath)
+				return platform.MigrateUp(url, *migrationsPath)
 			},
 		},
 		&cobra.Command{
 			Use:   "down",
 			Short: "Roll back the most recent migration",
 			RunE: func(cmd *cobra.Command, args []string) error {
-				if *dbURL == "" {
-					return fmt.Errorf("--db-url is required")
+				url, err := resolveDBURL()
+				if err != nil {
+					return err
 				}
-				return platform.MigrateDown(*dbURL, *migrationsPath)
+				return platform.MigrateDown(url, *migrationsPath)
 			},
 		},
 		&cobra.Command{
 			Use:   "version",
 			Short: "Show current migration version",
 			RunE: func(cmd *cobra.Command, args []string) error {
-				if *dbURL == "" {
-					return fmt.Errorf("--db-url is required")
+				url, err := resolveDBURL()
+				if err != nil {
+					return err
 				}
-				v, dirty, err := platform.MigrateVersion(*dbURL, *migrationsPath)
+				v, dirty, err := platform.MigrateVersion(url, *migrationsPath)
 				if err != nil {
 					return err
 				}

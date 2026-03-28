@@ -3,7 +3,9 @@ package networkengine
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -12,6 +14,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// eventCounter generates unique, deterministic event UUIDs.
+var eventCounter uint64
+
+func nextEventUUID() string {
+	n := atomic.AddUint64(&eventCounter, 1)
+	return fmt.Sprintf("cccccccc-cccc-cccc-cccc-%012d", n)
+}
 
 // newIntegrationDeps creates all dependencies for integration tests.
 // Skips if either the database or the engine binary is unavailable.
@@ -50,13 +60,13 @@ func newIntegrationDeps(t *testing.T) (*platform.PostgresEventStore, *PostgresTr
 	return eventStore, treeStore, engine, pool
 }
 
-func appendTreeEvent(t *testing.T, es *platform.EventStore, stream string, version int64, eventType string, payload any) platform.Event {
+func appendTreeEvent(t *testing.T, es platform.EventStore, stream string, version int64, eventType string, payload any) platform.Event {
 	t.Helper()
 
 	data, err := json.Marshal(payload)
 	require.NoError(t, err)
 
-	eventID := "00000000-0000-0000-0000-" + time.Now().Format("150405.000000")
+	eventID := nextEventUUID()
 
 	ne := []platform.NewEvent{{
 		ID:      eventID,
@@ -64,10 +74,10 @@ func appendTreeEvent(t *testing.T, es *platform.EventStore, stream string, versi
 		Payload: data,
 	}}
 
-	err = (*es).Append(context.Background(), stream, version, ne)
+	err = es.Append(context.Background(), stream, version, ne)
 	require.NoError(t, err)
 
-	events, err := (*es).ReadStream(context.Background(), stream, version+1, 1)
+	events, err := es.ReadStream(context.Background(), stream, version+1, 1)
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	return events[0]
@@ -77,31 +87,32 @@ func TestTreePersistence_FullWritePath(t *testing.T) {
 	eventStore, treeStore, engine, _ := newIntegrationDeps(t)
 	ctx := context.Background()
 
-	// Create tree in engine.
-	require.NoError(t, engine.CreateTree(ctx, "tree-1", "unilevel"))
+	treeID := testTreeUUID(1)
+	rootUserID := testUserUUID(1)
+
+	// Create tree in engine using the UUID as structure name.
+	require.NoError(t, engine.CreateTree(ctx, treeID, "unilevel"))
 
 	consumer := NewTreeEventConsumer(treeStore, engine)
 
-	// Append and consume a root_added event.
 	rootPayload := RootAddedPayload{
-		TreeID:     "tree-1",
-		UserID:     "00000000-0000-0000-0000-000000000001",
-		SponsorID:  "00000000-0000-0000-0000-000000000001",
+		TreeID:     treeID,
+		UserID:     rootUserID,
+		SponsorID:  rootUserID,
 		EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 	}
 
-	es := platform.EventStore(eventStore)
-	event := appendTreeEvent(t, &es, "tree-tree-1", 0, EventTypeRootAdded, rootPayload)
+	event := appendTreeEvent(t, eventStore, TreeStreamName(treeID), 0, EventTypeRootAdded, rootPayload)
 	require.NoError(t, consumer.HandleEvent(ctx, event))
 
 	// Verify node exists in table.
-	node, err := treeStore.GetNode(ctx, "tree-1", "00000000-0000-0000-0000-000000000001")
+	node, err := treeStore.GetNode(ctx, treeID, rootUserID)
 	require.NoError(t, err)
 	require.NotNil(t, node, "root should exist in adjacency table")
 	assert.Equal(t, 0, node.Depth)
 
 	// Verify node exists in engine.
-	pos, err := engine.GetPosition(ctx, "tree-1", "00000000-0000-0000-0000-000000000001")
+	pos, err := engine.GetPosition(ctx, treeID, rootUserID)
 	require.NoError(t, err)
 	require.NotNil(t, pos)
 	assert.Equal(t, 0, pos.Depth)
@@ -111,45 +122,46 @@ func TestTreePersistence_PlaceAndRemove(t *testing.T) {
 	eventStore, treeStore, engine, pool := newIntegrationDeps(t)
 	ctx := context.Background()
 
-	require.NoError(t, engine.CreateTree(ctx, "tree-1", "unilevel"))
-	consumer := NewTreeEventConsumer(treeStore, engine)
-	es := platform.EventStore(eventStore)
+	treeID := testTreeUUID(1)
+	rootID := testUserUUID(1)
+	childID := testUserUUID(2)
+	stream := TreeStreamName(treeID)
 
-	rootID := "00000000-0000-0000-0000-000000000001"
-	childID := "00000000-0000-0000-0000-000000000002"
+	require.NoError(t, engine.CreateTree(ctx, treeID, "unilevel"))
+	consumer := NewTreeEventConsumer(treeStore, engine)
 
 	// Place root.
-	rootEvent := appendTreeEvent(t, &es, "tree-tree-1", 0, EventTypeRootAdded, RootAddedPayload{
-		TreeID: "tree-1", UserID: rootID, SponsorID: rootID,
+	rootEvent := appendTreeEvent(t, eventStore, stream, 0, EventTypeRootAdded, RootAddedPayload{
+		TreeID: treeID, UserID: rootID, SponsorID: rootID,
 		EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 	})
 	require.NoError(t, consumer.HandleEvent(ctx, rootEvent))
 
 	// Place child.
-	childEvent := appendTreeEvent(t, &es, "tree-tree-1", 1, EventTypeNodePlaced, NodePlacedPayload{
-		TreeID: "tree-1", UserID: childID, ParentID: rootID, SponsorID: rootID,
+	childEvent := appendTreeEvent(t, eventStore, stream, 1, EventTypeNodePlaced, NodePlacedPayload{
+		TreeID: treeID, UserID: childID, ParentID: rootID, SponsorID: rootID,
 		EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 	})
 	require.NoError(t, consumer.HandleEvent(ctx, childEvent))
 
 	// Verify child in table and engine.
-	childNode, err := treeStore.GetNode(ctx, "tree-1", childID)
+	childNode, err := treeStore.GetNode(ctx, treeID, childID)
 	require.NoError(t, err)
 	require.NotNil(t, childNode)
 	assert.Equal(t, 1, childNode.Depth)
 
-	childPos, err := engine.GetPosition(ctx, "tree-1", childID)
+	childPos, err := engine.GetPosition(ctx, treeID, childID)
 	require.NoError(t, err)
 	require.NotNil(t, childPos)
 
 	// Remove child.
-	removeEvent := appendTreeEvent(t, &es, "tree-tree-1", 2, EventTypeNodeRemoved, NodeRemovedPayload{
-		TreeID: "tree-1", UserID: childID, RemovedAt: time.Now(),
+	removeEvent := appendTreeEvent(t, eventStore, stream, 2, EventTypeNodeRemoved, NodeRemovedPayload{
+		TreeID: treeID, UserID: childID, RemovedAt: time.Now(),
 	})
 	require.NoError(t, consumer.HandleEvent(ctx, removeEvent))
 
 	// Verify child is soft-deleted in table (has removed_at).
-	activeNode, err := treeStore.GetNode(ctx, "tree-1", childID)
+	activeNode, err := treeStore.GetNode(ctx, treeID, childID)
 	require.NoError(t, err)
 	assert.Nil(t, activeNode, "child should not appear in active query after removal")
 
@@ -166,39 +178,40 @@ func TestTreePersistence_BulkLoadMatchesEventPath(t *testing.T) {
 	eventStore, treeStore, engine, _ := newIntegrationDeps(t)
 	ctx := context.Background()
 
-	require.NoError(t, engine.CreateTree(ctx, "tree-1", "unilevel"))
-	consumer := NewTreeEventConsumer(treeStore, engine)
-	es := platform.EventStore(eventStore)
+	treeID := testTreeUUID(1)
+	rootID := testUserUUID(1)
+	childID := testUserUUID(2)
+	grandchildID := testUserUUID(3)
+	stream := TreeStreamName(treeID)
 
-	rootID := "00000000-0000-0000-0000-000000000001"
-	childID := "00000000-0000-0000-0000-000000000002"
-	grandchildID := "00000000-0000-0000-0000-000000000003"
+	require.NoError(t, engine.CreateTree(ctx, treeID, "unilevel"))
+	consumer := NewTreeEventConsumer(treeStore, engine)
 
 	// Build tree via events.
-	rootEvent := appendTreeEvent(t, &es, "tree-tree-1", 0, EventTypeRootAdded, RootAddedPayload{
-		TreeID: "tree-1", UserID: rootID, SponsorID: rootID,
+	rootEvent := appendTreeEvent(t, eventStore, stream, 0, EventTypeRootAdded, RootAddedPayload{
+		TreeID: treeID, UserID: rootID, SponsorID: rootID,
 		EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 	})
 	require.NoError(t, consumer.HandleEvent(ctx, rootEvent))
 
-	childEvent := appendTreeEvent(t, &es, "tree-tree-1", 1, EventTypeNodePlaced, NodePlacedPayload{
-		TreeID: "tree-1", UserID: childID, ParentID: rootID, SponsorID: rootID,
+	childEvent := appendTreeEvent(t, eventStore, stream, 1, EventTypeNodePlaced, NodePlacedPayload{
+		TreeID: treeID, UserID: childID, ParentID: rootID, SponsorID: rootID,
 		EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 	})
 	require.NoError(t, consumer.HandleEvent(ctx, childEvent))
 
-	grandchildEvent := appendTreeEvent(t, &es, "tree-tree-1", 2, EventTypeNodePlaced, NodePlacedPayload{
-		TreeID: "tree-1", UserID: grandchildID, ParentID: childID, SponsorID: childID,
+	grandchildEvent := appendTreeEvent(t, eventStore, stream, 2, EventTypeNodePlaced, NodePlacedPayload{
+		TreeID: treeID, UserID: grandchildID, ParentID: childID, SponsorID: childID,
 		EnrolledAt: time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC),
 	})
 	require.NoError(t, consumer.HandleEvent(ctx, grandchildEvent))
 
 	// Capture positions from the event-built engine.
-	rootPos, err := engine.GetPosition(ctx, "tree-1", rootID)
+	rootPos, err := engine.GetPosition(ctx, treeID, rootID)
 	require.NoError(t, err)
-	childPos, err := engine.GetPosition(ctx, "tree-1", childID)
+	childPos, err := engine.GetPosition(ctx, treeID, childID)
 	require.NoError(t, err)
-	grandchildPos, err := engine.GetPosition(ctx, "tree-1", grandchildID)
+	grandchildPos, err := engine.GetPosition(ctx, treeID, grandchildID)
 	require.NoError(t, err)
 
 	// Stop engine and start a fresh one.
@@ -209,18 +222,18 @@ func TestTreePersistence_BulkLoadMatchesEventPath(t *testing.T) {
 
 	// Bulk-load from the adjacency table.
 	loader := NewTreeLoader(treeStore, freshEngine)
-	require.NoError(t, loader.LoadTree(ctx, "tree-1", "unilevel"))
+	require.NoError(t, loader.LoadTree(ctx, treeID, "unilevel"))
 
 	// Compare positions. The fresh engine should match the original.
-	freshRootPos, err := freshEngine.GetPosition(ctx, "tree-1", rootID)
+	freshRootPos, err := freshEngine.GetPosition(ctx, treeID, rootID)
 	require.NoError(t, err)
 	assert.Equal(t, rootPos.Depth, freshRootPos.Depth)
 
-	freshChildPos, err := freshEngine.GetPosition(ctx, "tree-1", childID)
+	freshChildPos, err := freshEngine.GetPosition(ctx, treeID, childID)
 	require.NoError(t, err)
 	assert.Equal(t, childPos.Depth, freshChildPos.Depth)
 
-	freshGrandchildPos, err := freshEngine.GetPosition(ctx, "tree-1", grandchildID)
+	freshGrandchildPos, err := freshEngine.GetPosition(ctx, treeID, grandchildID)
 	require.NoError(t, err)
 	assert.Equal(t, grandchildPos.Depth, freshGrandchildPos.Depth)
 }
@@ -229,21 +242,24 @@ func TestTreePersistence_EngineFailureRetry(t *testing.T) {
 	_, treeStore, _, _ := newIntegrationDeps(t)
 	ctx := context.Background()
 
+	treeID := testTreeUUID(1)
+	rootUserID := testUserUUID(1)
+
 	// Use a failN transport instead of a real engine to test retry behavior.
 	transport := newFailNTransport(1)
 	mockEngine := NewEngineClientWithTransport(transport)
 	consumer := NewTreeEventConsumer(treeStore, mockEngine)
 
 	rootPayload := RootAddedPayload{
-		TreeID:     "tree-1",
-		UserID:     "00000000-0000-0000-0000-000000000001",
-		SponsorID:  "00000000-0000-0000-0000-000000000001",
+		TreeID:     treeID,
+		UserID:     rootUserID,
+		SponsorID:  rootUserID,
 		EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 	}
 	data, _ := json.Marshal(rootPayload)
 	event := platform.Event{
-		ID:      "00000000-0000-0000-0000-000000000099",
-		Stream:  "tree-tree-1",
+		ID:      nextEventUUID(),
+		Stream:  TreeStreamName(treeID),
 		Type:    EventTypeRootAdded,
 		Version: 1,
 		Payload: data,
@@ -253,7 +269,7 @@ func TestTreePersistence_EngineFailureRetry(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify store projection succeeded.
-	node, err := treeStore.GetNode(ctx, "tree-1", "00000000-0000-0000-0000-000000000001")
+	node, err := treeStore.GetNode(ctx, treeID, rootUserID)
 	require.NoError(t, err)
 	require.NotNil(t, node, "store should have the node despite engine failure on first try")
 

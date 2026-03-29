@@ -76,6 +76,9 @@ func MigrateVersion(dbURL, migrationsPath string) (uint, bool, error) {
 
 	version, dirty, err := m.Version()
 	if err != nil {
+		if err == migrate.ErrNilVersion {
+			return 0, false, nil
+		}
 		return 0, false, err
 	}
 	return version, dirty, nil

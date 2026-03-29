@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -21,9 +22,14 @@ func RunMigrationsForTest(t *testing.T, dbURL string) func() {
 	return func() {
 		for {
 			err := MigrateDown(dbURL, migrationsPath)
-			if err != nil {
+			if err == nil {
+				continue
+			}
+			if errors.Is(err, ErrNoChange) {
 				return
 			}
+			t.Errorf("MigrateDown failed during cleanup: %v", err)
+			return
 		}
 	}
 }

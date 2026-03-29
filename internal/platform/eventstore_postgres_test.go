@@ -25,7 +25,8 @@ func newTestPostgresStore(t *testing.T) *PostgresEventStore {
 	t.Cleanup(func() { pool.Close() })
 
 	// Drop existing tables and apply migrations for a clean slate.
-	_, _ = pool.Exec(ctx, "DROP TABLE IF EXISTS schema_migrations, tree_nodes, events")
+	_, err = pool.Exec(ctx, "DROP TABLE IF EXISTS schema_migrations, tree_nodes, events")
+	require.NoError(t, err, "failed to reset schema")
 	cleanup := RunMigrationsForTest(t, dsn)
 	t.Cleanup(cleanup)
 
@@ -169,7 +170,8 @@ func TestMigrateUpIdempotent(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { pool.Close() })
 
-	_, _ = pool.Exec(ctx, "DROP TABLE IF EXISTS schema_migrations, tree_nodes, events")
+	_, err = pool.Exec(ctx, "DROP TABLE IF EXISTS schema_migrations, tree_nodes, events")
+	require.NoError(t, err, "failed to reset schema")
 
 	cleanup := RunMigrationsForTest(t, dsn)
 	defer cleanup()

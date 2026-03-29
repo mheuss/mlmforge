@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -53,7 +54,15 @@ func main() {
 				if err != nil {
 					return err
 				}
-				return platform.MigrateDown(url, *migrationsPath)
+				if err := platform.MigrateDown(url, *migrationsPath); err != nil {
+					if errors.Is(err, platform.ErrNoChange) {
+						fmt.Println("No migrations to roll back.")
+						return nil
+					}
+					return err
+				}
+				fmt.Println("Rolled back one migration.")
+				return nil
 			},
 		},
 		&cobra.Command{

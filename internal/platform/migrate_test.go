@@ -34,7 +34,8 @@ func TestMigrateUp(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { pool.Close() })
 
-	_, _ = pool.Exec(ctx, "DROP TABLE IF EXISTS schema_migrations, tree_nodes, events")
+	_, err = pool.Exec(ctx, "DROP TABLE IF EXISTS schema_migrations, tree_nodes, events")
+	require.NoError(t, err, "failed to reset schema before migration test")
 
 	cleanup := RunMigrationsForTest(t, dsn)
 	defer cleanup()
@@ -54,7 +55,8 @@ func TestMigrateUpDown(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { pool.Close() })
 
-	_, _ = pool.Exec(ctx, "DROP TABLE IF EXISTS schema_migrations, tree_nodes, events")
+	_, err = pool.Exec(ctx, "DROP TABLE IF EXISTS schema_migrations, tree_nodes, events")
+	require.NoError(t, err, "failed to reset schema before migration test")
 
 	migrationsPath := FindMigrationsDir(t)
 

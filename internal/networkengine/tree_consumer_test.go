@@ -42,7 +42,10 @@ func newRecordingTransport() *recordingTransport {
 }
 
 func makeEvent(eventType string, payload any) platform.Event {
-	data, _ := json.Marshal(payload)
+	data, err := json.Marshal(payload)
+	if err != nil {
+		panic(fmt.Errorf("makeEvent: marshal payload: %w", err))
+	}
 	return platform.Event{
 		ID:      "00000000-0000-0000-0000-000000000001",
 		Stream:  "tree-tree1",

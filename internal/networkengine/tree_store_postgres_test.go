@@ -58,7 +58,8 @@ func newTestPostgresTreeStore(t *testing.T) (*PostgresTreeStore, *pgxpool.Pool) 
 	t.Cleanup(func() { pool.Close() })
 
 	// Clean slate: drop all managed tables, run migrations.
-	_, _ = pool.Exec(ctx, "DROP TABLE IF EXISTS schema_migrations, tree_nodes, events")
+	_, err = pool.Exec(ctx, "DROP TABLE IF EXISTS schema_migrations, tree_nodes, events")
+	require.NoError(t, err, "failed to reset schema")
 	cleanup := platform.RunMigrationsForTest(t, dsn)
 	t.Cleanup(cleanup)
 

@@ -168,8 +168,8 @@ func TestTreePersistence_PlaceAndRemove(t *testing.T) {
 
 	var removedCount int
 	err = pool.QueryRow(ctx,
-		"SELECT count(*) FROM tree_nodes WHERE user_id = $1 AND removed_at IS NOT NULL",
-		childID,
+		"SELECT count(*) FROM tree_nodes WHERE tree_id = $1 AND user_id = $2 AND removed_at IS NOT NULL",
+		treeID, childID,
 	).Scan(&removedCount)
 	require.NoError(t, err)
 	assert.Equal(t, 1, removedCount, "child should have removed_at set")
@@ -257,7 +257,8 @@ func TestTreePersistence_EngineFailureRetry(t *testing.T) {
 		SponsorID:  rootUserID,
 		EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 	}
-	data, _ := json.Marshal(rootPayload)
+	data, err := json.Marshal(rootPayload)
+	require.NoError(t, err)
 	event := platform.Event{
 		ID:      nextEventUUID(),
 		Stream:  TreeStreamName(treeID),
@@ -266,7 +267,7 @@ func TestTreePersistence_EngineFailureRetry(t *testing.T) {
 		Payload: data,
 	}
 
-	err := consumer.HandleEvent(ctx, event)
+	err = consumer.HandleEvent(ctx, event)
 	require.NoError(t, err)
 
 	// Verify store projection succeeded.

@@ -23,7 +23,7 @@ func NewEngineClient(ctx context.Context, binaryPath string) (*EngineClient, err
 
 	// Verify the worker is alive.
 	if err := client.Ping(ctx); err != nil {
-		transport.Close()
+		_ = transport.Close()
 		return nil, fmt.Errorf("initial ping failed: %w", err)
 	}
 

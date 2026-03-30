@@ -83,7 +83,7 @@ func TestContractFixtures(t *testing.T) {
 			// Spawn a fresh worker for each fixture to avoid state leaking.
 			transport, err := NewStdioTransport(binaryPath)
 			require.NoError(t, err)
-			defer transport.Close()
+			defer func() { _ = transport.Close() }()
 
 			// Run setup steps (e.g., create_tree) before the main request.
 			for _, step := range tc.fixture.Setup {

@@ -12,4 +12,3 @@ linters:
     - unused
     - gocritic
     - gosimple
-    - typecheck

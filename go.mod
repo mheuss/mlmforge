@@ -1,10 +1,12 @@
 module github.com/mlmforge/mlmforge
 
-go 1.24.0
+go 1.25.0
+
+toolchain go1.25.8
 
 require (
 	github.com/golang-migrate/migrate/v4 v4.19.1
-	github.com/jackc/pgx/v5 v5.8.0
+	github.com/jackc/pgx/v5 v5.9.1
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1

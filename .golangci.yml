@@ -11,4 +11,3 @@ linters:
     - staticcheck
     - unused
     - gocritic
-    - gosimple

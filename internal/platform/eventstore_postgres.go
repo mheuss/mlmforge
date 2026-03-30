@@ -84,7 +84,7 @@ func (s *PostgresEventStore) Append(ctx context.Context, stream string, expected
 	for i := range events {
 		_, err := br.Exec()
 		if err != nil {
-			br.Close()
+			_ = br.Close()
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) && pgErr.ConstraintName == "events_stream_version_key" {
 				return &ConcurrencyError{

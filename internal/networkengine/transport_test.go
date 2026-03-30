@@ -18,7 +18,7 @@ import (
 func TestStdioTransport_Ping(t *testing.T) {
 	transport, err := NewStdioTransport(findWorkerBinary(t))
 	require.NoError(t, err)
-	defer transport.Close()
+	defer func() { _ = transport.Close() }()
 
 	result, err := transport.Call(context.Background(), "ping", json.RawMessage("null"))
 	require.NoError(t, err)
@@ -91,8 +91,8 @@ func TestStdioTransport_ContextCancellation(t *testing.T) {
 	assert.ErrorIs(t, err, ErrTransportClosed)
 
 	// Clean up the pipes so the orphaned goroutine exits.
-	stdoutW.Close()
-	stdinR.Close()
+	_ = stdoutW.Close()
+	_ = stdinR.Close()
 }
 
 func TestStdioTransport_ContextAlreadyCancelled(t *testing.T) {
@@ -121,8 +121,8 @@ func TestStdioTransport_ContextAlreadyCancelled(t *testing.T) {
 	_, err = transport.Call(context.Background(), "ping", json.RawMessage("null"))
 	assert.ErrorIs(t, err, ErrTransportClosed)
 
-	stdoutW.Close()
-	stdinR.Close()
+	_ = stdoutW.Close()
+	_ = stdinR.Close()
 }
 
 // findWorkerBinary returns the path to the compiled Rust worker binary.

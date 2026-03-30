@@ -32,7 +32,7 @@ func TestStdioTransport_Ping(t *testing.T) {
 func TestStdioTransport_UnknownOp(t *testing.T) {
 	transport, err := NewStdioTransport(findWorkerBinary(t))
 	require.NoError(t, err)
-	defer transport.Close()
+	defer func() { _ = transport.Close() }()
 
 	_, err = transport.Call(context.Background(), "nonexistent", json.RawMessage("null"))
 	require.Error(t, err)
@@ -42,7 +42,7 @@ func TestStdioTransport_UnknownOp(t *testing.T) {
 func TestStdioTransport_MultipleCalls(t *testing.T) {
 	transport, err := NewStdioTransport(findWorkerBinary(t))
 	require.NoError(t, err)
-	defer transport.Close()
+	defer func() { _ = transport.Close() }()
 
 	for i := 0; i < 5; i++ {
 		result, err := transport.Call(context.Background(), "ping", json.RawMessage("null"))

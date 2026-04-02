@@ -14,7 +14,7 @@ MLMForge handles core operations for a network marketing company.
 - Customer service ticketing and reporting
 - Admin panel and distributor back office
 
-Compensation plans are defined in YAML. Unilevel, binary, matrix, stairstep, streamline, and combinations of these run simultaneously. Different product classes route to different compensation structures. The commission engine is event-sourced. Every calculation is reproducible, auditable, and replayable against proposed plan changes before they go live.
+Compensation plans are defined in YAML. Unilevel, binary, matrix, stairstep, generation, streamline, and combinations of these run simultaneously. Different product classes route to different compensation structures. The commission engine is event-sourced. Every calculation is reproducible, auditable, and replayable against proposed plan changes before they go live.
 
 ## Architecture
 
@@ -55,4 +55,4 @@ The reasoning behind the architecture is documented in [content/design-rationale
 
 ## Status
 
-Active development. The commission engine handles all six compensation structure types: unilevel, binary, matrix, stairstep breakaway, generation, and streamline. Each has a dedicated Rust calculator with compression, active leg tiers, rate table lookup, and structure-specific mechanics (pairing/carry-forward for binary, breakaway/differential overrides for stairstep, boundary modes for generation, dynamic compression for streamline). Board plan cycling is implemented as a separate engine. Tree persistence uses an event-sourced adjacency table with startup bulk-load. A migration framework handles schema evolution. The Go/Rust integration boundary uses NDJSON over stdin/stdout with contract test coverage. 736 Rust tests and 218 Go tests. 24 design rationale documents. Next up: HTTP API layer, PlacementService wiring, and additional persistence for board plan and streamline structures.
+Active development. The commission engine handles all six compensation structure types: unilevel, binary, matrix, stairstep breakaway, generation, and streamline. Each has a dedicated Rust calculator with compression, active leg tiers, rate table lookup, and structure-specific mechanics (pairing/carry-forward for binary, breakaway/differential overrides for stairstep, boundary modes for generation, dynamic compression for streamline). Board plan cycling is implemented as a separate engine. Tree persistence uses an event-sourced adjacency table with startup bulk-load. A migration framework handles schema evolution. The Go/Rust integration boundary uses NDJSON over stdin/stdout with contract test coverage. 736 Rust tests and 218 Go tests. 24 design rationale documents. Next up: HTTP API layer, placement service wiring, and additional persistence for board plan and streamline structures.

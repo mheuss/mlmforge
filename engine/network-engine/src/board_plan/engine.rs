@@ -345,7 +345,10 @@ impl BoardPlanEngine {
             .collect();
 
         // Clear all positions.
-        let board = self.boards.get_mut(&board_id).unwrap();
+        let board = self
+            .boards
+            .get_mut(&board_id)
+            .expect("board_id validated by preceding get()");
         for pos in board.positions.iter_mut() {
             *pos = None;
         }

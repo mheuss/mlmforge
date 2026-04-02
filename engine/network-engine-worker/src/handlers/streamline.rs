@@ -55,9 +55,22 @@ fn get_streamline_ref<'a>(
 
 fn streamline_error_to_response(
     request_id: &str,
-    err: network_engine::streamline::StreamlineError,
+    e: network_engine::streamline::StreamlineError,
 ) -> Response {
-    Response::error(request_id.to_string(), "STREAMLINE_ERROR", err.to_string())
+    use network_engine::streamline::StreamlineError;
+    let code = match &e {
+        StreamlineError::MemberAlreadyExists(_) => "MEMBER_ALREADY_EXISTS",
+        StreamlineError::MemberNotFound(_) => "MEMBER_NOT_FOUND",
+        StreamlineError::SponsorNotFound(_) => "SPONSOR_NOT_FOUND",
+        StreamlineError::StreamNotFound(_) => "STREAM_NOT_FOUND",
+        StreamlineError::StreamFrozen(_) => "STREAM_FROZEN",
+        StreamlineError::SponsorDoesNotOwnStream(_, _) => "SPONSOR_NOT_OWNER",
+        StreamlineError::NoStreamsAvailable => "NO_STREAMS_AVAILABLE",
+        StreamlineError::NoOwnedStreams(_) => "NO_OWNED_STREAMS",
+        StreamlineError::StreamChoiceNotAllowed => "STREAM_CHOICE_NOT_ALLOWED",
+        StreamlineError::TreeError(_) => "TREE_ERROR",
+    };
+    Response::error(request_id.to_string(), code, e.to_string())
 }
 
 // --- Streamline handlers ---

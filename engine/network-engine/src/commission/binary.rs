@@ -411,7 +411,10 @@ fn calculate_binary_cycle_step(
 
         // Compute full cycle payout (all steps qualify) and highest threshold.
         let sum_of_amounts: f64 = steps.iter().map(|s| s.amount).sum();
-        let highest = steps.last().unwrap().threshold;
+        let highest = steps
+            .last()
+            .expect("validate() guarantees non-empty steps")
+            .threshold;
 
         // Closed-form full-cycle calculation for CarryForward mode.
         // Avoids O(cycles × steps) loop for large volumes.

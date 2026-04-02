@@ -151,7 +151,10 @@ pub(crate) fn handle_streamline_add_member(state: &mut WorkerState, request: &Re
             );
         }
     };
-    let stream_id_override = parse_u32_param(&params, "stream_id_override");
+    let stream_id_override = match parse_u32_param(&params, "stream_id_override", &request.id) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
 
     let engine = match get_streamline_mut(state, &structure, &request.id) {
         Ok(e) => e,
@@ -224,15 +227,12 @@ pub(crate) fn handle_streamline_expand_streams(
         Ok(id) => id,
         Err(resp) => return resp,
     };
-    let total_allowed = match parse_u32_param(&params, "total_allowed") {
-        Some(v) => v,
-        None => {
-            return Response::error(
-                request.id.clone(),
-                "MISSING_PARAM",
-                "missing or invalid total_allowed",
-            );
+    let total_allowed = match parse_u32_param(&params, "total_allowed", &request.id) {
+        Ok(Some(v)) => v,
+        Ok(None) => {
+            return Response::error(request.id.clone(), "MISSING_PARAM", "missing total_allowed");
         }
+        Err(resp) => return resp,
     };
     let timestamp = match params.get("timestamp").and_then(|v| v.as_i64()) {
         Some(ts) => ts,
@@ -275,15 +275,12 @@ pub(crate) fn handle_streamline_update_allowance(
         Ok(id) => id,
         Err(resp) => return resp,
     };
-    let total_allowed = match parse_u32_param(&params, "total_allowed") {
-        Some(v) => v,
-        None => {
-            return Response::error(
-                request.id.clone(),
-                "MISSING_PARAM",
-                "missing or invalid total_allowed",
-            );
+    let total_allowed = match parse_u32_param(&params, "total_allowed", &request.id) {
+        Ok(Some(v)) => v,
+        Ok(None) => {
+            return Response::error(request.id.clone(), "MISSING_PARAM", "missing total_allowed");
         }
+        Err(resp) => return resp,
     };
     let timestamp = match params.get("timestamp").and_then(|v| v.as_i64()) {
         Some(ts) => ts,
@@ -369,15 +366,12 @@ pub(crate) fn handle_streamline_get_stream(state: &WorkerState, request: &Reques
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    let stream_id = match parse_u32_param(&params, "stream_id") {
-        Some(v) => v,
-        None => {
-            return Response::error(
-                request.id.clone(),
-                "MISSING_PARAM",
-                "missing or invalid stream_id",
-            );
+    let stream_id = match parse_u32_param(&params, "stream_id", &request.id) {
+        Ok(Some(v)) => v,
+        Ok(None) => {
+            return Response::error(request.id.clone(), "MISSING_PARAM", "missing stream_id");
         }
+        Err(resp) => return resp,
     };
 
     let engine = match get_streamline_ref(state, &structure, &request.id) {

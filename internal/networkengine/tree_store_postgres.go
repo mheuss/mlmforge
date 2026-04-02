@@ -24,6 +24,11 @@ const insertNodeSQL = `INSERT INTO tree_nodes (id, tree_id, user_id, parent_id, 
 // Order must match the scanTreeNode/scanTreeNodes Scan call.
 const treeNodeSelectColumns = `id, tree_id, user_id, parent_id, sponsor_id, position, depth, enrolled_at, created_at, updated_at, removed_at`
 
+const getNodeSQL = `SELECT ` + treeNodeSelectColumns + ` FROM tree_nodes WHERE tree_id = $1 AND user_id = $2 AND removed_at IS NULL`
+const getChildrenSQL = `SELECT ` + treeNodeSelectColumns + ` FROM tree_nodes WHERE tree_id = $1 AND parent_id = $2 AND removed_at IS NULL`
+const getByTreeSQL = `SELECT ` + treeNodeSelectColumns + ` FROM tree_nodes WHERE tree_id = $1 AND removed_at IS NULL`
+const getByTreeDepthOrderedSQL = getByTreeSQL + ` ORDER BY depth ASC, enrolled_at ASC`
+
 func NewPostgresTreeStore(pool *pgxpool.Pool) *PostgresTreeStore {
 	return &PostgresTreeStore{pool: pool}
 }
@@ -45,18 +50,12 @@ func (s *PostgresTreeStore) DeleteNode(ctx context.Context, treeID, userID strin
 }
 
 func (s *PostgresTreeStore) GetNode(ctx context.Context, treeID, userID string) (*TreeNodeRow, error) {
-	row := s.pool.QueryRow(ctx,
-		fmt.Sprintf(`SELECT %s FROM tree_nodes WHERE tree_id = $1 AND user_id = $2 AND removed_at IS NULL`, treeNodeSelectColumns),
-		treeID, userID,
-	)
+	row := s.pool.QueryRow(ctx, getNodeSQL, treeID, userID)
 	return scanTreeNode(row)
 }
 
 func (s *PostgresTreeStore) GetChildren(ctx context.Context, treeID, parentUserID string) ([]TreeNodeRow, error) {
-	rows, err := s.pool.Query(ctx,
-		fmt.Sprintf(`SELECT %s FROM tree_nodes WHERE tree_id = $1 AND parent_id = $2 AND removed_at IS NULL`, treeNodeSelectColumns),
-		treeID, parentUserID,
-	)
+	rows, err := s.pool.Query(ctx, getChildrenSQL, treeID, parentUserID)
 	if err != nil {
 		return nil, err
 	}
@@ -65,10 +64,7 @@ func (s *PostgresTreeStore) GetChildren(ctx context.Context, treeID, parentUserI
 }
 
 func (s *PostgresTreeStore) GetByTree(ctx context.Context, treeID string) ([]TreeNodeRow, error) {
-	rows, err := s.pool.Query(ctx,
-		fmt.Sprintf(`SELECT %s FROM tree_nodes WHERE tree_id = $1 AND removed_at IS NULL`, treeNodeSelectColumns),
-		treeID,
-	)
+	rows, err := s.pool.Query(ctx, getByTreeSQL, treeID)
 	if err != nil {
 		return nil, err
 	}
@@ -77,10 +73,7 @@ func (s *PostgresTreeStore) GetByTree(ctx context.Context, treeID string) ([]Tre
 }
 
 func (s *PostgresTreeStore) GetByTreeDepthOrdered(ctx context.Context, treeID string) ([]TreeNodeRow, error) {
-	rows, err := s.pool.Query(ctx,
-		fmt.Sprintf(`SELECT %s FROM tree_nodes WHERE tree_id = $1 AND removed_at IS NULL ORDER BY depth ASC, enrolled_at ASC`, treeNodeSelectColumns),
-		treeID,
-	)
+	rows, err := s.pool.Query(ctx, getByTreeDepthOrderedSQL, treeID)
 	if err != nil {
 		return nil, err
 	}

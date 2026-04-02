@@ -15,7 +15,7 @@ pub struct Request {
 }
 
 fn default_raw_params() -> Box<serde_json::value::RawValue> {
-    serde_json::value::RawValue::from_string("{}".to_string()).unwrap()
+    serde_json::value::RawValue::from_string("{}".to_string()).expect("valid JSON object literal")
 }
 
 /// An NDJSON response sent back to the Go platform layer.

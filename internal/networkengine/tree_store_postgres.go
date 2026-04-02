@@ -2,6 +2,7 @@ package networkengine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -18,6 +19,10 @@ type PostgresTreeStore struct {
 
 const insertNodeSQL = `INSERT INTO tree_nodes (id, tree_id, user_id, parent_id, sponsor_id, position, depth, enrolled_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+
+// treeNodeSelectColumns is the SELECT column list for tree_nodes queries.
+// Order must match the scanTreeNode/scanTreeNodes Scan call.
+const treeNodeSelectColumns = `id, tree_id, user_id, parent_id, sponsor_id, position, depth, enrolled_at, created_at, updated_at, removed_at`
 
 func NewPostgresTreeStore(pool *pgxpool.Pool) *PostgresTreeStore {
 	return &PostgresTreeStore{pool: pool}
@@ -41,9 +46,7 @@ func (s *PostgresTreeStore) DeleteNode(ctx context.Context, treeID, userID strin
 
 func (s *PostgresTreeStore) GetNode(ctx context.Context, treeID, userID string) (*TreeNodeRow, error) {
 	row := s.pool.QueryRow(ctx,
-		`SELECT id, tree_id, user_id, parent_id, sponsor_id, position, depth, enrolled_at, created_at, updated_at, removed_at
-		 FROM tree_nodes
-		 WHERE tree_id = $1 AND user_id = $2 AND removed_at IS NULL`,
+		fmt.Sprintf(`SELECT %s FROM tree_nodes WHERE tree_id = $1 AND user_id = $2 AND removed_at IS NULL`, treeNodeSelectColumns),
 		treeID, userID,
 	)
 	return scanTreeNode(row)
@@ -51,9 +54,7 @@ func (s *PostgresTreeStore) GetNode(ctx context.Context, treeID, userID string) 
 
 func (s *PostgresTreeStore) GetChildren(ctx context.Context, treeID, parentUserID string) ([]TreeNodeRow, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, tree_id, user_id, parent_id, sponsor_id, position, depth, enrolled_at, created_at, updated_at, removed_at
-		 FROM tree_nodes
-		 WHERE tree_id = $1 AND parent_id = $2 AND removed_at IS NULL`,
+		fmt.Sprintf(`SELECT %s FROM tree_nodes WHERE tree_id = $1 AND parent_id = $2 AND removed_at IS NULL`, treeNodeSelectColumns),
 		treeID, parentUserID,
 	)
 	if err != nil {
@@ -65,9 +66,7 @@ func (s *PostgresTreeStore) GetChildren(ctx context.Context, treeID, parentUserI
 
 func (s *PostgresTreeStore) GetByTree(ctx context.Context, treeID string) ([]TreeNodeRow, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, tree_id, user_id, parent_id, sponsor_id, position, depth, enrolled_at, created_at, updated_at, removed_at
-		 FROM tree_nodes
-		 WHERE tree_id = $1 AND removed_at IS NULL`,
+		fmt.Sprintf(`SELECT %s FROM tree_nodes WHERE tree_id = $1 AND removed_at IS NULL`, treeNodeSelectColumns),
 		treeID,
 	)
 	if err != nil {
@@ -79,10 +78,7 @@ func (s *PostgresTreeStore) GetByTree(ctx context.Context, treeID string) ([]Tre
 
 func (s *PostgresTreeStore) GetByTreeDepthOrdered(ctx context.Context, treeID string) ([]TreeNodeRow, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, tree_id, user_id, parent_id, sponsor_id, position, depth, enrolled_at, created_at, updated_at, removed_at
-		 FROM tree_nodes
-		 WHERE tree_id = $1 AND removed_at IS NULL
-		 ORDER BY depth ASC, enrolled_at ASC`,
+		fmt.Sprintf(`SELECT %s FROM tree_nodes WHERE tree_id = $1 AND removed_at IS NULL ORDER BY depth ASC, enrolled_at ASC`, treeNodeSelectColumns),
 		treeID,
 	)
 	if err != nil {
@@ -118,7 +114,7 @@ func scanTreeNode(row pgx.Row) (*TreeNodeRow, error) {
 		&n.ID, &n.TreeID, &n.UserID, &n.ParentID, &n.SponsorID,
 		&n.Position, &n.Depth, &n.EnrolledAt, &n.CreatedAt, &n.UpdatedAt, &n.RemovedAt,
 	)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {

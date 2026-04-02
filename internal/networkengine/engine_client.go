@@ -63,6 +63,21 @@ func (c *EngineClient) call(ctx context.Context, op string, params any) (json.Ra
 	return c.transport.Call(ctx, op, data)
 }
 
+// callInto calls an engine operation and unmarshals the result into T.
+// Use for operations that return a typed response.
+func callInto[T any](c *EngineClient, ctx context.Context, op string, params any) (T, error) {
+	var zero T
+	result, err := c.call(ctx, op, params)
+	if err != nil {
+		return zero, err
+	}
+	var out T
+	if err := json.Unmarshal(result, &out); err != nil {
+		return zero, fmt.Errorf("unmarshal %s: %w", op, err)
+	}
+	return out, nil
+}
+
 // --- Tree lifecycle methods ---
 
 // CreateTree creates a named tree instance in the engine.
@@ -167,7 +182,7 @@ func (c *EngineClient) AddNodeAt(ctx context.Context, structure, userID, sponsor
 // RemoveMatrixNode removes a node from a matrix tree using the specified pruning mode.
 // pruningMode must be "promote_earliest" or "holding_tank".
 func (c *EngineClient) RemoveMatrixNode(ctx context.Context, structure, userID, pruningMode string) (*MatrixRemovalResult, error) {
-	result, err := c.call(ctx, "remove_node", map[string]any{
+	r, err := callInto[MatrixRemovalResult](c, ctx, "remove_node", map[string]any{
 		"structure":    structure,
 		"user_id":      userID,
 		"pruning_mode": pruningMode,
@@ -175,11 +190,7 @@ func (c *EngineClient) RemoveMatrixNode(ctx context.Context, structure, userID, 
 	if err != nil {
 		return nil, err
 	}
-	var removal MatrixRemovalResult
-	if err := json.Unmarshal(result, &removal); err != nil {
-		return nil, fmt.Errorf("unmarshal removal result: %w", err)
-	}
-	return &removal, nil
+	return &r, nil
 }
 
 // PlaceFromTank moves a holding tank entry back into the matrix tree
@@ -203,15 +214,7 @@ func (c *EngineClient) GetHoldingTank(ctx context.Context, structure, sponsorID 
 	if sponsorID != "" {
 		params["sponsor_id"] = sponsorID
 	}
-	result, err := c.call(ctx, "get_holding_tank", params)
-	if err != nil {
-		return nil, err
-	}
-	var entries []HoldingTankEntryDTO
-	if err := json.Unmarshal(result, &entries); err != nil {
-		return nil, fmt.Errorf("unmarshal holding tank: %w", err)
-	}
-	return entries, nil
+	return callInto[[]HoldingTankEntryDTO](c, ctx, "get_holding_tank", params)
 }
 
 // --- Tree query methods ---
@@ -240,73 +243,41 @@ func (c *EngineClient) GetParent(ctx context.Context, structure, userID string) 
 
 // GetChildren returns the direct children of a node in position order.
 func (c *EngineClient) GetChildren(ctx context.Context, structure, userID string) ([]EngineNode, error) {
-	result, err := c.call(ctx, "get_children", map[string]string{
+	return callInto[[]EngineNode](c, ctx, "get_children", map[string]string{
 		"structure": structure,
 		"user_id":   userID,
 	})
-	if err != nil {
-		return nil, err
-	}
-
-	var nodes []EngineNode
-	if err := json.Unmarshal(result, &nodes); err != nil {
-		return nil, fmt.Errorf("unmarshal children: %w", err)
-	}
-	return nodes, nil
 }
 
 // GetUpline returns ancestors from closest to farthest.
 // Depth 0 means unlimited. Depth N returns at most N ancestors.
 func (c *EngineClient) GetUpline(ctx context.Context, structure, userID string, depth uint32) ([]EngineNode, error) {
-	result, err := c.call(ctx, "get_upline", map[string]any{
+	return callInto[[]EngineNode](c, ctx, "get_upline", map[string]any{
 		"structure": structure,
 		"user_id":   userID,
 		"depth":     depth,
 	})
-	if err != nil {
-		return nil, err
-	}
-
-	var nodes []EngineNode
-	if err := json.Unmarshal(result, &nodes); err != nil {
-		return nil, fmt.Errorf("unmarshal upline: %w", err)
-	}
-	return nodes, nil
 }
 
 // GetDownline returns descendants in breadth-first order.
 // Depth 0 means unlimited. Depth N returns descendants up to N levels deep.
 func (c *EngineClient) GetDownline(ctx context.Context, structure, userID string, depth uint32) ([]EngineNode, error) {
-	result, err := c.call(ctx, "get_downline", map[string]any{
+	return callInto[[]EngineNode](c, ctx, "get_downline", map[string]any{
 		"structure": structure,
 		"user_id":   userID,
 		"depth":     depth,
 	})
-	if err != nil {
-		return nil, err
-	}
-
-	var nodes []EngineNode
-	if err := json.Unmarshal(result, &nodes); err != nil {
-		return nil, fmt.Errorf("unmarshal downline: %w", err)
-	}
-	return nodes, nil
 }
 
 // GetPosition returns a full position snapshot for a user, including
 // derived data like downline counts and child count.
 func (c *EngineClient) GetPosition(ctx context.Context, structure, userID string) (*EnginePosition, error) {
-	result, err := c.call(ctx, "get_position", map[string]string{
+	pos, err := callInto[EnginePosition](c, ctx, "get_position", map[string]string{
 		"structure": structure,
 		"user_id":   userID,
 	})
 	if err != nil {
 		return nil, err
-	}
-
-	var pos EnginePosition
-	if err := json.Unmarshal(result, &pos); err != nil {
-		return nil, fmt.Errorf("unmarshal position: %w", err)
 	}
 	return &pos, nil
 }
@@ -358,37 +329,19 @@ func (c *EngineClient) GetSponsor(ctx context.Context, structure, userID string)
 // GetSponsorUpline returns sponsor ancestors from closest to farthest.
 // Depth 0 means unlimited. Depth N returns at most N sponsor ancestors.
 func (c *EngineClient) GetSponsorUpline(ctx context.Context, structure, userID string, depth uint32) ([]EngineNode, error) {
-	result, err := c.call(ctx, "get_sponsor_upline", map[string]any{
+	return callInto[[]EngineNode](c, ctx, "get_sponsor_upline", map[string]any{
 		"structure": structure,
 		"user_id":   userID,
 		"depth":     depth,
 	})
-	if err != nil {
-		return nil, err
-	}
-
-	var nodes []EngineNode
-	if err := json.Unmarshal(result, &nodes); err != nil {
-		return nil, fmt.Errorf("unmarshal sponsor upline: %w", err)
-	}
-	return nodes, nil
 }
 
 // GetSponsored returns the nodes directly sponsored by the given user.
 func (c *EngineClient) GetSponsored(ctx context.Context, structure, userID string) ([]EngineNode, error) {
-	result, err := c.call(ctx, "get_sponsored", map[string]string{
+	return callInto[[]EngineNode](c, ctx, "get_sponsored", map[string]string{
 		"structure": structure,
 		"user_id":   userID,
 	})
-	if err != nil {
-		return nil, err
-	}
-
-	var nodes []EngineNode
-	if err := json.Unmarshal(result, &nodes); err != nil {
-		return nil, fmt.Errorf("unmarshal sponsored: %w", err)
-	}
-	return nodes, nil
 }
 
 // --- Commission calculation ---
@@ -396,44 +349,24 @@ func (c *EngineClient) GetSponsored(ctx context.Context, structure, userID strin
 // CalculateUnilevel runs commission calculation for a unilevel structure.
 // Sends snapshots and volume to the engine and returns the earnings.
 func (c *EngineClient) CalculateUnilevel(ctx context.Context, req CalculateUnilevelRequest) ([]CommissionEarningDTO, error) {
-	result, err := c.call(ctx, "calculate_unilevel", req)
-	if err != nil {
-		return nil, err
-	}
-	var earnings []CommissionEarningDTO
-	if err := json.Unmarshal(result, &earnings); err != nil {
-		return nil, fmt.Errorf("unmarshal earnings: %w", err)
-	}
-	return earnings, nil
+	return callInto[[]CommissionEarningDTO](c, ctx, "calculate_unilevel", req)
 }
 
 // CalculateGeneration runs commission calculation for a generation structure.
 // Sends snapshots and volume to the engine and returns the earnings.
 func (c *EngineClient) CalculateGeneration(ctx context.Context, req CalculateGenerationRequest) ([]CommissionEarningDTO, error) {
-	result, err := c.call(ctx, "calculate_generation", req)
-	if err != nil {
-		return nil, err
-	}
-	var earnings []CommissionEarningDTO
-	if err := json.Unmarshal(result, &earnings); err != nil {
-		return nil, fmt.Errorf("unmarshal earnings: %w", err)
-	}
-	return earnings, nil
+	return callInto[[]CommissionEarningDTO](c, ctx, "calculate_generation", req)
 }
 
 // CalculateBinaryPairing runs binary pairing commission calculation.
 // Sends snapshots, volume, and optional carry-forward state to the engine.
 // Returns earnings and updated carry-forward state.
 func (c *EngineClient) CalculateBinaryPairing(ctx context.Context, req CalculateBinaryPairingRequest) (*BinaryCalculationResultDTO, error) {
-	result, err := c.call(ctx, "calculate_binary_pairing", req)
+	r, err := callInto[BinaryCalculationResultDTO](c, ctx, "calculate_binary_pairing", req)
 	if err != nil {
 		return nil, err
 	}
-	var calcResult BinaryCalculationResultDTO
-	if err := json.Unmarshal(result, &calcResult); err != nil {
-		return nil, fmt.Errorf("unmarshal binary calculation result: %w", err)
-	}
-	return &calcResult, nil
+	return &r, nil
 }
 
 // --- Board plan methods ---
@@ -454,7 +387,7 @@ func (c *EngineClient) CreateBoardPlan(ctx context.Context, structure string, wi
 // BoardAddMember adds a member to a board plan structure.
 // The engine places the member using BFS into the oldest board with space.
 func (c *EngineClient) BoardAddMember(ctx context.Context, structure, userID, sponsorID string, timestamp int64) (*BoardAddMemberResultDTO, error) {
-	result, err := c.call(ctx, "board_add_member", map[string]any{
+	r, err := callInto[BoardAddMemberResultDTO](c, ctx, "board_add_member", map[string]any{
 		"structure":  structure,
 		"user_id":    userID,
 		"sponsor_id": sponsorID,
@@ -463,17 +396,13 @@ func (c *EngineClient) BoardAddMember(ctx context.Context, structure, userID, sp
 	if err != nil {
 		return nil, err
 	}
-	var addResult BoardAddMemberResultDTO
-	if err := json.Unmarshal(result, &addResult); err != nil {
-		return nil, fmt.Errorf("unmarshal board add member result: %w", err)
-	}
-	return &addResult, nil
+	return &r, nil
 }
 
 // BoardRemoveMember removes a member from a board plan structure.
 // Remaining members compact upward to fill the gap.
 func (c *EngineClient) BoardRemoveMember(ctx context.Context, structure, userID string, timestamp int64) (*BoardRemoveMemberResultDTO, error) {
-	result, err := c.call(ctx, "board_remove_member", map[string]any{
+	r, err := callInto[BoardRemoveMemberResultDTO](c, ctx, "board_remove_member", map[string]any{
 		"structure": structure,
 		"user_id":   userID,
 		"timestamp": timestamp,
@@ -481,17 +410,13 @@ func (c *EngineClient) BoardRemoveMember(ctx context.Context, structure, userID 
 	if err != nil {
 		return nil, err
 	}
-	var removeResult BoardRemoveMemberResultDTO
-	if err := json.Unmarshal(result, &removeResult); err != nil {
-		return nil, fmt.Errorf("unmarshal board remove member result: %w", err)
-	}
-	return &removeResult, nil
+	return &r, nil
 }
 
 // BoardCompressInactive compresses inactive members out of their boards.
 // Returns which members were removed and any cycle events from compaction.
 func (c *EngineClient) BoardCompressInactive(ctx context.Context, structure string, memberIDs []string, timestamp int64) (*CompressionResultDTO, error) {
-	result, err := c.call(ctx, "board_compress_inactive", map[string]any{
+	r, err := callInto[CompressionResultDTO](c, ctx, "board_compress_inactive", map[string]any{
 		"structure":  structure,
 		"member_ids": memberIDs,
 		"timestamp":  timestamp,
@@ -499,32 +424,20 @@ func (c *EngineClient) BoardCompressInactive(ctx context.Context, structure stri
 	if err != nil {
 		return nil, err
 	}
-	var compResult CompressionResultDTO
-	if err := json.Unmarshal(result, &compResult); err != nil {
-		return nil, fmt.Errorf("unmarshal compression result: %w", err)
-	}
-	return &compResult, nil
+	return &r, nil
 }
 
 // BoardDetectStalled finds boards with no activity since the cutoff timestamp.
 func (c *EngineClient) BoardDetectStalled(ctx context.Context, structure string, cutoffTimestamp int64) ([]StalledBoardDTO, error) {
-	result, err := c.call(ctx, "board_detect_stalled", map[string]any{
+	return callInto[[]StalledBoardDTO](c, ctx, "board_detect_stalled", map[string]any{
 		"structure":        structure,
 		"cutoff_timestamp": cutoffTimestamp,
 	})
-	if err != nil {
-		return nil, err
-	}
-	var stalled []StalledBoardDTO
-	if err := json.Unmarshal(result, &stalled); err != nil {
-		return nil, fmt.Errorf("unmarshal stalled boards: %w", err)
-	}
-	return stalled, nil
 }
 
 // BoardDissolve dissolves a stalled board, displacing its members.
 func (c *EngineClient) BoardDissolve(ctx context.Context, structure, boardID string, timestamp int64) (*DissolutionResultDTO, error) {
-	result, err := c.call(ctx, "board_dissolve", map[string]any{
+	r, err := callInto[DissolutionResultDTO](c, ctx, "board_dissolve", map[string]any{
 		"structure": structure,
 		"board_id":  boardID,
 		"timestamp": timestamp,
@@ -532,11 +445,7 @@ func (c *EngineClient) BoardDissolve(ctx context.Context, structure, boardID str
 	if err != nil {
 		return nil, err
 	}
-	var dissolution DissolutionResultDTO
-	if err := json.Unmarshal(result, &dissolution); err != nil {
-		return nil, fmt.Errorf("unmarshal dissolution result: %w", err)
-	}
-	return &dissolution, nil
+	return &r, nil
 }
 
 // BoardGetState returns the full state of a board as raw JSON.
@@ -575,31 +484,19 @@ func (c *EngineClient) BoardGetMember(ctx context.Context, structure, userID str
 
 // BoardListBoards returns summaries of all boards in a board plan structure.
 func (c *EngineClient) BoardListBoards(ctx context.Context, structure string) ([]BoardSummaryDTO, error) {
-	result, err := c.call(ctx, "board_list", map[string]any{
+	return callInto[[]BoardSummaryDTO](c, ctx, "board_list", map[string]any{
 		"structure": structure,
 	})
-	if err != nil {
-		return nil, err
-	}
-	var boards []BoardSummaryDTO
-	if err := json.Unmarshal(result, &boards); err != nil {
-		return nil, fmt.Errorf("unmarshal board list: %w", err)
-	}
-	return boards, nil
 }
 
 // CalculateBoardCommissions computes cycle commissions for a set of board cycle events.
 // This is a stateless calculation: pass cycle events, prior counts, and config.
 func (c *EngineClient) CalculateBoardCommissions(ctx context.Context, req CalculateBoardCommissionsRequest) (*BoardCommissionResultDTO, error) {
-	result, err := c.call(ctx, "board_calculate_commissions", req)
+	r, err := callInto[BoardCommissionResultDTO](c, ctx, "board_calculate_commissions", req)
 	if err != nil {
 		return nil, err
 	}
-	var commResult BoardCommissionResultDTO
-	if err := json.Unmarshal(result, &commResult); err != nil {
-		return nil, fmt.Errorf("unmarshal board commission result: %w", err)
-	}
-	return &commResult, nil
+	return &r, nil
 }
 
 // --- Streamline methods ---
@@ -627,20 +524,16 @@ func (c *EngineClient) StreamlineAddMember(ctx context.Context, structure string
 	if req.StreamIDOverride != nil {
 		params["stream_id_override"] = *req.StreamIDOverride
 	}
-	result, err := c.call(ctx, "streamline_add_member", params)
+	r, err := callInto[StreamlineAddMemberResultDTO](c, ctx, "streamline_add_member", params)
 	if err != nil {
 		return nil, err
 	}
-	var addResult StreamlineAddMemberResultDTO
-	if err := json.Unmarshal(result, &addResult); err != nil {
-		return nil, fmt.Errorf("unmarshal streamline add member result: %w", err)
-	}
-	return &addResult, nil
+	return &r, nil
 }
 
 // StreamlineRemoveMember removes a member from all streams.
 func (c *EngineClient) StreamlineRemoveMember(ctx context.Context, structure, userID string, timestamp int64) (*StreamlineRemoveMemberResultDTO, error) {
-	result, err := c.call(ctx, "streamline_remove_member", map[string]any{
+	r, err := callInto[StreamlineRemoveMemberResultDTO](c, ctx, "streamline_remove_member", map[string]any{
 		"structure": structure,
 		"user_id":   userID,
 		"timestamp": timestamp,
@@ -648,16 +541,12 @@ func (c *EngineClient) StreamlineRemoveMember(ctx context.Context, structure, us
 	if err != nil {
 		return nil, err
 	}
-	var removeResult StreamlineRemoveMemberResultDTO
-	if err := json.Unmarshal(result, &removeResult); err != nil {
-		return nil, fmt.Errorf("unmarshal streamline remove member result: %w", err)
-	}
-	return &removeResult, nil
+	return &r, nil
 }
 
 // StreamlineExpandStreams expands a user's stream count on rank promotion.
 func (c *EngineClient) StreamlineExpandStreams(ctx context.Context, structure string, req StreamlineExpandRequest) (*StreamlineExpandResultDTO, error) {
-	result, err := c.call(ctx, "streamline_expand_streams", map[string]any{
+	r, err := callInto[StreamlineExpandResultDTO](c, ctx, "streamline_expand_streams", map[string]any{
 		"structure":     structure,
 		"user_id":       req.UserID,
 		"total_allowed": req.TotalAllowed,
@@ -666,16 +555,12 @@ func (c *EngineClient) StreamlineExpandStreams(ctx context.Context, structure st
 	if err != nil {
 		return nil, err
 	}
-	var expandResult StreamlineExpandResultDTO
-	if err := json.Unmarshal(result, &expandResult); err != nil {
-		return nil, fmt.Errorf("unmarshal streamline expand result: %w", err)
-	}
-	return &expandResult, nil
+	return &r, nil
 }
 
 // StreamlineUpdateAllowance freezes/unfreezes streams on rank change.
 func (c *EngineClient) StreamlineUpdateAllowance(ctx context.Context, structure string, req StreamlineUpdateAllowanceRequest) (*StreamlineFreezeResultDTO, error) {
-	result, err := c.call(ctx, "streamline_update_allowance", map[string]any{
+	r, err := callInto[StreamlineFreezeResultDTO](c, ctx, "streamline_update_allowance", map[string]any{
 		"structure":     structure,
 		"user_id":       req.UserID,
 		"total_allowed": req.TotalAllowed,
@@ -684,87 +569,55 @@ func (c *EngineClient) StreamlineUpdateAllowance(ctx context.Context, structure 
 	if err != nil {
 		return nil, err
 	}
-	var freezeResult StreamlineFreezeResultDTO
-	if err := json.Unmarshal(result, &freezeResult); err != nil {
-		return nil, fmt.Errorf("unmarshal streamline freeze result: %w", err)
-	}
-	return &freezeResult, nil
+	return &r, nil
 }
 
 // StreamlineListStreams returns summaries of all streams.
 func (c *EngineClient) StreamlineListStreams(ctx context.Context, structure string) ([]StreamSummaryDTO, error) {
-	result, err := c.call(ctx, "streamline_list_streams", map[string]any{
+	return callInto[[]StreamSummaryDTO](c, ctx, "streamline_list_streams", map[string]any{
 		"structure": structure,
 	})
-	if err != nil {
-		return nil, err
-	}
-	var streams []StreamSummaryDTO
-	if err := json.Unmarshal(result, &streams); err != nil {
-		return nil, fmt.Errorf("unmarshal streamline list streams: %w", err)
-	}
-	return streams, nil
 }
 
 // StreamlineGetMember returns a member's positions across all streams.
 func (c *EngineClient) StreamlineGetMember(ctx context.Context, structure, userID string) (*StreamlineMemberInfoDTO, error) {
-	result, err := c.call(ctx, "streamline_get_member", map[string]any{
+	r, err := callInto[StreamlineMemberInfoDTO](c, ctx, "streamline_get_member", map[string]any{
 		"structure": structure,
 		"user_id":   userID,
 	})
 	if err != nil {
 		return nil, err
 	}
-	var info StreamlineMemberInfoDTO
-	if err := json.Unmarshal(result, &info); err != nil {
-		return nil, fmt.Errorf("unmarshal streamline member info: %w", err)
-	}
-	return &info, nil
+	return &r, nil
 }
 
 // StreamlineGetStream returns a single stream's summary.
 func (c *EngineClient) StreamlineGetStream(ctx context.Context, structure string, streamID int) (*StreamSummaryDTO, error) {
-	result, err := c.call(ctx, "streamline_get_stream", map[string]any{
+	r, err := callInto[StreamSummaryDTO](c, ctx, "streamline_get_stream", map[string]any{
 		"structure": structure,
 		"stream_id": streamID,
 	})
 	if err != nil {
 		return nil, err
 	}
-	var summary StreamSummaryDTO
-	if err := json.Unmarshal(result, &summary); err != nil {
-		return nil, fmt.Errorf("unmarshal streamline stream summary: %w", err)
-	}
-	return &summary, nil
+	return &r, nil
 }
 
 // CalculateStreamline runs streamline commission calculation.
 func (c *EngineClient) CalculateStreamline(ctx context.Context, req CalculateStreamlineRequest) ([]CommissionEarningDTO, error) {
-	result, err := c.call(ctx, "calculate_streamline", req)
-	if err != nil {
-		return nil, err
-	}
-	var earnings []CommissionEarningDTO
-	if err := json.Unmarshal(result, &earnings); err != nil {
-		return nil, fmt.Errorf("unmarshal streamline earnings: %w", err)
-	}
-	return earnings, nil
+	return callInto[[]CommissionEarningDTO](c, ctx, "calculate_streamline", req)
 }
 
 // TakeSnapshot serializes a structure's state for persistence.
 // Returns the snapshot result containing tree type and serialized data.
 func (c *EngineClient) TakeSnapshot(ctx context.Context, structure string) (*SnapshotResultDTO, error) {
-	result, err := c.call(ctx, "take_snapshot", map[string]any{
+	r, err := callInto[SnapshotResultDTO](c, ctx, "take_snapshot", map[string]any{
 		"structure": structure,
 	})
 	if err != nil {
 		return nil, err
 	}
-	var snapshot SnapshotResultDTO
-	if err := json.Unmarshal(result, &snapshot); err != nil {
-		return nil, fmt.Errorf("unmarshal snapshot: %w", err)
-	}
-	return &snapshot, nil
+	return &r, nil
 }
 
 // RestoreSnapshot restores a structure from a previously taken snapshot.

@@ -3,11 +3,16 @@ package platform
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// eventSelectColumns is the SELECT column list for events queries.
+// Order must match the scanEvents Scan call.
+const eventSelectColumns = `global_position, id, stream, type, version, payload, metadata, timestamp`
 
 // Compile-time check: PostgresEventStore implements EventStore.
 var _ EventStore = (*PostgresEventStore)(nil)
@@ -120,19 +125,12 @@ func (s *PostgresEventStore) ReadStream(ctx context.Context, stream string, from
 	)
 	if limit > 0 {
 		rows, err = s.pool.Query(ctx,
-			`SELECT global_position, id, stream, type, version, payload, metadata, timestamp
-			 FROM events
-			 WHERE stream = $1 AND version >= $2
-			 ORDER BY version
-			 LIMIT $3`,
+			fmt.Sprintf(`SELECT %s FROM events WHERE stream = $1 AND version >= $2 ORDER BY version LIMIT $3`, eventSelectColumns),
 			stream, fromVersion, limit,
 		)
 	} else {
 		rows, err = s.pool.Query(ctx,
-			`SELECT global_position, id, stream, type, version, payload, metadata, timestamp
-			 FROM events
-			 WHERE stream = $1 AND version >= $2
-			 ORDER BY version`,
+			fmt.Sprintf(`SELECT %s FROM events WHERE stream = $1 AND version >= $2 ORDER BY version`, eventSelectColumns),
 			stream, fromVersion,
 		)
 	}
@@ -153,19 +151,12 @@ func (s *PostgresEventStore) ReadCategory(ctx context.Context, category string, 
 	)
 	if limit > 0 {
 		rows, err = s.pool.Query(ctx,
-			`SELECT global_position, id, stream, type, version, payload, metadata, timestamp
-			 FROM events
-			 WHERE split_part(stream, '-', 1) = $1 AND global_position > $2
-			 ORDER BY global_position
-			 LIMIT $3`,
+			fmt.Sprintf(`SELECT %s FROM events WHERE split_part(stream, '-', 1) = $1 AND global_position > $2 ORDER BY global_position LIMIT $3`, eventSelectColumns),
 			category, afterPosition, limit,
 		)
 	} else {
 		rows, err = s.pool.Query(ctx,
-			`SELECT global_position, id, stream, type, version, payload, metadata, timestamp
-			 FROM events
-			 WHERE split_part(stream, '-', 1) = $1 AND global_position > $2
-			 ORDER BY global_position`,
+			fmt.Sprintf(`SELECT %s FROM events WHERE split_part(stream, '-', 1) = $1 AND global_position > $2 ORDER BY global_position`, eventSelectColumns),
 			category, afterPosition,
 		)
 	}

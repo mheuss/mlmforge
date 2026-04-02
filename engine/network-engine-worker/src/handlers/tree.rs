@@ -570,7 +570,10 @@ pub(crate) fn handle_get_upline(state: &WorkerState, request: &Request) -> Respo
         Ok(id) => id,
         Err(resp) => return resp,
     };
-    let depth = parse_u32_param(&params, "depth").unwrap_or(0);
+    let depth = match parse_u32_param(&params, "depth", &request.id) {
+        Ok(d) => d.unwrap_or(0),
+        Err(resp) => return resp,
+    };
 
     let tree = match get_tree(state, &params, &request.id) {
         Ok(t) => t,
@@ -611,7 +614,10 @@ pub(crate) fn handle_get_downline(state: &WorkerState, request: &Request) -> Res
         Ok(id) => id,
         Err(resp) => return resp,
     };
-    let depth = parse_u32_param(&params, "depth").unwrap_or(0);
+    let depth = match parse_u32_param(&params, "depth", &request.id) {
+        Ok(d) => d.unwrap_or(0),
+        Err(resp) => return resp,
+    };
 
     let tree = match get_tree(state, &params, &request.id) {
         Ok(t) => t,
@@ -787,7 +793,10 @@ pub(crate) fn handle_get_sponsor_upline(state: &WorkerState, request: &Request) 
         Ok(id) => id,
         Err(resp) => return resp,
     };
-    let depth = parse_u32_param(&params, "depth").unwrap_or(0);
+    let depth = match parse_u32_param(&params, "depth", &request.id) {
+        Ok(d) => d.unwrap_or(0),
+        Err(resp) => return resp,
+    };
 
     let tree = match get_tree(state, &params, &request.id) {
         Ok(t) => t,

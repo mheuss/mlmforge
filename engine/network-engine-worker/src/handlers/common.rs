@@ -260,10 +260,32 @@ pub(crate) fn parse_pruning_mode(
 }
 
 /// Parses an optional u32 parameter from the request params.
-/// Returns `None` if the field is missing or not a valid number.
-pub(crate) fn parse_u32_param(params: &serde_json::Value, field: &str) -> Option<u32> {
-    params
-        .get(field)
-        .and_then(|v| v.as_u64())
-        .and_then(|v| u32::try_from(v).ok())
+///
+/// Returns `Ok(None)` when the field is absent, `Ok(Some(n))` on success,
+/// and `Err(Response)` when the field is present but not a valid u32.
+pub(crate) fn parse_u32_param(
+    params: &serde_json::Value,
+    field: &str,
+    request_id: &str,
+) -> Result<Option<u32>, Response> {
+    match params.get(field) {
+        None => Ok(None),
+        Some(v) => {
+            let n = v.as_u64().ok_or_else(|| {
+                Response::error(
+                    request_id.to_string(),
+                    "INVALID_PARAMS",
+                    format!("{} must be a non-negative integer", field),
+                )
+            })?;
+            let n = u32::try_from(n).map_err(|_| {
+                Response::error(
+                    request_id.to_string(),
+                    "INVALID_PARAMS",
+                    format!("{} value {} exceeds u32 range", field, n),
+                )
+            })?;
+            Ok(Some(n))
+        }
+    }
 }

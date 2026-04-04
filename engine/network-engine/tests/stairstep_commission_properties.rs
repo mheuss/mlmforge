@@ -1,5 +1,5 @@
 mod common;
-use common::{build_stairstep_plan, uuid_from_index};
+use common::{build_stairstep_plan, member_snapshot, uuid_from_index};
 
 use network_engine::commission::{DistributorSnapshot, VolumeSource, calculate_stairstep};
 use network_engine::tree::unilevel::UnilevelTree;
@@ -26,12 +26,7 @@ proptest! {
         for i in 0..tree_size {
             snapshots.insert(
                 uuid_from_index(i),
-                DistributorSnapshot {
-                    rank: "member".to_string(),
-                    personal_volume: 100.0,
-                    status: "active".to_string(),
-                    has_order_in_period: true,
-                },
+                member_snapshot(),
             );
         }
 
@@ -71,12 +66,7 @@ proptest! {
         for i in 0..tree_size {
             snapshots.insert(
                 uuid_from_index(i),
-                DistributorSnapshot {
-                    rank: "member".to_string(),
-                    personal_volume: 100.0,
-                    status: "active".to_string(),
-                    has_order_in_period: true,
-                },
+                member_snapshot(),
             );
         }
 
@@ -115,12 +105,7 @@ proptest! {
         for i in 0..tree_size {
             snapshots.insert(
                 uuid_from_index(i),
-                DistributorSnapshot {
-                    rank: "member".to_string(),
-                    personal_volume: 100.0,
-                    status: "active".to_string(),
-                    has_order_in_period: true,
-                },
+                member_snapshot(),
             );
         }
 
@@ -160,12 +145,7 @@ proptest! {
         for i in 0..tree_size {
             snapshots.insert(
                 uuid_from_index(i),
-                DistributorSnapshot {
-                    rank: "member".to_string(),
-                    personal_volume: 100.0,
-                    status: "active".to_string(),
-                    has_order_in_period: true,
-                },
+                member_snapshot(),
             );
         }
 
@@ -209,12 +189,7 @@ proptest! {
         for i in 0..tree_size {
             snapshots.insert(
                 uuid_from_index(i),
-                DistributorSnapshot {
-                    rank: "member".to_string(),
-                    personal_volume: 100.0,
-                    status: "active".to_string(),
-                    has_order_in_period: true,
-                },
+                member_snapshot(),
             );
         }
 

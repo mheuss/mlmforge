@@ -1,7 +1,10 @@
 mod common;
-use common::{build_binary_cycle_step_plan, build_binary_plan, default_pairing, uuid_from_index};
+use common::{
+    build_binary_cycle_step_plan, build_binary_plan, default_pairing, member_snapshot,
+    uuid_from_index,
+};
 
-use network_engine::commission::{DistributorSnapshot, VolumeSource, calculate_binary_pairing};
+use network_engine::commission::{VolumeSource, calculate_binary_pairing};
 use network_engine::config::binary::{
     CycleStep, CycleStepConfig, MultiPositionCapMode, PairingCalculation, PairingConfig,
     VolumeAfterPayout,
@@ -9,15 +12,6 @@ use network_engine::config::binary::{
 use network_engine::tree::binary::BinaryTree;
 use proptest::prelude::*;
 use std::collections::HashMap;
-
-fn member_snapshot() -> DistributorSnapshot {
-    DistributorSnapshot {
-        rank: "member".to_string(),
-        personal_volume: 100.0,
-        status: "active".to_string(),
-        has_order_in_period: true,
-    }
-}
 
 /// Build a 3-node binary tree (root with left and right children).
 fn three_node_tree() -> BinaryTree {

@@ -7,5 +7,7 @@ pub mod board_plan;
 pub mod commission;
 pub mod config;
 pub mod streamline;
+#[doc(hidden)]
+pub mod test_support;
 pub mod tree;
 pub mod types;

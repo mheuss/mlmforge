@@ -6,37 +6,16 @@ use network_engine::config::binary::{
     BinaryCommissionConfig, BinaryCommissionMode, CycleStepConfig, MultiPositionCapMode,
     PairingCalculation, PairingConfig, VolumeAfterPayout,
 };
-use network_engine::config::bonus::BonusConfig;
 use network_engine::config::eligibility::CommissionEligibility;
-use network_engine::config::payout::{CapEnforcement, CapsConfig, PayoutConfig, PayoutMethod};
-use network_engine::config::period::{PeriodConfig, PeriodLength};
-use network_engine::config::placement::PlacementConfig;
-use network_engine::config::rank::{
-    DemotionPolicy, RankDefinition, RankFeaturesConfig, RankQualification, RankTrackingConfig,
-};
 use network_engine::config::stairstep::{BreakawayConfig, DifferentialConfig, OverrideMode};
-use network_engine::config::volume::VolumeConfig;
 use network_engine::config::{
     BinaryStructureConfig, CompensationPlan, StairstepStructureConfig, StructureConfig,
     UnilevelStructureConfig,
 };
+use network_engine::test_support::{build_test_plan, make_rank};
+#[allow(unused_imports)]
+pub use network_engine::test_support::{member_snapshot, snapshot_with_rank, uuid_from_index};
 use std::collections::BTreeMap;
-use uuid::Uuid;
-
-// ---------------------------------------------------------------------------
-// UUID helpers
-// ---------------------------------------------------------------------------
-
-/// Generates a deterministic UUID from an index.
-///
-/// Uses little-endian byte representation with the high byte set to 0xFF
-/// to avoid collisions with `Uuid::nil()`, which is used as the tombstone
-/// sentinel in the arena.
-pub fn uuid_from_index(i: usize) -> Uuid {
-    let mut bytes = (i as u128).to_le_bytes();
-    bytes[15] = 0xFF;
-    Uuid::from_bytes(bytes)
-}
 
 // ---------------------------------------------------------------------------
 // CompensationPlan builders
@@ -53,73 +32,9 @@ pub fn build_base_plan(
     structure: StructureConfig,
     structure_name: &str,
 ) -> CompensationPlan {
-    CompensationPlan {
-        name: "Test Plan".to_string(),
-        version: 1,
-        structures: vec![structure],
-        period: PeriodConfig {
-            length: PeriodLength::Month,
-            start_date: chrono::NaiveDate::from_ymd_opt(2026, 3, 1).unwrap(),
-            payout_lag_days: 14,
-        },
-        volume: VolumeConfig {
-            inhibit_signup_volume: false,
-            base_currency: "USD".to_string(),
-            volume_to_dollar_multiplier: 1.0,
-            deduct_qualifying_volume: false,
-        },
-        ranks: vec![RankDefinition {
-            name: "member".to_string(),
-            ordinal: 1,
-            qualification: RankQualification {
-                structures: vec![],
-                required_products: vec![],
-            },
-            qualified_structures: vec![structure_name.to_string()],
-            demotion_policy: DemotionPolicy::PromotionOnly,
-        }],
-        rank_tracking: RankTrackingConfig {
-            track_achieved_rank: false,
-        },
-        rank_features: RankFeaturesConfig {
-            constraints_enabled: false,
-            overrides_enabled: false,
-        },
-        eligibility,
-        bonuses: BonusConfig {
-            matching: None,
-            sponsor: None,
-            fast_start: None,
-            rank_advancement: None,
-            leadership_development: None,
-            infinity: None,
-            lifestyle: None,
-            pool: None,
-            matrix_completion: None,
-            position: None,
-            board_cycling: None,
-        },
-        payout: PayoutConfig {
-            currency: "USD".to_string(),
-            minimum_payout: 50.0,
-            allow_partial_payout: true,
-            payment_methods: vec![PayoutMethod {
-                method_type: "bank_transfer".to_string(),
-                fee: 2.50,
-            }],
-        },
-        caps: CapsConfig {
-            per_distributor_cap: None,
-            company_payout_cap_percent: 0.42,
-            enforcement: CapEnforcement::ProRata,
-            enable_clawback: false,
-        },
-        placement: PlacementConfig {
-            donated_placement: None,
-            holding_tank: None,
-            binary_placement: None,
-        },
-    }
+    let mut plan = build_test_plan(eligibility, structure, structure_name);
+    plan.ranks = vec![make_rank("member", 1, vec![structure_name.to_string()])];
+    plan
 }
 
 /// Default eligibility for property tests.
@@ -313,26 +228,8 @@ pub fn build_two_rank_unilevel_plan(
     );
 
     plan.ranks = vec![
-        RankDefinition {
-            name: "associate".to_string(),
-            ordinal: 1,
-            qualification: RankQualification {
-                structures: vec![],
-                required_products: vec![],
-            },
-            qualified_structures: vec!["Test".to_string()],
-            demotion_policy: DemotionPolicy::PromotionOnly,
-        },
-        RankDefinition {
-            name: "silver".to_string(),
-            ordinal: 2,
-            qualification: RankQualification {
-                structures: vec![],
-                required_products: vec![],
-            },
-            qualified_structures: vec!["Test".to_string()],
-            demotion_policy: DemotionPolicy::PromotionOnly,
-        },
+        make_rank("associate", 1, vec!["Test".to_string()]),
+        make_rank("silver", 2, vec!["Test".to_string()]),
     ];
 
     (plan, structure)
@@ -402,16 +299,8 @@ pub fn build_stairstep_plan_with_eligibility(
         "Test",
     );
 
-    plan.ranks.push(RankDefinition {
-        name: "director".to_string(),
-        ordinal: 2,
-        qualification: RankQualification {
-            structures: vec![],
-            required_products: vec![],
-        },
-        qualified_structures: vec!["Test".to_string()],
-        demotion_policy: DemotionPolicy::PromotionOnly,
-    });
+    plan.ranks
+        .push(make_rank("director", 2, vec!["Test".to_string()]));
 
     (plan, structure)
 }
@@ -479,26 +368,8 @@ pub fn build_generation_plan_with_eligibility(
     );
 
     plan.ranks = vec![
-        RankDefinition {
-            name: "associate".to_string(),
-            ordinal: 1,
-            qualification: RankQualification {
-                structures: vec![],
-                required_products: vec![],
-            },
-            qualified_structures: vec!["Generation".to_string()],
-            demotion_policy: DemotionPolicy::PromotionOnly,
-        },
-        RankDefinition {
-            name: "director".to_string(),
-            ordinal: 2,
-            qualification: RankQualification {
-                structures: vec![],
-                required_products: vec![],
-            },
-            qualified_structures: vec!["Generation".to_string()],
-            demotion_policy: DemotionPolicy::PromotionOnly,
-        },
+        make_rank("associate", 1, vec!["Generation".to_string()]),
+        make_rank("director", 2, vec!["Generation".to_string()]),
     ];
 
     (plan, structure)
@@ -552,36 +423,9 @@ pub fn build_same_rank_generation_plan(
     );
 
     plan.ranks = vec![
-        RankDefinition {
-            name: "associate".to_string(),
-            ordinal: 1,
-            qualification: RankQualification {
-                structures: vec![],
-                required_products: vec![],
-            },
-            qualified_structures: vec!["Generation".to_string()],
-            demotion_policy: DemotionPolicy::PromotionOnly,
-        },
-        RankDefinition {
-            name: "silver".to_string(),
-            ordinal: 2,
-            qualification: RankQualification {
-                structures: vec![],
-                required_products: vec![],
-            },
-            qualified_structures: vec!["Generation".to_string()],
-            demotion_policy: DemotionPolicy::PromotionOnly,
-        },
-        RankDefinition {
-            name: "director".to_string(),
-            ordinal: 3,
-            qualification: RankQualification {
-                structures: vec![],
-                required_products: vec![],
-            },
-            qualified_structures: vec!["Generation".to_string()],
-            demotion_policy: DemotionPolicy::PromotionOnly,
-        },
+        make_rank("associate", 1, vec!["Generation".to_string()]),
+        make_rank("silver", 2, vec!["Generation".to_string()]),
+        make_rank("director", 3, vec!["Generation".to_string()]),
     ];
 
     (plan, structure)
@@ -698,26 +542,8 @@ pub fn build_two_rank_matrix_plan(
     );
 
     plan.ranks = vec![
-        RankDefinition {
-            name: "associate".to_string(),
-            ordinal: 1,
-            qualification: RankQualification {
-                structures: vec![],
-                required_products: vec![],
-            },
-            qualified_structures: vec!["Test".to_string()],
-            demotion_policy: DemotionPolicy::PromotionOnly,
-        },
-        RankDefinition {
-            name: "silver".to_string(),
-            ordinal: 2,
-            qualification: RankQualification {
-                structures: vec![],
-                required_products: vec![],
-            },
-            qualified_structures: vec!["Test".to_string()],
-            demotion_policy: DemotionPolicy::PromotionOnly,
-        },
+        make_rank("associate", 1, vec!["Test".to_string()]),
+        make_rank("silver", 2, vec!["Test".to_string()]),
     ];
 
     (plan, structure)

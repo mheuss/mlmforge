@@ -1,6 +1,8 @@
 mod common;
 
-use common::{build_generation_plan, build_same_rank_generation_plan, uuid_from_index};
+use common::{
+    build_generation_plan, build_same_rank_generation_plan, snapshot_with_rank, uuid_from_index,
+};
 
 use network_engine::commission::{DistributorSnapshot, VolumeSource, calculate_generation};
 use network_engine::tree::unilevel::UnilevelTree;
@@ -86,16 +88,12 @@ fn reference_tree_threshold_mode() {
     let (plan, structure) = build_generation_plan(4);
 
     let director = DistributorSnapshot {
-        rank: "director".to_string(),
         personal_volume: 150.0,
-        status: "active".to_string(),
-        has_order_in_period: true,
+        ..snapshot_with_rank("director")
     };
     let associate = DistributorSnapshot {
-        rank: "associate".to_string(),
         personal_volume: 150.0,
-        status: "active".to_string(),
-        has_order_in_period: true,
+        ..snapshot_with_rank("associate")
     };
 
     let mut snapshots = HashMap::new();

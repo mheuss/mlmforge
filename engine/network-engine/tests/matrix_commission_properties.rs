@@ -1,7 +1,7 @@
 mod common;
 use common::{
     build_matrix_plan, build_matrix_plan_with_eligibility, build_two_rank_matrix_plan,
-    uuid_from_index,
+    member_snapshot, uuid_from_index,
 };
 
 use network_engine::commission::{DistributorSnapshot, VolumeSource, calculate_matrix};
@@ -33,12 +33,7 @@ proptest! {
         for i in 0..tree_size {
             snapshots.insert(
                 uuid_from_index(i),
-                DistributorSnapshot {
-                    rank: "member".to_string(),
-                    personal_volume: 100.0,
-                    status: "active".to_string(),
-                    has_order_in_period: true,
-                },
+                member_snapshot(),
             );
         }
 
@@ -76,21 +71,11 @@ proptest! {
         let mut snapshots = HashMap::new();
         snapshots.insert(
             uuid_from_index(0),
-            DistributorSnapshot {
-                rank: "member".to_string(),
-                personal_volume: 100.0,
-                status: "active".to_string(),
-                has_order_in_period: true,
-            },
+            member_snapshot(),
         );
         snapshots.insert(
             uuid_from_index(1),
-            DistributorSnapshot {
-                rank: "member".to_string(),
-                personal_volume: 100.0,
-                status: "active".to_string(),
-                has_order_in_period: true,
-            },
+            member_snapshot(),
         );
 
         let volume = vec![VolumeSource {
@@ -142,11 +127,9 @@ proptest! {
         for i in 0..tree_size {
             snapshots.insert(
                 uuid_from_index(i),
-                DistributorSnapshot {
-                    rank: "member".to_string(),
+                network_engine::commission::DistributorSnapshot {
                     personal_volume: if i % 2 == 0 { 100.0 } else { 0.0 },
-                    status: "active".to_string(),
-                    has_order_in_period: true,
+                    ..member_snapshot()
                 },
             );
         }
@@ -187,12 +170,7 @@ proptest! {
         for i in 0..tree_size {
             snapshots.insert(
                 uuid_from_index(i),
-                DistributorSnapshot {
-                    rank: "member".to_string(),
-                    personal_volume: 100.0,
-                    status: "active".to_string(),
-                    has_order_in_period: true,
-                },
+                member_snapshot(),
             );
         }
 

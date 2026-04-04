@@ -1,7 +1,7 @@
 mod common;
 use common::{
     build_two_rank_unilevel_plan, build_unilevel_plan, build_unilevel_plan_with_eligibility,
-    build_unilevel_plan_with_pass_up, permissive_eligibility, uuid_from_index,
+    build_unilevel_plan_with_pass_up, member_snapshot, permissive_eligibility, uuid_from_index,
 };
 
 use network_engine::commission::{DistributorSnapshot, VolumeSource, calculate_unilevel};
@@ -54,12 +54,7 @@ proptest! {
         for i in 0..tree_size {
             snapshots.insert(
                 uuid_from_index(i),
-                DistributorSnapshot {
-                    rank: "member".to_string(),
-                    personal_volume: 100.0,
-                    status: "active".to_string(),
-                    has_order_in_period: true,
-                },
+                member_snapshot(),
             );
         }
 
@@ -103,21 +98,11 @@ proptest! {
         let mut snapshots = HashMap::new();
         snapshots.insert(
             uuid_from_index(0),
-            DistributorSnapshot {
-                rank: "member".to_string(),
-                personal_volume: 100.0,
-                status: "active".to_string(),
-                has_order_in_period: true,
-            },
+            member_snapshot(),
         );
         snapshots.insert(
             uuid_from_index(1),
-            DistributorSnapshot {
-                rank: "member".to_string(),
-                personal_volume: 100.0,
-                status: "active".to_string(),
-                has_order_in_period: true,
-            },
+            member_snapshot(),
         );
 
         let volume = vec![VolumeSource {
@@ -167,12 +152,10 @@ proptest! {
         for i in 0..tree_size {
             snapshots.insert(
                 uuid_from_index(i),
-                DistributorSnapshot {
-                    rank: "member".to_string(),
+                network_engine::commission::DistributorSnapshot {
                     // Alternate: even nodes eligible, odd nodes ineligible
                     personal_volume: if i % 2 == 0 { 100.0 } else { 0.0 },
-                    status: "active".to_string(),
-                    has_order_in_period: true,
+                    ..member_snapshot()
                 },
             );
         }

@@ -115,7 +115,7 @@ func findMigrationsDir() string {
 		panic("cannot determine source file path")
 	}
 	// thisFile is internal/testutil/postgres.go
-	// project root is two levels up
+	// project root is three levels up: testutil -> internal -> repo root
 	projectRoot := filepath.Dir(filepath.Dir(filepath.Dir(thisFile)))
 	dir := filepath.Join(projectRoot, "migrations")
 	if _, err := os.Stat(dir); err != nil {

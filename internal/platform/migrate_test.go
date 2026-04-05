@@ -24,53 +24,43 @@ func tableExists(t *testing.T, pool *pgxpool.Pool, tableName string) bool {
 }
 
 func TestMigrateUp(t *testing.T) {
-	dsn := os.Getenv("EVENTSTORE_TEST_DSN")
-	if dsn == "" {
-		t.Skip("EVENTSTORE_TEST_DSN not set, skipping migration tests")
+	if pgContainer == nil {
+		t.Skip("Postgres container not available")
 	}
 
+	// The container already has migrations applied. Create a fresh pool
+	// to verify the tables exist.
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
+	pool, err := pgxpool.New(ctx, pgContainer.DSN)
 	require.NoError(t, err)
 	t.Cleanup(func() { pool.Close() })
-
-	_, err = pool.Exec(ctx, "DROP TABLE IF EXISTS schema_migrations, tree_nodes, events")
-	require.NoError(t, err, "failed to reset schema before migration test")
-
-	cleanup := RunMigrationsForTest(t, dsn)
-	defer cleanup()
 
 	assert.True(t, tableExists(t, pool, "events"), "events table should exist after MigrateUp")
 	assert.True(t, tableExists(t, pool, "tree_nodes"), "tree_nodes table should exist after MigrateUp")
 }
 
 func TestMigrateUpDown(t *testing.T) {
-	dsn := os.Getenv("EVENTSTORE_TEST_DSN")
-	if dsn == "" {
-		t.Skip("EVENTSTORE_TEST_DSN not set, skipping migration tests")
+	if pgContainer == nil {
+		t.Skip("Postgres container not available")
 	}
 
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
+	pool, err := pgxpool.New(ctx, pgContainer.DSN)
 	require.NoError(t, err)
 	t.Cleanup(func() { pool.Close() })
 
-	_, err = pool.Exec(ctx, "DROP TABLE IF EXISTS schema_migrations, tree_nodes, events")
-	require.NoError(t, err, "failed to reset schema before migration test")
-
 	migrationsPath := FindMigrationsDir(t)
 
-	err = MigrateUp(dsn, migrationsPath)
-	require.NoError(t, err)
-	assert.True(t, tableExists(t, pool, "events"), "events table should exist after up")
-	assert.True(t, tableExists(t, pool, "tree_nodes"), "tree_nodes table should exist after up")
-
+	// Roll all migrations down, then back up to verify the full cycle.
+	// The loop terminates on ErrNoChange or os.ErrNotExist. The latter
+	// occurs when golang-migrate has rolled back past all numbered
+	// migration files.
 	for {
-		err := MigrateDown(dsn, migrationsPath)
+		err := MigrateDown(pgContainer.DSN, migrationsPath)
 		if err == nil {
 			continue
 		}
-		if errors.Is(err, ErrNoChange) {
+		if errors.Is(err, ErrNoChange) || errors.Is(err, os.ErrNotExist) {
 			break
 		}
 		require.NoError(t, err, "unexpected rollback error")
@@ -78,4 +68,10 @@ func TestMigrateUpDown(t *testing.T) {
 
 	assert.False(t, tableExists(t, pool, "events"), "events table should not exist after full rollback")
 	assert.False(t, tableExists(t, pool, "tree_nodes"), "tree_nodes table should not exist after full rollback")
+
+	// Re-apply migrations so subsequent tests still have tables.
+	err = MigrateUp(pgContainer.DSN, migrationsPath)
+	require.NoError(t, err)
+	assert.True(t, tableExists(t, pool, "events"), "events table should exist after up")
+	assert.True(t, tableExists(t, pool, "tree_nodes"), "tree_nodes table should exist after up")
 }

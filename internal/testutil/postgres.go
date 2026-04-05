@@ -9,12 +9,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-migrate/migrate/v4"
+	_ "github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
-
-	"github.com/mlmforge/mlmforge/internal/platform"
 )
 
 // PostgresContainer holds a running Postgres test container.
@@ -47,8 +48,7 @@ func StartPostgres() (*PostgresContainer, error) {
 		return nil, fmt.Errorf("get connection string: %w", err)
 	}
 
-	migrationsDir := findMigrationsDir()
-	if err := platform.MigrateUp(dsn, migrationsDir); err != nil {
+	if err := migrateUp(dsn, findMigrationsDir()); err != nil {
 		container.Terminate(ctx)
 		return nil, fmt.Errorf("run migrations: %w", err)
 	}
@@ -84,6 +84,27 @@ func (c *PostgresContainer) NewPool(t *testing.T) *pgxpool.Pool {
 	}
 
 	return pool
+}
+
+// migrateUp applies all pending migrations. Uses golang-migrate directly
+// to avoid an import cycle with the platform package.
+func migrateUp(dbURL, migrationsPath string) error {
+	absPath, err := filepath.Abs(migrationsPath)
+	if err != nil {
+		return fmt.Errorf("resolve migrations path: %w", err)
+	}
+	sourceURL := fmt.Sprintf("file://%s", absPath)
+
+	m, err := migrate.New(sourceURL, dbURL)
+	if err != nil {
+		return fmt.Errorf("create migrator: %w", err)
+	}
+	defer func() { _, _ = m.Close() }()
+
+	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+		return fmt.Errorf("apply migrations: %w", err)
+	}
+	return nil
 }
 
 // findMigrationsDir locates the migrations/ directory relative to the

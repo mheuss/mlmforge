@@ -44,12 +44,12 @@ func StartPostgres() (*PostgresContainer, error) {
 
 	dsn, err := container.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		container.Terminate(ctx)
+		_ = container.Terminate(ctx)
 		return nil, fmt.Errorf("get connection string: %w", err)
 	}
 
 	if err := migrateUp(dsn, findMigrationsDir()); err != nil {
-		container.Terminate(ctx)
+		_ = container.Terminate(ctx)
 		return nil, fmt.Errorf("run migrations: %w", err)
 	}
 
@@ -62,7 +62,7 @@ func StartPostgres() (*PostgresContainer, error) {
 // Terminate stops and removes the container.
 func (c *PostgresContainer) Terminate() {
 	if c != nil && c.container != nil {
-		c.container.Terminate(context.Background())
+		_ = c.container.Terminate(context.Background())
 	}
 }
 

@@ -1029,6 +1029,266 @@ func TestEngineClient_CalculateBinaryPairing_EmptyResult(t *testing.T) {
 	assert.Empty(t, result.CarryForward)
 }
 
+// --- Board plan contract tests (mock) ---
+
+func TestEngineClient_BoardCreateBoardPlan_MockParams(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`null`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	config := json.RawMessage(`{"cycle_commission":10.0,"re_entry":true}`)
+	err := client.CreateBoardPlan(context.Background(), "BoardTest", 2, 3, config)
+	require.NoError(t, err)
+
+	assert.Equal(t, "create_board_plan", mock.lastOp)
+	assert.JSONEq(t, `{
+		"structure":"BoardTest",
+		"width":2,
+		"height":3,
+		"config":{"cycle_commission":10.0,"re_entry":true}
+	}`, string(mock.lastParams))
+}
+
+func TestEngineClient_BoardAddMember_MockResponse(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{
+			"board_id":"board-001",
+			"position":3,
+			"cycle_events":[{
+				"board_id":"board-001",
+				"cycled_member":"00000000-0000-0000-0000-000000000001",
+				"new_boards":["board-002"],
+				"re_entry_board":"board-003"
+			}]
+		}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	result, err := client.BoardAddMember(context.Background(), "BoardTest",
+		"00000000-0000-0000-0000-000000000001",
+		"00000000-0000-0000-0000-000000000002",
+		1000)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Equal(t, "board_add_member", mock.lastOp)
+	assert.Equal(t, "board-001", result.BoardID)
+	assert.Equal(t, 3, result.Position)
+	require.Len(t, result.CycleEvents, 1)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000001", result.CycleEvents[0].CycledMember)
+	assert.Equal(t, []string{"board-002"}, result.CycleEvents[0].NewBoards)
+	require.NotNil(t, result.CycleEvents[0].ReEntryBoard)
+	assert.Equal(t, "board-003", *result.CycleEvents[0].ReEntryBoard)
+}
+
+func TestEngineClient_BoardRemoveMember_MockResponse(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{
+			"compacted":["00000000-0000-0000-0000-000000000002","00000000-0000-0000-0000-000000000003"],
+			"cycle_events":[]
+		}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	result, err := client.BoardRemoveMember(context.Background(), "BoardTest",
+		"00000000-0000-0000-0000-000000000001", 2000)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Equal(t, "board_remove_member", mock.lastOp)
+	assert.Equal(t, []string{
+		"00000000-0000-0000-0000-000000000002",
+		"00000000-0000-0000-0000-000000000003",
+	}, result.Compacted)
+	assert.Empty(t, result.CycleEvents)
+}
+
+func TestEngineClient_BoardCompressInactive_MockResponse(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{
+			"compressed":[{"user_id":"00000000-0000-0000-0000-000000000001","board_id":"board-001"}],
+			"cycle_events":[{
+				"board_id":"board-001",
+				"cycled_member":"00000000-0000-0000-0000-000000000002",
+				"new_boards":["board-002"],
+				"re_entry_board":null
+			}]
+		}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	result, err := client.BoardCompressInactive(context.Background(), "BoardTest",
+		[]string{"00000000-0000-0000-0000-000000000001"}, 3000)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Equal(t, "board_compress_inactive", mock.lastOp)
+	require.Len(t, result.Compressed, 1)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000001", result.Compressed[0].UserID)
+	assert.Equal(t, "board-001", result.Compressed[0].BoardID)
+	require.Len(t, result.CycleEvents, 1)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000002", result.CycleEvents[0].CycledMember)
+	assert.Nil(t, result.CycleEvents[0].ReEntryBoard)
+}
+
+func TestEngineClient_BoardDetectStalled_MockResponse(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`[{
+			"board_id":"board-001",
+			"last_activity_at":500,
+			"filled_positions":3,
+			"total_positions":7,
+			"members":["00000000-0000-0000-0000-000000000001","00000000-0000-0000-0000-000000000002"]
+		}]`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	stalled, err := client.BoardDetectStalled(context.Background(), "BoardTest", 1000)
+	require.NoError(t, err)
+	require.Len(t, stalled, 1)
+
+	assert.Equal(t, "board_detect_stalled", mock.lastOp)
+	assert.Equal(t, "board-001", stalled[0].BoardID)
+	assert.Equal(t, int64(500), stalled[0].LastActivityAt)
+	assert.Equal(t, 3, stalled[0].FilledPositions)
+	assert.Equal(t, 7, stalled[0].TotalPositions)
+	assert.Len(t, stalled[0].Members, 2)
+}
+
+func TestEngineClient_BoardDissolve_MockResponse(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{
+			"dissolved_board_id":"board-001",
+			"displaced_members":["00000000-0000-0000-0000-000000000001","00000000-0000-0000-0000-000000000002"]
+		}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	result, err := client.BoardDissolve(context.Background(), "BoardTest", "board-001", 4000)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Equal(t, "board_dissolve", mock.lastOp)
+	assert.Equal(t, "board-001", result.DissolvedBoardID)
+	assert.Equal(t, []string{
+		"00000000-0000-0000-0000-000000000001",
+		"00000000-0000-0000-0000-000000000002",
+	}, result.DisplacedMembers)
+}
+
+func TestEngineClient_BoardGetState_MockResponse(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{"board_id":"board-001","positions":[null,"00000000-0000-0000-0000-000000000001"]}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	result, err := client.BoardGetState(context.Background(), "BoardTest", "board-001")
+	require.NoError(t, err)
+
+	assert.Equal(t, "board_get_state", mock.lastOp)
+	assert.JSONEq(t, `{"board_id":"board-001","positions":[null,"00000000-0000-0000-0000-000000000001"]}`, string(result))
+}
+
+func TestEngineClient_BoardGetMember_MockResponse(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{"board_id":"board-001"}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	info, err := client.BoardGetMember(context.Background(), "BoardTest", "00000000-0000-0000-0000-000000000001")
+	require.NoError(t, err)
+	require.NotNil(t, info)
+
+	assert.Equal(t, "board_get_member", mock.lastOp)
+	assert.Equal(t, "board-001", info.BoardID)
+}
+
+func TestEngineClient_BoardGetMember_ReturnsNilWhenNotFound(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`null`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	info, err := client.BoardGetMember(context.Background(), "BoardTest", "00000000-0000-0000-0000-000000000099")
+	require.NoError(t, err)
+	assert.Nil(t, info)
+}
+
+func TestEngineClient_BoardListBoards_MockResponse(t *testing.T) {
+	parentID := "board-000"
+	mock := &mockTransport{
+		response: json.RawMessage(`[{
+			"id":"board-001",
+			"filled_count":5,
+			"total_positions":7,
+			"created_at":1000,
+			"last_activity_at":2000,
+			"parent_board_id":"board-000"
+		}]`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	boards, err := client.BoardListBoards(context.Background(), "BoardTest")
+	require.NoError(t, err)
+	require.Len(t, boards, 1)
+
+	assert.Equal(t, "board_list", mock.lastOp)
+	assert.Equal(t, "board-001", boards[0].ID)
+	assert.Equal(t, 5, boards[0].FilledCount)
+	assert.Equal(t, 7, boards[0].TotalPositions)
+	assert.Equal(t, int64(1000), boards[0].CreatedAt)
+	assert.Equal(t, int64(2000), boards[0].LastActivityAt)
+	require.NotNil(t, boards[0].ParentBoardID)
+	assert.Equal(t, parentID, *boards[0].ParentBoardID)
+}
+
+func TestEngineClient_CalculateBoardCommissions_MockResponse(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{
+			"earnings":[{
+				"earner_id":"00000000-0000-0000-0000-000000000001",
+				"board_id":"board-001",
+				"dollar_amount":25.50,
+				"cycle_number":2,
+				"capped":false
+			}],
+			"updated_cycle_counts":{"00000000-0000-0000-0000-000000000001":3}
+		}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	req := CalculateBoardCommissionsRequest{
+		CycleEvents: []CycleEventDTO{
+			{
+				BoardID:      "board-001",
+				CycledMember: "00000000-0000-0000-0000-000000000001",
+				NewBoards:    []string{"board-002"},
+				ReEntryBoard: nil,
+			},
+		},
+		PeriodCycleCounts: map[string]int{
+			"00000000-0000-0000-0000-000000000001": 2,
+		},
+		Config: json.RawMessage(`{"cycle_commission":25.50,"max_cycles_per_period":5}`),
+	}
+
+	result, err := client.CalculateBoardCommissions(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Equal(t, "board_calculate_commissions", mock.lastOp)
+	require.Len(t, result.Earnings, 1)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000001", result.Earnings[0].EarnerID)
+	assert.Equal(t, "board-001", result.Earnings[0].BoardID)
+	assert.InDelta(t, 25.50, result.Earnings[0].DollarAmount, 1e-9)
+	assert.Equal(t, 2, result.Earnings[0].CycleNumber)
+	assert.False(t, result.Earnings[0].Capped)
+
+	require.Contains(t, result.UpdatedCycleCounts, "00000000-0000-0000-0000-000000000001")
+	assert.Equal(t, 3, result.UpdatedCycleCounts["00000000-0000-0000-0000-000000000001"])
+}
+
 // mockTransport is a test double for EngineTransport.
 type mockTransport struct {
 	response   json.RawMessage

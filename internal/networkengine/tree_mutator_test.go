@@ -27,30 +27,27 @@ func (s *stubMutator) CreateTree(_ context.Context, structure, _ string) error {
 	return nil
 }
 
-func (s *stubMutator) AddRoot(_ context.Context, structure, userID string, _ int64) error {
+func (s *stubMutator) AddRoot(_ context.Context, _, userID string, _ int64) error {
 	if s.failWith != nil {
 		return s.failWith
 	}
 	s.roots = append(s.roots, userID)
-	_ = structure
 	return nil
 }
 
-func (s *stubMutator) AddNode(_ context.Context, structure, userID, _, _ string, _ int64, _ ...AddNodeOption) error {
+func (s *stubMutator) AddNode(_ context.Context, _, userID, _, _ string, _ int64, _ ...AddNodeOption) error {
 	if s.failWith != nil {
 		return s.failWith
 	}
 	s.nodes = append(s.nodes, userID)
-	_ = structure
 	return nil
 }
 
-func (s *stubMutator) RemoveNode(_ context.Context, structure, userID string) error {
+func (s *stubMutator) RemoveNode(_ context.Context, _, userID string) error {
 	if s.failWith != nil {
 		return s.failWith
 	}
 	s.removed = append(s.removed, userID)
-	_ = structure
 	return nil
 }
 

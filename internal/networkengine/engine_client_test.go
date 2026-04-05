@@ -1232,35 +1232,17 @@ func TestStreamlineStructureConfigDTO_Deserialization(t *testing.T) {
 	}`
 
 	var dto StreamlineStructureConfigDTO
-	err := json.Unmarshal([]byte(jsonStr), &dto)
-	if err != nil {
-		t.Fatalf("unmarshal failed: %v", err)
-	}
+	require.NoError(t, json.Unmarshal([]byte(jsonStr), &dto))
 
-	if dto.Name != "main_stream" {
-		t.Errorf("Name = %q, want %q", dto.Name, "main_stream")
-	}
-	if dto.StreamlineCommission.CommissionableDepth != 10 {
-		t.Errorf("CommissionableDepth = %d, want 10", dto.StreamlineCommission.CommissionableDepth)
-	}
-	if len(dto.StreamlineCommission.DynamicCompression) != 3 {
-		t.Fatalf("DynamicCompression length = %d, want 3", len(dto.StreamlineCommission.DynamicCompression))
-	}
-	if dto.StreamlineCommission.DynamicCompression[1].MinRank != "silver" {
-		t.Errorf("Level 2 MinRank = %q, want %q", dto.StreamlineCommission.DynamicCompression[1].MinRank, "silver")
-	}
-	if dto.StreamlineCommission.Streams == nil {
-		t.Fatal("Streams is nil, want non-nil")
-	}
-	if dto.StreamlineCommission.Streams.AdditionalPerRank["gold"] != 2 {
-		t.Errorf("AdditionalPerRank[gold] = %d, want 2", dto.StreamlineCommission.Streams.AdditionalPerRank["gold"])
-	}
-	if dto.StreamlineCommission.Streams.FreezeOnDemotion != true {
-		t.Error("FreezeOnDemotion = false, want true")
-	}
-	if dto.StreamlineCommission.VolumeToDollarMultiplier == nil || *dto.StreamlineCommission.VolumeToDollarMultiplier != 0.5 {
-		t.Error("VolumeToDollarMultiplier wrong")
-	}
+	assert.Equal(t, "main_stream", dto.Name)
+	assert.Equal(t, uint8(10), dto.StreamlineCommission.CommissionableDepth)
+	require.Len(t, dto.StreamlineCommission.DynamicCompression, 3)
+	assert.Equal(t, "silver", dto.StreamlineCommission.DynamicCompression[1].MinRank)
+	require.NotNil(t, dto.StreamlineCommission.Streams)
+	assert.Equal(t, uint8(2), dto.StreamlineCommission.Streams.AdditionalPerRank["gold"])
+	assert.True(t, dto.StreamlineCommission.Streams.FreezeOnDemotion)
+	require.NotNil(t, dto.StreamlineCommission.VolumeToDollarMultiplier)
+	assert.Equal(t, 0.5, *dto.StreamlineCommission.VolumeToDollarMultiplier)
 }
 
 func TestStreamlineStructureConfigDTO_NilOptionalFields(t *testing.T) {
@@ -1275,18 +1257,9 @@ func TestStreamlineStructureConfigDTO_NilOptionalFields(t *testing.T) {
 	}`
 
 	var dto StreamlineStructureConfigDTO
-	err := json.Unmarshal([]byte(jsonStr), &dto)
-	if err != nil {
-		t.Fatalf("unmarshal failed: %v", err)
-	}
+	require.NoError(t, json.Unmarshal([]byte(jsonStr), &dto))
 
-	if dto.StreamlineCommission.VolumeToDollarMultiplier != nil {
-		t.Error("VolumeToDollarMultiplier should be nil when omitted")
-	}
-	if dto.StreamlineCommission.Streams != nil {
-		t.Error("Streams should be nil when omitted")
-	}
-	if dto.StreamlineCommission.CommissionableDepth != 5 {
-		t.Errorf("CommissionableDepth = %d, want 5", dto.StreamlineCommission.CommissionableDepth)
-	}
+	assert.Nil(t, dto.StreamlineCommission.VolumeToDollarMultiplier)
+	assert.Nil(t, dto.StreamlineCommission.Streams)
+	assert.Equal(t, uint8(5), dto.StreamlineCommission.CommissionableDepth)
 }

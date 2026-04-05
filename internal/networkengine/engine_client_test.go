@@ -1208,3 +1208,85 @@ func TestEngineClient_StreamlineSnapshotRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, info.Streams, 1)
 }
+
+// --- Streamline structure DTO deserialization tests ---
+
+func TestStreamlineStructureConfigDTO_Deserialization(t *testing.T) {
+	jsonStr := `{
+		"name": "main_stream",
+		"streamline_commission": {
+			"volume_to_dollar_multiplier": 0.5,
+			"commissionable_depth": 10,
+			"dynamic_compression": [
+				{"level": 1, "min_rank": "active", "percent": 5.0},
+				{"level": 2, "min_rank": "silver", "percent": 3.0},
+				{"level": 3, "min_rank": "gold", "percent": 1.0}
+			],
+			"streams": {
+				"additional_per_rank": {"silver": 1, "gold": 2},
+				"assignment_mode": "round_robin",
+				"per_enrollment_choice": false,
+				"freeze_on_demotion": true
+			}
+		}
+	}`
+
+	var dto StreamlineStructureConfigDTO
+	err := json.Unmarshal([]byte(jsonStr), &dto)
+	if err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+
+	if dto.Name != "main_stream" {
+		t.Errorf("Name = %q, want %q", dto.Name, "main_stream")
+	}
+	if dto.StreamlineCommission.CommissionableDepth != 10 {
+		t.Errorf("CommissionableDepth = %d, want 10", dto.StreamlineCommission.CommissionableDepth)
+	}
+	if len(dto.StreamlineCommission.DynamicCompression) != 3 {
+		t.Fatalf("DynamicCompression length = %d, want 3", len(dto.StreamlineCommission.DynamicCompression))
+	}
+	if dto.StreamlineCommission.DynamicCompression[1].MinRank != "silver" {
+		t.Errorf("Level 2 MinRank = %q, want %q", dto.StreamlineCommission.DynamicCompression[1].MinRank, "silver")
+	}
+	if dto.StreamlineCommission.Streams == nil {
+		t.Fatal("Streams is nil, want non-nil")
+	}
+	if dto.StreamlineCommission.Streams.AdditionalPerRank["gold"] != 2 {
+		t.Errorf("AdditionalPerRank[gold] = %d, want 2", dto.StreamlineCommission.Streams.AdditionalPerRank["gold"])
+	}
+	if dto.StreamlineCommission.Streams.FreezeOnDemotion != true {
+		t.Error("FreezeOnDemotion = false, want true")
+	}
+	if dto.StreamlineCommission.VolumeToDollarMultiplier == nil || *dto.StreamlineCommission.VolumeToDollarMultiplier != 0.5 {
+		t.Error("VolumeToDollarMultiplier wrong")
+	}
+}
+
+func TestStreamlineStructureConfigDTO_NilOptionalFields(t *testing.T) {
+	jsonStr := `{
+		"name": "simple_stream",
+		"streamline_commission": {
+			"commissionable_depth": 5,
+			"dynamic_compression": [
+				{"level": 1, "min_rank": "active", "percent": 10.0}
+			]
+		}
+	}`
+
+	var dto StreamlineStructureConfigDTO
+	err := json.Unmarshal([]byte(jsonStr), &dto)
+	if err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+
+	if dto.StreamlineCommission.VolumeToDollarMultiplier != nil {
+		t.Error("VolumeToDollarMultiplier should be nil when omitted")
+	}
+	if dto.StreamlineCommission.Streams != nil {
+		t.Error("Streams should be nil when omitted")
+	}
+	if dto.StreamlineCommission.CommissionableDepth != 5 {
+		t.Errorf("CommissionableDepth = %d, want 5", dto.StreamlineCommission.CommissionableDepth)
+	}
+}

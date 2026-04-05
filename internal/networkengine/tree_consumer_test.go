@@ -290,3 +290,85 @@ func TestTreeConsumer_EngineRetriesExhausted(t *testing.T) {
 	// Engine should have been called maxRetries+1 times (initial + retries).
 	assert.Len(t, transport.calls, 3, "1 initial + 2 retries = 3 calls")
 }
+
+// --- Malformed payload tests ---
+
+func TestTreeConsumer_MalformedRootAdded(t *testing.T) {
+	store := NewMemoryTreeStore()
+	transport := newRecordingTransport()
+	engine := NewEngineClientWithTransport(transport)
+	consumer := NewTreeEventConsumer(store, engine)
+
+	event := platform.Event{
+		ID:      "00000000-0000-0000-0000-000000000001",
+		Stream:  "tree-tree1",
+		Type:    EventTypeRootAdded,
+		Version: 1,
+		Payload: json.RawMessage(`{not json}`),
+	}
+
+	err := consumer.HandleEvent(context.Background(), event)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unmarshal root_added payload")
+	assert.Empty(t, transport.calls, "engine should not be called on bad payload")
+}
+
+func TestTreeConsumer_MalformedNodePlaced(t *testing.T) {
+	store := NewMemoryTreeStore()
+	transport := newRecordingTransport()
+	engine := NewEngineClientWithTransport(transport)
+	consumer := NewTreeEventConsumer(store, engine)
+
+	event := platform.Event{
+		ID:      "00000000-0000-0000-0000-000000000001",
+		Stream:  "tree-tree1",
+		Type:    EventTypeNodePlaced,
+		Version: 1,
+		Payload: json.RawMessage(`{not json}`),
+	}
+
+	err := consumer.HandleEvent(context.Background(), event)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unmarshal node_placed payload")
+	assert.Empty(t, transport.calls, "engine should not be called on bad payload")
+}
+
+func TestTreeConsumer_MalformedNodeRemoved(t *testing.T) {
+	store := NewMemoryTreeStore()
+	transport := newRecordingTransport()
+	engine := NewEngineClientWithTransport(transport)
+	consumer := NewTreeEventConsumer(store, engine)
+
+	event := platform.Event{
+		ID:      "00000000-0000-0000-0000-000000000001",
+		Stream:  "tree-tree1",
+		Type:    EventTypeNodeRemoved,
+		Version: 1,
+		Payload: json.RawMessage(`{not json}`),
+	}
+
+	err := consumer.HandleEvent(context.Background(), event)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unmarshal node_removed payload")
+	assert.Empty(t, transport.calls, "engine should not be called on bad payload")
+}
+
+func TestTreeConsumer_NilPayload(t *testing.T) {
+	store := NewMemoryTreeStore()
+	transport := newRecordingTransport()
+	engine := NewEngineClientWithTransport(transport)
+	consumer := NewTreeEventConsumer(store, engine)
+
+	event := platform.Event{
+		ID:      "00000000-0000-0000-0000-000000000001",
+		Stream:  "tree-tree1",
+		Type:    EventTypeRootAdded,
+		Version: 1,
+		Payload: nil,
+	}
+
+	err := consumer.HandleEvent(context.Background(), event)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unmarshal root_added payload")
+	assert.Empty(t, transport.calls, "engine should not be called on nil payload")
+}

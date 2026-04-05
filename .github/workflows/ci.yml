@@ -39,7 +39,11 @@ jobs:
       - name: Vulnerability check
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
-          govulncheck ./...
+          # Exclude internal/testutil from scan — test-only infrastructure
+          # that pulls in docker/docker via testcontainers-go. These vulns
+          # are in the Docker daemon, not the client, and the package never
+          # ships in any binary.
+          go list ./... | grep -v internal/testutil | xargs govulncheck
 
   rust:
     name: Rust

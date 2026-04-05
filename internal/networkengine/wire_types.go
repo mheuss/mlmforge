@@ -315,8 +315,8 @@ type StreamlineStructureConfigDTO struct {
 }
 
 // StreamlineCommissionDTO mirrors Rust StreamlineCommissionConfig (wire names).
-// uint8 fields match Rust u8. Go's JSON decoder silently truncates overflow
-// values. Range validation is the Rust engine's responsibility.
+// uint8 fields match Rust u8. Go's JSON decoder returns an error for
+// out-of-range or non-integer values during unmarshalling.
 type StreamlineCommissionDTO struct {
 	VolumeToDollarMultiplier *float64             `json:"volume_to_dollar_multiplier,omitempty"`
 	CommissionableDepth      uint8                `json:"commissionable_depth"`

@@ -3,38 +3,18 @@ package platform
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func newTestPostgresStore(t *testing.T) *PostgresEventStore {
 	t.Helper()
-
-	dsn := os.Getenv("EVENTSTORE_TEST_DSN")
-	if dsn == "" {
-		t.Skip("EVENTSTORE_TEST_DSN not set, skipping PostgreSQL integration tests")
+	if pgContainer == nil {
+		t.Skip("Postgres container not available")
 	}
-
-	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	require.NoError(t, err)
-	t.Cleanup(func() { pool.Close() })
-
-	// Drop existing tables and apply migrations for a clean slate.
-	_, err = pool.Exec(ctx, "DROP TABLE IF EXISTS schema_migrations, tree_nodes, events")
-	require.NoError(t, err, "failed to reset schema")
-	cleanup := RunMigrationsForTest(t, dsn)
-	t.Cleanup(cleanup)
-
-	// Truncate events for test isolation (migrations create the table,
-	// but previous test data may linger within the same migration cycle).
-	_, err = pool.Exec(ctx, "TRUNCATE events RESTART IDENTITY")
-	require.NoError(t, err)
-
+	pool := pgContainer.NewPool(t)
 	return NewPostgresEventStore(pool)
 }
 
@@ -160,24 +140,13 @@ func TestPostgresEventStore_MultipleEventsAtomicAppend(t *testing.T) {
 }
 
 func TestMigrateUpIdempotent(t *testing.T) {
-	dsn := os.Getenv("EVENTSTORE_TEST_DSN")
-	if dsn == "" {
-		t.Skip("EVENTSTORE_TEST_DSN not set, skipping migration tests")
+	if pgContainer == nil {
+		t.Skip("Postgres container not available")
 	}
 
-	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	require.NoError(t, err)
-	t.Cleanup(func() { pool.Close() })
-
-	_, err = pool.Exec(ctx, "DROP TABLE IF EXISTS schema_migrations, tree_nodes, events")
-	require.NoError(t, err, "failed to reset schema")
-
-	cleanup := RunMigrationsForTest(t, dsn)
-	defer cleanup()
-
+	// The container already has migrations applied by StartPostgres.
 	// Running MigrateUp again should not error (ErrNoChange is swallowed).
 	migrationsPath := FindMigrationsDir(t)
-	err = MigrateUp(dsn, migrationsPath)
+	err := MigrateUp(pgContainer.DSN, migrationsPath)
 	require.NoError(t, err)
 }

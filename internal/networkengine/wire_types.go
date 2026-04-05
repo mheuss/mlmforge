@@ -292,11 +292,11 @@ type StreamSummaryDTO struct {
 
 // CalculateStreamlineRequest is the input for streamline commission calculation.
 type CalculateStreamlineRequest struct {
-	Structure       string                     `json:"structure"`
-	Plan            json.RawMessage            `json:"plan"`
-	StructureConfig json.RawMessage            `json:"structure_config"`
-	Snapshots       map[string]json.RawMessage `json:"snapshots"`
-	Volume          []json.RawMessage          `json:"volume"`
+	Structure       string                            `json:"structure"`
+	Plan            json.RawMessage                   `json:"plan"` // Full CompensationPlan — see HEU-391
+	StructureConfig StreamlineStructureConfigDTO      `json:"structure_config"`
+	Snapshots       map[string]DistributorSnapshotDTO `json:"snapshots"`
+	Volume          []VolumeSourceDTO                 `json:"volume"`
 }
 
 // SnapshotResultDTO is the wire format for a take_snapshot response.

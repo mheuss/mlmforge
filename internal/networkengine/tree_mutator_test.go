@@ -70,6 +70,9 @@ func TestTreeMutator_ConsumerAcceptsInterface(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"user-root"}, mutator.roots)
+	assert.Empty(t, mutator.nodes)
+	assert.Empty(t, mutator.removed)
+	assert.Empty(t, mutator.created)
 }
 
 // TestTreeMutator_LoaderAcceptsInterface verifies that TreeLoader accepts
@@ -90,4 +93,6 @@ func TestTreeMutator_LoaderAcceptsInterface(t *testing.T) {
 
 	assert.Equal(t, []string{"tree-1"}, mutator.created)
 	assert.Equal(t, []string{"user-0"}, mutator.roots)
+	assert.Empty(t, mutator.nodes)
+	assert.Empty(t, mutator.removed)
 }

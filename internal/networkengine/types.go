@@ -87,7 +87,7 @@ type Rank struct {
 // RankGroup defines a ranking system. Scope determines whether it's
 // global (evaluates across all structures) or structure-specific.
 // EvaluationMode determines how qualification is measured over time.
-// Defined in PlanConfiguration, consumed by RankProvider.
+// Defined in PlanConfiguration, consumed by rank qualification logic.
 type RankGroup struct {
 	ID             string
 	Name           string
@@ -96,8 +96,8 @@ type RankGroup struct {
 	EvaluationMode string // "current_period_only", "cumulative", "highest_ever"
 }
 
-// RankDefinition describes a rank level and its qualification criteria.
-type RankDefinition struct {
+// RankDescriptor describes a rank level and its qualification criteria.
+type RankDescriptor struct {
 	ID                 string
 	Name               string
 	Level              int
@@ -171,8 +171,8 @@ type VolumeAttribution struct {
 
 // --- Commission types ---
 
-// Commission represents a single earned commission record.
-type Commission struct {
+// CommissionEarning represents a single earned commission record.
+type CommissionEarning struct {
 	ID           string
 	UserID       string
 	Amount       float64 // In base currency
@@ -194,7 +194,7 @@ type CommissionSummary struct {
 
 // CommissionPage is a paginated result of commissions.
 type CommissionPage struct {
-	Commissions []Commission
+	Commissions []CommissionEarning
 	TotalCount  int
 	Page        int
 	PageSize    int

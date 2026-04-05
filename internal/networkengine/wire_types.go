@@ -292,11 +292,11 @@ type StreamSummaryDTO struct {
 
 // CalculateStreamlineRequest is the input for streamline commission calculation.
 type CalculateStreamlineRequest struct {
-	Structure       string                     `json:"structure"`
-	Plan            json.RawMessage            `json:"plan"`
-	StructureConfig json.RawMessage            `json:"structure_config"`
-	Snapshots       map[string]json.RawMessage `json:"snapshots"`
-	Volume          []json.RawMessage          `json:"volume"`
+	Structure       string                            `json:"structure"`
+	Plan            json.RawMessage                   `json:"plan"` // Full CompensationPlan — see HEU-391
+	StructureConfig StreamlineStructureConfigDTO      `json:"structure_config"`
+	Snapshots       map[string]DistributorSnapshotDTO `json:"snapshots"`
+	Volume          []VolumeSourceDTO                 `json:"volume"`
 }
 
 // SnapshotResultDTO is the wire format for a take_snapshot response.
@@ -304,4 +304,37 @@ type CalculateStreamlineRequest struct {
 type SnapshotResultDTO struct {
 	TreeType string          `json:"tree_type"`
 	Data     json.RawMessage `json:"data"`
+}
+
+// --- Streamline structure DTOs ---
+
+// StreamlineStructureConfigDTO mirrors Rust StreamlineStructureConfig.
+type StreamlineStructureConfigDTO struct {
+	Name                 string                  `json:"name"`
+	StreamlineCommission StreamlineCommissionDTO `json:"streamline_commission"`
+}
+
+// StreamlineCommissionDTO mirrors Rust StreamlineCommissionConfig (wire names).
+// uint8 fields match Rust u8. Go's JSON decoder returns an error for
+// out-of-range or non-integer values during unmarshalling.
+type StreamlineCommissionDTO struct {
+	VolumeToDollarMultiplier *float64             `json:"volume_to_dollar_multiplier,omitempty"`
+	CommissionableDepth      uint8                `json:"commissionable_depth"`
+	DynamicCompression       []StreamlineLevelDTO `json:"dynamic_compression"`
+	Streams                  *StreamConfigDTO     `json:"streams,omitempty"`
+}
+
+// StreamlineLevelDTO mirrors Rust StreamlineLevel.
+type StreamlineLevelDTO struct {
+	Level   uint8   `json:"level"`
+	MinRank string  `json:"min_rank"`
+	Percent float64 `json:"percent"`
+}
+
+// StreamConfigDTO mirrors Rust StreamConfig (wire names).
+type StreamConfigDTO struct {
+	AdditionalPerRank   map[string]uint8 `json:"additional_per_rank"`
+	AssignmentMode      string           `json:"assignment_mode"`
+	PerEnrollmentChoice bool             `json:"per_enrollment_choice"`
+	FreezeOnDemotion    bool             `json:"freeze_on_demotion"`
 }

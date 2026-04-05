@@ -9,10 +9,10 @@ import (
 // adjacency table on startup.
 type TreeLoader struct {
 	store  TreeStore
-	engine *EngineClient
+	engine TreeMutator
 }
 
-func NewTreeLoader(store TreeStore, engine *EngineClient) *TreeLoader {
+func NewTreeLoader(store TreeStore, engine TreeMutator) *TreeLoader {
 	return &TreeLoader{store: store, engine: engine}
 }
 

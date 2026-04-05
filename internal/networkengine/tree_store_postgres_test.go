@@ -3,12 +3,9 @@ package networkengine
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/mlmforge/mlmforge/internal/platform"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -44,34 +41,17 @@ func makeUUIDNode(nodeID, treeID, userID string, depth int, parentID, sponsorID 
 	}
 }
 
-func newTestPostgresTreeStore(t *testing.T) (*PostgresTreeStore, *pgxpool.Pool) {
+func newTestPostgresTreeStore(t *testing.T) *PostgresTreeStore {
 	t.Helper()
-
-	dsn := os.Getenv("EVENTSTORE_TEST_DSN")
-	if dsn == "" {
-		t.Skip("EVENTSTORE_TEST_DSN not set, skipping PostgreSQL integration tests")
+	if pgContainer == nil {
+		t.Skip("Postgres container not available")
 	}
-
-	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	require.NoError(t, err)
-	t.Cleanup(func() { pool.Close() })
-
-	// Clean slate: drop all managed tables, run migrations.
-	_, err = pool.Exec(ctx, "DROP TABLE IF EXISTS schema_migrations, tree_nodes, events")
-	require.NoError(t, err, "failed to reset schema")
-	cleanup := platform.RunMigrationsForTest(t, dsn)
-	t.Cleanup(cleanup)
-
-	// Truncate tree_nodes for test isolation.
-	_, err = pool.Exec(ctx, "TRUNCATE tree_nodes RESTART IDENTITY")
-	require.NoError(t, err)
-
-	return NewPostgresTreeStore(pool), pool
+	pool := pgContainer.NewPool(t)
+	return NewPostgresTreeStore(pool)
 }
 
 func TestPostgresTreeStore_InsertAndGetNode(t *testing.T) {
-	store, _ := newTestPostgresTreeStore(t)
+	store := newTestPostgresTreeStore(t)
 	ctx := context.Background()
 
 	tree1 := testTreeUUID(1)
@@ -90,7 +70,7 @@ func TestPostgresTreeStore_InsertAndGetNode(t *testing.T) {
 }
 
 func TestPostgresTreeStore_GetNodeNotFound(t *testing.T) {
-	store, _ := newTestPostgresTreeStore(t)
+	store := newTestPostgresTreeStore(t)
 	ctx := context.Background()
 
 	got, err := store.GetNode(ctx, testTreeUUID(1), testUserUUID(99))
@@ -99,7 +79,7 @@ func TestPostgresTreeStore_GetNodeNotFound(t *testing.T) {
 }
 
 func TestPostgresTreeStore_DeleteNode(t *testing.T) {
-	store, _ := newTestPostgresTreeStore(t)
+	store := newTestPostgresTreeStore(t)
 	ctx := context.Background()
 
 	tree1 := testTreeUUID(1)
@@ -114,7 +94,7 @@ func TestPostgresTreeStore_DeleteNode(t *testing.T) {
 }
 
 func TestPostgresTreeStore_GetChildren(t *testing.T) {
-	store, _ := newTestPostgresTreeStore(t)
+	store := newTestPostgresTreeStore(t)
 	ctx := context.Background()
 
 	tree1 := testTreeUUID(1)
@@ -136,7 +116,7 @@ func TestPostgresTreeStore_GetChildren(t *testing.T) {
 }
 
 func TestPostgresTreeStore_GetByTree(t *testing.T) {
-	store, _ := newTestPostgresTreeStore(t)
+	store := newTestPostgresTreeStore(t)
 	ctx := context.Background()
 
 	tree1 := testTreeUUID(1)
@@ -155,7 +135,7 @@ func TestPostgresTreeStore_GetByTree(t *testing.T) {
 }
 
 func TestPostgresTreeStore_GetByTreeDepthOrdered(t *testing.T) {
-	store, _ := newTestPostgresTreeStore(t)
+	store := newTestPostgresTreeStore(t)
 	ctx := context.Background()
 
 	tree1 := testTreeUUID(1)
@@ -177,7 +157,7 @@ func TestPostgresTreeStore_GetByTreeDepthOrdered(t *testing.T) {
 }
 
 func TestPostgresTreeStore_BulkInsert(t *testing.T) {
-	store, _ := newTestPostgresTreeStore(t)
+	store := newTestPostgresTreeStore(t)
 	ctx := context.Background()
 
 	tree1 := testTreeUUID(1)
@@ -203,7 +183,7 @@ func TestPostgresTreeStore_BulkInsert(t *testing.T) {
 }
 
 func TestPostgresTreeStore_DeletedNodeExcludedFromActive(t *testing.T) {
-	store, _ := newTestPostgresTreeStore(t)
+	store := newTestPostgresTreeStore(t)
 	ctx := context.Background()
 
 	tree1 := testTreeUUID(1)
@@ -231,7 +211,8 @@ func TestPostgresTreeStore_DeletedNodeExcludedFromActive(t *testing.T) {
 }
 
 func TestPostgresTreeStore_PartialIndex(t *testing.T) {
-	store, pool := newTestPostgresTreeStore(t)
+	store := newTestPostgresTreeStore(t)
+	pool := pgContainer.NewPool(t)
 	ctx := context.Background()
 
 	tree1 := testTreeUUID(1)
@@ -256,7 +237,8 @@ func TestPostgresTreeStore_PartialIndex(t *testing.T) {
 }
 
 func TestPostgresTreeStore_BulkInsertTransaction(t *testing.T) {
-	store, pool := newTestPostgresTreeStore(t)
+	store := newTestPostgresTreeStore(t)
+	pool := pgContainer.NewPool(t)
 	ctx := context.Background()
 
 	tree1 := testTreeUUID(1)
@@ -284,7 +266,7 @@ func TestPostgresTreeStore_BulkInsertTransaction(t *testing.T) {
 }
 
 func TestPostgresTreeStore_TimestampsPopulated(t *testing.T) {
-	store, _ := newTestPostgresTreeStore(t)
+	store := newTestPostgresTreeStore(t)
 	ctx := context.Background()
 
 	tree1 := testTreeUUID(1)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -27,34 +26,17 @@ func nextEventUUID() string {
 // Skips if either the database or the engine binary is unavailable.
 func newIntegrationDeps(t *testing.T) (*platform.PostgresEventStore, *PostgresTreeStore, *EngineClient, *pgxpool.Pool) {
 	t.Helper()
-
-	dsn := os.Getenv("EVENTSTORE_TEST_DSN")
-	if dsn == "" {
-		t.Skip("EVENTSTORE_TEST_DSN not set, skipping integration tests")
+	if pgContainer == nil {
+		t.Skip("Postgres container not available")
 	}
 
 	engineBinary := findWorkerBinary(t)
 
-	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	require.NoError(t, err)
-	t.Cleanup(func() { pool.Close() })
-
-	// Clean slate.
-	_, err = pool.Exec(ctx, "DROP TABLE IF EXISTS schema_migrations, tree_nodes, events")
-	require.NoError(t, err, "failed to reset schema")
-	cleanup := platform.RunMigrationsForTest(t, dsn)
-	t.Cleanup(cleanup)
-
-	_, err = pool.Exec(ctx, "TRUNCATE events RESTART IDENTITY")
-	require.NoError(t, err)
-	_, err = pool.Exec(ctx, "TRUNCATE tree_nodes RESTART IDENTITY")
-	require.NoError(t, err)
-
+	pool := pgContainer.NewPool(t)
 	eventStore := platform.NewPostgresEventStore(pool)
 	treeStore := NewPostgresTreeStore(pool)
 
-	engine, err := NewEngineClient(ctx, engineBinary)
+	engine, err := NewEngineClient(context.Background(), engineBinary)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Stop() })
 
@@ -116,7 +98,7 @@ func TestTreePersistence_FullWritePath(t *testing.T) {
 	pos, err := engine.GetPosition(ctx, treeID, rootUserID)
 	require.NoError(t, err)
 	require.NotNil(t, pos)
-	assert.Equal(t, 0, pos.Depth)
+	assert.Equal(t, uint32(0), pos.Depth)
 }
 
 func TestTreePersistence_PlaceAndRemove(t *testing.T) {

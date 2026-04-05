@@ -123,3 +123,47 @@ func TestTreeLoader_SkipsRemovedNodes(t *testing.T) {
 	assert.Equal(t, "create_tree", transport.ops[0])
 	assert.Equal(t, "add_root", transport.ops[1])
 }
+
+func TestTreeLoader_RootWithNonZeroDepth(t *testing.T) {
+	store := NewMemoryTreeStore()
+	ctx := context.Background()
+
+	// Insert a single node with depth 1 — invalid for a root.
+	node := makeNode("tree-1", "user-0", 1, nil, ptr("user-0"), nil)
+	require.NoError(t, store.InsertNode(ctx, node))
+
+	transport := newOrderRecordingTransport()
+	engine := NewEngineClientWithTransport(transport)
+	loader := NewTreeLoader(store, engine)
+
+	err := loader.LoadTree(ctx, "tree-1", "unilevel")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "has depth 1, expected 0")
+
+	// create_tree is called before the loop, but no add_root or add_node.
+	assert.Equal(t, []string{"create_tree"}, transport.ops)
+}
+
+func TestTreeLoader_ChildWithNilParent(t *testing.T) {
+	store := NewMemoryTreeStore()
+	ctx := context.Background()
+	enrolled := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// Valid root.
+	root := makeNode("tree-1", "user-0", 0, nil, ptr("user-0"), nil)
+	root.EnrolledAt = enrolled
+	require.NoError(t, store.InsertNode(ctx, root))
+
+	// Child with nil ParentID and nil SponsorID — data corruption.
+	child := makeNode("tree-1", "user-1", 1, nil, nil, nil)
+	child.EnrolledAt = enrolled.Add(time.Hour)
+	require.NoError(t, store.InsertNode(ctx, child))
+
+	transport := newOrderRecordingTransport()
+	engine := NewEngineClientWithTransport(transport)
+	loader := NewTreeLoader(store, engine)
+
+	err := loader.LoadTree(ctx, "tree-1", "unilevel")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "has nil parent or sponsor")
+}

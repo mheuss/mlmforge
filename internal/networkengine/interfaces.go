@@ -80,7 +80,7 @@ type RankProvider interface {
 
 	// ListRankDefinitions returns all rank levels in a rank group
 	// with their qualification criteria.
-	ListRankDefinitions(ctx context.Context, rankGroupID string) ([]RankDefinition, error)
+	ListRankDefinitions(ctx context.Context, rankGroupID string) ([]RankDescriptor, error)
 }
 
 // VolumeRecorder is the command interface for recording volume from orders.
@@ -102,7 +102,7 @@ type CommissionResult interface {
 	// --- Individual / back office ---
 
 	// GetForUser returns all commission records for a user in a period.
-	GetForUser(ctx context.Context, userID string, period string) ([]Commission, error)
+	GetForUser(ctx context.Context, userID string, period string) ([]CommissionEarning, error)
 
 	// GetSummary returns a dashboard summary for a user in a period.
 	GetSummary(ctx context.Context, userID string, period string) (CommissionSummary, error)
@@ -171,8 +171,8 @@ type StructurePlacer interface {
 type PlanConfiguration interface {
 	GetSignupProduct(ctx context.Context, productID string) (SignupProduct, error)
 	ListSignupProducts(ctx context.Context) ([]SignupProduct, error)
-	GetStructureConfig(ctx context.Context, structureID string) (StructureConfig, error)
-	ListStructures(ctx context.Context) ([]StructureConfig, error)
+	GetStructureConfig(ctx context.Context, structureID string) (StructureDescriptor, error)
+	ListStructures(ctx context.Context) ([]StructureDescriptor, error)
 
 	// GetVolumeRoutingRules returns product class to structure mappings.
 	GetVolumeRoutingRules(ctx context.Context) ([]VolumeRoutingRule, error)

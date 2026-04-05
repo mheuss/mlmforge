@@ -17,8 +17,8 @@ type SignupProduct struct {
 	UpgradeEligible     []string // Which signup products this can be upgraded to
 }
 
-// StructureConfig describes a tree structure's shape and behavior.
-type StructureConfig struct {
+// StructureDescriptor describes a tree structure's shape and behavior.
+type StructureDescriptor struct {
 	ID                 string
 	Type               string // "unilevel", "binary", "matrix", "stairstep", "streamline"
 	Name               string

@@ -1264,7 +1264,7 @@ mod tests {
         // Verify root is actually in the sponsor board's positions.
         let sb = engine.get_board(sponsor_board_id).unwrap();
         assert!(
-            sb.positions.iter().any(|p| *p == Some(root)),
+            sb.positions.contains(&Some(root)),
             "root should appear in sponsor board's position array"
         );
     }

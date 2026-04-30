@@ -21,7 +21,6 @@ use super::walk;
 ///
 /// Looks up the rank in `max_generations_per_rank` first; falls back to
 /// the default `max_generations` if the rank is not in the map.
-#[allow(dead_code)] // Wired into walk paths in follow-up tasks (HEU-425).
 fn earner_max_generations(
     rank: &str,
     cfg: &crate::config::generation::GenerationCommissionConfig,
@@ -271,24 +270,33 @@ pub fn calculate_generation(
         }
 
         GenerationBoundaryMode::SameRank => {
-            // Collect unique rank ordinals from all snapshots. Each ordinal
-            // gets its own boundary set and walk pass.
-            let mut unique_ordinals: Vec<u16> = snapshots
+            // Collect unique (rank_name, ordinal) pairs from snapshots. Each
+            // pair gets its own boundary set and walk pass. The rank name is
+            // preserved so each per-rank walk can use earner_max_generations
+            // for its termination depth.
+            let mut unique_ranks: Vec<(&str, u16)> = snapshots
                 .values()
-                .filter_map(|snap| rank_ordinals.get(snap.rank.as_str()).copied())
+                .filter_map(|snap| {
+                    rank_ordinals
+                        .get(snap.rank.as_str())
+                        .copied()
+                        .map(|ord| (snap.rank.as_str(), ord))
+                })
                 .collect::<HashSet<_>>()
                 .into_iter()
                 .collect();
-            unique_ordinals.sort_unstable();
+            unique_ranks.sort_by_key(|(_, ord)| *ord);
 
-            // Validate sources once before the per-ordinal loops.
+            // Validate sources once before the per-rank loops.
             for source in volume {
                 walk::validate_cv(source)?;
                 tree.get_upline(source.source_id, 0)
                     .map_err(|_| CalculationError::SourceNotInTree(source.source_id))?;
             }
 
-            for &ordinal in &unique_ordinals {
+            for &(rank_name, ordinal) in &unique_ranks {
+                let walk_max = earner_max_generations(rank_name, gen_config);
+
                 // Boundary set for this rank level: all nodes at or above ordinal.
                 let boundary_set: HashSet<Uuid> = snapshots
                     .iter()
@@ -311,7 +319,7 @@ pub fn calculate_generation(
                         source.source_id,
                         &boundary_set,
                         &boundary_check,
-                        gen_config.max_generations,
+                        walk_max,
                         gen_config.empty_generation_consumes_number,
                     );
 
@@ -1497,5 +1505,109 @@ mod calculate_tests {
         // low (Associate): gen 1 from Associate walk
         let earn_low = result.iter().find(|e| e.earner_id == uuid(2)).unwrap();
         assert_eq!(earn_low.level, 1);
+    }
+
+    fn silver_snapshot() -> DistributorSnapshot {
+        DistributorSnapshot {
+            rank: "silver".to_string(),
+            personal_volume: 150.0,
+            status: "active".to_string(),
+            has_order_in_period: true,
+        }
+    }
+
+    /// Plan with two ranks for the per-rank-depth test: silver (1), diamond (2).
+    fn silver_diamond_plan(
+        structure: GenerationStructureConfig,
+    ) -> crate::config::CompensationPlan {
+        let structure_config = StructureConfig::Generation(structure);
+        let mut plan = build_test_plan(default_eligibility(), structure_config, "Generation");
+        plan.ranks = vec![
+            RankDefinition {
+                name: "silver".to_string(),
+                ordinal: 1,
+                qualification: RankQualification {
+                    structures: vec![],
+                    required_products: vec![],
+                },
+                qualified_structures: vec!["Generation".to_string()],
+                demotion_policy: DemotionPolicy::PromotionOnly,
+            },
+            RankDefinition {
+                name: "diamond".to_string(),
+                ordinal: 2,
+                qualification: RankQualification {
+                    structures: vec![],
+                    required_products: vec![],
+                },
+                qualified_structures: vec!["Generation".to_string()],
+                demotion_policy: DemotionPolicy::PromotionOnly,
+            },
+        ];
+        plan
+    }
+
+    /// Chain: 0(Silver) -> 1(Silver) -> 2(Diamond) -> 3(Diamond) -> 4(Associate, source).
+    /// SameRank mode. max_generations = 10. Per-rank depth: silver = 2, diamond = 5.
+    ///
+    /// Silver walk (ordinal 1, walk_max=2):
+    ///   boundary_set = all ranked nodes {0, 1, 2, 3}.
+    ///   Walking up from source: 3 (diamond, gen 1) -> 2 (diamond, gen 2) -> STOP.
+    ///   Per-rank cap of 2 stops the walk before the actual Silver nodes (1, 0).
+    ///   Filter to ordinal 1: zero earners.
+    ///
+    /// Diamond walk (ordinal 2, walk_max=5):
+    ///   boundary_set = {2, 3}. Walking up: 3 (gen 1), 2 (gen 2), 1 (skip), 0 (skip).
+    ///   Filter to ordinal 2: node 3 earns gen 1, node 2 earns gen 2.
+    ///
+    /// With the OLD code (no per-rank), every walk uses max_generations=10 and the
+    /// Silver walk would produce gen 3 at node 1 and gen 4 at node 0. The new
+    /// per-rank cap is the binding constraint: max_generations is loose, and the
+    /// tree has more than enough depth to reach those Silver nodes.
+    #[test]
+    fn same_rank_per_rank_depth() {
+        let tree = build_chain(5);
+        let rates = BTreeMap::from([(1, 0.10), (2, 0.05), (3, 0.03), (4, 0.02)]);
+        let mut structure = same_rank_structure(10, rates);
+        structure.generation_commission.max_generations_per_rank =
+            BTreeMap::from([("silver".to_string(), 2), ("diamond".to_string(), 5)]);
+        let plan = silver_diamond_plan(structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), silver_snapshot());
+        snapshots.insert(uuid(1), silver_snapshot());
+        snapshots.insert(uuid(2), diamond_snapshot());
+        snapshots.insert(uuid(3), diamond_snapshot());
+        snapshots.insert(uuid(4), eligible_snapshot()); // associate (source)
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(4),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // Silver nodes (0, 1) earn nothing: per-rank cap of 2 caps the silver
+        // walk at the two diamond nodes above the source, before reaching them.
+        assert!(
+            !result.iter().any(|e| e.earner_id == uuid(0)),
+            "silver node 0 should not earn (per-rank cap binds)"
+        );
+        assert!(
+            !result.iter().any(|e| e.earner_id == uuid(1)),
+            "silver node 1 should not earn (per-rank cap binds)"
+        );
+
+        // Diamond walk produces both diamond earners.
+        let earn_3 = result.iter().find(|e| e.earner_id == uuid(3)).unwrap();
+        assert_eq!(earn_3.level, 1);
+        assert_eq!(earn_3.rate, 0.10);
+
+        let earn_2 = result.iter().find(|e| e.earner_id == uuid(2)).unwrap();
+        assert_eq!(earn_2.level, 2);
+        assert_eq!(earn_2.rate, 0.05);
+
+        // Exactly two earnings total: only the diamond walk produces results.
+        assert_eq!(result.len(), 2);
     }
 }

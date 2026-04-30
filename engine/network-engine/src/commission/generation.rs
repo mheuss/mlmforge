@@ -322,6 +322,15 @@ pub fn calculate_generation(
                     .map_err(|_| CalculationError::SourceNotInTree(source.source_id))?;
             }
 
+            // The boundary check is rank-independent, so build it once and
+            // reuse it across every per-rank walk.
+            let boundary_check: Box<dyn Fn(Uuid) -> bool + '_> =
+                if gen_config.ineligible_creates_boundary {
+                    Box::new(|_| true)
+                } else {
+                    Box::new(|id: Uuid| eligibility_cache.get(&id).is_some_and(|e| e.eligible))
+                };
+
             for &(rank_name, ordinal) in &unique_ranks {
                 let walk_max = earner_max_generations(rank_name, gen_config);
 
@@ -333,13 +342,6 @@ pub fn calculate_generation(
                     })
                     .map(|(id, _)| *id)
                     .collect();
-
-                let boundary_check: Box<dyn Fn(Uuid) -> bool + '_> =
-                    if gen_config.ineligible_creates_boundary {
-                        Box::new(|_| true)
-                    } else {
-                        Box::new(|id: Uuid| eligibility_cache.get(&id).is_some_and(|e| e.eligible))
-                    };
 
                 for source in volume {
                     let gen_entries = count_generations_upward(
@@ -2079,6 +2081,53 @@ mod calculate_tests {
         // All three must produce identical earnings. The full vec is
         // compared so any divergence in earner_id, level, rate, cv_amount,
         // or dollar_amount surfaces.
+        assert_eq!(result_a, result_b);
+        assert_eq!(result_b, result_c);
+    }
+
+    /// SameRank counterpart to the threshold regression guard above. The
+    /// SameRank refactor changed the per-rank dedup key from `u16` to
+    /// `(&str, u16)`, so SameRank is the path most likely to diverge under
+    /// future refactors. Same shape: three configs, full-vec equality.
+    #[test]
+    fn calculate_generation_empty_per_rank_map_preserves_same_rank_behavior() {
+        let tree = build_chain(5);
+        let rates = BTreeMap::from([(1u8, 0.10), (2u8, 0.06), (3u8, 0.04)]);
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), diamond_snapshot());
+        snapshots.insert(uuid(1), platinum_snapshot());
+        snapshots.insert(uuid(2), bronze_snapshot());
+        snapshots.insert(uuid(3), eligible_snapshot()); // associate
+        snapshots.insert(uuid(4), eligible_snapshot()); // associate (source)
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(4),
+            cv_amount: 100.0,
+        }];
+
+        // (a) Explicit empty map.
+        let mut structure_a = same_rank_structure(3, rates.clone());
+        structure_a.generation_commission.max_generations_per_rank = BTreeMap::new();
+        let plan_a = six_rank_plan(structure_a.clone());
+        let result_a =
+            calculate_generation(&tree, &plan_a, &structure_a, &snapshots, &volume).unwrap();
+
+        // (b) Default-constructed map.
+        let mut structure_b = same_rank_structure(3, rates.clone());
+        structure_b.generation_commission.max_generations_per_rank = BTreeMap::default();
+        let plan_b = six_rank_plan(structure_b.clone());
+        let result_b =
+            calculate_generation(&tree, &plan_b, &structure_b, &snapshots, &volume).unwrap();
+
+        // (c) Baseline: today's behavior with no per-rank entries.
+        // same_rank_structure already sets max_generations_per_rank to
+        // BTreeMap::new(); leave it untouched.
+        let structure_c = same_rank_structure(3, rates);
+        let plan_c = six_rank_plan(structure_c.clone());
+        let result_c =
+            calculate_generation(&tree, &plan_c, &structure_c, &snapshots, &volume).unwrap();
+
         assert_eq!(result_a, result_b);
         assert_eq!(result_b, result_c);
     }

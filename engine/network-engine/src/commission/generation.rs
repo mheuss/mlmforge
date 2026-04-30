@@ -570,6 +570,7 @@ mod calculate_tests {
             compression: None,
             generation_commission: GenerationCommissionConfig {
                 max_generations,
+                max_generations_per_rank: BTreeMap::new(),
                 rates,
                 boundary_mode: GenerationBoundaryMode::ThresholdRank,
                 boundary_rank: boundary_rank.to_string(),
@@ -1046,6 +1047,7 @@ mod calculate_tests {
             compression: None,
             generation_commission: GenerationCommissionConfig {
                 max_generations: 3,
+                max_generations_per_rank: BTreeMap::new(),
                 rates: BTreeMap::from([(1, 0.10)]),
                 boundary_mode: GenerationBoundaryMode::ThresholdRank,
                 boundary_rank: "director".to_string(),
@@ -1168,6 +1170,7 @@ mod calculate_tests {
             compression: None,
             generation_commission: GenerationCommissionConfig {
                 max_generations: 3,
+                max_generations_per_rank: BTreeMap::new(),
                 rates: BTreeMap::from([(1, 0.10)]),
                 boundary_mode: GenerationBoundaryMode::ThresholdRank,
                 boundary_rank: "nonexistent_rank".to_string(),
@@ -1228,6 +1231,7 @@ mod calculate_tests {
             compression: None,
             generation_commission: GenerationCommissionConfig {
                 max_generations,
+                max_generations_per_rank: BTreeMap::new(),
                 rates,
                 boundary_mode: GenerationBoundaryMode::SameRank,
                 boundary_rank: "unused_in_same_rank_mode".to_string(),

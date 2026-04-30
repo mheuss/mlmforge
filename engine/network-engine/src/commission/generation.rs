@@ -35,9 +35,6 @@ fn earner_max_generations(
 /// generation cap. Used by the ThresholdRank walk to decide how deep the
 /// shared per-source walk must go. Per-earner filtering trims results to
 /// each earner's own cap after the walk.
-// Wired in HEU-425 task 7. Remove `#[allow(dead_code)]` when the call site
-// is added.
-#[allow(dead_code)]
 fn walk_depth(cfg: &crate::config::generation::GenerationCommissionConfig) -> u8 {
     cfg.max_generations_per_rank
         .values()
@@ -270,12 +267,27 @@ pub fn calculate_generation(
                     source.source_id,
                     &boundary_set,
                     &boundary_check,
-                    gen_config.max_generations,
+                    walk_depth(gen_config),
                     gen_config.empty_generation_consumes_number,
                 );
 
+                // Filter: each earner receives at most their per-rank generation
+                // count. The shared walk extends to the deepest configured depth
+                // so every earner's cap can be honored from a single walk; this
+                // filter trims emitted entries to each earner's own cap.
+                let filtered: Vec<_> = gen_entries
+                    .into_iter()
+                    .filter(|entry| {
+                        let earner_rank = snapshots
+                            .get(&entry.earner_id)
+                            .map(|s| s.rank.as_str())
+                            .unwrap_or("");
+                        entry.generation <= earner_max_generations(earner_rank, gen_config)
+                    })
+                    .collect();
+
                 emit_generation_earnings(
-                    &gen_entries,
+                    &filtered,
                     source,
                     gen_config,
                     &eligibility_cache,
@@ -1648,5 +1660,90 @@ mod calculate_tests {
 
         // Exactly two earnings total: only the diamond walk produces results.
         assert_eq!(result.len(), 2);
+    }
+
+    /// Chain: 0(Diamond) -> 1..7(Silver) -> 8(Associate, source).
+    /// ThresholdRank mode. boundary_rank = "silver" (ordinal 1) so all silver
+    /// and diamond nodes are boundaries. max_generations = 4 (default).
+    /// Per-rank depth: silver = 2, diamond = 8.
+    ///
+    /// walk_depth = max(4, max(2, 8)) = 8. The shared walk emits eight
+    /// generation entries: silver gen 1..=7 at nodes 7..=1, diamond gen 8
+    /// at node 0.
+    ///
+    /// Per-earner filter:
+    ///   - Silver entries trimmed at gen > 2: only nodes 7 (gen 1) and
+    ///     6 (gen 2) survive. Silvers at gen 3..=7 (nodes 5..=1) are
+    ///     trimmed by the silver per-rank cap.
+    ///   - Diamond entry at gen 8 (node 0) survives the diamond cap of 8.
+    ///
+    /// With the OLD code (walk capped at max_generations=4, no per-earner
+    /// filter) this test fails twice over:
+    ///   - Silver nodes 5 and 4 would earn at gen 3 and gen 4 (no filter).
+    ///   - Diamond node 0 would never appear (walk stops at depth 4).
+    ///
+    /// Both per-rank caps are the binding constraint, and walk_depth must
+    /// extend the walk past max_generations to reach the diamond earner.
+    #[test]
+    fn threshold_rank_walk_uses_per_rank_depth_cap() {
+        let tree = build_chain(9);
+        let rates = BTreeMap::from([
+            (1u8, 0.10),
+            (2u8, 0.08),
+            (3u8, 0.06),
+            (4u8, 0.04),
+            (5u8, 0.03),
+            (6u8, 0.03),
+            (7u8, 0.03),
+            (8u8, 0.02),
+        ]);
+        let mut structure = threshold_structure("silver", 4, rates);
+        structure.generation_commission.max_generations_per_rank =
+            BTreeMap::from([("silver".to_string(), 2), ("diamond".to_string(), 8)]);
+        let plan = silver_diamond_plan(structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), diamond_snapshot());
+        for i in 1..=7 {
+            snapshots.insert(uuid(i), silver_snapshot());
+        }
+        snapshots.insert(uuid(8), eligible_snapshot()); // associate (source)
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(8),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // Silver earners beyond their per-rank cap of 2 must not earn. Under
+        // the OLD code these nodes earn at gen 3 and gen 4 because no filter
+        // trims them.
+        assert!(
+            !result.iter().any(|e| e.earner_id == uuid(5)),
+            "silver node 5 (gen 3) must not earn (silver per-rank cap is 2)"
+        );
+        assert!(
+            !result.iter().any(|e| e.earner_id == uuid(4)),
+            "silver node 4 (gen 4) must not earn (silver per-rank cap is 2)"
+        );
+
+        // Silver earners within the per-rank cap of 2 must earn.
+        let earn_7 = result.iter().find(|e| e.earner_id == uuid(7)).unwrap();
+        assert_eq!(earn_7.level, 1);
+        assert_eq!(earn_7.rate, 0.10);
+
+        let earn_6 = result.iter().find(|e| e.earner_id == uuid(6)).unwrap();
+        assert_eq!(earn_6.level, 2);
+        assert_eq!(earn_6.rate, 0.08);
+
+        // Diamond earner at gen 8 must earn. Under the OLD code the walk
+        // stops at depth 4 and this earner never appears.
+        let earn_0 = result.iter().find(|e| e.earner_id == uuid(0)).unwrap();
+        assert_eq!(earn_0.level, 8);
+        assert_eq!(earn_0.rate, 0.02);
+
+        // Exactly three earnings: silvers 7 and 6, plus diamond 0.
+        assert_eq!(result.len(), 3);
     }
 }

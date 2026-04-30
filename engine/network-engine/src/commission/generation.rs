@@ -1746,4 +1746,339 @@ mod calculate_tests {
         // Exactly three earnings: silvers 7 and 6, plus diamond 0.
         assert_eq!(result.len(), 3);
     }
+
+    // -- End-to-end per-rank generation depth tests --
+
+    fn bronze_snapshot() -> DistributorSnapshot {
+        DistributorSnapshot {
+            rank: "bronze".to_string(),
+            personal_volume: 150.0,
+            status: "active".to_string(),
+            has_order_in_period: true,
+        }
+    }
+
+    fn platinum_snapshot() -> DistributorSnapshot {
+        DistributorSnapshot {
+            rank: "platinum".to_string(),
+            personal_volume: 150.0,
+            status: "active".to_string(),
+            has_order_in_period: true,
+        }
+    }
+
+    /// Plan with six ranks for the end-to-end per-rank-depth tests:
+    /// associate(1), bronze(2), silver(3), gold(4), platinum(5), diamond(6).
+    fn six_rank_plan(structure: GenerationStructureConfig) -> crate::config::CompensationPlan {
+        let structure_config = StructureConfig::Generation(structure);
+        let mut plan = build_test_plan(default_eligibility(), structure_config, "Generation");
+        plan.ranks = vec![
+            RankDefinition {
+                name: "associate".to_string(),
+                ordinal: 1,
+                qualification: RankQualification {
+                    structures: vec![],
+                    required_products: vec![],
+                },
+                qualified_structures: vec!["Generation".to_string()],
+                demotion_policy: DemotionPolicy::PromotionOnly,
+            },
+            RankDefinition {
+                name: "bronze".to_string(),
+                ordinal: 2,
+                qualification: RankQualification {
+                    structures: vec![],
+                    required_products: vec![],
+                },
+                qualified_structures: vec!["Generation".to_string()],
+                demotion_policy: DemotionPolicy::PromotionOnly,
+            },
+            RankDefinition {
+                name: "silver".to_string(),
+                ordinal: 3,
+                qualification: RankQualification {
+                    structures: vec![],
+                    required_products: vec![],
+                },
+                qualified_structures: vec!["Generation".to_string()],
+                demotion_policy: DemotionPolicy::PromotionOnly,
+            },
+            RankDefinition {
+                name: "gold".to_string(),
+                ordinal: 4,
+                qualification: RankQualification {
+                    structures: vec![],
+                    required_products: vec![],
+                },
+                qualified_structures: vec!["Generation".to_string()],
+                demotion_policy: DemotionPolicy::PromotionOnly,
+            },
+            RankDefinition {
+                name: "platinum".to_string(),
+                ordinal: 5,
+                qualification: RankQualification {
+                    structures: vec![],
+                    required_products: vec![],
+                },
+                qualified_structures: vec!["Generation".to_string()],
+                demotion_policy: DemotionPolicy::PromotionOnly,
+            },
+            RankDefinition {
+                name: "diamond".to_string(),
+                ordinal: 6,
+                qualification: RankQualification {
+                    structures: vec![],
+                    required_products: vec![],
+                },
+                qualified_structures: vec!["Generation".to_string()],
+                demotion_policy: DemotionPolicy::PromotionOnly,
+            },
+        ];
+        plan
+    }
+
+    /// End-to-end ThresholdRank test for per-rank generation depth.
+    ///
+    /// Plan: 6 ranks, default max_generations=4, per-rank
+    /// `{silver: 2, gold: 4, diamond: 7}`. boundary_rank="silver" so all
+    /// silver+ nodes are boundaries.
+    ///
+    /// Chain: 0(diamond) -> 1..=5(silver) -> 6(gold) -> 7(associate, source).
+    ///
+    /// walk_depth = max(default=4, max(2, 4, 7)) = 7. Walking up from
+    /// node 7 produces eight upline nodes but stops at gen 7:
+    ///   gen 1 = node 6 (gold), gen 2..=6 = nodes 5..=1 (silver),
+    ///   gen 7 = node 0 (diamond).
+    ///
+    /// Per-earner filter:
+    ///   - gold cap = 4: node 6 at gen 1 keeps.
+    ///   - silver cap = 2: node 5 at gen 2 keeps; nodes 4,3,2,1 at gens
+    ///     3,4,5,6 trim out.
+    ///   - diamond cap = 7: node 0 at gen 7 keeps (boundary cap).
+    ///
+    /// Final earners: node 6 (gen 1), node 5 (gen 2), node 0 (gen 7).
+    ///
+    /// The walk reaches gen 7, beyond the default max_generations of 4:
+    /// the diamond per-rank cap is the binding constraint that drives
+    /// walk_depth past max_generations and past tree depth would be if
+    /// the chain were shorter. The silver per-rank cap is the binding
+    /// constraint that trims four would-be silver earners.
+    #[test]
+    fn calculate_generation_per_rank_depth_threshold_rank_end_to_end() {
+        let tree = build_chain(8);
+        let rates = BTreeMap::from([
+            (1u8, 0.10),
+            (2u8, 0.08),
+            (3u8, 0.06),
+            (4u8, 0.04),
+            (5u8, 0.03),
+            (6u8, 0.025),
+            (7u8, 0.02),
+        ]);
+        let mut structure = threshold_structure("silver", 4, rates);
+        structure.generation_commission.max_generations_per_rank = BTreeMap::from([
+            ("silver".to_string(), 2u8),
+            ("gold".to_string(), 4u8),
+            ("diamond".to_string(), 7u8),
+        ]);
+        let plan = six_rank_plan(structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), diamond_snapshot());
+        for i in 1..=5 {
+            snapshots.insert(uuid(i), silver_snapshot());
+        }
+        snapshots.insert(uuid(6), gold_snapshot());
+        snapshots.insert(uuid(7), eligible_snapshot()); // associate (source)
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(7),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // Silver nodes beyond the per-rank cap of 2 must not earn.
+        for capped_node in [1usize, 2, 3, 4] {
+            assert!(
+                !result.iter().any(|e| e.earner_id == uuid(capped_node)),
+                "silver node {capped_node} must not earn (silver per-rank cap is 2)"
+            );
+        }
+
+        // Gold node 6 earns gen 1.
+        let earn_6 = result.iter().find(|e| e.earner_id == uuid(6)).unwrap();
+        assert_eq!(earn_6.level, 1);
+        assert_eq!(earn_6.rate, 0.10);
+        assert!((earn_6.dollar_amount - 10.0).abs() < f64::EPSILON);
+
+        // Silver node 5 earns gen 2 (within silver cap of 2).
+        let earn_5 = result.iter().find(|e| e.earner_id == uuid(5)).unwrap();
+        assert_eq!(earn_5.level, 2);
+        assert_eq!(earn_5.rate, 0.08);
+        assert!((earn_5.dollar_amount - 8.0).abs() < f64::EPSILON);
+
+        // Diamond node 0 earns gen 7. Walk reaches the diamond cap of 7,
+        // proving walk_depth (not max_generations or tree depth) is the
+        // binding constraint here.
+        let earn_0 = result.iter().find(|e| e.earner_id == uuid(0)).unwrap();
+        assert_eq!(earn_0.level, 7);
+        assert_eq!(earn_0.rate, 0.02);
+        assert!((earn_0.dollar_amount - 2.0).abs() < f64::EPSILON);
+
+        // Exactly three earnings: gold 6, silver 5, diamond 0.
+        assert_eq!(result.len(), 3);
+    }
+
+    /// End-to-end SameRank test for per-rank generation depth.
+    ///
+    /// Same plan and tree as the ThresholdRank end-to-end test, but with
+    /// `boundary_mode = SameRank`. Each earner's own rank determines the
+    /// boundary set and walk depth.
+    ///
+    /// Chain: 0(diamond) -> 1..=5(silver) -> 6(gold) -> 7(associate, source).
+    ///
+    /// Per-rank walks (each uses the earner's per-rank cap as walk_max):
+    ///   - Associate walk (default cap=4): boundary_set = all ranked nodes.
+    ///     Walk: 6 gen 1, 5 gen 2, 4 gen 3, 3 gen 4, STOP. Filter to
+    ///     associate ordinal: zero earners (no associates above source).
+    ///   - Silver walk (cap=2): boundary_set = silver+. Walk: 6 gen 1,
+    ///     5 gen 2, STOP. Filter to silver: only node 5 at gen 2.
+    ///   - Gold walk (cap=4): boundary_set = {0, 6}. Walk: 6 gen 1, 5..=1
+    ///     skip (not in set), 0 gen 2. Filter to gold: only node 6 at gen 1.
+    ///   - Diamond walk (cap=7): boundary_set = {0}. Walk: 6..=1 skip,
+    ///     0 gen 1. Filter to diamond: only node 0 at gen 1.
+    ///
+    /// Final earners: node 5 (silver, gen 2), node 6 (gold, gen 1),
+    /// node 0 (diamond, gen 1).
+    ///
+    /// The silver per-rank cap of 2 is the binding constraint: without
+    /// it, the silver walk would extend to default max_generations and
+    /// silver nodes 4, 3 would also earn at gens 3, 4.
+    #[test]
+    fn calculate_generation_per_rank_depth_same_rank_end_to_end() {
+        let tree = build_chain(8);
+        let rates = BTreeMap::from([
+            (1u8, 0.10),
+            (2u8, 0.08),
+            (3u8, 0.06),
+            (4u8, 0.04),
+            (5u8, 0.03),
+            (6u8, 0.025),
+            (7u8, 0.02),
+        ]);
+        let mut structure = same_rank_structure(4, rates);
+        structure.generation_commission.max_generations_per_rank = BTreeMap::from([
+            ("silver".to_string(), 2u8),
+            ("gold".to_string(), 4u8),
+            ("diamond".to_string(), 7u8),
+        ]);
+        let plan = six_rank_plan(structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), diamond_snapshot());
+        for i in 1..=5 {
+            snapshots.insert(uuid(i), silver_snapshot());
+        }
+        snapshots.insert(uuid(6), gold_snapshot());
+        snapshots.insert(uuid(7), eligible_snapshot()); // associate (source)
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(7),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // Silver nodes beyond the per-rank cap of 2 must not earn. Without
+        // the cap the silver walk would extend further and these would
+        // surface at gens 3, 4 in the silver walk.
+        for capped_node in [1usize, 2, 3, 4] {
+            assert!(
+                !result.iter().any(|e| e.earner_id == uuid(capped_node)),
+                "silver node {capped_node} must not earn (silver per-rank cap is 2)"
+            );
+        }
+
+        // Gold node 6 earns gen 1 in the gold walk.
+        let earn_6 = result.iter().find(|e| e.earner_id == uuid(6)).unwrap();
+        assert_eq!(earn_6.level, 1);
+        assert_eq!(earn_6.rate, 0.10);
+        assert!((earn_6.dollar_amount - 10.0).abs() < f64::EPSILON);
+
+        // Silver node 5 earns gen 2 in the silver walk (gen 2 = silver cap).
+        let earn_5 = result.iter().find(|e| e.earner_id == uuid(5)).unwrap();
+        assert_eq!(earn_5.level, 2);
+        assert_eq!(earn_5.rate, 0.08);
+        assert!((earn_5.dollar_amount - 8.0).abs() < f64::EPSILON);
+
+        // Diamond node 0 earns gen 1 in the diamond walk (only diamond+
+        // boundary above the source).
+        let earn_0 = result.iter().find(|e| e.earner_id == uuid(0)).unwrap();
+        assert_eq!(earn_0.level, 1);
+        assert_eq!(earn_0.rate, 0.10);
+        assert!((earn_0.dollar_amount - 10.0).abs() < f64::EPSILON);
+
+        // Exactly three earnings: silver 5, gold 6, diamond 0.
+        assert_eq!(result.len(), 3);
+    }
+
+    /// Regression guard: an empty per-rank map must produce identical
+    /// earnings to the absent-field default. Three configs are compared:
+    ///   (a) explicit `BTreeMap::new()`,
+    ///   (b) default-constructed map (`BTreeMap::default()`),
+    ///   (c) baseline matching today's behavior (also `BTreeMap::new()`).
+    ///
+    /// All three must produce identical earnings vectors.
+    ///
+    /// This test guards against future refactors that might add caching or
+    /// special-case logic for the per-rank map. The chain mixes bronze,
+    /// platinum, and diamond ranks to exercise the rank lookup paths.
+    #[test]
+    fn calculate_generation_empty_per_rank_map_preserves_current_behavior() {
+        let tree = build_chain(5);
+        let rates = BTreeMap::from([(1u8, 0.10), (2u8, 0.06), (3u8, 0.04)]);
+
+        // Snapshots: a mix of ranks above the source so the rank lookup
+        // is exercised on multiple values.
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), diamond_snapshot());
+        snapshots.insert(uuid(1), platinum_snapshot());
+        snapshots.insert(uuid(2), bronze_snapshot());
+        snapshots.insert(uuid(3), eligible_snapshot()); // associate
+        snapshots.insert(uuid(4), eligible_snapshot()); // associate (source)
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(4),
+            cv_amount: 100.0,
+        }];
+
+        // (a) Explicit empty map.
+        let mut structure_a = threshold_structure("bronze", 3, rates.clone());
+        structure_a.generation_commission.max_generations_per_rank = BTreeMap::new();
+        let plan_a = six_rank_plan(structure_a.clone());
+        let result_a =
+            calculate_generation(&tree, &plan_a, &structure_a, &snapshots, &volume).unwrap();
+
+        // (b) Default-constructed map.
+        let mut structure_b = threshold_structure("bronze", 3, rates.clone());
+        structure_b.generation_commission.max_generations_per_rank = BTreeMap::default();
+        let plan_b = six_rank_plan(structure_b.clone());
+        let result_b =
+            calculate_generation(&tree, &plan_b, &structure_b, &snapshots, &volume).unwrap();
+
+        // (c) Baseline: today's behavior with no per-rank entries.
+        // threshold_structure already sets max_generations_per_rank to
+        // BTreeMap::new(); leave it untouched.
+        let structure_c = threshold_structure("bronze", 3, rates);
+        let plan_c = six_rank_plan(structure_c.clone());
+        let result_c =
+            calculate_generation(&tree, &plan_c, &structure_c, &snapshots, &volume).unwrap();
+
+        // All three must produce identical earnings. The full vec is
+        // compared so any divergence in earner_id, level, rate, cv_amount,
+        // or dollar_amount surfaces.
+        assert_eq!(result_a, result_b);
+        assert_eq!(result_b, result_c);
+    }
 }

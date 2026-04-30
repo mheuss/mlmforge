@@ -17,6 +17,21 @@ use crate::tree::unilevel::UnilevelTree;
 use super::types::{CalculationError, CommissionEarning, DistributorSnapshot, VolumeSource};
 use super::walk;
 
+/// Returns the generation depth for an earner with the given rank.
+///
+/// Looks up the rank in `max_generations_per_rank` first; falls back to
+/// the default `max_generations` if the rank is not in the map.
+#[allow(dead_code)] // Wired into walk paths in follow-up tasks (HEU-425).
+fn earner_max_generations(
+    rank: &str,
+    cfg: &crate::config::generation::GenerationCommissionConfig,
+) -> u8 {
+    cfg.max_generations_per_rank
+        .get(rank)
+        .copied()
+        .unwrap_or(cfg.max_generations)
+}
+
 /// A single generation entry produced by the upward walk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenerationEntry {
@@ -331,9 +346,49 @@ pub fn calculate_generation(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
     use crate::commission::test_helpers::uuid_from_index as uuid;
+    use crate::config::generation::GenerationCommissionConfig;
     use crate::tree::unilevel::UnilevelTree;
+
+    fn gen_config_with(default: u8, per_rank: BTreeMap<String, u8>) -> GenerationCommissionConfig {
+        GenerationCommissionConfig {
+            max_generations: default,
+            max_generations_per_rank: per_rank,
+            rates: BTreeMap::from([(1u8, 0.10)]),
+            boundary_mode: GenerationBoundaryMode::ThresholdRank,
+            boundary_rank: "director".to_string(),
+            empty_generation_consumes_number: false,
+            volume_to_dollar_multiplier: None,
+            ineligible_creates_boundary: true,
+        }
+    }
+
+    #[test]
+    fn earner_max_generations_uses_per_rank_when_present() {
+        let mut per_rank = BTreeMap::new();
+        per_rank.insert("diamond".to_string(), 8u8);
+        let cfg = gen_config_with(4, per_rank);
+
+        assert_eq!(earner_max_generations("diamond", &cfg), 8);
+    }
+
+    #[test]
+    fn earner_max_generations_falls_back_to_default_for_missing_rank() {
+        let mut per_rank = BTreeMap::new();
+        per_rank.insert("diamond".to_string(), 8u8);
+        let cfg = gen_config_with(4, per_rank);
+
+        assert_eq!(earner_max_generations("silver", &cfg), 4);
+    }
+
+    #[test]
+    fn earner_max_generations_falls_back_to_default_when_map_empty() {
+        let cfg = gen_config_with(4, BTreeMap::new());
+        assert_eq!(earner_max_generations("anything", &cfg), 4);
+    }
 
     /// Build a linear chain: 0 -> 1 -> 2 -> ... -> (len-1).
     /// Each node's parent and sponsor are the previous node.

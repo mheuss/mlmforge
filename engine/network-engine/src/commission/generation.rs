@@ -1860,9 +1860,10 @@ mod calculate_tests {
     ///
     /// The walk reaches gen 7, beyond the default max_generations of 4:
     /// the diamond per-rank cap is the binding constraint that drives
-    /// walk_depth past max_generations and past tree depth would be if
-    /// the chain were shorter. The silver per-rank cap is the binding
-    /// constraint that trims four would-be silver earners.
+    /// walk_depth past max_generations. If the chain were shorter than
+    /// 7, the walk would still terminate at the chain's actual depth.
+    /// The silver per-rank cap is the binding constraint that trims
+    /// four would-be silver earners.
     #[test]
     fn calculate_generation_per_rank_depth_threshold_rank_end_to_end() {
         let tree = build_chain(8);

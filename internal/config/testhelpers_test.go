@@ -119,3 +119,21 @@ func minimalPlanWithCommission() *CompensationPlan {
 	}
 	return plan
 }
+
+// minimalPlanWithGenerationStructure returns minimalPlan() with a Generation
+// structure resolved on the first structure. Used by tests that exercise
+// GenerationCommission validation paths.
+func minimalPlanWithGenerationStructure() *CompensationPlan {
+	plan := minimalPlan()
+	plan.Structures[0].Type = "generation"
+	plan.Structures[0].resolvedCommission = &GenerationCommission{
+		Generation: GenerationCommissionConfig{
+			MaxGenerations:                3,
+			GenerationRates:               map[string]float64{"1": 0.10},
+			BoundaryMode:                  "threshold_rank",
+			BoundaryRank:                  "Silver",
+			EmptyGenerationConsumesNumber: false,
+		},
+	}
+	return plan
+}

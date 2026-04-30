@@ -31,6 +31,22 @@ fn earner_max_generations(
         .unwrap_or(cfg.max_generations)
 }
 
+/// Returns the maximum walk depth needed to satisfy any earner's per-rank
+/// generation cap. Used by the ThresholdRank walk to decide how deep the
+/// shared per-source walk must go. Per-earner filtering trims results to
+/// each earner's own cap after the walk.
+// Wired in HEU-425 task 7. Remove `#[allow(dead_code)]` when the call site
+// is added.
+#[allow(dead_code)]
+fn walk_depth(cfg: &crate::config::generation::GenerationCommissionConfig) -> u8 {
+    cfg.max_generations_per_rank
+        .values()
+        .copied()
+        .max()
+        .map(|m| m.max(cfg.max_generations))
+        .unwrap_or(cfg.max_generations)
+}
+
 /// A single generation entry produced by the upward walk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenerationEntry {
@@ -396,6 +412,29 @@ mod tests {
     fn earner_max_generations_falls_back_to_default_when_map_empty() {
         let cfg = gen_config_with(4, BTreeMap::new());
         assert_eq!(earner_max_generations("anything", &cfg), 4);
+    }
+
+    #[test]
+    fn walk_depth_returns_default_when_per_rank_empty() {
+        let cfg = gen_config_with(4, BTreeMap::new());
+        assert_eq!(walk_depth(&cfg), 4);
+    }
+
+    #[test]
+    fn walk_depth_returns_max_of_default_and_per_rank() {
+        let mut per_rank = BTreeMap::new();
+        per_rank.insert("diamond".to_string(), 8u8);
+        per_rank.insert("silver".to_string(), 2u8);
+        let cfg = gen_config_with(4, per_rank);
+        assert_eq!(walk_depth(&cfg), 8);
+    }
+
+    #[test]
+    fn walk_depth_returns_default_when_per_rank_all_smaller() {
+        let mut per_rank = BTreeMap::new();
+        per_rank.insert("silver".to_string(), 2u8);
+        let cfg = gen_config_with(5, per_rank);
+        assert_eq!(walk_depth(&cfg), 5);
     }
 
     /// Build a linear chain: 0 -> 1 -> 2 -> ... -> (len-1).

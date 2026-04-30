@@ -43,7 +43,7 @@ fn load_fixtures() -> Vec<(String, ContractFixture)> {
     {
         let entry = entry.unwrap();
         let path = entry.path();
-        if path.extension().map_or(true, |ext| ext != "json") {
+        if path.extension().is_none_or(|ext| ext != "json") {
             continue;
         }
         let content = std::fs::read_to_string(&path)

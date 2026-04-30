@@ -24,6 +24,18 @@ pub struct GenerationCommissionConfig {
     /// Typical values: 3-7.
     pub max_generations: u8,
 
+    /// Per-rank override for `max_generations`.
+    ///
+    /// When a rank is present in this map, the value is used in place of
+    /// `max_generations` for that rank during the generation walk. Ranks
+    /// not in the map fall back to the default. Empty (the default) means
+    /// uniform depth for all ranks.
+    ///
+    /// Keys must reference rank names defined in the plan's rank ladder.
+    /// Plan validation rejects unknown rank names.
+    #[serde(default)]
+    pub max_generations_per_rank: BTreeMap<String, u8>,
+
     /// Generation number (1-indexed) to commission percentage.
     ///
     /// Missing generation = no commission. Keys are generation numbers.
@@ -228,5 +240,59 @@ mod tests {
         }"#;
         let config: GenerationCommissionConfig = serde_json::from_str(json).unwrap();
         assert!(!config.ineligible_creates_boundary);
+    }
+
+    #[test]
+    fn deserialize_with_max_generations_per_rank() {
+        let json = r#"{
+            "max_generations": 4,
+            "max_generations_per_rank": {
+                "silver": 3,
+                "diamond": 8
+            },
+            "generation_rates": { "1": 0.10 },
+            "boundary_mode": "threshold_rank",
+            "boundary_rank": "director",
+            "empty_generation_consumes_number": false,
+            "volume_to_dollar_multiplier": null
+        }"#;
+        let config: GenerationCommissionConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.max_generations_per_rank.get("silver"), Some(&3));
+        assert_eq!(config.max_generations_per_rank.get("diamond"), Some(&8));
+    }
+
+    #[test]
+    fn max_generations_per_rank_defaults_to_empty_map() {
+        let json = r#"{
+            "max_generations": 4,
+            "generation_rates": { "1": 0.10 },
+            "boundary_mode": "threshold_rank",
+            "boundary_rank": "director",
+            "empty_generation_consumes_number": false,
+            "volume_to_dollar_multiplier": null
+        }"#;
+        let config: GenerationCommissionConfig = serde_json::from_str(json).unwrap();
+        assert!(config.max_generations_per_rank.is_empty());
+    }
+
+    #[test]
+    fn round_trip_max_generations_per_rank() {
+        let mut per_rank = BTreeMap::new();
+        per_rank.insert("silver".to_string(), 3u8);
+        per_rank.insert("diamond".to_string(), 8u8);
+        let original = GenerationCommissionConfig {
+            max_generations: 4,
+            max_generations_per_rank: per_rank,
+            rates: BTreeMap::from([(1u8, 0.10)]),
+            boundary_mode: GenerationBoundaryMode::ThresholdRank,
+            boundary_rank: "director".to_string(),
+            empty_generation_consumes_number: false,
+            volume_to_dollar_multiplier: None,
+            ineligible_creates_boundary: true,
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        let decoded: GenerationCommissionConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.max_generations_per_rank.get("silver"), Some(&3));
+        assert_eq!(decoded.max_generations_per_rank.get("diamond"), Some(&8));
     }
 }

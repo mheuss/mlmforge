@@ -351,6 +351,7 @@ pub fn build_generation_plan_with_eligibility(
         compression: None,
         generation_commission: GenerationCommissionConfig {
             max_generations,
+            max_generations_per_rank: BTreeMap::new(),
             rates,
             boundary_mode: GenerationBoundaryMode::ThresholdRank,
             boundary_rank: "director".to_string(),
@@ -406,6 +407,7 @@ pub fn build_same_rank_generation_plan(
         compression: None,
         generation_commission: GenerationCommissionConfig {
             max_generations,
+            max_generations_per_rank: BTreeMap::new(),
             rates,
             boundary_mode: GenerationBoundaryMode::SameRank,
             boundary_rank: "unused_in_same_rank_mode".to_string(),

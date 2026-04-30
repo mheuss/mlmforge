@@ -991,3 +991,52 @@ func TestValidation_StreamlineValidConfigPasses(t *testing.T) {
 		}
 	}
 }
+
+func TestGenerationMaxGenerationsPerRank_UnknownRankFails(t *testing.T) {
+	plan := minimalPlanWithGenerationStructure()
+	gen := plan.Structures[0].resolvedCommission.(*GenerationCommission)
+	gen.Generation.MaxGenerationsPerRank = map[string]uint8{"NonexistentRank": 5}
+
+	errs := validateBusinessRules(plan)
+
+	found := false
+	for _, e := range errs {
+		if e.Code == "undefined_reference" &&
+			strings.Contains(e.Message, "max_generations_per_rank") &&
+			strings.Contains(e.Message, "NonexistentRank") {
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "expected undefined_reference error for max_generations_per_rank, got: %v", errs)
+}
+
+func TestGenerationMaxGenerationsPerRank_KnownRanksPass(t *testing.T) {
+	plan := minimalPlanWithGenerationStructure()
+	gen := plan.Structures[0].resolvedCommission.(*GenerationCommission)
+	gen.Generation.MaxGenerationsPerRank = map[string]uint8{
+		"Associate": 3,
+		"Silver":    5,
+	}
+
+	errs := validateBusinessRules(plan)
+	for _, e := range errs {
+		require.False(t,
+			e.Code == "undefined_reference" && strings.Contains(e.Message, "max_generations_per_rank"),
+			"unexpected per-rank validation error: %v", e,
+		)
+	}
+}
+
+func TestGenerationMaxGenerationsPerRank_EmptyPasses(t *testing.T) {
+	plan := minimalPlanWithGenerationStructure()
+	gen := plan.Structures[0].resolvedCommission.(*GenerationCommission)
+	gen.Generation.MaxGenerationsPerRank = nil
+
+	errs := validateBusinessRules(plan)
+	for _, e := range errs {
+		require.False(t,
+			e.Code == "undefined_reference" && strings.Contains(e.Message, "max_generations_per_rank"),
+		)
+	}
+}

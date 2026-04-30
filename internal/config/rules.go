@@ -221,6 +221,16 @@ func validateStructureRefs(plan *CompensationPlan, ranks map[string]bool) []Vali
 					Severity: SeverityError,
 				})
 			}
+			for rankName := range rc.Generation.MaxGenerationsPerRank {
+				if !ranks[rankName] {
+					errs = append(errs, ValidationError{
+						Path:     fmt.Sprintf("/structures/%d/commission/generation/max_generations_per_rank", i),
+						Code:     "undefined_reference",
+						Message:  fmt.Sprintf("structure %q generation max_generations_per_rank references undefined rank %q", s.Name, rankName),
+						Severity: SeverityError,
+					})
+				}
+			}
 		case *StairstepCommission:
 			if rc.Breakaway != nil {
 				if rc.Breakaway.ThresholdRank != "" && !ranks[rc.Breakaway.ThresholdRank] {

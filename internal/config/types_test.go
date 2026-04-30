@@ -317,7 +317,7 @@ placement: {donated_placement_enabled: false}
 	require.True(t, ok, "expected *GenerationCommission, got %T", plan.Structures[0].resolvedCommission)
 	assert.True(t, c.LevelCommissionsEnabled)
 	assert.Equal(t, 5, c.CommissionableDepth)
-	assert.Equal(t, 4, c.Generation.MaxGenerations)
+	assert.Equal(t, uint8(4), c.Generation.MaxGenerations)
 	assert.Equal(t, "threshold_rank", c.Generation.BoundaryMode)
 	assert.Equal(t, "Executive", c.Generation.BoundaryRank)
 	assert.True(t, c.Generation.EmptyGenerationConsumesNumber)
@@ -518,6 +518,24 @@ volume_to_dollar_multiplier: null
 	var decoded GenerationCommissionConfig
 	require.NoError(t, json.Unmarshal(jsonBytes, &decoded))
 	require.Equal(t, uint8(3), decoded.MaxGenerationsPerRank["silver"])
+}
+
+// TestGenerationCommissionConfig_MaxGenerations_RejectsOutOfRange verifies
+// that values too large for the Rust u8 mirror fail at YAML unmarshal time.
+// Without this guard, a Go-authored config could set MaxGenerations: 300 and
+// silently truncate or fail when round-tripped to the Rust engine.
+func TestGenerationCommissionConfig_MaxGenerations_RejectsOutOfRange(t *testing.T) {
+	yamlInput := `
+max_generations: 300
+generation_rates:
+  "1": 0.10
+boundary_mode: threshold_rank
+boundary_rank: director
+empty_generation_consumes_number: false
+`
+	var cfg GenerationCommissionConfig
+	err := yaml.Unmarshal([]byte(yamlInput), &cfg)
+	require.Error(t, err, "expected unmarshal to reject max_generations=300 as out of range for uint8")
 }
 
 // TestGenerationCommissionConfig_MaxGenerationsPerRank_DefaultsToNil verifies

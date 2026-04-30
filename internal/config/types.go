@@ -334,13 +334,13 @@ type BreakawayGenerationConfig struct {
 
 // GenerationCommissionConfig holds configuration for generation-based commissions.
 //
-// MaxGenerationsPerRank overrides MaxGenerations on a per-rank basis. The map
-// type uint8 mirrors the Rust BTreeMap<String, u8> exactly so negative or
-// out-of-range values fail at Go validation time before round-tripping to the
-// engine. The omitempty tag matches the Rust serde(default) behavior so an
-// empty map round-trips cleanly.
+// MaxGenerations and MaxGenerationsPerRank both use uint8 to mirror the Rust
+// u8 fields exactly. This makes negative or out-of-range values fail at Go
+// unmarshal time instead of silently truncating or erroring downstream when
+// the config round-trips to the engine. The omitempty tag on the per-rank map
+// matches the Rust serde(default) behavior so an empty map round-trips cleanly.
 type GenerationCommissionConfig struct {
-	MaxGenerations                int                `yaml:"max_generations" json:"max_generations"`
+	MaxGenerations                uint8              `yaml:"max_generations" json:"max_generations"`
 	MaxGenerationsPerRank         map[string]uint8   `yaml:"max_generations_per_rank,omitempty" json:"max_generations_per_rank,omitempty"`
 	GenerationRates               map[string]float64 `yaml:"generation_rates" json:"generation_rates"`
 	BoundaryMode                  string             `yaml:"boundary_mode" json:"boundary_mode"`

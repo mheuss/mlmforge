@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -488,6 +489,52 @@ placement: {donated_placement_enabled: false}
 	assert.Equal(t, 10, c.BoardCycling.MaxCascadeDepth)
 	assert.Equal(t, 3, c.BoardCycling.StallThresholdPeriods)
 	assert.True(t, c.BoardCycling.InactiveCompression)
+}
+
+// TestGenerationCommissionConfig_MaxGenerationsPerRank_RoundTrip verifies that
+// the per-rank generation depth override deserializes from YAML and round-trips
+// through JSON, matching the Rust BTreeMap<String, u8> mirror.
+func TestGenerationCommissionConfig_MaxGenerationsPerRank_RoundTrip(t *testing.T) {
+	yamlInput := `
+max_generations: 4
+max_generations_per_rank:
+  silver: 3
+  diamond: 8
+generation_rates:
+  "1": 0.10
+boundary_mode: threshold_rank
+boundary_rank: director
+empty_generation_consumes_number: false
+volume_to_dollar_multiplier: null
+`
+	var cfg GenerationCommissionConfig
+	require.NoError(t, yaml.Unmarshal([]byte(yamlInput), &cfg))
+	require.Equal(t, uint8(3), cfg.MaxGenerationsPerRank["silver"])
+	require.Equal(t, uint8(8), cfg.MaxGenerationsPerRank["diamond"])
+
+	// Round-trip JSON to validate Rust-bound serialization.
+	jsonBytes, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	var decoded GenerationCommissionConfig
+	require.NoError(t, json.Unmarshal(jsonBytes, &decoded))
+	require.Equal(t, uint8(3), decoded.MaxGenerationsPerRank["silver"])
+}
+
+// TestGenerationCommissionConfig_MaxGenerationsPerRank_DefaultsToNil verifies
+// that when the per-rank override is absent from YAML, the field is empty so
+// downstream code falls back to the uniform max_generations value.
+func TestGenerationCommissionConfig_MaxGenerationsPerRank_DefaultsToNil(t *testing.T) {
+	yamlInput := `
+max_generations: 4
+generation_rates:
+  "1": 0.10
+boundary_mode: threshold_rank
+boundary_rank: director
+empty_generation_consumes_number: false
+`
+	var cfg GenerationCommissionConfig
+	require.NoError(t, yaml.Unmarshal([]byte(yamlInput), &cfg))
+	require.Empty(t, cfg.MaxGenerationsPerRank)
 }
 
 // TestBoardCyclingConfigDeserialization verifies that BoardCyclingConfig

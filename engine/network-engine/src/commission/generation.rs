@@ -1565,7 +1565,7 @@ mod calculate_tests {
     /// per-rank cap is the binding constraint: max_generations is loose, and the
     /// tree has more than enough depth to reach those Silver nodes.
     #[test]
-    fn same_rank_per_rank_depth() {
+    fn same_rank_walk_uses_per_rank_depth_cap() {
         let tree = build_chain(5);
         let rates = BTreeMap::from([(1, 0.10), (2, 0.05), (3, 0.03), (4, 0.02)]);
         let mut structure = same_rank_structure(10, rates);

@@ -1149,7 +1149,7 @@ mod tests {
         let participants = vec![test_uuid(1)];
         let ctx = build_pass_up_context(&tree, &config, &participants);
 
-        assert!(ctx.skip_sets.get(&test_uuid(1)).is_none());
+        assert!(!ctx.skip_sets.contains_key(&test_uuid(1)));
     }
 
     #[test]

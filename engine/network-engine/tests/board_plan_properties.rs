@@ -57,10 +57,8 @@ fn all_visible_members(engine: &BoardPlanEngine) -> Vec<Uuid> {
     let mut members = Vec::new();
     for summary in engine.list_boards() {
         if let Some(board) = engine.get_board(summary.id) {
-            for pos in &board.positions {
-                if let Some(uid) = pos {
-                    members.push(*uid);
-                }
+            for uid in board.positions.iter().flatten() {
+                members.push(*uid);
             }
         }
     }
@@ -178,7 +176,7 @@ proptest! {
                 );
                 let board = board.unwrap();
                 prop_assert!(
-                    board.positions.iter().any(|p| *p == Some(uid)),
+                    board.positions.contains(&Some(uid)),
                     "member {} mapped to board {} but not found in positions",
                     uid,
                     board_id
@@ -189,17 +187,15 @@ proptest! {
         // Direction 2: board positions -> member_boards.
         for summary in engine.list_boards() {
             let board = engine.get_board(summary.id).unwrap();
-            for pos in &board.positions {
-                if let Some(uid) = pos {
-                    prop_assert_eq!(
-                        engine.get_member_board(*uid),
-                        Some(summary.id),
-                        "user {} in board {} positions but get_member_board returns {:?}",
-                        uid,
-                        summary.id,
-                        engine.get_member_board(*uid)
-                    );
-                }
+            for uid in board.positions.iter().flatten() {
+                prop_assert_eq!(
+                    engine.get_member_board(*uid),
+                    Some(summary.id),
+                    "user {} in board {} positions but get_member_board returns {:?}",
+                    uid,
+                    summary.id,
+                    engine.get_member_board(*uid)
+                );
             }
         }
     }
@@ -326,14 +322,12 @@ fn cycled_members_sponsor_was_dissolved_falls_back_to_bottom() {
     let displaced: HashSet<Uuid> = engine.displaced_members().iter().copied().collect();
     for summary in engine.list_boards() {
         let board = engine.get_board(summary.id).unwrap();
-        for pos in &board.positions {
-            if let Some(uid) = pos {
-                assert!(
-                    !displaced.contains(uid),
-                    "member {} is both on a board and in the displaced pool",
-                    uid
-                );
-            }
+        for uid in board.positions.iter().flatten() {
+            assert!(
+                !displaced.contains(uid),
+                "member {} is both on a board and in the displaced pool",
+                uid
+            );
         }
     }
 }

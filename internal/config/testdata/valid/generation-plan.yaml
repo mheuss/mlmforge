@@ -85,11 +85,16 @@ structures:
           "5": 0.02
       generation:
         max_generations: 4
+        max_generations_per_rank:
+          Executive: 3
+          Senior Executive: 6
         generation_rates:
           "1": 0.05
           "2": 0.04
           "3": 0.03
           "4": 0.02
+          "5": 0.02
+          "6": 0.02
         boundary_mode: threshold_rank
         boundary_rank: Executive
         empty_generation_consumes_number: true

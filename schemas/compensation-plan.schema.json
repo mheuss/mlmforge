@@ -1246,6 +1246,15 @@
           "maximum": 255,
           "description": "Maximum number of generations to pay commissions on."
         },
+        "max_generations_per_rank": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 255
+          },
+          "description": "Per-rank override for max_generations. When a rank name appears here, that value is used in place of max_generations for earners at that rank during the generation walk. Ranks not present fall back to max_generations. Empty (the default) means uniform depth for all ranks. Keys must reference rank names defined in the plan's rank ladder; plan validation rejects unknown rank names."
+        },
         "generation_rates": {
           "type": "object",
           "additionalProperties": {

@@ -326,8 +326,12 @@ type FixedOverrideConfig struct {
 }
 
 // BreakawayGenerationConfig holds generation override configuration for breakaway groups.
+//
+// MaxGenerations uses uint8 to mirror the Rust u8 field exactly. This makes
+// negative or out-of-range values fail at Go unmarshal time instead of silently
+// truncating or erroring downstream when the config round-trips to the engine.
 type BreakawayGenerationConfig struct {
-	MaxGenerations  int                `yaml:"max_generations" json:"max_generations"`
+	MaxGenerations  uint8              `yaml:"max_generations" json:"max_generations"`
 	GenerationRates map[string]float64 `yaml:"generation_rates" json:"generation_rates"`
 	BoundaryRank    string             `yaml:"boundary_rank" json:"boundary_rank"`
 }

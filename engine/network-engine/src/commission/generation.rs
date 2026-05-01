@@ -2026,17 +2026,23 @@ mod calculate_tests {
         assert_eq!(result.len(), 3);
     }
 
-    /// Regression guard: an empty per-rank map must produce identical
-    /// earnings to the absent-field default. Three configs are compared:
-    ///   (a) explicit `BTreeMap::new()`,
-    ///   (b) default-constructed map (`BTreeMap::default()`),
-    ///   (c) baseline matching today's behavior (also `BTreeMap::new()`).
+    /// Regression guard: per-rank entries that equal `max_generations`
+    /// must produce identical earnings to an empty per-rank map, because
+    /// neither walk depth nor per-earner caps differ in that case.
     ///
-    /// All three must produce identical earnings vectors.
+    /// Three configs are compared:
+    ///   (a) empty per-rank map (today's baseline behavior),
+    ///   (b) per-rank map populated for every snapshot rank with the
+    ///       value equal to `max_generations` — exercises lookup hits
+    ///       AND the per-earner filter, but the caps do not bind,
+    ///   (c) per-rank map with PARTIAL coverage (only some ranks present,
+    ///       value equal to `max_generations`) — exercises both lookup
+    ///       hits and lookup misses (fallback) within one walk.
     ///
-    /// This test guards against future refactors that might add caching or
-    /// special-case logic for the per-rank map. The chain mixes bronze,
-    /// platinum, and diamond ranks to exercise the rank lookup paths.
+    /// All three must produce identical earnings vectors. If any future
+    /// refactor causes (b) or (c) to diverge from (a), this test fails.
+    /// A test that only compared three empty maps (the previous shape)
+    /// would assert nothing beyond determinism.
     #[test]
     fn calculate_generation_empty_per_rank_map_preserves_current_behavior() {
         let tree = build_chain(5);
@@ -2056,31 +2062,45 @@ mod calculate_tests {
             cv_amount: 100.0,
         }];
 
-        // (a) Explicit empty map.
-        let mut structure_a = threshold_structure("bronze", 3, rates.clone());
-        structure_a.generation_commission.max_generations_per_rank = BTreeMap::new();
+        let max_gen = 3u8;
+
+        // (a) Empty per-rank map (baseline).
+        let structure_a = threshold_structure("bronze", max_gen, rates.clone());
         let plan_a = six_rank_plan(structure_a.clone());
         let result_a =
             calculate_generation(&tree, &plan_a, &structure_a, &snapshots, &volume).unwrap();
 
-        // (b) Default-constructed map.
-        let mut structure_b = threshold_structure("bronze", 3, rates.clone());
-        structure_b.generation_commission.max_generations_per_rank = BTreeMap::default();
+        // (b) Full population: every snapshot rank present, all caps == max_gen.
+        // walk_depth = max(max_gen, max_gen, ...) = max_gen. Per-earner filter
+        // looks each earner up successfully, finds cap == max_gen, no entries
+        // trimmed. Equivalent to (a) but exercises the lookup-hit branch.
+        let mut structure_b = threshold_structure("bronze", max_gen, rates.clone());
+        structure_b.generation_commission.max_generations_per_rank = BTreeMap::from([
+            ("associate".to_string(), max_gen),
+            ("bronze".to_string(), max_gen),
+            ("platinum".to_string(), max_gen),
+            ("diamond".to_string(), max_gen),
+        ]);
         let plan_b = six_rank_plan(structure_b.clone());
         let result_b =
             calculate_generation(&tree, &plan_b, &structure_b, &snapshots, &volume).unwrap();
 
-        // (c) Baseline: today's behavior with no per-rank entries.
-        // threshold_structure already sets max_generations_per_rank to
-        // BTreeMap::new(); leave it untouched.
-        let structure_c = threshold_structure("bronze", 3, rates);
+        // (c) Partial population: only bronze and diamond present, both == max_gen.
+        // Earners at platinum and associate fall through to the default in
+        // earner_max_generations. Mixes lookup-hit and lookup-miss branches in
+        // one walk. Equivalent earnings to (a).
+        let mut structure_c = threshold_structure("bronze", max_gen, rates);
+        structure_c.generation_commission.max_generations_per_rank = BTreeMap::from([
+            ("bronze".to_string(), max_gen),
+            ("diamond".to_string(), max_gen),
+        ]);
         let plan_c = six_rank_plan(structure_c.clone());
         let result_c =
             calculate_generation(&tree, &plan_c, &structure_c, &snapshots, &volume).unwrap();
 
-        // All three must produce identical earnings. The full vec is
-        // compared so any divergence in earner_id, level, rate, cv_amount,
-        // or dollar_amount surfaces.
+        // All three must produce identical earnings. The full vec is compared
+        // so any divergence in earner_id, level, rate, cv_amount, or
+        // dollar_amount surfaces.
         assert_eq!(result_a, result_b);
         assert_eq!(result_b, result_c);
     }
@@ -2088,7 +2108,10 @@ mod calculate_tests {
     /// SameRank counterpart to the threshold regression guard above. The
     /// SameRank refactor changed the per-rank dedup key from `u16` to
     /// `(&str, u16)`, so SameRank is the path most likely to diverge under
-    /// future refactors. Same shape: three configs, full-vec equality.
+    /// future refactors. Same shape as the threshold version: three configs
+    /// (empty / fully populated / partially populated), all expected to
+    /// produce identical earnings because the per-rank values match
+    /// `max_generations` exactly (no-op caps).
     #[test]
     fn calculate_generation_empty_per_rank_map_preserves_same_rank_behavior() {
         let tree = build_chain(5);
@@ -2106,24 +2129,35 @@ mod calculate_tests {
             cv_amount: 100.0,
         }];
 
-        // (a) Explicit empty map.
-        let mut structure_a = same_rank_structure(3, rates.clone());
-        structure_a.generation_commission.max_generations_per_rank = BTreeMap::new();
+        let max_gen = 3u8;
+
+        // (a) Empty per-rank map (baseline).
+        let structure_a = same_rank_structure(max_gen, rates.clone());
         let plan_a = six_rank_plan(structure_a.clone());
         let result_a =
             calculate_generation(&tree, &plan_a, &structure_a, &snapshots, &volume).unwrap();
 
-        // (b) Default-constructed map.
-        let mut structure_b = same_rank_structure(3, rates.clone());
-        structure_b.generation_commission.max_generations_per_rank = BTreeMap::default();
+        // (b) Full population: every per-rank-ordinal walk uses walk_max == max_gen.
+        let mut structure_b = same_rank_structure(max_gen, rates.clone());
+        structure_b.generation_commission.max_generations_per_rank = BTreeMap::from([
+            ("associate".to_string(), max_gen),
+            ("bronze".to_string(), max_gen),
+            ("platinum".to_string(), max_gen),
+            ("diamond".to_string(), max_gen),
+        ]);
         let plan_b = six_rank_plan(structure_b.clone());
         let result_b =
             calculate_generation(&tree, &plan_b, &structure_b, &snapshots, &volume).unwrap();
 
-        // (c) Baseline: today's behavior with no per-rank entries.
-        // same_rank_structure already sets max_generations_per_rank to
-        // BTreeMap::new(); leave it untouched.
-        let structure_c = same_rank_structure(3, rates);
+        // (c) Partial population: only bronze and diamond present, both == max_gen.
+        // The platinum and associate per-rank-ordinal walks fall back to the
+        // default, exercising both branches of earner_max_generations within
+        // one calculation.
+        let mut structure_c = same_rank_structure(max_gen, rates);
+        structure_c.generation_commission.max_generations_per_rank = BTreeMap::from([
+            ("bronze".to_string(), max_gen),
+            ("diamond".to_string(), max_gen),
+        ]);
         let plan_c = six_rank_plan(structure_c.clone());
         let result_c =
             calculate_generation(&tree, &plan_c, &structure_c, &snapshots, &volume).unwrap();

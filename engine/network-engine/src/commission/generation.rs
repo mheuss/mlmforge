@@ -257,6 +257,10 @@ pub fn calculate_generation(
                     Box::new(|id: Uuid| eligibility_cache.get(&id).is_some_and(|e| e.eligible))
                 };
 
+            // walk_depth is loop-invariant: it depends only on gen_config, not
+            // on the source. Compute once before the per-source loop.
+            let walk_max = walk_depth(gen_config);
+
             for source in volume {
                 walk::validate_cv(source)?;
                 tree.get_upline(source.source_id, 0)
@@ -267,7 +271,7 @@ pub fn calculate_generation(
                     source.source_id,
                     &boundary_set,
                     &boundary_check,
-                    walk_depth(gen_config),
+                    walk_max,
                     gen_config.empty_generation_consumes_number,
                 );
 

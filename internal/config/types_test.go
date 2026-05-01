@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -520,22 +521,42 @@ volume_to_dollar_multiplier: null
 	require.Equal(t, uint8(3), decoded.MaxGenerationsPerRank["silver"])
 }
 
-// TestGenerationCommissionConfig_MaxGenerations_RejectsOutOfRange verifies
-// that values too large for the Rust u8 mirror fail at YAML unmarshal time.
-// Without this guard, a Go-authored config could set MaxGenerations: 300 and
+// TestGenerationCommissionConfig_MaxGenerations_BoundaryValues verifies the
+// uint8 boundaries at YAML unmarshal time. Values in [0, 255] succeed; values
+// outside fail. Without this guard, a Go-authored config could set values that
 // silently truncate or fail when round-tripped to the Rust engine.
-func TestGenerationCommissionConfig_MaxGenerations_RejectsOutOfRange(t *testing.T) {
-	yamlInput := `
-max_generations: 300
+func TestGenerationCommissionConfig_MaxGenerations_BoundaryValues(t *testing.T) {
+	cases := []struct {
+		name      string
+		value     string
+		expectErr bool
+	}{
+		{"zero", "0", false},
+		{"max_uint8", "255", false},
+		{"one_above_max", "256", true},
+		{"large_overflow", "300", true},
+		{"negative", "-1", true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			yamlInput := fmt.Sprintf(`
+max_generations: %s
 generation_rates:
   "1": 0.10
 boundary_mode: threshold_rank
 boundary_rank: director
 empty_generation_consumes_number: false
-`
-	var cfg GenerationCommissionConfig
-	err := yaml.Unmarshal([]byte(yamlInput), &cfg)
-	require.Error(t, err, "expected unmarshal to reject max_generations=300 as out of range for uint8")
+`, tc.value)
+			var cfg GenerationCommissionConfig
+			err := yaml.Unmarshal([]byte(yamlInput), &cfg)
+			if tc.expectErr {
+				require.Error(t, err, "expected unmarshal to reject max_generations=%s", tc.value)
+			} else {
+				require.NoError(t, err, "expected unmarshal to accept max_generations=%s", tc.value)
+			}
+		})
+	}
 }
 
 // TestGenerationCommissionConfig_MaxGenerationsPerRank_DefaultsToNil verifies

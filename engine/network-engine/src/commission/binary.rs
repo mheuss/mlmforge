@@ -100,7 +100,7 @@ fn accumulate_leg_volumes(
         .iter()
         .map(|(uid, &idx)| (idx, *uid, arena.node(idx).depth))
         .collect();
-    nodes_by_depth.sort_by(|a, b| b.2.cmp(&a.2));
+    nodes_by_depth.sort_by_key(|n| std::cmp::Reverse(n.2));
 
     // Subtree totals: personal volume + children's subtree totals.
     let mut subtree_totals: HashMap<NodeIndex, f64> = HashMap::new();

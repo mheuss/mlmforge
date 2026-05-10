@@ -94,7 +94,7 @@ func TestContractFixtures(t *testing.T) {
 			// ambiguous because ordering across the two lists is undefined.
 			require.False(t,
 				len(tc.fixture.Setup) > 0 && len(tc.fixture.SetupRaw) > 0,
-				"fixture %s has both 'setup' and 'setup_raw'; pick one", tc.name)
+				"[%s] fixture has both 'setup' and 'setup_raw'; pick one", tc.name)
 
 			// Run setup steps (e.g., create_tree) before the main request.
 			// SetupRaw is sent verbatim, mirroring RequestRaw. Use it for
@@ -119,6 +119,8 @@ func TestContractFixtures(t *testing.T) {
 
 			for i, line := range setupLines {
 				resp := sendRawLine(t, transport, line)
+				require.Contains(t, resp, `"ok":true`,
+					"setup request %d failed: %s", i, resp)
 				t.Logf("setup %d: %s", i, resp)
 			}
 

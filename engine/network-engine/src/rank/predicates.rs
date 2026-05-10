@@ -160,7 +160,6 @@ pub(crate) fn distributor_count_meets(
 /// - `UnknownStructure` if the rank references a structure not in `trees`.
 /// - `UnknownMinRank` if a `DistributorCountRequirement.min_rank` is not in `rank_ordinals`.
 /// - `DistributorNotInTree` if the user is not present in a tree the rank references.
-#[allow(dead_code)] // Wired up by evaluate_distributor in a later task.
 pub(crate) fn satisfies(
     rank: &RankDefinition,
     user_id: Uuid,

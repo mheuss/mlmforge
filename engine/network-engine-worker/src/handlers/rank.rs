@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 
 use network_engine::rank::{EvaluationInputs, evaluate_ranks};
 use network_engine::tree::navigator::TreeNavigator;
@@ -19,7 +19,10 @@ pub(crate) fn handle_evaluate_ranks(state: &WorkerState, request: &Request) -> R
     };
 
     // Collect every structure name referenced by any rank's qualification.
-    let mut needed: HashSet<&str> = HashSet::new();
+    // BTreeSet for deterministic iteration order so STRUCTURE_NOT_FOUND
+    // errors surface the same missing structure across runs (test stability,
+    // reproducible failures).
+    let mut needed: BTreeSet<&str> = BTreeSet::new();
     for rank in &plan.ranks {
         for sq in &rank.qualification.structures {
             needed.insert(sq.structure.as_str());

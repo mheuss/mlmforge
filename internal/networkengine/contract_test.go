@@ -24,11 +24,16 @@ type contractFixtureSetup struct {
 // contractFixture represents a single contract test case loaded from JSON.
 // Both Rust and Go read the same fixture files to catch serialization drift.
 type contractFixture struct {
-	Description      string                 `json:"description"`
-	Setup            []contractFixtureSetup `json:"setup,omitempty"`
-	Request          *json.RawMessage       `json:"request,omitempty"`
-	RequestRaw       *string                `json:"request_raw,omitempty"`
-	ExpectedResponse json.RawMessage        `json:"expected_response"`
+	Description string                 `json:"description"`
+	Setup       []contractFixtureSetup `json:"setup,omitempty"`
+	// SetupRaw holds NDJSON lines to send as setup, bypassing the
+	// map[string]any round-trip. Use it when re-marshaling would reorder
+	// keys the worker treats as significant (for example, adjacent-tagged
+	// enum payloads). Mirrors RequestRaw. Mutually exclusive with Setup.
+	SetupRaw         []string         `json:"setup_raw,omitempty"`
+	Request          *json.RawMessage `json:"request,omitempty"`
+	RequestRaw       *string          `json:"request_raw,omitempty"`
+	ExpectedResponse json.RawMessage  `json:"expected_response"`
 }
 
 func loadContractFixtures(t *testing.T) []struct {
@@ -85,17 +90,36 @@ func TestContractFixtures(t *testing.T) {
 			require.NoError(t, err)
 			defer func() { _ = transport.Close() }()
 
+			// Fixtures pick exactly one setup mode. Mixing them is
+			// ambiguous because ordering across the two lists is undefined.
+			require.False(t,
+				len(tc.fixture.Setup) > 0 && len(tc.fixture.SetupRaw) > 0,
+				"fixture %s has both 'setup' and 'setup_raw'; pick one", tc.name)
+
 			// Run setup steps (e.g., create_tree) before the main request.
-			for _, step := range tc.fixture.Setup {
-				setupReq := map[string]any{
-					"id":     step.ID,
-					"op":     step.Op,
-					"params": step.Params,
+			// SetupRaw is sent verbatim, mirroring RequestRaw. Use it for
+			// payloads where key order matters (for example, adjacent-tagged
+			// enum discriminants).
+			var setupLines []string
+			if len(tc.fixture.SetupRaw) > 0 {
+				setupLines = tc.fixture.SetupRaw
+			} else {
+				setupLines = make([]string, 0, len(tc.fixture.Setup))
+				for _, step := range tc.fixture.Setup {
+					setupReq := map[string]any{
+						"id":     step.ID,
+						"op":     step.Op,
+						"params": step.Params,
+					}
+					setupJSON, err := json.Marshal(setupReq)
+					require.NoError(t, err, "failed to marshal setup step %s", step.ID)
+					setupLines = append(setupLines, string(setupJSON))
 				}
-				setupJSON, err := json.Marshal(setupReq)
-				require.NoError(t, err, "failed to marshal setup step %s", step.ID)
-				resp := sendRawLine(t, transport, string(setupJSON))
-				t.Logf("setup %s: %s", step.ID, resp)
+			}
+
+			for i, line := range setupLines {
+				resp := sendRawLine(t, transport, line)
+				t.Logf("setup %d: %s", i, resp)
 			}
 
 			// Build the request line. For structured requests, re-marshal to

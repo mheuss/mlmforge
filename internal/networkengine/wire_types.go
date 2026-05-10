@@ -364,8 +364,14 @@ type DistributorPrimitivesDTO struct {
 // When Kind == "qualified", Rank and Ordinal are populated.
 // When Kind == "unranked", Rank and Ordinal are zero values.
 type EvaluatedRankDTO struct {
-	Kind    string `json:"kind"`
-	Rank    string `json:"rank,omitempty"`
+	Kind string `json:"kind"`
+	Rank string `json:"rank,omitempty"`
+	// Ordinal is uint16 with omitempty. This DTO is receive-only on the Go side
+	// today; if a future caller marshals a Qualified rank with Ordinal == 0,
+	// the resulting JSON will omit the ordinal field and the Rust deserializer
+	// will reject the variant (Qualified requires both rank and ordinal).
+	// If marshaling becomes load-bearing, change Ordinal to *uint16 so the
+	// presence/absence is explicit rather than collapsed by zero value.
 	Ordinal uint16 `json:"ordinal,omitempty"`
 }
 

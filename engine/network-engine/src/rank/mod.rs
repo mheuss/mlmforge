@@ -17,12 +17,14 @@ use crate::tree::navigator::TreeNavigator;
 
 use self::evaluator::{VolumeIndex, evaluate_distributor, evaluation_order_for_users};
 
-/// Evaluate the qualified rank for every distributor in `inputs`.
+/// Evaluate the qualified rank for every distributor in `inputs` that also
+/// appears in at least one tree.
 ///
 /// Walks each tree bottom-up so descendants are evaluated first. Each
 /// distributor ascends the rank ladder lowest-ordinal-first; the highest
-/// passing rank wins. Distributors omitted from `inputs.distributors` are
-/// not in the result and do not contribute to ancestors' counts.
+/// passing rank wins. Distributors omitted from `inputs.distributors`, and
+/// distributors not present in any tree, are not in the result and do not
+/// contribute to ancestors' counts.
 pub fn evaluate_ranks(
     plan: &CompensationPlan,
     trees: &HashMap<String, &dyn TreeNavigator>,

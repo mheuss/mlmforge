@@ -64,6 +64,7 @@ mod tests {
     use crate::commission::types::VolumeSource;
     use crate::rank::evaluator::VolumeIndex;
     use crate::rank::types::DistributorPrimitives;
+    use crate::tree::error::TreeError;
     use crate::tree::unilevel::UnilevelTree;
     use uuid::Uuid;
 
@@ -199,8 +200,8 @@ mod tests {
 
         let err = gv_meets(0.0, uid(99), &tree, &idx, &primitives).unwrap_err();
         // We don't pin the structure name here; the caller does. The error
-        // surfaces from get_downline as a TreeError that the predicate
-        // converts to None / Err. Predicates return Result<bool, TreeError>.
-        assert!(format!("{:?}", err).contains("UserNotFound"));
+        // surfaces from get_downline as a TreeError. Predicates return
+        // Result<bool, TreeError>.
+        assert_eq!(err, TreeError::UserNotFound(uid(99)));
     }
 }

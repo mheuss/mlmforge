@@ -104,3 +104,17 @@ func TestEvaluatedRankDTO_UnrankedDeserialization(t *testing.T) {
 	assert.Equal(t, "", dto.Rank)
 	assert.Equal(t, uint16(0), dto.Ordinal)
 }
+
+func TestEvaluatedRankDTO_QualifiedMarshalShape(t *testing.T) {
+	dto := EvaluatedRankDTO{Kind: "qualified", Rank: "silver", Ordinal: 2}
+	b, err := json.Marshal(dto)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"kind":"qualified","rank":"silver","ordinal":2}`, string(b))
+}
+
+func TestEvaluatedRankDTO_UnrankedMarshalShape(t *testing.T) {
+	dto := EvaluatedRankDTO{Kind: "unranked"}
+	b, err := json.Marshal(dto)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"kind":"unranked"}`, string(b))
+}

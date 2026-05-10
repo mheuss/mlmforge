@@ -60,3 +60,47 @@ func TestStreamlineStructureConfigDTO_NilOptionalFields(t *testing.T) {
 	assert.Nil(t, dto.StreamlineCommission.Streams)
 	assert.Equal(t, uint8(5), dto.StreamlineCommission.CommissionableDepth)
 }
+
+func TestEvaluateRanksRequest_RoundTrip(t *testing.T) {
+	src := EvaluateRanksRequest{
+		Distributors: map[string]DistributorPrimitivesDTO{
+			"00000000-0000-0000-0000-000000000001": {
+				PersonalVolume:   100.0,
+				RetailVolume:     25.0,
+				Status:           "active",
+				HasOrderInPeriod: true,
+				ActiveProducts:   []string{"kit-a"},
+			},
+		},
+		VolumeSources: []VolumeSourceDTO{
+			{SourceID: "00000000-0000-0000-0000-000000000001", CVAmount: 50.0},
+		},
+	}
+
+	b, err := json.Marshal(src)
+	require.NoError(t, err)
+
+	var got EvaluateRanksRequest
+	require.NoError(t, json.Unmarshal(b, &got))
+	require.Len(t, got.Distributors, 1)
+	require.Equal(t, "active", got.Distributors["00000000-0000-0000-0000-000000000001"].Status)
+	require.Len(t, got.VolumeSources, 1)
+}
+
+func TestEvaluatedRankDTO_QualifiedDeserialization(t *testing.T) {
+	jsonStr := `{"kind":"qualified","rank":"silver","ordinal":2}`
+	var dto EvaluatedRankDTO
+	require.NoError(t, json.Unmarshal([]byte(jsonStr), &dto))
+	assert.Equal(t, "qualified", dto.Kind)
+	assert.Equal(t, "silver", dto.Rank)
+	assert.Equal(t, uint16(2), dto.Ordinal)
+}
+
+func TestEvaluatedRankDTO_UnrankedDeserialization(t *testing.T) {
+	jsonStr := `{"kind":"unranked"}`
+	var dto EvaluatedRankDTO
+	require.NoError(t, json.Unmarshal([]byte(jsonStr), &dto))
+	assert.Equal(t, "unranked", dto.Kind)
+	assert.Equal(t, "", dto.Rank)
+	assert.Equal(t, uint16(0), dto.Ordinal)
+}

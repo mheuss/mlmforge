@@ -338,3 +338,39 @@ type StreamConfigDTO struct {
 	PerEnrollmentChoice bool             `json:"per_enrollment_choice"`
 	FreezeOnDemotion    bool             `json:"freeze_on_demotion"`
 }
+
+// --- Rank evaluation wire types (HEU-443) ---
+
+// EvaluateRanksRequest is the input for the evaluate_ranks op.
+// Mirrors the Rust EvaluationInputs struct.
+type EvaluateRanksRequest struct {
+	Distributors  map[string]DistributorPrimitivesDTO `json:"distributors"`
+	VolumeSources []VolumeSourceDTO                   `json:"volume_sources"`
+}
+
+// DistributorPrimitivesDTO is the per-distributor input for rank evaluation.
+// Mirrors the Rust DistributorPrimitives struct.
+type DistributorPrimitivesDTO struct {
+	PersonalVolume   float64  `json:"personal_volume"`
+	RetailVolume     float64  `json:"retail_volume"`
+	Status           string   `json:"status"`
+	HasOrderInPeriod bool     `json:"has_order_in_period"`
+	ActiveProducts   []string `json:"active_products"`
+}
+
+// EvaluatedRankDTO is one distributor's evaluated rank.
+// Mirrors the Rust EvaluatedRank enum (kind-tagged).
+//
+// When Kind == "qualified", Rank and Ordinal are populated.
+// When Kind == "unranked", Rank and Ordinal are zero values.
+type EvaluatedRankDTO struct {
+	Kind    string `json:"kind"`
+	Rank    string `json:"rank,omitempty"`
+	Ordinal uint16 `json:"ordinal,omitempty"`
+}
+
+// EvaluationResultDTO is the full per-distributor rank map for a period.
+// Mirrors the Rust EvaluationResult struct.
+type EvaluationResultDTO struct {
+	Ranks map[string]EvaluatedRankDTO `json:"ranks"`
+}

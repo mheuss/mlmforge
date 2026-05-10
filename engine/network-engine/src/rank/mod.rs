@@ -3,3 +3,7 @@
 pub mod evaluator;
 pub mod predicates;
 pub mod types;
+
+pub use types::{
+    DistributorPrimitives, EvaluatedRank, EvaluationError, EvaluationInputs, EvaluationResult,
+};

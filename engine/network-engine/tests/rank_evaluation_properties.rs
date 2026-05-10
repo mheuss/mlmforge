@@ -109,3 +109,63 @@ proptest! {
         prop_assert_eq!(json1, json2);
     }
 }
+
+proptest! {
+    #[test]
+    fn increasing_pv_cannot_lower_rank(
+        size in 2..10usize,
+        base_pv in 0u32..500,
+        increase in 1u32..200,
+    ) {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uuid_from_index(0), 0).unwrap();
+        for i in 1..size {
+            tree.add_node(uuid_from_index(i), uuid_from_index(i - 1), uuid_from_index(i - 1), i as i64).unwrap();
+        }
+        let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+        nav.insert("Test".to_string(), &tree);
+
+        let plan = build_random_plan();
+
+        let mut distributors_low = HashMap::new();
+        let mut distributors_high = HashMap::new();
+        for i in 0..size {
+            distributors_low.insert(uuid_from_index(i), DistributorPrimitives {
+                personal_volume: base_pv as f64,
+                retail_volume: 0.0,
+                status: "active".to_string(),
+                has_order_in_period: true,
+                active_products: vec![],
+            });
+            distributors_high.insert(uuid_from_index(i), DistributorPrimitives {
+                personal_volume: (base_pv + increase) as f64,
+                retail_volume: 0.0,
+                status: "active".to_string(),
+                has_order_in_period: true,
+                active_products: vec![],
+            });
+        }
+
+        let r_low = evaluate_ranks(
+            &plan, &nav,
+            &EvaluationInputs { distributors: distributors_low, volume_sources: vec![] },
+        ).unwrap();
+        let r_high = evaluate_ranks(
+            &plan, &nav,
+            &EvaluationInputs { distributors: distributors_high, volume_sources: vec![] },
+        ).unwrap();
+
+        for i in 0..size {
+            let id = uuid_from_index(i);
+            let low_ord = match r_low.ranks.get(&id) {
+                Some(network_engine::rank::EvaluatedRank::Qualified { ordinal, .. }) => *ordinal as i32,
+                _ => -1,
+            };
+            let high_ord = match r_high.ranks.get(&id) {
+                Some(network_engine::rank::EvaluatedRank::Qualified { ordinal, .. }) => *ordinal as i32,
+                _ => -1,
+            };
+            prop_assert!(high_ord >= low_ord, "increasing PV must not lower rank");
+        }
+    }
+}

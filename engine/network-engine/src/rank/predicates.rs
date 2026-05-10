@@ -4,15 +4,14 @@ use std::collections::HashMap;
 
 use uuid::Uuid;
 
-use crate::config::rank::{DistributorCountRequirement, SearchMode};
+use crate::config::rank::{DistributorCountRequirement, RankDefinition, SearchMode};
 use crate::rank::evaluator::VolumeIndex;
-use crate::rank::types::{DistributorPrimitives, EvaluatedRank};
+use crate::rank::types::{DistributorPrimitives, EvaluatedRank, EvaluationError};
 use crate::tree::error::TreeError;
 use crate::tree::navigator::TreeNavigator;
 
 /// Reasons distributor_count evaluation can fail. Caller maps these to
 /// `EvaluationError` variants with rank context attached.
-#[allow(dead_code)] // Wired up by `satisfies()` in a later task.
 #[derive(Debug, PartialEq)]
 pub(crate) enum DistributorCountError {
     Tree(TreeError),
@@ -26,20 +25,17 @@ impl From<TreeError> for DistributorCountError {
 }
 
 /// Pass when the distributor's personal volume is at least `required`.
-#[allow(dead_code)] // Wired up by `satisfies()` in a later task.
 pub(crate) fn pv_meets(required: f64, primitives: &DistributorPrimitives) -> bool {
     primitives.personal_volume >= required
 }
 
 /// Pass when the distributor's retail volume is at least `required`.
-#[allow(dead_code)] // Wired up by `satisfies()` in a later task.
 pub(crate) fn retail_meets(required: f64, primitives: &DistributorPrimitives) -> bool {
     primitives.retail_volume >= required
 }
 
 /// Pass when at least one element of `required` appears in `primitives.active_products`.
 /// An empty `required` list always passes.
-#[allow(dead_code)] // Wired up by `satisfies()` in a later task.
 pub(crate) fn required_products_met(
     required: &[String],
     primitives: &DistributorPrimitives,
@@ -59,7 +55,6 @@ pub(crate) fn required_products_met(
 /// `personal_volume` from primitives. The distributor's own CV from
 /// `volume_sources` is not added on top — `personal_volume` is the
 /// authoritative own contribution.
-#[allow(dead_code)] // Wired up by `satisfies()` in a later task.
 pub(crate) fn gv_meets(
     required: f64,
     user_id: Uuid,
@@ -80,7 +75,6 @@ pub(crate) fn gv_meets(
 ///
 /// For each direct child of `user_id`, sum CV across the child plus their
 /// downline. The maximum of those sums must be at most `cap`.
-#[allow(dead_code)] // Wired up by `satisfies()` in a later task.
 pub(crate) fn max_leg_gv_meets(
     cap: f64,
     user_id: Uuid,
@@ -109,7 +103,6 @@ pub(crate) fn max_leg_gv_meets(
 /// whose evaluated rank ordinal >= `min_rank` ordinal AND whose group volume
 /// (subtree CV including the node) >= `min_leg_group_volume`. The total
 /// downline node count within scope must also be >= `total_count`.
-#[allow(dead_code)] // Wired up by `satisfies()` in a later task.
 pub(crate) fn distributor_count_meets(
     req: &DistributorCountRequirement,
     user_id: Uuid,
@@ -158,6 +151,91 @@ pub(crate) fn distributor_count_meets(
     }
 
     Ok(qualifying >= req.count as usize)
+}
+
+/// Pass when every structure qualification on `rank` passes for `user_id`
+/// and the `required_products` clause passes.
+///
+/// Errors:
+/// - `UnknownStructure` if the rank references a structure not in `trees`.
+/// - `UnknownMinRank` if a `DistributorCountRequirement.min_rank` is not in `rank_ordinals`.
+/// - `DistributorNotInTree` if the user is not present in a tree the rank references.
+#[allow(dead_code)] // Wired up by evaluate_distributor in a later task.
+pub(crate) fn satisfies(
+    rank: &RankDefinition,
+    user_id: Uuid,
+    primitives: &DistributorPrimitives,
+    trees: &HashMap<String, &dyn TreeNavigator>,
+    volume_index: &VolumeIndex,
+    already: &HashMap<Uuid, EvaluatedRank>,
+    rank_ordinals: &HashMap<String, u16>,
+) -> Result<bool, EvaluationError> {
+    if !required_products_met(&rank.qualification.required_products, primitives) {
+        return Ok(false);
+    }
+
+    for sq in &rank.qualification.structures {
+        let tree = trees
+            .get(&sq.structure)
+            .ok_or_else(|| EvaluationError::UnknownStructure {
+                rank: rank.name.clone(),
+                structure: sq.structure.clone(),
+            })?;
+
+        if !tree.contains(user_id) {
+            return Err(EvaluationError::DistributorNotInTree(
+                user_id,
+                sq.structure.clone(),
+            ));
+        }
+
+        if !pv_meets(sq.personal_volume, primitives) {
+            return Ok(false);
+        }
+        if !retail_meets(sq.min_retail_volume, primitives) {
+            return Ok(false);
+        }
+        match gv_meets(sq.group_volume, user_id, *tree, volume_index, primitives) {
+            Ok(true) => {}
+            Ok(false) => return Ok(false),
+            Err(_) => {
+                return Err(EvaluationError::DistributorNotInTree(
+                    user_id,
+                    sq.structure.clone(),
+                ));
+            }
+        }
+        match max_leg_gv_meets(sq.max_group_volume_per_leg, user_id, *tree, volume_index) {
+            Ok(true) => {}
+            Ok(false) => return Ok(false),
+            Err(_) => {
+                return Err(EvaluationError::DistributorNotInTree(
+                    user_id,
+                    sq.structure.clone(),
+                ));
+            }
+        }
+        if let Some(req) = &sq.distributor_count {
+            match distributor_count_meets(req, user_id, *tree, volume_index, already, rank_ordinals)
+            {
+                Ok(true) => {}
+                Ok(false) => return Ok(false),
+                Err(DistributorCountError::Tree(_)) => {
+                    return Err(EvaluationError::DistributorNotInTree(
+                        user_id,
+                        sq.structure.clone(),
+                    ));
+                }
+                Err(DistributorCountError::UnknownMinRank(referenced)) => {
+                    return Err(EvaluationError::UnknownMinRank {
+                        rank: rank.name.clone(),
+                        referenced,
+                    });
+                }
+            }
+        }
+    }
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -454,6 +532,138 @@ mod tests {
         assert_eq!(
             err,
             DistributorCountError::UnknownMinRank("unknown".to_string())
+        );
+    }
+
+    use crate::config::rank::{
+        DemotionPolicy, RankDefinition, RankQualification, StructureQualification,
+    };
+
+    fn rank_with_pv_and_gv(
+        name: &str,
+        ord: u16,
+        structure: &str,
+        pv: f64,
+        gv: f64,
+    ) -> RankDefinition {
+        RankDefinition {
+            name: name.to_string(),
+            ordinal: ord,
+            qualification: RankQualification {
+                structures: vec![StructureQualification {
+                    structure: structure.to_string(),
+                    personal_volume: pv,
+                    group_volume: gv,
+                    max_group_volume_per_leg: gv * 10.0, // permissive
+                    min_retail_volume: 0.0,
+                    distributor_count: None,
+                }],
+                required_products: vec![],
+            },
+            qualified_structures: vec![structure.to_string()],
+            demotion_policy: DemotionPolicy::PromotionOnly,
+        }
+    }
+
+    #[test]
+    fn satisfies_passes_when_every_structure_passes_and_products_pass() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uid(1), 0).unwrap();
+        tree.add_node(uid(2), uid(1), uid(1), 0).unwrap();
+
+        let sources = vec![VolumeSource {
+            source_id: uid(2),
+            cv_amount: 1000.0,
+        }];
+        let idx = VolumeIndex::build(&sources);
+
+        let mut nav_map: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+        nav_map.insert("Test".to_string(), &tree);
+
+        let primitives = DistributorPrimitives {
+            personal_volume: 100.0,
+            retail_volume: 0.0,
+            status: "active".to_string(),
+            has_order_in_period: true,
+            active_products: vec![],
+        };
+
+        let rank = rank_with_pv_and_gv("silver", 2, "Test", 100.0, 500.0);
+        let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
+        let ordinals: HashMap<String, u16> = HashMap::new();
+
+        assert!(
+            satisfies(
+                &rank,
+                uid(1),
+                &primitives,
+                &nav_map,
+                &idx,
+                &already,
+                &ordinals
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn satisfies_fails_when_any_structure_fails() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uid(1), 0).unwrap();
+        let idx = VolumeIndex::build(&[]);
+
+        let mut nav_map: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+        nav_map.insert("Test".to_string(), &tree);
+
+        let primitives = primitives_with_pv(50.0); // PV too low
+
+        let rank = rank_with_pv_and_gv("silver", 2, "Test", 100.0, 0.0);
+        let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
+        let ordinals: HashMap<String, u16> = HashMap::new();
+
+        assert!(
+            !satisfies(
+                &rank,
+                uid(1),
+                &primitives,
+                &nav_map,
+                &idx,
+                &already,
+                &ordinals
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn satisfies_errors_on_unknown_structure() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uid(1), 0).unwrap();
+        let idx = VolumeIndex::build(&[]);
+
+        let nav_map: HashMap<String, &dyn TreeNavigator> = HashMap::new(); // missing "Test"
+
+        let primitives = primitives_with_pv(0.0);
+        let rank = rank_with_pv_and_gv("silver", 2, "Test", 0.0, 0.0);
+        let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
+        let ordinals: HashMap<String, u16> = HashMap::new();
+
+        let err = satisfies(
+            &rank,
+            uid(1),
+            &primitives,
+            &nav_map,
+            &idx,
+            &already,
+            &ordinals,
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            crate::rank::types::EvaluationError::UnknownStructure {
+                rank: "silver".to_string(),
+                structure: "Test".to_string(),
+            }
         );
     }
 }

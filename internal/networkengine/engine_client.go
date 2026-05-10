@@ -369,6 +369,16 @@ func (c *EngineClient) CalculateBinaryPairing(ctx context.Context, req Calculate
 	return &r, nil
 }
 
+// EvaluateRanks asks the worker to compute the qualified rank for every
+// distributor in the input set against the loaded plan.
+func (c *EngineClient) EvaluateRanks(ctx context.Context, req EvaluateRanksRequest) (*EvaluationResultDTO, error) {
+	r, err := callInto[EvaluationResultDTO](c, ctx, "evaluate_ranks", req)
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
 // --- Board plan methods ---
 
 // CreateBoardPlan creates a board plan structure in the engine.

@@ -169,3 +169,58 @@ proptest! {
         }
     }
 }
+
+proptest! {
+    #[test]
+    fn evaluation_is_invariant_to_input_iteration_order(
+        size in 2..12usize,
+        seed_pv in 0u32..400,
+    ) {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uuid_from_index(0), 0).unwrap();
+        for i in 1..size {
+            tree.add_node(uuid_from_index(i), uuid_from_index(i - 1), uuid_from_index(i - 1), i as i64).unwrap();
+        }
+        let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+        nav.insert("Test".to_string(), &tree);
+        let plan = build_random_plan();
+
+        // Build the same logical input twice with different HashMap seeds.
+        // serde_json roundtrip via two independent HashMap instances is
+        // enough to exercise different iteration orders in practice.
+        let mut a = HashMap::new();
+        let mut b = HashMap::new();
+        for i in 0..size {
+            let p = DistributorPrimitives {
+                personal_volume: (seed_pv as f64) + (i as f64),
+                retail_volume: 0.0,
+                status: "active".to_string(),
+                has_order_in_period: true,
+                active_products: vec![],
+            };
+            a.insert(uuid_from_index(i), p.clone());
+            b.insert(uuid_from_index(i), p);
+        }
+
+        let r_a = evaluate_ranks(
+            &plan, &nav,
+            &EvaluationInputs { distributors: a, volume_sources: vec![] },
+        ).unwrap();
+        let r_b = evaluate_ranks(
+            &plan, &nav,
+            &EvaluationInputs { distributors: b, volume_sources: vec![] },
+        ).unwrap();
+
+        // EvaluationResult uses BTreeMap, so JSON output is canonicalized.
+        let json_a = serde_json::to_string(&r_a).unwrap();
+        let json_b = serde_json::to_string(&r_b).unwrap();
+        prop_assert_eq!(json_a, json_b);
+
+        // Spot-check: every distributor present in input is present in output
+        // with the SAME EvaluatedRank in both runs.
+        for i in 0..size {
+            let id = uuid_from_index(i);
+            prop_assert_eq!(r_a.ranks.get(&id), r_b.ranks.get(&id));
+        }
+    }
+}

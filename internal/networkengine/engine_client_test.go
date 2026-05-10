@@ -1056,6 +1056,160 @@ func TestEngineClient_EvaluateRanks_MockParams(t *testing.T) {
 	assert.Equal(t, "unranked", got.Kind)
 }
 
+// --- Rank evaluation integration test (real binary) ---
+
+// rankIntegrationPlanJSON is a minimal compensation plan tailored for the
+// EvaluateRanks integration test. The "member" rank carries a trivial
+// structure qualification (personal_volume >= 0 on "Test"), so every
+// distributor present in the tree with primitives qualifies. The worker's
+// rank handler only registers a tree in the navigator map when at least
+// one rank's qualification references that structure, so an entirely
+// empty qualification would yield an empty ranks map.
+const rankIntegrationPlanJSON = `{
+    "name": "Rank Integration Test Plan",
+    "version": 1,
+    "structures": [
+        {
+            "type": "unilevel",
+            "config": {
+                "name": "Test",
+                "level_commission": {
+                    "broad_commission_percent": 0.40,
+                    "volume_to_dollar_multiplier": null,
+                    "commissionable_depth": 3,
+                    "rate_table": {
+                        "member": { "1": 0.05, "2": 0.05, "3": 0.05 }
+                    }
+                },
+                "compression": null
+            }
+        }
+    ],
+    "period": {
+        "length": "month",
+        "start_date": "2026-03-01",
+        "payout_lag_days": 14
+    },
+    "volume": {
+        "inhibit_signup_volume": false,
+        "base_currency": "USD",
+        "volume_to_dollar_multiplier": 1.0,
+        "deduct_qualifying_volume": false
+    },
+    "ranks": [
+        {
+            "name": "member",
+            "ordinal": 1,
+            "qualification": {
+                "structures": [
+                    {
+                        "structure": "Test",
+                        "personal_volume": 0.0,
+                        "group_volume": 0.0,
+                        "max_group_volume_per_leg": 1e12,
+                        "min_retail_volume": 0.0,
+                        "distributor_count": null
+                    }
+                ],
+                "required_products": []
+            },
+            "qualified_structures": ["Test"],
+            "demotion_policy": "promotion_only"
+        }
+    ],
+    "rank_tracking": { "track_achieved_rank": false },
+    "rank_features": { "constraints_enabled": false, "overrides_enabled": false },
+    "commission_eligibility": {
+        "min_personal_volume": 0.0,
+        "require_order_in_period": false,
+        "eligible_statuses": [],
+        "active_leg_tiers": []
+    },
+    "bonuses": {
+        "matching": null,
+        "sponsor": null,
+        "fast_start": null,
+        "rank_advancement": null,
+        "leadership_development": null,
+        "infinity": null,
+        "lifestyle": null,
+        "pool": null,
+        "matrix_completion": null,
+        "position": null,
+        "board_cycling": null
+    },
+    "payout": {
+        "base_currency": "USD",
+        "minimum_amount": 50.0,
+        "split_payouts_enabled": true,
+        "methods": [
+            { "type": "bank_transfer", "fee": 2.50 }
+        ]
+    },
+    "caps": {
+        "per_distributor_per_period": null,
+        "company_payout_cap_percent": 0.42,
+        "cap_enforcement": "pro_rata",
+        "clawback_on_refund": false
+    },
+    "placement": {
+        "donated_placement": null,
+        "holding_tank": null,
+        "binary_placement": null
+    }
+}`
+
+func TestEngineClient_EvaluateRanks(t *testing.T) {
+	client, err := NewEngineClient(context.Background(), findWorkerBinary(t))
+	require.NoError(t, err)
+	defer func() { _ = client.Stop() }()
+
+	ctx := context.Background()
+	rootID := "00000000-0000-0000-0000-000000000001"
+	childID := "00000000-0000-0000-0000-000000000002"
+
+	require.NoError(t, client.LoadPlan(ctx, json.RawMessage(rankIntegrationPlanJSON)))
+	require.NoError(t, client.CreateTree(ctx, structureName, "unilevel"))
+	require.NoError(t, client.AddRoot(ctx, structureName, rootID, 100))
+	require.NoError(t, client.AddNode(ctx, structureName, childID, rootID, rootID, 200))
+
+	req := EvaluateRanksRequest{
+		Distributors: map[string]DistributorPrimitivesDTO{
+			rootID: {
+				PersonalVolume:   100.0,
+				RetailVolume:     0.0,
+				Status:           "active",
+				HasOrderInPeriod: true,
+				ActiveProducts:   []string{},
+			},
+			childID: {
+				PersonalVolume:   100.0,
+				RetailVolume:     0.0,
+				Status:           "active",
+				HasOrderInPeriod: true,
+				ActiveProducts:   []string{},
+			},
+		},
+		VolumeSources: []VolumeSourceDTO{},
+	}
+
+	result, err := client.EvaluateRanks(ctx, req)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, result.Ranks, 2)
+
+	for _, id := range []string{rootID, childID} {
+		got, ok := result.Ranks[id]
+		require.True(t, ok, "expected entry for %s", id)
+		// The plan defines one rank (member, ordinal 1) with a structure
+		// qualification on "Test" requiring PV >= 0. Both distributors are
+		// in the tree with positive PV, so both qualify.
+		assert.Equal(t, "qualified", got.Kind)
+		assert.Equal(t, "member", got.Rank)
+		assert.Equal(t, uint16(1), got.Ordinal)
+	}
+}
+
 // --- Board plan contract tests (mock) ---
 
 func TestEngineClient_BoardCreateBoardPlan_MockParams(t *testing.T) {

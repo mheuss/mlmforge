@@ -183,7 +183,7 @@ fn evaluate_ranks_omitting_primitives_treats_distributor_as_unranked() {
 
     let result = evaluate_ranks(&plan, &nav, &inputs).unwrap();
     // Distributor 2 must NOT appear in the result — they have no primitives.
-    assert!(result.ranks.get(&uuid_from_index(2)).is_none());
+    assert!(!result.ranks.contains_key(&uuid_from_index(2)));
 }
 
 #[test]

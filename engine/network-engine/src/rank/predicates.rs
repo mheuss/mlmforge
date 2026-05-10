@@ -1,11 +1,29 @@
 //! Per-criterion predicate evaluators (PV, GV, max-leg-GV, retail, distributor count, products).
 
+use std::collections::HashMap;
+
 use uuid::Uuid;
 
+use crate::config::rank::{DistributorCountRequirement, SearchMode};
 use crate::rank::evaluator::VolumeIndex;
-use crate::rank::types::DistributorPrimitives;
+use crate::rank::types::{DistributorPrimitives, EvaluatedRank};
 use crate::tree::error::TreeError;
 use crate::tree::navigator::TreeNavigator;
+
+/// Reasons distributor_count evaluation can fail. Caller maps these to
+/// `EvaluationError` variants with rank context attached.
+#[allow(dead_code)] // Wired up by `satisfies()` in a later task.
+#[derive(Debug, PartialEq)]
+pub(crate) enum DistributorCountError {
+    Tree(TreeError),
+    UnknownMinRank(String),
+}
+
+impl From<TreeError> for DistributorCountError {
+    fn from(e: TreeError) -> Self {
+        DistributorCountError::Tree(e)
+    }
+}
 
 /// Pass when the distributor's personal volume is at least `required`.
 #[allow(dead_code)] // Wired up by `satisfies()` in a later task.
@@ -82,6 +100,64 @@ pub(crate) fn max_leg_gv_meets(
         }
     }
     Ok(max_leg <= cap)
+}
+
+/// Pass when the downline contains enough qualifying distributors per the
+/// `DistributorCountRequirement`.
+///
+/// Counts nodes within `search_depth` (or the entire downline for `AnyLevel`)
+/// whose evaluated rank ordinal >= `min_rank` ordinal AND whose group volume
+/// (subtree CV including the node) >= `min_leg_group_volume`. The total
+/// downline node count within scope must also be >= `total_count`.
+#[allow(dead_code)] // Wired up by `satisfies()` in a later task.
+pub(crate) fn distributor_count_meets(
+    req: &DistributorCountRequirement,
+    user_id: Uuid,
+    tree: &dyn TreeNavigator,
+    volume_index: &VolumeIndex,
+    already: &HashMap<Uuid, EvaluatedRank>,
+    rank_ordinals: &HashMap<String, u16>,
+) -> Result<bool, DistributorCountError> {
+    let min_ordinal = rank_ordinals
+        .get(&req.min_rank)
+        .copied()
+        .ok_or_else(|| DistributorCountError::UnknownMinRank(req.min_rank.clone()))?;
+
+    let depth: u32 = match req.search_mode {
+        SearchMode::FirstLevels => req.search_depth.unwrap_or(0) as u32,
+        SearchMode::AnyLevel => 0, // unbounded
+    };
+
+    let nodes = tree.get_downline(user_id, depth)?;
+
+    if (nodes.len() as u16) < req.total_count {
+        return Ok(false);
+    }
+
+    let mut qualifying = 0_u16;
+    for node in nodes {
+        let Some(rank) = already.get(&node.user_id) else {
+            continue;
+        };
+        let ord = match rank {
+            EvaluatedRank::Qualified { ordinal, .. } => *ordinal,
+            EvaluatedRank::Unranked => continue,
+        };
+        if ord < min_ordinal {
+            continue;
+        }
+        // Group volume for this node = node CV + descendants' CV.
+        let mut leg_gv = volume_index.cv_for(node.user_id);
+        let desc = tree.get_downline(node.user_id, 0)?;
+        for d in desc {
+            leg_gv += volume_index.cv_for(d.user_id);
+        }
+        if leg_gv >= req.min_leg_group_volume {
+            qualifying += 1;
+        }
+    }
+
+    Ok(qualifying >= req.count)
 }
 
 #[cfg(test)]
@@ -288,5 +364,96 @@ mod tests {
         let idx = VolumeIndex::build(&[]);
         // No legs means "max leg GV" = 0 ≤ any cap.
         assert!(max_leg_gv_meets(100.0, uid(1), &tree, &idx).unwrap());
+    }
+
+    use crate::config::rank::{DistributorCountRequirement, SearchMode};
+    use crate::rank::types::EvaluatedRank;
+    use std::collections::HashMap;
+
+    #[test]
+    fn distributor_count_meets_counts_qualifying_descendants() {
+        // Tree: 1 -> 2, 1 -> 3, 1 -> 4. Each direct child has rank "bronze".
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uid(1), 0).unwrap();
+        tree.add_node(uid(2), uid(1), uid(1), 0).unwrap();
+        tree.add_node(uid(3), uid(1), uid(1), 0).unwrap();
+        tree.add_node(uid(4), uid(1), uid(1), 0).unwrap();
+
+        let mut already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
+        already.insert(
+            uid(2),
+            EvaluatedRank::Qualified {
+                rank: "bronze".to_string(),
+                ordinal: 1,
+            },
+        );
+        already.insert(
+            uid(3),
+            EvaluatedRank::Qualified {
+                rank: "bronze".to_string(),
+                ordinal: 1,
+            },
+        );
+        already.insert(
+            uid(4),
+            EvaluatedRank::Qualified {
+                rank: "associate".to_string(),
+                ordinal: 0,
+            },
+        );
+
+        let mut ordinals: HashMap<String, u16> = HashMap::new();
+        ordinals.insert("associate".to_string(), 0);
+        ordinals.insert("bronze".to_string(), 1);
+
+        let mut cv_per: HashMap<Uuid, f64> = HashMap::new();
+        cv_per.insert(uid(2), 600.0);
+        cv_per.insert(uid(3), 600.0);
+        cv_per.insert(uid(4), 600.0);
+        let sources: Vec<VolumeSource> = cv_per
+            .into_iter()
+            .map(|(id, cv)| VolumeSource {
+                source_id: id,
+                cv_amount: cv,
+            })
+            .collect();
+        let idx = VolumeIndex::build(&sources);
+
+        let req = DistributorCountRequirement {
+            count: 2,
+            min_rank: "bronze".to_string(),
+            search_mode: SearchMode::FirstLevels,
+            search_depth: Some(1),
+            total_count: 3,
+            min_leg_group_volume: 500.0,
+        };
+
+        assert!(distributor_count_meets(&req, uid(1), &tree, &idx, &already, &ordinals).unwrap());
+    }
+
+    #[test]
+    fn distributor_count_meets_unknown_min_rank_errors() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uid(1), 0).unwrap();
+
+        let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
+        let ordinals: HashMap<String, u16> = HashMap::new();
+        let idx = VolumeIndex::build(&[]);
+
+        let req = DistributorCountRequirement {
+            count: 1,
+            min_rank: "unknown".to_string(),
+            search_mode: SearchMode::AnyLevel,
+            search_depth: None,
+            total_count: 0,
+            min_leg_group_volume: 0.0,
+        };
+
+        let err =
+            distributor_count_meets(&req, uid(1), &tree, &idx, &already, &ordinals).unwrap_err();
+        assert_eq!(
+            err,
+            DistributorCountError::UnknownMinRank("unknown".to_string())
+        );
     }
 }

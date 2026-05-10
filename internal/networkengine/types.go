@@ -75,68 +75,6 @@ type HoldingTankEntry struct {
 	AvailablePositions []int // Valid placement options based on current tree state
 }
 
-// --- Rank types ---
-
-// Rank represents a rank level in a ranking system.
-type Rank struct {
-	ID    string
-	Name  string
-	Level int // Numeric ordering
-}
-
-// RankGroup defines a ranking system. Scope determines whether it's
-// global (evaluates across all structures) or structure-specific.
-// EvaluationMode determines how qualification is measured over time.
-// Defined in PlanConfiguration, consumed by rank qualification logic.
-type RankGroup struct {
-	ID             string
-	Name           string
-	Scope          string // "global" or "structure_specific"
-	StructureID    string // If structure-specific
-	EvaluationMode string // "current_period_only", "cumulative", "highest_ever"
-}
-
-// RankDescriptor describes a rank level and its qualification criteria.
-type RankDescriptor struct {
-	ID                 string
-	Name               string
-	Level              int
-	RankGroupID        string
-	QualificationRules []QualificationRule
-}
-
-// QualificationRule is a single criterion for rank qualification.
-type QualificationRule struct {
-	RuleName string
-	RuleType string  // "personal_volume", "group_volume", "active_legs", "personally_enrolled", "leg_rank_minimum", etc.
-	Required float64 // Threshold
-}
-
-// QualificationStatus provides full per-rule breakdown, not just a percentage.
-type QualificationStatus struct {
-	CurrentRank     Rank
-	NextRank        Rank
-	Rules           []RuleProgress
-	OverallProgress float64 // Percentage toward next rank
-}
-
-// RuleProgress shows exactly where a user stands on a single qualification rule.
-type RuleProgress struct {
-	RuleName string
-	RuleType string  // "personal_volume", "group_volume", "active_legs", "personally_enrolled", "leg_rank_minimum", etc.
-	Required float64 // Threshold
-	Current  float64 // Actual value
-	Met      bool
-}
-
-// RankEvent records a rank achievement.
-type RankEvent struct {
-	RankID      string
-	RankGroupID string
-	AchievedAt  time.Time
-	Period      string
-}
-
 // --- Volume types ---
 //
 // Monetary values use float64 throughout the system. IEEE 754 rounding errors

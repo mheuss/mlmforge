@@ -58,6 +58,32 @@ pub(crate) fn gv_meets(
     Ok(downline_cv + primitives.personal_volume >= required)
 }
 
+/// Pass when no first-level child's subtree CV exceeds `cap`.
+///
+/// For each direct child of `user_id`, sum CV across the child plus their
+/// downline. The maximum of those sums must be at most `cap`.
+#[allow(dead_code)] // Wired up by `satisfies()` in a later task.
+pub(crate) fn max_leg_gv_meets(
+    cap: f64,
+    user_id: Uuid,
+    tree: &dyn TreeNavigator,
+    volume_index: &VolumeIndex,
+) -> Result<bool, TreeError> {
+    let children = tree.get_children(user_id)?;
+    let mut max_leg = 0.0_f64;
+    for child in children {
+        let mut leg_cv = volume_index.cv_for(child.user_id);
+        let descendants = tree.get_downline(child.user_id, 0)?;
+        for d in descendants {
+            leg_cv += volume_index.cv_for(d.user_id);
+        }
+        if leg_cv > max_leg {
+            max_leg = leg_cv;
+        }
+    }
+    Ok(max_leg <= cap)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,5 +229,64 @@ mod tests {
         // surfaces from get_downline as a TreeError. Predicates return
         // Result<bool, TreeError>.
         assert_eq!(err, TreeError::UserNotFound(uid(99)));
+    }
+
+    #[test]
+    fn max_leg_gv_meets_passes_when_no_leg_exceeds_cap() {
+        // Root with two first-level children, each subtree CV totaling 100, cap 150.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uid(1), 0).unwrap();
+        tree.add_node(uid(2), uid(1), uid(1), 0).unwrap(); // leg A
+        tree.add_node(uid(3), uid(1), uid(1), 0).unwrap(); // leg B
+        tree.add_node(uid(4), uid(2), uid(2), 0).unwrap(); // child of leg A
+
+        let sources = vec![
+            VolumeSource {
+                source_id: uid(2),
+                cv_amount: 50.0,
+            },
+            VolumeSource {
+                source_id: uid(4),
+                cv_amount: 50.0,
+            }, // leg A subtotal: 100
+            VolumeSource {
+                source_id: uid(3),
+                cv_amount: 100.0,
+            }, // leg B subtotal: 100
+        ];
+        let idx = VolumeIndex::build(&sources);
+
+        assert!(max_leg_gv_meets(150.0, uid(1), &tree, &idx).unwrap());
+    }
+
+    #[test]
+    fn max_leg_gv_meets_fails_when_a_leg_exceeds_cap() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uid(1), 0).unwrap();
+        tree.add_node(uid(2), uid(1), uid(1), 0).unwrap();
+        tree.add_node(uid(3), uid(1), uid(1), 0).unwrap();
+
+        let sources = vec![
+            VolumeSource {
+                source_id: uid(2),
+                cv_amount: 200.0,
+            }, // leg A: 200
+            VolumeSource {
+                source_id: uid(3),
+                cv_amount: 50.0,
+            }, // leg B: 50
+        ];
+        let idx = VolumeIndex::build(&sources);
+
+        assert!(!max_leg_gv_meets(150.0, uid(1), &tree, &idx).unwrap());
+    }
+
+    #[test]
+    fn max_leg_gv_meets_passes_for_distributor_with_no_children() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uid(1), 0).unwrap();
+        let idx = VolumeIndex::build(&[]);
+        // No legs means "max leg GV" = 0 ≤ any cap.
+        assert!(max_leg_gv_meets(100.0, uid(1), &tree, &idx).unwrap());
     }
 }

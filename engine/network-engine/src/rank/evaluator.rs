@@ -5,6 +5,9 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::commission::types::VolumeSource;
+use crate::config::rank::RankDefinition;
+use crate::rank::predicates::satisfies;
+use crate::rank::types::{DistributorPrimitives, EvaluatedRank, EvaluationError};
 use crate::tree::navigator::TreeNavigator;
 
 /// Per-distributor CV total, derived from `EvaluationInputs.volume_sources`.
@@ -56,6 +59,46 @@ pub(crate) fn evaluation_order_for_users(
     let mut order: Vec<(Uuid, u32)> = depth_by_user.into_iter().collect();
     order.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     order.into_iter().map(|(u, _)| u).collect()
+}
+
+/// Walk the rank ladder for one distributor and return their evaluated rank.
+///
+/// `ranks` MUST be sorted by ordinal ascending. Iterates lowest to highest;
+/// the last passing rank is the result. A failed rank does NOT short-circuit
+/// — higher ranks may still pass and be selected. This handles ladder gaps
+/// where a distributor satisfies rank N+1 but not rank N (e.g., missing a
+/// required product unique to N).
+#[allow(dead_code)] // Wired up by evaluate_ranks in a later task.
+pub(crate) fn evaluate_distributor(
+    user_id: Uuid,
+    primitives: &DistributorPrimitives,
+    ranks: &[RankDefinition],
+    trees: &HashMap<String, &dyn TreeNavigator>,
+    volume_index: &VolumeIndex,
+    rank_ordinals: &HashMap<String, u16>,
+    already: &HashMap<Uuid, EvaluatedRank>,
+) -> Result<EvaluatedRank, EvaluationError> {
+    let mut current: Option<(String, u16)> = None;
+    for rank in ranks {
+        if satisfies(
+            rank,
+            user_id,
+            primitives,
+            trees,
+            volume_index,
+            already,
+            rank_ordinals,
+        )? {
+            current = Some((rank.name.clone(), rank.ordinal));
+        }
+    }
+    Ok(match current {
+        Some((name, ordinal)) => EvaluatedRank::Qualified {
+            rank: name,
+            ordinal,
+        },
+        None => EvaluatedRank::Unranked,
+    })
 }
 
 #[cfg(test)]
@@ -196,5 +239,169 @@ mod tests {
         let order = evaluation_order_for_users(&nav, &users);
 
         assert_eq!(order, vec![Uuid::from_u128(1)]);
+    }
+
+    use crate::config::rank::{
+        DemotionPolicy, RankDefinition, RankQualification, StructureQualification,
+    };
+
+    fn linear_rank(name: &str, ord: u16, structure: &str, pv: f64) -> RankDefinition {
+        RankDefinition {
+            name: name.to_string(),
+            ordinal: ord,
+            qualification: RankQualification {
+                structures: vec![StructureQualification {
+                    structure: structure.to_string(),
+                    personal_volume: pv,
+                    group_volume: 0.0,
+                    max_group_volume_per_leg: f64::MAX,
+                    min_retail_volume: 0.0,
+                    distributor_count: None,
+                }],
+                required_products: vec![],
+            },
+            qualified_structures: vec![structure.to_string()],
+            demotion_policy: DemotionPolicy::PromotionOnly,
+        }
+    }
+
+    #[test]
+    fn evaluate_distributor_picks_highest_qualifying_rank() {
+        use crate::rank::types::{DistributorPrimitives, EvaluatedRank};
+
+        let mut tree = UnilevelTree::new();
+        tree.add_root(Uuid::from_u128(1), 0).unwrap();
+        let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+        nav.insert("Test".to_string(), &tree);
+        let idx = VolumeIndex::build(&[]);
+
+        let primitives = DistributorPrimitives {
+            personal_volume: 250.0,
+            retail_volume: 0.0,
+            status: "active".to_string(),
+            has_order_in_period: true,
+            active_products: vec![],
+        };
+
+        let ranks = vec![
+            linear_rank("associate", 1, "Test", 0.0),
+            linear_rank("silver", 2, "Test", 100.0),
+            linear_rank("gold", 3, "Test", 200.0),
+            linear_rank("diamond", 4, "Test", 500.0),
+        ];
+        let mut ordinals: HashMap<String, u16> = HashMap::new();
+        for r in &ranks {
+            ordinals.insert(r.name.clone(), r.ordinal);
+        }
+
+        let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
+        let result = evaluate_distributor(
+            Uuid::from_u128(1),
+            &primitives,
+            &ranks,
+            &nav,
+            &idx,
+            &ordinals,
+            &already,
+        )
+        .unwrap();
+
+        assert_eq!(
+            result,
+            EvaluatedRank::Qualified {
+                rank: "gold".to_string(),
+                ordinal: 3
+            }
+        );
+    }
+
+    #[test]
+    fn evaluate_distributor_returns_unranked_when_no_rank_passes() {
+        use crate::rank::types::{DistributorPrimitives, EvaluatedRank};
+
+        let mut tree = UnilevelTree::new();
+        tree.add_root(Uuid::from_u128(1), 0).unwrap();
+        let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+        nav.insert("Test".to_string(), &tree);
+        let idx = VolumeIndex::build(&[]);
+
+        let primitives = DistributorPrimitives {
+            personal_volume: 0.0,
+            retail_volume: 0.0,
+            status: "inactive".to_string(),
+            has_order_in_period: false,
+            active_products: vec![],
+        };
+
+        let ranks = vec![linear_rank("silver", 2, "Test", 100.0)];
+        let mut ordinals: HashMap<String, u16> = HashMap::new();
+        ordinals.insert("silver".to_string(), 2);
+
+        let result = evaluate_distributor(
+            Uuid::from_u128(1),
+            &primitives,
+            &ranks,
+            &nav,
+            &idx,
+            &ordinals,
+            &HashMap::new(),
+        )
+        .unwrap();
+
+        assert_eq!(result, EvaluatedRank::Unranked);
+    }
+
+    #[test]
+    fn evaluate_distributor_handles_ladder_gap() {
+        // Plan should pick rank 3 (gold) because rank 2 (silver) fails on
+        // missing product, but rank 3's requirements are still met.
+        use crate::rank::types::{DistributorPrimitives, EvaluatedRank};
+
+        let mut tree = UnilevelTree::new();
+        tree.add_root(Uuid::from_u128(1), 0).unwrap();
+        let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+        nav.insert("Test".to_string(), &tree);
+        let idx = VolumeIndex::build(&[]);
+
+        let primitives = DistributorPrimitives {
+            personal_volume: 100.0,
+            retail_volume: 0.0,
+            status: "active".to_string(),
+            has_order_in_period: true,
+            active_products: vec!["kit-A".to_string()],
+        };
+
+        // rank 2 requires product kit-B which the distributor lacks.
+        let mut rank_two = linear_rank("silver", 2, "Test", 50.0);
+        rank_two.qualification.required_products = vec!["kit-B".to_string()];
+
+        let ranks = vec![
+            linear_rank("associate", 1, "Test", 0.0),
+            rank_two,
+            linear_rank("gold", 3, "Test", 50.0),
+        ];
+        let mut ordinals: HashMap<String, u16> = HashMap::new();
+        for r in &ranks {
+            ordinals.insert(r.name.clone(), r.ordinal);
+        }
+
+        let result = evaluate_distributor(
+            Uuid::from_u128(1),
+            &primitives,
+            &ranks,
+            &nav,
+            &idx,
+            &ordinals,
+            &HashMap::new(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            result,
+            EvaluatedRank::Qualified {
+                rank: "gold".to_string(),
+                ordinal: 3
+            }
+        );
     }
 }

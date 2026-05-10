@@ -80,6 +80,8 @@ fn dispatch(state: &mut WorkerState, request: &Request) -> Response {
         // Snapshot operations
         "take_snapshot" => handlers::snapshot::handle_take_snapshot(state, request),
         "restore_snapshot" => handlers::snapshot::handle_restore_snapshot(state, request),
+        // Rank evaluation
+        "evaluate_ranks" => handlers::rank::handle_evaluate_ranks(state, request),
         _ => Response::error(
             request.id.clone(),
             "UNKNOWN_OP",

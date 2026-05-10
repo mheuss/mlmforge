@@ -2298,3 +2298,85 @@ fn streamline_snapshot_round_trip() {
     drop(worker.stdin.take());
     worker.wait().unwrap();
 }
+
+#[test]
+fn evaluate_ranks_returns_unranked_for_zero_pv_distributor() {
+    let mut child = common::spawn_worker();
+
+    // Load a minimal plan with one rank whose lowest tier requires PV > 0.
+    let plan_json = r#"{
+        "name": "RankTest",
+        "version": 1,
+        "structures": [
+            {"type": "unilevel", "config": {
+                "name": "Test",
+                "level_commission": {
+                    "broad_commission_percent": 0.4,
+                    "volume_to_dollar_multiplier": null,
+                    "commissionable_depth": 3,
+                    "rate_table": {"associate": {"1": 0.05}}
+                },
+                "compression": null
+            }}
+        ],
+        "period": {"length": "month", "start_date": "2026-03-01", "payout_lag_days": 14},
+        "volume": {"inhibit_signup_volume": false, "base_currency": "USD", "volume_to_dollar_multiplier": 1.0, "deduct_qualifying_volume": false},
+        "ranks": [
+            {"name": "associate", "ordinal": 1,
+             "qualification": {"structures": [{"structure": "Test", "personal_volume": 50.0, "group_volume": 0.0, "max_group_volume_per_leg": 1e12, "min_retail_volume": 0.0, "distributor_count": null}], "required_products": []},
+             "qualified_structures": ["Test"],
+             "demotion_policy": "promotion_only"}
+        ],
+        "rank_tracking": {"track_achieved_rank": false},
+        "rank_features": {"constraints_enabled": false, "overrides_enabled": false},
+        "commission_eligibility": {"min_personal_volume": 0.0, "require_order_in_period": false, "eligible_statuses": [], "active_leg_tiers": []},
+        "bonuses": {"matching": null, "sponsor": null, "fast_start": null, "rank_advancement": null, "leadership_development": null, "infinity": null, "lifestyle": null, "pool": null, "matrix_completion": null, "position": null, "board_cycling": null},
+        "payout": {"base_currency": "USD", "minimum_amount": 50.0, "split_payouts_enabled": true, "methods": [{"type": "bank_transfer", "fee": 0.0}]},
+        "caps": {"per_distributor_per_period": null, "company_payout_cap_percent": 0.42, "cap_enforcement": "pro_rata", "clawback_on_refund": false},
+        "placement": {"donated_placement": null, "holding_tank": null, "binary_placement": null}
+    }"#;
+    // The wire protocol sends one JSON object per line. Minify the plan JSON
+    // so embedded newlines don't fragment the request.
+    let minified_plan: String = plan_json
+        .lines()
+        .map(|l| l.trim())
+        .collect::<Vec<_>>()
+        .join("");
+    let resp = common::send_receive(
+        &mut child,
+        &format!(
+            r#"{{"id":"1","op":"load_plan","params":{}}}"#,
+            minified_plan
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "load_plan failed: {}", resp);
+
+    create_tree(&mut child, "Test");
+    let resp = common::send_receive(
+        &mut child,
+        &format!(
+            r#"{{"id":"2","op":"add_root","params":{{"structure":"Test","user_id":"{}","enrolled_at":100}}}}"#,
+            ROOT
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
+
+    let req = format!(
+        r#"{{"id":"3","op":"evaluate_ranks","params":{{"distributors":{{"{}":{{"personal_volume":0.0,"retail_volume":0.0,"status":"active","has_order_in_period":false,"active_products":[]}}}},"volume_sources":[]}}}}"#,
+        ROOT
+    );
+    let resp = common::send_receive(&mut child, &req);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "evaluate_ranks failed: {}",
+        resp
+    );
+    assert!(
+        resp.contains(r#""kind":"unranked""#),
+        "expected unranked result, got: {}",
+        resp
+    );
+
+    drop(child.stdin.take());
+    child.wait().unwrap();
+}

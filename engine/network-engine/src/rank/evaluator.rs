@@ -18,7 +18,6 @@ pub(crate) struct VolumeIndex {
 }
 
 impl VolumeIndex {
-    #[allow(dead_code)] // Wired up by evaluate_ranks in a later task.
     pub(crate) fn build(sources: &[VolumeSource]) -> Self {
         let mut by_source: HashMap<Uuid, f64> = HashMap::new();
         for src in sources {
@@ -37,7 +36,6 @@ impl VolumeIndex {
 /// For each user in `users`, look up their depth in every tree they appear in
 /// and keep the maximum. Users not present in any tree are skipped. Sort by
 /// depth descending, then by user_id ascending so the output is deterministic.
-#[allow(dead_code)] // Wired up by evaluate_ranks in a later task.
 pub(crate) fn evaluation_order_for_users(
     trees: &HashMap<String, &dyn TreeNavigator>,
     users: &[Uuid],
@@ -68,7 +66,6 @@ pub(crate) fn evaluation_order_for_users(
 /// — higher ranks may still pass and be selected. This handles ladder gaps
 /// where a distributor satisfies rank N+1 but not rank N (e.g., missing a
 /// required product unique to N).
-#[allow(dead_code)] // Wired up by evaluate_ranks in a later task.
 pub(crate) fn evaluate_distributor(
     user_id: Uuid,
     primitives: &DistributorPrimitives,

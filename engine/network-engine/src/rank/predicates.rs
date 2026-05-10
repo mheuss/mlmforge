@@ -666,4 +666,52 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn satisfies_errors_on_unknown_min_rank() {
+        // Construct a rank whose StructureQualification carries a
+        // DistributorCountRequirement referencing a min_rank that is NOT
+        // present in `rank_ordinals`. satisfies() must surface
+        // EvaluationError::UnknownMinRank with the qualifying rank's name
+        // and the referenced rank string.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uid(1), 0).unwrap();
+        let idx = VolumeIndex::build(&[]);
+
+        let mut nav_map: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+        nav_map.insert("Test".to_string(), &tree);
+
+        let primitives = primitives_with_pv(0.0);
+
+        let mut rank = rank_with_pv_and_gv("silver", 2, "Test", 0.0, 0.0);
+        rank.qualification.structures[0].distributor_count = Some(DistributorCountRequirement {
+            count: 1,
+            min_rank: "phantom_rank".to_string(),
+            search_mode: SearchMode::AnyLevel,
+            search_depth: None,
+            total_count: 0,
+            min_leg_group_volume: 0.0,
+        });
+
+        let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
+        let ordinals: HashMap<String, u16> = HashMap::new(); // intentionally empty
+
+        let err = satisfies(
+            &rank,
+            uid(1),
+            &primitives,
+            &nav_map,
+            &idx,
+            &already,
+            &ordinals,
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            EvaluationError::UnknownMinRank {
+                rank: "silver".to_string(),
+                referenced: "phantom_rank".to_string(),
+            }
+        );
+    }
 }

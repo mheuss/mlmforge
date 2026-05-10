@@ -130,11 +130,11 @@ pub(crate) fn distributor_count_meets(
 
     let nodes = tree.get_downline(user_id, depth)?;
 
-    if (nodes.len() as u16) < req.total_count {
+    if nodes.len() < req.total_count as usize {
         return Ok(false);
     }
 
-    let mut qualifying = 0_u16;
+    let mut qualifying: usize = 0;
     for node in nodes {
         let Some(rank) = already.get(&node.user_id) else {
             continue;
@@ -157,7 +157,7 @@ pub(crate) fn distributor_count_meets(
         }
     }
 
-    Ok(qualifying >= req.count)
+    Ok(qualifying >= req.count as usize)
 }
 
 #[cfg(test)]

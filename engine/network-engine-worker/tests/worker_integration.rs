@@ -2299,45 +2299,49 @@ fn streamline_snapshot_round_trip() {
     worker.wait().unwrap();
 }
 
+/// Minimal plan used by `evaluate_ranks` integration tests. The single rank
+/// "associate" requires PV=50 inside structure "Test", so a distributor with
+/// PV=0 falls through to `Unranked`. The plan is shared by the happy-path
+/// test and the STRUCTURE_NOT_FOUND error-path test.
+const RANK_TEST_PLAN_JSON: &str = r#"{
+    "name": "RankTest",
+    "version": 1,
+    "structures": [
+        {"type": "unilevel", "config": {
+            "name": "Test",
+            "level_commission": {
+                "broad_commission_percent": 0.4,
+                "volume_to_dollar_multiplier": null,
+                "commissionable_depth": 3,
+                "rate_table": {"associate": {"1": 0.05}}
+            },
+            "compression": null
+        }}
+    ],
+    "period": {"length": "month", "start_date": "2026-03-01", "payout_lag_days": 14},
+    "volume": {"inhibit_signup_volume": false, "base_currency": "USD", "volume_to_dollar_multiplier": 1.0, "deduct_qualifying_volume": false},
+    "ranks": [
+        {"name": "associate", "ordinal": 1,
+         "qualification": {"structures": [{"structure": "Test", "personal_volume": 50.0, "group_volume": 0.0, "max_group_volume_per_leg": 1e12, "min_retail_volume": 0.0, "distributor_count": null}], "required_products": []},
+         "qualified_structures": ["Test"],
+         "demotion_policy": "promotion_only"}
+    ],
+    "rank_tracking": {"track_achieved_rank": false},
+    "rank_features": {"constraints_enabled": false, "overrides_enabled": false},
+    "commission_eligibility": {"min_personal_volume": 0.0, "require_order_in_period": false, "eligible_statuses": [], "active_leg_tiers": []},
+    "bonuses": {"matching": null, "sponsor": null, "fast_start": null, "rank_advancement": null, "leadership_development": null, "infinity": null, "lifestyle": null, "pool": null, "matrix_completion": null, "position": null, "board_cycling": null},
+    "payout": {"base_currency": "USD", "minimum_amount": 50.0, "split_payouts_enabled": true, "methods": [{"type": "bank_transfer", "fee": 0.0}]},
+    "caps": {"per_distributor_per_period": null, "company_payout_cap_percent": 0.42, "cap_enforcement": "pro_rata", "clawback_on_refund": false},
+    "placement": {"donated_placement": null, "holding_tank": null, "binary_placement": null}
+}"#;
+
 #[test]
 fn evaluate_ranks_returns_unranked_for_zero_pv_distributor() {
     let mut child = common::spawn_worker();
 
-    // Load a minimal plan with one rank whose lowest tier requires PV > 0.
-    let plan_json = r#"{
-        "name": "RankTest",
-        "version": 1,
-        "structures": [
-            {"type": "unilevel", "config": {
-                "name": "Test",
-                "level_commission": {
-                    "broad_commission_percent": 0.4,
-                    "volume_to_dollar_multiplier": null,
-                    "commissionable_depth": 3,
-                    "rate_table": {"associate": {"1": 0.05}}
-                },
-                "compression": null
-            }}
-        ],
-        "period": {"length": "month", "start_date": "2026-03-01", "payout_lag_days": 14},
-        "volume": {"inhibit_signup_volume": false, "base_currency": "USD", "volume_to_dollar_multiplier": 1.0, "deduct_qualifying_volume": false},
-        "ranks": [
-            {"name": "associate", "ordinal": 1,
-             "qualification": {"structures": [{"structure": "Test", "personal_volume": 50.0, "group_volume": 0.0, "max_group_volume_per_leg": 1e12, "min_retail_volume": 0.0, "distributor_count": null}], "required_products": []},
-             "qualified_structures": ["Test"],
-             "demotion_policy": "promotion_only"}
-        ],
-        "rank_tracking": {"track_achieved_rank": false},
-        "rank_features": {"constraints_enabled": false, "overrides_enabled": false},
-        "commission_eligibility": {"min_personal_volume": 0.0, "require_order_in_period": false, "eligible_statuses": [], "active_leg_tiers": []},
-        "bonuses": {"matching": null, "sponsor": null, "fast_start": null, "rank_advancement": null, "leadership_development": null, "infinity": null, "lifestyle": null, "pool": null, "matrix_completion": null, "position": null, "board_cycling": null},
-        "payout": {"base_currency": "USD", "minimum_amount": 50.0, "split_payouts_enabled": true, "methods": [{"type": "bank_transfer", "fee": 0.0}]},
-        "caps": {"per_distributor_per_period": null, "company_payout_cap_percent": 0.42, "cap_enforcement": "pro_rata", "clawback_on_refund": false},
-        "placement": {"donated_placement": null, "holding_tank": null, "binary_placement": null}
-    }"#;
     // The wire protocol sends one JSON object per line. Minify the plan JSON
     // so embedded newlines don't fragment the request.
-    let minified_plan: String = plan_json
+    let minified_plan: String = RANK_TEST_PLAN_JSON
         .lines()
         .map(|l| l.trim())
         .collect::<Vec<_>>()
@@ -2366,15 +2370,73 @@ fn evaluate_ranks_returns_unranked_for_zero_pv_distributor() {
         ROOT
     );
     let resp = common::send_receive(&mut child, &req);
-    assert!(
-        resp.contains(r#""ok":true"#),
+    // Parse structurally so future fields with "kind" in their name can't
+    // false-positive a substring match.
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(
+        parsed["ok"].as_bool(),
+        Some(true),
         "evaluate_ranks failed: {}",
         resp
     );
-    assert!(
-        resp.contains(r#""kind":"unranked""#),
-        "expected unranked result, got: {}",
+    assert_eq!(
+        parsed["result"]["ranks"][ROOT]["kind"], "unranked",
+        "expected unranked result for ROOT, got: {}",
         resp
+    );
+
+    drop(child.stdin.take());
+    child.wait().unwrap();
+}
+
+#[test]
+fn evaluate_ranks_returns_structure_not_found_when_tree_missing() {
+    // The rank ladder references structure "Test" but we deliberately skip
+    // create_tree, so the handler must surface STRUCTURE_NOT_FOUND. This
+    // exercises the wire contract for the error path Task 21's Go DTOs need
+    // to mirror.
+    let mut child = common::spawn_worker();
+
+    let minified_plan: String = RANK_TEST_PLAN_JSON
+        .lines()
+        .map(|l| l.trim())
+        .collect::<Vec<_>>()
+        .join("");
+    let resp = common::send_receive(
+        &mut child,
+        &format!(
+            r#"{{"id":"1","op":"load_plan","params":{}}}"#,
+            minified_plan
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "load_plan failed: {}", resp);
+
+    // No create_tree("Test") here.
+
+    let req = format!(
+        r#"{{"id":"2","op":"evaluate_ranks","params":{{"distributors":{{"{}":{{"personal_volume":0.0,"retail_volume":0.0,"status":"active","has_order_in_period":false,"active_products":[]}}}},"volume_sources":[]}}}}"#,
+        ROOT
+    );
+    let resp = common::send_receive(&mut child, &req);
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(
+        parsed["ok"].as_bool(),
+        Some(false),
+        "expected ok=false, got: {}",
+        resp
+    );
+    assert_eq!(
+        parsed["error"]["code"], "STRUCTURE_NOT_FOUND",
+        "expected STRUCTURE_NOT_FOUND error code, got: {}",
+        resp
+    );
+    let message = parsed["error"]["message"]
+        .as_str()
+        .unwrap_or_else(|| panic!("error.message must be a string, got: {}", resp));
+    assert!(
+        message.contains("Test"),
+        "expected error message to reference structure 'Test', got: {}",
+        message
     );
 
     drop(child.stdin.take());

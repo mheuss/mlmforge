@@ -16,6 +16,13 @@ struct ContractFixture {
     /// testing operations that require an existing tree.
     #[serde(default)]
     setup: Vec<serde_json::Value>,
+    /// Raw NDJSON lines to send as setup, bypassing the `serde_json::Value`
+    /// round-trip. Use this when the worker rejects a re-serialized payload
+    /// (for example, an adjacent-tagged enum whose discriminant key would be
+    /// reordered relative to its content key). Mirrors `request_raw`.
+    /// Mutually exclusive with `setup`.
+    #[serde(default)]
+    setup_raw: Vec<String>,
     /// Structured request object. Present for well-formed requests.
     #[serde(default)]
     request: Option<serde_json::Value>,
@@ -124,13 +131,33 @@ fn contract_fixtures_match_worker_behavior() {
         // Each fixture gets a fresh worker to avoid state leaking between tests.
         let mut worker = common::spawn_worker();
 
+        // Fixtures pick exactly one setup mode. Mixing them is ambiguous
+        // because ordering across the two lists is undefined.
+        assert!(
+            fixture.setup.is_empty() || fixture.setup_raw.is_empty(),
+            "[{}] fixture has both 'setup' and 'setup_raw'; pick one",
+            name
+        );
+
         // Send setup requests to initialize worker state.
         // Each setup response must succeed; a silent failure here would
         // cause the main request to pass vacuously against wrong state.
-        for (i, setup_req) in fixture.setup.iter().enumerate() {
-            let setup_line = serde_json::to_string(setup_req)
-                .expect("setup request serialization is infallible");
-            let setup_resp = common::send_receive(&mut worker, &setup_line);
+        // `setup_raw` is sent verbatim (no Value round-trip), mirroring
+        // `request_raw`. Use it for payloads where key order matters.
+        let setup_lines: Vec<String> = if !fixture.setup_raw.is_empty() {
+            fixture.setup_raw.clone()
+        } else {
+            fixture
+                .setup
+                .iter()
+                .map(|req| {
+                    serde_json::to_string(req).expect("setup request serialization is infallible")
+                })
+                .collect()
+        };
+
+        for (i, setup_line) in setup_lines.iter().enumerate() {
+            let setup_resp = common::send_receive(&mut worker, setup_line);
             assert!(
                 setup_resp.contains(r#""ok":true"#),
                 "[{}] setup request {} failed: {}",

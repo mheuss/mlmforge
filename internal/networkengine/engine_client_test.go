@@ -1029,6 +1029,33 @@ func TestEngineClient_CalculateBinaryPairing_EmptyResult(t *testing.T) {
 	assert.Empty(t, result.CarryForward)
 }
 
+func TestEngineClient_EvaluateRanks_MockParams(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{"ranks":{"00000000-0000-0000-0000-000000000001":{"kind":"unranked"}}}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	req := EvaluateRanksRequest{
+		Distributors: map[string]DistributorPrimitivesDTO{
+			"00000000-0000-0000-0000-000000000001": {
+				PersonalVolume: 0.0,
+				Status:         "active",
+				ActiveProducts: []string{},
+			},
+		},
+		VolumeSources: []VolumeSourceDTO{},
+	}
+
+	result, err := client.EvaluateRanks(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "evaluate_ranks", mock.lastOp)
+
+	got, ok := result.Ranks["00000000-0000-0000-0000-000000000001"]
+	require.True(t, ok)
+	assert.Equal(t, "unranked", got.Kind)
+}
+
 // --- Board plan contract tests (mock) ---
 
 func TestEngineClient_BoardCreateBoardPlan_MockParams(t *testing.T) {

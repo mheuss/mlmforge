@@ -211,16 +211,14 @@ proptest! {
             &EvaluationInputs { distributors: b, volume_sources: vec![] },
         ).unwrap();
 
-        // EvaluationResult uses BTreeMap, so JSON output is canonicalized.
+        // The map-equality assertion below is the operative check. The JSON
+        // assertion catches future regressions where EvaluationResult gains a
+        // non-canonical field (anything but a BTreeMap or Vec with deterministic order).
         let json_a = serde_json::to_string(&r_a).unwrap();
         let json_b = serde_json::to_string(&r_b).unwrap();
         prop_assert_eq!(json_a, json_b);
 
-        // Spot-check: every distributor present in input is present in output
-        // with the SAME EvaluatedRank in both runs.
-        for i in 0..size {
-            let id = uuid_from_index(i);
-            prop_assert_eq!(r_a.ranks.get(&id), r_b.ranks.get(&id));
-        }
+        // Catches divergence on every key in either map (missing, extra, or mismatched).
+        prop_assert_eq!(r_a.ranks, r_b.ranks);
     }
 }

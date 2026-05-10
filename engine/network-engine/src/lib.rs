@@ -6,6 +6,7 @@
 pub mod board_plan;
 pub mod commission;
 pub mod config;
+pub mod rank;
 pub mod streamline;
 #[doc(hidden)]
 pub mod test_support;

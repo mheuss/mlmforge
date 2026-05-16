@@ -72,7 +72,8 @@ pub enum EvaluationError {
     #[error("rank '{rank}' references unknown structure '{structure}'")]
     UnknownStructure { rank: String, structure: String },
 
-    /// A `DistributorCountRequirement.min_rank` references a rank not in the plan.
+    /// A `DistributorCountRequirement.min_rank` or `LegPredicate::ContainsRank.min_rank`
+    /// references a rank not in the plan.
     #[error("rank '{rank}' references unknown min_rank '{referenced}'")]
     UnknownMinRank { rank: String, referenced: String },
 

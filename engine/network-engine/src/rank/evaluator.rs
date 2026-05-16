@@ -31,11 +31,18 @@ impl VolumeIndex {
     }
 }
 
-/// Compute evaluation order across all trees: deepest-first, tiebroken by user_id.
+/// Compute a heuristic evaluation order across all trees: deepest-first,
+/// tiebroken by user_id.
 ///
 /// For each user in `users`, look up their depth in every tree they appear in
 /// and keep the maximum. Users not present in any tree are skipped. Sort by
 /// depth descending, then by user_id ascending so the output is deterministic.
+///
+/// This order is a performance heuristic for the fixpoint loop in
+/// `iterate_to_fixpoint`, not a correctness guarantee. The fixpoint converges
+/// to the same result for any order. A deepest-first order simply lets the
+/// common single-tree, acyclic case settle in one effective pass. See
+/// design-rationale 026.
 pub(crate) fn evaluation_order_for_users(
     trees: &HashMap<String, &dyn TreeNavigator>,
     users: &[Uuid],
@@ -111,7 +118,6 @@ pub(crate) fn evaluate_distributor(
 /// values, so no run can need more passes. Reaching the bound means a
 /// non-monotone descendant-reading predicate was introduced — a bug — and
 /// yields `RankEvaluationDidNotConverge`.
-#[allow(dead_code)] // Wired into evaluate_ranks in HEU-460 task 3.
 pub(crate) fn iterate_to_fixpoint(
     order: &[Uuid],
     distributors: &HashMap<Uuid, DistributorPrimitives>,

@@ -452,6 +452,23 @@ mod tests {
     }
 
     #[test]
+    fn leg_predicate_deserializes_go_payload_with_zero_nonselected_field() {
+        // The Go config layer is a flat struct: it emits the non-selected
+        // variant field as a zero value. Rust's internally-tagged enum must
+        // ignore that extra field. This locks the Go->Rust half of the
+        // leg_quality serialization contract.
+        let contains_rank =
+            r#"{"type": "contains_rank", "min_rank": "Gold", "min_personal_volume": 0.0}"#;
+        let pred: LegPredicate = serde_json::from_str(contains_rank).unwrap();
+        assert!(matches!(pred, LegPredicate::ContainsRank { .. }));
+
+        let contains_pv =
+            r#"{"type": "contains_personal_volume", "min_personal_volume": 200.0, "min_rank": ""}"#;
+        let pred: LegPredicate = serde_json::from_str(contains_pv).unwrap();
+        assert!(matches!(pred, LegPredicate::ContainsPersonalVolume { .. }));
+    }
+
+    #[test]
     fn structure_qualification_deserializes_leg_quality() {
         let json = r#"{
             "structure": "Primary",

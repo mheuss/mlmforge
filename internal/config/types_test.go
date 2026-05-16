@@ -643,6 +643,15 @@ leg_quality:
 	// Round-trip JSON to validate Rust-bound serialization.
 	jsonBytes, err := json.Marshal(sq)
 	require.NoError(t, err)
+
+	// Wire-shape guard: the flat-struct mirror must emit the non-selected
+	// variant field as a zero value (no omitempty). Rust serde ignores it,
+	// but omitempty here would silently drop a legitimate min_personal_volume
+	// of 0. These assertions make the no-omitempty tags on LegPredicate a
+	// tested contract, not just a doc comment.
+	assert.Contains(t, string(jsonBytes), `"min_personal_volume":0`)
+	assert.Contains(t, string(jsonBytes), `"min_rank":""`)
+
 	var decoded StructureQualification
 	require.NoError(t, json.Unmarshal(jsonBytes, &decoded))
 	require.Len(t, decoded.LegQuality, 2)

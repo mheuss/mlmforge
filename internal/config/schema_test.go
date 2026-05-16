@@ -24,6 +24,7 @@ func TestSchemaValidatesAllValidFixtures(t *testing.T) {
 		"valid/stairstep-plan.yaml",
 		"valid/streamline-plan.yaml",
 		"valid/board-plan.yaml",
+		"valid/leg-quality-plan.yaml",
 	}
 	for _, f := range fixtures {
 		t.Run(f, func(t *testing.T) {
@@ -213,6 +214,18 @@ func TestStringifyKey(t *testing.T) {
 // the library consistently returns *jsonschema.ValidationError. The branch
 // exists as a safety net for unexpected error types from the library.
 // See schema.go:33-41.
+
+func TestSchemaRejectsLegQualityBadPredicate(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+
+	errs := p.validateSchema(readFixture(t, "invalid/leg-quality-bad-predicate.yaml"))
+	require.NotEmpty(t, errs, "leg_quality predicate missing min_rank should produce errors")
+
+	for _, e := range errs {
+		assert.Equal(t, SeverityError, e.Severity)
+	}
+}
 
 func TestConvertYAMLToJSONMapAnyAny(t *testing.T) {
 	// Simulate a map[any]any input (yaml.v3 safety net path).

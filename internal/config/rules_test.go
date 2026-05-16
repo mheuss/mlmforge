@@ -342,6 +342,82 @@ func TestDistributorCountMinRankMustBeLowerOrdinal(t *testing.T) {
 	assert.Contains(t, errs[0].Path, "distributor_count/min_rank")
 }
 
+func TestLegQualityContainsRankMinRankMustExist(t *testing.T) {
+	plan := minimalPlan()
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{
+			Structure:      "Primary",
+			PersonalVolume: 100,
+			GroupVolume:    3000,
+			LegQuality: []LegQualityRequirement{
+				{Count: 2, Predicate: LegPredicate{Type: "contains_rank", MinRank: "Nonexistent"}},
+			},
+		},
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "undefined_reference", errs[0].Code)
+	assert.Equal(t, SeverityError, errs[0].Severity)
+	assert.Contains(t, errs[0].Path, "leg_quality/0/predicate/min_rank")
+}
+
+func TestLegQualityContainsRankMinRankMustBeLowerOrdinal(t *testing.T) {
+	plan := minimalPlan()
+	// Silver (ordinal 2) references min_rank Silver (same ordinal — not lower).
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{
+			Structure:      "Primary",
+			PersonalVolume: 100,
+			GroupVolume:    3000,
+			LegQuality: []LegQualityRequirement{
+				{Count: 1, Predicate: LegPredicate{Type: "contains_rank", MinRank: "Silver"}},
+			},
+		},
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "ordering_violation", errs[0].Code)
+	assert.Equal(t, SeverityError, errs[0].Severity)
+	assert.Contains(t, errs[0].Path, "leg_quality/0/predicate/min_rank")
+}
+
+func TestLegQualityContainsRankValidMinRankPasses(t *testing.T) {
+	plan := minimalPlan()
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{
+			Structure:      "Primary",
+			PersonalVolume: 100,
+			GroupVolume:    3000,
+			LegQuality: []LegQualityRequirement{
+				{Count: 2, Predicate: LegPredicate{Type: "contains_rank", MinRank: "Associate"}},
+			},
+		},
+	}
+
+	errs := validateBusinessRules(plan)
+	assert.Empty(t, errs)
+}
+
+func TestLegQualityContainsPersonalVolumeSkipsRankCheck(t *testing.T) {
+	plan := minimalPlan()
+	// A contains_personal_volume predicate must not trigger the rank check.
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{
+			Structure:      "Primary",
+			PersonalVolume: 100,
+			GroupVolume:    3000,
+			LegQuality: []LegQualityRequirement{
+				{Count: 3, Predicate: LegPredicate{Type: "contains_personal_volume", MinPersonalVolume: 200}},
+			},
+		},
+	}
+
+	errs := validateBusinessRules(plan)
+	assert.Empty(t, errs)
+}
+
 func TestMatchedCommissionTypesMustExist(t *testing.T) {
 	plan := minimalPlan()
 	plan.Bonuses.Matching = &MatchingBonusConfig{

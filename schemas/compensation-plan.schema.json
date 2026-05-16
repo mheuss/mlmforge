@@ -238,6 +238,13 @@
             }
           ],
           "description": "Distributor count requirements per leg."
+        },
+        "leg_quality": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LegQualityRequirement"
+          },
+          "description": "Per-leg structural requirements. All requirements are AND-combined."
         }
       }
     },
@@ -285,6 +292,63 @@
           "description": "Minimum group volume in each qualifying leg."
         }
       }
+    },
+    "LegQualityRequirement": {
+      "type": "object",
+      "description": "A per-leg structural requirement: at least `count` frontline legs must each contain a node matching `predicate`.",
+      "required": ["count", "predicate"],
+      "properties": {
+        "count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535,
+          "description": "Minimum number of frontline legs that must satisfy the predicate."
+        },
+        "predicate": {
+          "$ref": "#/$defs/LegPredicate",
+          "description": "The condition at least one node in a leg's subtree must meet."
+        }
+      }
+    },
+    "LegPredicate": {
+      "type": "object",
+      "description": "The condition a leg's subtree is tested against. The type field selects the variant.",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["contains_rank", "contains_personal_volume"],
+          "description": "Which predicate variant this is."
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "type": {
+              "const": "contains_rank"
+            },
+            "min_rank": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Leg must contain a node whose evaluated rank is at least this rank."
+            }
+          },
+          "required": ["min_rank"]
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "contains_personal_volume"
+            },
+            "min_personal_volume": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Leg must contain a node whose personal volume is at least this value."
+            }
+          },
+          "required": ["min_personal_volume"]
+        }
+      ]
     },
     "GracePeriod": {
       "type": "object",

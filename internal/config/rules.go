@@ -199,6 +199,31 @@ func validateRanks(plan *CompensationPlan, structs map[string]bool) []Validation
 					})
 				}
 			}
+
+			// leg_quality contains_rank predicates: min_rank must reference a
+			// defined rank of lower ordinal than this rank. Mirrors the
+			// distributor_count.min_rank check above.
+			for k, lq := range sq.LegQuality {
+				if lq.Predicate.Type != "contains_rank" || lq.Predicate.MinRank == "" {
+					continue
+				}
+				refOrd, exists := ordinals[lq.Predicate.MinRank]
+				if !exists {
+					errs = append(errs, ValidationError{
+						Path:     fmt.Sprintf("/ranks/%d/qualification/structures/%d/leg_quality/%d/predicate/min_rank", i, j, k),
+						Code:     "undefined_reference",
+						Message:  fmt.Sprintf("rank %q leg_quality references undefined rank %q", r.Name, lq.Predicate.MinRank),
+						Severity: SeverityError,
+					})
+				} else if refOrd >= r.Ordinal {
+					errs = append(errs, ValidationError{
+						Path:     fmt.Sprintf("/ranks/%d/qualification/structures/%d/leg_quality/%d/predicate/min_rank", i, j, k),
+						Code:     "ordering_violation",
+						Message:  fmt.Sprintf("rank %q leg_quality.min_rank %q must be lower ordinal than %d", r.Name, lq.Predicate.MinRank, r.Ordinal),
+						Severity: SeverityError,
+					})
+				}
+			}
 		}
 	}
 

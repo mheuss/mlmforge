@@ -98,6 +98,62 @@ pub(crate) fn evaluate_distributor(
     })
 }
 
+/// Run rank evaluation passes until the rank map reaches a fixpoint.
+///
+/// Each pass evaluates every user in `order` against the accumulating
+/// `already` map. Rank evaluation is monotone in `already` — every
+/// descendant-reading predicate is a "rank >= X" threshold — so iterating
+/// from the empty map converges to the least fixpoint. The result is the
+/// same for any `order`; `order` only affects how many passes it takes.
+///
+/// `max_passes` is `order.len() * (ranks.len() + 1) + 1`. A distributor's
+/// evaluated rank only rises, through at most `ranks.len() + 1` distinct
+/// values, so no run can need more passes. Reaching the bound means a
+/// non-monotone descendant-reading predicate was introduced — a bug — and
+/// yields `RankEvaluationDidNotConverge`.
+#[allow(dead_code)] // Wired into evaluate_ranks in HEU-460 task 3.
+pub(crate) fn iterate_to_fixpoint(
+    order: &[Uuid],
+    distributors: &HashMap<Uuid, DistributorPrimitives>,
+    ranks: &[RankDefinition],
+    trees: &HashMap<String, &dyn TreeNavigator>,
+    volume_index: &VolumeIndex,
+    rank_ordinals: &HashMap<String, u16>,
+) -> Result<HashMap<Uuid, EvaluatedRank>, EvaluationError> {
+    let max_passes = order
+        .len()
+        .saturating_mul(ranks.len().saturating_add(1))
+        .saturating_add(1);
+
+    let mut already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
+    for _ in 0..max_passes {
+        let mut changed = false;
+        for &user_id in order {
+            let evaluated = evaluate_distributor(
+                user_id,
+                distributors,
+                ranks,
+                trees,
+                volume_index,
+                rank_ordinals,
+                &already,
+            )?;
+            // `already` is updated in place, so later users in this pass see
+            // earlier users' fresh ranks. That speeds convergence and does
+            // not change the fixpoint. A user never reads its own entry —
+            // a node is not its own descendant within a single tree.
+            if already.get(&user_id) != Some(&evaluated) {
+                already.insert(user_id, evaluated);
+                changed = true;
+            }
+        }
+        if !changed {
+            return Ok(already);
+        }
+    }
+    Err(EvaluationError::RankEvaluationDidNotConverge { passes: max_passes })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -406,6 +462,140 @@ mod tests {
                 rank: "gold".to_string(),
                 ordinal: 3
             }
+        );
+    }
+
+    #[test]
+    fn iterate_to_fixpoint_same_result_for_any_order() {
+        use crate::config::rank::{DistributorCountRequirement, SearchMode};
+        use crate::rank::types::DistributorPrimitives;
+
+        // Two structure trees. `subject` is the root of `uni` (depth 0) but
+        // sits at depth 2 in `bin`, so the max-depth heuristic orders
+        // `subject` before its own `uni` child `child`. `child` qualifies
+        // `subject` for `manager` via the distributor_count predicate.
+        //
+        // uni:  subject(0) -> child(1)
+        // bin:  f1(0) -> f2(1) -> subject(2)
+        let subject = Uuid::from_u128(1);
+        let child = Uuid::from_u128(2);
+        let f1 = Uuid::from_u128(10);
+        let f2 = Uuid::from_u128(11);
+
+        let mut uni = UnilevelTree::new();
+        uni.add_root(subject, 0).unwrap();
+        uni.add_node(child, subject, subject, 0).unwrap();
+
+        let mut bin = UnilevelTree::new();
+        bin.add_root(f1, 0).unwrap();
+        bin.add_node(f2, f1, f1, 0).unwrap();
+        bin.add_node(subject, f2, f2, 0).unwrap();
+
+        let mut trees: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+        trees.insert("uni".to_string(), &uni);
+        trees.insert("bin".to_string(), &bin);
+
+        // Ladder: associate (trivial) and manager (needs 1 associate downline).
+        let associate = RankDefinition {
+            name: "associate".to_string(),
+            ordinal: 1,
+            qualification: RankQualification {
+                structures: vec![StructureQualification {
+                    structure: "uni".to_string(),
+                    personal_volume: 0.0,
+                    group_volume: 0.0,
+                    max_group_volume_per_leg: f64::MAX,
+                    min_retail_volume: 0.0,
+                    distributor_count: None,
+                    leg_quality: vec![],
+                }],
+                required_products: vec![],
+            },
+            qualified_structures: vec!["uni".to_string()],
+            demotion_policy: DemotionPolicy::PromotionOnly,
+        };
+        let manager = RankDefinition {
+            name: "manager".to_string(),
+            ordinal: 2,
+            qualification: RankQualification {
+                structures: vec![StructureQualification {
+                    structure: "uni".to_string(),
+                    personal_volume: 0.0,
+                    group_volume: 0.0,
+                    max_group_volume_per_leg: f64::MAX,
+                    min_retail_volume: 0.0,
+                    distributor_count: Some(DistributorCountRequirement {
+                        count: 1,
+                        min_rank: "associate".to_string(),
+                        search_mode: SearchMode::AnyLevel,
+                        search_depth: None,
+                        total_count: 1,
+                        min_leg_group_volume: 0.0,
+                    }),
+                    leg_quality: vec![],
+                }],
+                required_products: vec![],
+            },
+            qualified_structures: vec!["uni".to_string()],
+            demotion_policy: DemotionPolicy::PromotionOnly,
+        };
+        let ranks = vec![associate, manager];
+        let rank_ordinals: HashMap<String, u16> =
+            ranks.iter().map(|r| (r.name.clone(), r.ordinal)).collect();
+
+        let prim = DistributorPrimitives {
+            personal_volume: 0.0,
+            retail_volume: 0.0,
+            status: "active".to_string(),
+            has_order_in_period: true,
+            active_products: vec![],
+        };
+        let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
+        distributors.insert(subject, prim.clone());
+        distributors.insert(child, prim);
+
+        let volume_index = VolumeIndex::build(&[]);
+
+        // The heuristic order places `subject` first. Its exact reverse places
+        // `subject` last. The fixpoint result must be identical for both.
+        let heuristic = evaluation_order_for_users(&trees, &[subject, child]);
+        let mut reversed = heuristic.clone();
+        reversed.reverse();
+
+        let from_heuristic = iterate_to_fixpoint(
+            &heuristic,
+            &distributors,
+            &ranks,
+            &trees,
+            &volume_index,
+            &rank_ordinals,
+        )
+        .unwrap();
+        let from_reversed = iterate_to_fixpoint(
+            &reversed,
+            &distributors,
+            &ranks,
+            &trees,
+            &volume_index,
+            &rank_ordinals,
+        )
+        .unwrap();
+
+        // Order-independent, and the fixpoint counts `child` for `subject`.
+        assert_eq!(from_heuristic, from_reversed);
+        assert_eq!(
+            from_heuristic.get(&subject),
+            Some(&EvaluatedRank::Qualified {
+                rank: "manager".to_string(),
+                ordinal: 2,
+            })
+        );
+        assert_eq!(
+            from_heuristic.get(&child),
+            Some(&EvaluatedRank::Qualified {
+                rank: "associate".to_string(),
+                ordinal: 1,
+            })
         );
     }
 }

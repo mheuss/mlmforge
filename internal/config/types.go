@@ -69,6 +69,7 @@ type StructureQualification struct {
 	MaxGroupVolumePerLeg float64                      `yaml:"max_group_volume_per_leg" json:"max_group_volume_per_leg"`
 	MinRetailVolume      float64                      `yaml:"min_retail_volume" json:"min_retail_volume"`
 	DistributorCount     *DistributorCountRequirement `yaml:"distributor_count" json:"distributor_count"`
+	LegQuality           []LegQualityRequirement      `yaml:"leg_quality,omitempty" json:"leg_quality,omitempty"`
 }
 
 // DistributorCountRequirement defines distributor count requirements per leg.
@@ -79,6 +80,29 @@ type DistributorCountRequirement struct {
 	SearchDepth       *int    `yaml:"search_depth" json:"search_depth"`
 	TotalCount        int     `yaml:"total_count" json:"total_count"`
 	MinLegGroupVolume float64 `yaml:"min_leg_group_volume" json:"min_leg_group_volume"`
+}
+
+// LegQualityRequirement defines a per-leg structural requirement: at least
+// Count of the distributor's frontline legs must each contain a node matching
+// Predicate. Mirrors the Rust LegQualityRequirement.
+type LegQualityRequirement struct {
+	Count     uint16       `yaml:"count" json:"count"`
+	Predicate LegPredicate `yaml:"predicate" json:"predicate"`
+}
+
+// LegPredicate is the flat-struct Go mirror of the Rust internally-tagged
+// LegPredicate enum. Type selects the variant ("contains_rank" or
+// "contains_personal_volume"); only the matching variant's field is
+// meaningful.
+//
+// No omitempty on MinRank / MinPersonalVolume: the non-selected field is
+// emitted as a zero value, which Rust serde ignores when deserializing the
+// internally-tagged enum. omitempty would wrongly drop a legitimate
+// min_personal_volume of 0, and Rust has no serde(default) on that field.
+type LegPredicate struct {
+	Type              string  `yaml:"type" json:"type"`
+	MinRank           string  `yaml:"min_rank" json:"min_rank"`
+	MinPersonalVolume float64 `yaml:"min_personal_volume" json:"min_personal_volume"`
 }
 
 // DemotionPolicy handles the YAML union: either the string "promotion_only"

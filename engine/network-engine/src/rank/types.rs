@@ -80,6 +80,13 @@ pub enum EvaluationError {
     /// An input distributor is not present in a tree the evaluator must walk.
     #[error("distributor {0} not found in tree '{1}'")]
     DistributorNotInTree(Uuid, String),
+
+    /// Fixpoint iteration in `evaluate_ranks` did not stabilize within the
+    /// pass bound. Rank evaluation is monotone, so this is unreachable unless
+    /// a non-monotone descendant-reading predicate was introduced — a bug,
+    /// not bad input.
+    #[error("rank evaluation did not converge within {passes} passes")]
+    RankEvaluationDidNotConverge { passes: usize },
 }
 
 #[cfg(test)]
@@ -139,6 +146,15 @@ mod tests {
         assert!(
             pos1 < pos2 && pos2 < pos3,
             "user_id keys must serialize in ascending order"
+        );
+    }
+
+    #[test]
+    fn rank_evaluation_did_not_converge_displays_pass_count() {
+        let err = EvaluationError::RankEvaluationDidNotConverge { passes: 7 };
+        assert_eq!(
+            err.to_string(),
+            "rank evaluation did not converge within 7 passes"
         );
     }
 }

@@ -612,6 +612,95 @@ empty_generation_consumes_number: false
 	require.Empty(t, cfg.MaxGenerationsPerRank)
 }
 
+// TestLegQualityRoundTrip verifies that leg_quality requirements deserialize
+// from YAML and round-trip through JSON, matching the Rust internally-tagged
+// LegPredicate enum. The Go side is a flat struct; the non-selected variant
+// field carries a zero value, which serde ignores on the Rust side.
+func TestLegQualityRoundTrip(t *testing.T) {
+	yamlInput := `
+structure: Primary
+personal_volume: 300
+group_volume: 10000
+leg_quality:
+  - count: 12
+    predicate:
+      type: contains_rank
+      min_rank: Gold
+  - count: 3
+    predicate:
+      type: contains_personal_volume
+      min_personal_volume: 200
+`
+	var sq StructureQualification
+	require.NoError(t, yaml.Unmarshal([]byte(yamlInput), &sq))
+	require.Len(t, sq.LegQuality, 2)
+	assert.Equal(t, uint16(12), sq.LegQuality[0].Count)
+	assert.Equal(t, "contains_rank", sq.LegQuality[0].Predicate.Type)
+	assert.Equal(t, "Gold", sq.LegQuality[0].Predicate.MinRank)
+	assert.Equal(t, "contains_personal_volume", sq.LegQuality[1].Predicate.Type)
+	assert.Equal(t, float64(200), sq.LegQuality[1].Predicate.MinPersonalVolume)
+
+	// Round-trip JSON to validate Rust-bound serialization.
+	jsonBytes, err := json.Marshal(sq)
+	require.NoError(t, err)
+	var decoded StructureQualification
+	require.NoError(t, json.Unmarshal(jsonBytes, &decoded))
+	require.Len(t, decoded.LegQuality, 2)
+	assert.Equal(t, uint16(12), decoded.LegQuality[0].Count)
+	assert.Equal(t, "Gold", decoded.LegQuality[0].Predicate.MinRank)
+	assert.Equal(t, float64(200), decoded.LegQuality[1].Predicate.MinPersonalVolume)
+}
+
+// TestLegQualityDefaultsToEmpty verifies that an absent leg_quality
+// unmarshals to a nil slice, matching the Rust serde(default).
+func TestLegQualityDefaultsToEmpty(t *testing.T) {
+	yamlInput := `
+structure: Primary
+personal_volume: 100
+group_volume: 5000
+`
+	var sq StructureQualification
+	require.NoError(t, yaml.Unmarshal([]byte(yamlInput), &sq))
+	assert.Empty(t, sq.LegQuality)
+}
+
+// TestLegQualityRequirementCountBoundaryValues verifies the uint16 boundaries
+// at YAML unmarshal time. Values in [0, 65535] succeed; values outside fail,
+// so an out-of-range count produces a clear Go unmarshal error instead of
+// silently truncating when round-tripped to the Rust u16. Mirrors
+// TestGenerationCommissionConfig_MaxGenerations_BoundaryValues.
+func TestLegQualityRequirementCountBoundaryValues(t *testing.T) {
+	cases := []struct {
+		name      string
+		value     string
+		expectErr bool
+	}{
+		{"zero", "0", false},
+		{"max_uint16", "65535", false},
+		{"one_above_max", "65536", true},
+		{"large_overflow", "70000", true},
+		{"negative", "-1", true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			yamlInput := fmt.Sprintf(`
+count: %s
+predicate:
+  type: contains_rank
+  min_rank: Gold
+`, tc.value)
+			var req LegQualityRequirement
+			err := yaml.Unmarshal([]byte(yamlInput), &req)
+			if tc.expectErr {
+				require.Error(t, err, "expected unmarshal to reject count=%s", tc.value)
+			} else {
+				require.NoError(t, err, "expected unmarshal to accept count=%s", tc.value)
+			}
+		})
+	}
+}
+
 // TestBoardCyclingConfigDeserialization verifies that BoardCyclingConfig
 // deserializes correctly from YAML with all fields populated.
 func TestBoardCyclingConfigDeserialization(t *testing.T) {

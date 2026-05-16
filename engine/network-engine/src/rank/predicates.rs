@@ -163,12 +163,19 @@ pub(crate) fn distributor_count_meets(
 pub(crate) fn satisfies(
     rank: &RankDefinition,
     user_id: Uuid,
-    primitives: &DistributorPrimitives,
+    distributors: &HashMap<Uuid, DistributorPrimitives>,
     trees: &HashMap<String, &dyn TreeNavigator>,
     volume_index: &VolumeIndex,
     already: &HashMap<Uuid, EvaluatedRank>,
     rank_ordinals: &HashMap<String, u16>,
 ) -> Result<bool, EvaluationError> {
+    // evaluate_ranks only evaluates users present in `distributors`, so this
+    // lookup always succeeds. A subject with no primitives cannot meet any
+    // volume or product criterion, so treat the absence as not-qualifying.
+    let Some(primitives) = distributors.get(&user_id) else {
+        return Ok(false);
+    };
+
     if !required_products_met(&rank.qualification.required_products, primitives) {
         return Ok(false);
     }
@@ -591,12 +598,14 @@ mod tests {
         let rank = rank_with_pv_and_gv("silver", 2, "Test", 100.0, 500.0);
         let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
         let ordinals: HashMap<String, u16> = HashMap::new();
+        let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
+        distributors.insert(uid(1), primitives);
 
         assert!(
             satisfies(
                 &rank,
                 uid(1),
-                &primitives,
+                &distributors,
                 &nav_map,
                 &idx,
                 &already,
@@ -620,12 +629,14 @@ mod tests {
         let rank = rank_with_pv_and_gv("silver", 2, "Test", 100.0, 0.0);
         let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
         let ordinals: HashMap<String, u16> = HashMap::new();
+        let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
+        distributors.insert(uid(1), primitives);
 
         assert!(
             !satisfies(
                 &rank,
                 uid(1),
-                &primitives,
+                &distributors,
                 &nav_map,
                 &idx,
                 &already,
@@ -647,11 +658,13 @@ mod tests {
         let rank = rank_with_pv_and_gv("silver", 2, "Test", 0.0, 0.0);
         let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
         let ordinals: HashMap<String, u16> = HashMap::new();
+        let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
+        distributors.insert(uid(1), primitives);
 
         let err = satisfies(
             &rank,
             uid(1),
-            &primitives,
+            &distributors,
             &nav_map,
             &idx,
             &already,
@@ -695,11 +708,13 @@ mod tests {
 
         let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
         let ordinals: HashMap<String, u16> = HashMap::new(); // intentionally empty
+        let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
+        distributors.insert(uid(1), primitives);
 
         let err = satisfies(
             &rank,
             uid(1),
-            &primitives,
+            &distributors,
             &nav_map,
             &idx,
             &already,

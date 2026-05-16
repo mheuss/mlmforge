@@ -2,7 +2,8 @@ mod common;
 
 use common::uuid_from_index;
 use network_engine::config::rank::{
-    DemotionPolicy, RankDefinition, RankQualification, StructureQualification,
+    DemotionPolicy, DistributorCountRequirement, RankDefinition, RankQualification, SearchMode,
+    StructureQualification,
 };
 use network_engine::config::{CompensationPlan, StructureConfig, UnilevelStructureConfig};
 use network_engine::rank::{DistributorPrimitives, EvaluationInputs, evaluate_ranks};
@@ -222,5 +223,100 @@ proptest! {
 
         // Catches divergence on every key in either map (missing, extra, or mismatched).
         prop_assert_eq!(r_a.ranks, r_b.ranks);
+    }
+}
+
+proptest! {
+    /// `evaluate_ranks` always converges on a multi-tree plan with circular
+    /// cross-tree rank dependencies. `a` is above `b` in `uni`, `b` is above
+    /// `a` in `bin`. `manager_u` counts a `uni` downline and `manager_b`
+    /// counts a `bin` downline, so `a`'s rank depends on `b`'s and `b`'s on
+    /// `a`'s — a genuine cycle that no single evaluation order resolves. Every
+    /// rank requires PV >= 100, and PV is randomized across 0..400. A
+    /// distributor below the threshold is `Unranked`, so the cross-tree
+    /// distributor_count predicate genuinely flips between draws: some count a
+    /// qualifying downline, others do not. For every draw `evaluate_ranks`
+    /// must return Ok — it must never fail to converge.
+    ///
+    /// uni: a(0) -> b(1)
+    /// bin: b(0) -> a(1)
+    #[test]
+    fn evaluate_ranks_always_converges_on_cyclic_multi_tree_plan(
+        pv_a in 0u32..400,
+        pv_b in 0u32..400,
+    ) {
+        let a = uuid_from_index(1);
+        let b = uuid_from_index(2);
+
+        let mut uni = UnilevelTree::new();
+        uni.add_root(a, 0).unwrap();
+        uni.add_node(b, a, a, 0).unwrap();
+
+        let mut bin = UnilevelTree::new();
+        bin.add_root(b, 0).unwrap();
+        bin.add_node(a, b, b, 0).unwrap();
+
+        let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+        nav.insert("uni".to_string(), &uni);
+        nav.insert("bin".to_string(), &bin);
+
+        // 1 associate-or-better downline distributor.
+        let count_req = || DistributorCountRequirement {
+            count: 1,
+            min_rank: "associate".to_string(),
+            search_mode: SearchMode::AnyLevel,
+            search_depth: None,
+            total_count: 1,
+            min_leg_group_volume: 0.0,
+        };
+        let rank = |name: &str,
+                    ordinal: u16,
+                    structure: &str,
+                    pv: f64,
+                    dc: Option<DistributorCountRequirement>| RankDefinition {
+            name: name.to_string(),
+            ordinal,
+            qualification: RankQualification {
+                structures: vec![StructureQualification {
+                    structure: structure.to_string(),
+                    personal_volume: pv,
+                    group_volume: 0.0,
+                    max_group_volume_per_leg: f64::MAX,
+                    min_retail_volume: 0.0,
+                    distributor_count: dc,
+                    leg_quality: vec![],
+                }],
+                required_products: vec![],
+            },
+            qualified_structures: vec![structure.to_string()],
+            demotion_policy: DemotionPolicy::PromotionOnly,
+        };
+
+        let mut plan = build_random_plan();
+        plan.ranks = vec![
+            rank("associate", 1, "uni", 100.0, None),
+            rank("manager_u", 2, "uni", 100.0, Some(count_req())),
+            rank("manager_b", 3, "bin", 100.0, Some(count_req())),
+        ];
+
+        let prim = |pv: u32| DistributorPrimitives {
+            personal_volume: pv as f64,
+            retail_volume: 0.0,
+            status: "active".to_string(),
+            has_order_in_period: true,
+            active_products: vec![],
+        };
+        let mut distributors = HashMap::new();
+        distributors.insert(a, prim(pv_a));
+        distributors.insert(b, prim(pv_b));
+
+        let inputs = EvaluationInputs { distributors, volume_sources: vec![] };
+
+        let result = evaluate_ranks(&plan, &nav, &inputs);
+        prop_assert!(
+            result.is_ok(),
+            "evaluate_ranks must converge on a cyclic multi-tree plan: {:?}",
+            result.err()
+        );
     }
 }

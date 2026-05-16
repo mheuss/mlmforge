@@ -857,6 +857,34 @@ mod tests {
         assert_eq!(err, LegQualityError::UnknownMinRank("phantom".to_string()));
     }
 
+    #[test]
+    fn leg_quality_meets_unranked_node_does_not_match() {
+        // An EvaluatedRank::Unranked entry means the node was evaluated but
+        // did not qualify for any rank. It must NOT satisfy a ContainsRank
+        // predicate — distinct from an absent node, but treated identically.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uid(1), 0).unwrap();
+        tree.add_node(uid(2), uid(1), uid(1), 0).unwrap();
+
+        let mut already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
+        already.insert(uid(2), EvaluatedRank::Unranked);
+
+        let distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
+        let mut ordinals: HashMap<String, u16> = HashMap::new();
+        ordinals.insert("bronze".to_string(), 1);
+
+        let reqs = vec![LegQualityRequirement {
+            count: 1,
+            predicate: LegPredicate::ContainsRank {
+                min_rank: "bronze".to_string(),
+            },
+        }];
+        // The only leg's only node is Unranked — no matching leg exists.
+        assert!(
+            !leg_quality_meets(&reqs, uid(1), &tree, &already, &distributors, &ordinals).unwrap()
+        );
+    }
+
     use crate::config::rank::{
         DemotionPolicy, RankDefinition, RankQualification, StructureQualification,
     };

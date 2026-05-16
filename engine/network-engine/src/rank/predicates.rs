@@ -187,6 +187,16 @@ pub(crate) fn leg_quality_meets(
     }
     let children = tree.get_children(user_id)?;
     for req in reqs {
+        if req.count == 0 {
+            // A count-0 requirement is vacuously satisfied. Skip the leg scan.
+            continue;
+        }
+        if req.count as usize > children.len() {
+            // At most children.len() legs can match, so a count larger than
+            // the frontline leg count cannot be met. Mirrors the population-size
+            // early-return in distributor_count_meets (the nodes.len() < req.total_count check).
+            return Ok(false);
+        }
         let mut matching_legs: usize = 0;
         for child in &children {
             // A leg is the frontline child plus its whole subtree.
@@ -855,6 +865,54 @@ mod tests {
         let err = leg_quality_meets(&reqs, uid(1), &tree, &already, &distributors, &ordinals)
             .unwrap_err();
         assert_eq!(err, LegQualityError::UnknownMinRank("phantom".to_string()));
+    }
+
+    #[test]
+    fn leg_quality_meets_count_exceeds_frontline_returns_false() {
+        // Root 1 has 2 frontline children. A requirement with count 3 cannot
+        // be met — there are only 2 legs. Expect false without any subtree BFS.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uid(1), 0).unwrap();
+        tree.add_node(uid(2), uid(1), uid(1), 0).unwrap();
+        tree.add_node(uid(3), uid(1), uid(1), 0).unwrap();
+
+        let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
+        let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
+        distributors.insert(uid(2), primitives_with_pv(500.0));
+        distributors.insert(uid(3), primitives_with_pv(500.0));
+        let ordinals: HashMap<String, u16> = HashMap::new();
+
+        let reqs = vec![LegQualityRequirement {
+            count: 3, // requires 3 legs but only 2 exist
+            predicate: LegPredicate::ContainsPersonalVolume {
+                min_personal_volume: 100.0,
+            },
+        }];
+        assert!(
+            !leg_quality_meets(&reqs, uid(1), &tree, &already, &distributors, &ordinals).unwrap()
+        );
+    }
+
+    #[test]
+    fn leg_quality_meets_count_zero_passes() {
+        // A count-0 requirement is vacuously satisfied regardless of the tree.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uid(1), 0).unwrap();
+        tree.add_node(uid(2), uid(1), uid(1), 0).unwrap();
+
+        let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
+        let distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
+        let ordinals: HashMap<String, u16> = HashMap::new();
+
+        let reqs = vec![LegQualityRequirement {
+            count: 0,
+            predicate: LegPredicate::ContainsPersonalVolume {
+                min_personal_volume: 9999.0, // impossible threshold — vacuously satisfied
+            },
+        }];
+        assert!(
+            leg_quality_meets(&reqs, uid(1), &tree, &already, &distributors, &ordinals).unwrap()
+        );
     }
 
     #[test]

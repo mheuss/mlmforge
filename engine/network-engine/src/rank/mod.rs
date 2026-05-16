@@ -50,12 +50,12 @@ pub fn evaluate_ranks(
 
     let mut already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
     for user_id in order {
-        let Some(primitives) = inputs.distributors.get(&user_id) else {
-            continue;
-        };
+        // Every user in `order` is a key of `inputs.distributors` — the
+        // order is derived from `distributors.keys()` — so evaluate_distributor
+        // always resolves the subject's primitives from the map.
         let evaluated = evaluate_distributor(
             user_id,
-            primitives,
+            &inputs.distributors,
             &ranks_owned,
             trees,
             &volume_index,

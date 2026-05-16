@@ -68,7 +68,7 @@ pub(crate) fn evaluation_order_for_users(
 /// required product unique to N).
 pub(crate) fn evaluate_distributor(
     user_id: Uuid,
-    primitives: &DistributorPrimitives,
+    distributors: &HashMap<Uuid, DistributorPrimitives>,
     ranks: &[RankDefinition],
     trees: &HashMap<String, &dyn TreeNavigator>,
     volume_index: &VolumeIndex,
@@ -80,7 +80,7 @@ pub(crate) fn evaluate_distributor(
         if satisfies(
             rank,
             user_id,
-            primitives,
+            distributors,
             trees,
             volume_index,
             already,
@@ -293,9 +293,11 @@ mod tests {
         }
 
         let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
+        let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
+        distributors.insert(Uuid::from_u128(1), primitives);
         let result = evaluate_distributor(
             Uuid::from_u128(1),
-            &primitives,
+            &distributors,
             &ranks,
             &nav,
             &idx,
@@ -335,9 +337,11 @@ mod tests {
         let mut ordinals: HashMap<String, u16> = HashMap::new();
         ordinals.insert("silver".to_string(), 2);
 
+        let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
+        distributors.insert(Uuid::from_u128(1), primitives);
         let result = evaluate_distributor(
             Uuid::from_u128(1),
-            &primitives,
+            &distributors,
             &ranks,
             &nav,
             &idx,
@@ -383,9 +387,11 @@ mod tests {
             ordinals.insert(r.name.clone(), r.ordinal);
         }
 
+        let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
+        distributors.insert(Uuid::from_u128(1), primitives);
         let result = evaluate_distributor(
             Uuid::from_u128(1),
-            &primitives,
+            &distributors,
             &ranks,
             &nav,
             &idx,

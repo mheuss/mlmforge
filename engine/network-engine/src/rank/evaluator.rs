@@ -164,6 +164,7 @@ pub(crate) fn iterate_to_fixpoint(
 mod tests {
     use super::*;
     use crate::commission::types::VolumeSource;
+    use proptest::prelude::*;
     use uuid::Uuid;
 
     #[test]
@@ -603,5 +604,123 @@ mod tests {
                 ordinal: 1,
             })
         );
+    }
+
+    proptest! {
+        /// `iterate_to_fixpoint` produces the same result for any within-pass
+        /// order. Two trees with different ancestry (`uni`: a->b->c, `bin`:
+        /// c->b->a) make some evaluation orders visit an ancestor before its
+        /// descendants, which forces the loop to run more than one pass. Only
+        /// `uni` carries qualifications; `bin` exists only to skew tree depth.
+        /// PV values are randomized; for every draw, all six orderings of the
+        /// three distributors must yield the same fixpoint rank map.
+        #[test]
+        fn prop_fixpoint_order_independent(
+            pv_a in 0u32..300,
+            pv_b in 0u32..300,
+            pv_c in 0u32..300,
+        ) {
+            use crate::config::rank::{DistributorCountRequirement, SearchMode};
+            use crate::rank::types::DistributorPrimitives;
+
+            let a = Uuid::from_u128(1);
+            let b = Uuid::from_u128(2);
+            let c = Uuid::from_u128(3);
+
+            // uni: a(0) -> b(1) -> c(2)
+            let mut uni = UnilevelTree::new();
+            uni.add_root(a, 0).unwrap();
+            uni.add_node(b, a, a, 0).unwrap();
+            uni.add_node(c, b, b, 0).unwrap();
+            // bin: c(0) -> b(1) -> a(2). Different ancestry from uni; it skews
+            // the depth heuristic but carries no qualification of its own.
+            let mut bin = UnilevelTree::new();
+            bin.add_root(c, 0).unwrap();
+            bin.add_node(b, c, c, 0).unwrap();
+            bin.add_node(a, b, b, 0).unwrap();
+
+            let mut trees: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+            trees.insert("uni".to_string(), &uni);
+            trees.insert("bin".to_string(), &bin);
+
+            let sq = |dc: Option<DistributorCountRequirement>| StructureQualification {
+                structure: "uni".to_string(),
+                personal_volume: 100.0,
+                group_volume: 0.0,
+                max_group_volume_per_leg: f64::MAX,
+                min_retail_volume: 0.0,
+                distributor_count: dc,
+                leg_quality: vec![],
+            };
+            let ranks = vec![
+                RankDefinition {
+                    name: "associate".to_string(),
+                    ordinal: 1,
+                    qualification: RankQualification {
+                        structures: vec![sq(None)],
+                        required_products: vec![],
+                    },
+                    qualified_structures: vec!["uni".to_string()],
+                    demotion_policy: DemotionPolicy::PromotionOnly,
+                },
+                RankDefinition {
+                    name: "manager".to_string(),
+                    ordinal: 2,
+                    qualification: RankQualification {
+                        structures: vec![sq(Some(DistributorCountRequirement {
+                            count: 1,
+                            min_rank: "associate".to_string(),
+                            search_mode: SearchMode::AnyLevel,
+                            search_depth: None,
+                            total_count: 1,
+                            min_leg_group_volume: 0.0,
+                        }))],
+                        required_products: vec![],
+                    },
+                    qualified_structures: vec!["uni".to_string()],
+                    demotion_policy: DemotionPolicy::PromotionOnly,
+                },
+            ];
+            let rank_ordinals: HashMap<String, u16> =
+                ranks.iter().map(|r| (r.name.clone(), r.ordinal)).collect();
+
+            // Only personal volume is randomized; status and order activity
+            // are held constant so order is the lone varying dimension.
+            let prim = |pv: u32| DistributorPrimitives {
+                personal_volume: pv as f64,
+                retail_volume: 0.0,
+                status: "active".to_string(),
+                has_order_in_period: true,
+                active_products: vec![],
+            };
+            let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
+            distributors.insert(a, prim(pv_a));
+            distributors.insert(b, prim(pv_b));
+            distributors.insert(c, prim(pv_c));
+
+            let volume_index = VolumeIndex::build(&[]);
+
+            // Every ordering of the three distributors must converge to the
+            // same fixpoint. Six permutations is exhaustive for three users.
+            let orders = [
+                [a, b, c],
+                [a, c, b],
+                [b, a, c],
+                [b, c, a],
+                [c, a, b],
+                [c, b, a],
+            ];
+            let baseline = iterate_to_fixpoint(
+                &orders[0], &distributors, &ranks, &trees, &volume_index, &rank_ordinals,
+            )
+            .unwrap();
+            for order in &orders {
+                let result = iterate_to_fixpoint(
+                    order, &distributors, &ranks, &trees, &volume_index, &rank_ordinals,
+                )
+                .unwrap();
+                prop_assert_eq!(&result, &baseline);
+            }
+        }
     }
 }

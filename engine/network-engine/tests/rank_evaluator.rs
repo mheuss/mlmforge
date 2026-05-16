@@ -292,3 +292,62 @@ fn evaluate_ranks_errors_on_unknown_min_rank() {
         }
     );
 }
+
+/// BR5 regression guard: a plan whose qualifications carry an empty
+/// `leg_quality` evaluates identically to the pre-feature behaviour.
+///
+/// Absent `leg_quality` deserializes to an empty Vec via `#[serde(default)]`
+/// — proven by `structure_qualification_leg_quality_defaults_to_empty_when_absent`
+/// in config/rank.rs — so empty, absent, and pre-feature configs all evaluate
+/// identically.
+#[test]
+fn evaluate_ranks_with_empty_leg_quality_matches_baseline() {
+    let mut tree = UnilevelTree::new();
+    tree.add_root(uuid_from_index(1), 0).unwrap();
+    tree.add_node(
+        uuid_from_index(2),
+        uuid_from_index(1),
+        uuid_from_index(1),
+        0,
+    )
+    .unwrap();
+
+    let plan = linear_plan();
+    // Guard: linear_plan's qualifications carry an empty leg_quality.
+    for rank in &plan.ranks {
+        for sq in &rank.qualification.structures {
+            assert!(sq.leg_quality.is_empty());
+        }
+    }
+
+    let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+    nav.insert("Test".to_string(), &tree);
+
+    let mut distributors = HashMap::new();
+    distributors.insert(uuid_from_index(1), primitives(250.0));
+    distributors.insert(uuid_from_index(2), primitives(50.0));
+
+    let inputs = EvaluationInputs {
+        distributors,
+        volume_sources: vec![],
+    };
+
+    let result = evaluate_ranks(&plan, &nav, &inputs).unwrap();
+
+    // Identical to the pre-feature baseline: distributor 1 reaches silver,
+    // distributor 2 stays at associate.
+    assert_eq!(
+        result.ranks.get(&uuid_from_index(1)),
+        Some(&EvaluatedRank::Qualified {
+            rank: "silver".to_string(),
+            ordinal: 2
+        })
+    );
+    assert_eq!(
+        result.ranks.get(&uuid_from_index(2)),
+        Some(&EvaluatedRank::Qualified {
+            rank: "associate".to_string(),
+            ordinal: 1
+        })
+    );
+}

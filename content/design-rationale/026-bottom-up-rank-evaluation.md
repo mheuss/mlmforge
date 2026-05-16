@@ -24,9 +24,10 @@ walk.
 - The evaluation loop carries an accumulating `already: HashMap<Uuid,
   EvaluatedRank>`. Each `evaluate_distributor` call reads descendants' computed
   ranks from `already`, then writes its own result back into it.
-- Because the order is deepest-first, every deeper node is evaluated before a
-  given distributor. A distributor's descendants are all deeper, so their ranks
-  are in `already` when it is reached.
+- Within one tree, deepest-first ordering evaluates a distributor's descendants
+  before the distributor itself. They are strictly deeper in that tree, so
+  their ranks are in `already` when the distributor is evaluated. The
+  multi-tree case needs a caveat. See the known limitation below.
 - The result is moved into a `BTreeMap<Uuid, EvaluatedRank>` so serialization
   emits user-id keys in a fixed order.
 
@@ -38,11 +39,12 @@ not rank N still reaches N+1.
 ## The Reasoning
 
 **Why bottom-up.** A predicate that reads descendant ranks has a strict data
-dependency. The descendant must be evaluated first. Deepest-first ordering is
-the one walk order that satisfies that dependency for every ancestor at once.
-It also gives the recursive senior-title case a base case for free. A leaf has
-no descendants, so it evaluates against an empty descendant context. Each level
-above it then sees fully resolved ranks below. No predicate has to recurse.
+dependency. The descendant must be evaluated first. Within a tree,
+deepest-first ordering is the one walk order that satisfies that dependency for
+every ancestor at once. It also gives the recursive senior-title case a base
+case for free. A leaf has no descendants, so it evaluates against an empty
+descendant context. Each level above it then sees fully resolved ranks below.
+No predicate has to recurse.
 
 **Why an accumulating map.** Each distributor's rank is computed exactly once.
 A predicate looking down reads `already` rather than re-running rank evaluation
@@ -55,12 +57,21 @@ the user set is pinned by the depth-descending, `user_id`-ascending sort.
 Serialization order is pinned by the `BTreeMap`. A plain `HashMap` would surface
 its arbitrary iteration order in the output.
 
-**Why predicates see descendants but not ancestors.** When a distributor is
-evaluated, `already` holds every node processed before it. Deepest-first
-ordering makes that set the strictly-deeper nodes, which includes all
-descendants. An ancestor is shallower, so it sorts later and is absent. This is
-a deliberate limit. The design supports "qualify on what is below me" and not
-"qualify on what is above me."
+**Why predicates see descendants, not ancestors.** When a distributor is
+evaluated, `already` holds every node processed before it. Within one tree that
+set contains all of the distributor's descendants and never an ancestor. An
+ancestor is shallower, sorts later, and is absent. This is a deliberate limit.
+The design supports "qualify on what is below me" and not "qualify on what is
+above me."
+
+**Known limitation: ordering across multiple trees.**
+`evaluation_order_for_users` gives each distributor a single position from its
+maximum depth across all registered trees. That is exact for a plan with one
+structure tree. With several structure trees it is only a heuristic. A
+distributor that is shallow in one tree but deep in another is ordered by its
+deepest appearance, which can place it before a same-tree descendant that is
+shallower everywhere. A predicate walking the shallower tree then reads that
+descendant as not-yet-evaluated and undercounts. Tracked in HEU-460.
 
 ## Revisit Trigger
 

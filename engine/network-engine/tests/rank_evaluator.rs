@@ -547,3 +547,188 @@ fn evaluate_ranks_with_empty_leg_quality_matches_baseline() {
         })
     );
 }
+
+/// HEU-460 regression. `subject` is the root of the `uni` tree (depth 0) but
+/// sits at depth 2 in the `bin` tree. The max-depth heuristic therefore orders
+/// `subject` (effective depth 2) before its own `uni` child `child` (depth 1).
+/// The old single-pass evaluator evaluated `subject` while `child` was still
+/// absent from `already`, so `subject`'s distributor_count came back zero and
+/// `subject` was undercounted to `associate`. The fixpoint loop re-evaluates
+/// until stable, so `subject` reaches `manager`.
+///
+/// uni:  subject(0) -> child(1)
+/// bin:  f1(0) -> f2(1) -> subject(2)        f1, f2 exist only to deepen bin
+#[test]
+fn evaluate_ranks_counts_descendant_across_trees() {
+    use network_engine::config::rank::{DistributorCountRequirement, SearchMode};
+
+    let subject = uuid_from_index(1);
+    let child = uuid_from_index(2);
+    let f1 = uuid_from_index(10);
+    let f2 = uuid_from_index(11);
+
+    let mut uni = UnilevelTree::new();
+    uni.add_root(subject, 0).unwrap();
+    uni.add_node(child, subject, subject, 0).unwrap();
+
+    let mut bin = UnilevelTree::new();
+    bin.add_root(f1, 0).unwrap();
+    bin.add_node(f2, f1, f1, 0).unwrap();
+    bin.add_node(subject, f2, f2, 0).unwrap();
+
+    // The rank ladder qualifies only on "uni". The "bin" tree is registered in
+    // `nav` to model a hybrid plan: it carries no qualification of its own
+    // here, and its only effect is that subject's depth in it perturbs the
+    // global evaluation order. That perturbation is the HEU-460 condition.
+    let mut plan = linear_plan();
+    plan.ranks[0].qualification.structures[0].structure = "uni".to_string();
+    plan.ranks[0].qualified_structures = vec!["uni".to_string()];
+    plan.ranks[0].name = "associate".to_string();
+    plan.ranks[1].qualification.structures[0].structure = "uni".to_string();
+    plan.ranks[1].qualified_structures = vec!["uni".to_string()];
+    plan.ranks[1].name = "manager".to_string();
+    // associate stays trivial (PV >= 0). manager additionally needs one
+    // downline distributor of associate-or-better.
+    plan.ranks[1].qualification.structures[0].personal_volume = 0.0;
+    plan.ranks[1].qualification.structures[0].distributor_count =
+        Some(DistributorCountRequirement {
+            count: 1,
+            min_rank: "associate".to_string(),
+            search_mode: SearchMode::AnyLevel,
+            search_depth: None,
+            total_count: 1,
+            min_leg_group_volume: 0.0,
+        });
+
+    let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+    nav.insert("uni".to_string(), &uni);
+    nav.insert("bin".to_string(), &bin);
+
+    let mut distributors = HashMap::new();
+    distributors.insert(subject, primitives(0.0));
+    distributors.insert(child, primitives(0.0));
+
+    let inputs = EvaluationInputs {
+        distributors,
+        volume_sources: vec![],
+    };
+
+    let result = evaluate_ranks(&plan, &nav, &inputs).unwrap();
+
+    // The fix: subject reaches manager because child is counted.
+    assert_eq!(
+        result.ranks.get(&subject),
+        Some(&EvaluatedRank::Qualified {
+            rank: "manager".to_string(),
+            ordinal: 2,
+        }),
+        "subject must reach manager: its uni child counts toward distributor_count"
+    );
+    // child has an empty uni downline, so it cannot reach manager.
+    assert_eq!(
+        result.ranks.get(&child),
+        Some(&EvaluatedRank::Qualified {
+            rank: "associate".to_string(),
+            ordinal: 1,
+        })
+    );
+}
+
+/// HEU-460 cycle case. `a` and `b` have inverted ancestry across trees:
+/// `a` is above `b` in `uni`, `b` is above `a` in `bin`. `manager_u` qualifies
+/// on a uni distributor_count and `manager_b` on a bin distributor_count, so
+/// `a`'s rank depends on `b`'s and `b`'s depends on `a`'s. No single order
+/// resolves that. The fixpoint loop converges to a stable, order-independent result.
+///
+/// uni:  a(0) -> b(1)
+/// bin:  b(0) -> a(1)
+#[test]
+fn evaluate_ranks_converges_on_cyclic_ancestry() {
+    use network_engine::config::rank::{DistributorCountRequirement, SearchMode};
+
+    let a = uuid_from_index(1);
+    let b = uuid_from_index(2);
+
+    let mut uni = UnilevelTree::new();
+    uni.add_root(a, 0).unwrap();
+    uni.add_node(b, a, a, 0).unwrap();
+
+    let mut bin = UnilevelTree::new();
+    bin.add_root(b, 0).unwrap();
+    bin.add_node(a, b, b, 0).unwrap();
+
+    // A count requirement reused for both manager ranks. count: 1 of
+    // associate-or-better, total_count: 1, no group-volume floor.
+    let count_req = || DistributorCountRequirement {
+        count: 1,
+        min_rank: "associate".to_string(),
+        search_mode: SearchMode::AnyLevel,
+        search_depth: None,
+        total_count: 1,
+        min_leg_group_volume: 0.0,
+    };
+    let structure_qual =
+        |structure: &str, dc: Option<DistributorCountRequirement>| StructureQualification {
+            structure: structure.to_string(),
+            personal_volume: 0.0,
+            group_volume: 0.0,
+            max_group_volume_per_leg: f64::MAX,
+            min_retail_volume: 0.0,
+            distributor_count: dc,
+            leg_quality: vec![],
+        };
+    let rank =
+        |name: &str, ordinal: u16, structure: &str, dc: Option<DistributorCountRequirement>| {
+            RankDefinition {
+                name: name.to_string(),
+                ordinal,
+                qualification: RankQualification {
+                    structures: vec![structure_qual(structure, dc)],
+                    required_products: vec![],
+                },
+                qualified_structures: vec![structure.to_string()],
+                demotion_policy: DemotionPolicy::PromotionOnly,
+            }
+        };
+
+    let mut plan = linear_plan();
+    plan.ranks = vec![
+        rank("associate", 1, "uni", None),
+        rank("manager_u", 2, "uni", Some(count_req())),
+        rank("manager_b", 3, "bin", Some(count_req())),
+    ];
+
+    let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+    nav.insert("uni".to_string(), &uni);
+    nav.insert("bin".to_string(), &bin);
+
+    let mut distributors = HashMap::new();
+    distributors.insert(a, primitives(0.0));
+    distributors.insert(b, primitives(0.0));
+
+    let inputs = EvaluationInputs {
+        distributors,
+        volume_sources: vec![],
+    };
+
+    // Must not hang and must not error: the cycle is legitimate input.
+    let result = evaluate_ranks(&plan, &nav, &inputs).unwrap();
+
+    // `a` reaches manager_u (its uni child `b` is counted); `b` reaches
+    // manager_b (its bin child `a` is counted). The single-pass evaluator
+    // undercounted whichever of the two was evaluated first.
+    assert_eq!(
+        result.ranks.get(&a),
+        Some(&EvaluatedRank::Qualified {
+            rank: "manager_u".to_string(),
+            ordinal: 2,
+        })
+    );
+    assert_eq!(
+        result.ranks.get(&b),
+        Some(&EvaluatedRank::Qualified {
+            rank: "manager_b".to_string(),
+            ordinal: 3,
+        })
+    );
+}

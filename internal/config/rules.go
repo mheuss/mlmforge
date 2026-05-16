@@ -204,6 +204,12 @@ func validateRanks(plan *CompensationPlan, structs map[string]bool) []Validation
 			// defined rank of lower ordinal than this rank. Mirrors the
 			// distributor_count.min_rank check above.
 			for k, lq := range sq.LegQuality {
+				// Skip predicates the rank check does not apply to: a
+				// contains_personal_volume predicate has no min_rank, and an
+				// empty min_rank on a contains_rank predicate is a malformed
+				// predicate the JSON schema already rejects (its contains_rank
+				// variant requires a non-empty min_rank). Skipping here avoids
+				// a confusing undefined_reference for "".
 				if lq.Predicate.Type != "contains_rank" || lq.Predicate.MinRank == "" {
 					continue
 				}

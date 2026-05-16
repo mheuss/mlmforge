@@ -254,6 +254,7 @@ mod tests {
                     max_group_volume_per_leg: f64::MAX,
                     min_retail_volume: 0.0,
                     distributor_count: None,
+                    leg_quality: vec![],
                 }],
                 required_products: vec![],
             },

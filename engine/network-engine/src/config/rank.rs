@@ -106,6 +106,12 @@ pub struct StructureQualification {
     /// When present, the distributor must have a team of a certain
     /// size and quality to achieve the rank.
     pub distributor_count: Option<DistributorCountRequirement>,
+
+    /// Per-leg structural requirements. Empty (the default) means no
+    /// leg-quality criterion. All requirements are AND-combined with each
+    /// other and with the rest of the qualification.
+    #[serde(default)]
+    pub leg_quality: Vec<LegQualityRequirement>,
 }
 
 /// Team composition requirements for rank qualification.
@@ -150,6 +156,36 @@ pub struct DistributorCountRequirement {
     /// Ensures the leaders being counted are actually producing.
     /// A distributor with the right rank but no volume does not count.
     pub min_leg_group_volume: f64,
+}
+
+/// A per-leg structural requirement for rank qualification.
+///
+/// Requires at least `count` of the distributor's frontline legs to each
+/// contain a node matching `predicate`. A "leg" is a direct child plus
+/// that child's entire subtree.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LegQualityRequirement {
+    /// Minimum number of frontline legs that must satisfy `predicate`.
+    pub count: u16,
+    /// The condition at least one node in a leg's subtree must meet.
+    pub predicate: LegPredicate,
+}
+
+/// The condition a leg's subtree is tested against.
+///
+/// Internally tagged: serializes as `{"type": "contains_rank", ...}`. The
+/// content is string-keyed, so the contract-test harness gotcha for
+/// adjacently-tagged enums (see docs/development/network-engine.md) does
+/// not apply.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum LegPredicate {
+    /// Leg contains a node whose evaluated rank ordinal is at least the
+    /// ordinal of `min_rank`.
+    ContainsRank { min_rank: String },
+    /// Leg contains a node whose personal volume is at least
+    /// `min_personal_volume`.
+    ContainsPersonalVolume { min_personal_volume: f64 },
 }
 
 /// Where to search for qualifying distributors in the tree.
@@ -394,6 +430,80 @@ mod tests {
     }
 
     #[test]
+    fn leg_predicate_contains_rank_deserializes() {
+        let json = r#"{"type": "contains_rank", "min_rank": "Gold"}"#;
+        let pred: LegPredicate = serde_json::from_str(json).unwrap();
+        match pred {
+            LegPredicate::ContainsRank { min_rank } => assert_eq!(min_rank, "Gold"),
+            _ => panic!("expected ContainsRank variant"),
+        }
+    }
+
+    #[test]
+    fn leg_predicate_contains_personal_volume_deserializes() {
+        let json = r#"{"type": "contains_personal_volume", "min_personal_volume": 200.0}"#;
+        let pred: LegPredicate = serde_json::from_str(json).unwrap();
+        match pred {
+            LegPredicate::ContainsPersonalVolume {
+                min_personal_volume,
+            } => assert_eq!(min_personal_volume, 200.0),
+            _ => panic!("expected ContainsPersonalVolume variant"),
+        }
+    }
+
+    #[test]
+    fn structure_qualification_deserializes_leg_quality() {
+        let json = r#"{
+            "structure": "Primary",
+            "personal_volume": 100.0,
+            "group_volume": 5000.0,
+            "max_group_volume_per_leg": 3000.0,
+            "min_retail_volume": 50.0,
+            "distributor_count": null,
+            "leg_quality": [
+                {"count": 3, "predicate": {"type": "contains_rank", "min_rank": "Gold"}}
+            ]
+        }"#;
+        let sq: StructureQualification = serde_json::from_str(json).unwrap();
+        assert_eq!(sq.leg_quality.len(), 1);
+        assert_eq!(sq.leg_quality[0].count, 3);
+        assert!(matches!(
+            sq.leg_quality[0].predicate,
+            LegPredicate::ContainsRank { .. }
+        ));
+    }
+
+    #[test]
+    fn structure_qualification_leg_quality_defaults_to_empty_when_absent() {
+        // BR5: an absent `leg_quality` deserializes to an empty Vec via
+        // `#[serde(default)]`. This is the "absent ≡ empty" half of BR5;
+        // the "empty ≡ pre-feature" half is Task 4.
+        let json = r#"{
+            "structure": "Primary",
+            "personal_volume": 100.0,
+            "group_volume": 5000.0,
+            "max_group_volume_per_leg": 3000.0,
+            "min_retail_volume": 50.0,
+            "distributor_count": null
+        }"#;
+        let sq: StructureQualification = serde_json::from_str(json).unwrap();
+        assert!(sq.leg_quality.is_empty());
+    }
+
+    #[test]
+    fn leg_quality_requirement_round_trips() {
+        let json = r#"{"count": 12, "predicate": {"type": "contains_personal_volume", "min_personal_volume": 150.0}}"#;
+        let req: LegQualityRequirement = serde_json::from_str(json).unwrap();
+        let reserialized = serde_json::to_string(&req).unwrap();
+        let restored: LegQualityRequirement = serde_json::from_str(&reserialized).unwrap();
+        assert_eq!(restored.count, 12);
+        assert!(matches!(
+            restored.predicate,
+            LegPredicate::ContainsPersonalVolume { .. }
+        ));
+    }
+
+    #[test]
     fn round_trip_rank_definition() {
         let rank = RankDefinition {
             name: "Gold".to_string(),
@@ -406,6 +516,7 @@ mod tests {
                     max_group_volume_per_leg: 6000.0,
                     min_retail_volume: 100.0,
                     distributor_count: None,
+                    leg_quality: vec![],
                 }],
                 required_products: vec![],
             },

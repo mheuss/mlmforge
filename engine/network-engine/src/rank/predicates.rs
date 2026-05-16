@@ -4,7 +4,9 @@ use std::collections::HashMap;
 
 use uuid::Uuid;
 
-use crate::config::rank::{DistributorCountRequirement, RankDefinition, SearchMode};
+use crate::config::rank::{
+    DistributorCountRequirement, LegPredicate, LegQualityRequirement, RankDefinition, SearchMode,
+};
 use crate::rank::evaluator::VolumeIndex;
 use crate::rank::types::{DistributorPrimitives, EvaluatedRank, EvaluationError};
 use crate::tree::error::TreeError;
@@ -21,6 +23,20 @@ pub(crate) enum DistributorCountError {
 impl From<TreeError> for DistributorCountError {
     fn from(e: TreeError) -> Self {
         DistributorCountError::Tree(e)
+    }
+}
+
+/// Reasons leg_quality evaluation can fail. Caller maps these to
+/// `EvaluationError` variants with rank context attached.
+#[derive(Debug, PartialEq)]
+pub(crate) enum LegQualityError {
+    Tree(TreeError),
+    UnknownMinRank(String),
+}
+
+impl From<TreeError> for LegQualityError {
+    fn from(e: TreeError) -> Self {
+        LegQualityError::Tree(e)
     }
 }
 
@@ -153,6 +169,110 @@ pub(crate) fn distributor_count_meets(
     Ok(qualifying >= req.count as usize)
 }
 
+/// Pass when, for every requirement, at least `count` of `user_id`'s
+/// frontline legs contain a node matching the requirement's predicate.
+///
+/// A "leg" is a direct child of `user_id` plus that child's entire
+/// subtree (the child included). Requirements are AND-combined.
+pub(crate) fn leg_quality_meets(
+    reqs: &[LegQualityRequirement],
+    user_id: Uuid,
+    tree: &dyn TreeNavigator,
+    already: &HashMap<Uuid, EvaluatedRank>,
+    distributors: &HashMap<Uuid, DistributorPrimitives>,
+    rank_ordinals: &HashMap<String, u16>,
+) -> Result<bool, LegQualityError> {
+    if reqs.is_empty() {
+        return Ok(true); // BR5: empty is an exact no-op, no tree calls.
+    }
+    let children = tree.get_children(user_id)?;
+    for req in reqs {
+        let mut matching_legs: usize = 0;
+        for child in &children {
+            // A leg is the frontline child plus its whole subtree.
+            if leg_contains_match(
+                &req.predicate,
+                child.user_id,
+                tree,
+                already,
+                distributors,
+                rank_ordinals,
+            )? {
+                matching_legs += 1;
+            }
+        }
+        if matching_legs < req.count as usize {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Pass when the leg rooted at `leg_root` (the node itself plus its entire
+/// subtree) contains at least one node matching `predicate`. Short-circuits
+/// on the first match.
+fn leg_contains_match(
+    predicate: &LegPredicate,
+    leg_root: Uuid,
+    tree: &dyn TreeNavigator,
+    already: &HashMap<Uuid, EvaluatedRank>,
+    distributors: &HashMap<Uuid, DistributorPrimitives>,
+    rank_ordinals: &HashMap<String, u16>,
+) -> Result<bool, LegQualityError> {
+    if node_matches(predicate, leg_root, already, distributors, rank_ordinals)? {
+        return Ok(true);
+    }
+    // depth=0 is unbounded in TreeNavigator semantics. get_downline is
+    // deterministic BFS — reused here to preserve the NFR2 ordering guarantee.
+    for node in tree.get_downline(leg_root, 0)? {
+        if node_matches(
+            predicate,
+            node.user_id,
+            already,
+            distributors,
+            rank_ordinals,
+        )? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Test a single node against `predicate`.
+///
+/// `ContainsRank` resolves `min_rank` against `rank_ordinals` (unknown ranks
+/// raise `UnknownMinRank`) and reads the node's evaluated rank from `already`;
+/// a node that is absent or `Unranked` does not match. `ContainsPersonalVolume`
+/// reads the node's personal volume from `distributors`; a node absent from
+/// the map does not match. Plan validation (the Go layer) is the primary gate
+/// for `min_rank`; this error is defense in depth.
+fn node_matches(
+    predicate: &LegPredicate,
+    node_id: Uuid,
+    already: &HashMap<Uuid, EvaluatedRank>,
+    distributors: &HashMap<Uuid, DistributorPrimitives>,
+    rank_ordinals: &HashMap<String, u16>,
+) -> Result<bool, LegQualityError> {
+    match predicate {
+        LegPredicate::ContainsRank { min_rank } => {
+            let min_ordinal = rank_ordinals
+                .get(min_rank)
+                .copied()
+                .ok_or_else(|| LegQualityError::UnknownMinRank(min_rank.clone()))?;
+            match already.get(&node_id) {
+                Some(EvaluatedRank::Qualified { ordinal, .. }) => Ok(*ordinal >= min_ordinal),
+                Some(EvaluatedRank::Unranked) | None => Ok(false),
+            }
+        }
+        LegPredicate::ContainsPersonalVolume {
+            min_personal_volume,
+        } => match distributors.get(&node_id) {
+            Some(primitives) => Ok(primitives.personal_volume >= *min_personal_volume),
+            None => Ok(false),
+        },
+    }
+}
+
 /// Pass when every structure qualification on `rank` passes for `user_id`
 /// and the `required_products` clause passes.
 ///
@@ -238,6 +358,29 @@ pub(crate) fn satisfies(
                         referenced,
                     });
                 }
+            }
+        }
+        match leg_quality_meets(
+            &sq.leg_quality,
+            user_id,
+            *tree,
+            already,
+            distributors,
+            rank_ordinals,
+        ) {
+            Ok(true) => {}
+            Ok(false) => return Ok(false),
+            Err(LegQualityError::Tree(_)) => {
+                return Err(EvaluationError::DistributorNotInTree(
+                    user_id,
+                    sq.structure.clone(),
+                ));
+            }
+            Err(LegQualityError::UnknownMinRank(referenced)) => {
+                return Err(EvaluationError::UnknownMinRank {
+                    rank: rank.name.clone(),
+                    referenced,
+                });
             }
         }
     }
@@ -541,6 +684,179 @@ mod tests {
         );
     }
 
+    use crate::config::rank::{LegPredicate, LegQualityRequirement};
+
+    fn ranked(name: &str, ordinal: u16) -> EvaluatedRank {
+        EvaluatedRank::Qualified {
+            rank: name.to_string(),
+            ordinal,
+        }
+    }
+
+    #[test]
+    fn leg_quality_meets_empty_requirements_passes() {
+        // BR5: empty requirements is an exact no-op and makes no tree calls.
+        let tree = UnilevelTree::new();
+        let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
+        let distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
+        let ordinals: HashMap<String, u16> = HashMap::new();
+        assert!(leg_quality_meets(&[], uid(1), &tree, &already, &distributors, &ordinals).unwrap());
+    }
+
+    #[test]
+    fn leg_quality_meets_counts_legs_containing_rank() {
+        // Root 1 has two legs: 2 (with child 4) and 3. Node 4 is Gold.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uid(1), 0).unwrap();
+        tree.add_node(uid(2), uid(1), uid(1), 0).unwrap();
+        tree.add_node(uid(3), uid(1), uid(1), 0).unwrap();
+        tree.add_node(uid(4), uid(2), uid(2), 0).unwrap();
+
+        let mut already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
+        already.insert(uid(4), ranked("gold", 3));
+
+        let distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
+        let mut ordinals: HashMap<String, u16> = HashMap::new();
+        ordinals.insert("gold".to_string(), 3);
+
+        let reqs = vec![LegQualityRequirement {
+            count: 1,
+            predicate: LegPredicate::ContainsRank {
+                min_rank: "gold".to_string(),
+            },
+        }];
+        // Leg 2 contains a Gold node (4); leg 3 does not. One matching leg.
+        assert!(
+            leg_quality_meets(&reqs, uid(1), &tree, &already, &distributors, &ordinals).unwrap()
+        );
+
+        let reqs_two = vec![LegQualityRequirement {
+            count: 2,
+            predicate: LegPredicate::ContainsRank {
+                min_rank: "gold".to_string(),
+            },
+        }];
+        assert!(
+            !leg_quality_meets(&reqs_two, uid(1), &tree, &already, &distributors, &ordinals)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn leg_quality_meets_counts_legs_containing_personal_volume() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uid(1), 0).unwrap();
+        tree.add_node(uid(2), uid(1), uid(1), 0).unwrap();
+        tree.add_node(uid(3), uid(1), uid(1), 0).unwrap();
+
+        let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
+        let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
+        distributors.insert(uid(2), primitives_with_pv(200.0));
+        distributors.insert(uid(3), primitives_with_pv(50.0));
+        let ordinals: HashMap<String, u16> = HashMap::new();
+
+        let reqs = vec![LegQualityRequirement {
+            count: 1,
+            predicate: LegPredicate::ContainsPersonalVolume {
+                min_personal_volume: 200.0,
+            },
+        }];
+        // Only leg 2 has a node with PV >= 200.
+        assert!(
+            leg_quality_meets(&reqs, uid(1), &tree, &already, &distributors, &ordinals).unwrap()
+        );
+    }
+
+    #[test]
+    fn leg_quality_meets_and_combines_multiple_requirements() {
+        // Tiered, Oriflame-like: legs containing Gold AND a leg containing
+        // Diamond. Root 1 has legs 2, 3, 4. Nodes 2 and 3 are Gold; node 4
+        // is Diamond.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uid(1), 0).unwrap();
+        tree.add_node(uid(2), uid(1), uid(1), 0).unwrap();
+        tree.add_node(uid(3), uid(1), uid(1), 0).unwrap();
+        tree.add_node(uid(4), uid(1), uid(1), 0).unwrap();
+
+        let mut already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
+        already.insert(uid(2), ranked("gold", 3));
+        already.insert(uid(3), ranked("gold", 3));
+        already.insert(uid(4), ranked("diamond", 4));
+
+        let distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
+        let mut ordinals: HashMap<String, u16> = HashMap::new();
+        ordinals.insert("gold".to_string(), 3);
+        ordinals.insert("diamond".to_string(), 4);
+
+        // A Diamond node satisfies a `ContainsRank { min_rank: gold }` test
+        // too (ordinal 4 >= 3), so all three legs count as Gold legs.
+        let reqs = vec![
+            LegQualityRequirement {
+                count: 2,
+                predicate: LegPredicate::ContainsRank {
+                    min_rank: "gold".to_string(),
+                },
+            },
+            LegQualityRequirement {
+                count: 1,
+                predicate: LegPredicate::ContainsRank {
+                    min_rank: "diamond".to_string(),
+                },
+            },
+        ];
+        assert!(
+            leg_quality_meets(&reqs, uid(1), &tree, &already, &distributors, &ordinals).unwrap()
+        );
+
+        // Raise the Diamond requirement to 2 — only one Diamond leg exists.
+        let reqs_fail = vec![
+            LegQualityRequirement {
+                count: 2,
+                predicate: LegPredicate::ContainsRank {
+                    min_rank: "gold".to_string(),
+                },
+            },
+            LegQualityRequirement {
+                count: 2,
+                predicate: LegPredicate::ContainsRank {
+                    min_rank: "diamond".to_string(),
+                },
+            },
+        ];
+        assert!(
+            !leg_quality_meets(
+                &reqs_fail,
+                uid(1),
+                &tree,
+                &already,
+                &distributors,
+                &ordinals
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn leg_quality_meets_unknown_min_rank_errors() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uid(1), 0).unwrap();
+        tree.add_node(uid(2), uid(1), uid(1), 0).unwrap();
+
+        let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
+        let distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
+        let ordinals: HashMap<String, u16> = HashMap::new();
+
+        let reqs = vec![LegQualityRequirement {
+            count: 1,
+            predicate: LegPredicate::ContainsRank {
+                min_rank: "phantom".to_string(),
+            },
+        }];
+        let err = leg_quality_meets(&reqs, uid(1), &tree, &already, &distributors, &ordinals)
+            .unwrap_err();
+        assert_eq!(err, LegQualityError::UnknownMinRank("phantom".to_string()));
+    }
+
     use crate::config::rank::{
         DemotionPolicy, RankDefinition, RankQualification, StructureQualification,
     };
@@ -710,6 +1026,132 @@ mod tests {
         let ordinals: HashMap<String, u16> = HashMap::new(); // intentionally empty
         let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
         distributors.insert(uid(1), primitives);
+
+        let err = satisfies(
+            &rank,
+            uid(1),
+            &distributors,
+            &nav_map,
+            &idx,
+            &already,
+            &ordinals,
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            EvaluationError::UnknownMinRank {
+                rank: "silver".to_string(),
+                referenced: "phantom_rank".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn satisfies_passes_with_satisfied_leg_quality() {
+        // Subject 1 has two legs, each a node ranked "bronze".
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uid(1), 0).unwrap();
+        tree.add_node(uid(2), uid(1), uid(1), 0).unwrap();
+        tree.add_node(uid(3), uid(1), uid(1), 0).unwrap();
+        let idx = VolumeIndex::build(&[]);
+
+        let mut nav_map: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+        nav_map.insert("Test".to_string(), &tree);
+
+        let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
+        distributors.insert(uid(1), primitives_with_pv(100.0));
+
+        let mut rank = rank_with_pv_and_gv("silver", 2, "Test", 100.0, 0.0);
+        rank.qualification.structures[0].leg_quality = vec![LegQualityRequirement {
+            count: 2,
+            predicate: LegPredicate::ContainsRank {
+                min_rank: "bronze".to_string(),
+            },
+        }];
+
+        let mut already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
+        already.insert(uid(2), ranked("bronze", 1));
+        already.insert(uid(3), ranked("bronze", 1));
+        let mut ordinals: HashMap<String, u16> = HashMap::new();
+        ordinals.insert("bronze".to_string(), 1);
+
+        assert!(
+            satisfies(
+                &rank,
+                uid(1),
+                &distributors,
+                &nav_map,
+                &idx,
+                &already,
+                &ordinals
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn satisfies_fails_with_unsatisfied_leg_quality() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uid(1), 0).unwrap();
+        tree.add_node(uid(2), uid(1), uid(1), 0).unwrap();
+        let idx = VolumeIndex::build(&[]);
+
+        let mut nav_map: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+        nav_map.insert("Test".to_string(), &tree);
+
+        let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
+        distributors.insert(uid(1), primitives_with_pv(100.0));
+
+        let mut rank = rank_with_pv_and_gv("silver", 2, "Test", 100.0, 0.0);
+        rank.qualification.structures[0].leg_quality = vec![LegQualityRequirement {
+            count: 2, // requires 2 bronze legs; only one leg exists
+            predicate: LegPredicate::ContainsRank {
+                min_rank: "bronze".to_string(),
+            },
+        }];
+
+        let mut already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
+        already.insert(uid(2), ranked("bronze", 1));
+        let mut ordinals: HashMap<String, u16> = HashMap::new();
+        ordinals.insert("bronze".to_string(), 1);
+
+        assert!(
+            !satisfies(
+                &rank,
+                uid(1),
+                &distributors,
+                &nav_map,
+                &idx,
+                &already,
+                &ordinals
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn satisfies_maps_leg_quality_unknown_min_rank_error() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uid(1), 0).unwrap();
+        tree.add_node(uid(2), uid(1), uid(1), 0).unwrap();
+        let idx = VolumeIndex::build(&[]);
+
+        let mut nav_map: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+        nav_map.insert("Test".to_string(), &tree);
+
+        let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
+        distributors.insert(uid(1), primitives_with_pv(100.0));
+
+        let mut rank = rank_with_pv_and_gv("silver", 2, "Test", 100.0, 0.0);
+        rank.qualification.structures[0].leg_quality = vec![LegQualityRequirement {
+            count: 1,
+            predicate: LegPredicate::ContainsRank {
+                min_rank: "phantom_rank".to_string(),
+            },
+        }];
+
+        let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
+        let ordinals: HashMap<String, u16> = HashMap::new();
 
         let err = satisfies(
             &rank,

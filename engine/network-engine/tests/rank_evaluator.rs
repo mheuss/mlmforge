@@ -463,10 +463,11 @@ fn evaluate_ranks_with_populated_leg_quality_gates_rank() {
     let result = evaluate_ranks(&plan, &nav, &inputs).unwrap();
 
     // subject_a: both reqs satisfied (2 associate legs + 1 leg with PV >= 100).
-    // evaluate_ranks evaluates deepest-first, so nodes 4-7 are ranked as
-    // associate before subjects 2 and 3 are evaluated. ContainsRank reads
-    // those results from the `already` map — exactly the interaction this test
-    // exercises end-to-end.
+    // evaluate_ranks iterates to a fixpoint, so nodes 4-7 are ranked
+    // as associate and counted toward subjects 2 and 3 regardless of
+    // evaluation order. ContainsRank reads those results from the
+    // `already` map — exactly the interaction this test exercises
+    // end-to-end.
     assert_eq!(
         result.ranks.get(&uuid_from_index(2)),
         Some(&EvaluatedRank::Qualified {

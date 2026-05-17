@@ -1,4 +1,4 @@
-//! Bottom-up walk driver and ladder ascent loop.
+//! Fixpoint evaluation driver and ladder ascent loop.
 
 use std::collections::HashMap;
 

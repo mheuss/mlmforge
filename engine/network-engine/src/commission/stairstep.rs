@@ -1947,4 +1947,124 @@ mod tests {
             "uuid(2) should earn exactly once (Tier 0 only)"
         );
     }
+
+    #[test]
+    fn multi_tier_six_tier_reference() {
+        // CLAUDE.md reference-data mandate: a known-good hand-verified
+        // scenario for the full six-tier ladder. Exercises the multi-tier
+        // override walk against Oriflame's published rates.
+        //
+        // Chain: uuid(0) (root) -> uuid(1) -> ... -> uuid(6).
+        // Every node has rank "director" == threshold_rank, so all seven
+        // are breakaways. PV is 0 for uuid(0)..uuid(5) and 10_000 for
+        // uuid(6). Eligibility is permissive. Multiplier is 1.0.
+        //
+        // First-Line Split-Outs: each of uuid(0)..uuid(5) owns the next
+        // breakaway in the chain (count 1). uuid(6) owns none (count 0).
+        // All six split-out ancestors of uuid(6) meet min_split_out_groups=1.
+        //
+        // Group volumes: uuid(6) is its own leader and accumulates
+        // PV 10_000. uuid(0)..uuid(5) have group_vol 0 and are skipped.
+        // `volume = vec![]` skips Walk 1, so the only earnings are the
+        // six tier earnings on source uuid(6).
+        //
+        // For source uuid(6), split-out ancestors are uuid(5) (gen 1)
+        // through uuid(0) (gen 6). Each tier pays its nearest ancestor at
+        // or below its depth floor:
+        //   Tier 0 (depth_floor 1): uuid(5) earns 0.05 * 10000 = 500.0
+        //   Tier 1 (depth_floor 2): uuid(4) earns 0.02 * 10000 = 200.0
+        //   Tier 2 (depth_floor 3): uuid(3) earns 0.01 * 10000 = 100.0
+        //   Tier 3 (depth_floor 4): uuid(2) earns 0.005 * 10000 = 50.0
+        //   Tier 4 (depth_floor 5): uuid(1) earns 0.0025 * 10000 = 25.0
+        //   Tier 5 (depth_floor 6): uuid(0) earns 0.00125 * 10000 = 12.5
+        let tree = build_chain(7);
+        let structure = test_multi_tier_structure(vec![
+            BreakawayTier {
+                min_split_out_groups: 1,
+                rate: 0.05,
+            },
+            BreakawayTier {
+                min_split_out_groups: 1,
+                rate: 0.02,
+            },
+            BreakawayTier {
+                min_split_out_groups: 1,
+                rate: 0.01,
+            },
+            BreakawayTier {
+                min_split_out_groups: 1,
+                rate: 0.005,
+            },
+            BreakawayTier {
+                min_split_out_groups: 1,
+                rate: 0.0025,
+            },
+            BreakawayTier {
+                min_split_out_groups: 1,
+                rate: 0.00125,
+            },
+        ]);
+        // Permissive eligibility so uuid(0)..uuid(5) with PV 0 still earn.
+        let eligibility = CommissionEligibility {
+            minimum_pv: 0.0,
+            require_order_in_period: false,
+            eligible_statuses: vec![],
+            active_leg_tiers: vec![],
+        };
+        let plan = build_test_stairstep_plan(eligibility, structure.clone());
+
+        let mut snapshots = HashMap::new();
+        for i in 0..=5 {
+            snapshots.insert(uuid(i), snapshot_with_rank("director", 0.0));
+        }
+        snapshots.insert(uuid(6), snapshot_with_rank("director", 10_000.0));
+
+        // `volume = vec![]` so only Walk 2 runs.
+        let volume: Vec<VolumeSource> = vec![];
+
+        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // Exactly six earnings, all on source uuid(6), one per tier.
+        assert_eq!(
+            result.len(),
+            6,
+            "expected exactly 6 override earnings, got {result:?}"
+        );
+        assert!(
+            result.iter().all(|e| e.source_id == uuid(6)),
+            "all earnings should be on uuid(6): {result:?}"
+        );
+
+        // Hand-verified expected (earner_id, level, rate, dollar_amount)
+        // for each tier of the Oriflame ladder.
+        let expected = [
+            (uuid(5), 1u8, 0.05, 500.0),
+            (uuid(4), 2u8, 0.02, 200.0),
+            (uuid(3), 3u8, 0.01, 100.0),
+            (uuid(2), 4u8, 0.005, 50.0),
+            (uuid(1), 5u8, 0.0025, 25.0),
+            (uuid(0), 6u8, 0.00125, 12.5),
+        ];
+
+        for (earner, level, rate, dollar_amount) in expected {
+            let earning = result
+                .iter()
+                .find(|e| e.earner_id == earner && e.level == level)
+                .unwrap_or_else(|| {
+                    panic!("expected earning for earner {earner:?} at level {level}")
+                });
+            assert!(
+                (earning.rate - rate).abs() < FP_TOL,
+                "rate mismatch for {earner:?}: {earning:?}",
+            );
+            assert!(
+                (earning.cv_amount - 10_000.0).abs() < FP_TOL,
+                "cv_amount mismatch for {earner:?}: {earning:?}",
+            );
+            assert!(
+                (earning.dollar_amount - dollar_amount).abs() < FP_TOL,
+                "dollar_amount mismatch for {earner:?}: {earning:?}",
+            );
+        }
+    }
 }

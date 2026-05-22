@@ -231,6 +231,14 @@ fn walk_overrides(
 /// Dollar amounts use `broad_pct` (broad commission percent) because
 /// overrides pay from the same commission pool as level commissions.
 /// The pool is `cv * broad_pct * multiplier`, then split by rate.
+///
+/// # Invariant
+///
+/// Callers must dispatch on `OverrideStrategy` before invoking. This
+/// function only handles `OverrideStrategy::SingleWalk` and panics on
+/// any other strategy. The only caller, [`walk_overrides`], already
+/// filters on the `SingleWalk` arm and returns early when
+/// `structure.breakaway` is `None`.
 fn walk_single_overrides(
     tree: &UnilevelTree,
     structure: &StairstepStructureConfig,
@@ -240,17 +248,24 @@ fn walk_single_overrides(
     broad_pct: f64,
     multiplier: f64,
 ) -> Vec<CommissionEarning> {
-    let breakaway_cfg = match &structure.breakaway {
-        Some(b) => b,
-        None => return Vec::new(),
-    };
+    // walk_overrides has already returned early when breakaway is None,
+    // so we can unwrap here. The MultiTier arm below is similarly
+    // unreachable.
+    let breakaway_cfg = structure
+        .breakaway
+        .as_ref()
+        .expect("walk_single_overrides called without breakaway config; walk_overrides should have returned early");
 
     let (override_mode, generation_overrides) = match &breakaway_cfg.overrides {
         crate::config::stairstep::OverrideStrategy::SingleWalk {
             mode,
             generation_overrides,
         } => (mode, generation_overrides),
-        crate::config::stairstep::OverrideStrategy::MultiTier(_) => return Vec::new(),
+        crate::config::stairstep::OverrideStrategy::MultiTier(_) => {
+            unreachable!(
+                "walk_single_overrides called with MultiTier; walk_overrides should have dispatched"
+            )
+        }
     };
 
     let mut earnings = Vec::new();

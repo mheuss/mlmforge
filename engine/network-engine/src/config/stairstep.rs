@@ -58,6 +58,9 @@ pub enum OverrideStrategy {
 ///
 /// Tiers are listed in depth order. The first tier is split-out depth 1,
 /// the second is depth 2, and so on.
+///
+/// Non-empty `tiers` is enforced by the JSON schema and the Go validator
+/// (HEU-428 Task 7), not by this type.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MultiTierConfig {
     pub tiers: Vec<BreakawayTier>,
@@ -757,7 +760,11 @@ mod tests {
             OverrideStrategy::SingleWalk { mode, .. } => mode,
             OverrideStrategy::MultiTier(_) => panic!("expected SingleWalk"),
         };
-        assert!(matches!(mode, OverrideMode::Differential(_)));
+        let OverrideMode::Differential(diff) = mode else {
+            panic!("expected Differential override mode");
+        };
+        assert_eq!(diff.rank_rates["director"], 0.10);
+        assert_eq!(diff.min_override, 0.02);
     }
 
     #[test]

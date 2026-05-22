@@ -146,7 +146,8 @@ fn count_first_line_split_outs(
     for &breakaway_id in breakaways {
         let parent_id = match tree.get_parent(breakaway_id) {
             Ok(Some(parent)) => parent.user_id,
-            _ => continue, // root breakaway, or not in tree — skip
+            Ok(None) => continue, // root breakaway — not attributed to anyone
+            Err(_) => continue,   // breakaway not in tree — defensive skip
         };
         let owner = find_group_leader(tree, parent_id, breakaways);
         *counts.entry(owner).or_insert(0) += 1;
@@ -486,7 +487,8 @@ fn walk_multi_tier_overrides(
         );
 
         for (tier_index, tier) in config.tiers.iter().enumerate() {
-            let depth_floor = (tier_index + 1) as u8;
+            let depth_floor = u8::try_from(tier_index + 1)
+                .expect("more than 255 tiers — should be rejected by JSON schema and Go validator");
 
             let earner = ancestors.iter().find(|entry| {
                 entry.generation >= depth_floor
@@ -1859,7 +1861,11 @@ mod tests {
         //   Tier 2: find gen>=3 with count>=1 -> uuid(0). Earns 0.01 at level 3.
         //
         // Bonus invariant: uuid(2) earns Tier 0 only (not Tier 1 or 2 even though
-        // it has count 1, because gen 1 is below tier 1's depth floor).
+        // it has count 1, because gen 1 is below those tiers' depth floors).
+        // The uuid(2) count assertion below locks this down: if the
+        // `generation >= depth_floor` filter is removed, uuid(2) — the nearest
+        // split-out for source uuid(3) — would also win Tiers 1 and 2 via
+        // `.find()` order.
         let tree = build_chain(5);
         let structure = test_multi_tier_structure(vec![
             BreakawayTier {
@@ -1919,5 +1925,26 @@ mod tests {
         assert_eq!(tier2.level, 3);
         assert!((tier2.rate - 0.01).abs() < FP_TOL);
         assert!((tier2.dollar_amount - 3.0).abs() < FP_TOL);
+
+        // Tier-count invariant: exactly one earner per tier on uuid(3)'s
+        // group, so the source has exactly three override earnings. Catches
+        // a regression where the per-tier `find()` accidentally emits more
+        // than one earner.
+        let on_uuid3 = result.iter().filter(|e| e.source_id == uuid(3)).count();
+        assert_eq!(
+            on_uuid3, 3,
+            "expected exactly 3 override earnings on uuid(3)"
+        );
+
+        // Depth-floor invariant: uuid(2) sits at gen 1, so it qualifies only
+        // for Tier 0. If the `generation >= depth_floor` filter is removed,
+        // uuid(2) — the nearest split-out — would also win Tiers 1 and 2 by
+        // `.find()` order, bumping its earning count from 1 to 3.
+        let uuid2_earnings: Vec<_> = result.iter().filter(|e| e.earner_id == uuid(2)).collect();
+        assert_eq!(
+            uuid2_earnings.len(),
+            1,
+            "uuid(2) should earn exactly once (Tier 0 only)"
+        );
     }
 }

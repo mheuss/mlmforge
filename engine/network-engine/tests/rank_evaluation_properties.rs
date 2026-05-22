@@ -2,8 +2,8 @@ mod common;
 
 use common::uuid_from_index;
 use network_engine::config::rank::{
-    DemotionPolicy, DistributorCountRequirement, RankDefinition, RankQualification, SearchMode,
-    StructureQualification,
+    DemotionPolicy, DistributorCountRequirement, LegPredicate, LegQualityRequirement,
+    RankDefinition, RankQualification, SearchMode, StructureQualification,
 };
 use network_engine::config::{CompensationPlan, StructureConfig, UnilevelStructureConfig};
 use network_engine::rank::{DistributorPrimitives, EvaluationInputs, evaluate_ranks};
@@ -317,6 +317,196 @@ proptest! {
             result.is_ok(),
             "evaluate_ranks must converge on a cyclic multi-tree plan: {:?}",
             result.err()
+        );
+    }
+}
+
+/// Builds `DistributorPrimitives` with the given personal volume. The other
+/// fields are fixed: active, with an order in the period.
+fn prim(pv: f64) -> DistributorPrimitives {
+    DistributorPrimitives {
+        personal_volume: pv,
+        retail_volume: 0.0,
+        status: "active".to_string(),
+        has_order_in_period: true,
+        active_products: vec![],
+    }
+}
+
+/// A two-rank plan on the "Test" structure: `base` (ordinal 1, PV >= `base_pv`)
+/// and `gated` (ordinal 2, PV >= 0) which additionally requires
+/// `gated_leg_quality`. Reuses `build_random_plan`'s structure config.
+fn leg_quality_plan(
+    base_pv: f64,
+    gated_leg_quality: Vec<LegQualityRequirement>,
+) -> CompensationPlan {
+    let mut plan = build_random_plan();
+    plan.ranks = vec![
+        RankDefinition {
+            name: "base".to_string(),
+            ordinal: 1,
+            qualification: RankQualification {
+                structures: vec![StructureQualification {
+                    structure: "Test".to_string(),
+                    personal_volume: base_pv,
+                    group_volume: 0.0,
+                    max_group_volume_per_leg: f64::MAX,
+                    min_retail_volume: 0.0,
+                    distributor_count: None,
+                    leg_quality: vec![],
+                }],
+                required_products: vec![],
+            },
+            qualified_structures: vec!["Test".to_string()],
+            demotion_policy: DemotionPolicy::PromotionOnly,
+        },
+        RankDefinition {
+            name: "gated".to_string(),
+            ordinal: 2,
+            qualification: RankQualification {
+                structures: vec![StructureQualification {
+                    structure: "Test".to_string(),
+                    personal_volume: 0.0,
+                    group_volume: 0.0,
+                    max_group_volume_per_leg: f64::MAX,
+                    min_retail_volume: 0.0,
+                    distributor_count: None,
+                    leg_quality: gated_leg_quality,
+                }],
+                required_products: vec![],
+            },
+            qualified_structures: vec!["Test".to_string()],
+            demotion_policy: DemotionPolicy::PromotionOnly,
+        },
+    ];
+    plan
+}
+
+proptest! {
+    /// Oracle check for `leg_quality` gating. The subject has one leaf child
+    /// per drawn PV, so each leg contains a PV-matching node exactly when that
+    /// child clears the threshold. The subject must reach `gated` if and only
+    /// if at least `required` legs qualify — checked against an independent
+    /// count over the same PVs.
+    #[test]
+    fn leg_quality_gates_rank_iff_enough_legs_match(
+        child_pvs in prop::collection::vec(0u32..300, 1..8usize),
+        threshold in 1u32..300,
+        required in 1u16..8,
+    ) {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uuid_from_index(0), 0).unwrap();
+        for i in 0..child_pvs.len() {
+            tree.add_node(
+                uuid_from_index(i + 1),
+                uuid_from_index(0),
+                uuid_from_index(0),
+                i as i64,
+            ).unwrap();
+        }
+        let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+        nav.insert("Test".to_string(), &tree);
+
+        let plan = leg_quality_plan(
+            0.0,
+            vec![LegQualityRequirement {
+                count: required,
+                predicate: LegPredicate::ContainsPersonalVolume {
+                    min_personal_volume: threshold as f64,
+                },
+            }],
+        );
+
+        let mut distributors = HashMap::new();
+        distributors.insert(uuid_from_index(0), prim(50.0));
+        for (i, pv) in child_pvs.iter().enumerate() {
+            distributors.insert(uuid_from_index(i + 1), prim(*pv as f64));
+        }
+        let inputs = EvaluationInputs { distributors, volume_sources: vec![] };
+
+        let result = evaluate_ranks(&plan, &nav, &inputs).unwrap();
+
+        // Oracle: each leg is a single leaf, so it qualifies exactly when that
+        // child's PV clears the threshold.
+        let qualifying_legs = child_pvs.iter().filter(|pv| **pv >= threshold).count();
+        let expected = if qualifying_legs >= required as usize {
+            "gated"
+        } else {
+            "base"
+        };
+        let subject_rank = match result.ranks.get(&uuid_from_index(0)) {
+            Some(network_engine::rank::EvaluatedRank::Qualified { rank, .. }) => rank.as_str(),
+            _ => "<unranked>",
+        };
+        prop_assert_eq!(
+            subject_rank, expected,
+            "child PVs {:?}, threshold {}, required {}: {} legs qualify",
+            child_pvs, threshold, required, qualifying_legs,
+        );
+    }
+}
+
+proptest! {
+    /// Monotonicity of `ContainsRank` leg quality. Raising every child's PV
+    /// can only raise children into the `base` rank, never out of it, so it
+    /// can only add qualifying legs — never remove them. The subject's
+    /// evaluated rank must therefore never decrease. This is the per-predicate
+    /// monotonicity that design-rationale 026 relies on for fixpoint
+    /// convergence.
+    #[test]
+    fn leg_quality_is_monotone_in_descendant_rank(
+        child_pvs in prop::collection::vec(0u32..250, 1..8usize),
+        increase in 1u32..200,
+        base_threshold in 1u32..250,
+        required in 1u16..6,
+    ) {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uuid_from_index(0), 0).unwrap();
+        for i in 0..child_pvs.len() {
+            tree.add_node(
+                uuid_from_index(i + 1),
+                uuid_from_index(0),
+                uuid_from_index(0),
+                i as i64,
+            ).unwrap();
+        }
+        let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+        nav.insert("Test".to_string(), &tree);
+
+        // `gated` needs `required` legs each containing a `base`-or-better
+        // node; a child reaches `base` once its PV clears `base_threshold`.
+        let plan = leg_quality_plan(
+            base_threshold as f64,
+            vec![LegQualityRequirement {
+                count: required,
+                predicate: LegPredicate::ContainsRank {
+                    min_rank: "base".to_string(),
+                },
+            }],
+        );
+
+        // The subject's PV clears any `base_threshold` draw, so the subject is
+        // always Qualified — only its leg structure varies between runs.
+        let subject_ordinal = |bump: u32| -> u16 {
+            let mut distributors = HashMap::new();
+            distributors.insert(uuid_from_index(0), prim(300.0));
+            for (i, pv) in child_pvs.iter().enumerate() {
+                distributors.insert(uuid_from_index(i + 1), prim((*pv + bump) as f64));
+            }
+            let result = evaluate_ranks(
+                &plan,
+                &nav,
+                &EvaluationInputs { distributors, volume_sources: vec![] },
+            ).unwrap();
+            match result.ranks.get(&uuid_from_index(0)) {
+                Some(network_engine::rank::EvaluatedRank::Qualified { ordinal, .. }) => *ordinal,
+                _ => 0,
+            }
+        };
+
+        prop_assert!(
+            subject_ordinal(increase) >= subject_ordinal(0),
+            "raising every descendant's PV must not lower the subject's leg-quality rank",
         );
     }
 }

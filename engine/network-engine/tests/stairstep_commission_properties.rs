@@ -219,7 +219,7 @@ proptest! {
         cv in 1.0..10000.0f64,
     ) {
         use network_engine::config::stairstep::{
-            BreakawayConfig, DifferentialConfig, OverrideMode,
+            BreakawayConfig, DifferentialConfig, OverrideMode, OverrideStrategy,
         };
 
         let (plan, mut structure) = build_stairstep_plan(5);
@@ -230,16 +230,18 @@ proptest! {
         structure.breakaway = Some(BreakawayConfig {
             threshold_rank: "director".to_string(),
             exclude_breakaway_gv: false,
-            override_mode: OverrideMode::Differential(DifferentialConfig {
-                rank_rates: {
-                    let mut m = std::collections::BTreeMap::new();
-                    m.insert("member".to_string(), 0.05);
-                    m.insert("director".to_string(), 0.10);
-                    m
-                },
-                min_override: 0.02,
-            }),
-            generation_overrides: None,
+            overrides: OverrideStrategy::SingleWalk {
+                mode: OverrideMode::Differential(DifferentialConfig {
+                    rank_rates: {
+                        let mut m = std::collections::BTreeMap::new();
+                        m.insert("member".to_string(), 0.05);
+                        m.insert("director".to_string(), 0.10);
+                        m
+                    },
+                    min_override: 0.02,
+                }),
+                generation_overrides: None,
+            },
         });
 
         let mut tree = UnilevelTree::new();
@@ -294,7 +296,7 @@ proptest! {
         tree_size in 3..30usize,
     ) {
         use network_engine::config::stairstep::{
-            BreakawayConfig, DifferentialConfig, OverrideMode,
+            BreakawayConfig, DifferentialConfig, OverrideMode, OverrideStrategy,
         };
 
         let (plan, mut structure) = build_stairstep_plan(5);
@@ -304,16 +306,18 @@ proptest! {
         structure.breakaway = Some(BreakawayConfig {
             threshold_rank: "director".to_string(),
             exclude_breakaway_gv: false,
-            override_mode: OverrideMode::Differential(DifferentialConfig {
-                rank_rates: {
-                    let mut m = std::collections::BTreeMap::new();
-                    m.insert("member".to_string(), 0.05);
-                    m.insert("director".to_string(), 0.10);
-                    m
-                },
-                min_override: 0.02,
-            }),
-            generation_overrides: None,
+            overrides: OverrideStrategy::SingleWalk {
+                mode: OverrideMode::Differential(DifferentialConfig {
+                    rank_rates: {
+                        let mut m = std::collections::BTreeMap::new();
+                        m.insert("member".to_string(), 0.05);
+                        m.insert("director".to_string(), 0.10);
+                        m
+                    },
+                    min_override: 0.02,
+                }),
+                generation_overrides: None,
+            },
         });
 
         let mut tree = UnilevelTree::new();

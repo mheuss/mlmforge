@@ -182,20 +182,11 @@ fn resolve_gen1_rate(
 
 /// Walk 2 produces override earnings on breakaway group volume.
 ///
-/// Two override modes determine how the rate is resolved:
-/// - **Differential:** ancestor_rate - breakaway_rate, floored at
-///   `min_override` when the gap is zero or negative.
-/// - **FixedOverride:** flat per-rank rate lookup, independent of the
-///   breakaway leader's rank.
-///
-/// Both modes use `resolve_gen1_rate` for generation-1 (or non-generation)
-/// rate resolution. When generation overrides are configured, generation 1
-/// uses the mode-specific rate. Generations 2+ use rates from the
-/// generation override table regardless of mode.
-///
-/// Dollar amounts use `broad_pct` (broad commission percent) because
-/// overrides pay from the same commission pool as level commissions.
-/// The pool is `cv * broad_pct * multiplier`, then split by rate.
+/// The breakaway config's `OverrideStrategy` selects the walk:
+/// - **SingleWalk:** one override walk. Delegates to
+///   [`walk_single_overrides`].
+/// - **MultiTier:** an ordered ladder of override tiers. Placeholder for
+///   now — implemented in HEU-428 Task 3.
 fn walk_overrides(
     tree: &UnilevelTree,
     structure: &StairstepStructureConfig,
@@ -210,41 +201,86 @@ fn walk_overrides(
         None => return Vec::new(),
     };
 
-    let override_mode = &breakaway_cfg.override_mode;
+    match &breakaway_cfg.overrides {
+        crate::config::stairstep::OverrideStrategy::SingleWalk { .. } => walk_single_overrides(
+            tree,
+            structure,
+            snapshots,
+            prep,
+            rank_ordinals,
+            broad_pct,
+            multiplier,
+        ),
+        crate::config::stairstep::OverrideStrategy::MultiTier(_) => Vec::new(),
+    }
+}
+
+/// Run the single override walk for a breakaway plan.
+///
+/// Two override modes determine how the rate is resolved:
+/// - **Differential:** ancestor_rate - breakaway_rate, floored at
+///   `min_override` when the gap is zero or negative.
+/// - **FixedOverride:** flat per-rank rate lookup, independent of the
+///   breakaway leader's rank.
+///
+/// Both modes use `resolve_gen1_rate` for generation-1 (or non-generation)
+/// rate resolution. When generation overrides are configured, generation 1
+/// uses the mode-specific rate. Generations 2+ use rates from the
+/// generation override table regardless of mode.
+///
+/// Dollar amounts use `broad_pct` (broad commission percent) because
+/// overrides pay from the same commission pool as level commissions.
+/// The pool is `cv * broad_pct * multiplier`, then split by rate.
+fn walk_single_overrides(
+    tree: &UnilevelTree,
+    structure: &StairstepStructureConfig,
+    snapshots: &HashMap<Uuid, DistributorSnapshot>,
+    prep: &PrepResult,
+    rank_ordinals: &HashMap<&str, u16>,
+    broad_pct: f64,
+    multiplier: f64,
+) -> Vec<CommissionEarning> {
+    let breakaway_cfg = match &structure.breakaway {
+        Some(b) => b,
+        None => return Vec::new(),
+    };
+
+    let (override_mode, generation_overrides) = match &breakaway_cfg.overrides {
+        crate::config::stairstep::OverrideStrategy::SingleWalk {
+            mode,
+            generation_overrides,
+        } => (mode, generation_overrides),
+        crate::config::stairstep::OverrideStrategy::MultiTier(_) => return Vec::new(),
+    };
 
     let mut earnings = Vec::new();
 
     // Pre-build generation override candidates if configured. This set
     // is the same for every breakaway, so we build it once rather than
     // per-iteration.
-    let gen_override_candidates = breakaway_cfg
-        .generation_overrides
-        .as_ref()
-        .and_then(|gen_cfg| {
-            let boundary_ordinal = match rank_ordinals.get(gen_cfg.boundary_rank.as_str()).copied()
-            {
-                Some(ord) => ord,
-                None => {
-                    log::warn!(
-                        "generation override boundary_rank '{}' not found in plan ranks; \
+    let gen_override_candidates = generation_overrides.as_ref().and_then(|gen_cfg| {
+        let boundary_ordinal = match rank_ordinals.get(gen_cfg.boundary_rank.as_str()).copied() {
+            Some(ord) => ord,
+            None => {
+                log::warn!(
+                    "generation override boundary_rank '{}' not found in plan ranks; \
                                  generation overrides will be skipped",
-                        gen_cfg.boundary_rank
-                    );
-                    return None;
-                }
-            };
+                    gen_cfg.boundary_rank
+                );
+                return None;
+            }
+        };
 
-            Some(
-                snapshots
-                    .iter()
-                    .filter(|(_, snap)| {
-                        rank_ordinals.get(snap.rank.as_str()).copied().unwrap_or(0)
-                            >= boundary_ordinal
-                    })
-                    .map(|(id, _)| *id)
-                    .collect::<HashSet<Uuid>>(),
-            )
-        });
+        Some(
+            snapshots
+                .iter()
+                .filter(|(_, snap)| {
+                    rank_ordinals.get(snap.rank.as_str()).copied().unwrap_or(0) >= boundary_ordinal
+                })
+                .map(|(id, _)| *id)
+                .collect::<HashSet<Uuid>>(),
+        )
+    });
 
     for &breakaway_id in &prep.breakaways {
         let group_vol = prep
@@ -262,10 +298,9 @@ fn walk_overrides(
             None => continue,
         };
 
-        if let (Some(gen_cfg), Some(override_candidates)) = (
-            &breakaway_cfg.generation_overrides,
-            gen_override_candidates.as_ref(),
-        ) {
+        if let (Some(gen_cfg), Some(override_candidates)) =
+            (generation_overrides, gen_override_candidates.as_ref())
+        {
             // --- Generation override mode ---
             let boundary_check = |_: Uuid| -> bool { true };
 
@@ -494,7 +529,7 @@ mod tests {
     use crate::config::rank::{DemotionPolicy, RankDefinition, RankQualification};
     use crate::config::stairstep::{
         BreakawayConfig, BreakawayGenerationConfig, DifferentialConfig, FixedOverrideConfig,
-        OverrideMode,
+        OverrideMode, OverrideStrategy,
     };
     use crate::config::{StairstepStructureConfig, StructureConfig};
     use std::collections::BTreeMap;
@@ -551,16 +586,18 @@ mod tests {
             breakaway: Some(BreakawayConfig {
                 threshold_rank: "director".to_string(),
                 exclude_breakaway_gv: true,
-                override_mode: OverrideMode::Differential(DifferentialConfig {
-                    rank_rates: {
-                        let mut m = BTreeMap::new();
-                        m.insert("director".to_string(), 0.10);
-                        m.insert("senior_director".to_string(), 0.15);
-                        m
-                    },
-                    min_override: 0.02,
-                }),
-                generation_overrides: None,
+                overrides: OverrideStrategy::SingleWalk {
+                    mode: OverrideMode::Differential(DifferentialConfig {
+                        rank_rates: {
+                            let mut m = BTreeMap::new();
+                            m.insert("director".to_string(), 0.10);
+                            m.insert("senior_director".to_string(), 0.15);
+                            m
+                        },
+                        min_override: 0.02,
+                    }),
+                    generation_overrides: None,
+                },
             }),
         }
     }
@@ -955,9 +992,12 @@ mod tests {
         // No override earnings should be produced.
         let tree = build_chain(3);
         let mut structure = test_stairstep_structure();
-        match &mut structure.breakaway.as_mut().unwrap().override_mode {
-            OverrideMode::Differential(diff) => diff.min_override = 0.0,
-            OverrideMode::FixedOverride(_) => panic!("expected Differential override mode"),
+        match &mut structure.breakaway.as_mut().unwrap().overrides {
+            OverrideStrategy::SingleWalk { mode, .. } => match mode {
+                OverrideMode::Differential(diff) => diff.min_override = 0.0,
+                OverrideMode::FixedOverride(_) => panic!("expected Differential override mode"),
+            },
+            OverrideStrategy::MultiTier(_) => panic!("expected SingleWalk override strategy"),
         }
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
@@ -1110,18 +1150,24 @@ mod tests {
         //   No generation 2 (no more ancestors).
         let tree = build_chain(5);
         let mut structure = test_stairstep_structure();
-        structure.breakaway.as_mut().unwrap().generation_overrides =
-            Some(BreakawayGenerationConfig {
-                max_generations: 3,
-                rates: {
-                    let mut m = BTreeMap::new();
-                    m.insert(1, 0.05);
-                    m.insert(2, 0.03);
-                    m.insert(3, 0.01);
-                    m
-                },
-                boundary_rank: "director".to_string(),
-            });
+        let OverrideStrategy::SingleWalk {
+            generation_overrides,
+            ..
+        } = &mut structure.breakaway.as_mut().unwrap().overrides
+        else {
+            panic!("expected SingleWalk override strategy");
+        };
+        *generation_overrides = Some(BreakawayGenerationConfig {
+            max_generations: 3,
+            rates: {
+                let mut m = BTreeMap::new();
+                m.insert(1, 0.05);
+                m.insert(2, 0.03);
+                m.insert(3, 0.01);
+                m
+            },
+            boundary_rank: "director".to_string(),
+        });
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
@@ -1195,15 +1241,17 @@ mod tests {
             breakaway: Some(BreakawayConfig {
                 threshold_rank: "director".to_string(),
                 exclude_breakaway_gv: true,
-                override_mode: OverrideMode::FixedOverride(FixedOverrideConfig {
-                    rank_rates: {
-                        let mut m = BTreeMap::new();
-                        m.insert("director".to_string(), 0.05);
-                        m.insert("senior_director".to_string(), 0.08);
-                        m
-                    },
-                }),
-                generation_overrides: None,
+                overrides: OverrideStrategy::SingleWalk {
+                    mode: OverrideMode::FixedOverride(FixedOverrideConfig {
+                        rank_rates: {
+                            let mut m = BTreeMap::new();
+                            m.insert("director".to_string(), 0.05);
+                            m.insert("senior_director".to_string(), 0.08);
+                            m
+                        },
+                    }),
+                    generation_overrides: None,
+                },
             }),
         }
     }
@@ -1335,17 +1383,23 @@ mod tests {
         // Gen 2 dollar = 300 * 0.40 * 1.0 * 0.03 = 3.60
         let tree = build_chain(4);
         let mut structure = test_fixed_override_structure();
-        structure.breakaway.as_mut().unwrap().generation_overrides =
-            Some(BreakawayGenerationConfig {
-                max_generations: 3,
-                rates: {
-                    let mut m = BTreeMap::new();
-                    m.insert(1, 0.05); // unused for gen 1 (uses fixed rate)
-                    m.insert(2, 0.03);
-                    m
-                },
-                boundary_rank: "director".to_string(),
-            });
+        let OverrideStrategy::SingleWalk {
+            generation_overrides,
+            ..
+        } = &mut structure.breakaway.as_mut().unwrap().overrides
+        else {
+            panic!("expected SingleWalk override strategy");
+        };
+        *generation_overrides = Some(BreakawayGenerationConfig {
+            max_generations: 3,
+            rates: {
+                let mut m = BTreeMap::new();
+                m.insert(1, 0.05); // unused for gen 1 (uses fixed rate)
+                m.insert(2, 0.03);
+                m
+            },
+            boundary_rank: "director".to_string(),
+        });
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();

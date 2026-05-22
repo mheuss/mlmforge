@@ -96,19 +96,21 @@ structures:
       breakaway:
         threshold_rank: Supervisor
         group_volume_excludes_breakaway: true
-        override_calculation: differential
-        differential:
-          rank_rates:
-            Supervisor: 0.05
-            Manager: 0.08
-          min_override: 10.00
-        generation:
-          max_generations: 3
-          generation_rates:
-            "1": 0.04
-            "2": 0.03
-            "3": 0.02
-          boundary_rank: Supervisor
+        overrides:
+          type: single_walk
+          override_calculation: differential
+          differential:
+            rank_rates:
+              Supervisor: 0.05
+              Manager: 0.08
+            min_override: 10.00
+          generation:
+            max_generations: 3
+            generation_rates:
+              "1": 0.04
+              "2": 0.03
+              "3": 0.02
+            boundary_rank: Supervisor
 
 bonuses:
   matching: null

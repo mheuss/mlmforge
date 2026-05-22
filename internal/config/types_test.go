@@ -351,11 +351,13 @@ structures:
       breakaway:
         threshold_rank: Supervisor
         group_volume_excludes_breakaway: true
-        override_calculation: differential
-        differential:
-          rank_rates:
-            Supervisor: 0.05
-          min_override: 10.00
+        overrides:
+          type: single_walk
+          override_calculation: differential
+          differential:
+            rank_rates:
+              Supervisor: 0.05
+            min_override: 10.00
 bonuses: {}
 payout: {base_currency: USD, minimum_amount: 50, methods: [{type: bank_transfer, fee: 2.50}]}
 caps: {company_payout_cap_percent: 0.42, cap_enforcement: pro_rata}
@@ -371,10 +373,107 @@ placement: {donated_placement_enabled: false}
 	require.NotNil(t, c.Breakaway)
 	assert.Equal(t, "Supervisor", c.Breakaway.ThresholdRank)
 	assert.True(t, c.Breakaway.GroupVolumeExcludesBreakaway)
-	assert.Equal(t, "differential", c.Breakaway.OverrideCalculation)
-	require.NotNil(t, c.Breakaway.Differential)
-	assert.Equal(t, 0.05, c.Breakaway.Differential.RankRates["Supervisor"])
-	assert.Equal(t, 10.0, c.Breakaway.Differential.MinOverride)
+	assert.Equal(t, "single_walk", c.Breakaway.Overrides.Type)
+	assert.Equal(t, "differential", c.Breakaway.Overrides.OverrideCalculation)
+	require.NotNil(t, c.Breakaway.Overrides.Differential)
+	assert.Equal(t, 0.05, c.Breakaway.Overrides.Differential.RankRates["Supervisor"])
+	assert.Equal(t, 10.0, c.Breakaway.Overrides.Differential.MinOverride)
+}
+
+// TestBreakawayConfig_SingleWalk_MarshalsGoEmittedWireShape verifies the
+// JSON wire shape Go sends to the Rust engine for a single_walk breakaway.
+// Every variant field is present and the non-selected multi_tier tiers
+// slice marshals as null (no omitempty). Rust's internally-tagged
+// OverrideStrategy ignores the non-selected variant's fields when it
+// deserializes. The cross-language contract is pinned by Rust's
+// deserialize_go_emitted_overrides test.
+func TestBreakawayConfig_SingleWalk_MarshalsGoEmittedWireShape(t *testing.T) {
+	cfg := BreakawayConfig{
+		ThresholdRank:                "director",
+		GroupVolumeExcludesBreakaway: true,
+		Overrides: OverrideStrategy{
+			Type:                "single_walk",
+			OverrideCalculation: "differential",
+			Differential: &DifferentialConfig{
+				RankRates:   map[string]float64{"director": 0.10},
+				MinOverride: 0.02,
+			},
+		},
+	}
+
+	jsonBytes, err := json.Marshal(cfg)
+	require.NoError(t, err)
+
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(jsonBytes, &got))
+
+	assert.Equal(t, "director", got["threshold_rank"])
+	assert.Equal(t, true, got["group_volume_excludes_breakaway"])
+
+	ov, ok := got["overrides"].(map[string]any)
+	require.True(t, ok, "overrides should be an object")
+	assert.Equal(t, "single_walk", ov["type"])
+	assert.Equal(t, "differential", ov["override_calculation"])
+
+	diff, ok := ov["differential"].(map[string]any)
+	require.True(t, ok, "differential should be an object")
+	rates := diff["rank_rates"].(map[string]any)
+	assert.Equal(t, 0.10, rates["director"])
+	assert.Equal(t, 0.02, diff["min_override"])
+
+	// Non-selected variant fields must be present and zero-valued. The Rust
+	// internally-tagged enum reads `type` and ignores these.
+	assert.Nil(t, ov["fixed_override"])
+	assert.Nil(t, ov["generation"])
+	assert.Contains(t, ov, "tiers")
+	assert.Nil(t, ov["tiers"])
+}
+
+// TestBreakawayConfig_MultiTier_MarshalsGoEmittedWireShape verifies the
+// JSON wire shape Go sends to the Rust engine for a multi_tier breakaway.
+// Every single_walk variant field is present and zero-valued (empty
+// override_calculation, nil differential, nil fixed_override, nil
+// generation). The empty-string override_calculation is what keeps the
+// schema's oneOf unambiguous: it fails the single_walk branch's enum
+// constraint, so only the multi_tier branch matches.
+func TestBreakawayConfig_MultiTier_MarshalsGoEmittedWireShape(t *testing.T) {
+	cfg := BreakawayConfig{
+		ThresholdRank:                "director",
+		GroupVolumeExcludesBreakaway: true,
+		Overrides: OverrideStrategy{
+			Type: "multi_tier",
+			Tiers: []BreakawayTier{
+				{MinSplitOutGroups: 1, Rate: 0.05},
+				{MinSplitOutGroups: 2, Rate: 0.02},
+			},
+		},
+	}
+
+	jsonBytes, err := json.Marshal(cfg)
+	require.NoError(t, err)
+
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(jsonBytes, &got))
+
+	ov, ok := got["overrides"].(map[string]any)
+	require.True(t, ok, "overrides should be an object")
+	assert.Equal(t, "multi_tier", ov["type"])
+
+	// Non-selected single_walk fields are present and zero-valued.
+	assert.Equal(t, "", ov["override_calculation"])
+	assert.Nil(t, ov["differential"])
+	assert.Nil(t, ov["fixed_override"])
+	assert.Nil(t, ov["generation"])
+
+	tiers, ok := ov["tiers"].([]any)
+	require.True(t, ok, "tiers should be an array")
+	require.Len(t, tiers, 2)
+	t0 := tiers[0].(map[string]any)
+	assert.Equal(t, float64(1), t0["min_split_out_groups"])
+	assert.Equal(t, 0.05, t0["rate"])
+	t1 := tiers[1].(map[string]any)
+	assert.Equal(t, float64(2), t1["min_split_out_groups"])
+	assert.Equal(t, 0.02, t1["rate"])
 }
 
 // TestResolveCommissionsMatrix verifies that resolveCommissions correctly

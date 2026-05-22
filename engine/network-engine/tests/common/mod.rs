@@ -8,7 +8,8 @@ use network_engine::config::binary::{
 };
 use network_engine::config::eligibility::CommissionEligibility;
 use network_engine::config::stairstep::{
-    BreakawayConfig, DifferentialConfig, OverrideMode, OverrideStrategy,
+    BreakawayConfig, BreakawayTier, DifferentialConfig, MultiTierConfig, OverrideMode,
+    OverrideStrategy,
 };
 use network_engine::config::{
     BinaryStructureConfig, CompensationPlan, StairstepStructureConfig, StructureConfig,
@@ -299,6 +300,57 @@ pub fn build_stairstep_plan_with_eligibility(
 
     let mut plan = build_base_plan(
         eligibility,
+        StructureConfig::Stairstep(structure.clone()),
+        "Test",
+    );
+
+    plan.ranks
+        .push(make_rank("director", 2, vec!["Test".to_string()]));
+
+    (plan, structure)
+}
+
+/// Build a stairstep plan with a multi-tier breakaway override ladder.
+///
+/// Mirrors `build_stairstep_plan`: two ranks ("member" and "director"),
+/// "director" as `threshold_rank`, 5% level rates, max depth 5, fully
+/// permissive eligibility. Caller supplies the tier ladder.
+pub fn build_multi_tier_stairstep_plan(
+    tiers: Vec<BreakawayTier>,
+) -> (
+    CompensationPlan,
+    network_engine::config::StairstepStructureConfig,
+) {
+    use network_engine::config::commission::LevelCommissionConfig;
+
+    let max_depth = 5;
+    let mut rate_table = BTreeMap::new();
+    for rank_name in &["member", "director"] {
+        let mut rates = BTreeMap::new();
+        for level in 1..=max_depth {
+            rates.insert(level, 0.05);
+        }
+        rate_table.insert(rank_name.to_string(), rates);
+    }
+
+    let structure = StairstepStructureConfig {
+        name: "Test".to_string(),
+        level_commission: LevelCommissionConfig {
+            broad_commission_percent: 0.40,
+            volume_to_dollar_multiplier: None,
+            max_depth,
+            rate_table,
+        },
+        compression: None,
+        breakaway: Some(BreakawayConfig {
+            threshold_rank: "director".to_string(),
+            exclude_breakaway_gv: false,
+            overrides: OverrideStrategy::MultiTier(MultiTierConfig { tiers }),
+        }),
+    };
+
+    let mut plan = build_base_plan(
+        permissive_eligibility(),
         StructureConfig::Stairstep(structure.clone()),
         "Test",
     );

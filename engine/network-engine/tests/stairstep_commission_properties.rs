@@ -1,10 +1,16 @@
 mod common;
-use common::{build_stairstep_plan, member_snapshot, uuid_from_index};
+use common::{
+    build_multi_tier_stairstep_plan, build_stairstep_plan, member_snapshot, uuid_from_index,
+};
 
 use network_engine::commission::{DistributorSnapshot, VolumeSource, calculate_stairstep};
+use network_engine::config::stairstep::BreakawayTier;
 use network_engine::tree::unilevel::UnilevelTree;
 use proptest::prelude::*;
 use std::collections::HashMap;
+
+/// Tolerance for floating-point rate-bound comparisons.
+const FP_TOL: f64 = 1e-10;
 
 proptest! {
     /// No earning should have a level exceeding max_depth.
@@ -383,6 +389,201 @@ proptest! {
             "Earners received both level and override commissions: {:?}",
             overlap
         );
+    }
+
+    /// Multi-tier walk pays at most one earner per (source, level).
+    ///
+    /// Each tier in a Split-Out Group pays exactly one earner, so no two
+    /// emitted earnings may share the same `(source_id, level)`.
+    #[test]
+    fn multi_tier_no_double_pay_within_a_tier(
+        tree_size in 3..30usize,
+        tiers in prop::collection::vec(
+            (1u8..=4u8, 0.0..=1.0f64).prop_map(|(g, r)| BreakawayTier {
+                min_split_out_groups: g,
+                rate: r,
+            }),
+            1..=6,
+        ),
+    ) {
+        let (plan, structure) = build_multi_tier_stairstep_plan(tiers);
+
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uuid_from_index(0), 0).unwrap();
+        for i in 1..tree_size {
+            let parent = i - 1;
+            tree.add_node(uuid_from_index(i), uuid_from_index(parent), uuid_from_index(parent), i as i64).unwrap();
+        }
+
+        let source_idx = tree_size - 1;
+
+        // Force the volume source to be "member" so override earnings
+        // (source_id == breakaway distributor) never collide with the
+        // level earnings' source_id (== volume source). Other distributors
+        // alternate ranks to create Split-Out Groups.
+        let mut snapshots = HashMap::new();
+        for i in 0..tree_size {
+            let rank = if i == source_idx {
+                "member"
+            } else if i % 2 == 0 {
+                "director"
+            } else {
+                "member"
+            };
+            snapshots.insert(
+                uuid_from_index(i),
+                DistributorSnapshot {
+                    rank: rank.to_string(),
+                    personal_volume: 100.0,
+                    status: "active".to_string(),
+                    has_order_in_period: true,
+                },
+            );
+        }
+
+        let volume = vec![VolumeSource {
+            source_id: uuid_from_index(source_idx),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        let mut seen = std::collections::HashSet::new();
+        for earning in &result {
+            prop_assert!(
+                seen.insert((earning.source_id, earning.level)),
+                "Two earnings share (source_id, level) = ({:?}, {}): {:?}",
+                earning.source_id, earning.level, earning
+            );
+        }
+    }
+
+    /// Two runs of `calculate_stairstep` on identical inputs produce the
+    /// same earnings vector, element-wise.
+    ///
+    /// The Task 1 `level` tiebreaker plus `sort_earnings` inside the
+    /// calculator gives full ordering. A failure means a real
+    /// non-determinism bug — stop and investigate.
+    #[test]
+    fn multi_tier_output_is_deterministic(
+        tree_size in 3..30usize,
+        tiers in prop::collection::vec(
+            (1u8..=4u8, 0.0..=1.0f64).prop_map(|(g, r)| BreakawayTier {
+                min_split_out_groups: g,
+                rate: r,
+            }),
+            1..=6,
+        ),
+    ) {
+        let (plan, structure) = build_multi_tier_stairstep_plan(tiers);
+
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uuid_from_index(0), 0).unwrap();
+        for i in 1..tree_size {
+            let parent = i - 1;
+            tree.add_node(uuid_from_index(i), uuid_from_index(parent), uuid_from_index(parent), i as i64).unwrap();
+        }
+
+        // Many directors so multiple Split-Out Groups exist and the
+        // multi-tier walk actually emits earnings to sort.
+        let mut snapshots = HashMap::new();
+        for i in 0..tree_size {
+            let rank = if i % 2 == 0 { "director" } else { "member" };
+            snapshots.insert(
+                uuid_from_index(i),
+                DistributorSnapshot {
+                    rank: rank.to_string(),
+                    personal_volume: 100.0,
+                    status: "active".to_string(),
+                    has_order_in_period: true,
+                },
+            );
+        }
+
+        let source_idx = tree_size - 1;
+        let volume = vec![VolumeSource {
+            source_id: uuid_from_index(source_idx),
+            cv_amount: 100.0,
+        }];
+
+        let first = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let second = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        prop_assert_eq!(first, second);
+    }
+
+    /// Every multi-tier earning's dollar amount matches
+    /// `cv_amount * multiplier * rate`, and its rate is one of the
+    /// configured tier rates.
+    #[test]
+    fn multi_tier_rate_bound(
+        tree_size in 3..30usize,
+        tiers in prop::collection::vec(
+            (1u8..=4u8, 0.0..=1.0f64).prop_map(|(g, r)| BreakawayTier {
+                min_split_out_groups: g,
+                rate: r,
+            }),
+            1..=6,
+        ),
+    ) {
+        let (plan, structure) = build_multi_tier_stairstep_plan(tiers.clone());
+        let multiplier = plan.volume.volume_to_dollar_multiplier;
+
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uuid_from_index(0), 0).unwrap();
+        for i in 1..tree_size {
+            let parent = i - 1;
+            tree.add_node(uuid_from_index(i), uuid_from_index(parent), uuid_from_index(parent), i as i64).unwrap();
+        }
+
+        let source_idx = tree_size - 1;
+
+        // Force the volume source to be "member" so override earnings
+        // (source_id == breakaway distributor) and level earnings
+        // (source_id == volume source) never overlap on source_id.
+        // Other distributors alternate ranks to create Split-Out Groups.
+        let mut snapshots = HashMap::new();
+        for i in 0..tree_size {
+            let rank = if i == source_idx {
+                "member"
+            } else if i % 2 == 0 {
+                "director"
+            } else {
+                "member"
+            };
+            snapshots.insert(
+                uuid_from_index(i),
+                DistributorSnapshot {
+                    rank: rank.to_string(),
+                    personal_volume: 100.0,
+                    status: "active".to_string(),
+                    has_order_in_period: true,
+                },
+            );
+        }
+
+        let volume = vec![VolumeSource {
+            source_id: uuid_from_index(source_idx),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // Multi-tier earnings have source_id == a breakaway distributor;
+        // level commissions have source_id == the original volume source.
+        // Restrict the property to the override earnings.
+        for earning in result.iter().filter(|e| e.source_id != uuid_from_index(source_idx)) {
+            let expected = earning.cv_amount * multiplier * earning.rate;
+            prop_assert!(
+                (earning.dollar_amount - expected).abs() < FP_TOL,
+                "dollar_amount {} != cv_amount {} * multiplier {} * rate {} (= {}) for earning {:?}",
+                earning.dollar_amount, earning.cv_amount, multiplier, earning.rate, expected, earning
+            );
+            prop_assert!(
+                tiers.iter().any(|t| (t.rate - earning.rate).abs() < FP_TOL),
+                "earning rate {} is not one of the configured tier rates {:?}",
+                earning.rate, tiers.iter().map(|t| t.rate).collect::<Vec<_>>()
+            );
+        }
     }
 }
 

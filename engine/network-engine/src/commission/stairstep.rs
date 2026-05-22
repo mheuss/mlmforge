@@ -8,6 +8,7 @@
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
+use crate::config::stairstep::MultiTierConfig;
 use crate::config::{CompensationPlan, StairstepStructureConfig};
 use crate::tree::unilevel::UnilevelTree;
 
@@ -25,6 +26,11 @@ struct PrepResult {
     breakaways: HashSet<Uuid>,
     group_volumes: HashMap<Uuid, f64>,
     group_leaders: HashMap<Uuid, Uuid>,
+    /// First-Line Split-Out Group counts. Distributor X's count is the
+    /// number of breakaways B whose nearest breakaway-or-root ancestor is
+    /// X. Used by the multi-tier override walk for the
+    /// `min_split_out_groups` gate.
+    first_line_split_outs: HashMap<Uuid, u32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -127,6 +133,27 @@ fn find_group_leader(tree: &UnilevelTree, user_id: Uuid, breakaways: &HashSet<Uu
     upline.last().map(|n| n.user_id).unwrap_or(user_id)
 }
 
+/// Count each distributor's First-Line Split-Out Groups.
+///
+/// A breakaway `B` is a First-Line Split-Out of its nearest
+/// breakaway-or-root ancestor. A breakaway at the root has no parent
+/// and is not attributed to anyone.
+fn count_first_line_split_outs(
+    tree: &UnilevelTree,
+    breakaways: &HashSet<Uuid>,
+) -> HashMap<Uuid, u32> {
+    let mut counts: HashMap<Uuid, u32> = HashMap::new();
+    for &breakaway_id in breakaways {
+        let parent_id = match tree.get_parent(breakaway_id) {
+            Ok(Some(parent)) => parent.user_id,
+            _ => continue, // root breakaway, or not in tree — skip
+        };
+        let owner = find_group_leader(tree, parent_id, breakaways);
+        *counts.entry(owner).or_insert(0) += 1;
+    }
+    counts
+}
+
 /// Run the full prep phase: eligibility, breakaway detection, group volumes.
 fn prep(
     tree: &UnilevelTree,
@@ -138,12 +165,14 @@ fn prep(
     let eligibility = walk::evaluate_eligibility(snapshots, tree, &plan.eligibility);
     let breakaways = identify_breakaways(structure, snapshots, rank_ordinals);
     let (group_volumes, group_leaders) = build_group_volumes(tree, snapshots, &breakaways);
+    let first_line_split_outs = count_first_line_split_outs(tree, &breakaways);
 
     PrepResult {
         eligibility,
         breakaways,
         group_volumes,
         group_leaders,
+        first_line_split_outs,
     }
 }
 
@@ -185,8 +214,8 @@ fn resolve_gen1_rate(
 /// The breakaway config's `OverrideStrategy` selects the walk:
 /// - **SingleWalk:** one override walk. Delegates to
 ///   [`walk_single_overrides`].
-/// - **MultiTier:** an ordered ladder of override tiers. Placeholder for
-///   now — implemented in HEU-428 Task 3.
+/// - **MultiTier:** an ordered ladder of override tiers. Delegates to
+///   [`walk_multi_tier_overrides`].
 fn walk_overrides(
     tree: &UnilevelTree,
     structure: &StairstepStructureConfig,
@@ -211,7 +240,9 @@ fn walk_overrides(
             broad_pct,
             multiplier,
         ),
-        crate::config::stairstep::OverrideStrategy::MultiTier(_) => Vec::new(),
+        crate::config::stairstep::OverrideStrategy::MultiTier(cfg) => {
+            walk_multi_tier_overrides(tree, cfg, prep, multiplier)
+        }
     }
 }
 
@@ -417,6 +448,76 @@ fn walk_single_overrides(
     earnings
 }
 
+/// Walk 2, multi-tier branch. For each Split-Out Group, find each tier's
+/// nearest qualifying earner among the split-out ancestors.
+///
+/// Each tier pays its rate to the nearest split-out ancestor at or below
+/// the tier's depth floor that meets the `min_split_out_groups` gate. The
+/// walk is shared across tiers: one `count_generations_upward` call per
+/// source produces the ordered ancestor list, and per-tier filters scan
+/// that single result.
+///
+/// Multi-tier rates are effective rates. The dollar formula is
+/// `group_vol * multiplier * tier.rate` — no `broad_pct` factor.
+fn walk_multi_tier_overrides(
+    tree: &UnilevelTree,
+    config: &MultiTierConfig,
+    prep: &PrepResult,
+    multiplier: f64,
+) -> Vec<CommissionEarning> {
+    let mut earnings = Vec::new();
+    let always_boundary = |_: Uuid| true;
+
+    for &source_id in &prep.breakaways {
+        let group_vol = prep.group_volumes.get(&source_id).copied().unwrap_or(0.0);
+        if group_vol <= 0.0 {
+            continue;
+        }
+
+        // Ordered split-out ancestors; generation 1 is the nearest.
+        // u8::MAX, not the tier count — a tier's qualifier may sit far up.
+        let ancestors = count_generations_upward(
+            tree,
+            source_id,
+            &prep.breakaways,
+            &always_boundary,
+            u8::MAX,
+            false,
+        );
+
+        for (tier_index, tier) in config.tiers.iter().enumerate() {
+            let depth_floor = (tier_index + 1) as u8;
+
+            let earner = ancestors.iter().find(|entry| {
+                entry.generation >= depth_floor
+                    && prep
+                        .eligibility
+                        .get(&entry.earner_id)
+                        .is_some_and(|e| e.eligible)
+                    && prep
+                        .first_line_split_outs
+                        .get(&entry.earner_id)
+                        .copied()
+                        .unwrap_or(0)
+                        >= u32::from(tier.min_split_out_groups)
+            });
+
+            if let Some(entry) = earner {
+                earnings.push(CommissionEarning {
+                    earner_id: entry.earner_id,
+                    source_id,
+                    level: depth_floor,
+                    rate: tier.rate,
+                    cv_amount: group_vol,
+                    dollar_amount: group_vol * multiplier * tier.rate,
+                });
+            }
+        }
+    }
+
+    earnings
+}
+
 // ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
@@ -543,8 +644,8 @@ mod tests {
     use crate::config::eligibility::CommissionEligibility;
     use crate::config::rank::{DemotionPolicy, RankDefinition, RankQualification};
     use crate::config::stairstep::{
-        BreakawayConfig, BreakawayGenerationConfig, DifferentialConfig, FixedOverrideConfig,
-        OverrideMode, OverrideStrategy,
+        BreakawayConfig, BreakawayGenerationConfig, BreakawayTier, DifferentialConfig,
+        FixedOverrideConfig, MultiTierConfig, OverrideMode, OverrideStrategy,
     };
     use crate::config::{StairstepStructureConfig, StructureConfig};
     use std::collections::BTreeMap;
@@ -1454,5 +1555,369 @@ mod tests {
         assert_eq!(gen2.earner_id, uuid(0));
         assert!((gen2.rate - 0.03).abs() < FP_TOL);
         assert!((gen2.dollar_amount - 3.60).abs() < FP_TOL);
+    }
+
+    // --- First-Line Split-Out counting tests ---
+
+    #[test]
+    fn count_first_line_split_outs_chain_each_owns_one() {
+        // Chain: 0 -> 1 -> 2 -> 3. Breakaways: {1, 2, 3}.
+        // Each breakaway's nearest breakaway-or-root ancestor:
+        //   uuid(1) -> parent is uuid(0) (root, not a breakaway) -> owner uuid(0).
+        //   uuid(2) -> parent is uuid(1) (breakaway) -> owner uuid(1).
+        //   uuid(3) -> parent is uuid(2) (breakaway) -> owner uuid(2).
+        // So uuid(0), uuid(1), uuid(2) each have 1 First-Line Split-Out.
+        let tree = build_chain(4);
+        let breakaways: HashSet<Uuid> = [uuid(1), uuid(2), uuid(3)].into_iter().collect();
+
+        let counts = count_first_line_split_outs(&tree, &breakaways);
+
+        assert_eq!(counts.get(&uuid(0)).copied().unwrap_or(0), 1);
+        assert_eq!(counts.get(&uuid(1)).copied().unwrap_or(0), 1);
+        assert_eq!(counts.get(&uuid(2)).copied().unwrap_or(0), 1);
+        // uuid(3) is a leaf breakaway and owns no one.
+        assert_eq!(counts.get(&uuid(3)).copied().unwrap_or(0), 0);
+    }
+
+    #[test]
+    fn count_first_line_split_outs_root_breakaway_not_attributed() {
+        // Chain: 0 -> 1. Breakaways: {0}. uuid(0) is at the root.
+        // Root breakaway has no parent, so it is not attributed to anyone.
+        // No First-Line Split-Out counts are produced.
+        let tree = build_chain(2);
+        let breakaways: HashSet<Uuid> = [uuid(0)].into_iter().collect();
+
+        let counts = count_first_line_split_outs(&tree, &breakaways);
+
+        assert!(
+            counts.is_empty(),
+            "root breakaway should not be attributed to anyone; got {counts:?}",
+        );
+    }
+
+    #[test]
+    fn count_first_line_split_outs_non_breakaway_between_two_breakaways() {
+        // Chain: 0 -> 1 -> 2 -> 3. Breakaways: {0, 3}. uuid(1) and uuid(2) are not breakaways.
+        // uuid(3)'s parent is uuid(2). The nearest breakaway-or-root ancestor of uuid(2) is uuid(0).
+        // So uuid(3) is a First-Line Split-Out of uuid(0). uuid(0) gets count 1.
+        let tree = build_chain(4);
+        let breakaways: HashSet<Uuid> = [uuid(0), uuid(3)].into_iter().collect();
+
+        let counts = count_first_line_split_outs(&tree, &breakaways);
+
+        assert_eq!(counts.get(&uuid(0)).copied().unwrap_or(0), 1);
+        // No other distributors should be attributed.
+        assert_eq!(counts.len(), 1);
+    }
+
+    // --- Multi-tier override walk tests ---
+
+    fn test_multi_tier_structure(tiers: Vec<BreakawayTier>) -> StairstepStructureConfig {
+        StairstepStructureConfig {
+            name: "Test".to_string(),
+            level_commission: LevelCommissionConfig {
+                broad_commission_percent: 0.40,
+                volume_to_dollar_multiplier: None,
+                max_depth: 5,
+                rate_table: test_stairstep_rate_table(),
+            },
+            compression: None,
+            breakaway: Some(BreakawayConfig {
+                threshold_rank: "director".to_string(),
+                exclude_breakaway_gv: true,
+                overrides: OverrideStrategy::MultiTier(MultiTierConfig { tiers }),
+            }),
+        }
+    }
+
+    #[test]
+    fn multi_tier_single_tier_pays_nearest_qualifier() {
+        // Chain: 0(director) -> 1(director) -> 2(director) -> 3(assoc)
+        // Breakaways: uuid(0), uuid(1), uuid(2).
+        // First-Line Split-Outs:
+        //   uuid(0): owns uuid(1) (count 1).
+        //   uuid(1): owns uuid(2) (count 1).
+        //   uuid(2): no children breakaways (count 0).
+        // Tier 0: depth_floor=1, min_split_out_groups=1, rate=0.05.
+        // For source uuid(2): split-out ancestors are uuid(1) (gen 1), uuid(0) (gen 2).
+        //   At gen >= 1: uuid(1) has count 1 >= 1, so uuid(1) earns at depth_floor 1.
+        // For source uuid(1): split-out ancestors are uuid(0) (gen 1).
+        //   At gen >= 1: uuid(0) has count 1 >= 1, so uuid(0) earns at depth_floor 1.
+        // For source uuid(0): root breakaway, no ancestors -> no earning.
+        let tree = build_chain(4);
+        let structure = test_multi_tier_structure(vec![BreakawayTier {
+            min_split_out_groups: 1,
+            rate: 0.05,
+        }]);
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(2), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", 150.0));
+
+        // Each source feeds its own group_volume map entry. Volume here is
+        // for the calculator's source list; the multi-tier walk uses
+        // group_volumes built during prep.
+        let volume = vec![VolumeSource {
+            source_id: uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // Override earning on uuid(2)'s group (uuid(2) PV + uuid(3) PV = 150 + 150 = 300).
+        // Earner: uuid(1). Rate: 0.05. Dollar = 300 * 1.0 * 0.05 = 15.0.
+        let on_uuid2 = result
+            .iter()
+            .find(|e| e.source_id == uuid(2) && e.earner_id == uuid(1))
+            .expect("uuid(1) should earn tier 1 on uuid(2)'s group");
+        assert_eq!(on_uuid2.level, 1);
+        assert!((on_uuid2.rate - 0.05).abs() < FP_TOL);
+        assert!((on_uuid2.cv_amount - 300.0).abs() < FP_TOL);
+        assert!((on_uuid2.dollar_amount - 15.0).abs() < FP_TOL);
+
+        // Override earning on uuid(1)'s group (uuid(1) PV alone = 150).
+        // Earner: uuid(0). Rate: 0.05. Dollar = 150 * 1.0 * 0.05 = 7.5.
+        let on_uuid1 = result
+            .iter()
+            .find(|e| e.source_id == uuid(1) && e.earner_id == uuid(0))
+            .expect("uuid(0) should earn tier 1 on uuid(1)'s group");
+        assert_eq!(on_uuid1.level, 1);
+        assert!((on_uuid1.rate - 0.05).abs() < FP_TOL);
+        assert!((on_uuid1.cv_amount - 150.0).abs() < FP_TOL);
+        assert!((on_uuid1.dollar_amount - 7.5).abs() < FP_TOL);
+
+        // uuid(0) is a root breakaway and has no override earnings on itself.
+        let on_uuid0: Vec<_> = result.iter().filter(|e| e.source_id == uuid(0)).collect();
+        assert!(
+            on_uuid0.is_empty(),
+            "root breakaway should not generate override earnings: {on_uuid0:?}",
+        );
+    }
+
+    #[test]
+    fn multi_tier_nearest_fails_gate_farther_ancestor_earns() {
+        // Tree:
+        //        0(director, has 2 First-Line Split-Outs)
+        //        /                \
+        //   1(director)        4(director, leaf)
+        //       |
+        //   2(director)
+        //       |
+        //   3(director, source)
+        //
+        // Breakaways: {0, 1, 2, 3, 4}.
+        // First-Line Split-Outs:
+        //   uuid(0): owns uuid(1) (parent uuid(0)) and uuid(4) (parent uuid(0)). Count 2.
+        //   uuid(1): owns uuid(2). Count 1.
+        //   uuid(2): owns uuid(3). Count 1.
+        //   uuid(3), uuid(4): own none. Count 0.
+        //
+        // Tier 0: depth_floor=1, min_split_out_groups=2, rate=0.05.
+        // For source uuid(3): split-out ancestors are uuid(2), uuid(1), uuid(0).
+        // uuid(2) count 1 fails, uuid(1) count 1 fails, uuid(0) count 2 qualifies.
+        // uuid(0) earns at depth_floor 1.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uuid(0), 0).unwrap();
+        tree.add_node(uuid(1), uuid(0), uuid(0), 1).unwrap();
+        tree.add_node(uuid(2), uuid(1), uuid(1), 2).unwrap();
+        tree.add_node(uuid(3), uuid(2), uuid(2), 3).unwrap();
+        tree.add_node(uuid(4), uuid(0), uuid(0), 4).unwrap();
+
+        let structure = test_multi_tier_structure(vec![BreakawayTier {
+            min_split_out_groups: 2,
+            rate: 0.05,
+        }]);
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(2), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(3), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(4), snapshot_with_rank("director", 150.0));
+
+        // Pump volume on uuid(3) so the calculator runs the full pipeline.
+        let volume = vec![VolumeSource {
+            source_id: uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // Override earning on uuid(3)'s group: uuid(3) PV alone = 150.
+        // uuid(2) (gen 1) count 1 fails; uuid(1) (gen 2) count 1 fails;
+        // uuid(0) (gen 3) count 2 >= 2, qualifies. uuid(0) earns at depth_floor 1.
+        let on_uuid3 = result
+            .iter()
+            .find(|e| e.source_id == uuid(3))
+            .expect("expected one override earning on uuid(3)'s group");
+        assert_eq!(on_uuid3.earner_id, uuid(0));
+        assert_eq!(on_uuid3.level, 1);
+        assert!((on_uuid3.rate - 0.05).abs() < FP_TOL);
+        assert!((on_uuid3.cv_amount - 150.0).abs() < FP_TOL);
+        assert!((on_uuid3.dollar_amount - 7.5).abs() < FP_TOL);
+
+        // No earnings from uuid(1) or uuid(2) on uuid(3)'s group:
+        // they fail the min_split_out_groups gate.
+        let other_earners_on_uuid3: Vec<_> = result
+            .iter()
+            .filter(|e| e.source_id == uuid(3) && e.earner_id != uuid(0))
+            .collect();
+        assert!(
+            other_earners_on_uuid3.is_empty(),
+            "non-qualifying ancestors must not earn: {other_earners_on_uuid3:?}",
+        );
+    }
+
+    #[test]
+    fn multi_tier_no_qualifying_ancestor_no_earning() {
+        // Chain: 0(director) -> 1(director) -> 2(assoc)
+        // Breakaways: uuid(0), uuid(1).
+        // First-Line Split-Outs:
+        //   uuid(0): owns uuid(1) (count 1).
+        //   uuid(1): owns none (count 0).
+        // Tier 0: depth_floor=1, min_split_out_groups=5, rate=0.05.
+        // For source uuid(1): split-out ancestors are uuid(0) (gen 1).
+        //   uuid(0) count 1 fails min 5. No earning.
+        // For source uuid(0): root breakaway, no ancestors.
+        let tree = build_chain(3);
+        let structure = test_multi_tier_structure(vec![BreakawayTier {
+            min_split_out_groups: 5,
+            rate: 0.05,
+        }]);
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // No override earnings on uuid(1)'s group: no ancestor qualifies.
+        let on_uuid1: Vec<_> = result.iter().filter(|e| e.source_id == uuid(1)).collect();
+        assert!(
+            on_uuid1.is_empty(),
+            "no ancestor should qualify: {on_uuid1:?}",
+        );
+    }
+
+    #[test]
+    fn multi_tier_breakaway_at_root_no_earning() {
+        // Single root, uuid(0) is breakaway. No ancestors. No earning.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uuid(0), 0).unwrap();
+
+        let structure = test_multi_tier_structure(vec![BreakawayTier {
+            min_split_out_groups: 1,
+            rate: 0.05,
+        }]);
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), snapshot_with_rank("director", 150.0));
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(0),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // No override earnings sourced from uuid(0).
+        let overrides: Vec<_> = result.iter().filter(|e| e.source_id == uuid(0)).collect();
+        assert!(
+            overrides.is_empty(),
+            "breakaway at root must not earn overrides: {overrides:?}",
+        );
+    }
+
+    #[test]
+    fn multi_tier_one_earner_qualifies_for_several_tiers() {
+        // Chain: 0(director) -> 1(director) -> 2(director) -> 3(director) -> 4(assoc)
+        // Breakaways: {0, 1, 2, 3}.
+        // First-Line Split-Outs:
+        //   uuid(0): owns uuid(1). Count 1.
+        //   uuid(1): owns uuid(2). Count 1.
+        //   uuid(2): owns uuid(3). Count 1.
+        //   uuid(3): owns none. Count 0.
+        // Tiers:
+        //   Tier 0: depth_floor=1, min_split_out_groups=1, rate=0.05.
+        //   Tier 1: depth_floor=2, min_split_out_groups=1, rate=0.03.
+        //   Tier 2: depth_floor=3, min_split_out_groups=1, rate=0.01.
+        // For source uuid(3): split-out ancestors uuid(2) (gen 1), uuid(1) (gen 2), uuid(0) (gen 3).
+        //   Tier 0: find gen>=1 with count>=1 -> uuid(2). Earns 0.05 at level 1.
+        //   Tier 1: find gen>=2 with count>=1 -> uuid(1). Earns 0.03 at level 2.
+        //   Tier 2: find gen>=3 with count>=1 -> uuid(0). Earns 0.01 at level 3.
+        //
+        // Bonus invariant: uuid(2) earns Tier 0 only (not Tier 1 or 2 even though
+        // it has count 1, because gen 1 is below tier 1's depth floor).
+        let tree = build_chain(5);
+        let structure = test_multi_tier_structure(vec![
+            BreakawayTier {
+                min_split_out_groups: 1,
+                rate: 0.05,
+            },
+            BreakawayTier {
+                min_split_out_groups: 1,
+                rate: 0.03,
+            },
+            BreakawayTier {
+                min_split_out_groups: 1,
+                rate: 0.01,
+            },
+        ]);
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(2), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(3), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(4), snapshot_with_rank("associate", 150.0));
+
+        // Volume on uuid(4) so uuid(3)'s group has volume.
+        let volume = vec![VolumeSource {
+            source_id: uuid(4),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+
+        // uuid(3)'s group volume = uuid(3) PV + uuid(4) PV = 150 + 150 = 300.
+        // Tier 0: uuid(2) earns 0.05 * 300 = 15.0 at level 1.
+        let tier0 = result
+            .iter()
+            .find(|e| e.source_id == uuid(3) && e.earner_id == uuid(2))
+            .expect("uuid(2) should earn tier 0 on uuid(3)'s group");
+        assert_eq!(tier0.level, 1);
+        assert!((tier0.rate - 0.05).abs() < FP_TOL);
+        assert!((tier0.dollar_amount - 15.0).abs() < FP_TOL);
+
+        // Tier 1: uuid(1) earns 0.03 * 300 = 9.0 at level 2.
+        let tier1 = result
+            .iter()
+            .find(|e| e.source_id == uuid(3) && e.earner_id == uuid(1))
+            .expect("uuid(1) should earn tier 1 on uuid(3)'s group");
+        assert_eq!(tier1.level, 2);
+        assert!((tier1.rate - 0.03).abs() < FP_TOL);
+        assert!((tier1.dollar_amount - 9.0).abs() < FP_TOL);
+
+        // Tier 2: uuid(0) earns 0.01 * 300 = 3.0 at level 3.
+        let tier2 = result
+            .iter()
+            .find(|e| e.source_id == uuid(3) && e.earner_id == uuid(0))
+            .expect("uuid(0) should earn tier 2 on uuid(3)'s group");
+        assert_eq!(tier2.level, 3);
+        assert!((tier2.rate - 0.01).abs() < FP_TOL);
+        assert!((tier2.dollar_amount - 3.0).abs() < FP_TOL);
     }
 }

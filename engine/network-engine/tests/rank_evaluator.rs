@@ -733,3 +733,179 @@ fn evaluate_ranks_converges_on_cyclic_ancestry() {
         })
     );
 }
+
+/// Recursive senior-title ladder: `director`'s `leg_quality` references
+/// `manager`, and `president`'s references `director` — a rank whose own
+/// qualification is itself leg-structural. This is the recursive case in
+/// HEU-427's original title, and the reason rank evaluation iterates to a
+/// fixpoint (design-rationale 026): managers must be ranked before directors
+/// can be, and directors before presidents.
+///
+/// Every node has PV = 50, which clears each rank's PV floor, so leg
+/// structure is the only differentiator.
+///
+/// ```text
+/// president(1)
+/// ├── director(2) ── manager(4), manager(5)
+/// └── director(3) ── manager(6), manager(7)
+/// ```
+///
+/// Node 1 reaches `president` only because its two legs each contain a
+/// `director`; nodes 2 and 3 reach `director` only because their two legs
+/// each contain a `manager`. The leaf managers stay at `manager`, which also
+/// proves `leg_quality` gates the senior ranks: were it ignored, every PV-50
+/// node would climb the whole ladder.
+#[test]
+fn evaluate_ranks_resolves_recursive_leg_quality_ladder() {
+    let mut plan = network_engine::test_support::build_test_plan(
+        network_engine::config::eligibility::CommissionEligibility {
+            minimum_pv: 0.0,
+            require_order_in_period: false,
+            eligible_statuses: vec![],
+            active_leg_tiers: vec![],
+        },
+        StructureConfig::Unilevel(UnilevelStructureConfig {
+            name: "Test".to_string(),
+            level_commission: network_engine::config::commission::LevelCommissionConfig {
+                broad_commission_percent: 0.40,
+                volume_to_dollar_multiplier: None,
+                max_depth: 3,
+                rate_table: Default::default(),
+            },
+            compression: None,
+            pass_up: None,
+        }),
+        "Test",
+    );
+
+    // Each rank requires PV >= 50 plus the given leg-quality rules.
+    let rank = |name: &str, ordinal: u16, leg_quality: Vec<LegQualityRequirement>| RankDefinition {
+        name: name.to_string(),
+        ordinal,
+        qualification: RankQualification {
+            structures: vec![StructureQualification {
+                structure: "Test".to_string(),
+                personal_volume: 50.0,
+                group_volume: 0.0,
+                max_group_volume_per_leg: f64::MAX,
+                min_retail_volume: 0.0,
+                distributor_count: None,
+                leg_quality,
+            }],
+            required_products: vec![],
+        },
+        qualified_structures: vec!["Test".to_string()],
+        demotion_policy: DemotionPolicy::PromotionOnly,
+    };
+    // A senior rank needs 2 frontline legs that each contain the rank below it.
+    let legs_containing = |min_rank: &str| {
+        vec![LegQualityRequirement {
+            count: 2,
+            predicate: LegPredicate::ContainsRank {
+                min_rank: min_rank.to_string(),
+            },
+        }]
+    };
+    plan.ranks = vec![
+        rank("manager", 1, vec![]),
+        rank("director", 2, legs_containing("manager")),
+        rank("president", 3, legs_containing("director")),
+    ];
+
+    // president(1) -> director(2), director(3); each director -> two managers.
+    let mut tree = UnilevelTree::new();
+    tree.add_root(uuid_from_index(1), 0).unwrap();
+    tree.add_node(
+        uuid_from_index(2),
+        uuid_from_index(1),
+        uuid_from_index(1),
+        0,
+    )
+    .unwrap();
+    tree.add_node(
+        uuid_from_index(3),
+        uuid_from_index(1),
+        uuid_from_index(1),
+        0,
+    )
+    .unwrap();
+    tree.add_node(
+        uuid_from_index(4),
+        uuid_from_index(2),
+        uuid_from_index(2),
+        0,
+    )
+    .unwrap();
+    tree.add_node(
+        uuid_from_index(5),
+        uuid_from_index(2),
+        uuid_from_index(2),
+        0,
+    )
+    .unwrap();
+    tree.add_node(
+        uuid_from_index(6),
+        uuid_from_index(3),
+        uuid_from_index(3),
+        0,
+    )
+    .unwrap();
+    tree.add_node(
+        uuid_from_index(7),
+        uuid_from_index(3),
+        uuid_from_index(3),
+        0,
+    )
+    .unwrap();
+
+    let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+    nav.insert("Test".to_string(), &tree);
+
+    let mut distributors = HashMap::new();
+    for i in 1..=7usize {
+        distributors.insert(uuid_from_index(i), primitives(50.0));
+    }
+
+    let inputs = EvaluationInputs {
+        distributors,
+        volume_sources: vec![],
+    };
+
+    let result = evaluate_ranks(&plan, &nav, &inputs).unwrap();
+
+    // Top of the ladder: two legs each contain a director.
+    assert_eq!(
+        result.ranks.get(&uuid_from_index(1)),
+        Some(&EvaluatedRank::Qualified {
+            rank: "president".to_string(),
+            ordinal: 3,
+        }),
+        "node 1 should reach president: 2 legs each contain a director",
+    );
+    // Middle tier: two legs each contain a manager. They cannot reach
+    // president — their legs hold managers, not directors.
+    for mid in [2usize, 3] {
+        assert_eq!(
+            result.ranks.get(&uuid_from_index(mid)),
+            Some(&EvaluatedRank::Qualified {
+                rank: "director".to_string(),
+                ordinal: 2,
+            }),
+            "node {} should reach director: 2 legs each contain a manager",
+            mid,
+        );
+    }
+    // Leaf managers: PV alone clears every rank's PV floor, so staying at
+    // manager proves leg_quality gates the senior ranks.
+    for leaf in [4usize, 5, 6, 7] {
+        assert_eq!(
+            result.ranks.get(&uuid_from_index(leaf)),
+            Some(&EvaluatedRank::Qualified {
+                rank: "manager".to_string(),
+                ordinal: 1,
+            }),
+            "node {} should stay at manager: it has no legs",
+            leaf,
+        );
+    }
+}

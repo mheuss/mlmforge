@@ -7,7 +7,9 @@ use network_engine::config::binary::{
     PairingCalculation, PairingConfig, VolumeAfterPayout,
 };
 use network_engine::config::eligibility::CommissionEligibility;
-use network_engine::config::stairstep::{BreakawayConfig, DifferentialConfig, OverrideMode};
+use network_engine::config::stairstep::{
+    BreakawayConfig, DifferentialConfig, OverrideMode, OverrideStrategy,
+};
 use network_engine::config::{
     BinaryStructureConfig, CompensationPlan, StairstepStructureConfig, StructureConfig,
     UnilevelStructureConfig,
@@ -281,15 +283,17 @@ pub fn build_stairstep_plan_with_eligibility(
         breakaway: Some(BreakawayConfig {
             threshold_rank: "director".to_string(),
             exclude_breakaway_gv: false,
-            override_mode: OverrideMode::Differential(DifferentialConfig {
-                rank_rates: {
-                    let mut m = BTreeMap::new();
-                    m.insert("director".to_string(), 0.10);
-                    m
-                },
-                min_override: 0.0,
-            }),
-            generation_overrides: None,
+            overrides: OverrideStrategy::SingleWalk {
+                mode: OverrideMode::Differential(DifferentialConfig {
+                    rank_rates: {
+                        let mut m = BTreeMap::new();
+                        m.insert("director".to_string(), 0.10);
+                        m
+                    },
+                    min_override: 0.0,
+                }),
+                generation_overrides: None,
+            },
         }),
     };
 

@@ -211,7 +211,9 @@ func TestPipelineCommissionContentRoundTrip(t *testing.T) {
 				bk := cfg["breakaway"].(map[string]any)
 				assert.Equal(t, "Supervisor", bk["threshold_rank"])
 				assert.Equal(t, true, bk["group_volume_excludes_breakaway"])
-				assert.Equal(t, "differential", bk["override_calculation"])
+				ov := bk["overrides"].(map[string]any)
+				assert.Equal(t, "single_walk", ov["type"])
+				assert.Equal(t, "differential", ov["override_calculation"])
 			},
 		},
 		{

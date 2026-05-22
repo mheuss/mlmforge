@@ -190,12 +190,15 @@ func TestBreakawayDifferentialRankRatesMustExist(t *testing.T) {
 	plan.Structures[0].Type = "stairstep"
 	plan.Structures[0].resolvedCommission = &StairstepCommission{
 		Breakaway: &BreakawayConfig{
-			ThresholdRank:       "Silver",
-			OverrideCalculation: "differential",
-			Differential: &DifferentialConfig{
-				RankRates: map[string]float64{
-					"Silver": 0.05,
-					"Typo":   0.08,
+			ThresholdRank: "Silver",
+			Overrides: OverrideStrategy{
+				Type:                "single_walk",
+				OverrideCalculation: "differential",
+				Differential: &DifferentialConfig{
+					RankRates: map[string]float64{
+						"Silver": 0.05,
+						"Typo":   0.08,
+					},
 				},
 			},
 		},
@@ -210,7 +213,7 @@ func TestBreakawayDifferentialRankRatesMustExist(t *testing.T) {
 	errs := validateBusinessRules(plan)
 	require.Len(t, errs, 1)
 	assert.Equal(t, "undefined_reference", errs[0].Code)
-	assert.Contains(t, errs[0].Path, "differential/rank_rates")
+	assert.Contains(t, errs[0].Path, "overrides/differential/rank_rates")
 }
 
 func TestPoolQualificationMinRankMustExist(t *testing.T) {
@@ -528,8 +531,11 @@ func TestStairstepBreakawayGenerationBoundaryRankMustExist(t *testing.T) {
 	plan.Structures[0].resolvedCommission = &StairstepCommission{
 		Breakaway: &BreakawayConfig{
 			ThresholdRank: "Silver",
-			Generation: &BreakawayGenerationConfig{
-				BoundaryRank: "Nonexistent",
+			Overrides: OverrideStrategy{
+				Type: "single_walk",
+				Generation: &BreakawayGenerationConfig{
+					BoundaryRank: "Nonexistent",
+				},
 			},
 		},
 	}
@@ -543,7 +549,7 @@ func TestStairstepBreakawayGenerationBoundaryRankMustExist(t *testing.T) {
 	errs := validateBusinessRules(plan)
 	require.Len(t, errs, 1)
 	assert.Equal(t, "undefined_reference", errs[0].Code)
-	assert.Contains(t, errs[0].Path, "breakaway/generation/boundary_rank")
+	assert.Contains(t, errs[0].Path, "breakaway/overrides/generation/boundary_rank")
 }
 
 func TestValidation_DuplicateRankName(t *testing.T) {

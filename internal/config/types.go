@@ -327,14 +327,43 @@ type CycleStep struct {
 	Amount    float64 `yaml:"amount" json:"amount"`
 }
 
-// BreakawayConfig holds stairstep breakaway configuration.
+// BreakawayConfig holds stairstep breakaway configuration. The override
+// strategy nests under Overrides so single_walk and multi_tier share the
+// same wire shape: a discriminated object with a `type` tag.
 type BreakawayConfig struct {
-	ThresholdRank                string                     `yaml:"threshold_rank" json:"threshold_rank"`
-	GroupVolumeExcludesBreakaway bool                       `yaml:"group_volume_excludes_breakaway" json:"group_volume_excludes_breakaway"`
-	OverrideCalculation          string                     `yaml:"override_calculation" json:"override_calculation"`
-	Differential                 *DifferentialConfig        `yaml:"differential" json:"differential"`
-	FixedOverride                *FixedOverrideConfig       `yaml:"fixed_override" json:"fixed_override"`
-	Generation                   *BreakawayGenerationConfig `yaml:"generation" json:"generation"`
+	ThresholdRank                string           `yaml:"threshold_rank" json:"threshold_rank"`
+	GroupVolumeExcludesBreakaway bool             `yaml:"group_volume_excludes_breakaway" json:"group_volume_excludes_breakaway"`
+	Overrides                    OverrideStrategy `yaml:"overrides" json:"overrides"`
+}
+
+// OverrideStrategy is the flat Go mirror of the Rust OverrideStrategy enum
+// (internally tagged on `type`). Type selects the variant. Non-selected
+// variant fields marshal as zero values; the Rust internally-tagged enum
+// reads `type` first and ignores the other variant's fields. See
+// docs/development/config-types.md for the mirror pattern.
+//
+// No omitempty on the variant fields. A zero value must round-trip so the
+// Rust side sees a consistent shape on every payload.
+type OverrideStrategy struct {
+	Type string `yaml:"type" json:"type"` // "single_walk" or "multi_tier"
+
+	// single_walk fields
+	OverrideCalculation string                     `yaml:"override_calculation" json:"override_calculation"`
+	Differential        *DifferentialConfig        `yaml:"differential" json:"differential"`
+	FixedOverride       *FixedOverrideConfig       `yaml:"fixed_override" json:"fixed_override"`
+	Generation          *BreakawayGenerationConfig `yaml:"generation" json:"generation"`
+
+	// multi_tier fields
+	Tiers []BreakawayTier `yaml:"tiers" json:"tiers"`
+}
+
+// BreakawayTier is one tier of a multi-tier breakaway override ladder.
+// MinSplitOutGroups uses uint8 to mirror the Rust u8 exactly, so negative
+// or out-of-range values fail at Go unmarshal time instead of silently
+// truncating downstream.
+type BreakawayTier struct {
+	MinSplitOutGroups uint8   `yaml:"min_split_out_groups" json:"min_split_out_groups"`
+	Rate              float64 `yaml:"rate" json:"rate"`
 }
 
 // DifferentialConfig holds differential override commission configuration.

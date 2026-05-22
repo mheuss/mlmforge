@@ -272,11 +272,11 @@ func validateStructureRefs(plan *CompensationPlan, ranks map[string]bool) []Vali
 						Severity: SeverityError,
 					})
 				}
-				if rc.Breakaway.Differential != nil {
-					for rankName := range rc.Breakaway.Differential.RankRates {
+				if rc.Breakaway.Overrides.Differential != nil {
+					for rankName := range rc.Breakaway.Overrides.Differential.RankRates {
 						if !ranks[rankName] {
 							errs = append(errs, ValidationError{
-								Path:     fmt.Sprintf("/structures/%d/commission/breakaway/differential/rank_rates", i),
+								Path:     fmt.Sprintf("/structures/%d/commission/breakaway/overrides/differential/rank_rates", i),
 								Code:     "undefined_reference",
 								Message:  fmt.Sprintf("structure %q breakaway differential rank_rates references undefined rank %q", s.Name, rankName),
 								Severity: SeverityError,
@@ -284,12 +284,12 @@ func validateStructureRefs(plan *CompensationPlan, ranks map[string]bool) []Vali
 						}
 					}
 				}
-				if rc.Breakaway.Generation != nil && rc.Breakaway.Generation.BoundaryRank != "" {
-					if !ranks[rc.Breakaway.Generation.BoundaryRank] {
+				if rc.Breakaway.Overrides.Generation != nil && rc.Breakaway.Overrides.Generation.BoundaryRank != "" {
+					if !ranks[rc.Breakaway.Overrides.Generation.BoundaryRank] {
 						errs = append(errs, ValidationError{
-							Path:     fmt.Sprintf("/structures/%d/commission/breakaway/generation/boundary_rank", i),
+							Path:     fmt.Sprintf("/structures/%d/commission/breakaway/overrides/generation/boundary_rank", i),
 							Code:     "undefined_reference",
-							Message:  fmt.Sprintf("structure %q breakaway generation boundary_rank references undefined rank %q", s.Name, rc.Breakaway.Generation.BoundaryRank),
+							Message:  fmt.Sprintf("structure %q breakaway generation boundary_rank references undefined rank %q", s.Name, rc.Breakaway.Overrides.Generation.BoundaryRank),
 							Severity: SeverityError,
 						})
 					}

@@ -1138,11 +1138,11 @@
     },
     "BreakawayConfig": {
       "type": "object",
-      "description": "Configuration for stairstep breakaway behavior.",
+      "description": "Configuration for stairstep breakaway behavior. The override strategy nests under overrides as a discriminated object (single_walk or multi_tier).",
       "required": [
         "threshold_rank",
         "group_volume_excludes_breakaway",
-        "override_calculation"
+        "overrides"
       ],
       "properties": {
         "threshold_rank": {
@@ -1153,79 +1153,132 @@
           "type": "boolean",
           "description": "If true, volume from broken-away groups is excluded from upline group volume."
         },
-        "override_calculation": {
-          "type": "string",
-          "enum": ["differential", "fixed_override"],
-          "description": "How override commissions are calculated for breakaway groups."
-        },
-        "differential": {
+        "overrides": {
+          "type": "object",
+          "description": "Override strategy for the breakaway. Tagged on `type`: single_walk for the classic rank-walk overrides, multi_tier for the split-out-count ladder.",
           "oneOf": [
             {
-              "$ref": "#/$defs/DifferentialConfig"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Differential override configuration. Required when override_calculation is differential."
-        },
-        "fixed_override": {
-          "oneOf": [
-            {
-              "$ref": "#/$defs/FixedOverrideConfig"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Fixed override configuration. Required when override_calculation is fixed_override."
-        },
-        "generation": {
-          "oneOf": [
-            {
-              "$ref": "#/$defs/BreakawayGenerationConfig"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Generation override configuration for broken-away groups."
-        }
-      },
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "override_calculation": {
-                "const": "differential"
-              }
-            },
-            "required": ["override_calculation"]
-          },
-          "then": {
-            "required": ["differential"],
-            "properties": {
-              "differential": {
-                "$ref": "#/$defs/DifferentialConfig"
+              "title": "SingleWalkOverrides",
+              "description": "Classic single-walk overrides. Pays the closest qualifying upline (differential or fixed_override mode), with optional generation overrides above the threshold.",
+              "required": ["type", "override_calculation"],
+              "properties": {
+                "type": {
+                  "const": "single_walk"
+                },
+                "override_calculation": {
+                  "type": "string",
+                  "enum": ["differential", "fixed_override"],
+                  "description": "How override commissions are calculated for breakaway groups."
+                },
+                "differential": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/$defs/DifferentialConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Differential override configuration. Required when override_calculation is differential."
+                },
+                "fixed_override": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/$defs/FixedOverrideConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Fixed override configuration. Required when override_calculation is fixed_override."
+                },
+                "generation": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/$defs/BreakawayGenerationConfig"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Generation override configuration for broken-away groups."
+                }
               },
-              "fixed_override": {
-                "type": "null"
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "override_calculation": {
+                        "const": "differential"
+                      }
+                    },
+                    "required": ["override_calculation"]
+                  },
+                  "then": {
+                    "required": ["differential"],
+                    "properties": {
+                      "differential": {
+                        "$ref": "#/$defs/DifferentialConfig"
+                      },
+                      "fixed_override": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "else": {
+                    "required": ["fixed_override"],
+                    "properties": {
+                      "differential": {
+                        "type": "null"
+                      },
+                      "fixed_override": {
+                        "$ref": "#/$defs/FixedOverrideConfig"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "title": "MultiTierOverrides",
+              "description": "Multi-tier overrides. The first tier the leg's split-out count clears determines its override rate.",
+              "required": ["type", "tiers"],
+              "properties": {
+                "type": {
+                  "const": "multi_tier"
+                },
+                "tiers": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "$ref": "#/$defs/BreakawayTier"
+                  },
+                  "description": "Ladder of override tiers. Each tier's min_split_out_groups is the count threshold the leg must meet."
+                }
               }
             }
-          },
-          "else": {
-            "required": ["fixed_override"],
-            "properties": {
-              "differential": {
-                "type": "null"
-              },
-              "fixed_override": {
-                "$ref": "#/$defs/FixedOverrideConfig"
-              }
-            }
-          }
+          ]
         }
-      ]
+      }
+    },
+    "BreakawayTier": {
+      "type": "object",
+      "description": "One tier of a multi-tier breakaway override ladder.",
+      "required": ["min_split_out_groups", "rate"],
+      "properties": {
+        "min_split_out_groups": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 255,
+          "description": "Minimum number of split-out groups required for this tier to apply."
+        },
+        "rate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Override rate paid on the leg's breakaway volume when this tier applies."
+        }
+      }
     },
     "DifferentialConfig": {
       "type": "object",

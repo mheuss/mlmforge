@@ -168,15 +168,18 @@ pub(crate) fn validate_cv(source: &VolumeSource) -> Result<(), CalculationError>
     Ok(())
 }
 
-/// Sort earnings by (earner_id, source_id) for deterministic output.
+/// Sort earnings by (earner_id, source_id, level) for deterministic output.
 ///
 /// Without sorting, the order depends on BFS traversal and volume
-/// source iteration, both of which can vary across runs.
+/// source iteration, both of which can vary across runs. The level
+/// tiebreaker ensures deterministic ordering when multiple tiers emit
+/// earnings for the same (earner_id, source_id) pair.
 pub(crate) fn sort_earnings(earnings: &mut [CommissionEarning]) {
     earnings.sort_by(|a, b| {
         a.earner_id
             .cmp(&b.earner_id)
             .then_with(|| a.source_id.cmp(&b.source_id))
+            .then_with(|| a.level.cmp(&b.level))
     });
 }
 
@@ -660,6 +663,31 @@ mod tests {
     }
 
     // --- sort_earnings ---
+
+    #[test]
+    fn sort_earnings_breaks_ties_by_level() {
+        let mut earnings = vec![
+            CommissionEarning {
+                earner_id: uuid_from_index(1),
+                source_id: uuid_from_index(2),
+                level: 3,
+                rate: 0.01,
+                cv_amount: 100.0,
+                dollar_amount: 1.0,
+            },
+            CommissionEarning {
+                earner_id: uuid_from_index(1),
+                source_id: uuid_from_index(2),
+                level: 1,
+                rate: 0.05,
+                cv_amount: 100.0,
+                dollar_amount: 5.0,
+            },
+        ];
+        sort_earnings(&mut earnings);
+        assert_eq!(earnings[0].level, 1);
+        assert_eq!(earnings[1].level, 3);
+    }
 
     #[test]
     fn sort_earnings_by_earner_then_source() {

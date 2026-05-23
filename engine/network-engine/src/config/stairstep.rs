@@ -57,10 +57,18 @@ pub enum OverrideStrategy {
 /// An ordered ladder of breakaway override tiers.
 ///
 /// Tiers are listed in depth order. The first tier is split-out depth 1,
-/// the second is depth 2, and so on.
+/// the second is depth 2, and so on. Capped at 255 tiers so each tier's
+/// 1-based depth floor fits in `u8` (`walk_multi_tier_overrides` would
+/// panic the 256th tier otherwise).
 ///
-/// Non-empty `tiers` is enforced by the JSON schema and the Go validator
-/// (HEU-428 Task 7), not by this type.
+/// Non-empty and at-most-255 `tiers` is enforced by the JSON schema and the
+/// Go validator (HEU-428 Tasks 7 and final review), not by this type.
+///
+/// The struct exists as a one-field wrapper rather than
+/// `MultiTier(Vec<BreakawayTier>)` so the internally-tagged wire form
+/// nests `tiers` under the discriminator (`{"type": "multi_tier",
+/// "tiers": [...]}`). Newtype-around-`Vec` would emit the array
+/// inline at the variant root, breaking the cross-language contract.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MultiTierConfig {
     pub tiers: Vec<BreakawayTier>,

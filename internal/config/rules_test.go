@@ -588,6 +588,136 @@ func TestBreakawayMultiTierRateOutOfRangeRejected(t *testing.T) {
 	assert.Contains(t, errs[0].Path, "/structures/0/commission/breakaway/overrides/tiers/1/rate")
 }
 
+// TestBreakawayMultiTierRateAtBoundsAccepted pins the inclusive contract:
+// rates of exactly 0.0 and 1.0 are valid. A future change to strict
+// inequalities (e.g., `< 0 || >= 1`) would break this test.
+func TestBreakawayMultiTierRateAtBoundsAccepted(t *testing.T) {
+	plan := minimalPlan()
+	plan.Structures[0].Name = "Stairs"
+	plan.Structures[0].Type = "stairstep"
+	plan.Structures[0].resolvedCommission = &StairstepCommission{
+		Breakaway: &BreakawayConfig{
+			ThresholdRank: "Silver",
+			Overrides: OverrideStrategy{
+				Type: "multi_tier",
+				Tiers: []BreakawayTier{
+					{MinSplitOutGroups: 1, Rate: 0.0},
+					{MinSplitOutGroups: 2, Rate: 1.0},
+				},
+			},
+		},
+	}
+	plan.Ranks[0].QualifiedStructures = []string{"Stairs"}
+	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stairs"}}
+	plan.Ranks[1].QualifiedStructures = []string{"Stairs"}
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{Structure: "Stairs", PersonalVolume: 100, GroupVolume: 3000},
+	}
+
+	errs := validateBusinessRules(plan)
+	assert.Empty(t, errs)
+}
+
+// TestBreakawayMultiTierRateJustOverOneRejected pins the upper bound by
+// rejecting a rate one ULP above 1. Paired with the at-bounds test above to
+// guard against an off-by-epsilon regression.
+func TestBreakawayMultiTierRateJustOverOneRejected(t *testing.T) {
+	plan := minimalPlan()
+	plan.Structures[0].Name = "Stairs"
+	plan.Structures[0].Type = "stairstep"
+	plan.Structures[0].resolvedCommission = &StairstepCommission{
+		Breakaway: &BreakawayConfig{
+			ThresholdRank: "Silver",
+			Overrides: OverrideStrategy{
+				Type: "multi_tier",
+				Tiers: []BreakawayTier{
+					{MinSplitOutGroups: 1, Rate: 1.0000001},
+				},
+			},
+		},
+	}
+	plan.Ranks[0].QualifiedStructures = []string{"Stairs"}
+	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stairs"}}
+	plan.Ranks[1].QualifiedStructures = []string{"Stairs"}
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{Structure: "Stairs", PersonalVolume: 100, GroupVolume: 3000},
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "invalid_value", errs[0].Code)
+	assert.Contains(t, errs[0].Path, "/structures/0/commission/breakaway/overrides/tiers/0/rate")
+}
+
+// TestBreakawayMultiTierTooManyTiersRejected verifies the 255-tier cap.
+// The cap exists because the engine's multi-tier walk derives each tier's
+// 1-based depth floor as a u8; a 256th tier would overflow the conversion
+// and panic. The schema enforces maxItems: 255 and rules.go mirrors it.
+func TestBreakawayMultiTierTooManyTiersRejected(t *testing.T) {
+	const tooMany = 256
+
+	tiers := make([]BreakawayTier, tooMany)
+	for i := range tiers {
+		tiers[i] = BreakawayTier{MinSplitOutGroups: 1, Rate: 0.01}
+	}
+
+	plan := minimalPlan()
+	plan.Structures[0].Name = "Stairs"
+	plan.Structures[0].Type = "stairstep"
+	plan.Structures[0].resolvedCommission = &StairstepCommission{
+		Breakaway: &BreakawayConfig{
+			ThresholdRank: "Silver",
+			Overrides: OverrideStrategy{
+				Type:  "multi_tier",
+				Tiers: tiers,
+			},
+		},
+	}
+	plan.Ranks[0].QualifiedStructures = []string{"Stairs"}
+	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stairs"}}
+	plan.Ranks[1].QualifiedStructures = []string{"Stairs"}
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{Structure: "Stairs", PersonalVolume: 100, GroupVolume: 3000},
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "invalid_value", errs[0].Code)
+	assert.Equal(t, SeverityError, errs[0].Severity)
+	assert.Contains(t, errs[0].Path, "/structures/0/commission/breakaway/overrides/tiers")
+}
+
+// TestBreakawayMultiTierExactly255TiersAccepted pins the inclusive upper
+// bound: 255 tiers is the maximum and must not be rejected.
+func TestBreakawayMultiTierExactly255TiersAccepted(t *testing.T) {
+	tiers := make([]BreakawayTier, 255)
+	for i := range tiers {
+		tiers[i] = BreakawayTier{MinSplitOutGroups: 1, Rate: 0.01}
+	}
+
+	plan := minimalPlan()
+	plan.Structures[0].Name = "Stairs"
+	plan.Structures[0].Type = "stairstep"
+	plan.Structures[0].resolvedCommission = &StairstepCommission{
+		Breakaway: &BreakawayConfig{
+			ThresholdRank: "Silver",
+			Overrides: OverrideStrategy{
+				Type:  "multi_tier",
+				Tiers: tiers,
+			},
+		},
+	}
+	plan.Ranks[0].QualifiedStructures = []string{"Stairs"}
+	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stairs"}}
+	plan.Ranks[1].QualifiedStructures = []string{"Stairs"}
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{Structure: "Stairs", PersonalVolume: 100, GroupVolume: 3000},
+	}
+
+	errs := validateBusinessRules(plan)
+	assert.Empty(t, errs)
+}
+
 func TestStairstepBreakawayGenerationBoundaryRankMustExist(t *testing.T) {
 	plan := minimalPlan()
 	plan.Structures[0].Name = "Stairs"

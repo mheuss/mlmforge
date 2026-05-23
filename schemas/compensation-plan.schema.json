@@ -1250,10 +1250,11 @@
                 "tiers": {
                   "type": "array",
                   "minItems": 1,
+                  "maxItems": 255,
                   "items": {
                     "$ref": "#/$defs/BreakawayTier"
                   },
-                  "description": "Ladder of override tiers. Each tier's min_split_out_groups is the count threshold the leg must meet."
+                  "description": "Ladder of override tiers. Each tier's min_split_out_groups is the count threshold the leg must meet. Capped at 255 so each tier's 1-based depth floor fits in u8 on the engine side."
                 }
               }
             }

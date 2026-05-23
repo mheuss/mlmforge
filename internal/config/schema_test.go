@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -228,9 +229,23 @@ func TestSchemaRejectsMultiTierMinSplitOutZero(t *testing.T) {
 	errs := p.validateSchema(readFixture(t, "invalid/multi-tier-min-split-out-zero.yaml"))
 	require.NotEmpty(t, errs, "min_split_out_groups=0 should produce schema errors")
 
+	// Pin the failure mode: at least one error must be a schema_violation
+	// pointing at min_split_out_groups, not some unrelated structural error
+	// in the fixture. Without this, a future tightening that breaks the
+	// fixture in some other way would still pass this test.
+	foundMinSplitOutFailure := false
 	for _, e := range errs {
 		assert.Equal(t, SeverityError, e.Severity)
+		if e.Code == "schema_violation" && strings.Contains(e.Path, "min_split_out_groups") {
+			foundMinSplitOutFailure = true
+		}
 	}
+	assert.True(
+		t,
+		foundMinSplitOutFailure,
+		"expected at least one schema_violation on min_split_out_groups, got %+v",
+		errs,
+	)
 }
 
 func TestSchemaRejectsLegQualityBadPredicate(t *testing.T) {

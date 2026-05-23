@@ -294,15 +294,26 @@ func validateStructureRefs(plan *CompensationPlan, ranks map[string]bool) []Vali
 						})
 					}
 				}
-				// Multi-tier overrides: non-empty tiers and rate in [0, 1].
-				// The schema also enforces these, but rules.go owns the
-				// breakaway invariants alongside the reference checks above.
+				// Multi-tier overrides: non-empty tiers, rate in [0, 1], and
+				// at most 255 tiers. The schema also enforces these, but
+				// rules.go owns the breakaway invariants alongside the
+				// reference checks above. The 255 cap mirrors the engine's u8
+				// depth floor: a 256th tier would panic the calculator.
 				if rc.Breakaway.Overrides.Type == "multi_tier" {
-					if len(rc.Breakaway.Overrides.Tiers) == 0 {
+					tierCount := len(rc.Breakaway.Overrides.Tiers)
+					if tierCount == 0 {
 						errs = append(errs, ValidationError{
 							Path:     fmt.Sprintf("/structures/%d/commission/breakaway/overrides/tiers", i),
 							Code:     "invalid_value",
 							Message:  fmt.Sprintf("structure %q breakaway multi_tier overrides must have at least one tier", s.Name),
+							Severity: SeverityError,
+						})
+					}
+					if tierCount > 255 {
+						errs = append(errs, ValidationError{
+							Path:     fmt.Sprintf("/structures/%d/commission/breakaway/overrides/tiers", i),
+							Code:     "invalid_value",
+							Message:  fmt.Sprintf("structure %q breakaway multi_tier overrides has %d tiers; at most 255 are allowed", s.Name, tierCount),
 							Severity: SeverityError,
 						})
 					}

@@ -1,7 +1,8 @@
 # Invalid: a multi_tier breakaway tier has min_split_out_groups: 0,
 # which violates the schema's minimum: 1 constraint. Go's uint8 type
 # accepts 0, but the schema is the gate that rejects it.
-# Expected error: schema_violation on tiers/0/min_split_out_groups.
+# Expected error: schema_violation, with the JSON-pointer path containing
+# `min_split_out_groups` (pinned by TestSchemaRejectsMultiTierMinSplitOutZero).
 
 name: Bad Multi-Tier Min Split Out
 version: 1

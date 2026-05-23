@@ -1612,6 +1612,31 @@ mod tests {
         assert_eq!(counts.len(), 1);
     }
 
+    #[test]
+    fn count_first_line_split_outs_breakaway_not_in_tree_silently_skipped() {
+        // Defensive case: the breakaway set carries an id that isn't in the
+        // tree (e.g., a stale snapshot key). `tree.get_parent(id)` returns
+        // `Err(TreeError::UserNotFound)` rather than `Ok(None)`, exercising
+        // a different branch of `count_first_line_split_outs` than the
+        // root-breakaway case. The function must silently skip and continue
+        // tallying the remaining breakaways — never panic.
+        let tree = build_chain(3); // {0, 1, 2} in the tree
+        let phantom = uuid(99); // not in the tree
+        let breakaways: HashSet<Uuid> = [uuid(1), uuid(2), phantom].into_iter().collect();
+
+        let counts = count_first_line_split_outs(&tree, &breakaways);
+
+        // The in-tree breakaways are tallied as usual: uuid(0) owns uuid(1)
+        // (count 1), uuid(1) owns uuid(2) (count 1). The phantom contributes
+        // nothing.
+        assert_eq!(counts.get(&uuid(0)).copied().unwrap_or(0), 1);
+        assert_eq!(counts.get(&uuid(1)).copied().unwrap_or(0), 1);
+        assert!(
+            !counts.contains_key(&phantom),
+            "phantom id should not appear in the counts map"
+        );
+    }
+
     // --- Multi-tier override walk tests ---
 
     fn test_multi_tier_structure(tiers: Vec<BreakawayTier>) -> StairstepStructureConfig {
@@ -1843,7 +1868,10 @@ mod tests {
     }
 
     #[test]
-    fn multi_tier_one_earner_qualifies_for_several_tiers() {
+    fn multi_tier_depth_floor_partitions_chain_ancestors() {
+        // The depth_floor filter partitions a uniform breakaway chain so each
+        // tier's nearest qualifying ancestor is a distinct earner.
+        //
         // Chain: 0(director) -> 1(director) -> 2(director) -> 3(director) -> 4(assoc)
         // Breakaways: {0, 1, 2, 3}.
         // First-Line Split-Outs:
@@ -1866,6 +1894,10 @@ mod tests {
         // `generation >= depth_floor` filter is removed, uuid(2) — the nearest
         // split-out for source uuid(3) — would also win Tiers 1 and 2 via
         // `.find()` order.
+        //
+        // For the converse case — one earner winning multiple tiers when a
+        // nearer ancestor fails a gate — see
+        // `multi_tier_single_earner_wins_multiple_tiers_when_nearer_fails_gate`.
         let tree = build_chain(5);
         let structure = test_multi_tier_structure(vec![
             BreakawayTier {
@@ -1945,6 +1977,110 @@ mod tests {
             uuid2_earnings.len(),
             1,
             "uuid(2) should earn exactly once (Tier 0 only)"
+        );
+    }
+
+    #[test]
+    fn multi_tier_single_earner_wins_multiple_tiers_when_nearer_fails_gate() {
+        // One earner can win multiple consecutive tiers when nearer ancestors
+        // fail the gate and the earner satisfies every relevant tier's
+        // depth_floor and min_split_out_groups.
+        //
+        // Tree shape: uuid(0) is the root breakaway with five direct breakaway
+        // children — uuid(1) through uuid(5). uuid(6) is a breakaway under
+        // uuid(1) and serves as the source. The other branches (2..=5) exist
+        // only to inflate uuid(0)'s First-Line Split-Out count.
+        //
+        //               uuid(0) [breakaway, count 5]
+        //              / / | \ \
+        //   uuid(1)  uuid(2)  uuid(3)  uuid(4)  uuid(5)
+        //    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        //    |        breakaway siblings (count 0 each)
+        //   uuid(6) [breakaway, source]
+        //
+        // First-Line Split-Outs:
+        //   uuid(0): owns uuid(1..=5) -> count 5.
+        //   uuid(1): owns uuid(6)    -> count 1.
+        //   uuid(2..=5), uuid(6): no breakaway children -> count 0.
+        //
+        // Tiers:
+        //   Tier 0: depth_floor=1, min_split_out_groups=2, rate=0.05.
+        //   Tier 1: depth_floor=2, min_split_out_groups=2, rate=0.03.
+        //
+        // For source uuid(6): split-out ancestors uuid(1) (gen 1, count 1),
+        // uuid(0) (gen 2, count 5).
+        //   Tier 0 (df=1, min=2): uuid(1) fails the gate (count 1 < 2).
+        //     .find() advances to uuid(0) (gen 2 >= 1, count 5 >= 2). uuid(0) wins.
+        //   Tier 1 (df=2, min=2): uuid(1) is below df. .find() lands on uuid(0)
+        //     (gen 2 >= 2, count 5 >= 2). uuid(0) wins.
+        // So uuid(0) wins both tiers; uuid(1) wins nothing.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uuid(0), 0).unwrap();
+        for sibling in 1..=5 {
+            tree.add_node(uuid(sibling), uuid(0), uuid(0), sibling as i64)
+                .unwrap();
+        }
+        tree.add_node(uuid(6), uuid(1), uuid(1), 6).unwrap();
+
+        let structure = test_multi_tier_structure(vec![
+            BreakawayTier {
+                min_split_out_groups: 2,
+                rate: 0.05,
+            },
+            BreakawayTier {
+                min_split_out_groups: 2,
+                rate: 0.03,
+            },
+        ]);
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        // All seven nodes get PV 200 so every node passes eligibility
+        // (default_eligibility() requires PV >= 100). uuid(6) is the source
+        // and its group volume = its PV (no descendants).
+        let mut snapshots = HashMap::new();
+        for id in 0..=6 {
+            snapshots.insert(uuid(id), snapshot_with_rank("director", 200.0));
+        }
+
+        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &[]).unwrap();
+
+        // uuid(6)'s group volume = 200 (PV on uuid(6), no descendants).
+        // Tier 0: uuid(0) earns 0.05 * 200 = 10.0 at level 1.
+        let tier0 = result
+            .iter()
+            .find(|e| e.source_id == uuid(6) && e.earner_id == uuid(0) && e.level == 1)
+            .expect("uuid(0) should win Tier 0 on uuid(6)'s group");
+        assert!((tier0.rate - 0.05).abs() < FP_TOL);
+        assert!((tier0.dollar_amount - 10.0).abs() < FP_TOL);
+
+        // Tier 1: uuid(0) earns 0.03 * 200 = 6.0 at level 2.
+        let tier1 = result
+            .iter()
+            .find(|e| e.source_id == uuid(6) && e.earner_id == uuid(0) && e.level == 2)
+            .expect("uuid(0) should win Tier 1 on uuid(6)'s group");
+        assert!((tier1.rate - 0.03).abs() < FP_TOL);
+        assert!((tier1.dollar_amount - 6.0).abs() < FP_TOL);
+
+        // uuid(0) wins both tiers: exactly two earnings, one per level.
+        let uuid0_earnings: Vec<_> = result
+            .iter()
+            .filter(|e| e.earner_id == uuid(0) && e.source_id == uuid(6))
+            .collect();
+        assert_eq!(
+            uuid0_earnings.len(),
+            2,
+            "uuid(0) should earn both Tier 0 and Tier 1 on uuid(6)"
+        );
+
+        // uuid(1) is the nearest split-out ancestor but fails every tier's
+        // min_split_out_groups gate (count 1 < 2). It must not appear in the
+        // override earnings for source uuid(6).
+        let uuid1_overrides = result
+            .iter()
+            .any(|e| e.earner_id == uuid(1) && e.source_id == uuid(6));
+        assert!(
+            !uuid1_overrides,
+            "uuid(1) fails the gate and must not earn any override on uuid(6)"
         );
     }
 

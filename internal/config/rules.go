@@ -284,6 +284,18 @@ func validateStructureRefs(plan *CompensationPlan, ranks map[string]bool) []Vali
 						}
 					}
 				}
+				if rc.Breakaway.Overrides.FixedOverride != nil {
+					for rankName := range rc.Breakaway.Overrides.FixedOverride.RankRates {
+						if !ranks[rankName] {
+							errs = append(errs, ValidationError{
+								Path:     fmt.Sprintf("/structures/%d/commission/breakaway/overrides/fixed_override/rank_rates", i),
+								Code:     "undefined_reference",
+								Message:  fmt.Sprintf("structure %q breakaway fixed_override rank_rates references undefined rank %q", s.Name, rankName),
+								Severity: SeverityError,
+							})
+						}
+					}
+				}
 				if rc.Breakaway.Overrides.Generation != nil && rc.Breakaway.Overrides.Generation.BoundaryRank != "" {
 					if !ranks[rc.Breakaway.Overrides.Generation.BoundaryRank] {
 						errs = append(errs, ValidationError{

@@ -1241,7 +1241,7 @@
             },
             {
               "title": "MultiTierOverrides",
-              "description": "Multi-tier overrides. The first tier the leg's split-out count clears determines its override rate.",
+              "description": "Multi-tier overrides. An ordered ladder of depth-banded tiers, each paid independently to the nearest qualifying split-out ancestor of the source group. Each tier emits its own earning, not a single tier per group.",
               "required": ["type", "tiers"],
               "properties": {
                 "type": {
@@ -1254,7 +1254,7 @@
                   "items": {
                     "$ref": "#/$defs/BreakawayTier"
                   },
-                  "description": "Ladder of override tiers. Each tier's min_split_out_groups is the count threshold the leg must meet. Capped at 255 so each tier's 1-based depth floor fits in u8 on the engine side."
+                  "description": "Ladder of override tiers. Each tier's min_split_out_groups is the count threshold the *earner* (the qualifying ancestor) must meet on their own First-Line Split-Out Groups. Capped at 255 so each tier's 1-based depth floor fits in u8 on the engine side."
                 }
               }
             }
@@ -1271,7 +1271,7 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 255,
-          "description": "Minimum number of split-out groups required for this tier to apply."
+          "description": "Minimum First-Line Split-Out Groups the earner (the qualifying ancestor) must own for this tier's rate to apply to them."
         },
         "rate": {
           "type": "number",

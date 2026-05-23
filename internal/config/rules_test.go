@@ -216,6 +216,43 @@ func TestBreakawayDifferentialRankRatesMustExist(t *testing.T) {
 	assert.Contains(t, errs[0].Path, "overrides/differential/rank_rates")
 }
 
+// TestBreakawayFixedOverrideRankRatesMustExist mirrors the differential check
+// for fixed_override. The original validateStructureRefs had a parallel gap —
+// fixed_override rank-rates were not cross-checked against the defined ranks,
+// so a typo passed business-rule validation silently. CodeRabbit flagged this
+// on the HEU-428 PR and the gap was closed alongside the multi-tier work.
+func TestBreakawayFixedOverrideRankRatesMustExist(t *testing.T) {
+	plan := minimalPlan()
+	plan.Structures[0].Name = "Stairs"
+	plan.Structures[0].Type = "stairstep"
+	plan.Structures[0].resolvedCommission = &StairstepCommission{
+		Breakaway: &BreakawayConfig{
+			ThresholdRank: "Silver",
+			Overrides: OverrideStrategy{
+				Type:                "single_walk",
+				OverrideCalculation: "fixed_override",
+				FixedOverride: &FixedOverrideConfig{
+					RankRates: map[string]float64{
+						"Silver": 0.05,
+						"Typo":   0.08,
+					},
+				},
+			},
+		},
+	}
+	plan.Ranks[0].QualifiedStructures = []string{"Stairs"}
+	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stairs"}}
+	plan.Ranks[1].QualifiedStructures = []string{"Stairs"}
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{Structure: "Stairs", PersonalVolume: 100, GroupVolume: 3000},
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "undefined_reference", errs[0].Code)
+	assert.Contains(t, errs[0].Path, "overrides/fixed_override/rank_rates")
+}
+
 func TestPoolQualificationMinRankMustExist(t *testing.T) {
 	plan := minimalPlan()
 	badRank := "Nonexistent"

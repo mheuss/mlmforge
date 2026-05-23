@@ -294,6 +294,29 @@ func validateStructureRefs(plan *CompensationPlan, ranks map[string]bool) []Vali
 						})
 					}
 				}
+				// Multi-tier overrides: non-empty tiers and rate in [0, 1].
+				// The schema also enforces these, but rules.go owns the
+				// breakaway invariants alongside the reference checks above.
+				if rc.Breakaway.Overrides.Type == "multi_tier" {
+					if len(rc.Breakaway.Overrides.Tiers) == 0 {
+						errs = append(errs, ValidationError{
+							Path:     fmt.Sprintf("/structures/%d/commission/breakaway/overrides/tiers", i),
+							Code:     "invalid_value",
+							Message:  fmt.Sprintf("structure %q breakaway multi_tier overrides must have at least one tier", s.Name),
+							Severity: SeverityError,
+						})
+					}
+					for k, tier := range rc.Breakaway.Overrides.Tiers {
+						if tier.Rate < 0 || tier.Rate > 1 {
+							errs = append(errs, ValidationError{
+								Path:     fmt.Sprintf("/structures/%d/commission/breakaway/overrides/tiers/%d/rate", i, k),
+								Code:     "invalid_value",
+								Message:  fmt.Sprintf("structure %q breakaway tier %d rate %g must be in [0, 1]", s.Name, k, tier.Rate),
+								Severity: SeverityError,
+							})
+						}
+					}
+				}
 			}
 		case *StreamlineCommission:
 			for level, sl := range rc.DynamicCompression {

@@ -487,6 +487,42 @@ func TestBreakawayConfig_MultiTier_MarshalsGoEmittedWireShape(t *testing.T) {
 	assert.Equal(t, 0.02, t1["rate"])
 }
 
+// TestBreakawayTier_MinSplitOutGroups_BoundaryValues verifies the uint8
+// boundaries at YAML unmarshal time. Values in [0, 255] succeed at the Go
+// layer; values outside fail. The contract: 0 passes the Go uint8 type
+// (uint8 is unsigned and 0 is a valid value), but the schema's
+// minimum: 1 constraint rejects it. The schema is the gate, not Go.
+// See multi-tier-min-split-out-zero.yaml for the schema-level test.
+func TestBreakawayTier_MinSplitOutGroups_BoundaryValues(t *testing.T) {
+	cases := []struct {
+		name      string
+		value     string
+		expectErr bool
+	}{
+		{"zero", "0", false},
+		{"max_uint8", "255", false},
+		{"one_above_max", "256", true},
+		{"large_overflow", "300", true},
+		{"negative", "-1", true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			yamlInput := fmt.Sprintf(`
+min_split_out_groups: %s
+rate: 0.05
+`, tc.value)
+			var tier BreakawayTier
+			err := yaml.Unmarshal([]byte(yamlInput), &tier)
+			if tc.expectErr {
+				require.Error(t, err, "expected unmarshal to reject min_split_out_groups=%s", tc.value)
+			} else {
+				require.NoError(t, err, "expected unmarshal to accept min_split_out_groups=%s", tc.value)
+			}
+		})
+	}
+}
+
 // TestResolveCommissionsMatrix verifies that resolveCommissions correctly
 // decodes a matrix commission block.
 func TestResolveCommissionsMatrix(t *testing.T) {

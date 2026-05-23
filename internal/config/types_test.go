@@ -422,8 +422,13 @@ func TestBreakawayConfig_SingleWalk_MarshalsGoEmittedWireShape(t *testing.T) {
 	assert.Equal(t, 0.02, diff["min_override"])
 
 	// Non-selected variant fields must be present and zero-valued. The Rust
-	// internally-tagged enum reads `type` and ignores these.
+	// internally-tagged enum reads `type` and ignores these. assert.Contains
+	// checks key presence before assert.Nil checks the value, so an
+	// omitempty regression on any variant field would drop the key entirely
+	// and fail Contains.
+	assert.Contains(t, ov, "fixed_override")
 	assert.Nil(t, ov["fixed_override"])
+	assert.Contains(t, ov, "generation")
 	assert.Nil(t, ov["generation"])
 	assert.Contains(t, ov, "tiers")
 	assert.Nil(t, ov["tiers"])
@@ -460,9 +465,15 @@ func TestBreakawayConfig_MultiTier_MarshalsGoEmittedWireShape(t *testing.T) {
 	assert.Equal(t, "multi_tier", ov["type"])
 
 	// Non-selected single_walk fields are present and zero-valued.
+	// assert.Contains pins key presence so an omitempty regression on any
+	// variant field would drop the key entirely and fail Contains. The
+	// override_calculation field is gated by the explicit "" equality check.
 	assert.Equal(t, "", ov["override_calculation"])
+	assert.Contains(t, ov, "differential")
 	assert.Nil(t, ov["differential"])
+	assert.Contains(t, ov, "fixed_override")
 	assert.Nil(t, ov["fixed_override"])
+	assert.Contains(t, ov, "generation")
 	assert.Nil(t, ov["generation"])
 
 	tiers, ok := ov["tiers"].([]any)

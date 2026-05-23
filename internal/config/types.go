@@ -343,7 +343,10 @@ type BreakawayConfig struct {
 // docs/development/config-types.md for the mirror pattern.
 //
 // No omitempty on the variant fields. A zero value must round-trip so the
-// Rust side sees a consistent shape on every payload.
+// Rust side sees a consistent shape on every payload. See
+// TestBreakawayConfig_SingleWalk_MarshalsGoEmittedWireShape and
+// TestBreakawayConfig_MultiTier_MarshalsGoEmittedWireShape for the
+// wire-shape regression pin.
 type OverrideStrategy struct {
 	Type string `yaml:"type" json:"type"` // "single_walk" or "multi_tier"
 
@@ -353,7 +356,8 @@ type OverrideStrategy struct {
 	FixedOverride       *FixedOverrideConfig       `yaml:"fixed_override" json:"fixed_override"`
 	Generation          *BreakawayGenerationConfig `yaml:"generation" json:"generation"`
 
-	// multi_tier fields
+	// Tiers: nil marshals as JSON null. Do not default to an empty slice.
+	// That changes the wire shape Rust expects.
 	Tiers []BreakawayTier `yaml:"tiers" json:"tiers"`
 }
 

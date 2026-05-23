@@ -1,0 +1,100 @@
+# Invalid: a multi_tier breakaway tier has min_split_out_groups: 0,
+# which violates the schema's minimum: 1 constraint. Go's uint8 type
+# accepts 0, but the schema is the gate that rejects it.
+# Expected error: schema_violation on tiers/0/min_split_out_groups.
+
+name: Bad Multi-Tier Min Split Out
+version: 1
+
+period:
+  length: month
+  start_date: "2026-01-01"
+  payout_lag_days: 14
+
+volume:
+  inhibit_signup_volume: false
+  base_currency: USD
+  volume_to_dollar_multiplier: 1.0
+  deduct_qualifying_volume: true
+
+ranks:
+  - name: Distributor
+    ordinal: 1
+    qualification:
+      structures:
+        - structure: StairstepTree
+          personal_volume: 0
+          group_volume: 0
+    demotion_policy: promotion_only
+
+  - name: Supervisor
+    ordinal: 2
+    qualification:
+      structures:
+        - structure: StairstepTree
+          personal_volume: 100
+          group_volume: 2000
+    demotion_policy: promotion_only
+
+rank_tracking:
+  track_achieved_rank: false
+
+rank_features:
+  constraints_enabled: false
+  overrides_enabled: false
+
+commission_eligibility:
+  min_personal_volume: 0
+  require_order_in_period: false
+  eligible_statuses:
+    - active
+
+structures:
+  - name: StairstepTree
+    type: stairstep
+    commission:
+      commissionable_depth: 6
+      rate_table:
+        Distributor:
+          "1": 0.05
+        Supervisor:
+          "1": 0.10
+      breakaway:
+        threshold_rank: Supervisor
+        group_volume_excludes_breakaway: true
+        overrides:
+          type: multi_tier
+          tiers:
+            - min_split_out_groups: 0
+              rate: 0.05
+            - min_split_out_groups: 2
+              rate: 0.02
+
+bonuses:
+  matching: null
+  sponsor: null
+  fast_start: null
+  rank_advancement: null
+  leadership_development: null
+  infinity: null
+  lifestyle: null
+  pool: null
+  matrix_completion: null
+  position: null
+  board_cycling: null
+
+payout:
+  base_currency: USD
+  minimum_amount: 50.00
+  split_payouts_enabled: false
+  methods:
+    - type: bank_transfer
+      fee: 2.50
+
+caps:
+  company_payout_cap_percent: 0.42
+  cap_enforcement: pro_rata
+  clawback_on_refund: false
+
+placement:
+  donated_placement_enabled: false

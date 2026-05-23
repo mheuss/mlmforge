@@ -26,6 +26,7 @@ func TestPipelineAllValidFixtures(t *testing.T) {
 		{"valid/hybrid-plan.yaml", "Hybrid Unilevel-Binary", []string{"unilevel", "binary"}},
 		{"valid/matrix-plan.yaml", "Forced Matrix 3x7", []string{"matrix"}},
 		{"valid/stairstep-plan.yaml", "Classic Stairstep Breakaway", []string{"stairstep"}},
+		{"valid/multi-tier-stairstep-plan.yaml", "Multi-Tier Stairstep Breakaway", []string{"stairstep"}},
 		{"valid/generation-plan.yaml", "Generation Override Plan", []string{"generation"}},
 		{"valid/streamline-plan.yaml", "Streamline Direct", []string{"unilevel", "streamline"}},
 		{"valid/board-plan.yaml", "Sales Board Plan", []string{"unilevel", "board_plan"}},

@@ -524,6 +524,70 @@ func TestLargeMatrixWarning(t *testing.T) {
 	assert.True(t, found, "expected large_matrix warning, got: %v", errs)
 }
 
+// TestBreakawayMultiTierEmptyTiersRejected verifies that a multi-tier
+// breakaway with an empty Tiers slice produces an invalid_value error.
+// The schema also enforces minItems: 1, but rules.go owns the structural
+// invariant alongside the existing breakaway reference checks.
+func TestBreakawayMultiTierEmptyTiersRejected(t *testing.T) {
+	plan := minimalPlan()
+	plan.Structures[0].Name = "Stairs"
+	plan.Structures[0].Type = "stairstep"
+	plan.Structures[0].resolvedCommission = &StairstepCommission{
+		Breakaway: &BreakawayConfig{
+			ThresholdRank: "Silver",
+			Overrides: OverrideStrategy{
+				Type:  "multi_tier",
+				Tiers: []BreakawayTier{},
+			},
+		},
+	}
+	plan.Ranks[0].QualifiedStructures = []string{"Stairs"}
+	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stairs"}}
+	plan.Ranks[1].QualifiedStructures = []string{"Stairs"}
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{Structure: "Stairs", PersonalVolume: 100, GroupVolume: 3000},
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "invalid_value", errs[0].Code)
+	assert.Equal(t, SeverityError, errs[0].Severity)
+	assert.Contains(t, errs[0].Path, "/structures/0/commission/breakaway/overrides/tiers")
+}
+
+// TestBreakawayMultiTierRateOutOfRangeRejected verifies that a tier with a
+// rate outside [0, 1] produces an invalid_value error pointing at the
+// offending tier's rate field.
+func TestBreakawayMultiTierRateOutOfRangeRejected(t *testing.T) {
+	plan := minimalPlan()
+	plan.Structures[0].Name = "Stairs"
+	plan.Structures[0].Type = "stairstep"
+	plan.Structures[0].resolvedCommission = &StairstepCommission{
+		Breakaway: &BreakawayConfig{
+			ThresholdRank: "Silver",
+			Overrides: OverrideStrategy{
+				Type: "multi_tier",
+				Tiers: []BreakawayTier{
+					{MinSplitOutGroups: 1, Rate: 0.05},
+					{MinSplitOutGroups: 2, Rate: 1.5}, // out of range
+				},
+			},
+		},
+	}
+	plan.Ranks[0].QualifiedStructures = []string{"Stairs"}
+	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stairs"}}
+	plan.Ranks[1].QualifiedStructures = []string{"Stairs"}
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{Structure: "Stairs", PersonalVolume: 100, GroupVolume: 3000},
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "invalid_value", errs[0].Code)
+	assert.Equal(t, SeverityError, errs[0].Severity)
+	assert.Contains(t, errs[0].Path, "/structures/0/commission/breakaway/overrides/tiers/1/rate")
+}
+
 func TestStairstepBreakawayGenerationBoundaryRankMustExist(t *testing.T) {
 	plan := minimalPlan()
 	plan.Structures[0].Name = "Stairs"

@@ -22,6 +22,7 @@ func TestSchemaValidatesAllValidFixtures(t *testing.T) {
 		"valid/generation-plan.yaml",
 		"valid/matrix-plan.yaml",
 		"valid/stairstep-plan.yaml",
+		"valid/multi-tier-stairstep-plan.yaml",
 		"valid/streamline-plan.yaml",
 		"valid/board-plan.yaml",
 		"valid/leg-quality-plan.yaml",
@@ -214,6 +215,23 @@ func TestStringifyKey(t *testing.T) {
 // the library consistently returns *jsonschema.ValidationError. The branch
 // exists as a safety net for unexpected error types from the library.
 // See schema.go:33-41.
+
+// TestSchemaRejectsMultiTierMinSplitOutZero verifies that a multi-tier
+// breakaway with a tier whose min_split_out_groups is 0 fails schema
+// validation. The Go uint8 type accepts 0, but the schema's minimum: 1
+// constraint is the gate. This pins the "schema is the gate" contract
+// referenced in TestBreakawayTier_MinSplitOutGroups_BoundaryValues.
+func TestSchemaRejectsMultiTierMinSplitOutZero(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+
+	errs := p.validateSchema(readFixture(t, "invalid/multi-tier-min-split-out-zero.yaml"))
+	require.NotEmpty(t, errs, "min_split_out_groups=0 should produce schema errors")
+
+	for _, e := range errs {
+		assert.Equal(t, SeverityError, e.Severity)
+	}
+}
 
 func TestSchemaRejectsLegQualityBadPredicate(t *testing.T) {
 	p, err := NewPipeline(schemaPath(t))

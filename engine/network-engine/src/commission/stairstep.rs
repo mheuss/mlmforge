@@ -8,11 +8,11 @@
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
-use crate::config::stairstep::MultiTierConfig;
+use crate::config::stairstep::{BreakawayTier, MultiTierConfig};
 use crate::config::{CompensationPlan, StairstepStructureConfig};
 use crate::tree::unilevel::UnilevelTree;
 
-use super::generation::count_generations_upward;
+use super::generation::{GenerationEntry, count_generations_upward};
 use super::types::{CalculationError, CommissionEarning, DistributorSnapshot, VolumeSource};
 use super::walk;
 
@@ -449,6 +449,28 @@ fn walk_single_overrides(
     earnings
 }
 
+/// True if this ancestor qualifies as the earner for the given tier:
+/// at the tier's depth floor or farther upline, currently eligible, and
+/// meeting the tier's `min_split_out_groups` gate.
+fn qualifies_for_tier(
+    entry: &GenerationEntry,
+    depth_floor: u8,
+    tier: &BreakawayTier,
+    prep: &PrepResult,
+) -> bool {
+    entry.generation >= depth_floor
+        && prep
+            .eligibility
+            .get(&entry.earner_id)
+            .is_some_and(|e| e.eligible)
+        && prep
+            .first_line_split_outs
+            .get(&entry.earner_id)
+            .copied()
+            .unwrap_or(0)
+            >= u32::from(tier.min_split_out_groups)
+}
+
 /// Walk 2, multi-tier branch. For each Split-Out Group, find each tier's
 /// nearest qualifying earner among the split-out ancestors.
 ///
@@ -490,19 +512,9 @@ fn walk_multi_tier_overrides(
             let depth_floor = u8::try_from(tier_index + 1)
                 .expect("more than 255 tiers — should be rejected by JSON schema and Go validator");
 
-            let earner = ancestors.iter().find(|entry| {
-                entry.generation >= depth_floor
-                    && prep
-                        .eligibility
-                        .get(&entry.earner_id)
-                        .is_some_and(|e| e.eligible)
-                    && prep
-                        .first_line_split_outs
-                        .get(&entry.earner_id)
-                        .copied()
-                        .unwrap_or(0)
-                        >= u32::from(tier.min_split_out_groups)
-            });
+            let earner = ancestors
+                .iter()
+                .find(|entry| qualifies_for_tier(entry, depth_floor, tier, prep));
 
             if let Some(entry) = earner {
                 earnings.push(CommissionEarning {
@@ -2202,5 +2214,115 @@ mod tests {
                 "dollar_amount mismatch for {earner:?}: {earning:?}",
             );
         }
+    }
+
+    // ---- qualifies_for_tier ----
+
+    /// Helper: build a minimal PrepResult covering only the fields
+    /// qualifies_for_tier inspects (eligibility, first_line_split_outs).
+    fn qualifies_prep(earner: Uuid, eligible: bool, first_line_count: u32) -> PrepResult {
+        let mut eligibility = HashMap::new();
+        eligibility.insert(
+            earner,
+            walk::EligibilityResult {
+                eligible,
+                max_earning_depth: None,
+            },
+        );
+        let mut first_line_split_outs = HashMap::new();
+        first_line_split_outs.insert(earner, first_line_count);
+        PrepResult {
+            eligibility,
+            breakaways: HashSet::new(),
+            group_volumes: HashMap::new(),
+            group_leaders: HashMap::new(),
+            first_line_split_outs,
+        }
+    }
+
+    // Use the project's deterministic uuid helper (aliased as `uuid` at
+    // mod-tests scope from `crate::commission::test_helpers::uuid_from_index`).
+    // The raw `uuid` crate is shadowed inside this module; do not call
+    // `uuid::Uuid::new_v4()` here.
+
+    #[test]
+    fn qualifies_for_tier_positive_case() {
+        let earner = uuid(1);
+        let entry = GenerationEntry {
+            earner_id: earner,
+            generation: 2,
+        };
+        let tier = BreakawayTier {
+            min_split_out_groups: 1,
+            rate: 0.05,
+        };
+        let prep = qualifies_prep(earner, true, 1);
+        assert!(qualifies_for_tier(&entry, 2, &tier, &prep));
+    }
+
+    #[test]
+    fn qualifies_for_tier_rejects_above_depth_floor() {
+        let earner = uuid(1);
+        // generation 1 is closer to the source than depth_floor 2; reject.
+        let entry = GenerationEntry {
+            earner_id: earner,
+            generation: 1,
+        };
+        let tier = BreakawayTier {
+            min_split_out_groups: 1,
+            rate: 0.05,
+        };
+        let prep = qualifies_prep(earner, true, 1);
+        assert!(!qualifies_for_tier(&entry, 2, &tier, &prep));
+    }
+
+    #[test]
+    fn qualifies_for_tier_rejects_ineligible_earner() {
+        let earner = uuid(1);
+        let entry = GenerationEntry {
+            earner_id: earner,
+            generation: 2,
+        };
+        let tier = BreakawayTier {
+            min_split_out_groups: 1,
+            rate: 0.05,
+        };
+        let prep = qualifies_prep(earner, false, 1);
+        assert!(!qualifies_for_tier(&entry, 2, &tier, &prep));
+    }
+
+    #[test]
+    fn qualifies_for_tier_rejects_below_min_split_out_groups() {
+        let earner = uuid(1);
+        let entry = GenerationEntry {
+            earner_id: earner,
+            generation: 2,
+        };
+        let tier = BreakawayTier {
+            min_split_out_groups: 2,
+            rate: 0.05,
+        };
+        // First-line split-out count is 1, below the gate of 2; reject.
+        let prep = qualifies_prep(earner, true, 1);
+        assert!(!qualifies_for_tier(&entry, 2, &tier, &prep));
+    }
+
+    #[test]
+    fn qualifies_for_tier_rejects_earner_absent_from_prep_maps() {
+        // Pins the implementation choice: a lookup miss in either
+        // `eligibility` or `first_line_split_outs` is treated as ineligible
+        // / zero, not panic. Earner has no entry in either map.
+        let known = uuid(1);
+        let unknown = uuid(2);
+        let entry = GenerationEntry {
+            earner_id: unknown,
+            generation: 2,
+        };
+        let tier = BreakawayTier {
+            min_split_out_groups: 1,
+            rate: 0.05,
+        };
+        let prep = qualifies_prep(known, true, 5);
+        assert!(!qualifies_for_tier(&entry, 2, &tier, &prep));
     }
 }

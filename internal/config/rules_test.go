@@ -192,7 +192,7 @@ func TestBreakawayDifferentialRankRatesMustExist(t *testing.T) {
 		Breakaway: &BreakawayConfig{
 			ThresholdRank: "Silver",
 			Overrides: OverrideStrategy{
-				Type:                "single_walk",
+				Type:                overrideStrategySingleWalk,
 				OverrideCalculation: "differential",
 				Differential: &DifferentialConfig{
 					RankRates: map[string]float64{
@@ -229,7 +229,7 @@ func TestBreakawayFixedOverrideRankRatesMustExist(t *testing.T) {
 		Breakaway: &BreakawayConfig{
 			ThresholdRank: "Silver",
 			Overrides: OverrideStrategy{
-				Type:                "single_walk",
+				Type:                overrideStrategySingleWalk,
 				OverrideCalculation: "fixed_override",
 				FixedOverride: &FixedOverrideConfig{
 					RankRates: map[string]float64{
@@ -573,7 +573,7 @@ func TestBreakawayMultiTierEmptyTiersRejected(t *testing.T) {
 		Breakaway: &BreakawayConfig{
 			ThresholdRank: "Silver",
 			Overrides: OverrideStrategy{
-				Type:  "multi_tier",
+				Type:  overrideStrategyMultiTier,
 				Tiers: []BreakawayTier{},
 			},
 		},
@@ -603,7 +603,7 @@ func TestBreakawayMultiTierRateOutOfRangeRejected(t *testing.T) {
 		Breakaway: &BreakawayConfig{
 			ThresholdRank: "Silver",
 			Overrides: OverrideStrategy{
-				Type: "multi_tier",
+				Type: overrideStrategyMultiTier,
 				Tiers: []BreakawayTier{
 					{MinSplitOutGroups: 1, Rate: 0.05},
 					{MinSplitOutGroups: 2, Rate: 1.5}, // out of range
@@ -636,7 +636,7 @@ func TestBreakawayMultiTierRateAtBoundsAccepted(t *testing.T) {
 		Breakaway: &BreakawayConfig{
 			ThresholdRank: "Silver",
 			Overrides: OverrideStrategy{
-				Type: "multi_tier",
+				Type: overrideStrategyMultiTier,
 				Tiers: []BreakawayTier{
 					{MinSplitOutGroups: 1, Rate: 0.0},
 					{MinSplitOutGroups: 2, Rate: 1.0},
@@ -666,7 +666,7 @@ func TestBreakawayMultiTierRateJustOverOneRejected(t *testing.T) {
 		Breakaway: &BreakawayConfig{
 			ThresholdRank: "Silver",
 			Overrides: OverrideStrategy{
-				Type: "multi_tier",
+				Type: overrideStrategyMultiTier,
 				Tiers: []BreakawayTier{
 					{MinSplitOutGroups: 1, Rate: 1.0000001},
 				},
@@ -705,7 +705,7 @@ func TestBreakawayMultiTierTooManyTiersRejected(t *testing.T) {
 		Breakaway: &BreakawayConfig{
 			ThresholdRank: "Silver",
 			Overrides: OverrideStrategy{
-				Type:  "multi_tier",
+				Type:  overrideStrategyMultiTier,
 				Tiers: tiers,
 			},
 		},
@@ -739,7 +739,7 @@ func TestBreakawayMultiTierExactly255TiersAccepted(t *testing.T) {
 		Breakaway: &BreakawayConfig{
 			ThresholdRank: "Silver",
 			Overrides: OverrideStrategy{
-				Type:  "multi_tier",
+				Type:  overrideStrategyMultiTier,
 				Tiers: tiers,
 			},
 		},
@@ -763,7 +763,7 @@ func TestStairstepBreakawayGenerationBoundaryRankMustExist(t *testing.T) {
 		Breakaway: &BreakawayConfig{
 			ThresholdRank: "Silver",
 			Overrides: OverrideStrategy{
-				Type: "single_walk",
+				Type: overrideStrategySingleWalk,
 				Generation: &BreakawayGenerationConfig{
 					BoundaryRank: "Nonexistent",
 				},

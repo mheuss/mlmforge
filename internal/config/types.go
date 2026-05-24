@@ -357,8 +357,8 @@ const (
 // TestBreakawayConfig_MultiTier_MarshalsGoEmittedWireShape for the
 // wire-shape regression pin.
 type OverrideStrategy struct {
-	// Type selects the variant; see overrideStrategySingleWalk and
-	// overrideStrategyMultiTier above.
+	// Type selects the variant. Valid values: "single_walk", "multi_tier"
+	// (see overrideStrategySingleWalk and overrideStrategyMultiTier above).
 	Type string `yaml:"type" json:"type"`
 
 	// single_walk fields

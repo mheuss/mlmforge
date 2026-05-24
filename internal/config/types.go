@@ -336,6 +336,15 @@ type BreakawayConfig struct {
 	Overrides                    OverrideStrategy `yaml:"overrides" json:"overrides"`
 }
 
+// Override strategy wire-string values. These mirror the Rust enum variants
+// in OverrideStrategy and must match the JSON schema enum. The const values
+// are pinned to literals by TestOverrideStrategyConstValues so a typo here
+// fails fast.
+const (
+	overrideStrategySingleWalk = "single_walk"
+	overrideStrategyMultiTier  = "multi_tier"
+)
+
 // OverrideStrategy is the flat Go mirror of the Rust OverrideStrategy enum
 // (internally tagged on `type`). Type selects the variant. Non-selected
 // variant fields marshal as zero values; the Rust internally-tagged enum
@@ -348,7 +357,9 @@ type BreakawayConfig struct {
 // TestBreakawayConfig_MultiTier_MarshalsGoEmittedWireShape for the
 // wire-shape regression pin.
 type OverrideStrategy struct {
-	Type string `yaml:"type" json:"type"` // "single_walk" or "multi_tier"
+	// Type selects the variant; see overrideStrategySingleWalk and
+	// overrideStrategyMultiTier above.
+	Type string `yaml:"type" json:"type"`
 
 	// single_walk fields
 	OverrideCalculation string                     `yaml:"override_calculation" json:"override_calculation"`

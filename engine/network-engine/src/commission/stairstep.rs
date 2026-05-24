@@ -253,9 +253,10 @@ fn walk_overrides(
 /// uses the mode-specific rate. Generations 2+ use rates from the
 /// generation override table regardless of mode.
 ///
-/// Dollar amounts use `broad_pct` (broad commission percent) because
-/// overrides pay from the same commission pool as level commissions.
-/// The pool is `cv * broad_pct * multiplier`, then split by rate.
+/// Dollar amounts use the broad commission percent (read from
+/// `structure.level_commission` at function entry) because overrides pay
+/// from the same commission pool as level commissions. The pool is
+/// `cv * broad_pct * multiplier`, then split by rate.
 ///
 /// # Invariant
 ///
@@ -2258,9 +2259,9 @@ mod tests {
     }
 
     #[test]
-    fn qualifies_for_tier_rejects_above_depth_floor() {
+    fn qualifies_for_tier_rejects_below_depth_floor() {
         let earner = uuid(1);
-        // generation 1 is closer to the source than depth_floor 2; reject.
+        // generation 1 is below depth_floor 2 (closer to the source); reject.
         let entry = GenerationEntry {
             earner_id: earner,
             generation: 1,

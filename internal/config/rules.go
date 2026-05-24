@@ -311,7 +311,7 @@ func validateStructureRefs(plan *CompensationPlan, ranks map[string]bool) []Vali
 				// rules.go owns the breakaway invariants alongside the
 				// reference checks above. The 255 cap mirrors the engine's u8
 				// depth floor: a 256th tier would panic the calculator.
-				if rc.Breakaway.Overrides.Type == "multi_tier" {
+				if rc.Breakaway.Overrides.Type == overrideStrategyMultiTier {
 					tierCount := len(rc.Breakaway.Overrides.Tiers)
 					if tierCount == 0 {
 						errs = append(errs, ValidationError{

@@ -223,7 +223,6 @@ fn walk_overrides(
     snapshots: &HashMap<Uuid, DistributorSnapshot>,
     prep: &PrepResult,
     rank_ordinals: &HashMap<&str, u16>,
-    broad_pct: f64,
     multiplier: f64,
 ) -> Vec<CommissionEarning> {
     let breakaway_cfg = match &structure.breakaway {
@@ -232,15 +231,9 @@ fn walk_overrides(
     };
 
     match &breakaway_cfg.overrides {
-        crate::config::stairstep::OverrideStrategy::SingleWalk { .. } => walk_single_overrides(
-            tree,
-            structure,
-            snapshots,
-            prep,
-            rank_ordinals,
-            broad_pct,
-            multiplier,
-        ),
+        crate::config::stairstep::OverrideStrategy::SingleWalk { .. } => {
+            walk_single_overrides(tree, structure, snapshots, prep, rank_ordinals, multiplier)
+        }
         crate::config::stairstep::OverrideStrategy::MultiTier(cfg) => {
             walk_multi_tier_overrides(tree, cfg, prep, multiplier)
         }
@@ -277,9 +270,14 @@ fn walk_single_overrides(
     snapshots: &HashMap<Uuid, DistributorSnapshot>,
     prep: &PrepResult,
     rank_ordinals: &HashMap<&str, u16>,
-    broad_pct: f64,
     multiplier: f64,
 ) -> Vec<CommissionEarning> {
+    // broad_pct is read inside this function so the multi-tier dispatch
+    // path does not carry it as an unused parameter. Walk 1
+    // (walk_level_commissions) still consumes broad_pct via
+    // LevelWalkConfig; calculate_stairstep validates it once at entry.
+    let broad_pct = structure.level_commission.broad_commission_percent;
+
     // walk_overrides has already returned early when breakaway is None,
     // so we can unwrap here. The MultiTier arm below is similarly
     // unreachable.
@@ -641,7 +639,6 @@ pub fn calculate_stairstep(
         snapshots,
         &prep_result,
         &rank_ordinals,
-        broad_pct,
         multiplier,
     );
     all_earnings.extend(override_earnings);

@@ -392,7 +392,7 @@ func TestBreakawayConfig_SingleWalk_MarshalsGoEmittedWireShape(t *testing.T) {
 		ThresholdRank:                "director",
 		GroupVolumeExcludesBreakaway: true,
 		Overrides: OverrideStrategy{
-			Type:                "single_walk",
+			Type:                overrideStrategySingleWalk,
 			OverrideCalculation: "differential",
 			Differential: &DifferentialConfig{
 				RankRates:   map[string]float64{"director": 0.10},
@@ -446,7 +446,7 @@ func TestBreakawayConfig_MultiTier_MarshalsGoEmittedWireShape(t *testing.T) {
 		ThresholdRank:                "director",
 		GroupVolumeExcludesBreakaway: true,
 		Overrides: OverrideStrategy{
-			Type: "multi_tier",
+			Type: overrideStrategyMultiTier,
 			Tiers: []BreakawayTier{
 				{MinSplitOutGroups: 1, Rate: 0.05},
 				{MinSplitOutGroups: 2, Rate: 0.02},

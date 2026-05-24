@@ -880,3 +880,12 @@ inactive_compression: false
 	assert.Equal(t, 6, cfg.StallThresholdPeriods)
 	assert.False(t, cfg.InactiveCompression)
 }
+
+// TestOverrideStrategyConstValues pins each override-strategy const to its
+// wire-format string. Production code and config-construction tests use the
+// const for readability; this test is the single source of truth that
+// guarantees a typo in the const value fails fast.
+func TestOverrideStrategyConstValues(t *testing.T) {
+	assert.Equal(t, "single_walk", overrideStrategySingleWalk)
+	assert.Equal(t, "multi_tier", overrideStrategyMultiTier)
+}

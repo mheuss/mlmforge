@@ -24,6 +24,12 @@ func evaluationResultToHistoryEntries(r *EvaluationResultDTO) ([]QualificationHi
 		}
 		switch ev.Kind {
 		case "qualified":
+			if ev.Rank == "" {
+				return nil, fmt.Errorf("qualified rank for user %s has empty rank name", id)
+			}
+			if ev.Ordinal == 0 {
+				return nil, fmt.Errorf("qualified rank for user %s has zero ordinal", id)
+			}
 			rank := ev.Rank
 			ord := ev.Ordinal
 			out = append(out, QualificationHistoryEntry{

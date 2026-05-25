@@ -166,6 +166,19 @@ func TestMemoryQualificationHistoryStore_GetByUserAndPeriodRange(t *testing.T) {
 	assert.Empty(t, rows)
 }
 
+func TestMemoryQualificationHistoryStore_SaveResult_RejectsEmptyPeriodID(t *testing.T) {
+	store := NewMemoryQualificationHistoryStore()
+	ctx := context.Background()
+
+	userA := mustParseUUID(t, "00000000-0000-0000-0000-000000000001")
+
+	err := store.SaveResult(ctx, "", []QualificationHistoryEntry{
+		{UserID: userA, Rank: strPtr("silver"), Ordinal: u16Ptr(2)},
+	})
+	require.Error(t, err, "memory store must reject empty period_id, matching the postgres contract")
+	assert.Contains(t, err.Error(), "period_id must be non-empty")
+}
+
 func TestMemoryQualificationHistoryStore_LexicographicPeriodOrdering_Documented(t *testing.T) {
 	store := NewMemoryQualificationHistoryStore()
 	ctx := context.Background()

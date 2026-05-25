@@ -59,3 +59,27 @@ func TestEvaluationResultToHistoryEntries_RejectsUnknownKind(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown rank kind")
 }
+
+func TestEvaluationResultToHistoryEntries_RejectsQualifiedEmptyRank(t *testing.T) {
+	result := &EvaluationResultDTO{
+		Ranks: map[string]EvaluatedRankDTO{
+			"00000000-0000-0000-0000-000000000001": {Kind: "qualified", Rank: "", Ordinal: 1},
+		},
+	}
+
+	_, err := evaluationResultToHistoryEntries(result)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "empty rank name")
+}
+
+func TestEvaluationResultToHistoryEntries_RejectsQualifiedZeroOrdinal(t *testing.T) {
+	result := &EvaluationResultDTO{
+		Ranks: map[string]EvaluatedRankDTO{
+			"00000000-0000-0000-0000-000000000001": {Kind: "qualified", Rank: "silver", Ordinal: 0},
+		},
+	}
+
+	_, err := evaluationResultToHistoryEntries(result)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "zero ordinal")
+}

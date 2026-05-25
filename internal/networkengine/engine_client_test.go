@@ -1268,6 +1268,66 @@ func TestEngineClient_EvaluateRanks_WithPersistence_WritesEntries(t *testing.T) 
 	assert.Nil(t, u.Ordinal)
 }
 
+func TestEngineClient_EvaluateRanks_WithPersistence_NilStoreReturnsResultAndError(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{"ranks":{"00000000-0000-0000-0000-000000000001":{"kind":"unranked"}}}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	req := EvaluateRanksRequest{
+		Distributors:  map[string]DistributorPrimitivesDTO{},
+		VolumeSources: []VolumeSourceDTO{},
+	}
+
+	result, err := client.EvaluateRanks(context.Background(), req, WithPersistence("2026-05", nil))
+	require.Error(t, err)
+	require.NotNil(t, result, "engine result must be returned even when persistence rejects nil store")
+	assert.Contains(t, err.Error(), "non-nil store")
+}
+
+func TestEngineClient_EvaluateRanks_WithPersistence_EmptyPeriodIDReturnsResultAndError(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{"ranks":{"00000000-0000-0000-0000-000000000001":{"kind":"unranked"}}}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+	store := NewMemoryQualificationHistoryStore()
+
+	req := EvaluateRanksRequest{
+		Distributors:  map[string]DistributorPrimitivesDTO{},
+		VolumeSources: []VolumeSourceDTO{},
+	}
+
+	result, err := client.EvaluateRanks(context.Background(), req, WithPersistence("", store))
+	require.Error(t, err)
+	require.NotNil(t, result)
+	assert.Contains(t, err.Error(), "non-empty period_id")
+
+	// No rows written.
+	rows, err := store.GetByPeriod(context.Background(), "")
+	require.NoError(t, err)
+	assert.Empty(t, rows)
+}
+
+func TestEngineClient_EvaluateRanks_WithPersistence_BothInvalidReturnsResultAndError(t *testing.T) {
+	// The both-invalid case (empty period_id AND nil store) must surface an
+	// error rather than silently no-op as "no option was passed." This is
+	// why evaluateRanksConfig has an explicit persistRequested flag.
+	mock := &mockTransport{
+		response: json.RawMessage(`{"ranks":{}}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	req := EvaluateRanksRequest{
+		Distributors:  map[string]DistributorPrimitivesDTO{},
+		VolumeSources: []VolumeSourceDTO{},
+	}
+
+	result, err := client.EvaluateRanks(context.Background(), req, WithPersistence("", nil))
+	require.Error(t, err, "WithPersistence('', nil) must error rather than no-op")
+	require.NotNil(t, result, "engine result must still be returned")
+	assert.Contains(t, err.Error(), "non-empty period_id")
+}
+
 // --- Board plan contract tests (mock) ---
 
 func TestEngineClient_BoardCreateBoardPlan_MockParams(t *testing.T) {

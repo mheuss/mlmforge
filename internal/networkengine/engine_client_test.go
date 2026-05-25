@@ -1056,6 +1056,23 @@ func TestEngineClient_EvaluateRanks_MockParams(t *testing.T) {
 	assert.Equal(t, "unranked", got.Kind)
 }
 
+func TestEngineClient_EvaluateRanks_VariadicSignature_NoOptions(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{"ranks":{}}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	req := EvaluateRanksRequest{
+		Distributors:  map[string]DistributorPrimitivesDTO{},
+		VolumeSources: []VolumeSourceDTO{},
+	}
+
+	store := NewMemoryQualificationHistoryStore()
+	// The compile-only assertion: WithPersistence must be a valid option type.
+	_, err := client.EvaluateRanks(context.Background(), req, WithPersistence("2026-05", store))
+	require.NoError(t, err)
+}
+
 // --- Rank evaluation integration test (real binary) ---
 
 // rankIntegrationPlanJSON is a minimal compensation plan tailored for the

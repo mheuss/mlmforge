@@ -371,12 +371,89 @@ func (c *EngineClient) CalculateBinaryPairing(ctx context.Context, req Calculate
 
 // EvaluateRanks asks the worker to compute the qualified rank for every
 // distributor in the input set against the loaded plan.
-func (c *EngineClient) EvaluateRanks(ctx context.Context, req EvaluateRanksRequest) (*EvaluationResultDTO, error) {
+//
+// By default the call is stateless (current behavior). Passing
+// WithPersistence(periodID, store) causes the result to be persisted to
+// the supplied QualificationHistoryStore as a complete replacement of any
+// prior result for periodID, in one transaction.
+//
+// Error contract:
+//   - Engine failure: returns (nil, error).
+//   - Engine success, persistence not requested: returns (result, nil).
+//   - Engine success, store write success: returns (result, nil).
+//   - Engine success, store write failure: returns (result, wrapped error).
+//     The caller has the engine result and can decide whether to retry the
+//     store write. NFR4 guarantees no half-replaced data — the prior
+//     period rows are intact.
+//   - WithPersistence with empty periodID or nil store: returns (result,
+//     wrapped error). No write attempted.
+func (c *EngineClient) EvaluateRanks(
+	ctx context.Context,
+	req EvaluateRanksRequest,
+	opts ...EvaluateRanksOption,
+) (*EvaluationResultDTO, error) {
+	var cfg evaluateRanksConfig
+	for _, opt := range opts {
+		opt.apply(&cfg)
+	}
 	r, err := callInto[EvaluationResultDTO](c, ctx, "evaluate_ranks", req)
 	if err != nil {
 		return nil, err
 	}
+	if !cfg.persistRequested {
+		return &r, nil
+	}
+	if cfg.persistPeriodID == "" {
+		return &r, fmt.Errorf("evaluate_ranks: WithPersistence requires non-empty period_id")
+	}
+	if cfg.persistStore == nil {
+		return &r, fmt.Errorf("evaluate_ranks: WithPersistence requires non-nil store")
+	}
+	entries, err := evaluationResultToHistoryEntries(&r)
+	if err != nil {
+		return &r, fmt.Errorf("evaluate_ranks: build history entries: %w", err)
+	}
+	if err := cfg.persistStore.SaveResult(ctx, cfg.persistPeriodID, entries); err != nil {
+		return &r, fmt.Errorf("evaluate_ranks succeeded but history save failed: %w", err)
+	}
 	return &r, nil
+}
+
+// EvaluateRanksOption configures optional behavior of EvaluateRanks.
+type EvaluateRanksOption interface {
+	apply(*evaluateRanksConfig)
+}
+
+type evaluateRanksConfig struct {
+	persistRequested bool
+	persistPeriodID  string
+	persistStore     QualificationHistoryStore
+}
+
+// WithPersistence directs EvaluateRanks to persist the result to store
+// under periodID after a successful evaluation. periodID must be non-empty
+// and a sortable, zero-padded string (e.g., "2026-05", "2026-W21"). store
+// must be non-nil. The option is recorded as "persistence requested" even
+// when periodID or store are zero values, so an invalid WithPersistence
+// call surfaces a wrapped error rather than silently no-op'ing.
+func WithPersistence(periodID string, store QualificationHistoryStore) EvaluateRanksOption {
+	return persistenceOption{periodID: periodID, store: store}
+}
+
+type persistenceOption struct {
+	periodID string
+	store    QualificationHistoryStore
+}
+
+func (o persistenceOption) apply(c *evaluateRanksConfig) {
+	c.persistRequested = true
+	c.persistPeriodID = o.periodID
+	c.persistStore = o.store
+}
+
+// TODO(HEU-445 Task 15): replace stub with real implementation.
+func evaluationResultToHistoryEntries(_ *EvaluationResultDTO) ([]QualificationHistoryEntry, error) {
+	return nil, nil
 }
 
 // --- Board plan methods ---

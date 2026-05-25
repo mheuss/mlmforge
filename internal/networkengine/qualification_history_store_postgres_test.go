@@ -155,3 +155,55 @@ func TestPostgresQualificationHistoryStore_SaveResult_EmptyEntriesEmptiesPeriod(
 	require.NoError(t, err)
 	assert.Empty(t, rows, "empty entries must wipe the period")
 }
+
+func TestPostgresQualificationHistoryStore_CheckConstraint_RankOrdinalPair(t *testing.T) {
+	store := newTestPostgresQualificationHistoryStore(t)
+	ctx := context.Background()
+
+	userA := mustParseUUID(t, "00000000-0000-0000-0000-000000000001")
+
+	// Rank set, Ordinal nil — violates CHECK ((rank IS NULL) = (ordinal IS NULL)).
+	err := store.SaveResult(ctx, "2026-05", []QualificationHistoryEntry{
+		{UserID: userA, Rank: strPtr("silver"), Ordinal: nil},
+	})
+	require.Error(t, err, "CHECK constraint should reject mismatched rank/ordinal pair")
+	assert.Contains(t, err.Error(), "save qualification history")
+}
+
+func TestPostgresQualificationHistoryStore_SaveResult_RollbackPreservesPriorRows(t *testing.T) {
+	store := newTestPostgresQualificationHistoryStore(t)
+	ctx := context.Background()
+
+	userA := mustParseUUID(t, "00000000-0000-0000-0000-000000000001")
+	userB := mustParseUUID(t, "00000000-0000-0000-0000-000000000002")
+	userC := mustParseUUID(t, "00000000-0000-0000-0000-000000000003")
+
+	// Seed period 2026-05 with {A, B}.
+	require.NoError(t, store.SaveResult(ctx, "2026-05", []QualificationHistoryEntry{
+		{UserID: userA, Rank: strPtr("silver"), Ordinal: u16Ptr(2)},
+		{UserID: userB, Rank: strPtr("gold"), Ordinal: u16Ptr(3)},
+	}))
+
+	// Attempt a re-write that fails: third entry has rank set but ordinal nil,
+	// which violates the CHECK constraint and aborts the transaction.
+	err := store.SaveResult(ctx, "2026-05", []QualificationHistoryEntry{
+		{UserID: userA, Rank: strPtr("silver"), Ordinal: u16Ptr(2)},
+		{UserID: userB, Rank: strPtr("gold"), Ordinal: u16Ptr(3)},
+		{UserID: userC, Rank: strPtr("bronze"), Ordinal: nil}, // bad pair
+	})
+	require.Error(t, err)
+
+	// NFR4: the original two rows must still be present. The DELETE-then-CopyFrom
+	// transaction rolled back, so {A, B} survive untouched.
+	rows, err := store.GetByPeriod(ctx, "2026-05")
+	require.NoError(t, err)
+	require.Len(t, rows, 2, "prior period rows must remain after a failed SaveResult (NFR4)")
+
+	var ids []uuid.UUID
+	for _, r := range rows {
+		ids = append(ids, r.UserID)
+	}
+	assert.Contains(t, ids, userA)
+	assert.Contains(t, ids, userB)
+	assert.NotContains(t, ids, userC)
+}

@@ -78,7 +78,7 @@ func (c *PostgresContainer) NewPool(t *testing.T) *pgxpool.Pool {
 	}
 	t.Cleanup(func() { pool.Close() })
 
-	_, err = pool.Exec(ctx, "TRUNCATE events, tree_nodes RESTART IDENTITY")
+	_, err = pool.Exec(ctx, "TRUNCATE events, tree_nodes, qualification_history RESTART IDENTITY")
 	if err != nil {
 		t.Fatalf("truncate tables: %v", err)
 	}

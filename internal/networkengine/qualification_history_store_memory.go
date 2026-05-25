@@ -76,7 +76,28 @@ func (s *MemoryQualificationHistoryStore) GetByPeriod(_ context.Context, periodI
 	return out, nil
 }
 
-// GetByUserAndPeriodRange is implemented in Task 6. Stub returns nil.
-func (s *MemoryQualificationHistoryStore) GetByUserAndPeriodRange(_ context.Context, _ uuid.UUID, _, _ string) ([]QualificationHistoryRow, error) {
-	return nil, nil
+// GetByUserAndPeriodRange returns userID's evaluated ranks across the inclusive
+// [fromPeriod, toPeriod] range, sorted by period_id ASC. Inverted ranges
+// (fromPeriod > toPeriod) return an empty result per the interface contract.
+func (s *MemoryQualificationHistoryStore) GetByUserAndPeriodRange(_ context.Context, userID uuid.UUID, fromPeriod, toPeriod string) ([]QualificationHistoryRow, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if fromPeriod > toPeriod {
+		return nil, nil
+	}
+	var out []QualificationHistoryRow
+	for k, v := range s.rows {
+		if k.UserID != userID {
+			continue
+		}
+		if k.PeriodID < fromPeriod || k.PeriodID > toPeriod {
+			continue
+		}
+		out = append(out, v)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].PeriodID < out[j].PeriodID
+	})
+	return out, nil
 }

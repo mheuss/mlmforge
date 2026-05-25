@@ -165,3 +165,26 @@ func TestMemoryQualificationHistoryStore_GetByUserAndPeriodRange(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, rows)
 }
+
+func TestMemoryQualificationHistoryStore_LexicographicPeriodOrdering_Documented(t *testing.T) {
+	store := NewMemoryQualificationHistoryStore()
+	ctx := context.Background()
+
+	userA := mustParseUUID(t, "00000000-0000-0000-0000-000000000001")
+
+	// Mixed-width period IDs sort wrong: "2026-1" < "2026-10" < "2026-2".
+	// This test documents that callers must zero-pad to stay sortable.
+	for _, p := range []string{"2026-1", "2026-10", "2026-2"} {
+		require.NoError(t, store.SaveResult(ctx, p, []QualificationHistoryEntry{
+			{UserID: userA, Rank: strPtr("silver"), Ordinal: u16Ptr(2)},
+		}))
+	}
+
+	rows, err := store.GetByUserAndPeriodRange(ctx, userA, "2026-0", "2026-9")
+	require.NoError(t, err)
+	require.Len(t, rows, 3)
+	// Lexicographic order, NOT numeric order. This is the contract.
+	assert.Equal(t, "2026-1", rows[0].PeriodID)
+	assert.Equal(t, "2026-10", rows[1].PeriodID)
+	assert.Equal(t, "2026-2", rows[2].PeriodID)
+}

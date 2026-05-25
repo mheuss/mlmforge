@@ -105,6 +105,29 @@ func TestMemoryQualificationHistoryStore_SaveResult_EmptyEntriesEmptiesPeriod(t 
 	assert.Empty(t, rows, "empty entries must wipe the period")
 }
 
+func TestMemoryQualificationHistoryStore_UnrankedRoundTrip(t *testing.T) {
+	store := NewMemoryQualificationHistoryStore()
+	ctx := context.Background()
+
+	userA := mustParseUUID(t, "00000000-0000-0000-0000-000000000001")
+
+	require.NoError(t, store.SaveResult(ctx, "2026-05", []QualificationHistoryEntry{
+		{UserID: userA, Rank: nil, Ordinal: nil}, // Unranked
+	}))
+
+	rows, err := store.GetByPeriod(ctx, "2026-05")
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, userA, rows[0].UserID)
+	assert.Nil(t, rows[0].Rank)
+	assert.Nil(t, rows[0].Ordinal)
+
+	// BR7: missing row is distinguishable from explicit Unranked.
+	missing, err := store.GetByPeriod(ctx, "2026-04")
+	require.NoError(t, err)
+	assert.Empty(t, missing)
+}
+
 func TestMemoryQualificationHistoryStore_GetByUserAndPeriodRange(t *testing.T) {
 	store := NewMemoryQualificationHistoryStore()
 	ctx := context.Background()

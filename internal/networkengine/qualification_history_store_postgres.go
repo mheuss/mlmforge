@@ -1,0 +1,133 @@
+package networkengine
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+// Compile-time check.
+var _ QualificationHistoryStore = (*PostgresQualificationHistoryStore)(nil)
+
+// PostgresQualificationHistoryStore is a QualificationHistoryStore backed by Postgres.
+type PostgresQualificationHistoryStore struct {
+	pool *pgxpool.Pool
+}
+
+func NewPostgresQualificationHistoryStore(pool *pgxpool.Pool) *PostgresQualificationHistoryStore {
+	return &PostgresQualificationHistoryStore{pool: pool}
+}
+
+const qualHistoryColumns = `period_id, user_id, rank, ordinal, evaluated_at`
+
+const getByPeriodSQL = `SELECT ` + qualHistoryColumns + `
+                        FROM qualification_history
+                        WHERE period_id = $1
+                        ORDER BY user_id ASC`
+
+func (s *PostgresQualificationHistoryStore) SaveResult(ctx context.Context, periodID string, entries []QualificationHistoryEntry) error {
+	if periodID == "" {
+		return fmt.Errorf("save qualification history: period_id must be non-empty")
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("save qualification history: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() // no-op after Commit
+
+	// BR5: complete replacement.
+	if _, err := tx.Exec(ctx,
+		"DELETE FROM qualification_history WHERE period_id = $1", periodID,
+	); err != nil {
+		return fmt.Errorf("save qualification history: delete prior rows: %w", err)
+	}
+
+	if len(entries) > 0 {
+		src := newQualificationHistoryCopySource(periodID, entries)
+		if _, err := tx.CopyFrom(ctx,
+			pgx.Identifier{"qualification_history"},
+			[]string{"period_id", "user_id", "rank", "ordinal"},
+			src,
+		); err != nil {
+			return fmt.Errorf("save qualification history: copy from: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("save qualification history: commit: %w", err)
+	}
+	return nil
+}
+
+// qualificationHistoryCopySource is a pgx.CopyFromSource over a slice of
+// entries. Each row emits (period_id, user_id, rank, ordinal). evaluated_at
+// is left to the table DEFAULT now().
+//
+// Ordinal is widened from *uint16 to *int32 on the wire because Postgres
+// has no unsigned integer types. The CHECK constraint on the table keeps
+// (rank IS NULL) = (ordinal IS NULL); the helper panics in test if the
+// caller violates it (callers go through evaluationResultToHistoryEntries
+// which always produces matched pairs).
+type qualificationHistoryCopySource struct {
+	periodID string
+	entries  []QualificationHistoryEntry
+	idx      int
+	err      error
+}
+
+func newQualificationHistoryCopySource(periodID string, entries []QualificationHistoryEntry) *qualificationHistoryCopySource {
+	return &qualificationHistoryCopySource{periodID: periodID, entries: entries, idx: -1}
+}
+
+func (s *qualificationHistoryCopySource) Next() bool {
+	s.idx++
+	return s.idx < len(s.entries)
+}
+
+func (s *qualificationHistoryCopySource) Values() ([]any, error) {
+	e := s.entries[s.idx]
+	var ordinal *int32
+	if e.Ordinal != nil {
+		v := int32(*e.Ordinal)
+		ordinal = &v
+	}
+	return []any{s.periodID, e.UserID, e.Rank, ordinal}, nil
+}
+
+func (s *qualificationHistoryCopySource) Err() error { return s.err }
+
+// GetByPeriod returns all rows for a period sorted by user_id ASC.
+func (s *PostgresQualificationHistoryStore) GetByPeriod(ctx context.Context, periodID string) ([]QualificationHistoryRow, error) {
+	rows, err := s.pool.Query(ctx, getByPeriodSQL, periodID)
+	if err != nil {
+		return nil, fmt.Errorf("get by period: %w", err)
+	}
+	defer rows.Close()
+	return scanQualificationHistoryRows(rows)
+}
+
+// GetByUserAndPeriodRange is implemented in Task 11. Stub returns nil.
+func (s *PostgresQualificationHistoryStore) GetByUserAndPeriodRange(_ context.Context, _ uuid.UUID, _, _ string) ([]QualificationHistoryRow, error) {
+	return nil, nil
+}
+
+func scanQualificationHistoryRows(rows pgx.Rows) ([]QualificationHistoryRow, error) {
+	var out []QualificationHistoryRow
+	for rows.Next() {
+		var r QualificationHistoryRow
+		var ord *int32
+		if err := rows.Scan(&r.PeriodID, &r.UserID, &r.Rank, &ord, &r.EvaluatedAt); err != nil {
+			return nil, fmt.Errorf("scan qualification_history row: %w", err)
+		}
+		if ord != nil {
+			v := uint16(*ord)
+			r.Ordinal = &v
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}

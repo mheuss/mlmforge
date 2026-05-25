@@ -451,11 +451,6 @@ func (o persistenceOption) apply(c *evaluateRanksConfig) {
 	c.persistStore = o.store
 }
 
-// TODO(HEU-445 Task 15): replace stub with real implementation.
-func evaluationResultToHistoryEntries(_ *EvaluationResultDTO) ([]QualificationHistoryEntry, error) {
-	return nil, nil
-}
-
 // --- Board plan methods ---
 
 // CreateBoardPlan creates a board plan structure in the engine.

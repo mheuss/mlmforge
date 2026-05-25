@@ -1056,7 +1056,7 @@ func TestEngineClient_EvaluateRanks_MockParams(t *testing.T) {
 	assert.Equal(t, "unranked", got.Kind)
 }
 
-func TestEngineClient_EvaluateRanks_VariadicSignature_NoOptions(t *testing.T) {
+func TestEngineClient_EvaluateRanks_VariadicSignature_AcceptsWithPersistence(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`{"ranks":{}}`),
 	}

@@ -17,6 +17,29 @@ func newTestPostgresQualificationHistoryStore(t *testing.T) *PostgresQualificati
 	return NewPostgresQualificationHistoryStore(pool)
 }
 
+func TestPostgresQualificationHistoryStore_GetByPeriod_UserIDAscOrder(t *testing.T) {
+	store := newTestPostgresQualificationHistoryStore(t)
+	ctx := context.Background()
+
+	// Insert in reverse order; query must come back ascending.
+	userZ := mustParseUUID(t, "ffffffff-ffff-ffff-ffff-ffffffffffff")
+	userA := mustParseUUID(t, "00000000-0000-0000-0000-000000000001")
+	userM := mustParseUUID(t, "88888888-8888-8888-8888-888888888888")
+
+	require.NoError(t, store.SaveResult(ctx, "2026-05", []QualificationHistoryEntry{
+		{UserID: userZ, Rank: strPtr("silver"), Ordinal: u16Ptr(2)},
+		{UserID: userA, Rank: strPtr("silver"), Ordinal: u16Ptr(2)},
+		{UserID: userM, Rank: strPtr("silver"), Ordinal: u16Ptr(2)},
+	}))
+
+	rows, err := store.GetByPeriod(ctx, "2026-05")
+	require.NoError(t, err)
+	require.Len(t, rows, 3)
+	assert.Equal(t, userA, rows[0].UserID)
+	assert.Equal(t, userM, rows[1].UserID)
+	assert.Equal(t, userZ, rows[2].UserID)
+}
+
 func TestPostgresQualificationHistoryStore_SaveAndGetByPeriod(t *testing.T) {
 	store := newTestPostgresQualificationHistoryStore(t)
 	ctx := context.Background()

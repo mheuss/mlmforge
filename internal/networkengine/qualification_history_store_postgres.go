@@ -68,10 +68,10 @@ func (s *PostgresQualificationHistoryStore) SaveResult(ctx context.Context, peri
 // is left to the table DEFAULT now().
 //
 // Ordinal is widened from *uint16 to *int32 on the wire because Postgres
-// has no unsigned integer types. The CHECK constraint on the table keeps
-// (rank IS NULL) = (ordinal IS NULL); the helper panics in test if the
-// caller violates it (callers go through evaluationResultToHistoryEntries
-// which always produces matched pairs).
+// has no unsigned integer types. The (rank IS NULL) = (ordinal IS NULL)
+// invariant is enforced by the table CHECK constraint at COPY time;
+// callers go through evaluationResultToHistoryEntries which always
+// produces matched pairs.
 type qualificationHistoryCopySource struct {
 	periodID string
 	entries  []QualificationHistoryEntry

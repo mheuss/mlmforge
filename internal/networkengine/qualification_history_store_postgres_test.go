@@ -36,5 +36,10 @@ func TestPostgresQualificationHistoryStore_SaveAndGetByPeriod(t *testing.T) {
 	assert.Equal(t, "silver", *rows[0].Rank)
 	assert.Equal(t, uint16(2), *rows[0].Ordinal)
 	assert.Equal(t, userB, rows[1].UserID)
+	require.NotNil(t, rows[1].Rank)
+	assert.Equal(t, "gold", *rows[1].Rank)
+	require.NotNil(t, rows[1].Ordinal)
+	assert.Equal(t, uint16(3), *rows[1].Ordinal)
+	assert.False(t, rows[1].EvaluatedAt.IsZero())
 	assert.False(t, rows[0].EvaluatedAt.IsZero())
 }

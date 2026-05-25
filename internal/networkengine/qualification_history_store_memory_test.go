@@ -53,3 +53,54 @@ func TestMemoryQualificationHistoryStore_SaveAndGetByPeriod_RoundTrip(t *testing
 	require.NotNil(t, rows[1].Rank)
 	assert.Equal(t, "gold", *rows[1].Rank)
 }
+
+func TestMemoryQualificationHistoryStore_SaveResult_ReplacesPriorPeriod(t *testing.T) {
+	store := NewMemoryQualificationHistoryStore()
+	ctx := context.Background()
+
+	userA := mustParseUUID(t, "00000000-0000-0000-0000-000000000001")
+	userB := mustParseUUID(t, "00000000-0000-0000-0000-000000000002")
+	userC := mustParseUUID(t, "00000000-0000-0000-0000-000000000003")
+
+	// First write: {A, B, C}.
+	require.NoError(t, store.SaveResult(ctx, "2026-05", []QualificationHistoryEntry{
+		{UserID: userA, Rank: strPtr("silver"), Ordinal: u16Ptr(2)},
+		{UserID: userB, Rank: strPtr("gold"), Ordinal: u16Ptr(3)},
+		{UserID: userC, Rank: strPtr("bronze"), Ordinal: u16Ptr(1)},
+	}))
+
+	// Re-write the same period with only {A, B}.
+	require.NoError(t, store.SaveResult(ctx, "2026-05", []QualificationHistoryEntry{
+		{UserID: userA, Rank: strPtr("silver"), Ordinal: u16Ptr(2)},
+		{UserID: userB, Rank: strPtr("gold"), Ordinal: u16Ptr(3)},
+	}))
+
+	rows, err := store.GetByPeriod(ctx, "2026-05")
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+
+	userIDs := []uuid.UUID{rows[0].UserID, rows[1].UserID}
+	assert.NotContains(t, userIDs, userC, "C must be removed after re-evaluation drops them")
+}
+
+func TestMemoryQualificationHistoryStore_SaveResult_EmptyEntriesEmptiesPeriod(t *testing.T) {
+	// Degenerate case of BR5: re-evaluating with an empty distributor set
+	// must remove every prior row for the period. Pins the deletion-only
+	// semantic of SaveResult(ctx, periodID, nil).
+	store := NewMemoryQualificationHistoryStore()
+	ctx := context.Background()
+
+	userA := mustParseUUID(t, "00000000-0000-0000-0000-000000000001")
+	userB := mustParseUUID(t, "00000000-0000-0000-0000-000000000002")
+
+	require.NoError(t, store.SaveResult(ctx, "2026-05", []QualificationHistoryEntry{
+		{UserID: userA, Rank: strPtr("silver"), Ordinal: u16Ptr(2)},
+		{UserID: userB, Rank: strPtr("gold"), Ordinal: u16Ptr(3)},
+	}))
+
+	require.NoError(t, store.SaveResult(ctx, "2026-05", nil))
+
+	rows, err := store.GetByPeriod(ctx, "2026-05")
+	require.NoError(t, err)
+	assert.Empty(t, rows, "empty entries must wipe the period")
+}

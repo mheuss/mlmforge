@@ -1227,6 +1227,47 @@ func TestEngineClient_EvaluateRanks(t *testing.T) {
 	}
 }
 
+func TestEngineClient_EvaluateRanks_WithPersistence_WritesEntries(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{"ranks":{
+            "00000000-0000-0000-0000-000000000001":{"kind":"qualified","rank":"silver","ordinal":2},
+            "00000000-0000-0000-0000-000000000002":{"kind":"unranked"}
+        }}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+	store := NewMemoryQualificationHistoryStore()
+	ctx := context.Background()
+
+	req := EvaluateRanksRequest{
+		Distributors:  map[string]DistributorPrimitivesDTO{},
+		VolumeSources: []VolumeSourceDTO{},
+	}
+
+	result, err := client.EvaluateRanks(ctx, req, WithPersistence("2026-05", store))
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, result.Ranks, 2)
+
+	rows, err := store.GetByPeriod(ctx, "2026-05")
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+
+	byUser := map[string]QualificationHistoryRow{}
+	for _, r := range rows {
+		byUser[r.UserID.String()] = r
+	}
+
+	q := byUser["00000000-0000-0000-0000-000000000001"]
+	require.NotNil(t, q.Rank)
+	assert.Equal(t, "silver", *q.Rank)
+	require.NotNil(t, q.Ordinal)
+	assert.Equal(t, uint16(2), *q.Ordinal)
+
+	u := byUser["00000000-0000-0000-0000-000000000002"]
+	assert.Nil(t, u.Rank)
+	assert.Nil(t, u.Ordinal)
+}
+
 // --- Board plan contract tests (mock) ---
 
 func TestEngineClient_BoardCreateBoardPlan_MockParams(t *testing.T) {

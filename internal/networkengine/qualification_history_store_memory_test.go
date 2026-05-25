@@ -104,3 +104,41 @@ func TestMemoryQualificationHistoryStore_SaveResult_EmptyEntriesEmptiesPeriod(t 
 	require.NoError(t, err)
 	assert.Empty(t, rows, "empty entries must wipe the period")
 }
+
+func TestMemoryQualificationHistoryStore_GetByUserAndPeriodRange(t *testing.T) {
+	store := NewMemoryQualificationHistoryStore()
+	ctx := context.Background()
+
+	userA := mustParseUUID(t, "00000000-0000-0000-0000-000000000001")
+	userB := mustParseUUID(t, "00000000-0000-0000-0000-000000000002")
+
+	// Three periods for userA, one period for userB.
+	require.NoError(t, store.SaveResult(ctx, "2026-03", []QualificationHistoryEntry{
+		{UserID: userA, Rank: strPtr("bronze"), Ordinal: u16Ptr(1)},
+	}))
+	require.NoError(t, store.SaveResult(ctx, "2026-04", []QualificationHistoryEntry{
+		{UserID: userA, Rank: strPtr("silver"), Ordinal: u16Ptr(2)},
+		{UserID: userB, Rank: strPtr("silver"), Ordinal: u16Ptr(2)},
+	}))
+	require.NoError(t, store.SaveResult(ctx, "2026-05", []QualificationHistoryEntry{
+		{UserID: userA, Rank: strPtr("gold"), Ordinal: u16Ptr(3)},
+	}))
+
+	// Closed range [2026-03, 2026-04] for userA → two rows in ascending order.
+	rows, err := store.GetByUserAndPeriodRange(ctx, userA, "2026-03", "2026-04")
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	assert.Equal(t, "2026-03", rows[0].PeriodID)
+	assert.Equal(t, "2026-04", rows[1].PeriodID)
+
+	// Inverted range returns nothing.
+	rows, err = store.GetByUserAndPeriodRange(ctx, userA, "2026-04", "2026-03")
+	require.NoError(t, err)
+	assert.Empty(t, rows)
+
+	// Empty result for unknown user.
+	unknown := mustParseUUID(t, "00000000-0000-0000-0000-0000000000ff")
+	rows, err = store.GetByUserAndPeriodRange(ctx, unknown, "2026-03", "2026-05")
+	require.NoError(t, err)
+	assert.Empty(t, rows)
+}

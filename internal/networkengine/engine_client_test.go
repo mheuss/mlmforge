@@ -1257,13 +1257,15 @@ func TestEngineClient_EvaluateRanks_WithPersistence_WritesEntries(t *testing.T) 
 		byUser[r.UserID.String()] = r
 	}
 
-	q := byUser["00000000-0000-0000-0000-000000000001"]
+	q, ok := byUser["00000000-0000-0000-0000-000000000001"]
+	require.True(t, ok, "qualified user must be present in persisted rows")
 	require.NotNil(t, q.Rank)
 	assert.Equal(t, "silver", *q.Rank)
 	require.NotNil(t, q.Ordinal)
 	assert.Equal(t, uint16(2), *q.Ordinal)
 
-	u := byUser["00000000-0000-0000-0000-000000000002"]
+	u, ok := byUser["00000000-0000-0000-0000-000000000002"]
+	require.True(t, ok, "unranked user must be present in persisted rows")
 	assert.Nil(t, u.Rank)
 	assert.Nil(t, u.Ordinal)
 }

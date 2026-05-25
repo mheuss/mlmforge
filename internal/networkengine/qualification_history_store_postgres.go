@@ -137,6 +137,14 @@ func scanQualificationHistoryRows(rows pgx.Rows) ([]QualificationHistoryRow, err
 			return nil, fmt.Errorf("scan qualification_history row: %w", err)
 		}
 		if ord != nil {
+			// Bounds-check the int32→uint16 narrowing. The Go contract
+			// promises ordinal ∈ [1, 65535]; a value outside that range
+			// means the row was written by something that didn't honor
+			// the contract (manual SQL, future migration bug, etc.).
+			// Wrapping silently would corrupt the rank ordering.
+			if *ord < 1 || *ord > 65535 {
+				return nil, fmt.Errorf("scan qualification_history row: ordinal %d out of range [1, 65535]", *ord)
+			}
 			v := uint16(*ord)
 			r.Ordinal = &v
 		}

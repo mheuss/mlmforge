@@ -33,9 +33,25 @@ func NewMemoryQualificationHistoryStore() *MemoryQualificationHistoryStore {
 // SaveResult replaces all rows for periodID with entries.
 // BR5: prior rows for periodID are dropped before insert so re-evaluation
 // semantics match the Postgres DELETE-then-INSERT transaction.
+//
+// Validation mirrors Postgres so a test that passes here would also pass
+// against the real store. Duplicate UserIDs would fail the (period_id,
+// user_id) PRIMARY KEY on COPY. Mismatched (rank, ordinal) pairs would
+// fail the table CHECK constraint.
 func (s *MemoryQualificationHistoryStore) SaveResult(_ context.Context, periodID string, entries []QualificationHistoryEntry) error {
 	if periodID == "" {
 		return fmt.Errorf("save qualification history: period_id must be non-empty")
+	}
+
+	seen := make(map[uuid.UUID]struct{}, len(entries))
+	for _, e := range entries {
+		if (e.Rank == nil) != (e.Ordinal == nil) {
+			return fmt.Errorf("save qualification history: rank and ordinal must both be set or both be nil (user %s)", e.UserID)
+		}
+		if _, dup := seen[e.UserID]; dup {
+			return fmt.Errorf("save qualification history: duplicate user_id %s for period %s", e.UserID, periodID)
+		}
+		seen[e.UserID] = struct{}{}
 	}
 
 	s.mu.Lock()

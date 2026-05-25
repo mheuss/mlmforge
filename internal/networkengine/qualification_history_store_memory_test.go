@@ -179,6 +179,50 @@ func TestMemoryQualificationHistoryStore_SaveResult_RejectsEmptyPeriodID(t *test
 	assert.Contains(t, err.Error(), "period_id must be non-empty")
 }
 
+func TestMemoryQualificationHistoryStore_SaveResult_RejectsMismatchedRankOrdinalPair(t *testing.T) {
+	// Mirrors the Postgres CHECK ((rank IS NULL) = (ordinal IS NULL)).
+	// Without this, a test could pass against memory but fail against Postgres.
+	store := NewMemoryQualificationHistoryStore()
+	ctx := context.Background()
+	userA := mustParseUUID(t, "00000000-0000-0000-0000-000000000001")
+
+	rankOnly := []QualificationHistoryEntry{
+		{UserID: userA, Rank: strPtr("silver"), Ordinal: nil},
+	}
+	err := store.SaveResult(ctx, "2026-05", rankOnly)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "rank and ordinal must both be set or both be nil")
+
+	ordinalOnly := []QualificationHistoryEntry{
+		{UserID: userA, Rank: nil, Ordinal: u16Ptr(2)},
+	}
+	err = store.SaveResult(ctx, "2026-05", ordinalOnly)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "rank and ordinal must both be set or both be nil")
+}
+
+func TestMemoryQualificationHistoryStore_SaveResult_RejectsDuplicateUserID(t *testing.T) {
+	// Mirrors the Postgres PRIMARY KEY (period_id, user_id) — COPY would fail
+	// on the second insert with the same user_id. The memory store used to
+	// silently let the second entry win, which hid divergence from tests.
+	store := NewMemoryQualificationHistoryStore()
+	ctx := context.Background()
+	userA := mustParseUUID(t, "00000000-0000-0000-0000-000000000001")
+
+	entries := []QualificationHistoryEntry{
+		{UserID: userA, Rank: strPtr("silver"), Ordinal: u16Ptr(2)},
+		{UserID: userA, Rank: strPtr("gold"), Ordinal: u16Ptr(3)},
+	}
+	err := store.SaveResult(ctx, "2026-05", entries)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "duplicate user_id")
+
+	// Nothing was written.
+	rows, err := store.GetByPeriod(ctx, "2026-05")
+	require.NoError(t, err)
+	assert.Empty(t, rows)
+}
+
 func TestMemoryQualificationHistoryStore_LexicographicPeriodOrdering_Documented(t *testing.T) {
 	store := NewMemoryQualificationHistoryStore()
 	ctx := context.Background()

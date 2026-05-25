@@ -2,6 +2,7 @@ package networkengine
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -33,6 +34,10 @@ func NewMemoryQualificationHistoryStore() *MemoryQualificationHistoryStore {
 // BR5: prior rows for periodID are dropped before insert so re-evaluation
 // semantics match the Postgres DELETE-then-INSERT transaction.
 func (s *MemoryQualificationHistoryStore) SaveResult(_ context.Context, periodID string, entries []QualificationHistoryEntry) error {
+	if periodID == "" {
+		return fmt.Errorf("save qualification history: period_id must be non-empty")
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

@@ -28,6 +28,11 @@ const getByPeriodSQL = `SELECT ` + qualHistoryColumns + `
                         WHERE period_id = $1
                         ORDER BY user_id ASC`
 
+const getByUserAndPeriodRangeSQL = `SELECT ` + qualHistoryColumns + `
+                                    FROM qualification_history
+                                    WHERE user_id = $1 AND period_id BETWEEN $2 AND $3
+                                    ORDER BY period_id ASC`
+
 func (s *PostgresQualificationHistoryStore) SaveResult(ctx context.Context, periodID string, entries []QualificationHistoryEntry) error {
 	if periodID == "" {
 		return fmt.Errorf("save qualification history: period_id must be non-empty")
@@ -110,9 +115,17 @@ func (s *PostgresQualificationHistoryStore) GetByPeriod(ctx context.Context, per
 	return scanQualificationHistoryRows(rows)
 }
 
-// GetByUserAndPeriodRange is implemented in Task 11. Stub returns nil.
-func (s *PostgresQualificationHistoryStore) GetByUserAndPeriodRange(_ context.Context, _ uuid.UUID, _, _ string) ([]QualificationHistoryRow, error) {
-	return nil, nil
+// GetByUserAndPeriodRange returns rows for a user across a closed period range
+// ordered by period_id ASC. The (user_id, period_id) secondary index serves
+// this query as a leftmost-prefix range scan. period_id BETWEEN is inclusive
+// on both ends and yields no rows when fromPeriod > toPeriod.
+func (s *PostgresQualificationHistoryStore) GetByUserAndPeriodRange(ctx context.Context, userID uuid.UUID, fromPeriod, toPeriod string) ([]QualificationHistoryRow, error) {
+	rows, err := s.pool.Query(ctx, getByUserAndPeriodRangeSQL, userID, fromPeriod, toPeriod)
+	if err != nil {
+		return nil, fmt.Errorf("get by user and period range: %w", err)
+	}
+	defer rows.Close()
+	return scanQualificationHistoryRows(rows)
 }
 
 func scanQualificationHistoryRows(rows pgx.Rows) ([]QualificationHistoryRow, error) {

@@ -66,3 +66,37 @@ func TestPostgresQualificationHistoryStore_SaveAndGetByPeriod(t *testing.T) {
 	assert.False(t, rows[1].EvaluatedAt.IsZero())
 	assert.False(t, rows[0].EvaluatedAt.IsZero())
 }
+
+func TestPostgresQualificationHistoryStore_GetByUserAndPeriodRange(t *testing.T) {
+	store := newTestPostgresQualificationHistoryStore(t)
+	ctx := context.Background()
+
+	userA := mustParseUUID(t, "00000000-0000-0000-0000-000000000001")
+	userB := mustParseUUID(t, "00000000-0000-0000-0000-000000000002")
+
+	require.NoError(t, store.SaveResult(ctx, "2026-03", []QualificationHistoryEntry{
+		{UserID: userA, Rank: strPtr("bronze"), Ordinal: u16Ptr(1)},
+	}))
+	require.NoError(t, store.SaveResult(ctx, "2026-04", []QualificationHistoryEntry{
+		{UserID: userA, Rank: strPtr("silver"), Ordinal: u16Ptr(2)},
+		{UserID: userB, Rank: strPtr("silver"), Ordinal: u16Ptr(2)},
+	}))
+	require.NoError(t, store.SaveResult(ctx, "2026-05", []QualificationHistoryEntry{
+		{UserID: userA, Rank: strPtr("gold"), Ordinal: u16Ptr(3)},
+	}))
+
+	// Inclusive [2026-03, 2026-04] for userA → two rows ascending.
+	rows, err := store.GetByUserAndPeriodRange(ctx, userA, "2026-03", "2026-04")
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	assert.Equal(t, "2026-03", rows[0].PeriodID)
+	assert.Equal(t, "2026-04", rows[1].PeriodID)
+	assert.Equal(t, "bronze", *rows[0].Rank)
+	assert.Equal(t, "silver", *rows[1].Rank)
+
+	// Inverted range returns empty (Postgres: WHERE period_id BETWEEN $2 AND $3
+	// is false when from > to).
+	rows, err = store.GetByUserAndPeriodRange(ctx, userA, "2026-04", "2026-03")
+	require.NoError(t, err)
+	assert.Empty(t, rows)
+}

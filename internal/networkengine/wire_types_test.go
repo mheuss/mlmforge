@@ -118,3 +118,24 @@ func TestEvaluatedRankDTO_UnrankedMarshalShape(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"kind":"unranked"}`, string(b))
 }
+
+func TestEvaluateRanksRequest_WireShape_UnchangedByHEU445(t *testing.T) {
+	// The HEU-445 design adds persistence as a Go-side concern only.
+	// The NDJSON wire payload for evaluate_ranks must not grow new fields.
+	req := EvaluateRanksRequest{
+		Distributors:  map[string]DistributorPrimitivesDTO{},
+		VolumeSources: []VolumeSourceDTO{},
+	}
+	b, err := json.Marshal(req)
+	require.NoError(t, err)
+
+	// Top-level keys must be exactly these two and nothing else.
+	var asMap map[string]any
+	require.NoError(t, json.Unmarshal(b, &asMap))
+	keys := make([]string, 0, len(asMap))
+	for k := range asMap {
+		keys = append(keys, k)
+	}
+	assert.ElementsMatch(t, []string{"distributors", "volume_sources"}, keys,
+		"EvaluateRanksRequest must serialize to exactly {distributors, volume_sources}")
+}

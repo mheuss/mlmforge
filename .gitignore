@@ -78,6 +78,7 @@ credentials.json
 # Project internal — development process docs and tooling
 # ============================================================
 .claude/
+.antigravitycli/
 CLAUDE.md
 AGENTS.md
 BUGS_AND_TODOS.md

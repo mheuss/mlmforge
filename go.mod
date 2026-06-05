@@ -2,7 +2,7 @@ module github.com/mlmforge/mlmforge
 
 go 1.25.0
 
-toolchain go1.25.8
+toolchain go1.25.11
 
 require (
 	github.com/golang-migrate/migrate/v4 v4.19.1

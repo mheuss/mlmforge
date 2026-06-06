@@ -147,6 +147,7 @@ mod tests {
                 qualification: RankQualification {
                     structures: vec![],
                     required_products: vec![],
+                    window: None,
                 },
                 qualified_structures: vec!["Test Matrix".to_string()],
                 demotion_policy: DemotionPolicy::PromotionOnly,
@@ -157,6 +158,7 @@ mod tests {
                 qualification: RankQualification {
                     structures: vec![],
                     required_products: vec![],
+                    window: None,
                 },
                 qualified_structures: vec!["Test Matrix".to_string()],
                 demotion_policy: DemotionPolicy::PromotionOnly,

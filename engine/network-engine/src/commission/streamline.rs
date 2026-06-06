@@ -193,6 +193,7 @@ mod tests {
                 qualification: crate::config::rank::RankQualification {
                     structures: vec![],
                     required_products: vec![],
+                    window: None,
                 },
                 qualified_structures: vec!["test_streamline".to_string()],
                 demotion_policy: crate::config::rank::DemotionPolicy::PromotionOnly,
@@ -203,6 +204,7 @@ mod tests {
                 qualification: crate::config::rank::RankQualification {
                     structures: vec![],
                     required_products: vec![],
+                    window: None,
                 },
                 qualified_structures: vec!["test_streamline".to_string()],
                 demotion_policy: crate::config::rank::DemotionPolicy::PromotionOnly,
@@ -213,6 +215,7 @@ mod tests {
                 qualification: crate::config::rank::RankQualification {
                     structures: vec![],
                     required_products: vec![],
+                    window: None,
                 },
                 qualified_structures: vec!["test_streamline".to_string()],
                 demotion_policy: crate::config::rank::DemotionPolicy::PromotionOnly,

@@ -124,6 +124,7 @@ pub fn make_rank(name: &str, ordinal: u16, qualified_structures: Vec<String>) ->
         qualification: RankQualification {
             structures: vec![],
             required_products: vec![],
+            window: None,
         },
         qualified_structures,
         demotion_policy: DemotionPolicy::PromotionOnly,

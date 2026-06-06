@@ -983,6 +983,7 @@ mod tests {
                     leg_quality: vec![],
                 }],
                 required_products: vec![],
+                window: None,
             },
             qualified_structures: vec![structure.to_string()],
             demotion_policy: DemotionPolicy::PromotionOnly,

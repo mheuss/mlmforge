@@ -59,6 +59,16 @@ type RankDefinition struct {
 type RankQualification struct {
 	Structures       []StructureQualification `yaml:"structures" json:"structures"`
 	RequiredProducts []string                 `yaml:"required_products" json:"required_products"`
+	Window           *RankQualificationWindow `yaml:"window,omitempty" json:"window,omitempty"`
+}
+
+// RankQualificationWindow defines a windowed N-of-M gate: the distributor must
+// qualify in at least QualifyingPeriods out of the most recent WindowPeriods
+// before advancing to ThresholdRank. Mirrors the Rust RankQualificationWindow.
+type RankQualificationWindow struct {
+	ThresholdRank     string `yaml:"threshold_rank" json:"threshold_rank"`
+	QualifyingPeriods uint8  `yaml:"qualifying_periods" json:"qualifying_periods"`
+	WindowPeriods     uint8  `yaml:"window_periods" json:"window_periods"`
 }
 
 // StructureQualification holds qualification requirements for a specific structure.

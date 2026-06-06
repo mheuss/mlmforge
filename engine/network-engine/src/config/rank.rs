@@ -68,6 +68,21 @@ pub struct RankQualification {
     /// one of the specified products. Used to tie rank eligibility to
     /// enrollment package tier.
     pub required_products: Vec<String>,
+
+    /// Optional windowed gate (G2): achieved >= threshold rank in N of the
+    /// last M prior periods. Absent = no windowed requirement.
+    #[serde(default)]
+    pub window: Option<RankQualificationWindow>,
+}
+
+/// "Achieved >= threshold_rank in qualifying_periods of the last
+/// window_periods prior periods." Invariant: qualifying_periods <=
+/// window_periods, both >= 1 (validated by the Go config layer and schema).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RankQualificationWindow {
+    pub threshold_rank: String,
+    pub qualifying_periods: u8,
+    pub window_periods: u8,
 }
 
 /// Volume and team requirements for a single structure.
@@ -521,6 +536,24 @@ mod tests {
     }
 
     #[test]
+    fn rank_qualification_deserializes_window() {
+        let json = r#"{"structures":[],"required_products":[],
+            "window":{"threshold_rank":"Director","qualifying_periods":6,"window_periods":12}}"#;
+        let q: RankQualification = serde_json::from_str(json).unwrap();
+        let w = q.window.unwrap();
+        assert_eq!(w.threshold_rank, "Director");
+        assert_eq!(w.qualifying_periods, 6);
+        assert_eq!(w.window_periods, 12);
+    }
+
+    #[test]
+    fn rank_qualification_window_defaults_none_when_absent() {
+        let json = r#"{"structures":[],"required_products":[]}"#;
+        let q: RankQualification = serde_json::from_str(json).unwrap();
+        assert!(q.window.is_none());
+    }
+
+    #[test]
     fn round_trip_rank_definition() {
         let rank = RankDefinition {
             name: "Gold".to_string(),
@@ -536,6 +569,7 @@ mod tests {
                     leg_quality: vec![],
                 }],
                 required_products: vec![],
+                window: None,
             },
             qualified_structures: vec!["Primary".to_string()],
             demotion_policy: DemotionPolicy::PromotionOnly,

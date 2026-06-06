@@ -717,6 +717,7 @@ mod calculate_tests {
                 qualification: RankQualification {
                     structures: vec![],
                     required_products: vec![],
+                    window: None,
                 },
                 qualified_structures: vec!["Generation".to_string()],
                 demotion_policy: DemotionPolicy::PromotionOnly,
@@ -727,6 +728,7 @@ mod calculate_tests {
                 qualification: RankQualification {
                     structures: vec![],
                     required_products: vec![],
+                    window: None,
                 },
                 qualified_structures: vec!["Generation".to_string()],
                 demotion_policy: DemotionPolicy::PromotionOnly,
@@ -1187,6 +1189,7 @@ mod calculate_tests {
                 qualification: RankQualification {
                     structures: vec![],
                     required_products: vec![],
+                    window: None,
                 },
                 qualified_structures: vec!["Generation".to_string()],
                 demotion_policy: DemotionPolicy::PromotionOnly,
@@ -1197,6 +1200,7 @@ mod calculate_tests {
                 qualification: RankQualification {
                     structures: vec![],
                     required_products: vec![],
+                    window: None,
                 },
                 qualified_structures: vec!["Generation".to_string()],
                 demotion_policy: DemotionPolicy::PromotionOnly,
@@ -1309,6 +1313,7 @@ mod calculate_tests {
             qualification: RankQualification {
                 structures: vec![],
                 required_products: vec![],
+                window: None,
             },
             qualified_structures: vec!["Generation".to_string()],
             demotion_policy: DemotionPolicy::PromotionOnly,
@@ -1373,6 +1378,7 @@ mod calculate_tests {
                 qualification: RankQualification {
                     structures: vec![],
                     required_products: vec![],
+                    window: None,
                 },
                 qualified_structures: vec!["Generation".to_string()],
                 demotion_policy: DemotionPolicy::PromotionOnly,
@@ -1383,6 +1389,7 @@ mod calculate_tests {
                 qualification: RankQualification {
                     structures: vec![],
                     required_products: vec![],
+                    window: None,
                 },
                 qualified_structures: vec!["Generation".to_string()],
                 demotion_policy: DemotionPolicy::PromotionOnly,
@@ -1393,6 +1400,7 @@ mod calculate_tests {
                 qualification: RankQualification {
                     structures: vec![],
                     required_products: vec![],
+                    window: None,
                 },
                 qualified_structures: vec!["Generation".to_string()],
                 demotion_policy: DemotionPolicy::PromotionOnly,
@@ -1586,6 +1594,7 @@ mod calculate_tests {
                 qualification: RankQualification {
                     structures: vec![],
                     required_products: vec![],
+                    window: None,
                 },
                 qualified_structures: vec!["Generation".to_string()],
                 demotion_policy: DemotionPolicy::PromotionOnly,
@@ -1596,6 +1605,7 @@ mod calculate_tests {
                 qualification: RankQualification {
                     structures: vec![],
                     required_products: vec![],
+                    window: None,
                 },
                 qualified_structures: vec!["Generation".to_string()],
                 demotion_policy: DemotionPolicy::PromotionOnly,
@@ -1785,6 +1795,7 @@ mod calculate_tests {
                 qualification: RankQualification {
                     structures: vec![],
                     required_products: vec![],
+                    window: None,
                 },
                 qualified_structures: vec!["Generation".to_string()],
                 demotion_policy: DemotionPolicy::PromotionOnly,
@@ -1795,6 +1806,7 @@ mod calculate_tests {
                 qualification: RankQualification {
                     structures: vec![],
                     required_products: vec![],
+                    window: None,
                 },
                 qualified_structures: vec!["Generation".to_string()],
                 demotion_policy: DemotionPolicy::PromotionOnly,
@@ -1805,6 +1817,7 @@ mod calculate_tests {
                 qualification: RankQualification {
                     structures: vec![],
                     required_products: vec![],
+                    window: None,
                 },
                 qualified_structures: vec!["Generation".to_string()],
                 demotion_policy: DemotionPolicy::PromotionOnly,
@@ -1815,6 +1828,7 @@ mod calculate_tests {
                 qualification: RankQualification {
                     structures: vec![],
                     required_products: vec![],
+                    window: None,
                 },
                 qualified_structures: vec!["Generation".to_string()],
                 demotion_policy: DemotionPolicy::PromotionOnly,
@@ -1825,6 +1839,7 @@ mod calculate_tests {
                 qualification: RankQualification {
                     structures: vec![],
                     required_products: vec![],
+                    window: None,
                 },
                 qualified_structures: vec!["Generation".to_string()],
                 demotion_policy: DemotionPolicy::PromotionOnly,
@@ -1835,6 +1850,7 @@ mod calculate_tests {
                 qualification: RankQualification {
                     structures: vec![],
                     required_products: vec![],
+                    window: None,
                 },
                 qualified_structures: vec!["Generation".to_string()],
                 demotion_policy: DemotionPolicy::PromotionOnly,

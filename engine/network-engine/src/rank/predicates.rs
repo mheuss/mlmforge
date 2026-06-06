@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::config::rank::{
     DistributorCountRequirement, LegPredicate, LegQualityRequirement, RankDefinition, SearchMode,
 };
-use crate::rank::evaluator::VolumeIndex;
+use crate::rank::evaluator::{EvalCtx, VolumeIndex};
 use crate::rank::types::{DistributorPrimitives, EvaluatedRank, EvaluationError};
 use crate::tree::error::TreeError;
 use crate::tree::navigator::TreeNavigator;
@@ -293,16 +293,13 @@ fn node_matches(
 pub(crate) fn satisfies(
     rank: &RankDefinition,
     user_id: Uuid,
-    distributors: &HashMap<Uuid, DistributorPrimitives>,
-    trees: &HashMap<String, &dyn TreeNavigator>,
-    volume_index: &VolumeIndex,
     already: &HashMap<Uuid, EvaluatedRank>,
-    rank_ordinals: &HashMap<String, u16>,
+    ctx: &EvalCtx<'_, '_>,
 ) -> Result<bool, EvaluationError> {
-    // evaluate_ranks only evaluates users present in `distributors`, so this
-    // lookup always succeeds. A subject with no primitives cannot meet any
-    // volume or product criterion, so treat the absence as not-qualifying.
-    let Some(primitives) = distributors.get(&user_id) else {
+    // evaluate_ranks only evaluates users present in `ctx.distributors`, so
+    // this lookup always succeeds. A subject with no primitives cannot meet
+    // any volume or product criterion, so treat the absence as not-qualifying.
+    let Some(primitives) = ctx.distributors.get(&user_id) else {
         return Ok(false);
     };
 
@@ -311,12 +308,13 @@ pub(crate) fn satisfies(
     }
 
     for sq in &rank.qualification.structures {
-        let tree = trees
-            .get(&sq.structure)
-            .ok_or_else(|| EvaluationError::UnknownStructure {
-                rank: rank.name.clone(),
-                structure: sq.structure.clone(),
-            })?;
+        let tree =
+            ctx.trees
+                .get(&sq.structure)
+                .ok_or_else(|| EvaluationError::UnknownStructure {
+                    rank: rank.name.clone(),
+                    structure: sq.structure.clone(),
+                })?;
 
         if !tree.contains(user_id) {
             return Err(EvaluationError::DistributorNotInTree(
@@ -331,7 +329,13 @@ pub(crate) fn satisfies(
         if !retail_meets(sq.min_retail_volume, primitives) {
             return Ok(false);
         }
-        match gv_meets(sq.group_volume, user_id, *tree, volume_index, primitives) {
+        match gv_meets(
+            sq.group_volume,
+            user_id,
+            *tree,
+            ctx.volume_index,
+            primitives,
+        ) {
             Ok(true) => {}
             Ok(false) => return Ok(false),
             Err(_) => {
@@ -341,7 +345,12 @@ pub(crate) fn satisfies(
                 ));
             }
         }
-        match max_leg_gv_meets(sq.max_group_volume_per_leg, user_id, *tree, volume_index) {
+        match max_leg_gv_meets(
+            sq.max_group_volume_per_leg,
+            user_id,
+            *tree,
+            ctx.volume_index,
+        ) {
             Ok(true) => {}
             Ok(false) => return Ok(false),
             Err(_) => {
@@ -352,8 +361,14 @@ pub(crate) fn satisfies(
             }
         }
         if let Some(req) = &sq.distributor_count {
-            match distributor_count_meets(req, user_id, *tree, volume_index, already, rank_ordinals)
-            {
+            match distributor_count_meets(
+                req,
+                user_id,
+                *tree,
+                ctx.volume_index,
+                already,
+                ctx.rank_ordinals,
+            ) {
                 Ok(true) => {}
                 Ok(false) => return Ok(false),
                 Err(DistributorCountError::Tree(_)) => {
@@ -375,8 +390,8 @@ pub(crate) fn satisfies(
             user_id,
             *tree,
             already,
-            distributors,
-            rank_ordinals,
+            ctx.distributors,
+            ctx.rank_ordinals,
         ) {
             Ok(true) => {}
             Ok(false) => return Ok(false),
@@ -1003,18 +1018,20 @@ mod tests {
         let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
         distributors.insert(uid(1), primitives);
 
-        assert!(
-            satisfies(
-                &rank,
-                uid(1),
-                &distributors,
-                &nav_map,
-                &idx,
-                &already,
-                &ordinals
-            )
-            .unwrap()
-        );
+        let ranks: Vec<RankDefinition> = vec![];
+        let window: Vec<String> = vec![];
+        let history = HashMap::new();
+        let ctx = EvalCtx {
+            distributors: &distributors,
+            ranks: &ranks,
+            trees: &nav_map,
+            volume_index: &idx,
+            rank_ordinals: &ordinals,
+            history_window: &window,
+            history: &history,
+        };
+
+        assert!(satisfies(&rank, uid(1), &already, &ctx).unwrap());
     }
 
     #[test]
@@ -1034,18 +1051,20 @@ mod tests {
         let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
         distributors.insert(uid(1), primitives);
 
-        assert!(
-            !satisfies(
-                &rank,
-                uid(1),
-                &distributors,
-                &nav_map,
-                &idx,
-                &already,
-                &ordinals
-            )
-            .unwrap()
-        );
+        let ranks: Vec<RankDefinition> = vec![];
+        let window: Vec<String> = vec![];
+        let history = HashMap::new();
+        let ctx = EvalCtx {
+            distributors: &distributors,
+            ranks: &ranks,
+            trees: &nav_map,
+            volume_index: &idx,
+            rank_ordinals: &ordinals,
+            history_window: &window,
+            history: &history,
+        };
+
+        assert!(!satisfies(&rank, uid(1), &already, &ctx).unwrap());
     }
 
     #[test]
@@ -1063,16 +1082,20 @@ mod tests {
         let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
         distributors.insert(uid(1), primitives);
 
-        let err = satisfies(
-            &rank,
-            uid(1),
-            &distributors,
-            &nav_map,
-            &idx,
-            &already,
-            &ordinals,
-        )
-        .unwrap_err();
+        let ranks: Vec<RankDefinition> = vec![];
+        let window: Vec<String> = vec![];
+        let history = HashMap::new();
+        let ctx = EvalCtx {
+            distributors: &distributors,
+            ranks: &ranks,
+            trees: &nav_map,
+            volume_index: &idx,
+            rank_ordinals: &ordinals,
+            history_window: &window,
+            history: &history,
+        };
+
+        let err = satisfies(&rank, uid(1), &already, &ctx).unwrap_err();
         assert_eq!(
             err,
             crate::rank::types::EvaluationError::UnknownStructure {
@@ -1113,16 +1136,20 @@ mod tests {
         let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
         distributors.insert(uid(1), primitives);
 
-        let err = satisfies(
-            &rank,
-            uid(1),
-            &distributors,
-            &nav_map,
-            &idx,
-            &already,
-            &ordinals,
-        )
-        .unwrap_err();
+        let ranks: Vec<RankDefinition> = vec![];
+        let window: Vec<String> = vec![];
+        let history = HashMap::new();
+        let ctx = EvalCtx {
+            distributors: &distributors,
+            ranks: &ranks,
+            trees: &nav_map,
+            volume_index: &idx,
+            rank_ordinals: &ordinals,
+            history_window: &window,
+            history: &history,
+        };
+
+        let err = satisfies(&rank, uid(1), &already, &ctx).unwrap_err();
         assert_eq!(
             err,
             EvaluationError::UnknownMinRank {
@@ -1161,18 +1188,20 @@ mod tests {
         let mut ordinals: HashMap<String, u16> = HashMap::new();
         ordinals.insert("bronze".to_string(), 1);
 
-        assert!(
-            satisfies(
-                &rank,
-                uid(1),
-                &distributors,
-                &nav_map,
-                &idx,
-                &already,
-                &ordinals
-            )
-            .unwrap()
-        );
+        let ranks: Vec<RankDefinition> = vec![];
+        let window: Vec<String> = vec![];
+        let history = HashMap::new();
+        let ctx = EvalCtx {
+            distributors: &distributors,
+            ranks: &ranks,
+            trees: &nav_map,
+            volume_index: &idx,
+            rank_ordinals: &ordinals,
+            history_window: &window,
+            history: &history,
+        };
+
+        assert!(satisfies(&rank, uid(1), &already, &ctx).unwrap());
     }
 
     #[test]
@@ -1201,18 +1230,20 @@ mod tests {
         let mut ordinals: HashMap<String, u16> = HashMap::new();
         ordinals.insert("bronze".to_string(), 1);
 
-        assert!(
-            !satisfies(
-                &rank,
-                uid(1),
-                &distributors,
-                &nav_map,
-                &idx,
-                &already,
-                &ordinals
-            )
-            .unwrap()
-        );
+        let ranks: Vec<RankDefinition> = vec![];
+        let window: Vec<String> = vec![];
+        let history = HashMap::new();
+        let ctx = EvalCtx {
+            distributors: &distributors,
+            ranks: &ranks,
+            trees: &nav_map,
+            volume_index: &idx,
+            rank_ordinals: &ordinals,
+            history_window: &window,
+            history: &history,
+        };
+
+        assert!(!satisfies(&rank, uid(1), &already, &ctx).unwrap());
     }
 
     #[test]
@@ -1239,16 +1270,20 @@ mod tests {
         let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
         let ordinals: HashMap<String, u16> = HashMap::new();
 
-        let err = satisfies(
-            &rank,
-            uid(1),
-            &distributors,
-            &nav_map,
-            &idx,
-            &already,
-            &ordinals,
-        )
-        .unwrap_err();
+        let ranks: Vec<RankDefinition> = vec![];
+        let window: Vec<String> = vec![];
+        let history = HashMap::new();
+        let ctx = EvalCtx {
+            distributors: &distributors,
+            ranks: &ranks,
+            trees: &nav_map,
+            volume_index: &idx,
+            rank_ordinals: &ordinals,
+            history_window: &window,
+            history: &history,
+        };
+
+        let err = satisfies(&rank, uid(1), &already, &ctx).unwrap_err();
         assert_eq!(
             err,
             EvaluationError::UnknownMinRank {

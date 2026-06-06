@@ -31,6 +31,22 @@ impl VolumeIndex {
     }
 }
 
+/// Read-only ambient inputs for one evaluation pass. Bundled to keep
+/// `satisfies`/`evaluate_distributor` under the clippy arg limit and to
+/// carry the windowed/tenure history without widening every signature.
+/// All references are confined to a single `evaluate_ranks` call.
+pub(crate) struct EvalCtx<'a, 'b> {
+    pub distributors: &'a HashMap<Uuid, DistributorPrimitives>,
+    pub ranks: &'a [RankDefinition],
+    pub trees: &'a HashMap<String, &'b dyn TreeNavigator>,
+    pub volume_index: &'a VolumeIndex,
+    pub rank_ordinals: &'a HashMap<String, u16>,
+    #[allow(dead_code)] // Read by the windowed/tenure gates (HEU-446 tasks 5/6).
+    pub history_window: &'a [String],
+    #[allow(dead_code)] // Read by the windowed/tenure gates (HEU-446 tasks 5/6).
+    pub history: &'a HashMap<Uuid, HashMap<String, Option<u16>>>,
+}
+
 /// Compute a heuristic evaluation order across all trees: deepest-first,
 /// tiebroken by user_id.
 ///
@@ -68,31 +84,19 @@ pub(crate) fn evaluation_order_for_users(
 
 /// Walk the rank ladder for one distributor and return their evaluated rank.
 ///
-/// `ranks` MUST be sorted by ordinal ascending. Iterates lowest to highest;
-/// the last passing rank is the result. A failed rank does NOT short-circuit
-/// — higher ranks may still pass and be selected. This handles ladder gaps
-/// where a distributor satisfies rank N+1 but not rank N (e.g., missing a
-/// required product unique to N).
+/// `ctx.ranks` MUST be sorted by ordinal ascending. Iterates lowest to
+/// highest; the last passing rank is the result. A failed rank does NOT
+/// short-circuit — higher ranks may still pass and be selected. This handles
+/// ladder gaps where a distributor satisfies rank N+1 but not rank N (e.g.,
+/// missing a required product unique to N).
 pub(crate) fn evaluate_distributor(
     user_id: Uuid,
-    distributors: &HashMap<Uuid, DistributorPrimitives>,
-    ranks: &[RankDefinition],
-    trees: &HashMap<String, &dyn TreeNavigator>,
-    volume_index: &VolumeIndex,
-    rank_ordinals: &HashMap<String, u16>,
     already: &HashMap<Uuid, EvaluatedRank>,
+    ctx: &EvalCtx<'_, '_>,
 ) -> Result<EvaluatedRank, EvaluationError> {
     let mut current: Option<(String, u16)> = None;
-    for rank in ranks {
-        if satisfies(
-            rank,
-            user_id,
-            distributors,
-            trees,
-            volume_index,
-            already,
-            rank_ordinals,
-        )? {
+    for rank in ctx.ranks {
+        if satisfies(rank, user_id, already, ctx)? {
             current = Some((rank.name.clone(), rank.ordinal));
         }
     }
@@ -113,37 +117,25 @@ pub(crate) fn evaluate_distributor(
 /// from the empty map converges to the least fixpoint. The result is the
 /// same for any `order`; `order` only affects how many passes it takes.
 ///
-/// `max_passes` is `order.len() * (ranks.len() + 1) + 1`. A distributor's
-/// evaluated rank only rises, through at most `ranks.len() + 1` distinct
+/// `max_passes` is `order.len() * (ctx.ranks.len() + 1) + 1`. A distributor's
+/// evaluated rank only rises, through at most `ctx.ranks.len() + 1` distinct
 /// values, so no run can need more passes. Reaching the bound means a
 /// non-monotone descendant-reading predicate was introduced — a bug — and
 /// yields `RankEvaluationDidNotConverge`.
 pub(crate) fn iterate_to_fixpoint(
     order: &[Uuid],
-    distributors: &HashMap<Uuid, DistributorPrimitives>,
-    ranks: &[RankDefinition],
-    trees: &HashMap<String, &dyn TreeNavigator>,
-    volume_index: &VolumeIndex,
-    rank_ordinals: &HashMap<String, u16>,
+    ctx: &EvalCtx<'_, '_>,
 ) -> Result<HashMap<Uuid, EvaluatedRank>, EvaluationError> {
     let max_passes = order
         .len()
-        .saturating_mul(ranks.len().saturating_add(1))
+        .saturating_mul(ctx.ranks.len().saturating_add(1))
         .saturating_add(1);
 
     let mut already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
     for _ in 0..max_passes {
         let mut changed = false;
         for &user_id in order {
-            let evaluated = evaluate_distributor(
-                user_id,
-                distributors,
-                ranks,
-                trees,
-                volume_index,
-                rank_ordinals,
-                &already,
-            )?;
+            let evaluated = evaluate_distributor(user_id, &already, ctx)?;
             // `already` is updated in place, so later users in this pass see
             // earlier users' fresh ranks. That speeds convergence and does
             // not change the fixpoint. A user never reads its own entry —
@@ -166,6 +158,27 @@ mod tests {
     use crate::commission::types::VolumeSource;
     use proptest::prelude::*;
     use uuid::Uuid;
+
+    #[test]
+    fn eval_ctx_exposes_history_fields() {
+        let distributors = HashMap::new();
+        let ranks: Vec<RankDefinition> = vec![];
+        let trees: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+        let vi = VolumeIndex::build(&[]);
+        let ords = HashMap::new();
+        let window = vec!["2026-05".to_string()];
+        let history = HashMap::new();
+        let ctx = EvalCtx {
+            distributors: &distributors,
+            ranks: &ranks,
+            trees: &trees,
+            volume_index: &vi,
+            rank_ordinals: &ords,
+            history_window: &window,
+            history: &history,
+        };
+        assert_eq!(ctx.history_window.len(), 1);
+    }
 
     #[test]
     fn volume_index_sums_cv_per_source() {
@@ -358,16 +371,18 @@ mod tests {
         let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
         let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
         distributors.insert(Uuid::from_u128(1), primitives);
-        let result = evaluate_distributor(
-            Uuid::from_u128(1),
-            &distributors,
-            &ranks,
-            &nav,
-            &idx,
-            &ordinals,
-            &already,
-        )
-        .unwrap();
+        let window: Vec<String> = vec![];
+        let history = HashMap::new();
+        let ctx = EvalCtx {
+            distributors: &distributors,
+            ranks: &ranks,
+            trees: &nav,
+            volume_index: &idx,
+            rank_ordinals: &ordinals,
+            history_window: &window,
+            history: &history,
+        };
+        let result = evaluate_distributor(Uuid::from_u128(1), &already, &ctx).unwrap();
 
         assert_eq!(
             result,
@@ -402,16 +417,18 @@ mod tests {
 
         let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
         distributors.insert(Uuid::from_u128(1), primitives);
-        let result = evaluate_distributor(
-            Uuid::from_u128(1),
-            &distributors,
-            &ranks,
-            &nav,
-            &idx,
-            &ordinals,
-            &HashMap::new(),
-        )
-        .unwrap();
+        let window: Vec<String> = vec![];
+        let history = HashMap::new();
+        let ctx = EvalCtx {
+            distributors: &distributors,
+            ranks: &ranks,
+            trees: &nav,
+            volume_index: &idx,
+            rank_ordinals: &ordinals,
+            history_window: &window,
+            history: &history,
+        };
+        let result = evaluate_distributor(Uuid::from_u128(1), &HashMap::new(), &ctx).unwrap();
 
         assert_eq!(result, EvaluatedRank::Unranked);
     }
@@ -452,16 +469,18 @@ mod tests {
 
         let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
         distributors.insert(Uuid::from_u128(1), primitives);
-        let result = evaluate_distributor(
-            Uuid::from_u128(1),
-            &distributors,
-            &ranks,
-            &nav,
-            &idx,
-            &ordinals,
-            &HashMap::new(),
-        )
-        .unwrap();
+        let window: Vec<String> = vec![];
+        let history = HashMap::new();
+        let ctx = EvalCtx {
+            distributors: &distributors,
+            ranks: &ranks,
+            trees: &nav,
+            volume_index: &idx,
+            rank_ordinals: &ordinals,
+            history_window: &window,
+            history: &history,
+        };
+        let result = evaluate_distributor(Uuid::from_u128(1), &HashMap::new(), &ctx).unwrap();
 
         assert_eq!(
             result,
@@ -569,24 +588,20 @@ mod tests {
         let mut reversed = heuristic.clone();
         reversed.reverse();
 
-        let from_heuristic = iterate_to_fixpoint(
-            &heuristic,
-            &distributors,
-            &ranks,
-            &trees,
-            &volume_index,
-            &rank_ordinals,
-        )
-        .unwrap();
-        let from_reversed = iterate_to_fixpoint(
-            &reversed,
-            &distributors,
-            &ranks,
-            &trees,
-            &volume_index,
-            &rank_ordinals,
-        )
-        .unwrap();
+        let window: Vec<String> = vec![];
+        let history = HashMap::new();
+        let ctx = EvalCtx {
+            distributors: &distributors,
+            ranks: &ranks,
+            trees: &trees,
+            volume_index: &volume_index,
+            rank_ordinals: &rank_ordinals,
+            history_window: &window,
+            history: &history,
+        };
+
+        let from_heuristic = iterate_to_fixpoint(&heuristic, &ctx).unwrap();
+        let from_reversed = iterate_to_fixpoint(&reversed, &ctx).unwrap();
 
         // Order-independent, and the fixpoint counts `child` for `subject`.
         assert_eq!(from_heuristic, from_reversed);
@@ -710,15 +725,20 @@ mod tests {
                 [c, a, b],
                 [c, b, a],
             ];
-            let baseline = iterate_to_fixpoint(
-                &orders[0], &distributors, &ranks, &trees, &volume_index, &rank_ordinals,
-            )
-            .unwrap();
+            let window: Vec<String> = vec![];
+            let history = HashMap::new();
+            let ctx = EvalCtx {
+                distributors: &distributors,
+                ranks: &ranks,
+                trees: &trees,
+                volume_index: &volume_index,
+                rank_ordinals: &rank_ordinals,
+                history_window: &window,
+                history: &history,
+            };
+            let baseline = iterate_to_fixpoint(&orders[0], &ctx).unwrap();
             for order in &orders {
-                let result = iterate_to_fixpoint(
-                    order, &distributors, &ranks, &trees, &volume_index, &rank_ordinals,
-                )
-                .unwrap();
+                let result = iterate_to_fixpoint(order, &ctx).unwrap();
                 prop_assert_eq!(&result, &baseline);
             }
         }

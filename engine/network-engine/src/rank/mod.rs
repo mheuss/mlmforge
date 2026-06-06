@@ -15,7 +15,7 @@ use uuid::Uuid;
 use crate::config::CompensationPlan;
 use crate::tree::navigator::TreeNavigator;
 
-use self::evaluator::{VolumeIndex, evaluation_order_for_users, iterate_to_fixpoint};
+use self::evaluator::{EvalCtx, VolumeIndex, evaluation_order_for_users, iterate_to_fixpoint};
 
 /// Evaluate the qualified rank for every distributor in `inputs` that also
 /// appears in at least one tree.
@@ -53,14 +53,16 @@ pub fn evaluate_ranks(
     // ordered pass is correct only when one order places every descendant
     // before its ancestor in every tree at once; multi-structure plans break
     // that. The fixpoint is order-independent. See design-rationale 026.
-    let already = iterate_to_fixpoint(
-        &order,
-        &inputs.distributors,
-        &ranks_owned,
+    let ctx = EvalCtx {
+        distributors: &inputs.distributors,
+        ranks: &ranks_owned,
         trees,
-        &volume_index,
-        &rank_ordinals,
-    )?;
+        volume_index: &volume_index,
+        rank_ordinals: &rank_ordinals,
+        history_window: &inputs.history_window,
+        history: &inputs.history,
+    };
+    let already = iterate_to_fixpoint(&order, &ctx)?;
 
     // Move into a BTreeMap so the result serializes with sorted keys.
     let ranks: std::collections::BTreeMap<Uuid, EvaluatedRank> = already.into_iter().collect();

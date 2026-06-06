@@ -5,7 +5,8 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::config::rank::{
-    DistributorCountRequirement, LegPredicate, LegQualityRequirement, RankDefinition, SearchMode,
+    DistributorCountRequirement, LegPredicate, LegQualityRequirement, RankDefinition,
+    RankQualificationWindow, SearchMode,
 };
 use crate::rank::evaluator::{EvalCtx, VolumeIndex};
 use crate::rank::types::{DistributorPrimitives, EvaluatedRank, EvaluationError};
@@ -410,6 +411,53 @@ pub(crate) fn satisfies(
         }
     }
     Ok(true)
+}
+
+/// Look up a threshold rank's ordinal, erroring with the qualifying rank's
+/// name (`rank_name`) for context.
+#[allow(dead_code)] // Reached via `windowed_meets`, wired into `satisfies` by HEU-446 Task 6.
+fn lookup_threshold(
+    threshold: &str,
+    rank_ordinals: &HashMap<String, u16>,
+    rank_name: &str,
+) -> Result<u16, EvaluationError> {
+    rank_ordinals
+        .get(threshold)
+        .copied()
+        .ok_or_else(|| EvaluationError::UnknownThresholdRank {
+            rank: rank_name.to_string(),
+            referenced: threshold.to_string(),
+        })
+}
+
+/// BR1: achieved >= threshold ordinal in >= N of the M most-recent prior
+/// periods. `axis` is the history window (DESC); `hist` is this distributor's
+/// per-period achieved ordinals; `rank_name` is the rank being qualified
+/// (error context only).
+#[allow(dead_code)] // Wired into `satisfies` by HEU-446 Task 6.
+pub(crate) fn windowed_meets(
+    w: &RankQualificationWindow,
+    axis: &[String],
+    hist: Option<&HashMap<String, Option<u16>>>,
+    rank_ordinals: &HashMap<String, u16>,
+    rank_name: &str,
+) -> Result<bool, EvaluationError> {
+    let threshold = lookup_threshold(&w.threshold_rank, rank_ordinals, rank_name)?; // BR7/E
+    let m = w.window_periods as usize;
+    if axis.len() < m {
+        return Ok(false); // BR5
+    }
+    let count = axis[..m]
+        .iter()
+        .filter(|pid| {
+            // missing key OR Unranked (None) both map to false (BR6)
+            hist.and_then(|h| h.get(pid.as_str()))
+                .copied()
+                .flatten()
+                .is_some_and(|o| o >= threshold)
+        })
+        .count();
+    Ok(count >= w.qualifying_periods as usize)
 }
 
 #[cfg(test)]
@@ -1290,6 +1338,65 @@ mod tests {
             EvaluationError::UnknownMinRank {
                 rank: "silver".to_string(),
                 referenced: "phantom_rank".to_string(),
+            }
+        );
+    }
+
+    use crate::config::rank::RankQualificationWindow;
+
+    fn ords() -> HashMap<String, u16> {
+        HashMap::from([
+            ("Associate".into(), 1),
+            ("Director".into(), 5),
+            ("QD".into(), 6),
+        ])
+    }
+    fn win(n: u8, m: u8) -> RankQualificationWindow {
+        RankQualificationWindow {
+            threshold_rank: "Director".into(),
+            qualifying_periods: n,
+            window_periods: m,
+        }
+    }
+
+    #[test]
+    fn windowed_meets_counts_at_or_above_threshold() {
+        let axis: Vec<String> = (0..12).rev().map(|i| format!("2026-{i:02}")).collect();
+        let mut h = HashMap::new();
+        for (i, p) in axis.iter().enumerate() {
+            h.insert(p.clone(), if i < 6 { Some(5) } else { Some(1) });
+        }
+        assert!(windowed_meets(&win(6, 12), &axis, Some(&h), &ords(), "QD").unwrap());
+        assert!(!windowed_meets(&win(7, 12), &axis, Some(&h), &ords(), "QD").unwrap());
+    }
+
+    #[test]
+    fn windowed_meets_missing_and_unranked_count_as_below() {
+        let axis = vec!["2026-05".to_string(), "2026-04".to_string()];
+        let h = HashMap::from([("2026-05".to_string(), None)]); // Unranked; 2026-04 missing
+        assert!(!windowed_meets(&win(1, 2), &axis, Some(&h), &ords(), "QD").unwrap());
+    }
+
+    #[test]
+    fn windowed_meets_insufficient_axis_fails() {
+        let axis = vec!["2026-05".to_string()];
+        assert!(!windowed_meets(&win(1, 12), &axis, None, &ords(), "QD").unwrap());
+    }
+
+    #[test]
+    fn windowed_meets_unknown_threshold_errors_with_qualifying_rank() {
+        let axis: Vec<String> = (0..12).map(|i| format!("2026-{i:02}")).collect();
+        let bad = RankQualificationWindow {
+            threshold_rank: "Ghost".into(),
+            qualifying_periods: 1,
+            window_periods: 12,
+        };
+        let err = windowed_meets(&bad, &axis, None, &ords(), "QD").unwrap_err();
+        assert_eq!(
+            err,
+            EvaluationError::UnknownThresholdRank {
+                rank: "QD".into(),
+                referenced: "Ghost".into()
             }
         );
     }

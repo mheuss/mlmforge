@@ -90,6 +90,16 @@ pub enum EvaluationError {
     #[error("rank '{rank}' references unknown min_rank '{referenced}'")]
     UnknownMinRank { rank: String, referenced: String },
 
+    /// A window/tenure gate's `threshold_rank` references a rank not in the plan.
+    #[error("rank '{rank}' references unknown threshold rank '{referenced}'")]
+    UnknownThresholdRank { rank: String, referenced: String },
+
+    /// A rank declares a window/tenure gate but the request supplied an empty
+    /// history_window. Loud failure (BR9), distinct from insufficient history
+    /// (BR5, where some axis exists but is shorter than the window).
+    #[error("rank '{rank}' has a time gate but no history_window was supplied")]
+    TimeGateWithoutHistory { rank: String },
+
     /// An input distributor is not present in a tree the evaluator must walk.
     #[error("distributor {0} not found in tree '{1}'")]
     DistributorNotInTree(Uuid, String),
@@ -177,6 +187,27 @@ mod tests {
         let inputs: EvaluationInputs = serde_json::from_str(json).unwrap();
         assert!(inputs.history_window.is_empty());
         assert!(inputs.history.is_empty());
+    }
+
+    #[test]
+    fn unknown_threshold_rank_displays_context() {
+        let err = EvaluationError::UnknownThresholdRank {
+            rank: "QD".into(),
+            referenced: "Director".into(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "rank 'QD' references unknown threshold rank 'Director'"
+        );
+    }
+
+    #[test]
+    fn time_gate_without_history_displays_context() {
+        let err = EvaluationError::TimeGateWithoutHistory { rank: "QD".into() };
+        assert_eq!(
+            err.to_string(),
+            "rank 'QD' has a time gate but no history_window was supplied"
+        );
     }
 
     #[test]

@@ -440,6 +440,80 @@ func TestLegQualityContainsRankValidMinRankPasses(t *testing.T) {
 	assert.Empty(t, errs)
 }
 
+func TestWindowThresholdRankMustExist(t *testing.T) {
+	plan := minimalPlan()
+	plan.Ranks[1].Qualification.Window = &RankQualificationWindow{
+		ThresholdRank:     "Nonexistent",
+		QualifyingPeriods: 2,
+		WindowPeriods:     3,
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "undefined_reference", errs[0].Code)
+	assert.Equal(t, SeverityError, errs[0].Severity)
+	assert.Equal(t, "/ranks/1/qualification/window/threshold_rank", errs[0].Path)
+}
+
+func TestWindowQualifyingPeriodsExceedsWindowPeriods(t *testing.T) {
+	plan := minimalPlan()
+	plan.Ranks[1].Qualification.Window = &RankQualificationWindow{
+		ThresholdRank:     "Associate",
+		QualifyingPeriods: 4,
+		WindowPeriods:     3,
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "cross_field_dependency", errs[0].Code)
+	assert.Equal(t, SeverityError, errs[0].Severity)
+	assert.Equal(t, "/ranks/1/qualification/window", errs[0].Path)
+}
+
+func TestWindowQualifyingPeriodsZeroRejected(t *testing.T) {
+	plan := minimalPlan()
+	plan.Ranks[1].Qualification.Window = &RankQualificationWindow{
+		ThresholdRank:     "Associate",
+		QualifyingPeriods: 0,
+		WindowPeriods:     3,
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "cross_field_dependency", errs[0].Code)
+	assert.Equal(t, SeverityError, errs[0].Severity)
+	assert.Equal(t, "/ranks/1/qualification/window", errs[0].Path)
+}
+
+func TestWindowWindowPeriodsZeroRejected(t *testing.T) {
+	plan := minimalPlan()
+	plan.Ranks[1].Qualification.Window = &RankQualificationWindow{
+		ThresholdRank:     "Associate",
+		QualifyingPeriods: 1,
+		WindowPeriods:     0,
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "cross_field_dependency", errs[0].Code)
+	assert.Equal(t, SeverityError, errs[0].Severity)
+	assert.Equal(t, "/ranks/1/qualification/window", errs[0].Path)
+}
+
+func TestWindowThresholdRankEqualOrHigherOrdinalAccepted(t *testing.T) {
+	plan := minimalPlan()
+	// Silver (ordinal 2) references threshold_rank Silver (same ordinal).
+	// This must pass — threshold_rank is NOT required to be lower than the current rank.
+	plan.Ranks[1].Qualification.Window = &RankQualificationWindow{
+		ThresholdRank:     "Silver",
+		QualifyingPeriods: 2,
+		WindowPeriods:     3,
+	}
+
+	errs := validateBusinessRules(plan)
+	assert.Empty(t, errs)
+}
+
 func TestLegQualityContainsPersonalVolumeSkipsRankCheck(t *testing.T) {
 	plan := minimalPlan()
 	// A contains_personal_volume predicate must not trigger the rank check.

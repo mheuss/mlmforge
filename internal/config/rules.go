@@ -231,6 +231,33 @@ func validateRanks(plan *CompensationPlan, structs map[string]bool) []Validation
 				}
 			}
 		}
+
+		if r.Qualification.Window != nil {
+			w := r.Qualification.Window
+			if _, exists := ordinals[w.ThresholdRank]; !exists {
+				errs = append(errs, ValidationError{
+					Path:     fmt.Sprintf("/ranks/%d/qualification/window/threshold_rank", i),
+					Code:     "undefined_reference",
+					Message:  fmt.Sprintf("rank %q window references undefined rank %q", r.Name, w.ThresholdRank),
+					Severity: SeverityError,
+				})
+			}
+			if w.QualifyingPeriods < 1 || w.WindowPeriods < 1 {
+				errs = append(errs, ValidationError{
+					Path:     fmt.Sprintf("/ranks/%d/qualification/window", i),
+					Code:     "cross_field_dependency",
+					Message:  fmt.Sprintf("rank %q window periods must be >= 1", r.Name),
+					Severity: SeverityError,
+				})
+			} else if w.QualifyingPeriods > w.WindowPeriods {
+				errs = append(errs, ValidationError{
+					Path:     fmt.Sprintf("/ranks/%d/qualification/window", i),
+					Code:     "cross_field_dependency",
+					Message:  fmt.Sprintf("rank %q qualifying_periods (%d) exceeds window_periods (%d)", r.Name, w.QualifyingPeriods, w.WindowPeriods),
+					Severity: SeverityError,
+				})
+			}
+		}
 	}
 
 	return errs

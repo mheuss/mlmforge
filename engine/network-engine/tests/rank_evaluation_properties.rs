@@ -3,7 +3,7 @@ mod common;
 use common::uuid_from_index;
 use network_engine::config::rank::{
     DemotionPolicy, DistributorCountRequirement, LegPredicate, LegQualityRequirement,
-    RankDefinition, RankQualification, SearchMode, StructureQualification,
+    RankDefinition, RankQualification, RankQualificationWindow, SearchMode, StructureQualification,
 };
 use network_engine::config::{CompensationPlan, StructureConfig, UnilevelStructureConfig};
 use network_engine::rank::{DistributorPrimitives, EvaluationInputs, evaluate_ranks};
@@ -552,6 +552,229 @@ proptest! {
         prop_assert!(
             subject_ordinal(increase) >= subject_ordinal(0),
             "raising every descendant's PV must not lower the subject's leg-quality rank",
+        );
+    }
+}
+
+/// Ordinal of the windowed threshold rank ("silver"). The window gate counts
+/// axis periods whose achieved ordinal is `>= WINDOW_THRESHOLD_ORDINAL`.
+const WINDOW_THRESHOLD_ORDINAL: u16 = 2;
+
+/// A three-rank plan on the "Test" structure with a windowed (N-of-M) gate on
+/// the top rank:
+/// - `associate` (ordinal 1, PV >= 0, no window)
+/// - `silver` (ordinal 2, PV >= 0, no window) — the gate's `threshold_rank`
+/// - `gold` (ordinal 3, PV >= 0) — additionally requires `qualifying_periods`
+///   of the last `window_periods` axis periods to have achieved silver-or-better
+///
+/// Every rank requires only PV >= 0 on "Test", so any in-tree distributor is
+/// always at least `silver`. Reaching `gold` depends solely on the window gate,
+/// which isolates the windowed dimension. `gold`'s `structures` references the
+/// "Test" tree (non-empty) so the subject is actually evaluated. `threshold_rank`
+/// is "silver", a real rank in the plan, so `evaluate_ranks` does not error with
+/// `UnknownThresholdRank`. Reuses `build_random_plan`'s structure config.
+fn windowed_plan(qualifying_periods: u8, window_periods: u8) -> CompensationPlan {
+    let pv_only =
+        |name: &str, ordinal: u16, window: Option<RankQualificationWindow>| RankDefinition {
+            name: name.to_string(),
+            ordinal,
+            qualification: RankQualification {
+                structures: vec![StructureQualification {
+                    structure: "Test".to_string(),
+                    personal_volume: 0.0,
+                    group_volume: 0.0,
+                    max_group_volume_per_leg: f64::MAX,
+                    min_retail_volume: 0.0,
+                    distributor_count: None,
+                    leg_quality: vec![],
+                }],
+                required_products: vec![],
+                window,
+            },
+            qualified_structures: vec!["Test".to_string()],
+            demotion_policy: DemotionPolicy::PromotionOnly,
+        };
+    let mut plan = build_random_plan();
+    plan.ranks = vec![
+        pv_only("associate", 1, None),
+        pv_only("silver", WINDOW_THRESHOLD_ORDINAL, None),
+        pv_only(
+            "gold",
+            3,
+            Some(RankQualificationWindow {
+                threshold_rank: "silver".to_string(),
+                qualifying_periods,
+                window_periods,
+            }),
+        ),
+    ];
+    plan
+}
+
+proptest! {
+    /// Determinism (design §5, NFR #4): evaluating the same inputs twice — the
+    /// same `history_window` (DESC) and per-distributor `history` — yields
+    /// byte-identical serialized output. `evaluate_ranks` is already
+    /// deterministic, so this passes with no production change; a failure here
+    /// is a real non-determinism bug, not a test gap.
+    ///
+    /// Non-vacuous: the subject is the root of the "Test" tree and is present in
+    /// `distributors`, so it is always evaluated (and, since every rank needs
+    /// only PV >= 0, always at least `silver` — see the sanity assertion). The
+    /// axis length is `>= window_periods` (BR5), so the gate is satisfiable, and
+    /// per-period ordinals are drawn across the threshold (`None`/below/at-or-
+    /// above), so the gate both passes and fails across draws.
+    #[test]
+    fn windowed_gate_is_deterministic(
+        // axis_len = ords.len() in 2..=8; ords[i] is the subject's achieved rank
+        // in axis period i (None = Unranked). window_periods is clamped to
+        // <= axis_len so the axis is always long enough to satisfy the gate
+        // (BR5); qualifying_periods is clamped to <= window_periods so the
+        // window itself is valid.
+        ords in prop::collection::vec(prop::option::of(0u16..=3), 2..=8usize),
+        m_raw in 1u8..=8,
+        n_raw in 1u8..=8,
+    ) {
+        let axis_len = ords.len();
+        let m = (m_raw as usize).min(axis_len).max(1);
+        let n = (n_raw as usize).min(m).max(1);
+        let plan = windowed_plan(n as u8, m as u8);
+
+        let subject = uuid_from_index(0);
+        let mut tree = UnilevelTree::new();
+        tree.add_root(subject, 0).unwrap();
+        let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+        nav.insert("Test".to_string(), &tree);
+
+        // Most-recent-first axis (DESC); labels need only be distinct, the Vec
+        // order defines recency.
+        let axis: Vec<String> = (0..axis_len)
+            .map(|i| format!("2026-{:02}", axis_len - i))
+            .collect();
+        let mut subject_history: HashMap<String, Option<u16>> = HashMap::new();
+        for (i, achieved) in ords.iter().enumerate() {
+            subject_history.insert(axis[i].clone(), *achieved);
+        }
+        let mut history = HashMap::new();
+        history.insert(subject, subject_history);
+
+        let mut distributors = HashMap::new();
+        distributors.insert(subject, prim(300.0));
+
+        let inputs = EvaluationInputs {
+            distributors,
+            volume_sources: vec![],
+            history_window: axis,
+            history,
+        };
+
+        let r1 = evaluate_ranks(&plan, &nav, &inputs).unwrap();
+        let r2 = evaluate_ranks(&plan, &nav, &inputs).unwrap();
+
+        // The subject is in-tree with PV >= every threshold, so it is always
+        // evaluated and at least `silver`. This proves the determinism check is
+        // not vacuously comparing two `Unranked`/absent results.
+        prop_assert!(
+            matches!(
+                r1.ranks.get(&subject),
+                Some(network_engine::rank::EvaluatedRank::Qualified { .. })
+            ),
+            "subject must be evaluated (Qualified), got {:?}",
+            r1.ranks.get(&subject),
+        );
+
+        let json1 = serde_json::to_string(&r1).unwrap();
+        let json2 = serde_json::to_string(&r2).unwrap();
+        prop_assert_eq!(json1, json2);
+    }
+}
+
+proptest! {
+    /// Fixed-set monotonicity (design §5, NFR #4): holding the axis fixed,
+    /// raising some axis periods from below-threshold to at-or-above-threshold
+    /// (and lowering none) can only increase the window count, which can only
+    /// flip the gate false->true, so the subject's evaluated ordinal must not
+    /// decrease. Varying the axis itself is out of scope.
+    ///
+    /// The "raised" history maps each baseline ordinal `b` to
+    /// `max(b, WINDOW_THRESHOLD_ORDINAL)` on masked periods and leaves the rest
+    /// at `b`. `max(b, T) >= b` always, so no period is ever lowered; only
+    /// below-`T` masked periods move up to `T`.
+    ///
+    /// Non-vacuous: the subject is the in-tree root and always at least `silver`
+    /// (sanity assertion below), so the comparison is between two real evaluated
+    /// ordinals. The axis length is `>= window_periods` (BR5), so the gate is
+    /// satisfiable and can reach `gold`.
+    #[test]
+    fn windowed_gate_is_monotone_in_qualifying_periods(
+        // (baseline ordinal, raise this period?) per axis period; axis_len in
+        // 2..=8. window_periods clamped <= axis_len (BR5 satisfiable),
+        // qualifying_periods clamped <= window_periods (valid window).
+        base_and_mask in prop::collection::vec((0u16..=3, any::<bool>()), 2..=8usize),
+        m_raw in 1u8..=8,
+        n_raw in 1u8..=8,
+    ) {
+        let axis_len = base_and_mask.len();
+        let m = (m_raw as usize).min(axis_len).max(1);
+        let n = (n_raw as usize).min(m).max(1);
+        let plan = windowed_plan(n as u8, m as u8);
+
+        let subject = uuid_from_index(0);
+        let mut tree = UnilevelTree::new();
+        tree.add_root(subject, 0).unwrap();
+        let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+        nav.insert("Test".to_string(), &tree);
+
+        let axis: Vec<String> = (0..axis_len)
+            .map(|i| format!("2026-{:02}", axis_len - i))
+            .collect();
+
+        // Evaluate the subject with its history; `raise` toggles the masked
+        // periods up to the threshold. Base criteria (PV) are fixed in both
+        // runs, so only the windowed dimension varies.
+        let subject_ordinal = |raise: bool| -> u16 {
+            let mut subject_history: HashMap<String, Option<u16>> = HashMap::new();
+            for (i, (base, mask)) in base_and_mask.iter().enumerate() {
+                let achieved = if raise && *mask {
+                    (*base).max(WINDOW_THRESHOLD_ORDINAL)
+                } else {
+                    *base
+                };
+                subject_history.insert(axis[i].clone(), Some(achieved));
+            }
+            let mut history = HashMap::new();
+            history.insert(subject, subject_history);
+
+            let mut distributors = HashMap::new();
+            distributors.insert(subject, prim(300.0));
+
+            let result = evaluate_ranks(
+                &plan,
+                &nav,
+                &EvaluationInputs {
+                    distributors,
+                    volume_sources: vec![],
+                    history_window: axis.clone(),
+                    history,
+                },
+            )
+            .unwrap();
+            match result.ranks.get(&subject) {
+                Some(network_engine::rank::EvaluatedRank::Qualified { ordinal, .. }) => *ordinal,
+                _ => 0,
+            }
+        };
+
+        // The subject is always at least `silver` (ordinal 2) since every rank
+        // needs only PV >= 0; this proves the subject is evaluated and the
+        // comparison is not vacuous.
+        prop_assert!(
+            subject_ordinal(false) >= WINDOW_THRESHOLD_ORDINAL,
+            "subject must be evaluated and at least silver",
+        );
+        prop_assert!(
+            subject_ordinal(true) >= subject_ordinal(false),
+            "raising periods to at-or-above-threshold must not lower the subject's windowed rank",
         );
     }
 }

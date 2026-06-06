@@ -889,3 +889,14 @@ func TestOverrideStrategyConstValues(t *testing.T) {
 	assert.Equal(t, "single_walk", overrideStrategySingleWalk)
 	assert.Equal(t, "multi_tier", overrideStrategyMultiTier)
 }
+
+func TestRankQualification_ParsesWindow(t *testing.T) {
+	y := []byte("structures: []\nrequired_products: []\n" +
+		"window:\n  threshold_rank: Director\n  qualifying_periods: 6\n  window_periods: 12\n")
+	var q RankQualification
+	require.NoError(t, yaml.Unmarshal(y, &q))
+	require.NotNil(t, q.Window)
+	assert.Equal(t, "Director", q.Window.ThresholdRank)
+	assert.Equal(t, uint8(6), q.Window.QualifyingPeriods)
+	assert.Equal(t, uint8(12), q.Window.WindowPeriods)
+}

@@ -2442,3 +2442,112 @@ fn evaluate_ranks_returns_structure_not_found_when_tree_missing() {
     drop(child.stdin.take());
     child.wait().unwrap();
 }
+
+/// Minimal plan for windowed-gate tests. Two ranks on structure "Test":
+/// - `associate` (ordinal 1): PV >= 0 — serves as `threshold_rank` for the window.
+/// - `silver` (ordinal 2): PV >= 0 + window gate (2-of-3 periods at >= associate).
+///
+/// Both ranks list structure "Test" so they are evaluated; the window gate is
+/// the only differentiator. Key ordering is authored with `type` before
+/// `config` to satisfy the adjacent-tagged enum deserialization in serde.
+const WINDOWED_RANK_TEST_PLAN_JSON: &str = r#"{
+    "name": "WindowedRankTest",
+    "version": 1,
+    "structures": [
+        {"type": "unilevel", "config": {
+            "name": "Test",
+            "level_commission": {
+                "broad_commission_percent": 0.4,
+                "volume_to_dollar_multiplier": null,
+                "commissionable_depth": 3,
+                "rate_table": {"associate": {"1": 0.05}}
+            },
+            "compression": null
+        }}
+    ],
+    "period": {"length": "month", "start_date": "2026-03-01", "payout_lag_days": 14},
+    "volume": {"inhibit_signup_volume": false, "base_currency": "USD", "volume_to_dollar_multiplier": 1.0, "deduct_qualifying_volume": false},
+    "ranks": [
+        {"name": "associate", "ordinal": 1,
+         "qualification": {"structures": [{"structure": "Test", "personal_volume": 0.0, "group_volume": 0.0, "max_group_volume_per_leg": 1e12, "min_retail_volume": 0.0, "distributor_count": null}], "required_products": []},
+         "qualified_structures": ["Test"],
+         "demotion_policy": "promotion_only"},
+        {"name": "silver", "ordinal": 2,
+         "qualification": {"structures": [{"structure": "Test", "personal_volume": 0.0, "group_volume": 0.0, "max_group_volume_per_leg": 1e12, "min_retail_volume": 0.0, "distributor_count": null}], "required_products": [], "window": {"threshold_rank": "associate", "qualifying_periods": 2, "window_periods": 3}},
+         "qualified_structures": ["Test"],
+         "demotion_policy": "promotion_only"}
+    ],
+    "rank_tracking": {"track_achieved_rank": false},
+    "rank_features": {"constraints_enabled": false, "overrides_enabled": false},
+    "commission_eligibility": {"min_personal_volume": 0.0, "require_order_in_period": false, "eligible_statuses": [], "active_leg_tiers": []},
+    "bonuses": {"matching": null, "sponsor": null, "fast_start": null, "rank_advancement": null, "leadership_development": null, "infinity": null, "lifestyle": null, "pool": null, "matrix_completion": null, "position": null, "board_cycling": null},
+    "payout": {"base_currency": "USD", "minimum_amount": 50.0, "split_payouts_enabled": true, "methods": [{"type": "bank_transfer", "fee": 0.0}]},
+    "caps": {"per_distributor_per_period": null, "company_payout_cap_percent": 0.42, "cap_enforcement": "pro_rata", "clawback_on_refund": false},
+    "placement": {"donated_placement": null, "holding_tank": null, "binary_placement": null}
+}"#;
+
+#[test]
+fn evaluate_ranks_honors_window_history() {
+    // ROOT has ordinal 1 (associate) in all three history periods, which
+    // satisfies the silver rank's 2-of-3 window gate. The test proves that
+    // history fields carried in the evaluate_ranks request flow through the
+    // worker handler unchanged.
+    let mut child = common::spawn_worker();
+
+    let minified_plan: String = WINDOWED_RANK_TEST_PLAN_JSON
+        .lines()
+        .map(|l| l.trim())
+        .collect::<Vec<_>>()
+        .join("");
+    let resp = common::send_receive(
+        &mut child,
+        &format!(
+            r#"{{"id":"1","op":"load_plan","params":{}}}"#,
+            minified_plan
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "load_plan failed: {}", resp);
+
+    create_tree(&mut child, "Test");
+    let resp = common::send_receive(
+        &mut child,
+        &format!(
+            r#"{{"id":"2","op":"add_root","params":{{"structure":"Test","user_id":"{}","enrolled_at":100}}}}"#,
+            ROOT
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
+
+    // history: ROOT achieved ordinal 1 (associate) in every axis period →
+    // 3/3 periods pass the threshold, satisfying the 2-of-3 window gate.
+    let req = format!(
+        r#"{{"id":"3","op":"evaluate_ranks","params":{{"distributors":{{"{}":{{"personal_volume":0.0,"retail_volume":0.0,"status":"active","has_order_in_period":false,"active_products":[]}}}},"volume_sources":[],"history_window":["2026-05","2026-04","2026-03"],"history":{{"{}":{{"2026-05":1,"2026-04":1,"2026-03":1}}}}}}}}"#,
+        ROOT, ROOT
+    );
+    let resp = common::send_receive(&mut child, &req);
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(
+        parsed["ok"].as_bool(),
+        Some(true),
+        "evaluate_ranks failed: {}",
+        resp
+    );
+    assert_eq!(
+        parsed["result"]["ranks"][ROOT]["kind"], "qualified",
+        "expected qualified result for ROOT, got: {}",
+        resp
+    );
+    assert_eq!(
+        parsed["result"]["ranks"][ROOT]["rank"], "silver",
+        "expected rank=silver for ROOT, got: {}",
+        resp
+    );
+    assert_eq!(
+        parsed["result"]["ranks"][ROOT]["ordinal"], 2,
+        "expected ordinal=2 for ROOT, got: {}",
+        resp
+    );
+
+    drop(child.stdin.take());
+    child.wait().unwrap();
+}

@@ -346,6 +346,13 @@ type StreamConfigDTO struct {
 type EvaluateRanksRequest struct {
 	Distributors  map[string]DistributorPrimitivesDTO `json:"distributors"`
 	VolumeSources []VolumeSourceDTO                   `json:"volume_sources"`
+	// HistoryWindow lists the prior period labels in order (e.g. ["2026-05", "2026-04"]).
+	// Omitted when empty (omitempty) so callers without history data stay backward-compatible.
+	HistoryWindow []string `json:"history_window,omitempty"`
+	// History maps distributor UUID strings to per-period rank ordinals.
+	// A nil *uint16 value marshals to JSON null, representing "Unranked" (evaluated, did not qualify).
+	// A plain uint16 would collapse Unranked to 0, which is a valid ordinal — keep the pointer.
+	History map[string]map[string]*uint16 `json:"history,omitempty"`
 }
 
 // DistributorPrimitivesDTO is the per-distributor input for rank evaluation.

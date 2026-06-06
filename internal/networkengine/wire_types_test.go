@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -119,23 +120,46 @@ func TestEvaluatedRankDTO_UnrankedMarshalShape(t *testing.T) {
 	assert.JSONEq(t, `{"kind":"unranked"}`, string(b))
 }
 
-func TestEvaluateRanksRequest_WireShape_UnchangedByHEU445(t *testing.T) {
-	// The HEU-445 design adds persistence as a Go-side concern only.
-	// The NDJSON wire payload for evaluate_ranks must not grow new fields.
+func TestEvaluateRanksRequest_EmptyOmitsHistory(t *testing.T) {
 	req := EvaluateRanksRequest{
 		Distributors:  map[string]DistributorPrimitivesDTO{},
 		VolumeSources: []VolumeSourceDTO{},
 	}
-	b, err := json.Marshal(req)
-	require.NoError(t, err)
-
-	// Top-level keys must be exactly these two and nothing else.
-	var asMap map[string]any
-	require.NoError(t, json.Unmarshal(b, &asMap))
-	keys := make([]string, 0, len(asMap))
-	for k := range asMap {
+	b, _ := json.Marshal(req)
+	var m map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(b, &m))
+	keys := make([]string, 0, len(m))
+	for k := range m {
 		keys = append(keys, k)
 	}
 	assert.ElementsMatch(t, []string{"distributors", "volume_sources"}, keys,
-		"EvaluateRanksRequest must serialize to exactly {distributors, volume_sources}")
+		"an empty request must omit history_window/history (omitempty)")
+}
+
+func TestEvaluateRanksRequest_PopulatedIncludesHistory(t *testing.T) {
+	uid := uuid.New()
+	two := uint16(2)
+	var unranked *uint16 // nil
+	req := EvaluateRanksRequest{
+		Distributors:  map[string]DistributorPrimitivesDTO{},
+		VolumeSources: []VolumeSourceDTO{},
+		HistoryWindow: []string{"2026-05", "2026-04"},
+		History: map[string]map[string]*uint16{
+			uid.String(): {"2026-05": &two, "2026-04": unranked},
+		},
+	}
+	b, _ := json.Marshal(req)
+	var m map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(b, &m))
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	assert.ElementsMatch(t,
+		[]string{"distributors", "volume_sources", "history_window", "history"}, keys)
+	assert.Contains(t, string(b), `"2026-04":null`) // Unranked survives as null
+	var back EvaluateRanksRequest
+	require.NoError(t, json.Unmarshal(b, &back))
+	assert.Nil(t, back.History[uid.String()]["2026-04"])
+	assert.Equal(t, uint16(2), *back.History[uid.String()]["2026-05"])
 }

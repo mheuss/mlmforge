@@ -410,12 +410,27 @@ pub(crate) fn satisfies(
             }
         }
     }
+    // Windowed gate (BR3/BR4): AND-combined with the structure criteria. When
+    // the rank declares a window, the distributor's per-period history must
+    // satisfy it. Absent window = no-op (BR4). The empty-axis case (BR9) is
+    // caught loudly upstream in `evaluate_ranks`, so a non-empty axis here is
+    // the only reachable path that can fail the gate.
+    if let Some(w) = &rank.qualification.window {
+        if !windowed_meets(
+            w,
+            ctx.history_window,
+            ctx.history.get(&user_id),
+            ctx.rank_ordinals,
+            &rank.name,
+        )? {
+            return Ok(false);
+        }
+    }
     Ok(true)
 }
 
 /// Look up a threshold rank's ordinal, erroring with the qualifying rank's
 /// name (`rank_name`) for context.
-#[allow(dead_code)] // Reached via `windowed_meets`, wired into `satisfies` by HEU-446 Task 6.
 fn lookup_threshold(
     threshold: &str,
     rank_ordinals: &HashMap<String, u16>,
@@ -434,7 +449,6 @@ fn lookup_threshold(
 /// periods. `axis` is the history window (DESC); `hist` is this distributor's
 /// per-period achieved ordinals; `rank_name` is the rank being qualified
 /// (error context only).
-#[allow(dead_code)] // Wired into `satisfies` by HEU-446 Task 6.
 pub(crate) fn windowed_meets(
     w: &RankQualificationWindow,
     axis: &[String],
@@ -1342,8 +1356,6 @@ mod tests {
         );
     }
 
-    use crate::config::rank::RankQualificationWindow;
-
     fn ords() -> HashMap<String, u16> {
         HashMap::from([
             ("Associate".into(), 1),
@@ -1399,5 +1411,92 @@ mod tests {
                 referenced: "Ghost".into()
             }
         );
+    }
+
+    #[test]
+    fn satisfies_fails_when_window_gate_unmet() {
+        // Base criteria pass (PV 100 >= 100, trivial GV) but the windowed gate
+        // requires Director in 2 of the last 3 periods and the distributor has
+        // no qualifying history, so the rank is not satisfied.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uid(1), 0).unwrap();
+        let idx = VolumeIndex::build(&[]);
+
+        let mut nav_map: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+        nav_map.insert("Test".to_string(), &tree);
+
+        let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
+        distributors.insert(uid(1), primitives_with_pv(100.0));
+
+        let mut rank = rank_with_pv_and_gv("QD", 6, "Test", 100.0, 0.0);
+        rank.qualification.window = Some(win(2, 3));
+
+        let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
+        let ordinals = ords();
+
+        let ranks: Vec<RankDefinition> = vec![];
+        let axis = vec![
+            "2026-05".to_string(),
+            "2026-04".to_string(),
+            "2026-03".to_string(),
+        ];
+        // No history rows for this distributor: every axis period gates as below.
+        let history: HashMap<Uuid, HashMap<String, Option<u16>>> = HashMap::new();
+        let ctx = EvalCtx {
+            distributors: &distributors,
+            ranks: &ranks,
+            trees: &nav_map,
+            volume_index: &idx,
+            rank_ordinals: &ordinals,
+            history_window: &axis,
+            history: &history,
+        };
+
+        assert!(!satisfies(&rank, uid(1), &already, &ctx).unwrap());
+    }
+
+    #[test]
+    fn satisfies_passes_when_window_gate_met() {
+        // Same base criteria, but the distributor achieved Director (ordinal 5)
+        // in 2 of the last 3 periods, satisfying the windowed gate.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uid(1), 0).unwrap();
+        let idx = VolumeIndex::build(&[]);
+
+        let mut nav_map: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+        nav_map.insert("Test".to_string(), &tree);
+
+        let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
+        distributors.insert(uid(1), primitives_with_pv(100.0));
+
+        let mut rank = rank_with_pv_and_gv("QD", 6, "Test", 100.0, 0.0);
+        rank.qualification.window = Some(win(2, 3));
+
+        let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
+        let ordinals = ords();
+
+        let ranks: Vec<RankDefinition> = vec![];
+        let axis = vec![
+            "2026-05".to_string(),
+            "2026-04".to_string(),
+            "2026-03".to_string(),
+        ];
+        let mut hist: HashMap<String, Option<u16>> = HashMap::new();
+        hist.insert("2026-05".to_string(), Some(5)); // Director
+        hist.insert("2026-04".to_string(), Some(5)); // Director
+        hist.insert("2026-03".to_string(), Some(1)); // Associate (below)
+        let mut history: HashMap<Uuid, HashMap<String, Option<u16>>> = HashMap::new();
+        history.insert(uid(1), hist);
+        let ctx = EvalCtx {
+            distributors: &distributors,
+            ranks: &ranks,
+            trees: &nav_map,
+            volume_index: &idx,
+            rank_ordinals: &ordinals,
+            history_window: &axis,
+            history: &history,
+        };
+
+        assert!(satisfies(&rank, uid(1), &already, &ctx).unwrap());
     }
 }

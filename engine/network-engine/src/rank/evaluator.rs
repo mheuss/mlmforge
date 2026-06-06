@@ -41,9 +41,7 @@ pub(crate) struct EvalCtx<'a, 'b> {
     pub trees: &'a HashMap<String, &'b dyn TreeNavigator>,
     pub volume_index: &'a VolumeIndex,
     pub rank_ordinals: &'a HashMap<String, u16>,
-    #[allow(dead_code)] // Read by the windowed/tenure gates (HEU-446 tasks 5/6).
     pub history_window: &'a [String],
-    #[allow(dead_code)] // Read by the windowed/tenure gates (HEU-446 tasks 5/6).
     pub history: &'a HashMap<Uuid, HashMap<String, Option<u16>>>,
 }
 

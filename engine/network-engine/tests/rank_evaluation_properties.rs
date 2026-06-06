@@ -101,7 +101,12 @@ proptest! {
             });
         }
 
-        let inputs = EvaluationInputs { distributors, volume_sources: vec![] };
+        let inputs = EvaluationInputs {
+            distributors,
+            volume_sources: vec![],
+            history_window: Vec::new(),
+            history: HashMap::new(),
+        };
         let plan = build_random_plan();
 
         let r1 = evaluate_ranks(&plan, &nav, &inputs).unwrap();
@@ -151,11 +156,21 @@ proptest! {
 
         let r_low = evaluate_ranks(
             &plan, &nav,
-            &EvaluationInputs { distributors: distributors_low, volume_sources: vec![] },
+            &EvaluationInputs {
+                distributors: distributors_low,
+                volume_sources: vec![],
+                history_window: Vec::new(),
+                history: HashMap::new(),
+            },
         ).unwrap();
         let r_high = evaluate_ranks(
             &plan, &nav,
-            &EvaluationInputs { distributors: distributors_high, volume_sources: vec![] },
+            &EvaluationInputs {
+                distributors: distributors_high,
+                volume_sources: vec![],
+                history_window: Vec::new(),
+                history: HashMap::new(),
+            },
         ).unwrap();
 
         for i in 0..size {
@@ -207,11 +222,21 @@ proptest! {
 
         let r_a = evaluate_ranks(
             &plan, &nav,
-            &EvaluationInputs { distributors: a, volume_sources: vec![] },
+            &EvaluationInputs {
+                distributors: a,
+                volume_sources: vec![],
+                history_window: Vec::new(),
+                history: HashMap::new(),
+            },
         ).unwrap();
         let r_b = evaluate_ranks(
             &plan, &nav,
-            &EvaluationInputs { distributors: b, volume_sources: vec![] },
+            &EvaluationInputs {
+                distributors: b,
+                volume_sources: vec![],
+                history_window: Vec::new(),
+                history: HashMap::new(),
+            },
         ).unwrap();
 
         // The map-equality assertion below is the operative check. The JSON
@@ -310,7 +335,12 @@ proptest! {
         distributors.insert(a, prim(pv_a));
         distributors.insert(b, prim(pv_b));
 
-        let inputs = EvaluationInputs { distributors, volume_sources: vec![] };
+        let inputs = EvaluationInputs {
+            distributors,
+            volume_sources: vec![],
+            history_window: Vec::new(),
+            history: HashMap::new(),
+        };
 
         let result = evaluate_ranks(&plan, &nav, &inputs);
         prop_assert!(
@@ -422,7 +452,12 @@ proptest! {
         for (i, pv) in child_pvs.iter().enumerate() {
             distributors.insert(uuid_from_index(i + 1), prim(*pv as f64));
         }
-        let inputs = EvaluationInputs { distributors, volume_sources: vec![] };
+        let inputs = EvaluationInputs {
+            distributors,
+            volume_sources: vec![],
+            history_window: Vec::new(),
+            history: HashMap::new(),
+        };
 
         let result = evaluate_ranks(&plan, &nav, &inputs).unwrap();
 
@@ -496,7 +531,12 @@ proptest! {
             let result = evaluate_ranks(
                 &plan,
                 &nav,
-                &EvaluationInputs { distributors, volume_sources: vec![] },
+                &EvaluationInputs {
+                    distributors,
+                    volume_sources: vec![],
+                    history_window: Vec::new(),
+                    history: HashMap::new(),
+                },
             ).unwrap();
             match result.ranks.get(&uuid_from_index(0)) {
                 Some(network_engine::rank::EvaluatedRank::Qualified { ordinal, .. }) => *ordinal,

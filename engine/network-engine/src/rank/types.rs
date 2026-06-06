@@ -21,6 +21,19 @@ pub struct EvaluationInputs {
 
     /// Volume events for the period. Used to compute GV and leg volumes.
     pub volume_sources: Vec<VolumeSource>,
+
+    /// Ordered period axis for time-gated evaluation, most-recent-first
+    /// (period_id DESC). Caller-supplied; length >= the max window depth
+    /// across the plan. Empty when no rank uses a time gate. Opaque ordered
+    /// labels — the caller owns period semantics and ordering.
+    #[serde(default)]
+    pub history_window: Vec<String>,
+
+    /// Per-distributor achieved-rank ordinals keyed by period_id, for axis
+    /// periods that have a persisted row. Absent key = not evaluated;
+    /// Some(None) = Unranked. Both gate as "below threshold" (BR6).
+    #[serde(default)]
+    pub history: HashMap<Uuid, HashMap<String, Option<u16>>>,
 }
 
 /// Point-in-time facts about one distributor for rank evaluation.
@@ -156,5 +169,27 @@ mod tests {
             err.to_string(),
             "rank evaluation did not converge within 7 passes"
         );
+    }
+
+    #[test]
+    fn evaluation_inputs_defaults_history_when_absent() {
+        let json = r#"{"distributors":{},"volume_sources":[]}"#;
+        let inputs: EvaluationInputs = serde_json::from_str(json).unwrap();
+        assert!(inputs.history_window.is_empty());
+        assert!(inputs.history.is_empty());
+    }
+
+    #[test]
+    fn evaluation_inputs_deserializes_history() {
+        let uid = Uuid::nil();
+        let json = format!(
+            r#"{{"distributors":{{}},"volume_sources":[],
+                "history_window":["2026-05","2026-04"],
+                "history":{{"{uid}":{{"2026-05":2,"2026-04":null}}}}}}"#
+        );
+        let inputs: EvaluationInputs = serde_json::from_str(&json).unwrap();
+        assert_eq!(inputs.history_window, vec!["2026-05", "2026-04"]);
+        assert_eq!(inputs.history[&uid]["2026-05"], Some(2));
+        assert_eq!(inputs.history[&uid]["2026-04"], None);
     }
 }

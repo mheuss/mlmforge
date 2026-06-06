@@ -107,6 +107,8 @@ fn evaluate_ranks_completes_in_reasonable_time_on_10k_distributors() {
     let inputs = EvaluationInputs {
         distributors,
         volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
     };
 
     let started = Instant::now();

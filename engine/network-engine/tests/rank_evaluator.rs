@@ -109,6 +109,8 @@ fn evaluate_ranks_returns_per_distributor_rank() {
     let inputs = EvaluationInputs {
         distributors,
         volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
     };
 
     let result = evaluate_ranks(&plan, &nav, &inputs).unwrap();
@@ -148,6 +150,8 @@ fn evaluate_ranks_returns_unranked_for_distributor_below_lowest_tier() {
     let inputs = EvaluationInputs {
         distributors,
         volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
     };
 
     let result = evaluate_ranks(&plan, &nav, &inputs).unwrap();
@@ -182,6 +186,8 @@ fn evaluate_ranks_omitting_primitives_treats_distributor_as_unranked() {
     let inputs = EvaluationInputs {
         distributors,
         volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
     };
 
     let result = evaluate_ranks(&plan, &nav, &inputs).unwrap();
@@ -209,6 +215,8 @@ fn evaluate_ranks_errors_on_unknown_structure() {
     let inputs = EvaluationInputs {
         distributors,
         volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
     };
 
     let err = evaluate_ranks(&plan, &nav, &inputs).unwrap_err();
@@ -242,6 +250,8 @@ fn evaluate_ranks_errors_on_distributor_not_in_referenced_tree() {
     let inputs = EvaluationInputs {
         distributors,
         volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
     };
 
     let err = evaluate_ranks(&plan, &nav, &inputs).unwrap_err();
@@ -282,6 +292,8 @@ fn evaluate_ranks_errors_on_unknown_min_rank() {
     let inputs = EvaluationInputs {
         distributors,
         volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
     };
 
     let err = evaluate_ranks(&plan, &nav, &inputs).unwrap_err();
@@ -458,6 +470,8 @@ fn evaluate_ranks_with_populated_leg_quality_gates_rank() {
     let inputs = EvaluationInputs {
         distributors,
         volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
     };
 
     let result = evaluate_ranks(&plan, &nav, &inputs).unwrap();
@@ -527,6 +541,8 @@ fn evaluate_ranks_with_empty_leg_quality_matches_baseline() {
     let inputs = EvaluationInputs {
         distributors,
         volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
     };
 
     let result = evaluate_ranks(&plan, &nav, &inputs).unwrap();
@@ -612,6 +628,8 @@ fn evaluate_ranks_counts_descendant_across_trees() {
     let inputs = EvaluationInputs {
         distributors,
         volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
     };
 
     let result = evaluate_ranks(&plan, &nav, &inputs).unwrap();
@@ -710,6 +728,8 @@ fn evaluate_ranks_converges_on_cyclic_ancestry() {
     let inputs = EvaluationInputs {
         distributors,
         volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
     };
 
     // Must not hang and must not error: the cycle is legitimate input.
@@ -869,6 +889,8 @@ fn evaluate_ranks_resolves_recursive_leg_quality_ladder() {
     let inputs = EvaluationInputs {
         distributors,
         volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
     };
 
     let result = evaluate_ranks(&plan, &nav, &inputs).unwrap();

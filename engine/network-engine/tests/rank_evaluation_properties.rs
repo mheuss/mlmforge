@@ -4,6 +4,7 @@ use common::uuid_from_index;
 use network_engine::config::rank::{
     DemotionPolicy, DistributorCountRequirement, LegPredicate, LegQualityRequirement,
     RankDefinition, RankQualification, RankQualificationWindow, SearchMode, StructureQualification,
+    TenureRequirement,
 };
 use network_engine::config::{CompensationPlan, StructureConfig, UnilevelStructureConfig};
 use network_engine::rank::{DistributorPrimitives, EvaluationInputs, evaluate_ranks};
@@ -781,6 +782,238 @@ proptest! {
         prop_assert!(
             subject_ordinal(true) >= subject_ordinal(false),
             "raising periods to at-or-above-threshold must not lower the subject's windowed rank",
+        );
+    }
+}
+
+/// Ordinal of the tenure threshold rank ("silver"). The tenure gate requires
+/// the achieved ordinal to be `>= TENURE_THRESHOLD_ORDINAL` for the most-recent
+/// consecutive axis periods.
+const TENURE_THRESHOLD_ORDINAL: u16 = 2;
+
+/// A three-rank plan on the "Test" structure with a tenure gate on the top rank:
+/// - `associate` (ordinal 1, PV >= 0, no tenure)
+/// - `silver` (ordinal 2, PV >= 0, no tenure) — the gate's `threshold_rank`
+/// - `gold` (ordinal 3, PV >= 0) — additionally requires `periods` consecutive
+///   most-recent axis periods to have achieved silver-or-better
+///
+/// Every rank requires only PV >= 0 on "Test", so any in-tree distributor is
+/// always at least `silver`. Reaching `gold` depends solely on the tenure gate,
+/// which isolates the tenure dimension. `gold`'s `structures` references the
+/// "Test" tree (non-empty) so the subject is actually evaluated. `threshold_rank`
+/// is "silver", a real rank in the plan, so `evaluate_ranks` does not error with
+/// `UnknownThresholdRank`. Reuses `build_random_plan`'s structure config.
+fn tenure_plan(periods: u8) -> CompensationPlan {
+    let pv_only = |name: &str, ordinal: u16, tenure: Option<TenureRequirement>| RankDefinition {
+        name: name.to_string(),
+        ordinal,
+        qualification: RankQualification {
+            structures: vec![StructureQualification {
+                structure: "Test".to_string(),
+                personal_volume: 0.0,
+                group_volume: 0.0,
+                max_group_volume_per_leg: f64::MAX,
+                min_retail_volume: 0.0,
+                distributor_count: None,
+                leg_quality: vec![],
+            }],
+            required_products: vec![],
+            window: None,
+            tenure,
+        },
+        qualified_structures: vec!["Test".to_string()],
+        demotion_policy: DemotionPolicy::PromotionOnly,
+    };
+    let mut plan = build_random_plan();
+    plan.ranks = vec![
+        pv_only("associate", 1, None),
+        pv_only("silver", TENURE_THRESHOLD_ORDINAL, None),
+        pv_only(
+            "gold",
+            3,
+            Some(TenureRequirement {
+                threshold_rank: "silver".to_string(),
+                periods,
+            }),
+        ),
+    ];
+    plan
+}
+
+proptest! {
+    /// Determinism (design §5, NFR #4): evaluating the same inputs twice — the
+    /// same `history_window` (DESC) and per-distributor `history` — yields
+    /// byte-identical serialized output. `evaluate_ranks` is already
+    /// deterministic, so this passes with no production change; a failure here
+    /// is a real non-determinism bug, not a test gap.
+    ///
+    /// Non-vacuous: the subject is the root of the "Test" tree and is present in
+    /// `distributors`, so it is always evaluated (and, since every rank needs
+    /// only PV >= 0, always at least `silver` — see the sanity assertion). The
+    /// axis length is `>= periods` (BR5), so the gate is satisfiable, and
+    /// per-period ordinals are drawn across the threshold (`None`/below/at-or-
+    /// above) so the gate's consecutive-streak check both passes and fails
+    /// across draws.
+    #[test]
+    fn tenure_gate_is_deterministic(
+        // axis_len = ords.len() in 2..=8; ords[i] is the subject's achieved rank
+        // in axis period i (None = Unranked, which breaks the streak). `periods`
+        // is clamped to <= axis_len so the axis is always long enough to satisfy
+        // the gate (BR5).
+        ords in prop::collection::vec(prop::option::of(0u16..=3), 2..=8usize),
+        x_raw in 1u8..=8,
+    ) {
+        let axis_len = ords.len();
+        let x = (x_raw as usize).min(axis_len).max(1);
+        let plan = tenure_plan(x as u8);
+
+        let subject = uuid_from_index(0);
+        let mut tree = UnilevelTree::new();
+        tree.add_root(subject, 0).unwrap();
+        let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+        nav.insert("Test".to_string(), &tree);
+
+        // Most-recent-first axis (DESC); labels need only be distinct, the Vec
+        // order defines recency.
+        let axis: Vec<String> = (0..axis_len)
+            .map(|i| format!("2026-{:02}", axis_len - i))
+            .collect();
+        let mut subject_history: HashMap<String, Option<u16>> = HashMap::new();
+        for (i, achieved) in ords.iter().enumerate() {
+            subject_history.insert(axis[i].clone(), *achieved);
+        }
+        let mut history = HashMap::new();
+        history.insert(subject, subject_history);
+
+        let mut distributors = HashMap::new();
+        distributors.insert(subject, prim(300.0));
+
+        let inputs = EvaluationInputs {
+            distributors,
+            volume_sources: vec![],
+            history_window: axis,
+            history,
+        };
+
+        let r1 = evaluate_ranks(&plan, &nav, &inputs).unwrap();
+        let r2 = evaluate_ranks(&plan, &nav, &inputs).unwrap();
+
+        // The subject is in-tree with PV >= every threshold, so it is always
+        // evaluated and at least `silver`. This proves the determinism check is
+        // not vacuously comparing two `Unranked`/absent results.
+        prop_assert!(
+            matches!(
+                r1.ranks.get(&subject),
+                Some(network_engine::rank::EvaluatedRank::Qualified { .. })
+            ),
+            "subject must be evaluated (Qualified), got {:?}",
+            r1.ranks.get(&subject),
+        );
+
+        let json1 = serde_json::to_string(&r1).unwrap();
+        let json2 = serde_json::to_string(&r2).unwrap();
+        prop_assert_eq!(json1, json2);
+    }
+}
+
+proptest! {
+    /// Fixed-set monotonicity (design §5, NFR #4): holding the axis fixed,
+    /// extending the trailing consecutive run of at-or-above-threshold periods
+    /// (and lowering none) can only flip the tenure gate false->true, so the
+    /// subject's evaluated ordinal must not decrease. Varying the axis itself is
+    /// out of scope.
+    ///
+    /// Tenure requires X *consecutive* most-recent periods at-or-above
+    /// threshold, so the only mutation guaranteed monotone is lengthening the
+    /// contiguous run from the most-recent end. This test sets the most-recent
+    /// `run` periods to `max(baseline, T)` (raise-only, never below baseline,
+    /// never gapped) and leaves the rest at baseline. It then compares two run
+    /// lengths `lo <= hi`: the longer run is a superset prefix of at-or-above
+    /// periods, so `tenure_meets` can only go false->true. Raising an isolated
+    /// non-contiguous period would NOT extend the streak and is deliberately not
+    /// used.
+    ///
+    /// Non-vacuous: the subject is the in-tree root and always at least `silver`
+    /// (sanity assertion below), so the comparison is between two real evaluated
+    /// ordinals. The axis length is `>= periods` (BR5), so the gate is
+    /// satisfiable and can reach `gold`.
+    #[test]
+    fn tenure_gate_is_monotone_in_consecutive_run(
+        // baseline ordinal per axis period; axis_len in 2..=8. `periods` clamped
+        // <= axis_len (BR5 satisfiable). `run_a`/`run_b` are candidate trailing
+        // run lengths in 0..=axis_len; the test orders them so the longer run
+        // extends the shorter.
+        baseline in prop::collection::vec(0u16..=3, 2..=8usize),
+        x_raw in 1u8..=8,
+        run_a in 0usize..=8,
+        run_b in 0usize..=8,
+    ) {
+        let axis_len = baseline.len();
+        let x = (x_raw as usize).min(axis_len).max(1);
+        let lo = run_a.min(run_b).min(axis_len);
+        let hi = run_a.max(run_b).min(axis_len);
+        let plan = tenure_plan(x as u8);
+
+        let subject = uuid_from_index(0);
+        let mut tree = UnilevelTree::new();
+        tree.add_root(subject, 0).unwrap();
+        let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+        nav.insert("Test".to_string(), &tree);
+
+        let axis: Vec<String> = (0..axis_len)
+            .map(|i| format!("2026-{:02}", axis_len - i))
+            .collect();
+
+        // Evaluate the subject with a trailing run of `run` at-or-above-threshold
+        // periods. Period i (DESC, so i=0 is most-recent) is raised to
+        // `max(baseline, T)` when i < run, else left at baseline. `max(_, T) >=
+        // baseline` always, so no period is ever lowered; a larger `run`
+        // contiguously extends the at-or-above prefix from the most-recent end.
+        // Base criteria (PV) are fixed in both runs, so only the tenure
+        // dimension varies.
+        let subject_ordinal = |run: usize| -> u16 {
+            let mut subject_history: HashMap<String, Option<u16>> = HashMap::new();
+            for (i, base) in baseline.iter().enumerate() {
+                let achieved = if i < run {
+                    (*base).max(TENURE_THRESHOLD_ORDINAL)
+                } else {
+                    *base
+                };
+                subject_history.insert(axis[i].clone(), Some(achieved));
+            }
+            let mut history = HashMap::new();
+            history.insert(subject, subject_history);
+
+            let mut distributors = HashMap::new();
+            distributors.insert(subject, prim(300.0));
+
+            let result = evaluate_ranks(
+                &plan,
+                &nav,
+                &EvaluationInputs {
+                    distributors,
+                    volume_sources: vec![],
+                    history_window: axis.clone(),
+                    history,
+                },
+            )
+            .unwrap();
+            match result.ranks.get(&subject) {
+                Some(network_engine::rank::EvaluatedRank::Qualified { ordinal, .. }) => *ordinal,
+                _ => 0,
+            }
+        };
+
+        // The subject is always at least `silver` (ordinal 2) since every rank
+        // needs only PV >= 0; this proves the subject is evaluated and the
+        // comparison is not vacuous.
+        prop_assert!(
+            subject_ordinal(lo) >= TENURE_THRESHOLD_ORDINAL,
+            "subject must be evaluated and at least silver",
+        );
+        prop_assert!(
+            subject_ordinal(hi) >= subject_ordinal(lo),
+            "extending the trailing consecutive run must not lower the subject's tenure rank",
         );
     }
 }

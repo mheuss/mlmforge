@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::config::rank::{
     DistributorCountRequirement, LegPredicate, LegQualityRequirement, RankDefinition,
-    RankQualificationWindow, SearchMode,
+    RankQualificationWindow, SearchMode, TenureRequirement,
 };
 use crate::rank::evaluator::{EvalCtx, VolumeIndex};
 use crate::rank::types::{DistributorPrimitives, EvaluatedRank, EvaluationError};
@@ -472,6 +472,36 @@ pub(crate) fn windowed_meets(
         })
         .count();
     Ok(count >= w.qualifying_periods as usize)
+}
+
+/// BR2: achieved >= threshold ordinal for X consecutive most-recent prior
+/// periods (no gap). `axis` is the history window (DESC); `hist` is this
+/// distributor's per-period achieved ordinals; `rank_name` is the rank being
+/// qualified (error context only). A gap (missing period row) or an Unranked
+/// period (`None`) breaks the streak. An axis shorter than X fails (BR5).
+// Wired into `satisfies` in Task 16; lib-only clippy (no --tests) flags it
+// as never-used until then. Same convention as windowed_meets (Task 5).
+#[allow(dead_code)]
+pub(crate) fn tenure_meets(
+    t: &TenureRequirement,
+    axis: &[String],
+    hist: Option<&HashMap<String, Option<u16>>>,
+    rank_ordinals: &HashMap<String, u16>,
+    rank_name: &str,
+) -> Result<bool, EvaluationError> {
+    let threshold = lookup_threshold(&t.threshold_rank, rank_ordinals, rank_name)?;
+    let x = t.periods as usize;
+    if axis.len() < x {
+        return Ok(false); // BR5
+    }
+    let all = axis[..x].iter().all(|pid| {
+        // missing key OR Unranked (None) both break the streak
+        hist.and_then(|h| h.get(pid.as_str()))
+            .copied()
+            .flatten()
+            .is_some_and(|o| o >= threshold)
+    });
+    Ok(all)
 }
 
 #[cfg(test)]
@@ -1412,6 +1442,38 @@ mod tests {
                 referenced: "Ghost".into()
             }
         );
+    }
+
+    fn ten(x: u8) -> TenureRequirement {
+        TenureRequirement {
+            threshold_rank: "Director".into(),
+            periods: x,
+        }
+    }
+
+    #[test]
+    fn tenure_meets_requires_consecutive_at_or_above() {
+        let axis = vec!["2026-05".into(), "2026-04".into(), "2026-03".into()];
+        let pass = HashMap::from([
+            ("2026-05".into(), Some(5)),
+            ("2026-04".into(), Some(6)),
+            ("2026-03".into(), Some(5)),
+        ]);
+        assert!(tenure_meets(&ten(3), &axis, Some(&pass), &ords(), "QD").unwrap());
+        let gap = HashMap::from([("2026-05".into(), Some(5)), ("2026-03".into(), Some(5))]); // 2026-04 missing
+        assert!(!tenure_meets(&ten(3), &axis, Some(&gap), &ords(), "QD").unwrap());
+        let unr = HashMap::from([
+            ("2026-05".into(), Some(5)),
+            ("2026-04".into(), None),
+            ("2026-03".into(), Some(5)),
+        ]);
+        assert!(!tenure_meets(&ten(3), &axis, Some(&unr), &ords(), "QD").unwrap());
+    }
+
+    #[test]
+    fn tenure_meets_insufficient_axis_fails() {
+        let axis = vec!["2026-05".into()];
+        assert!(!tenure_meets(&ten(4), &axis, None, &ords(), "QD").unwrap());
     }
 
     #[test]

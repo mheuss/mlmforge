@@ -442,6 +442,7 @@ pub(crate) fn satisfies(
             return Ok(false);
         }
     }
+    // Reaching here means every gate passed: window AND tenure AND base criteria (BR3).
     Ok(true)
 }
 

@@ -273,9 +273,24 @@ func TestSchemaRejectsWindowMissingThresholdRank(t *testing.T) {
 	errs := p.validateSchema(readFixture(t, "invalid/window-missing-threshold-rank.yaml"))
 	require.NotEmpty(t, errs, "window missing threshold_rank should produce errors")
 
+	// Pin the failure mode: a schema_violation on the window gate whose message
+	// names the missing threshold_rank property. The missing property surfaces
+	// in the message rather than the path (the path points at the window object).
+	foundMissingThresholdRank := false
 	for _, e := range errs {
 		assert.Equal(t, SeverityError, e.Severity)
+		if e.Code == "schema_violation" &&
+			strings.Contains(e.Path, "window") &&
+			strings.Contains(e.Message, "threshold_rank") {
+			foundMissingThresholdRank = true
+		}
 	}
+	assert.True(
+		t,
+		foundMissingThresholdRank,
+		"expected a schema_violation on the window gate naming threshold_rank, got %+v",
+		errs,
+	)
 }
 
 // TestSchemaRejectsWindowPeriodsZero verifies that window_periods: 0 fails the
@@ -313,9 +328,24 @@ func TestSchemaRejectsTenureMissingThresholdRank(t *testing.T) {
 	errs := p.validateSchema(readFixture(t, "invalid/tenure-missing-threshold-rank.yaml"))
 	require.NotEmpty(t, errs, "tenure missing threshold_rank should produce errors")
 
+	// Pin the failure mode: a schema_violation on the tenure gate whose message
+	// names the missing threshold_rank property. The missing property surfaces
+	// in the message rather than the path (the path points at the tenure object).
+	foundMissingThresholdRank := false
 	for _, e := range errs {
 		assert.Equal(t, SeverityError, e.Severity)
+		if e.Code == "schema_violation" &&
+			strings.Contains(e.Path, "tenure") &&
+			strings.Contains(e.Message, "threshold_rank") {
+			foundMissingThresholdRank = true
+		}
 	}
+	assert.True(
+		t,
+		foundMissingThresholdRank,
+		"expected a schema_violation on the tenure gate naming threshold_rank, got %+v",
+		errs,
+	)
 }
 
 // TestSchemaRejectsTenurePeriodsZero verifies that periods: 0 fails the

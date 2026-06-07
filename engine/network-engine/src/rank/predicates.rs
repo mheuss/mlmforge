@@ -426,6 +426,22 @@ pub(crate) fn satisfies(
             return Ok(false);
         }
     }
+    // Tenure gate (BR3/BR4): AND-combined with the window and structure
+    // criteria. When the rank declares a tenure requirement, the distributor's
+    // consecutive per-period history must satisfy it. Absent tenure = no-op
+    // (BR4). The empty-axis case (BR9) is caught loudly upstream in
+    // `evaluate_ranks`, mirroring the window gate above.
+    if let Some(t) = &rank.qualification.tenure {
+        if !tenure_meets(
+            t,
+            ctx.history_window,
+            ctx.history.get(&user_id),
+            ctx.rank_ordinals,
+            &rank.name,
+        )? {
+            return Ok(false);
+        }
+    }
     Ok(true)
 }
 
@@ -479,9 +495,6 @@ pub(crate) fn windowed_meets(
 /// distributor's per-period achieved ordinals; `rank_name` is the rank being
 /// qualified (error context only). A gap (missing period row) or an Unranked
 /// period (`None`) breaks the streak. An axis shorter than X fails (BR5).
-// Wired into `satisfies` in Task 16; lib-only clippy (no --tests) flags it
-// as never-used until then. Same convention as windowed_meets (Task 5).
-#[allow(dead_code)]
 pub(crate) fn tenure_meets(
     t: &TenureRequirement,
     axis: &[String],
@@ -1548,6 +1561,93 @@ mod tests {
         hist.insert("2026-05".to_string(), Some(5)); // Director
         hist.insert("2026-04".to_string(), Some(5)); // Director
         hist.insert("2026-03".to_string(), Some(1)); // Associate (below)
+        let mut history: HashMap<Uuid, HashMap<String, Option<u16>>> = HashMap::new();
+        history.insert(uid(1), hist);
+        let ctx = EvalCtx {
+            distributors: &distributors,
+            ranks: &ranks,
+            trees: &nav_map,
+            volume_index: &idx,
+            rank_ordinals: &ordinals,
+            history_window: &axis,
+            history: &history,
+        };
+
+        assert!(satisfies(&rank, uid(1), &already, &ctx).unwrap());
+    }
+
+    #[test]
+    fn satisfies_fails_when_tenure_gate_unmet() {
+        // Base criteria pass (PV 100 >= 100, trivial GV) but the tenure gate
+        // requires Director for 3 consecutive periods and the distributor has
+        // no qualifying history, so the rank is not satisfied.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uid(1), 0).unwrap();
+        let idx = VolumeIndex::build(&[]);
+
+        let mut nav_map: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+        nav_map.insert("Test".to_string(), &tree);
+
+        let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
+        distributors.insert(uid(1), primitives_with_pv(100.0));
+
+        let mut rank = rank_with_pv_and_gv("QD", 6, "Test", 100.0, 0.0);
+        rank.qualification.tenure = Some(ten(3));
+
+        let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
+        let ordinals = ords();
+
+        let ranks: Vec<RankDefinition> = vec![];
+        let axis = vec![
+            "2026-05".to_string(),
+            "2026-04".to_string(),
+            "2026-03".to_string(),
+        ];
+        // No history rows for this distributor: every axis period breaks the streak.
+        let history: HashMap<Uuid, HashMap<String, Option<u16>>> = HashMap::new();
+        let ctx = EvalCtx {
+            distributors: &distributors,
+            ranks: &ranks,
+            trees: &nav_map,
+            volume_index: &idx,
+            rank_ordinals: &ordinals,
+            history_window: &axis,
+            history: &history,
+        };
+
+        assert!(!satisfies(&rank, uid(1), &already, &ctx).unwrap());
+    }
+
+    #[test]
+    fn satisfies_passes_when_tenure_gate_met() {
+        // Same base criteria, but the distributor achieved Director (ordinal 5)
+        // or above for 3 consecutive periods, satisfying the tenure gate.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uid(1), 0).unwrap();
+        let idx = VolumeIndex::build(&[]);
+
+        let mut nav_map: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+        nav_map.insert("Test".to_string(), &tree);
+
+        let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
+        distributors.insert(uid(1), primitives_with_pv(100.0));
+
+        let mut rank = rank_with_pv_and_gv("QD", 6, "Test", 100.0, 0.0);
+        rank.qualification.tenure = Some(ten(3));
+
+        let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
+        let ordinals = ords();
+
+        let ranks: Vec<RankDefinition> = vec![];
+        let axis = vec![
+            "2026-05".to_string(),
+            "2026-04".to_string(),
+            "2026-03".to_string(),
+        ];
+        let mut hist: HashMap<String, Option<u16>> = HashMap::new();
+        hist.insert("2026-05".to_string(), Some(5)); // Director
+        hist.insert("2026-04".to_string(), Some(6)); // QD (above)
+        hist.insert("2026-03".to_string(), Some(5)); // Director
         let mut history: HashMap<Uuid, HashMap<String, Option<u16>>> = HashMap::new();
         history.insert(uid(1), hist);
         let ctx = EvalCtx {

@@ -3,7 +3,7 @@ mod common;
 use common::uuid_from_index;
 use network_engine::config::rank::{
     DemotionPolicy, LegPredicate, LegQualityRequirement, RankDefinition, RankQualification,
-    RankQualificationWindow, StructureQualification,
+    RankQualificationWindow, StructureQualification, TenureRequirement,
 };
 use network_engine::config::{CompensationPlan, StructureConfig, UnilevelStructureConfig};
 use network_engine::rank::{
@@ -1053,6 +1053,134 @@ fn evaluate_ranks_applies_windowed_rank_when_history_window_supplied() {
     let mut hist: HashMap<String, Option<u16>> = HashMap::new();
     hist.insert("2026-05".to_string(), Some(1)); // associate
     hist.insert("2026-04".to_string(), None); // Unranked
+    let mut history: HashMap<uuid::Uuid, HashMap<String, Option<u16>>> = HashMap::new();
+    history.insert(uuid_from_index(1), hist);
+
+    let inputs = EvaluationInputs {
+        distributors,
+        volume_sources: vec![],
+        history_window: vec!["2026-05".to_string(), "2026-04".to_string()],
+        history,
+    };
+
+    let result = evaluate_ranks(&plan, &nav, &inputs).unwrap();
+    assert_eq!(
+        result.ranks.get(&uuid_from_index(1)),
+        Some(&EvaluatedRank::Qualified {
+            rank: "QD".to_string(),
+            ordinal: 2,
+        })
+    );
+}
+
+/// Two-rank ladder ("associate", "QD") where QD carries a tenure gate
+/// (achieved >= "associate" for 2 consecutive prior periods). "associate" is
+/// also in the ladder so the threshold resolves. The gated rank keeps a
+/// non-empty `structures` entry referencing "Test" so the distributor is
+/// actually evaluated (empty structures would skip it). Mirrors
+/// `windowed_plan` for the tenure axis.
+fn tenure_plan() -> CompensationPlan {
+    let mut plan = linear_plan();
+    plan.ranks = vec![
+        RankDefinition {
+            name: "associate".to_string(),
+            ordinal: 1,
+            qualification: RankQualification {
+                structures: vec![StructureQualification {
+                    structure: "Test".to_string(),
+                    personal_volume: 0.0,
+                    group_volume: 0.0,
+                    max_group_volume_per_leg: f64::MAX,
+                    min_retail_volume: 0.0,
+                    distributor_count: None,
+                    leg_quality: vec![],
+                }],
+                required_products: vec![],
+                window: None,
+                tenure: None,
+            },
+            qualified_structures: vec!["Test".to_string()],
+            demotion_policy: DemotionPolicy::PromotionOnly,
+        },
+        RankDefinition {
+            name: "QD".to_string(),
+            ordinal: 2,
+            qualification: RankQualification {
+                structures: vec![StructureQualification {
+                    structure: "Test".to_string(),
+                    personal_volume: 0.0,
+                    group_volume: 0.0,
+                    max_group_volume_per_leg: f64::MAX,
+                    min_retail_volume: 0.0,
+                    distributor_count: None,
+                    leg_quality: vec![],
+                }],
+                required_products: vec![],
+                window: None,
+                tenure: Some(TenureRequirement {
+                    threshold_rank: "associate".to_string(),
+                    periods: 2,
+                }),
+            },
+            qualified_structures: vec!["Test".to_string()],
+            demotion_policy: DemotionPolicy::PromotionOnly,
+        },
+    ];
+    plan
+}
+
+#[test]
+fn evaluate_ranks_errors_when_tenure_rank_has_empty_history_window() {
+    // BR9: a rank declares a tenure gate but the caller supplied an empty
+    // history_window. evaluate_ranks must fail loud with TimeGateWithoutHistory
+    // naming the offending rank, rather than silently treating the gate as
+    // unmet.
+    let mut tree = UnilevelTree::new();
+    tree.add_root(uuid_from_index(1), 0).unwrap();
+
+    let plan = tenure_plan();
+
+    let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+    nav.insert("Test".to_string(), &tree);
+
+    let mut distributors = HashMap::new();
+    distributors.insert(uuid_from_index(1), primitives(0.0));
+
+    let inputs = EvaluationInputs {
+        distributors,
+        volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
+    };
+
+    let err = evaluate_ranks(&plan, &nav, &inputs).unwrap_err();
+    assert_eq!(
+        err,
+        EvaluationError::TimeGateWithoutHistory {
+            rank: "QD".to_string(),
+        }
+    );
+}
+
+#[test]
+fn evaluate_ranks_applies_tenure_rank_when_history_window_supplied() {
+    // BR9 negative case: with a non-empty axis the empty-axis guard does not
+    // fire, and the tenure gate is enforced. The distributor achieved associate
+    // for the last 2 consecutive periods, so QD's gate passes and they reach QD.
+    let mut tree = UnilevelTree::new();
+    tree.add_root(uuid_from_index(1), 0).unwrap();
+
+    let plan = tenure_plan();
+
+    let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+    nav.insert("Test".to_string(), &tree);
+
+    let mut distributors = HashMap::new();
+    distributors.insert(uuid_from_index(1), primitives(0.0));
+
+    let mut hist: HashMap<String, Option<u16>> = HashMap::new();
+    hist.insert("2026-05".to_string(), Some(1)); // associate
+    hist.insert("2026-04".to_string(), Some(1)); // associate
     let mut history: HashMap<uuid::Uuid, HashMap<String, Option<u16>>> = HashMap::new();
     history.insert(uuid_from_index(1), hist);
 

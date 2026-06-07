@@ -27,6 +27,7 @@ func TestSchemaValidatesAllValidFixtures(t *testing.T) {
 		"valid/streamline-plan.yaml",
 		"valid/board-plan.yaml",
 		"valid/leg-quality-plan.yaml",
+		"valid/windowed-rank-plan.yaml",
 	}
 	for _, f := range fixtures {
 		t.Run(f, func(t *testing.T) {
@@ -258,6 +259,47 @@ func TestSchemaRejectsLegQualityBadPredicate(t *testing.T) {
 	for _, e := range errs {
 		assert.Equal(t, SeverityError, e.Severity)
 	}
+}
+
+// TestSchemaRejectsWindowMissingThresholdRank verifies that a rank window
+// object without threshold_rank fails schema validation. The window property
+// has "required": ["threshold_rank", "qualifying_periods", "window_periods"]
+// in the RankQualificationWindow $def.
+func TestSchemaRejectsWindowMissingThresholdRank(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+
+	errs := p.validateSchema(readFixture(t, "invalid/window-missing-threshold-rank.yaml"))
+	require.NotEmpty(t, errs, "window missing threshold_rank should produce errors")
+
+	for _, e := range errs {
+		assert.Equal(t, SeverityError, e.Severity)
+	}
+}
+
+// TestSchemaRejectsWindowPeriodsZero verifies that window_periods: 0 fails the
+// minimum: 1 bound on the RankQualificationWindow $def. This pins the schema as
+// the gate for the lower bound (Go uint8 accepts 0 but the plan is invalid).
+func TestSchemaRejectsWindowPeriodsZero(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+
+	errs := p.validateSchema(readFixture(t, "invalid/window-periods-zero.yaml"))
+	require.NotEmpty(t, errs, "window_periods=0 should produce schema errors")
+
+	foundWindowPeriodsBound := false
+	for _, e := range errs {
+		assert.Equal(t, SeverityError, e.Severity)
+		if e.Code == "schema_violation" && strings.Contains(e.Path, "window_periods") {
+			foundWindowPeriodsBound = true
+		}
+	}
+	assert.True(
+		t,
+		foundWindowPeriodsBound,
+		"expected at least one schema_violation on window_periods, got %+v",
+		errs,
+	)
 }
 
 func TestConvertYAMLToJSONMapAnyAny(t *testing.T) {

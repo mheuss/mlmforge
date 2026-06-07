@@ -39,15 +39,15 @@ pub fn evaluate_ranks(
     let ranks_owned: Vec<crate::config::rank::RankDefinition> =
         ranks_sorted.iter().map(|r| (*r).clone()).collect();
 
-    // BR9 empty-axis guard: a windowed gate cannot be evaluated without an
-    // axis. If any rank declares a window but the caller supplied no
-    // history_window, fail loud rather than silently treating every gate as
-    // unmet. The guard lives engine-side because the Go client does not have
-    // the plan. Phase 1 checks `window` only; tenure extends this in Task 14.
+    // BR9 empty-axis guard: a time gate cannot be evaluated without an axis.
+    // If any rank declares a window or tenure requirement but the caller
+    // supplied no history_window, fail loud rather than silently treating every
+    // gate as unmet. The guard lives engine-side because the Go client does not
+    // have the plan.
     if inputs.history_window.is_empty() {
         if let Some(r) = ranks_owned
             .iter()
-            .find(|r| r.qualification.window.is_some())
+            .find(|r| r.qualification.window.is_some() || r.qualification.tenure.is_some())
         {
             return Err(EvaluationError::TimeGateWithoutHistory {
                 rank: r.name.clone(),

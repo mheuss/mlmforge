@@ -258,6 +258,26 @@ func validateRanks(plan *CompensationPlan, structs map[string]bool) []Validation
 				})
 			}
 		}
+
+		if r.Qualification.Tenure != nil {
+			t := r.Qualification.Tenure
+			if _, exists := ordinals[t.ThresholdRank]; !exists {
+				errs = append(errs, ValidationError{
+					Path:     fmt.Sprintf("/ranks/%d/qualification/tenure/threshold_rank", i),
+					Code:     "undefined_reference",
+					Message:  fmt.Sprintf("rank %q tenure references undefined rank %q", r.Name, t.ThresholdRank),
+					Severity: SeverityError,
+				})
+			}
+			if t.Periods < 1 {
+				errs = append(errs, ValidationError{
+					Path:     fmt.Sprintf("/ranks/%d/qualification/tenure", i),
+					Code:     "cross_field_dependency",
+					Message:  fmt.Sprintf("rank %q tenure periods must be >= 1", r.Name),
+					Severity: SeverityError,
+				})
+			}
+		}
 	}
 
 	return errs

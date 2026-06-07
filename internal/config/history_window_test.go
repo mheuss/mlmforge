@@ -44,3 +44,37 @@ func TestMaxHistoryDepth_SingleWindow(t *testing.T) {
 
 	assert.Equal(t, 5, MaxHistoryDepth(plan))
 }
+
+// TestMaxHistoryDepth_TenureDepthExceedsWindowDepth returns tenure.periods when
+// it is larger than any window_periods.
+func TestMaxHistoryDepth_TenureDepthExceedsWindowDepth(t *testing.T) {
+	plan := minimalPlan()
+	plan.Ranks[0].Qualification.Window = &RankQualificationWindow{
+		ThresholdRank:     "Associate",
+		QualifyingPeriods: 2,
+		WindowPeriods:     3,
+	}
+	plan.Ranks[1].Qualification.Tenure = &TenureRequirement{
+		ThresholdRank: "Silver",
+		Periods:       6,
+	}
+
+	assert.Equal(t, 6, MaxHistoryDepth(plan))
+}
+
+// TestMaxHistoryDepth_WindowDepthExceedsTenureDepth returns window_periods when
+// it is larger than any tenure.periods.
+func TestMaxHistoryDepth_WindowDepthExceedsTenureDepth(t *testing.T) {
+	plan := minimalPlan()
+	plan.Ranks[0].Qualification.Window = &RankQualificationWindow{
+		ThresholdRank:     "Associate",
+		QualifyingPeriods: 3,
+		WindowPeriods:     8,
+	}
+	plan.Ranks[1].Qualification.Tenure = &TenureRequirement{
+		ThresholdRank: "Silver",
+		Periods:       4,
+	}
+
+	assert.Equal(t, 8, MaxHistoryDepth(plan))
+}

@@ -224,7 +224,9 @@ func TestTenureEvaluation_QualifiesWithFourConsecutiveDirector(t *testing.T) {
 func TestTenureEvaluation_WithheldWhenGapInTrailingPeriods(t *testing.T) {
 	store := NewMemoryQualificationHistoryStore()
 	userID := mustParseUUID(t, "00000000-0000-0000-0000-000000000001")
-	seedTenureHistory(t, store, userID, 4, 2)
+	// Put the gap at axis index 2 (2026-10), inside the trailing 4, to break the streak.
+	const gapAtIndex = 2
+	seedTenureHistory(t, store, userID, 4, gapAtIndex)
 
 	got := evaluateWithHistory(t, store, userID, tenureRankPlanJSON, tenureAxis)
 

@@ -168,8 +168,9 @@ var windowedAxis = []string{
 }
 
 // directorOrdinal and associateOrdinal are the achieved-rank ordinals seeded
-// into prior-period history. The window threshold is Director (ordinal 5), so a
-// Director period counts toward the gate and an Associate period does not.
+// into prior-period history, shared by the windowed and tenure tests. The
+// threshold rank in both fixtures is Director (ordinal 5), so a Director period
+// counts toward the gate and an Associate period does not.
 const (
 	directorOrdinal  uint16 = 5
 	associateOrdinal uint16 = 1

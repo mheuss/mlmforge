@@ -246,7 +246,7 @@ func validateRanks(plan *CompensationPlan, structs map[string]bool) []Validation
 				errs = append(errs, ValidationError{
 					Path:     fmt.Sprintf("/ranks/%d/qualification/window", i),
 					Code:     "cross_field_dependency",
-					Message:  fmt.Sprintf("rank %q window periods must be >= 1", r.Name),
+					Message:  fmt.Sprintf("rank %q window qualifying_periods and window_periods must each be >= 1", r.Name),
 					Severity: SeverityError,
 				})
 			} else if w.QualifyingPeriods > w.WindowPeriods {

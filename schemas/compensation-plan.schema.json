@@ -406,7 +406,7 @@
     },
     "TenureRequirement": {
       "type": "object",
-      "description": "Consecutive-period tenure gate. The distributor must have achieved threshold_rank for periods consecutive prior periods.",
+      "description": "Consecutive-period tenure gate. The distributor must have achieved threshold_rank for the number of consecutive prior periods given by the periods property.",
       "required": ["threshold_rank", "periods"],
       "properties": {
         "threshold_rank": {

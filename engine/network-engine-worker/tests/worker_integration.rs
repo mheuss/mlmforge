@@ -2449,7 +2449,11 @@ fn evaluate_ranks_returns_structure_not_found_when_tree_missing() {
 ///
 /// Both ranks list structure "Test" so they are evaluated; the window gate is
 /// the only differentiator. Key ordering is authored with `type` before
-/// `config` to satisfy the adjacent-tagged enum deserialization in serde.
+/// `config` deliberately: `StructureConfig` is an adjacent-tagged enum whose
+/// `config` content holds the integer-keyed `rate_table`. If `config` precedes
+/// `type`, serde buffers the content before the variant is known and the
+/// string->u8 key coercion is stripped, so deserialization fails (see
+/// docs/development/network-engine.md and UC-NET-007). Verified empirically.
 const WINDOWED_RANK_TEST_PLAN_JSON: &str = r#"{
     "name": "WindowedRankTest",
     "version": 1,

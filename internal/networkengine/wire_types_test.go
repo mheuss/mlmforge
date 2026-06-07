@@ -125,7 +125,8 @@ func TestEvaluateRanksRequest_EmptyOmitsHistory(t *testing.T) {
 		Distributors:  map[string]DistributorPrimitivesDTO{},
 		VolumeSources: []VolumeSourceDTO{},
 	}
-	b, _ := json.Marshal(req)
+	b, err := json.Marshal(req)
+	require.NoError(t, err)
 	var m map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(b, &m))
 	keys := make([]string, 0, len(m))
@@ -148,7 +149,8 @@ func TestEvaluateRanksRequest_PopulatedIncludesHistory(t *testing.T) {
 			uid.String(): {"2026-05": &two, "2026-04": unranked},
 		},
 	}
-	b, _ := json.Marshal(req)
+	b, err := json.Marshal(req)
+	require.NoError(t, err)
 	var m map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(b, &m))
 	keys := make([]string, 0, len(m))

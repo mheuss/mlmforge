@@ -194,9 +194,11 @@ func seedHistory(t *testing.T, store QualificationHistoryStore, userID uuid.UUID
 }
 
 // evaluateWithHistory runs the full Go -> worker -> Go flow for one distributor
-// against the windowed plan, building the history window from store and passing
-// it into EvaluateRanks. It returns the distributor's evaluated rank.
-func evaluateWithHistory(t *testing.T, store QualificationHistoryStore, userID uuid.UUID) EvaluatedRankDTO {
+// against planJSON over the given DESC prior-period axis, building the history
+// window from store and passing it into EvaluateRanks. It returns the
+// distributor's evaluated rank. The windowed and tenure end-to-end tests share
+// this helper, differing only in the plan and axis they pass.
+func evaluateWithHistory(t *testing.T, store QualificationHistoryStore, userID uuid.UUID, planJSON string, axis []string) EvaluatedRankDTO {
 	t.Helper()
 	ctx := context.Background()
 
@@ -205,11 +207,11 @@ func evaluateWithHistory(t *testing.T, store QualificationHistoryStore, userID u
 	defer func() { _ = client.Stop() }()
 
 	userStr := userID.String()
-	require.NoError(t, client.LoadPlan(ctx, json.RawMessage(windowedRankPlanJSON)))
+	require.NoError(t, client.LoadPlan(ctx, json.RawMessage(planJSON)))
 	require.NoError(t, client.CreateTree(ctx, structureName, "unilevel"))
 	require.NoError(t, client.AddRoot(ctx, structureName, userStr, 100))
 
-	_, hist, err := BuildHistoryWindow(ctx, store, []uuid.UUID{userID}, windowedAxis)
+	_, hist, err := BuildHistoryWindow(ctx, store, []uuid.UUID{userID}, axis)
 	require.NoError(t, err)
 
 	req := EvaluateRanksRequest{
@@ -222,7 +224,7 @@ func evaluateWithHistory(t *testing.T, store QualificationHistoryStore, userID u
 			},
 		},
 		VolumeSources: []VolumeSourceDTO{},
-		HistoryWindow: windowedAxis,
+		HistoryWindow: axis,
 		History:       hist,
 	}
 
@@ -244,7 +246,7 @@ func TestWindowedEvaluation_QualifiesAtSixOfTwelve(t *testing.T) {
 	userID := mustParseUUID(t, "00000000-0000-0000-0000-000000000001")
 	seedHistory(t, store, userID, 6)
 
-	got := evaluateWithHistory(t, store, userID)
+	got := evaluateWithHistory(t, store, userID, windowedRankPlanJSON, windowedAxis)
 
 	assert.Equal(t, "qualified", got.Kind)
 	assert.Equal(t, "Executive", got.Rank, "6 Director periods meets the 6-of-12 window")
@@ -260,7 +262,7 @@ func TestWindowedEvaluation_WithheldAtFiveOfTwelve(t *testing.T) {
 	userID := mustParseUUID(t, "00000000-0000-0000-0000-000000000001")
 	seedHistory(t, store, userID, 5)
 
-	got := evaluateWithHistory(t, store, userID)
+	got := evaluateWithHistory(t, store, userID, windowedRankPlanJSON, windowedAxis)
 
 	assert.Equal(t, "qualified", got.Kind)
 	assert.Equal(t, "Director", got.Rank, "5 Director periods misses the 6-of-12 window, so gated Executive is withheld and the rank falls back to Director")

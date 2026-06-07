@@ -73,6 +73,11 @@ pub struct RankQualification {
     /// last M prior periods. Absent = no windowed requirement.
     #[serde(default)]
     pub window: Option<RankQualificationWindow>,
+
+    /// Optional tenure gate (G3): achieved >= threshold rank for `periods`
+    /// consecutive prior periods. Absent = no tenure requirement.
+    #[serde(default)]
+    pub tenure: Option<TenureRequirement>,
 }
 
 /// "Achieved >= threshold_rank in qualifying_periods of the last
@@ -83,6 +88,13 @@ pub struct RankQualificationWindow {
     pub threshold_rank: String,
     pub qualifying_periods: u8,
     pub window_periods: u8,
+}
+
+/// "Achieved >= threshold_rank for `periods` consecutive prior periods."
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TenureRequirement {
+    pub threshold_rank: String,
+    pub periods: u8,
 }
 
 /// Volume and team requirements for a single structure.
@@ -554,6 +566,23 @@ mod tests {
     }
 
     #[test]
+    fn rank_qualification_deserializes_tenure() {
+        let json = r#"{"structures":[],"required_products":[],
+            "tenure":{"threshold_rank":"Director","periods":12}}"#;
+        let q: RankQualification = serde_json::from_str(json).unwrap();
+        let t = q.tenure.unwrap();
+        assert_eq!(t.threshold_rank, "Director");
+        assert_eq!(t.periods, 12u8);
+    }
+
+    #[test]
+    fn rank_qualification_tenure_defaults_none_when_absent() {
+        let json = r#"{"structures":[],"required_products":[]}"#;
+        let q: RankQualification = serde_json::from_str(json).unwrap();
+        assert!(q.tenure.is_none());
+    }
+
+    #[test]
     fn round_trip_rank_definition() {
         let rank = RankDefinition {
             name: "Gold".to_string(),
@@ -570,6 +599,7 @@ mod tests {
                 }],
                 required_products: vec![],
                 window: None,
+                tenure: None,
             },
             qualified_structures: vec!["Primary".to_string()],
             demotion_policy: DemotionPolicy::PromotionOnly,

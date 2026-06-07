@@ -60,6 +60,7 @@ type RankQualification struct {
 	Structures       []StructureQualification `yaml:"structures" json:"structures"`
 	RequiredProducts []string                 `yaml:"required_products" json:"required_products"`
 	Window           *RankQualificationWindow `yaml:"window,omitempty" json:"window,omitempty"`
+	Tenure           *TenureRequirement       `yaml:"tenure,omitempty" json:"tenure,omitempty"`
 }
 
 // RankQualificationWindow defines a windowed N-of-M gate: the distributor must
@@ -69,6 +70,14 @@ type RankQualificationWindow struct {
 	ThresholdRank     string `yaml:"threshold_rank" json:"threshold_rank"`
 	QualifyingPeriods uint8  `yaml:"qualifying_periods" json:"qualifying_periods"`
 	WindowPeriods     uint8  `yaml:"window_periods" json:"window_periods"`
+}
+
+// TenureRequirement defines a strict consecutive-period gate: the distributor
+// must have achieved ThresholdRank for Periods consecutive prior periods.
+// Mirrors the Rust TenureRequirement.
+type TenureRequirement struct {
+	ThresholdRank string `yaml:"threshold_rank" json:"threshold_rank"`
+	Periods       uint8  `yaml:"periods" json:"periods"`
 }
 
 // StructureQualification holds qualification requirements for a specific structure.

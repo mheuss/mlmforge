@@ -31,6 +31,7 @@ func TestPipelineAllValidFixtures(t *testing.T) {
 		{"valid/streamline-plan.yaml", "Streamline Direct", []string{"unilevel", "streamline"}},
 		{"valid/board-plan.yaml", "Sales Board Plan", []string{"unilevel", "board_plan"}},
 		{"valid/leg-quality-plan.yaml", "Leg Quality Plan", []string{"unilevel"}},
+		{"valid/windowed-rank-plan.yaml", "Windowed Rank Plan", []string{"unilevel"}},
 	}
 
 	for _, tt := range tests {

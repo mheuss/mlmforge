@@ -196,6 +196,13 @@
             "type": "string"
           },
           "description": "Product IDs that must be on autoship."
+        },
+        "window": {
+          "oneOf": [
+            { "$ref": "#/$defs/RankQualificationWindow" },
+            { "type": "null" }
+          ],
+          "description": "Windowed N-of-M qualification gate (G2)."
         }
       }
     },
@@ -364,6 +371,29 @@
           "type": "string",
           "enum": ["days", "weeks", "months"],
           "description": "Time unit for the grace period."
+        }
+      }
+    },
+    "RankQualificationWindow": {
+      "type": "object",
+      "description": "Windowed N-of-M rank qualification gate. The distributor must have achieved threshold_rank in at least qualifying_periods of the last window_periods prior periods.",
+      "required": ["threshold_rank", "qualifying_periods", "window_periods"],
+      "properties": {
+        "threshold_rank": {
+          "type": "string",
+          "description": "The rank the distributor must have achieved in each qualifying period."
+        },
+        "qualifying_periods": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 255,
+          "description": "Minimum number of periods within the window in which the distributor must have achieved threshold_rank."
+        },
+        "window_periods": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 255,
+          "description": "Number of prior periods that form the evaluation window."
         }
       }
     },

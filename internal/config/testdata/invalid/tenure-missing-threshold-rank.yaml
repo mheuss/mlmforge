@@ -1,8 +1,11 @@
 # yaml-language-server: $schema=../../../../schemas/compensation-plan.schema.json
+#
 # Invalid: tenure object is missing the required threshold_rank field.
-# Expected error: threshold_rank is required by TenureRequirement.
+# Copy of valid/tenure-rank-plan.yaml with threshold_rank deleted from the
+# Leader tenure block. Expected error: threshold_rank is required by
+# TenureRequirement.
 
-name: Tenure Missing Threshold Rank
+name: Tenure Rank Plan
 version: 1
 
 period:
@@ -33,7 +36,18 @@ ranks:
           personal_volume: 100
           group_volume: 1000
       tenure:
-        periods: 6
+        periods: 3
+
+  - name: Director
+    ordinal: 3
+    qualification:
+      structures:
+        - structure: Primary
+          personal_volume: 200
+          group_volume: 5000
+      tenure:
+        threshold_rank: Leader
+        periods: 12
 
 rank_tracking:
   track_achieved_rank: false
@@ -58,6 +72,8 @@ structures:
           "1": 0.05
         Leader:
           "1": 0.07
+        Director:
+          "1": 0.10
 
 bonuses:
   matching: null

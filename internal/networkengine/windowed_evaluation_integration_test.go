@@ -176,7 +176,8 @@ const (
 )
 
 // seedHistory writes one achieved-rank row per period for userID: Director for
-// the first directorPeriods periods of the (DESC) axis, Associate for the rest.
+// the first directorPeriods periods of the (DESC) axis, meaning the most-recent
+// directorPeriods periods, and Associate for the rest.
 // Each SaveResult call replaces a whole period, matching the store contract.
 func seedHistory(t *testing.T, store QualificationHistoryStore, userID uuid.UUID, directorPeriods int) {
 	t.Helper()
@@ -262,9 +263,8 @@ func TestWindowedEvaluation_WithheldAtFiveOfTwelve(t *testing.T) {
 	got := evaluateWithHistory(t, store, userID)
 
 	assert.Equal(t, "qualified", got.Kind)
-	assert.Equal(t, "Director", got.Rank, "5 Director periods misses the 6-of-12 window")
+	assert.Equal(t, "Director", got.Rank, "5 Director periods misses the 6-of-12 window, so gated Executive is withheld and the rank falls back to Director")
 	assert.Equal(t, uint16(5), got.Ordinal)
-	assert.NotEqual(t, "Executive", got.Rank, "the gated rank must be withheld at 5 of 12")
 }
 
 // TestWindowedEvaluation_BackwardCompat_EmptyHistoryEqualsOmitted proves the

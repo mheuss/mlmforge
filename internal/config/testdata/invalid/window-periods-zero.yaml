@@ -1,8 +1,11 @@
 # yaml-language-server: $schema=../../../../schemas/compensation-plan.schema.json
+#
 # Invalid: window_periods is 0, which violates the minimum: 1 bound.
-# Expected error: window_periods must be >= 1.
+# Copy of valid/windowed-rank-plan.yaml with the Leader window_periods set to 0.
+# qualifying_periods stays at its valid value so window_periods is the only
+# delta. Expected error: window_periods must be >= 1.
 
-name: Window Periods Zero
+name: Windowed Rank Plan
 version: 1
 
 period:
@@ -34,8 +37,20 @@ ranks:
           group_volume: 1000
       window:
         threshold_rank: Associate
-        qualifying_periods: 1
+        qualifying_periods: 3
         window_periods: 0
+
+  - name: Director
+    ordinal: 3
+    qualification:
+      structures:
+        - structure: Primary
+          personal_volume: 200
+          group_volume: 5000
+      window:
+        threshold_rank: Leader
+        qualifying_periods: 6
+        window_periods: 12
 
 rank_tracking:
   track_achieved_rank: false
@@ -60,6 +75,8 @@ structures:
           "1": 0.05
         Leader:
           "1": 0.07
+        Director:
+          "1": 0.10
 
 bonuses:
   matching: null

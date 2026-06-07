@@ -1,8 +1,10 @@
 # yaml-language-server: $schema=../../../../schemas/compensation-plan.schema.json
+#
 # Invalid: tenure periods is 0, which violates the minimum: 1 bound.
-# Expected error: periods must be >= 1.
+# Copy of valid/tenure-rank-plan.yaml with the Leader tenure periods set to 0.
+# periods is the only delta. Expected error: periods must be >= 1.
 
-name: Tenure Periods Zero
+name: Tenure Rank Plan
 version: 1
 
 period:
@@ -36,6 +38,17 @@ ranks:
         threshold_rank: Associate
         periods: 0
 
+  - name: Director
+    ordinal: 3
+    qualification:
+      structures:
+        - structure: Primary
+          personal_volume: 200
+          group_volume: 5000
+      tenure:
+        threshold_rank: Leader
+        periods: 12
+
 rank_tracking:
   track_achieved_rank: false
 
@@ -59,6 +72,8 @@ structures:
           "1": 0.05
         Leader:
           "1": 0.07
+        Director:
+          "1": 0.10
 
 bonuses:
   matching: null

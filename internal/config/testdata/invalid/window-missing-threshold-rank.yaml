@@ -1,8 +1,11 @@
 # yaml-language-server: $schema=../../../../schemas/compensation-plan.schema.json
+#
 # Invalid: rank window object is missing the required threshold_rank field.
-# Expected error: threshold_rank is required by RankQualificationWindow.
+# Copy of valid/windowed-rank-plan.yaml with threshold_rank deleted from the
+# Leader window block. Expected error: threshold_rank is required by
+# RankQualificationWindow.
 
-name: Window Missing Threshold Rank
+name: Windowed Rank Plan
 version: 1
 
 period:
@@ -36,6 +39,18 @@ ranks:
         qualifying_periods: 3
         window_periods: 6
 
+  - name: Director
+    ordinal: 3
+    qualification:
+      structures:
+        - structure: Primary
+          personal_volume: 200
+          group_volume: 5000
+      window:
+        threshold_rank: Leader
+        qualifying_periods: 6
+        window_periods: 12
+
 rank_tracking:
   track_achieved_rank: false
 
@@ -59,6 +74,8 @@ structures:
           "1": 0.05
         Leader:
           "1": 0.07
+        Director:
+          "1": 0.10
 
 bonuses:
   matching: null

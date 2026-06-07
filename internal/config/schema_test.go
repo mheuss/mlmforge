@@ -28,6 +28,7 @@ func TestSchemaValidatesAllValidFixtures(t *testing.T) {
 		"valid/board-plan.yaml",
 		"valid/leg-quality-plan.yaml",
 		"valid/windowed-rank-plan.yaml",
+		"valid/tenure-rank-plan.yaml",
 	}
 	for _, f := range fixtures {
 		t.Run(f, func(t *testing.T) {
@@ -298,6 +299,46 @@ func TestSchemaRejectsWindowPeriodsZero(t *testing.T) {
 		t,
 		foundWindowPeriodsBound,
 		"expected at least one schema_violation on window_periods, got %+v",
+		errs,
+	)
+}
+
+// TestSchemaRejectsTenureMissingThresholdRank verifies that a tenure object
+// without threshold_rank fails schema validation. The tenure property has
+// "required": ["threshold_rank", "periods"] in the TenureRequirement $def.
+func TestSchemaRejectsTenureMissingThresholdRank(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+
+	errs := p.validateSchema(readFixture(t, "invalid/tenure-missing-threshold-rank.yaml"))
+	require.NotEmpty(t, errs, "tenure missing threshold_rank should produce errors")
+
+	for _, e := range errs {
+		assert.Equal(t, SeverityError, e.Severity)
+	}
+}
+
+// TestSchemaRejectsTenurePeriodsZero verifies that periods: 0 fails the
+// minimum: 1 bound on the TenureRequirement $def. This pins the schema as the
+// gate for the lower bound (Go uint8 accepts 0 but the plan is invalid).
+func TestSchemaRejectsTenurePeriodsZero(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+
+	errs := p.validateSchema(readFixture(t, "invalid/tenure-periods-zero.yaml"))
+	require.NotEmpty(t, errs, "tenure periods=0 should produce schema errors")
+
+	foundPeriodsBound := false
+	for _, e := range errs {
+		assert.Equal(t, SeverityError, e.Severity)
+		if e.Code == "schema_violation" && strings.Contains(e.Path, "periods") {
+			foundPeriodsBound = true
+		}
+	}
+	assert.True(
+		t,
+		foundPeriodsBound,
+		"expected at least one schema_violation on periods, got %+v",
 		errs,
 	)
 }

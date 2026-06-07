@@ -1046,6 +1046,7 @@ mod tests {
                 }],
                 required_products: vec![],
                 window: None,
+                tenure: None,
             },
             qualified_structures: vec![structure.to_string()],
             demotion_policy: DemotionPolicy::PromotionOnly,

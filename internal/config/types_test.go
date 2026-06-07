@@ -900,3 +900,13 @@ func TestRankQualification_ParsesWindow(t *testing.T) {
 	assert.Equal(t, uint8(6), q.Window.QualifyingPeriods)
 	assert.Equal(t, uint8(12), q.Window.WindowPeriods)
 }
+
+func TestRankQualification_ParsesTenure(t *testing.T) {
+	y := []byte("structures: []\nrequired_products: []\n" +
+		"tenure:\n  threshold_rank: Director\n  periods: 12\n")
+	var q RankQualification
+	require.NoError(t, yaml.Unmarshal(y, &q))
+	require.NotNil(t, q.Tenure)
+	assert.Equal(t, "Director", q.Tenure.ThresholdRank)
+	assert.Equal(t, uint8(12), q.Tenure.Periods)
+}

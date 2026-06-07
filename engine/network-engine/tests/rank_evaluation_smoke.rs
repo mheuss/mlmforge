@@ -60,6 +60,7 @@ fn build_seven_rank_plan() -> CompensationPlan {
                 }],
                 required_products: vec![],
                 window: None,
+                tenure: None,
             },
             qualified_structures: vec!["Test".to_string()],
             demotion_policy: DemotionPolicy::PromotionOnly,

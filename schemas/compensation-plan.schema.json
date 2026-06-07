@@ -203,6 +203,13 @@
             { "type": "null" }
           ],
           "description": "Windowed N-of-M qualification gate (G2)."
+        },
+        "tenure": {
+          "oneOf": [
+            { "$ref": "#/$defs/TenureRequirement" },
+            { "type": "null" }
+          ],
+          "description": "Consecutive-period tenure gate (G3)."
         }
       }
     },
@@ -394,6 +401,23 @@
           "minimum": 1,
           "maximum": 255,
           "description": "Number of prior periods that form the evaluation window."
+        }
+      }
+    },
+    "TenureRequirement": {
+      "type": "object",
+      "description": "Consecutive-period tenure gate. The distributor must have achieved threshold_rank for periods consecutive prior periods.",
+      "required": ["threshold_rank", "periods"],
+      "properties": {
+        "threshold_rank": {
+          "type": "string",
+          "description": "The rank the distributor must have achieved in each of the consecutive periods."
+        },
+        "periods": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 255,
+          "description": "Number of consecutive prior periods the distributor must have held threshold_rank."
         }
       }
     },

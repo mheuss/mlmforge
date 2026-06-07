@@ -92,12 +92,18 @@ type StructureQualification struct {
 }
 
 // DistributorCountRequirement defines distributor count requirements per leg.
+//
+// Field widths mirror the Rust DistributorCountRequirement (rank.rs):
+// Count and TotalCount are uint16 (Rust u16), SearchDepth is *uint8
+// (Rust Option<u8>). Matching byte-widths catches an out-of-range value at
+// the Go unmarshal layer instead of truncating at the Rust FFI boundary.
+// See docs/development/config-types.md "Field types must match byte-widths".
 type DistributorCountRequirement struct {
-	Count             int     `yaml:"count" json:"count"`
+	Count             uint16  `yaml:"count" json:"count"`
 	MinRank           string  `yaml:"min_rank" json:"min_rank"`
 	SearchMode        string  `yaml:"search_mode" json:"search_mode"`
-	SearchDepth       *int    `yaml:"search_depth" json:"search_depth"`
-	TotalCount        int     `yaml:"total_count" json:"total_count"`
+	SearchDepth       *uint8  `yaml:"search_depth" json:"search_depth"`
+	TotalCount        uint16  `yaml:"total_count" json:"total_count"`
 	MinLegGroupVolume float64 `yaml:"min_leg_group_volume" json:"min_leg_group_volume"`
 }
 

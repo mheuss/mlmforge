@@ -1028,7 +1028,7 @@ func TestValidation_SearchModeFirstLevelsWithoutDepthWarning(t *testing.T) {
 
 func TestValidation_SearchModeFirstLevelsWithDepthPasses(t *testing.T) {
 	plan := minimalPlan()
-	depth := 3
+	depth := uint8(3)
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{
 		{
 			Structure:      "Primary",

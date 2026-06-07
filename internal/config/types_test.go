@@ -856,6 +856,104 @@ predicate:
 	}
 }
 
+// TestDistributorCountRequirementCountBoundaryValues verifies the uint16
+// boundaries on count at YAML unmarshal time. Values in [0, 65535] succeed;
+// values outside fail, so an out-of-range count produces a clear Go unmarshal
+// error instead of silently truncating when round-tripped to the Rust u16
+// (rank.rs count: u16). Mirrors TestLegQualityRequirementCountBoundaryValues.
+func TestDistributorCountRequirementCountBoundaryValues(t *testing.T) {
+	cases := []struct {
+		name      string
+		value     string
+		expectErr bool
+	}{
+		{"zero", "0", false},
+		{"max_uint16", "65535", false},
+		{"one_above_max", "65536", true},
+		{"large_overflow", "70000", true},
+		{"negative", "-1", true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			yamlInput := fmt.Sprintf("count: %s\n", tc.value)
+			var req DistributorCountRequirement
+			err := yaml.Unmarshal([]byte(yamlInput), &req)
+			if tc.expectErr {
+				require.Error(t, err, "expected unmarshal to reject count=%s", tc.value)
+			} else {
+				require.NoError(t, err, "expected unmarshal to accept count=%s", tc.value)
+			}
+		})
+	}
+}
+
+// TestDistributorCountRequirementTotalCountBoundaryValues verifies the uint16
+// boundaries on total_count at YAML unmarshal time. Values in [0, 65535]
+// succeed; values outside fail, mirroring the Rust total_count: u16
+// (rank.rs). Mirrors TestDistributorCountRequirementCountBoundaryValues.
+func TestDistributorCountRequirementTotalCountBoundaryValues(t *testing.T) {
+	cases := []struct {
+		name      string
+		value     string
+		expectErr bool
+	}{
+		{"zero", "0", false},
+		{"max_uint16", "65535", false},
+		{"one_above_max", "65536", true},
+		{"large_overflow", "70000", true},
+		{"negative", "-1", true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			yamlInput := fmt.Sprintf("total_count: %s\n", tc.value)
+			var req DistributorCountRequirement
+			err := yaml.Unmarshal([]byte(yamlInput), &req)
+			if tc.expectErr {
+				require.Error(t, err, "expected unmarshal to reject total_count=%s", tc.value)
+			} else {
+				require.NoError(t, err, "expected unmarshal to accept total_count=%s", tc.value)
+			}
+		})
+	}
+}
+
+// TestDistributorCountRequirementSearchDepthBoundaryValues verifies the uint8
+// boundaries on search_depth (*uint8) at YAML unmarshal time. Values in
+// [0, 255] succeed at the Go layer; values outside fail. The contract: 0
+// passes the Go uint8 type (uint8 is unsigned and 0 is a valid value), but
+// the schema's minimum: 1 constraint rejects it. The schema is the gate at
+// that bound, not Go. Mirrors search_depth to the Rust Option<u8>
+// (rank.rs) and follows TestBreakawayTier_MinSplitOutGroups_BoundaryValues.
+func TestDistributorCountRequirementSearchDepthBoundaryValues(t *testing.T) {
+	cases := []struct {
+		name      string
+		value     string
+		expectErr bool
+	}{
+		{"zero", "0", false},
+		{"min_schema", "1", false},
+		{"max_uint8", "255", false},
+		{"one_above_max", "256", true},
+		{"large_overflow", "300", true},
+		{"negative", "-1", true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			yamlInput := fmt.Sprintf("search_depth: %s\n", tc.value)
+			var req DistributorCountRequirement
+			err := yaml.Unmarshal([]byte(yamlInput), &req)
+			if tc.expectErr {
+				require.Error(t, err, "expected unmarshal to reject search_depth=%s", tc.value)
+			} else {
+				require.NoError(t, err, "expected unmarshal to accept search_depth=%s", tc.value)
+			}
+		})
+	}
+}
+
 // TestBoardCyclingConfigDeserialization verifies that BoardCyclingConfig
 // deserializes correctly from YAML with all fields populated.
 func TestBoardCyclingConfigDeserialization(t *testing.T) {

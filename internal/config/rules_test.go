@@ -514,6 +514,47 @@ func TestWindowThresholdRankEqualOrHigherOrdinalAccepted(t *testing.T) {
 	assert.Empty(t, errs)
 }
 
+func TestTenureThresholdRankMustExist(t *testing.T) {
+	plan := minimalPlan()
+	plan.Ranks[1].Qualification.Tenure = &TenureRequirement{
+		ThresholdRank: "Nonexistent",
+		Periods:       3,
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "undefined_reference", errs[0].Code)
+	assert.Equal(t, SeverityError, errs[0].Severity)
+	assert.Equal(t, "/ranks/1/qualification/tenure/threshold_rank", errs[0].Path)
+}
+
+func TestTenurePeriodsZeroRejected(t *testing.T) {
+	plan := minimalPlan()
+	plan.Ranks[1].Qualification.Tenure = &TenureRequirement{
+		ThresholdRank: "Associate",
+		Periods:       0,
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "cross_field_dependency", errs[0].Code)
+	assert.Equal(t, SeverityError, errs[0].Severity)
+	assert.Equal(t, "/ranks/1/qualification/tenure", errs[0].Path)
+}
+
+func TestTenureThresholdRankEqualOrHigherOrdinalAccepted(t *testing.T) {
+	plan := minimalPlan()
+	// Silver (ordinal 2) references threshold_rank Silver (same ordinal).
+	// Tenure does NOT require threshold_rank to be lower than the current rank.
+	plan.Ranks[1].Qualification.Tenure = &TenureRequirement{
+		ThresholdRank: "Silver",
+		Periods:       3,
+	}
+
+	errs := validateBusinessRules(plan)
+	assert.Empty(t, errs)
+}
+
 func TestLegQualityContainsPersonalVolumeSkipsRankCheck(t *testing.T) {
 	plan := minimalPlan()
 	// A contains_personal_volume predicate must not trigger the rank check.

@@ -162,3 +162,49 @@ func TestPeriodStart(t *testing.T) {
 		})
 	}
 }
+
+func TestAdvance(t *testing.T) {
+	t.Parallel()
+
+	month := &Sequence{length: Month, anchor: dateUTC(2026, time.January, 1)}
+	quarter := &Sequence{length: Quarter, anchor: dateUTC(2026, time.January, 1)}
+	semiMonth := &Sequence{length: SemiMonth, anchor: dateUTC(2026, time.January, 1)}
+	// Anchor is a Wednesday; week buckets are 7-day blocks off this grid.
+	week := &Sequence{length: Week, anchor: dateUTC(2026, time.January, 7)}
+
+	cases := []struct {
+		name  string
+		seq   *Sequence
+		start time.Time
+		n     int
+		want  time.Time
+	}{
+		// Month: step whole calendar months, including year rollover.
+		{name: "month +1 across year", seq: month, start: dateUTC(2026, time.December, 1), n: 1, want: dateUTC(2027, time.January, 1)},
+		{name: "month -1 across year", seq: month, start: dateUTC(2026, time.January, 1), n: -1, want: dateUTC(2025, time.December, 1)},
+
+		// Quarter: step 3 months at a time.
+		{name: "quarter +1 across year", seq: quarter, start: dateUTC(2026, time.October, 1), n: 1, want: dateUTC(2027, time.January, 1)},
+		{name: "quarter -1 across year", seq: quarter, start: dateUTC(2026, time.January, 1), n: -1, want: dateUTC(2025, time.October, 1)},
+
+		// SemiMonth: H1 (1st) and H2 (16th) alternate.
+		{name: "semimonth H1 +1", seq: semiMonth, start: dateUTC(2026, time.May, 1), n: 1, want: dateUTC(2026, time.May, 16)},
+		{name: "semimonth H2 +1 rolls month", seq: semiMonth, start: dateUTC(2026, time.May, 16), n: 1, want: dateUTC(2026, time.June, 1)},
+		{name: "semimonth H1 +2 rolls month", seq: semiMonth, start: dateUTC(2026, time.May, 1), n: 2, want: dateUTC(2026, time.June, 1)},
+		{name: "semimonth H1 -1 rolls month", seq: semiMonth, start: dateUTC(2026, time.May, 1), n: -1, want: dateUTC(2026, time.April, 16)},
+		{name: "semimonth H2 -1", seq: semiMonth, start: dateUTC(2026, time.May, 16), n: -1, want: dateUTC(2026, time.May, 1)},
+
+		// Week: 7-day steps off the anchor grid, including year rollover.
+		{name: "week +1", seq: week, start: dateUTC(2026, time.January, 7), n: 1, want: dateUTC(2026, time.January, 14)},
+		{name: "week -1 across year", seq: week, start: dateUTC(2026, time.January, 7), n: -1, want: dateUTC(2025, time.December, 31)},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := tc.seq.advance(tc.start, tc.n)
+			assert.True(t, got.Equal(tc.want),
+				"advance(%s, %d) = %s, want %s", tc.start, tc.n, got, tc.want)
+		})
+	}
+}

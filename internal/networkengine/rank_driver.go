@@ -49,12 +49,49 @@ func (d *RankDriver) guardAfterStart(asOf time.Time) error {
 	return nil
 }
 
-// EvaluatePeriod is implemented in Task 11.
+// EvaluatePeriod evaluates and persists the period containing asOf. It builds
+// the strictly-prior axis (sized by MaxHistoryDepth), fetches that history,
+// and evaluates with persistence. The axis is empty only when the plan has no
+// time gate (depth 0), so HEU-446's TimeGateWithoutHistory guard never trips.
 func (d *RankDriver) EvaluatePeriod(ctx context.Context, asOf time.Time) (*EvaluationResultDTO, error) {
 	if err := d.guardAfterStart(asOf); err != nil {
 		return nil, err
 	}
-	return nil, fmt.Errorf("rank driver: EvaluatePeriod not yet implemented")
+	periodID := d.seq.Label(asOf)
+	inputs, err := d.provider.InputsFor(ctx, periodID)
+	if err != nil {
+		return nil, fmt.Errorf("rank driver: inputs for %s: %w", periodID, err)
+	}
+	// Normalize nil to empty: the Rust EvaluationInputs.distributors/volume_sources
+	// fields lack serde(default) and have no omitempty, so a JSON null fails to
+	// deserialize at the worker. Empty {} / [] are required.
+	if inputs.Distributors == nil {
+		inputs.Distributors = map[string]DistributorPrimitivesDTO{}
+	}
+	if inputs.VolumeSources == nil {
+		inputs.VolumeSources = []VolumeSourceDTO{}
+	}
+	depth := config.MaxHistoryDepth(d.plan)
+	axis := d.seq.PriorLabels(asOf, depth) // DESC; nil when depth == 0
+	ids, err := distributorIDs(inputs.Distributors)
+	if err != nil {
+		return nil, err
+	}
+	_, hist, err := BuildHistoryWindow(ctx, d.store, ids, axis)
+	if err != nil {
+		return nil, fmt.Errorf("rank driver: build history for %s: %w", periodID, err)
+	}
+	req := EvaluateRanksRequest{
+		Distributors:  inputs.Distributors,
+		VolumeSources: inputs.VolumeSources,
+		HistoryWindow: axis,
+		History:       hist,
+	}
+	result, err := d.client.EvaluateRanks(ctx, req, WithPersistence(periodID, d.store))
+	if err != nil {
+		return result, fmt.Errorf("rank driver: evaluate %s: %w", periodID, err)
+	}
+	return result, nil
 }
 
 // distributorIDs parses the request's distributor map keys into sorted UUIDs.

@@ -73,6 +73,37 @@ func (s *Sequence) periodStart(t time.Time) time.Time {
 	return d // unreachable: Length is validated in NewSequence
 }
 
+// advance returns the start of the period n steps from start (n may be < 0).
+// start MUST be a period start (as returned by periodStart).
+func (s *Sequence) advance(start time.Time, n int) time.Time {
+	switch s.length {
+	case Month:
+		return start.AddDate(0, n, 0)
+	case Quarter:
+		return start.AddDate(0, 3*n, 0)
+	case SemiMonth:
+		half := 0
+		if start.Day() == 16 {
+			half = 1
+		}
+		total := half + n
+		monthDelta := total / 2
+		newHalf := total % 2
+		if newHalf < 0 { // normalize Go's truncated modulo for negative n
+			newHalf += 2
+			monthDelta--
+		}
+		base := time.Date(start.Year(), start.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, monthDelta, 0)
+		if newHalf == 1 {
+			return time.Date(base.Year(), base.Month(), 16, 0, 0, 0, 0, time.UTC)
+		}
+		return base
+	case Week:
+		return start.AddDate(0, 0, 7*n)
+	}
+	return start // unreachable
+}
+
 // ParseLength maps a config length string to a Length.
 func ParseLength(s string) (Length, error) {
 	switch s {

@@ -195,6 +195,9 @@ func TestAdvance(t *testing.T) {
 		{name: "semimonth H1 +2 rolls month", seq: semiMonth, start: dateUTC(2026, time.May, 1), n: 2, want: dateUTC(2026, time.June, 1)},
 		{name: "semimonth H1 -1 rolls month", seq: semiMonth, start: dateUTC(2026, time.May, 1), n: -1, want: dateUTC(2026, time.April, 16)},
 		{name: "semimonth H2 -1", seq: semiMonth, start: dateUTC(2026, time.May, 16), n: -1, want: dateUTC(2026, time.May, 1)},
+		// Negative N beyond one step exercises the modulo-correction branch (monthDelta--).
+		{name: "semimonth H1 -3 rolls month", seq: semiMonth, start: dateUTC(2026, time.May, 1), n: -3, want: dateUTC(2026, time.March, 16)},
+		{name: "semimonth H2 -3 rolls month", seq: semiMonth, start: dateUTC(2026, time.May, 16), n: -3, want: dateUTC(2026, time.April, 1)},
 
 		// Week: 7-day steps off the anchor grid, including year rollover.
 		{name: "week +1", seq: week, start: dateUTC(2026, time.January, 7), n: 1, want: dateUTC(2026, time.January, 14)},
@@ -373,11 +376,14 @@ func TestLabelDateOnly(t *testing.T) {
 		"label must use caller's civil date (May 15 in EST), not UTC-shifted May 16")
 
 	// Two instants with the same civil date but different UTC dates must yield the
-	// same label. inA is May 10 23:00 at -05:00 (UTC: May 11); inB is May 10 01:00
-	// at -08:00 (UTC: May 10). Both must map to "2026-05-H1".
+	// same label. The civil date (the 15th) straddles the H1/H2 boundary, so this
+	// equality is independently discriminating: a UTC-based impl would split inA
+	// (UTC May 16 → H2) from inB (UTC May 15 → H1).
 	pstMinus8 := time.FixedZone("PST", -8*60*60)
-	inA := time.Date(2026, time.May, 10, 23, 0, 0, 0, estMinus5) // civil May 10, UTC May 11
-	inB := time.Date(2026, time.May, 10, 1, 0, 0, 0, pstMinus8)  // civil May 10, UTC May 10
+	inA := time.Date(2026, time.May, 15, 23, 0, 0, 0, estMinus5) // civil May 15, UTC May 16
+	inB := time.Date(2026, time.May, 15, 1, 0, 0, 0, pstMinus8)  // civil May 15, UTC May 15
+	assert.Equal(t, "2026-05-H1", semiMonth.Label(inA),
+		"caller civil date (May 15) is authoritative, not UTC-shifted May 16")
 	assert.Equal(t, semiMonth.Label(inA), semiMonth.Label(inB),
 		"same civil date in different locations must yield the same label")
 }

@@ -318,6 +318,48 @@ func TestLabelSortable(t *testing.T) {
 	})
 }
 
+func TestPriorLabels(t *testing.T) {
+	t.Parallel()
+
+	month := &Sequence{length: Month, anchor: dateUTC(2026, time.January, 1)}
+
+	t.Run("three prior months most-recent-first", func(t *testing.T) {
+		t.Parallel()
+		// June 10 is in 2026-06; prior 3 must be 2026-05, 2026-04, 2026-03 (never 2026-06).
+		got := month.PriorLabels(dateUTC(2026, time.June, 10), 3)
+		assert.Equal(t, []string{"2026-05", "2026-04", "2026-03"}, got)
+	})
+
+	t.Run("n=0 returns nil", func(t *testing.T) {
+		t.Parallel()
+		got := month.PriorLabels(dateUTC(2026, time.June, 10), 0)
+		assert.Nil(t, got)
+	})
+
+	t.Run("n=-1 returns nil", func(t *testing.T) {
+		t.Parallel()
+		got := month.PriorLabels(dateUTC(2026, time.June, 10), -1)
+		assert.Nil(t, got)
+	})
+
+	t.Run("year crossing", func(t *testing.T) {
+		t.Parallel()
+		// Jan 10 is in 2026-01; prior 2 must cross into 2025.
+		got := month.PriorLabels(dateUTC(2026, time.January, 10), 2)
+		assert.Equal(t, []string{"2025-12", "2025-11"}, got)
+	})
+
+	t.Run("pre-anchor periods produce labels", func(t *testing.T) {
+		t.Parallel()
+		// Anchor is 2026-06-01; June 10 is in 2026-06 (post-anchor).
+		// Prior 3 periods are 2026-05, 2026-04, 2026-03 — all pre-anchor.
+		// Labels must still be produced (they simply carry no history later).
+		preAnchor := &Sequence{length: Month, anchor: dateUTC(2026, time.June, 1)}
+		got := preAnchor.PriorLabels(dateUTC(2026, time.June, 10), 3)
+		assert.Equal(t, []string{"2026-05", "2026-04", "2026-03"}, got)
+	})
+}
+
 func TestLabelDateOnly(t *testing.T) {
 	t.Parallel()
 

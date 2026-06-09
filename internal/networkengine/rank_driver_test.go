@@ -3,6 +3,7 @@ package networkengine
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -114,4 +115,128 @@ func TestNewRankDriver_NilCollaboratorsError(t *testing.T) {
 
 	_, err = NewRankDriver(client, store, plan, nil)
 	require.Error(t, err)
+}
+
+// monthlyNoGatePlan builds a minimal monthly plan whose only rank has no time
+// gate, so MaxHistoryDepth is 0 and the driver sends no history (design BR7).
+func monthlyNoGatePlan(startDate string) *config.CompensationPlan {
+	return &config.CompensationPlan{
+		Period: config.PeriodConfig{Length: "month", StartDate: &startDate},
+		Ranks:  []config.RankDefinition{{Name: "Member", Ordinal: 1}},
+	}
+}
+
+func TestRankDriver_EvaluatePeriod_BuildsAxisAndPersists(t *testing.T) {
+	ctx := context.Background()
+	userA := "00000000-0000-0000-0000-000000000001"
+	uidA := mustParseUUID(t, userA)
+
+	store := NewMemoryQualificationHistoryStore()
+	require.NoError(t, store.SaveResult(ctx, "2026-05", []QualificationHistoryEntry{{UserID: uidA, Rank: strPtr("Director"), Ordinal: u16Ptr(3)}}))
+	require.NoError(t, store.SaveResult(ctx, "2026-04", []QualificationHistoryEntry{{UserID: uidA, Rank: strPtr("Director"), Ordinal: u16Ptr(3)}}))
+
+	mock := &mockTransport{response: json.RawMessage(fmt.Sprintf(`{"ranks":{"%s":{"kind":"qualified","rank":"Director","ordinal":3}}}`, userA))}
+	client := NewEngineClientWithTransport(mock)
+
+	provider := NewMemoryPeriodInputProvider()
+	provider.Set("2026-06", PeriodInputs{
+		Distributors:  map[string]DistributorPrimitivesDTO{userA: {PersonalVolume: 100, Status: "active", HasOrderInPeriod: true, ActiveProducts: []string{}}},
+		VolumeSources: []VolumeSourceDTO{},
+	})
+
+	driver, err := NewRankDriver(client, store, monthlyWindowPlan("2026-01-01", 2), provider)
+	require.NoError(t, err)
+
+	result, err := driver.EvaluatePeriod(ctx, time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	var sent EvaluateRanksRequest
+	require.NoError(t, json.Unmarshal(mock.lastParams, &sent))
+	assert.Equal(t, []string{"2026-05", "2026-04"}, sent.HistoryWindow) // DESC
+	require.NotNil(t, sent.History[userA]["2026-05"])
+	assert.Equal(t, uint16(3), *sent.History[userA]["2026-05"])
+
+	rows, err := store.GetByPeriod(ctx, "2026-06")
+	require.NoError(t, err)
+	require.Len(t, rows, 1) // persisted
+}
+
+func TestRankDriver_EvaluatePeriod_NoGatePlanSendsNoHistory(t *testing.T) {
+	ctx := context.Background()
+	userA := "00000000-0000-0000-0000-000000000001"
+
+	store := NewMemoryQualificationHistoryStore()
+	mock := &mockTransport{response: json.RawMessage(`{"ranks":{}}`)}
+	client := NewEngineClientWithTransport(mock)
+
+	provider := NewMemoryPeriodInputProvider()
+	provider.Set("2026-06", PeriodInputs{
+		Distributors:  map[string]DistributorPrimitivesDTO{userA: {PersonalVolume: 100, Status: "active", HasOrderInPeriod: true, ActiveProducts: []string{}}},
+		VolumeSources: []VolumeSourceDTO{},
+	})
+
+	driver, err := NewRankDriver(client, store, monthlyNoGatePlan("2026-01-01"), provider)
+	require.NoError(t, err)
+
+	_, err = driver.EvaluatePeriod(ctx, time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+
+	var sent EvaluateRanksRequest
+	require.NoError(t, json.Unmarshal(mock.lastParams, &sent))
+	assert.Empty(t, sent.HistoryWindow) // no time gate -> no axis
+	assert.Empty(t, sent.History)       // no history fetched
+
+	rows, err := store.GetByPeriod(ctx, "2026-06")
+	require.NoError(t, err)
+	assert.Empty(t, rows) // period persisted (empty result -> empty rows)
+}
+
+func TestRankDriver_EvaluatePeriod_UnknownPeriodSendsEmptyNotNull(t *testing.T) {
+	ctx := context.Background()
+
+	store := NewMemoryQualificationHistoryStore()
+	mock := &mockTransport{response: json.RawMessage(`{"ranks":{}}`)}
+	client := NewEngineClientWithTransport(mock)
+
+	// Provider has no entry for 2026-06, so InputsFor returns a zero PeriodInputs
+	// with nil Distributors and nil VolumeSources.
+	provider := NewMemoryPeriodInputProvider()
+
+	driver, err := NewRankDriver(client, store, monthlyNoGatePlan("2026-01-01"), provider)
+	require.NoError(t, err)
+
+	_, err = driver.EvaluatePeriod(ctx, time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+
+	// nil must normalize to empty {} / [], never null, or the Rust worker fails
+	// to deserialize (distributors/volume_sources have no serde default).
+	params := string(mock.lastParams)
+	assert.Contains(t, params, `"distributors":{}`)
+	assert.Contains(t, params, `"volume_sources":[]`)
+}
+
+func TestRankDriver_EvaluatePeriod_BadDistributorIDErrors(t *testing.T) {
+	ctx := context.Background()
+
+	store := NewMemoryQualificationHistoryStore()
+	mock := &mockTransport{response: json.RawMessage(`{"ranks":{}}`)}
+	client := NewEngineClientWithTransport(mock)
+
+	provider := NewMemoryPeriodInputProvider()
+	provider.Set("2026-06", PeriodInputs{
+		Distributors:  map[string]DistributorPrimitivesDTO{"nope": {}},
+		VolumeSources: []VolumeSourceDTO{},
+	})
+
+	driver, err := NewRankDriver(client, store, monthlyNoGatePlan("2026-01-01"), provider)
+	require.NoError(t, err)
+
+	_, err = driver.EvaluatePeriod(ctx, time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nope")
+
+	rows, err := store.GetByPeriod(ctx, "2026-06")
+	require.NoError(t, err)
+	assert.Empty(t, rows) // bad id errors before any persistence
 }

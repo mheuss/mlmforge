@@ -142,6 +142,26 @@ func (s *Sequence) PriorLabels(t time.Time, n int) []string {
 	return labels
 }
 
+// PeriodStartsInRange returns the start of each period from the one containing
+// from to the one containing to, inclusive, ascending. Empty if from is after to.
+func (s *Sequence) PeriodStartsInRange(from, to time.Time) []time.Time {
+	start := s.periodStart(from)
+	end := s.periodStart(to)
+	if start.After(end) {
+		return nil
+	}
+	var starts []time.Time
+	for cur := start; !cur.After(end); cur = s.advance(cur, 1) {
+		starts = append(starts, cur)
+	}
+	return starts
+}
+
+// IsBeforeStart reports whether t's period falls before the plan's start period.
+func (s *Sequence) IsBeforeStart(t time.Time) bool {
+	return s.periodStart(t).Before(s.periodStart(s.anchor))
+}
+
 // ParseLength maps a config length string to a Length.
 func ParseLength(s string) (Length, error) {
 	switch s {

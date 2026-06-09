@@ -363,6 +363,66 @@ func TestPriorLabels(t *testing.T) {
 	})
 }
 
+func TestPeriodStartsInRange(t *testing.T) {
+	t.Parallel()
+
+	month := &Sequence{length: Month, anchor: dateUTC(2026, time.January, 1)}
+
+	t.Run("multi-period range ascending", func(t *testing.T) {
+		t.Parallel()
+		got := month.PeriodStartsInRange(
+			dateUTC(2026, time.January, 10),
+			dateUTC(2026, time.March, 20),
+		)
+		want := []time.Time{
+			dateUTC(2026, time.January, 1),
+			dateUTC(2026, time.February, 1),
+			dateUTC(2026, time.March, 1),
+		}
+		assert.Equal(t, want, got)
+	})
+
+	t.Run("same period returns single start", func(t *testing.T) {
+		t.Parallel()
+		got := month.PeriodStartsInRange(
+			dateUTC(2026, time.January, 5),
+			dateUTC(2026, time.January, 25),
+		)
+		want := []time.Time{dateUTC(2026, time.January, 1)}
+		assert.Equal(t, want, got)
+	})
+
+	t.Run("inverted range returns nil", func(t *testing.T) {
+		t.Parallel()
+		got := month.PeriodStartsInRange(
+			dateUTC(2026, time.March, 1),
+			dateUTC(2026, time.January, 1),
+		)
+		assert.Nil(t, got)
+	})
+}
+
+func TestIsBeforeStart(t *testing.T) {
+	t.Parallel()
+
+	month := &Sequence{length: Month, anchor: dateUTC(2026, time.March, 1)}
+
+	t.Run("date before anchor period returns true", func(t *testing.T) {
+		t.Parallel()
+		assert.True(t, month.IsBeforeStart(dateUTC(2026, time.February, 15)))
+	})
+
+	t.Run("date after anchor period returns false", func(t *testing.T) {
+		t.Parallel()
+		assert.False(t, month.IsBeforeStart(dateUTC(2026, time.March, 10)))
+	})
+
+	t.Run("date within anchor period returns false", func(t *testing.T) {
+		t.Parallel()
+		assert.False(t, month.IsBeforeStart(dateUTC(2026, time.March, 1)))
+	})
+}
+
 func TestLabelDateOnly(t *testing.T) {
 	t.Parallel()
 

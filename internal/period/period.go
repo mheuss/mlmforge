@@ -127,6 +127,21 @@ func (s *Sequence) Label(t time.Time) string {
 	return "" // unreachable
 }
 
+// PriorLabels returns the labels of the n periods immediately before the period
+// containing t, most-recent-first (DESC). Empty when n <= 0. Pure date math:
+// labels for periods before the anchor are produced normally.
+func (s *Sequence) PriorLabels(t time.Time, n int) []string {
+	if n <= 0 {
+		return nil
+	}
+	start := s.periodStart(t)
+	labels := make([]string, 0, n)
+	for i := 1; i <= n; i++ {
+		labels = append(labels, s.Label(s.advance(start, -i)))
+	}
+	return labels
+}
+
 // ParseLength maps a config length string to a Length.
 func ParseLength(s string) (Length, error) {
 	switch s {

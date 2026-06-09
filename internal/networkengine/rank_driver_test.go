@@ -15,16 +15,21 @@ import (
 
 func TestDistributorIDs(t *testing.T) {
 	t.Run("two valid UUIDs parse to sorted slice", func(t *testing.T) {
+		// The interior-segment key (ffff in segment 3) sorts between the two
+		// trailing-byte keys, confirming full-string lexical order.
 		m := map[string]DistributorPrimitivesDTO{
 			"00000000-0000-0000-0000-000000000002": {},
+			"00000000-ffff-0000-0000-000000000000": {},
 			"00000000-0000-0000-0000-000000000001": {},
 		}
 		ids, err := distributorIDs(m)
 		require.NoError(t, err)
-		require.Len(t, ids, 2)
+		require.Len(t, ids, 3)
 		assert.True(t, ids[0].String() < ids[1].String(), "expected ascending order by string")
+		assert.True(t, ids[1].String() < ids[2].String(), "expected ascending order by string")
 		assert.Equal(t, "00000000-0000-0000-0000-000000000001", ids[0].String())
 		assert.Equal(t, "00000000-0000-0000-0000-000000000002", ids[1].String())
+		assert.Equal(t, "00000000-ffff-0000-0000-000000000000", ids[2].String())
 	})
 
 	t.Run("bad UUID key returns error naming the key", func(t *testing.T) {
@@ -243,6 +248,8 @@ func TestRankDriver_EvaluatePeriod_BadDistributorIDErrors(t *testing.T) {
 
 // countingTransport wraps mockTransport and counts evaluate_ranks calls, so a
 // backfill test can prove a same-period range evaluates exactly once.
+// It embeds mockTransport by value; always use via pointer (&countingTransport{})
+// so the pointer-receiver methods promote correctly.
 type countingTransport struct {
 	mockTransport
 	calls int
@@ -325,6 +332,7 @@ func TestRankDriver_Backfill_InvertedRangeErrors(t *testing.T) {
 
 	err = driver.Backfill(ctx, time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	require.Error(t, err)
+	assert.Contains(t, err.Error(), "empty backfill range")
 }
 
 func TestRankDriver_Backfill_PreStartErrors(t *testing.T) {

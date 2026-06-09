@@ -62,8 +62,9 @@ func (d *RankDriver) EvaluatePeriod(ctx context.Context, asOf time.Time) (*Evalu
 	if err != nil {
 		return nil, fmt.Errorf("rank driver: inputs for %s: %w", periodID, err)
 	}
-	// Normalize nil to empty: the Rust EvaluationInputs.distributors/volume_sources
-	// fields lack serde(default) and have no omitempty, so a JSON null fails to
+	// Normalize nil to empty: the Go EvaluateRanksRequest.Distributors/VolumeSources
+	// fields have no omitempty, so a nil map/slice marshals to JSON null; and the
+	// Rust EvaluationInputs fields lack serde(default), so that null fails to
 	// deserialize at the worker. Empty {} / [] are required.
 	if inputs.Distributors == nil {
 		inputs.Distributors = map[string]DistributorPrimitivesDTO{}
@@ -97,7 +98,9 @@ func (d *RankDriver) EvaluatePeriod(ctx context.Context, asOf time.Time) (*Evalu
 // Backfill evaluates each period from the one containing from to the one
 // containing to, oldest-first, with persistence on, so later periods read
 // earlier periods' freshly persisted rows. It is fail-stop: the first failing
-// period stops the run and is named in the error.
+// period stops the run and is named in the error. On failure, periods evaluated
+// before the failing one stay persisted; re-running re-evaluates and replaces
+// them (SaveResult is a full replacement), so partial progress is safe to retry.
 func (d *RankDriver) Backfill(ctx context.Context, from, to time.Time) error {
 	if err := d.guardAfterStart(from); err != nil {
 		return err

@@ -104,6 +104,29 @@ func (s *Sequence) advance(start time.Time, n int) time.Time {
 	return start // unreachable
 }
 
+// Label returns the period_id for the period containing t. Length-specific,
+// zero-padded, lexicographically sortable. Output-only: never parsed back.
+func (s *Sequence) Label(t time.Time) string {
+	start := s.periodStart(t)
+	switch s.length {
+	case Month:
+		return start.Format("2006-01")
+	case Quarter:
+		q := (int(start.Month())-1)/3 + 1
+		return fmt.Sprintf("%04d-Q%d", start.Year(), q)
+	case SemiMonth:
+		half := 1
+		if start.Day() == 16 {
+			half = 2
+		}
+		return fmt.Sprintf("%s-H%d", start.Format("2006-01"), half)
+	case Week:
+		isoYear, isoWeek := start.ISOWeek()
+		return fmt.Sprintf("%04d-W%02d", isoYear, isoWeek)
+	}
+	return "" // unreachable
+}
+
 // ParseLength maps a config length string to a Length.
 func ParseLength(s string) (Length, error) {
 	switch s {

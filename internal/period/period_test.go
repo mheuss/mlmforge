@@ -1,6 +1,8 @@
 package period
 
 import (
+	"fmt"
+	"sort"
 	"testing"
 	"time"
 
@@ -207,4 +209,133 @@ func TestAdvance(t *testing.T) {
 				"advance(%s, %d) = %s, want %s", tc.start, tc.n, got, tc.want)
 		})
 	}
+}
+
+func TestLabel(t *testing.T) {
+	t.Parallel()
+
+	month := &Sequence{length: Month, anchor: dateUTC(2026, time.January, 1)}
+	quarter := &Sequence{length: Quarter, anchor: dateUTC(2026, time.January, 1)}
+	semiMonth := &Sequence{length: SemiMonth, anchor: dateUTC(2026, time.January, 1)}
+	week := &Sequence{length: Week, anchor: dateUTC(2026, time.January, 7)}
+
+	// Compute the expected ISO week label for 2026-01-07 using ISOWeek.
+	wantISOYear, wantISOWeek := time.Date(2026, 1, 7, 0, 0, 0, 0, time.UTC).ISOWeek()
+
+	cases := []struct {
+		name string
+		seq  *Sequence
+		in   time.Time
+		want string
+	}{
+		// Month
+		{name: "month mid", seq: month, in: dateUTC(2026, time.May, 10), want: "2026-05"},
+
+		// Quarter
+		{name: "quarter Q2", seq: quarter, in: dateUTC(2026, time.May, 10), want: "2026-Q2"},
+		{name: "quarter Q1", seq: quarter, in: dateUTC(2026, time.January, 1), want: "2026-Q1"},
+		{name: "quarter Q4", seq: quarter, in: dateUTC(2026, time.December, 31), want: "2026-Q4"},
+
+		// SemiMonth: H1 is days 1-15, H2 is days 16-end
+		{name: "semimonth H1", seq: semiMonth, in: dateUTC(2026, time.May, 10), want: "2026-05-H1"},
+		{name: "semimonth H2 at boundary", seq: semiMonth, in: dateUTC(2026, time.May, 16), want: "2026-05-H2"},
+		{name: "semimonth H2 mid", seq: semiMonth, in: dateUTC(2026, time.May, 20), want: "2026-05-H2"},
+
+		// Week: ISO week-year format
+		{
+			name: "week on anchor",
+			seq:  week,
+			in:   dateUTC(2026, time.January, 7),
+			want: fmt.Sprintf("%04d-W%02d", wantISOYear, wantISOWeek),
+		},
+		// 2025-12-31 falls in the period starting 2025-12-31; that date's
+		// ISOWeek() returns year 2026 (it is the Wednesday of 2026-W01).
+		// A regression to start.Year() would produce "2025-W01" instead.
+		{
+			name: "week ISO year boundary",
+			seq:  week,
+			in:   dateUTC(2025, time.December, 31),
+			want: "2026-W01",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := tc.seq.Label(tc.in)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestLabelSortable(t *testing.T) {
+	t.Parallel()
+
+	// Helper: build n consecutive labels starting from the period containing start.
+	labels := func(seq *Sequence, start time.Time, n int) []string {
+		s := seq.periodStart(start)
+		out := make([]string, n)
+		for i := range out {
+			out[i] = seq.Label(seq.advance(s, i))
+		}
+		return out
+	}
+
+	assertSorted := func(t *testing.T, got []string) {
+		t.Helper()
+		cp := make([]string, len(got))
+		copy(cp, got)
+		sort.Strings(cp)
+		assert.Equal(t, got, cp, "labels are not lexicographically sortable in chronological order")
+	}
+
+	t.Run("month across year boundary", func(t *testing.T) {
+		t.Parallel()
+		seq := &Sequence{length: Month, anchor: dateUTC(2025, time.December, 1)}
+		got := labels(seq, dateUTC(2025, time.December, 1), 14)
+		assertSorted(t, got)
+	})
+
+	t.Run("week across year boundary", func(t *testing.T) {
+		t.Parallel()
+		seq := &Sequence{length: Week, anchor: dateUTC(2025, time.December, 29)}
+		got := labels(seq, dateUTC(2025, time.December, 29), 8)
+		assertSorted(t, got)
+	})
+
+	t.Run("quarter across year boundary", func(t *testing.T) {
+		t.Parallel()
+		seq := &Sequence{length: Quarter, anchor: dateUTC(2025, time.October, 1)}
+		got := labels(seq, dateUTC(2025, time.October, 1), 6)
+		assertSorted(t, got)
+	})
+
+	t.Run("semimonth across month and year boundary", func(t *testing.T) {
+		t.Parallel()
+		seq := &Sequence{length: SemiMonth, anchor: dateUTC(2025, time.December, 1)}
+		got := labels(seq, dateUTC(2025, time.December, 1), 6)
+		assertSorted(t, got)
+	})
+}
+
+func TestLabelDateOnly(t *testing.T) {
+	t.Parallel()
+
+	semiMonth := &Sequence{length: SemiMonth, anchor: dateUTC(2026, time.January, 1)}
+
+	// 23:30 on May 15 in UTC-5 → UTC is May 16 (which would be H2), but the
+	// caller's civil date is still May 15, so the label must be H1.
+	estMinus5 := time.FixedZone("EST", -5*60*60)
+	in1 := time.Date(2026, time.May, 15, 23, 30, 0, 0, estMinus5)
+	assert.Equal(t, "2026-05-H1", semiMonth.Label(in1),
+		"label must use caller's civil date (May 15 in EST), not UTC-shifted May 16")
+
+	// Two instants with the same civil date but different UTC dates must yield the
+	// same label. inA is May 10 23:00 at -05:00 (UTC: May 11); inB is May 10 01:00
+	// at -08:00 (UTC: May 10). Both must map to "2026-05-H1".
+	pstMinus8 := time.FixedZone("PST", -8*60*60)
+	inA := time.Date(2026, time.May, 10, 23, 0, 0, 0, estMinus5) // civil May 10, UTC May 11
+	inB := time.Date(2026, time.May, 10, 1, 0, 0, 0, pstMinus8)  // civil May 10, UTC May 10
+	assert.Equal(t, semiMonth.Label(inA), semiMonth.Label(inB),
+		"same civil date in different locations must yield the same label")
 }

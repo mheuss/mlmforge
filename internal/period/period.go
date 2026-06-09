@@ -48,6 +48,31 @@ func dateOnly(t time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 }
 
+// periodStart returns the start date (UTC midnight) of the period containing t.
+func (s *Sequence) periodStart(t time.Time) time.Time {
+	d := dateOnly(t)
+	switch s.length {
+	case Month:
+		return time.Date(d.Year(), d.Month(), 1, 0, 0, 0, 0, time.UTC)
+	case Quarter:
+		startMonth := time.Month((int(d.Month())-1)/3*3 + 1) // 1, 4, 7, or 10
+		return time.Date(d.Year(), startMonth, 1, 0, 0, 0, 0, time.UTC)
+	case SemiMonth:
+		if d.Day() <= 15 {
+			return time.Date(d.Year(), d.Month(), 1, 0, 0, 0, 0, time.UTC)
+		}
+		return time.Date(d.Year(), d.Month(), 16, 0, 0, 0, 0, time.UTC)
+	case Week:
+		days := int(d.Sub(s.anchor) / (24 * time.Hour)) // exact whole days in UTC
+		bucket := days / 7
+		if days < 0 && days%7 != 0 {
+			bucket-- // floor toward negative infinity for pre-anchor dates
+		}
+		return s.anchor.AddDate(0, 0, bucket*7)
+	}
+	return d // unreachable: Length is validated in NewSequence
+}
+
 // ParseLength maps a config length string to a Length.
 func ParseLength(s string) (Length, error) {
 	switch s {

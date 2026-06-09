@@ -128,7 +128,7 @@ func (s *Sequence) Label(t time.Time) string {
 }
 
 // PriorLabels returns the labels of the n periods immediately before the period
-// containing t, most-recent-first (DESC). Empty when n <= 0. Pure date math:
+// containing t, most-recent-first (DESC). Returns nil when n <= 0. Pure date math:
 // labels for periods before the anchor are produced normally.
 func (s *Sequence) PriorLabels(t time.Time, n int) []string {
 	if n <= 0 {
@@ -143,7 +143,7 @@ func (s *Sequence) PriorLabels(t time.Time, n int) []string {
 }
 
 // PeriodStartsInRange returns the start of each period from the one containing
-// from to the one containing to, inclusive, ascending. Empty if from is after to.
+// from to the one containing to, inclusive, ascending. nil if from is after to.
 func (s *Sequence) PeriodStartsInRange(from, to time.Time) []time.Time {
 	start := s.periodStart(from)
 	end := s.periodStart(to)

@@ -240,3 +240,190 @@ func TestRankDriver_EvaluatePeriod_BadDistributorIDErrors(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, rows) // bad id errors before any persistence
 }
+
+// countingTransport wraps mockTransport and counts evaluate_ranks calls, so a
+// backfill test can prove a same-period range evaluates exactly once.
+type countingTransport struct {
+	mockTransport
+	calls int
+}
+
+func (c *countingTransport) Call(ctx context.Context, op string, params json.RawMessage) (json.RawMessage, error) {
+	if op == "evaluate_ranks" {
+		c.calls++
+	}
+	return c.mockTransport.Call(ctx, op, params)
+}
+
+// failOnPeriodStore wraps a QualificationHistoryStore and fails SaveResult for
+// one period, so a backfill test can prove fail-stop on a persistence failure.
+type failOnPeriodStore struct {
+	QualificationHistoryStore
+	failPeriod string
+}
+
+func (s *failOnPeriodStore) SaveResult(ctx context.Context, periodID string, entries []QualificationHistoryEntry) error {
+	if periodID == s.failPeriod {
+		return fmt.Errorf("boom")
+	}
+	return s.QualificationHistoryStore.SaveResult(ctx, periodID, entries)
+}
+
+// qualifiedDirectorInputs builds a single active distributor whose engine
+// response (from the shared mock) qualifies as Director (ordinal 3).
+func qualifiedDirectorInputs(userID string) PeriodInputs {
+	return PeriodInputs{
+		Distributors:  map[string]DistributorPrimitivesDTO{userID: {PersonalVolume: 100, Status: "active", HasOrderInPeriod: true, ActiveProducts: []string{}}},
+		VolumeSources: []VolumeSourceDTO{},
+	}
+}
+
+func TestRankDriver_Backfill_Accumulates(t *testing.T) {
+	ctx := context.Background()
+	userA := "00000000-0000-0000-0000-000000000001"
+
+	store := NewMemoryQualificationHistoryStore()
+	mock := &mockTransport{response: json.RawMessage(fmt.Sprintf(`{"ranks":{"%s":{"kind":"qualified","rank":"Director","ordinal":3}}}`, userA))}
+	client := NewEngineClientWithTransport(mock)
+
+	provider := NewMemoryPeriodInputProvider()
+	provider.Set("2026-01", qualifiedDirectorInputs(userA))
+	provider.Set("2026-02", qualifiedDirectorInputs(userA))
+	provider.Set("2026-03", qualifiedDirectorInputs(userA))
+
+	driver, err := NewRankDriver(client, store, monthlyWindowPlan("2026-01-01", 2), provider)
+	require.NoError(t, err)
+
+	err = driver.Backfill(ctx, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 3, 31, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+
+	// lastParams holds the final (2026-03) request. Its axis is the two prior
+	// periods, and both appear in History because the earlier loop iterations
+	// persisted them before 2026-03 was evaluated.
+	var sent EvaluateRanksRequest
+	require.NoError(t, json.Unmarshal(mock.lastParams, &sent))
+	assert.Equal(t, []string{"2026-02", "2026-01"}, sent.HistoryWindow) // DESC
+	require.NotNil(t, sent.History[userA]["2026-02"])
+	require.NotNil(t, sent.History[userA]["2026-01"])
+
+	for _, periodID := range []string{"2026-01", "2026-02", "2026-03"} {
+		rows, err := store.GetByPeriod(ctx, periodID)
+		require.NoError(t, err)
+		require.Len(t, rows, 1, "expected persisted row for %s", periodID)
+	}
+}
+
+func TestRankDriver_Backfill_InvertedRangeErrors(t *testing.T) {
+	ctx := context.Background()
+
+	client := NewEngineClientWithTransport(&mockTransport{response: json.RawMessage(`{"ranks":{}}`)})
+	store := NewMemoryQualificationHistoryStore()
+	provider := NewMemoryPeriodInputProvider()
+
+	driver, err := NewRankDriver(client, store, monthlyWindowPlan("2026-01-01", 2), provider)
+	require.NoError(t, err)
+
+	err = driver.Backfill(ctx, time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	require.Error(t, err)
+}
+
+func TestRankDriver_Backfill_PreStartErrors(t *testing.T) {
+	ctx := context.Background()
+
+	client := NewEngineClientWithTransport(&mockTransport{response: json.RawMessage(`{"ranks":{}}`)})
+	store := NewMemoryQualificationHistoryStore()
+	provider := NewMemoryPeriodInputProvider()
+
+	driver, err := NewRankDriver(client, store, monthlyWindowPlan("2026-03-01", 2), provider)
+	require.NoError(t, err)
+
+	err = driver.Backfill(ctx, time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "before the plan start")
+}
+
+func TestRankDriver_Backfill_FailStop(t *testing.T) {
+	ctx := context.Background()
+	userA := "00000000-0000-0000-0000-000000000001"
+
+	store := NewMemoryQualificationHistoryStore()
+	mock := &mockTransport{response: json.RawMessage(fmt.Sprintf(`{"ranks":{"%s":{"kind":"qualified","rank":"Director","ordinal":3}}}`, userA))}
+	client := NewEngineClientWithTransport(mock)
+
+	provider := NewMemoryPeriodInputProvider()
+	provider.Set("2026-01", qualifiedDirectorInputs(userA))
+	// 2026-02 has a bad-UUID distributor key, so it fails before any engine call.
+	provider.Set("2026-02", PeriodInputs{
+		Distributors:  map[string]DistributorPrimitivesDTO{"nope": {}},
+		VolumeSources: []VolumeSourceDTO{},
+	})
+	provider.Set("2026-03", qualifiedDirectorInputs(userA))
+
+	driver, err := NewRankDriver(client, store, monthlyWindowPlan("2026-01-01", 2), provider)
+	require.NoError(t, err)
+
+	err = driver.Backfill(ctx, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 3, 31, 0, 0, 0, 0, time.UTC))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "2026-02")
+
+	rows, err := store.GetByPeriod(ctx, "2026-03")
+	require.NoError(t, err)
+	assert.Empty(t, rows) // stopped at 2026-02; never evaluated 2026-03
+}
+
+func TestRankDriver_Backfill_SamePeriodEvaluatesOnce(t *testing.T) {
+	ctx := context.Background()
+	userA := "00000000-0000-0000-0000-000000000001"
+
+	store := NewMemoryQualificationHistoryStore()
+	transport := &countingTransport{mockTransport: mockTransport{response: json.RawMessage(fmt.Sprintf(`{"ranks":{"%s":{"kind":"qualified","rank":"Director","ordinal":3}}}`, userA))}}
+	client := NewEngineClientWithTransport(transport)
+
+	provider := NewMemoryPeriodInputProvider()
+	provider.Set("2026-01", qualifiedDirectorInputs(userA))
+
+	driver, err := NewRankDriver(client, store, monthlyWindowPlan("2026-01-01", 2), provider)
+	require.NoError(t, err)
+
+	// from and to land in the same month, so the range is exactly one period.
+	err = driver.Backfill(ctx, time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC), time.Date(2026, 1, 25, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, transport.calls) // evaluated exactly once (design BR4)
+
+	rows, err := store.GetByPeriod(ctx, "2026-01")
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+}
+
+func TestRankDriver_Backfill_FailStopOnStoreWrite(t *testing.T) {
+	ctx := context.Background()
+	userA := "00000000-0000-0000-0000-000000000001"
+
+	store := &failOnPeriodStore{QualificationHistoryStore: NewMemoryQualificationHistoryStore(), failPeriod: "2026-02"}
+	mock := &mockTransport{response: json.RawMessage(fmt.Sprintf(`{"ranks":{"%s":{"kind":"qualified","rank":"Director","ordinal":3}}}`, userA))}
+	client := NewEngineClientWithTransport(mock)
+
+	provider := NewMemoryPeriodInputProvider()
+	provider.Set("2026-01", qualifiedDirectorInputs(userA))
+	provider.Set("2026-02", qualifiedDirectorInputs(userA))
+	provider.Set("2026-03", qualifiedDirectorInputs(userA))
+
+	driver, err := NewRankDriver(client, store, monthlyWindowPlan("2026-01-01", 2), provider)
+	require.NoError(t, err)
+
+	// The engine call for 2026-02 succeeds but its persistence fails, so
+	// EvaluateRanks's partial-success contract surfaces an error and the run
+	// fail-stops before evaluating 2026-03 (design NFR3).
+	err = driver.Backfill(ctx, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 3, 31, 0, 0, 0, 0, time.UTC))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "2026-02")
+
+	rows, err := store.GetByPeriod(ctx, "2026-01")
+	require.NoError(t, err)
+	require.Len(t, rows, 1) // 2026-01 persisted before the failure
+
+	rows, err = store.GetByPeriod(ctx, "2026-03")
+	require.NoError(t, err)
+	assert.Empty(t, rows) // never reached 2026-03
+}

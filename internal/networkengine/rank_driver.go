@@ -94,6 +94,26 @@ func (d *RankDriver) EvaluatePeriod(ctx context.Context, asOf time.Time) (*Evalu
 	return result, nil
 }
 
+// Backfill evaluates each period from the one containing from to the one
+// containing to, oldest-first, with persistence on, so later periods read
+// earlier periods' freshly persisted rows. It is fail-stop: the first failing
+// period stops the run and is named in the error.
+func (d *RankDriver) Backfill(ctx context.Context, from, to time.Time) error {
+	if err := d.guardAfterStart(from); err != nil {
+		return err
+	}
+	starts := d.seq.PeriodStartsInRange(from, to)
+	if len(starts) == 0 {
+		return fmt.Errorf("rank driver: empty backfill range from=%s to=%s", from.Format("2006-01-02"), to.Format("2006-01-02"))
+	}
+	for _, asOf := range starts {
+		if _, err := d.EvaluatePeriod(ctx, asOf); err != nil {
+			return fmt.Errorf("rank driver: backfill stopped at %s: %w", d.seq.Label(asOf), err)
+		}
+	}
+	return nil
+}
+
 // distributorIDs parses the request's distributor map keys into sorted UUIDs.
 // A non-UUID key is a loud error, named, before any engine call.
 func distributorIDs(m map[string]DistributorPrimitivesDTO) ([]uuid.UUID, error) {

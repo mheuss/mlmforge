@@ -72,6 +72,14 @@ func (d *RankDriver) EvaluatePeriod(ctx context.Context, asOf time.Time) (*Evalu
 	if inputs.VolumeSources == nil {
 		inputs.VolumeSources = []VolumeSourceDTO{}
 	}
+	// Same hazard one level down: a nil ActiveProducts on any distributor marshals
+	// to "active_products":null, which the Rust field (no serde default) rejects.
+	for k, dp := range inputs.Distributors {
+		if dp.ActiveProducts == nil {
+			dp.ActiveProducts = []string{}
+			inputs.Distributors[k] = dp
+		}
+	}
 	depth := config.MaxHistoryDepth(d.plan)
 	axis := d.seq.PriorLabels(asOf, depth) // DESC; nil when depth == 0
 	ids, err := distributorIDs(inputs.Distributors)
@@ -118,7 +126,9 @@ func (d *RankDriver) Backfill(ctx context.Context, from, to time.Time) error {
 }
 
 // distributorIDs parses the request's distributor map keys into sorted UUIDs.
-// A non-UUID key is a loud error, named, before any engine call.
+// A non-UUID key is a loud error, named, before any engine call. The sort is for
+// determinism only (e.g. stable logging); BuildHistoryWindow consumes the slice
+// as an unordered set, so order does not affect output.
 func distributorIDs(m map[string]DistributorPrimitivesDTO) ([]uuid.UUID, error) {
 	ids := make([]uuid.UUID, 0, len(m))
 	for k := range m {

@@ -192,6 +192,14 @@ func TestRankDriver_EvaluatePeriod_NoGatePlanSendsNoHistory(t *testing.T) {
 	assert.Empty(t, sent.HistoryWindow) // no time gate -> no axis
 	assert.Empty(t, sent.History)       // no history fetched
 
+	// Raw-byte guard: Empty() above collapses omitted/null/[], so also assert the
+	// wire omits both history fields rather than sending an unparseable null.
+	// "history" is a prefix of "history_window", so this one check proves neither
+	// the axis nor the history map is serialized.
+	params := string(mock.lastParams)
+	assert.NotContains(t, params, "history")
+	assert.NotContains(t, params, "null")
+
 	rows, err := store.GetByPeriod(ctx, "2026-06")
 	require.NoError(t, err)
 	assert.Empty(t, rows) // period persisted (empty result -> empty rows)

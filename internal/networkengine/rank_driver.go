@@ -62,10 +62,11 @@ func (d *RankDriver) EvaluatePeriod(ctx context.Context, asOf time.Time) (*Evalu
 	if err != nil {
 		return nil, fmt.Errorf("rank driver: inputs for %s: %w", periodID, err)
 	}
-	// Normalize nil to empty: the Go EvaluateRanksRequest fields have no omitempty,
-	// so a nil map/slice marshals to JSON null, and the Rust EvaluationInputs fields
-	// lack serde(default), so that null fails to deserialize at the worker. Empty
-	// {} / [] are required.
+	// Normalize nil to empty: EvaluateRanksRequest.Distributors and .VolumeSources
+	// have no omitempty, so a nil map/slice marshals to JSON null, and the matching
+	// Rust EvaluationInputs fields lack serde(default), so that null fails to
+	// deserialize at the worker. Empty {} / [] are required. HistoryWindow and
+	// History do have omitempty, so they are omitted when empty, not sent as null.
 	if inputs.VolumeSources == nil {
 		inputs.VolumeSources = []VolumeSourceDTO{}
 	}

@@ -63,7 +63,10 @@ func (s *Sequence) periodStart(t time.Time) time.Time {
 		}
 		return time.Date(d.Year(), d.Month(), 16, 0, 0, 0, 0, time.UTC)
 	case Week:
-		days := int(d.Sub(s.anchor) / (24 * time.Hour)) // exact whole days in UTC
+		// Whole days from the anchor in UTC. d.Sub(s.anchor) is an int64-ns
+		// Duration, so the day count stays exact only within ~292 years of the
+		// anchor. It overflows past that, which no real plan reaches.
+		days := int(d.Sub(s.anchor) / (24 * time.Hour))
 		bucket := days / 7
 		if days < 0 && days%7 != 0 {
 			bucket-- // floor toward negative infinity for pre-anchor dates

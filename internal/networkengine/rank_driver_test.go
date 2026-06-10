@@ -335,6 +335,23 @@ func TestRankDriver_Backfill_InvertedRangeErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "empty backfill range")
 }
 
+func TestRankDriver_Backfill_SamePeriodInvertedRangeErrors(t *testing.T) {
+	ctx := context.Background()
+
+	client := NewEngineClientWithTransport(&mockTransport{response: json.RawMessage(`{"ranks":{}}`)})
+	store := NewMemoryQualificationHistoryStore()
+	provider := NewMemoryPeriodInputProvider()
+
+	driver, err := NewRankDriver(client, store, monthlyWindowPlan("2026-01-01", 2), provider)
+	require.NoError(t, err)
+
+	// from and to land in the same month, but from is the later civil date. The
+	// inverted range must be rejected, not silently evaluated as a single period.
+	err = driver.Backfill(ctx, time.Date(2026, 1, 25, 0, 0, 0, 0, time.UTC), time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "empty backfill range")
+}
+
 func TestRankDriver_Backfill_PreStartErrors(t *testing.T) {
 	ctx := context.Background()
 

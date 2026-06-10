@@ -143,13 +143,16 @@ func (s *Sequence) PriorLabels(t time.Time, n int) []string {
 }
 
 // PeriodStartsInRange returns the start of each period from the one containing
-// from to the one containing to, inclusive, ascending. nil if from is after to.
+// from to the one containing to, inclusive, ascending. Returns nil when from's
+// civil date is after to's, so an inverted range within a single period is nil
+// too (not a one-element slice). Compares civil dates, not period starts, which
+// would collapse a same-period inversion and miss it.
 func (s *Sequence) PeriodStartsInRange(from, to time.Time) []time.Time {
-	start := s.periodStart(from)
-	end := s.periodStart(to)
-	if start.After(end) {
+	if dateOnly(from).After(dateOnly(to)) {
 		return nil
 	}
+	start := s.periodStart(from)
+	end := s.periodStart(to)
 	var starts []time.Time
 	for cur := start; !cur.After(end); cur = s.advance(cur, 1) {
 		starts = append(starts, cur)

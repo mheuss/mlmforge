@@ -400,6 +400,18 @@ func TestPeriodStartsInRange(t *testing.T) {
 		)
 		assert.Nil(t, got)
 	})
+
+	t.Run("inverted range within a single period returns nil", func(t *testing.T) {
+		t.Parallel()
+		// from and to fall in the same month, so both period starts collapse to
+		// 2026-01-01. A period-start comparison would miss the inversion and
+		// return one element. Civil-date order is what rejects it.
+		got := month.PeriodStartsInRange(
+			dateUTC(2026, time.January, 25),
+			dateUTC(2026, time.January, 5),
+		)
+		assert.Nil(t, got)
+	})
 }
 
 func TestIsBeforeStart(t *testing.T) {

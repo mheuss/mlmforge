@@ -44,7 +44,7 @@ func NewRankDriver(
 // guardAfterStart rejects evaluation of a period before the plan begins (BR9).
 func (d *RankDriver) guardAfterStart(asOf time.Time) error {
 	if d.seq.IsBeforeStart(asOf) {
-		return fmt.Errorf("rank driver: %s is before the plan start period", asOf.Format("2006-01-02"))
+		return fmt.Errorf("rank driver: %s is before the plan start period", d.seq.Label(asOf))
 	}
 	return nil
 }
@@ -62,24 +62,25 @@ func (d *RankDriver) EvaluatePeriod(ctx context.Context, asOf time.Time) (*Evalu
 	if err != nil {
 		return nil, fmt.Errorf("rank driver: inputs for %s: %w", periodID, err)
 	}
-	// Normalize nil to empty: the Go EvaluateRanksRequest.Distributors/VolumeSources
-	// fields have no omitempty, so a nil map/slice marshals to JSON null; and the
-	// Rust EvaluationInputs fields lack serde(default), so that null fails to
-	// deserialize at the worker. Empty {} / [] are required.
-	if inputs.Distributors == nil {
-		inputs.Distributors = map[string]DistributorPrimitivesDTO{}
-	}
+	// Normalize nil to empty: the Go EvaluateRanksRequest fields have no omitempty,
+	// so a nil map/slice marshals to JSON null, and the Rust EvaluationInputs fields
+	// lack serde(default), so that null fails to deserialize at the worker. Empty
+	// {} / [] are required.
 	if inputs.VolumeSources == nil {
 		inputs.VolumeSources = []VolumeSourceDTO{}
 	}
-	// Same hazard one level down: a nil ActiveProducts on any distributor marshals
-	// to "active_products":null, which the Rust field (no serde default) rejects.
+	// Copy distributors into a fresh map so the provider's stored inputs are never
+	// mutated, normalizing each entry's nil ActiveProducts to [] (same null hazard
+	// one level down: the Rust active_products field has no serde default either).
+	// A nil source map yields an empty {} here too.
+	distributors := make(map[string]DistributorPrimitivesDTO, len(inputs.Distributors))
 	for k, dp := range inputs.Distributors {
 		if dp.ActiveProducts == nil {
 			dp.ActiveProducts = []string{}
-			inputs.Distributors[k] = dp
 		}
+		distributors[k] = dp
 	}
+	inputs.Distributors = distributors
 	depth := config.MaxHistoryDepth(d.plan)
 	axis := d.seq.PriorLabels(asOf, depth) // DESC; nil when depth == 0
 	ids, err := distributorIDs(inputs.Distributors)

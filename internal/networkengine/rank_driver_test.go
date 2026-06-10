@@ -258,6 +258,33 @@ func TestRankDriver_EvaluatePeriod_NilActiveProductsSendsEmptyNotNull(t *testing
 	assert.NotContains(t, params, `"active_products":null`)
 }
 
+func TestRankDriver_EvaluatePeriod_DoesNotMutateProviderInputs(t *testing.T) {
+	ctx := context.Background()
+	userA := "00000000-0000-0000-0000-000000000001"
+
+	store := NewMemoryQualificationHistoryStore()
+	mock := &mockTransport{response: json.RawMessage(`{"ranks":{}}`)}
+	client := NewEngineClientWithTransport(mock)
+
+	provider := NewMemoryPeriodInputProvider()
+	provider.Set("2026-06", PeriodInputs{
+		Distributors:  map[string]DistributorPrimitivesDTO{userA: {PersonalVolume: 100, Status: "active", HasOrderInPeriod: true}},
+		VolumeSources: []VolumeSourceDTO{},
+	})
+
+	driver, err := NewRankDriver(client, store, monthlyNoGatePlan("2026-01-01"), provider)
+	require.NoError(t, err)
+
+	_, err = driver.EvaluatePeriod(ctx, time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+
+	// The driver normalizes a copy, not the provider's stored map. Re-fetch and
+	// confirm the stored distributor's ActiveProducts is still nil (untouched).
+	stored, err := provider.InputsFor(ctx, "2026-06")
+	require.NoError(t, err)
+	assert.Nil(t, stored.Distributors[userA].ActiveProducts, "driver must not mutate provider-owned inputs")
+}
+
 func TestRankDriver_EvaluatePeriod_BadDistributorIDErrors(t *testing.T) {
 	ctx := context.Background()
 

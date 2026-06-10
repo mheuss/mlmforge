@@ -198,7 +198,7 @@ func TestRankDriver_EvaluatePeriod_NoGatePlanSendsNoHistory(t *testing.T) {
 	// the axis nor the history map is serialized.
 	params := string(mock.lastParams)
 	assert.NotContains(t, params, "history")
-	assert.NotContains(t, params, "null")
+	assert.NotContains(t, params, ":null") // no field serialized as null
 
 	rows, err := store.GetByPeriod(ctx, "2026-06")
 	require.NoError(t, err)
@@ -227,6 +227,35 @@ func TestRankDriver_EvaluatePeriod_UnknownPeriodSendsEmptyNotNull(t *testing.T) 
 	params := string(mock.lastParams)
 	assert.Contains(t, params, `"distributors":{}`)
 	assert.Contains(t, params, `"volume_sources":[]`)
+}
+
+func TestRankDriver_EvaluatePeriod_NilActiveProductsSendsEmptyNotNull(t *testing.T) {
+	ctx := context.Background()
+	userA := "00000000-0000-0000-0000-000000000001"
+
+	store := NewMemoryQualificationHistoryStore()
+	mock := &mockTransport{response: json.RawMessage(`{"ranks":{}}`)}
+	client := NewEngineClientWithTransport(mock)
+
+	// Distributor with a nil ActiveProducts slice (the field is omitted). Without
+	// normalization it marshals to "active_products":null, which the Rust worker
+	// rejects (the field has no serde default) -- the same hazard as a nil
+	// distributors map, one level down.
+	provider := NewMemoryPeriodInputProvider()
+	provider.Set("2026-06", PeriodInputs{
+		Distributors:  map[string]DistributorPrimitivesDTO{userA: {PersonalVolume: 100, Status: "active", HasOrderInPeriod: true}},
+		VolumeSources: []VolumeSourceDTO{},
+	})
+
+	driver, err := NewRankDriver(client, store, monthlyNoGatePlan("2026-01-01"), provider)
+	require.NoError(t, err)
+
+	_, err = driver.EvaluatePeriod(ctx, time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+
+	params := string(mock.lastParams)
+	assert.Contains(t, params, `"active_products":[]`)
+	assert.NotContains(t, params, `"active_products":null`)
 }
 
 func TestRankDriver_EvaluatePeriod_BadDistributorIDErrors(t *testing.T) {

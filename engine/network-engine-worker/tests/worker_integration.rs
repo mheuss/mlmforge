@@ -2704,19 +2704,25 @@ fn calculate_matrix_pays_upline() {
     );
     assert_eq!(parsed["id"], "calc-m");
     let earnings = parsed["result"].as_array().unwrap();
-    assert!(
-        !earnings.is_empty(),
-        "expected non-empty matrix earnings, got: {}",
+    // Volume at child (100 CV) pays only its upline, root, at level 1:
+    // 100 * 0.40 (broad_pct) * 1.0 (multiplier) * 0.05 (rate) = 2.0.
+    assert_eq!(
+        earnings.len(),
+        1,
+        "expected exactly 1 matrix earning, got: {}",
         resp
     );
-    // Root is child's upline, so it must earn from child's volume.
+    let root_earning = earnings
+        .iter()
+        .find(|e| e["earner_id"].as_str().unwrap() == ROOT)
+        .expect("root should have earned");
+    assert_eq!(root_earning["level"].as_u64().unwrap(), 1);
+    assert_eq!(root_earning["source_id"].as_str().unwrap(), CHILD);
+    let root_dollar = root_earning["dollar_amount"].as_f64().unwrap();
     assert!(
-        earnings
-            .iter()
-            .any(|e| e["earner_id"].as_str() == Some(ROOT)),
-        "expected root {} to earn, got: {}",
-        ROOT,
-        resp
+        (root_dollar - 2.0).abs() < 1e-10,
+        "root dollar_amount should be 2.0, got {}",
+        root_dollar
     );
 
     drop(worker.stdin.take());

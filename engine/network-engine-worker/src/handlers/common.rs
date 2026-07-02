@@ -128,6 +128,18 @@ pub(crate) fn require_plan<'a>(
         .ok_or_else(|| Response::error(request_id.to_string(), "NO_PLAN", "no plan loaded"))
 }
 
+/// Returns the wire name of a tree instance's structure type. Used to phrase
+/// tree-type-mismatch errors as expected-vs-actual.
+pub(crate) fn tree_type_name(tree: &TreeInstance) -> &'static str {
+    match tree {
+        TreeInstance::Unilevel(_) => "unilevel",
+        TreeInstance::Binary(_) => "binary",
+        TreeInstance::Matrix(_) => "matrix",
+        TreeInstance::BoardPlan(_) => "board plan",
+        TreeInstance::Streamline(_) => "streamline",
+    }
+}
+
 pub(crate) fn require_unilevel_tree<'a>(
     state: &'a WorkerState,
     name: &str,
@@ -135,10 +147,14 @@ pub(crate) fn require_unilevel_tree<'a>(
 ) -> Result<&'a UnilevelTree, Response> {
     match state.trees.get(name) {
         Some(TreeInstance::Unilevel(t)) => Ok(t),
-        Some(_) => Err(Response::error(
+        Some(other) => Err(Response::error(
             request_id.to_string(),
             "INVALID_PARAMS",
-            format!("structure '{}' is not a unilevel tree", name),
+            format!(
+                "structure '{}' is a {} tree, not a unilevel tree",
+                name,
+                tree_type_name(other)
+            ),
         )),
         None => Err(Response::error(
             request_id.to_string(),
@@ -155,10 +171,14 @@ pub(crate) fn require_binary_tree<'a>(
 ) -> Result<&'a BinaryTree, Response> {
     match state.trees.get(name) {
         Some(TreeInstance::Binary(t)) => Ok(t),
-        Some(_) => Err(Response::error(
+        Some(other) => Err(Response::error(
             request_id.to_string(),
             "INVALID_PARAMS",
-            format!("structure '{}' is not a binary tree", name),
+            format!(
+                "structure '{}' is a {} tree, not a binary tree",
+                name,
+                tree_type_name(other)
+            ),
         )),
         None => Err(Response::error(
             request_id.to_string(),

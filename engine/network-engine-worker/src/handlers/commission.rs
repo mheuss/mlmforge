@@ -64,7 +64,7 @@ fn find_stairstep_structure<'a>(
     name: &str,
 ) -> Option<&'a StairstepStructureConfig> {
     plan.structures.iter().find_map(|s| match s {
-        StructureConfig::Stairstep(s) if s.name == name => Some(s),
+        StructureConfig::Stairstep(st) if st.name == name => Some(st),
         _ => None,
     })
 }

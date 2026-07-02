@@ -2,11 +2,12 @@ use std::collections::HashMap;
 
 use network_engine::commission::{
     BinaryCommissionEarning, DistributorSnapshot, LegVolumes, VolumeSource,
-    calculate_binary_pairing, calculate_generation, calculate_matrix, calculate_unilevel,
+    calculate_binary_pairing, calculate_generation, calculate_matrix, calculate_stairstep,
+    calculate_unilevel,
 };
 use network_engine::config::{
     BinaryStructureConfig, CompensationPlan, GenerationStructureConfig, MatrixStructureConfig,
-    StructureConfig, UnilevelStructureConfig,
+    StairstepStructureConfig, StructureConfig, UnilevelStructureConfig,
 };
 use uuid::Uuid;
 
@@ -58,6 +59,16 @@ fn find_matrix_structure<'a>(
     })
 }
 
+fn find_stairstep_structure<'a>(
+    plan: &'a CompensationPlan,
+    name: &str,
+) -> Option<&'a StairstepStructureConfig> {
+    plan.structures.iter().find_map(|s| match s {
+        StructureConfig::Stairstep(s) if s.name == name => Some(s),
+        _ => None,
+    })
+}
+
 // --- Commission param types ---
 
 /// Request parameters for calculating unilevel commissions.
@@ -94,6 +105,15 @@ struct CalculateBinaryPairingParams {
 /// Request parameters for calculating matrix commissions.
 #[derive(serde::Deserialize)]
 struct CalculateMatrixParams {
+    #[serde(rename = "structure")]
+    structure_name: String,
+    snapshots: HashMap<Uuid, DistributorSnapshot>,
+    volume: Vec<VolumeSource>,
+}
+
+/// Request parameters for calculating stairstep commissions.
+#[derive(serde::Deserialize)]
+struct CalculateStairstepParams {
     #[serde(rename = "structure")]
     structure_name: String,
     snapshots: HashMap<Uuid, DistributorSnapshot>,
@@ -266,6 +286,43 @@ pub(crate) fn handle_calculate_matrix(state: &WorkerState, request: &Request) ->
     };
 
     match calculate_matrix(tree, plan, structure, &params.snapshots, &params.volume) {
+        Ok(earnings) => Response::success(
+            request.id.clone(),
+            serde_json::to_value(&earnings)
+                .expect("serialization of Vec<CommissionEarning> is infallible"),
+        ),
+        Err(e) => Response::error(request.id.clone(), "CALCULATION_ERROR", e.to_string()),
+    }
+}
+
+pub(crate) fn handle_calculate_stairstep(state: &WorkerState, request: &Request) -> Response {
+    let plan = match require_plan(state, &request.id) {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    let params: CalculateStairstepParams = match serde_json::from_str(request.params.get()) {
+        Ok(p) => p,
+        Err(e) => {
+            return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string());
+        }
+    };
+    // Stairstep operates on a unilevel tree, so reuse require_unilevel_tree.
+    let tree = match require_unilevel_tree(state, &params.structure_name, &request.id) {
+        Ok(t) => t,
+        Err(resp) => return resp,
+    };
+    let structure = match find_stairstep_structure(plan, &params.structure_name) {
+        Some(s) => s,
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "STRUCTURE_NOT_FOUND",
+                format!("no stairstep structure named '{}'", params.structure_name),
+            );
+        }
+    };
+
+    match calculate_stairstep(tree, plan, structure, &params.snapshots, &params.volume) {
         Ok(earnings) => Response::success(
             request.id.clone(),
             serde_json::to_value(&earnings)

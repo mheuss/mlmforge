@@ -2826,3 +2826,225 @@ fn calculate_matrix_unknown_structure_returns_not_found() {
     drop(worker.stdin.take());
     worker.wait().unwrap();
 }
+
+/// Stairstep test plan. structures[0] is a stairstep structure with the same
+/// level_commission block as the unilevel fixture. Walk 1 (level commissions)
+/// pays regardless of breakaway, so breakaway: null still pays.
+const STAIRSTEP_TEST_PLAN_JSON: &str = r#"{
+    "name": "Integration Test Plan",
+    "version": 1,
+    "structures": [
+        {
+            "type": "stairstep",
+            "config": {
+                "name": "Test",
+                "level_commission": {
+                    "broad_commission_percent": 0.40,
+                    "volume_to_dollar_multiplier": null,
+                    "commissionable_depth": 3,
+                    "rate_table": { "member": { "1": 0.05, "2": 0.05, "3": 0.05 } }
+                },
+                "compression": null,
+                "breakaway": null
+            }
+        }
+    ],
+    "period": { "length": "month", "start_date": "2026-03-01", "payout_lag_days": 14 },
+    "volume": { "inhibit_signup_volume": false, "base_currency": "USD", "volume_to_dollar_multiplier": 1.0, "deduct_qualifying_volume": false },
+    "ranks": [
+        { "name": "member", "ordinal": 1, "qualification": { "structures": [], "required_products": [] }, "qualified_structures": ["Test"], "demotion_policy": "promotion_only" }
+    ],
+    "rank_tracking": { "track_achieved_rank": false },
+    "rank_features": { "constraints_enabled": false, "overrides_enabled": false },
+    "commission_eligibility": { "min_personal_volume": 0.0, "require_order_in_period": false, "eligible_statuses": [], "active_leg_tiers": [] },
+    "bonuses": { "matching": null, "sponsor": null, "fast_start": null, "rank_advancement": null, "leadership_development": null, "infinity": null, "lifestyle": null, "pool": null, "matrix_completion": null, "position": null, "board_cycling": null },
+    "payout": { "base_currency": "USD", "minimum_amount": 50.0, "split_payouts_enabled": true, "methods": [ { "type": "bank_transfer", "fee": 2.50 } ] },
+    "caps": { "per_distributor_per_period": null, "company_payout_cap_percent": 0.42, "cap_enforcement": "pro_rata", "clawback_on_refund": false },
+    "placement": { "donated_placement": null, "holding_tank": null, "binary_placement": null }
+}"#;
+
+fn load_stairstep_test_plan(worker: &mut std::process::Child) {
+    let minified: String = STAIRSTEP_TEST_PLAN_JSON
+        .lines()
+        .map(|l| l.trim())
+        .collect::<Vec<_>>()
+        .join("");
+    let request = format!(
+        r#"{{"id":"load-plan","op":"load_plan","params":{}}}"#,
+        minified
+    );
+    let resp = common::send_receive(worker, &request);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "load_plan (stairstep) failed: {}",
+        resp
+    );
+}
+
+#[test]
+fn calculate_stairstep_pays_upline() {
+    let mut worker = common::spawn_worker();
+    load_stairstep_test_plan(&mut worker);
+    // Stairstep operates on a unilevel tree. build_three_node_chain creates a
+    // unilevel tree named "Test" (root -> child -> grandchild).
+    build_three_node_chain(&mut worker);
+
+    // Volume at grandchild -> child (L1) and root (L2) earn.
+    let snap =
+        r#"{"rank":"member","personal_volume":100.0,"status":"active","has_order_in_period":true}"#;
+    let params = format!(
+        r#"{{"structure":"Test","snapshots":{{"{root}":{snap},"{child}":{snap},"{gc}":{snap}}},"volume":[{{"source_id":"{gc}","cv_amount":100.0}}]}}"#,
+        root = ROOT,
+        child = CHILD,
+        gc = GRANDCHILD,
+        snap = snap,
+    );
+    let request = format!(
+        r#"{{"id":"calc-s","op":"calculate_stairstep","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(
+        parsed["ok"].as_bool().unwrap(),
+        "calculate_stairstep failed: {}",
+        resp
+    );
+    assert_eq!(parsed["id"], "calc-s");
+    let earnings = parsed["result"].as_array().unwrap();
+    // Volume at grandchild (100 CV) pays up the chain: child at level 1 and
+    // root at level 2, each 100 * 0.40 * 1.0 * 0.05 = 2.0.
+    assert_eq!(
+        earnings.len(),
+        2,
+        "expected exactly 2 stairstep earnings, got: {}",
+        resp
+    );
+    let child_earning = earnings
+        .iter()
+        .find(|e| e["earner_id"].as_str().unwrap() == CHILD)
+        .expect("child should have earned");
+    assert_eq!(child_earning["level"].as_u64().unwrap(), 1);
+    assert_eq!(child_earning["source_id"].as_str().unwrap(), GRANDCHILD);
+    let child_dollar = child_earning["dollar_amount"].as_f64().unwrap();
+    assert!(
+        (child_dollar - 2.0).abs() < 1e-10,
+        "child dollar_amount should be 2.0, got {}",
+        child_dollar
+    );
+    let root_earning = earnings
+        .iter()
+        .find(|e| e["earner_id"].as_str().unwrap() == ROOT)
+        .expect("root should have earned");
+    assert_eq!(root_earning["level"].as_u64().unwrap(), 2);
+    assert_eq!(root_earning["source_id"].as_str().unwrap(), GRANDCHILD);
+    let root_dollar = root_earning["dollar_amount"].as_f64().unwrap();
+    assert!(
+        (root_dollar - 2.0).abs() < 1e-10,
+        "root dollar_amount should be 2.0, got {}",
+        root_dollar
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn calculate_stairstep_wrong_tree_type_returns_invalid_params() {
+    let mut worker = common::spawn_worker();
+    load_stairstep_test_plan(&mut worker);
+    // A binary tree under the stairstep structure's name.
+    create_binary_tree(&mut worker, TREE_NAME);
+
+    let params = r#"{"structure":"Test","snapshots":{},"volume":[]}"#;
+    let request = format!(
+        r#"{{"id":"calc-s-wrong","op":"calculate_stairstep","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(resp.contains(r#""ok":false"#));
+    assert!(
+        resp.contains("INVALID_PARAMS"),
+        "expected INVALID_PARAMS, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("is a binary tree, not a unilevel tree"),
+        "expected expected-vs-actual message, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn calculate_stairstep_without_plan_returns_no_plan() {
+    let mut worker = common::spawn_worker();
+    let params = r#"{"structure":"Test","snapshots":{},"volume":[]}"#;
+    let request = format!(
+        r#"{{"id":"calc-s-np","op":"calculate_stairstep","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(resp.contains(r#""ok":false"#));
+    assert!(resp.contains("NO_PLAN"), "expected NO_PLAN, got: {}", resp);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn calculate_stairstep_structure_not_found_when_no_tree() {
+    let mut worker = common::spawn_worker();
+    load_stairstep_test_plan(&mut worker);
+    // Plan loaded, but no tree created under "Test" -> require_unilevel_tree misses.
+    let params = r#"{"structure":"Test","snapshots":{},"volume":[]}"#;
+    let request = format!(
+        r#"{{"id":"calc-s-nf","op":"calculate_stairstep","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(resp.contains(r#""ok":false"#));
+    assert!(
+        resp.contains("STRUCTURE_NOT_FOUND"),
+        "expected STRUCTURE_NOT_FOUND, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn calculate_stairstep_unknown_structure_returns_not_found() {
+    let mut worker = common::spawn_worker();
+    load_stairstep_test_plan(&mut worker);
+    // A unilevel tree exists under "Ghost", but the plan's only stairstep
+    // structure is named "Test". require_unilevel_tree hits;
+    // find_stairstep_structure misses.
+    create_tree(&mut worker, "Ghost");
+
+    let params = r#"{"structure":"Ghost","snapshots":{},"volume":[]}"#;
+    let request = format!(
+        r#"{{"id":"calc-s-us","op":"calculate_stairstep","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(resp.contains(r#""ok":false"#));
+    assert!(
+        resp.contains("STRUCTURE_NOT_FOUND"),
+        "expected STRUCTURE_NOT_FOUND, got: {}",
+        resp
+    );
+    // Distinct from the no-tree case: this is the find_stairstep_structure miss.
+    assert!(
+        resp.contains("no stairstep structure named 'Ghost'"),
+        "expected the find_stairstep_structure miss message, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}

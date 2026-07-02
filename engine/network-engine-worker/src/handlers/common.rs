@@ -1,7 +1,7 @@
 use network_engine::config::CompensationPlan;
 use network_engine::tree::binary::BinaryTree;
 use network_engine::tree::error::TreeError;
-use network_engine::tree::matrix::PruningMode;
+use network_engine::tree::matrix::{MatrixTree, PruningMode};
 use network_engine::tree::node::Node;
 use network_engine::tree::unilevel::UnilevelTree;
 use uuid::Uuid;
@@ -176,6 +176,30 @@ pub(crate) fn require_binary_tree<'a>(
             "INVALID_PARAMS",
             format!(
                 "structure '{}' is a {} tree, not a binary tree",
+                name,
+                tree_type_name(other)
+            ),
+        )),
+        None => Err(Response::error(
+            request_id.to_string(),
+            "STRUCTURE_NOT_FOUND",
+            format!("no tree named '{}'", name),
+        )),
+    }
+}
+
+pub(crate) fn require_matrix_tree<'a>(
+    state: &'a WorkerState,
+    name: &str,
+    request_id: &str,
+) -> Result<&'a MatrixTree, Response> {
+    match state.trees.get(name) {
+        Some(TreeInstance::Matrix(t)) => Ok(t),
+        Some(other) => Err(Response::error(
+            request_id.to_string(),
+            "INVALID_PARAMS",
+            format!(
+                "structure '{}' is a {} tree, not a matrix tree",
                 name,
                 tree_type_name(other)
             ),

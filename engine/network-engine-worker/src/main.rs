@@ -38,6 +38,7 @@ fn dispatch(state: &mut WorkerState, request: &Request) -> Response {
             handlers::commission::handle_calculate_binary_pairing(state, request)
         }
         "calculate_generation" => handlers::commission::handle_calculate_generation(state, request),
+        "calculate_matrix" => handlers::commission::handle_calculate_matrix(state, request),
         // Board plan operations
         "create_board_plan" => handlers::board_plan::handle_create_board_plan(state, request),
         "board_add_member" => handlers::board_plan::handle_board_add_member(state, request),

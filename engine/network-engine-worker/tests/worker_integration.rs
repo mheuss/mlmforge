@@ -2584,3 +2584,239 @@ fn calculate_unilevel_wrong_tree_type_reports_expected_vs_actual() {
     drop(worker.stdin.take());
     worker.wait().unwrap();
 }
+
+/// Matrix test plan. Same envelope as TEST_PLAN_JSON, but structures[0] is a
+/// matrix structure. level_commission is identical to the unilevel fixture, so
+/// it pays the same way; matrix_params drives width/height.
+const MATRIX_TEST_PLAN_JSON: &str = r#"{
+    "name": "Integration Test Plan",
+    "version": 1,
+    "structures": [
+        {
+            "type": "matrix",
+            "config": {
+                "name": "Test",
+                "matrix_params": { "width": 3, "height": 3, "spillover_direction": "breadth_first" },
+                "level_commission": {
+                    "broad_commission_percent": 0.40,
+                    "volume_to_dollar_multiplier": null,
+                    "commissionable_depth": 3,
+                    "rate_table": { "member": { "1": 0.05, "2": 0.05, "3": 0.05 } }
+                },
+                "compression": null,
+                "pruning": null
+            }
+        }
+    ],
+    "period": { "length": "month", "start_date": "2026-03-01", "payout_lag_days": 14 },
+    "volume": { "inhibit_signup_volume": false, "base_currency": "USD", "volume_to_dollar_multiplier": 1.0, "deduct_qualifying_volume": false },
+    "ranks": [
+        { "name": "member", "ordinal": 1, "qualification": { "structures": [], "required_products": [] }, "qualified_structures": ["Test"], "demotion_policy": "promotion_only" }
+    ],
+    "rank_tracking": { "track_achieved_rank": false },
+    "rank_features": { "constraints_enabled": false, "overrides_enabled": false },
+    "commission_eligibility": { "min_personal_volume": 0.0, "require_order_in_period": false, "eligible_statuses": [], "active_leg_tiers": [] },
+    "bonuses": { "matching": null, "sponsor": null, "fast_start": null, "rank_advancement": null, "leadership_development": null, "infinity": null, "lifestyle": null, "pool": null, "matrix_completion": null, "position": null, "board_cycling": null },
+    "payout": { "base_currency": "USD", "minimum_amount": 50.0, "split_payouts_enabled": true, "methods": [ { "type": "bank_transfer", "fee": 2.50 } ] },
+    "caps": { "per_distributor_per_period": null, "company_payout_cap_percent": 0.42, "cap_enforcement": "pro_rata", "clawback_on_refund": false },
+    "placement": { "donated_placement": null, "holding_tank": null, "binary_placement": null }
+}"#;
+
+fn load_matrix_test_plan(worker: &mut std::process::Child) {
+    let minified: String = MATRIX_TEST_PLAN_JSON
+        .lines()
+        .map(|l| l.trim())
+        .collect::<Vec<_>>()
+        .join("");
+    let request = format!(
+        r#"{{"id":"load-plan","op":"load_plan","params":{}}}"#,
+        minified
+    );
+    let resp = common::send_receive(worker, &request);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "load_plan (matrix) failed: {}",
+        resp
+    );
+}
+
+/// Creates a matrix tree. Matrix create_tree needs width (>= 2) and spillover.
+fn create_matrix_tree(child: &mut std::process::Child, name: &str) {
+    let resp = common::send_receive(
+        child,
+        &format!(
+            r#"{{"id":"setup-mat","op":"create_tree","params":{{"structure":"{}","tree_type":"matrix","width":3,"spillover":"breadth_first"}}}}"#,
+            name
+        ),
+    );
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "create_tree (matrix) failed: {}",
+        resp
+    );
+}
+
+#[test]
+fn calculate_matrix_pays_upline() {
+    let mut worker = common::spawn_worker();
+    load_matrix_test_plan(&mut worker);
+    create_matrix_tree(&mut worker, TREE_NAME);
+
+    // root(001); child(002) sponsored by root -> auto-placed under root.
+    // Matrix add_node takes no parent_id (placement is automatic).
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"m-root","op":"add_root","params":{{"structure":"{}","user_id":"{}","enrolled_at":100}}}}"#,
+            TREE_NAME, ROOT
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"m-child","op":"add_node","params":{{"structure":"{}","user_id":"{}","sponsor_id":"{}","enrolled_at":200}}}}"#,
+            TREE_NAME, CHILD, ROOT
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "add_node failed: {}", resp);
+
+    // Volume at child -> root earns at level 1.
+    let snap =
+        r#"{"rank":"member","personal_volume":100.0,"status":"active","has_order_in_period":true}"#;
+    let params = format!(
+        r#"{{"structure":"Test","snapshots":{{"{root}":{snap},"{child}":{snap}}},"volume":[{{"source_id":"{child}","cv_amount":100.0}}]}}"#,
+        root = ROOT,
+        child = CHILD,
+        snap = snap,
+    );
+    let request = format!(
+        r#"{{"id":"calc-m","op":"calculate_matrix","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(
+        parsed["ok"].as_bool().unwrap(),
+        "calculate_matrix failed: {}",
+        resp
+    );
+    assert_eq!(parsed["id"], "calc-m");
+    let earnings = parsed["result"].as_array().unwrap();
+    assert!(
+        !earnings.is_empty(),
+        "expected non-empty matrix earnings, got: {}",
+        resp
+    );
+    // Root is child's upline, so it must earn from child's volume.
+    assert!(
+        earnings
+            .iter()
+            .any(|e| e["earner_id"].as_str() == Some(ROOT)),
+        "expected root {} to earn, got: {}",
+        ROOT,
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn calculate_matrix_wrong_tree_type_returns_invalid_params() {
+    let mut worker = common::spawn_worker();
+    load_matrix_test_plan(&mut worker);
+    // A unilevel tree under the matrix structure's name.
+    create_tree(&mut worker, TREE_NAME);
+
+    let params = r#"{"structure":"Test","snapshots":{},"volume":[]}"#;
+    let request = format!(
+        r#"{{"id":"calc-m-wrong","op":"calculate_matrix","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(resp.contains(r#""ok":false"#));
+    assert!(
+        resp.contains("INVALID_PARAMS"),
+        "expected INVALID_PARAMS, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("is a unilevel tree, not a matrix tree"),
+        "expected expected-vs-actual message, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn calculate_matrix_without_plan_returns_no_plan() {
+    let mut worker = common::spawn_worker();
+    let params = r#"{"structure":"Test","snapshots":{},"volume":[]}"#;
+    let request = format!(
+        r#"{{"id":"calc-m-np","op":"calculate_matrix","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(resp.contains(r#""ok":false"#));
+    assert!(resp.contains("NO_PLAN"), "expected NO_PLAN, got: {}", resp);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn calculate_matrix_structure_not_found_when_no_tree() {
+    let mut worker = common::spawn_worker();
+    load_matrix_test_plan(&mut worker);
+    // Plan loaded, but no tree created under "Test" -> require_matrix_tree misses.
+    let params = r#"{"structure":"Test","snapshots":{},"volume":[]}"#;
+    let request = format!(
+        r#"{{"id":"calc-m-nf","op":"calculate_matrix","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(resp.contains(r#""ok":false"#));
+    assert!(
+        resp.contains("STRUCTURE_NOT_FOUND"),
+        "expected STRUCTURE_NOT_FOUND, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn calculate_matrix_unknown_structure_returns_not_found() {
+    let mut worker = common::spawn_worker();
+    load_matrix_test_plan(&mut worker);
+    // A matrix tree exists under "Ghost", but the plan's only matrix structure
+    // is named "Test". require_matrix_tree hits; find_matrix_structure misses.
+    create_matrix_tree(&mut worker, "Ghost");
+
+    let params = r#"{"structure":"Ghost","snapshots":{},"volume":[]}"#;
+    let request = format!(
+        r#"{{"id":"calc-m-us","op":"calculate_matrix","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(resp.contains(r#""ok":false"#));
+    assert!(
+        resp.contains("STRUCTURE_NOT_FOUND"),
+        "expected STRUCTURE_NOT_FOUND, got: {}",
+        resp
+    );
+    // Distinct from the no-tree case: this is the find_matrix_structure miss.
+    assert!(
+        resp.contains("no matrix structure named 'Ghost'"),
+        "expected the find_matrix_structure miss message, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}

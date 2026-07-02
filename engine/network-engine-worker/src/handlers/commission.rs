@@ -2,15 +2,17 @@ use std::collections::HashMap;
 
 use network_engine::commission::{
     BinaryCommissionEarning, DistributorSnapshot, LegVolumes, VolumeSource,
-    calculate_binary_pairing, calculate_generation, calculate_unilevel,
+    calculate_binary_pairing, calculate_generation, calculate_matrix, calculate_unilevel,
 };
 use network_engine::config::{
-    BinaryStructureConfig, CompensationPlan, GenerationStructureConfig, StructureConfig,
-    UnilevelStructureConfig,
+    BinaryStructureConfig, CompensationPlan, GenerationStructureConfig, MatrixStructureConfig,
+    StructureConfig, UnilevelStructureConfig,
 };
 use uuid::Uuid;
 
-use super::common::{require_binary_tree, require_plan, require_unilevel_tree};
+use super::common::{
+    require_binary_tree, require_matrix_tree, require_plan, require_unilevel_tree,
+};
 use crate::protocol::{Request, Response};
 use crate::state::WorkerState;
 
@@ -46,6 +48,16 @@ fn find_binary_structure<'a>(
     })
 }
 
+fn find_matrix_structure<'a>(
+    plan: &'a CompensationPlan,
+    name: &str,
+) -> Option<&'a MatrixStructureConfig> {
+    plan.structures.iter().find_map(|s| match s {
+        StructureConfig::Matrix(m) if m.name == name => Some(m),
+        _ => None,
+    })
+}
+
 // --- Commission param types ---
 
 /// Request parameters for calculating unilevel commissions.
@@ -77,6 +89,15 @@ struct CalculateBinaryPairingParams {
     carry_forward: HashMap<Uuid, LegVolumes>,
     #[serde(default)]
     ownership: Option<HashMap<Uuid, Uuid>>,
+}
+
+/// Request parameters for calculating matrix commissions.
+#[derive(serde::Deserialize)]
+struct CalculateMatrixParams {
+    #[serde(rename = "structure")]
+    structure_name: String,
+    snapshots: HashMap<Uuid, DistributorSnapshot>,
+    volume: Vec<VolumeSource>,
 }
 
 /// Wire response for a binary pairing calculation result.
@@ -214,6 +235,42 @@ pub(crate) fn handle_calculate_binary_pairing(state: &WorkerState, request: &Req
                     .expect("serialization of BinaryCalculationResponse is infallible"),
             )
         }
+        Err(e) => Response::error(request.id.clone(), "CALCULATION_ERROR", e.to_string()),
+    }
+}
+
+pub(crate) fn handle_calculate_matrix(state: &WorkerState, request: &Request) -> Response {
+    let plan = match require_plan(state, &request.id) {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    let params: CalculateMatrixParams = match serde_json::from_str(request.params.get()) {
+        Ok(p) => p,
+        Err(e) => {
+            return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string());
+        }
+    };
+    let tree = match require_matrix_tree(state, &params.structure_name, &request.id) {
+        Ok(t) => t,
+        Err(resp) => return resp,
+    };
+    let structure = match find_matrix_structure(plan, &params.structure_name) {
+        Some(s) => s,
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "STRUCTURE_NOT_FOUND",
+                format!("no matrix structure named '{}'", params.structure_name),
+            );
+        }
+    };
+
+    match calculate_matrix(tree, plan, structure, &params.snapshots, &params.volume) {
+        Ok(earnings) => Response::success(
+            request.id.clone(),
+            serde_json::to_value(&earnings)
+                .expect("serialization of Vec<CommissionEarning> is infallible"),
+        ),
         Err(e) => Response::error(request.id.clone(), "CALCULATION_ERROR", e.to_string()),
     }
 }

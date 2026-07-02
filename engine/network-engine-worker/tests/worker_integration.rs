@@ -2555,3 +2555,32 @@ fn evaluate_ranks_honors_window_history() {
     drop(child.stdin.take());
     child.wait().unwrap();
 }
+
+#[test]
+fn calculate_unilevel_wrong_tree_type_reports_expected_vs_actual() {
+    let mut worker = common::spawn_worker();
+    load_test_plan(&mut worker);
+    // Create a binary tree under the name the unilevel op will target.
+    create_binary_tree(&mut worker, TREE_NAME);
+
+    let params = r#"{"structure":"Test","snapshots":{},"volume":[]}"#;
+    let request = format!(
+        r#"{{"id":"calc-wrong","op":"calculate_unilevel","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(resp.contains(r#""ok":false"#));
+    assert!(
+        resp.contains("INVALID_PARAMS"),
+        "expected INVALID_PARAMS, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("is a binary tree, not a unilevel tree"),
+        "expected expected-vs-actual message, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}

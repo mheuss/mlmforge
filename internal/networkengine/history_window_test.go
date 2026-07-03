@@ -160,8 +160,10 @@ func TestBuildHistoryWindow_NonContiguousAxisExcludesOffAxisPeriods(t *testing.T
 	_, history, err := BuildHistoryWindow(ctx, store, []uuid.UUID{userA}, []string{"2026-05", "2026-03"})
 	require.NoError(t, err)
 	require.Contains(t, history, userA.String())
-	assert.Contains(t, history[userA.String()], "2026-05")
-	assert.Contains(t, history[userA.String()], "2026-03")
+	require.NotNil(t, history[userA.String()]["2026-05"])
+	assert.Equal(t, uint16(3), *history[userA.String()]["2026-05"], "on-axis value survives the filter intact")
+	require.NotNil(t, history[userA.String()]["2026-03"])
+	assert.Equal(t, uint16(3), *history[userA.String()]["2026-03"])
 	assert.NotContains(t, history[userA.String()], "2026-04", "off-axis period must be dropped by inAxis")
 }
 
@@ -221,4 +223,39 @@ func TestBuildHistoryWindow_Equivalence(t *testing.T) {
 	require.NoError(t, err)
 	want := referenceHistoryWindow(t, store, requested, axis)
 	assert.Equal(t, want, got, "new BuildHistoryWindow must match the old per-period logic")
+}
+
+// TestBuildHistoryWindow_EquivalenceNonContiguous is the byte-parity guard for
+// the path that actually diverges from the old per-period loop: a gapped axis
+// makes the batched BETWEEN over-fetch an off-axis period the old loop never
+// reads. The full-map oracle comparison proves inAxis drops it to an identical
+// result, values included.
+func TestBuildHistoryWindow_EquivalenceNonContiguous(t *testing.T) {
+	store := NewMemoryQualificationHistoryStore()
+	ctx := context.Background()
+	userA := mustParseUUID(t, "00000000-0000-0000-0000-000000000001")
+	userB := mustParseUUID(t, "00000000-0000-0000-0000-000000000002")
+
+	// 2026-04 is off the requested axis but inside [2026-03, 2026-05], so the
+	// batched read over-fetches it. It holds a requested-user row that MUST be
+	// dropped for the output to match the old per-period logic.
+	require.NoError(t, store.SaveResult(ctx, "2026-03", []QualificationHistoryEntry{
+		{UserID: userA, Rank: strPtr("bronze"), Ordinal: u16Ptr(1)},
+		{UserID: userB}, // Unranked
+	}))
+	require.NoError(t, store.SaveResult(ctx, "2026-04", []QualificationHistoryEntry{
+		{UserID: userA, Rank: strPtr("silver"), Ordinal: u16Ptr(2)}, // off-axis: must be dropped
+	}))
+	require.NoError(t, store.SaveResult(ctx, "2026-05", []QualificationHistoryEntry{
+		{UserID: userA, Rank: strPtr("gold"), Ordinal: u16Ptr(3)},
+	}))
+
+	axis := []string{"2026-05", "2026-03"} // gapped: 2026-04 is off-axis
+	requested := []uuid.UUID{userA, userB}
+	_, got, err := BuildHistoryWindow(ctx, store, requested, axis)
+	require.NoError(t, err)
+
+	want := referenceHistoryWindow(t, store, requested, axis)
+	assert.Equal(t, want, got, "over-fetched off-axis 2026-04 must be dropped to match the old per-period logic")
+	assert.NotContains(t, got[userA.String()], "2026-04", "off-axis period must not survive the filter")
 }

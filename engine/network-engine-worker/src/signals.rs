@@ -3,6 +3,7 @@
 // binary build. Remove this allow when main installs the subscriber.
 #![allow(dead_code)]
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::io::Write;
 
@@ -111,10 +112,34 @@ where
     }
 }
 
-/// Trace context is stubbed in this task. Task 4 wires it to a thread-local that
-/// the worker sets per request from the incoming trace_id/span_id.
+thread_local! {
+    // Read by `current_trace_context` inside `SignalLayer::on_event`, i.e. inside
+    // arbitrary tracing call sites. Never emit a tracing event while a borrow of
+    // this cell is held: `on_event` would re-enter and the nested borrow would
+    // panic. The functions below only move tuples, so they are safe.
+    static CURRENT_TRACE: RefCell<(Option<String>, Option<String>)> =
+        const { RefCell::new((None, None)) };
+}
+
+/// Set the trace context for signals emitted on this thread. The worker calls
+/// this per request from the incoming trace_id/span_id.
+///
+/// The matching `clear_trace_context` must run even if a request handler panics.
+/// The worker catches handler panics, so wire this pair OUTSIDE that recovery (or
+/// behind a drop guard), never inside the panicking closure. Otherwise a stale
+/// trace context leaks into the next request on this long-lived thread.
+pub(crate) fn set_trace_context(trace_id: Option<String>, span_id: Option<String>) {
+    CURRENT_TRACE.with(|c| *c.borrow_mut() = (trace_id, span_id));
+}
+
+/// Clear the trace context. See `set_trace_context` for the panic-safety rule.
+pub(crate) fn clear_trace_context() {
+    CURRENT_TRACE.with(|c| *c.borrow_mut() = (None, None));
+}
+
+/// Read the current thread's trace context. The Layer calls this per event.
 pub(crate) fn current_trace_context() -> (Option<String>, Option<String>) {
-    (None, None)
+    CURRENT_TRACE.with(|c| c.borrow().clone())
 }
 
 #[cfg(test)]
@@ -211,5 +236,36 @@ mod tests {
 
         // A &str field must serialize as a JSON string, not a Debug-quoted string.
         assert_eq!(value["fields"]["boundary_rank"], "gold");
+    }
+
+    #[test]
+    fn trace_context_attaches_to_signal_and_clears() {
+        use super::{clear_trace_context, set_trace_context};
+
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = Registry::default().with(SignalLayer::new(BufWriter(buf.clone())));
+
+        tracing::subscriber::with_default(subscriber, || {
+            set_trace_context(Some("abc".into()), Some("def".into()));
+            tracing::warn!("with trace");
+            clear_trace_context();
+            tracing::warn!("without trace");
+        });
+
+        let captured = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        let mut lines = captured.lines();
+
+        let first: serde_json::Value =
+            serde_json::from_str(lines.next().expect("first signal line")).expect("valid JSON");
+        assert_eq!(first["trace_id"], "abc");
+        assert_eq!(first["span_id"], "def");
+
+        let second: serde_json::Value =
+            serde_json::from_str(lines.next().expect("second signal line")).expect("valid JSON");
+        assert!(
+            second.get("trace_id").is_none(),
+            "trace_id should be cleared"
+        );
+        assert!(second.get("span_id").is_none(), "span_id should be cleared");
     }
 }

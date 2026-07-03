@@ -5,6 +5,18 @@ use serde::{Deserialize, Serialize};
 pub struct Request {
     pub id: String,
     pub op: String,
+    /// Optional trace context from the Go caller, used to correlate the worker's
+    /// signals with the caller's trace. These fields are optional, so requests
+    /// without them still deserialize. `serde(default)` makes that explicit and
+    /// keeps existing contract fixtures unaffected.
+    // Nothing reads trace_id/span_id until Task 6 wires main to set the per-request
+    // trace context; the allows come off then.
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub trace_id: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub span_id: Option<String>,
     /// Raw JSON params preserved as-is to avoid the serde_json::Value
     /// intermediate representation. Value's BTreeMap key ordering and
     /// buffered content deserialization breaks non-string map keys
@@ -77,6 +89,24 @@ mod tests {
         let req: Request = serde_json::from_str(json).unwrap();
         assert_eq!(req.op, "add_node");
         assert!(req.params.get().contains("user_id"));
+    }
+
+    #[test]
+    fn deserialize_request_with_trace() {
+        let json = r#"{"id":"req-1","op":"ping","trace_id":"abc","span_id":"def"}"#;
+        let req: Request = serde_json::from_str(json).unwrap();
+        assert_eq!(req.trace_id.as_deref(), Some("abc"));
+        assert_eq!(req.span_id.as_deref(), Some("def"));
+    }
+
+    #[test]
+    fn deserialize_request_without_trace() {
+        // No trace fields: they default to None. Protects existing contract
+        // fixtures that send requests without trace context.
+        let json = r#"{"id":"req-1","op":"ping"}"#;
+        let req: Request = serde_json::from_str(json).unwrap();
+        assert!(req.trace_id.is_none());
+        assert!(req.span_id.is_none());
     }
 
     #[test]

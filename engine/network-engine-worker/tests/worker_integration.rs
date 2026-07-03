@@ -3052,9 +3052,12 @@ fn calculate_stairstep_unknown_structure_returns_not_found() {
 }
 
 /// Compile-time completeness gate. Every StructureConfig variant must map to a
-/// commission op here. Adding a variant without an arm fails to compile, which
-/// forces the new op to be named (and therefore wired). `allow(dead_code)`: the
-/// function exists for its exhaustive match, not to be called.
+/// commission op here. Adding a variant without an arm fails to compile the
+/// test crate (this fn is test-only), which forces the new op to be named (and
+/// therefore wired). This holds only while StructureConfig stays exhaustive: if
+/// it ever becomes `#[non_exhaustive]`, Rust would require a `_` arm here and
+/// quietly defeat the gate. `allow(dead_code)`: the function exists for its
+/// exhaustive match, not to be called.
 #[allow(dead_code)]
 fn commission_op(structure: &StructureConfig) -> &'static str {
     match structure {
@@ -3074,8 +3077,9 @@ fn every_structure_type_has_a_dispatchable_commission_op() {
     // returns a typed error (NO_PLAN, etc.) on empty params, never UNKNOWN_OP.
     //
     // Primary gate is commission_op above: its exhaustive match is compile-time,
-    // so adding a StructureConfig variant without an arm fails to compile and
-    // forces you to name the op. This list is the runtime half: it confirms the
+    // so adding a StructureConfig variant without an arm fails to compile the
+    // test crate and forces you to name the op. This list is the runtime half:
+    // it confirms the
     // named ops actually dispatch. The two are not auto-synced. When commission_op
     // stops compiling on a new variant, name the op there, then add the same
     // string here and bump EXPECTED_OPS. The count assert only flags a mismatch

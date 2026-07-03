@@ -354,6 +354,8 @@ func (c *EngineClient) CalculateUnilevel(ctx context.Context, req CalculateUnile
 
 // CalculateGeneration runs commission calculation for a generation structure.
 // Sends snapshots and volume to the engine and returns the earnings.
+// Generation runs on a unilevel tree, so a tree-type mismatch error names
+// "unilevel" (e.g. "is a binary tree, not a unilevel tree").
 func (c *EngineClient) CalculateGeneration(ctx context.Context, req CalculateGenerationRequest) ([]CommissionEarningDTO, error) {
 	return callInto[[]CommissionEarningDTO](c, ctx, "calculate_generation", req)
 }

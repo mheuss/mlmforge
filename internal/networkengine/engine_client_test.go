@@ -769,6 +769,101 @@ func TestEngineClient_CalculateGeneration_EmptyEarnings(t *testing.T) {
 	assert.Empty(t, earnings)
 }
 
+// --- Matrix commission calculation tests (mock) ---
+
+func TestEngineClient_CalculateMatrix_MockParams(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`[{"earner_id":"00000000-0000-0000-0000-000000000001","source_id":"00000000-0000-0000-0000-000000000002","level":1,"rate":0.05,"cv_amount":100.0,"dollar_amount":2.0}]`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	req := CalculateMatrixRequest{
+		StructureName: "Test",
+		Snapshots: map[string]DistributorSnapshotDTO{
+			"00000000-0000-0000-0000-000000000001": {
+				Rank:             "member",
+				PersonalVolume:   100.0,
+				Status:           "active",
+				HasOrderInPeriod: true,
+			},
+		},
+		Volume: []VolumeSourceDTO{
+			{SourceID: "00000000-0000-0000-0000-000000000002", CVAmount: 100.0},
+		},
+	}
+
+	earnings, err := client.CalculateMatrix(context.Background(), req)
+	require.NoError(t, err)
+	require.Len(t, earnings, 1)
+
+	assert.Equal(t, "calculate_matrix", mock.lastOp)
+	assert.JSONEq(t, `{"structure":"Test","snapshots":{"00000000-0000-0000-0000-000000000001":{"rank":"member","personal_volume":100,"status":"active","has_order_in_period":true}},"volume":[{"source_id":"00000000-0000-0000-0000-000000000002","cv_amount":100}]}`, string(mock.lastParams))
+	assert.Equal(t, "00000000-0000-0000-0000-000000000001", earnings[0].EarnerID)
+	assert.InDelta(t, 2.0, earnings[0].DollarAmount, 1e-9)
+}
+
+func TestEngineClient_CalculateMatrix_EmptyEarnings(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`[]`)}
+	client := NewEngineClientWithTransport(mock)
+
+	req := CalculateMatrixRequest{
+		StructureName: "Test",
+		Snapshots:     map[string]DistributorSnapshotDTO{},
+		Volume:        []VolumeSourceDTO{},
+	}
+
+	earnings, err := client.CalculateMatrix(context.Background(), req)
+	require.NoError(t, err)
+	assert.Empty(t, earnings)
+}
+
+// --- Stairstep commission calculation tests (mock) ---
+
+func TestEngineClient_CalculateStairstep_MockParams(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`[{"earner_id":"00000000-0000-0000-0000-000000000001","source_id":"00000000-0000-0000-0000-000000000003","level":2,"rate":0.05,"cv_amount":100.0,"dollar_amount":2.0}]`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	req := CalculateStairstepRequest{
+		StructureName: "Test",
+		Snapshots: map[string]DistributorSnapshotDTO{
+			"00000000-0000-0000-0000-000000000001": {
+				Rank:             "member",
+				PersonalVolume:   100.0,
+				Status:           "active",
+				HasOrderInPeriod: true,
+			},
+		},
+		Volume: []VolumeSourceDTO{
+			{SourceID: "00000000-0000-0000-0000-000000000003", CVAmount: 100.0},
+		},
+	}
+
+	earnings, err := client.CalculateStairstep(context.Background(), req)
+	require.NoError(t, err)
+	require.Len(t, earnings, 1)
+
+	assert.Equal(t, "calculate_stairstep", mock.lastOp)
+	assert.JSONEq(t, `{"structure":"Test","snapshots":{"00000000-0000-0000-0000-000000000001":{"rank":"member","personal_volume":100,"status":"active","has_order_in_period":true}},"volume":[{"source_id":"00000000-0000-0000-0000-000000000003","cv_amount":100}]}`, string(mock.lastParams))
+	assert.Equal(t, "00000000-0000-0000-0000-000000000001", earnings[0].EarnerID)
+}
+
+func TestEngineClient_CalculateStairstep_EmptyEarnings(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`[]`)}
+	client := NewEngineClientWithTransport(mock)
+
+	req := CalculateStairstepRequest{
+		StructureName: "Test",
+		Snapshots:     map[string]DistributorSnapshotDTO{},
+		Volume:        []VolumeSourceDTO{},
+	}
+
+	earnings, err := client.CalculateStairstep(context.Background(), req)
+	require.NoError(t, err)
+	assert.Empty(t, earnings)
+}
+
 // --- Commission calculation integration test (real binary) ---
 
 // testPlanJSON is a minimal compensation plan that matches the Rust

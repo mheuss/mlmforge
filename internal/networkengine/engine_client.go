@@ -358,6 +358,18 @@ func (c *EngineClient) CalculateGeneration(ctx context.Context, req CalculateGen
 	return callInto[[]CommissionEarningDTO](c, ctx, "calculate_generation", req)
 }
 
+// CalculateMatrix runs commission calculation for a matrix structure.
+// Sends snapshots and volume to the engine and returns the earnings.
+func (c *EngineClient) CalculateMatrix(ctx context.Context, req CalculateMatrixRequest) ([]CommissionEarningDTO, error) {
+	return callInto[[]CommissionEarningDTO](c, ctx, "calculate_matrix", req)
+}
+
+// CalculateStairstep runs commission calculation for a stairstep structure.
+// Sends snapshots and volume to the engine and returns the earnings.
+func (c *EngineClient) CalculateStairstep(ctx context.Context, req CalculateStairstepRequest) ([]CommissionEarningDTO, error) {
+	return callInto[[]CommissionEarningDTO](c, ctx, "calculate_stairstep", req)
+}
+
 // CalculateBinaryPairing runs binary pairing commission calculation.
 // Sends snapshots, volume, and optional carry-forward state to the engine.
 // Returns earnings and updated carry-forward state.

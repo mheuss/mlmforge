@@ -58,6 +58,16 @@ type QualificationHistoryStore interface {
 		userID uuid.UUID, fromPeriod, toPeriod string,
 	) ([]QualificationHistoryRow, error)
 
+	// GetByUsersAndPeriodRange returns the requested distributors' evaluated
+	// ranks for every period in [fromPeriod, toPeriod] inclusive that has a
+	// row. Sorted by period_id ASC, then user_id ASC (a deterministic superset
+	// of GetByUserAndPeriodRange's period-only order). Missing (user, period)
+	// pairs are omitted. An empty userIDs slice or fromPeriod > toPeriod yields
+	// no rows.
+	GetByUsersAndPeriodRange(ctx context.Context,
+		userIDs []uuid.UUID, fromPeriod, toPeriod string,
+	) ([]QualificationHistoryRow, error)
+
 	// GetByPeriod returns every distributor's evaluated rank for a single
 	// period. Sorted by user_id ASC.
 	GetByPeriod(ctx context.Context, periodID string,

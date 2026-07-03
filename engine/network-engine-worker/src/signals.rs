@@ -1,8 +1,3 @@
-// SignalLayer is installed in the worker's main loop in a later task (Task 6).
-// Until then only the tests construct it, so the module reads as dead code to the
-// binary build. Remove this allow when main installs the subscriber.
-#![allow(dead_code)]
-
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::io::Write;

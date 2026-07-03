@@ -9,13 +9,9 @@ pub struct Request {
     /// signals with the caller's trace. These fields are optional, so requests
     /// without them still deserialize. `serde(default)` makes that explicit and
     /// keeps existing contract fixtures unaffected.
-    // Nothing reads trace_id/span_id until Task 6 wires main to set the per-request
-    // trace context; the allows come off then.
     #[serde(default)]
-    #[allow(dead_code)]
     pub trace_id: Option<String>,
     #[serde(default)]
-    #[allow(dead_code)]
     pub span_id: Option<String>,
     /// Raw JSON params preserved as-is to avoid the serde_json::Value
     /// intermediate representation. Value's BTreeMap key ordering and

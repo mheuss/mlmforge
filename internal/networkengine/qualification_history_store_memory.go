@@ -122,3 +122,38 @@ func (s *MemoryQualificationHistoryStore) GetByUserAndPeriodRange(_ context.Cont
 	})
 	return out, nil
 }
+
+// GetByUsersAndPeriodRange returns the requested users' rows across the inclusive
+// [fromPeriod, toPeriod] range, sorted by period_id ASC then user_id ASC. An empty
+// userIDs slice or an inverted range (fromPeriod > toPeriod) yields no rows without
+// taking the read lock. Missing (user, period) pairs are omitted, matching the
+// single-user GetByUserAndPeriodRange contract widened to a set.
+func (s *MemoryQualificationHistoryStore) GetByUsersAndPeriodRange(_ context.Context, userIDs []uuid.UUID, fromPeriod, toPeriod string) ([]QualificationHistoryRow, error) {
+	if len(userIDs) == 0 || fromPeriod > toPeriod {
+		return nil, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	want := make(map[uuid.UUID]struct{}, len(userIDs))
+	for _, id := range userIDs {
+		want[id] = struct{}{}
+	}
+	var out []QualificationHistoryRow
+	for k, v := range s.rows {
+		if _, ok := want[k.UserID]; !ok {
+			continue
+		}
+		if k.PeriodID < fromPeriod || k.PeriodID > toPeriod {
+			continue
+		}
+		out = append(out, v)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].PeriodID != out[j].PeriodID {
+			return out[i].PeriodID < out[j].PeriodID
+		}
+		return out[i].UserID.String() < out[j].UserID.String()
+	})
+	return out, nil
+}

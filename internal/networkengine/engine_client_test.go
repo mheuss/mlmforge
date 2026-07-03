@@ -1054,6 +1054,81 @@ func TestEngineClient_CalculateUnilevel_EmptyVolume(t *testing.T) {
 	assert.Empty(t, earnings)
 }
 
+// TestEngineClient_CalculateStreamline exercises EngineClient.CalculateStreamline
+// against a real worker. This op had no Go client test, so the typed
+// CommissionEarningDTO marshal/unmarshal on the streamline path was unguarded.
+// Mirrors TestEngineClient_CalculateUnilevel. HEU-514.
+func TestEngineClient_CalculateStreamline(t *testing.T) {
+	client, err := NewEngineClient(context.Background(), findWorkerBinary(t))
+	require.NoError(t, err)
+	defer func() { _ = client.Stop() }()
+
+	ctx := context.Background()
+	structure := "StreamTest"
+	member1 := "00000000-0000-0000-0000-000000000001"
+	member2 := "00000000-0000-0000-0000-000000000002"
+
+	// 1. Create the streamline and build a 2-member sponsor chain:
+	//    member1 is the stream root, member2 sits one level below it.
+	err = client.CreateStreamline(ctx, structure, "sponsor_stream", false, true, 1000)
+	require.NoError(t, err)
+
+	_, err = client.StreamlineAddMember(ctx, structure, StreamlineAddMemberRequest{
+		UserID: member1, SponsorID: "00000000-0000-0000-0000-000000000009", Timestamp: 1000,
+	})
+	require.NoError(t, err)
+
+	_, err = client.StreamlineAddMember(ctx, structure, StreamlineAddMemberRequest{
+		UserID: member2, SponsorID: member1, Timestamp: 2000,
+	})
+	require.NoError(t, err)
+
+	// 2. Calculate streamline commissions. The plan rides in the request.
+	//    member2 generates 100 CV, which walks up one level to member1.
+	//    Dollar amount: 100 * 1.0 (broad) * 1.0 (multiplier) * 0.10 (level 1) = 10.0
+	multiplier := 1.0
+	snap := DistributorSnapshotDTO{
+		Rank:             "member",
+		PersonalVolume:   100.0,
+		Status:           "active",
+		HasOrderInPeriod: true,
+	}
+	req := CalculateStreamlineRequest{
+		Structure: structure,
+		Plan:      json.RawMessage(testPlanJSON),
+		StructureConfig: StreamlineStructureConfigDTO{
+			Name: structure,
+			StreamlineCommission: StreamlineCommissionDTO{
+				VolumeToDollarMultiplier: &multiplier,
+				CommissionableDepth:      5,
+				DynamicCompression: []StreamlineLevelDTO{
+					{Level: 1, MinRank: "member", Percent: 0.10},
+				},
+			},
+		},
+		Snapshots: map[string]DistributorSnapshotDTO{
+			member1: snap,
+			member2: snap,
+		},
+		Volume: []VolumeSourceDTO{
+			{SourceID: member2, CVAmount: 100.0},
+		},
+	}
+
+	earnings, err := client.CalculateStreamline(ctx, req)
+	require.NoError(t, err)
+	require.Len(t, earnings, 1, "expected 1 earning: member1 at level 1")
+
+	// Assert the full CommissionEarningDTO unmarshal, not just the dollar amount.
+	earning := earnings[0]
+	assert.Equal(t, member1, earning.EarnerID)
+	assert.Equal(t, member2, earning.SourceID)
+	assert.Equal(t, 1, earning.Level)
+	assert.InDelta(t, 0.10, earning.Rate, 1e-9)
+	assert.InDelta(t, 100.0, earning.CVAmount, 1e-9)
+	assert.InDelta(t, 10.0, earning.DollarAmount, 1e-9)
+}
+
 // --- Binary pairing commission calculation tests (mock) ---
 
 func TestEngineClient_CalculateBinaryPairing_MockParams(t *testing.T) {

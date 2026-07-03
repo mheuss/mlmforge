@@ -105,9 +105,9 @@ The Rust library provides `get_branch`, `count_downline`, and `count_branch` ope
 
 ### Mode-Dispatched Operations
 
-Some operations serve multiple calculation modes through one op string, selected by the loaded plan config rather than a distinct op.
+Some operations serve multiple calculation modes through one op string, selected by the loaded plan rather than a distinct op.
 
-`calculate_binary_pairing` handles both binary modes. When the plan's `BinaryCommissionMode` is `CycleStep`, the call dispatches internally to the private `calculate_binary_cycle_step` (`commission/binary.rs:367`). So cycle_step results are reachable over the seam through `calculate_binary_pairing`. There is deliberately no separate `calculate_binary_cycle_step` op. A Go caller selects the mode by the plan it loads, not by the op it sends.
+`calculate_binary_pairing` handles both binary modes. When the plan's `BinaryCommissionMode` is `CycleStep`, the call dispatches internally to the private `calculate_binary_cycle_step`, so those results are reachable over the seam through `calculate_binary_pairing`. There is deliberately no separate `calculate_binary_cycle_step` op. A Go caller selects the mode by the plan it loads, not by the op it sends.
 
 The commission ops are `calculate_unilevel`, `calculate_binary_pairing`, `calculate_matrix`, `calculate_stairstep`, `calculate_generation`, `calculate_streamline`, and `board_calculate_commissions`. That is one op per plan type.
 

@@ -21,28 +21,43 @@ func BuildHistoryWindow(
 	ctx context.Context, store QualificationHistoryStore,
 	distributorIDs []uuid.UUID, axis []string,
 ) ([]string, map[string]map[string]*uint16, error) {
-	want := make(map[uuid.UUID]struct{}, len(distributorIDs))
-	for _, id := range distributorIDs {
-		want[id] = struct{}{}
-	}
 	history := make(map[string]map[string]*uint16)
-	for _, period := range axis {
-		rows, err := store.GetByPeriod(ctx, period)
-		if err != nil {
-			return nil, nil, fmt.Errorf("build history window: period %q: %w", period, err)
+	if len(axis) == 0 || len(distributorIDs) == 0 {
+		return axis, history, nil // nothing to fetch; preserves the empty-axis contract
+	}
+
+	// Range covering the axis. period_id is lexicographically sortable.
+	from, to := axis[0], axis[0]
+	inAxis := make(map[string]struct{}, len(axis))
+	for _, p := range axis {
+		inAxis[p] = struct{}{}
+		if p < from {
+			from = p
 		}
-		for _, r := range rows {
-			if _, ok := want[r.UserID]; !ok {
-				continue // filter to requested distributors (I1)
-			}
-			key := r.UserID.String()
-			m := history[key]
-			if m == nil {
-				m = make(map[string]*uint16)
-				history[key] = m
-			}
-			m[period] = r.Ordinal // *uint16; nil == Unranked
+		if p > to {
+			to = p
 		}
+	}
+
+	rows, err := store.GetByUsersAndPeriodRange(ctx, distributorIDs, from, to)
+	if err != nil {
+		return nil, nil, fmt.Errorf("build history window: users=%d range=%q..%q: %w",
+			len(distributorIDs), from, to, err)
+	}
+	for _, r := range rows {
+		// inAxis keeps output identical to the old per-period loop for ANY axis.
+		// BETWEEN over-fetches only for a non-contiguous axis, which PriorLabels
+		// never produces; this guards arbitrary callers.
+		if _, ok := inAxis[r.PeriodID]; !ok {
+			continue
+		}
+		key := r.UserID.String()
+		m := history[key]
+		if m == nil {
+			m = make(map[string]*uint16)
+			history[key] = m
+		}
+		m[r.PeriodID] = r.Ordinal // *uint16; nil == Unranked
 	}
 	return axis, history, nil
 }

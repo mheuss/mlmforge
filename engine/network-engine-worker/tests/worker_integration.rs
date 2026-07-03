@@ -1,5 +1,7 @@
 mod common;
 
+use network_engine::config::StructureConfig;
+
 const ROOT: &str = "00000000-0000-0000-0000-000000000001";
 const CHILD: &str = "00000000-0000-0000-0000-000000000002";
 const GRANDCHILD: &str = "00000000-0000-0000-0000-000000000003";
@@ -3045,6 +3047,72 @@ fn calculate_stairstep_unknown_structure_returns_not_found() {
         resp
     );
 
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Compile-time completeness gate. Every StructureConfig variant must map to a
+/// commission op here. Adding a variant without an arm fails to compile, which
+/// forces the new op to be named (and therefore wired). `allow(dead_code)`: the
+/// function exists for its exhaustive match, not to be called.
+#[allow(dead_code)]
+fn commission_op(structure: &StructureConfig) -> &'static str {
+    match structure {
+        StructureConfig::Unilevel(_) => "calculate_unilevel",
+        StructureConfig::Binary(_) => "calculate_binary_pairing",
+        StructureConfig::Matrix(_) => "calculate_matrix",
+        StructureConfig::Stairstep(_) => "calculate_stairstep",
+        StructureConfig::Generation(_) => "calculate_generation",
+        StructureConfig::Streamline(_) => "calculate_streamline",
+        StructureConfig::BoardPlan(_) => "board_calculate_commissions",
+    }
+}
+
+#[test]
+fn every_structure_type_has_a_dispatchable_commission_op() {
+    // Runtime gate: each op below dispatches to a handler. A dispatched op
+    // returns a typed error (NO_PLAN, etc.) on empty params, never UNKNOWN_OP.
+    //
+    // Primary gate is commission_op above: its exhaustive match is compile-time,
+    // so adding a StructureConfig variant without an arm fails to compile and
+    // forces you to name the op. This list is the runtime half: it confirms the
+    // named ops actually dispatch. The two are not auto-synced. When commission_op
+    // stops compiling on a new variant, name the op there, then add the same
+    // string here and bump EXPECTED_OPS. The count assert only flags a mismatch
+    // between EXPECTED_OPS and this list; it cannot see an op named in
+    // commission_op but never added here. The backstop for that gap is the per-op
+    // integration test every real calculator gets, where an unwired op returns
+    // UNKNOWN_OP. Fully single-sourcing the list would need enum reflection over
+    // StructureConfig, which is not worth it for this gate.
+    const EXPECTED_OPS: usize = 7;
+    let ops = [
+        "calculate_unilevel",
+        "calculate_binary_pairing",
+        "calculate_matrix",
+        "calculate_stairstep",
+        "calculate_generation",
+        "calculate_streamline",
+        "board_calculate_commissions",
+    ];
+    assert_eq!(
+        ops.len(),
+        EXPECTED_OPS,
+        "ops list is out of sync with commission_op's StructureConfig arms"
+    );
+
+    let mut worker = common::spawn_worker();
+    for op in ops {
+        let resp = common::send_receive(
+            &mut worker,
+            &format!(r#"{{"id":"gate","op":"{}","params":{{}}}}"#, op),
+        );
+        assert!(
+            !resp.contains("UNKNOWN_OP"),
+            "op '{}' is not dispatched (orphaned calculator?): {}",
+            op,
+            resp
+        );
+    }
     drop(worker.stdin.take());
     worker.wait().unwrap();
 }

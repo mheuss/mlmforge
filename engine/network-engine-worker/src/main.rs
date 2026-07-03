@@ -1,5 +1,6 @@
 mod handlers;
 mod protocol;
+mod signals;
 mod state;
 
 use std::io::{self, BufRead, Write};

@@ -1,0 +1,215 @@
+// SignalLayer is installed in the worker's main loop in a later task (Task 6).
+// Until then only the tests construct it, so the module reads as dead code to the
+// binary build. Remove this allow when main installs the subscriber.
+#![allow(dead_code)]
+
+use std::collections::BTreeMap;
+use std::io::Write;
+
+use serde::Serialize;
+use tracing::field::{Field, Visit};
+use tracing::{Event, Subscriber};
+use tracing_subscriber::fmt::MakeWriter;
+use tracing_subscriber::layer::{Context, Layer};
+
+/// One serialized NDJSON signal message. Mirrors the schema in design-rationale 019.
+#[derive(Serialize)]
+struct SignalMessage {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    level: String,
+    target: String,
+    message: String,
+    fields: BTreeMap<String, serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trace_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    span_id: Option<String>,
+    timestamp: String,
+}
+
+/// Collects event fields into a JSON map and extracts the special `message` field.
+#[derive(Default)]
+struct FieldVisitor {
+    fields: BTreeMap<String, serde_json::Value>,
+    message: Option<String>,
+}
+
+impl Visit for FieldVisitor {
+    fn record_f64(&mut self, f: &Field, v: f64) {
+        // serde_json maps non-finite floats (NaN, +/-Inf) to null.
+        self.fields.insert(f.name().into(), v.into());
+    }
+    fn record_i64(&mut self, f: &Field, v: i64) {
+        self.fields.insert(f.name().into(), v.into());
+    }
+    fn record_u64(&mut self, f: &Field, v: u64) {
+        self.fields.insert(f.name().into(), v.into());
+    }
+    fn record_bool(&mut self, f: &Field, v: bool) {
+        self.fields.insert(f.name().into(), v.into());
+    }
+    fn record_str(&mut self, f: &Field, v: &str) {
+        self.fields.insert(f.name().into(), v.into());
+    }
+    fn record_debug(&mut self, f: &Field, v: &dyn std::fmt::Debug) {
+        let rendered = format!("{v:?}");
+        if f.name() == "message" {
+            // The macro records the message as `fmt::Arguments`, whose Debug impl
+            // renders through Display. So this is the plain message text, with no
+            // surrounding quotes to strip.
+            self.message = Some(rendered);
+        } else {
+            // Non-primitive fields, or values written with `?field`, land here and
+            // are Debug-stringified: strings gain quotes and numbers become strings.
+            // Prefer typed values at call sites so they hit record_str/record_f64
+            // and serialize as native JSON.
+            self.fields
+                .insert(f.name().into(), serde_json::Value::String(rendered));
+        }
+    }
+}
+
+/// A tracing Layer that serializes each event as one NDJSON signal line.
+pub struct SignalLayer<W> {
+    make_writer: W,
+}
+
+impl<W> SignalLayer<W> {
+    pub fn new(make_writer: W) -> Self {
+        Self { make_writer }
+    }
+}
+
+impl<S, W> Layer<S> for SignalLayer<W>
+where
+    S: Subscriber,
+    W: for<'a> MakeWriter<'a> + 'static,
+{
+    fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+        let meta = event.metadata();
+        let mut visitor = FieldVisitor::default();
+        event.record(&mut visitor);
+
+        let (trace_id, span_id) = current_trace_context();
+        let signal = SignalMessage {
+            kind: "signal",
+            level: meta.level().as_str().to_ascii_lowercase(),
+            target: meta.target().to_string(),
+            message: visitor.message.unwrap_or_default(),
+            fields: visitor.fields,
+            trace_id,
+            span_id,
+            timestamp: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true),
+        };
+
+        if let Ok(line) = serde_json::to_string(&signal) {
+            let mut w = self.make_writer.make_writer();
+            let _ = writeln!(w, "{line}");
+            let _ = w.flush();
+        }
+    }
+}
+
+/// Trace context is stubbed in this task. Task 4 wires it to a thread-local that
+/// the worker sets per request from the incoming trace_id/span_id.
+pub(crate) fn current_trace_context() -> (Option<String>, Option<String>) {
+    (None, None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SignalLayer;
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+    use tracing_subscriber::Registry;
+    use tracing_subscriber::fmt::MakeWriter;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    /// A `MakeWriter` that appends every write into a shared buffer, so the test
+    /// can inspect exactly what the layer emitted.
+    #[derive(Clone)]
+    struct BufWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl<'a> MakeWriter<'a> for BufWriter {
+        type Writer = BufGuard;
+        fn make_writer(&'a self) -> Self::Writer {
+            BufGuard(self.0.clone())
+        }
+    }
+
+    struct BufGuard(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for BufGuard {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn warn_event_serializes_as_signal() {
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = Registry::default().with(SignalLayer::new(BufWriter(buf.clone())));
+
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::warn!(percent = 0.5, "pairing percent outside [0.0, 1.0]");
+        });
+
+        let captured = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        let line = captured
+            .lines()
+            .next()
+            .expect("one signal line was written");
+        let value: serde_json::Value =
+            serde_json::from_str(line).expect("signal line is valid JSON");
+
+        assert_eq!(value["type"], "signal");
+        assert_eq!(value["level"], "warn");
+        assert!(
+            value["target"]
+                .as_str()
+                .unwrap()
+                .starts_with("network_engine_worker"),
+            "unexpected target: {}",
+            value["target"]
+        );
+        assert_eq!(value["message"], "pairing percent outside [0.0, 1.0]");
+        assert_eq!(value["fields"]["percent"], 0.5);
+        // 019: trace_id/span_id are omitted keys (not null) when absent.
+        assert!(
+            value.get("trace_id").is_none(),
+            "trace_id should be omitted"
+        );
+        assert!(value.get("span_id").is_none(), "span_id should be omitted");
+        assert!(
+            value["timestamp"].as_str().unwrap().ends_with('Z'),
+            "timestamp should be UTC Z form: {}",
+            value["timestamp"]
+        );
+    }
+
+    #[test]
+    fn string_field_serializes_as_json_string() {
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = Registry::default().with(SignalLayer::new(BufWriter(buf.clone())));
+
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::warn!(boundary_rank = "gold", "rank below boundary");
+        });
+
+        let captured = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        let line = captured
+            .lines()
+            .next()
+            .expect("one signal line was written");
+        let value: serde_json::Value =
+            serde_json::from_str(line).expect("signal line is valid JSON");
+
+        // A &str field must serialize as a JSON string, not a Debug-quoted string.
+        assert_eq!(value["fields"]["boundary_rank"], "gold");
+    }
+}

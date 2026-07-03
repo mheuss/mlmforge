@@ -67,6 +67,22 @@ type CalculateGenerationRequest struct {
 	Volume        []VolumeSourceDTO                 `json:"volume"`
 }
 
+// CalculateMatrixRequest is the input for matrix commission calculation.
+// Wire field "structure" matches the Rust CalculateMatrixParams serde rename.
+type CalculateMatrixRequest struct {
+	StructureName string                            `json:"structure"`
+	Snapshots     map[string]DistributorSnapshotDTO `json:"snapshots"`
+	Volume        []VolumeSourceDTO                 `json:"volume"`
+}
+
+// CalculateStairstepRequest is the input for stairstep commission calculation.
+// Wire field "structure" matches the Rust CalculateStairstepParams serde rename.
+type CalculateStairstepRequest struct {
+	StructureName string                            `json:"structure"`
+	Snapshots     map[string]DistributorSnapshotDTO `json:"snapshots"`
+	Volume        []VolumeSourceDTO                 `json:"volume"`
+}
+
 // CalculateBinaryPairingRequest is the input for binary pairing commission calculation.
 // Wire field "structure" matches the Rust CalculateBinaryPairingParams serde rename.
 type CalculateBinaryPairingRequest struct {

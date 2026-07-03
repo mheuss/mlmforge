@@ -44,20 +44,11 @@ The operations are the same across tree types. "Get the subtree under position N
 
 We considered separate types per tree (BinaryNode, MatrixNode, UnilevelNode) with a common interface. The position-indexed approach is simpler and avoids type assertion overhead.
 
-### Rank Groups
+### Rank Groups (superseded)
 
-Organizations can have multiple ranking systems running at the same time. Some have a single global rank. Others have different ranks per structure. Some evaluate rank on current-period volume only. Others use cumulative all-time volume or highest-ever achieved rank.
+The original design proposed a Go `RankGroup` type and a `RankProvider` interface so multiple ranking systems could coexist in one compensation plan. That API was never built. It has been removed.
 
-```go
-type RankGroup struct {
-    ID             string
-    Scope          string // "global" or "structure_specific"
-    StructureID    string // If structure-specific
-    EvaluationMode string // "current_period_only", "cumulative", "highest_ever"
-}
-```
-
-The `RankGroup` concept allows all of these to coexist in a single compensation plan. All `RankProvider` methods are scoped by rank group.
+Rank evaluation now lives in the Rust engine as the `evaluate_ranks` op. It iterates the rank ladder to a least fixpoint, driven from Go by a thin `RankDriver`. See ADR-024 and [026 Bottom-Up Rank Evaluation](026-bottom-up-rank-evaluation.md).
 
 ### Holding Tanks
 

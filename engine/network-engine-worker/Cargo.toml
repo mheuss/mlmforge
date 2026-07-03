@@ -9,3 +9,7 @@ network-engine = { path = "../network-engine" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 uuid = { version = "1", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+tracing-log = "0.2"
+chrono = { version = "0.4", features = ["clock"] }

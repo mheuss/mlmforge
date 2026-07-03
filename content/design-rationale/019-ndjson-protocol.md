@@ -103,6 +103,14 @@ This surfaces Rust panic messages, assertion failures, and any `eprintln!` diagn
 
 The Rust library provides `get_branch`, `count_downline`, and `count_branch` operations that are not exposed through the NDJSON protocol. These are internal operations used during commission calculations (e.g., active leg counting). Exposing them would add protocol surface area without a Go-side caller. They remain available for future exposure if needed.
 
+### Mode-Dispatched Operations
+
+Some operations serve multiple calculation modes through one op string, selected by the loaded plan config rather than a distinct op.
+
+`calculate_binary_pairing` handles both binary modes. When the plan's `BinaryCommissionMode` is `CycleStep`, the call dispatches internally to the private `calculate_binary_cycle_step` (`commission/binary.rs:367`). So cycle_step results are reachable over the seam through `calculate_binary_pairing`. There is deliberately no separate `calculate_binary_cycle_step` op. A Go caller selects the mode by the plan it loads, not by the op it sends.
+
+The commission ops are `calculate_unilevel`, `calculate_binary_pairing`, `calculate_matrix`, `calculate_stairstep`, `calculate_generation`, `calculate_streamline`, and `board_calculate_commissions`. That is one op per plan type.
+
 ## What We Considered
 
 **Multiplexed requests.** Allow multiple in-flight requests with ID-based response matching. The subprocess model is inherently single-threaded (one stdin, one stdout). Multiplexing adds complexity for no throughput benefit. The mutex serializes requests, which matches the worker's single-threaded dispatch loop.

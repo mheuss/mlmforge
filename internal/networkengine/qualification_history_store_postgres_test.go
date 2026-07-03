@@ -293,3 +293,36 @@ func TestPostgresQualificationHistoryStore_SaveResult_RollbackPreservesPriorRows
 	assert.Contains(t, ids, userB)
 	assert.NotContains(t, ids, userC)
 }
+
+func TestBuildHistoryWindow_PostgresParity(t *testing.T) {
+	store := newTestPostgresQualificationHistoryStore(t)
+	ctx := context.Background()
+
+	userA := mustParseUUID(t, "00000000-0000-0000-0000-000000000001")
+	userB := mustParseUUID(t, "00000000-0000-0000-0000-000000000002")
+	other := mustParseUUID(t, "00000000-0000-0000-0000-000000000099")
+
+	require.NoError(t, store.SaveResult(ctx, "2026-04", []QualificationHistoryEntry{
+		{UserID: userA, Rank: strPtr("silver"), Ordinal: u16Ptr(2)},
+		{UserID: userB}, // Unranked
+		{UserID: other, Rank: strPtr("gold"), Ordinal: u16Ptr(3)},
+	}))
+	require.NoError(t, store.SaveResult(ctx, "2026-05", []QualificationHistoryEntry{
+		{UserID: userA, Rank: strPtr("gold"), Ordinal: u16Ptr(3)},
+	}))
+
+	axis := []string{"2026-05", "2026-04"}
+	axisOut, history, err := BuildHistoryWindow(ctx, store, []uuid.UUID{userA, userB}, axis)
+	require.NoError(t, err)
+
+	assert.Equal(t, axis, axisOut)
+	assert.NotContains(t, history, other.String()) // filtered server-side
+	require.NotNil(t, history[userA.String()]["2026-05"])
+	assert.Equal(t, uint16(3), *history[userA.String()]["2026-05"])
+	assert.Equal(t, uint16(2), *history[userA.String()]["2026-04"])
+	// B was evaluated Unranked in 2026-04 (present key, nil value) and absent in 2026-05.
+	val, ok := history[userB.String()]["2026-04"]
+	require.True(t, ok)
+	assert.Nil(t, val)
+	assert.NotContains(t, history[userB.String()], "2026-05")
+}

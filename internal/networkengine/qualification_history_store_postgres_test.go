@@ -102,6 +102,46 @@ func TestPostgresQualificationHistoryStore_GetByUserAndPeriodRange(t *testing.T)
 	assert.Empty(t, rows)
 }
 
+func TestPostgresQualificationHistoryStore_GetByUsersAndPeriodRange(t *testing.T) {
+	store := newTestPostgresQualificationHistoryStore(t)
+	ctx := context.Background()
+
+	userA := mustParseUUID(t, "00000000-0000-0000-0000-000000000001")
+	userB := mustParseUUID(t, "00000000-0000-0000-0000-000000000002")
+	userC := mustParseUUID(t, "00000000-0000-0000-0000-000000000003")
+
+	require.NoError(t, store.SaveResult(ctx, "2026-03", []QualificationHistoryEntry{
+		{UserID: userA, Rank: strPtr("bronze"), Ordinal: u16Ptr(1)},
+		{UserID: userB, Rank: strPtr("silver"), Ordinal: u16Ptr(2)},
+	}))
+	require.NoError(t, store.SaveResult(ctx, "2026-04", []QualificationHistoryEntry{
+		{UserID: userA, Rank: strPtr("gold"), Ordinal: u16Ptr(3)},
+		{UserID: userC, Rank: strPtr("gold"), Ordinal: u16Ptr(3)},
+	}))
+	require.NoError(t, store.SaveResult(ctx, "2026-05", []QualificationHistoryEntry{
+		{UserID: userA, Rank: strPtr("gold"), Ordinal: u16Ptr(3)},
+	}))
+
+	// Proves pgx encodes []uuid.UUID for = ANY($1), plus the bounded read.
+	rows, err := store.GetByUsersAndPeriodRange(ctx, []uuid.UUID{userA, userB}, "2026-03", "2026-04")
+	require.NoError(t, err)
+	require.Len(t, rows, 3)
+	assert.Equal(t, "2026-03", rows[0].PeriodID)
+	assert.Equal(t, userA, rows[0].UserID)
+	assert.Equal(t, userB, rows[1].UserID)
+	assert.Equal(t, "2026-04", rows[2].PeriodID)
+	assert.Equal(t, userA, rows[2].UserID)
+
+	// Postgres has its own early-return path (before any round-trip): an empty
+	// user set and an inverted range must both yield no rows, matching Memory.
+	empty, err := store.GetByUsersAndPeriodRange(ctx, nil, "2026-03", "2026-05")
+	require.NoError(t, err)
+	assert.Empty(t, empty)
+	inverted, err := store.GetByUsersAndPeriodRange(ctx, []uuid.UUID{userA}, "2026-05", "2026-03")
+	require.NoError(t, err)
+	assert.Empty(t, inverted)
+}
+
 func TestPostgresQualificationHistoryStore_SaveResult_CompleteReplacement(t *testing.T) {
 	store := newTestPostgresQualificationHistoryStore(t)
 	ctx := context.Background()

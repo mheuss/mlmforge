@@ -33,6 +33,15 @@ const getByUserAndPeriodRangeSQL = `SELECT ` + qualHistoryColumns + `
                                     WHERE user_id = $1 AND period_id BETWEEN $2 AND $3
                                     ORDER BY period_id ASC`
 
+// Served by qualification_history_user_period_idx (user_id, period_id). Keep
+// user_id as the left operand of ANY so the index serves the read. HEU-506's
+// planned tenant_id-in-PK change must re-EXPLAIN this to confirm it still does.
+const getByUsersAndPeriodRangeSQL = `SELECT ` + qualHistoryColumns + `
+                                     FROM qualification_history
+                                     WHERE user_id = ANY($1)
+                                       AND period_id BETWEEN $2 AND $3
+                                     ORDER BY period_id ASC, user_id ASC`
+
 func (s *PostgresQualificationHistoryStore) SaveResult(ctx context.Context, periodID string, entries []QualificationHistoryEntry) error {
 	if periodID == "" {
 		return fmt.Errorf("save qualification history: period_id must be non-empty")
@@ -123,6 +132,22 @@ func (s *PostgresQualificationHistoryStore) GetByUserAndPeriodRange(ctx context.
 	rows, err := s.pool.Query(ctx, getByUserAndPeriodRangeSQL, userID, fromPeriod, toPeriod)
 	if err != nil {
 		return nil, fmt.Errorf("get by user and period range: %w", err)
+	}
+	defer rows.Close()
+	return scanQualificationHistoryRows(rows)
+}
+
+// GetByUsersAndPeriodRange returns the requested users' rows across the inclusive
+// [fromPeriod, toPeriod] range, ordered by period_id ASC then user_id ASC. One
+// index-served query replaces the per-period fan-out. An empty userIDs slice or an
+// inverted range returns no rows without a round-trip.
+func (s *PostgresQualificationHistoryStore) GetByUsersAndPeriodRange(ctx context.Context, userIDs []uuid.UUID, fromPeriod, toPeriod string) ([]QualificationHistoryRow, error) {
+	if len(userIDs) == 0 || fromPeriod > toPeriod {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx, getByUsersAndPeriodRangeSQL, userIDs, fromPeriod, toPeriod)
+	if err != nil {
+		return nil, fmt.Errorf("get by users and period range: %w", err)
 	}
 	defer rows.Close()
 	return scanQualificationHistoryRows(rows)

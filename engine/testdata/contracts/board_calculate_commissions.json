@@ -1,0 +1,45 @@
+{
+    "description": "board_calculate_commissions pins BoardCommissionResult: one uncapped cycle (count 1 <= max 3) pays the cycled member $500 at cycle_number 1 and bumps updated_cycle_counts to 1",
+    "request": {
+        "id": "bd-1",
+        "op": "board_calculate_commissions",
+        "params": {
+            "cycle_events": [
+                {
+                    "board_id": "00000000-0000-0000-0000-000000000010",
+                    "cycled_member": "00000000-0000-0000-0000-000000000001",
+                    "new_boards": [],
+                    "re_entry_board": null
+                }
+            ],
+            "period_cycle_counts": {},
+            "config": {
+                "cycle_commission": 500.0,
+                "re_entry_enabled": true,
+                "re_entry_position": "bottom",
+                "max_cycles_per_period": 3,
+                "max_cascade_depth": 10,
+                "stall_threshold_periods": 3,
+                "inactive_compression": false
+            }
+        }
+    },
+    "expected_response": {
+        "id": "bd-1",
+        "ok": true,
+        "result": {
+            "earnings": [
+                {
+                    "earner_id": "00000000-0000-0000-0000-000000000001",
+                    "board_id": "00000000-0000-0000-0000-000000000010",
+                    "dollar_amount": 500.0,
+                    "cycle_number": 1,
+                    "capped": false
+                }
+            ],
+            "updated_cycle_counts": {
+                "00000000-0000-0000-0000-000000000001": 1
+            }
+        }
+    }
+}

@@ -46,8 +46,9 @@ func BuildHistoryWindow(
 	}
 	for _, r := range rows {
 		// inAxis keeps output identical to the old per-period loop for ANY axis.
-		// BETWEEN over-fetches only for a non-contiguous axis, which PriorLabels
-		// never produces; this guards arbitrary callers.
+		// A non-contiguous axis makes BETWEEN over-fetch off-axis periods, so
+		// this filter is load-bearing, not optional. PriorLabels passes a
+		// contiguous axis today, but the filter guards any caller.
 		if _, ok := inAxis[r.PeriodID]; !ok {
 			continue
 		}

@@ -315,7 +315,7 @@ func TestBuildHistoryWindow_PostgresParity(t *testing.T) {
 	axisOut, history, err := BuildHistoryWindow(ctx, store, []uuid.UUID{userA, userB}, axis)
 	require.NoError(t, err)
 
-	assert.Equal(t, axis, axisOut)
+	assert.Equal(t, []string{"2026-05", "2026-04"}, axisOut)
 	assert.NotContains(t, history, other.String()) // filtered server-side
 	require.NotNil(t, history[userA.String()]["2026-05"])
 	assert.Equal(t, uint16(3), *history[userA.String()]["2026-05"])

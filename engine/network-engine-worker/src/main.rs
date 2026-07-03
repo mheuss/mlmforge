@@ -6,6 +6,9 @@ mod state;
 use std::io::{self, BufRead, Write};
 use std::panic;
 
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+
 use protocol::{Request, Response};
 use state::WorkerState;
 
@@ -94,11 +97,16 @@ fn dispatch(state: &mut WorkerState, request: &Request) -> Response {
 }
 
 fn main() {
-    // The worker communicates exclusively via NDJSON on stdout. Initializing a
-    // logger (e.g. env_logger) would risk mixing log output with protocol
-    // messages on stderr, which the Go side does not parse. Log macro calls in
-    // the engine library are intentionally no-ops in subprocess mode. If engine
-    // warnings need to surface, they should be included in the response envelope.
+    // The worker emits engine warnings as NDJSON `signal` messages on stdout,
+    // interleaved with protocol responses. Go demuxes by the "type":"signal"
+    // discriminator. stdout is a LineWriter behind a reentrant lock, so signal
+    // lines written during dispatch flush ahead of the response line on the same
+    // thread. See design-rationale 019.
+    tracing_subscriber::registry()
+        .with(signals::SignalLayer::new(std::io::stdout))
+        .init();
+    // Route any dependency `log` records into tracing so they become signals too.
+    let _ = tracing_log::LogTracer::init();
 
     let mut state = WorkerState::default();
     let stdin = io::stdin().lock();
@@ -115,9 +123,15 @@ fn main() {
 
         let response = match serde_json::from_str::<Request>(&line) {
             Ok(request) => {
+                // Set the trace context so signals emitted during dispatch carry
+                // the caller's trace_id/span_id. Cleared after catch_unwind, not
+                // inside it, so the clear runs even when a handler panics. That
+                // keeps a stale context from leaking into the next request on this
+                // long-lived thread.
+                signals::set_trace_context(request.trace_id.clone(), request.span_id.clone());
                 // Catch panics so a bug in one handler doesn't crash the
                 // long-lived worker process and break the Go subprocess connection.
-                match panic::catch_unwind(panic::AssertUnwindSafe(|| {
+                let resp = match panic::catch_unwind(panic::AssertUnwindSafe(|| {
                     dispatch(&mut state, &request)
                 })) {
                     Ok(resp) => resp,
@@ -126,7 +140,9 @@ fn main() {
                         "INTERNAL_ERROR",
                         "handler panicked unexpectedly",
                     ),
-                }
+                };
+                signals::clear_trace_context();
+                resp
             }
             Err(e) => Response::error(
                 String::new(),

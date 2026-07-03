@@ -3079,15 +3079,14 @@ fn every_structure_type_has_a_dispatchable_commission_op() {
     // Primary gate is commission_op above: its exhaustive match is compile-time,
     // so adding a StructureConfig variant without an arm fails to compile the
     // test crate and forces you to name the op. This list is the runtime half:
-    // it confirms the
-    // named ops actually dispatch. The two are not auto-synced. When commission_op
-    // stops compiling on a new variant, name the op there, then add the same
-    // string here and bump EXPECTED_OPS. The count assert only flags a mismatch
-    // between EXPECTED_OPS and this list; it cannot see an op named in
-    // commission_op but never added here. The backstop for that gap is the per-op
-    // integration test every real calculator gets, where an unwired op returns
-    // UNKNOWN_OP. Fully single-sourcing the list would need enum reflection over
-    // StructureConfig, which is not worth it for this gate.
+    // it confirms the named ops actually dispatch. The two are not auto-synced.
+    // When commission_op stops compiling on a new variant, name the op there,
+    // then add the same string here and bump EXPECTED_OPS. The count assert only
+    // flags a mismatch between EXPECTED_OPS and this list; it cannot see an op
+    // named in commission_op but never added here. The backstop for that gap is
+    // the per-op integration test every real calculator gets, where an unwired
+    // op returns UNKNOWN_OP. Fully single-sourcing the list would need enum
+    // reflection over StructureConfig, which is not worth it for this gate.
     const EXPECTED_OPS: usize = 7;
     let ops = [
         "calculate_unilevel",

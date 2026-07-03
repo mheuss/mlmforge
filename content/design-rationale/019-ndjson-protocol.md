@@ -2,7 +2,7 @@
 
 ## The Problem
 
-Decision 003 establishes that the Rust engine runs as a subprocess communicating via NDJSON over stdin/stdout. That decision covered the "why" (performance, language boundary) but not the protocol specifics. How are requests correlated with responses? What happens when the worker panics? How does Go cancel a blocked read? What error codes does the worker return?
+Decision 003 establishes that the Rust engine runs as a subprocess communicating via NDJSON over stdin/stdout. That decision covered the "why" (performance, language boundary) but not the protocol specifics. How are requests correlated with responses? What happens when the worker panics? How does Go cancel a blocked read? How does the worker's own logging reach Go? What error codes does the worker return?
 
 These details matter for reliability, debuggability, and the Go-Rust contract.
 
@@ -30,6 +30,29 @@ Response (error):
 The `id` field correlates requests with responses. The Go transport generates monotonically increasing IDs (`req-1`, `req-2`, ...) and validates that the response ID matches. A mismatch indicates a protocol desynchronization and is treated as a fatal error.
 
 The `ok` boolean makes success/failure unambiguous without inspecting the `result` or `error` fields. `result` is omitted on error. `error` is omitted on success.
+
+A request may also carry two optional fields, `trace_id` and `span_id`. They let the worker's log output correlate with the Go caller's trace. Both are omitted when the caller has no active trace. The worker echoes them onto any signal a request produces. The next section describes them.
+
+The same request with trace context set:
+```json
+{"id": "req-1", "op": "get_children", "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736", "span_id": "00f067aa0ba902b7", "params": {"user_id": "abc"}}
+```
+
+### Signal Messages
+
+The worker emits its log output as signals. They flow from Rust to Go on stdout, interleaved with responses. This carries structured logs across the language boundary without a second channel.
+
+A signal is a single JSON object followed by a newline:
+
+```json
+{"type": "signal", "level": "warn", "target": "network_engine::commission::binary", "message": "pairing percent outside [0.0, 1.0]", "fields": {"percent": 1.4}, "trace_id": "...", "span_id": "...", "timestamp": "2026-07-03T12:00:00Z"}
+```
+
+The `type` field is the discriminator. Signals always carry `"type": "signal"`. Responses never carry a `type` field. The Go reader routes each stdout line by this field. A line with `"type": "signal"` goes to the observability pipeline. Any other line is a response.
+
+The remaining fields describe the log event. `level` is the severity (`error`, `warn`, `info`, `debug`, or `trace`). `target` is the Rust module path that emitted it. `message` is the human-readable text. `fields` holds the structured key-value pairs from the log call. `timestamp` is RFC3339.
+
+`trace_id` and `span_id` appear only when the triggering request carried them. They tie the signal back to the Go operation that caused it.
 
 ### RawValue for Params
 
@@ -79,17 +102,23 @@ Without this, a panic in any handler would crash the process. The Go side would 
 
 ### Context Cancellation
 
-The Go `StdioTransport.Call` method supports context cancellation. After writing the request to stdin, it reads the response in a goroutine and selects between the read result and `ctx.Done()`.
+A background goroutine owns the read side of stdout. It runs for the life of the transport and drains stdout line by line into a buffered channel.
+
+`StdioTransport.Call` writes the request to stdin, then reads lines from the channel. It forwards signals to the observability pipeline and returns the first response to the caller. The read selects against `ctx.Done()`.
 
 ```
 write request to stdin
-spawn goroutine: read response from stdout
-select:
-  case response received: unmarshal and return
-  case context cancelled: return ctx.Err()
+loop:
+  select:
+    case line received:
+      signal   -> forward to observability, keep reading
+      response -> unmarshal and return
+    case context cancelled: return ctx.Err()
 ```
 
 This prevents a hung worker from blocking the Go caller indefinitely. A caller with a timeout context gets a clean cancellation instead of waiting forever for a response that may never come.
+
+A dedicated reader also removes the pipe-buffer deadlock a synchronous reader risks. A per-call synchronous read stops when the caller cancels. The worker can then block writing to a full stdout pipe. The background reader keeps reading after a cancellation and buffers what arrives, so a cancelled caller no longer strands the worker. The worker is single-threaded and emits signals only while handling a request. On a normal call, the request's signals and its response all arrive within that call's window, so the channel returns to empty. Cancellation is the exception. The worker may finish and write a response after `Call` has already returned `ctx.Err()`, and the reader buffers that late line. To keep it from being read as the next call's response, a cancelled `Call` marks the transport closed. Later calls fail the closed check and return before reading, so the stale line never reaches the id check.
 
 The mutex ensures only one request is in flight at a time. Combined with the atomic `closed` flag (checked before acquiring the mutex), this prevents races between concurrent `Call` and `Close` operations.
 
@@ -127,3 +156,4 @@ The commission ops are `calculate_unilevel`, `calculate_binary_pairing`, `calcul
 - **Typed error handling.** Go callers match on error codes, not message strings. Adding a new error code requires no Go-side changes until a caller needs to handle it specifically.
 - **Resilient worker.** A panic in one handler does not crash the process. The Go side sees a typed error and the connection stays alive.
 - **Clean cancellation.** Go contexts propagate through to the transport layer. Timeouts and cancellations work as expected.
+- **Cross-language observability.** The worker's logs cross the boundary as signals on the same stdout stream. Go forwards them to its telemetry pipeline, correlated by trace context when the request carried it.

@@ -80,7 +80,7 @@ Consumers do not need Rust tooling. The Rust engine can be replaced or upgraded 
 |---------|-----------|
 | Platform | ConfigStore, AuditWriter, EventStore, JobScheduler, SessionManager |
 | Identity | UserReader, AddressReader, StatusTransition, AuthProvider |
-| Network Engine | TreeNavigator, RankProvider, VolumeRecorder, CommissionResult, CommissionAdmin, StructurePlacer, PlanConfiguration, EngineTransport |
+| Network Engine | TreeNavigator, VolumeRecorder, CommissionResult, CommissionAdmin, StructurePlacer, PlanConfiguration, EngineTransport |
 | Financial | PaymentProcessor, WalletManager, InvoiceProvider |
 | Commerce | ProductCatalog, AutoshipManager |
 | Engagement | MessageSender |

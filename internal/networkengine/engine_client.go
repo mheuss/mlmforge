@@ -366,6 +366,8 @@ func (c *EngineClient) CalculateMatrix(ctx context.Context, req CalculateMatrixR
 
 // CalculateStairstep runs commission calculation for a stairstep structure.
 // Sends snapshots and volume to the engine and returns the earnings.
+// Stairstep runs on a unilevel tree, so a tree-type mismatch error names
+// "unilevel" (e.g. "is a binary tree, not a unilevel tree").
 func (c *EngineClient) CalculateStairstep(ctx context.Context, req CalculateStairstepRequest) ([]CommissionEarningDTO, error) {
 	return callInto[[]CommissionEarningDTO](c, ctx, "calculate_stairstep", req)
 }

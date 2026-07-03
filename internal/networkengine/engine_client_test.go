@@ -847,6 +847,7 @@ func TestEngineClient_CalculateStairstep_MockParams(t *testing.T) {
 	assert.Equal(t, "calculate_stairstep", mock.lastOp)
 	assert.JSONEq(t, `{"structure":"Test","snapshots":{"00000000-0000-0000-0000-000000000001":{"rank":"member","personal_volume":100,"status":"active","has_order_in_period":true}},"volume":[{"source_id":"00000000-0000-0000-0000-000000000003","cv_amount":100}]}`, string(mock.lastParams))
 	assert.Equal(t, "00000000-0000-0000-0000-000000000001", earnings[0].EarnerID)
+	assert.InDelta(t, 2.0, earnings[0].DollarAmount, 1e-9)
 }
 
 func TestEngineClient_CalculateStairstep_EmptyEarnings(t *testing.T) {

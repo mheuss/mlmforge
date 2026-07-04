@@ -5,11 +5,17 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/mlmforge/mlmforge/internal/observability"
 	"github.com/mlmforge/mlmforge/internal/platform"
 	"github.com/spf13/cobra"
 )
+
+// shutdownTimeout bounds the observability flush on exit. A stuck exporter (e.g.
+// the batch log processor flushing to a slow destination) must not hang the CLI
+// — the fail-fast intent of Init extends to shutdown.
+const shutdownTimeout = 5 * time.Second
 
 func main() {
 	// run returns the exit code so the deferred observability shutdown (which
@@ -30,7 +36,13 @@ func run() int {
 		fmt.Fprintf(os.Stderr, "observability init: %v\n", err)
 		return 1
 	}
-	defer func() { _ = shutdown(context.Background()) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := shutdown(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "observability shutdown: %v\n", err)
+		}
+	}()
 
 	root := &cobra.Command{
 		Use:   "mlmforge",

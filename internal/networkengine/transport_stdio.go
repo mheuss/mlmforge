@@ -32,7 +32,7 @@ var _ EngineTransport = (*StdioTransport)(nil)
 type StdioTransport struct {
 	cmd           *exec.Cmd
 	stdin         io.WriteCloser
-	stderr        bytes.Buffer
+	stderr        syncBuffer
 	lines         chan json.RawMessage
 	signalHandler func(json.RawMessage)
 	mu            sync.Mutex
@@ -40,6 +40,28 @@ type StdioTransport struct {
 	closed        atomic.Bool
 	readErrMu     sync.Mutex
 	readErr       error
+}
+
+// syncBuffer is a bytes.Buffer safe for concurrent use. os/exec copies the
+// worker's stderr into it from an internal goroutine that runs until Wait
+// returns, while readError may read it on the failure path before then.
+// bytes.Buffer is not safe for concurrent read/write, so both sides go through
+// the mutex.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 // TransportOption configures a StdioTransport at construction time.

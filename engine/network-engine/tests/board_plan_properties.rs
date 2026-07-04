@@ -2,10 +2,11 @@ mod common;
 
 use common::uuid_from_index;
 use network_engine::board_plan::board::total_positions;
-use network_engine::board_plan::{BoardPlanEngine, BoardPlanError};
+use network_engine::board_plan::{BoardPlanEngine, BoardPlanError, CycleEvent};
+use network_engine::commission::calculate_board_commissions;
 use network_engine::config::board_plan::{BoardPlanConfig, ReEntryPosition};
 use proptest::prelude::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
@@ -233,6 +234,99 @@ proptest! {
                 Err(_) => break,
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Commission dollar-value law
+// ---------------------------------------------------------------------------
+
+proptest! {
+    /// The cycle-commission dollar law from `calculate_board_commissions`
+    /// (board_plan.rs:35-36): a cycle is capped exactly when its number
+    /// exceeds `max_cycles_per_period`. Capped cycles pay $0, uncapped
+    /// cycles pay `cycle_commission`.
+    ///
+    /// Drives the real calculator with synthetic cycle events for a single
+    /// member, generating `max_cycles + extra` events (extra >= 1) so both
+    /// the paid and capped regimes appear in every generated case. The
+    /// closing `any(capped)` / `any(!capped)` assertions guarantee the law
+    /// is exercised on both sides of the cap, so the test keeps its teeth.
+    #[test]
+    fn cycle_commission_dollar_law(
+        cycle_commission in 1.0f64..10_000.0,
+        max_cycles in 1u32..8,
+        extra in 1u32..6,
+    ) {
+        let config = BoardPlanConfig {
+            cycle_commission,
+            max_cycles_per_period: max_cycles,
+            ..prop_config()
+        };
+
+        // One member cycles `max_cycles + extra` times against an empty
+        // starting count, so cycle numbers run 1..=n and straddle the cap.
+        let member = uuid_from_index(1);
+        let board = uuid_from_index(2);
+        let n_events = max_cycles + extra;
+        let events: Vec<CycleEvent> = (0..n_events)
+            .map(|_| CycleEvent {
+                board_id: board,
+                cycled_member: member,
+                new_boards: vec![],
+                re_entry_board: None,
+            })
+            .collect();
+
+        let result = calculate_board_commissions(&events, &HashMap::new(), &config);
+        prop_assert_eq!(result.earnings.len(), n_events as usize);
+
+        for (i, earning) in result.earnings.iter().enumerate() {
+            // Single member with empty prior counts: the i-th event is
+            // cycle i+1, so pin cycle_number to the known input rather than
+            // trusting the value the cap decision is derived from.
+            let expected_cycle = (i + 1) as u32;
+            prop_assert_eq!(
+                earning.cycle_number,
+                expected_cycle,
+                "event {} produced cycle_number {}, expected {}",
+                i,
+                earning.cycle_number,
+                expected_cycle
+            );
+
+            // Derive the cap decision from the input-pinned cycle, not the
+            // field under test, so the capped assertion stays independent
+            // regardless of assertion order.
+            let should_cap = expected_cycle > max_cycles;
+            prop_assert_eq!(
+                earning.capped,
+                should_cap,
+                "cycle {} capped={} but max_cycles_per_period={}",
+                earning.cycle_number,
+                earning.capped,
+                max_cycles
+            );
+
+            let expected = if should_cap { 0.0 } else { cycle_commission };
+            prop_assert!(
+                (earning.dollar_amount - expected).abs() < 1e-10,
+                "cycle {} (capped={}): dollar {} != expected {}",
+                earning.cycle_number,
+                earning.capped,
+                earning.dollar_amount,
+                expected
+            );
+        }
+
+        prop_assert!(
+            result.earnings.iter().any(|e| e.capped),
+            "no capped earning generated; cap law untested"
+        );
+        prop_assert!(
+            result.earnings.iter().any(|e| !e.capped),
+            "no uncapped earning generated; paid law untested"
+        );
     }
 }
 

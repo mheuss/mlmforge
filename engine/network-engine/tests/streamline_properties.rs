@@ -230,3 +230,108 @@ proptest! {
         prop_assert_eq!(earner_ids.len(), earnings.len(), "duplicate earners detected");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Property 6: Commission dollar-value law (monoline)
+// ---------------------------------------------------------------------------
+
+proptest! {
+    /// Every streamline earning's dollar amount must equal
+    /// `cv_amount * broad_pct * volume_to_dollar_multiplier * level.percent`,
+    /// where streamline hardcodes `broad_pct = 1.0` (streamline.rs:86) and the
+    /// per-level rate comes from the config-built rate table (walk.rs:474-488).
+    ///
+    /// Companion to `commission_walk_completeness`: that pins the earner set,
+    /// this pins the money. Stays in the clean monoline, fully-qualified
+    /// regime (no compression/skip) where the law holds per earner. Uses
+    /// distinct per-level percents so a level->rate mapping bug can't hide
+    /// behind a uniform rate, and rebuilds `expected` from the same
+    /// `structure.streamline_commission.levels` the calculator reads.
+    #[test]
+    fn commission_dollar_value_law(
+        chain_depth in 2_usize..8,
+        cv_amount in 1.0f64..10_000.0,
+        multiplier in 0.1f64..5.0,
+    ) {
+        use std::collections::HashMap;
+        use network_engine::commission::calculate_streamline;
+        use network_engine::commission::types::{DistributorSnapshot, VolumeSource};
+        use network_engine::config::streamline::{StreamlineCommissionConfig, StreamlineLevel};
+        use network_engine::config::StreamlineStructureConfig;
+
+        let engine = build_engine(chain_depth);
+
+        // Monoline: every level qualifies at the lowest rank. Distinct
+        // per-level percents (0.01, 0.02, ...) so the level->rate mapping is
+        // actually exercised, not masked by a uniform rate.
+        let max_depth = (chain_depth - 1) as u8;
+        let levels: Vec<StreamlineLevel> = (1..=max_depth).map(|l| StreamlineLevel {
+            level: l,
+            min_rank: "member".to_string(),
+            percent: 0.01 * l as f64,
+        }).collect();
+
+        let structure = StreamlineStructureConfig {
+            name: "Test".to_string(),
+            streamline_commission: StreamlineCommissionConfig {
+                volume_to_dollar_multiplier: Some(multiplier),
+                max_depth,
+                levels,
+                stream_config: None,
+            },
+        };
+
+        let plan = common::build_base_plan(
+            common::permissive_eligibility(),
+            network_engine::config::StructureConfig::Streamline(structure.clone()),
+            "Test",
+        );
+
+        let mut snapshots = HashMap::new();
+        for i in 1..=chain_depth {
+            snapshots.insert(uuid_from_index(i), DistributorSnapshot {
+                rank: "member".to_string(),
+                personal_volume: 150.0,
+                status: "active".to_string(),
+                has_order_in_period: true,
+            });
+        }
+
+        // Volume at the bottom of the chain.
+        let volume = vec![VolumeSource {
+            source_id: uuid_from_index(chain_depth),
+            cv_amount,
+        }];
+
+        let earnings = calculate_streamline(&engine, &plan, &structure, &snapshots, &volume)
+            .expect("calculation should not fail");
+
+        // Fully-qualified monoline pays at least one level, so the law is
+        // exercised on real earnings and the property keeps its teeth.
+        prop_assert!(!earnings.is_empty(), "expected at least one earning");
+
+        // streamline.rs:86 hardcodes broad_pct = 1.0.
+        let broad_pct = 1.0f64;
+        let cfg_levels = &structure.streamline_commission.levels;
+        for earning in &earnings {
+            let percent = cfg_levels
+                .iter()
+                .find(|l| l.level == earning.level)
+                .map(|l| l.percent)
+                .expect("earning level should map to a configured streamline level");
+
+            let expected = cv_amount * broad_pct * multiplier * percent;
+            prop_assert!(
+                (earning.dollar_amount - expected).abs() < 1e-10,
+                "level {}: dollar {} != cv {} * broad {} * mult {} * pct {} = {}",
+                earning.level,
+                earning.dollar_amount,
+                cv_amount,
+                broad_pct,
+                multiplier,
+                percent,
+                expected
+            );
+        }
+    }
+}

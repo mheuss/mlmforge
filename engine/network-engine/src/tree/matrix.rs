@@ -44,7 +44,6 @@ pub enum PruningMode {
 pub struct MatrixTree {
     arena: Arena,
     width: u8,
-    #[allow(dead_code)] // Validated at construction; read when depth-first spillover is added.
     spillover: SpilloverDirection,
     slots: HashMap<NodeIndex, Vec<Option<NodeIndex>>>,
     holding_tank: Vec<HoldingTankEntry>,
@@ -65,6 +64,16 @@ impl MatrixTree {
             slots: HashMap::new(),
             holding_tank: Vec::new(),
         })
+    }
+
+    /// The fixed number of child slots per node. Immutable after construction.
+    pub fn width(&self) -> u8 {
+        self.width
+    }
+
+    /// The spillover direction this tree was constructed with.
+    pub fn spillover(&self) -> SpilloverDirection {
+        self.spillover
     }
 
     pub fn add_root(&mut self, user_id: Uuid, enrolled_at: i64) -> Result<NodeIndex, TreeError> {
@@ -850,6 +859,18 @@ mod tests {
     fn new_with_depth_first_spillover_fails() {
         let tree = MatrixTree::new(3, SpilloverDirection::DepthFirst);
         assert!(matches!(tree, Err(TreeError::UnsupportedSpillover)));
+    }
+
+    #[test]
+    fn width_returns_configured_width() {
+        let tree = MatrixTree::new(4, SpilloverDirection::BreadthFirst).unwrap();
+        assert_eq!(tree.width(), 4);
+    }
+
+    #[test]
+    fn spillover_returns_configured_direction() {
+        let tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        assert_eq!(tree.spillover(), SpilloverDirection::BreadthFirst);
     }
 
     #[test]

@@ -179,9 +179,7 @@ func (t *StdioTransport) Call(ctx context.Context, op string, params json.RawMes
 			// keep reading so a signal emitted mid-request is never mistaken for
 			// the response.
 			if isSignal(line) {
-				if t.signalHandler != nil {
-					t.signalHandler(line)
-				}
+				t.deliverSignal(line)
 				continue
 			}
 
@@ -228,6 +226,18 @@ func (t *StdioTransport) readError() error {
 		return fmt.Errorf("read response: %w\nworker stderr: %s", err, stderrOut)
 	}
 	return fmt.Errorf("read response: %w", err)
+}
+
+// deliverSignal forwards a signal line to the registered handler, recovering
+// from any panic. Signal forwarding is best-effort, and the handler runs inline
+// on the request path (under the Call mutex), so a misbehaving handler must not
+// be able to crash the caller — or the process.
+func (t *StdioTransport) deliverSignal(line json.RawMessage) {
+	if t.signalHandler == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	t.signalHandler(line)
 }
 
 // Close shuts down the worker process by closing stdin and waiting for exit.

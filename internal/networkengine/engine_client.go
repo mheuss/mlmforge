@@ -13,9 +13,12 @@ type EngineClient struct {
 }
 
 // NewEngineClient creates a client backed by a subprocess at binaryPath.
-// Spawns the worker and verifies it responds to ping.
-func NewEngineClient(ctx context.Context, binaryPath string) (*EngineClient, error) {
-	transport, err := NewStdioTransport(binaryPath)
+// Spawns the worker and verifies it responds to ping. Transport options are
+// forwarded to the underlying StdioTransport, so a caller can opt into
+// observability with WithSignalHandler(observer.HandleSignal). Observability
+// stays opt-in — no handler is installed by default.
+func NewEngineClient(ctx context.Context, binaryPath string, opts ...TransportOption) (*EngineClient, error) {
+	transport, err := NewStdioTransport(binaryPath, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("create transport: %w", err)
 	}

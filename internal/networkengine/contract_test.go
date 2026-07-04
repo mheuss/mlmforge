@@ -196,10 +196,20 @@ func sendRawLine(t *testing.T, transport *StdioTransport, line string) string {
 	_, err := fmt.Fprintf(transport.stdin, "%s\n", line)
 	require.NoError(t, err, "failed to write to worker stdin")
 
-	resp, err := transport.reader.ReadBytes('\n')
-	require.NoError(t, err, "failed to read from worker stdout")
+	// Drain the async reader like Call does: the worker emits signal frames
+	// (structured logs) on stdout, so skip them and return the next response.
+	// A signal emitted mid-fixture must not be read as the response (isSignal,
+	// Task 8). Current fixtures use valid configs (no warns → no signals); this
+	// keeps the harness correct when a future fixture triggers one.
+	for raw := range transport.lines {
+		if isSignal(raw) {
+			continue
+		}
+		return strings.TrimSpace(string(raw))
+	}
 
-	return strings.TrimSpace(string(resp))
+	require.Fail(t, "worker stdout closed before a response was read")
+	return ""
 }
 
 // assertJSONFieldEqual compares a single field between expected and actual

@@ -168,9 +168,9 @@ pub fn calculate_binary_pairing(
                 config.percent
             );
             if !(0.0..=1.0).contains(&config.percent) {
-                log::warn!(
-                    "pairing percent {} is outside [0.0, 1.0]; commissions may be overstated",
-                    config.percent
+                tracing::warn!(
+                    percent = config.percent,
+                    "pairing percent outside [0.0, 1.0]; commissions may be overstated"
                 );
             }
             config

@@ -179,11 +179,13 @@ func spanContextFromIDs(traceID, spanID string) (trace.SpanContext, bool) {
 	if err != nil {
 		return trace.SpanContext{}, false
 	}
+	// TraceFlags is deliberately left unset: the worker forwards only the trace
+	// and span IDs, not the upstream sampling decision, so asserting Sampled here
+	// would misrepresent it. Correlation only needs the IDs.
 	sc := trace.NewSpanContext(trace.SpanContextConfig{
-		TraceID:    tid,
-		SpanID:     sid,
-		TraceFlags: trace.FlagsSampled,
-		Remote:     true,
+		TraceID: tid,
+		SpanID:  sid,
+		Remote:  true,
 	})
 	return sc, sc.IsValid()
 }

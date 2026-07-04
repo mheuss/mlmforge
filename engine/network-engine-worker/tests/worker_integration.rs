@@ -595,6 +595,69 @@ fn load_test_plan(worker: &mut std::process::Child) {
     assert!(resp.contains(r#""ok":true"#), "load_plan failed: {}", resp);
 }
 
+/// Minifies a plan JSON body and sends it via `load_plan`, returning the raw
+/// response. Unlike `load_test_plan`, it does not assert success — the
+/// validation-gate tests need to inspect the rejection.
+fn send_load_plan(worker: &mut std::process::Child, plan_json: &str) -> String {
+    let minified: String = plan_json
+        .lines()
+        .map(|l| l.trim())
+        .collect::<Vec<_>>()
+        .join("");
+    let request = format!(
+        r#"{{"id":"load-plan","op":"load_plan","params":{}}}"#,
+        minified
+    );
+    common::send_receive(worker, &request)
+}
+
+#[test]
+fn load_plan_accepts_valid_baseline_plan() {
+    // Guards against the HEU-517 validator over-rejecting the known-good plan.
+    let mut worker = common::spawn_worker();
+    let resp = send_load_plan(&mut worker, TEST_PLAN_JSON);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "baseline plan should load: {}",
+        resp
+    );
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn load_plan_rejects_unsupported_version() {
+    let mut worker = common::spawn_worker();
+    // A valid future-version plan is not malformed, so it gets its own code.
+    let plan = TEST_PLAN_JSON.replace(r#""version": 1"#, r#""version": 2"#);
+    let resp = send_load_plan(&mut worker, &plan);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("UNSUPPORTED_PLAN_VERSION"),
+        "expected UNSUPPORTED_PLAN_VERSION, got: {}",
+        resp
+    );
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn load_plan_rejects_out_of_range_percent() {
+    let mut worker = common::spawn_worker();
+    // broad_commission_percent must be a fraction in [0, 1]; 1.5 is out of range.
+    let plan = TEST_PLAN_JSON.replace(
+        r#""broad_commission_percent": 0.40"#,
+        r#""broad_commission_percent": 1.5"#,
+    );
+    let resp = send_load_plan(&mut worker, &plan);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PLAN"),
+        "expected INVALID_PLAN, got: {}",
+        resp
+    );
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 #[test]
 fn calculate_unilevel_three_node_chain() {
     let mut worker = common::spawn_worker();

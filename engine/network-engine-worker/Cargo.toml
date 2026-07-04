@@ -13,3 +13,8 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 tracing-log = "0.2"
 chrono = { version = "0.4", features = ["clock"] }
+
+[dev-dependencies]
+# Used only to emit a `log`-crate record in the signal-layer bridge test, so the
+# log->tracing normalization path stays covered after the engine dropped `log`.
+log = "0.4"

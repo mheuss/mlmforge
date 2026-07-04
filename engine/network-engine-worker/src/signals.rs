@@ -272,4 +272,48 @@ mod tests {
         );
         assert!(second.get("span_id").is_none(), "span_id should be cleared");
     }
+
+    #[test]
+    fn log_bridged_event_normalizes_target_and_drops_log_fields() {
+        // A `log`-crate record routed through `LogTracer` reports a static "log"
+        // target and carries the real module path in `log.*` fields. The layer
+        // must recover the module target and drop those fields (see `on_event`).
+        // Native `tracing` events are covered by the tests above and by
+        // tests/signal_emission.rs; this covers the bridge path, which stays live
+        // for dependency `log` records after Task 7 converted the engine warns.
+        //
+        // `LogTracer` is a process-global, install-once bridge, so guard it. The
+        // record still routes to this thread's `with_default` subscriber below.
+        static INIT: std::sync::Once = std::sync::Once::new();
+        INIT.call_once(|| {
+            let _ = tracing_log::LogTracer::init();
+        });
+
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = Registry::default().with(SignalLayer::new(BufWriter(buf.clone())));
+
+        tracing::subscriber::with_default(subscriber, || {
+            log::warn!(target: "network_engine::commission::walk", "bridged warning fired");
+        });
+
+        let captured = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        let line = captured
+            .lines()
+            .next()
+            .expect("one signal line was written");
+        let value: serde_json::Value =
+            serde_json::from_str(line).expect("signal line is valid JSON");
+
+        // Target is normalized to the log record's real target, not "log".
+        assert_eq!(value["target"], "network_engine::commission::walk");
+        // The bridge's log.* bookkeeping fields are dropped.
+        let fields = value["fields"].as_object().expect("fields is an object");
+        assert!(
+            fields.keys().all(|k| !k.starts_with("log.")),
+            "log.* fields should be dropped, got: {:?}",
+            fields.keys().collect::<Vec<_>>()
+        );
+        assert_eq!(value["message"], "bridged warning fired");
+        assert_eq!(value["level"], "warn");
+    }
 }

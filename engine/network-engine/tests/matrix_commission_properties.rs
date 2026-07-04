@@ -4,7 +4,9 @@ use common::{
     member_snapshot, uuid_from_index,
 };
 
-use network_engine::commission::{DistributorSnapshot, VolumeSource, calculate_matrix};
+use network_engine::commission::{
+    CalculationError, DistributorSnapshot, VolumeSource, calculate_matrix,
+};
 use network_engine::config::commission::{CompressionConfig, CompressionMode};
 use network_engine::config::eligibility::CommissionEligibility;
 use network_engine::config::matrix::SpilloverDirection;
@@ -285,6 +287,47 @@ proptest! {
             "Total payout {} exceeds upper bound {}",
             total, upper_bound
         );
+    }
+
+    /// A matrix tree whose width differs from its config's width is rejected;
+    /// a matching width is not rejected as a topology mismatch.
+    #[test]
+    fn width_mismatch_rejected_matching_accepted(
+        tree_width in 2..=8u8,
+        config_width in 2..=8u8,
+    ) {
+        // Config carries config_width; the tree is built at tree_width.
+        // Height, max_depth, and spillover all match — only width can differ.
+        let (plan, structure) = build_matrix_plan(config_width, 9, 5);
+
+        let mut tree = MatrixTree::new(tree_width, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(uuid_from_index(0), 0).unwrap();
+        tree.add_node(uuid_from_index(1), uuid_from_index(0), 1).unwrap();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid_from_index(0), member_snapshot());
+        snapshots.insert(uuid_from_index(1), member_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: uuid_from_index(1),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume);
+
+        if tree_width != config_width {
+            prop_assert!(
+                matches!(result, Err(CalculationError::TreeConfigMismatch { .. })),
+                "tree width {} vs config {} should mismatch, got {:?}",
+                tree_width, config_width, result
+            );
+        } else {
+            prop_assert!(
+                !matches!(result, Err(CalculationError::TreeConfigMismatch { .. })),
+                "matching width {} must not be a topology mismatch, got {:?}",
+                tree_width, result
+            );
+        }
     }
 }
 

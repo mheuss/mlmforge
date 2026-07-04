@@ -2721,6 +2721,23 @@ fn create_matrix_tree(child: &mut std::process::Child, name: &str) {
     );
 }
 
+/// Creates a matrix tree with an explicit width, to exercise topology mismatch.
+fn create_matrix_tree_with_width(child: &mut std::process::Child, name: &str, width: u8) {
+    let resp = common::send_receive(
+        child,
+        &format!(
+            r#"{{"id":"setup-mat-w","op":"create_tree","params":{{"structure":"{}","tree_type":"matrix","width":{},"spillover":"breadth_first"}}}}"#,
+            name, width
+        ),
+    );
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "create_tree (matrix width {}) failed: {}",
+        width,
+        resp
+    );
+}
+
 #[test]
 fn calculate_matrix_pays_upline() {
     let mut worker = common::spawn_worker();
@@ -2816,6 +2833,44 @@ fn calculate_matrix_wrong_tree_type_returns_invalid_params() {
     assert!(
         resp.contains("is a unilevel tree, not a matrix tree"),
         "expected expected-vs-actual message, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn calculate_matrix_topology_mismatch_returns_invalid_params() {
+    let mut worker = common::spawn_worker();
+    load_matrix_test_plan(&mut worker);
+    // Plan's "Test" matrix is width 3; build the tree 2-wide to force a mismatch.
+    create_matrix_tree_with_width(&mut worker, TREE_NAME, 2);
+
+    let params = r#"{"structure":"Test","snapshots":{},"volume":[]}"#;
+    let request = format!(
+        r#"{{"id":"calc-m-mismatch","op":"calculate_matrix","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#),
+        "expected ok:false, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("INVALID_PARAMS"),
+        "expected INVALID_PARAMS, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("does not match config"),
+        "expected topology-mismatch message, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("width 2 vs expected 3"),
+        "expected the expected-vs-actual width in the message (BR3), got: {}",
         resp
     );
 

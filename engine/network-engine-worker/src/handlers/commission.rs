@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use network_engine::commission::{
-    BinaryCommissionEarning, DistributorSnapshot, LegVolumes, VolumeSource,
+    BinaryCommissionEarning, CalculationError, DistributorSnapshot, LegVolumes, VolumeSource,
     calculate_binary_pairing, calculate_generation, calculate_matrix, calculate_stairstep,
     calculate_unilevel,
 };
@@ -291,6 +291,10 @@ pub(crate) fn handle_calculate_matrix(state: &WorkerState, request: &Request) ->
             serde_json::to_value(&earnings)
                 .expect("serialization of Vec<CommissionEarning> is infallible"),
         ),
+        Err(e @ CalculationError::TreeConfigMismatch { .. }) => {
+            // Caller-supplied tree/config incoherence, not a calc failure.
+            Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string())
+        }
         Err(e) => Response::error(request.id.clone(), "CALCULATION_ERROR", e.to_string()),
     }
 }

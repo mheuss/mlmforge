@@ -229,10 +229,9 @@ pub fn calculate_generation(
             {
                 Some(ord) => ord,
                 None => {
-                    log::warn!(
-                        "generation boundary_rank '{}' not found in plan ranks; \
-                         no generation commissions will be paid",
-                        gen_config.boundary_rank
+                    tracing::warn!(
+                        boundary_rank = gen_config.boundary_rank.as_str(),
+                        "generation boundary_rank not found in plan ranks; no generation commissions will be paid"
                     );
                     // Return any level earnings already collected. Don't
                     // discard them just because the generation boundary

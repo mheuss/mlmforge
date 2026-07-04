@@ -57,10 +57,9 @@ fn identify_breakaways(
     let threshold_ordinal = match rank_ordinals.get(threshold.as_str()).copied() {
         Some(ord) => ord,
         None => {
-            log::warn!(
-                "breakaway threshold_rank '{}' not found in plan ranks; \
-                 no distributors will be treated as breakaway",
-                threshold
+            tracing::warn!(
+                threshold_rank = threshold.as_str(),
+                "breakaway threshold_rank not found in plan ranks; no distributors will be treated as breakaway"
             );
             return HashSet::new();
         }
@@ -308,10 +307,9 @@ fn walk_single_overrides(
         let boundary_ordinal = match rank_ordinals.get(gen_cfg.boundary_rank.as_str()).copied() {
             Some(ord) => ord,
             None => {
-                log::warn!(
-                    "generation override boundary_rank '{}' not found in plan ranks; \
-                                 generation overrides will be skipped",
-                    gen_cfg.boundary_rank
+                tracing::warn!(
+                    boundary_rank = gen_cfg.boundary_rank.as_str(),
+                    "generation override boundary_rank not found in plan ranks; generation overrides will be skipped"
                 );
                 return None;
             }

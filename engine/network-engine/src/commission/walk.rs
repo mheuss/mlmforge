@@ -106,19 +106,17 @@ pub(crate) fn resolve_threshold_ordinal(
         if matches!(c.mode, CompressionMode::SkipBelowRank) {
             match &c.rank_threshold {
                 None => {
-                    log::warn!(
-                        "SkipBelowRank compression enabled but rank_threshold is not set; \
-                         compression will have no effect"
+                    tracing::warn!(
+                        "SkipBelowRank compression enabled but rank_threshold is not set; compression will have no effect"
                     );
                     None
                 }
                 Some(name) => {
                     let ordinal = rank_ordinals.get(name.as_str()).copied();
                     if ordinal.is_none() {
-                        log::warn!(
-                            "SkipBelowRank compression rank_threshold '{}' not found in \
-                             plan ranks; compression will have no effect",
-                            name
+                        tracing::warn!(
+                            rank_threshold = name.as_str(),
+                            "SkipBelowRank compression rank_threshold not found in plan ranks; compression will have no effect"
                         );
                     }
                     ordinal
@@ -315,7 +313,7 @@ pub(crate) fn build_pass_up_context<T: TreeNavigator>(
 /// Log a warning if broad_commission_percent is outside [0.0, 1.0].
 ///
 /// Called once during config construction. The debug_assert catches
-/// this in development; the log::warn surfaces it in production.
+/// this in development; the tracing::warn surfaces it in production.
 pub(crate) fn validate_broad_pct(broad_pct: f64) {
     debug_assert!(
         (0.0..=1.0).contains(&broad_pct),
@@ -323,9 +321,9 @@ pub(crate) fn validate_broad_pct(broad_pct: f64) {
         broad_pct
     );
     if !(0.0..=1.0).contains(&broad_pct) {
-        log::warn!(
-            "broad_commission_percent {} is outside [0.0, 1.0]; commissions may be overstated",
-            broad_pct
+        tracing::warn!(
+            broad_percent = broad_pct,
+            "broad_commission_percent outside [0.0, 1.0]; commissions may be overstated"
         );
     }
 }

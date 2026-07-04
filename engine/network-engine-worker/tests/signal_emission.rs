@@ -108,6 +108,30 @@ fn engine_warning_surfaces_as_signal_with_trace_context() {
         signal["span_id"], SPAN_ID,
         "signal carries the request span_id"
     );
+    // 019: target is the emitting module path, not the log->tracing bridge's
+    // static "log" target. Normalization in SignalLayer recovers the module.
+    let target = signal["target"].as_str().expect("target is a string");
+    assert!(
+        target.starts_with("network_engine::commission"),
+        "target should be the engine module, got: {target}"
+    );
+    // 019: fields carry call-site key-values only. This warn has none, and the
+    // bridge's `log.*` bookkeeping keys must be dropped, so fields is empty.
+    assert_eq!(
+        signal["fields"].as_object().map(|o| o.len()),
+        Some(0),
+        "fields should be empty, got: {}",
+        signal["fields"]
+    );
+    // The message text survives the log->tracing bridge intact.
+    assert!(
+        signal["message"]
+            .as_str()
+            .expect("message is a string")
+            .contains("rank_threshold"),
+        "unexpected message: {}",
+        signal["message"]
+    );
 
     let response = response.expect("the calc response line was emitted");
     assert_eq!(response["id"], "calc");

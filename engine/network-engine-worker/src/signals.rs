@@ -5,6 +5,7 @@ use std::io::Write;
 use serde::Serialize;
 use tracing::field::{Field, Visit};
 use tracing::{Event, Subscriber};
+use tracing_log::NormalizeEvent;
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::{Context, Layer};
 
@@ -83,9 +84,17 @@ where
     W: for<'a> MakeWriter<'a> + 'static,
 {
     fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
-        let meta = event.metadata();
+        // Events bridged from the `log` crate report a static "log" target and
+        // push their real module path, file, and line into `log.*` fields.
+        // Normalize the metadata so `target` is the emitting module (per 019),
+        // then drop the `log.*` fields so `fields` holds only call-site data.
+        // Native `tracing` events return None here and use their own metadata.
+        let normalized = event.normalized_metadata();
+        let meta = normalized.as_ref().unwrap_or_else(|| event.metadata());
+
         let mut visitor = FieldVisitor::default();
         event.record(&mut visitor);
+        visitor.fields.retain(|name, _| !name.starts_with("log."));
 
         let (trace_id, span_id) = current_trace_context();
         let signal = SignalMessage {

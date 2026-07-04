@@ -131,6 +131,31 @@ func TestObserver_HandleSignal_FieldTypes(t *testing.T) {
 	assert.Equal(t, `[1,2]`, attrs["arr"].AsString())
 }
 
+// TestObserver_HandleSignal_NativeTraceCorrelation: valid hex IDs land in the
+// record's first-class TraceID/SpanID (via the emit context), not as attributes.
+func TestObserver_HandleSignal_NativeTraceCorrelation(t *testing.T) {
+	exporter := &captureExporter{}
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(exporter)))
+	t.Cleanup(func() { _ = lp.Shutdown(context.Background()) })
+
+	observer := NewObserver(lp)
+	const traceID = "0123456789abcdef0123456789abcdef"
+	const spanID = "0123456789abcdef"
+	observer.HandleSignal(json.RawMessage(
+		`{"type":"signal","level":"warn","message":"m","trace_id":"` + traceID + `","span_id":"` + spanID + `"}`))
+
+	require.NoError(t, lp.ForceFlush(context.Background()))
+	require.Len(t, exporter.records, 1)
+	rec := exporter.records[0]
+
+	assert.Equal(t, traceID, rec.TraceID().String(), "trace id should be stamped natively")
+	assert.Equal(t, spanID, rec.SpanID().String(), "span id should be stamped natively")
+
+	attrs := collectAttrs(rec)
+	assert.NotContains(t, attrs, "trace_id", "valid ids must not duplicate into attributes")
+	assert.NotContains(t, attrs, "span_id")
+}
+
 // TestObserver_HandleSignal_Malformed: fire-and-forget drops bad input without
 // panicking and emits nothing.
 func TestObserver_HandleSignal_Malformed(t *testing.T) {

@@ -27,6 +27,7 @@ import (
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // defaultLogFile is used when OTEL_LOGS_EXPORTER=file but OTEL_LOGS_FILE is unset.
@@ -144,15 +145,47 @@ func (o *Observer) HandleSignal(raw json.RawMessage) {
 	for _, k := range keys {
 		attrs = append(attrs, fieldToKeyValue(k, sig.Fields[k]))
 	}
-	if sig.TraceID != "" {
-		attrs = append(attrs, otellog.String("trace_id", sig.TraceID))
-	}
-	if sig.SpanID != "" {
-		attrs = append(attrs, otellog.String("span_id", sig.SpanID))
+
+	// Correlate to the engine's span natively when the IDs parse: emitting with
+	// the span context lets the SDK stamp the record's first-class TraceID/SpanID.
+	// Fall back to string attributes only when they don't parse (e.g. partial IDs).
+	emitCtx := context.Background()
+	if sc, ok := spanContextFromIDs(sig.TraceID, sig.SpanID); ok {
+		emitCtx = trace.ContextWithSpanContext(emitCtx, sc)
+	} else {
+		if sig.TraceID != "" {
+			attrs = append(attrs, otellog.String("trace_id", sig.TraceID))
+		}
+		if sig.SpanID != "" {
+			attrs = append(attrs, otellog.String("span_id", sig.SpanID))
+		}
 	}
 	rec.AddAttributes(attrs...)
 
-	o.logger.Emit(context.Background(), rec)
+	// Emit hands the record to the batch processor and returns; the export runs
+	// off this goroutine, so it never blocks the demux loop that calls it.
+	o.logger.Emit(emitCtx, rec)
+}
+
+// spanContextFromIDs builds a remote SpanContext from hex trace/span IDs. It
+// returns ok=false when either ID is missing or not valid hex, so the caller
+// can fall back to string attributes.
+func spanContextFromIDs(traceID, spanID string) (trace.SpanContext, bool) {
+	tid, err := trace.TraceIDFromHex(traceID)
+	if err != nil {
+		return trace.SpanContext{}, false
+	}
+	sid, err := trace.SpanIDFromHex(spanID)
+	if err != nil {
+		return trace.SpanContext{}, false
+	}
+	sc := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    tid,
+		SpanID:     sid,
+		TraceFlags: trace.FlagsSampled,
+		Remote:     true,
+	})
+	return sc, sc.IsValid()
 }
 
 // severityForLevel maps a tracing level string to an OTel severity. Unknown
@@ -239,5 +272,10 @@ func newLogProcessor() (*os.File, sdklog.Processor, error) {
 		_ = f.Close()
 		return nil, nil, fmt.Errorf("create stdoutlog exporter: %w", err)
 	}
-	return f, sdklog.NewSimpleProcessor(exporter), nil
+	// A batch processor exports off the caller's goroutine. This matters because
+	// HandleSignal runs inline in the transport's demux loop while it holds the
+	// Call mutex (the money path): a synchronous exporter would put a file write
+	// on that path. A simple processor would export on every Emit — never use it
+	// here.
+	return f, sdklog.NewBatchProcessor(exporter), nil
 }

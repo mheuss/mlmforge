@@ -1,5 +1,6 @@
 //! Types for commission calculation.
 
+use crate::config::matrix::SpilloverDirection;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
@@ -84,6 +85,21 @@ pub enum CalculationError {
     /// Commission config failed validation.
     #[error("config error: {0}")]
     ConfigError(String),
+
+    /// The tree's topology does not match the structure config it pays against.
+    /// Paying against a mismatched tree computes commissions on the wrong shape.
+    #[error(
+        "matrix tree for structure '{structure}' does not match config: \
+         width {actual_width} vs expected {expected_width}, \
+         spillover {actual_spillover:?} vs expected {expected_spillover:?}"
+    )]
+    TreeConfigMismatch {
+        structure: String,
+        expected_width: u8,
+        actual_width: u8,
+        expected_spillover: SpilloverDirection,
+        actual_spillover: SpilloverDirection,
+    },
 }
 
 /// Per-distributor leg volumes carried from the previous period.
@@ -145,4 +161,31 @@ pub struct BinaryCalculationResult {
     /// Post-payout leg volumes for every distributor in the tree.
     /// Keyed by user_id. Includes non-earners (they accumulate volume).
     pub carry_forward: HashMap<Uuid, LegVolumes>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tree_config_mismatch_message_names_structure_and_values() {
+        let err = CalculationError::TreeConfigMismatch {
+            structure: "Test".to_string(),
+            expected_width: 3,
+            actual_width: 2,
+            expected_spillover: SpilloverDirection::BreadthFirst,
+            actual_spillover: SpilloverDirection::DepthFirst,
+        };
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Test"),
+            "message must name the structure: {msg}"
+        );
+        assert!(msg.contains("does not match config"), "message: {msg}");
+        assert!(msg.contains("width 2 vs expected 3"), "message: {msg}");
+        assert!(
+            msg.contains("spillover DepthFirst vs expected BreadthFirst"),
+            "message must report actual-vs-expected spillover in order: {msg}"
+        );
+    }
 }

@@ -1,6 +1,7 @@
 package networkengine
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func TestStdioTransport_Ping(t *testing.T) {
@@ -176,6 +178,77 @@ func TestStdioTransport_ContextAlreadyCancelled(t *testing.T) {
 
 	_ = stdoutW.Close()
 	_ = stdinR.Close()
+}
+
+// TestStdioTransport_TraceContext asserts on the raw request bytes: with an OTel
+// span in context, Call marshals trace_id/span_id; with a plain context the
+// omitempty tags keep both fields absent (which protects contract fixtures that
+// assert exact request bytes).
+func TestStdioTransport_TraceContext(t *testing.T) {
+	withSpan := func() context.Context {
+		sc := trace.NewSpanContext(trace.SpanContextConfig{
+			TraceID: trace.TraceID{0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8, 0x9, 0xa, 0xb, 0xc, 0xd, 0xe, 0xf, 0x10},
+			SpanID:  trace.SpanID{0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8},
+		})
+		return trace.ContextWithSpanContext(context.Background(), sc)
+	}
+
+	tests := []struct {
+		name      string
+		ctx       context.Context
+		wantTrace bool
+	}{
+		{"valid span context", withSpan(), true},
+		{"plain context", context.Background(), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stdin := &stdinCapture{}
+			stdoutR, stdoutW := io.Pipe()
+			transport := newTestTransport(stdin, stdoutR, nil)
+
+			// Feed the response for the fresh transport's first id (req-1).
+			go func() {
+				_, _ = io.WriteString(stdoutW, `{"id":"req-1","ok":true,"result":null}`+"\n")
+			}()
+
+			_, err := transport.Call(tt.ctx, "ping", json.RawMessage("null"))
+			require.NoError(t, err)
+
+			sent := stdin.String()
+			if tt.wantTrace {
+				assert.Contains(t, sent, `"trace_id":`)
+				assert.Contains(t, sent, `"span_id":`)
+			} else {
+				assert.NotContains(t, sent, `"trace_id":`)
+				assert.NotContains(t, sent, `"span_id":`)
+			}
+
+			_ = stdoutW.Close()
+		})
+	}
+}
+
+// stdinCapture is an io.WriteCloser that records everything written, so tests
+// can assert on the exact request bytes Call sends.
+type stdinCapture struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (c *stdinCapture) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.buf.Write(p)
+}
+
+func (c *stdinCapture) Close() error { return nil }
+
+func (c *stdinCapture) String() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.buf.String()
 }
 
 // newTestTransport builds a StdioTransport around injected pipes (no real

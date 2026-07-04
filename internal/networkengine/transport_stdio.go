@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"sync"
 	"sync/atomic"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 // ErrTransportClosed is returned when Call is invoked on a closed transport.
@@ -151,6 +153,13 @@ func (t *StdioTransport) Call(ctx context.Context, op string, params json.RawMes
 	id := fmt.Sprintf("req-%d", t.nextID.Add(1))
 
 	req := protocolRequest{ID: id, Op: op, Params: params}
+	// Propagate the caller's OTel span context so engine-side signals can be
+	// correlated with this request (D7). The omitempty tags keep both fields
+	// absent when there is no active span, protecting contract fixtures.
+	if sc := trace.SpanContextFromContext(ctx); sc.IsValid() {
+		req.TraceID = sc.TraceID().String()
+		req.SpanID = sc.SpanID().String()
+	}
 	data, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)

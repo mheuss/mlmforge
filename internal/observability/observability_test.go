@@ -2,8 +2,10 @@ package observability
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -50,6 +52,97 @@ func assertProvidersWired(t *testing.T) {
 	counter, err := otel.Meter("test").Int64Counter("dormant")
 	require.NoError(t, err)
 	counter.Add(context.Background(), 1)
+}
+
+// captureExporter is an in-memory sdklog.Exporter that records everything the
+// SimpleProcessor emits, so tests can inspect the resulting log records.
+type captureExporter struct {
+	mu      sync.Mutex
+	records []sdklog.Record
+}
+
+func (e *captureExporter) Export(_ context.Context, records []sdklog.Record) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.records = append(e.records, records...)
+	return nil
+}
+
+func (e *captureExporter) Shutdown(context.Context) error   { return nil }
+func (e *captureExporter) ForceFlush(context.Context) error { return nil }
+
+func collectAttrs(rec sdklog.Record) map[string]otellog.Value {
+	attrs := make(map[string]otellog.Value, rec.AttributesLen())
+	rec.WalkAttributes(func(kv otellog.KeyValue) bool {
+		attrs[kv.Key] = kv.Value
+		return true
+	})
+	return attrs
+}
+
+func TestObserver_HandleSignal(t *testing.T) {
+	exporter := &captureExporter{}
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(exporter)))
+	t.Cleanup(func() { _ = lp.Shutdown(context.Background()) })
+
+	observer := NewObserver(lp)
+
+	raw := json.RawMessage(`{"type":"signal","level":"warn","target":"network_engine::commission::binary","message":"pairing percent outside [0.0, 1.0]","fields":{"percent":1.5},"trace_id":"abc","span_id":"def","timestamp":"2026-07-03T00:00:00Z"}`)
+	observer.HandleSignal(raw)
+
+	require.NoError(t, lp.ForceFlush(context.Background()))
+	require.Len(t, exporter.records, 1, "one signal should map to one record")
+	rec := exporter.records[0]
+
+	assert.Equal(t, otellog.SeverityWarn, rec.Severity())
+	assert.Equal(t, "pairing percent outside [0.0, 1.0]", rec.Body().AsString())
+
+	attrs := collectAttrs(rec)
+	require.Contains(t, attrs, "target")
+	assert.Equal(t, "network_engine::commission::binary", attrs["target"].AsString())
+	require.Contains(t, attrs, "percent")
+	assert.Equal(t, 1.5, attrs["percent"].AsFloat64())
+	require.Contains(t, attrs, "trace_id")
+	assert.Equal(t, "abc", attrs["trace_id"].AsString())
+	require.Contains(t, attrs, "span_id")
+	assert.Equal(t, "def", attrs["span_id"].AsString())
+}
+
+// TestObserver_HandleSignal_FieldTypes covers the deterministic value mapping:
+// string/number/bool as typed attributes, and null/object/array compacted to a
+// JSON string (mirrors the Rust visitor).
+func TestObserver_HandleSignal_FieldTypes(t *testing.T) {
+	exporter := &captureExporter{}
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(exporter)))
+	t.Cleanup(func() { _ = lp.Shutdown(context.Background()) })
+
+	observer := NewObserver(lp)
+	observer.HandleSignal(json.RawMessage(`{"type":"signal","level":"info","message":"m","fields":{"s":"txt","n":42,"b":true,"nothing":null,"obj":{"k":1},"arr":[1,2]}}`))
+
+	require.NoError(t, lp.ForceFlush(context.Background()))
+	require.Len(t, exporter.records, 1)
+	attrs := collectAttrs(exporter.records[0])
+
+	assert.Equal(t, "txt", attrs["s"].AsString())
+	assert.Equal(t, float64(42), attrs["n"].AsFloat64())
+	assert.Equal(t, true, attrs["b"].AsBool())
+	assert.Equal(t, "null", attrs["nothing"].AsString())
+	assert.Equal(t, `{"k":1}`, attrs["obj"].AsString())
+	assert.Equal(t, `[1,2]`, attrs["arr"].AsString())
+}
+
+// TestObserver_HandleSignal_Malformed: fire-and-forget drops bad input without
+// panicking and emits nothing.
+func TestObserver_HandleSignal_Malformed(t *testing.T) {
+	exporter := &captureExporter{}
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(exporter)))
+	t.Cleanup(func() { _ = lp.Shutdown(context.Background()) })
+
+	observer := NewObserver(lp)
+	observer.HandleSignal(json.RawMessage(`{"type":"signal",`)) // truncated
+
+	require.NoError(t, lp.ForceFlush(context.Background()))
+	assert.Empty(t, exporter.records, "malformed signal should emit no record")
 }
 
 func TestInit_LogsDisabled(t *testing.T) {

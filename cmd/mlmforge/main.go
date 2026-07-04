@@ -1,15 +1,37 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 
+	"github.com/mlmforge/mlmforge/internal/observability"
 	"github.com/mlmforge/mlmforge/internal/platform"
 	"github.com/spf13/cobra"
 )
 
 func main() {
+	// run returns the exit code so the deferred observability shutdown (which
+	// flushes buffered telemetry) runs before the process exits — a bare os.Exit
+	// in main would skip every defer.
+	os.Exit(run())
+}
+
+func run() int {
+	// Initialize observability before anything else. Fail-fast: if an operator
+	// explicitly asked for a log exporter (OTEL_LOGS_EXPORTER=file) and the
+	// environment can't deliver it (bad path/permissions), exit rather than run a
+	// money-system migration unobserved. Unset env is the normal path and never
+	// errors — the pipeline stays dormant. Revisit when a network (OTLP) exporter
+	// lands, where reachability at init is a softer failure (HEU-404).
+	shutdown, err := observability.Init(context.Background())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "observability init: %v\n", err)
+		return 1
+	}
+	defer func() { _ = shutdown(context.Background()) }()
+
 	root := &cobra.Command{
 		Use:   "mlmforge",
 		Short: "MLMForge compensation engine",
@@ -86,6 +108,7 @@ func main() {
 	root.AddCommand(migrateCmd)
 
 	if err := root.Execute(); err != nil {
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }

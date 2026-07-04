@@ -104,7 +104,29 @@ pub(crate) fn tree_error_to_response(request_id: &str, e: TreeError) -> Response
 
 pub(crate) fn handle_load_plan(state: &mut WorkerState, request: &Request) -> Response {
     match serde_json::from_str::<CompensationPlan>(request.params.get()) {
-        Ok(plan) => {
+        Ok(mut plan) => {
+            // The engine is the system of record for money and does not trust
+            // that the upstream Go schema pipeline ran (HEU-517). Gate the plan
+            // here before storing it. Version skew gets a dedicated code so a
+            // valid future-version plan stays distinguishable from a malformed
+            // one; every other semantic violation reuses INVALID_PLAN.
+            if plan.version != 1 {
+                return Response::error(
+                    request.id.clone(),
+                    "UNSUPPORTED_PLAN_VERSION",
+                    format!(
+                        "unsupported plan version {}: this engine supports version 1",
+                        plan.version
+                    ),
+                );
+            }
+            if let Err(e) = plan.validate() {
+                return Response::error(
+                    request.id.clone(),
+                    "INVALID_PLAN",
+                    format!("plan failed validation: {}", e),
+                );
+            }
             state.plan = Some(plan);
             Response::success(request.id.clone(), serde_json::json!({"loaded": true}))
         }

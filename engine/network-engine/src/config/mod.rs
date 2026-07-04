@@ -25,6 +25,10 @@ pub mod stairstep;
 pub mod streamline;
 pub mod volume;
 
+/// Engine-side plan validation (`CompensationPlan::validate`). Internal impl
+/// module — it attaches methods to the public config types, nothing to export.
+mod validate;
+
 use serde::{Deserialize, Serialize};
 
 pub use binary::BinaryCommissionConfig;

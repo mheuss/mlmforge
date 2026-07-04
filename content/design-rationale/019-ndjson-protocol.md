@@ -76,6 +76,7 @@ The worker uses a fixed set of error codes. Handlers return these codes in the `
 | `INVALID_POSITION` | Position value is not valid for this tree type |
 | `TREE_EXISTS` | A tree with this name already exists |
 | `INVALID_PLAN` | Compensation plan data is malformed or invalid |
+| `UNSUPPORTED_PLAN_VERSION` | Plan `version` is not supported by this engine build. Distinct from `INVALID_PLAN`: the plan parsed cleanly but targets a schema version the engine does not implement |
 | `HAS_CHILDREN` | Cannot remove a node that has children |
 | `NO_ROOT` | Reserved. Tree operation requires a root but none has been set. Currently handled via `STRUCTURE_NOT_FOUND`. |
 | `NO_PLAN` | Commission calculation requires a loaded plan |

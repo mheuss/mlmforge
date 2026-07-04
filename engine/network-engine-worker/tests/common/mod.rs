@@ -40,7 +40,8 @@ pub fn is_signal_line(line: &str) -> bool {
 /// writes in response to a request and blocks on stdin afterward, so nothing is
 /// buffered past the response line when the reader is dropped. Signal lines that
 /// precede the response are drained within this same reader, so they are never
-/// mistaken for the next request's response.
+/// mistaken for the next request's response. This holds only while signals are
+/// emitted synchronously within dispatch. A background logger would break it.
 pub fn send_receive(child: &mut Child, request: &str) -> String {
     let stdin = child.stdin.as_mut().expect("stdin not available");
     writeln!(stdin, "{}", request).expect("failed to write to stdin");

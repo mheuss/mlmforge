@@ -99,13 +99,18 @@ fn dispatch(state: &mut WorkerState, request: &Request) -> Response {
 fn main() {
     // The worker emits engine warnings as NDJSON `signal` messages on stdout,
     // interleaved with protocol responses. Go demuxes by the "type":"signal"
-    // discriminator. stdout is a LineWriter behind a reentrant lock, so signal
-    // lines written during dispatch flush ahead of the response line on the same
-    // thread. See design-rationale 019.
+    // discriminator. stdout is a LineWriter behind a reentrant lock, so a signal
+    // written during dispatch flushes ahead of the response on the same thread.
+    // This assumes a single-threaded worker: `main` holds the stdout lock for the
+    // whole loop, so a background thread emitting an event would block. Revisit
+    // if concurrency is ever added. See design-rationale 019.
     tracing_subscriber::registry()
         .with(signals::SignalLayer::new(std::io::stdout))
         .init();
-    // Route any dependency `log` records into tracing so they become signals too.
+    // Belt-and-suspenders: `.init()` already installs the log->tracing bridge via
+    // tracing-subscriber's default `tracing-log` feature. This keeps dependency
+    // `log` records routing even if that feature is turned off. No-op when the
+    // bridge is already installed.
     let _ = tracing_log::LogTracer::init();
 
     let mut state = WorkerState::default();

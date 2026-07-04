@@ -21,7 +21,7 @@ use super::walk;
 /// `spillover` disagrees with `structure.matrix_params` — checked before any
 /// other work, so it precedes volume/snapshot validation. Otherwise returns
 /// `CalculationError` if a volume source is not found in the tree or snapshot
-/// data.
+/// data, or has an invalid `cv_amount`.
 pub fn calculate_matrix(
     tree: &MatrixTree,
     plan: &CompensationPlan,

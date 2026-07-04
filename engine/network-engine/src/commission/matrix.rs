@@ -17,8 +17,11 @@ use super::walk;
 ///
 /// # Errors
 ///
-/// Returns `CalculationError` if a volume source is not found in the
-/// tree or snapshot data.
+/// Returns [`CalculationError::TreeConfigMismatch`] when the tree's `width` or
+/// `spillover` disagrees with `structure.matrix_params` — checked before any
+/// other work, so it precedes volume/snapshot validation. Otherwise returns
+/// `CalculationError` if a volume source is not found in the tree or snapshot
+/// data.
 pub fn calculate_matrix(
     tree: &MatrixTree,
     plan: &CompensationPlan,
@@ -26,6 +29,21 @@ pub fn calculate_matrix(
     snapshots: &HashMap<Uuid, DistributorSnapshot>,
     volume: &[VolumeSource],
 ) -> Result<Vec<CommissionEarning>, CalculationError> {
+    // Guard: the tree must have the topology the plan structure declares.
+    // Tree width/spillover are set at create_tree time from op params, not from
+    // the config, so nothing else reconciles them. Paying against a mismatched
+    // tree would compute commissions on the wrong shape. See HEU-525.
+    let params = &structure.matrix_params;
+    if tree.width() != params.width || tree.spillover() != params.spillover {
+        return Err(CalculationError::TreeConfigMismatch {
+            structure: structure.name.clone(),
+            expected_width: params.width,
+            actual_width: tree.width(),
+            expected_spillover: params.spillover,
+            actual_spillover: tree.spillover(),
+        });
+    }
+
     let rank_ordinals = walk::build_rank_ordinals(plan);
     let eligibility_cache = walk::evaluate_eligibility(snapshots, tree, &plan.eligibility);
 
@@ -909,5 +927,132 @@ mod tests {
 
         let root = result.iter().find(|e| e.earner_id == test_uuid(0)).unwrap();
         assert_eq!(root.level, 2);
+    }
+
+    #[test]
+    fn width_mismatch_returns_error() {
+        // Config declares width 3; tree is built 2-wide.
+        let structure = test_matrix_structure(3, 9, 5);
+        let plan = test_plan(structure.clone());
+        let tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+
+        let snapshots = HashMap::new();
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &[]);
+
+        assert!(matches!(
+            result,
+            Err(CalculationError::TreeConfigMismatch {
+                expected_width: 3,
+                actual_width: 2,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn spillover_mismatch_returns_error() {
+        // Config declares DepthFirst; tree is BreadthFirst (widths match).
+        // A config may carry DepthFirst even though MatrixTree::new rejects it.
+        let mut structure = test_matrix_structure(3, 9, 5);
+        structure.matrix_params.spillover = SpilloverDirection::DepthFirst;
+        let plan = test_plan(structure.clone());
+        let tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+
+        let snapshots = HashMap::new();
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &[]);
+
+        // Pin the expected/actual spillover direction (expected = config's
+        // DepthFirst, actual = tree's BreadthFirst) so a future field swap in
+        // the guard is caught — the operator-facing message would otherwise
+        // reverse silently on this money seam.
+        assert!(matches!(
+            result,
+            Err(CalculationError::TreeConfigMismatch {
+                expected_spillover: SpilloverDirection::DepthFirst,
+                actual_spillover: SpilloverDirection::BreadthFirst,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn matching_topology_calculates() {
+        // Width and spillover both match — the guard does not fire.
+        let structure = test_matrix_structure(3, 9, 5);
+        let plan = test_plan(structure.clone());
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), 1).unwrap();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(0), eligible_snapshot());
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(1),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume);
+        assert!(
+            !matches!(result, Err(CalculationError::TreeConfigMismatch { .. })),
+            "matching topology must not be a mismatch"
+        );
+        assert!(
+            result.is_ok(),
+            "matching topology should calculate: {result:?}"
+        );
+    }
+
+    #[test]
+    fn mismatch_precedes_volume_errors() {
+        // Width mismatch AND an invalid cv_amount. The guard runs first, so
+        // the topology error wins over InvalidCvAmount.
+        let structure = test_matrix_structure(3, 9, 5);
+        let plan = test_plan(structure.clone());
+
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), 1).unwrap();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(0), eligible_snapshot());
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(1),
+            cv_amount: -50.0, // would be InvalidCvAmount if the walk ran
+        }];
+
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume);
+        assert!(matches!(
+            result,
+            Err(CalculationError::TreeConfigMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn mismatch_is_deterministic() {
+        // NFR2 (Reliability): identical inputs yield an identical error, and the
+        // guard mutates nothing — reusing `&tree`/`&structure` across two calls
+        // only compiles because they are borrowed immutably.
+        let structure = test_matrix_structure(3, 9, 5);
+        let plan = test_plan(structure.clone());
+        let tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        let snapshots = HashMap::new();
+
+        let first = calculate_matrix(&tree, &plan, &structure, &snapshots, &[]);
+        let second = calculate_matrix(&tree, &plan, &structure, &snapshots, &[]);
+
+        assert!(matches!(
+            first,
+            Err(CalculationError::TreeConfigMismatch { .. })
+        ));
+        // CalculationError and CommissionEarning both derive PartialEq.
+        assert_eq!(
+            first, second,
+            "guard must be deterministic for identical inputs"
+        );
     }
 }

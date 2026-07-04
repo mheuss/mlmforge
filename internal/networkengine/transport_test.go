@@ -130,6 +130,32 @@ func TestStdioTransport_SignalDemux_Multiple(t *testing.T) {
 	_ = stdinR.Close()
 }
 
+// TestStdioTransport_SignalHandlerPanic verifies a panicking best-effort handler
+// is contained: Call recovers and still returns the response.
+func TestStdioTransport_SignalHandlerPanic(t *testing.T) {
+	stdinR, stdinW := io.Pipe()
+	go func() { _, _ = io.Copy(io.Discard, stdinR) }()
+	stdoutR, stdoutW := io.Pipe()
+
+	transport := newTestTransport(stdinW, stdoutR, func(json.RawMessage) {
+		panic("handler boom")
+	})
+
+	go func() {
+		_, _ = io.WriteString(stdoutW, `{"type":"signal","level":"warn","message":"boom"}`+"\n")
+		_, _ = io.WriteString(stdoutW, `{"id":"req-1","ok":true,"result":"pong"}`+"\n")
+	}()
+
+	result, err := transport.Call(context.Background(), "ping", json.RawMessage("null"))
+	require.NoError(t, err)
+	var pong string
+	require.NoError(t, json.Unmarshal(result, &pong))
+	assert.Equal(t, "pong", pong)
+
+	_ = stdoutW.Close()
+	_ = stdinR.Close()
+}
+
 func TestStdioTransport_ContextCancellation(t *testing.T) {
 	// Never write to stdout, so the reader blocks and Call must give up on the
 	// context deadline.

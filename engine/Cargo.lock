@@ -208,6 +208,7 @@ name = "network-engine-worker"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "log",
  "network-engine",
  "serde",
  "serde_json",

@@ -158,6 +158,14 @@ impl LevelCommissionConfig {
             "volume_to_dollar_multiplier",
             self.volume_to_dollar_multiplier,
         )?;
+        // A commissionable depth of 0 loads but silently pays no level
+        // commissions — a config error the gate should catch (HEU-517 review).
+        if self.max_depth < 1 {
+            return Err(format!(
+                "commissionable_depth must be >= 1, got {}",
+                self.max_depth
+            ));
+        }
         for (rank, levels) in &self.rate_table {
             for (level, rate) in levels {
                 check_fraction(&format!("rate_table[{rank}][{level}]"), *rate)?;
@@ -216,6 +224,14 @@ impl StreamlineCommissionConfig {
             "volume_to_dollar_multiplier",
             self.volume_to_dollar_multiplier,
         )?;
+        // A commissionable depth of 0 loads but silently pays nothing — reject
+        // it at the boundary like the level-commission depth (HEU-517 review).
+        if self.max_depth < 1 {
+            return Err(format!(
+                "commissionable_depth must be >= 1, got {}",
+                self.max_depth
+            ));
+        }
         // dynamic_compression percents scale CV directly (the streamline
         // dollar-value law, HEU-530), so each is a fraction in [0, 1].
         for level in &self.levels {
@@ -407,6 +423,13 @@ mod tests {
     }
 
     #[test]
+    fn level_commission_rejects_zero_depth() {
+        let mut config = level_config(0.40, None, 0.05);
+        config.max_depth = 0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
     fn matrix_params_enforces_width_and_spillover() {
         let ok = MatrixStructureParams {
             width: 3,
@@ -443,6 +466,17 @@ mod tests {
         assert!(config.validate().is_ok());
 
         config.levels[0].percent = 5.0; // whole-number percent — rejected
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn streamline_rejects_zero_depth() {
+        let config = StreamlineCommissionConfig {
+            volume_to_dollar_multiplier: None,
+            max_depth: 0,
+            levels: vec![],
+            stream_config: None,
+        };
         assert!(config.validate().is_err());
     }
 

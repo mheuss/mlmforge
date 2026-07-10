@@ -12,11 +12,20 @@ import (
 // stubMutator is a minimal TreeMutator that records what was called.
 // It is not *EngineClient, verifying the interface indirection works.
 type stubMutator struct {
-	created  []string
-	roots    []string
-	nodes    []string
-	removed  []string
-	failWith error
+	created       []string
+	matrixCreated []matrixCreate
+	roots         []string
+	nodes         []string
+	removed       []string
+	failWith      error
+}
+
+// matrixCreate records the params of a CreateMatrixTree call so tests can
+// assert that width and spillover were threaded through, not dropped.
+type matrixCreate struct {
+	structure string
+	width     int
+	spillover string
 }
 
 func (s *stubMutator) CreateTree(_ context.Context, structure, _ string) error {
@@ -24,6 +33,14 @@ func (s *stubMutator) CreateTree(_ context.Context, structure, _ string) error {
 		return s.failWith
 	}
 	s.created = append(s.created, structure)
+	return nil
+}
+
+func (s *stubMutator) CreateMatrixTree(_ context.Context, structure string, width int, spillover string) error {
+	if s.failWith != nil {
+		return s.failWith
+	}
+	s.matrixCreated = append(s.matrixCreated, matrixCreate{structure: structure, width: width, spillover: spillover})
 	return nil
 }
 

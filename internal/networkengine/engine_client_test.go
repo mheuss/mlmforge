@@ -85,6 +85,21 @@ func TestEngineClient_CreateTree_MockParams(t *testing.T) {
 	assert.JSONEq(t, `{"structure":"Test","tree_type":"unilevel"}`, string(mock.lastParams))
 }
 
+func TestEngineClient_CreateMatrixTree_MockParams(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{"created":true}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	err := client.CreateMatrixTree(context.Background(), "Test", 3, "breadth_first")
+	require.NoError(t, err)
+
+	// The matrix path reuses the create_tree op but must carry width and
+	// spillover, or the Rust worker rejects it with MISSING_PARAM.
+	assert.Equal(t, "create_tree", mock.lastOp)
+	assert.JSONEq(t, `{"structure":"Test","tree_type":"matrix","width":3,"spillover":"breadth_first"}`, string(mock.lastParams))
+}
+
 // --- Tree mutation tests (mock) ---
 
 func TestEngineClient_AddRoot_MockParams(t *testing.T) {

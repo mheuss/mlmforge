@@ -798,7 +798,7 @@ func validateStreamlineCommission(plan *CompensationPlan) []ValidationError {
 		}
 
 		// Depth must accommodate all valid levels.
-		if c.CommissionableDepth < len(levelNums) {
+		if int(c.CommissionableDepth) < len(levelNums) {
 			errs = append(errs, ValidationError{
 				Path:     path + "/commissionable_depth",
 				Code:     "depth_less_than_levels",

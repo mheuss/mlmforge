@@ -184,9 +184,29 @@ placement: {donated_placement_enabled: false}
 	c, ok := plan.Structures[0].resolvedCommission.(*UnilevelCommission)
 	require.True(t, ok, "expected *UnilevelCommission, got %T", plan.Structures[0].resolvedCommission)
 	assert.Equal(t, 0.40, c.BroadCommissionPercent)
-	assert.Equal(t, 5, c.CommissionableDepth)
+	assert.Equal(t, uint8(5), c.CommissionableDepth)
 	assert.Equal(t, 0.05, c.RateTable["Associate"]["1"])
 	assert.Equal(t, 0.04, c.RateTable["Associate"]["2"])
+}
+
+// TestCommissionableDepth_RejectsOverMax verifies the uint8 commissionable_depth
+// field rejects out-of-range values at YAML unmarshal — the schema-bypass
+// boundary HEU-513 closes. Covers max+1, a large overflow, and a negative, so a
+// future clamping unmarshaler cannot silently weaken the type.
+func TestCommissionableDepth_RejectsOverMax(t *testing.T) {
+	for _, over := range []string{"256", "300", "-1"} {
+		var c UnilevelCommission
+		err := yaml.Unmarshal([]byte("commissionable_depth: "+over), &c)
+		assert.Error(t, err, "commissionable_depth: %s must be rejected by uint8", over)
+	}
+}
+
+// TestCommissionableDepth_AcceptsMax verifies the inclusive uint8 max (255) is
+// accepted and lands in the field.
+func TestCommissionableDepth_AcceptsMax(t *testing.T) {
+	var c UnilevelCommission
+	require.NoError(t, yaml.Unmarshal([]byte("commissionable_depth: 255"), &c))
+	assert.Equal(t, uint8(255), c.CommissionableDepth)
 }
 
 // TestResolveCommissionsBinary verifies that resolveCommissions correctly
@@ -267,7 +287,7 @@ placement: {donated_placement_enabled: false}
 
 	c, ok := plan.Structures[0].resolvedCommission.(*StreamlineCommission)
 	require.True(t, ok, "expected *StreamlineCommission, got %T", plan.Structures[0].resolvedCommission)
-	assert.Equal(t, 10, c.CommissionableDepth)
+	assert.Equal(t, uint8(10), c.CommissionableDepth)
 	require.Len(t, c.DynamicCompression, 2)
 	assert.Equal(t, "Affiliate", c.DynamicCompression["1"].MinRank)
 	assert.Equal(t, 0.10, c.DynamicCompression["1"].Percent)
@@ -317,7 +337,7 @@ placement: {donated_placement_enabled: false}
 	c, ok := plan.Structures[0].resolvedCommission.(*GenerationCommission)
 	require.True(t, ok, "expected *GenerationCommission, got %T", plan.Structures[0].resolvedCommission)
 	assert.True(t, c.LevelCommissionsEnabled)
-	assert.Equal(t, 5, c.CommissionableDepth)
+	assert.Equal(t, uint8(5), c.CommissionableDepth)
 	assert.Equal(t, uint8(4), c.Generation.MaxGenerations)
 	assert.Equal(t, "threshold_rank", c.Generation.BoundaryMode)
 	assert.Equal(t, "Executive", c.Generation.BoundaryRank)
@@ -369,7 +389,7 @@ placement: {donated_placement_enabled: false}
 
 	c, ok := plan.Structures[0].resolvedCommission.(*StairstepCommission)
 	require.True(t, ok, "expected *StairstepCommission, got %T", plan.Structures[0].resolvedCommission)
-	assert.Equal(t, 6, c.CommissionableDepth)
+	assert.Equal(t, uint8(6), c.CommissionableDepth)
 	require.NotNil(t, c.Breakaway)
 	assert.Equal(t, "Supervisor", c.Breakaway.ThresholdRank)
 	assert.True(t, c.Breakaway.GroupVolumeExcludesBreakaway)
@@ -559,7 +579,7 @@ placement: {donated_placement_enabled: false}
 
 	c, ok := plan.Structures[0].resolvedCommission.(*MatrixCommission)
 	require.True(t, ok, "expected *MatrixCommission, got %T", plan.Structures[0].resolvedCommission)
-	assert.Equal(t, 7, c.CommissionableDepth)
+	assert.Equal(t, uint8(7), c.CommissionableDepth)
 	assert.Equal(t, 0.05, c.RateTable["Starter"]["1"])
 	assert.Equal(t, 0.03, c.RateTable["Starter"]["2"])
 }

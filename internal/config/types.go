@@ -243,7 +243,7 @@ type StructureConfig struct {
 type UnilevelCommission struct {
 	BroadCommissionPercent   float64                       `yaml:"broad_commission_percent" json:"broad_commission_percent"`
 	VolumeToDollarMultiplier *float64                      `yaml:"volume_to_dollar_multiplier" json:"volume_to_dollar_multiplier"`
-	CommissionableDepth      int                           `yaml:"commissionable_depth" json:"commissionable_depth"`
+	CommissionableDepth      uint8                         `yaml:"commissionable_depth" json:"commissionable_depth"`
 	RateTable                map[string]map[string]float64 `yaml:"rate_table" json:"rate_table"`
 	Compression              *CompressionConfig            `yaml:"compression" json:"compression"`
 	PassUp                   *PassUpConfig                 `yaml:"pass_up" json:"pass_up"`
@@ -261,7 +261,7 @@ type BinaryCommission struct {
 type MatrixCommission struct {
 	BroadCommissionPercent   float64                       `yaml:"broad_commission_percent" json:"broad_commission_percent"`
 	VolumeToDollarMultiplier *float64                      `yaml:"volume_to_dollar_multiplier" json:"volume_to_dollar_multiplier"`
-	CommissionableDepth      int                           `yaml:"commissionable_depth" json:"commissionable_depth"`
+	CommissionableDepth      uint8                         `yaml:"commissionable_depth" json:"commissionable_depth"`
 	RateTable                map[string]map[string]float64 `yaml:"rate_table" json:"rate_table"`
 	Compression              *CompressionConfig            `yaml:"compression" json:"compression"`
 }
@@ -270,7 +270,7 @@ type MatrixCommission struct {
 type StairstepCommission struct {
 	BroadCommissionPercent   float64                       `yaml:"broad_commission_percent" json:"broad_commission_percent"`
 	VolumeToDollarMultiplier *float64                      `yaml:"volume_to_dollar_multiplier" json:"volume_to_dollar_multiplier"`
-	CommissionableDepth      int                           `yaml:"commissionable_depth" json:"commissionable_depth"`
+	CommissionableDepth      uint8                         `yaml:"commissionable_depth" json:"commissionable_depth"`
 	RateTable                map[string]map[string]float64 `yaml:"rate_table" json:"rate_table"`
 	Compression              *CompressionConfig            `yaml:"compression" json:"compression"`
 	Breakaway                *BreakawayConfig              `yaml:"breakaway" json:"breakaway"`
@@ -281,7 +281,7 @@ type GenerationCommission struct {
 	LevelCommissionsEnabled  bool                          `yaml:"level_commissions_enabled" json:"level_commissions_enabled"`
 	BroadCommissionPercent   float64                       `yaml:"broad_commission_percent" json:"broad_commission_percent"`
 	VolumeToDollarMultiplier *float64                      `yaml:"volume_to_dollar_multiplier" json:"volume_to_dollar_multiplier"`
-	CommissionableDepth      int                           `yaml:"commissionable_depth" json:"commissionable_depth"`
+	CommissionableDepth      uint8                         `yaml:"commissionable_depth" json:"commissionable_depth"`
 	RateTable                map[string]map[string]float64 `yaml:"rate_table" json:"rate_table"`
 	Compression              *CompressionConfig            `yaml:"compression" json:"compression"`
 	Generation               GenerationCommissionConfig    `yaml:"generation" json:"generation"`
@@ -290,7 +290,7 @@ type GenerationCommission struct {
 // StreamlineCommission holds commission configuration for streamline structures.
 type StreamlineCommission struct {
 	VolumeToDollarMultiplier *float64                   `yaml:"volume_to_dollar_multiplier" json:"volume_to_dollar_multiplier"`
-	CommissionableDepth      int                        `yaml:"commissionable_depth" json:"commissionable_depth"`
+	CommissionableDepth      uint8                      `yaml:"commissionable_depth" json:"commissionable_depth"`
 	DynamicCompression       map[string]StreamlineLevel `yaml:"dynamic_compression" json:"dynamic_compression"`
 	Streams                  *StreamConfig              `yaml:"streams" json:"streams"`
 }

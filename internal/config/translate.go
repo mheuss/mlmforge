@@ -288,7 +288,7 @@ func sortStreamlineLevels(levels map[string]StreamlineLevel) ([]map[string]any, 
 // buildLevelCommission creates the Rust-side level_commission object from
 // the shared fields that appear in unilevel, matrix, stairstep, and
 // generation commission configs.
-func buildLevelCommission(broadPercent float64, multiplier *float64, depth int, rateTable map[string]map[string]float64) map[string]any {
+func buildLevelCommission(broadPercent float64, multiplier *float64, depth uint8, rateTable map[string]map[string]float64) map[string]any {
 	return map[string]any{
 		"broad_commission_percent":    broadPercent,
 		"volume_to_dollar_multiplier": multiplier,

@@ -260,3 +260,31 @@ func TestTreePersistence_EngineFailureRetry(t *testing.T) {
 	// Verify engine received 2 calls (initial fail + 1 retry success).
 	assert.Len(t, transport.calls, 2)
 }
+
+// TestTreePersistence_LoadMatrixTreeCreatesInEngine proves the HEU-533 fix
+// end-to-end against the real worker: reconstructing a matrix tree from the
+// adjacency store now routes through CreateMatrixTree (width + spillover)
+// instead of plain CreateTree, which the worker rejected with MISSING_PARAM.
+// Scope is the create step only. Multi-node matrix replay placement is HEU-534.
+func TestTreePersistence_LoadMatrixTreeCreatesInEngine(t *testing.T) {
+	_, treeStore, engine, _ := newIntegrationDeps(t)
+	ctx := context.Background()
+
+	treeID := testTreeUUID(1)
+	rootID := testUserUUID(1)
+
+	// Seed a matrix root directly, as if projected from a prior run's events.
+	root := makeUUIDNode(testNodeUUID(1), treeID, rootID, 0, nil, ptr(rootID), nil)
+	require.NoError(t, treeStore.InsertNode(ctx, root))
+
+	// Before HEU-533 this errored at the create step. The engine has never
+	// seen treeID, so this mirrors startup reconstruction.
+	loader := NewTreeLoader(treeStore, engine)
+	require.NoError(t, loader.LoadTree(ctx, treeID, "matrix", WithMatrixParams(3, "breadth_first")))
+
+	// The root exists in the freshly reconstructed matrix tree.
+	rootPos, err := engine.GetPosition(ctx, treeID, rootID)
+	require.NoError(t, err)
+	require.NotNil(t, rootPos)
+	assert.Equal(t, uint32(0), rootPos.Depth)
+}

@@ -167,3 +167,75 @@ func TestTreeLoader_ChildWithNilParent(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "has nil parent or sponsor")
 }
+
+func TestTreeLoader_LoadMatrixTree_RootOnlyRoutesToCreateMatrixTree(t *testing.T) {
+	store := NewMemoryTreeStore()
+	ctx := context.Background()
+
+	root := makeNode("m-tree", "user-0", 0, nil, ptr("user-0"), nil)
+	root.EnrolledAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, store.InsertNode(ctx, root))
+
+	mutator := &stubMutator{}
+	loader := NewTreeLoader(store, mutator)
+
+	err := loader.LoadTree(ctx, "m-tree", "matrix", WithMatrixParams(3, "breadth_first"))
+	require.NoError(t, err)
+
+	// A matrix tree must be created via CreateMatrixTree carrying width and
+	// spillover. Plain CreateTree omits them and the engine rejects it.
+	require.Equal(t, []matrixCreate{{structure: "m-tree", width: 3, spillover: "breadth_first"}}, mutator.matrixCreated)
+	assert.Empty(t, mutator.created, "matrix load must not call plain CreateTree")
+	assert.Equal(t, []string{"user-0"}, mutator.roots)
+	assert.Empty(t, mutator.nodes)
+}
+
+func TestTreeLoader_LoadMatrixTree_MultiNodeRefused(t *testing.T) {
+	store := NewMemoryTreeStore()
+	ctx := context.Background()
+	enrolled := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	root := makeNode("m-tree", "user-0", 0, nil, ptr("user-0"), nil)
+	root.EnrolledAt = enrolled
+	require.NoError(t, store.InsertNode(ctx, root))
+
+	child := makeNode("m-tree", "user-1", 1, ptr("user-0"), ptr("user-0"), intPtr(1))
+	child.EnrolledAt = enrolled.Add(time.Hour)
+	require.NoError(t, store.InsertNode(ctx, child))
+
+	mutator := &stubMutator{}
+	loader := NewTreeLoader(store, mutator)
+
+	// The worker's matrix add_node re-derives placement from sponsor and
+	// ignores the stored parent/position (HEU-534), so replaying past the root
+	// would silently build a different topology than the store. Until that is
+	// fixed the loader must refuse multi-node matrix reloads, not corrupt state.
+	err := loader.LoadTree(ctx, "m-tree", "matrix", WithMatrixParams(3, "breadth_first"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not yet supported")
+	assert.Empty(t, mutator.matrixCreated, "must refuse before creating anything")
+	assert.Empty(t, mutator.created)
+	assert.Empty(t, mutator.roots)
+	assert.Empty(t, mutator.nodes)
+}
+
+func TestTreeLoader_LoadMatrixTree_RequiresParams(t *testing.T) {
+	store := NewMemoryTreeStore()
+	ctx := context.Background()
+
+	root := makeNode("m-tree", "user-0", 0, nil, ptr("user-0"), nil)
+	root.EnrolledAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, store.InsertNode(ctx, root))
+
+	mutator := &stubMutator{}
+	loader := NewTreeLoader(store, mutator)
+
+	// Matrix tree with no WithMatrixParams: the loader has no width/spillover
+	// to create with, so it must fail fast before touching the engine.
+	err := loader.LoadTree(ctx, "m-tree", "matrix")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "matrix")
+	assert.Empty(t, mutator.matrixCreated)
+	assert.Empty(t, mutator.created)
+	assert.Empty(t, mutator.roots)
+}

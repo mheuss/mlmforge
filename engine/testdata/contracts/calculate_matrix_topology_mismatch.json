@@ -1,0 +1,23 @@
+{
+    "description": "calculate_matrix rejects a width-2 matrix tree under the plan's width-3 MatrixStructureConfig with INVALID_PARAMS. Cross-language lock for the HEU-525 topology guard (HEU-537).",
+    "setup_raw": [
+        "{\"id\":\"s-1\",\"op\":\"load_plan\",\"params\":{\"name\": \"Integration Test Plan\",\"version\": 1,\"structures\": [{\"type\": \"matrix\",\"config\": {\"name\": \"Test\",\"matrix_params\": { \"width\": 3, \"height\": 3, \"spillover_direction\": \"breadth_first\" },\"level_commission\": {\"broad_commission_percent\": 0.40,\"volume_to_dollar_multiplier\": null,\"commissionable_depth\": 3,\"rate_table\": { \"member\": { \"1\": 0.05, \"2\": 0.05, \"3\": 0.05 } }},\"compression\": null,\"pruning\": null}}],\"period\": { \"length\": \"month\", \"start_date\": \"2026-03-01\", \"payout_lag_days\": 14 },\"volume\": { \"inhibit_signup_volume\": false, \"base_currency\": \"USD\", \"volume_to_dollar_multiplier\": 1.0, \"deduct_qualifying_volume\": false },\"ranks\": [{ \"name\": \"member\", \"ordinal\": 1, \"qualification\": { \"structures\": [], \"required_products\": [] }, \"qualified_structures\": [\"Test\"], \"demotion_policy\": \"promotion_only\" }],\"rank_tracking\": { \"track_achieved_rank\": false },\"rank_features\": { \"constraints_enabled\": false, \"overrides_enabled\": false },\"commission_eligibility\": { \"min_personal_volume\": 0.0, \"require_order_in_period\": false, \"eligible_statuses\": [], \"active_leg_tiers\": [] },\"bonuses\": { \"matching\": null, \"sponsor\": null, \"fast_start\": null, \"rank_advancement\": null, \"leadership_development\": null, \"infinity\": null, \"lifestyle\": null, \"pool\": null, \"matrix_completion\": null, \"position\": null, \"board_cycling\": null },\"payout\": { \"base_currency\": \"USD\", \"minimum_amount\": 50.0, \"split_payouts_enabled\": true, \"methods\": [ { \"type\": \"bank_transfer\", \"fee\": 2.50 } ] },\"caps\": { \"per_distributor_per_period\": null, \"company_payout_cap_percent\": 0.42, \"cap_enforcement\": \"pro_rata\", \"clawback_on_refund\": false },\"placement\": { \"donated_placement\": null, \"holding_tank\": null, \"binary_placement\": null }}}",
+        "{\"id\":\"s-2\",\"op\":\"create_tree\",\"params\":{\"structure\":\"Test\",\"tree_type\":\"matrix\",\"width\":2,\"spillover\":\"breadth_first\"}}"
+    ],
+    "request": {
+        "id": "cm-mismatch",
+        "op": "calculate_matrix",
+        "params": {
+            "structure": "Test",
+            "snapshots": {},
+            "volume": []
+        }
+    },
+    "expected_response": {
+        "id": "cm-mismatch",
+        "ok": false,
+        "error": {
+            "code": "INVALID_PARAMS"
+        }
+    }
+}

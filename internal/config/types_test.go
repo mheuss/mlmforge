@@ -255,6 +255,50 @@ func TestActiveLegTierFields_AcceptsMax(t *testing.T) {
 	assert.Equal(t, uint16(65535), tier.MaxCommissionDepth)
 }
 
+// TestBonusFields_RejectsOverMax verifies the uintN bonus config fields reject
+// out-of-range values at YAML unmarshal — the schema-bypass boundary HEU-513
+// closes. Covers max+1, a large overflow, and a negative per field, so a
+// future clamping unmarshaler cannot silently weaken the types.
+func TestBonusFields_RejectsOverMax(t *testing.T) {
+	cases := []struct {
+		field string
+		over  []string
+		dst   func() any
+	}{
+		{"depth", []string{"256", "300", "-1"}, func() any { return &MatchingBonusConfig{} }},
+		{"depth", []string{"256", "300", "-1"}, func() any { return &LeadershipDevelopmentBonusConfig{} }},
+		{"window_days", []string{"65536", "70000", "-1"}, func() any { return &FastStartBonusConfig{} }},
+		{"grace_periods", []string{"256", "300", "-1"}, func() any { return &LifestyleTier{} }},
+	}
+	for _, tc := range cases {
+		for _, over := range tc.over {
+			dst := tc.dst()
+			err := yaml.Unmarshal([]byte(tc.field+": "+over), dst)
+			assert.Error(t, err, "%T %s: %s must be rejected", dst, tc.field, over)
+		}
+	}
+}
+
+// TestBonusFields_AcceptsMax verifies each bonus field's inclusive uintN max
+// is accepted and lands in the field.
+func TestBonusFields_AcceptsMax(t *testing.T) {
+	var m MatchingBonusConfig
+	require.NoError(t, yaml.Unmarshal([]byte("depth: 255"), &m))
+	assert.Equal(t, uint8(255), m.Depth)
+
+	var l LeadershipDevelopmentBonusConfig
+	require.NoError(t, yaml.Unmarshal([]byte("depth: 255"), &l))
+	assert.Equal(t, uint8(255), l.Depth)
+
+	var f FastStartBonusConfig
+	require.NoError(t, yaml.Unmarshal([]byte("window_days: 65535"), &f))
+	assert.Equal(t, uint16(65535), f.WindowDays)
+
+	var lt LifestyleTier
+	require.NoError(t, yaml.Unmarshal([]byte("grace_periods: 255"), &lt))
+	assert.Equal(t, uint8(255), lt.GracePeriods)
+}
+
 // TestResolveCommissionsBinary verifies that resolveCommissions correctly
 // decodes a binary commission block with pairing mode.
 func TestResolveCommissionsBinary(t *testing.T) {

@@ -494,7 +494,7 @@ type BonusConfig struct {
 
 // MatchingBonusConfig pays a percentage of downline commissions.
 type MatchingBonusConfig struct {
-	Depth                  int                `yaml:"depth" json:"depth"`
+	Depth                  uint8              `yaml:"depth" json:"depth"`
 	Rates                  map[string]float64 `yaml:"rates" json:"rates"`
 	MatchedCommissionTypes []string           `yaml:"matched_commission_types" json:"matched_commission_types"`
 }
@@ -508,7 +508,7 @@ type SponsorBonusConfig struct {
 
 // FastStartBonusConfig provides enhanced commissions during the early enrollment window.
 type FastStartBonusConfig struct {
-	WindowDays int                           `yaml:"window_days" json:"window_days"`
+	WindowDays uint16                        `yaml:"window_days" json:"window_days"`
 	RateTable  map[string]map[string]float64 `yaml:"rate_table" json:"rate_table"`
 }
 
@@ -520,7 +520,7 @@ type RankAdvancementBonusConfig struct {
 
 // LeadershipDevelopmentBonusConfig pays override commissions on downline leaders.
 type LeadershipDevelopmentBonusConfig struct {
-	Depth        int                `yaml:"depth" json:"depth"`
+	Depth        uint8              `yaml:"depth" json:"depth"`
 	Rates        map[string]float64 `yaml:"rates" json:"rates"`
 	RankSkipMode string             `yaml:"rank_skip_mode" json:"rank_skip_mode"`
 }
@@ -542,7 +542,7 @@ type LifestyleBonusConfig struct {
 type LifestyleTier struct {
 	MinRank      string  `yaml:"min_rank" json:"min_rank"`
 	Amount       float64 `yaml:"amount" json:"amount"`
-	GracePeriods int     `yaml:"grace_periods" json:"grace_periods"`
+	GracePeriods uint8   `yaml:"grace_periods" json:"grace_periods"`
 }
 
 // PoolBonusConfig defines a revenue pool shared among qualifying distributors.

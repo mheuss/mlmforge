@@ -232,6 +232,29 @@ func TestMatrixWidthHeight_AcceptsMax(t *testing.T) {
 	assert.Equal(t, uint8(255), p.Height)
 }
 
+// TestActiveLegTierFields_RejectsOverMax verifies the uint16 active-leg tier
+// fields reject out-of-range values at YAML unmarshal — the schema-bypass
+// boundary HEU-513 closes. Covers max+1, a large overflow, and a negative, so a
+// future clamping unmarshaler cannot silently weaken the type.
+func TestActiveLegTierFields_RejectsOverMax(t *testing.T) {
+	for _, field := range []string{"min_active_legs", "max_commission_depth"} {
+		for _, over := range []string{"65536", "70000", "-1"} {
+			var tier ActiveLegTier
+			err := yaml.Unmarshal([]byte(field+": "+over), &tier)
+			assert.Error(t, err, "%s: %s must be rejected by uint16", field, over)
+		}
+	}
+}
+
+// TestActiveLegTierFields_AcceptsMax verifies the inclusive uint16 max (65535)
+// is accepted and lands in both fields.
+func TestActiveLegTierFields_AcceptsMax(t *testing.T) {
+	var tier ActiveLegTier
+	require.NoError(t, yaml.Unmarshal([]byte("min_active_legs: 65535\nmax_commission_depth: 65535"), &tier))
+	assert.Equal(t, uint16(65535), tier.MinActiveLegs)
+	assert.Equal(t, uint16(65535), tier.MaxCommissionDepth)
+}
+
 // TestResolveCommissionsBinary verifies that resolveCommissions correctly
 // decodes a binary commission block with pairing mode.
 func TestResolveCommissionsBinary(t *testing.T) {

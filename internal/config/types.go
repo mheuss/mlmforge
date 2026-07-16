@@ -197,8 +197,8 @@ type CommissionEligibility struct {
 
 // ActiveLegTier maps an active leg count to a commission depth.
 type ActiveLegTier struct {
-	MinActiveLegs      int `yaml:"min_active_legs" json:"min_active_legs"`
-	MaxCommissionDepth int `yaml:"max_commission_depth" json:"max_commission_depth"`
+	MinActiveLegs      uint16 `yaml:"min_active_legs" json:"min_active_legs"`
+	MaxCommissionDepth uint16 `yaml:"max_commission_depth" json:"max_commission_depth"`
 }
 
 // --- Commission interface ---

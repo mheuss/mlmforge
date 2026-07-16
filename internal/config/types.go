@@ -465,8 +465,8 @@ type StreamConfig struct {
 
 // MatrixStructureParams defines matrix tree shape parameters.
 type MatrixStructureParams struct {
-	Width              int    `yaml:"width" json:"width"`
-	Height             int    `yaml:"height" json:"height"`
+	Width              uint8  `yaml:"width" json:"width"`
+	Height             uint8  `yaml:"height" json:"height"`
 	SpilloverDirection string `yaml:"spillover_direction" json:"spillover_direction"`
 }
 

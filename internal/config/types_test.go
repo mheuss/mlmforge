@@ -209,6 +209,29 @@ func TestCommissionableDepth_AcceptsMax(t *testing.T) {
 	assert.Equal(t, uint8(255), c.CommissionableDepth)
 }
 
+// TestMatrixWidthHeight_RejectsOverMax verifies the uint8 matrix width and
+// height fields reject out-of-range values at YAML unmarshal — the
+// schema-bypass boundary HEU-513 closes. Covers max+1, a large overflow, and a
+// negative, so a future clamping unmarshaler cannot silently weaken the type.
+func TestMatrixWidthHeight_RejectsOverMax(t *testing.T) {
+	for _, field := range []string{"width", "height"} {
+		for _, over := range []string{"256", "300", "-1"} {
+			var p MatrixStructureParams
+			err := yaml.Unmarshal([]byte(field+": "+over), &p)
+			assert.Error(t, err, "%s: %s must be rejected by uint8", field, over)
+		}
+	}
+}
+
+// TestMatrixWidthHeight_AcceptsMax verifies the inclusive uint8 max (255) is
+// accepted and lands in both fields.
+func TestMatrixWidthHeight_AcceptsMax(t *testing.T) {
+	var p MatrixStructureParams
+	require.NoError(t, yaml.Unmarshal([]byte("width: 255\nheight: 255"), &p))
+	assert.Equal(t, uint8(255), p.Width)
+	assert.Equal(t, uint8(255), p.Height)
+}
+
 // TestResolveCommissionsBinary verifies that resolveCommissions correctly
 // decodes a binary commission block with pairing mode.
 func TestResolveCommissionsBinary(t *testing.T) {

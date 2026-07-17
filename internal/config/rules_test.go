@@ -977,7 +977,7 @@ func TestValidation_StreamlineAdditionalPerRankMustExist(t *testing.T) {
 				"1": {MinRank: "Associate", Percent: 0.05},
 			},
 			Streams: &StreamConfig{
-				AdditionalPerRank: map[string]int{
+				AdditionalPerRank: map[string]uint8{
 					"Silver":      2,
 					"Nonexistent": 3,
 				},

@@ -128,7 +128,7 @@ demotion_policy:
 	err = yaml.Unmarshal(yamlGrace, &rank2)
 	require.NoError(t, err)
 	require.NotNil(t, rank2.DemotionPolicy.Grace)
-	assert.Equal(t, 2, rank2.DemotionPolicy.Grace.Count)
+	assert.Equal(t, uint16(2), rank2.DemotionPolicy.Grace.Count)
 	assert.Equal(t, "months", rank2.DemotionPolicy.Grace.Unit)
 }
 
@@ -384,6 +384,76 @@ func TestBoardCyclingConfig_MaxCascadeDepthOmitempty(t *testing.T) {
 	var nonzeroMap map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(nonzero, &nonzeroMap))
 	assert.Contains(t, nonzeroMap, "max_cascade_depth")
+}
+
+// TestAdditionalPerRank_RejectsOverMax verifies the uint8 map VALUE on
+// additional_per_rank rejects out-of-range values at YAML unmarshal — mirrors
+// Rust BTreeMap<String, u8> (streamline.rs:85). Covers max+1, a large overflow,
+// and a negative.
+func TestAdditionalPerRank_RejectsOverMax(t *testing.T) {
+	for _, over := range []string{"256", "300", "-1"} {
+		var s StreamConfig
+		err := yaml.Unmarshal([]byte("additional_per_rank:\n  gold: "+over), &s)
+		assert.Error(t, err, "additional_per_rank value %s must be rejected by uint8", over)
+	}
+}
+
+// TestAdditionalPerRank_AcceptsMax verifies the inclusive uint8 max (255) is
+// accepted as a map value.
+func TestAdditionalPerRank_AcceptsMax(t *testing.T) {
+	var s StreamConfig
+	require.NoError(t, yaml.Unmarshal([]byte("additional_per_rank:\n  gold: 255"), &s))
+	assert.Equal(t, uint8(255), s.AdditionalPerRank["gold"])
+}
+
+// TestAdditionalPerRank_EmptyStaysPresent verifies an empty additional_per_rank
+// map serializes to a present "{}", NOT omitted. Rust StreamConfig.additional_streams
+// has no serde(default) (streamline.rs:85), so the field is required on the wire;
+// a future omitempty would drop an empty map to absent and break deserialization.
+func TestAdditionalPerRank_EmptyStaysPresent(t *testing.T) {
+	var s StreamConfig
+	require.NoError(t, yaml.Unmarshal([]byte(
+		"additional_per_rank: {}\nassignment_mode: round_robin\n"+
+			"per_enrollment_choice: false\nfreeze_on_demotion: false"), &s))
+	data, err := json.Marshal(s)
+	require.NoError(t, err)
+	var m map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(data, &m))
+	assert.Contains(t, m, "additional_per_rank")
+}
+
+// TestGracePeriodCount_RejectsOverMax verifies the uint16 count on GracePeriod
+// rejects out-of-range values at YAML unmarshal — mirrors Rust u16 (rank.rs:243).
+func TestGracePeriodCount_RejectsOverMax(t *testing.T) {
+	for _, over := range []string{"65536", "99999999", "-1"} {
+		var g GracePeriod
+		err := yaml.Unmarshal([]byte("count: "+over), &g)
+		assert.Error(t, err, "grace count %s must be rejected by uint16", over)
+	}
+}
+
+// TestGracePeriodCount_AcceptsMax verifies the inclusive uint16 max (65535).
+func TestGracePeriodCount_AcceptsMax(t *testing.T) {
+	var g GracePeriod
+	require.NoError(t, yaml.Unmarshal([]byte("count: 65535"), &g))
+	assert.Equal(t, uint16(65535), g.Count)
+}
+
+// TestHoldingTankExpirationDays_RejectsOverMax verifies the uint8 expiration_days
+// on HoldingTankConfig rejects out-of-range values — mirrors Rust u8 (placement.rs:70).
+func TestHoldingTankExpirationDays_RejectsOverMax(t *testing.T) {
+	for _, over := range []string{"256", "300", "-1"} {
+		var h HoldingTankConfig
+		err := yaml.Unmarshal([]byte("expiration_days: "+over), &h)
+		assert.Error(t, err, "expiration_days %s must be rejected by uint8", over)
+	}
+}
+
+// TestHoldingTankExpirationDays_AcceptsMax verifies the inclusive uint8 max (255).
+func TestHoldingTankExpirationDays_AcceptsMax(t *testing.T) {
+	var h HoldingTankConfig
+	require.NoError(t, yaml.Unmarshal([]byte("expiration_days: 255"), &h))
+	assert.Equal(t, uint8(255), h.ExpirationDays)
 }
 
 // TestResolveCommissionsBinary verifies that resolveCommissions correctly

@@ -410,7 +410,7 @@ func TestTranslateStreamlineConfigWithStreams(t *testing.T) {
 			"2": {MinRank: "bronze", Percent: 0.04},
 		},
 		Streams: &StreamConfig{
-			AdditionalPerRank:   map[string]int{"silver": 1, "gold": 2},
+			AdditionalPerRank:   map[string]uint8{"silver": 1, "gold": 2},
 			AssignmentMode:      "round_robin",
 			PerEnrollmentChoice: true,
 			FreezeOnDemotion:    true,

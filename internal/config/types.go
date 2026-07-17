@@ -168,7 +168,7 @@ func (d DemotionPolicy) MarshalJSON() ([]byte, error) {
 
 // GracePeriod defines a time window before a rank demotion takes effect.
 type GracePeriod struct {
-	Count int    `yaml:"count" json:"count"`
+	Count uint16 `yaml:"count" json:"count"`
 	Unit  string `yaml:"unit" json:"unit"`
 }
 
@@ -455,10 +455,10 @@ type StreamlineLevel struct {
 
 // StreamConfig holds multi-stream configuration for streamline plans.
 type StreamConfig struct {
-	AdditionalPerRank   map[string]int `yaml:"additional_per_rank" json:"additional_per_rank"`
-	AssignmentMode      string         `yaml:"assignment_mode" json:"assignment_mode"`
-	PerEnrollmentChoice bool           `yaml:"per_enrollment_choice" json:"per_enrollment_choice"`
-	FreezeOnDemotion    bool           `yaml:"freeze_on_demotion" json:"freeze_on_demotion"`
+	AdditionalPerRank   map[string]uint8 `yaml:"additional_per_rank" json:"additional_per_rank"`
+	AssignmentMode      string           `yaml:"assignment_mode" json:"assignment_mode"`
+	PerEnrollmentChoice bool             `yaml:"per_enrollment_choice" json:"per_enrollment_choice"`
+	FreezeOnDemotion    bool             `yaml:"freeze_on_demotion" json:"freeze_on_demotion"`
 }
 
 // --- Matrix ---
@@ -646,7 +646,7 @@ type PlacementConfig struct {
 // HoldingTankConfig defines holding tank behavior for deferred placement.
 type HoldingTankConfig struct {
 	Enabled              bool     `yaml:"enabled" json:"enabled"`
-	ExpirationDays       int      `yaml:"expiration_days" json:"expiration_days"`
+	ExpirationDays       uint8    `yaml:"expiration_days" json:"expiration_days"`
 	AllowSponsorChange   bool     `yaml:"allow_sponsor_change" json:"allow_sponsor_change"`
 	ApplicableStructures []string `yaml:"applicable_structures" json:"applicable_structures"`
 }

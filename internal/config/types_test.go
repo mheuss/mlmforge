@@ -339,6 +339,53 @@ func TestPayoutLagDays_AcceptsMax(t *testing.T) {
 	assert.Equal(t, uint8(255), p.PayoutLagDays)
 }
 
+// TestBoardCyclingFields_RejectsOverMax verifies the three uint32 board_cycling
+// fields reject out-of-range values at YAML unmarshal — the schema-bypass
+// boundary HEU-513 closes. Covers max+1, a large overflow, and a negative, so a
+// future clamping unmarshaler cannot silently weaken the type.
+func TestBoardCyclingFields_RejectsOverMax(t *testing.T) {
+	for _, field := range []string{"max_cycles_per_period", "max_cascade_depth", "stall_threshold_periods"} {
+		for _, over := range []string{"4294967296", "9999999999", "-1"} {
+			var c BoardCyclingConfig
+			err := yaml.Unmarshal([]byte(field+": "+over), &c)
+			assert.Error(t, err, "%s: %s must be rejected by uint32", field, over)
+		}
+	}
+}
+
+// TestBoardCyclingFields_AcceptsMax verifies the inclusive uint32 max
+// (4294967295) is accepted and lands in each field.
+func TestBoardCyclingFields_AcceptsMax(t *testing.T) {
+	var c BoardCyclingConfig
+	require.NoError(t, yaml.Unmarshal([]byte(
+		"max_cycles_per_period: 4294967295\n"+
+			"max_cascade_depth: 4294967295\n"+
+			"stall_threshold_periods: 4294967295"), &c))
+	assert.Equal(t, uint32(4294967295), c.MaxCyclesPerPeriod)
+	assert.Equal(t, uint32(4294967295), c.MaxCascadeDepth)
+	assert.Equal(t, uint32(4294967295), c.StallThresholdPeriods)
+}
+
+// TestBoardCyclingConfig_MaxCascadeDepthOmitempty verifies a zero MaxCascadeDepth
+// is omitted from JSON so the Rust engine applies its serde default (10), and
+// that a non-zero value is present. This must still hold after the uint32
+// tightening — uint32's zero value is still 0. Assertions are key-level (decode
+// to a map), not substring, so a future sibling key can't mask a regression —
+// see docs/development/config-types.md ("wire shape" assertions).
+func TestBoardCyclingConfig_MaxCascadeDepthOmitempty(t *testing.T) {
+	zero, err := json.Marshal(BoardCyclingConfig{MaxCascadeDepth: 0})
+	require.NoError(t, err)
+	var zeroMap map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(zero, &zeroMap))
+	assert.NotContains(t, zeroMap, "max_cascade_depth")
+
+	nonzero, err := json.Marshal(BoardCyclingConfig{MaxCascadeDepth: 7})
+	require.NoError(t, err)
+	var nonzeroMap map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(nonzero, &nonzeroMap))
+	assert.Contains(t, nonzeroMap, "max_cascade_depth")
+}
+
 // TestResolveCommissionsBinary verifies that resolveCommissions correctly
 // decodes a binary commission block with pairing mode.
 func TestResolveCommissionsBinary(t *testing.T) {
@@ -782,9 +829,9 @@ placement: {donated_placement_enabled: false}
 	assert.Equal(t, 500.0, c.BoardCycling.CycleCommission)
 	assert.True(t, c.BoardCycling.ReEntryEnabled)
 	assert.Equal(t, "bottom", c.BoardCycling.ReEntryPosition)
-	assert.Equal(t, 5, c.BoardCycling.MaxCyclesPerPeriod)
-	assert.Equal(t, 10, c.BoardCycling.MaxCascadeDepth)
-	assert.Equal(t, 3, c.BoardCycling.StallThresholdPeriods)
+	assert.Equal(t, uint32(5), c.BoardCycling.MaxCyclesPerPeriod)
+	assert.Equal(t, uint32(10), c.BoardCycling.MaxCascadeDepth)
+	assert.Equal(t, uint32(3), c.BoardCycling.StallThresholdPeriods)
 	assert.True(t, c.BoardCycling.InactiveCompression)
 }
 
@@ -1123,9 +1170,9 @@ inactive_compression: false
 	assert.Equal(t, 250.0, cfg.CycleCommission)
 	assert.False(t, cfg.ReEntryEnabled)
 	assert.Equal(t, "sponsor_board", cfg.ReEntryPosition)
-	assert.Equal(t, 3, cfg.MaxCyclesPerPeriod)
-	assert.Equal(t, 15, cfg.MaxCascadeDepth)
-	assert.Equal(t, 6, cfg.StallThresholdPeriods)
+	assert.Equal(t, uint32(3), cfg.MaxCyclesPerPeriod)
+	assert.Equal(t, uint32(15), cfg.MaxCascadeDepth)
+	assert.Equal(t, uint32(6), cfg.StallThresholdPeriods)
 	assert.False(t, cfg.InactiveCompression)
 }
 

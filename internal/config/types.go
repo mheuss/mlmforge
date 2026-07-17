@@ -592,9 +592,9 @@ type BoardCyclingConfig struct {
 	CycleCommission       float64 `yaml:"cycle_commission" json:"cycle_commission"`
 	ReEntryEnabled        bool    `yaml:"re_entry_enabled" json:"re_entry_enabled"`
 	ReEntryPosition       string  `yaml:"re_entry_position" json:"re_entry_position"`
-	MaxCyclesPerPeriod    int     `yaml:"max_cycles_per_period" json:"max_cycles_per_period"`
-	MaxCascadeDepth       int     `yaml:"max_cascade_depth" json:"max_cascade_depth,omitempty"`
-	StallThresholdPeriods int     `yaml:"stall_threshold_periods" json:"stall_threshold_periods"`
+	MaxCyclesPerPeriod    uint32  `yaml:"max_cycles_per_period" json:"max_cycles_per_period"`
+	MaxCascadeDepth       uint32  `yaml:"max_cascade_depth" json:"max_cascade_depth,omitempty"`
+	StallThresholdPeriods uint32  `yaml:"stall_threshold_periods" json:"stall_threshold_periods"`
 	InactiveCompression   bool    `yaml:"inactive_compression" json:"inactive_compression"`
 }
 

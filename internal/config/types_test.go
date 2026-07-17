@@ -90,7 +90,7 @@ placement:
 	assert.Equal(t, "Minimal Unilevel", plan.Name)
 	assert.Equal(t, 1, plan.Version)
 	assert.Equal(t, "month", plan.Period.Length)
-	assert.Equal(t, 14, plan.Period.PayoutLagDays)
+	assert.Equal(t, uint8(14), plan.Period.PayoutLagDays)
 	assert.Equal(t, "USD", plan.Volume.BaseCurrency)
 	assert.Len(t, plan.Ranks, 1)
 	assert.Equal(t, "Associate", plan.Ranks[0].Name)
@@ -317,6 +317,26 @@ func TestPassUpCount_AcceptsMax(t *testing.T) {
 	var p PassUpConfig
 	require.NoError(t, yaml.Unmarshal([]byte("count: 255"), &p))
 	assert.Equal(t, uint8(255), p.Count)
+}
+
+// TestPayoutLagDays_RejectsOverMax verifies the uint8 payout_lag_days field
+// rejects out-of-range values at YAML unmarshal — the schema-bypass boundary
+// HEU-513 closes. Covers max+1, a large overflow, and a negative, so a future
+// clamping unmarshaler cannot silently weaken the type.
+func TestPayoutLagDays_RejectsOverMax(t *testing.T) {
+	for _, over := range []string{"256", "300", "-1"} {
+		var p PeriodConfig
+		err := yaml.Unmarshal([]byte("payout_lag_days: "+over), &p)
+		assert.Error(t, err, "payout_lag_days: %s must be rejected by uint8", over)
+	}
+}
+
+// TestPayoutLagDays_AcceptsMax verifies the inclusive uint8 max (255) is
+// accepted and lands in the field.
+func TestPayoutLagDays_AcceptsMax(t *testing.T) {
+	var p PeriodConfig
+	require.NoError(t, yaml.Unmarshal([]byte("payout_lag_days: 255"), &p))
+	assert.Equal(t, uint8(255), p.PayoutLagDays)
 }
 
 // TestResolveCommissionsBinary verifies that resolveCommissions correctly

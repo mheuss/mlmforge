@@ -31,7 +31,7 @@ type CompensationPlan struct {
 type PeriodConfig struct {
 	Length        string  `yaml:"length" json:"length"`
 	StartDate     *string `yaml:"start_date" json:"start_date"`
-	PayoutLagDays int     `yaml:"payout_lag_days" json:"payout_lag_days"`
+	PayoutLagDays uint8   `yaml:"payout_lag_days" json:"payout_lag_days"`
 }
 
 // --- Volume ---

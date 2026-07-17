@@ -420,6 +420,16 @@ func TestAdditionalPerRank_EmptyStaysPresent(t *testing.T) {
 	var m map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(data, &m))
 	assert.Contains(t, m, "additional_per_rank")
+
+	// A nil (absent) map marshals to JSON null, which Rust's BTreeMap rejects.
+	// The schema now requires additional_per_rank (Task 10), so an omitted field
+	// is caught at the schema gate before it can reach this marshal path.
+	nilData, err := json.Marshal(StreamConfig{})
+	require.NoError(t, err)
+	var nilMap map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(nilData, &nilMap))
+	require.Contains(t, nilMap, "additional_per_rank")
+	assert.Equal(t, "null", string(nilMap["additional_per_rank"]))
 }
 
 // TestGracePeriodCount_RejectsOverMax verifies the uint16 count on GracePeriod

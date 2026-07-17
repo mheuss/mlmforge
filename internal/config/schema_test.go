@@ -309,6 +309,76 @@ func TestSchemaRejectsStreamlineLevelOverU8(t *testing.T) {
 		"dynamic_compression level 0 should fail the schema gate (1-based)")
 }
 
+// TestSchemaRejectsOverMaxBounds verifies the maximum bounds added in Task 10
+// reject over-max values at the schema gate, for tighten-list fields that
+// previously had no maximum: the three u32 board_cycling fields (ceiling
+// 4294967295) and the u16 grace count (ceiling 65535).
+func TestSchemaRejectsOverMaxBounds(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	cases := []struct {
+		name     string
+		fixture  string
+		old      string
+		over     string
+		boundary string
+	}{
+		{"max_cycles_per_period u32", "valid/board-plan.yaml", "max_cycles_per_period: 5", "max_cycles_per_period: 4294967296", "max_cycles_per_period: 4294967295"},
+		{"max_cascade_depth u32", "valid/board-plan.yaml", "max_cascade_depth: 10", "max_cascade_depth: 4294967296", "max_cascade_depth: 4294967295"},
+		{"stall_threshold_periods u32", "valid/board-plan.yaml", "stall_threshold_periods: 3", "stall_threshold_periods: 4294967296", "stall_threshold_periods: 4294967295"},
+		{"grace count u16", "valid/full-unilevel.yaml", "count: 2\n        unit: months", "count: 65536\n        unit: months", "count: 65535\n        unit: months"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			base := readFixture(t, tc.fixture)
+			require.Empty(t, p.validateSchema(base), "base fixture should validate cleanly")
+
+			over := replaceInYAML(t, base, tc.old, tc.over)
+			errs := p.validateSchema(over)
+			require.NotEmpty(t, errs, "%s over-max should fail the schema gate", tc.name)
+			found := false
+			for _, e := range errs {
+				if e.Code == "schema_violation" {
+					found = true
+					assert.Equal(t, SeverityError, e.Severity)
+				}
+			}
+			assert.True(t, found, "expected schema_violation for %s, got %+v", tc.name, errs)
+
+			// The inclusive ceiling itself must pass — guards against a maximum
+			// typed one too low.
+			boundary := replaceInYAML(t, base, tc.old, tc.boundary)
+			assert.Empty(t, p.validateSchema(boundary), "%s at the ceiling should pass the schema gate", tc.name)
+		})
+	}
+}
+
+// TestSchemaRequiresAdditionalPerRank verifies additional_per_rank is required
+// on StreamConfig (HEU-513 Task 10 fold-in). Rust StreamConfig.additional_streams
+// has no serde(default), so a streams block omitting the field passes the old
+// schema then dies opaquely at Rust serde; the schema now catches it at the gate.
+func TestSchemaRequiresAdditionalPerRank(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/streamline-plan.yaml")
+	require.Empty(t, p.validateSchema(base), "base fixture should validate cleanly")
+
+	// Rename the field so the streams block omits additional_per_rank
+	// (StreamConfig has no additionalProperties:false, so the renamed key is
+	// otherwise allowed — the only violation is the missing required field).
+	without := replaceInYAML(t, base, "additional_per_rank:", "removed_field:")
+	errs := p.validateSchema(without)
+	require.NotEmpty(t, errs, "streams without additional_per_rank should fail the schema gate")
+	found := false
+	for _, e := range errs {
+		if e.Code == "schema_violation" {
+			found = true
+			assert.Equal(t, SeverityError, e.Severity)
+		}
+	}
+	assert.True(t, found, "expected a schema_violation for missing additional_per_rank, got %+v", errs)
+}
+
 func TestSchemaRejectsLegQualityBadPredicate(t *testing.T) {
 	p, err := NewPipeline(schemaPath(t))
 	require.NoError(t, err)

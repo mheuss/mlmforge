@@ -372,6 +372,7 @@
         "count": {
           "type": "integer",
           "minimum": 1,
+          "maximum": 65535,
           "description": "Number of time units in the grace period."
         },
         "unit": {
@@ -1492,6 +1493,7 @@
       "type": "object",
       "description": "Multi-stream configuration for streamline plans.",
       "required": [
+        "additional_per_rank",
         "assignment_mode",
         "per_enrollment_choice",
         "freeze_on_demotion"
@@ -2212,17 +2214,20 @@
         "max_cycles_per_period": {
           "type": "integer",
           "minimum": 1,
+          "maximum": 4294967295,
           "description": "Maximum times a member can earn cycle commission per period."
         },
         "max_cascade_depth": {
           "type": "integer",
           "minimum": 1,
+          "maximum": 4294967295,
           "default": 10,
           "description": "Maximum cascade depth from a single operation. Limits how many levels of chained cycling can occur."
         },
         "stall_threshold_periods": {
           "type": "integer",
           "minimum": 1,
+          "maximum": 4294967295,
           "description": "Number of inactive periods before a board is considered stalled."
         },
         "inactive_compression": {

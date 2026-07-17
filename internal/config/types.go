@@ -600,8 +600,8 @@ type BoardCyclingConfig struct {
 
 // PassUpConfig defines pass-up bonus behavior where initial sales go to the upline.
 type PassUpConfig struct {
-	Count               int  `yaml:"count" json:"count"`
-	IncludesCommissions bool `yaml:"includes_commissions" json:"includes_commissions"`
+	Count               uint8 `yaml:"count" json:"count"`
+	IncludesCommissions bool  `yaml:"includes_commissions" json:"includes_commissions"`
 }
 
 // --- Payout ---

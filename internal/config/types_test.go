@@ -299,6 +299,26 @@ func TestBonusFields_AcceptsMax(t *testing.T) {
 	assert.Equal(t, uint8(255), lt.GracePeriods)
 }
 
+// TestPassUpCount_RejectsOverMax verifies the uint8 pass_up count field
+// rejects out-of-range values at YAML unmarshal — the schema-bypass boundary
+// HEU-513 closes. Covers max+1, a large overflow, and a negative, so a future
+// clamping unmarshaler cannot silently weaken the type.
+func TestPassUpCount_RejectsOverMax(t *testing.T) {
+	for _, over := range []string{"256", "300", "-1"} {
+		var p PassUpConfig
+		err := yaml.Unmarshal([]byte("count: "+over), &p)
+		assert.Error(t, err, "count: %s must be rejected by uint8", over)
+	}
+}
+
+// TestPassUpCount_AcceptsMax verifies the inclusive uint8 max (255) is
+// accepted and lands in the field.
+func TestPassUpCount_AcceptsMax(t *testing.T) {
+	var p PassUpConfig
+	require.NoError(t, yaml.Unmarshal([]byte("count: 255"), &p))
+	assert.Equal(t, uint8(255), p.Count)
+}
+
 // TestResolveCommissionsBinary verifies that resolveCommissions correctly
 // decodes a binary commission block with pairing mode.
 func TestResolveCommissionsBinary(t *testing.T) {

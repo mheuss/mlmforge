@@ -653,15 +653,6 @@ func validatePassUp(plan *CompensationPlan) []ValidationError {
 				Severity: SeverityError,
 			})
 		}
-
-		if commission.PassUp.Count > 255 {
-			errs = append(errs, ValidationError{
-				Path:     fmt.Sprintf("/structures/%d/commission/pass_up/count", i),
-				Code:     "value_out_of_range",
-				Message:  "pass_up count must be <= 255",
-				Severity: SeverityError,
-			})
-		}
 	}
 
 	return errs

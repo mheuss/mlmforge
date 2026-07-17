@@ -998,7 +998,7 @@
             "$ref": "#/$defs/StreamlineLevel"
           },
           "propertyNames": {
-            "pattern": "^[0-9]+$"
+            "pattern": "^0*(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]?)$"
           },
           "description": "Map of level number to commission configuration. Levels are dynamically compressed."
         },

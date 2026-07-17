@@ -278,6 +278,37 @@ func TestSchemaRejectsRateKeyOverU8(t *testing.T) {
 	assert.Empty(t, p.validateSchema(boundary), "rate_table key 255 should pass the schema gate")
 }
 
+// TestSchemaRejectsStreamlineLevelOverU8 verifies the tightened
+// dynamic_compression propertyNames (HEU-513 Task 9) reject a level key above
+// the Rust u8 range at the schema gate and accept the inclusive boundary.
+// Streamline levels are 1-based, so the pattern is [1, 255].
+func TestSchemaRejectsStreamlineLevelOverU8(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/streamline-plan.yaml")
+	require.Empty(t, p.validateSchema(base), "base fixture should validate cleanly")
+
+	over := replaceInYAML(t, base, `"3":`, `"256":`)
+	errs := p.validateSchema(over)
+	require.NotEmpty(t, errs, "dynamic_compression level 256 should fail the schema gate")
+	foundViolation := false
+	for _, e := range errs {
+		if e.Code == "schema_violation" {
+			foundViolation = true
+			assert.Equal(t, SeverityError, e.Severity)
+		}
+	}
+	assert.True(t, foundViolation, "expected a schema_violation for level 256, got %+v", errs)
+
+	boundary := replaceInYAML(t, base, `"3":`, `"255":`)
+	assert.Empty(t, p.validateSchema(boundary), "dynamic_compression level 255 should pass the schema gate")
+
+	// Level 0 must also fail — streamline levels are 1-based; this locks in the
+	// 1-based pattern so a future loosening to the 0-based sibling is caught.
+	require.NotEmpty(t, p.validateSchema(replaceInYAML(t, base, `"3":`, `"0":`)),
+		"dynamic_compression level 0 should fail the schema gate (1-based)")
+}
+
 func TestSchemaRejectsLegQualityBadPredicate(t *testing.T) {
 	p, err := NewPipeline(schemaPath(t))
 	require.NoError(t, err)

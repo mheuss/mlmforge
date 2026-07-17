@@ -255,6 +255,34 @@ func TestSortStreamlineLevelsInvalidKey(t *testing.T) {
 	assert.Contains(t, err.Error(), `"abc" is not a valid level number`)
 }
 
+// TestSortStreamlineLevelsOutOfRange verifies that sortStreamlineLevels rejects
+// a level number outside the Rust u8 level range [1, 255]. This closes the
+// schema-bypass path: translateToEngine can run on an unvalidated plan, and a
+// level like 256 would otherwise truncate at the Rust u8 level key. Covers the
+// upper bound (256 / a large overflow) and the lower bound (0).
+func TestSortStreamlineLevelsOutOfRange(t *testing.T) {
+	for _, level := range []string{"256", "300", "0"} {
+		levels := map[string]StreamlineLevel{
+			level: {MinRank: "silver", Percent: 0.05},
+		}
+		_, err := sortStreamlineLevels(levels)
+		require.Error(t, err, "level %s must be rejected", level)
+		assert.Contains(t, err.Error(), "out of range")
+	}
+}
+
+// TestSortStreamlineLevelsAcceptsBoundary verifies the inclusive [1, 255]
+// boundary is accepted at the Go layer, pinning the exact bound against an
+// off-by-one in the guard (n >= 255 vs n > 255).
+func TestSortStreamlineLevelsAcceptsBoundary(t *testing.T) {
+	accepted, err := sortStreamlineLevels(map[string]StreamlineLevel{
+		"1":   {MinRank: "silver", Percent: 0.05},
+		"255": {MinRank: "gold", Percent: 0.03},
+	})
+	require.NoError(t, err)
+	assert.Len(t, accepted, 2)
+}
+
 // TestTranslateBinaryCommissionUnknownMode verifies that
 // translateBinaryCommission returns an error for an unknown mode.
 func TestTranslateBinaryCommissionUnknownMode(t *testing.T) {

@@ -268,6 +268,9 @@ func sortStreamlineLevels(levels map[string]StreamlineLevel) ([]map[string]any, 
 		if err != nil {
 			return nil, fmt.Errorf("dynamic_compression key %q is not a valid level number: %w", k, err)
 		}
+		if n < 1 || n > 255 {
+			return nil, fmt.Errorf("dynamic_compression level %d is out of range [1, 255]", n)
+		}
 		sorted = append(sorted, numbered{level: n, sl: v})
 	}
 	sort.Slice(sorted, func(i, j int) bool {

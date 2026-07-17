@@ -997,6 +997,107 @@ func TestValidation_StreamlineAdditionalPerRankMustExist(t *testing.T) {
 	assert.True(t, foundUndefinedRef, "should find undefined_reference for Nonexistent rank in additional_per_rank")
 }
 
+// TestRateKeyWidth_RejectsKeysOverU8 verifies the u8 key-width guard on every
+// level/depth-keyed rate map (HEU-513 Part B). These maps are Go
+// map[string]float64 but Rust BTreeMap<u8, f64>; a key over 255 passes Go and
+// dies opaquely at Rust serde. Each case sets one out-of-range key and expects
+// an invalid_value error at the exact offending path.
+func TestRateKeyWidth_RejectsKeysOverU8(t *testing.T) {
+	cases := []struct {
+		name     string
+		setup    func(*CompensationPlan)
+		wantPath string
+	}{
+		{"matching rates", func(p *CompensationPlan) {
+			p.Bonuses.Matching = &MatchingBonusConfig{Rates: map[string]float64{"300": 0.5}}
+		}, "/bonuses/matching/rates/300"},
+		{"leadership rates", func(p *CompensationPlan) {
+			p.Bonuses.LeadershipDevelopment = &LeadershipDevelopmentBonusConfig{Rates: map[string]float64{"256": 0.5}}
+		}, "/bonuses/leadership_development/rates/256"},
+		{"infinity decreasing_rates", func(p *CompensationPlan) {
+			p.Bonuses.Infinity = &InfinityBonusConfig{DecreasingRates: map[string]float64{"999": 0.5}}
+		}, "/bonuses/infinity/decreasing_rates/999"},
+		{"matrix_completion per_level", func(p *CompensationPlan) {
+			p.Bonuses.MatrixCompletion = &MatrixCompletionBonusConfig{PerLevel: map[string]float64{"256": 100.0}}
+		}, "/bonuses/matrix_completion/per_level/256"},
+		{"fast_start rate_table inner", func(p *CompensationPlan) {
+			p.Bonuses.FastStart = &FastStartBonusConfig{RateTable: map[string]map[string]float64{"Associate": {"256": 0.5}}}
+		}, "/bonuses/fast_start/rate_table/Associate/256"},
+		{"generation rates", func(p *CompensationPlan) {
+			p.Structures[0].resolvedCommission = &GenerationCommission{
+				Generation: GenerationCommissionConfig{GenerationRates: map[string]float64{"256": 0.1}},
+			}
+		}, "/structures/0/commission/generation/generation_rates/256"},
+		{"stairstep breakaway generation_rates", func(p *CompensationPlan) {
+			p.Structures[0].resolvedCommission = &StairstepCommission{
+				Breakaway: &BreakawayConfig{
+					Overrides: OverrideStrategy{
+						Generation: &BreakawayGenerationConfig{GenerationRates: map[string]float64{"256": 0.1}},
+					},
+				},
+			}
+		}, "/structures/0/commission/breakaway/overrides/generation/generation_rates/256"},
+		{"commission rate_table inner", func(p *CompensationPlan) {
+			p.Structures[0].resolvedCommission = &UnilevelCommission{
+				RateTable: map[string]map[string]float64{
+					"Associate": {"256": 0.1},
+					"Silver":    {"1": 0.1},
+				},
+			}
+		}, "/structures/0/commission/rate_table/Associate/256"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			plan := minimalPlan()
+			tc.setup(plan)
+			errs := validateBusinessRules(plan)
+			found := false
+			for _, e := range errs {
+				if e.Code == "invalid_value" && e.Path == tc.wantPath {
+					found = true
+					assert.Equal(t, SeverityError, e.Severity)
+				}
+			}
+			assert.True(t, found, "expected invalid_value at %s, got: %v", tc.wantPath, errs)
+		})
+	}
+}
+
+// TestRateKeyWidth_RejectsNonNumericAndNegative verifies non-numeric, signed,
+// and out-of-range rate keys are rejected — a u8 key must be digits only in
+// [0, 255], matching the schema propertyNames pattern. "-0" and "+5" cover the
+// signed forms Atoi would have leaked past the Rust u8 boundary.
+func TestRateKeyWidth_RejectsNonNumericAndNegative(t *testing.T) {
+	for _, key := range []string{"-1", "-0", "+5", "abc", "256"} {
+		plan := minimalPlan()
+		plan.Bonuses.Matching = &MatchingBonusConfig{Rates: map[string]float64{key: 0.5}}
+		errs := validateBusinessRules(plan)
+		found := false
+		for _, e := range errs {
+			if e.Code == "invalid_value" && e.Path == "/bonuses/matching/rates/"+key {
+				found = true
+			}
+		}
+		assert.True(t, found, "expected invalid_value for matching rate key %q, got: %v", key, errs)
+	}
+}
+
+// TestRateKeyWidth_AcceptsU8Range verifies validateRateKeyWidths produces no
+// error for keys within the u8 range (0-255). Rank-name-keyed outer keys are
+// not checked. Calls the validator directly so an unrelated rule emitting
+// invalid_value on the baseline plan cannot break this test spuriously.
+func TestRateKeyWidth_AcceptsU8Range(t *testing.T) {
+	plan := minimalPlan()
+	plan.Bonuses.Matching = &MatchingBonusConfig{Rates: map[string]float64{"0": 0.1, "1": 0.2, "255": 0.3}}
+	plan.Structures[0].resolvedCommission = &UnilevelCommission{
+		RateTable: map[string]map[string]float64{
+			"Associate": {"1": 0.1, "255": 0.2},
+			"Silver":    {"1": 0.1, "255": 0.2},
+		},
+	}
+	assert.Empty(t, validateRateKeyWidths(plan), "valid u8 keys should produce no errors")
+}
+
 func TestValidation_SearchModeFirstLevelsWithoutDepthWarning(t *testing.T) {
 	plan := minimalPlan()
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{

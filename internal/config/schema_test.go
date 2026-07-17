@@ -250,6 +250,34 @@ func TestSchemaRejectsMultiTierMinSplitOutZero(t *testing.T) {
 	)
 }
 
+// TestSchemaRejectsRateKeyOverU8 verifies the tightened rate-map propertyNames
+// (HEU-513 Part B) reject a level key above the Rust u8 range at the schema gate
+// — the happy-path guard this task closes — and accept the inclusive boundary.
+// Exercises the shared $defs/RateTable pattern via minimal-unilevel's rate_table
+// by mutating one otherwise-valid key, so a future regex typo (admitting 256 or
+// rejecting 255) fails CI instead of passing silently.
+func TestSchemaRejectsRateKeyOverU8(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/minimal-unilevel.yaml")
+	require.Empty(t, p.validateSchema(base), "base fixture should validate cleanly")
+
+	over := replaceInYAML(t, base, `"5": 0.01`, `"300": 0.01`)
+	errs := p.validateSchema(over)
+	require.NotEmpty(t, errs, "rate_table key 300 should fail the schema gate")
+	foundViolation := false
+	for _, e := range errs {
+		if e.Code == "schema_violation" {
+			foundViolation = true
+			assert.Equal(t, SeverityError, e.Severity)
+		}
+	}
+	assert.True(t, foundViolation, "expected a schema_violation for rate_table key 300, got %+v", errs)
+
+	boundary := replaceInYAML(t, base, `"5": 0.01`, `"255": 0.01`)
+	assert.Empty(t, p.validateSchema(boundary), "rate_table key 255 should pass the schema gate")
+}
+
 func TestSchemaRejectsLegQualityBadPredicate(t *testing.T) {
 	p, err := NewPipeline(schemaPath(t))
 	require.NoError(t, err)

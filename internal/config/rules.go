@@ -21,6 +21,7 @@ func validateBusinessRules(plan *CompensationPlan) []ValidationError {
 	errs = append(errs, validateRanks(plan, structs)...)
 	errs = append(errs, validateStructureRefs(plan, ranks)...)
 	errs = append(errs, validateBonuses(plan, ranks)...)
+	errs = append(errs, validateRateKeyWidths(plan)...)
 	errs = append(errs, validatePlacement(plan, structs)...)
 	errs = append(errs, validateEligibility(plan)...)
 	errs = append(errs, validatePassUp(plan)...)
@@ -66,6 +67,85 @@ func getRateTable(commission Commission) map[string]map[string]float64 {
 	default:
 		return nil
 	}
+}
+
+// validateU8MapKeys appends an error for each key of a level/depth-keyed rate
+// map that is not representable as a Rust u8 (0-255). These maps are Go
+// map[string]float64 but Rust BTreeMap<u8, f64>; a key like "300" passes Go
+// untyped and dies opaquely at Rust serde. See docs/development/config-types.md
+// "Cross-layer enforcement of byte-width caps".
+func validateU8MapKeys(m map[string]float64, path string) []ValidationError {
+	var errs []ValidationError
+	for key := range m {
+		// ParseUint(_, 10, 8) accepts exactly a Rust u8 key: digits only (no
+		// sign), 0-255. This matches the schema propertyNames pattern, so the
+		// bypass-path Go guard is as strict as the happy-path schema gate (Atoi
+		// would leak signed forms like "-0" that Rust u8 rejects).
+		if _, err := strconv.ParseUint(key, 10, 8); err != nil {
+			errs = append(errs, ValidationError{
+				Path:     path + "/" + key,
+				Code:     "invalid_value",
+				Message:  fmt.Sprintf("rate key %q must be an integer in [0, 255] to fit the Rust u8 map key", key),
+				Severity: SeverityError,
+			})
+		}
+	}
+	return errs
+}
+
+// validateRateTableU8Keys applies validateU8MapKeys to the inner (level) keys of
+// a rank-by-level rate table. Outer keys are rank names (String on both sides)
+// and are not checked here.
+func validateRateTableU8Keys(rt map[string]map[string]float64, path string) []ValidationError {
+	var errs []ValidationError
+	for rank, inner := range rt {
+		errs = append(errs, validateU8MapKeys(inner, path+"/"+rank)...)
+	}
+	return errs
+}
+
+// validateRateKeyWidths checks that every level/depth-keyed rate map uses keys
+// representable as a Rust u8 (0-255). Bonus and per-structure commission rate
+// maps are Go map[string]float64 (or nested) but Rust BTreeMap<u8, f64>, so an
+// out-of-range key passes Go untyped and fails opaquely at the Rust serde
+// boundary. This mirrors the byte-width contract on the map KEY. Rank-name-keyed
+// maps (rank_rates, amounts) are String on both sides and are not checked.
+func validateRateKeyWidths(plan *CompensationPlan) []ValidationError {
+	var errs []ValidationError
+
+	// Bonus rate maps.
+	if plan.Bonuses.Matching != nil {
+		errs = append(errs, validateU8MapKeys(plan.Bonuses.Matching.Rates, "/bonuses/matching/rates")...)
+	}
+	if plan.Bonuses.LeadershipDevelopment != nil {
+		errs = append(errs, validateU8MapKeys(plan.Bonuses.LeadershipDevelopment.Rates, "/bonuses/leadership_development/rates")...)
+	}
+	if plan.Bonuses.Infinity != nil {
+		errs = append(errs, validateU8MapKeys(plan.Bonuses.Infinity.DecreasingRates, "/bonuses/infinity/decreasing_rates")...)
+	}
+	if plan.Bonuses.MatrixCompletion != nil {
+		errs = append(errs, validateU8MapKeys(plan.Bonuses.MatrixCompletion.PerLevel, "/bonuses/matrix_completion/per_level")...)
+	}
+	if plan.Bonuses.FastStart != nil {
+		errs = append(errs, validateRateTableU8Keys(plan.Bonuses.FastStart.RateTable, "/bonuses/fast_start/rate_table")...)
+	}
+
+	// Per-structure commission rate maps.
+	for i, s := range plan.Structures {
+		base := fmt.Sprintf("/structures/%d/commission", i)
+		switch rc := s.resolvedCommission.(type) {
+		case *GenerationCommission:
+			errs = append(errs, validateU8MapKeys(rc.Generation.GenerationRates, base+"/generation/generation_rates")...)
+		case *StairstepCommission:
+			if rc.Breakaway != nil && rc.Breakaway.Overrides.Generation != nil {
+				errs = append(errs, validateU8MapKeys(rc.Breakaway.Overrides.Generation.GenerationRates, base+"/breakaway/overrides/generation/generation_rates")...)
+			}
+		}
+		// Rank-by-level rate tables (Unilevel/Matrix/Stairstep/Generation): inner keys.
+		errs = append(errs, validateRateTableU8Keys(getRateTable(s.resolvedCommission), base+"/rate_table")...)
+	}
+
+	return errs
 }
 
 // rankOrdinalMap returns a map from rank name to ordinal.

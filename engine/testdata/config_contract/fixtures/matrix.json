@@ -1,0 +1,154 @@
+{
+  "bonuses": {
+    "matching": null,
+    "sponsor": null,
+    "fast_start": null,
+    "rank_advancement": null,
+    "leadership_development": null,
+    "infinity": null,
+    "lifestyle": null,
+    "pool": null,
+    "matrix_completion": {
+      "per_level": {
+        "1": 10,
+        "2": 25,
+        "3": 50
+      },
+      "full_matrix": 500
+    },
+    "position": {
+      "amount": 5,
+      "amount_type": "fixed",
+      "sponsored_only": true
+    },
+    "board_cycling": null
+  },
+  "caps": {
+    "per_distributor_per_period": null,
+    "company_payout_cap_percent": 0.45,
+    "cap_enforcement": "pro_rata",
+    "clawback_on_refund": false
+  },
+  "commission_eligibility": {
+    "min_personal_volume": 30,
+    "require_order_in_period": true,
+    "eligible_statuses": [
+      "active"
+    ],
+    "active_leg_tiers": null
+  },
+  "name": "Forced Matrix 3x7",
+  "payout": {
+    "base_currency": "USD",
+    "minimum_amount": 10,
+    "split_payouts_enabled": false,
+    "methods": [
+      {
+        "type": "ewallet",
+        "fee": 0
+      }
+    ]
+  },
+  "period": {
+    "length": "month",
+    "start_date": "2026-01-01",
+    "payout_lag_days": 14
+  },
+  "placement": {
+    "binary_placement": null,
+    "donated_placement": null,
+    "holding_tank": null
+  },
+  "rank_features": {
+    "constraints_enabled": true,
+    "overrides_enabled": false
+  },
+  "rank_tracking": {
+    "track_achieved_rank": false
+  },
+  "ranks": [
+    {
+      "name": "Starter",
+      "ordinal": 1,
+      "qualification": {
+        "structures": [
+          {
+            "structure": "Matrix",
+            "personal_volume": 0,
+            "group_volume": 0,
+            "max_group_volume_per_leg": 0,
+            "min_retail_volume": 0,
+            "distributor_count": null
+          }
+        ],
+        "required_products": null
+      },
+      "qualified_structures": null,
+      "demotion_policy": ""
+    },
+    {
+      "name": "Builder",
+      "ordinal": 2,
+      "qualification": {
+        "structures": [
+          {
+            "structure": "Matrix",
+            "personal_volume": 50,
+            "group_volume": 300,
+            "max_group_volume_per_leg": 0,
+            "min_retail_volume": 0,
+            "distributor_count": null
+          }
+        ],
+        "required_products": null
+      },
+      "qualified_structures": null,
+      "demotion_policy": ""
+    }
+  ],
+  "structures": [
+    {
+      "config": {
+        "compression": null,
+        "level_commission": {
+          "broad_commission_percent": 0,
+          "commissionable_depth": 7,
+          "rate_table": {
+            "Builder": {
+              "1": 0.08,
+              "2": 0.05,
+              "3": 0.04,
+              "4": 0.03,
+              "5": 0.02,
+              "6": 0.01,
+              "7": 0.01
+            },
+            "Starter": {
+              "1": 0.05,
+              "2": 0.03,
+              "3": 0.02
+            }
+          },
+          "volume_to_dollar_multiplier": null
+        },
+        "matrix_params": {
+          "width": 3,
+          "height": 7,
+          "spillover_direction": "breadth_first"
+        },
+        "name": "Matrix",
+        "pruning": {
+          "mode": "promote_earliest"
+        }
+      },
+      "type": "matrix"
+    }
+  ],
+  "version": 1,
+  "volume": {
+    "inhibit_signup_volume": false,
+    "base_currency": "USD",
+    "volume_to_dollar_multiplier": 1,
+    "deduct_qualifying_volume": false
+  }
+}

@@ -89,9 +89,27 @@ func TestConfigContract_FieldsMatchAndRejectOverMax(t *testing.T) {
 			// Boundary: mutate one field of a real authoring plan to over_max,
 			// then run the actual two-pass decode and assert it rejects.
 			raw := loadAuthoringFixture(t, f.GoFixture)
+
+			// Pristine-first. Without this, a fixture that breaks for any
+			// unrelated reason makes the rejection below true for the wrong
+			// reason, and the boundary half silently stops testing anything
+			// while still reporting green.
+			require.NoError(t, loadAndResolve(raw),
+				"fixture %s must load cleanly before mutation", f.GoFixture)
+
 			mutated := setJSONPointer(t, raw, f.GoPointer, f.OverMax)
-			assert.Error(t, loadAndResolve(mutated),
+			err := loadAndResolve(mutated)
+			require.Error(t, err,
 				"%s.%s must reject %d through the loader", f.GoStruct, f.GoField, f.OverMax)
+
+			// Pin the rejection to the value itself, which makes the OverMax
+			// int64 decision executable rather than merely documented: decode
+			// it as any and the uint32 entries re-encode to 4.294967296e+09,
+			// which yaml.v3 rejects as a type error naming that float — not
+			// this integer — so this assertion would catch the regression.
+			assert.Contains(t, err.Error(), strconv.FormatInt(f.OverMax, 10),
+				"%s.%s rejection must name the over-max value, not fail for an unrelated reason",
+				f.GoStruct, f.GoField)
 		})
 	}
 }
@@ -253,6 +271,11 @@ func loadAndResolve(yamlBytes []byte) error {
 // re-encodes. Every token must already resolve — a stale manifest pointer fails
 // the test loudly rather than leaving the document unmutated, which would let
 // the boundary assertion pass without testing anything.
+//
+// Mapping tokens require string-tagged YAML keys, which yaml.v3 decodes into
+// map[string]any. A numeric-looking key must therefore be quoted in the fixture
+// ("1:" not 1:), or yaml.v3 yields map[any]any and the walk fails loudly rather
+// than resolving. Every rate map in the current fixtures quotes its keys.
 func setJSONPointer(t *testing.T, yamlBytes []byte, pointer string, value any) []byte {
 	t.Helper()
 	require.True(t, strings.HasPrefix(pointer, "/"), "pointer %q must start with /", pointer)
@@ -270,7 +293,7 @@ func setJSONPointer(t *testing.T, yamlBytes []byte, pointer string, value any) [
 	for _, tok := range tokens[:len(tokens)-1] {
 		node = pointerChild(t, node, tok, pointer)
 	}
-	setPointerLeaf(t, node, tokens[len(tokens)-1], value, pointer)
+	setPointerLeaf(t, node, tokens[len(tokens)-1], pointer, value)
 
 	out, err := yaml.Marshal(doc)
 	require.NoError(t, err)
@@ -296,7 +319,7 @@ func pointerChild(t *testing.T, node any, token, pointer string) any {
 
 // setPointerLeaf writes value at the final pointer token. The target must
 // already exist, so a stale pointer cannot silently create a new key.
-func setPointerLeaf(t *testing.T, node any, token string, value any, pointer string) {
+func setPointerLeaf(t *testing.T, node any, token, pointer string, value any) {
 	t.Helper()
 	switch n := node.(type) {
 	case map[string]any:

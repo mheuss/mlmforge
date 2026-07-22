@@ -45,6 +45,17 @@ func translateToEngine(plan *CompensationPlan) ([]byte, error) {
 	return json.Marshal(doc)
 }
 
+// taggedStructure marshals its fields in declaration order (type before config)
+// so the engine's adjacently-tagged StructureConfig deserializes cleanly: serde
+// reads the "type" tag first, then decodes "config" directly. A map[string]any
+// marshals keys alphabetically ("config" before "type"), which forces serde to
+// buffer the content before it knows the variant — and that buffer fails on
+// non-string map keys such as rate_table's u8 keys (HEU-513: contract round-trip).
+type taggedStructure struct {
+	Type   string         `json:"type"`
+	Config map[string]any `json:"config"`
+}
+
 // translateStructures converts each structure from flat YAML shape to
 // adjacently tagged shape: {"type": "...", "config": {...}}.
 func translateStructures(structures []StructureConfig) ([]any, error) {
@@ -54,10 +65,7 @@ func translateStructures(structures []StructureConfig) ([]any, error) {
 		if err != nil {
 			return nil, fmt.Errorf("structure %q: %w", s.Name, err)
 		}
-		result = append(result, map[string]any{
-			"type":   s.Type,
-			"config": cfg,
-		})
+		result = append(result, taggedStructure{Type: s.Type, Config: cfg})
 	}
 	return result, nil
 }

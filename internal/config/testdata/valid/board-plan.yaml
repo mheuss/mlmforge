@@ -20,6 +20,7 @@ volume:
 ranks:
   - name: Member
     ordinal: 1
+    demotion_policy: promotion_only
     qualification:
       structures:
         - structure: Overrides
@@ -28,6 +29,7 @@ ranks:
 
   - name: Leader
     ordinal: 2
+    demotion_policy: promotion_only
     qualification:
       structures:
         - structure: Overrides

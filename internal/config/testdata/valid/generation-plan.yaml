@@ -21,6 +21,7 @@ volume:
 ranks:
   - name: Associate
     ordinal: 1
+    demotion_policy: promotion_only
     qualification:
       structures:
         - structure: GenTree
@@ -29,6 +30,7 @@ ranks:
 
   - name: Executive
     ordinal: 2
+    demotion_policy: promotion_only
     qualification:
       structures:
         - structure: GenTree
@@ -37,6 +39,7 @@ ranks:
 
   - name: Senior Executive
     ordinal: 3
+    demotion_policy: promotion_only
     qualification:
       structures:
         - structure: GenTree

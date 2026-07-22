@@ -20,6 +20,7 @@ volume:
 ranks:
   - name: Starter
     ordinal: 1
+    demotion_policy: promotion_only
     qualification:
       structures:
         - structure: Matrix
@@ -28,6 +29,7 @@ ranks:
 
   - name: Builder
     ordinal: 2
+    demotion_policy: promotion_only
     qualification:
       structures:
         - structure: Matrix

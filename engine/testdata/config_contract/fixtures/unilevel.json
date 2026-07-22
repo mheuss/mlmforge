@@ -212,10 +212,8 @@
             "min_retail_volume": 0,
             "distributor_count": null
           }
-        ],
-        "required_products": null
+        ]
       },
-      "qualified_structures": null,
       "demotion_policy": "promotion_only"
     },
     {
@@ -231,8 +229,7 @@
             "min_retail_volume": 0,
             "distributor_count": null
           }
-        ],
-        "required_products": null
+        ]
       },
       "qualified_structures": [
         "Primary"
@@ -299,10 +296,8 @@
               "min_leg_group_volume": 1000
             }
           }
-        ],
-        "required_products": null
+        ]
       },
-      "qualified_structures": null,
       "demotion_policy": {
         "grace": {
           "count": 6,
@@ -313,6 +308,7 @@
   ],
   "structures": [
     {
+      "type": "unilevel",
       "config": {
         "compression": {
           "enabled": true,
@@ -361,8 +357,7 @@
           "count": 2,
           "includes_commissions": false
         }
-      },
-      "type": "unilevel"
+      }
     }
   ],
   "version": 1,

@@ -51,14 +51,14 @@ type RankDefinition struct {
 	Name                string            `yaml:"name" json:"name"`
 	Ordinal             int               `yaml:"ordinal" json:"ordinal"`
 	Qualification       RankQualification `yaml:"qualification" json:"qualification"`
-	QualifiedStructures []string          `yaml:"qualified_structures" json:"qualified_structures"`
+	QualifiedStructures []string          `yaml:"qualified_structures" json:"qualified_structures,omitempty"`
 	DemotionPolicy      DemotionPolicy    `yaml:"demotion_policy" json:"demotion_policy"`
 }
 
 // RankQualification holds the qualification requirements for achieving a rank.
 type RankQualification struct {
 	Structures       []StructureQualification `yaml:"structures" json:"structures"`
-	RequiredProducts []string                 `yaml:"required_products" json:"required_products"`
+	RequiredProducts []string                 `yaml:"required_products" json:"required_products,omitempty"`
 	Window           *RankQualificationWindow `yaml:"window,omitempty" json:"window,omitempty"`
 	Tenure           *TenureRequirement       `yaml:"tenure,omitempty" json:"tenure,omitempty"`
 }
@@ -192,7 +192,7 @@ type CommissionEligibility struct {
 	MinPersonalVolume    float64         `yaml:"min_personal_volume" json:"min_personal_volume"`
 	RequireOrderInPeriod bool            `yaml:"require_order_in_period" json:"require_order_in_period"`
 	EligibleStatuses     []string        `yaml:"eligible_statuses" json:"eligible_statuses"`
-	ActiveLegTiers       []ActiveLegTier `yaml:"active_leg_tiers" json:"active_leg_tiers"`
+	ActiveLegTiers       []ActiveLegTier `yaml:"active_leg_tiers" json:"active_leg_tiers,omitempty"`
 }
 
 // ActiveLegTier maps an active leg count to a commission depth.

@@ -31,8 +31,7 @@
     "require_order_in_period": true,
     "eligible_statuses": [
       "active"
-    ],
-    "active_leg_tiers": null
+    ]
   },
   "name": "Generation Override Plan",
   "payout": {
@@ -77,11 +76,9 @@
             "min_retail_volume": 0,
             "distributor_count": null
           }
-        ],
-        "required_products": null
+        ]
       },
-      "qualified_structures": null,
-      "demotion_policy": ""
+      "demotion_policy": "promotion_only"
     },
     {
       "name": "Executive",
@@ -96,11 +93,9 @@
             "min_retail_volume": 0,
             "distributor_count": null
           }
-        ],
-        "required_products": null
+        ]
       },
-      "qualified_structures": null,
-      "demotion_policy": ""
+      "demotion_policy": "promotion_only"
     },
     {
       "name": "Senior Executive",
@@ -122,15 +117,14 @@
               "min_leg_group_volume": 1000
             }
           }
-        ],
-        "required_products": null
+        ]
       },
-      "qualified_structures": null,
-      "demotion_policy": ""
+      "demotion_policy": "promotion_only"
     }
   ],
   "structures": [
     {
+      "type": "generation",
       "config": {
         "compression": null,
         "generation_commission": {
@@ -178,8 +172,7 @@
         },
         "level_commissions_enabled": true,
         "name": "GenTree"
-      },
-      "type": "generation"
+      }
     }
   ],
   "version": 1,

@@ -30,8 +30,7 @@
     "eligible_statuses": [
       "active",
       "grace_period"
-    ],
-    "active_leg_tiers": null
+    ]
   },
   "name": "Classic Stairstep Breakaway",
   "payout": {
@@ -76,10 +75,8 @@
             "min_retail_volume": 0,
             "distributor_count": null
           }
-        ],
-        "required_products": null
+        ]
       },
-      "qualified_structures": null,
       "demotion_policy": "promotion_only"
     },
     {
@@ -95,10 +92,8 @@
             "min_retail_volume": 0,
             "distributor_count": null
           }
-        ],
-        "required_products": null
+        ]
       },
-      "qualified_structures": null,
       "demotion_policy": {
         "grace": {
           "count": 3,
@@ -126,10 +121,8 @@
               "min_leg_group_volume": 500
             }
           }
-        ],
-        "required_products": null
+        ]
       },
-      "qualified_structures": null,
       "demotion_policy": {
         "grace": {
           "count": 6,
@@ -140,6 +133,7 @@
   ],
   "structures": [
     {
+      "type": "stairstep",
       "config": {
         "breakaway": {
           "threshold_rank": "Supervisor",
@@ -194,8 +188,7 @@
           "volume_to_dollar_multiplier": null
         },
         "name": "StairstepTree"
-      },
-      "type": "stairstep"
+      }
     }
   ],
   "version": 1,

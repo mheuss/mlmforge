@@ -35,6 +35,7 @@ pub struct CommissionEligibility {
     /// More active frontline legs unlock deeper commission earnings.
     /// Tiers must be sorted by `min_active_legs` ascending. An empty
     /// list means no leg-based depth restrictions apply.
+    #[serde(default)]
     pub active_leg_tiers: Vec<ActiveLegTier>,
 }
 

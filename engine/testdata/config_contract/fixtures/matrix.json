@@ -34,8 +34,7 @@
     "require_order_in_period": true,
     "eligible_statuses": [
       "active"
-    ],
-    "active_leg_tiers": null
+    ]
   },
   "name": "Forced Matrix 3x7",
   "payout": {
@@ -80,11 +79,9 @@
             "min_retail_volume": 0,
             "distributor_count": null
           }
-        ],
-        "required_products": null
+        ]
       },
-      "qualified_structures": null,
-      "demotion_policy": ""
+      "demotion_policy": "promotion_only"
     },
     {
       "name": "Builder",
@@ -99,15 +96,14 @@
             "min_retail_volume": 0,
             "distributor_count": null
           }
-        ],
-        "required_products": null
+        ]
       },
-      "qualified_structures": null,
-      "demotion_policy": ""
+      "demotion_policy": "promotion_only"
     }
   ],
   "structures": [
     {
+      "type": "matrix",
       "config": {
         "compression": null,
         "level_commission": {
@@ -140,8 +136,7 @@
         "pruning": {
           "mode": "promote_earliest"
         }
-      },
-      "type": "matrix"
+      }
     }
   ],
   "version": 1,

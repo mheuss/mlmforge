@@ -31,8 +31,7 @@
     "require_order_in_period": false,
     "eligible_statuses": [
       "active"
-    ],
-    "active_leg_tiers": null
+    ]
   },
   "name": "Sales Board Plan",
   "payout": {
@@ -77,11 +76,9 @@
             "min_retail_volume": 0,
             "distributor_count": null
           }
-        ],
-        "required_products": null
+        ]
       },
-      "qualified_structures": null,
-      "demotion_policy": ""
+      "demotion_policy": "promotion_only"
     },
     {
       "name": "Leader",
@@ -96,15 +93,14 @@
             "min_retail_volume": 0,
             "distributor_count": null
           }
-        ],
-        "required_products": null
+        ]
       },
-      "qualified_structures": null,
-      "demotion_policy": ""
+      "demotion_policy": "promotion_only"
     }
   ],
   "structures": [
     {
+      "type": "unilevel",
       "config": {
         "compression": null,
         "level_commission": {
@@ -127,10 +123,10 @@
         },
         "name": "Overrides",
         "pass_up": null
-      },
-      "type": "unilevel"
+      }
     },
     {
+      "type": "board_plan",
       "config": {
         "board_cycling": {
           "cycle_commission": 500,
@@ -144,8 +140,7 @@
         "height": 2,
         "name": "Sales Board",
         "width": 2
-      },
-      "type": "board_plan"
+      }
     }
   ],
   "version": 1,

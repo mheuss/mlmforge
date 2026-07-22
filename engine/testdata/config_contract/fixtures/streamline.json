@@ -27,8 +27,7 @@
     "require_order_in_period": true,
     "eligible_statuses": [
       "active"
-    ],
-    "active_leg_tiers": null
+    ]
   },
   "name": "Streamline Direct",
   "payout": {
@@ -77,11 +76,9 @@
             "min_retail_volume": 0,
             "distributor_count": null
           }
-        ],
-        "required_products": null
+        ]
       },
-      "qualified_structures": null,
-      "demotion_policy": ""
+      "demotion_policy": "promotion_only"
     },
     {
       "name": "Team Lead",
@@ -96,11 +93,9 @@
             "min_retail_volume": 0,
             "distributor_count": null
           }
-        ],
-        "required_products": null
+        ]
       },
-      "qualified_structures": null,
-      "demotion_policy": ""
+      "demotion_policy": "promotion_only"
     },
     {
       "name": "Director",
@@ -115,15 +110,14 @@
             "min_retail_volume": 0,
             "distributor_count": null
           }
-        ],
-        "required_products": null
+        ]
       },
-      "qualified_structures": null,
-      "demotion_policy": ""
+      "demotion_policy": "promotion_only"
     }
   ],
   "structures": [
     {
+      "type": "unilevel",
       "config": {
         "compression": null,
         "level_commission": {
@@ -147,10 +141,10 @@
         },
         "name": "PrimaryUnilevel",
         "pass_up": null
-      },
-      "type": "unilevel"
+      }
     },
     {
+      "type": "streamline",
       "config": {
         "name": "StreamlineTree",
         "streamline_commission": {
@@ -198,8 +192,7 @@
           },
           "volume_to_dollar_multiplier": null
         }
-      },
-      "type": "streamline"
+      }
     }
   ],
   "version": 1,

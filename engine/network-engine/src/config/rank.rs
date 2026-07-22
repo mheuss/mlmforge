@@ -37,6 +37,7 @@ pub struct RankDefinition {
     /// In a hybrid plan (e.g., binary + unilevel), lower ranks might
     /// earn only on the unilevel while higher ranks unlock the binary.
     /// References structure names defined in the plan.
+    #[serde(default)]
     pub qualified_structures: Vec<String>,
 
     /// How demotion is handled when the distributor fails to maintain
@@ -67,6 +68,7 @@ pub struct RankQualification {
     /// The distributor must maintain a current membership of at least
     /// one of the specified products. Used to tie rank eligibility to
     /// enrollment package tier.
+    #[serde(default)]
     pub required_products: Vec<String>,
 
     /// Optional windowed gate (G2): achieved >= threshold rank in N of the

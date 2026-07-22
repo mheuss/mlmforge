@@ -13,4 +13,8 @@ tracing = "0.1"
 
 [dev-dependencies]
 proptest = "1"
-serde_json = "1"
+# preserve_order: keep JSON object key order through serde_json::Value so the
+# width-contract test (tests/config_width_contract.rs) can mutate a fixture and
+# re-deserialize it without re-sorting structure keys to config-before-type,
+# which would re-break the engine's adjacently-tagged StructureConfig. Dev-only.
+serde_json = { version = "1", features = ["preserve_order"] }

@@ -24,11 +24,12 @@ type widthManifest struct {
 }
 
 type manifestEntry struct {
-	GoStruct  string `json:"go_struct"`
-	GoField   string `json:"go_field"`
-	GoType    string `json:"go_type"`
-	GoFixture string `json:"go_fixture"`
-	GoPointer string `json:"go_pointer"`
+	GoStruct      string `json:"go_struct"`
+	GoField       string `json:"go_field"`
+	GoType        string `json:"go_type"`
+	GoFixture     string `json:"go_fixture"`
+	GoPointer     string `json:"go_pointer"`
+	SchemaPointer string `json:"schema_pointer"`
 	// OverMax is decoded as int64, not any. encoding/json decodes a bare number
 	// into float64, and re-encoding 4294967296 to YAML then emits
 	// 4.294967296e+09 — which yaml.v3 rejects as a *type* error rather than a
@@ -110,6 +111,45 @@ func TestConfigContract_FieldsMatchAndRejectOverMax(t *testing.T) {
 			assert.Contains(t, err.Error(), strconv.FormatInt(f.OverMax, 10),
 				"%s.%s rejection must name the over-max value, not fail for an unrelated reason",
 				f.GoStruct, f.GoField)
+		})
+	}
+}
+
+// TestConfigContract_SchemaMaxWithinType asserts that, for every tightened field
+// in the width manifest, the JSON schema's `maximum` is within the Go/Rust type's
+// capacity (uint8 <= 255, uint16 <= 65535, uint32 <= 4294967295). This is the
+// schema half of the width contract: Task 13 pins the Go type and the loader
+// rejection; this pins that the schema's first gate agrees, so the three layers
+// (schema, Go, Rust) cannot drift apart on the upper bound.
+//
+// For a map-typed field the bound lives on the map VALUE schema
+// (additionalProperties), not the property object, so the walk descends into
+// additionalProperties when go_type is a map — otherwise node["maximum"] is nil
+// and the check silently no-ops (Task 11 spec-review finding). A missing maximum
+// fails loudly rather than passing vacuously, the same non-vacuity guard as Task 13.
+func TestConfigContract_SchemaMaxWithinType(t *testing.T) {
+	schema := loadSchemaJSON(t)
+	for _, f := range loadManifest(t).Fields {
+		t.Run(f.GoStruct+"."+f.GoField, func(t *testing.T) {
+			node := resolveJSONPointer(t, schema, f.SchemaPointer)
+
+			// Map fields carry their width on the value schema, not the property.
+			if strings.HasPrefix(f.GoType, "map[") {
+				apRaw, ok := node["additionalProperties"]
+				require.True(t, ok,
+					"%s: map field %s has no additionalProperties value schema to carry the width bound",
+					f.SchemaPointer, f.GoType)
+				ap, ok := derefSchema(t, schema, apRaw).(map[string]any)
+				require.True(t, ok, "%s: additionalProperties is not a schema object", f.SchemaPointer)
+				node = ap
+			}
+
+			maxRaw, ok := node["maximum"]
+			require.True(t, ok,
+				"%s: schema has no maximum — the width bound is unenforced at the schema gate", f.SchemaPointer)
+
+			assert.LessOrEqual(t, toInt(t, maxRaw), typeMax(t, f.GoType),
+				"schema maximum for %s exceeds %s capacity", f.SchemaPointer, f.GoType)
 		})
 	}
 }
@@ -349,4 +389,97 @@ func pointerIndex(t *testing.T, node []any, token, pointer string) int {
 	require.True(t, idx >= 0 && idx < len(node),
 		"pointer %s: index %d out of range (len %d)", pointer, idx, len(node))
 	return idx
+}
+
+// loadSchemaJSON reads and decodes the compensation-plan JSON schema.
+func loadSchemaJSON(t *testing.T) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile("../../schemas/compensation-plan.schema.json")
+	require.NoError(t, err)
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(data, &schema))
+	require.NotEmpty(t, schema, "schema decoded empty")
+	return schema
+}
+
+// resolveJSONPointer walks a "#/$defs/.../properties/<field>" schema pointer and
+// returns the schema object it names. It is $ref-aware: a bare {"$ref": "#/..."}
+// at any node is followed before descending further (and at the leaf), so a
+// property that is itself a $ref resolves to its target. Every token must resolve
+// — a stale pointer fails the test loudly rather than yielding nil, which would
+// let the maximum check silently pass.
+func resolveJSONPointer(t *testing.T, schema map[string]any, pointer string) map[string]any {
+	t.Helper()
+	require.True(t, strings.HasPrefix(pointer, "#/"), "schema pointer %q must start with #/", pointer)
+
+	node := derefSchema(t, schema, any(schema))
+	for tok := range strings.SplitSeq(strings.TrimPrefix(pointer, "#/"), "/") {
+		m, ok := node.(map[string]any)
+		require.True(t, ok, "schema pointer %s: cannot descend through %T at %q", pointer, node, tok)
+		child, ok := m[tok]
+		require.True(t, ok, "schema pointer %s: key %q not found", pointer, tok)
+		node = derefSchema(t, schema, child)
+	}
+	m, ok := node.(map[string]any)
+	require.True(t, ok, "schema pointer %s resolves to %T, not an object", pointer, node)
+	return m
+}
+
+// derefSchema follows a chain of {"$ref": "#/..."} indirections to the object the
+// last ref names. A non-map, or a map without a $ref, is returned unchanged.
+func derefSchema(t *testing.T, schema map[string]any, node any) any {
+	t.Helper()
+	for {
+		m, ok := node.(map[string]any)
+		if !ok {
+			return node
+		}
+		ref, ok := m["$ref"].(string)
+		if !ok {
+			return node
+		}
+		require.True(t, strings.HasPrefix(ref, "#/"), "unsupported $ref %q (only local #/ refs)", ref)
+		target := any(schema)
+		for tok := range strings.SplitSeq(strings.TrimPrefix(ref, "#/"), "/") {
+			tm, ok := target.(map[string]any)
+			require.True(t, ok, "$ref %s: cannot descend through %T at %q", ref, target, tok)
+			child, ok := tm[tok]
+			require.True(t, ok, "$ref %s: key %q not found", ref, tok)
+			target = child
+		}
+		node = target
+	}
+}
+
+// toInt converts a JSON-decoded schema number to int64. encoding/json decodes
+// bare numbers into float64; every schema maximum (<= 4294967295) is exactly
+// representable as a float64, so the conversion is lossless.
+func toInt(t *testing.T, v any) int64 {
+	t.Helper()
+	f, ok := v.(float64)
+	require.True(t, ok, "schema maximum is %T, not a JSON number", v)
+	return int64(f)
+}
+
+// typeMax returns the inclusive maximum an unsigned Go type can hold. For a map
+// type the width lives on the value type (map[string]uint8 -> 255), matching the
+// additionalProperties descent the schema check does for map fields.
+func typeMax(t *testing.T, goType string) int64 {
+	t.Helper()
+	if strings.HasPrefix(goType, "map[") {
+		if i := strings.LastIndex(goType, "]"); i >= 0 {
+			goType = goType[i+1:]
+		}
+	}
+	switch goType {
+	case "uint8":
+		return 255
+	case "uint16":
+		return 65535
+	case "uint32":
+		return 4294967295
+	default:
+		t.Fatalf("typeMax: unsupported go_type %q", goType)
+		return 0
+	}
 }

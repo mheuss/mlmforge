@@ -272,10 +272,13 @@ func loadAndResolve(yamlBytes []byte) error {
 // the test loudly rather than leaving the document unmutated, which would let
 // the boundary assertion pass without testing anything.
 //
-// Mapping tokens require string-tagged YAML keys, which yaml.v3 decodes into
-// map[string]any. A numeric-looking key must therefore be quoted in the fixture
-// ("1:" not 1:), or yaml.v3 yields map[any]any and the walk fails loudly rather
-// than resolving. Every rate map in the current fixtures quotes its keys.
+// Mapping tokens require string YAML keys. yaml.v3 decodes a mapping into
+// map[string]any only when every key is a string; an unquoted numeric key
+// (1: rather than "1":) makes yaml.v3 decode that mapping into map[any]any with
+// int keys, which pointerChild/setPointerLeaf reject loudly (never a silent
+// no-op) — so an unquoted-key fixture can never make a boundary assertion pass
+// for the wrong reason. Fixtures therefore quote numeric map keys ("1": not 1:);
+// all current valid fixtures do.
 func setJSONPointer(t *testing.T, yamlBytes []byte, pointer string, value any) []byte {
 	t.Helper()
 	require.True(t, strings.HasPrefix(pointer, "/"), "pointer %q must start with /", pointer)
@@ -311,6 +314,9 @@ func pointerChild(t *testing.T, node any, token, pointer string) any {
 		return child
 	case []any:
 		return n[pointerIndex(t, n, token, pointer)]
+	case map[any]any:
+		t.Fatalf("pointer %s: token %q lands in a mapping with non-string keys — quote numeric keys in the fixture (\"1\": not 1:) so yaml.v3 decodes them as strings", pointer, token)
+		return nil
 	default:
 		t.Fatalf("pointer %s: cannot descend through %T at %q", pointer, node, token)
 		return nil
@@ -328,6 +334,8 @@ func setPointerLeaf(t *testing.T, node any, token, pointer string, value any) {
 		n[token] = value
 	case []any:
 		n[pointerIndex(t, n, token, pointer)] = value
+	case map[any]any:
+		t.Fatalf("pointer %s: token %q lands in a mapping with non-string keys — quote numeric keys in the fixture (\"1\": not 1:) so yaml.v3 decodes them as strings", pointer, token)
 	default:
 		t.Fatalf("pointer %s: cannot set %q on %T", pointer, token, node)
 	}

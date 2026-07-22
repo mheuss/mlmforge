@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::deserialize_null_default;
+
 /// A single rank in the compensation plan ladder.
 ///
 /// Ranks are the ladder distributors climb. Higher ranks unlock deeper
@@ -37,7 +39,7 @@ pub struct RankDefinition {
     /// In a hybrid plan (e.g., binary + unilevel), lower ranks might
     /// earn only on the unilevel while higher ranks unlock the binary.
     /// References structure names defined in the plan.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub qualified_structures: Vec<String>,
 
     /// How demotion is handled when the distributor fails to maintain
@@ -68,7 +70,7 @@ pub struct RankQualification {
     /// The distributor must maintain a current membership of at least
     /// one of the specified products. Used to tie rank eligibility to
     /// enrollment package tier.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub required_products: Vec<String>,
 
     /// Optional windowed gate (G2): achieved >= threshold rank in N of the
@@ -582,6 +584,36 @@ mod tests {
         let json = r#"{"structures":[],"required_products":[]}"#;
         let q: RankQualification = serde_json::from_str(json).unwrap();
         assert!(q.tenure.is_none());
+    }
+
+    #[test]
+    fn qualified_structures_absent_or_null_deserializes_to_empty() {
+        // deserialize_null_default: Go omits an empty qualified_structures via
+        // omitempty and may emit null; absent, null, and [] all yield empty.
+        for tail in [
+            "",
+            r#","qualified_structures":null"#,
+            r#","qualified_structures":[]"#,
+        ] {
+            let json = format!(
+                r#"{{"name":"R","ordinal":1,"qualification":{{"structures":[]}},"demotion_policy":"promotion_only"{tail}}}"#
+            );
+            let rank: RankDefinition = serde_json::from_str(&json).unwrap();
+            assert!(rank.qualified_structures.is_empty(), "input: {json}");
+        }
+    }
+
+    #[test]
+    fn required_products_absent_or_null_deserializes_to_empty() {
+        for tail in [
+            "",
+            r#","required_products":null"#,
+            r#","required_products":[]"#,
+        ] {
+            let json = format!(r#"{{"structures":[]{tail}}}"#);
+            let q: RankQualification = serde_json::from_str(&json).unwrap();
+            assert!(q.required_products.is_empty(), "input: {json}");
+        }
     }
 
     #[test]

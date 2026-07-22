@@ -132,6 +132,24 @@ demotion_policy:
 	assert.Equal(t, "months", rank2.DemotionPolicy.Grace.Unit)
 }
 
+func TestDemotionPolicyMarshalJSON(t *testing.T) {
+	// An unset demotion policy must marshal to "promotion_only", not the zero
+	// value "", so the engine JSON round-trips into the Rust DemotionPolicy enum.
+	// The schema leaves demotion_policy optional, so a valid plan can omit it.
+	unset, err := json.Marshal(DemotionPolicy{})
+	require.NoError(t, err)
+	assert.JSONEq(t, `"promotion_only"`, string(unset))
+
+	// Explicit string passes through; grace marshals to the object form.
+	promo, err := json.Marshal(DemotionPolicy{StringValue: "promotion_only"})
+	require.NoError(t, err)
+	assert.JSONEq(t, `"promotion_only"`, string(promo))
+
+	grace, err := json.Marshal(DemotionPolicy{Grace: &GracePeriod{Count: 2, Unit: "months"}})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"grace":{"count":2,"unit":"months"}}`, string(grace))
+}
+
 func TestUnmarshalStructureCommissionDeferred(t *testing.T) {
 	yamlData := []byte(`
 name: Primary

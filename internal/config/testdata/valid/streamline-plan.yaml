@@ -20,7 +20,6 @@ volume:
 ranks:
   - name: Affiliate
     ordinal: 1
-    demotion_policy: promotion_only
     qualification:
       structures:
         - structure: StreamlineTree
@@ -29,7 +28,6 @@ ranks:
 
   - name: Team Lead
     ordinal: 2
-    demotion_policy: promotion_only
     qualification:
       structures:
         - structure: StreamlineTree
@@ -38,7 +36,6 @@ ranks:
 
   - name: Director
     ordinal: 3
-    demotion_policy: promotion_only
     qualification:
       structures:
         - structure: StreamlineTree

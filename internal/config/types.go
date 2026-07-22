@@ -163,6 +163,14 @@ func (d DemotionPolicy) MarshalJSON() ([]byte, error) {
 	if d.Grace != nil {
 		return json.Marshal(map[string]any{"grace": d.Grace})
 	}
+	// An unset demotion policy defaults to "promotion_only" (ranks never
+	// decrease). The schema leaves demotion_policy optional, so a valid plan may
+	// omit it; emitting the zero value "" instead would produce engine JSON the
+	// Rust DemotionPolicy enum rejects — keep the cross-language contract
+	// round-trippable (HEU-513) rather than relying on every plan authoring it.
+	if d.StringValue == "" {
+		return json.Marshal("promotion_only")
+	}
 	return json.Marshal(d.StringValue)
 }
 

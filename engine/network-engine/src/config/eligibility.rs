@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::deserialize_null_default;
+
 /// Determines who receives commissions regardless of rank.
 ///
 /// A distributor can hold Gold rank but earn nothing if they don't meet
@@ -35,7 +37,7 @@ pub struct CommissionEligibility {
     /// More active frontline legs unlock deeper commission earnings.
     /// Tiers must be sorted by `min_active_legs` ascending. An empty
     /// list means no leg-based depth restrictions apply.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub active_leg_tiers: Vec<ActiveLegTier>,
 }
 
@@ -127,6 +129,19 @@ mod tests {
         assert!(!elig.require_order_in_period);
         assert!(elig.eligible_statuses.is_empty());
         assert!(elig.active_leg_tiers.is_empty());
+    }
+
+    #[test]
+    fn active_leg_tiers_absent_or_null_deserializes_to_empty() {
+        // Go omits an empty active_leg_tiers via omitempty, but a nil slice can
+        // also reach serde as JSON null; deserialize_null_default accepts absent,
+        // null, and [] identically (the [] case is covered above).
+        let base = r#"{"min_personal_volume":50.0,"require_order_in_period":true,"eligible_statuses":["active"]"#;
+        for tail in ["}", r#","active_leg_tiers":null}"#] {
+            let json = format!("{base}{tail}");
+            let elig: CommissionEligibility = serde_json::from_str(&json).unwrap();
+            assert!(elig.active_leg_tiers.is_empty(), "input: {json}");
+        }
     }
 
     #[test]

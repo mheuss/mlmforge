@@ -217,6 +217,42 @@ func TestBreakawayDifferentialRankRatesMustExist(t *testing.T) {
 	assert.Contains(t, errs[0].Path, "overrides/differential/rank_rates")
 }
 
+// TestBreakawayGenerationMaxGenerationsMustBeAtLeastOne verifies that a
+// breakaway single_walk generation override with max_generations = 0 is
+// rejected. A zero excludes every earner in the override walk — the same trap
+// the main generation config guards. The schema rejects it too, but this closes
+// the schema-bypass path (HEU-513 final-review finding).
+func TestBreakawayGenerationMaxGenerationsMustBeAtLeastOne(t *testing.T) {
+	plan := minimalPlan()
+	plan.Structures[0].Name = "Stairs"
+	plan.Structures[0].Type = "stairstep"
+	plan.Structures[0].resolvedCommission = &StairstepCommission{
+		Breakaway: &BreakawayConfig{
+			ThresholdRank: "Silver",
+			Overrides: OverrideStrategy{
+				Type:                overrideStrategySingleWalk,
+				OverrideCalculation: "generation",
+				Generation: &BreakawayGenerationConfig{
+					MaxGenerations:  0,
+					GenerationRates: map[string]float64{"1": 0.10},
+					BoundaryRank:    "Silver",
+				},
+			},
+		},
+	}
+	plan.Ranks[0].QualifiedStructures = []string{"Stairs"}
+	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stairs"}}
+	plan.Ranks[1].QualifiedStructures = []string{"Stairs"}
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{Structure: "Stairs", PersonalVolume: 100, GroupVolume: 3000},
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "value_out_of_range", errs[0].Code)
+	assert.Contains(t, errs[0].Path, "breakaway/overrides/generation/max_generations")
+}
+
 // TestBreakawayFixedOverrideRankRatesMustExist mirrors the differential check
 // for fixed_override. The original validateStructureRefs had a parallel gap —
 // fixed_override rank-rates were not cross-checked against the defined ranks,
@@ -677,6 +713,43 @@ func TestLargeMatrixWarning(t *testing.T) {
 	assert.True(t, found, "expected large_matrix warning, got: %v", errs)
 }
 
+// TestMatrixSpilloverDepthFirstRejected verifies that a matrix structure whose
+// spillover_direction is not breadth_first is rejected at business-rule
+// validation. The schema restricts the value and the engine's MatrixTree::new
+// rejects depth_first, but nothing guarded the Go bypass path before this
+// (HEU-513 final-review finding).
+func TestMatrixSpilloverDepthFirstRejected(t *testing.T) {
+	plan := minimalPlan()
+	plan.Structures[0].Name = "Grid"
+	plan.Structures[0].Type = "matrix"
+	plan.Structures[0].Structure = &MatrixStructureParams{
+		Width:              3,
+		Height:             4,
+		SpilloverDirection: "depth_first",
+	}
+	plan.Structures[0].resolvedCommission = &MatrixCommission{
+		CommissionableDepth: 4,
+		RateTable:           map[string]map[string]float64{"Associate": {"1": 0.05}},
+	}
+	plan.Ranks[0].QualifiedStructures = []string{"Grid"}
+	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Grid"}}
+	plan.Ranks[1].QualifiedStructures = []string{"Grid"}
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{Structure: "Grid", PersonalVolume: 100, GroupVolume: 3000},
+	}
+
+	errs := validateBusinessRules(plan)
+	var found bool
+	for _, e := range errs {
+		if e.Code == "invalid_value" && strings.Contains(e.Path, "structure/spillover_direction") {
+			found = true
+			assert.Equal(t, SeverityError, e.Severity)
+			break
+		}
+	}
+	assert.True(t, found, "expected spillover_direction invalid_value error, got: %v", errs)
+}
+
 // TestBreakawayMultiTierEmptyTiersRejected verifies that a multi-tier
 // breakaway with an empty Tiers slice produces an invalid_value error.
 // The schema also enforces minItems: 1, but rules.go owns the structural
@@ -881,7 +954,8 @@ func TestStairstepBreakawayGenerationBoundaryRankMustExist(t *testing.T) {
 			Overrides: OverrideStrategy{
 				Type: overrideStrategySingleWalk,
 				Generation: &BreakawayGenerationConfig{
-					BoundaryRank: "Nonexistent",
+					MaxGenerations: 1,
+					BoundaryRank:   "Nonexistent",
 				},
 			},
 		},

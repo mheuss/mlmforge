@@ -448,6 +448,14 @@ func validateStructureRefs(plan *CompensationPlan, ranks map[string]bool) []Vali
 						}
 					}
 				}
+				if gen := rc.Breakaway.Overrides.Generation; gen != nil && gen.MaxGenerations < 1 {
+					errs = append(errs, ValidationError{
+						Path:     fmt.Sprintf("/structures/%d/commission/breakaway/overrides/generation/max_generations", i),
+						Code:     "value_out_of_range",
+						Message:  "max_generations must be >= 1",
+						Severity: SeverityError,
+					})
+				}
 				if rc.Breakaway.Overrides.Generation != nil && rc.Breakaway.Overrides.Generation.BoundaryRank != "" {
 					if !ranks[rc.Breakaway.Overrides.Generation.BoundaryRank] {
 						errs = append(errs, ValidationError{
@@ -946,9 +954,27 @@ func validateCrossFieldRules(plan *CompensationPlan, ranks map[string]bool) []Va
 		}
 	}
 
-	// Matrix size warning: width^height > 1,000,000.
+	// Matrix structure checks: spillover restriction (error) and size warning.
 	for i, s := range plan.Structures {
-		if s.Structure != nil && s.Structure.Width > 0 && s.Structure.Height > 0 {
+		if s.Structure == nil {
+			continue
+		}
+		// spillover_direction must be breadth_first. The schema restricts it to
+		// that single value, and the engine's MatrixTree::new rejects
+		// depth_first, so a non-breadth_first value reaching the engine on a
+		// schema-bypass path dies opaquely. Reject it here at load. Empty/unset
+		// is left to the engine's enum decode (this guard owns the bypass, not
+		// the required-field check).
+		if sd := s.Structure.SpilloverDirection; sd != "" && sd != "breadth_first" {
+			errs = append(errs, ValidationError{
+				Path:     fmt.Sprintf("/structures/%d/structure/spillover_direction", i),
+				Code:     "invalid_value",
+				Message:  fmt.Sprintf("matrix %q spillover_direction %q is not supported; only \"breadth_first\" is allowed", s.Name, sd),
+				Severity: SeverityError,
+			})
+		}
+		// Matrix size warning: width^height > 1,000,000.
+		if s.Structure.Width > 0 && s.Structure.Height > 0 {
 			size := math.Pow(float64(s.Structure.Width), float64(s.Structure.Height))
 			if size > 1_000_000 {
 				errs = append(errs, ValidationError{

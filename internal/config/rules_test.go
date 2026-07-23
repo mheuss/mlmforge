@@ -1577,3 +1577,40 @@ func TestGenerationMaxGenerations_DefaultOnePasses(t *testing.T) {
 			"unexpected max_generations error: %v", e)
 	}
 }
+
+// TestValidatePeriodRequiresStartDate pins HEU-507: start_date is required. Rust
+// requires it (NaiveDate); the Go schema also requires it, but a bypass path
+// (programmatic builder, direct validateBusinessRules) could otherwise reach the
+// engine with a nil start_date. minimalPlan() now sets a valid one.
+func TestValidatePeriodRequiresStartDate(t *testing.T) {
+	plan := minimalPlan()
+	plan.Period.StartDate = nil
+
+	errs := validateBusinessRules(plan)
+	found := false
+	for _, e := range errs {
+		if e.Path == "/period/start_date" && e.Code == "missing_required_field" {
+			assert.Equal(t, SeverityError, e.Severity)
+			found = true
+		}
+	}
+	require.True(t, found, "expected missing_required_field at /period/start_date, got: %v", errs)
+}
+
+func TestValidatePeriodAcceptsStartDate(t *testing.T) {
+	plan := minimalPlan() // now sets a valid StartDate
+	for _, e := range validateBusinessRules(plan) {
+		require.NotEqual(t, "/period/start_date", e.Path,
+			"a valid start_date should not produce an error: %v", e)
+	}
+
+	empty := ""
+	plan.Period.StartDate = &empty
+	found := false
+	for _, e := range validateBusinessRules(plan) {
+		if e.Path == "/period/start_date" {
+			found = true
+		}
+	}
+	require.True(t, found, "an empty start_date should also be rejected")
+}

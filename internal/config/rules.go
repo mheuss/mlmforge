@@ -18,6 +18,7 @@ func validateBusinessRules(plan *CompensationPlan) []ValidationError {
 
 	errs = append(errs, validateRankNames(plan)...)
 	errs = append(errs, validateStructureNames(plan)...)
+	errs = append(errs, validatePeriod(plan)...)
 	errs = append(errs, validateRanks(plan, structs)...)
 	errs = append(errs, validateStructureRefs(plan, ranks)...)
 	errs = append(errs, validateBonuses(plan, ranks)...)
@@ -30,6 +31,22 @@ func validateBusinessRules(plan *CompensationPlan) []ValidationError {
 	errs = append(errs, validateStreamlineCommission(plan)...)
 	errs = append(errs, validateCrossFieldRules(plan, ranks)...)
 	return errs
+}
+
+// validatePeriod checks top-level period constraints. start_date is required:
+// Rust deserializes it into a NaiveDate (no default), so a nil/empty value on a
+// schema-bypass path (programmatic builder, direct validateBusinessRules) would
+// otherwise reach the engine as an opaque failure. HEU-507.
+func validatePeriod(plan *CompensationPlan) []ValidationError {
+	if plan.Period.StartDate == nil || *plan.Period.StartDate == "" {
+		return []ValidationError{{
+			Path:     "/period/start_date",
+			Code:     "missing_required_field",
+			Message:  "start_date is required",
+			Severity: SeverityError,
+		}}
+	}
+	return nil
 }
 
 // --- Helpers ---

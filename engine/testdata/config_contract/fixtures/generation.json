@@ -1,0 +1,185 @@
+{
+  "bonuses": {
+    "matching": null,
+    "sponsor": null,
+    "fast_start": null,
+    "rank_advancement": null,
+    "leadership_development": {
+      "depth": 3,
+      "rates": {
+        "1": 0.04,
+        "2": 0.02,
+        "3": 0.01
+      },
+      "rank_skip_mode": "each_rank_passed"
+    },
+    "infinity": null,
+    "lifestyle": null,
+    "pool": null,
+    "matrix_completion": null,
+    "position": null,
+    "board_cycling": null
+  },
+  "caps": {
+    "per_distributor_per_period": null,
+    "company_payout_cap_percent": 0.4,
+    "cap_enforcement": "pro_rata",
+    "clawback_on_refund": true
+  },
+  "commission_eligibility": {
+    "min_personal_volume": 75,
+    "require_order_in_period": true,
+    "eligible_statuses": [
+      "active"
+    ]
+  },
+  "name": "Generation Override Plan",
+  "payout": {
+    "base_currency": "USD",
+    "minimum_amount": 50,
+    "split_payouts_enabled": false,
+    "methods": [
+      {
+        "type": "bank_transfer",
+        "fee": 2.5
+      }
+    ]
+  },
+  "period": {
+    "length": "month",
+    "start_date": "2026-01-01",
+    "payout_lag_days": 10
+  },
+  "placement": {
+    "binary_placement": null,
+    "donated_placement": null,
+    "holding_tank": null
+  },
+  "rank_features": {
+    "constraints_enabled": true,
+    "overrides_enabled": false
+  },
+  "rank_tracking": {
+    "track_achieved_rank": true
+  },
+  "ranks": [
+    {
+      "name": "Associate",
+      "ordinal": 1,
+      "qualification": {
+        "structures": [
+          {
+            "structure": "GenTree",
+            "personal_volume": 0,
+            "group_volume": 0,
+            "max_group_volume_per_leg": 0,
+            "min_retail_volume": 0,
+            "distributor_count": null
+          }
+        ]
+      },
+      "demotion_policy": "promotion_only"
+    },
+    {
+      "name": "Executive",
+      "ordinal": 2,
+      "qualification": {
+        "structures": [
+          {
+            "structure": "GenTree",
+            "personal_volume": 150,
+            "group_volume": 3000,
+            "max_group_volume_per_leg": 0,
+            "min_retail_volume": 0,
+            "distributor_count": null
+          }
+        ]
+      },
+      "demotion_policy": "promotion_only"
+    },
+    {
+      "name": "Senior Executive",
+      "ordinal": 3,
+      "qualification": {
+        "structures": [
+          {
+            "structure": "GenTree",
+            "personal_volume": 250,
+            "group_volume": 10000,
+            "max_group_volume_per_leg": 0,
+            "min_retail_volume": 0,
+            "distributor_count": {
+              "count": 3,
+              "min_rank": "Executive",
+              "search_mode": "any_level",
+              "search_depth": 3,
+              "total_count": 8,
+              "min_leg_group_volume": 1000
+            }
+          }
+        ]
+      },
+      "demotion_policy": "promotion_only"
+    }
+  ],
+  "structures": [
+    {
+      "type": "generation",
+      "config": {
+        "compression": null,
+        "generation_commission": {
+          "max_generations": 4,
+          "max_generations_per_rank": {
+            "Executive": 3,
+            "Senior Executive": 6
+          },
+          "generation_rates": {
+            "1": 0.05,
+            "2": 0.04,
+            "3": 0.03,
+            "4": 0.02,
+            "5": 0.02,
+            "6": 0.02
+          },
+          "boundary_mode": "threshold_rank",
+          "boundary_rank": "Executive",
+          "empty_generation_consumes_number": true,
+          "volume_to_dollar_multiplier": null,
+          "ineligible_creates_boundary": true
+        },
+        "level_commission": {
+          "broad_commission_percent": 0,
+          "commissionable_depth": 5,
+          "rate_table": {
+            "Associate": {
+              "1": 0.05,
+              "2": 0.03
+            },
+            "Executive": {
+              "1": 0.08,
+              "2": 0.06,
+              "3": 0.04
+            },
+            "Senior Executive": {
+              "1": 0.1,
+              "2": 0.08,
+              "3": 0.06,
+              "4": 0.04,
+              "5": 0.02
+            }
+          },
+          "volume_to_dollar_multiplier": null
+        },
+        "level_commissions_enabled": true,
+        "name": "GenTree"
+      }
+    }
+  ],
+  "version": 1,
+  "volume": {
+    "inhibit_signup_volume": false,
+    "base_currency": "USD",
+    "volume_to_dollar_multiplier": 1,
+    "deduct_qualifying_volume": false
+  }
+}

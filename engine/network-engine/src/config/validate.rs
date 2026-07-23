@@ -246,6 +246,12 @@ impl StreamlineCommissionConfig {
 
 impl GenerationCommissionConfig {
     fn validate(&self) -> Result<(), String> {
+        if self.max_generations < 1 {
+            return Err(format!(
+                "max_generations must be >= 1, got {}",
+                self.max_generations
+            ));
+        }
         check_optional_positive(
             "volume_to_dollar_multiplier",
             self.volume_to_dollar_multiplier,
@@ -278,6 +284,12 @@ impl BreakawayConfig {
                     }
                 }
                 if let Some(gen_overrides) = generation_overrides {
+                    if gen_overrides.max_generations < 1 {
+                        return Err(format!(
+                            "breakaway max_generations must be >= 1, got {}",
+                            gen_overrides.max_generations
+                        ));
+                    }
                     for (generation, rate) in &gen_overrides.rates {
                         check_fraction(
                             &format!("breakaway generation_rates[{generation}]"),
@@ -344,9 +356,12 @@ mod tests {
 
     use crate::config::binary::{PairingCalculation, VolumeAfterPayout};
     use crate::config::board_plan::ReEntryPosition;
+    use crate::config::generation::GenerationBoundaryMode;
     use crate::config::matrix::SpilloverDirection;
     use crate::config::payout::CapEnforcement;
-    use crate::config::stairstep::{BreakawayTier, MultiTierConfig};
+    use crate::config::stairstep::{
+        BreakawayGenerationConfig, BreakawayTier, FixedOverrideConfig, MultiTierConfig,
+    };
     use crate::config::streamline::StreamlineLevel;
 
     // --- numeric helpers ---
@@ -427,6 +442,60 @@ mod tests {
         let mut config = level_config(0.40, None, 0.05);
         config.max_depth = 0;
         assert!(config.validate().is_err());
+    }
+
+    fn generation_config(max_generations: u8) -> GenerationCommissionConfig {
+        GenerationCommissionConfig {
+            max_generations,
+            max_generations_per_rank: BTreeMap::new(),
+            rates: BTreeMap::from([(1u8, 0.10)]),
+            boundary_mode: GenerationBoundaryMode::ThresholdRank,
+            boundary_rank: "Silver".to_string(),
+            empty_generation_consumes_number: false,
+            volume_to_dollar_multiplier: None,
+            ineligible_creates_boundary: true,
+        }
+    }
+
+    #[test]
+    fn generation_rejects_default_max_generations_of_zero() {
+        // HEU-442: a default max_generations of 0 excludes every earner — reject
+        // it (mirrors level_commission_rejects_zero_depth). This closes the
+        // direct-engine bypass the Go check alone leaves open. Per-rank overrides
+        // of 0 remain allowed.
+        assert!(generation_config(0).validate().is_err());
+        assert!(generation_config(1).validate().is_ok());
+
+        let mut per_rank_zero = generation_config(3);
+        per_rank_zero.max_generations_per_rank = BTreeMap::from([("Silver".to_string(), 0u8)]);
+        assert!(per_rank_zero.validate().is_ok());
+    }
+
+    fn single_walk_generation_breakaway(max_generations: u8) -> BreakawayConfig {
+        BreakawayConfig {
+            threshold_rank: "gold".to_string(),
+            exclude_breakaway_gv: false,
+            overrides: OverrideStrategy::SingleWalk {
+                mode: OverrideMode::FixedOverride(FixedOverrideConfig {
+                    rank_rates: BTreeMap::new(),
+                }),
+                generation_overrides: Some(BreakawayGenerationConfig {
+                    max_generations,
+                    rates: BTreeMap::new(),
+                    boundary_rank: "gold".to_string(),
+                }),
+            },
+        }
+    }
+
+    #[test]
+    fn breakaway_generation_rejects_max_generations_of_zero() {
+        // A breakaway single_walk generation override with max_generations = 0
+        // excludes every earner in the override walk — the same zero-depth trap
+        // GenerationCommissionConfig guards. Close the direct-engine bypass for
+        // the breakaway sibling too (HEU-513 final review).
+        assert!(single_walk_generation_breakaway(0).validate().is_err());
+        assert!(single_walk_generation_breakaway(1).validate().is_ok());
     }
 
     #[test]

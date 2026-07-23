@@ -6,20 +6,9 @@
 
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
-/// Deserializes a value, treating JSON `null` or a missing field as
-/// `Default::default()`. Needed because Go serializes nil slices as
-/// JSON `null`, and serde's `#[serde(default)]` only handles missing
-/// fields, not explicit `null`.
-fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
-where
-    D: Deserializer<'de>,
-    T: Default + Deserialize<'de>,
-{
-    let opt = Option::deserialize(deserializer)?;
-    Ok(opt.unwrap_or_default())
-}
+use super::deserialize_null_default;
 
 // ---------------------------------------------------------------------------
 // Top-level container

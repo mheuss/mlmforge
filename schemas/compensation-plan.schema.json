@@ -372,6 +372,7 @@
         "count": {
           "type": "integer",
           "minimum": 1,
+          "maximum": 65535,
           "description": "Number of time units in the grace period."
         },
         "unit": {
@@ -998,9 +999,9 @@
             "$ref": "#/$defs/StreamlineLevel"
           },
           "propertyNames": {
-            "pattern": "^[0-9]+$"
+            "pattern": "^0*(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]?)$"
           },
-          "description": "Map of level number to commission configuration. Levels are dynamically compressed."
+          "description": "Map of 1-based streamline level number to commission configuration; levels are dynamically compressed. Keys are 1-255: level 0 is invalid (streamline levels are 1-based, enforced by validateStreamlineCommission). This is why the propertyNames pattern excludes 0 (`[1-9][0-9]?`), unlike the width-only rate maps whose keys span the full u8 range 0-255 (`[1-9]?[0-9]`)."
         },
         "streams": {
           "oneOf": [
@@ -1025,7 +1026,7 @@
           "maximum": 1
         },
         "propertyNames": {
-          "pattern": "^[0-9]+$"
+          "pattern": "^0*(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$"
         },
         "description": "Level-to-rate mapping for a single rank."
       },
@@ -1391,7 +1392,7 @@
             "maximum": 1
           },
           "propertyNames": {
-            "pattern": "^[0-9]+$"
+            "pattern": "^0*(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$"
           },
           "description": "Override rate per generation."
         },
@@ -1422,7 +1423,7 @@
           "type": "object",
           "additionalProperties": {
             "type": "integer",
-            "minimum": 1,
+            "minimum": 0,
             "maximum": 255
           },
           "description": "Per-rank override for max_generations. When a rank name appears here, that value is used in place of max_generations for earners at that rank during the generation walk. Ranks not present fall back to max_generations. Empty (the default) means uniform depth for all ranks. Keys must reference rank names defined in the plan's rank ladder; plan validation rejects unknown rank names."
@@ -1435,7 +1436,7 @@
             "maximum": 1
           },
           "propertyNames": {
-            "pattern": "^[0-9]+$"
+            "pattern": "^0*(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$"
           },
           "description": "Commission rate per generation."
         },
@@ -1484,7 +1485,7 @@
           "type": "number",
           "minimum": 0,
           "maximum": 1,
-          "description": "Commission percentage at this level."
+          "description": "Commission rate for this streamline level, as a fraction in [0, 1] (e.g. 0.05 = 5%), not a whole-number percent. Matches the Rust engine's fraction contract."
         }
       }
     },
@@ -1492,6 +1493,7 @@
       "type": "object",
       "description": "Multi-stream configuration for streamline plans.",
       "required": [
+        "additional_per_rank",
         "assignment_mode",
         "per_enrollment_choice",
         "freeze_on_demotion"
@@ -1540,7 +1542,7 @@
         },
         "spillover_direction": {
           "type": "string",
-          "enum": ["breadth_first", "depth_first"],
+          "enum": ["breadth_first"],
           "description": "How overflow placements are distributed."
         }
       }
@@ -1706,7 +1708,7 @@
             "maximum": 1
           },
           "propertyNames": {
-            "pattern": "^[0-9]+$"
+            "pattern": "^0*(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$"
           },
           "description": "Matching rate by level."
         },
@@ -1798,7 +1800,7 @@
             "maximum": 1
           },
           "propertyNames": {
-            "pattern": "^[0-9]+$"
+            "pattern": "^0*(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$"
           },
           "description": "Override rate by level."
         },
@@ -1842,7 +1844,7 @@
                 "maximum": 1
               },
               "propertyNames": {
-                "pattern": "^[0-9]+$"
+                "pattern": "^0*(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$"
               }
             },
             {
@@ -1898,7 +1900,7 @@
                   "maximum": 1
                 },
                 "propertyNames": {
-                  "pattern": "^[0-9]+$"
+                  "pattern": "^0*(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$"
                 }
               }
             }
@@ -2158,7 +2160,7 @@
             "minimum": 0
           },
           "propertyNames": {
-            "pattern": "^[0-9]+$"
+            "pattern": "^0*(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$"
           },
           "description": "Bonus amount for completing each matrix level."
         },
@@ -2212,17 +2214,20 @@
         "max_cycles_per_period": {
           "type": "integer",
           "minimum": 1,
+          "maximum": 4294967295,
           "description": "Maximum times a member can earn cycle commission per period."
         },
         "max_cascade_depth": {
           "type": "integer",
           "minimum": 1,
+          "maximum": 4294967295,
           "default": 10,
           "description": "Maximum cascade depth from a single operation. Limits how many levels of chained cycling can occur."
         },
         "stall_threshold_periods": {
           "type": "integer",
           "minimum": 1,
+          "maximum": 4294967295,
           "description": "Number of inactive periods before a board is considered stalled."
         },
         "inactive_compression": {
@@ -2419,7 +2424,7 @@
               "properties": {
                 "spillover_direction": {
                   "type": "string",
-                  "enum": ["breadth_first", "depth_first"],
+                  "enum": ["breadth_first"],
                   "description": "How overflow placements are distributed in the matrix."
                 }
               },

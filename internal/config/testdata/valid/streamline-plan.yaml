@@ -63,14 +63,14 @@ structures:
       broad_commission_percent: 0.40
       rate_table:
         Affiliate:
-          1: 0.05
-          2: 0.03
+          "1": 0.05
+          "2": 0.03
         Team Lead:
-          1: 0.07
-          2: 0.05
+          "1": 0.07
+          "2": 0.05
         Director:
-          1: 0.10
-          2: 0.07
+          "1": 0.10
+          "2": 0.07
 
   - name: StreamlineTree
     type: streamline

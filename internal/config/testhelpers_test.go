@@ -43,11 +43,13 @@ func replaceInYAML(t *testing.T, yamlBytes []byte, old, new string) []byte {
 // business-rule tests. Each test introduces one violation on top of this
 // known-good plan.
 func minimalPlan() *CompensationPlan {
+	startDate := "2026-01-01"
 	return &CompensationPlan{
 		Name:    "Test Plan",
 		Version: 1,
 		Period: PeriodConfig{
 			Length:        "month",
+			StartDate:     &startDate,
 			PayoutLagDays: 14,
 		},
 		Volume: VolumeConfig{

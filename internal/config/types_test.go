@@ -90,7 +90,7 @@ placement:
 	assert.Equal(t, "Minimal Unilevel", plan.Name)
 	assert.Equal(t, 1, plan.Version)
 	assert.Equal(t, "month", plan.Period.Length)
-	assert.Equal(t, 14, plan.Period.PayoutLagDays)
+	assert.Equal(t, uint8(14), plan.Period.PayoutLagDays)
 	assert.Equal(t, "USD", plan.Volume.BaseCurrency)
 	assert.Len(t, plan.Ranks, 1)
 	assert.Equal(t, "Associate", plan.Ranks[0].Name)
@@ -128,8 +128,26 @@ demotion_policy:
 	err = yaml.Unmarshal(yamlGrace, &rank2)
 	require.NoError(t, err)
 	require.NotNil(t, rank2.DemotionPolicy.Grace)
-	assert.Equal(t, 2, rank2.DemotionPolicy.Grace.Count)
+	assert.Equal(t, uint16(2), rank2.DemotionPolicy.Grace.Count)
 	assert.Equal(t, "months", rank2.DemotionPolicy.Grace.Unit)
+}
+
+func TestDemotionPolicyMarshalJSON(t *testing.T) {
+	// An unset demotion policy must marshal to "promotion_only", not the zero
+	// value "", so the engine JSON round-trips into the Rust DemotionPolicy enum.
+	// The schema leaves demotion_policy optional, so a valid plan can omit it.
+	unset, err := json.Marshal(DemotionPolicy{})
+	require.NoError(t, err)
+	assert.JSONEq(t, `"promotion_only"`, string(unset))
+
+	// Explicit string passes through; grace marshals to the object form.
+	promo, err := json.Marshal(DemotionPolicy{StringValue: "promotion_only"})
+	require.NoError(t, err)
+	assert.JSONEq(t, `"promotion_only"`, string(promo))
+
+	grace, err := json.Marshal(DemotionPolicy{Grace: &GracePeriod{Count: 2, Unit: "months"}})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"grace":{"count":2,"unit":"months"}}`, string(grace))
 }
 
 func TestUnmarshalStructureCommissionDeferred(t *testing.T) {
@@ -184,9 +202,286 @@ placement: {donated_placement_enabled: false}
 	c, ok := plan.Structures[0].resolvedCommission.(*UnilevelCommission)
 	require.True(t, ok, "expected *UnilevelCommission, got %T", plan.Structures[0].resolvedCommission)
 	assert.Equal(t, 0.40, c.BroadCommissionPercent)
-	assert.Equal(t, 5, c.CommissionableDepth)
+	assert.Equal(t, uint8(5), c.CommissionableDepth)
 	assert.Equal(t, 0.05, c.RateTable["Associate"]["1"])
 	assert.Equal(t, 0.04, c.RateTable["Associate"]["2"])
+}
+
+// TestCommissionableDepth_RejectsOverMax verifies the uint8 commissionable_depth
+// field rejects out-of-range values at YAML unmarshal — the schema-bypass
+// boundary HEU-513 closes. Covers max+1, a large overflow, and a negative, so a
+// future clamping unmarshaler cannot silently weaken the type.
+func TestCommissionableDepth_RejectsOverMax(t *testing.T) {
+	for _, over := range []string{"256", "300", "-1"} {
+		var c UnilevelCommission
+		err := yaml.Unmarshal([]byte("commissionable_depth: "+over), &c)
+		assert.Error(t, err, "commissionable_depth: %s must be rejected by uint8", over)
+	}
+}
+
+// TestCommissionableDepth_AcceptsMax verifies the inclusive uint8 max (255) is
+// accepted and lands in the field.
+func TestCommissionableDepth_AcceptsMax(t *testing.T) {
+	var c UnilevelCommission
+	require.NoError(t, yaml.Unmarshal([]byte("commissionable_depth: 255"), &c))
+	assert.Equal(t, uint8(255), c.CommissionableDepth)
+}
+
+// TestMatrixWidthHeight_RejectsOverMax verifies the uint8 matrix width and
+// height fields reject out-of-range values at YAML unmarshal — the
+// schema-bypass boundary HEU-513 closes. Covers max+1, a large overflow, and a
+// negative, so a future clamping unmarshaler cannot silently weaken the type.
+func TestMatrixWidthHeight_RejectsOverMax(t *testing.T) {
+	for _, field := range []string{"width", "height"} {
+		for _, over := range []string{"256", "300", "-1"} {
+			var p MatrixStructureParams
+			err := yaml.Unmarshal([]byte(field+": "+over), &p)
+			assert.Error(t, err, "%s: %s must be rejected by uint8", field, over)
+		}
+	}
+}
+
+// TestMatrixWidthHeight_AcceptsMax verifies the inclusive uint8 max (255) is
+// accepted and lands in both fields.
+func TestMatrixWidthHeight_AcceptsMax(t *testing.T) {
+	var p MatrixStructureParams
+	require.NoError(t, yaml.Unmarshal([]byte("width: 255\nheight: 255"), &p))
+	assert.Equal(t, uint8(255), p.Width)
+	assert.Equal(t, uint8(255), p.Height)
+}
+
+// TestActiveLegTierFields_RejectsOverMax verifies the uint16 active-leg tier
+// fields reject out-of-range values at YAML unmarshal — the schema-bypass
+// boundary HEU-513 closes. Covers max+1, a large overflow, and a negative, so a
+// future clamping unmarshaler cannot silently weaken the type.
+func TestActiveLegTierFields_RejectsOverMax(t *testing.T) {
+	for _, field := range []string{"min_active_legs", "max_commission_depth"} {
+		for _, over := range []string{"65536", "70000", "-1"} {
+			var tier ActiveLegTier
+			err := yaml.Unmarshal([]byte(field+": "+over), &tier)
+			assert.Error(t, err, "%s: %s must be rejected by uint16", field, over)
+		}
+	}
+}
+
+// TestActiveLegTierFields_AcceptsMax verifies the inclusive uint16 max (65535)
+// is accepted and lands in both fields.
+func TestActiveLegTierFields_AcceptsMax(t *testing.T) {
+	var tier ActiveLegTier
+	require.NoError(t, yaml.Unmarshal([]byte("min_active_legs: 65535\nmax_commission_depth: 65535"), &tier))
+	assert.Equal(t, uint16(65535), tier.MinActiveLegs)
+	assert.Equal(t, uint16(65535), tier.MaxCommissionDepth)
+}
+
+// TestBonusFields_RejectsOverMax verifies the uintN bonus config fields reject
+// out-of-range values at YAML unmarshal — the schema-bypass boundary HEU-513
+// closes. Covers max+1, a large overflow, and a negative per field, so a
+// future clamping unmarshaler cannot silently weaken the types.
+func TestBonusFields_RejectsOverMax(t *testing.T) {
+	cases := []struct {
+		field string
+		over  []string
+		dst   func() any
+	}{
+		{"depth", []string{"256", "300", "-1"}, func() any { return &MatchingBonusConfig{} }},
+		{"depth", []string{"256", "300", "-1"}, func() any { return &LeadershipDevelopmentBonusConfig{} }},
+		{"window_days", []string{"65536", "70000", "-1"}, func() any { return &FastStartBonusConfig{} }},
+		{"grace_periods", []string{"256", "300", "-1"}, func() any { return &LifestyleTier{} }},
+	}
+	for _, tc := range cases {
+		for _, over := range tc.over {
+			dst := tc.dst()
+			err := yaml.Unmarshal([]byte(tc.field+": "+over), dst)
+			assert.Error(t, err, "%T %s: %s must be rejected", dst, tc.field, over)
+		}
+	}
+}
+
+// TestBonusFields_AcceptsMax verifies each bonus field's inclusive uintN max
+// is accepted and lands in the field.
+func TestBonusFields_AcceptsMax(t *testing.T) {
+	var m MatchingBonusConfig
+	require.NoError(t, yaml.Unmarshal([]byte("depth: 255"), &m))
+	assert.Equal(t, uint8(255), m.Depth)
+
+	var l LeadershipDevelopmentBonusConfig
+	require.NoError(t, yaml.Unmarshal([]byte("depth: 255"), &l))
+	assert.Equal(t, uint8(255), l.Depth)
+
+	var f FastStartBonusConfig
+	require.NoError(t, yaml.Unmarshal([]byte("window_days: 65535"), &f))
+	assert.Equal(t, uint16(65535), f.WindowDays)
+
+	var lt LifestyleTier
+	require.NoError(t, yaml.Unmarshal([]byte("grace_periods: 255"), &lt))
+	assert.Equal(t, uint8(255), lt.GracePeriods)
+}
+
+// TestPassUpCount_RejectsOverMax verifies the uint8 pass_up count field
+// rejects out-of-range values at YAML unmarshal — the schema-bypass boundary
+// HEU-513 closes. Covers max+1, a large overflow, and a negative, so a future
+// clamping unmarshaler cannot silently weaken the type.
+func TestPassUpCount_RejectsOverMax(t *testing.T) {
+	for _, over := range []string{"256", "300", "-1"} {
+		var p PassUpConfig
+		err := yaml.Unmarshal([]byte("count: "+over), &p)
+		assert.Error(t, err, "count: %s must be rejected by uint8", over)
+	}
+}
+
+// TestPassUpCount_AcceptsMax verifies the inclusive uint8 max (255) is
+// accepted and lands in the field.
+func TestPassUpCount_AcceptsMax(t *testing.T) {
+	var p PassUpConfig
+	require.NoError(t, yaml.Unmarshal([]byte("count: 255"), &p))
+	assert.Equal(t, uint8(255), p.Count)
+}
+
+// TestPayoutLagDays_RejectsOverMax verifies the uint8 payout_lag_days field
+// rejects out-of-range values at YAML unmarshal — the schema-bypass boundary
+// HEU-513 closes. Covers max+1, a large overflow, and a negative, so a future
+// clamping unmarshaler cannot silently weaken the type.
+func TestPayoutLagDays_RejectsOverMax(t *testing.T) {
+	for _, over := range []string{"256", "300", "-1"} {
+		var p PeriodConfig
+		err := yaml.Unmarshal([]byte("payout_lag_days: "+over), &p)
+		assert.Error(t, err, "payout_lag_days: %s must be rejected by uint8", over)
+	}
+}
+
+// TestPayoutLagDays_AcceptsMax verifies the inclusive uint8 max (255) is
+// accepted and lands in the field.
+func TestPayoutLagDays_AcceptsMax(t *testing.T) {
+	var p PeriodConfig
+	require.NoError(t, yaml.Unmarshal([]byte("payout_lag_days: 255"), &p))
+	assert.Equal(t, uint8(255), p.PayoutLagDays)
+}
+
+// TestBoardCyclingFields_RejectsOverMax verifies the three uint32 board_cycling
+// fields reject out-of-range values at YAML unmarshal — the schema-bypass
+// boundary HEU-513 closes. Covers max+1, a large overflow, and a negative, so a
+// future clamping unmarshaler cannot silently weaken the type.
+func TestBoardCyclingFields_RejectsOverMax(t *testing.T) {
+	for _, field := range []string{"max_cycles_per_period", "max_cascade_depth", "stall_threshold_periods"} {
+		for _, over := range []string{"4294967296", "9999999999", "-1"} {
+			var c BoardCyclingConfig
+			err := yaml.Unmarshal([]byte(field+": "+over), &c)
+			assert.Error(t, err, "%s: %s must be rejected by uint32", field, over)
+		}
+	}
+}
+
+// TestBoardCyclingFields_AcceptsMax verifies the inclusive uint32 max
+// (4294967295) is accepted and lands in each field.
+func TestBoardCyclingFields_AcceptsMax(t *testing.T) {
+	var c BoardCyclingConfig
+	require.NoError(t, yaml.Unmarshal([]byte(
+		"max_cycles_per_period: 4294967295\n"+
+			"max_cascade_depth: 4294967295\n"+
+			"stall_threshold_periods: 4294967295"), &c))
+	assert.Equal(t, uint32(4294967295), c.MaxCyclesPerPeriod)
+	assert.Equal(t, uint32(4294967295), c.MaxCascadeDepth)
+	assert.Equal(t, uint32(4294967295), c.StallThresholdPeriods)
+}
+
+// TestBoardCyclingConfig_MaxCascadeDepthOmitempty verifies a zero MaxCascadeDepth
+// is omitted from JSON so the Rust engine applies its serde default (10), and
+// that a non-zero value is present. This must still hold after the uint32
+// tightening — uint32's zero value is still 0. Assertions are key-level (decode
+// to a map), not substring, so a future sibling key can't mask a regression —
+// see docs/development/config-types.md ("wire shape" assertions).
+func TestBoardCyclingConfig_MaxCascadeDepthOmitempty(t *testing.T) {
+	zero, err := json.Marshal(BoardCyclingConfig{MaxCascadeDepth: 0})
+	require.NoError(t, err)
+	var zeroMap map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(zero, &zeroMap))
+	assert.NotContains(t, zeroMap, "max_cascade_depth")
+
+	nonzero, err := json.Marshal(BoardCyclingConfig{MaxCascadeDepth: 7})
+	require.NoError(t, err)
+	var nonzeroMap map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(nonzero, &nonzeroMap))
+	assert.Contains(t, nonzeroMap, "max_cascade_depth")
+}
+
+// TestAdditionalPerRank_RejectsOverMax verifies the uint8 map VALUE on
+// additional_per_rank rejects out-of-range values at YAML unmarshal — mirrors
+// Rust BTreeMap<String, u8> (streamline.rs:85). Covers max+1, a large overflow,
+// and a negative.
+func TestAdditionalPerRank_RejectsOverMax(t *testing.T) {
+	for _, over := range []string{"256", "300", "-1"} {
+		var s StreamConfig
+		err := yaml.Unmarshal([]byte("additional_per_rank:\n  gold: "+over), &s)
+		assert.Error(t, err, "additional_per_rank value %s must be rejected by uint8", over)
+	}
+}
+
+// TestAdditionalPerRank_AcceptsMax verifies the inclusive uint8 max (255) is
+// accepted as a map value.
+func TestAdditionalPerRank_AcceptsMax(t *testing.T) {
+	var s StreamConfig
+	require.NoError(t, yaml.Unmarshal([]byte("additional_per_rank:\n  gold: 255"), &s))
+	assert.Equal(t, uint8(255), s.AdditionalPerRank["gold"])
+}
+
+// TestAdditionalPerRank_EmptyStaysPresent verifies an empty additional_per_rank
+// map serializes to a present "{}", NOT omitted. Rust StreamConfig.additional_streams
+// has no serde(default) (streamline.rs:85), so the field is required on the wire;
+// a future omitempty would drop an empty map to absent and break deserialization.
+func TestAdditionalPerRank_EmptyStaysPresent(t *testing.T) {
+	var s StreamConfig
+	require.NoError(t, yaml.Unmarshal([]byte(
+		"additional_per_rank: {}\nassignment_mode: round_robin\n"+
+			"per_enrollment_choice: false\nfreeze_on_demotion: false"), &s))
+	data, err := json.Marshal(s)
+	require.NoError(t, err)
+	var m map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(data, &m))
+	assert.Contains(t, m, "additional_per_rank")
+
+	// A nil (absent) map marshals to JSON null, which Rust's BTreeMap rejects.
+	// The schema now requires additional_per_rank (Task 10), so an omitted field
+	// is caught at the schema gate before it can reach this marshal path.
+	nilData, err := json.Marshal(StreamConfig{})
+	require.NoError(t, err)
+	var nilMap map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(nilData, &nilMap))
+	require.Contains(t, nilMap, "additional_per_rank")
+	assert.Equal(t, "null", string(nilMap["additional_per_rank"]))
+}
+
+// TestGracePeriodCount_RejectsOverMax verifies the uint16 count on GracePeriod
+// rejects out-of-range values at YAML unmarshal — mirrors Rust u16 (rank.rs:243).
+func TestGracePeriodCount_RejectsOverMax(t *testing.T) {
+	for _, over := range []string{"65536", "99999999", "-1"} {
+		var g GracePeriod
+		err := yaml.Unmarshal([]byte("count: "+over), &g)
+		assert.Error(t, err, "grace count %s must be rejected by uint16", over)
+	}
+}
+
+// TestGracePeriodCount_AcceptsMax verifies the inclusive uint16 max (65535).
+func TestGracePeriodCount_AcceptsMax(t *testing.T) {
+	var g GracePeriod
+	require.NoError(t, yaml.Unmarshal([]byte("count: 65535"), &g))
+	assert.Equal(t, uint16(65535), g.Count)
+}
+
+// TestHoldingTankExpirationDays_RejectsOverMax verifies the uint8 expiration_days
+// on HoldingTankConfig rejects out-of-range values — mirrors Rust u8 (placement.rs:70).
+func TestHoldingTankExpirationDays_RejectsOverMax(t *testing.T) {
+	for _, over := range []string{"256", "300", "-1"} {
+		var h HoldingTankConfig
+		err := yaml.Unmarshal([]byte("expiration_days: "+over), &h)
+		assert.Error(t, err, "expiration_days %s must be rejected by uint8", over)
+	}
+}
+
+// TestHoldingTankExpirationDays_AcceptsMax verifies the inclusive uint8 max (255).
+func TestHoldingTankExpirationDays_AcceptsMax(t *testing.T) {
+	var h HoldingTankConfig
+	require.NoError(t, yaml.Unmarshal([]byte("expiration_days: 255"), &h))
+	assert.Equal(t, uint8(255), h.ExpirationDays)
 }
 
 // TestResolveCommissionsBinary verifies that resolveCommissions correctly
@@ -267,7 +562,7 @@ placement: {donated_placement_enabled: false}
 
 	c, ok := plan.Structures[0].resolvedCommission.(*StreamlineCommission)
 	require.True(t, ok, "expected *StreamlineCommission, got %T", plan.Structures[0].resolvedCommission)
-	assert.Equal(t, 10, c.CommissionableDepth)
+	assert.Equal(t, uint8(10), c.CommissionableDepth)
 	require.Len(t, c.DynamicCompression, 2)
 	assert.Equal(t, "Affiliate", c.DynamicCompression["1"].MinRank)
 	assert.Equal(t, 0.10, c.DynamicCompression["1"].Percent)
@@ -317,7 +612,7 @@ placement: {donated_placement_enabled: false}
 	c, ok := plan.Structures[0].resolvedCommission.(*GenerationCommission)
 	require.True(t, ok, "expected *GenerationCommission, got %T", plan.Structures[0].resolvedCommission)
 	assert.True(t, c.LevelCommissionsEnabled)
-	assert.Equal(t, 5, c.CommissionableDepth)
+	assert.Equal(t, uint8(5), c.CommissionableDepth)
 	assert.Equal(t, uint8(4), c.Generation.MaxGenerations)
 	assert.Equal(t, "threshold_rank", c.Generation.BoundaryMode)
 	assert.Equal(t, "Executive", c.Generation.BoundaryRank)
@@ -369,7 +664,7 @@ placement: {donated_placement_enabled: false}
 
 	c, ok := plan.Structures[0].resolvedCommission.(*StairstepCommission)
 	require.True(t, ok, "expected *StairstepCommission, got %T", plan.Structures[0].resolvedCommission)
-	assert.Equal(t, 6, c.CommissionableDepth)
+	assert.Equal(t, uint8(6), c.CommissionableDepth)
 	require.NotNil(t, c.Breakaway)
 	assert.Equal(t, "Supervisor", c.Breakaway.ThresholdRank)
 	assert.True(t, c.Breakaway.GroupVolumeExcludesBreakaway)
@@ -559,7 +854,7 @@ placement: {donated_placement_enabled: false}
 
 	c, ok := plan.Structures[0].resolvedCommission.(*MatrixCommission)
 	require.True(t, ok, "expected *MatrixCommission, got %T", plan.Structures[0].resolvedCommission)
-	assert.Equal(t, 7, c.CommissionableDepth)
+	assert.Equal(t, uint8(7), c.CommissionableDepth)
 	assert.Equal(t, 0.05, c.RateTable["Starter"]["1"])
 	assert.Equal(t, 0.03, c.RateTable["Starter"]["2"])
 }
@@ -632,9 +927,9 @@ placement: {donated_placement_enabled: false}
 	assert.Equal(t, 500.0, c.BoardCycling.CycleCommission)
 	assert.True(t, c.BoardCycling.ReEntryEnabled)
 	assert.Equal(t, "bottom", c.BoardCycling.ReEntryPosition)
-	assert.Equal(t, 5, c.BoardCycling.MaxCyclesPerPeriod)
-	assert.Equal(t, 10, c.BoardCycling.MaxCascadeDepth)
-	assert.Equal(t, 3, c.BoardCycling.StallThresholdPeriods)
+	assert.Equal(t, uint32(5), c.BoardCycling.MaxCyclesPerPeriod)
+	assert.Equal(t, uint32(10), c.BoardCycling.MaxCascadeDepth)
+	assert.Equal(t, uint32(3), c.BoardCycling.StallThresholdPeriods)
 	assert.True(t, c.BoardCycling.InactiveCompression)
 }
 
@@ -973,9 +1268,9 @@ inactive_compression: false
 	assert.Equal(t, 250.0, cfg.CycleCommission)
 	assert.False(t, cfg.ReEntryEnabled)
 	assert.Equal(t, "sponsor_board", cfg.ReEntryPosition)
-	assert.Equal(t, 3, cfg.MaxCyclesPerPeriod)
-	assert.Equal(t, 15, cfg.MaxCascadeDepth)
-	assert.Equal(t, 6, cfg.StallThresholdPeriods)
+	assert.Equal(t, uint32(3), cfg.MaxCyclesPerPeriod)
+	assert.Equal(t, uint32(15), cfg.MaxCascadeDepth)
+	assert.Equal(t, uint32(6), cfg.StallThresholdPeriods)
 	assert.False(t, cfg.InactiveCompression)
 }
 

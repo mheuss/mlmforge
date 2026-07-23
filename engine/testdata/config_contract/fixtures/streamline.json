@@ -1,0 +1,205 @@
+{
+  "bonuses": {
+    "matching": null,
+    "sponsor": {
+      "amount": 15,
+      "amount_type": "fixed",
+      "qualifying_products": null
+    },
+    "fast_start": null,
+    "rank_advancement": null,
+    "leadership_development": null,
+    "infinity": null,
+    "lifestyle": null,
+    "pool": null,
+    "matrix_completion": null,
+    "position": null,
+    "board_cycling": null
+  },
+  "caps": {
+    "per_distributor_per_period": null,
+    "company_payout_cap_percent": 0.4,
+    "cap_enforcement": "pro_rata",
+    "clawback_on_refund": false
+  },
+  "commission_eligibility": {
+    "min_personal_volume": 50,
+    "require_order_in_period": true,
+    "eligible_statuses": [
+      "active"
+    ]
+  },
+  "name": "Streamline Direct",
+  "payout": {
+    "base_currency": "USD",
+    "minimum_amount": 20,
+    "split_payouts_enabled": false,
+    "methods": [
+      {
+        "type": "ewallet",
+        "fee": 0
+      },
+      {
+        "type": "bank_transfer",
+        "fee": 2.5
+      }
+    ]
+  },
+  "period": {
+    "length": "semi_month",
+    "start_date": "2026-01-01",
+    "payout_lag_days": 7
+  },
+  "placement": {
+    "binary_placement": null,
+    "donated_placement": null,
+    "holding_tank": null
+  },
+  "rank_features": {
+    "constraints_enabled": true,
+    "overrides_enabled": false
+  },
+  "rank_tracking": {
+    "track_achieved_rank": false
+  },
+  "ranks": [
+    {
+      "name": "Affiliate",
+      "ordinal": 1,
+      "qualification": {
+        "structures": [
+          {
+            "structure": "StreamlineTree",
+            "personal_volume": 0,
+            "group_volume": 0,
+            "max_group_volume_per_leg": 0,
+            "min_retail_volume": 0,
+            "distributor_count": null
+          }
+        ]
+      },
+      "demotion_policy": "promotion_only"
+    },
+    {
+      "name": "Team Lead",
+      "ordinal": 2,
+      "qualification": {
+        "structures": [
+          {
+            "structure": "StreamlineTree",
+            "personal_volume": 100,
+            "group_volume": 1000,
+            "max_group_volume_per_leg": 0,
+            "min_retail_volume": 0,
+            "distributor_count": null
+          }
+        ]
+      },
+      "demotion_policy": "promotion_only"
+    },
+    {
+      "name": "Director",
+      "ordinal": 3,
+      "qualification": {
+        "structures": [
+          {
+            "structure": "StreamlineTree",
+            "personal_volume": 200,
+            "group_volume": 5000,
+            "max_group_volume_per_leg": 0,
+            "min_retail_volume": 0,
+            "distributor_count": null
+          }
+        ]
+      },
+      "demotion_policy": "promotion_only"
+    }
+  ],
+  "structures": [
+    {
+      "type": "unilevel",
+      "config": {
+        "compression": null,
+        "level_commission": {
+          "broad_commission_percent": 0.4,
+          "commissionable_depth": 5,
+          "rate_table": {
+            "Affiliate": {
+              "1": 0.05,
+              "2": 0.03
+            },
+            "Director": {
+              "1": 0.1,
+              "2": 0.07
+            },
+            "Team Lead": {
+              "1": 0.07,
+              "2": 0.05
+            }
+          },
+          "volume_to_dollar_multiplier": null
+        },
+        "name": "PrimaryUnilevel",
+        "pass_up": null
+      }
+    },
+    {
+      "type": "streamline",
+      "config": {
+        "name": "StreamlineTree",
+        "streamline_commission": {
+          "commissionable_depth": 10,
+          "dynamic_compression": [
+            {
+              "level": 1,
+              "min_rank": "Affiliate",
+              "percent": 0.1
+            },
+            {
+              "level": 2,
+              "min_rank": "Affiliate",
+              "percent": 0.07
+            },
+            {
+              "level": 3,
+              "min_rank": "Team Lead",
+              "percent": 0.05
+            },
+            {
+              "level": 4,
+              "min_rank": "Team Lead",
+              "percent": 0.04
+            },
+            {
+              "level": 5,
+              "min_rank": "Director",
+              "percent": 0.03
+            },
+            {
+              "level": 6,
+              "min_rank": "Director",
+              "percent": 0.02
+            }
+          ],
+          "streams": {
+            "additional_per_rank": {
+              "Director": 2,
+              "Team Lead": 1
+            },
+            "assignment_mode": "sponsor_stream",
+            "per_enrollment_choice": false,
+            "freeze_on_demotion": true
+          },
+          "volume_to_dollar_multiplier": null
+        }
+      }
+    }
+  ],
+  "version": 1,
+  "volume": {
+    "inhibit_signup_volume": false,
+    "base_currency": "USD",
+    "volume_to_dollar_multiplier": 1,
+    "deduct_qualifying_volume": false
+  }
+}

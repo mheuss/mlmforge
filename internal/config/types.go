@@ -31,7 +31,7 @@ type CompensationPlan struct {
 type PeriodConfig struct {
 	Length        string  `yaml:"length" json:"length"`
 	StartDate     *string `yaml:"start_date" json:"start_date"`
-	PayoutLagDays int     `yaml:"payout_lag_days" json:"payout_lag_days"`
+	PayoutLagDays uint8   `yaml:"payout_lag_days" json:"payout_lag_days"`
 }
 
 // --- Volume ---
@@ -51,14 +51,14 @@ type RankDefinition struct {
 	Name                string            `yaml:"name" json:"name"`
 	Ordinal             int               `yaml:"ordinal" json:"ordinal"`
 	Qualification       RankQualification `yaml:"qualification" json:"qualification"`
-	QualifiedStructures []string          `yaml:"qualified_structures" json:"qualified_structures"`
+	QualifiedStructures []string          `yaml:"qualified_structures" json:"qualified_structures,omitempty"`
 	DemotionPolicy      DemotionPolicy    `yaml:"demotion_policy" json:"demotion_policy"`
 }
 
 // RankQualification holds the qualification requirements for achieving a rank.
 type RankQualification struct {
 	Structures       []StructureQualification `yaml:"structures" json:"structures"`
-	RequiredProducts []string                 `yaml:"required_products" json:"required_products"`
+	RequiredProducts []string                 `yaml:"required_products" json:"required_products,omitempty"`
 	Window           *RankQualificationWindow `yaml:"window,omitempty" json:"window,omitempty"`
 	Tenure           *TenureRequirement       `yaml:"tenure,omitempty" json:"tenure,omitempty"`
 }
@@ -163,12 +163,20 @@ func (d DemotionPolicy) MarshalJSON() ([]byte, error) {
 	if d.Grace != nil {
 		return json.Marshal(map[string]any{"grace": d.Grace})
 	}
+	// An unset demotion policy defaults to "promotion_only" (ranks never
+	// decrease). The schema leaves demotion_policy optional, so a valid plan may
+	// omit it; emitting the zero value "" instead would produce engine JSON the
+	// Rust DemotionPolicy enum rejects — keep the cross-language contract
+	// round-trippable (HEU-513) rather than relying on every plan authoring it.
+	if d.StringValue == "" {
+		return json.Marshal("promotion_only")
+	}
 	return json.Marshal(d.StringValue)
 }
 
 // GracePeriod defines a time window before a rank demotion takes effect.
 type GracePeriod struct {
-	Count int    `yaml:"count" json:"count"`
+	Count uint16 `yaml:"count" json:"count"`
 	Unit  string `yaml:"unit" json:"unit"`
 }
 
@@ -192,13 +200,13 @@ type CommissionEligibility struct {
 	MinPersonalVolume    float64         `yaml:"min_personal_volume" json:"min_personal_volume"`
 	RequireOrderInPeriod bool            `yaml:"require_order_in_period" json:"require_order_in_period"`
 	EligibleStatuses     []string        `yaml:"eligible_statuses" json:"eligible_statuses"`
-	ActiveLegTiers       []ActiveLegTier `yaml:"active_leg_tiers" json:"active_leg_tiers"`
+	ActiveLegTiers       []ActiveLegTier `yaml:"active_leg_tiers" json:"active_leg_tiers,omitempty"`
 }
 
 // ActiveLegTier maps an active leg count to a commission depth.
 type ActiveLegTier struct {
-	MinActiveLegs      int `yaml:"min_active_legs" json:"min_active_legs"`
-	MaxCommissionDepth int `yaml:"max_commission_depth" json:"max_commission_depth"`
+	MinActiveLegs      uint16 `yaml:"min_active_legs" json:"min_active_legs"`
+	MaxCommissionDepth uint16 `yaml:"max_commission_depth" json:"max_commission_depth"`
 }
 
 // --- Commission interface ---
@@ -243,7 +251,7 @@ type StructureConfig struct {
 type UnilevelCommission struct {
 	BroadCommissionPercent   float64                       `yaml:"broad_commission_percent" json:"broad_commission_percent"`
 	VolumeToDollarMultiplier *float64                      `yaml:"volume_to_dollar_multiplier" json:"volume_to_dollar_multiplier"`
-	CommissionableDepth      int                           `yaml:"commissionable_depth" json:"commissionable_depth"`
+	CommissionableDepth      uint8                         `yaml:"commissionable_depth" json:"commissionable_depth"`
 	RateTable                map[string]map[string]float64 `yaml:"rate_table" json:"rate_table"`
 	Compression              *CompressionConfig            `yaml:"compression" json:"compression"`
 	PassUp                   *PassUpConfig                 `yaml:"pass_up" json:"pass_up"`
@@ -261,7 +269,7 @@ type BinaryCommission struct {
 type MatrixCommission struct {
 	BroadCommissionPercent   float64                       `yaml:"broad_commission_percent" json:"broad_commission_percent"`
 	VolumeToDollarMultiplier *float64                      `yaml:"volume_to_dollar_multiplier" json:"volume_to_dollar_multiplier"`
-	CommissionableDepth      int                           `yaml:"commissionable_depth" json:"commissionable_depth"`
+	CommissionableDepth      uint8                         `yaml:"commissionable_depth" json:"commissionable_depth"`
 	RateTable                map[string]map[string]float64 `yaml:"rate_table" json:"rate_table"`
 	Compression              *CompressionConfig            `yaml:"compression" json:"compression"`
 }
@@ -270,7 +278,7 @@ type MatrixCommission struct {
 type StairstepCommission struct {
 	BroadCommissionPercent   float64                       `yaml:"broad_commission_percent" json:"broad_commission_percent"`
 	VolumeToDollarMultiplier *float64                      `yaml:"volume_to_dollar_multiplier" json:"volume_to_dollar_multiplier"`
-	CommissionableDepth      int                           `yaml:"commissionable_depth" json:"commissionable_depth"`
+	CommissionableDepth      uint8                         `yaml:"commissionable_depth" json:"commissionable_depth"`
 	RateTable                map[string]map[string]float64 `yaml:"rate_table" json:"rate_table"`
 	Compression              *CompressionConfig            `yaml:"compression" json:"compression"`
 	Breakaway                *BreakawayConfig              `yaml:"breakaway" json:"breakaway"`
@@ -281,7 +289,7 @@ type GenerationCommission struct {
 	LevelCommissionsEnabled  bool                          `yaml:"level_commissions_enabled" json:"level_commissions_enabled"`
 	BroadCommissionPercent   float64                       `yaml:"broad_commission_percent" json:"broad_commission_percent"`
 	VolumeToDollarMultiplier *float64                      `yaml:"volume_to_dollar_multiplier" json:"volume_to_dollar_multiplier"`
-	CommissionableDepth      int                           `yaml:"commissionable_depth" json:"commissionable_depth"`
+	CommissionableDepth      uint8                         `yaml:"commissionable_depth" json:"commissionable_depth"`
 	RateTable                map[string]map[string]float64 `yaml:"rate_table" json:"rate_table"`
 	Compression              *CompressionConfig            `yaml:"compression" json:"compression"`
 	Generation               GenerationCommissionConfig    `yaml:"generation" json:"generation"`
@@ -290,7 +298,7 @@ type GenerationCommission struct {
 // StreamlineCommission holds commission configuration for streamline structures.
 type StreamlineCommission struct {
 	VolumeToDollarMultiplier *float64                   `yaml:"volume_to_dollar_multiplier" json:"volume_to_dollar_multiplier"`
-	CommissionableDepth      int                        `yaml:"commissionable_depth" json:"commissionable_depth"`
+	CommissionableDepth      uint8                      `yaml:"commissionable_depth" json:"commissionable_depth"`
 	DynamicCompression       map[string]StreamlineLevel `yaml:"dynamic_compression" json:"dynamic_compression"`
 	Streams                  *StreamConfig              `yaml:"streams" json:"streams"`
 }
@@ -455,18 +463,18 @@ type StreamlineLevel struct {
 
 // StreamConfig holds multi-stream configuration for streamline plans.
 type StreamConfig struct {
-	AdditionalPerRank   map[string]int `yaml:"additional_per_rank" json:"additional_per_rank"`
-	AssignmentMode      string         `yaml:"assignment_mode" json:"assignment_mode"`
-	PerEnrollmentChoice bool           `yaml:"per_enrollment_choice" json:"per_enrollment_choice"`
-	FreezeOnDemotion    bool           `yaml:"freeze_on_demotion" json:"freeze_on_demotion"`
+	AdditionalPerRank   map[string]uint8 `yaml:"additional_per_rank" json:"additional_per_rank"`
+	AssignmentMode      string           `yaml:"assignment_mode" json:"assignment_mode"`
+	PerEnrollmentChoice bool             `yaml:"per_enrollment_choice" json:"per_enrollment_choice"`
+	FreezeOnDemotion    bool             `yaml:"freeze_on_demotion" json:"freeze_on_demotion"`
 }
 
 // --- Matrix ---
 
 // MatrixStructureParams defines matrix tree shape parameters.
 type MatrixStructureParams struct {
-	Width              int    `yaml:"width" json:"width"`
-	Height             int    `yaml:"height" json:"height"`
+	Width              uint8  `yaml:"width" json:"width"`
+	Height             uint8  `yaml:"height" json:"height"`
 	SpilloverDirection string `yaml:"spillover_direction" json:"spillover_direction"`
 }
 
@@ -494,7 +502,7 @@ type BonusConfig struct {
 
 // MatchingBonusConfig pays a percentage of downline commissions.
 type MatchingBonusConfig struct {
-	Depth                  int                `yaml:"depth" json:"depth"`
+	Depth                  uint8              `yaml:"depth" json:"depth"`
 	Rates                  map[string]float64 `yaml:"rates" json:"rates"`
 	MatchedCommissionTypes []string           `yaml:"matched_commission_types" json:"matched_commission_types"`
 }
@@ -508,7 +516,7 @@ type SponsorBonusConfig struct {
 
 // FastStartBonusConfig provides enhanced commissions during the early enrollment window.
 type FastStartBonusConfig struct {
-	WindowDays int                           `yaml:"window_days" json:"window_days"`
+	WindowDays uint16                        `yaml:"window_days" json:"window_days"`
 	RateTable  map[string]map[string]float64 `yaml:"rate_table" json:"rate_table"`
 }
 
@@ -520,7 +528,7 @@ type RankAdvancementBonusConfig struct {
 
 // LeadershipDevelopmentBonusConfig pays override commissions on downline leaders.
 type LeadershipDevelopmentBonusConfig struct {
-	Depth        int                `yaml:"depth" json:"depth"`
+	Depth        uint8              `yaml:"depth" json:"depth"`
 	Rates        map[string]float64 `yaml:"rates" json:"rates"`
 	RankSkipMode string             `yaml:"rank_skip_mode" json:"rank_skip_mode"`
 }
@@ -542,7 +550,7 @@ type LifestyleBonusConfig struct {
 type LifestyleTier struct {
 	MinRank      string  `yaml:"min_rank" json:"min_rank"`
 	Amount       float64 `yaml:"amount" json:"amount"`
-	GracePeriods int     `yaml:"grace_periods" json:"grace_periods"`
+	GracePeriods uint8   `yaml:"grace_periods" json:"grace_periods"`
 }
 
 // PoolBonusConfig defines a revenue pool shared among qualifying distributors.
@@ -592,16 +600,16 @@ type BoardCyclingConfig struct {
 	CycleCommission       float64 `yaml:"cycle_commission" json:"cycle_commission"`
 	ReEntryEnabled        bool    `yaml:"re_entry_enabled" json:"re_entry_enabled"`
 	ReEntryPosition       string  `yaml:"re_entry_position" json:"re_entry_position"`
-	MaxCyclesPerPeriod    int     `yaml:"max_cycles_per_period" json:"max_cycles_per_period"`
-	MaxCascadeDepth       int     `yaml:"max_cascade_depth" json:"max_cascade_depth,omitempty"`
-	StallThresholdPeriods int     `yaml:"stall_threshold_periods" json:"stall_threshold_periods"`
+	MaxCyclesPerPeriod    uint32  `yaml:"max_cycles_per_period" json:"max_cycles_per_period"`
+	MaxCascadeDepth       uint32  `yaml:"max_cascade_depth" json:"max_cascade_depth,omitempty"`
+	StallThresholdPeriods uint32  `yaml:"stall_threshold_periods" json:"stall_threshold_periods"`
 	InactiveCompression   bool    `yaml:"inactive_compression" json:"inactive_compression"`
 }
 
 // PassUpConfig defines pass-up bonus behavior where initial sales go to the upline.
 type PassUpConfig struct {
-	Count               int  `yaml:"count" json:"count"`
-	IncludesCommissions bool `yaml:"includes_commissions" json:"includes_commissions"`
+	Count               uint8 `yaml:"count" json:"count"`
+	IncludesCommissions bool  `yaml:"includes_commissions" json:"includes_commissions"`
 }
 
 // --- Payout ---
@@ -646,7 +654,7 @@ type PlacementConfig struct {
 // HoldingTankConfig defines holding tank behavior for deferred placement.
 type HoldingTankConfig struct {
 	Enabled              bool     `yaml:"enabled" json:"enabled"`
-	ExpirationDays       int      `yaml:"expiration_days" json:"expiration_days"`
+	ExpirationDays       uint8    `yaml:"expiration_days" json:"expiration_days"`
 	AllowSponsorChange   bool     `yaml:"allow_sponsor_change" json:"allow_sponsor_change"`
 	ApplicableStructures []string `yaml:"applicable_structures" json:"applicable_structures"`
 }

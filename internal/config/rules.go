@@ -18,9 +18,11 @@ func validateBusinessRules(plan *CompensationPlan) []ValidationError {
 
 	errs = append(errs, validateRankNames(plan)...)
 	errs = append(errs, validateStructureNames(plan)...)
+	errs = append(errs, validatePeriod(plan)...)
 	errs = append(errs, validateRanks(plan, structs)...)
 	errs = append(errs, validateStructureRefs(plan, ranks)...)
 	errs = append(errs, validateBonuses(plan, ranks)...)
+	errs = append(errs, validateRateKeyWidths(plan)...)
 	errs = append(errs, validatePlacement(plan, structs)...)
 	errs = append(errs, validateEligibility(plan)...)
 	errs = append(errs, validatePassUp(plan)...)
@@ -29,6 +31,22 @@ func validateBusinessRules(plan *CompensationPlan) []ValidationError {
 	errs = append(errs, validateStreamlineCommission(plan)...)
 	errs = append(errs, validateCrossFieldRules(plan, ranks)...)
 	return errs
+}
+
+// validatePeriod checks top-level period constraints. start_date is required:
+// Rust deserializes it into a NaiveDate (no default), so a nil/empty value on a
+// schema-bypass path (programmatic builder, direct validateBusinessRules) would
+// otherwise reach the engine as an opaque failure. HEU-507.
+func validatePeriod(plan *CompensationPlan) []ValidationError {
+	if plan.Period.StartDate == nil || *plan.Period.StartDate == "" {
+		return []ValidationError{{
+			Path:     "/period/start_date",
+			Code:     "missing_required_field",
+			Message:  "start_date is required",
+			Severity: SeverityError,
+		}}
+	}
+	return nil
 }
 
 // --- Helpers ---
@@ -66,6 +84,85 @@ func getRateTable(commission Commission) map[string]map[string]float64 {
 	default:
 		return nil
 	}
+}
+
+// validateU8MapKeys appends an error for each key of a level/depth-keyed rate
+// map that is not representable as a Rust u8 (0-255). These maps are Go
+// map[string]float64 but Rust BTreeMap<u8, f64>; a key like "300" passes Go
+// untyped and dies opaquely at Rust serde. See docs/development/config-types.md
+// "Cross-layer enforcement of byte-width caps".
+func validateU8MapKeys(m map[string]float64, path string) []ValidationError {
+	var errs []ValidationError
+	for key := range m {
+		// ParseUint(_, 10, 8) accepts exactly a Rust u8 key: digits only (no
+		// sign), 0-255. This matches the schema propertyNames pattern, so the
+		// bypass-path Go guard is as strict as the happy-path schema gate (Atoi
+		// would leak signed forms like "-0" that Rust u8 rejects).
+		if _, err := strconv.ParseUint(key, 10, 8); err != nil {
+			errs = append(errs, ValidationError{
+				Path:     path + "/" + key,
+				Code:     "invalid_value",
+				Message:  fmt.Sprintf("rate key %q must be an integer in [0, 255] to fit the Rust u8 map key", key),
+				Severity: SeverityError,
+			})
+		}
+	}
+	return errs
+}
+
+// validateRateTableU8Keys applies validateU8MapKeys to the inner (level) keys of
+// a rank-by-level rate table. Outer keys are rank names (String on both sides)
+// and are not checked here.
+func validateRateTableU8Keys(rt map[string]map[string]float64, path string) []ValidationError {
+	var errs []ValidationError
+	for rank, inner := range rt {
+		errs = append(errs, validateU8MapKeys(inner, path+"/"+rank)...)
+	}
+	return errs
+}
+
+// validateRateKeyWidths checks that every level/depth-keyed rate map uses keys
+// representable as a Rust u8 (0-255). Bonus and per-structure commission rate
+// maps are Go map[string]float64 (or nested) but Rust BTreeMap<u8, f64>, so an
+// out-of-range key passes Go untyped and fails opaquely at the Rust serde
+// boundary. This mirrors the byte-width contract on the map KEY. Rank-name-keyed
+// maps (rank_rates, amounts) are String on both sides and are not checked.
+func validateRateKeyWidths(plan *CompensationPlan) []ValidationError {
+	var errs []ValidationError
+
+	// Bonus rate maps.
+	if plan.Bonuses.Matching != nil {
+		errs = append(errs, validateU8MapKeys(plan.Bonuses.Matching.Rates, "/bonuses/matching/rates")...)
+	}
+	if plan.Bonuses.LeadershipDevelopment != nil {
+		errs = append(errs, validateU8MapKeys(plan.Bonuses.LeadershipDevelopment.Rates, "/bonuses/leadership_development/rates")...)
+	}
+	if plan.Bonuses.Infinity != nil {
+		errs = append(errs, validateU8MapKeys(plan.Bonuses.Infinity.DecreasingRates, "/bonuses/infinity/decreasing_rates")...)
+	}
+	if plan.Bonuses.MatrixCompletion != nil {
+		errs = append(errs, validateU8MapKeys(plan.Bonuses.MatrixCompletion.PerLevel, "/bonuses/matrix_completion/per_level")...)
+	}
+	if plan.Bonuses.FastStart != nil {
+		errs = append(errs, validateRateTableU8Keys(plan.Bonuses.FastStart.RateTable, "/bonuses/fast_start/rate_table")...)
+	}
+
+	// Per-structure commission rate maps.
+	for i, s := range plan.Structures {
+		base := fmt.Sprintf("/structures/%d/commission", i)
+		switch rc := s.resolvedCommission.(type) {
+		case *GenerationCommission:
+			errs = append(errs, validateU8MapKeys(rc.Generation.GenerationRates, base+"/generation/generation_rates")...)
+		case *StairstepCommission:
+			if rc.Breakaway != nil && rc.Breakaway.Overrides.Generation != nil {
+				errs = append(errs, validateU8MapKeys(rc.Breakaway.Overrides.Generation.GenerationRates, base+"/breakaway/overrides/generation/generation_rates")...)
+			}
+		}
+		// Rank-by-level rate tables (Unilevel/Matrix/Stairstep/Generation): inner keys.
+		errs = append(errs, validateRateTableU8Keys(getRateTable(s.resolvedCommission), base+"/rate_table")...)
+	}
+
+	return errs
 }
 
 // rankOrdinalMap returns a map from rank name to ordinal.
@@ -291,6 +388,14 @@ func validateStructureRefs(plan *CompensationPlan, ranks map[string]bool) []Vali
 	for i, s := range plan.Structures {
 		switch rc := s.resolvedCommission.(type) {
 		case *GenerationCommission:
+			if rc.Generation.MaxGenerations < 1 {
+				errs = append(errs, ValidationError{
+					Path:     fmt.Sprintf("/structures/%d/commission/generation/max_generations", i),
+					Code:     "value_out_of_range",
+					Message:  "max_generations must be >= 1 (per-rank overrides may be 0)",
+					Severity: SeverityError,
+				})
+			}
 			if rc.Generation.BoundaryRank != "" && !ranks[rc.Generation.BoundaryRank] {
 				errs = append(errs, ValidationError{
 					Path:     fmt.Sprintf("/structures/%d/commission/generation/boundary_rank", i),
@@ -342,6 +447,14 @@ func validateStructureRefs(plan *CompensationPlan, ranks map[string]bool) []Vali
 							})
 						}
 					}
+				}
+				if gen := rc.Breakaway.Overrides.Generation; gen != nil && gen.MaxGenerations < 1 {
+					errs = append(errs, ValidationError{
+						Path:     fmt.Sprintf("/structures/%d/commission/breakaway/overrides/generation/max_generations", i),
+						Code:     "value_out_of_range",
+						Message:  "max_generations must be >= 1",
+						Severity: SeverityError,
+					})
 				}
 				if rc.Breakaway.Overrides.Generation != nil && rc.Breakaway.Overrides.Generation.BoundaryRank != "" {
 					if !ranks[rc.Breakaway.Overrides.Generation.BoundaryRank] {
@@ -400,6 +513,14 @@ func validateStructureRefs(plan *CompensationPlan, ranks map[string]bool) []Vali
 				}
 			}
 			if rc.Streams != nil {
+				if rc.Streams.AdditionalPerRank == nil {
+					errs = append(errs, ValidationError{
+						Path:     fmt.Sprintf("/structures/%d/commission/streams/additional_per_rank", i),
+						Code:     "missing_required_field",
+						Message:  fmt.Sprintf("structure %q streams block is missing required additional_per_rank (use {} for none; a nil map serializes to null, which the engine rejects)", s.Name),
+						Severity: SeverityError,
+					})
+				}
 				for rankName := range rc.Streams.AdditionalPerRank {
 					if !ranks[rankName] {
 						errs = append(errs, ValidationError{
@@ -653,15 +774,6 @@ func validatePassUp(plan *CompensationPlan) []ValidationError {
 				Severity: SeverityError,
 			})
 		}
-
-		if commission.PassUp.Count > 255 {
-			errs = append(errs, ValidationError{
-				Path:     fmt.Sprintf("/structures/%d/commission/pass_up/count", i),
-				Code:     "value_out_of_range",
-				Message:  "pass_up count must be <= 255",
-				Severity: SeverityError,
-			})
-		}
 	}
 
 	return errs
@@ -798,7 +910,7 @@ func validateStreamlineCommission(plan *CompensationPlan) []ValidationError {
 		}
 
 		// Depth must accommodate all valid levels.
-		if c.CommissionableDepth < len(levelNums) {
+		if int(c.CommissionableDepth) < len(levelNums) {
 			errs = append(errs, ValidationError{
 				Path:     path + "/commissionable_depth",
 				Code:     "depth_less_than_levels",
@@ -850,9 +962,27 @@ func validateCrossFieldRules(plan *CompensationPlan, ranks map[string]bool) []Va
 		}
 	}
 
-	// Matrix size warning: width^height > 1,000,000.
+	// Matrix structure checks: spillover restriction (error) and size warning.
 	for i, s := range plan.Structures {
-		if s.Structure != nil && s.Structure.Width > 0 && s.Structure.Height > 0 {
+		if s.Structure == nil {
+			continue
+		}
+		// spillover_direction must be breadth_first. The schema restricts it to
+		// that single value, and the engine's MatrixTree::new rejects
+		// depth_first, so a non-breadth_first value reaching the engine on a
+		// schema-bypass path dies opaquely. Reject it here at load. Empty/unset
+		// is left to the engine's enum decode (this guard owns the bypass, not
+		// the required-field check).
+		if sd := s.Structure.SpilloverDirection; sd != "" && sd != "breadth_first" {
+			errs = append(errs, ValidationError{
+				Path:     fmt.Sprintf("/structures/%d/structure/spillover_direction", i),
+				Code:     "invalid_value",
+				Message:  fmt.Sprintf("matrix %q spillover_direction %q is not supported; only \"breadth_first\" is allowed", s.Name, sd),
+				Severity: SeverityError,
+			})
+		}
+		// Matrix size warning: width^height > 1,000,000.
+		if s.Structure.Width > 0 && s.Structure.Height > 0 {
 			size := math.Pow(float64(s.Structure.Width), float64(s.Structure.Height))
 			if size > 1_000_000 {
 				errs = append(errs, ValidationError{

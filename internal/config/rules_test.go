@@ -100,7 +100,8 @@ func TestBoundaryRankMustExist(t *testing.T) {
 	plan.Structures[0].Type = "generation"
 	plan.Structures[0].resolvedCommission = &GenerationCommission{
 		Generation: GenerationCommissionConfig{
-			BoundaryRank: "Platinum",
+			MaxGenerations: 3,
+			BoundaryRank:   "Platinum",
 		},
 	}
 	// Update rank references to match the new structure name.
@@ -214,6 +215,42 @@ func TestBreakawayDifferentialRankRatesMustExist(t *testing.T) {
 	require.Len(t, errs, 1)
 	assert.Equal(t, "undefined_reference", errs[0].Code)
 	assert.Contains(t, errs[0].Path, "overrides/differential/rank_rates")
+}
+
+// TestBreakawayGenerationMaxGenerationsMustBeAtLeastOne verifies that a
+// breakaway single_walk generation override with max_generations = 0 is
+// rejected. A zero excludes every earner in the override walk — the same trap
+// the main generation config guards. The schema rejects it too, but this closes
+// the schema-bypass path (HEU-513 final-review finding).
+func TestBreakawayGenerationMaxGenerationsMustBeAtLeastOne(t *testing.T) {
+	plan := minimalPlan()
+	plan.Structures[0].Name = "Stairs"
+	plan.Structures[0].Type = "stairstep"
+	plan.Structures[0].resolvedCommission = &StairstepCommission{
+		Breakaway: &BreakawayConfig{
+			ThresholdRank: "Silver",
+			Overrides: OverrideStrategy{
+				Type:                overrideStrategySingleWalk,
+				OverrideCalculation: "generation",
+				Generation: &BreakawayGenerationConfig{
+					MaxGenerations:  0,
+					GenerationRates: map[string]float64{"1": 0.10},
+					BoundaryRank:    "Silver",
+				},
+			},
+		},
+	}
+	plan.Ranks[0].QualifiedStructures = []string{"Stairs"}
+	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stairs"}}
+	plan.Ranks[1].QualifiedStructures = []string{"Stairs"}
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{Structure: "Stairs", PersonalVolume: 100, GroupVolume: 3000},
+	}
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "value_out_of_range", errs[0].Code)
+	assert.Contains(t, errs[0].Path, "breakaway/overrides/generation/max_generations")
 }
 
 // TestBreakawayFixedOverrideRankRatesMustExist mirrors the differential check
@@ -676,6 +713,81 @@ func TestLargeMatrixWarning(t *testing.T) {
 	assert.True(t, found, "expected large_matrix warning, got: %v", errs)
 }
 
+// TestStreamlineStreamsRequireAdditionalPerRank verifies that a streamline
+// structure with a streams block but a nil additional_per_rank is rejected at
+// the Go bypass layer. A nil Go map marshals to JSON null, which the Rust engine
+// rejects opaquely; the schema requires the field, so this guard mirrors that
+// requirement for schema-bypassing callers (analogous to the start_date guard).
+// An explicit empty map {} stays valid (HEU-513 Task 8A). Copilot flagged this
+// on PR #53.
+func TestStreamlineStreamsRequireAdditionalPerRank(t *testing.T) {
+	newStreamPlan := func(apr map[string]uint8) *CompensationPlan {
+		p := minimalPlan()
+		p.Structures[0].Name = "Stream"
+		p.Structures[0].Type = "streamline"
+		p.Structures[0].resolvedCommission = &StreamlineCommission{Streams: &StreamConfig{AdditionalPerRank: apr}}
+		p.Ranks[0].QualifiedStructures = []string{"Stream"}
+		p.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stream"}}
+		p.Ranks[1].QualifiedStructures = []string{"Stream"}
+		p.Ranks[1].Qualification.Structures = []StructureQualification{
+			{Structure: "Stream", PersonalVolume: 100, GroupVolume: 3000},
+		}
+		return p
+	}
+	missingErr := func(errs []ValidationError) bool {
+		for _, e := range errs {
+			if e.Code == "missing_required_field" && strings.Contains(e.Path, "streams/additional_per_rank") {
+				return true
+			}
+		}
+		return false
+	}
+
+	// nil (omitted) additional_per_rank -> rejected loud at Go, not opaque at Rust.
+	assert.True(t, missingErr(validateBusinessRules(newStreamPlan(nil))),
+		"nil additional_per_rank must be rejected")
+	// explicit empty {} -> allowed (Task 8A: empty stays present).
+	assert.False(t, missingErr(validateBusinessRules(newStreamPlan(map[string]uint8{}))),
+		"explicit empty additional_per_rank must be allowed")
+}
+
+// TestMatrixSpilloverDepthFirstRejected verifies that a matrix structure whose
+// spillover_direction is not breadth_first is rejected at business-rule
+// validation. The schema restricts the value and the engine's MatrixTree::new
+// rejects depth_first, but nothing guarded the Go bypass path before this
+// (HEU-513 final-review finding).
+func TestMatrixSpilloverDepthFirstRejected(t *testing.T) {
+	plan := minimalPlan()
+	plan.Structures[0].Name = "Grid"
+	plan.Structures[0].Type = "matrix"
+	plan.Structures[0].Structure = &MatrixStructureParams{
+		Width:              3,
+		Height:             4,
+		SpilloverDirection: "depth_first",
+	}
+	plan.Structures[0].resolvedCommission = &MatrixCommission{
+		CommissionableDepth: 4,
+		RateTable:           map[string]map[string]float64{"Associate": {"1": 0.05}},
+	}
+	plan.Ranks[0].QualifiedStructures = []string{"Grid"}
+	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Grid"}}
+	plan.Ranks[1].QualifiedStructures = []string{"Grid"}
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{Structure: "Grid", PersonalVolume: 100, GroupVolume: 3000},
+	}
+
+	errs := validateBusinessRules(plan)
+	var found bool
+	for _, e := range errs {
+		if e.Code == "invalid_value" && strings.Contains(e.Path, "structure/spillover_direction") {
+			found = true
+			assert.Equal(t, SeverityError, e.Severity)
+			break
+		}
+	}
+	assert.True(t, found, "expected spillover_direction invalid_value error, got: %v", errs)
+}
+
 // TestBreakawayMultiTierEmptyTiersRejected verifies that a multi-tier
 // breakaway with an empty Tiers slice produces an invalid_value error.
 // The schema also enforces minItems: 1, but rules.go owns the structural
@@ -880,7 +992,8 @@ func TestStairstepBreakawayGenerationBoundaryRankMustExist(t *testing.T) {
 			Overrides: OverrideStrategy{
 				Type: overrideStrategySingleWalk,
 				Generation: &BreakawayGenerationConfig{
-					BoundaryRank: "Nonexistent",
+					MaxGenerations: 1,
+					BoundaryRank:   "Nonexistent",
 				},
 			},
 		},
@@ -977,7 +1090,7 @@ func TestValidation_StreamlineAdditionalPerRankMustExist(t *testing.T) {
 				"1": {MinRank: "Associate", Percent: 0.05},
 			},
 			Streams: &StreamConfig{
-				AdditionalPerRank: map[string]int{
+				AdditionalPerRank: map[string]uint8{
 					"Silver":      2,
 					"Nonexistent": 3,
 				},
@@ -995,6 +1108,107 @@ func TestValidation_StreamlineAdditionalPerRankMustExist(t *testing.T) {
 		}
 	}
 	assert.True(t, foundUndefinedRef, "should find undefined_reference for Nonexistent rank in additional_per_rank")
+}
+
+// TestRateKeyWidth_RejectsKeysOverU8 verifies the u8 key-width guard on every
+// level/depth-keyed rate map (HEU-513 Part B). These maps are Go
+// map[string]float64 but Rust BTreeMap<u8, f64>; a key over 255 passes Go and
+// dies opaquely at Rust serde. Each case sets one out-of-range key and expects
+// an invalid_value error at the exact offending path.
+func TestRateKeyWidth_RejectsKeysOverU8(t *testing.T) {
+	cases := []struct {
+		name     string
+		setup    func(*CompensationPlan)
+		wantPath string
+	}{
+		{"matching rates", func(p *CompensationPlan) {
+			p.Bonuses.Matching = &MatchingBonusConfig{Rates: map[string]float64{"300": 0.5}}
+		}, "/bonuses/matching/rates/300"},
+		{"leadership rates", func(p *CompensationPlan) {
+			p.Bonuses.LeadershipDevelopment = &LeadershipDevelopmentBonusConfig{Rates: map[string]float64{"256": 0.5}}
+		}, "/bonuses/leadership_development/rates/256"},
+		{"infinity decreasing_rates", func(p *CompensationPlan) {
+			p.Bonuses.Infinity = &InfinityBonusConfig{DecreasingRates: map[string]float64{"999": 0.5}}
+		}, "/bonuses/infinity/decreasing_rates/999"},
+		{"matrix_completion per_level", func(p *CompensationPlan) {
+			p.Bonuses.MatrixCompletion = &MatrixCompletionBonusConfig{PerLevel: map[string]float64{"256": 100.0}}
+		}, "/bonuses/matrix_completion/per_level/256"},
+		{"fast_start rate_table inner", func(p *CompensationPlan) {
+			p.Bonuses.FastStart = &FastStartBonusConfig{RateTable: map[string]map[string]float64{"Associate": {"256": 0.5}}}
+		}, "/bonuses/fast_start/rate_table/Associate/256"},
+		{"generation rates", func(p *CompensationPlan) {
+			p.Structures[0].resolvedCommission = &GenerationCommission{
+				Generation: GenerationCommissionConfig{GenerationRates: map[string]float64{"256": 0.1}},
+			}
+		}, "/structures/0/commission/generation/generation_rates/256"},
+		{"stairstep breakaway generation_rates", func(p *CompensationPlan) {
+			p.Structures[0].resolvedCommission = &StairstepCommission{
+				Breakaway: &BreakawayConfig{
+					Overrides: OverrideStrategy{
+						Generation: &BreakawayGenerationConfig{GenerationRates: map[string]float64{"256": 0.1}},
+					},
+				},
+			}
+		}, "/structures/0/commission/breakaway/overrides/generation/generation_rates/256"},
+		{"commission rate_table inner", func(p *CompensationPlan) {
+			p.Structures[0].resolvedCommission = &UnilevelCommission{
+				RateTable: map[string]map[string]float64{
+					"Associate": {"256": 0.1},
+					"Silver":    {"1": 0.1},
+				},
+			}
+		}, "/structures/0/commission/rate_table/Associate/256"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			plan := minimalPlan()
+			tc.setup(plan)
+			errs := validateBusinessRules(plan)
+			found := false
+			for _, e := range errs {
+				if e.Code == "invalid_value" && e.Path == tc.wantPath {
+					found = true
+					assert.Equal(t, SeverityError, e.Severity)
+				}
+			}
+			assert.True(t, found, "expected invalid_value at %s, got: %v", tc.wantPath, errs)
+		})
+	}
+}
+
+// TestRateKeyWidth_RejectsNonNumericAndNegative verifies non-numeric, signed,
+// and out-of-range rate keys are rejected — a u8 key must be digits only in
+// [0, 255], matching the schema propertyNames pattern. "-0" and "+5" cover the
+// signed forms Atoi would have leaked past the Rust u8 boundary.
+func TestRateKeyWidth_RejectsNonNumericAndNegative(t *testing.T) {
+	for _, key := range []string{"-1", "-0", "+5", "abc", "256"} {
+		plan := minimalPlan()
+		plan.Bonuses.Matching = &MatchingBonusConfig{Rates: map[string]float64{key: 0.5}}
+		errs := validateBusinessRules(plan)
+		found := false
+		for _, e := range errs {
+			if e.Code == "invalid_value" && e.Path == "/bonuses/matching/rates/"+key {
+				found = true
+			}
+		}
+		assert.True(t, found, "expected invalid_value for matching rate key %q, got: %v", key, errs)
+	}
+}
+
+// TestRateKeyWidth_AcceptsU8Range verifies validateRateKeyWidths produces no
+// error for keys within the u8 range (0-255). Rank-name-keyed outer keys are
+// not checked. Calls the validator directly so an unrelated rule emitting
+// invalid_value on the baseline plan cannot break this test spuriously.
+func TestRateKeyWidth_AcceptsU8Range(t *testing.T) {
+	plan := minimalPlan()
+	plan.Bonuses.Matching = &MatchingBonusConfig{Rates: map[string]float64{"0": 0.1, "1": 0.2, "255": 0.3}}
+	plan.Structures[0].resolvedCommission = &UnilevelCommission{
+		RateTable: map[string]map[string]float64{
+			"Associate": {"1": 0.1, "255": 0.2},
+			"Silver":    {"1": 0.1, "255": 0.2},
+		},
+	}
+	assert.Empty(t, validateRateKeyWidths(plan), "valid u8 keys should produce no errors")
 }
 
 func TestValidation_SearchModeFirstLevelsWithoutDepthWarning(t *testing.T) {
@@ -1202,32 +1416,6 @@ func TestValidatePassUp_RejectedOnNonUnilevelViaRaw(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "expected unsupported_field error for pass_up on binary, got: %v", errs)
-}
-
-func TestValidatePassUp_CountExceeds255(t *testing.T) {
-	plan := minimalPlan()
-	plan.Structures[0].resolvedCommission = &UnilevelCommission{
-		CommissionableDepth: 5,
-		RateTable: map[string]map[string]float64{
-			"Associate": {"1": 0.05},
-		},
-		PassUp: &PassUpConfig{
-			Count:               256,
-			IncludesCommissions: false,
-		},
-	}
-
-	errs := validateBusinessRules(plan)
-	var found bool
-	for _, e := range errs {
-		if e.Code == "value_out_of_range" && strings.Contains(e.Message, "<= 255") {
-			found = true
-			assert.Equal(t, SeverityError, e.Severity)
-			assert.Contains(t, e.Path, "pass_up/count")
-			break
-		}
-	}
-	assert.True(t, found, "expected value_out_of_range error for pass_up count=256, got: %v", errs)
 }
 
 func TestValidation_MatchedCommissionTypesIncludesValidTypes(t *testing.T) {
@@ -1467,4 +1655,74 @@ func TestGenerationMaxGenerationsPerRank_EmptyPasses(t *testing.T) {
 			e.Code == "undefined_reference" && strings.Contains(e.Message, "max_generations_per_rank"),
 		)
 	}
+}
+
+// TestGenerationMaxGenerations_DefaultBelowOneFails pins HEU-442: the scalar
+// default max_generations must be >= 1 (a 0 default would exclude every earner).
+// Per-rank overrides of 0 are still allowed (tested separately) — only the
+// default is guarded here.
+func TestGenerationMaxGenerations_DefaultBelowOneFails(t *testing.T) {
+	plan := minimalPlanWithGenerationStructure()
+	gen := plan.Structures[0].resolvedCommission.(*GenerationCommission)
+	gen.Generation.MaxGenerations = 0
+
+	errs := validateBusinessRules(plan)
+	found := false
+	for _, e := range errs {
+		if e.Code == "value_out_of_range" && strings.Contains(e.Message, "max_generations") {
+			assert.Equal(t, SeverityError, e.Severity)
+			found = true
+		}
+	}
+	require.True(t, found, "expected value_out_of_range for max_generations=0, got: %v", errs)
+}
+
+func TestGenerationMaxGenerations_DefaultOnePasses(t *testing.T) {
+	plan := minimalPlanWithGenerationStructure()
+	gen := plan.Structures[0].resolvedCommission.(*GenerationCommission)
+	gen.Generation.MaxGenerations = 1
+
+	errs := validateBusinessRules(plan)
+	for _, e := range errs {
+		require.False(t,
+			e.Code == "value_out_of_range" && strings.Contains(e.Message, "max_generations"),
+			"unexpected max_generations error: %v", e)
+	}
+}
+
+// TestValidatePeriodRequiresStartDate pins HEU-507: start_date is required. Rust
+// requires it (NaiveDate); the Go schema also requires it, but a bypass path
+// (programmatic builder, direct validateBusinessRules) could otherwise reach the
+// engine with a nil start_date. minimalPlan() now sets a valid one.
+func TestValidatePeriodRequiresStartDate(t *testing.T) {
+	plan := minimalPlan()
+	plan.Period.StartDate = nil
+
+	errs := validateBusinessRules(plan)
+	found := false
+	for _, e := range errs {
+		if e.Path == "/period/start_date" && e.Code == "missing_required_field" {
+			assert.Equal(t, SeverityError, e.Severity)
+			found = true
+		}
+	}
+	require.True(t, found, "expected missing_required_field at /period/start_date, got: %v", errs)
+}
+
+func TestValidatePeriodAcceptsStartDate(t *testing.T) {
+	plan := minimalPlan() // now sets a valid StartDate
+	for _, e := range validateBusinessRules(plan) {
+		require.NotEqual(t, "/period/start_date", e.Path,
+			"a valid start_date should not produce an error: %v", e)
+	}
+
+	empty := ""
+	plan.Period.StartDate = &empty
+	found := false
+	for _, e := range validateBusinessRules(plan) {
+		if e.Path == "/period/start_date" {
+			found = true
+		}
+	}
+	require.True(t, found, "an empty start_date should also be rejected")
 }

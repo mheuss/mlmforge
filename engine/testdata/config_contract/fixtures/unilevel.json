@@ -1,0 +1,370 @@
+{
+  "bonuses": {
+    "matching": {
+      "depth": 3,
+      "rates": {
+        "1": 0.1,
+        "2": 0.05,
+        "3": 0.03
+      },
+      "matched_commission_types": [
+        "unilevel"
+      ]
+    },
+    "sponsor": {
+      "amount": 25,
+      "amount_type": "fixed",
+      "qualifying_products": [
+        "starter-pack",
+        "business-pack"
+      ]
+    },
+    "fast_start": {
+      "window_days": 30,
+      "rate_table": {
+        "Associate": {
+          "1": 0.15,
+          "2": 0.1
+        },
+        "Builder": {
+          "1": 0.2,
+          "2": 0.15,
+          "3": 0.1
+        }
+      }
+    },
+    "rank_advancement": {
+      "amounts": {
+        "Builder": 50,
+        "Director": 1000,
+        "Leader": 200
+      },
+      "pay_once_only": true
+    },
+    "leadership_development": {
+      "depth": 3,
+      "rates": {
+        "1": 0.05,
+        "2": 0.03,
+        "3": 0.01
+      },
+      "rank_skip_mode": "highest_only"
+    },
+    "infinity": {
+      "blocker_mode": "same_or_higher",
+      "flat_rate": 0.02,
+      "decreasing_rates": null,
+      "rate_mode": "flat"
+    },
+    "lifestyle": {
+      "tiers": [
+        {
+          "min_rank": "Leader",
+          "amount": 500,
+          "grace_periods": 2
+        },
+        {
+          "min_rank": "Director",
+          "amount": 1500,
+          "grace_periods": 3
+        }
+      ]
+    },
+    "pool": [
+      {
+        "name": "Leadership Pool",
+        "source_percent": 0.02,
+        "qualification": {
+          "mode": "rank_based",
+          "min_rank": "Director",
+          "velocity": null
+        },
+        "shares": {
+          "mode": "equal_share",
+          "equal_share_cap": 5000
+        },
+        "require_admin_confirmation": true
+      },
+      {
+        "name": "Velocity Pool",
+        "source_percent": 0.01,
+        "qualification": {
+          "mode": "velocity_based",
+          "min_rank": null,
+          "velocity": {
+            "volume_target": 5000,
+            "timeframe": "days",
+            "timeframe_days": 30
+          }
+        },
+        "shares": {
+          "mode": "volume_weighted",
+          "equal_share_cap": null
+        },
+        "require_admin_confirmation": false
+      },
+      {
+        "name": "Combined Pool",
+        "source_percent": 0.015,
+        "qualification": {
+          "mode": "combined",
+          "min_rank": "Leader",
+          "velocity": {
+            "volume_target": 3000,
+            "timeframe": "period",
+            "timeframe_days": null
+          }
+        },
+        "shares": {
+          "mode": "rank_weighted",
+          "equal_share_cap": null
+        },
+        "require_admin_confirmation": true
+      }
+    ],
+    "matrix_completion": null,
+    "position": null,
+    "board_cycling": null
+  },
+  "caps": {
+    "per_distributor_per_period": 50000,
+    "company_payout_cap_percent": 0.42,
+    "cap_enforcement": "pro_rata",
+    "clawback_on_refund": true
+  },
+  "commission_eligibility": {
+    "min_personal_volume": 50,
+    "require_order_in_period": true,
+    "eligible_statuses": [
+      "active",
+      "grace_period"
+    ],
+    "active_leg_tiers": [
+      {
+        "min_active_legs": 0,
+        "max_commission_depth": 3
+      },
+      {
+        "min_active_legs": 3,
+        "max_commission_depth": 5
+      },
+      {
+        "min_active_legs": 5,
+        "max_commission_depth": 7
+      }
+    ]
+  },
+  "name": "Premium Unilevel",
+  "payout": {
+    "base_currency": "USD",
+    "minimum_amount": 25,
+    "split_payouts_enabled": true,
+    "methods": [
+      {
+        "type": "bank_transfer",
+        "fee": 2.5
+      },
+      {
+        "type": "ewallet",
+        "fee": 0
+      },
+      {
+        "type": "check",
+        "fee": 5
+      }
+    ]
+  },
+  "period": {
+    "length": "month",
+    "start_date": "2026-03-01",
+    "payout_lag_days": 7
+  },
+  "placement": {
+    "binary_placement": null,
+    "donated_placement": "own_downline",
+    "holding_tank": {
+      "enabled": true,
+      "expiration_days": 3,
+      "allow_sponsor_change": true,
+      "applicable_structures": [
+        "Primary"
+      ]
+    }
+  },
+  "rank_features": {
+    "constraints_enabled": true,
+    "overrides_enabled": true
+  },
+  "rank_tracking": {
+    "track_achieved_rank": true
+  },
+  "ranks": [
+    {
+      "name": "Associate",
+      "ordinal": 1,
+      "qualification": {
+        "structures": [
+          {
+            "structure": "Primary",
+            "personal_volume": 0,
+            "group_volume": 0,
+            "max_group_volume_per_leg": 0,
+            "min_retail_volume": 0,
+            "distributor_count": null
+          }
+        ]
+      },
+      "demotion_policy": "promotion_only"
+    },
+    {
+      "name": "Builder",
+      "ordinal": 2,
+      "qualification": {
+        "structures": [
+          {
+            "structure": "Primary",
+            "personal_volume": 100,
+            "group_volume": 500,
+            "max_group_volume_per_leg": 0,
+            "min_retail_volume": 0,
+            "distributor_count": null
+          }
+        ]
+      },
+      "qualified_structures": [
+        "Primary"
+      ],
+      "demotion_policy": {
+        "grace": {
+          "count": 2,
+          "unit": "months"
+        }
+      }
+    },
+    {
+      "name": "Leader",
+      "ordinal": 3,
+      "qualification": {
+        "structures": [
+          {
+            "structure": "Primary",
+            "personal_volume": 200,
+            "group_volume": 2000,
+            "max_group_volume_per_leg": 1000,
+            "min_retail_volume": 50,
+            "distributor_count": {
+              "count": 2,
+              "min_rank": "Builder",
+              "search_mode": "first_levels",
+              "search_depth": 3,
+              "total_count": 4,
+              "min_leg_group_volume": 300
+            }
+          }
+        ],
+        "required_products": [
+          "starter-pack"
+        ]
+      },
+      "qualified_structures": [
+        "Primary"
+      ],
+      "demotion_policy": {
+        "grace": {
+          "count": 3,
+          "unit": "months"
+        }
+      }
+    },
+    {
+      "name": "Director",
+      "ordinal": 4,
+      "qualification": {
+        "structures": [
+          {
+            "structure": "Primary",
+            "personal_volume": 300,
+            "group_volume": 10000,
+            "max_group_volume_per_leg": 5000,
+            "min_retail_volume": 0,
+            "distributor_count": {
+              "count": 3,
+              "min_rank": "Leader",
+              "search_mode": "any_level",
+              "search_depth": 5,
+              "total_count": 10,
+              "min_leg_group_volume": 1000
+            }
+          }
+        ]
+      },
+      "demotion_policy": {
+        "grace": {
+          "count": 6,
+          "unit": "months"
+        }
+      }
+    }
+  ],
+  "structures": [
+    {
+      "type": "unilevel",
+      "config": {
+        "compression": {
+          "enabled": true,
+          "mode": "skip_inactive",
+          "rank_threshold": null
+        },
+        "level_commission": {
+          "broad_commission_percent": 0.4,
+          "commissionable_depth": 7,
+          "rate_table": {
+            "Associate": {
+              "1": 0.05,
+              "2": 0.04,
+              "3": 0.03
+            },
+            "Builder": {
+              "1": 0.07,
+              "2": 0.05,
+              "3": 0.04,
+              "4": 0.03,
+              "5": 0.02
+            },
+            "Director": {
+              "1": 0.12,
+              "2": 0.08,
+              "3": 0.06,
+              "4": 0.05,
+              "5": 0.04,
+              "6": 0.03,
+              "7": 0.02
+            },
+            "Leader": {
+              "1": 0.1,
+              "2": 0.07,
+              "3": 0.05,
+              "4": 0.04,
+              "5": 0.03,
+              "6": 0.02,
+              "7": 0.01
+            }
+          },
+          "volume_to_dollar_multiplier": 0.9
+        },
+        "name": "Primary",
+        "pass_up": {
+          "count": 2,
+          "includes_commissions": false
+        }
+      }
+    }
+  ],
+  "version": 1,
+  "volume": {
+    "inhibit_signup_volume": true,
+    "base_currency": "USD",
+    "volume_to_dollar_multiplier": 0.85,
+    "deduct_qualifying_volume": true
+  }
+}

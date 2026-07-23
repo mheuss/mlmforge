@@ -97,18 +97,33 @@ func TestSchemaRejectsDepthFirstSpillover(t *testing.T) {
 	base := readFixture(t, "valid/matrix-plan.yaml")
 	require.Empty(t, p.validateSchema(base), "base matrix fixture should validate cleanly")
 
-	depthFirst := replaceInYAML(t, base,
-		"spillover_direction: breadth_first", "spillover_direction: depth_first")
-	errs := p.validateSchema(depthFirst)
-	require.NotEmpty(t, errs, "depth_first spillover should fail the schema gate")
-	foundViolation := false
-	for _, e := range errs {
-		if e.Code == "schema_violation" {
-			foundViolation = true
-			assert.Equal(t, SeverityError, e.Severity)
-		}
+	// Both spillover_direction sites must reject depth_first: the matrix structure
+	// params AND the placement config. The two fixture lines are identical, so each
+	// anchor pins one via its distinct parent (`height` vs `matrix:`) — a revert of
+	// either enum then fails its own subtest, not just the first occurrence.
+	sites := []struct {
+		name   string
+		anchor string
+	}{
+		{"structure params", "height: 7\n      spillover_direction: breadth_first"},
+		{"placement config", "matrix:\n    spillover_direction: breadth_first"},
 	}
-	assert.True(t, foundViolation, "expected a schema_violation for depth_first spillover")
+	for _, site := range sites {
+		t.Run(site.name, func(t *testing.T) {
+			mutated := replaceInYAML(t, base, site.anchor,
+				strings.Replace(site.anchor, "breadth_first", "depth_first", 1))
+			errs := p.validateSchema(mutated)
+			require.NotEmpty(t, errs, "depth_first spillover should fail the schema gate")
+			foundViolation := false
+			for _, e := range errs {
+				if e.Code == "schema_violation" {
+					foundViolation = true
+					assert.Equal(t, SeverityError, e.Severity)
+				}
+			}
+			assert.True(t, foundViolation, "expected a schema_violation for depth_first spillover")
+		})
+	}
 }
 
 // TestSchemaAllowsPerRankMaxGenerationsZero pins HEU-442: a per-rank

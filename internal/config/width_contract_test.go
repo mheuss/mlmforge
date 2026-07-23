@@ -164,10 +164,14 @@ func tsStruct(ts *ast.TypeSpec) (*ast.StructType, bool) {
 }
 
 // typeContainsInt reports whether an AST field type is, or wraps, a signed
-// integer (int, int8, int16, int32, int64) — the width-mismatch class this
-// contract guards, including signed mirrors of narrow unsigned Rust types
+// integer literal (int, int8, int16, int32, int64) — the width-mismatch class
+// this contract guards, including signed mirrors of narrow unsigned Rust types
 // (e.g. int16 vs u16). It unwraps a pointer (*int), a slice/array element
-// ([]int), a map value (map[K]int), and an inline anonymous struct's fields.
+// ([]int), a map key or value (map[int]int), and an inline anonymous struct's
+// fields. Being AST-only (no type resolution), it does NOT see a signed int
+// hidden behind a named type (`type Depth int32; X Depth`) or an embedded field
+// (field.Names is empty). Config wire types use neither today, so this covers the
+// package; a future named-int/embedded field would need a go/types-based scan.
 func typeContainsInt(expr ast.Expr) bool {
 	switch e := expr.(type) {
 	case *ast.Ident:
@@ -181,7 +185,7 @@ func typeContainsInt(expr ast.Expr) bool {
 	case *ast.ArrayType:
 		return typeContainsInt(e.Elt)
 	case *ast.MapType:
-		return typeContainsInt(e.Value)
+		return typeContainsInt(e.Key) || typeContainsInt(e.Value)
 	case *ast.StructType:
 		for _, f := range e.Fields.List {
 			if typeContainsInt(f.Type) {

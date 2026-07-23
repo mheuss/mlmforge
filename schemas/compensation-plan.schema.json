@@ -1542,7 +1542,7 @@
         },
         "spillover_direction": {
           "type": "string",
-          "enum": ["breadth_first", "depth_first"],
+          "enum": ["breadth_first"],
           "description": "How overflow placements are distributed."
         }
       }
@@ -2424,7 +2424,7 @@
               "properties": {
                 "spillover_direction": {
                   "type": "string",
-                  "enum": ["breadth_first", "depth_first"],
+                  "enum": ["breadth_first"],
                   "description": "How overflow placements are distributed in the matrix."
                 }
               },

@@ -88,6 +88,29 @@ func TestSchemaRejectsUnknownStructureType(t *testing.T) {
 	}
 }
 
+// TestSchemaRejectsDepthFirstSpillover pins HEU-535: depth_first is no longer an
+// allowed spillover direction. The Rust engine already rejects it
+// (validate.rs, via HEU-517), so the authoring schema must agree.
+func TestSchemaRejectsDepthFirstSpillover(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/matrix-plan.yaml")
+	require.Empty(t, p.validateSchema(base), "base matrix fixture should validate cleanly")
+
+	depthFirst := replaceInYAML(t, base,
+		"spillover_direction: breadth_first", "spillover_direction: depth_first")
+	errs := p.validateSchema(depthFirst)
+	require.NotEmpty(t, errs, "depth_first spillover should fail the schema gate")
+	foundViolation := false
+	for _, e := range errs {
+		if e.Code == "schema_violation" {
+			foundViolation = true
+			assert.Equal(t, SeverityError, e.Severity)
+		}
+	}
+	assert.True(t, foundViolation, "expected a schema_violation for depth_first spillover")
+}
+
 func TestSchemaRejectsMissingCommission(t *testing.T) {
 	p, err := NewPipeline(schemaPath(t))
 	require.NoError(t, err)

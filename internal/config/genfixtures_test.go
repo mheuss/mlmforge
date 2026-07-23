@@ -47,7 +47,7 @@ func engineFixture(t *testing.T, p *Pipeline, authoring string) []byte {
 }
 
 func TestGenerateConfigContractFixtures(t *testing.T) {
-	if os.Getenv("REGEN_FIXTURES") == "" {
+	if os.Getenv("REGEN_FIXTURES") != "1" {
 		t.Skip("set REGEN_FIXTURES=1 to regenerate engine config-contract fixtures")
 	}
 	p, err := NewPipeline(schemaPath(t))

@@ -100,7 +100,8 @@ func TestBoundaryRankMustExist(t *testing.T) {
 	plan.Structures[0].Type = "generation"
 	plan.Structures[0].resolvedCommission = &GenerationCommission{
 		Generation: GenerationCommissionConfig{
-			BoundaryRank: "Platinum",
+			MaxGenerations: 3,
+			BoundaryRank:   "Platinum",
 		},
 	}
 	// Update rank references to match the new structure name.
@@ -1541,5 +1542,38 @@ func TestGenerationMaxGenerationsPerRank_EmptyPasses(t *testing.T) {
 		require.False(t,
 			e.Code == "undefined_reference" && strings.Contains(e.Message, "max_generations_per_rank"),
 		)
+	}
+}
+
+// TestGenerationMaxGenerations_DefaultBelowOneFails pins HEU-442: the scalar
+// default max_generations must be >= 1 (a 0 default would exclude every earner).
+// Per-rank overrides of 0 are still allowed (tested separately) — only the
+// default is guarded here.
+func TestGenerationMaxGenerations_DefaultBelowOneFails(t *testing.T) {
+	plan := minimalPlanWithGenerationStructure()
+	gen := plan.Structures[0].resolvedCommission.(*GenerationCommission)
+	gen.Generation.MaxGenerations = 0
+
+	errs := validateBusinessRules(plan)
+	found := false
+	for _, e := range errs {
+		if e.Code == "value_out_of_range" && strings.Contains(e.Message, "max_generations") {
+			assert.Equal(t, SeverityError, e.Severity)
+			found = true
+		}
+	}
+	require.True(t, found, "expected value_out_of_range for max_generations=0, got: %v", errs)
+}
+
+func TestGenerationMaxGenerations_DefaultOnePasses(t *testing.T) {
+	plan := minimalPlanWithGenerationStructure()
+	gen := plan.Structures[0].resolvedCommission.(*GenerationCommission)
+	gen.Generation.MaxGenerations = 1
+
+	errs := validateBusinessRules(plan)
+	for _, e := range errs {
+		require.False(t,
+			e.Code == "value_out_of_range" && strings.Contains(e.Message, "max_generations"),
+			"unexpected max_generations error: %v", e)
 	}
 }

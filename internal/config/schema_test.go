@@ -111,6 +111,21 @@ func TestSchemaRejectsDepthFirstSpillover(t *testing.T) {
 	assert.True(t, foundViolation, "expected a schema_violation for depth_first spillover")
 }
 
+// TestSchemaAllowsPerRankMaxGenerationsZero pins HEU-442: a per-rank
+// max_generations_per_rank override of 0 (the calculator treats 0 as excluding
+// that rank) must pass the schema gate. The scalar max_generations keeps
+// minimum 1; only the per-rank map value allows 0.
+func TestSchemaAllowsPerRankMaxGenerationsZero(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/generation-plan.yaml")
+	require.Empty(t, p.validateSchema(base), "base generation fixture should validate cleanly")
+
+	perRankZero := replaceInYAML(t, base, "Executive: 3", "Executive: 0")
+	assert.Empty(t, p.validateSchema(perRankZero),
+		"a per-rank max_generations override of 0 should pass the schema gate")
+}
+
 func TestSchemaRejectsMissingCommission(t *testing.T) {
 	p, err := NewPipeline(schemaPath(t))
 	require.NoError(t, err)

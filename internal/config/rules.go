@@ -371,6 +371,14 @@ func validateStructureRefs(plan *CompensationPlan, ranks map[string]bool) []Vali
 	for i, s := range plan.Structures {
 		switch rc := s.resolvedCommission.(type) {
 		case *GenerationCommission:
+			if rc.Generation.MaxGenerations < 1 {
+				errs = append(errs, ValidationError{
+					Path:     fmt.Sprintf("/structures/%d/commission/generation/max_generations", i),
+					Code:     "value_out_of_range",
+					Message:  "max_generations must be >= 1 (per-rank overrides may be 0)",
+					Severity: SeverityError,
+				})
+			}
 			if rc.Generation.BoundaryRank != "" && !ranks[rc.Generation.BoundaryRank] {
 				errs = append(errs, ValidationError{
 					Path:     fmt.Sprintf("/structures/%d/commission/generation/boundary_rank", i),

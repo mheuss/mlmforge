@@ -1485,7 +1485,7 @@
           "type": "number",
           "minimum": 0,
           "maximum": 1,
-          "description": "Commission percentage at this level."
+          "description": "Commission rate for this streamline level, as a fraction in [0, 1] (e.g. 0.05 = 5%), not a whole-number percent. Matches the Rust engine's fraction contract."
         }
       }
     },

@@ -713,6 +713,44 @@ func TestLargeMatrixWarning(t *testing.T) {
 	assert.True(t, found, "expected large_matrix warning, got: %v", errs)
 }
 
+// TestStreamlineStreamsRequireAdditionalPerRank verifies that a streamline
+// structure with a streams block but a nil additional_per_rank is rejected at
+// the Go bypass layer. A nil Go map marshals to JSON null, which the Rust engine
+// rejects opaquely; the schema requires the field, so this guard mirrors that
+// requirement for schema-bypassing callers (analogous to the start_date guard).
+// An explicit empty map {} stays valid (HEU-513 Task 8A). Copilot flagged this
+// on PR #53.
+func TestStreamlineStreamsRequireAdditionalPerRank(t *testing.T) {
+	newStreamPlan := func(apr map[string]uint8) *CompensationPlan {
+		p := minimalPlan()
+		p.Structures[0].Name = "Stream"
+		p.Structures[0].Type = "streamline"
+		p.Structures[0].resolvedCommission = &StreamlineCommission{Streams: &StreamConfig{AdditionalPerRank: apr}}
+		p.Ranks[0].QualifiedStructures = []string{"Stream"}
+		p.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stream"}}
+		p.Ranks[1].QualifiedStructures = []string{"Stream"}
+		p.Ranks[1].Qualification.Structures = []StructureQualification{
+			{Structure: "Stream", PersonalVolume: 100, GroupVolume: 3000},
+		}
+		return p
+	}
+	missingErr := func(errs []ValidationError) bool {
+		for _, e := range errs {
+			if e.Code == "missing_required_field" && strings.Contains(e.Path, "streams/additional_per_rank") {
+				return true
+			}
+		}
+		return false
+	}
+
+	// nil (omitted) additional_per_rank -> rejected loud at Go, not opaque at Rust.
+	assert.True(t, missingErr(validateBusinessRules(newStreamPlan(nil))),
+		"nil additional_per_rank must be rejected")
+	// explicit empty {} -> allowed (Task 8A: empty stays present).
+	assert.False(t, missingErr(validateBusinessRules(newStreamPlan(map[string]uint8{}))),
+		"explicit empty additional_per_rank must be allowed")
+}
+
 // TestMatrixSpilloverDepthFirstRejected verifies that a matrix structure whose
 // spillover_direction is not breadth_first is rejected at business-rule
 // validation. The schema restricts the value and the engine's MatrixTree::new

@@ -513,6 +513,14 @@ func validateStructureRefs(plan *CompensationPlan, ranks map[string]bool) []Vali
 				}
 			}
 			if rc.Streams != nil {
+				if rc.Streams.AdditionalPerRank == nil {
+					errs = append(errs, ValidationError{
+						Path:     fmt.Sprintf("/structures/%d/commission/streams/additional_per_rank", i),
+						Code:     "missing_required_field",
+						Message:  fmt.Sprintf("structure %q streams block is missing required additional_per_rank (use {} for none; a nil map serializes to null, which the engine rejects)", s.Name),
+						Severity: SeverityError,
+					})
+				}
 				for rankName := range rc.Streams.AdditionalPerRank {
 					if !ranks[rankName] {
 						errs = append(errs, ValidationError{

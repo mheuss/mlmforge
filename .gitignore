@@ -79,6 +79,7 @@ credentials.json
 # ============================================================
 .claude/
 .antigravitycli/
+.cgcignore
 CLAUDE.md
 AGENTS.md
 BUGS_AND_TODOS.md

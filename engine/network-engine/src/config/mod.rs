@@ -7,8 +7,11 @@
 //!
 //! Every type and field is documented with its business meaning.
 //! This module IS the developer reference for the configuration
-//! surface. Design document (untracked, relative to project root):
-//! `docs/plans/2026-02-12-compensation-plan-config-design.md`
+//! surface. For the design behind it, relative to the project root:
+//! `content/design-rationale/015-compensation-plan-schema-and-wire-format.md`
+//! covers the Go/Rust contract, `docs/development/config-types.md` covers
+//! the byte-width alignment rules, and the per-structure configuration
+//! decisions are indexed in `content/design-rationale/INDEX.md`.
 
 pub mod binary;
 pub mod board_plan;

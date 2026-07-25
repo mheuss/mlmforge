@@ -1726,3 +1726,61 @@ func TestValidatePeriodAcceptsStartDate(t *testing.T) {
 	}
 	require.True(t, found, "an empty start_date should also be rejected")
 }
+
+// TestValidatePeriodRejectsMalformedStartDate pins HEU-507's format half. The
+// schema's "format": "date" is annotation-only under Draft 2020-12 because
+// pipeline.go never calls AssertFormat, so a malformed date clears the schema
+// gate and the presence check, then dies at the Rust NaiveDate boundary with an
+// opaque error. Parse it at the config layer instead.
+//
+// "2026-7-4" is a deliberate divergence. chrono accepts unpadded components;
+// Go's 2006-01-02 layout does not. Strict wins here: the schema declares
+// RFC 3339 full-date, and being stricter than the engine guarantees that
+// anything Go accepts, Rust also accepts. The looser direction would let the
+// opaque failure back in.
+func TestValidatePeriodRejectsMalformedStartDate(t *testing.T) {
+	cases := []struct {
+		name  string
+		value string
+	}{
+		{"month and day out of range", "2026-13-45"},
+		{"wrong shape", "07/24/2026"},
+		{"day not in month", "2026-02-30"},
+		{"unpadded components", "2026-7-4"},
+		{"datetime not date", "2026-07-24T00:00:00Z"},
+		{"no separators", "20260724"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			plan := minimalPlan()
+			v := tc.value
+			plan.Period.StartDate = &v
+
+			found := false
+			for _, e := range validateBusinessRules(plan) {
+				if e.Path == "/period/start_date" && e.Code == "invalid_value" {
+					assert.Equal(t, SeverityError, e.Severity)
+					found = true
+				}
+			}
+			assert.True(t, found,
+				"expected invalid_value at /period/start_date for %q", tc.value)
+		})
+	}
+}
+
+// TestValidatePeriodAcceptsWellFormedStartDate guards the other direction, so
+// the format check cannot be tightened into rejecting real dates.
+func TestValidatePeriodAcceptsWellFormedStartDate(t *testing.T) {
+	for _, v := range []string{"2026-07-24", "2026-01-01", "2026-12-31", "2024-02-29"} {
+		t.Run(v, func(t *testing.T) {
+			plan := minimalPlan()
+			s := v
+			plan.Period.StartDate = &s
+			for _, e := range validateBusinessRules(plan) {
+				assert.NotEqual(t, "/period/start_date", e.Path,
+					"%q is a valid date but produced: %v", v, e)
+			}
+		})
+	}
+}

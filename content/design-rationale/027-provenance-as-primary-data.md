@@ -1,5 +1,19 @@
 # 027: Provenance as Primary Data
 
+> **"ADR-NNN" in this document refers to the `DEVELOPMENT.md` sequence, not to
+> this folder's numbering.** The two are independent. See
+> [Numbering](INDEX.md#numbering).
+>
+> The distinction matters here. ADR-016 happens to match
+> `016-eventstore-design.md`, which makes the two sequences look aligned. They
+> are not. ADR-021 is *Tree Persistence as Event Projection*, while this
+> folder's `021` covers sponsor versus placement. ADR-003, ADR-010, and ADR-011
+> diverge the same way.
+>
+> `DEVELOPMENT.md` is not published, so these references do not resolve for
+> external readers yet. HEU-546 tracks moving the cited decisions into this
+> folder.
+
 ## The Problem
 
 Commission calculations are the source of disputes and regulatory audits. Every

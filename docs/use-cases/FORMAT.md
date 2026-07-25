@@ -11,7 +11,7 @@ Document a use-case when:
 
 Each use-case entry in a domain file follows this structure:
 
-```markdown
+````markdown
 ### UC-{domain}-{number}: {Title}
 
 **Added:** {version}
@@ -22,12 +22,12 @@ Each use-case entry in a domain file follows this structure:
 **Solution:** 2-3 sentences describing how it's solved, including key functions/types involved.
 
 **Usage:**
-\```go
+```go
 // Example showing how to use the solution
-\```
+```
 
 **Notes:** Any caveats, edge cases, or related use-cases.
-```
+````
 
 ## Domain File Structure
 

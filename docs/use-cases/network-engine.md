@@ -1,0 +1,338 @@
+# Network Engine Use-Cases
+
+Use-cases for the Network Engine bounded context.
+
+## Table of Contents
+
+- [UC-NET-001: Pass-up skip set precomputation](#uc-net-001-pass-up-skip-set-precomputation)
+- [UC-NET-002: Snapshot persistence constraint](#uc-net-002-snapshot-persistence-constraint)
+- [UC-NET-003: Generation boundary counting via breakaway_set](#uc-net-003-generation-boundary-counting-via-breakaway_set)
+- [UC-NET-004: Per-earner thresholds via filter-before-emit](#uc-net-004-per-earner-thresholds-via-filter-before-emit)
+- [UC-NET-005: Bottom-up rank evaluation with accumulating descendant context](#uc-net-005-bottom-up-rank-evaluation-with-accumulating-descendant-context)
+- [UC-NET-006: Per-leg structural rank qualification](#uc-net-006-per-leg-structural-rank-qualification)
+- [UC-NET-007: Integer-keyed BTreeMap inside an internally-tagged serde enum](#uc-net-007-integer-keyed-btreemap-inside-an-internally-tagged-serde-enum)
+- [UC-NET-008: Per-period rank result persistence](#uc-net-008-per-period-rank-result-persistence)
+- [UC-NET-009: Windowed and tenure rank-qualification gates](#uc-net-009-windowed-and-tenure-rank-qualification-gates)
+- [UC-NET-010: Periodic rank-evaluation driver](#uc-net-010-periodic-rank-evaluation-driver)
+- [UC-NET-011: Cross-language integer width contract](#uc-net-011-cross-language-integer-width-contract)
+
+---
+
+### UC-NET-001: Pass-up skip set precomputation
+
+**Added:** 0.x (HEU-23)
+**Files:** `engine/network-engine/src/commission/walk.rs`
+
+**Problem:** Australian X-Up requires skipping distributors in the commission walk for volume from their first N sponsored recruits. The skip decision depends on both the current node AND the volume source, unlike compression which is per-node only.
+
+**Solution:** `build_pass_up_context()` precomputes a `PassUpContext` containing `HashMap<Uuid, HashSet<Uuid>>` — maps each distributor to the set of source IDs that should trigger skipping. Enrollment order is determined by sorting `get_sponsored()` results by `Node.enrolled_at` with UUID tiebreak. When `includes_commissions = true`, the skip set expands to include the full subtree via `get_downline(recruit, 0)`.
+
+**Usage:**
+```rust
+let ctx = walk::build_pass_up_context(tree, &pass_up_config, &participant_ids);
+// Pass to LevelWalkConfig as pass_up: Some(&ctx)
+// Walk loop checks ctx.skip_sets.get(&node.user_id).contains(&source.source_id)
+```
+
+**Notes:** The generation calculator (HEU-11) does not use pass-up. It passes `pass_up: None` to the level walk config because generation plans define boundaries by rank, not enrollment order. When testing pass-up with plan-level config, avoid linear chain trees — every node's single child gets passed up, causing cascading skips. Use wider trees with multiple children per node.
+
+---
+
+### UC-NET-002: Snapshot persistence constraint
+
+**Added:** 0.x (HEU-30)
+**Files:** `engine/network-engine/src/tree/`, `engine/network-engine/src/board_plan/`
+
+**Problem:** Board plan engines manage many small boards with cycling history. Full event replay becomes expensive over time. All tree-layer data structures must support serialization for snapshot persistence.
+
+**Solution:** All types in the tree layer (Arena, Node, UnilevelTree, BinaryTree, MatrixTree, BoardPlanEngine, Board) derive `serde::Serialize` and `serde::Deserialize`. Snapshot persistence uses `serde_json`. Go handles storage scheduling and recovery flow (restore snapshot, replay events after snapshot sequence number).
+
+**Usage:**
+```rust
+// Serialize full engine state
+let snapshot = serde_json::to_string(&board_plan_engine)?;
+// Deserialize on recovery
+let engine: BoardPlanEngine = serde_json::from_str(&snapshot)?;
+```
+
+**Notes:** Adding a non-serializable type (function pointers, file handles, runtime-only state) to any tree-layer struct breaks snapshot persistence. This is a breaking change. See design-rationale 023.
+
+---
+
+### UC-NET-003: Generation boundary counting via breakaway_set
+
+**Added:** 0.x (HEU-11)
+**Files:** `engine/network-engine/src/commission/generation.rs`
+
+**Problem:** The standalone generation calculator needs to walk upward through the tree counting rank boundaries. The `count_generations_upward()` utility already does this for stairstep Walk 2 generation overrides, but its `breakaway_set` parameter is named for the stairstep context.
+
+**Solution:** Reuse `count_generations_upward()` directly. Map boundary-rank nodes to the `breakaway_set` parameter. The `boundary_check` closure controls whether ineligible nodes create boundaries (`ineligible_creates_boundary` flag). For ThresholdRank mode, one boundary set serves all sources. For SameRank mode, a separate boundary set is built per unique `(rank_name, ordinal)` pair, and results are filtered to earners at exactly that ordinal. The rank name is preserved alongside the ordinal so the per-walk termination depth can resolve via `earner_max_generations` (see UC-NET-004).
+
+**Usage:**
+```rust
+// ThresholdRank: one boundary set for all sources, one walk per source.
+// Walk depth is the deepest configured cap (walk_depth helper); per-earner
+// filtering happens after the walk (see UC-NET-004).
+let boundary_set: HashSet<Uuid> = snapshots.iter()
+    .filter(|(_, snap)| rank_ordinals.get(snap.rank.as_str()).copied().unwrap_or(0) >= threshold)
+    .map(|(id, _)| *id)
+    .collect();
+
+let entries = count_generations_upward(tree, source_id, &boundary_set, &boundary_check, walk_depth(cfg), empty_consumes);
+
+// SameRank: per-(rank_name, ordinal) walks with exact-ordinal filtering.
+// Each walk's termination depth is the per-rank cap (earner_max_generations).
+for &(rank_name, ordinal) in &unique_ranks {
+    let walk_max = earner_max_generations(rank_name, cfg);
+    let boundary_set = /* nodes >= ordinal */;
+    let entries = count_generations_upward(tree, source_id, &boundary_set, &check, walk_max, empty_consumes);
+    let filtered = entries.into_iter().filter(|e| earner_ordinal(e) == ordinal).collect();
+}
+```
+
+**Notes:** The `breakaway_set` name is a semantic mismatch documented in design-rationale 024. If a third consumer appears (HEU-288 infinity commission mode), extract a shared interface with a cleaner name. The project's three-case abstraction threshold applies. Update: a third consumer arrived in HEU-428 — `walk_multi_tier_overrides` in `commission/stairstep.rs` uses `count_generations_upward` with `|_| true` for boundary detection. The abstraction trigger is technically met but the semantic-mismatch payoff is muted for this consumer (its boundary set IS the breakaway set). Defer the rename until HEU-288 or a future consumer makes the rename pay. The `(rank_name, ordinal)` dedup key relies on rank ordinals being unique across the rank ladder; HEU-440 tracks adding upstream validation.
+
+---
+
+### UC-NET-004: Per-earner thresholds via filter-before-emit
+
+**Added:** 0.x (HEU-425)
+**Files:** `engine/network-engine/src/commission/generation.rs`
+
+**Problem:** Some plans configure per-earner thresholds on a shared walk (e.g., per-rank generation depth where silver earners cap at 2 generations and diamond earners cap at 7). Repeating the walk per earner is wasteful and complicates the call graph.
+
+**Solution:** Walk once to the deepest configured cap, then filter the emitted entries against each earner's own cap before commission emission. Two helpers cooperate:
+- `earner_max_generations(rank, cfg)` returns the per-earner cap with default fallback
+- `walk_depth(cfg)` returns the deepest cap any earner needs (max of default and all per-rank values)
+
+The filter sits between the walk primitive and `emit_*_earnings`. Look up the earner's rank in the snapshot map, resolve the cap via the helper, admit entries where `entry.generation <= cap`. The walk primitive (`count_generations_upward`) is unchanged — the filter is purely at the call site.
+
+**Usage:**
+```rust
+// ThresholdRank: walk once to the deepest cap, then filter per-earner
+let gen_entries = count_generations_upward(
+    tree, source.source_id, &boundary_set, &boundary_check,
+    walk_depth(cfg), cfg.empty_generation_consumes_number,
+);
+let filtered: Vec<_> = gen_entries.into_iter()
+    .filter(|entry| {
+        let rank = snapshots.get(&entry.earner_id).map(|s| s.rank.as_str()).unwrap_or("");
+        entry.generation <= earner_max_generations(rank, cfg)
+    })
+    .collect();
+emit_generation_earnings(&filtered, source, cfg, /* ... */);
+```
+
+**When to use this pattern:**
+- The walk is shared across earners (one walk per source, not per earner)
+- Per-earner thresholds vary based on earner attributes (rank, status, etc.)
+- The threshold is a one-sided cap (admit if `value <= cap`), not a complex predicate
+
+**When NOT to use this pattern:**
+- The walk can be naturally partitioned by the threshold attribute (e.g., SameRank already walks per rank ordinal — thread the cap into walk termination instead, like UC-NET-003 SameRank example)
+- The threshold requires walking deeper than otherwise necessary AND most earners have low caps (you'll do extra walk work for entries that get trimmed)
+
+**Notes:** The defensive `unwrap_or("")` for missing snapshots is unreachable in current code (the boundary set is built from snapshot keys), but is forward-compatible. If an internal invariant is broken upstream, prefer `expect("...")` to fail loudly. Empty per-rank maps must produce identical results to the absent-field case — regression-guarded by `calculate_generation_empty_per_rank_map_preserves_*_behavior` tests.
+
+---
+
+### UC-NET-005: Bottom-up rank evaluation with accumulating descendant context
+
+**Added:** 0.x (HEU-443), fixpoint iteration added in HEU-460
+**Files:** `engine/network-engine/src/rank/evaluator.rs`, `engine/network-engine/src/rank/mod.rs`, `engine/network-engine/src/rank/predicates.rs`
+
+**Problem:** Per-period rank evaluation needs a `DistributorCountRequirement` predicate that counts downline distributors whose evaluated rank meets a threshold (`min_rank`). The descendants haven't been evaluated yet when the ancestor is processed top-down, so the count is always zero.
+
+**Solution:** `evaluate_ranks` iterates to a fixpoint. `iterate_to_fixpoint` re-runs evaluation passes over an accumulating `already: HashMap<Uuid, EvaluatedRank>` until a pass changes no rank. Each `evaluate_distributor` call reads descendants' computed ranks from `already` and writes its own result back. Rank evaluation is monotone, so iteration from an empty map converges to the least fixpoint — a unique result independent of pass order, including for plans with circular cross-tree ancestry. `evaluation_order_for_users` (deepest-first, max depth across trees, UUID tiebreak) is retained as a heuristic that minimizes pass count. The final HashMap is moved into a `BTreeMap<Uuid, EvaluatedRank>` so JSON serialization emits user-id keys in ascending order (NFR2).
+
+**Usage:**
+```rust
+// engine-side
+let result = network_engine::rank::evaluate_ranks(&plan, &trees, &inputs)?;
+// result.ranks: BTreeMap<Uuid, EvaluatedRank>
+//   - Qualified { rank: "silver", ordinal: 2 }
+//   - Unranked
+
+// Go-side via EngineClient
+result, err := client.EvaluateRanks(ctx, networkengine.EvaluateRanksRequest{...})
+// result.Ranks: map[string]EvaluatedRankDTO with kind-tagged JSON
+```
+
+**When to use this pattern:**
+- A predicate needs to inspect already-computed values of descendants (rank, status, etc.)
+- The walk order is deterministic and the function returns must be deterministic (NFR2)
+
+**When NOT to use this pattern:**
+- The predicate only inspects the user's own primitives (use a simpler top-down pass)
+- The result needs to depend on ancestors' evaluations (no current predicate reads upward, so the pattern does not serve this today — but the fixpoint `already` map does hold ancestor ranks, so downward-only walking is a predicate convention, not a loop limitation)
+
+**Notes:** The ladder-ascent semantics inside `evaluate_distributor` iterate every rank in ascending ordinal and pick the highest passing one. A failed rank does NOT short-circuit — higher ranks may still pass and be selected. This handles ladder gaps where a distributor satisfies rank N+1 but not rank N (e.g., missing a required product unique to N).
+
+The handler at `engine/network-engine-worker/src/handlers/rank.rs` only registers tree navigators for structures referenced by at least one rank's `qualification.structures`. An empty list yields an empty result map — see the network-engine development note "Rank Evaluation: Empty `qualification.structures`" for the workaround pattern in tests.
+
+---
+
+### UC-NET-006: Per-leg structural rank qualification
+
+**Added:** 0.x (HEU-444)
+**Files:** `engine/network-engine/src/rank/predicates.rs`, `engine/network-engine/src/config/rank.rs`
+
+**Problem:** A rank can require N frontline legs that each contain a qualifying node. For example "3 legs each containing a Gold distributor" or "2 legs each with a 200+ personal-volume distributor". `DistributorCountRequirement` (UC-NET-005) counts the flat downline and cannot express a per-leg structural requirement.
+
+**Solution:** `leg_quality_meets` evaluates a `Vec<LegQualityRequirement>` against a distributor's frontline legs. A "leg" is a direct child plus that child's entire subtree. For each requirement it counts the legs whose subtree contains a node matching the requirement's `LegPredicate`. It passes only when every requirement's leg count is met, so requirements are AND-combined. Three single-responsibility functions split the work: `leg_quality_meets` does per-requirement leg counting, `leg_contains_match` scans one leg's subtree and short-circuits on the first match, and `node_matches` tests one node against `ContainsRank` or `ContainsPersonalVolume`. It is wired into `satisfies` next to `distributor_count`, and is the sibling predicate of `distributor_count_meets`.
+
+**Usage:**
+```rust
+// StructureQualification.leg_quality: Vec<LegQualityRequirement>
+// LegQualityRequirement { count: u16, predicate: LegPredicate }
+// LegPredicate::ContainsRank { min_rank } | LegPredicate::ContainsPersonalVolume { min_personal_volume }
+//
+// satisfies() calls leg_quality_meets alongside distributor_count_meets.
+// Both AND-combine into the structure's qualification result.
+```
+
+**When to use this pattern:**
+- A rank criterion is about the shape of individual legs, not the flat downline total
+- The criterion is "at least N legs that each satisfy a per-leg condition"
+
+**Notes:** `ContainsRank` reads each node's evaluated rank from the `already` map, so it depends on UC-NET-005's fixpoint rank evaluation having populated that map. An empty `leg_quality` is an exact no-op. It makes no tree calls, which preserves pre-feature behaviour (BR5). `ContainsRank`'s `min_rank` is validated in the Go layer (`validateRanks` in `rules.go`) for an undefined or non-lower-ordinal reference. `node_matches` raises `UnknownMinRank` as defense in depth.
+
+---
+
+### UC-NET-007: Integer-keyed BTreeMap inside an internally-tagged serde enum
+
+**Added:** 0.x (HEU-428)
+**Files:** `engine/network-engine/src/config/stairstep.rs`
+
+**Problem:** When a Rust type with `#[serde(tag = "type")]` nests another type whose field is `BTreeMap<u8, _>` (or any integer-keyed map), `serde_json`'s string-to-int key coercion is stripped by the internally-tagged enum's `Content` intermediate buffer. JSON like `{"1": 0.05}` no longer deserializes into the map. The inner type passes its own tests in isolation; the bug only appears at the tagged-enum boundary.
+
+**Solution:** Add a `#[serde(deserialize_with = "...")]` helper on the field that goes through `BTreeMap<String, _>` first and parses the keys:
+
+```rust
+fn deserialize_u8_keyed_rates<'de, D>(d: D) -> Result<BTreeMap<u8, f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: BTreeMap<String, f64> = BTreeMap::deserialize(d)?;
+    raw.into_iter()
+        .map(|(k, v)| k.parse::<u8>().map(|k| (k, v)).map_err(serde::de::Error::custom))
+        .collect()
+}
+```
+
+The same `deserialize_with` precedent exists in `engine/network-engine/src/config/bonus.rs`.
+
+**When to use this pattern:**
+- A type owns a `BTreeMap<Int, _>` field that needs to accept JSON string keys.
+- That type is nested inside an internally-tagged enum (`#[serde(tag = "type")]`).
+
+**Notes:** Discovered in HEU-428 Task 2 when restructuring `BreakawayConfig` into an `OverrideStrategy` tagged enum. Without the helper, the existing `deserialize_breakaway_config` test broke even though the JSON shape was the migrated equivalent of the original. Rejected alternatives: pulling `serde_json` into main deps (heavier surface change), a `Value`-based manual deserialize (requires the dep), and a hand-rolled `Visitor` (verbose).
+
+---
+
+### UC-NET-008: Per-period rank result persistence
+
+**Added:** v0.0.1 (HEU-445)
+**Files:** `internal/networkengine/qualification_history_store.go`,
+`internal/networkengine/qualification_history_store_postgres.go`,
+`internal/networkengine/engine_client.go`
+
+**Problem:** Per-period rank evaluation results need durable storage so windowed and tenure predicates can read history across periods, without changing the Rust engine's stateless wire protocol.
+
+**Solution:** Opt-in `WithPersistence(periodID, store)` option on `EngineClient.EvaluateRanks`. Writes use DELETE-then-`pgx.CopyFrom` inside one transaction so re-evaluation completely replaces a period (BR5). PK is `(period_id, user_id)`; secondary `(user_id, period_id)` index serves multi-period reads.
+
+**Usage:**
+```go
+store := networkengine.NewPostgresQualificationHistoryStore(pool)
+result, err := client.EvaluateRanks(ctx, req,
+    networkengine.WithPersistence("2026-05", store))
+```
+
+**Notes:** `period_id` is opaque and compared lexicographically. Callers must zero-pad so widths sort correctly. Missing rows mean "not evaluated"; rows with `rank IS NULL` mean "evaluated, did not qualify" (Unranked). On store-write failure the engine result is still returned alongside a wrapped error (NFR4: prior period rows survive). The `qualificationHistoryCopySource` is the reference adapter for future bulk-write callers in this codebase. HEU-516 added `GetByUsersAndPeriodRange`, a batched read that returns a distributor set's rows across a period range in one index-served query.
+
+---
+
+### UC-NET-009: Windowed and tenure rank-qualification gates
+
+**Added:** v0.0.1 (HEU-446)
+**Files:** `engine/network-engine/src/rank/predicates.rs`, `engine/network-engine/src/config/rank.rs`, `engine/network-engine/src/rank/evaluator.rs`, `internal/networkengine/history_window.go`, `internal/config/rules.go`
+
+**Problem:** A rank can require sustained past performance, not just current-period criteria. Two shapes: "achieved >= rank R in N of the last M periods" (windowed, G2) and "held >= rank R for X consecutive periods" (tenure, G13). The current-period evaluator (UC-NET-005) only sees the current snapshot.
+
+**Solution:** Two optional, additive gates on `RankQualification` — `window: Option<RankQualificationWindow>` and `tenure: Option<TenureRequirement>` — read a caller-supplied prior-period achieved-rank history. Go's `BuildHistoryWindow` fetches the window from the `QualificationHistoryStore` (UC-NET-008), pivots it per-distributor, and passes it into the stateless `evaluate_ranks` op as `history_window` (most-recent-first axis) plus `history`. The Rust evaluator reads both through an `EvalCtx` bundle. `windowed_meets` counts at-or-above-threshold periods in the M most-recent and passes at N; `tenure_meets` requires the X most-recent to be consecutively at-or-above. Both AND-combine with base criteria in `satisfies`.
+
+**Usage:**
+```rust
+// RankQualification.window: Option<RankQualificationWindow { threshold_rank, qualifying_periods: u8, window_periods: u8 }>
+// RankQualification.tenure: Option<TenureRequirement { threshold_rank, periods: u8 }>
+// satisfies() AND-combines window + tenure with the structure/base criteria.
+```
+```go
+// axis is most-recent-first (period_id DESC); BuildHistoryWindow pivots store rows to per-distributor history.
+_, hist, _ := networkengine.BuildHistoryWindow(ctx, store, []uuid.UUID{u}, axis)
+res, _ := client.EvaluateRanks(ctx, networkengine.EvaluateRanksRequest{ /* ... */ HistoryWindow: axis, History: hist })
+```
+
+**When to use this pattern:**
+- A rank gate depends on prior-period achieved rank, not just the current snapshot.
+- The gate is "N of the last M" (windowed) or "X consecutive" (tenure).
+
+**Notes:** A missing history key or an Unranked (`null`) period both count as below-threshold (BR6). An insufficient axis (shorter than the window) fails the gate (BR5). The threshold rank may be equal or higher ordinal than the current rank — unlike `min_rank`, there is no lower-only rule. Validation (N>=1, M>=1, N<=M, threshold existence) lives in Go `validateRanks`; `MaxHistoryDepth` sizes the axis. The fail-loud empty-axis guard (`TimeGateWithoutHistory`, BR9) is engine-side because the Go client has no plan. Builds on UC-NET-008 (persistence). The periodic driver that generates `period_id`s is HEU-501. `BuildHistoryWindow`'s fetch is now a single bounded `GetByUsersAndPeriodRange` over the requested distributors and axis range (HEU-516), replacing the original per-period `GetByPeriod` fan-out, which fetched every distributor's row for each period and discarded all but the requested distributors'.
+
+---
+
+### UC-NET-010: Periodic rank-evaluation driver
+
+**Added:** v0.0.1 (HEU-501)
+**Files:** `internal/networkengine/rank_driver.go`,
+`internal/networkengine/period_input_provider.go`,
+`internal/period/period.go`
+
+**Problem:** Windowed and tenure gates (UC-NET-009) need per-period rank history to exist — something must evaluate and persist each period in order, supply the prior-period axis, and backfill a range, without the Rust engine (which is stateless and has no clock).
+
+**Solution:** `RankDriver` composes the existing pieces for one period: `config.MaxHistoryDepth` sizes the axis, `period.Sequence.PriorLabels` builds the strictly-prior DESC axis, `BuildHistoryWindow` (UC-NET-008) fetches it, and `EvaluateRanks(WithPersistence)` evaluates and persists. `Backfill` loops the same call oldest-first so each period reads the rows the earlier ones just wrote. Per-period distributor inputs come from an injected `PeriodInputProvider` (the seam for a real volume/order source). The pure `internal/period` package turns a plan's `PeriodConfig` into ordered, sortable `period_id` labels via date-only civil-date math (week, semi-month, month, quarter).
+
+**Usage:**
+```go
+driver, _ := networkengine.NewRankDriver(client, store, plan, provider)
+// One period (asOf falls anywhere inside it):
+_, _ = driver.EvaluatePeriod(ctx, time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC))
+// Backfill a contiguous range, oldest-first, accumulating history:
+_ = driver.Backfill(ctx, from, to)
+```
+
+**When to use this pattern:**
+- You need to populate or backfill `qualification_history` so windowed/tenure gates have an axis to read.
+- You need ordered, sortable `period_id`s from a plan's period config.
+
+**Notes:** The driver normalizes nil `distributors`/`volume_sources`/`active_products` to `{}`/`[]` before the engine call — those Rust fields have no `serde(default)`, so a JSON `null` fails to deserialize (see `docs/development/network-engine.md`). A no-gate plan (depth 0) sends no history axis. `Backfill` is fail-stop: the first failing period stops the run and is named; earlier periods stay persisted and re-running replaces them (full-replacement `SaveResult`), so retry is safe. Evaluating a period before the plan's start is rejected (BR9). Single-plan/context assumption: `qualification_history` PK is `(period_id, user_id)` with no plan/tenant scope (multi-plan scoping is HEU-506). Builds on UC-NET-008 (persistence) and UC-NET-009 (gates).
+
+---
+
+### UC-NET-011: Cross-language integer width contract
+
+**Added:** v0.0.1 (HEU-513)
+**Files:** `engine/testdata/config_contract/width_manifest.json`,
+`internal/config/width_contract_test.go`,
+`engine/network-engine/tests/config_width_contract.rs`,
+`internal/config/genfixtures_test.go`
+
+**Problem:** The compensation-plan config contract is hand-maintained in three places — `schemas/compensation-plan.schema.json`, Go `internal/config`, and the Rust engine config. A Go `int` mirroring a Rust `u8` accepts 300, then fails deep inside the engine or truncates. Nothing caught the drift, and nothing stopped a new field from reintroducing it.
+
+**Solution:** `width_manifest.json` is the single list of every narrow-mirror field. Each entry carries `go_type`, `rust_type`, `over_max`, and three RFC 6901 pointers — `schema_pointer` (schema), `go_pointer` (authoring shape), `engine_pointer` (post-`translateToEngine` wire shape) — so each layer mutates one field of a real payload in its own shape. Five tests read it. Go: `TestConfigContract_FieldsMatchAndRejectOverMax` (the declared Go type still matches the manifest, and `over_max` is rejected by the real two-pass decode), `TestConfigContract_SchemaMaxWithinType` (the schema's `maximum` fits the type's capacity), `TestConfigContract_NoUntypedIntFields` (package-wide AST scan — any signed int field in `internal/config` must be manifested or allow-listed with a reason), and `TestConfigContractFixturesMatchPipeline` (live `translateToEngine` output byte-equals each committed fixture). Rust: `rust_config_rejects_over_max_widths` deserializes each engine fixture pristine first, then sets one field to `over_max` and requires serde to reject.
+
+**Usage:**
+```bash
+# After adding a config field that mirrors a narrow Rust type:
+# 1. Add a manifest entry (or an allow_list entry with a reason).
+# 2. Regenerate the engine fixtures:
+REGEN_FIXTURES=1 go test ./internal/config/ -run TestGenerateConfigContractFixtures
+# 3. Run both halves of the contract (cargo must run from engine/ — no root Cargo.toml):
+go test ./internal/config/ && (cd engine && cargo test --test config_width_contract)
+```
+
+**When to use this pattern:**
+- You are adding a config field that mirrors a narrow Rust type.
+- A new integer field fails `TestConfigContract_NoUntypedIntFields`.
+
+**Notes:** Completeness is enforced Go-side only — the Rust test pins known fields, and the AST scan is what stops new drift. That scan is AST-only, so a signed int hidden behind a named type (`type Depth int32`) or an embedded field slips past; catching those would need a `go/types`-based scan. Commission fields sit behind `CommissionRaw` and only decode into their typed struct during `resolveCommissions`, which is why the Go test uses the real two-pass decode — unmarshalling the plan alone never exercises them. The decode stops before business validation deliberately, so a rejection proves the field's *type* rejected the value rather than some business rule capping it. Both boundary tests fail loudly on an unresolvable pointer instead of passing vacuously. `TestConfigContractFixturesMatchPipeline` is what keeps the Rust half honest: the fixtures are only REGEN-written, never compared, so without the golden check a `translate.go` regression would desync them from real output while the Rust test read stale files and stayed green. A field with `omitempty` (e.g. `board_cycling.max_cascade_depth`) must keep a non-default value in its fixture or its `engine_pointer` will not resolve. Go struct names do not map to Rust struct names — `UnilevelCommission.CommissionableDepth` is Rust `LevelCommissionConfig.max_depth`, and `BoardCyclingConfig` lives in two Rust modules — which is why the Rust side deserializes the whole plan instead of mapping per-struct. `REGEN_FIXTURES` must be exactly `1`. The parallel scan for wire DTO fields in `wire_types.go` is not built yet (HEU-544). See `docs/development/config-types.md`.

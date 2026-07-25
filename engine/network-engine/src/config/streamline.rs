@@ -71,16 +71,25 @@ pub struct StreamlineLevel {
 /// Multi-stream configuration for streamline plans.
 ///
 /// Higher ranks earn additional streams, each an independent
-/// commission chain. Excess streams freeze on rank demotion (not
-/// destroyed). Frozen streams lose commission eligibility but retain
-/// positions.
+/// commission chain. On rank demotion, excess streams either freeze or
+/// are destroyed. `freeze_on_demotion` picks which. Frozen streams lose
+/// commission eligibility but retain positions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamConfig {
     /// Rank name to number of additional streams unlocked at that rank.
     ///
-    /// Cumulative with lower ranks. For example, if "silver" unlocks 1
-    /// and "gold" unlocks 2, a gold-ranked distributor has 1 + 2 = 3
-    /// additional streams (plus the primary stream).
+    /// Whether these counts are cumulative or absolute is undecided.
+    /// Cumulative means "silver" unlocking 1 and "gold" unlocking 2
+    /// gives a gold distributor 1 + 2 = 3 additional streams. Absolute
+    /// gives 2.
+    ///
+    /// Nothing reads these values yet. This engine is rank-agnostic.
+    /// `expand_streams` and `update_stream_allowance` take a
+    /// pre-computed `total_allowed`. Go carries and validates this map
+    /// but does not resolve it to a total.
+    ///
+    /// Decide when the rank-to-total resolver is built, driven by a real
+    /// plan. Do not assume either reading before then. See HEU-558.
     #[serde(rename = "additional_per_rank")]
     pub additional_streams: BTreeMap<String, u8>,
 

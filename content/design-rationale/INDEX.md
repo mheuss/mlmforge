@@ -8,7 +8,7 @@ MLMForge's architecture is informed by years of building and operating a product
 
 ## Numbering
 
-This folder uses its own numbering sequence (001 through 026). DEVELOPMENT.md has a separate ADR sequence (ADR-001 through ADR-020).
+This folder uses its own numbering sequence. DEVELOPMENT.md has a separate ADR sequence. The two are independent. Some numbers appear in both and refer to different decisions.
 
 The two sequences cover different scopes. DEVELOPMENT.md ADRs document high-level architectural decisions like language choice, persistence strategy, and modularity. The `content/design-rationale/` folder documents detailed per-domain design decisions like tree implementation, compensation config, and interface contracts.
 

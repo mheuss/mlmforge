@@ -2,7 +2,7 @@
 
 ## The Problem
 
-Matrix plans use a fixed-width, fixed-depth tree. Positions fill algorithmically. The company controls the shape. This creates spillover excitement (new recruits appear below you without your effort) and structural guarantees (everyone has the same number of slots).
+Matrix plans use a fixed-width tree with a fixed commission depth. A "3x9" matrix is 3 wide and pays 9 levels down. Positions fill algorithmically. The company controls the shape. This creates spillover excitement (new recruits appear below you without your effort) and structural guarantees (everyone has the same number of slots).
 
 Matrix also has a cycling variant called the board plan, where small matrices split when full.
 
@@ -15,7 +15,7 @@ This document covers the configurable options specific to matrix commission calc
 | **Width** | integer (>= 2) | Maximum children per node. A 3-wide matrix means each person has exactly 3 slots below them. |
 | **Height** | integer (>= 1) | Maximum commissionable depth. Caps how many levels down the commission walk pays. Does not bound tree growth. |
 
-A 3x9 matrix has 29,524 theoretical positions. A 5x10 has around 12 million. The admin UI should warn when configured dimensions create an unreasonable number of positions (threshold: 1,000,000).
+A 3x9 matrix has 29,524 theoretical positions in one distributor's commissionable window — the root plus nine levels. A 5x10 has around 12 million. These counts size the commission walk, not the tree. The admin UI should warn when configured dimensions create an unreasonable number of positions (threshold: 1,000,000).
 
 Width is a structural invariant enforced at the tree level. The tree rejects children beyond the width.
 

@@ -6,7 +6,12 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
+
+// startDateLayout is RFC 3339 full-date, matching the schema's
+// "format": "date" on /period/start_date.
+const startDateLayout = "2006-01-02"
 
 // validateBusinessRules runs all business-rule checks against a parsed
 // CompensationPlan. Returns a slice of ValidationError. An empty slice
@@ -37,12 +42,31 @@ func validateBusinessRules(plan *CompensationPlan) []ValidationError {
 // Rust deserializes it into a NaiveDate (no default), so a nil/empty value on a
 // schema-bypass path (programmatic builder, direct validateBusinessRules) would
 // otherwise reach the engine as an opaque failure. HEU-507.
+//
+// The format is checked here too. The schema marks start_date with
+// "format": "date", but that is annotation-only: pipeline.go builds the
+// compiler without AssertFormat, and jsonschema v6 only forces format
+// assertion on for drafts older than 2019 (ours is 2020-12). So a malformed
+// date clears every schema gate and reaches the same NaiveDate boundary.
+//
+// This is deliberately stricter than chrono, which accepts unpadded
+// components ("2026-7-4"). Being stricter than the engine guarantees that
+// anything accepted here also deserializes there. The looser direction would
+// let the opaque failure back in.
 func validatePeriod(plan *CompensationPlan) []ValidationError {
 	if plan.Period.StartDate == nil || *plan.Period.StartDate == "" {
 		return []ValidationError{{
 			Path:     "/period/start_date",
 			Code:     "missing_required_field",
 			Message:  "start_date is required",
+			Severity: SeverityError,
+		}}
+	}
+	if _, err := time.Parse(startDateLayout, *plan.Period.StartDate); err != nil {
+		return []ValidationError{{
+			Path:     "/period/start_date",
+			Code:     "invalid_value",
+			Message:  fmt.Sprintf("start_date %q is not a valid YYYY-MM-DD date", *plan.Period.StartDate),
 			Severity: SeverityError,
 		}}
 	}

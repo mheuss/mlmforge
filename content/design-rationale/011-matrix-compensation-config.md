@@ -13,11 +13,15 @@ This document covers the configurable options specific to matrix commission calc
 | Option | Type | What it controls |
 |--------|------|-----------------|
 | **Width** | integer (>= 2) | Maximum children per node. A 3-wide matrix means each person has exactly 3 slots below them. |
-| **Height** | integer (>= 1) | Maximum depth. The tree cannot grow deeper than this. Also defines the maximum commissionable depth. |
+| **Height** | integer (>= 1) | Maximum commissionable depth. Caps how many levels down the commission walk pays. Does not bound tree growth. |
 
 A 3x9 matrix has 29,524 theoretical positions. A 5x10 has around 12 million. The admin UI should warn when configured dimensions create an unreasonable number of positions (threshold: 1,000,000).
 
-Width and height are structural invariants enforced at the tree level. The tree rejects children beyond the width and placements beyond the height.
+Width is a structural invariant enforced at the tree level. The tree rejects children beyond the width.
+
+Height is not a tree bound. The matrix tree grows to any depth. Every distributor has their own height-deep commission window into one shared genealogy, so a tree that stopped at the configured height would prevent anyone below that level from enrolling. A 3x9 matrix company could not place distributor 29,525.
+
+The board plan is different. A board is a genuinely bounded container, which is why it cycles when it fills. That is a separate structure type with its own storage. See the board plan section below.
 
 ## Commission Options
 
@@ -29,7 +33,7 @@ Matrix uses the same level-based commission walk as unilevel. The rate table is 
 commission = CV x broad_commission_percent x volume_to_dollar_multiplier x rate_table[rank][level]
 ```
 
-All options from decision 009 (rate table, broad commission percent, volume-to-dollar multiplier, commissionable depth) apply. Commissionable depth must be less than or equal to the matrix height.
+All options from decision 009 (rate table, broad commission percent, volume-to-dollar multiplier, commissionable depth) apply. The effective commission depth is `min(commissionable_depth, height)`. Whichever is smaller wins. Neither is rejected for exceeding the other.
 
 ### Compression
 

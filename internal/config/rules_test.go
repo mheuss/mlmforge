@@ -1760,6 +1760,11 @@ func TestValidatePeriodRejectsMalformedStartDate(t *testing.T) {
 			for _, e := range validateBusinessRules(plan) {
 				if e.Path == "/period/start_date" && e.Code == "invalid_value" {
 					assert.Equal(t, SeverityError, e.Severity)
+					// The offending value must survive into the message. Without
+					// it the operator is back to guessing which field was bad,
+					// which is the opaque failure this check exists to replace.
+					assert.Contains(t, e.Message, tc.value,
+						"error message should name the rejected value")
 					found = true
 				}
 			}

@@ -87,7 +87,19 @@ VERSION_HISTORY.md
 DEVELOPMENT.md
 ACCESSIBILITY.md
 CHANGELOG.md
-docs/
+
+# Most of docs/ is working material that should not ship: plans, handoff
+# notes, review transcripts, audits, and third-party compensation-plan PDFs.
+# Ignore the contents by default and opt subtrees in one at a time.
+#
+# This ignores docs/* (the contents), not docs/ itself. Git does not descend
+# into an excluded directory, so "docs/" plus a negation would not work.
+#
+# A NEW subdirectory under docs/ is invisible until it gets a line here. That
+# is deliberate: docs stay private until someone opts them in. See HEU-551.
+docs/*
+!docs/development/
+!docs/use-cases/
 
 # Git worktrees
 .worktrees/

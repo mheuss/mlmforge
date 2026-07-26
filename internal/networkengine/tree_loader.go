@@ -544,6 +544,6 @@ func cycleError(treeID string, nodes []TreeNodeRow, ordered []*TreeNodeRow, byID
 		via = fmt.Sprintf(", reached from %s", path[len(path)-2])
 	}
 	return fmt.Errorf(
-		"tree %s: %d of %d nodes cannot be replayed; the replay order stops at %s%s, whose parent or sponsor cannot be resolved",
+		"tree %s: %d of %d nodes cannot be replayed (the replay order stops at %s%s, whose parent or sponsor cannot be resolved)",
 		treeID, len(stuck), len(nodes), stopped, via)
 }

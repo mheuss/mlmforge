@@ -1106,9 +1106,13 @@ func TestTreeLoader_LoadMatrixTree_RequiresParams(t *testing.T) {
 
 	// Matrix tree with no WithMatrixParams: the loader has no width/spillover
 	// to create with, so it must fail fast before touching the engine.
+	//
+	// Assert the guard's own message, not just "matrix". A zero-valued cfg also
+	// trips validateNodes' width range check, whose message contains "matrix"
+	// too — so the looser assertion passed even with this guard deleted.
 	err := loader.LoadTree(ctx, "m-tree", "matrix")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "matrix")
+	assert.Contains(t, err.Error(), "requires width and spillover")
 	assert.Empty(t, mutator.matrixCreated)
 	assert.Empty(t, mutator.created)
 	assert.Empty(t, mutator.roots)

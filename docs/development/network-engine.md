@@ -296,7 +296,9 @@ Root **parent** and **position** are the opposite: `AddRoot` accepts neither, so
 
 Every tree type resolves the sponsor at insert time and rejects one that is not present yet (`unilevel.rs`, `binary.rs`, `matrix.rs`). Depth order satisfies parents — a parent is always shallower — but says nothing about sponsors.
 
-Automatic spillover always places a recruit below their sponsor, so depth order happened to work. Explicit placement removes that coincidence: an admin override can put a node at depth 1 whose sponsor sits at depth 10, and depth-ordered replay then fails mid-tree with `SPONSOR_NOT_FOUND`.
+Automatic spillover always places a recruit below their sponsor, so depth order happened to work. Explicit placement removes that coincidence: an admin override can put a node at depth 1 whose sponsor sits at depth 10, and depth-ordered replay then fails mid-tree.
+
+The error code differs by type, which matters when grepping logs. Only `MatrixTree` remaps the failure to `SponsorNotFound` → `SPONSOR_NOT_FOUND`. `UnilevelTree` and `BinaryTree` let the bare resolve error through, so they report `USER_NOT_FOUND` for the same fault.
 
 `orderForReplay` topologically sorts on both edges. Do not replace it with a depth sort.
 

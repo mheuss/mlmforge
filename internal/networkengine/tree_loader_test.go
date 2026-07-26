@@ -124,7 +124,7 @@ func TestTreeLoader_SkipsRemovedNodes(t *testing.T) {
 	assert.Equal(t, "add_root", transport.ops[1])
 }
 
-func TestTreeLoader_RootWithNonZeroDepth(t *testing.T) {
+func TestTreeLoader_NoDepthZeroRoot(t *testing.T) {
 	store := NewMemoryTreeStore()
 	ctx := context.Background()
 
@@ -373,6 +373,37 @@ func TestTreeLoader_ValidationFailures_Structural(t *testing.T) {
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.wantErr)
 			assert.Zero(t, mutator.totalCalls(), "preflight failure must make no engine calls")
+		})
+	}
+}
+
+// TestValidateNodes_RootSponsorIsExempt pins the deliberate exemption in
+// validateNodes: the root skips every non-root check, including sponsor
+// existence. AddRoot takes no sponsor and the engine root is sponsor: None, so
+// whatever a root row stores is projection metadata, not a replay input.
+//
+// Every other fixture in this package gives the root a self-sponsor, which
+// only exercises one of the three shapes. Without the other two, hoisting the
+// sponsor existence check above the root skip would still pass the suite.
+// Task 5 asserts the ordering half of this; the validation half ships here.
+func TestValidateNodes_RootSponsorIsExempt(t *testing.T) {
+	tests := []struct {
+		name        string
+		rootSponsor *string
+	}{
+		{name: "nil sponsor", rootSponsor: nil},
+		{name: "self sponsor", rootSponsor: ptr("u0")},
+		{name: "another node in the tree", rootSponsor: ptr("u1")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nodes := []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, tt.rootSponsor, nil),
+				makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), nil),
+			}
+
+			require.NoError(t, validateNodes("t", "unilevel", loadTreeConfig{}, nodes))
 		})
 	}
 }

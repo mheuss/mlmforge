@@ -112,6 +112,10 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 // supportedTreeTypes are the structures LoadTree knows how to replay. Anything
 // else would reach the worker as an unknown type after the engine had already
 // been mutated.
+//
+// This mirrors the worker's create_tree dispatch
+// (engine/network-engine-worker/src/handlers/tree.rs) and is not generated
+// from it. A new tree type has to be added in both places.
 var supportedTreeTypes = map[string]bool{
 	"unilevel": true,
 	"binary":   true,
@@ -125,11 +129,18 @@ var supportedSpillover = map[string]bool{
 	"breadth_first": true,
 }
 
-// validateNodes proves the node set is reconstructable before any engine
-// mutation. A tree that fails here leaves the engine untouched, so the load
-// can be retried once the data is corrected. This matters because the worker
-// has no operation to drop a structure (HEU-557): a partially built tree
-// would be stuck until the process restarts.
+// validateNodes proves the node set is structurally consistent before any
+// engine mutation. A tree that fails here leaves the engine untouched, so the
+// load can be retried once the data is corrected. This matters because the
+// worker has no operation to drop a structure (HEU-557): a partially built
+// tree would be stuck until the process restarts.
+//
+// Structural consistency is only half of "reconstructable". This function
+// proves every parent and sponsor exists in the set; it does not prove they
+// can be replayed in an order that satisfies the engine. A node may legally
+// sit shallower than its own sponsor, and the engine resolves a sponsor at
+// insert time, so depth order alone can still fail mid-replay. orderForReplay
+// closes that half.
 //
 // cfg supplies matrix width and spillover. Binary positions are fixed at 0
 // and 1; unilevel nodes carry no position.
@@ -148,11 +159,14 @@ func validateNodes(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNode
 		}
 	}
 
-	byID := make(map[string]TreeNodeRow, len(nodes))
+	// Pointers, not values: a distributor network can hold hundreds of
+	// thousands of rows, and TreeNodeRow is wide. nodes is never mutated here,
+	// so the pointers stay valid for the life of the call.
+	byID := make(map[string]*TreeNodeRow, len(nodes))
 	var root *TreeNodeRow
 
 	for i := range nodes {
-		n := nodes[i]
+		n := &nodes[i]
 		if _, dup := byID[n.UserID]; dup {
 			return fmt.Errorf("tree %s has duplicate user %s (data corruption?)", treeID, n.UserID)
 		}
@@ -162,7 +176,7 @@ func validateNodes(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNode
 				return fmt.Errorf("tree %s has more than one depth-0 root (%s and %s)",
 					treeID, root.UserID, n.UserID)
 			}
-			root = &nodes[i]
+			root = n
 		}
 	}
 	if root == nil {
@@ -173,11 +187,11 @@ func validateNodes(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNode
 	// carrying either describes a topology the engine cannot reproduce. Root
 	// sponsorship is deliberately exempt — see design section 5.
 	if root.ParentID != nil {
-		return fmt.Errorf("root %s in tree %s has parent %s; the engine root has no parent",
+		return fmt.Errorf("root %s in tree %s has parent %s (the engine root has no parent)",
 			root.UserID, treeID, *root.ParentID)
 	}
 	if root.Position != nil {
-		return fmt.Errorf("root %s in tree %s has position %d; the engine root occupies no slot",
+		return fmt.Errorf("root %s in tree %s has position %d (the engine root occupies no slot)",
 			root.UserID, treeID, *root.Position)
 	}
 

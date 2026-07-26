@@ -53,33 +53,21 @@ type nodeAddCall struct {
 }
 
 func (s *stubMutator) CreateTree(_ context.Context, structure, _ string) error {
-	if s.failWith != nil {
-		return s.failWith
-	}
 	s.created = append(s.created, structure)
-	return nil
+	return s.failWith
 }
 
 func (s *stubMutator) CreateMatrixTree(_ context.Context, structure string, width int, spillover string) error {
-	if s.failWith != nil {
-		return s.failWith
-	}
 	s.matrixCreated = append(s.matrixCreated, matrixCreate{structure: structure, width: width, spillover: spillover})
-	return nil
+	return s.failWith
 }
 
 func (s *stubMutator) AddRoot(_ context.Context, _, userID string, _ int64) error {
-	if s.failWith != nil {
-		return s.failWith
-	}
 	s.roots = append(s.roots, userID)
-	return nil
+	return s.failWith
 }
 
 func (s *stubMutator) AddNode(_ context.Context, _, userID, parentID, sponsorID string, _ int64, opts ...AddNodeOption) error {
-	if s.failWith != nil {
-		return s.failWith
-	}
 	s.nodes = append(s.nodes, userID)
 
 	// Decode the option set the way EngineClient does, so tests see the
@@ -93,20 +81,17 @@ func (s *stubMutator) AddNode(_ context.Context, _, userID, parentID, sponsorID 
 		call.position = &p
 	}
 	s.nodeCalls = append(s.nodeCalls, call)
-	return nil
+	return s.failWith
 }
 
 func (s *stubMutator) AddNodeAt(_ context.Context, _, userID, parentID, sponsorID string, position int, _ int64) error {
-	if s.failWith != nil {
-		return s.failWith
-	}
 	s.nodesAt = append(s.nodesAt, nodeAtCall{
 		userID:    userID,
 		parentID:  parentID,
 		sponsorID: sponsorID,
 		position:  position,
 	})
-	return nil
+	return s.failWith
 }
 
 // totalCalls counts every engine call the stub recorded. Preflight tests assert
@@ -116,15 +101,17 @@ func (s *stubMutator) AddNodeAt(_ context.Context, _, userID, parentID, sponsorI
 // nodeCalls is deliberately excluded — it mirrors `nodes` one-for-one, and
 // double-counting AddNode would make a zero assertion no stricter while making
 // a non-zero count harder to read.
+//
+// Every method records before consulting failWith, so a call that the stub
+// then fails still counts. Recording after the guard would let a test that
+// sets failWith assert zero calls and pass vacuously — on the one assertion
+// the whole atomicity guarantee rests on.
 func (s *stubMutator) totalCalls() int {
 	return len(s.created) + len(s.matrixCreated) + len(s.roots) +
 		len(s.nodes) + len(s.nodesAt) + len(s.removed)
 }
 
 func (s *stubMutator) RemoveNode(_ context.Context, _, userID string) error {
-	if s.failWith != nil {
-		return s.failWith
-	}
 	s.removed = append(s.removed, userID)
 	return nil
 }

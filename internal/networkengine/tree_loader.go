@@ -104,15 +104,15 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 		// startup, where a nil deref panics the process instead of failing one
 		// tree, and the invariant now spans two functions.
 		if node.ParentID == nil || node.SponsorID == nil {
-			return fmt.Errorf("node %s in tree %s has nil parent or sponsor (data corruption?)",
-				node.UserID, treeID)
+			return fmt.Errorf("node %s in tree %s has nil parent or sponsor (data corruption?; %d of %d, tree left partly built)",
+				node.UserID, treeID, i+1, total)
 		}
 		parentID, sponsorID := *node.ParentID, *node.SponsorID
 
 		if treeType == "matrix" {
 			if node.Position == nil {
-				return fmt.Errorf("matrix node %s in tree %s has nil position (data corruption?)",
-					node.UserID, treeID)
+				return fmt.Errorf("matrix node %s in tree %s has nil position (the adjacency row is incomplete; %d of %d, tree left partly built)",
+					node.UserID, treeID, i+1, total)
 			}
 			if err := l.engine.AddNodeAt(ctx, treeID, node.UserID, parentID, sponsorID,
 				*node.Position, node.EnrolledAt.Unix()); err != nil {
@@ -219,7 +219,9 @@ func validateNodes(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNode
 
 	// Root invariants. AddRoot takes neither a parent nor a position, so a row
 	// carrying either describes a topology the engine cannot reproduce. Root
-	// sponsorship is deliberately exempt — see design section 5.
+	// sponsorship is deliberately exempt: AddRoot takes no sponsor and the
+	// engine root carries sponsor: None, so whatever a root row stores is
+	// projection metadata that reload drops. See docs/development/network-engine.md.
 	if root.ParentID != nil {
 		return fmt.Errorf("root %s in tree %s has parent %s (the engine root has no parent)",
 			root.UserID, treeID, *root.ParentID)
@@ -326,9 +328,7 @@ func validateNodes(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNode
 // beyond UserID, so two rows sharing a user ID would order arbitrarily —
 // validateNodes rejects that case before this runs.
 // Holds pointers for the same reason validateNodes does: TreeNodeRow is wide
-// and a distributor network can hold hundreds of thousands of rows. Copying
-// each row into the heap and again into byID cost roughly 8x the memory of
-// this form, measured at 200k nodes.
+// and a distributor network can hold hundreds of thousands of rows.
 type replayQueue []*TreeNodeRow
 
 func (q replayQueue) Len() int      { return len(q) }
@@ -384,7 +384,7 @@ func orderForReplay(treeID string, nodes []TreeNodeRow) ([]*TreeNodeRow, error) 
 	for _, n := range nodes {
 		// The root's stored sponsor is projection metadata, never a replay
 		// dependency: AddRoot takes no sponsor and the engine root carries
-		// sponsor: None (design section 5). Treating it as one would make the
+		// sponsor: None. Treating it as one would make the
 		// root wait on a node that is itself downstream of the root, and
 		// reject the whole tree as a cycle. The root is identified by a nil
 		// parent, which validateNodes has already proven unique.
@@ -404,12 +404,10 @@ func orderForReplay(treeID string, nodes []TreeNodeRow) ([]*TreeNodeRow, error) 
 				continue
 			}
 			// Skip parent == sponsor, the shape automatic spillover produces
-			// for most nodes. This is a memory optimization, not a correctness
-			// guard: counting the edge twice also appends to dependents twice,
-			// so the two decrements still land and the node still unblocks.
-			// Verified by mutation — removing this check fails no test. It
-			// halves the dependents entries on a spillover-shaped tree, which
-			// is the common case.
+			// for most nodes. A memory optimization, not a correctness guard:
+			// counting the edge twice also appends to dependents twice, so both
+			// decrements land and the node still unblocks. It halves the
+			// dependents entries on a spillover-shaped tree.
 			if seen != nil && *seen == *ref {
 				continue
 			}
@@ -525,11 +523,14 @@ func cycleError(treeID string, nodes []TreeNodeRow, ordered []*TreeNodeRow, byID
 	// references and duplicate rows), so reaching here needs a broken
 	// precondition.
 	//
-	// Deliberately one branch. An earlier version split "target absent from the
-	// tree" from "target present but stalled", which reads better but adds an
-	// exit that only a duplicate-ID fixture reaches — and every untested exit
-	// in this function has been reintroduced by a later rewrite at least once.
-	// The wording below is true in both cases.
+	// Deliberately one branch rather than separating "target absent" from
+	// "target present but stalled": the second is reachable only through
+	// duplicate rows, and an exit no fixture reaches does not survive rewrites.
+	//
+	// The wording is exact for the absent case and loose for the stalled one,
+	// where byID's surviving copy resolves both refs and the unmet edge belongs
+	// to the shadowed row the message cannot name. Only duplicate rows reach
+	// that, and validateNodes rejects them.
 	stopped := ""
 	if len(path) > 0 {
 		stopped = path[len(path)-1]

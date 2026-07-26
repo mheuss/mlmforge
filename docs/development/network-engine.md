@@ -279,3 +279,33 @@ Pin the wire shape with raw-byte assertions, because unmarshaling into the Go
 struct collapses `null`, `[]`, and omitted into the same empty value. Assert the
 literal bytes: `"active_products":[]` is present and `:null` is absent (see
 `rank_driver_test.go`).
+
+## Tree Reload: What `LoadTree` Restores, and What It Does Not
+
+`LoadTree` rebuilds a tree in the engine from the `tree_nodes` adjacency rows. Three invariants are not obvious from the code and matter to anyone touching the loader, the projection, or the worker's tree handlers.
+
+### A root's stored sponsor is dropped on reload
+
+`AddRoot` takes no sponsor and the engine root carries `sponsor: None`. So whatever `sponsor_id` a depth-0 row holds is projection metadata, not a replay input, and reload discards it. Round-tripping a tree therefore does not preserve the root's stored sponsor.
+
+Preflight deliberately exempts that field from every check a non-root gets: no nil check, no self-reference check, no existence check. Validating it would reject rows the engine can restore perfectly well, and treating it as a replay dependency makes the root wait on a node downstream of itself, which rejects the whole tree as a cycle.
+
+Root **parent** and **position** are the opposite: `AddRoot` accepts neither, so a depth-0 row carrying either describes a topology the engine cannot reproduce, and preflight rejects it.
+
+### Replay order must satisfy sponsor edges, not just parent edges
+
+Every tree type resolves the sponsor at insert time and rejects one that is not present yet (`unilevel.rs`, `binary.rs`, `matrix.rs`). Depth order satisfies parents — a parent is always shallower — but says nothing about sponsors.
+
+Automatic spillover always places a recruit below their sponsor, so depth order happened to work. Explicit placement removes that coincidence: an admin override can put a node at depth 1 whose sponsor sits at depth 10, and depth-ordered replay then fails mid-tree with `SPONSOR_NOT_FOUND`.
+
+`orderForReplay` topologically sorts on both edges. Do not replace it with a depth sort.
+
+### Matrix and binary require a position on every non-root row
+
+Matrix reload replays through `add_node_at`, which takes an explicit slot. Binary replay passes `position` through `add_node`. Both reject a nil position at preflight rather than defaulting to 0, because a silent 0 places the node in the wrong slot and the divergence is invisible afterwards.
+
+Unilevel carries no position; it appends to the parent's child list. A unilevel row that *has* a position is currently tolerated and then silently dropped by the worker — see HEU-563, which argues it should be rejected for symmetry with the root rule.
+
+### Why preflight validates everything before mutating anything
+
+The worker has **no operation to remove a structure** (HEU-557). A load that fails partway leaves the tree stuck until the process restarts. So `LoadTree` proves the whole node set is reconstructable before the first engine call, and its replay failures report how far they got, because that count is the only recovery signal an operator has.

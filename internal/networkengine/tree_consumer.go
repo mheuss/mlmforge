@@ -106,6 +106,14 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform
 		return fmt.Errorf("store placed node: %w", err)
 	}
 
+	// HEU-553: for a matrix tree this stores the requested placement above and
+	// then calls AddNode, whose matrix arm ignores parent_id and position and
+	// re-derives by spillover. The row and the engine can therefore disagree.
+	//
+	// That disagreement is now observable: LoadTree replays matrix nodes at
+	// their stored slots, so a restart reshapes the live tree to match the row.
+	// A matrix node_placed event must carry engine-derived placement, not
+	// requested placement, until HEU-553 routes this through AddNodeAt.
 	return c.withRetry(ctx, "add_node", payload.TreeID, payload.UserID, func() error {
 		var opts []AddNodeOption
 		if payload.Position != nil {

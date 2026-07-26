@@ -294,9 +294,11 @@ func TestTreePersistence_LoadMatrixTreeCreatesInEngine(t *testing.T) {
 // against the real worker: a multi-node matrix tree with admin-override
 // placements reloads from the adjacency store with identical topology.
 //
-// The fixture is deliberately awkward and must not be simplified. It encodes
-// four properties, each of which catches a different way the implementation
-// could be wrong. See the table in the implementation plan.
+// The fixture is deliberately awkward and must not be simplified. Each row
+// below carries an inline note saying which failure mode it catches; between
+// them they cover placement spillover would not choose, differing parent and
+// sponsor, a sponsor deeper than the node it sponsors, and a slot at width-1.
+// Dropping u3 or u4 leaves this green over a broken loader (HEU-534).
 func TestTreePersistence_MatrixMultiNodeRoundTrip(t *testing.T) {
 	_, treeStore, engine, _ := newIntegrationDeps(t)
 	ctx := context.Background()
@@ -335,10 +337,13 @@ func TestTreePersistence_MatrixMultiNodeRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint32(0), rootPos.Depth)
 	assert.Nil(t, rootPos.ParentUserID, "root has no parent")
+	assert.Nil(t, rootPos.SponsorUserID, "root has no sponsor")
+	assert.Equal(t, rows[0].EnrolledAt.Unix(), rootPos.EnrolledAt, "root enrolled_at")
 
-	// Every non-root node must match its stored row exactly.
-	for _, want := range rows[1:] {
-		t.Run("node_"+want.UserID, func(t *testing.T) {
+	// Every non-root node must match its stored row exactly. Named u2..u5 so a
+	// failure points at the fixture comment rather than a bare UUID.
+	for i, want := range rows[1:] {
+		t.Run(fmt.Sprintf("u%d", i+2), func(t *testing.T) {
 			got, err := engine.GetPosition(ctx, treeID, want.UserID)
 			require.NoError(t, err)
 			require.NotNil(t, got.ParentUserID)
@@ -348,6 +353,67 @@ func TestTreePersistence_MatrixMultiNodeRoundTrip(t *testing.T) {
 			assert.Equal(t, *want.SponsorID, *got.SponsorUserID, "sponsor")
 			assert.Equal(t, *want.Position, got.Position, "position")
 			assert.Equal(t, uint32(want.Depth), got.Depth, "depth")
+
+			// enrolled_at decides who gets promoted when a node is removed
+			// (matrix.rs picks the minimum), so a reload that loses it builds
+			// a tree that looks right and pays the wrong distributor later.
+			assert.Equal(t, want.EnrolledAt.Unix(), got.EnrolledAt, "enrolled_at")
 		})
 	}
+
+	// The engine must hold these five and nothing else. Every assertion above
+	// asks about a node the fixture already knows; none of them would notice a
+	// phantom the loader invented.
+	downline, err := engine.GetDownline(ctx, treeID, u1, 0)
+	require.NoError(t, err)
+	assert.Len(t, downline, len(rows)-1, "engine holds exactly the stored nodes")
+}
+
+// TestTreePersistence_RejectedTreeLeavesEngineLoadable proves the operational
+// claim preflight exists for, which no stub can: after a tree is refused, the
+// worker is clean enough that a corrected load succeeds.
+//
+// The unit tests assert "preflight failure must make no engine calls" against
+// a fake mutator. That pins the Go-side mechanism but not the consequence. If
+// CreateMatrixTree ever leaked ahead of validation, the retry would hit
+// TREE_EXISTS and the tree would be unloadable until the process restarted —
+// the worker has no operation to drop a structure (HEU-557).
+func TestTreePersistence_RejectedTreeLeavesEngineLoadable(t *testing.T) {
+	_, treeStore, engine, _ := newIntegrationDeps(t)
+	ctx := context.Background()
+
+	treeID := testTreeUUID(1)
+	u1, u2, u3 := testUserUUID(1), testUserUUID(2), testUserUUID(3)
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	rows := []TreeNodeRow{
+		makeUUIDNode(testNodeUUID(1), treeID, u1, 0, nil, ptr(u1), nil),
+		makeUUIDNode(testNodeUUID(2), treeID, u2, 1, ptr(u1), ptr(u1), intPtr(0)),
+		// Claims the slot u2 already holds. Preflight must refuse the tree.
+		makeUUIDNode(testNodeUUID(3), treeID, u3, 1, ptr(u1), ptr(u1), intPtr(0)),
+	}
+	for i := range rows {
+		rows[i].EnrolledAt = base.Add(time.Duration(i) * time.Hour)
+		require.NoError(t, treeStore.InsertNode(ctx, rows[i]))
+	}
+
+	loader := NewTreeLoader(treeStore, engine)
+	err := loader.LoadTree(ctx, treeID, "matrix", WithMatrixParams(3, "breadth_first"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "both claim parent")
+
+	// The structure was never created, so even the root is unknown.
+	_, err = engine.GetPosition(ctx, treeID, u1)
+	require.Error(t, err, "a refused tree must leave no structure behind")
+
+	// Correct the data the way an operator would, then retry. This is the step
+	// that proves the engine is still usable: a leaked create would fail here.
+	require.NoError(t, treeStore.DeleteNode(ctx, treeID, u3))
+	require.NoError(t, loader.LoadTree(ctx, treeID, "matrix", WithMatrixParams(3, "breadth_first")))
+
+	got, err := engine.GetPosition(ctx, treeID, u2)
+	require.NoError(t, err)
+	require.NotNil(t, got.ParentUserID)
+	assert.Equal(t, u1, *got.ParentUserID)
+	assert.Equal(t, 0, got.Position)
 }

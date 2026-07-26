@@ -121,10 +121,12 @@ func TestEngineClient_AddNode_MockParams(t *testing.T) {
 	}
 	client := NewEngineClientWithTransport(mock)
 
+	// Parent and sponsor are distinct so a transposition fails here. Both are
+	// strings, so the swap would otherwise compile and pass silently.
 	err := client.AddNode(context.Background(), "Test",
 		"00000000-0000-0000-0000-000000000002",
 		"00000000-0000-0000-0000-000000000001",
-		"00000000-0000-0000-0000-000000000001",
+		"00000000-0000-0000-0000-000000000003",
 		200)
 	require.NoError(t, err)
 
@@ -133,7 +135,7 @@ func TestEngineClient_AddNode_MockParams(t *testing.T) {
 		"structure":"Test",
 		"user_id":"00000000-0000-0000-0000-000000000002",
 		"parent_id":"00000000-0000-0000-0000-000000000001",
-		"sponsor_id":"00000000-0000-0000-0000-000000000001",
+		"sponsor_id":"00000000-0000-0000-0000-000000000003",
 		"enrolled_at":200
 	}`, string(mock.lastParams))
 }

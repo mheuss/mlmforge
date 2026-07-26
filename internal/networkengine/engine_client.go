@@ -171,9 +171,10 @@ func (c *EngineClient) AddMatrixNode(ctx context.Context, structure, userID, spo
 // AddNodeAt places a node at an explicit position in a matrix tree.
 // This is an admin override that bypasses spillover.
 //
-// Parameter order matches AddNode so the two read the same way at a call
-// site. Both parameters are strings, so a swap still compiles: the wire
-// payload test is what catches it.
+// The leading parameters match AddNode so the two read the same way at a
+// call site. parentID and sponsorID are both strings, so transposing them
+// still compiles. TestEngineClient_AddNodeAt_WireParams pins the mapping
+// inside this method; call sites need their own assertion.
 func (c *EngineClient) AddNodeAt(ctx context.Context, structure, userID, parentID, sponsorID string, position int, enrolledAt int64) error {
 	_, err := c.call(ctx, "add_node_at", map[string]any{
 		"structure":   structure,

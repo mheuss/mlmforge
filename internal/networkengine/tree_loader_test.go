@@ -520,6 +520,11 @@ func TestTreeLoader_ValidationFailures_Positions(t *testing.T) {
 	}
 }
 
+// TestTreeLoader_ValidPositionsAccepted calls validateNodes directly rather
+// than driving through LoadTree, like TestValidateNodes_DuplicateUserID and for
+// a similar reason: this fixture is a three-node matrix tree, and the
+// multi-node matrix guard would refuse it before validation ran. Task 6
+// removes that guard.
 func TestTreeLoader_ValidPositionsAccepted(t *testing.T) {
 	// Same position under different parents is fine, and width-1 is in range.
 	nodes := []TreeNodeRow{
@@ -543,7 +548,39 @@ func TestTreeLoader_MatrixParamsIgnoredForNonMatrix(t *testing.T) {
 
 	mutator, err := loadWithStub(t, "binary", nodes, WithMatrixParams(0, "depth_first"))
 	require.NoError(t, err)
-	assert.Equal(t, []string{"u1"}, mutator.nodes)
+
+	// Width 0 must not leak into the binary slot limit: position 1 is only
+	// valid because binary hardcodes 2.
+	assert.Equal(t, []nodeAddCall{
+		{userID: "u1", parentID: "u0", sponsorID: "u0", position: intPtr(1)},
+	}, mutator.nodeCalls)
+
+	// The create path is unaffected too — a matrix option must not reroute a
+	// binary tree through CreateMatrixTree.
+	assert.Equal(t, []string{"t"}, mutator.created)
+	assert.Empty(t, mutator.matrixCreated)
+}
+
+// TestValidateNodes_UnilevelPositionIsTolerated pins current behavior, which is
+// not obviously correct: a unilevel node carrying a position is accepted, and
+// LoadTree then forwards that position to the worker, whose unilevel add_node
+// never reads it. So the value is silently dropped.
+//
+// validateNodes rejects a *root* that carries a position, on the grounds that
+// the engine root occupies no slot. A unilevel node occupies no slot either, so
+// the two cases are treated inconsistently. The likeliest cause of such a row
+// is a binary or matrix tree being loaded under the wrong treeType, which would
+// rebuild a structurally different tree from the same nodes and go unnoticed.
+//
+// Tracked in HEU-563. This test exists so the tolerance is a recorded decision
+// rather than an oversight; if HEU-563 lands, replace it with a rejection test.
+func TestValidateNodes_UnilevelPositionIsTolerated(t *testing.T) {
+	nodes := []TreeNodeRow{
+		makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+		makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), intPtr(7)),
+	}
+
+	require.NoError(t, validateNodes("t", "unilevel", loadTreeConfig{}, nodes))
 }
 
 func TestTreeLoader_LoadMatrixTree_RequiresParams(t *testing.T) {

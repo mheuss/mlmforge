@@ -203,8 +203,27 @@ func validateNodes(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNode
 			root.UserID, treeID, *root.Position)
 	}
 
-	width := cfg.matrixWidth
-	occupied := make(map[slotKey]string)
+	// Slot rule per tree type, derived once. Every supported type is named
+	// explicitly so that adding a fourth to supportedTreeTypes without deciding
+	// its slot rule fails here with an actionable message, rather than
+	// inheriting limit 0 and rejecting every node with "outside the range
+	// 0..-1". The comment on supportedTreeTypes says to expect a fourth.
+	var limit int
+	hasSlots := true
+	switch treeType {
+	case "unilevel":
+		// Unilevel appends to the parent's child list; children carry no slot.
+		hasSlots = false
+	case "binary":
+		// Binary is a width-2 matrix as far as slot validation is concerned.
+		limit = 2
+	case "matrix":
+		limit = cfg.matrixWidth
+	default:
+		return fmt.Errorf("tree %s has type %q with no slot rule (add one to validateNodes)",
+			treeID, treeType)
+	}
+	occupied := make(map[slotKey]string, len(nodes))
 
 	for i := range nodes {
 		n := &nodes[i]
@@ -239,18 +258,13 @@ func validateNodes(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNode
 				n.UserID, treeID, n.Depth, parent.UserID, parent.Depth)
 		}
 
-		// Unilevel appends to the parent's child list and carries no position.
-		if treeType == "unilevel" {
+		// A unilevel row that carries a position is not rejected — see HEU-563.
+		if !hasSlots {
 			continue
 		}
 
-		// Binary is a width-2 matrix as far as slot validation is concerned.
-		limit := width
-		if treeType == "binary" {
-			limit = 2
-		}
 		if n.Position == nil {
-			return fmt.Errorf("%s node %s in tree %s has nil position; the adjacency row is incomplete",
+			return fmt.Errorf("%s node %s in tree %s has nil position (the adjacency row is incomplete)",
 				treeType, n.UserID, treeID)
 		}
 		pos := *n.Position

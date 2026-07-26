@@ -138,10 +138,10 @@ func TestTreeLoader_RootWithNonZeroDepth(t *testing.T) {
 
 	err := loader.LoadTree(ctx, "tree-1", "unilevel")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "has depth 1, expected 0")
+	assert.Contains(t, err.Error(), "has no depth-0 root node")
 
-	// create_tree is called before the loop, but no add_root or add_node.
-	assert.Equal(t, []string{"create_tree"}, transport.ops)
+	// Preflight runs before the engine is touched, so nothing was created.
+	assert.Empty(t, transport.ops, "validation failure must make no engine calls")
 }
 
 func TestTreeLoader_ChildWithNilParent(t *testing.T) {
@@ -166,6 +166,7 @@ func TestTreeLoader_ChildWithNilParent(t *testing.T) {
 	err := loader.LoadTree(ctx, "tree-1", "unilevel")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "has nil parent or sponsor")
+	assert.Empty(t, transport.ops, "validation failure must make no engine calls")
 }
 
 func TestTreeLoader_LoadMatrixTree_RootOnlyRoutesToCreateMatrixTree(t *testing.T) {
@@ -217,6 +218,178 @@ func TestTreeLoader_LoadMatrixTree_MultiNodeRefused(t *testing.T) {
 	assert.Empty(t, mutator.created)
 	assert.Empty(t, mutator.roots)
 	assert.Empty(t, mutator.nodes)
+}
+
+// loadWithStub seeds an in-memory store and runs LoadTree against a stub
+// mutator, so a caller can assert both the error and that nothing reached the
+// engine. Every node must carry TreeID "t".
+func loadWithStub(t *testing.T, treeType string, nodes []TreeNodeRow, opts ...LoadTreeOption) (*stubMutator, error) {
+	t.Helper()
+	store := NewMemoryTreeStore()
+	ctx := context.Background()
+	for _, n := range nodes {
+		require.NoError(t, store.InsertNode(ctx, n))
+	}
+	mutator := &stubMutator{}
+	err := NewTreeLoader(store, mutator).LoadTree(ctx, "t", treeType, opts...)
+	return mutator, err
+}
+
+func TestTreeLoader_ValidationFailures_Structural(t *testing.T) {
+	matrixOpts := []LoadTreeOption{WithMatrixParams(3, "breadth_first")}
+
+	tests := []struct {
+		name     string
+		treeType string
+		opts     []LoadTreeOption
+		nodes    []TreeNodeRow
+		wantErr  string
+	}{
+		{
+			name:     "unsupported tree type",
+			treeType: "streamline",
+			nodes:    []TreeNodeRow{makeNode("t", "u0", 0, nil, ptr("u0"), nil)},
+			wantErr:  `unsupported type "streamline"`,
+		},
+		{
+			name:     "matrix width below 2",
+			treeType: "matrix",
+			opts:     []LoadTreeOption{WithMatrixParams(1, "breadth_first")},
+			nodes:    []TreeNodeRow{makeNode("t", "u0", 0, nil, ptr("u0"), nil)},
+			wantErr:  "matrix width 1 outside the supported range 2..255",
+		},
+		{
+			name:     "matrix width above 255",
+			treeType: "matrix",
+			opts:     []LoadTreeOption{WithMatrixParams(256, "breadth_first")},
+			nodes:    []TreeNodeRow{makeNode("t", "u0", 0, nil, ptr("u0"), nil)},
+			wantErr:  "matrix width 256 outside the supported range 2..255",
+		},
+		{
+			name:     "unsupported spillover",
+			treeType: "matrix",
+			opts:     []LoadTreeOption{WithMatrixParams(3, "depth_first")},
+			nodes:    []TreeNodeRow{makeNode("t", "u0", 0, nil, ptr("u0"), nil)},
+			wantErr:  `unsupported spillover "depth_first"`,
+		},
+		{
+			name:     "no root",
+			treeType: "unilevel",
+			nodes:    []TreeNodeRow{makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), nil)},
+			wantErr:  "no depth-0 root node",
+		},
+		{
+			name:     "two roots",
+			treeType: "unilevel",
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+				makeNode("t", "u1", 0, nil, ptr("u1"), nil),
+			},
+			wantErr: "more than one depth-0 root",
+		},
+		{
+			name:     "root carries a parent",
+			treeType: "unilevel",
+			nodes:    []TreeNodeRow{makeNode("t", "u0", 0, ptr("ghost"), ptr("u0"), nil)},
+			wantErr:  "root u0 in tree t has parent ghost",
+		},
+		{
+			name:     "root carries a position",
+			treeType: "matrix",
+			opts:     matrixOpts,
+			nodes:    []TreeNodeRow{makeNode("t", "u0", 0, nil, ptr("u0"), intPtr(0))},
+			wantErr:  "root u0 in tree t has position 0",
+		},
+		{
+			name:     "non-root is its own parent",
+			treeType: "unilevel",
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+				makeNode("t", "u1", 1, ptr("u1"), ptr("u0"), nil),
+			},
+			wantErr: "node u1 in tree t is its own parent",
+		},
+		{
+			name:     "non-root is its own sponsor",
+			treeType: "unilevel",
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+				makeNode("t", "u1", 1, ptr("u0"), ptr("u1"), nil),
+			},
+			wantErr: "node u1 in tree t is its own sponsor",
+		},
+		{
+			name:     "nil parent",
+			treeType: "unilevel",
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+				makeNode("t", "u1", 1, nil, ptr("u0"), nil),
+			},
+			wantErr: "nil parent or sponsor",
+		},
+		{
+			// Same combined check as "nil parent", opposite side. Both
+			// branches of `ParentID == nil || SponsorID == nil` need cover.
+			name:     "nil sponsor",
+			treeType: "unilevel",
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+				makeNode("t", "u1", 1, ptr("u0"), nil, nil),
+			},
+			wantErr: "nil parent or sponsor",
+		},
+		{
+			name:     "parent not in tree",
+			treeType: "unilevel",
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+				makeNode("t", "u1", 1, ptr("ghost"), ptr("u0"), nil),
+			},
+			wantErr: "references parent ghost that is not in the tree",
+		},
+		{
+			name:     "sponsor not in tree",
+			treeType: "unilevel",
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+				makeNode("t", "u1", 1, ptr("u0"), ptr("ghost"), nil),
+			},
+			wantErr: "references sponsor ghost that is not in the tree",
+		},
+		{
+			name:     "depth disagrees with parent",
+			treeType: "unilevel",
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+				makeNode("t", "u1", 3, ptr("u0"), ptr("u0"), nil),
+			},
+			wantErr: "has depth 3 but parent u0 has depth 0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mutator, err := loadWithStub(t, tt.treeType, tt.nodes, tt.opts...)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+			assert.Zero(t, mutator.totalCalls(), "preflight failure must make no engine calls")
+		})
+	}
+}
+
+// TestValidateNodes_DuplicateUserID is the one validation case that cannot be
+// driven through LoadTree: MemoryTreeStore.InsertNode rejects a duplicate
+// active user ID (tree_store_memory.go:25-31), mirroring the Postgres partial
+// unique index, so the fixture is unconstructable through the store.
+func TestValidateNodes_DuplicateUserID(t *testing.T) {
+	nodes := []TreeNodeRow{
+		makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+		makeNode("t", "u0", 1, ptr("u0"), ptr("u0"), nil),
+	}
+
+	err := validateNodes("t", "unilevel", loadTreeConfig{}, nodes)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "duplicate user u0")
 }
 
 func TestTreeLoader_LoadMatrixTree_RequiresParams(t *testing.T) {

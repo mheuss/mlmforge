@@ -81,22 +81,23 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 		return fmt.Errorf("create tree %s: %w", treeID, err)
 	}
 
+	// Every failure from here on says what survived it. The structure now
+	// exists and the worker has no operation to drop it (HEU-557), so a retry
+	// reports TREE_EXISTS and the only real remedy is a process restart. How
+	// much landed is the operator's sole input to that call. Validation
+	// pre-empts every logical error the engine can raise below, so what
+	// actually reaches these paths is transport failure: a worker crash, an
+	// IPC timeout, a cancelled context.
+	//
 	// ordered[0] is the root: validation proved exactly one depth-0 node exists
 	// and every other node has a non-nil parent that is not itself, so the root
 	// is the only node with zero dependencies.
 	root := ordered[0]
 	if err := l.engine.AddRoot(ctx, treeID, root.UserID, root.EnrolledAt.Unix()); err != nil {
-		return fmt.Errorf("add root %s: %w", root.UserID, err)
+		return fmt.Errorf("add root %s (tree %s created but left empty): %w", root.UserID, treeID, err)
 	}
 
-	// The counts in the failure messages below are the only recovery signal an
-	// operator gets. A replay that fails partway leaves the structure built up
-	// to that point, and the worker has no operation to drop it (HEU-557), so
-	// the scale of what landed decides whether to restart the process. The
-	// index names the node that failed, so "3 of 5" means two landed before it.
-	// Validation pre-empts every logical error the engine can raise here, so
-	// what actually reaches these paths is transport failure: a worker crash,
-	// an IPC timeout, a cancelled context.
+	// The index names the node that failed, so "3 of 5" means two landed.
 	total := len(ordered) - 1
 	for i, node := range ordered[1:] {
 		// validateNodes already proved these non-nil for every non-root, and

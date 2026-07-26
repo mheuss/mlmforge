@@ -571,11 +571,11 @@ func TestTreeLoader_ValidationFailures_Positions(t *testing.T) {
 	}
 }
 
-// TestTreeLoader_ValidPositionsAccepted calls validateNodes directly rather
-// than driving through LoadTree, like TestValidateNodes_DuplicateUserID and for
-// a similar reason: this fixture is a three-node matrix tree, and the
-// multi-node matrix guard would refuse it before validation ran. Task 6
-// removes that guard.
+// TestTreeLoader_ValidPositionsAccepted drives through LoadTree rather than
+// calling validateNodes directly. It used to do the latter, because the
+// multi-node matrix guard would have refused this three-node fixture before
+// validation ran — that guard is gone, so the bypass is no longer needed and
+// the test can assert the placements actually reached the engine.
 func TestTreeLoader_ValidPositionsAccepted(t *testing.T) {
 	// Same position under different parents is fine, and width-1 is in range.
 	nodes := []TreeNodeRow{
@@ -584,8 +584,14 @@ func TestTreeLoader_ValidPositionsAccepted(t *testing.T) {
 		makeNode("t", "u2", 2, ptr("u1"), ptr("u1"), intPtr(2)),
 	}
 
-	err := validateNodes("t", "matrix", loadTreeConfig{matrixParamsSet: true, matrixWidth: 3, matrixSpillover: "breadth_first"}, nodes)
+	mutator, err := loadWithStub(t, "matrix", nodes, WithMatrixParams(3, "breadth_first"))
 	require.NoError(t, err)
+
+	assert.Equal(t, []string{"u0"}, mutator.roots)
+	assert.Equal(t, []nodeAtCall{
+		{userID: "u1", parentID: "u0", sponsorID: "u0", position: 2},
+		{userID: "u2", parentID: "u1", sponsorID: "u1", position: 2},
+	}, mutator.nodesAt)
 }
 
 // TestTreeLoader_MatrixParamsIgnoredForNonMatrix pins the documented contract

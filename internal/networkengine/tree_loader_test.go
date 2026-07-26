@@ -643,6 +643,9 @@ type failAfterNMutator struct {
 	err    error
 }
 
+// Compile-time check, matching the one stubMutator carries.
+var _ TreeMutator = (*failAfterNMutator)(nil)
+
 func (m *failAfterNMutator) AddNode(ctx context.Context, structure, userID, parentID, sponsorID string, enrolledAt int64, opts ...AddNodeOption) error {
 	m.calls++
 	if m.calls == m.failOn {
@@ -726,6 +729,10 @@ func TestTreeLoader_ReplayFailureReportsProgress(t *testing.T) {
 			}
 
 			mutator := &failAfterNMutator{failOn: tt.failOn, err: boom}
+			// A case that sets failOn but forgets err would make the call
+			// succeed silently and fail on a confusing assertion instead.
+			require.NotNil(t, mutator.err, "failOn needs an err to return")
+
 			err := NewTreeLoader(store, mutator).LoadTree(ctx, "t", tt.treeType, tt.opts...)
 
 			require.Error(t, err)

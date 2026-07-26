@@ -3,6 +3,7 @@ package networkengine
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -679,8 +680,46 @@ func TestTreeLoader_CyclicReferences(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "form a cycle")
 	// BR-4: the error must name the offending nodes, not just count them.
-	assert.Contains(t, err.Error(), "u1, u2")
+	// Asserting the rendered cycle rather than a substring of a node list,
+	// because "u1, u2" would also match a message that wrongly included u0.
+	assert.Contains(t, err.Error(), "u1 -> u2 -> u1")
+	assert.Contains(t, err.Error(), "2 of 3 nodes", "the root is replayable and must not be counted")
 	assert.Zero(t, mutator.totalCalls(), "cycle must be detected before any engine call")
+}
+
+// TestOrderForReplay_CycleErrorNamesCycleNotBystanders is the case that
+// exposed the original defect. A cycle blocks its whole subtree, so the stuck
+// set is mostly innocent nodes. Reporting a sorted prefix of that set named
+// twenty bystanders and neither culprit, which is precisely what BR-4 forbids.
+//
+// The bystanders here sort ahead of the cycle members on purpose: "a00".."a29"
+// precede "z1"/"z2", so any implementation that sorts the stuck set and prints
+// a prefix fails this test.
+func TestOrderForReplay_CycleErrorNamesCycleNotBystanders(t *testing.T) {
+	nodes := []TreeNodeRow{
+		makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+		// z1 and z2 sponsor each other. Neither can ever replay.
+		makeNode("t", "z1", 1, ptr("u0"), ptr("z2"), nil),
+		makeNode("t", "z2", 1, ptr("u0"), ptr("z1"), nil),
+	}
+	// Thirty innocent nodes parented under z1, blocked only because z1 is.
+	for i := 0; i < 30; i++ {
+		id := fmt.Sprintf("a%02d", i)
+		nodes = append(nodes, makeNode("t", id, 2, ptr("z1"), ptr("z1"), nil))
+	}
+
+	_, err := orderForReplay("t", nodes)
+	require.Error(t, err)
+
+	assert.Contains(t, err.Error(), "z1", "the error must name a real cycle member")
+	assert.Contains(t, err.Error(), "z2", "the error must name a real cycle member")
+	assert.Contains(t, err.Error(), "->", "the cycle must be rendered as a path")
+	assert.Contains(t, err.Error(), "32 of 33 nodes", "the stuck count is the blast radius")
+
+	// The bystanders are counted but must not be listed — naming thirty
+	// blocked nodes buries the two that actually need fixing.
+	assert.NotContains(t, err.Error(), "a00")
+	assert.NotContains(t, err.Error(), "a29")
 }
 
 func TestTreeLoader_RootSponsorIsNotADependency(t *testing.T) {

@@ -129,6 +129,14 @@ var supportedSpillover = map[string]bool{
 	"breadth_first": true,
 }
 
+// slotKey identifies one occupied child position. Two nodes claiming the same
+// key means the adjacency rows disagree about who sits where. Matrix and
+// binary index children by position; unilevel does not.
+type slotKey struct {
+	parentID string
+	position int
+}
+
 // validateNodes proves the node set is structurally consistent before any
 // engine mutation. A tree that fails here leaves the engine untouched, so the
 // load can be retried once the data is corrected. This matters because the
@@ -195,7 +203,11 @@ func validateNodes(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNode
 			root.UserID, treeID, *root.Position)
 	}
 
-	for _, n := range nodes {
+	width := cfg.matrixWidth
+	occupied := make(map[slotKey]string)
+
+	for i := range nodes {
+		n := &nodes[i]
 		if n.UserID == root.UserID {
 			continue
 		}
@@ -226,6 +238,32 @@ func validateNodes(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNode
 			return fmt.Errorf("node %s in tree %s has depth %d but parent %s has depth %d",
 				n.UserID, treeID, n.Depth, parent.UserID, parent.Depth)
 		}
+
+		// Unilevel appends to the parent's child list and carries no position.
+		if treeType == "unilevel" {
+			continue
+		}
+
+		// Binary is a width-2 matrix as far as slot validation is concerned.
+		limit := width
+		if treeType == "binary" {
+			limit = 2
+		}
+		if n.Position == nil {
+			return fmt.Errorf("%s node %s in tree %s has nil position; the adjacency row is incomplete",
+				treeType, n.UserID, treeID)
+		}
+		pos := *n.Position
+		if pos < 0 || pos >= limit {
+			return fmt.Errorf("%s node %s in tree %s has position %d outside the range 0..%d",
+				treeType, n.UserID, treeID, pos, limit-1)
+		}
+		key := slotKey{parentID: *n.ParentID, position: pos}
+		if other, taken := occupied[key]; taken {
+			return fmt.Errorf("%s nodes %s and %s in tree %s both claim parent %s position %d",
+				treeType, other, n.UserID, treeID, *n.ParentID, pos)
+		}
+		occupied[key] = n.UserID
 	}
 	return nil
 }

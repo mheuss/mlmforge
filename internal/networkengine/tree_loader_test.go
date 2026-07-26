@@ -429,6 +429,123 @@ func TestValidateNodes_DuplicateUserID(t *testing.T) {
 	assert.Contains(t, err.Error(), "duplicate user u0")
 }
 
+func TestTreeLoader_ValidationFailures_Positions(t *testing.T) {
+	matrixOpts := []LoadTreeOption{WithMatrixParams(3, "breadth_first")}
+
+	tests := []struct {
+		name     string
+		treeType string
+		opts     []LoadTreeOption
+		nodes    []TreeNodeRow
+		wantErr  string
+	}{
+		{
+			name:     "matrix nil position",
+			treeType: "matrix",
+			opts:     matrixOpts,
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+				makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), nil),
+			},
+			wantErr: "matrix node u1 in tree t has nil position",
+		},
+		{
+			name:     "matrix negative position",
+			treeType: "matrix",
+			opts:     matrixOpts,
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+				makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), intPtr(-1)),
+			},
+			wantErr: "position -1 outside the range 0..2",
+		},
+		{
+			name:     "matrix position equals width",
+			treeType: "matrix",
+			opts:     matrixOpts,
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+				makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), intPtr(3)),
+			},
+			wantErr: "position 3 outside the range 0..2",
+		},
+		{
+			name:     "matrix duplicate slot",
+			treeType: "matrix",
+			opts:     matrixOpts,
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+				makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), intPtr(1)),
+				makeNode("t", "u2", 1, ptr("u0"), ptr("u0"), intPtr(1)),
+			},
+			wantErr: "both claim parent u0 position 1",
+		},
+		{
+			name:     "binary nil position",
+			treeType: "binary",
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+				makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), nil),
+			},
+			wantErr: "binary node u1 in tree t has nil position",
+		},
+		{
+			name:     "binary position outside 0..1",
+			treeType: "binary",
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+				makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), intPtr(2)),
+			},
+			wantErr: "position 2 outside the range 0..1",
+		},
+		{
+			name:     "binary duplicate slot",
+			treeType: "binary",
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+				makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), intPtr(0)),
+				makeNode("t", "u2", 1, ptr("u0"), ptr("u0"), intPtr(0)),
+			},
+			wantErr: "both claim parent u0 position 0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mutator, err := loadWithStub(t, tt.treeType, tt.nodes, tt.opts...)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+			assert.Zero(t, mutator.totalCalls(), "preflight failure must make no engine calls")
+		})
+	}
+}
+
+func TestTreeLoader_ValidPositionsAccepted(t *testing.T) {
+	// Same position under different parents is fine, and width-1 is in range.
+	nodes := []TreeNodeRow{
+		makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+		makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), intPtr(2)),
+		makeNode("t", "u2", 2, ptr("u1"), ptr("u1"), intPtr(2)),
+	}
+
+	err := validateNodes("t", "matrix", loadTreeConfig{matrixParamsSet: true, matrixWidth: 3, matrixSpillover: "breadth_first"}, nodes)
+	require.NoError(t, err)
+}
+
+// TestTreeLoader_MatrixParamsIgnoredForNonMatrix pins the documented contract
+// that WithMatrixParams is inert for other tree types. A width and spillover
+// that would be rejected outright for a matrix must not affect a binary load.
+func TestTreeLoader_MatrixParamsIgnoredForNonMatrix(t *testing.T) {
+	nodes := []TreeNodeRow{
+		makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+		makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), intPtr(1)),
+	}
+
+	mutator, err := loadWithStub(t, "binary", nodes, WithMatrixParams(0, "depth_first"))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"u1"}, mutator.nodes)
+}
+
 func TestTreeLoader_LoadMatrixTree_RequiresParams(t *testing.T) {
 	store := NewMemoryTreeStore()
 	ctx := context.Background()

@@ -501,27 +501,27 @@ func cycleError(treeID string, nodes []TreeNodeRow, ordered []*TreeNodeRow, byID
 		path = append(path, cur)
 	}
 
-	// The walk ran out of unmet dependencies instead of closing a loop. That
-	// happens when a hop names a user absent from the node set: an
-	// unresolvable reference, not a cycle. Name the node holding the bad
-	// reference and the target it names, rather than every node blocked behind
-	// it. The last hop is the absent user, so the referrer is the hop before.
-	// validateNodes rejects dangling references, so reaching this needs a
-	// broken precondition.
-	if len(path) >= 2 {
-		referrer, target := path[len(path)-2], path[len(path)-1]
-		if _, present := byID[target]; !present {
-			return fmt.Errorf(
-				"tree %s: %d of %d nodes cannot be replayed; %s references %s, which is not in the tree",
-				treeID, len(stuck), len(nodes), referrer, target)
-		}
-		// target resolves, so the walk stopped for another reason: every one of
-		// its references was already satisfied. Only duplicate rows produce
-		// that, and claiming the node is absent would be false.
-		return fmt.Errorf(
-			"tree %s: %d of %d nodes cannot be replayed; the walk from %s stalled at %s (duplicate user IDs?)",
-			treeID, len(stuck), len(nodes), referrer, target)
+	// The walk ran out of unmet dependencies instead of closing a loop, so the
+	// last hop named a user it could not follow. Name that user and, when the
+	// walk took more than one step, whoever referenced it — not every node
+	// blocked behind them. validateNodes rejects both causes (dangling
+	// references and duplicate rows), so reaching here needs a broken
+	// precondition.
+	//
+	// Deliberately one branch. An earlier version split "target absent from the
+	// tree" from "target present but stalled", which reads better but adds an
+	// exit that only a duplicate-ID fixture reaches — and every untested exit
+	// in this function has been reintroduced by a later rewrite at least once.
+	// The wording below is true in both cases.
+	stopped := ""
+	if len(path) > 0 {
+		stopped = path[len(path)-1]
 	}
-	return fmt.Errorf("tree %s: %d of %d nodes cannot be replayed; %s has an unresolvable parent/sponsor reference",
-		treeID, len(stuck), len(nodes), strings.Join(path, ""))
+	via := ""
+	if len(path) >= 2 {
+		via = fmt.Sprintf(", reached from %s", path[len(path)-2])
+	}
+	return fmt.Errorf(
+		"tree %s: %d of %d nodes cannot be replayed; the replay order stops at %s%s, whose parent or sponsor cannot be resolved",
+		treeID, len(stuck), len(nodes), stopped, via)
 }

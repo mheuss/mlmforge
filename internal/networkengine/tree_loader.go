@@ -41,10 +41,12 @@ func WithMatrixParams(width int, spillover string) LoadTreeOption {
 	}
 }
 
-// LoadTree reads all active nodes for a tree from the store (depth-ordered)
-// and replays them into the engine via CreateTree/CreateMatrixTree +
-// AddRoot/AddNode. Matrix trees need width and spillover supplied through
-// WithMatrixParams, which plain CreateTree does not carry.
+// LoadTree reads all active nodes for a tree from the store, validates that
+// the set is reconstructable, orders it so every node follows its parent and
+// sponsor, then replays it into the engine. Matrix trees replay through
+// AddNodeAt so stored placements survive; their AddNode would re-derive
+// placement by spillover. Matrix trees need width and spillover supplied
+// through WithMatrixParams, which plain CreateTree does not carry.
 func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts ...LoadTreeOption) error {
 	nodes, err := l.store.GetByTreeDepthOrdered(ctx, treeID)
 	if err != nil {
@@ -72,14 +74,6 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 	}
 
 	if treeType == "matrix" {
-		// The worker's matrix add_node re-derives BFS placement from sponsor_id
-		// and ignores the stored parent/position, so replaying past the root
-		// would silently reconstruct a different topology than the adjacency
-		// store. Refuse it rather than corrupt state. Explicit-placement replay
-		// (add_node_at) is tracked in HEU-534.
-		if len(nodes) > 1 {
-			return fmt.Errorf("load tree %s: multi-node matrix reload is not yet supported", treeID)
-		}
 		if err := l.engine.CreateMatrixTree(ctx, treeID, cfg.matrixWidth, cfg.matrixSpillover); err != nil {
 			return fmt.Errorf("create tree %s: %w", treeID, err)
 		}
@@ -105,6 +99,15 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 				node.UserID, treeID)
 		}
 		parentID, sponsorID := *node.ParentID, *node.SponsorID
+
+		if treeType == "matrix" {
+			// Validation proved Position is non-nil and within width.
+			if err := l.engine.AddNodeAt(ctx, treeID, node.UserID, parentID, sponsorID,
+				*node.Position, node.EnrolledAt.Unix()); err != nil {
+				return fmt.Errorf("add node %s: %w", node.UserID, err)
+			}
+			continue
+		}
 
 		var addOpts []AddNodeOption
 		if node.Position != nil {

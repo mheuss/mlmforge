@@ -1,9 +1,12 @@
 package networkengine
 
 import (
+	"container/heap"
 	"context"
 	"fmt"
 	"math"
+	"sort"
+	"strings"
 )
 
 // TreeLoader rebuilds the Rust engine's in-memory state from the
@@ -59,8 +62,12 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 		return fmt.Errorf("create tree %s: matrix tree requires width and spillover (use WithMatrixParams)", treeID)
 	}
 
-	// Preflight. Nothing below this point runs until validation succeeds.
+	// Preflight. Nothing below this point runs until both phases succeed.
 	if err := validateNodes(treeID, treeType, cfg, nodes); err != nil {
+		return err
+	}
+	ordered, err := orderForReplay(treeID, nodes)
+	if err != nil {
 		return err
 	}
 
@@ -80,29 +87,23 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 		return fmt.Errorf("create tree %s: %w", treeID, err)
 	}
 
-	for i, node := range nodes {
-		if i == 0 {
-			if node.Depth != 0 {
-				return fmt.Errorf("first node in tree %s has depth %d, expected 0 (data corruption?)", treeID, node.Depth)
-			}
-			if err := l.engine.AddRoot(ctx, treeID, node.UserID, node.EnrolledAt.Unix()); err != nil {
-				return fmt.Errorf("add root %s: %w", node.UserID, err)
-			}
-			continue
-		}
+	// ordered[0] is the root: validation proved exactly one depth-0 node exists
+	// and every other node has a non-nil parent that is not itself, so the root
+	// is the only node with zero dependencies.
+	root := ordered[0]
+	if err := l.engine.AddRoot(ctx, treeID, root.UserID, root.EnrolledAt.Unix()); err != nil {
+		return fmt.Errorf("add root %s: %w", root.UserID, err)
+	}
 
-		if node.ParentID == nil || node.SponsorID == nil {
-			return fmt.Errorf("node %s in tree %s has nil parent or sponsor (data corruption?)", node.UserID, treeID)
-		}
-		parentID := *node.ParentID
-		sponsorID := *node.SponsorID
+	for _, node := range ordered[1:] {
+		parentID, sponsorID := *node.ParentID, *node.SponsorID
 
-		var opts []AddNodeOption
+		var addOpts []AddNodeOption
 		if node.Position != nil {
-			opts = append(opts, WithPosition(*node.Position))
+			addOpts = append(addOpts, WithPosition(*node.Position))
 		}
-
-		if err := l.engine.AddNode(ctx, treeID, node.UserID, parentID, sponsorID, node.EnrolledAt.Unix(), opts...); err != nil {
+		if err := l.engine.AddNode(ctx, treeID, node.UserID, parentID, sponsorID,
+			node.EnrolledAt.Unix(), addOpts...); err != nil {
 			return fmt.Errorf("add node %s: %w", node.UserID, err)
 		}
 	}
@@ -148,7 +149,7 @@ type slotKey struct {
 // not prove they can be replayed in an order that satisfies the engine. A node
 // may legally sit shallower than its own sponsor, and the engine resolves a
 // sponsor at insert time, so depth order alone can still fail mid-replay.
-// Dependency-aware ordering closes that half; it is not implemented yet.
+// orderForReplay closes that half.
 //
 // cfg supplies matrix width and spillover. Binary positions are fixed at 0
 // and 1; unilevel nodes carry no position.
@@ -289,4 +290,130 @@ func validateNodes(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNode
 		occupied[key] = n.UserID
 	}
 	return nil
+}
+
+// replayQueue is a min-heap of nodes eligible to replay next, ordered
+// shallowest first, then earliest enrolled, then user ID. The tuple makes the
+// output deterministic regardless of how the store broke ties.
+//
+// Each user is pushed at most once: a node enters only when its final
+// dependency clears, and each dependency clears once. Less has no tiebreak
+// beyond UserID, so two rows sharing a user ID would order arbitrarily —
+// validateNodes rejects that case before this runs.
+type replayQueue []TreeNodeRow
+
+func (q replayQueue) Len() int      { return len(q) }
+func (q replayQueue) Swap(i, j int) { q[i], q[j] = q[j], q[i] }
+
+func (q replayQueue) Less(i, j int) bool {
+	if q[i].Depth != q[j].Depth {
+		return q[i].Depth < q[j].Depth
+	}
+	if !q[i].EnrolledAt.Equal(q[j].EnrolledAt) {
+		return q[i].EnrolledAt.Before(q[j].EnrolledAt)
+	}
+	return q[i].UserID < q[j].UserID
+}
+
+func (q *replayQueue) Push(x any) { *q = append(*q, x.(TreeNodeRow)) }
+
+func (q *replayQueue) Pop() any {
+	old := *q
+	last := len(old) - 1
+	item := old[last]
+	*q = old[:last]
+	return item
+}
+
+// orderForReplay returns nodes ordered so that every node appears after both
+// its parent and its sponsor. Depth order alone is not enough: an explicitly
+// placed node can sit at a shallower depth than its sponsor, and every tree
+// type rejects a sponsor that is not yet present.
+//
+// Kahn's algorithm over a priority queue, so the result is deterministic and
+// the pass is O(n log n + e).
+//
+// validateNodes must run first. This assumes every parent and sponsor
+// reference resolves within nodes, and that only the root self-references.
+func orderForReplay(treeID string, nodes []TreeNodeRow) ([]TreeNodeRow, error) {
+	// deps[u] = users that must be replayed before u.
+	// dependents[u] = users waiting on u.
+	deps := make(map[string]map[string]struct{}, len(nodes))
+	dependents := make(map[string][]string, len(nodes))
+	byID := make(map[string]TreeNodeRow, len(nodes))
+
+	for _, n := range nodes {
+		byID[n.UserID] = n
+		deps[n.UserID] = make(map[string]struct{}, 2)
+	}
+	for _, n := range nodes {
+		// The root's stored sponsor is projection metadata, never a replay
+		// dependency: AddRoot takes no sponsor and the engine root carries
+		// sponsor: None (design section 5). Treating it as one would make the
+		// root wait on a node that is itself downstream of the root, and
+		// reject the whole tree as a cycle. The root is identified by a nil
+		// parent, which validateNodes has already proven unique.
+		refs := []*string{n.ParentID}
+		if n.ParentID != nil {
+			refs = append(refs, n.SponsorID)
+		}
+		for _, ref := range refs {
+			// validateNodes rejects non-root self-references. If one ever
+			// slipped through it becomes an unsatisfiable dependency and
+			// surfaces below as a cycle, still before any engine call.
+			if ref == nil || *ref == n.UserID {
+				continue
+			}
+			if _, already := deps[n.UserID][*ref]; already {
+				continue
+			}
+			deps[n.UserID][*ref] = struct{}{}
+			dependents[*ref] = append(dependents[*ref], n.UserID)
+		}
+	}
+
+	ready := &replayQueue{}
+	for _, n := range nodes {
+		if len(deps[n.UserID]) == 0 {
+			*ready = append(*ready, n)
+		}
+	}
+	heap.Init(ready)
+
+	ordered := make([]TreeNodeRow, 0, len(nodes))
+	for ready.Len() > 0 {
+		n := heap.Pop(ready).(TreeNodeRow)
+		ordered = append(ordered, n)
+
+		for _, d := range dependents[n.UserID] {
+			delete(deps[d], n.UserID)
+			if len(deps[d]) == 0 {
+				heap.Push(ready, byID[d])
+			}
+		}
+	}
+
+	if len(ordered) != len(nodes) {
+		// BR-4 requires naming the offending node. Every node still carrying a
+		// dependency is unreplayable: the cycle members themselves, plus
+		// everything blocked behind them. Report the whole set and say exactly
+		// that. Do not try to single out the cycle by sorting and truncating —
+		// a short prefix of a sorted list can be all bystanders and no cycle
+		// member, which is worse than reporting nothing.
+		var stuck []string
+		for _, n := range nodes {
+			if len(deps[n.UserID]) > 0 {
+				stuck = append(stuck, n.UserID)
+			}
+		}
+		sort.Strings(stuck)
+		listed := strings.Join(stuck, ", ")
+		if len(stuck) > 20 {
+			listed = fmt.Sprintf("%s, and %d more", strings.Join(stuck[:20], ", "), len(stuck)-20)
+		}
+		return nil, fmt.Errorf(
+			"tree %s: %d of %d nodes cannot be replayed because their parent/sponsor references form a cycle: %s",
+			treeID, len(stuck), len(nodes), listed)
+	}
+	return ordered, nil
 }

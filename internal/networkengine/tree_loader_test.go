@@ -583,6 +583,189 @@ func TestValidateNodes_UnilevelPositionIsTolerated(t *testing.T) {
 	require.NoError(t, validateNodes("t", "unilevel", loadTreeConfig{}, nodes))
 }
 
+// userIDs extracts the replay order for readable assertions.
+func userIDs(nodes []TreeNodeRow) []string {
+	out := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		out = append(out, n.UserID)
+	}
+	return out
+}
+
+func TestOrderForReplay_LeavesSpilloverShapedTreesAlone(t *testing.T) {
+	// Sponsor always equals parent, which is what automatic spillover produces.
+	// Depth order already satisfies both constraints, so nothing should move.
+	nodes := []TreeNodeRow{
+		makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+		makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), nil),
+		makeNode("t", "u2", 2, ptr("u1"), ptr("u1"), nil),
+	}
+
+	ordered, err := orderForReplay("t", nodes)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"u0", "u1", "u2"}, userIDs(ordered))
+}
+
+func TestOrderForReplay_PlacesSponsorBeforeSponsored(t *testing.T) {
+	enrolled := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// u3 sits at depth 2 but sponsors u2, which sits at depth 1. Depth order
+	// would replay u2 first and the engine would reject an unknown sponsor.
+	root := makeNode("t", "u0", 0, nil, ptr("u0"), nil)
+	root.EnrolledAt = enrolled
+
+	u1 := makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), nil)
+	u1.EnrolledAt = enrolled.Add(time.Hour)
+
+	u2 := makeNode("t", "u2", 1, ptr("u0"), ptr("u3"), nil)
+	u2.EnrolledAt = enrolled.Add(2 * time.Hour)
+
+	u3 := makeNode("t", "u3", 2, ptr("u1"), ptr("u1"), nil)
+	u3.EnrolledAt = enrolled.Add(3 * time.Hour)
+
+	ordered, err := orderForReplay("t", []TreeNodeRow{root, u1, u2, u3})
+	require.NoError(t, err)
+
+	got := userIDs(ordered)
+	pos := make(map[string]int, len(got))
+	for i, id := range got {
+		pos[id] = i
+	}
+	assert.Less(t, pos["u3"], pos["u2"], "sponsor u3 must precede sponsored u2")
+	assert.Less(t, pos["u1"], pos["u3"], "parent u1 must precede child u3")
+	assert.Equal(t, "u0", got[0], "root replays first")
+}
+
+func TestOrderForReplay_IsIndependentOfInputOrder(t *testing.T) {
+	enrolled := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	root := makeNode("t", "u0", 0, nil, ptr("u0"), nil)
+	root.EnrolledAt = enrolled
+
+	// Three siblings enrolled at the same instant: only the user ID breaks the
+	// tie. Feeding different permutations must produce one stable order.
+	sib := func(id string) TreeNodeRow {
+		n := makeNode("t", id, 1, ptr("u0"), ptr("u0"), nil)
+		n.EnrolledAt = enrolled.Add(time.Hour)
+		return n
+	}
+	a, b, c := sib("ua"), sib("ub"), sib("uc")
+
+	permutations := [][]TreeNodeRow{
+		{root, a, b, c},
+		{root, c, b, a},
+		{root, b, a, c},
+		{root, c, a, b},
+	}
+
+	want := []string{"u0", "ua", "ub", "uc"}
+	for i, perm := range permutations {
+		ordered, err := orderForReplay("t", perm)
+		require.NoError(t, err, "permutation %d", i)
+		assert.Equal(t, want, userIDs(ordered), "permutation %d", i)
+	}
+}
+
+func TestTreeLoader_CyclicReferences(t *testing.T) {
+	// u1 and u2 sponsor each other. Parents are valid, so only the sponsor
+	// edges form the cycle and nothing can be replayed first.
+	nodes := []TreeNodeRow{
+		makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+		makeNode("t", "u1", 1, ptr("u0"), ptr("u2"), nil),
+		makeNode("t", "u2", 1, ptr("u0"), ptr("u1"), nil),
+	}
+
+	mutator, err := loadWithStub(t, "unilevel", nodes)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "form a cycle")
+	// BR-4: the error must name the offending nodes, not just count them.
+	assert.Contains(t, err.Error(), "u1, u2")
+	assert.Zero(t, mutator.totalCalls(), "cycle must be detected before any engine call")
+}
+
+func TestTreeLoader_RootSponsorIsNotADependency(t *testing.T) {
+	// AddRoot takes no sponsor and the engine root is sponsor: None, so
+	// whatever a root row stores is projection metadata. Treating it as a
+	// replay dependency makes the root wait on a node downstream of itself and
+	// rejects the whole tree as a cycle. The "another node" case is the one
+	// that regressed.
+	tests := []struct {
+		name        string
+		rootSponsor *string
+	}{
+		{name: "nil sponsor", rootSponsor: nil},
+		{name: "self sponsor", rootSponsor: ptr("u0")},
+		{name: "another node in the tree", rootSponsor: ptr("u1")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nodes := []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, tt.rootSponsor, nil),
+				makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), nil),
+			}
+
+			ordered, err := orderForReplay("t", nodes)
+			require.NoError(t, err)
+			assert.Equal(t, []string{"u0", "u1"}, userIDs(ordered))
+		})
+	}
+}
+
+// TestTreeLoader_RootSponsorLoadsThroughLoadTree covers the same invariant one
+// layer up. The regression this guards lived at the boundary between
+// validateNodes and orderForReplay, not inside either, so exercising the
+// helper alone would not have caught it.
+func TestTreeLoader_RootSponsorLoadsThroughLoadTree(t *testing.T) {
+	nodes := []TreeNodeRow{
+		// Root sponsored by a node that is itself downstream of the root.
+		makeNode("t", "u0", 0, nil, ptr("u1"), nil),
+		makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), nil),
+	}
+
+	mutator, err := loadWithStub(t, "unilevel", nodes)
+	require.NoError(t, err, "a root sponsored by its own descendant must still load")
+	assert.Equal(t, []string{"u0"}, mutator.roots)
+	assert.Equal(t, []string{"u1"}, mutator.nodes)
+}
+
+// TestTreeLoader_BinaryTreeLoadsUnchanged is BR-5's evidence for the binary
+// half. Binary now passes through position preflight and dependency-aware
+// ordering, and every other unchanged-behavior test loads a unilevel tree, so
+// without this the compatibility claim rests on nothing.
+func TestTreeLoader_BinaryTreeLoadsUnchanged(t *testing.T) {
+	enrolled := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	root := makeNode("t", "u0", 0, nil, ptr("u0"), nil)
+	root.EnrolledAt = enrolled
+
+	left := makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), intPtr(0))
+	left.EnrolledAt = enrolled.Add(time.Hour)
+
+	// Sponsored by u3, which sits deeper, so depth order alone would replay
+	// this before its sponsor exists. Parent and sponsor also differ here.
+	right := makeNode("t", "u2", 1, ptr("u0"), ptr("u3"), intPtr(1))
+	right.EnrolledAt = enrolled.Add(2 * time.Hour)
+
+	deep := makeNode("t", "u3", 2, ptr("u1"), ptr("u1"), intPtr(0))
+	deep.EnrolledAt = enrolled.Add(3 * time.Hour)
+
+	mutator, err := loadWithStub(t, "binary", []TreeNodeRow{root, left, right, deep})
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"t"}, mutator.created, "binary must use plain CreateTree")
+	assert.Empty(t, mutator.matrixCreated)
+	assert.Equal(t, []string{"u0"}, mutator.roots)
+	assert.Empty(t, mutator.nodesAt, "binary must not route through AddNodeAt")
+
+	// u3 precedes u2 because it sponsors it, even though u2 is shallower.
+	assert.Equal(t, []nodeAddCall{
+		{userID: "u1", parentID: "u0", sponsorID: "u0", position: intPtr(0)},
+		{userID: "u3", parentID: "u1", sponsorID: "u1", position: intPtr(0)},
+		{userID: "u2", parentID: "u0", sponsorID: "u3", position: intPtr(1)},
+	}, mutator.nodeCalls)
+}
+
 func TestTreeLoader_LoadMatrixTree_RequiresParams(t *testing.T) {
 	store := NewMemoryTreeStore()
 	ctx := context.Background()

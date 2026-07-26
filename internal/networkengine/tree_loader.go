@@ -92,10 +92,11 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 	// The counts in the failure messages below are the only recovery signal an
 	// operator gets. A replay that fails partway leaves the structure built up
 	// to that point, and the worker has no operation to drop it (HEU-557), so
-	// knowing whether 2 or 20000 nodes landed decides whether to restart the
-	// process. Validation pre-empts every logical error the engine can raise
-	// here, so what actually reaches these paths is transport failure: a worker
-	// crash, an IPC timeout, a cancelled context.
+	// the scale of what landed decides whether to restart the process. The
+	// index names the node that failed, so "3 of 5" means two landed before it.
+	// Validation pre-empts every logical error the engine can raise here, so
+	// what actually reaches these paths is transport failure: a worker crash,
+	// an IPC timeout, a cancelled context.
 	total := len(ordered) - 1
 	for i, node := range ordered[1:] {
 		// validateNodes already proved these non-nil for every non-root, and

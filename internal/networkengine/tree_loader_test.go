@@ -3,6 +3,7 @@ package networkengine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -281,8 +282,7 @@ func TestTreeLoader_ReplayOrderIsDeterministic(t *testing.T) {
 func TestTreeLoader_MatrixSponsorDeeperThanNode(t *testing.T) {
 	enrolled := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	root := makeNode("t", "u0", 0, nil, ptr("u0"), intPtr(0))
-	root.Position = nil
+	root := makeNode("t", "u0", 0, nil, ptr("u0"), nil)
 	root.EnrolledAt = enrolled
 
 	u1 := makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), intPtr(0))
@@ -630,6 +630,109 @@ func TestTreeLoader_ValidPositionsAccepted(t *testing.T) {
 		{userID: "u1", parentID: "u0", sponsorID: "u0", position: 2},
 		{userID: "u2", parentID: "u1", sponsorID: "u1", position: 2},
 	}, mutator.nodesAt)
+}
+
+// failAfterNMutator fails the Nth node-adding call and delegates the rest, so
+// a test can assert what LoadTree reports about how far a replay got.
+// stubMutator.failWith cannot express this: it fails every call including
+// CreateTree, so the replay never starts.
+type failAfterNMutator struct {
+	stubMutator
+	failOn int // 1-based index among AddNode/AddNodeAt calls
+	calls  int
+	err    error
+}
+
+func (m *failAfterNMutator) AddNode(ctx context.Context, structure, userID, parentID, sponsorID string, enrolledAt int64, opts ...AddNodeOption) error {
+	m.calls++
+	if m.calls == m.failOn {
+		return m.err
+	}
+	return m.stubMutator.AddNode(ctx, structure, userID, parentID, sponsorID, enrolledAt, opts...)
+}
+
+func (m *failAfterNMutator) AddNodeAt(ctx context.Context, structure, userID, parentID, sponsorID string, position int, enrolledAt int64) error {
+	m.calls++
+	if m.calls == m.failOn {
+		return m.err
+	}
+	return m.stubMutator.AddNodeAt(ctx, structure, userID, parentID, sponsorID, position, enrolledAt)
+}
+
+// TestTreeLoader_ReplayFailureReportsProgress pins the counter in the replay
+// failure message. The worker has no operation to drop a structure (HEU-557),
+// so a replay that dies partway leaves the tree stuck until the process
+// restarts, and how far it got is the only signal an operator has for deciding
+// whether to restart.
+//
+// The counter is 1-based over non-root nodes: the root replays through AddRoot
+// before the loop, so it is excluded from both the index and the total.
+func TestTreeLoader_ReplayFailureReportsProgress(t *testing.T) {
+	enrolled := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	boom := errors.New("transport closed")
+
+	// Root plus five children, distinct enrollment times so replay order is
+	// u1..u5 and the Nth call is known.
+	build := func(withPositions bool) []TreeNodeRow {
+		nodes := []TreeNodeRow{makeNode("t", "u0", 0, nil, ptr("u0"), nil)}
+		nodes[0].EnrolledAt = enrolled
+		for i := 1; i <= 5; i++ {
+			var pos *int
+			if withPositions {
+				pos = intPtr(i - 1)
+			}
+			n := makeNode("t", fmt.Sprintf("u%d", i), 1, ptr("u0"), ptr("u0"), pos)
+			n.EnrolledAt = enrolled.Add(time.Duration(i) * time.Hour)
+			nodes = append(nodes, n)
+		}
+		return nodes
+	}
+
+	tests := []struct {
+		name     string
+		treeType string
+		opts     []LoadTreeOption
+		failOn   int
+		wantErr  string
+	}{
+		{
+			name:     "matrix fails on the first node",
+			treeType: "matrix",
+			opts:     []LoadTreeOption{WithMatrixParams(5, "breadth_first")},
+			failOn:   1,
+			wantErr:  "add node u1 (1 of 5, tree t left partly built)",
+		},
+		{
+			name:     "matrix fails on the last node",
+			treeType: "matrix",
+			opts:     []LoadTreeOption{WithMatrixParams(5, "breadth_first")},
+			failOn:   5,
+			wantErr:  "add node u5 (5 of 5, tree t left partly built)",
+		},
+		{
+			name:     "unilevel fails midway",
+			treeType: "unilevel",
+			failOn:   3,
+			wantErr:  "add node u3 (3 of 5, tree t left partly built)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewMemoryTreeStore()
+			ctx := context.Background()
+			for _, n := range build(tt.treeType == "matrix") {
+				require.NoError(t, store.InsertNode(ctx, n))
+			}
+
+			mutator := &failAfterNMutator{failOn: tt.failOn, err: boom}
+			err := NewTreeLoader(store, mutator).LoadTree(ctx, "t", tt.treeType, tt.opts...)
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+			assert.ErrorIs(t, err, boom, "the transport error must stay wrapped")
+		})
+	}
 }
 
 // TestTreeLoader_MatrixParamsIgnoredForNonMatrix pins the documented contract

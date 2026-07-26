@@ -104,7 +104,7 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 		// startup, where a nil deref panics the process instead of failing one
 		// tree, and the invariant now spans two functions.
 		if node.ParentID == nil || node.SponsorID == nil {
-			return fmt.Errorf("node %s in tree %s has nil parent or sponsor (data corruption?; %d of %d, tree left partly built)",
+			return fmt.Errorf("node %s in tree %s has nil parent or sponsor (data corruption; %d of %d, tree left partly built)",
 				node.UserID, treeID, i+1, total)
 		}
 		parentID, sponsorID := *node.ParentID, *node.SponsorID
@@ -150,7 +150,7 @@ var supportedTreeTypes = map[string]bool{
 
 // supportedSpillover are the spillover values create_tree accepts. The worker
 // maps only "breadth_first", and MatrixTree::new rejects DepthFirst outright
-// (matrix.rs:57-59), so this set has one member today.
+// (MatrixTree::new), so this set has one member today.
 var supportedSpillover = map[string]bool{
 	"breadth_first": true,
 }
@@ -183,7 +183,7 @@ func validateNodes(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNode
 		return fmt.Errorf("tree %s has unsupported type %q", treeID, treeType)
 	}
 	if treeType == "matrix" {
-		// MatrixTree::new rejects width < 2 (matrix.rs:54), and width is a u8.
+		// MatrixTree::new rejects width < 2, and width is a u8 on the wire.
 		if cfg.matrixWidth < 2 || cfg.matrixWidth > math.MaxUint8 {
 			return fmt.Errorf("tree %s has matrix width %d outside the supported range 2..%d",
 				treeID, cfg.matrixWidth, math.MaxUint8)
@@ -327,6 +327,7 @@ func validateNodes(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNode
 // dependency clears, and each dependency clears once. Less has no tiebreak
 // beyond UserID, so two rows sharing a user ID would order arbitrarily —
 // validateNodes rejects that case before this runs.
+//
 // Holds pointers for the same reason validateNodes does: TreeNodeRow is wide
 // and a distributor network can hold hundreds of thousands of rows.
 type replayQueue []*TreeNodeRow
@@ -384,10 +385,10 @@ func orderForReplay(treeID string, nodes []TreeNodeRow) ([]*TreeNodeRow, error) 
 	for _, n := range nodes {
 		// The root's stored sponsor is projection metadata, never a replay
 		// dependency: AddRoot takes no sponsor and the engine root carries
-		// sponsor: None. Treating it as one would make the
-		// root wait on a node that is itself downstream of the root, and
-		// reject the whole tree as a cycle. The root is identified by a nil
-		// parent, which validateNodes has already proven unique.
+		// sponsor: None. Treating it as one would make the root wait on a node
+		// that is itself downstream of the root, and reject the whole tree as a
+		// cycle. The root is identified by a nil parent, which validateNodes
+		// has already proven unique.
 		refs := []*string{n.ParentID}
 		if n.ParentID != nil {
 			refs = append(refs, n.SponsorID)

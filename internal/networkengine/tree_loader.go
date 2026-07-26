@@ -89,9 +89,17 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 		return fmt.Errorf("add root %s: %w", root.UserID, err)
 	}
 
-	for _, node := range ordered[1:] {
+	// The counts in the failure messages below are the only recovery signal an
+	// operator gets. A replay that fails partway leaves the structure built up
+	// to that point, and the worker has no operation to drop it (HEU-557), so
+	// knowing whether 2 or 20000 nodes landed decides whether to restart the
+	// process. Validation pre-empts every logical error the engine can raise
+	// here, so what actually reaches these paths is transport failure: a worker
+	// crash, an IPC timeout, a cancelled context.
+	total := len(ordered) - 1
+	for i, node := range ordered[1:] {
 		// validateNodes already proved these non-nil for every non-root, and
-		// ordered[1:] excludes the root. Kept as a guard anyway: this runs at
+		// ordered[1:] excludes the root. Kept as guards anyway: this runs at
 		// startup, where a nil deref panics the process instead of failing one
 		// tree, and the invariant now spans two functions.
 		if node.ParentID == nil || node.SponsorID == nil {
@@ -101,10 +109,14 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 		parentID, sponsorID := *node.ParentID, *node.SponsorID
 
 		if treeType == "matrix" {
-			// Validation proved Position is non-nil and within width.
+			if node.Position == nil {
+				return fmt.Errorf("matrix node %s in tree %s has nil position (data corruption?)",
+					node.UserID, treeID)
+			}
 			if err := l.engine.AddNodeAt(ctx, treeID, node.UserID, parentID, sponsorID,
 				*node.Position, node.EnrolledAt.Unix()); err != nil {
-				return fmt.Errorf("add node %s: %w", node.UserID, err)
+				return fmt.Errorf("add node %s (%d of %d, tree %s left partly built): %w",
+					node.UserID, i+1, total, treeID, err)
 			}
 			continue
 		}
@@ -115,7 +127,8 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 		}
 		if err := l.engine.AddNode(ctx, treeID, node.UserID, parentID, sponsorID,
 			node.EnrolledAt.Unix(), addOpts...); err != nil {
-			return fmt.Errorf("add node %s: %w", node.UserID, err)
+			return fmt.Errorf("add node %s (%d of %d, tree %s left partly built): %w",
+				node.UserID, i+1, total, treeID, err)
 		}
 	}
 	return nil

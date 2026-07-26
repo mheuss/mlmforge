@@ -294,11 +294,12 @@ func TestTreePersistence_LoadMatrixTreeCreatesInEngine(t *testing.T) {
 // against the real worker: a multi-node matrix tree with admin-override
 // placements reloads from the adjacency store with identical topology.
 //
-// The fixture is deliberately awkward and must not be simplified. Each row
-// below carries an inline note saying which failure mode it catches; between
-// them they cover placement spillover would not choose, differing parent and
-// sponsor, a sponsor deeper than the node it sponsors, and a slot at width-1.
-// Dropping u3 or u4 leaves this green over a broken loader (HEU-534).
+// The fixture is deliberately awkward and must not be simplified. Between them
+// the rows cover a placement spillover would not choose, differing parent and
+// sponsor, a sponsor deeper than the node it sponsors, and a slot at width-1 —
+// see the inline notes on u3 and u4, which carry most of that load. Simplify
+// the shape and a loader that re-derives placement, transposes parent and
+// sponsor, or replays in depth order starts passing (HEU-534).
 func TestTreePersistence_MatrixMultiNodeRoundTrip(t *testing.T) {
 	_, treeStore, engine, _ := newIntegrationDeps(t)
 	ctx := context.Background()
@@ -402,9 +403,12 @@ func TestTreePersistence_RejectedTreeLeavesEngineLoadable(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "both claim parent")
 
-	// The structure was never created, so even the root is unknown.
+	// The structure was never created. Assert on the specific code: GetPosition
+	// also errors for a known structure missing that user, so a bare Error
+	// check would pass even if the create had leaked.
 	_, err = engine.GetPosition(ctx, treeID, u1)
 	require.Error(t, err, "a refused tree must leave no structure behind")
+	assert.Contains(t, err.Error(), "STRUCTURE_NOT_FOUND")
 
 	// Correct the data the way an operator would, then retry. This is the step
 	// that proves the engine is still usable: a leaked create would fail here.

@@ -638,9 +638,17 @@ func TestTreeLoader_ValidPositionsAccepted(t *testing.T) {
 // CreateTree, so the replay never starts.
 type failAfterNMutator struct {
 	stubMutator
-	failOn int // 1-based index among AddNode/AddNodeAt calls
-	calls  int
-	err    error
+	failOn   int  // 1-based index among AddNode/AddNodeAt calls
+	failRoot bool // fail AddRoot instead, after the create succeeds
+	calls    int
+	err      error
+}
+
+func (m *failAfterNMutator) AddRoot(ctx context.Context, structure, userID string, enrolledAt int64) error {
+	if m.failRoot {
+		return m.err
+	}
+	return m.stubMutator.AddRoot(ctx, structure, userID, enrolledAt)
 }
 
 // Compile-time check, matching the one stubMutator carries.
@@ -740,6 +748,34 @@ func TestTreeLoader_ReplayFailureReportsProgress(t *testing.T) {
 			assert.ErrorIs(t, err, boom, "the transport error must stay wrapped")
 		})
 	}
+}
+
+// TestTreeLoader_AddRootFailureReportsCreatedTree covers the one mid-load exit
+// that used to report nothing about what survived it. The create runs before
+// AddRoot, so a root failure leaves the structure in the worker with no nodes —
+// and the worker cannot drop it (HEU-557), so a retry reports TREE_EXISTS and
+// only a restart clears it. The message has to say the tree exists, or the
+// operator reads a bare "add root failed" and retries into a dead end.
+func TestTreeLoader_AddRootFailureReportsCreatedTree(t *testing.T) {
+	store := NewMemoryTreeStore()
+	ctx := context.Background()
+	boom := errors.New("transport closed")
+
+	root := makeNode("t", "u0", 0, nil, ptr("u0"), nil)
+	root.EnrolledAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, store.InsertNode(ctx, root))
+
+	mutator := &failAfterNMutator{failRoot: true, err: boom}
+	err := NewTreeLoader(store, mutator).LoadTree(ctx, "t", "unilevel")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "add root u0")
+	assert.Contains(t, err.Error(), "tree t created but left empty")
+	assert.ErrorIs(t, err, boom, "the transport error must stay wrapped")
+
+	// The create really did land, which is what makes the message true.
+	assert.Equal(t, []string{"t"}, mutator.created)
+	assert.Empty(t, mutator.roots)
 }
 
 // TestTreeLoader_MatrixParamsIgnoredForNonMatrix pins the documented contract

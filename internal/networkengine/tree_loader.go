@@ -110,6 +110,9 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 		parentID, sponsorID := *node.ParentID, *node.SponsorID
 
 		if treeType == "matrix" {
+			// Unreachable for the same reason as the guard above: validateNodes
+			// rejects a nil position on every non-root matrix node. Kept for
+			// the same reason too — a nil deref here panics startup.
 			if node.Position == nil {
 				return fmt.Errorf("matrix node %s in tree %s has nil position (the adjacency row is incomplete; %d of %d, tree left partly built)",
 					node.UserID, treeID, i+1, total)

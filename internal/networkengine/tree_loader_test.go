@@ -505,7 +505,7 @@ func TestValidateNodes_RootSponsorIsExempt(t *testing.T) {
 
 // TestValidateNodes_DuplicateUserID is the one validation case that cannot be
 // driven through LoadTree: MemoryTreeStore.InsertNode rejects a duplicate
-// active user ID (tree_store_memory.go:25-31), mirroring the Postgres partial
+// active user ID (MemoryTreeStore.InsertNode), mirroring the Postgres partial
 // unique index, so the fixture is unconstructable through the store.
 func TestValidateNodes_DuplicateUserID(t *testing.T) {
 	nodes := []TreeNodeRow{

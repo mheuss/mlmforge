@@ -282,7 +282,7 @@ literal bytes: `"active_products":[]` is present and `:null` is absent (see
 
 ## Tree Reload: What `LoadTree` Restores, and What It Does Not
 
-`LoadTree` rebuilds a tree in the engine from the `tree_nodes` adjacency rows. Three invariants are not obvious from the code and matter to anyone touching the loader, the projection, or the worker's tree handlers.
+`LoadTree` rebuilds a tree in the engine from the `tree_nodes` adjacency rows. The invariants below are not obvious from the code and matter to anyone touching the loader, the projection, or the worker's tree handlers.
 
 ### A root's stored sponsor is dropped on reload
 
@@ -311,3 +311,17 @@ Unilevel carries no position; it appends to the parent's child list. A unilevel 
 ### Why preflight validates everything before mutating anything
 
 The worker has **no operation to remove a structure** (HEU-557). A load that fails partway leaves the tree stuck until the process restarts. So `LoadTree` proves the whole node set is reconstructable before the first engine call, and its replay failures report how far they got, because that count is the only recovery signal an operator has.
+
+### Sponsored-list order is not restored
+
+`Arena::get_sponsored` returns its vec in insertion order, and reload inserts in `(depth, enrolled_at, user_id)` order rather than original event order. So a reloaded tree can report a distributor's recruits in a different order than the live tree did — on the HEU-534 integration fixture, `u1.sponsored` comes back `[u2, u5, u3]` where the event sequence produced `[u2, u3, u5]`.
+
+Harmless today: every other read of that vec is a `retain`, and the adjacency table stores no ordering to restore even if we wanted to. Do not build anything that depends on sponsored-list order surviving a restart.
+
+### The store may not match what the engine actually built (matrix only)
+
+This is the caveat most likely to bite. For a matrix tree, `TreeEventConsumer.handleNodePlaced` writes the event's *requested* `parent_id` and `position` into `tree_nodes`, then calls `add_node` — whose matrix arm ignores both and re-derives placement by spillover. The row records the request; the engine records something else.
+
+Reload is authoritative, so a restart reshapes the live tree to match the rows. Preflight cannot catch this: a spillover-built engine and a requested-placement store are each internally consistent, so validation passes and nothing is logged. Topology drives commissions, so the change is silent and consequential.
+
+Tracked as HEU-553. **Matrix trees must not be wired into startup reload until it is fixed.** Unilevel and binary are unaffected — their `add_node` honours the stored parent.

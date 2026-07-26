@@ -255,20 +255,58 @@ func TestTreeLoader_ReplayOrderIsDeterministic(t *testing.T) {
 		{root, child("ub", 1), child("uc", 2), child("ua", 0)},
 	}
 
-	var want []nodeAtCall
+	// The concrete sequence, not just "all runs agree". Comparing runs against
+	// each other alone would still pass if the ordering rule changed wholesale.
+	want := []nodeAtCall{
+		{userID: "ua", parentID: "u0", sponsorID: "u0", position: 0},
+		{userID: "ub", parentID: "u0", sponsorID: "u0", position: 1},
+		{userID: "uc", parentID: "u0", sponsorID: "u0", position: 2},
+	}
 	for i, nodes := range insertionOrders {
 		mutator, err := loadWithStub(t, "matrix", nodes, WithMatrixParams(3, "breadth_first"))
 		require.NoError(t, err, "insertion order %d", i)
 		require.Equal(t, []string{"u0"}, mutator.roots, "insertion order %d", i)
-
-		if i == 0 {
-			want = mutator.nodesAt
-			require.Len(t, want, 3)
-			continue
-		}
 		assert.Equal(t, want, mutator.nodesAt,
 			"insertion order %d produced a different call sequence", i)
 	}
+}
+
+// TestTreeLoader_MatrixSponsorDeeperThanNode is the matrix counterpart to
+// TestTreeLoader_BinaryTreeLoadsUnchanged: it exercises explicit-placement
+// dispatch and dependency-aware reordering together. That combination is the
+// whole point of HEU-534 — an admin override can put a node shallower than its
+// own sponsor, which is exactly what depth-ordered replay cannot restore — and
+// no other matrix test covers it, because every other matrix fixture has
+// sponsors at or above their nodes.
+func TestTreeLoader_MatrixSponsorDeeperThanNode(t *testing.T) {
+	enrolled := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	root := makeNode("t", "u0", 0, nil, ptr("u0"), intPtr(0))
+	root.Position = nil
+	root.EnrolledAt = enrolled
+
+	u1 := makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), intPtr(0))
+	u1.EnrolledAt = enrolled.Add(time.Hour)
+
+	// Sponsored by u2, which sits a level deeper. Depth order would replay this
+	// first and the engine would reject an unknown sponsor.
+	u3 := makeNode("t", "u3", 1, ptr("u0"), ptr("u2"), intPtr(2))
+	u3.EnrolledAt = enrolled.Add(2 * time.Hour)
+
+	u2 := makeNode("t", "u2", 2, ptr("u1"), ptr("u1"), intPtr(1))
+	u2.EnrolledAt = enrolled.Add(3 * time.Hour)
+
+	mutator, err := loadWithStub(t, "matrix", []TreeNodeRow{root, u1, u3, u2},
+		WithMatrixParams(3, "breadth_first"))
+	require.NoError(t, err)
+
+	assert.Empty(t, mutator.nodes, "matrix must not route through AddNode")
+	// u2 precedes u3 because it sponsors it, even though u3 is shallower.
+	assert.Equal(t, []nodeAtCall{
+		{userID: "u1", parentID: "u0", sponsorID: "u0", position: 0},
+		{userID: "u2", parentID: "u1", sponsorID: "u1", position: 1},
+		{userID: "u3", parentID: "u0", sponsorID: "u2", position: 2},
+	}, mutator.nodesAt)
 }
 
 // loadWithStub seeds an in-memory store and runs LoadTree against a stub

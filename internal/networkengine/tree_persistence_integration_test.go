@@ -265,7 +265,8 @@ func TestTreePersistence_EngineFailureRetry(t *testing.T) {
 // end-to-end against the real worker: reconstructing a matrix tree from the
 // adjacency store now routes through CreateMatrixTree (width + spillover)
 // instead of plain CreateTree, which the worker rejected with MISSING_PARAM.
-// Scope is the create step only. Multi-node matrix replay placement is HEU-534.
+// Scope is the create step only. Multi-node replay placement is covered by
+// TestTreePersistence_MatrixMultiNodeRoundTrip.
 func TestTreePersistence_LoadMatrixTreeCreatesInEngine(t *testing.T) {
 	_, treeStore, engine, _ := newIntegrationDeps(t)
 	ctx := context.Background()

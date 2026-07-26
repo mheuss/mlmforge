@@ -377,9 +377,12 @@ func orderForReplay(treeID string, nodes []TreeNodeRow) ([]*TreeNodeRow, error) 
 		}
 		var seen *string
 		for _, ref := range refs {
-			// validateNodes rejects non-root self-references. If one ever
-			// slipped through it becomes an unsatisfiable dependency and
-			// surfaces below as a cycle, still before any engine call.
+			// Skipping a self-reference drops the edge, so a non-root that
+			// named itself would order cleanly here and then fail in the
+			// engine mid-replay, with the tree already partly built. Nothing
+			// downstream catches that: validateNodes rejecting non-root
+			// self-references is the only thing standing between this loop and
+			// a partially mutated engine.
 			if ref == nil || *ref == n.UserID {
 				continue
 			}
@@ -456,6 +459,16 @@ func cycleError(treeID string, nodes []TreeNodeRow, ordered []*TreeNodeRow, byID
 	// it contains several.
 	sort.Strings(stuck)
 
+	// Every node was emitted yet the counts disagree, so two rows shared a user
+	// ID: both were pushed, one key landed in emitted. validateNodes rejects
+	// duplicates, so this needs a broken precondition to reach — but the walk
+	// below indexes stuck[0], and a panic here takes down startup rather than
+	// failing one tree.
+	if len(stuck) == 0 {
+		return fmt.Errorf("tree %s: replay produced %d of %d nodes with no unreplayable node (duplicate user IDs?)",
+			treeID, len(ordered), len(nodes))
+	}
+
 	// unmet returns a dependency of id that was never emitted, or "" if there
 	// is none. A stuck node always has one; the root is never stuck, so a
 	// stuck node's parent is non-nil and both refs are real dependencies.
@@ -488,9 +501,18 @@ func cycleError(treeID string, nodes []TreeNodeRow, ordered []*TreeNodeRow, byID
 		path = append(path, cur)
 	}
 
-	// Unreachable while the invariants above hold. Falling back beats
-	// returning nothing if one is ever broken.
-	return fmt.Errorf(
-		"tree %s: %d of %d nodes cannot be replayed because their parent/sponsor references form a cycle or sit behind one: %s",
-		treeID, len(stuck), len(nodes), strings.Join(stuck, ", "))
+	// The walk ran out of unmet dependencies instead of closing a loop. That
+	// happens when a hop names a user absent from the node set: an
+	// unresolvable reference, not a cycle. Name the node holding the bad
+	// reference and the target it names, rather than every node blocked behind
+	// it. The last hop is the absent user, so the referrer is the hop before.
+	// validateNodes rejects dangling references, so reaching this needs a
+	// broken precondition.
+	if len(path) >= 2 {
+		return fmt.Errorf(
+			"tree %s: %d of %d nodes cannot be replayed; %s references %s, which is not in the tree",
+			treeID, len(stuck), len(nodes), path[len(path)-2], path[len(path)-1])
+	}
+	return fmt.Errorf("tree %s: %d of %d nodes cannot be replayed; %s has an unresolvable parent/sponsor reference",
+		treeID, len(stuck), len(nodes), strings.Join(path, ""))
 }

@@ -378,14 +378,19 @@ func TestTreeLoader_ValidationFailures_Structural(t *testing.T) {
 }
 
 // TestValidateNodes_RootSponsorIsExempt pins the deliberate exemption in
-// validateNodes: the root skips every non-root check, including sponsor
-// existence. AddRoot takes no sponsor and the engine root is sponsor: None, so
-// whatever a root row stores is projection metadata, not a replay input.
+// validateNodes: the root's sponsor is not validated at all. AddRoot takes no
+// sponsor and the engine root is sponsor: None, so whatever a root row stores
+// is projection metadata, never a replay input.
 //
-// Every other fixture in this package gives the root a self-sponsor, which
-// only exercises one of the three shapes. Without the other two, hoisting the
-// sponsor existence check above the root skip would still pass the suite.
-// Task 5 asserts the ordering half of this; the validation half ships here.
+// The claim under test is "exempt means unvalidated," not "these particular
+// sponsor values are good data." That distinction is why the last case is
+// here. The first three shapes all survive a hoisted sponsor-existence check
+// — nil short-circuits on the nil guard, and the other two resolve in byID —
+// so only a sponsor that is absent from the tree can catch that regression.
+// Drop it and the test passes while the exemption is gone.
+//
+// Task 5 asserts the ordering half of the exemption; this is the validation
+// half.
 func TestValidateNodes_RootSponsorIsExempt(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -394,6 +399,7 @@ func TestValidateNodes_RootSponsorIsExempt(t *testing.T) {
 		{name: "nil sponsor", rootSponsor: nil},
 		{name: "self sponsor", rootSponsor: ptr("u0")},
 		{name: "another node in the tree", rootSponsor: ptr("u1")},
+		{name: "a user absent from the tree", rootSponsor: ptr("ghost")},
 	}
 
 	for _, tt := range tests {

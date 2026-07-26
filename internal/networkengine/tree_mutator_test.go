@@ -113,7 +113,7 @@ func (s *stubMutator) totalCalls() int {
 
 func (s *stubMutator) RemoveNode(_ context.Context, _, userID string) error {
 	s.removed = append(s.removed, userID)
-	return nil
+	return s.failWith
 }
 
 // TestTreeMutator_ConsumerAcceptsInterface verifies that TreeEventConsumer

@@ -1955,3 +1955,27 @@ func TestEngineClient_StreamlineSnapshotRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, info.Streams, 1)
 }
+
+// TestEngineClient_AddNodeAt_WireParams pins the mapping from Go parameters to
+// wire keys. AddNodeAt and AddNode both take (userID, parentID, sponsorID) and
+// all three are strings, so a transposition compiles clean and would silently
+// place every matrix node under the wrong parent. Distinct sentinel values make
+// a swap fail here instead of in production.
+func TestEngineClient_AddNodeAt_WireParams(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`{"added":true}`)}
+	client := NewEngineClientWithTransport(mock)
+
+	err := client.AddNodeAt(context.Background(), "m-tree",
+		"user-child", "user-parent", "user-sponsor", 2, 1700000000)
+	require.NoError(t, err)
+
+	assert.Equal(t, "add_node_at", mock.lastOp)
+	assert.JSONEq(t, `{
+		"structure":   "m-tree",
+		"user_id":     "user-child",
+		"parent_id":   "user-parent",
+		"sponsor_id":  "user-sponsor",
+		"position":    2,
+		"enrolled_at": 1700000000
+	}`, string(mock.lastParams))
+}

@@ -11,6 +11,10 @@ type TreeMutator interface {
 	CreateMatrixTree(ctx context.Context, structure string, width int, spillover string) error
 	AddRoot(ctx context.Context, structure, userID string, enrolledAt int64) error
 	AddNode(ctx context.Context, structure, userID, parentID, sponsorID string, enrolledAt int64, opts ...AddNodeOption) error
+	// AddNodeAt places a node at an explicit parent and position. Matrix trees
+	// need it on reload. Their AddNode re-derives placement by spillover and
+	// ignores the stored parent and position.
+	AddNodeAt(ctx context.Context, structure, userID, parentID, sponsorID string, position int, enrolledAt int64) error
 	RemoveNode(ctx context.Context, structure, userID string) error
 }
 

@@ -223,7 +223,16 @@ func validateNodes(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNode
 		return fmt.Errorf("tree %s has type %q with no slot rule (add one to validateNodes)",
 			treeID, treeType)
 	}
-	occupied := make(map[slotKey]string, len(nodes))
+
+	// Only sized when it will be used. A size hint allocates buckets eagerly,
+	// and unilevel skips the slot block entirely — sizing it there would strand
+	// megabytes on the tree type most likely to carry hundreds of thousands of
+	// rows. Left nil for unilevel, which is safe because the skip below
+	// guarantees no read or write.
+	var occupied map[slotKey]string
+	if hasSlots {
+		occupied = make(map[slotKey]string, len(nodes))
+	}
 
 	for i := range nodes {
 		n := &nodes[i]

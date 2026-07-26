@@ -722,6 +722,58 @@ func TestOrderForReplay_CycleErrorNamesCycleNotBystanders(t *testing.T) {
 	assert.NotContains(t, err.Error(), "a29")
 }
 
+// TestOrderForReplay_UnresolvableReferenceNamesTheReferrer covers the branch
+// taken when the walk runs out of unmet dependencies instead of closing a
+// loop. That is a dangling reference, not a cycle, and it needs its own test:
+// the cycle branch above already had one, this branch did not, and a rewrite
+// silently reintroduced an unbounded bystander list here that the cycle test
+// could not see.
+//
+// Bystanders again sort ahead of the interesting names so a regression to
+// listing the stuck set fails loudly.
+func TestOrderForReplay_UnresolvableReferenceNamesTheReferrer(t *testing.T) {
+	nodes := []TreeNodeRow{makeNode("t", "u0", 0, nil, ptr("u0"), nil)}
+	for i := 0; i < 25; i++ {
+		id := fmt.Sprintf("a%02d", i)
+		nodes = append(nodes, makeNode("t", id, 1, ptr("ghost"), ptr("ghost"), nil))
+	}
+
+	_, err := orderForReplay("t", nodes)
+	require.Error(t, err)
+
+	// Names the missing target and one node that references it.
+	assert.Contains(t, err.Error(), "ghost")
+	assert.Contains(t, err.Error(), "which is not in the tree")
+	assert.Contains(t, err.Error(), "25 of 26 nodes")
+
+	// Must not degenerate into listing every blocked node.
+	assert.NotContains(t, err.Error(), "a24", "only the referrer is named, not every blocked node")
+	assert.NotContains(t, err.Error(), "form a cycle", "a dangling reference is not a cycle")
+}
+
+// TestOrderForReplay_DuplicateUserIDsDoNotPanic covers the other new branch.
+// ordered counts rows while the emitted set counts IDs, so duplicate rows make
+// the length check fail with an empty stuck set. Indexing stuck[0] there
+// panicked, and a panic at startup takes down the process rather than failing
+// one tree load.
+//
+// validateNodes rejects duplicates, so LoadTree cannot reach this — the guard
+// exists because the invariant spans two functions and four tests call
+// orderForReplay directly.
+func TestOrderForReplay_DuplicateUserIDsDoNotPanic(t *testing.T) {
+	nodes := []TreeNodeRow{
+		makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+		makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), nil),
+		makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), nil),
+	}
+
+	require.NotPanics(t, func() {
+		_, err := orderForReplay("t", nodes)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no unreplayable node")
+	})
+}
+
 func TestTreeLoader_RootSponsorIsNotADependency(t *testing.T) {
 	// AddRoot takes no sponsor and the engine root is sponsor: None, so
 	// whatever a root row stores is projection metadata. Treating it as a

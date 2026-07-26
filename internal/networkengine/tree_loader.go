@@ -509,9 +509,18 @@ func cycleError(treeID string, nodes []TreeNodeRow, ordered []*TreeNodeRow, byID
 	// validateNodes rejects dangling references, so reaching this needs a
 	// broken precondition.
 	if len(path) >= 2 {
+		referrer, target := path[len(path)-2], path[len(path)-1]
+		if _, present := byID[target]; !present {
+			return fmt.Errorf(
+				"tree %s: %d of %d nodes cannot be replayed; %s references %s, which is not in the tree",
+				treeID, len(stuck), len(nodes), referrer, target)
+		}
+		// target resolves, so the walk stopped for another reason: every one of
+		// its references was already satisfied. Only duplicate rows produce
+		// that, and claiming the node is absent would be false.
 		return fmt.Errorf(
-			"tree %s: %d of %d nodes cannot be replayed; %s references %s, which is not in the tree",
-			treeID, len(stuck), len(nodes), path[len(path)-2], path[len(path)-1])
+			"tree %s: %d of %d nodes cannot be replayed; the walk from %s stalled at %s (duplicate user IDs?)",
+			treeID, len(stuck), len(nodes), referrer, target)
 	}
 	return fmt.Errorf("tree %s: %d of %d nodes cannot be replayed; %s has an unresolvable parent/sponsor reference",
 		treeID, len(stuck), len(nodes), strings.Join(path, ""))

@@ -584,7 +584,7 @@ func TestValidateNodes_UnilevelPositionIsTolerated(t *testing.T) {
 }
 
 // userIDs extracts the replay order for readable assertions.
-func userIDs(nodes []TreeNodeRow) []string {
+func userIDs(nodes []*TreeNodeRow) []string {
 	out := make([]string, 0, len(nodes))
 	for _, n := range nodes {
 		out = append(out, n.UserID)

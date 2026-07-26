@@ -192,7 +192,7 @@ func TestTreeLoader_LoadMatrixTree_RootOnlyRoutesToCreateMatrixTree(t *testing.T
 	assert.Empty(t, mutator.nodes)
 }
 
-func TestTreeLoader_LoadMatrixTree_MultiNodeRefused(t *testing.T) {
+func TestTreeLoader_LoadMatrixTree_MultiNodeReplaysExplicitPlacement(t *testing.T) {
 	store := NewMemoryTreeStore()
 	ctx := context.Background()
 	enrolled := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -201,24 +201,74 @@ func TestTreeLoader_LoadMatrixTree_MultiNodeRefused(t *testing.T) {
 	root.EnrolledAt = enrolled
 	require.NoError(t, store.InsertNode(ctx, root))
 
-	child := makeNode("m-tree", "user-1", 1, ptr("user-0"), ptr("user-0"), intPtr(1))
+	// user-1 at slot 2. Spillover would have chosen slot 0.
+	child := makeNode("m-tree", "user-1", 1, ptr("user-0"), ptr("user-0"), intPtr(2))
 	child.EnrolledAt = enrolled.Add(time.Hour)
 	require.NoError(t, store.InsertNode(ctx, child))
+
+	// user-2 sits under user-1 but is sponsored by user-0, so parent and
+	// sponsor differ. Without this the test cannot detect a transposition,
+	// because identical values hide the swap.
+	grandchild := makeNode("m-tree", "user-2", 2, ptr("user-1"), ptr("user-0"), intPtr(1))
+	grandchild.EnrolledAt = enrolled.Add(2 * time.Hour)
+	require.NoError(t, store.InsertNode(ctx, grandchild))
 
 	mutator := &stubMutator{}
 	loader := NewTreeLoader(store, mutator)
 
-	// The worker's matrix add_node re-derives placement from sponsor and
-	// ignores the stored parent/position (HEU-534), so replaying past the root
-	// would silently build a different topology than the store. Until that is
-	// fixed the loader must refuse multi-node matrix reloads, not corrupt state.
 	err := loader.LoadTree(ctx, "m-tree", "matrix", WithMatrixParams(3, "breadth_first"))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not yet supported")
-	assert.Empty(t, mutator.matrixCreated, "must refuse before creating anything")
-	assert.Empty(t, mutator.created)
-	assert.Empty(t, mutator.roots)
-	assert.Empty(t, mutator.nodes)
+	require.NoError(t, err)
+
+	require.Equal(t, []matrixCreate{{structure: "m-tree", width: 3, spillover: "breadth_first"}}, mutator.matrixCreated)
+	assert.Equal(t, []string{"user-0"}, mutator.roots)
+	assert.Empty(t, mutator.nodes, "matrix nodes must not go through AddNode")
+	assert.Equal(t, []nodeAtCall{
+		{userID: "user-1", parentID: "user-0", sponsorID: "user-0", position: 2},
+		{userID: "user-2", parentID: "user-1", sponsorID: "user-0", position: 1},
+	}, mutator.nodesAt)
+}
+
+// TestTreeLoader_ReplayOrderIsDeterministic covers BR-6 at the level the
+// requirement states it: repeated loads produce an identical engine call
+// sequence, including arguments. TestOrderForReplay_IsIndependentOfInputOrder
+// pins the helper; this pins the loader, including the root split and the
+// matrix dispatch.
+//
+// The three children share a depth and an enrollment time, so the store's
+// sort has no stable tiebreak and returns them in insertion order. Only the
+// loader's own ordering makes the result deterministic.
+func TestTreeLoader_ReplayOrderIsDeterministic(t *testing.T) {
+	enrolled := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	root := makeNode("t", "u0", 0, nil, ptr("u0"), nil)
+	root.EnrolledAt = enrolled
+
+	child := func(id string, pos int) TreeNodeRow {
+		n := makeNode("t", id, 1, ptr("u0"), ptr("u0"), intPtr(pos))
+		n.EnrolledAt = enrolled.Add(time.Hour)
+		return n
+	}
+
+	insertionOrders := [][]TreeNodeRow{
+		{root, child("uc", 2), child("ua", 0), child("ub", 1)},
+		{root, child("ua", 0), child("ub", 1), child("uc", 2)},
+		{root, child("ub", 1), child("uc", 2), child("ua", 0)},
+	}
+
+	var want []nodeAtCall
+	for i, nodes := range insertionOrders {
+		mutator, err := loadWithStub(t, "matrix", nodes, WithMatrixParams(3, "breadth_first"))
+		require.NoError(t, err, "insertion order %d", i)
+		require.Equal(t, []string{"u0"}, mutator.roots, "insertion order %d", i)
+
+		if i == 0 {
+			want = mutator.nodesAt
+			require.Len(t, want, 3)
+			continue
+		}
+		assert.Equal(t, want, mutator.nodesAt,
+			"insertion order %d produced a different call sequence", i)
+	}
 }
 
 // loadWithStub seeds an in-memory store and runs LoadTree against a stub

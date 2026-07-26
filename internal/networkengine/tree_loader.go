@@ -421,26 +421,76 @@ func orderForReplay(treeID string, nodes []TreeNodeRow) ([]*TreeNodeRow, error) 
 	}
 
 	if len(ordered) != len(nodes) {
-		// BR-4 requires naming the offending node. Every node still carrying a
-		// dependency is unreplayable: the cycle members themselves, plus
-		// everything blocked behind them. Report the whole set and say exactly
-		// that. Do not try to single out the cycle by sorting and truncating —
-		// a short prefix of a sorted list can be all bystanders and no cycle
-		// member, which is worse than reporting nothing.
-		var stuck []string
-		for _, n := range nodes {
-			if remaining[n.UserID] > 0 {
-				stuck = append(stuck, n.UserID)
-			}
-		}
-		sort.Strings(stuck)
-		listed := strings.Join(stuck, ", ")
-		if len(stuck) > 20 {
-			listed = fmt.Sprintf("%s, and %d more", strings.Join(stuck[:20], ", "), len(stuck)-20)
-		}
-		return nil, fmt.Errorf(
-			"tree %s: %d of %d nodes cannot be replayed because their parent/sponsor references form a cycle: %s",
-			treeID, len(stuck), len(nodes), listed)
+		return nil, cycleError(treeID, nodes, ordered, byID)
 	}
 	return ordered, nil
+}
+
+// cycleError explains why a replay order could not be produced. It runs only
+// on the failure path, so it recomputes what it needs rather than making the
+// successful pass carry it.
+//
+// BR-4 requires naming the offending nodes. Listing the stuck set does not
+// satisfy that: the set is the cycle members plus everything blocked behind
+// them, and the blocked nodes usually outnumber the cycle by a wide margin, so
+// any prefix of it can name only bystanders. Instead this walks to a concrete
+// cycle and names that, keeping the stuck count as the blast radius.
+//
+// The walk terminates. Every stuck node has at least one dependency that was
+// never emitted, that dependency is itself stuck, and the stuck set is finite,
+// so following unmet dependencies must revisit a node within len(stuck) steps.
+// The revisit closes a real cycle.
+func cycleError(treeID string, nodes []TreeNodeRow, ordered []*TreeNodeRow, byID map[string]*TreeNodeRow) error {
+	emitted := make(map[string]struct{}, len(ordered))
+	for _, n := range ordered {
+		emitted[n.UserID] = struct{}{}
+	}
+
+	var stuck []string
+	for _, n := range nodes {
+		if _, done := emitted[n.UserID]; !done {
+			stuck = append(stuck, n.UserID)
+		}
+	}
+	// Sorted so a given corrupt tree always reports the same cycle, even when
+	// it contains several.
+	sort.Strings(stuck)
+
+	// unmet returns a dependency of id that was never emitted, or "" if there
+	// is none. A stuck node always has one; the root is never stuck, so a
+	// stuck node's parent is non-nil and both refs are real dependencies.
+	unmet := func(id string) string {
+		n, ok := byID[id]
+		if !ok {
+			return ""
+		}
+		for _, ref := range []*string{n.ParentID, n.SponsorID} {
+			if ref == nil || *ref == id {
+				continue
+			}
+			if _, done := emitted[*ref]; !done {
+				return *ref
+			}
+		}
+		return ""
+	}
+
+	seenAt := make(map[string]int, len(stuck))
+	var path []string
+	for cur := stuck[0]; cur != ""; cur = unmet(cur) {
+		if idx, ok := seenAt[cur]; ok {
+			cycle := append(append([]string{}, path[idx:]...), cur)
+			return fmt.Errorf(
+				"tree %s: %d of %d nodes cannot be replayed because their parent/sponsor references form a cycle: %s",
+				treeID, len(stuck), len(nodes), strings.Join(cycle, " -> "))
+		}
+		seenAt[cur] = len(path)
+		path = append(path, cur)
+	}
+
+	// Unreachable while the invariants above hold. Falling back beats
+	// returning nothing if one is ever broken.
+	return fmt.Errorf(
+		"tree %s: %d of %d nodes cannot be replayed because their parent/sponsor references form a cycle or sit behind one: %s",
+		treeID, len(stuck), len(nodes), strings.Join(stuck, ", "))
 }

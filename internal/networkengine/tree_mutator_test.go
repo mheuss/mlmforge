@@ -109,6 +109,18 @@ func (s *stubMutator) AddNodeAt(_ context.Context, _, userID, parentID, sponsorI
 	return nil
 }
 
+// totalCalls counts every engine call the stub recorded. Preflight tests assert
+// this is zero: the guarantee is that a rejected tree never reaches the engine,
+// and counting one method at a time would miss a leak through another.
+//
+// nodeCalls is deliberately excluded — it mirrors `nodes` one-for-one, and
+// double-counting AddNode would make a zero assertion no stricter while making
+// a non-zero count harder to read.
+func (s *stubMutator) totalCalls() int {
+	return len(s.created) + len(s.matrixCreated) + len(s.roots) +
+		len(s.nodes) + len(s.nodesAt) + len(s.removed)
+}
+
 func (s *stubMutator) RemoveNode(_ context.Context, _, userID string) error {
 	if s.failWith != nil {
 		return s.failWith

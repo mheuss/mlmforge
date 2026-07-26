@@ -16,9 +16,14 @@ type stubMutator struct {
 	matrixCreated []matrixCreate
 	roots         []string
 	nodes         []string
+	nodeCalls     []nodeAddCall
+	nodesAt       []nodeAtCall
 	removed       []string
 	failWith      error
 }
+
+// Compile-time check: stubMutator must satisfy TreeMutator.
+var _ TreeMutator = (*stubMutator)(nil)
 
 // matrixCreate records the params of a CreateMatrixTree call so tests can
 // assert that width and spillover were threaded through, not dropped.
@@ -26,6 +31,25 @@ type matrixCreate struct {
 	structure string
 	width     int
 	spillover string
+}
+
+// nodeAtCall records the params of an AddNodeAt call so tests can assert that
+// explicit placement was threaded through rather than re-derived.
+type nodeAtCall struct {
+	userID    string
+	parentID  string
+	sponsorID string
+	position  int
+}
+
+// nodeAddCall records the params of an AddNode call, including the decoded
+// position option, so binary and unilevel replay can be asserted the same way
+// matrix replay can. The existing `nodes []string` field records user IDs only.
+type nodeAddCall struct {
+	userID    string
+	parentID  string
+	sponsorID string
+	position  *int
 }
 
 func (s *stubMutator) CreateTree(_ context.Context, structure, _ string) error {
@@ -52,11 +76,36 @@ func (s *stubMutator) AddRoot(_ context.Context, _, userID string, _ int64) erro
 	return nil
 }
 
-func (s *stubMutator) AddNode(_ context.Context, _, userID, _, _ string, _ int64, _ ...AddNodeOption) error {
+func (s *stubMutator) AddNode(_ context.Context, _, userID, parentID, sponsorID string, _ int64, opts ...AddNodeOption) error {
 	if s.failWith != nil {
 		return s.failWith
 	}
 	s.nodes = append(s.nodes, userID)
+
+	// Decode the option set the way EngineClient does, so tests see the
+	// position that would actually go over the wire.
+	params := map[string]any{}
+	for _, opt := range opts {
+		opt(params)
+	}
+	call := nodeAddCall{userID: userID, parentID: parentID, sponsorID: sponsorID}
+	if p, ok := params["position"].(int); ok {
+		call.position = &p
+	}
+	s.nodeCalls = append(s.nodeCalls, call)
+	return nil
+}
+
+func (s *stubMutator) AddNodeAt(_ context.Context, _, userID, parentID, sponsorID string, position int, _ int64) error {
+	if s.failWith != nil {
+		return s.failWith
+	}
+	s.nodesAt = append(s.nodesAt, nodeAtCall{
+		userID:    userID,
+		parentID:  parentID,
+		sponsorID: sponsorID,
+		position:  position,
+	})
 	return nil
 }
 

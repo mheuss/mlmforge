@@ -729,26 +729,58 @@ func TestOrderForReplay_CycleErrorNamesCycleNotBystanders(t *testing.T) {
 // silently reintroduced an unbounded bystander list here that the cycle test
 // could not see.
 //
-// Bystanders again sort ahead of the interesting names so a regression to
-// listing the stuck set fails loudly.
+// Exactly one node carries the bad reference; the 25 "a" nodes are bystanders
+// blocked behind it. That split is the point. An earlier version of this test
+// pointed all 25 at the missing user, which made every stuck node a legitimate
+// referrer — so it could not distinguish "names the referrer" from "lists the
+// stuck set", and a truncated list passed it.
+//
+// The bystanders sort ahead of z0, so asserting NotContains on the *first*
+// stuck node catches any prefix, even a one-element one.
 func TestOrderForReplay_UnresolvableReferenceNamesTheReferrer(t *testing.T) {
-	nodes := []TreeNodeRow{makeNode("t", "u0", 0, nil, ptr("u0"), nil)}
+	nodes := []TreeNodeRow{
+		makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+		makeNode("t", "z0", 1, ptr("ghost"), ptr("ghost"), nil),
+	}
 	for i := 0; i < 25; i++ {
 		id := fmt.Sprintf("a%02d", i)
-		nodes = append(nodes, makeNode("t", id, 1, ptr("ghost"), ptr("ghost"), nil))
+		nodes = append(nodes, makeNode("t", id, 2, ptr("z0"), ptr("z0"), nil))
 	}
 
 	_, err := orderForReplay("t", nodes)
 	require.Error(t, err)
 
-	// Names the missing target and one node that references it.
-	assert.Contains(t, err.Error(), "ghost")
-	assert.Contains(t, err.Error(), "which is not in the tree")
-	assert.Contains(t, err.Error(), "25 of 26 nodes")
+	assert.Contains(t, err.Error(), "ghost", "the unresolvable target must be named")
+	assert.Contains(t, err.Error(), "z0", "the node that references it must be named")
+	assert.Contains(t, err.Error(), "26 of 27 nodes", "the stuck count is the blast radius")
 
-	// Must not degenerate into listing every blocked node.
-	assert.NotContains(t, err.Error(), "a24", "only the referrer is named, not every blocked node")
+	// a00 is the alphabetically first stuck node, so this fails on any prefix
+	// of the stuck set, however short.
+	assert.NotContains(t, err.Error(), "a00", "bystanders are counted, never listed")
 	assert.NotContains(t, err.Error(), "form a cycle", "a dangling reference is not a cycle")
+}
+
+// TestOrderForReplay_StalledWalkNamesWhereItStopped covers the same exit taken
+// for the other reason: duplicate rows whose copies carry different references,
+// so byID resolves the target while one copy's edge stays unmet. The single
+// fallback message has to be true here too — an earlier split version claimed
+// this node was "not in the tree" when it plainly was.
+func TestOrderForReplay_StalledWalkNamesWhereItStopped(t *testing.T) {
+	nodes := []TreeNodeRow{
+		makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+		makeNode("t", "z", 1, ptr("ghost"), ptr("ghost"), nil),
+		// Same user ID, different references. byID keeps this copy.
+		makeNode("t", "z", 1, ptr("u0"), ptr("u0"), nil),
+		makeNode("t", "a", 2, ptr("z"), ptr("z"), nil),
+	}
+
+	require.NotPanics(t, func() {
+		_, err := orderForReplay("t", nodes)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "z", "must name where the walk stopped")
+		assert.NotContains(t, err.Error(), "is not in the tree",
+			"z resolves in byID; claiming it is absent would be false")
+	})
 }
 
 // TestOrderForReplay_DuplicateUserIDsDoNotPanic covers the other new branch.

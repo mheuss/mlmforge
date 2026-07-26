@@ -15,6 +15,8 @@ Use-cases for the Network Engine bounded context.
 - [UC-NET-009: Windowed and tenure rank-qualification gates](#uc-net-009-windowed-and-tenure-rank-qualification-gates)
 - [UC-NET-010: Periodic rank-evaluation driver](#uc-net-010-periodic-rank-evaluation-driver)
 - [UC-NET-011: Cross-language integer width contract](#uc-net-011-cross-language-integer-width-contract)
+- [UC-NET-012: Preflight validation before an irreversible mutation](#uc-net-012-preflight-validation-before-an-irreversible-mutation)
+- [UC-NET-013: Dependency-aware replay ordering over multiple edge types](#uc-net-013-dependency-aware-replay-ordering-over-multiple-edge-types)
 
 ---
 
@@ -336,3 +338,53 @@ go test ./internal/config/ && (cd engine && cargo test --test config_width_contr
 - A new integer field fails `TestConfigContract_NoUntypedIntFields`.
 
 **Notes:** Completeness is enforced Go-side only — the Rust test pins known fields, and the AST scan is what stops new drift. That scan is AST-only, so a signed int hidden behind a named type (`type Depth int32`) or an embedded field slips past; catching those would need a `go/types`-based scan. Commission fields sit behind `CommissionRaw` and only decode into their typed struct during `resolveCommissions`, which is why the Go test uses the real two-pass decode — unmarshalling the plan alone never exercises them. The decode stops before business validation deliberately, so a rejection proves the field's *type* rejected the value rather than some business rule capping it. Both boundary tests fail loudly on an unresolvable pointer instead of passing vacuously. `TestConfigContractFixturesMatchPipeline` is what keeps the Rust half honest: the fixtures are only REGEN-written, never compared, so without the golden check a `translate.go` regression would desync them from real output while the Rust test read stale files and stayed green. A field with `omitempty` (e.g. `board_cycling.max_cascade_depth`) must keep a non-default value in its fixture or its `engine_pointer` will not resolve. Go struct names do not map to Rust struct names — `UnilevelCommission.CommissionableDepth` is Rust `LevelCommissionConfig.max_depth`, and `BoardCyclingConfig` lives in two Rust modules — which is why the Rust side deserializes the whole plan instead of mapping per-struct. `REGEN_FIXTURES` must be exactly `1`. The parallel scan for wire DTO fields in `wire_types.go` is not built yet (HEU-544). See `docs/development/config-types.md`.
+
+---
+
+### UC-NET-012: Preflight validation before an irreversible mutation
+
+**Added:** Unreleased (HEU-534)
+**Files:** `internal/networkengine/tree_loader.go`
+
+**Problem:** `LoadTree` replays a persisted tree into the Rust worker one node at a time, but the worker has no operation to remove a structure — so a replay that fails partway leaves a half-built tree that cannot be dropped or retried until the process restarts.
+
+**Solution:** Prove the entire input set is reconstructable *before* the first call to the external system. `validateNodes` checks every rule the engine would enforce — tree type, matrix width and spillover, duplicate IDs, exactly one depth-0 root, root parent and position, self-references, reference existence, depth consistency, slot occupancy — and `orderForReplay` proves a workable order exists. Only then does the first mutation happen. Replay failures also report how far they got, because with no rollback that count is the operator's only recovery signal.
+
+**Usage:**
+```go
+// Every detectable fault fails here, with the engine untouched.
+if err := validateNodes(treeID, treeType, cfg, nodes); err != nil {
+    return err
+}
+ordered, err := orderForReplay(treeID, nodes)
+if err != nil {
+    return err
+}
+// First mutation only after both phases pass.
+if err := l.engine.CreateMatrixTree(ctx, treeID, cfg.matrixWidth, cfg.matrixSpillover); err != nil {
+```
+
+**Notes:** The pattern generalises to any external system with no undo: a worker without a delete op, an API without a rollback, a third party that charges on first call. Two things make it worth the duplication of engine rules in Go. First, the validation must mirror what the remote actually enforces, so it is only as good as that audit — `TestTreePersistence_RejectedTreeLeavesEngineLoadable` proves the guarantee against the real worker rather than a stub, and asserts a *corrected retry succeeds*, which is the part no fake can demonstrate. Second, the mirroring drifts silently if the remote adds a rule; the Rust side keeps its own runtime checks, so preflight is a second line of defence rather than a replacement. Deliberately not covered: divergence between what the store recorded and what the remote actually did — both can be internally consistent, so no read-side validation can detect it (HEU-553). Related: UC-NET-013, which supplies the ordering half.
+
+---
+
+### UC-NET-013: Dependency-aware replay ordering over multiple edge types
+
+**Added:** Unreleased (HEU-534, HEU-561)
+**Files:** `internal/networkengine/tree_loader.go`
+
+**Problem:** Replaying stored nodes in depth order satisfies parents, because a parent is always shallower — but every tree type also resolves the *sponsor* at insert time and rejects one that is not present yet. Automatic spillover always places a recruit below their sponsor, so depth order happened to work; explicit placement removes that coincidence, and a node placed shallower than its own sponsor then fails mid-replay.
+
+**Solution:** Kahn's algorithm over a min-heap, with an edge for each dependency kind. `orderForReplay` counts each node's unmet dependencies (parent *and* sponsor), seeds the heap with the zero-dependency nodes, and pops in `(depth, enrolled_at, user_id)` order so the result is deterministic regardless of how the store broke ties. If nodes remain unemitted, `cycleError` walks the residual graph to a concrete cycle and names it.
+
+**Usage:**
+```go
+ordered, err := orderForReplay(treeID, nodes)
+if err != nil {
+    return err // names a real cycle, e.g. "z1 -> z2 -> z1"
+}
+root := ordered[0] // the only zero-dependency node, provably
+for _, node := range ordered[1:] {
+```
+
+**Notes:** Two non-obvious parts. The root's stored sponsor must **not** be treated as a dependency — `AddRoot` takes no sponsor, so doing so makes the root wait on a node downstream of itself and rejects the whole tree as a cycle. And when reporting a cycle, do not print the stuck set: it is the cycle members *plus everything blocked behind them*, and the blocked nodes usually dominate, so any prefix names only bystanders. Walk to an actual cycle instead — every stuck node has an unmet dependency that is itself stuck, so following them from any stuck node closes a loop within `len(stuck)` steps, in O(n) and without a DFS. The counter formulation also makes duplicate edges harmless: double-counting appends to `dependents` twice, so both decrements land. Related: UC-NET-012, which supplies the validation half and guarantees the preconditions this relies on.

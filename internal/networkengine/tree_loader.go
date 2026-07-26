@@ -136,11 +136,11 @@ var supportedSpillover = map[string]bool{
 // tree would be stuck until the process restarts.
 //
 // Structural consistency is only half of "reconstructable". This function
-// proves every parent and sponsor exists in the set; it does not prove they
-// can be replayed in an order that satisfies the engine. A node may legally
-// sit shallower than its own sponsor, and the engine resolves a sponsor at
-// insert time, so depth order alone can still fail mid-replay. orderForReplay
-// closes that half.
+// proves every non-root node's parent and sponsor exists in the set; it does
+// not prove they can be replayed in an order that satisfies the engine. A node
+// may legally sit shallower than its own sponsor, and the engine resolves a
+// sponsor at insert time, so depth order alone can still fail mid-replay.
+// Dependency-aware ordering closes that half; it is not implemented yet.
 //
 // cfg supplies matrix width and spillover. Binary positions are fixed at 0
 // and 1; unilevel nodes carry no position.

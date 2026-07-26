@@ -289,3 +289,65 @@ func TestTreePersistence_LoadMatrixTreeCreatesInEngine(t *testing.T) {
 	require.NotNil(t, rootPos)
 	assert.Equal(t, uint32(0), rootPos.Depth)
 }
+
+// TestTreePersistence_MatrixMultiNodeRoundTrip proves HEU-534 end-to-end
+// against the real worker: a multi-node matrix tree with admin-override
+// placements reloads from the adjacency store with identical topology.
+//
+// The fixture is deliberately awkward and must not be simplified. It encodes
+// four properties, each of which catches a different way the implementation
+// could be wrong. See the table in the implementation plan.
+func TestTreePersistence_MatrixMultiNodeRoundTrip(t *testing.T) {
+	_, treeStore, engine, _ := newIntegrationDeps(t)
+	ctx := context.Background()
+
+	const width = 3
+	treeID := testTreeUUID(1)
+	u1, u2, u3, u4, u5 := testUserUUID(1), testUserUUID(2), testUserUUID(3), testUserUUID(4), testUserUUID(5)
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// Rows as a prior run's events would have projected them.
+	rows := []TreeNodeRow{
+		// root
+		makeUUIDNode(testNodeUUID(1), treeID, u1, 0, nil, ptr(u1), nil),
+		// u2 under the root at slot 0
+		makeUUIDNode(testNodeUUID(2), treeID, u2, 1, ptr(u1), ptr(u1), intPtr(0)),
+		// u3 pushed a level down under u2 while the root still has free slots.
+		// Spillover would never choose this. Parent and sponsor also differ.
+		makeUUIDNode(testNodeUUID(3), treeID, u3, 2, ptr(u2), ptr(u1), intPtr(2)),
+		// u4 sits at depth 1 but is sponsored by u3 at depth 2, so depth-ordered
+		// replay would reach it before its sponsor exists. Also at width-1.
+		makeUUIDNode(testNodeUUID(4), treeID, u4, 1, ptr(u1), ptr(u3), intPtr(2)),
+		// u5 fills the root's last free slot.
+		makeUUIDNode(testNodeUUID(5), treeID, u5, 1, ptr(u1), ptr(u1), intPtr(1)),
+	}
+	for i := range rows {
+		rows[i].EnrolledAt = base.Add(time.Duration(i) * time.Hour)
+		require.NoError(t, treeStore.InsertNode(ctx, rows[i]))
+	}
+
+	loader := NewTreeLoader(treeStore, engine)
+	require.NoError(t, loader.LoadTree(ctx, treeID, "matrix", WithMatrixParams(width, "breadth_first")))
+
+	// The root carries no sponsor in the engine by construction: AddRoot takes
+	// no sponsor and the Rust root is sponsor: None. Assert it separately.
+	rootPos, err := engine.GetPosition(ctx, treeID, u1)
+	require.NoError(t, err)
+	assert.Equal(t, uint32(0), rootPos.Depth)
+	assert.Nil(t, rootPos.ParentUserID, "root has no parent")
+
+	// Every non-root node must match its stored row exactly.
+	for _, want := range rows[1:] {
+		t.Run("node_"+want.UserID, func(t *testing.T) {
+			got, err := engine.GetPosition(ctx, treeID, want.UserID)
+			require.NoError(t, err)
+			require.NotNil(t, got.ParentUserID)
+			require.NotNil(t, got.SponsorUserID)
+
+			assert.Equal(t, *want.ParentID, *got.ParentUserID, "parent")
+			assert.Equal(t, *want.SponsorID, *got.SponsorUserID, "sponsor")
+			assert.Equal(t, *want.Position, got.Position, "position")
+			assert.Equal(t, uint32(want.Depth), got.Depth, "depth")
+		})
+	}
+}

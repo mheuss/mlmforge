@@ -348,7 +348,7 @@ go test ./internal/config/ && (cd engine && cargo test --test config_width_contr
 
 **Problem:** `LoadTree` replays a persisted tree into the Rust worker one node at a time, but the worker has no operation to remove a structure — so a replay that fails partway leaves a half-built tree that cannot be dropped or retried until the process restarts.
 
-**Solution:** Prove the entire input set is reconstructable *before* the first call to the external system. `validateNodes` checks every rule the engine would enforce — tree type, matrix width and spillover, duplicate IDs, exactly one depth-0 root, root parent and position, self-references, reference existence, depth consistency, slot occupancy — and `orderForReplay` proves a workable order exists. Only then does the first mutation happen. Replay failures also report how far they got, because with no rollback that count is the operator's only recovery signal.
+**Solution:** Prove the entire input set is reconstructable *before* the first call to the external system. `validateNodes` checks every rule the engine would enforce — tree type, matrix width and spillover, duplicate IDs, exactly one depth-0 root, root parent and position, self-references, reference existence, depth consistency, slot occupancy — and `orderForReplay` proves a workable order exists. Only then does the first mutation happen. Replay failures also report how far they got, because with no rollback that count is the operator's only recovery signal. Every exit after the create says what survived it, not just the replay loop: a failed `AddRoot` reports that the tree was created but left empty, since the worker has no operation to drop it (HEU-557) and only a process restart clears it.
 
 **Usage:**
 ```go

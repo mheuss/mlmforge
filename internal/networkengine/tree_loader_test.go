@@ -324,6 +324,18 @@ func loadWithStub(t *testing.T, treeType string, nodes []TreeNodeRow, opts ...Lo
 	return mutator, err
 }
 
+// loadWithStubDirect is loadWithStub for fixtures InsertNode itself refuses,
+// like duplicate slots, which the mirror of migration 000004 rejects at
+// insert. It seeds the store directly so loader preflight can still be tested
+// against corruption that predates the index in a real database.
+func loadWithStubDirect(t *testing.T, treeType string, nodes []TreeNodeRow, opts ...LoadTreeOption) (*stubMutator, error) {
+	t.Helper()
+	store := &MemoryTreeStore{nodes: nodes}
+	mutator := &stubMutator{}
+	err := NewTreeLoader(store, mutator).LoadTree(context.Background(), "t", treeType, opts...)
+	return mutator, err
+}
+
 func TestTreeLoader_ValidationFailures_Structural(t *testing.T) {
 	matrixOpts := []LoadTreeOption{WithMatrixParams(3, "breadth_first")}
 
@@ -527,6 +539,11 @@ func TestTreeLoader_ValidationFailures_Positions(t *testing.T) {
 		opts     []LoadTreeOption
 		nodes    []TreeNodeRow
 		wantErr  string
+		// direct seeds the store without InsertNode. Required for fixtures
+		// the store itself now refuses (duplicate slots, per the migration
+		// 000004 mirror), which preflight must still catch when they predate
+		// the index in a real database.
+		direct bool
 	}{
 		{
 			name:     "matrix nil position",
@@ -568,6 +585,7 @@ func TestTreeLoader_ValidationFailures_Positions(t *testing.T) {
 				makeNode("t", "u2", 1, ptr("u0"), ptr("u0"), intPtr(1)),
 			},
 			wantErr: "both claim parent u0 position 1",
+			direct:  true,
 		},
 		{
 			name:     "binary nil position",
@@ -596,12 +614,17 @@ func TestTreeLoader_ValidationFailures_Positions(t *testing.T) {
 				makeNode("t", "u2", 1, ptr("u0"), ptr("u0"), intPtr(0)),
 			},
 			wantErr: "both claim parent u0 position 0",
+			direct:  true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mutator, err := loadWithStub(t, tt.treeType, tt.nodes, tt.opts...)
+			load := loadWithStub
+			if tt.direct {
+				load = loadWithStubDirect
+			}
+			mutator, err := load(t, tt.treeType, tt.nodes, tt.opts...)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.wantErr)
 			assert.Zero(t, mutator.totalCalls(), "preflight failure must make no engine calls")

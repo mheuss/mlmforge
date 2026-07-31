@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/golang-migrate/migrate/v4"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mlmforge/mlmforge/internal/testutil"
 	"github.com/stretchr/testify/assert"
@@ -71,4 +73,39 @@ func TestPostgresContainer_NewPool_TruncatesQualificationHistory(t *testing.T) {
 	).Scan(&count)
 	require.NoError(t, err)
 	assert.Equal(t, 0, count, "qualification_history must be empty after NewPool truncate")
+}
+
+// TestMigrations_SlotUniqueDownUp proves migration 000004's down file works,
+// not just that it contains words: migrate down one step, confirm the index
+// is gone, migrate back up, confirm it returns. The source-URL construction
+// mirrors testutil.migrateUp. The down/up pair restores the schema, so the
+// shared container is left exactly as other tests expect it.
+func TestMigrations_SlotUniqueDownUp(t *testing.T) {
+	if migrationContainer == nil {
+		t.Skip("Postgres container not available")
+	}
+
+	absPath, err := filepath.Abs("../../migrations")
+	require.NoError(t, err)
+	m, err := migrate.New(fmt.Sprintf("file://%s", absPath), migrationContainer.DSN)
+	require.NoError(t, err)
+	defer func() { _, _ = m.Close() }()
+
+	indexExists := func() bool {
+		pool, err := pgxpool.New(context.Background(), migrationContainer.DSN)
+		require.NoError(t, err)
+		defer pool.Close()
+		var exists bool
+		require.NoError(t, pool.QueryRow(context.Background(),
+			`SELECT EXISTS (SELECT 1 FROM pg_indexes
+			                WHERE indexname = 'idx_tree_nodes_tree_parent_position_active')`,
+		).Scan(&exists))
+		return exists
+	}
+
+	require.True(t, indexExists(), "index present after full migrate up")
+	require.NoError(t, m.Steps(-1), "migrate down one step (000004)")
+	require.False(t, indexExists(), "down file actually drops the index")
+	require.NoError(t, m.Steps(1), "migrate back up")
+	require.True(t, indexExists(), "up file restores the index")
 }

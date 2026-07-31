@@ -78,6 +78,27 @@ func TestPostgresTreeStore_GetNodeNotFound(t *testing.T) {
 	assert.Nil(t, got)
 }
 
+func TestPostgresTreeStore_DuplicateActiveSlotRejected(t *testing.T) {
+	store := newTestPostgresTreeStore(t)
+	ctx := context.Background()
+
+	treeID := testTreeUUID(1)
+	require.NoError(t, store.InsertNode(ctx,
+		makeUUIDNode(testNodeUUID(1), treeID, testUserUUID(1), 0, nil, ptr(testUserUUID(1)), nil)))
+	require.NoError(t, store.InsertNode(ctx,
+		makeUUIDNode(testNodeUUID(2), treeID, testUserUUID(2), 1, ptr(testUserUUID(1)), ptr(testUserUUID(1)), intPtr(0))))
+
+	err := store.InsertNode(ctx,
+		makeUUIDNode(testNodeUUID(3), treeID, testUserUUID(3), 1, ptr(testUserUUID(1)), ptr(testUserUUID(1)), intPtr(0)))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "idx_tree_nodes_tree_parent_position_active")
+
+	// Soft-delete frees the slot for a live replacement (ADR-023).
+	require.NoError(t, store.DeleteNode(ctx, treeID, testUserUUID(2)))
+	require.NoError(t, store.InsertNode(ctx,
+		makeUUIDNode(testNodeUUID(4), treeID, testUserUUID(4), 1, ptr(testUserUUID(1)), ptr(testUserUUID(1)), intPtr(0))))
+}
+
 func TestPostgresTreeStore_DeleteNode(t *testing.T) {
 	store := newTestPostgresTreeStore(t)
 	ctx := context.Background()

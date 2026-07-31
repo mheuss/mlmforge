@@ -81,12 +81,14 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform
 
 	// Reject malformed payloads before either projection. A node_placed that
 	// cannot be applied faithfully must not land anywhere: a stored row the
-	// engine never honored is the divergence this consumer exists to prevent,
-	// and LoadTree's validation refuses rows these checks would admit, so
-	// storing one can make the whole tree unreloadable.
-	if event.Stream != TreeStreamName(payload.TreeID) {
+	// engine never honored is the divergence this consumer exists to prevent.
+	// Without these checks bad rows would be stored, and for the position
+	// rules LoadTree's validation would then refuse the whole tree at the
+	// next reload. (The unilevel rule is gate-only: the loader tolerates
+	// legacy unilevel positions — HEU-563.)
+	if want := TreeStreamName(payload.TreeID); event.Stream != want {
 		return fmt.Errorf("node_placed for %s in tree %s arrived on stream %q, want %q",
-			payload.UserID, payload.TreeID, event.Stream, TreeStreamName(payload.TreeID))
+			payload.UserID, payload.TreeID, event.Stream, want)
 	}
 	if !supportedTreeTypes[payload.TreeType] {
 		return fmt.Errorf("node_placed for %s in tree %s has unsupported tree_type %q",
@@ -114,6 +116,13 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform
 			return fmt.Errorf("unilevel node_placed for %s in tree %s carries position %d; unilevel trees have no slots",
 				payload.UserID, payload.TreeID, *payload.Position)
 		}
+	default:
+		// Unreachable while supportedTreeTypes has three entries, but that
+		// map's comment says to expect a fourth. Mirror validateNodes: a new
+		// type must fail here loudly until its position rule is decided,
+		// not fall through and admit whatever the event carries.
+		return fmt.Errorf("node_placed for %s in tree %s has type %q with no position rule (add one to handleNodePlaced)",
+			payload.UserID, payload.TreeID, payload.TreeType)
 	}
 
 	// Look up parent depth to derive child depth.

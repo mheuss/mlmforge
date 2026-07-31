@@ -99,6 +99,7 @@ func TestTreeConsumer_HandleNodePlaced(t *testing.T) {
 		UserID:     "user-child",
 		ParentID:   "user-root",
 		SponsorID:  "user-root",
+		TreeType:   treeTypeUnilevel,
 		EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 	}
 	event := makeEvent(EventTypeNodePlaced, payload)
@@ -160,6 +161,7 @@ func TestTreeConsumer_NodePlacedMissingParent(t *testing.T) {
 		UserID:     "user-child",
 		ParentID:   "nonexistent-parent",
 		SponsorID:  "nonexistent-parent",
+		TreeType:   treeTypeUnilevel,
 		EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 	}
 	event := makeEvent(EventTypeNodePlaced, payload)

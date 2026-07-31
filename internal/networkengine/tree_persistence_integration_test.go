@@ -123,6 +123,7 @@ func TestTreePersistence_PlaceAndRemove(t *testing.T) {
 	// Place child.
 	childEvent := appendTreeEvent(t, eventStore, stream, 1, EventTypeNodePlaced, NodePlacedPayload{
 		TreeID: treeID, UserID: childID, ParentID: rootID, SponsorID: rootID,
+		TreeType:   treeTypeUnilevel,
 		EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 	})
 	require.NoError(t, consumer.HandleEvent(ctx, childEvent))
@@ -179,12 +180,14 @@ func TestTreePersistence_BulkLoadMatchesEventPath(t *testing.T) {
 
 	childEvent := appendTreeEvent(t, eventStore, stream, 1, EventTypeNodePlaced, NodePlacedPayload{
 		TreeID: treeID, UserID: childID, ParentID: rootID, SponsorID: rootID,
+		TreeType:   treeTypeUnilevel,
 		EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 	})
 	require.NoError(t, consumer.HandleEvent(ctx, childEvent))
 
 	grandchildEvent := appendTreeEvent(t, eventStore, stream, 2, EventTypeNodePlaced, NodePlacedPayload{
 		TreeID: treeID, UserID: grandchildID, ParentID: childID, SponsorID: childID,
+		TreeType:   treeTypeUnilevel,
 		EnrolledAt: time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC),
 	})
 	require.NoError(t, consumer.HandleEvent(ctx, grandchildEvent))

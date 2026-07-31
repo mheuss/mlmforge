@@ -79,6 +79,43 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform
 		return fmt.Errorf("unmarshal node_placed payload: %w", err)
 	}
 
+	// Reject malformed payloads before either projection. A node_placed that
+	// cannot be applied faithfully must not land anywhere: a stored row the
+	// engine never honored is the divergence this consumer exists to prevent,
+	// and LoadTree's validation refuses rows these checks would admit, so
+	// storing one can make the whole tree unreloadable.
+	if event.Stream != TreeStreamName(payload.TreeID) {
+		return fmt.Errorf("node_placed for %s in tree %s arrived on stream %q, want %q",
+			payload.UserID, payload.TreeID, event.Stream, TreeStreamName(payload.TreeID))
+	}
+	if !supportedTreeTypes[payload.TreeType] {
+		return fmt.Errorf("node_placed for %s in tree %s has unsupported tree_type %q",
+			payload.UserID, payload.TreeID, payload.TreeType)
+	}
+	if payload.Position != nil && *payload.Position < 0 {
+		return fmt.Errorf("node_placed for %s in tree %s has negative position %d",
+			payload.UserID, payload.TreeID, *payload.Position)
+	}
+	switch payload.TreeType {
+	case treeTypeMatrix:
+		// The upper bound needs the tree's configured width, which nothing
+		// persists yet (HEU-554). The engine still enforces it at runtime.
+		if payload.Position == nil {
+			return fmt.Errorf("matrix node_placed for %s in tree %s has no position; matrix events must carry explicit placement",
+				payload.UserID, payload.TreeID)
+		}
+	case treeTypeBinary:
+		if payload.Position == nil || *payload.Position > 1 {
+			return fmt.Errorf("binary node_placed for %s in tree %s needs position 0 or 1",
+				payload.UserID, payload.TreeID)
+		}
+	case treeTypeUnilevel:
+		if payload.Position != nil {
+			return fmt.Errorf("unilevel node_placed for %s in tree %s carries position %d; unilevel trees have no slots",
+				payload.UserID, payload.TreeID, *payload.Position)
+		}
+	}
+
 	// Look up parent depth to derive child depth.
 	parent, err := c.store.GetNode(ctx, payload.TreeID, payload.ParentID)
 	if err != nil {

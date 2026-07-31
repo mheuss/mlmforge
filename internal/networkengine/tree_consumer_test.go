@@ -225,7 +225,7 @@ func TestTreeConsumer_NodePlacedGateRejections(t *testing.T) {
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.wantErr)
 			assert.Contains(t, err.Error(), payload.UserID, "error names the node")
-			assert.Contains(t, err.Error(), payload.TreeID, "error names the tree")
+			assert.Contains(t, err.Error(), "in tree "+payload.TreeID, "error names the tree")
 
 			rows, storeErr := store.GetByTree(context.Background(), "tree1")
 			require.NoError(t, storeErr)

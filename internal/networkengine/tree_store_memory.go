@@ -20,12 +20,25 @@ func NewMemoryTreeStore() *MemoryTreeStore {
 }
 
 func (s *MemoryTreeStore) InsertNode(_ context.Context, node TreeNodeRow) error {
-	// Enforce same uniqueness as the Postgres partial unique index
+	// Enforce same uniqueness as the Postgres partial unique indexes
 	// (only active nodes are constrained).
 	if node.RemovedAt == nil {
 		for _, n := range s.nodes {
-			if n.TreeID == node.TreeID && n.UserID == node.UserID && n.RemovedAt == nil {
+			if n.RemovedAt != nil || n.TreeID != node.TreeID {
+				continue
+			}
+			if n.UserID == node.UserID {
 				return fmt.Errorf("duplicate active node: tree=%s user=%s", node.TreeID, node.UserID)
+			}
+			// Mirror idx_tree_nodes_tree_parent_position_active (migration
+			// 000004): one active claim per (tree, parent, position). Rows
+			// without a parent or position are exempt, matching the index's
+			// WHERE clause and Postgres NULL semantics.
+			if node.ParentID != nil && node.Position != nil &&
+				n.ParentID != nil && n.Position != nil &&
+				*n.ParentID == *node.ParentID && *n.Position == *node.Position {
+				return fmt.Errorf("duplicate active slot: tree=%s parent=%s position=%d",
+					node.TreeID, *node.ParentID, *node.Position)
 			}
 		}
 	}

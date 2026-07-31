@@ -390,8 +390,11 @@ func TestTreePersistence_RejectedTreeLeavesEngineLoadable(t *testing.T) {
 	rows := []TreeNodeRow{
 		makeUUIDNode(testNodeUUID(1), treeID, u1, 0, nil, ptr(u1), nil),
 		makeUUIDNode(testNodeUUID(2), treeID, u2, 1, ptr(u1), ptr(u1), intPtr(0)),
-		// Claims the slot u2 already holds. Preflight must refuse the tree.
-		makeUUIDNode(testNodeUUID(3), treeID, u3, 1, ptr(u1), ptr(u1), intPtr(0)),
+		// Depth 3 under a depth-0 parent. Preflight must refuse the tree.
+		// (The old fixture double-claimed a slot; migration 000004 now stops
+		// that at the insert, so the corruption moved to a field the
+		// database cannot check.)
+		makeUUIDNode(testNodeUUID(3), treeID, u3, 3, ptr(u1), ptr(u1), intPtr(1)),
 	}
 	for i := range rows {
 		rows[i].EnrolledAt = base.Add(time.Duration(i) * time.Hour)
@@ -401,7 +404,7 @@ func TestTreePersistence_RejectedTreeLeavesEngineLoadable(t *testing.T) {
 	loader := NewTreeLoader(treeStore, engine)
 	err := loader.LoadTree(ctx, treeID, "matrix", WithMatrixParams(3, "breadth_first"))
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "both claim parent")
+	assert.Contains(t, err.Error(), "has depth 3 but parent")
 
 	// The structure was never created. Assert on the specific code: GetPosition
 	// also errors for a known structure missing that user, so a bare Error

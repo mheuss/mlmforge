@@ -1,1 +1,1 @@
-DROP INDEX idx_tree_nodes_tree_parent_position_active;
+DROP INDEX IF EXISTS idx_tree_nodes_tree_parent_position_active;

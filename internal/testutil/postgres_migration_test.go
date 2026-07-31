@@ -85,11 +85,16 @@ func TestMigrations_SlotUniqueDownUp(t *testing.T) {
 		t.Skip("Postgres container not available")
 	}
 
+	// Relative to this package's directory — Go sets a test's cwd to the
+	// package dir. testutil.findMigrationsDir resolves the same path via
+	// runtime.Caller but is unexported.
 	absPath, err := filepath.Abs("../../migrations")
 	require.NoError(t, err)
+	// The postgres database and file source drivers are registered by
+	// internal/testutil's blank imports, which this package already pulls in.
 	m, err := migrate.New(fmt.Sprintf("file://%s", absPath), migrationContainer.DSN)
 	require.NoError(t, err)
-	defer func() { _, _ = m.Close() }()
+	t.Cleanup(func() { _, _ = m.Close() })
 
 	indexExists := func() bool {
 		pool, err := pgxpool.New(context.Background(), migrationContainer.DSN)
@@ -105,6 +110,11 @@ func TestMigrations_SlotUniqueDownUp(t *testing.T) {
 
 	require.True(t, indexExists(), "index present after full migrate up")
 	require.NoError(t, m.Steps(-1), "migrate down one step (000004)")
+	// Self-heal the shared container if an assertion below fails: restore
+	// the schema before m.Close runs (cleanups are LIFO, so this fires
+	// first). On the happy path Steps(1) already restored it and this
+	// no-ops with ErrNoChange.
+	t.Cleanup(func() { _ = m.Up() })
 	require.False(t, indexExists(), "down file actually drops the index")
 	require.NoError(t, m.Steps(1), "migrate back up")
 	require.True(t, indexExists(), "up file restores the index")

@@ -109,12 +109,13 @@ func TestMigrations_SlotUniqueDownUp(t *testing.T) {
 	}
 
 	require.True(t, indexExists(), "index present after full migrate up")
-	require.NoError(t, m.Steps(-1), "migrate down one step (000004)")
-	// Self-heal the shared container if an assertion below fails: restore
-	// the schema before m.Close runs (cleanups are LIFO, so this fires
-	// first). On the happy path Steps(1) already restored it and this
-	// no-ops with ErrNoChange.
+	// Self-heal the shared container on any failure from here down,
+	// including a Steps(-1) that dies after dropping the index. Cleanups
+	// are LIFO, so this restore fires before m.Close. On the happy path
+	// Steps(1) already restored the schema and this no-ops (ErrNoChange);
+	// on a dirty version Up returns ErrDirty, which is safely discarded.
 	t.Cleanup(func() { _ = m.Up() })
+	require.NoError(t, m.Steps(-1), "migrate down one step (000004)")
 	require.False(t, indexExists(), "down file actually drops the index")
 	require.NoError(t, m.Steps(1), "migrate back up")
 	require.True(t, indexExists(), "up file restores the index")

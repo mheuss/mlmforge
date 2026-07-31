@@ -277,6 +277,122 @@ func TestTreeConsumer_NodePlacedGateAccepts(t *testing.T) {
 	}
 }
 
+func TestTreeConsumer_MatrixNodePlacedRoutesThroughAddNodeAt(t *testing.T) {
+	store := NewMemoryTreeStore()
+	transport := newRecordingTransport()
+	engine := NewEngineClientWithTransport(transport)
+	consumer := NewTreeEventConsumer(store, engine)
+
+	parent := makeNode("tree1", "user-root", 0, nil, nil, nil)
+	require.NoError(t, store.InsertNode(context.Background(), parent))
+
+	pos := 2
+	payload := NodePlacedPayload{
+		TreeID:     "tree1",
+		UserID:     "user-child",
+		ParentID:   "user-root",
+		SponsorID:  "user-sponsor", // differs from parent so a transposition is visible
+		Position:   &pos,
+		TreeType:   treeTypeMatrix,
+		EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
+	}
+	require.NoError(t, consumer.HandleEvent(context.Background(), makeEvent(EventTypeNodePlaced, payload)))
+
+	// Store projection carries the event's placement.
+	node, err := store.GetNode(context.Background(), "tree1", "user-child")
+	require.NoError(t, err)
+	require.NotNil(t, node)
+	assert.Equal(t, "user-root", *node.ParentID)
+	assert.Equal(t, "user-sponsor", *node.SponsorID)
+	assert.Equal(t, 2, *node.Position)
+
+	// Engine got add_node_at with the same values, at the wire level.
+	// Asserting raw params is the transposition catch: parent and sponsor
+	// are both strings, so a swap compiles and only this notices.
+	require.Len(t, transport.calls, 1)
+	assert.Equal(t, "add_node_at", transport.calls[0].op)
+
+	var params map[string]any
+	require.NoError(t, json.Unmarshal(transport.calls[0].params, &params))
+	assert.Equal(t, "tree1", params["structure"])
+	assert.Equal(t, "user-child", params["user_id"])
+	assert.Equal(t, "user-root", params["parent_id"])
+	assert.Equal(t, "user-sponsor", params["sponsor_id"])
+	assert.Equal(t, float64(2), params["position"])
+	assert.Equal(t, float64(payload.EnrolledAt.Unix()), params["enrolled_at"])
+}
+
+func TestTreeConsumer_UnilevelAndBinaryDispatchUnchanged(t *testing.T) {
+	cases := []struct {
+		name         string
+		treeType     string
+		position     *int
+		wantPosition bool
+	}{
+		{name: "unilevel has no position", treeType: treeTypeUnilevel, position: nil, wantPosition: false},
+		{name: "binary carries its position", treeType: treeTypeBinary, position: intPtr(1), wantPosition: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := NewMemoryTreeStore()
+			transport := newRecordingTransport()
+			engine := NewEngineClientWithTransport(transport)
+			consumer := NewTreeEventConsumer(store, engine)
+
+			parent := makeNode("tree1", "user-root", 0, nil, nil, nil)
+			require.NoError(t, store.InsertNode(context.Background(), parent))
+
+			payload := NodePlacedPayload{
+				TreeID: "tree1", UserID: "user-child",
+				ParentID: "user-root", SponsorID: "user-root",
+				Position: tc.position, TreeType: tc.treeType,
+				EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
+			}
+			require.NoError(t, consumer.HandleEvent(context.Background(), makeEvent(EventTypeNodePlaced, payload)))
+
+			require.Len(t, transport.calls, 1)
+			assert.Equal(t, "add_node", transport.calls[0].op)
+
+			var params map[string]any
+			require.NoError(t, json.Unmarshal(transport.calls[0].params, &params))
+			assert.Equal(t, "user-root", params["parent_id"])
+			_, hasPosition := params["position"]
+			assert.Equal(t, tc.wantPosition, hasPosition)
+			if tc.wantPosition {
+				assert.Equal(t, float64(1), params["position"])
+			}
+		})
+	}
+}
+
+func TestTreeConsumer_MatrixStoreProjectionPrecedesEngine(t *testing.T) {
+	store := NewMemoryTreeStore()
+	transport := newFailNTransport(10) // engine always fails
+	engine := NewEngineClientWithTransport(transport)
+	consumer := NewTreeEventConsumer(store, engine)
+
+	parent := makeNode("tree1", "user-root", 0, nil, nil, nil)
+	require.NoError(t, store.InsertNode(context.Background(), parent))
+
+	pos := 0
+	payload := NodePlacedPayload{
+		TreeID: "tree1", UserID: "user-child",
+		ParentID: "user-root", SponsorID: "user-root",
+		Position: &pos, TreeType: treeTypeMatrix,
+		EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
+	}
+	err := consumer.HandleEvent(context.Background(), makeEvent(EventTypeNodePlaced, payload))
+	require.Error(t, err, "engine failure surfaces after retries")
+
+	node, storeErr := store.GetNode(context.Background(), "tree1", "user-child")
+	require.NoError(t, storeErr)
+	require.NotNil(t, node, "store projection lands before the engine call (ADR-021)")
+
+	require.NotEmpty(t, transport.calls)
+	assert.Equal(t, "add_node_at", transport.calls[0].op)
+	assert.Len(t, transport.calls, 3, "1 initial + 2 retries")
+}
+
 func TestTreeConsumer_ContextCancellation(t *testing.T) {
 	store := NewMemoryTreeStore()
 	transport := newFailNTransport(10) // Fail all attempts.

@@ -37,8 +37,8 @@ func (s *MemoryTreeStore) InsertNode(_ context.Context, node TreeNodeRow) error 
 			if node.ParentID != nil && node.Position != nil &&
 				n.ParentID != nil && n.Position != nil &&
 				*n.ParentID == *node.ParentID && *n.Position == *node.Position {
-				return fmt.Errorf("duplicate active slot: tree=%s parent=%s position=%d",
-					node.TreeID, *node.ParentID, *node.Position)
+				return fmt.Errorf("duplicate active slot: tree=%s parent=%s position=%d (held by %s)",
+					node.TreeID, *node.ParentID, *node.Position, n.UserID)
 			}
 		}
 	}

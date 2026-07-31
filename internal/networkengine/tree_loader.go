@@ -60,7 +60,7 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	if treeType == "matrix" && !cfg.matrixParamsSet {
+	if treeType == treeTypeMatrix && !cfg.matrixParamsSet {
 		return fmt.Errorf("create tree %s: matrix tree requires width and spillover (use WithMatrixParams)", treeID)
 	}
 
@@ -73,7 +73,7 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 		return err
 	}
 
-	if treeType == "matrix" {
+	if treeType == treeTypeMatrix {
 		if err := l.engine.CreateMatrixTree(ctx, treeID, cfg.matrixWidth, cfg.matrixSpillover); err != nil {
 			return fmt.Errorf("create tree %s: %w", treeID, err)
 		}
@@ -110,7 +110,7 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 		}
 		parentID, sponsorID := *node.ParentID, *node.SponsorID
 
-		if treeType == "matrix" {
+		if treeType == treeTypeMatrix {
 			// Unreachable for the same reason as the guard above: validateNodes
 			// rejects a nil position on every non-root matrix node. Kept for
 			// the same reason too — a nil deref here panics startup.
@@ -147,9 +147,9 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 // (engine/network-engine-worker/src/handlers/tree.rs) and is not generated
 // from it. A new tree type has to be added in both places.
 var supportedTreeTypes = map[string]bool{
-	"unilevel": true,
-	"binary":   true,
-	"matrix":   true,
+	treeTypeUnilevel: true,
+	treeTypeBinary:   true,
+	treeTypeMatrix:   true,
 }
 
 // supportedSpillover are the spillover values create_tree accepts. The worker
@@ -186,7 +186,7 @@ func validateNodes(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNode
 	if !supportedTreeTypes[treeType] {
 		return fmt.Errorf("tree %s has unsupported type %q", treeID, treeType)
 	}
-	if treeType == "matrix" {
+	if treeType == treeTypeMatrix {
 		// MatrixTree::new rejects width < 2, and width is a u8 on the wire.
 		if cfg.matrixWidth < 2 || cfg.matrixWidth > math.MaxUint8 {
 			return fmt.Errorf("tree %s has matrix width %d outside the supported range 2..%d",
@@ -243,13 +243,13 @@ func validateNodes(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNode
 	var limit int
 	hasSlots := true
 	switch treeType {
-	case "unilevel":
+	case treeTypeUnilevel:
 		// Unilevel appends to the parent's child list; children carry no slot.
 		hasSlots = false
-	case "binary":
+	case treeTypeBinary:
 		// Binary is a width-2 matrix as far as slot validation is concerned.
 		limit = 2
-	case "matrix":
+	case treeTypeMatrix:
 		limit = cfg.matrixWidth
 	default:
 		return fmt.Errorf("tree %s has type %q with no slot rule (add one to validateNodes)",

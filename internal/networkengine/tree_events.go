@@ -41,13 +41,14 @@ const (
 //
 // For matrix and binary trees, Position is required. Unilevel events must
 // omit Position: unilevel trees have no slots, and the engine ignores the
-// value, so storing one records a field the engine never honors. Placement
-// is the producer's decision (ADR-020); the consumer never lets the engine
-// invent one.
+// value, so storing one records a field the engine never honors. (The
+// loader still tolerates legacy unilevel rows that carry one — HEU-563;
+// this gate stops new ones at the door.) Placement is the producer's
+// decision (ADR-020); the consumer never lets the engine invent one.
 //
-// The consumer trusts TreeType. It has no registry or worker op to verify
-// the label against (HEU-554). A producer that mislabels a tree's type
-// re-opens the divergence this contract exists to close.
+// The consumer trusts TreeType. It has no registry, and no cheap worker
+// op, to verify the label against (HEU-554). A producer that mislabels a
+// tree's type re-opens the divergence this contract exists to close.
 type NodePlacedPayload struct {
 	TreeID     string    `json:"tree_id"`
 	UserID     string    `json:"user_id"`

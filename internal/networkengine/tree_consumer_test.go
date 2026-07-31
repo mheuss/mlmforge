@@ -172,6 +172,68 @@ func TestTreeConsumer_NodePlacedMissingParent(t *testing.T) {
 	assert.Empty(t, transport.calls, "engine should not be called when parent is missing")
 }
 
+func TestTreeConsumer_NodePlacedGateRejections(t *testing.T) {
+	valid := func() NodePlacedPayload {
+		pos := 1
+		return NodePlacedPayload{
+			TreeID:     "tree1",
+			UserID:     "user-child",
+			ParentID:   "user-root",
+			SponsorID:  "user-root",
+			Position:   &pos,
+			TreeType:   treeTypeMatrix,
+			EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
+		}
+	}
+	neg := -1
+	two := 2
+
+	cases := []struct {
+		name    string
+		mutate  func(*NodePlacedPayload)
+		stream  string // non-empty overrides the event's stream
+		wantErr string
+	}{
+		{name: "missing tree_type", mutate: func(p *NodePlacedPayload) { p.TreeType = "" }, wantErr: `unsupported tree_type ""`},
+		{name: "unknown tree_type", mutate: func(p *NodePlacedPayload) { p.TreeType = "boardplan" }, wantErr: `unsupported tree_type "boardplan"`},
+		{name: "wrong-case tree_type", mutate: func(p *NodePlacedPayload) { p.TreeType = "Matrix" }, wantErr: `unsupported tree_type "Matrix"`},
+		{name: "matrix nil position", mutate: func(p *NodePlacedPayload) { p.Position = nil }, wantErr: "has no position"},
+		{name: "matrix negative position", mutate: func(p *NodePlacedPayload) { p.Position = &neg }, wantErr: "negative position -1"},
+		{name: "binary nil position", mutate: func(p *NodePlacedPayload) { p.TreeType = treeTypeBinary; p.Position = nil }, wantErr: "needs position 0 or 1"},
+		{name: "binary negative position", mutate: func(p *NodePlacedPayload) { p.TreeType = treeTypeBinary; p.Position = &neg }, wantErr: "negative position -1"},
+		{name: "binary position 2", mutate: func(p *NodePlacedPayload) { p.TreeType = treeTypeBinary; p.Position = &two }, wantErr: "needs position 0 or 1"},
+		{name: "unilevel negative position", mutate: func(p *NodePlacedPayload) { p.TreeType = treeTypeUnilevel; p.Position = &neg }, wantErr: "negative position -1"},
+		{name: "unilevel non-nil position", mutate: func(p *NodePlacedPayload) { p.TreeType = treeTypeUnilevel; p.Position = &two }, wantErr: "unilevel trees have no slots"},
+		{name: "stream mismatch", mutate: func(p *NodePlacedPayload) {}, stream: "tree-other", wantErr: `arrived on stream "tree-other"`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := NewMemoryTreeStore()
+			transport := newRecordingTransport()
+			engine := NewEngineClientWithTransport(transport)
+			consumer := NewTreeEventConsumer(store, engine)
+
+			payload := valid()
+			tc.mutate(&payload)
+			event := makeEvent(EventTypeNodePlaced, payload)
+			if tc.stream != "" {
+				event.Stream = tc.stream
+			}
+
+			err := consumer.HandleEvent(context.Background(), event)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+			assert.Contains(t, err.Error(), payload.UserID, "error names the node")
+
+			rows, storeErr := store.GetByTree(context.Background(), "tree1")
+			require.NoError(t, storeErr)
+			assert.Empty(t, rows, "no store projection for a rejected event")
+			assert.Empty(t, transport.calls, "no engine call for a rejected event")
+		})
+	}
+}
+
 func TestTreeConsumer_ContextCancellation(t *testing.T) {
 	store := NewMemoryTreeStore()
 	transport := newFailNTransport(10) // Fail all attempts.

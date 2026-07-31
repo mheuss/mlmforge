@@ -225,11 +225,54 @@ func TestTreeConsumer_NodePlacedGateRejections(t *testing.T) {
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.wantErr)
 			assert.Contains(t, err.Error(), payload.UserID, "error names the node")
+			assert.Contains(t, err.Error(), payload.TreeID, "error names the tree")
 
 			rows, storeErr := store.GetByTree(context.Background(), "tree1")
 			require.NoError(t, storeErr)
 			assert.Empty(t, rows, "no store projection for a rejected event")
 			assert.Empty(t, transport.calls, "no engine call for a rejected event")
+		})
+	}
+}
+
+func TestTreeConsumer_NodePlacedGateAccepts(t *testing.T) {
+	// The reject table above pins what the gate refuses. This pins what it
+	// lets through, so a botched bound (e.g. >= for >) fails a test instead
+	// of silently rejecting every valid placement. No engine-op assertions:
+	// dispatch shape is covered by the routing tests, not the gate.
+	zero, one := 0, 1
+	cases := []struct {
+		name     string
+		treeType string
+		position *int
+	}{
+		{name: "unilevel without position", treeType: treeTypeUnilevel, position: nil},
+		{name: "binary at position 0", treeType: treeTypeBinary, position: &zero},
+		{name: "binary at position 1", treeType: treeTypeBinary, position: &one},
+		{name: "matrix at position 0", treeType: treeTypeMatrix, position: &zero},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := NewMemoryTreeStore()
+			transport := newRecordingTransport()
+			engine := NewEngineClientWithTransport(transport)
+			consumer := NewTreeEventConsumer(store, engine)
+
+			parent := makeNode("tree1", "user-root", 0, nil, nil, nil)
+			require.NoError(t, store.InsertNode(context.Background(), parent))
+
+			payload := NodePlacedPayload{
+				TreeID: "tree1", UserID: "user-child",
+				ParentID: "user-root", SponsorID: "user-root",
+				Position: tc.position, TreeType: tc.treeType,
+				EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
+			}
+			require.NoError(t, consumer.HandleEvent(context.Background(), makeEvent(EventTypeNodePlaced, payload)))
+
+			node, err := store.GetNode(context.Background(), "tree1", "user-child")
+			require.NoError(t, err)
+			require.NotNil(t, node, "accepted event projects to the store")
+			require.Len(t, transport.calls, 1, "accepted event reaches the engine")
 		})
 	}
 }

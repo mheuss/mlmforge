@@ -504,6 +504,118 @@ func TestTreePersistence_MatrixConsumerRoundTrip(t *testing.T) {
 	assert.Len(t, downline, 4)
 }
 
+// TestTreePersistence_SlotConflictFailsCleanAndTreeReloads proves migration
+// 000004's consequence: a second active claim on an occupied (tree, parent,
+// position) dies at the store insert — before the engine — and the tree it
+// protects is still loadable afterward. Without the index both rows land and
+// reload preflight refuses the whole tree (HEU-553 triage, codex C3).
+func TestTreePersistence_SlotConflictFailsCleanAndTreeReloads(t *testing.T) {
+	eventStore, treeStore, engine, _ := newIntegrationDeps(t)
+	ctx := context.Background()
+
+	const width = 3
+	treeID := testTreeUUID(1)
+	u1, u2, u3 := testUserUUID(1), testUserUUID(2), testUserUUID(3)
+	stream := TreeStreamName(treeID)
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	require.NoError(t, engine.CreateMatrixTree(ctx, treeID, width, "breadth_first"))
+	consumer := NewTreeEventConsumer(treeStore, engine)
+
+	rootEvent := appendTreeEvent(t, eventStore, stream, 0, EventTypeRootAdded, RootAddedPayload{
+		TreeID: treeID, UserID: u1, SponsorID: u1, EnrolledAt: base,
+	})
+	require.NoError(t, consumer.HandleEvent(ctx, rootEvent))
+
+	pos := 0
+	okEvent := appendTreeEvent(t, eventStore, stream, 1, EventTypeNodePlaced, NodePlacedPayload{
+		TreeID: treeID, UserID: u2, ParentID: u1, SponsorID: u1,
+		Position: &pos, TreeType: treeTypeMatrix, EnrolledAt: base.Add(time.Hour),
+	})
+	require.NoError(t, consumer.HandleEvent(ctx, okEvent))
+
+	// u3 claims the slot u2 holds. The store insert dies on the partial
+	// unique index; the engine is never called for it.
+	conflict := appendTreeEvent(t, eventStore, stream, 2, EventTypeNodePlaced, NodePlacedPayload{
+		TreeID: treeID, UserID: u3, ParentID: u1, SponsorID: u1,
+		Position: &pos, TreeType: treeTypeMatrix, EnrolledAt: base.Add(2 * time.Hour),
+	})
+	err := consumer.HandleEvent(ctx, conflict)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "idx_tree_nodes_tree_parent_position_active")
+
+	rows, err := treeStore.GetByTree(ctx, treeID)
+	require.NoError(t, err)
+	assert.Len(t, rows, 2, "conflicting claim left no row")
+
+	// The conflicting event never reached the engine: the insert failed
+	// first (store-before-engine, ADR-021). Checked before the restart,
+	// which would otherwise erase the evidence.
+	_, posErr := engine.GetPosition(ctx, treeID, u3)
+	require.Error(t, posErr)
+	assert.Contains(t, posErr.Error(), "USER_NOT_FOUND")
+
+	// The store stayed clean, so a fresh engine reloads it. This is the
+	// consequence the index exists for.
+	require.NoError(t, engine.Stop())
+	freshEngine, err := NewEngineClient(ctx, findWorkerBinary(t))
+	require.NoError(t, err)
+	defer func() { _ = freshEngine.Stop() }()
+
+	loader := NewTreeLoader(treeStore, freshEngine)
+	require.NoError(t, loader.LoadTree(ctx, treeID, "matrix", WithMatrixParams(width, "breadth_first")))
+
+	got, err := freshEngine.GetPosition(ctx, treeID, u2)
+	require.NoError(t, err)
+	require.NotNil(t, got.ParentUserID)
+	assert.Equal(t, u1, *got.ParentUserID)
+	assert.Equal(t, 0, got.Position)
+}
+
+// TestTreePersistence_DuplicateDeliveryPinsNonIdempotence documents, on
+// purpose, that redelivering an already-projected event FAILS today: the
+// insert dies on the (tree_id, user_id) unique index and the engine is
+// never reached. HEU-576 owns making redelivery converge; when it lands,
+// this test's expectation flips from error to clean success.
+func TestTreePersistence_DuplicateDeliveryPinsNonIdempotence(t *testing.T) {
+	eventStore, treeStore, engine, _ := newIntegrationDeps(t)
+	ctx := context.Background()
+
+	treeID := testTreeUUID(1)
+	u1, u2 := testUserUUID(1), testUserUUID(2)
+	stream := TreeStreamName(treeID)
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	require.NoError(t, engine.CreateMatrixTree(ctx, treeID, 3, "breadth_first"))
+	consumer := NewTreeEventConsumer(treeStore, engine)
+
+	rootEvent := appendTreeEvent(t, eventStore, stream, 0, EventTypeRootAdded, RootAddedPayload{
+		TreeID: treeID, UserID: u1, SponsorID: u1, EnrolledAt: base,
+	})
+	require.NoError(t, consumer.HandleEvent(ctx, rootEvent))
+
+	pos := 0
+	okEvent := appendTreeEvent(t, eventStore, stream, 1, EventTypeNodePlaced, NodePlacedPayload{
+		TreeID: treeID, UserID: u2, ParentID: u1, SponsorID: u1,
+		Position: &pos, TreeType: treeTypeMatrix, EnrolledAt: base.Add(time.Hour),
+	})
+	require.NoError(t, consumer.HandleEvent(ctx, okEvent))
+
+	// Redeliver the exact same event. The row's id IS the event ID, so an
+	// identical redelivery dies on the primary key — before the
+	// (tree_id, user_id) index is ever consulted. That distinction is the
+	// discriminator HEU-576's idempotency needs: pkey collision means "this
+	// exact event was already projected"; idx_tree_nodes_tree_user means "a
+	// different event claims the same user", which is real corruption.
+	err := consumer.HandleEvent(ctx, okEvent)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tree_nodes_pkey")
+
+	rows, err := treeStore.GetByTree(ctx, treeID)
+	require.NoError(t, err)
+	assert.Len(t, rows, 2, "redelivery left no duplicate row")
+}
+
 // TestTreePersistence_RejectedTreeLeavesEngineLoadable proves the operational
 // claim preflight exists for, which no stub can: after a tree is refused, the
 // worker is clean enough that a corrected load succeeds.

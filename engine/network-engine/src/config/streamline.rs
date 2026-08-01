@@ -62,9 +62,14 @@ pub struct StreamlineLevel {
     /// (skipped).
     pub min_rank: String,
 
-    /// Commission percentage for this level.
+    /// Commission rate for this level, as a fraction in `[0, 1]`
+    /// where 1.0 = 100%.
     ///
-    /// Applied to CV * multiplier.
+    /// 0.05 means 5%, not a whole-number percent. Streamline pays
+    /// `dollar = CV * volume_to_dollar_multiplier * percent`, so a
+    /// 0.05 level on 100 CV at multiplier 1.0 pays 5.00.
+    /// `CompensationPlan::validate` rejects out-of-range values on
+    /// the `load_plan` path (HEU-517).
     pub percent: f64,
 }
 

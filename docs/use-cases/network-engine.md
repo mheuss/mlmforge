@@ -17,6 +17,7 @@ Use-cases for the Network Engine bounded context.
 - [UC-NET-011: Cross-language integer width contract](#uc-net-011-cross-language-integer-width-contract)
 - [UC-NET-012: Preflight validation before an irreversible mutation](#uc-net-012-preflight-validation-before-an-irreversible-mutation)
 - [UC-NET-013: Dependency-aware replay ordering over multiple edge types](#uc-net-013-dependency-aware-replay-ordering-over-multiple-edge-types)
+- [UC-NET-014: Pre-projection event gate with database backstop](#uc-net-014-pre-projection-event-gate-with-database-backstop)
 
 ---
 
@@ -388,3 +389,28 @@ for _, node := range ordered[1:] {
 ```
 
 **Notes:** Two non-obvious parts. The root's stored sponsor must **not** be treated as a dependency — `AddRoot` takes no sponsor, so doing so makes the root wait on a node downstream of itself and rejects the whole tree as a cycle. And when reporting a cycle, do not print the stuck set: it is the cycle members *plus everything blocked behind them*, and the blocked nodes usually dominate, so any prefix names only bystanders. Walk to an actual cycle instead — every stuck node has an unmet dependency that is itself stuck, so following them from any stuck node closes a loop within `len(stuck)` steps, in O(n) and without a DFS. The counter formulation also makes duplicate edges harmless: double-counting appends to `dependents` twice, so both decrements land. Related: UC-NET-012, which supplies the validation half and guarantees the preconditions this relies on.
+
+---
+### UC-NET-014: Pre-projection event gate with database backstop
+
+**Added:** Unreleased (HEU-553)
+**Files:** `internal/networkengine/tree_consumer.go`, `migrations/000004_add_tree_nodes_slot_unique.up.sql`
+
+**Problem:** A projection consumer writes one event into two targets, the adjacency store and then the engine. An event that cannot be applied faithfully must not land in either. A stored row the engine never honored is silent divergence, and some malformed rows make reload preflight refuse the whole tree. Per-event validation cannot see races between events, and redelivering an already-projected event must stay distinguishable from corruption.
+
+**Solution:** Three layers. A gate at the top of the handler rejects everything checkable from the payload alone (stream identity, known `tree_type`, per-type position rules) before either projection, so a rejected event leaves no trace outside the EventStore. A partial unique index (`idx_tree_nodes_tree_parent_position_active`, migration 000004) arbitrates what the gate cannot see: two events claiming one slot resolve at the insert, loudly, with the store still reloadable. Postgres index order then gives redelivery a discriminator for free: `tree_nodes_pkey` (the row id is the event ID) fires for an already-projected event, the user index for a conflicting one.
+
+**Usage:**
+```go
+// Gate before either projection: nothing lands anywhere on rejection.
+if want := TreeStreamName(payload.TreeID); event.Stream != want {
+    return fmt.Errorf(...)
+}
+if !supportedTreeTypes[payload.TreeType] {
+    return fmt.Errorf(...)
+}
+// per-type position rules (switch with a loud default), then the store
+// insert, then the engine dispatch — in that order.
+```
+
+**Notes:** Distinct from UC-NET-012, which preflights an irreversible bulk replay. Here each event is individually recoverable, so the gate stays thin (payload-checkable rules only) and the database owns cross-event races. The gate cannot check the matrix width bound because nothing persists width (HEU-554). The u8 ceiling is gated; the width..255 band is the documented residual. Redelivery is not yet idempotent (HEU-576). `MemoryTreeStore` mirrors all three constraints in the same check order, so the discriminator is unit-testable against the double.

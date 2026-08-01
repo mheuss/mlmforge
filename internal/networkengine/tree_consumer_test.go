@@ -342,9 +342,13 @@ func TestTreeConsumer_UnilevelAndBinaryDispatchUnchanged(t *testing.T) {
 			parent := makeNode("tree1", "user-root", 0, nil, nil, nil)
 			require.NoError(t, store.InsertNode(context.Background(), parent))
 
+			// Sponsor differs from parent so a transposition at the AddNode
+			// call site is visible in the wire params, mirroring the matrix
+			// routing test. EngineClient pins its internal mapping; call
+			// sites need their own assertion (engine_client.go).
 			payload := NodePlacedPayload{
 				TreeID: "tree1", UserID: "user-child",
-				ParentID: "user-root", SponsorID: "user-root",
+				ParentID: "user-root", SponsorID: "user-sponsor",
 				Position: tc.position, TreeType: tc.treeType,
 				EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 			}
@@ -356,6 +360,7 @@ func TestTreeConsumer_UnilevelAndBinaryDispatchUnchanged(t *testing.T) {
 			var params map[string]any
 			require.NoError(t, json.Unmarshal(transport.calls[0].params, &params))
 			assert.Equal(t, "user-root", params["parent_id"])
+			assert.Equal(t, "user-sponsor", params["sponsor_id"])
 			_, hasPosition := params["position"]
 			assert.Equal(t, tc.wantPosition, hasPosition)
 			if tc.wantPosition {
@@ -370,6 +375,7 @@ func TestTreeConsumer_MatrixStoreProjectionPrecedesEngine(t *testing.T) {
 	transport := newFailNTransport(10) // engine always fails
 	engine := NewEngineClientWithTransport(transport)
 	consumer := NewTreeEventConsumer(store, engine)
+	consumer.retryDelay = 0 // ordering is the behavior under test, not retry pacing
 
 	parent := makeNode("tree1", "user-root", 0, nil, nil, nil)
 	require.NoError(t, store.InsertNode(context.Background(), parent))
@@ -388,9 +394,10 @@ func TestTreeConsumer_MatrixStoreProjectionPrecedesEngine(t *testing.T) {
 	require.NoError(t, storeErr)
 	require.NotNil(t, node, "store projection lands before the engine call (ADR-021)")
 
+	// Retry exhaustion counts are TestTreeConsumer_EngineRetriesExhausted's
+	// behavior; this test owns ordering only.
 	require.NotEmpty(t, transport.calls)
 	assert.Equal(t, "add_node_at", transport.calls[0].op)
-	assert.Len(t, transport.calls, 3, "1 initial + 2 retries")
 }
 
 func TestTreeConsumer_ContextCancellation(t *testing.T) {

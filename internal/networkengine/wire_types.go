@@ -109,9 +109,10 @@ type BinaryCommissionEarningDTO struct {
 	RightVolume   float64 `json:"right_volume"`
 	MatchedVolume float64 `json:"matched_volume"`
 	Ratio         float64 `json:"ratio"`
-	Percent       float64 `json:"percent"`
-	DollarAmount  float64 `json:"dollar_amount"`
-	Capped        bool    `json:"capped"`
+	// Percent echoes the applied pairing commission rate as a fraction in [0, 1] (0.10 = 10%).
+	Percent      float64 `json:"percent"`
+	DollarAmount float64 `json:"dollar_amount"`
+	Capped       bool    `json:"capped"`
 }
 
 // BinaryCalculationResultDTO is the wire format for binary pairing calculation results.
@@ -342,8 +343,11 @@ type StreamlineCommissionDTO struct {
 
 // StreamlineLevelDTO mirrors Rust StreamlineLevel.
 type StreamlineLevelDTO struct {
-	Level   uint8   `json:"level"`
-	MinRank string  `json:"min_rank"`
+	Level   uint8  `json:"level"`
+	MinRank string `json:"min_rank"`
+	// Percent is the commission rate for this level, as a fraction in
+	// [0, 1] where 1.0 = 100%, not a whole-number percent: 0.05 means 5%.
+	// See internal/config.StreamlineLevel.Percent for the full contract.
 	Percent float64 `json:"percent"`
 }
 

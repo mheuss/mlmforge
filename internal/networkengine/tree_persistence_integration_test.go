@@ -574,9 +574,9 @@ func TestTreePersistence_SlotConflictFailsCleanAndTreeReloads(t *testing.T) {
 
 // TestTreePersistence_DuplicateDeliveryPinsNonIdempotence documents, on
 // purpose, that redelivering an already-projected event FAILS today: the
-// insert dies on the (tree_id, user_id) unique index and the engine is
-// never reached. HEU-576 owns making redelivery converge; when it lands,
-// this test's expectation flips from error to clean success.
+// row's id is the event ID, so the insert dies on tree_nodes_pkey and the
+// engine is never reached. HEU-576 owns making redelivery converge; when
+// it lands, this test's expectation flips from error to clean success.
 func TestTreePersistence_DuplicateDeliveryPinsNonIdempotence(t *testing.T) {
 	eventStore, treeStore, engine, _ := newIntegrationDeps(t)
 	ctx := context.Background()
@@ -607,6 +607,9 @@ func TestTreePersistence_DuplicateDeliveryPinsNonIdempotence(t *testing.T) {
 	// discriminator HEU-576's idempotency needs: pkey collision means "this
 	// exact event was already projected"; idx_tree_nodes_tree_user means "a
 	// different event claims the same user", which is real corruption.
+	// (Pkey-first depends on migration 000002 declaring the PK inline in
+	// CREATE TABLE, ahead of the named unique index — Postgres checks
+	// indexes in creation order.)
 	err := consumer.HandleEvent(ctx, okEvent)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "tree_nodes_pkey")
@@ -614,6 +617,12 @@ func TestTreePersistence_DuplicateDeliveryPinsNonIdempotence(t *testing.T) {
 	rows, err := treeStore.GetByTree(ctx, treeID)
 	require.NoError(t, err)
 	assert.Len(t, rows, 2, "redelivery left no duplicate row")
+
+	// The engine never saw the redelivery either: u1's downline is still
+	// just u2.
+	downline, err := engine.GetDownline(ctx, treeID, u1, 0)
+	require.NoError(t, err)
+	assert.Len(t, downline, 1, "engine untouched by the redelivery")
 }
 
 // TestTreePersistence_RejectedTreeLeavesEngineLoadable proves the operational

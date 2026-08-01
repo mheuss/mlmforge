@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -41,13 +42,19 @@ func newRecordingTransport() *recordingTransport {
 	}
 }
 
+// unitEventCounter gives every makeEvent a distinct ID. A fixed ID would
+// trip MemoryTreeStore's tree_nodes_pkey mirror the moment a test pushes
+// two events through one store.
+var unitEventCounter uint64
+
 func makeEvent(eventType string, payload any) platform.Event {
 	data, err := json.Marshal(payload)
 	if err != nil {
 		panic(fmt.Errorf("makeEvent: marshal payload: %w", err))
 	}
+	n := atomic.AddUint64(&unitEventCounter, 1)
 	return platform.Event{
-		ID:      "00000000-0000-0000-0000-000000000001",
+		ID:      fmt.Sprintf("dddddddd-dddd-dddd-dddd-%012d", n),
 		Stream:  "tree-tree1",
 		Type:    eventType,
 		Version: 1,

@@ -608,8 +608,10 @@ func TestTreePersistence_DuplicateDeliveryPinsNonIdempotence(t *testing.T) {
 	// exact event was already projected"; idx_tree_nodes_tree_user means "a
 	// different event claims the same user", which is real corruption.
 	// (Pkey-first depends on migration 000002 declaring the PK inline in
-	// CREATE TABLE, ahead of the named unique index — Postgres checks
-	// indexes in creation order.)
+	// CREATE TABLE, ahead of both named unique indexes — Postgres checks
+	// indexes in OID order, which tracks creation order in a fresh
+	// database. A redelivery would violate the slot index too; the pkey
+	// simply fires first.)
 	err := consumer.HandleEvent(ctx, okEvent)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "tree_nodes_pkey")

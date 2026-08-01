@@ -373,6 +373,108 @@ func TestTreePersistence_MatrixMultiNodeRoundTrip(t *testing.T) {
 	assert.Len(t, downline, len(rows)-1, "engine holds exactly the stored nodes")
 }
 
+// TestTreePersistence_MatrixConsumerRoundTrip proves HEU-553 end-to-end
+// against the real worker: live matrix node_placed events project the SAME
+// topology into tree_nodes and the engine.
+//
+// The fixture is deliberately awkward and must not be simplified. It covers:
+// a placement BFS spillover would not choose (u3 goes under u2 while the
+// root still has a free slot — spillover from sponsor u1 would take that),
+// a node whose sponsor differs from its parent (u3), a sponsor deeper than
+// the node it sponsors (u4, sponsored by u3), a slot at width-1 (u4), and a
+// malformed event mid-stream that must reach neither projection. Simplify
+// the shape and a consumer that falls back to spillover, transposes parent
+// and sponsor, or projects rejected events starts passing (HEU-553).
+func TestTreePersistence_MatrixConsumerRoundTrip(t *testing.T) {
+	eventStore, treeStore, engine, _ := newIntegrationDeps(t)
+	ctx := context.Background()
+
+	const width = 3
+	treeID := testTreeUUID(1)
+	u1, u2, u3, u4, u5 := testUserUUID(1), testUserUUID(2), testUserUUID(3), testUserUUID(4), testUserUUID(5)
+	stream := TreeStreamName(treeID)
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	require.NoError(t, engine.CreateMatrixTree(ctx, treeID, width, "breadth_first"))
+	consumer := NewTreeEventConsumer(treeStore, engine)
+
+	rootEvent := appendTreeEvent(t, eventStore, stream, 0, EventTypeRootAdded, RootAddedPayload{
+		TreeID: treeID, UserID: u1, SponsorID: u1, EnrolledAt: base,
+	})
+	require.NoError(t, consumer.HandleEvent(ctx, rootEvent))
+
+	place := func(version int64, userID, parentID, sponsorID string, pos int, at time.Time) {
+		t.Helper()
+		ev := appendTreeEvent(t, eventStore, stream, version, EventTypeNodePlaced, NodePlacedPayload{
+			TreeID: treeID, UserID: userID, ParentID: parentID, SponsorID: sponsorID,
+			Position: &pos, TreeType: treeTypeMatrix, EnrolledAt: at,
+		})
+		require.NoError(t, consumer.HandleEvent(ctx, ev))
+	}
+
+	// u2 under the root at slot 0.
+	place(1, u2, u1, u1, 0, base.Add(1*time.Hour))
+
+	// Malformed event mid-stream: matrix with no position. It must reject
+	// before either projection and leave the consumer fully usable.
+	badEvent := appendTreeEvent(t, eventStore, stream, 2, EventTypeNodePlaced, NodePlacedPayload{
+		TreeID: treeID, UserID: testUserUUID(9), ParentID: u1, SponsorID: u1,
+		TreeType: treeTypeMatrix, EnrolledAt: base.Add(90 * time.Minute),
+	})
+	err := consumer.HandleEvent(ctx, badEvent)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "has no position")
+	rows, err := treeStore.GetByTree(ctx, treeID)
+	require.NoError(t, err)
+	assert.Len(t, rows, 2, "rejected event left no row")
+
+	// The event itself survives in the EventStore for diagnosis — rejection
+	// happens at projection time, not append time.
+	persisted, err := eventStore.ReadStream(ctx, stream, 3, 1)
+	require.NoError(t, err)
+	require.Len(t, persisted, 1, "rejected event stays persisted")
+
+	// u5 fills root slot 1. u3 goes a level down under u2 at slot 2 while
+	// the root still has slot 2 free. u4 sits at depth 1, sponsored by the
+	// deeper u3, at width-1.
+	place(3, u5, u1, u1, 1, base.Add(2*time.Hour))
+	place(4, u3, u2, u1, 2, base.Add(3*time.Hour))
+	place(5, u4, u1, u3, 2, base.Add(4*time.Hour))
+
+	// Store and engine agree, field by field, for every non-root node.
+	// enrolled_at is load-bearing: matrix removal promotes by min enrolled_at,
+	// so a shifted value pays the wrong distributor later with no error
+	// (docs/development/network-engine.md "Timestamps").
+	rows, err = treeStore.GetByTree(ctx, treeID)
+	require.NoError(t, err)
+	require.Len(t, rows, 5)
+	for _, want := range rows {
+		if want.UserID == u1 {
+			continue
+		}
+		got, err := engine.GetPosition(ctx, treeID, want.UserID)
+		require.NoError(t, err)
+		require.NotNil(t, got.ParentUserID)
+		require.NotNil(t, got.SponsorUserID)
+		assert.Equal(t, *want.ParentID, *got.ParentUserID, "parent of %s", want.UserID)
+		assert.Equal(t, *want.SponsorID, *got.SponsorUserID, "sponsor of %s", want.UserID)
+		assert.Equal(t, *want.Position, got.Position, "position of %s", want.UserID)
+		assert.Equal(t, uint32(want.Depth), got.Depth, "depth of %s", want.UserID)
+		assert.Equal(t, want.EnrolledAt.Unix(), got.EnrolledAt, "enrolled_at of %s", want.UserID)
+	}
+
+	// Root: the engine carries no sponsor by construction (HEU-534 §5).
+	rootPos, err := engine.GetPosition(ctx, treeID, u1)
+	require.NoError(t, err)
+	assert.Nil(t, rootPos.ParentUserID)
+	assert.Nil(t, rootPos.SponsorUserID)
+
+	// Exactly the stored nodes, no phantoms.
+	downline, err := engine.GetDownline(ctx, treeID, u1, 0)
+	require.NoError(t, err)
+	assert.Len(t, downline, 4)
+}
+
 // TestTreePersistence_RejectedTreeLeavesEngineLoadable proves the operational
 // claim preflight exists for, which no stub can: after a tree is refused, the
 // worker is clean enough that a corrected load succeeds.

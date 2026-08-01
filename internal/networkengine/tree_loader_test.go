@@ -516,9 +516,10 @@ func TestValidateNodes_RootSponsorIsExempt(t *testing.T) {
 }
 
 // TestValidateNodes_DuplicateUserID is the one validation case that cannot be
-// driven through LoadTree: MemoryTreeStore.InsertNode rejects a duplicate
-// active user ID (MemoryTreeStore.InsertNode), mirroring the Postgres partial
-// unique index, so the fixture is unconstructable through the store.
+// driven through LoadTree: MemoryTreeStore.InsertNode refuses the fixture
+// (the pkey mirror fires first here, since makeNode derives the row ID from
+// the user ID, and the active-user mirror would refuse it regardless), so it
+// is unconstructable through the store.
 func TestValidateNodes_DuplicateUserID(t *testing.T) {
 	nodes := []TreeNodeRow{
 		makeNode("t", "u0", 0, nil, ptr("u0"), nil),

@@ -324,7 +324,7 @@ Harmless today: every other read of that vec is a `retain`, and the adjacency ta
 
 ### Matrix events carry authoritative placement (HEU-553)
 
-`node_placed` events are the single statement of placement. The payload requires `tree_type`. Matrix and binary events require an explicit `position`. Unilevel events must omit it. The consumer rejects an event it cannot apply faithfully before either projection, so nothing lands anywhere. The rejected payload classes: wrong stream, unknown type, missing position, negative position, binary position outside 0..1, unilevel position present. Matrix placements project through `add_node_at`, so the engine applies exactly the stored parent and position. A partial unique index (migration 000004) makes a double-claimed slot fail at the insert instead of poisoning reload.
+`node_placed` events are the single statement of placement. The payload requires `tree_type`. Matrix and binary events require an explicit `position`. Unilevel events must omit it. The consumer rejects an event it cannot apply faithfully before either projection, so nothing lands anywhere. The rejected payload classes: wrong stream, unknown type, missing position, negative position, matrix position above the u8 ceiling (255), binary position outside 0..1, unilevel position present. Matrix placements project through `add_node_at`, so the engine applies exactly the stored parent and position. A partial unique index (migration 000004) makes a double-claimed slot fail at the insert instead of poisoning reload.
 
 Four limits remain:
 

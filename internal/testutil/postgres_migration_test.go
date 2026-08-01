@@ -76,10 +76,10 @@ func TestPostgresContainer_NewPool_TruncatesQualificationHistory(t *testing.T) {
 }
 
 // TestMigrations_SlotUniqueDownUp proves migration 000004's down file works,
-// not just that it contains words: migrate down one step, confirm the index
-// is gone, migrate back up, confirm it returns. The source-URL construction
-// mirrors testutil.migrateUp. The down/up pair restores the schema, so the
-// shared container is left exactly as other tests expect it.
+// not just that it contains words: migrate down to version 3, confirm the
+// index is gone, migrate back up to 4, confirm it returns. The source-URL
+// construction mirrors testutil.migrateUp. The down/up pair restores the
+// schema, so the shared container is left exactly as other tests expect it.
 func TestMigrations_SlotUniqueDownUp(t *testing.T) {
 	if migrationContainer == nil {
 		t.Skip("Postgres container not available")

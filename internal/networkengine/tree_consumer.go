@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"time"
 
 	"github.com/mlmforge/mlmforge/internal/platform"
@@ -100,11 +101,18 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform
 	}
 	switch payload.TreeType {
 	case treeTypeMatrix:
-		// The upper bound needs the tree's configured width, which nothing
+		// The width bound needs the tree's configured width, which nothing
 		// persists yet (HEU-554). The engine still enforces it at runtime.
+		// The u8 ceiling needs no width: no matrix can have a slot above
+		// math.MaxUint8, so anything larger is rejected here, mirroring the
+		// loader's own ceiling check.
 		if payload.Position == nil {
 			return fmt.Errorf("matrix node_placed for %s in tree %s has no position; matrix events must carry explicit placement",
 				payload.UserID, payload.TreeID)
+		}
+		if *payload.Position > math.MaxUint8 {
+			return fmt.Errorf("matrix node_placed for %s in tree %s has position %d above the %d slot ceiling",
+				payload.UserID, payload.TreeID, *payload.Position, math.MaxUint8)
 		}
 	case treeTypeBinary:
 		if payload.Position == nil || *payload.Position > 1 {

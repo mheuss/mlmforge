@@ -162,6 +162,22 @@ func TestMemoryTreeStore_DuplicateActiveSlotRejected(t *testing.T) {
 	require.NoError(t, store.InsertNode(ctx, makeNode("tree-2", "r2", 0, nil, ptr("r2"), intPtr(0))))
 }
 
+func TestMemoryTreeStore_DuplicateIDRejected(t *testing.T) {
+	store := NewMemoryTreeStore()
+	ctx := context.Background()
+
+	row := makeNode("tree-1", "u1", 0, nil, nil, nil)
+	require.NoError(t, store.InsertNode(ctx, row))
+
+	// Same event ID replayed into a different tree and user: the pkey
+	// mirror rejects it before any per-tree uniqueness is consulted.
+	dup := makeNode("tree-2", "u2", 0, nil, nil, nil)
+	dup.ID = row.ID
+	err := store.InsertNode(ctx, dup)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tree_nodes_pkey")
+}
+
 func TestMemoryTreeStore_DeletedNodeExcludedFromActive(t *testing.T) {
 	store := NewMemoryTreeStore()
 	ctx := context.Background()

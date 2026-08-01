@@ -424,6 +424,7 @@ func TestTreePersistence_MatrixConsumerRoundTrip(t *testing.T) {
 	err := consumer.HandleEvent(ctx, badEvent)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "has no position")
+	assert.Contains(t, err.Error(), testUserUUID(9), "rejection names the poison event's user")
 	rows, err := treeStore.GetByTree(ctx, treeID)
 	require.NoError(t, err)
 	assert.Len(t, rows, 2, "rejected event left no row")
@@ -433,6 +434,7 @@ func TestTreePersistence_MatrixConsumerRoundTrip(t *testing.T) {
 	persisted, err := eventStore.ReadStream(ctx, stream, 3, 1)
 	require.NoError(t, err)
 	require.Len(t, persisted, 1, "rejected event stays persisted")
+	assert.Equal(t, badEvent.ID, persisted[0].ID, "the persisted event is the rejected one")
 
 	// u5 fills root slot 1. u3 goes a level down under u2 at slot 2 while
 	// the root still has slot 2 free. u4 sits at depth 1, sponsored by the
@@ -448,26 +450,36 @@ func TestTreePersistence_MatrixConsumerRoundTrip(t *testing.T) {
 	rows, err = treeStore.GetByTree(ctx, treeID)
 	require.NoError(t, err)
 	require.Len(t, rows, 5)
+	// Subtests are named u2..u5 so a failure points at the fixture comment
+	// rather than a bare UUID (GetByTree order is undefined, so a map, not
+	// the index, supplies the name).
+	names := map[string]string{u2: "u2", u3: "u3", u4: "u4", u5: "u5"}
 	for _, want := range rows {
 		if want.UserID == u1 {
 			continue
 		}
-		got, err := engine.GetPosition(ctx, treeID, want.UserID)
-		require.NoError(t, err)
-		require.NotNil(t, got.ParentUserID)
-		require.NotNil(t, got.SponsorUserID)
-		assert.Equal(t, *want.ParentID, *got.ParentUserID, "parent of %s", want.UserID)
-		assert.Equal(t, *want.SponsorID, *got.SponsorUserID, "sponsor of %s", want.UserID)
-		assert.Equal(t, *want.Position, got.Position, "position of %s", want.UserID)
-		assert.Equal(t, uint32(want.Depth), got.Depth, "depth of %s", want.UserID)
-		assert.Equal(t, want.EnrolledAt.Unix(), got.EnrolledAt, "enrolled_at of %s", want.UserID)
+		t.Run(names[want.UserID], func(t *testing.T) {
+			got, err := engine.GetPosition(ctx, treeID, want.UserID)
+			require.NoError(t, err)
+			require.NotNil(t, got.ParentUserID)
+			require.NotNil(t, got.SponsorUserID)
+			assert.Equal(t, *want.ParentID, *got.ParentUserID, "parent")
+			assert.Equal(t, *want.SponsorID, *got.SponsorUserID, "sponsor")
+			assert.Equal(t, *want.Position, got.Position, "position")
+			assert.Equal(t, uint32(want.Depth), got.Depth, "depth")
+			assert.Equal(t, want.EnrolledAt.Unix(), got.EnrolledAt, "enrolled_at")
+		})
 	}
 
 	// Root: the engine carries no sponsor by construction (HEU-534 §5).
+	// Depth and enrolled_at are asserted here because the per-node loop
+	// skips the root — a zeroed root enrolled_at once passed silently.
 	rootPos, err := engine.GetPosition(ctx, treeID, u1)
 	require.NoError(t, err)
 	assert.Nil(t, rootPos.ParentUserID)
 	assert.Nil(t, rootPos.SponsorUserID)
+	assert.Equal(t, uint32(0), rootPos.Depth)
+	assert.Equal(t, base.Unix(), rootPos.EnrolledAt, "root enrolled_at")
 
 	// Exactly the stored nodes, no phantoms.
 	downline, err := engine.GetDownline(ctx, treeID, u1, 0)

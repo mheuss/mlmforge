@@ -110,6 +110,7 @@ type BinaryCommissionEarningDTO struct {
 	MatchedVolume float64 `json:"matched_volume"`
 	Ratio         float64 `json:"ratio"`
 	// Percent echoes the applied pairing commission rate as a fraction in [0, 1] (0.10 = 10%).
+	// Cycle-step mode has no per-earning rate: Percent and Ratio report 0.0 there.
 	Percent      float64 `json:"percent"`
 	DollarAmount float64 `json:"dollar_amount"`
 	Capped       bool    `json:"capped"`

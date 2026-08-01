@@ -16,9 +16,9 @@ func TestStreamlineStructureConfigDTO_Deserialization(t *testing.T) {
 			"volume_to_dollar_multiplier": 0.5,
 			"commissionable_depth": 10,
 			"dynamic_compression": [
-				{"level": 1, "min_rank": "active", "percent": 5.0},
-				{"level": 2, "min_rank": "silver", "percent": 3.0},
-				{"level": 3, "min_rank": "gold", "percent": 1.0}
+				{"level": 1, "min_rank": "active", "percent": 0.05},
+				{"level": 2, "min_rank": "silver", "percent": 0.03},
+				{"level": 3, "min_rank": "gold", "percent": 0.01}
 			],
 			"streams": {
 				"additional_per_rank": {"silver": 1, "gold": 2},
@@ -35,7 +35,20 @@ func TestStreamlineStructureConfigDTO_Deserialization(t *testing.T) {
 	assert.Equal(t, "main_stream", dto.Name)
 	assert.Equal(t, uint8(10), dto.StreamlineCommission.CommissionableDepth)
 	require.Len(t, dto.StreamlineCommission.DynamicCompression, 3)
-	assert.Equal(t, "silver", dto.StreamlineCommission.DynamicCompression[1].MinRank)
+	for i, want := range []struct {
+		level   uint8
+		minRank string
+		percent float64
+	}{
+		{1, "active", 0.05},
+		{2, "silver", 0.03},
+		{3, "gold", 0.01},
+	} {
+		entry := dto.StreamlineCommission.DynamicCompression[i]
+		assert.Equal(t, want.level, entry.Level, "level at index %d", i)
+		assert.Equal(t, want.minRank, entry.MinRank, "min_rank at index %d", i)
+		assert.Equal(t, want.percent, entry.Percent, "percent at index %d", i)
+	}
 	require.NotNil(t, dto.StreamlineCommission.Streams)
 	assert.Equal(t, uint8(2), dto.StreamlineCommission.Streams.AdditionalPerRank["gold"])
 	assert.True(t, dto.StreamlineCommission.Streams.FreezeOnDemotion)
@@ -49,7 +62,7 @@ func TestStreamlineStructureConfigDTO_NilOptionalFields(t *testing.T) {
 		"streamline_commission": {
 			"commissionable_depth": 5,
 			"dynamic_compression": [
-				{"level": 1, "min_rank": "active", "percent": 10.0}
+				{"level": 1, "min_rank": "active", "percent": 0.10}
 			]
 		}
 	}`
@@ -60,6 +73,8 @@ func TestStreamlineStructureConfigDTO_NilOptionalFields(t *testing.T) {
 	assert.Nil(t, dto.StreamlineCommission.VolumeToDollarMultiplier)
 	assert.Nil(t, dto.StreamlineCommission.Streams)
 	assert.Equal(t, uint8(5), dto.StreamlineCommission.CommissionableDepth)
+	require.Len(t, dto.StreamlineCommission.DynamicCompression, 1)
+	assert.Equal(t, 0.10, dto.StreamlineCommission.DynamicCompression[0].Percent)
 }
 
 func TestEvaluateRanksRequest_RoundTrip(t *testing.T) {

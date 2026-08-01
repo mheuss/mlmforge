@@ -100,18 +100,22 @@ type LegVolumesDTO struct {
 	Right float64 `json:"right"`
 }
 
-// BinaryCommissionEarningDTO is the wire format for a single binary pairing earning.
-// Matches the Rust BinaryCommissionEarning struct.
+// BinaryCommissionEarningDTO is the wire format for a single binary pairing
+// or cycle-step earning. Matches the Rust BinaryCommissionEarning struct.
 type BinaryCommissionEarningDTO struct {
 	EarnerID      string  `json:"earner_id"`
 	PositionID    string  `json:"position_id"`
 	LeftVolume    float64 `json:"left_volume"`
 	RightVolume   float64 `json:"right_volume"`
 	MatchedVolume float64 `json:"matched_volume"`
-	Ratio         float64 `json:"ratio"`
-	Percent       float64 `json:"percent"`
-	DollarAmount  float64 `json:"dollar_amount"`
-	Capped        bool    `json:"capped"`
+	// Ratio echoes the balance ratio used for the match: 1.0 for weaker-leg,
+	// the leg min/max ratio for volume-ratio mode. Cycle-step mode reports 0.0.
+	Ratio float64 `json:"ratio"`
+	// Percent echoes the configured pairing commission rate as a fraction in [0, 1] (0.10 = 10%).
+	// Cycle-step mode has no per-earning rate and reports 0.0.
+	Percent      float64 `json:"percent"`
+	DollarAmount float64 `json:"dollar_amount"`
+	Capped       bool    `json:"capped"`
 }
 
 // BinaryCalculationResultDTO is the wire format for binary pairing calculation results.
@@ -342,8 +346,11 @@ type StreamlineCommissionDTO struct {
 
 // StreamlineLevelDTO mirrors Rust StreamlineLevel.
 type StreamlineLevelDTO struct {
-	Level   uint8   `json:"level"`
-	MinRank string  `json:"min_rank"`
+	Level   uint8  `json:"level"`
+	MinRank string `json:"min_rank"`
+	// Percent is the commission rate for this level, as a fraction in
+	// [0, 1] where 1.0 = 100%, not a whole-number percent: 0.05 means 5%.
+	// See internal/config.StreamlineLevel.Percent for the full contract.
 	Percent float64 `json:"percent"`
 }
 

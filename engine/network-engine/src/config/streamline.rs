@@ -14,9 +14,9 @@ use serde::{Deserialize, Serialize};
 /// Linear chains where rank determines earning position, not just
 /// percentage. Dynamic compression skips distributors who don't meet
 /// their level's rank threshold. The `levels` table defines minimum
-/// rank requirements and commission percentages for each depth level.
-/// Optional multi-stream support allows higher-ranked distributors to
-/// earn on multiple independent chains.
+/// rank requirements and commission percentages (fractions in `[0, 1]`)
+/// for each depth level. Optional multi-stream support allows
+/// higher-ranked distributors to earn on multiple independent chains.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamlineCommissionConfig {
     /// Per-structure CV override. None uses the plan-level multiplier
@@ -30,7 +30,8 @@ pub struct StreamlineCommissionConfig {
     /// Dynamic compression table.
     ///
     /// Each entry defines a level with its minimum rank requirement
-    /// and commission percentage. Levels are ordered by position
+    /// and commission percentage, a fraction in `[0, 1]`. Levels are
+    /// ordered by position
     /// (level 1 first). Non-decreasing rank thresholds. Higher levels
     /// require higher ranks.
     #[serde(rename = "dynamic_compression")]
@@ -62,9 +63,14 @@ pub struct StreamlineLevel {
     /// (skipped).
     pub min_rank: String,
 
-    /// Commission percentage for this level.
+    /// Commission rate for this level, as a fraction in `[0, 1]`
+    /// where 1.0 = 100%.
     ///
-    /// Applied to CV * multiplier.
+    /// 0.05 means 5%, not a whole-number percent. Streamline pays
+    /// `dollar = CV * volume_to_dollar_multiplier * percent`, so a
+    /// 0.05 level on 100 CV at multiplier 1.0 pays 5.00.
+    /// `CompensationPlan::validate` rejects out-of-range values on
+    /// the `load_plan` path (HEU-517).
     pub percent: f64,
 }
 

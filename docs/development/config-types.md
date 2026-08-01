@@ -111,10 +111,11 @@ The patterns above are the discipline; four test-time guards enforce them in CI 
 
 ## Fail-loud validation on bypass paths (HEU-513)
 
-The three-layer model has two bypass paths, and a money-seam invariant must be guarded on both:
+The three-layer model has three bypass paths, and a money-seam invariant must be guarded on all of them:
 
 - A caller that builds a plan programmatically or hand-writes a fixture reaches `validateBusinessRules` **without the schema** — so `rules.go` must own the invariant, not just the schema.
 - A caller that feeds JSON straight to the engine bypasses Go entirely — so the Rust `*::validate` impls (`engine/network-engine/src/config/validate.rs`) must own it too.
+- A request-scoped worker handler that deserializes its own plan or structure config from request params bypasses even `CompensationPlan::validate`. The HEU-517 gate runs only in `handle_load_plan`. Example: `handle_calculate_streamline` (`engine/network-engine-worker/src/handlers/streamline.rs`) takes `plan` and `structure_config` per request with no validation. HEU-583 tracks the fix. Until then, treat request-scoped params as unvalidated input when adding or changing handlers.
 
 Guard both. Examples on this seam:
 

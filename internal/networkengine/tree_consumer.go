@@ -155,6 +155,8 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform
 	// Matrix placements go through add_node_at so the engine applies exactly
 	// the parent and position the event recorded. Matrix add_node would
 	// re-derive placement by spillover and diverge from the row just written.
+	// The Position deref is safe: the gate above rejects a nil matrix
+	// position before anything is written.
 	if payload.TreeType == treeTypeMatrix {
 		return c.withRetry(ctx, "add_node_at", payload.TreeID, payload.UserID, func() error {
 			return c.engine.AddNodeAt(ctx, payload.TreeID, payload.UserID,

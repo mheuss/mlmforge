@@ -110,13 +110,16 @@ func TestMigrations_SlotUniqueDownUp(t *testing.T) {
 
 	require.True(t, indexExists(), "index present after full migrate up")
 	// Self-heal the shared container on any failure from here down,
-	// including a Steps(-1) that dies after dropping the index. Cleanups
+	// including a Migrate(3) that dies after dropping the index. Cleanups
 	// are LIFO, so this restore fires before m.Close. On the happy path
-	// Steps(1) already restored the schema and this no-ops (ErrNoChange);
+	// Migrate(4) already restored the schema and this no-ops (ErrNoChange);
 	// on a dirty version Up returns ErrDirty, which is safely discarded.
 	t.Cleanup(func() { _ = m.Up() })
-	require.NoError(t, m.Steps(-1), "migrate down one step (000004)")
+	// Pinned to versions 3 and 4, not Steps(-1): a relative step would roll
+	// back whichever migration is newest and fail confusingly once 000005
+	// lands. This test is about 000004's down file specifically.
+	require.NoError(t, m.Migrate(3), "migrate down to version 3 (drops 000004)")
 	require.False(t, indexExists(), "down file actually drops the index")
-	require.NoError(t, m.Steps(1), "migrate back up")
+	require.NoError(t, m.Migrate(4), "migrate back up to version 4")
 	require.True(t, indexExists(), "up file restores the index")
 }

@@ -145,7 +145,9 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 //
 // This mirrors the worker's create_tree dispatch
 // (engine/network-engine-worker/src/handlers/tree.rs) and is not generated
-// from it. A new tree type has to be added in both places.
+// from it. A new tree type has to be added in both places — and in
+// handleNodePlaced's position-rule switch, whose default arm names itself
+// when the rule is missing.
 var supportedTreeTypes = map[string]bool{
 	treeTypeUnilevel: true,
 	treeTypeBinary:   true,

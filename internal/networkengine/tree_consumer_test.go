@@ -187,6 +187,7 @@ func TestTreeConsumer_NodePlacedGateRejections(t *testing.T) {
 	}
 	neg := -1
 	two := 2
+	big := 256
 
 	cases := []struct {
 		name    string
@@ -199,6 +200,7 @@ func TestTreeConsumer_NodePlacedGateRejections(t *testing.T) {
 		{name: "wrong-case tree_type", mutate: func(p *NodePlacedPayload) { p.TreeType = "Matrix" }, wantErr: `unsupported tree_type "Matrix"`},
 		{name: "matrix nil position", mutate: func(p *NodePlacedPayload) { p.Position = nil }, wantErr: "has no position"},
 		{name: "matrix negative position", mutate: func(p *NodePlacedPayload) { p.Position = &neg }, wantErr: "negative position -1"},
+		{name: "matrix position above u8 ceiling", mutate: func(p *NodePlacedPayload) { p.Position = &big }, wantErr: "above the 255 slot ceiling"},
 		{name: "binary nil position", mutate: func(p *NodePlacedPayload) { p.TreeType = treeTypeBinary; p.Position = nil }, wantErr: "needs position 0 or 1"},
 		{name: "binary negative position", mutate: func(p *NodePlacedPayload) { p.TreeType = treeTypeBinary; p.Position = &neg }, wantErr: "negative position -1"},
 		{name: "binary position 2", mutate: func(p *NodePlacedPayload) { p.TreeType = treeTypeBinary; p.Position = &two }, wantErr: "needs position 0 or 1"},

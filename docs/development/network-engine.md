@@ -322,10 +322,23 @@ The worker has **no operation to remove a structure** (HEU-557). A load that fai
 
 Harmless today: every other read of that vec is a `retain`, and the adjacency table stores no ordering to restore even if we wanted to. Do not build anything that depends on sponsored-list order surviving a restart.
 
-### The store may not match what the engine actually built (matrix only)
+### Matrix events carry authoritative placement (HEU-553)
 
-This is the caveat most likely to bite. For a matrix tree, `TreeEventConsumer.handleNodePlaced` writes the event's *requested* `parent_id` and `position` into `tree_nodes`, then calls `add_node` — whose matrix arm ignores both and re-derives placement by spillover. The row records the request; the engine records something else.
+`node_placed` events are the single statement of placement. The payload
+requires `tree_type`, and matrix and binary events require an explicit
+`position`. Unilevel events must omit it. The consumer rejects an event it
+cannot apply faithfully — wrong stream, unknown type, missing or
+out-of-range position — before either projection, so nothing lands
+anywhere. Matrix placements project through `add_node_at`, so the engine
+applies exactly the stored parent and position. A partial unique index
+(migration 000004) makes a double-claimed slot fail at the insert instead
+of poisoning reload.
 
-Reload is authoritative, so a restart reshapes the live tree to match the rows. Preflight cannot catch this: a spillover-built engine and a requested-placement store are each internally consistent, so validation passes and nothing is logged. Topology drives commissions, so the change is silent and consequential.
-
-Tracked as HEU-553. **Matrix trees must not be wired into startup reload until it is fixed.** Unilevel and binary are unaffected — their `add_node` honours the stored parent.
+Four limits remain. The consumer trusts the `tree_type` label and cannot
+verify it (no registry exists — HEU-554). The matrix position upper bound
+needs the tree's width, which nothing persists (HEU-554). Redelivering an
+already-projected event fails at the insert instead of converging
+(HEU-576). And the agreement claim covers placement only: a matrix
+`node_removed` still diverges, because the consumer sends no pruning mode
+and the worker refuses the removal after the soft-delete lands (HEU-582).
+Matrix startup reload is no longer blocked by this defect.

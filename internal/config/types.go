@@ -297,6 +297,8 @@ type GenerationCommission struct {
 
 // StreamlineCommission holds commission configuration for streamline structures.
 type StreamlineCommission struct {
+	// VolumeToDollarMultiplier is the per-structure CV override. Nil uses
+	// the plan-level multiplier from the volume config.
 	VolumeToDollarMultiplier *float64                   `yaml:"volume_to_dollar_multiplier" json:"volume_to_dollar_multiplier"`
 	CommissionableDepth      uint8                      `yaml:"commissionable_depth" json:"commissionable_depth"`
 	DynamicCompression       map[string]StreamlineLevel `yaml:"dynamic_compression" json:"dynamic_compression"`
@@ -461,8 +463,9 @@ type StreamlineLevel struct {
 	// Percent is the commission rate for this level. It is a fraction in
 	// [0, 1] where 1.0 = 100%, not a whole-number percent: 0.05 means 5%.
 	// Streamline pays dollar = CV * volume_to_dollar_multiplier * percent,
-	// so a 0.05 level on 100 CV at multiplier 1.0 pays 5.00. The engine
-	// rejects out-of-range values when the plan loads (HEU-517).
+	// so a 0.05 level on 100 CV at multiplier 1.0 pays 5.00. Schema
+	// validation, the Go rules, and the engine (HEU-517) all reject
+	// out-of-range values at plan load.
 	Percent float64 `yaml:"percent" json:"percent"`
 }
 

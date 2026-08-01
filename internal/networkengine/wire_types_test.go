@@ -35,10 +35,20 @@ func TestStreamlineStructureConfigDTO_Deserialization(t *testing.T) {
 	assert.Equal(t, "main_stream", dto.Name)
 	assert.Equal(t, uint8(10), dto.StreamlineCommission.CommissionableDepth)
 	require.Len(t, dto.StreamlineCommission.DynamicCompression, 3)
-	assert.Equal(t, "silver", dto.StreamlineCommission.DynamicCompression[1].MinRank)
-	assert.Equal(t, 0.05, dto.StreamlineCommission.DynamicCompression[0].Percent)
-	assert.Equal(t, 0.03, dto.StreamlineCommission.DynamicCompression[1].Percent)
-	assert.Equal(t, 0.01, dto.StreamlineCommission.DynamicCompression[2].Percent)
+	for i, want := range []struct {
+		level   uint8
+		minRank string
+		percent float64
+	}{
+		{1, "active", 0.05},
+		{2, "silver", 0.03},
+		{3, "gold", 0.01},
+	} {
+		entry := dto.StreamlineCommission.DynamicCompression[i]
+		assert.Equal(t, want.level, entry.Level, "level at index %d", i)
+		assert.Equal(t, want.minRank, entry.MinRank, "min_rank at index %d", i)
+		assert.Equal(t, want.percent, entry.Percent, "percent at index %d", i)
+	}
 	require.NotNil(t, dto.StreamlineCommission.Streams)
 	assert.Equal(t, uint8(2), dto.StreamlineCommission.Streams.AdditionalPerRank["gold"])
 	assert.True(t, dto.StreamlineCommission.Streams.FreezeOnDemotion)

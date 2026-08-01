@@ -458,7 +458,13 @@ func TestTreePersistence_MatrixConsumerRoundTrip(t *testing.T) {
 		if want.UserID == u1 {
 			continue
 		}
-		t.Run(names[want.UserID], func(t *testing.T) {
+		name, ok := names[want.UserID]
+		if !ok {
+			// A user the fixture never placed is itself the divergence
+			// case — fail under the raw UUID rather than anonymously.
+			name = want.UserID
+		}
+		t.Run(name, func(t *testing.T) {
 			got, err := engine.GetPosition(ctx, treeID, want.UserID)
 			require.NoError(t, err)
 			require.NotNil(t, got.ParentUserID)
@@ -472,14 +478,25 @@ func TestTreePersistence_MatrixConsumerRoundTrip(t *testing.T) {
 	}
 
 	// Root: the engine carries no sponsor by construction (HEU-534 §5).
-	// Depth and enrolled_at are asserted here because the per-node loop
-	// skips the root — a zeroed root enrolled_at once passed silently.
+	// Depth and enrolled_at are asserted here, on BOTH projections, because
+	// the per-node loop skips the root — a zeroed root enrolled_at once
+	// passed silently, and the store row is a separate write that can rot
+	// independently of the engine call.
 	rootPos, err := engine.GetPosition(ctx, treeID, u1)
 	require.NoError(t, err)
 	assert.Nil(t, rootPos.ParentUserID)
 	assert.Nil(t, rootPos.SponsorUserID)
 	assert.Equal(t, uint32(0), rootPos.Depth)
 	assert.Equal(t, base.Unix(), rootPos.EnrolledAt, "root enrolled_at")
+
+	var rootRow TreeNodeRow
+	for _, r := range rows {
+		if r.UserID == u1 {
+			rootRow = r
+		}
+	}
+	assert.Equal(t, base.Unix(), rootRow.EnrolledAt.Unix(), "stored root enrolled_at")
+	assert.Equal(t, 0, rootRow.Depth, "stored root depth")
 
 	// Exactly the stored nodes, no phantoms.
 	downline, err := engine.GetDownline(ctx, treeID, u1, 0)

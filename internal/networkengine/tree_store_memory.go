@@ -42,8 +42,9 @@ func (s *MemoryTreeStore) InsertNode(_ context.Context, node TreeNodeRow) error 
 			}
 			// Mirror idx_tree_nodes_tree_parent_position_active (migration
 			// 000004): one active claim per (tree, parent, position). Rows
-			// without a parent or position are exempt, matching the index's
-			// WHERE clause and Postgres NULL semantics.
+			// without a position are outside the index (WHERE position IS
+			// NOT NULL). Rows without a parent are indexed but never
+			// conflict, because unique indexes treat NULLs as distinct.
 			if node.ParentID != nil && node.Position != nil &&
 				n.ParentID != nil && n.Position != nil &&
 				*n.ParentID == *node.ParentID && *n.Position == *node.Position {

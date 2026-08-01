@@ -605,8 +605,9 @@ func TestTreePersistence_DuplicateDeliveryPinsNonIdempotence(t *testing.T) {
 	// identical redelivery dies on the primary key — before the
 	// (tree_id, user_id) index is ever consulted. That distinction is the
 	// discriminator HEU-576's idempotency needs: pkey collision means "this
-	// exact event was already projected"; idx_tree_nodes_tree_user means "a
-	// different event claims the same user", which is real corruption.
+	// exact event was already stored" (the engine may not have applied it);
+	// idx_tree_nodes_tree_user means "a different event claims the same
+	// user", which is real corruption.
 	// (Pkey-first depends on migration 000002 declaring the PK inline in
 	// CREATE TABLE, ahead of both named unique indexes — Postgres checks
 	// indexes in OID order, which tracks creation order in a fresh

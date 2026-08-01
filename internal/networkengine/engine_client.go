@@ -170,7 +170,8 @@ func (c *EngineClient) AddMatrixNode(ctx context.Context, structure, userID, spo
 
 // AddNodeAt places a node at an explicit position in a matrix tree.
 // It is the normal matrix path: the live consumer and reload both route
-// through it, and admin overrides use it to bypass spillover.
+// through it, and it is the path an admin override would take to bypass
+// spillover.
 //
 // The leading parameters match AddNode so the two read the same way at a
 // call site. parentID and sponsorID are both strings, so transposing them

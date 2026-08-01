@@ -395,9 +395,12 @@ func TestTreeConsumer_MatrixStoreProjectionPrecedesEngine(t *testing.T) {
 	require.NotNil(t, node, "store projection lands before the engine call (ADR-021)")
 
 	// Retry exhaustion counts are TestTreeConsumer_EngineRetriesExhausted's
-	// behavior; this test owns ordering only.
+	// behavior; this test owns ordering, plus the fact that the matrix arm
+	// is wrapped in withRetry at all (more than one call proves the wrapper
+	// without pinning its arithmetic).
 	require.NotEmpty(t, transport.calls)
 	assert.Equal(t, "add_node_at", transport.calls[0].op)
+	assert.Greater(t, len(transport.calls), 1, "matrix dispatch goes through withRetry")
 }
 
 func TestTreeConsumer_ContextCancellation(t *testing.T) {

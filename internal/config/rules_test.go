@@ -1597,6 +1597,37 @@ func TestValidation_StreamlineDepthLessThanLevelsFails(t *testing.T) {
 	assert.True(t, found, "depth < levels should produce depth_less_than_levels")
 }
 
+func TestValidation_StreamlinePercentAboveOneFails(t *testing.T) {
+	plan := streamlinePlan()
+	c := plan.Structures[1].resolvedCommission.(*StreamlineCommission)
+	// 5.0 is the whole-number authoring trap: 5% written as 5 rather than 0.05.
+	c.DynamicCompression["1"] = StreamlineLevel{MinRank: "Associate", Percent: 5.0}
+
+	errs := validateBusinessRules(plan)
+	found := false
+	for _, e := range errs {
+		if e.Code == "percent_out_of_range" {
+			found = true
+		}
+	}
+	assert.True(t, found, "percent above 1 should produce percent_out_of_range")
+}
+
+func TestValidation_StreamlinePercentNegativeFails(t *testing.T) {
+	plan := streamlinePlan()
+	c := plan.Structures[1].resolvedCommission.(*StreamlineCommission)
+	c.DynamicCompression["1"] = StreamlineLevel{MinRank: "Associate", Percent: -0.01}
+
+	errs := validateBusinessRules(plan)
+	found := false
+	for _, e := range errs {
+		if e.Code == "percent_out_of_range" {
+			found = true
+		}
+	}
+	assert.True(t, found, "negative percent should produce percent_out_of_range")
+}
+
 func TestValidation_StreamlineValidConfigPasses(t *testing.T) {
 	plan := streamlinePlan()
 

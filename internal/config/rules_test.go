@@ -1597,6 +1597,11 @@ func TestValidation_StreamlineDepthLessThanLevelsFails(t *testing.T) {
 	assert.True(t, found, "depth < levels should produce depth_less_than_levels")
 }
 
+// streamlineLevel1PercentPath is where validateStreamlineCommission reports a
+// bad percent on level 1 of the second structure. Asserting the path, not just
+// the code, ties the error to the level the test actually mutated.
+const streamlineLevel1PercentPath = "/structures/1/commission/dynamic_compression/1/percent"
+
 func TestValidation_StreamlinePercentAboveOneFails(t *testing.T) {
 	plan := streamlinePlan()
 	c := plan.Structures[1].resolvedCommission.(*StreamlineCommission)
@@ -1606,13 +1611,15 @@ func TestValidation_StreamlinePercentAboveOneFails(t *testing.T) {
 	errs := validateBusinessRules(plan)
 	found := false
 	for _, e := range errs {
-		if e.Code == "percent_out_of_range" {
+		if e.Code == "percent_out_of_range" && e.Path == streamlineLevel1PercentPath {
 			found = true
 		}
 	}
-	assert.True(t, found, "percent above 1 should produce percent_out_of_range")
+	assert.True(t, found, "percent above 1 should produce percent_out_of_range, got %+v", errs)
 }
 
+// The negative case is a separate test from the above-one case so that neither
+// side of the `< 0 || > 1` gate can be deleted with the suite still green.
 func TestValidation_StreamlinePercentNegativeFails(t *testing.T) {
 	plan := streamlinePlan()
 	c := plan.Structures[1].resolvedCommission.(*StreamlineCommission)
@@ -1621,11 +1628,11 @@ func TestValidation_StreamlinePercentNegativeFails(t *testing.T) {
 	errs := validateBusinessRules(plan)
 	found := false
 	for _, e := range errs {
-		if e.Code == "percent_out_of_range" {
+		if e.Code == "percent_out_of_range" && e.Path == streamlineLevel1PercentPath {
 			found = true
 		}
 	}
-	assert.True(t, found, "negative percent should produce percent_out_of_range")
+	assert.True(t, found, "negative percent should produce percent_out_of_range, got %+v", errs)
 }
 
 func TestValidation_StreamlineValidConfigPasses(t *testing.T) {

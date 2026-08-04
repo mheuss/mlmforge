@@ -1599,7 +1599,16 @@ func TestValidation_StreamlineDepthLessThanLevelsFails(t *testing.T) {
 
 // streamlineLevel1PercentPath is where validateStreamlineCommission reports a
 // bad percent on level 1 of the second structure. Asserting the path, not just
-// the code, ties the error to the level the test actually mutated.
+// the code, ties each error to the level the test actually mutated.
+//
+// schema_test.go declares its own copy of this string. That is deliberate:
+// this one is assembled by string concatenation in rules.go, the other comes
+// from the jsonschema library's instance location. They agree today but are
+// produced independently and are free to diverge, so they are not shared.
+//
+// The three tests below split the gate deliberately — above one, below zero,
+// and the inclusive endpoints. Together they mean no part of the
+// `< 0 || > 1` check can be deleted or tightened with the suite still green.
 const streamlineLevel1PercentPath = "/structures/1/commission/dynamic_compression/1/percent"
 
 func TestValidation_StreamlinePercentAboveOneFails(t *testing.T) {
@@ -1618,8 +1627,6 @@ func TestValidation_StreamlinePercentAboveOneFails(t *testing.T) {
 	assert.True(t, found, "percent above 1 should produce percent_out_of_range, got %+v", errs)
 }
 
-// The negative case is a separate test from the above-one case so that neither
-// side of the `< 0 || > 1` gate can be deleted with the suite still green.
 func TestValidation_StreamlinePercentNegativeFails(t *testing.T) {
 	plan := streamlinePlan()
 	c := plan.Structures[1].resolvedCommission.(*StreamlineCommission)
@@ -1633,6 +1640,23 @@ func TestValidation_StreamlinePercentNegativeFails(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "negative percent should produce percent_out_of_range, got %+v", errs)
+}
+
+// Both bounds are inclusive: 0 means no commission at this level, 1.0 means
+// full payout. The schema accepts both, so the rules layer must too. Without
+// this the gate could be tightened to `<= 0 || >= 1` with the suite green,
+// and the two Go layers would silently disagree about legal config.
+func TestValidation_StreamlinePercentInclusiveEndpointsPass(t *testing.T) {
+	for _, pct := range []float64{0, 1.0} {
+		plan := streamlinePlan()
+		c := plan.Structures[1].resolvedCommission.(*StreamlineCommission)
+		c.DynamicCompression["1"] = StreamlineLevel{MinRank: "Associate", Percent: pct}
+
+		for _, e := range validateBusinessRules(plan) {
+			assert.NotEqual(t, "percent_out_of_range", e.Code,
+				"percent %v is an inclusive endpoint and must be accepted", pct)
+		}
+	}
 }
 
 func TestValidation_StreamlineValidConfigPasses(t *testing.T) {

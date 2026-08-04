@@ -235,9 +235,18 @@ func TestSchemaRejectsStreamlinePercentOutOfRange(t *testing.T) {
 	base := readFixture(t, "valid/streamline-plan.yaml")
 	require.Empty(t, p.validateSchema(base), "base fixture should validate cleanly")
 
+	// See rules_test.go for why this string is duplicated rather than shared —
+	// the two are produced independently and may legitimately diverge.
 	const levelPercentPath = "/structures/1/commission/dynamic_compression/1/percent"
 
-	over := replaceInYAML(t, base, "percent: 0.10", "percent: 5.0")
+	// Anchor on two lines. A bare "percent: 0.10" would also match
+	// broad_commission_percent, which sits earlier in the fixture, if it were
+	// ever set to that value. Level 2 shares min_rank: Affiliate but carries a
+	// different percent, so this pair is unique to level 1.
+	const level1 = "min_rank: Affiliate\n          percent: "
+	const level1Valid = level1 + "0.10"
+
+	over := replaceInYAML(t, base, level1Valid, level1+"5.0")
 	errs := p.validateSchema(over)
 	require.NotEmpty(t, errs, "streamline percent 5.0 should fail the schema gate")
 	foundOver := false
@@ -249,7 +258,7 @@ func TestSchemaRejectsStreamlinePercentOutOfRange(t *testing.T) {
 	}
 	assert.True(t, foundOver, "expected a schema_violation at %s, got %+v", levelPercentPath, errs)
 
-	under := replaceInYAML(t, base, "percent: 0.10", "percent: -0.10")
+	under := replaceInYAML(t, base, level1Valid, level1+"-0.10")
 	errs = p.validateSchema(under)
 	require.NotEmpty(t, errs, "streamline percent -0.10 should fail the schema gate")
 	foundUnder := false
@@ -262,9 +271,9 @@ func TestSchemaRejectsStreamlinePercentOutOfRange(t *testing.T) {
 	assert.True(t, foundUnder, "expected a schema_violation at %s, got %+v", levelPercentPath, errs)
 
 	// Both bounds are inclusive, so the endpoints must stay legal.
-	assert.Empty(t, p.validateSchema(replaceInYAML(t, base, "percent: 0.10", "percent: 1.0")),
+	assert.Empty(t, p.validateSchema(replaceInYAML(t, base, level1Valid, level1+"1.0")),
 		"streamline percent 1.0 should pass the schema gate")
-	assert.Empty(t, p.validateSchema(replaceInYAML(t, base, "percent: 0.10", "percent: 0")),
+	assert.Empty(t, p.validateSchema(replaceInYAML(t, base, level1Valid, level1+"0")),
 		"streamline percent 0 should pass the schema gate")
 }
 

@@ -20,6 +20,12 @@ coverage.*
 profile.cov
 *.prof
 
+# Go build cache, when GOCACHE is pointed inside the repo. Agents and sandboxed
+# runs do this when the default cache location is unwritable. It is large
+# (100MB+) and regenerable, so it must never be committed. Delete it when idle —
+# ignoring it stops the commit, not the disk usage.
+.gocache/
+
 # Go workspace files
 go.work
 go.work.sum

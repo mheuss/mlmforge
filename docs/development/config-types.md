@@ -61,6 +61,25 @@ When you add a field to a Go config struct that gets serialized:
 
 The schema is what tells plan authors when they typo a field name. Missing the schema declaration means typos produce empty/default values silently. The Go and Rust layers won't catch them either — neither uses `additionalProperties: false` today.
 
+### Invalid fixtures: mutate a valid one
+
+The steps above cover valid fixtures. Invalid ones work differently. They are registered in no list, and each gets its own named test.
+
+Build them by mutating a valid fixture rather than hand-writing a standalone file:
+
+```go
+base := readFixture(t, "valid/streamline-plan.yaml")
+require.Empty(t, p.validateSchema(base), "base fixture should validate cleanly")
+
+over := replaceInYAML(t, base, level1Valid, level1+"5.0")
+```
+
+The `require.Empty` line is the point. It re-proves on every CI run that the base is valid apart from the mutation, so the test cannot pass for an unrelated reason. A hand-written invalid fixture can only assert that once, by hand, at authoring time. When the schema later tightens, that file can start failing for a second reason. The test stays green while the constraint it was written to pin is gone.
+
+`replaceInYAML` (`testhelpers_test.go`) replaces the first match and fails the test if the anchor is missing. Anchor on enough lines to be unique. A bare `percent: 0.10` also matches `broad_commission_percent` if that field ever takes the same value.
+
+Worked examples: `TestSchemaRejectsStreamlineLevelOverU8`, `TestSchemaRejectsOverMaxBounds`, `TestSchemaRejectsStreamlinePercentOutOfRange`.
+
 ## Boundary tests for narrow types
 
 For any field with a constrained range (`uint8`, `uint16`, etc.), add a table-driven boundary test:
@@ -96,6 +115,14 @@ Pair the cap with two boundary tests at the Go layer:
 - One above the max (e.g., 256 tiers): must produce exactly one `invalid_value` error at the slice's path.
 
 Without the matching Go check, the schema alone is the gate. Test fixtures that bypass schema validation (`validateBusinessRules` direct calls) can construct 256+ entries and trip the Rust panic at calculate time. The Go check prevents this.
+
+### Two-sided ranges need four boundary points, at every layer
+
+Two boundary tests are right for a one-sided cap. A two-sided range needs four: over the max, under the min, and both inclusive endpoints.
+
+`StreamlineLevel.percent` is the worked example (HEU-584). It is a fraction in `[0, 1]`, gated by `minimum`/`maximum` in the schema and by `level.Percent < 0 || level.Percent > 1` in `rules.go`. Cover only the out-of-range cases and the comparison stays free to tighten to `<= 0 || >= 1` with the whole suite green. That silently rejects `percent: 0` (no commission at this level) and `percent: 1.0` (full payout), both of which the schema still accepts. Legal config gets refused, and the two Go gates disagree with nothing to catch it.
+
+Pin the endpoints at each layer separately. Endpoint coverage at the schema layer does not constrain `rules.go`, and the reverse holds too. Splitting the out-of-range cases into one test per branch matters for the same reason: a single "out of range" test leaves the other half of the comparison deletable.
 
 ## Automated drift guards (HEU-513)
 

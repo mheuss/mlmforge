@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -273,8 +275,57 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		if err != nil {
 			t.Fatalf("GetRun: %v", err)
 		}
-		if len(run.CarryForward) != 0 {
-			t.Fatalf("CarryForward = %s, want empty", run.CarryForward)
+		if run.CarryForward != nil {
+			t.Fatalf("CarryForward = %#v, want nil", run.CarryForward)
+		}
+	})
+
+	// A returned run is the caller's. Postgres scans fresh values on every
+	// read, so a store handing back its own pointers would let a caller
+	// rewrite persisted state through a value it was merely shown.
+	t.Run("mutating a returned run does not change the store", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		oldID, err := s.CreateRun(ctx, "2026-01", validHash)
+		if err != nil {
+			t.Fatalf("CreateRun: %v", err)
+		}
+		if err := s.CompleteRun(ctx, oldID, json.RawMessage(`{"v":1}`)); err != nil {
+			t.Fatalf("CompleteRun: %v", err)
+		}
+		newID, err := s.ReplaceRun(ctx, oldID, otherHash)
+		if err != nil {
+			t.Fatalf("ReplaceRun: %v", err)
+		}
+
+		got, err := s.GetRun(ctx, oldID)
+		if err != nil {
+			t.Fatalf("GetRun: %v", err)
+		}
+		if got.CompletedAt == nil || got.VoidedAt == nil || got.SupersededBy == nil {
+			t.Fatalf("need all three optional fields set to test aliasing, got %+v", got)
+		}
+		*got.CompletedAt = time.Unix(0, 0).UTC()
+		*got.VoidedAt = time.Unix(0, 0).UTC()
+		*got.SupersededBy = uuid.Nil
+		got.CarryForward[2] = 'X'
+
+		again, err := s.GetRun(ctx, oldID)
+		if err != nil {
+			t.Fatalf("second GetRun: %v", err)
+		}
+		if again.CompletedAt.Equal(time.Unix(0, 0).UTC()) {
+			t.Error("CompletedAt is aliased to store state")
+		}
+		if again.VoidedAt.Equal(time.Unix(0, 0).UTC()) {
+			t.Error("VoidedAt is aliased to store state")
+		}
+		if *again.SupersededBy != newID {
+			t.Errorf("SupersededBy = %v, want %s; it is aliased to store state", again.SupersededBy, newID)
+		}
+		if string(again.CarryForward) != `{"v":1}` {
+			t.Errorf("CarryForward = %s, want the stored value; it is aliased", again.CarryForward)
 		}
 	})
 
@@ -315,6 +366,16 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		}
 		if err := s.CompleteRun(ctx, id, json.RawMessage(`null`)); err == nil {
 			t.Fatal("a JSON null carry-forward should be rejected")
+		}
+		// Without this the test passes even if the first call wrongly
+		// completed the run: the second would then fail as not-running, which
+		// is still a non-nil error.
+		run, err := s.GetRun(ctx, id)
+		if err != nil {
+			t.Fatalf("GetRun: %v", err)
+		}
+		if run.Status != RunStatusRunning {
+			t.Fatalf("Status = %q, want the rejected calls to have left it running", run.Status)
 		}
 	})
 
@@ -503,6 +564,9 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		if old.CompletedAt == nil {
 			t.Fatal("ReplaceRun must not erase the old run's completed_at")
 		}
+		if old.VoidedAt == nil {
+			t.Fatal("VoidedAt should be set on the replaced run")
+		}
 
 		fresh, err := s.GetRun(ctx, newID)
 		if err != nil {
@@ -554,8 +618,12 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		if target.Status != RunStatusVoided {
 			t.Fatalf("Status = %q, want voided", target.Status)
 		}
-		if !strings.Contains(err.Error(), "must be running or complete") {
-			t.Fatalf("message should name both allowed states, got %q", err.Error())
+		// Assert the structured field, not the rendered message. Allowed is
+		// what the Postgres implementation must also populate; the wording is
+		// pinned once in the errors test.
+		want := []CommissionRunStatus{RunStatusRunning, RunStatusComplete}
+		if !slices.Equal(target.Allowed, want) {
+			t.Fatalf("Allowed = %v, want %v", target.Allowed, want)
 		}
 	})
 

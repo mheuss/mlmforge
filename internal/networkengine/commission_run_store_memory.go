@@ -3,6 +3,7 @@ package networkengine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"time"
 
@@ -14,10 +15,13 @@ var _ CommissionRunStore = (*MemoryCommissionRunStore)(nil)
 
 // MemoryCommissionRunStore is an in-memory CommissionRunStore for tests.
 //
-// It enforces in code what the Postgres store gets from the database: one
-// active run per period, per-structure result replacement, and id-ascending
-// result order. The shared suite asserts the two behave identically, so
-// anything the index or a constraint enforces there has to be enforced here.
+// It enforces in code what the Postgres store gets from the database. Today
+// that is one active run per period, which Postgres gets from a partial
+// unique index. Per-structure result replacement and id-ascending result
+// order land with the results half in Task 4.
+//
+// The shared suite asserts the two implementations behave identically, so
+// anything an index or a constraint enforces there has to be enforced here.
 type MemoryCommissionRunStore struct {
 	mu      sync.RWMutex
 	runs    map[uuid.UUID]*CommissionRun
@@ -139,9 +143,13 @@ func (s *MemoryCommissionRunStore) ReplaceRun(_ context.Context, oldRunID uuid.U
 		}
 	}
 	periodID := old.PeriodID
+	// Only the hash needs checking. period_id is inherited from the run being
+	// replaced, not supplied by the caller, so validating it here could
+	// report an error about a value the caller never passed.
+	//
 	// Validate before mutating anything, so a bad hash cannot leave the old
 	// run voided with no replacement.
-	if err := validateRunInput(periodID, planHash); err != nil {
+	if err := validatePlanHashOnly(planHash); err != nil {
 		return uuid.Nil, err
 	}
 
@@ -149,6 +157,10 @@ func (s *MemoryCommissionRunStore) ReplaceRun(_ context.Context, oldRunID uuid.U
 	if err := s.voidRunLocked(oldRunID); err != nil {
 		return uuid.Nil, err
 	}
+	// Cannot fail: the void above just freed the period, and nothing else can
+	// take it while this call holds the lock. If that invariant ever breaks,
+	// the old run is left voided with no replacement — the Postgres store
+	// gets atomicity here from its transaction, which this cannot match.
 	newID, err := s.createRunLocked(periodID, planHash)
 	if err != nil {
 		return uuid.Nil, err
@@ -184,25 +196,52 @@ func (s *MemoryCommissionRunStore) GetActiveRun(_ context.Context, periodID stri
 }
 
 // copyRun returns a caller-owned copy. The struct copy alone is not enough:
-// CarryForward is a json.RawMessage, so a shallow copy would leave the caller
-// holding the store's buffer and able to corrupt it.
+// every reference field would stay aliased to store state, letting a caller
+// write through a returned value and silently change what the store hands
+// everyone else. CarryForward is a json.RawMessage (a slice), and the three
+// optional fields are pointers.
+//
+// Postgres scans fresh values on every read, so this is parity, not just
+// hygiene: without it a suite case that mutates a returned run would pass
+// against the real store and corrupt this one.
 func copyRun(run *CommissionRun) *CommissionRun {
 	cp := *run
 	cp.CarryForward = cloneRaw(run.CarryForward)
+	if run.CompletedAt != nil {
+		completed := *run.CompletedAt
+		cp.CompletedAt = &completed
+	}
+	if run.VoidedAt != nil {
+		voided := *run.VoidedAt
+		cp.VoidedAt = &voided
+	}
+	if run.SupersededBy != nil {
+		superseded := *run.SupersededBy
+		cp.SupersededBy = &superseded
+	}
 	return &cp
 }
 
+// errResultsUnimplemented keeps the results half of the interface loud until
+// Task 4 fills it in. Returning zero values instead would be quietly wrong:
+// several of the contract's own cases assert an EMPTY result set — a running
+// run's rows are invisible, a voided run's are too, and saving an empty batch
+// leaves none — so a stub returning (nil, nil) would make them pass against a
+// store that does nothing. That is the exact drift this suite exists to
+// catch.
+var errResultsUnimplemented = errors.New("commission results: not implemented until HEU-555 task 4")
+
 // SaveResults is implemented in Task 4.
 func (s *MemoryCommissionRunStore) SaveResults(_ context.Context, _ uuid.UUID, _ string, _ []CommissionResultInput) error {
-	return nil
+	return errResultsUnimplemented
 }
 
 // GetResults is implemented in Task 4.
 func (s *MemoryCommissionRunStore) GetResults(_ context.Context, _ uuid.UUID) ([]CommissionResult, error) {
-	return nil, nil
+	return nil, errResultsUnimplemented
 }
 
 // GetLiveResults is implemented in Task 4.
 func (s *MemoryCommissionRunStore) GetLiveResults(_ context.Context, _ string) ([]CommissionResult, error) {
-	return nil, nil
+	return nil, errResultsUnimplemented
 }

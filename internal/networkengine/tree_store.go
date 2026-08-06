@@ -40,8 +40,21 @@ type TreeStore interface {
 	// GetByTree returns all active nodes in a tree.
 	GetByTree(ctx context.Context, treeID string) ([]TreeNodeRow, error)
 
-	// GetByTreeDepthOrdered returns all active nodes in a tree ordered
-	// by depth ascending. Used for startup bulk-load (parents before children).
+	// GetByTreeDepthOrdered returns all active nodes in a tree ordered by
+	// depth ascending, then enrolled_at. Used for startup bulk-load by
+	// TreeLoader.LoadTree, its only caller.
+	//
+	// Replay does not depend on this order. orderForReplay sorts by
+	// (Depth, EnrolledAt, UserID), a total order over a set whose duplicate
+	// user IDs validateNodes already rejected, so the replay sequence is fixed
+	// by the node set alone. TestOrderForReplay_IsIndependentOfInputOrder pins
+	// that. GetByTree returns the same set and would work.
+	//
+	// The sort is kept as defense in depth, not as a correctness requirement.
+	// It makes a failed startup load reproducible: the same rows fail the same
+	// way, in the same reported position, rather than in whatever order the
+	// planner happened to return. idx_tree_nodes_depth(tree_id, depth) backs
+	// the leading key, so the cost is a sort within each depth group.
 	GetByTreeDepthOrdered(ctx context.Context, treeID string) ([]TreeNodeRow, error)
 
 	// BulkInsert adds multiple nodes in a single transaction.

@@ -18,6 +18,7 @@ Use-cases for the Network Engine bounded context.
 - [UC-NET-012: Preflight validation before an irreversible mutation](#uc-net-012-preflight-validation-before-an-irreversible-mutation)
 - [UC-NET-013: Dependency-aware replay ordering over multiple edge types](#uc-net-013-dependency-aware-replay-ordering-over-multiple-edge-types)
 - [UC-NET-014: Pre-projection event gate with database backstop](#uc-net-014-pre-projection-event-gate-with-database-backstop)
+- [UC-NET-015: Immutable run registry with a visibility-flip results store](#uc-net-015-immutable-run-registry-with-a-visibility-flip-results-store)
 
 ---
 
@@ -414,3 +415,36 @@ if !supportedTreeTypes[payload.TreeType] {
 ```
 
 **Notes:** Distinct from UC-NET-012, which preflights an irreversible bulk replay. Here each event is individually recoverable, so the gate stays thin (payload-checkable rules only) and the database owns cross-event races. The gate cannot check the matrix width bound because nothing persists width (HEU-554). The u8 ceiling is gated; the width..255 band is the documented residual. Redelivery is not yet idempotent (HEU-576). `MemoryTreeStore` mirrors all three constraints in the same check order, so the discriminator is unit-testable against the double.
+
+---
+
+### UC-NET-015: Immutable run registry with a visibility-flip results store
+
+**Added:** v0.0.1 (HEU-555)
+**Files:** `internal/networkengine/commission_run_store.go`,
+`internal/networkengine/commission_run_store_postgres.go`,
+`internal/networkengine/commission_run_store_memory.go`,
+`migrations/000005_create_commission_tables.up.sql`
+
+**Problem:** A batch job produces up to a million rows per period. The rows must be an audit record retained for years, a re-run must not destroy the prior one, and readers must never see a half-written batch. Holding a million-row write inside one transaction readers can see is not viable.
+
+**Solution:** Split the run's *status* from its *rows*. A `commission_runs` row carries mutable status (`running` → `complete` → `voided`) and `superseded_by`; `commission_results` rows carry `run_id`. Completion is the visibility flip: `GetLiveResults` returns rows only for a completed, non-voided run, so the bulk write happens against a `running` run outside any replacement transaction and becomes visible atomically via one status update. Re-running calls `ReplaceRun`, which voids the old run and opens its replacement in one transaction — lock, void, insert, link, in that order, because the partial unique index forbids inserting before the void and the foreign key forbids linking before the insert. Writes replace per `(run_id, structure)`, so a retry after an uncertain commit leaves one copy.
+
+**Usage:**
+```go
+store := networkengine.NewPostgresCommissionRunStore(pool)
+runID, _ := store.CreateRun(ctx, "2026-01", planHash)   // planHash from networkengine.PlanHash
+_ = store.SaveResults(ctx, runID, "unilevel", rows)     // invisible so far
+_ = store.CompleteRun(ctx, runID, carryForward)         // now live
+live, _ := store.GetLiveResults(ctx, "2026-01")
+
+// Re-run the period. The old run is voided, not deleted, and keeps its results.
+newID, _ := store.ReplaceRun(ctx, runID, newPlanHash)
+```
+
+**When to use this pattern:**
+- A batch write too large to hold inside a transaction readers can see.
+- Results that must be superseded without being destroyed.
+- A re-run whose partial output must never be visible.
+
+**Notes:** One active run per period comes from a partial unique index on `(period_id) WHERE status <> 'voided'`. The same-period rule for `superseded_by` is a composite foreign key against `UNIQUE (id, period_id)` — it does not need a trigger. Voiding preserves `completed_at` and `carry_forward`, which is why the completion CHECK is one-directional: a biconditional would make complete → voided impossible without erasing the audit fact the row exists to hold. Audit timestamps use `clock_timestamp()`, not `now()`, which is stamped at BEGIN and can predate a lock wait. Both implementations run one shared behavioral suite; see `docs/development/postgres-stores.md` for the Go/Postgres seams that suite exists to catch. The store has no production caller until HEU-592. HEU-595 adds `ListRuns` for walking the supersede chain, and HEU-596 owns the read-path paging contract.

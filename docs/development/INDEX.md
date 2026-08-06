@@ -8,3 +8,4 @@ These notes cover *how* to work within a subsystem. For *why* the subsystem is d
 |------|------|--------------------------|
 | Network Engine | [network-engine.md](network-engine.md) | [003](../../content/design-rationale/003-network-engine-design.md), [007](../../content/design-rationale/007-unilevel-tree-implementation.md), [017](../../content/design-rationale/017-commission-calculation-architecture.md), [020](../../content/design-rationale/020-tree-topology-separation.md) |
 | Config Types (Go/Rust alignment) | [config-types.md](config-types.md) | — |
+| Postgres Stores (Go/Postgres seams) | [postgres-stores.md](postgres-stores.md) | [027](../../content/design-rationale/027-provenance-as-primary-data.md) |

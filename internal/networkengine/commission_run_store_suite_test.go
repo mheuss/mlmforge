@@ -76,6 +76,15 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		if _, err := s.CreateRun(ctx, "2026-01", "sha256:anything"); err == nil {
 			t.Fatal("a malformed plan hash should be rejected")
 		}
+		// TEXT cannot hold these, so Postgres rejects with SQLSTATE 22021.
+		// period_id is caller-supplied, so a memory store accepting them
+		// would diverge on input a caller can actually produce.
+		if _, err := s.CreateRun(ctx, "2026\x0001", validHash); err == nil {
+			t.Fatal("a NUL byte in the period should be rejected")
+		}
+		if _, err := s.CreateRun(ctx, "2026\xff01", validHash); err == nil {
+			t.Fatal("invalid UTF-8 in the period should be rejected")
+		}
 	})
 
 	t.Run("a second run for the same period is rejected with the winner's id", func(t *testing.T) {

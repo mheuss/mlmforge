@@ -40,9 +40,10 @@ CREATE TABLE commission_runs (
     CHECK (status <> 'running' OR completed_at IS NULL),
     CHECK ((status = 'voided') = (voided_at IS NOT NULL)),
     CHECK (superseded_by IS NULL OR status = 'voided'),
-    -- The same-period rule is enforced in Go, but that check is blind to a
-    -- self-reference: the old run's period always equals its own. A cycle
-    -- here would hang any walk of the supersede chain.
+    -- The composite foreign key below is blind to a self-reference: a row's
+    -- own (id, period_id) trivially exists, so the same-period rule is
+    -- satisfied. A cycle here would hang any walk of the supersede chain,
+    -- hence a separate check.
     CHECK (superseded_by IS NULL OR superseded_by <> id),
     CHECK (carry_forward IS NULL OR jsonb_typeof(carry_forward) = 'object'),
     -- The target of the composite foreign key below. Redundant with the

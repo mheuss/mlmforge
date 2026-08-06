@@ -413,7 +413,7 @@ func (s *commissionResultCopySource) Next() bool {
 	return s.idx < len(s.results)
 }
 
-// Values re-checks three of the four things validateResultInputs rejects.
+// Values re-checks a subset of what validateResultInputs rejects.
 // This is the bypass guard: the copy path is where bytes reach the money
 // table, and a future caller building this source directly must fail loudly
 // rather than write a silent default.

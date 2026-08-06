@@ -155,11 +155,11 @@ type CommissionRunStore interface {
 	// is what makes the audit trail survive a replacement.
 	//
 	// Returns *RunNotFoundError when the run does not exist. That is distinct
-	// from a run with no rows, which returns an empty slice and no error.
+	// from a run with no rows, which returns nil and no error.
 	GetResults(ctx context.Context, runID uuid.UUID) ([]CommissionResult, error)
 
 	// GetLiveResults returns the period's current results, ordered by id
-	// ascending. Empty when the period has no run, when its run is still
+	// ascending. Nil when the period has no run, when its run is still
 	// running, or when its run is voided. Implementations must resolve the
 	// run and read its rows atomically so a replacement landing mid-read
 	// cannot produce a mix.
@@ -231,6 +231,17 @@ var planHashPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 func validateRunInput(periodID, planHash string) error {
 	if periodID == "" {
 		return fmt.Errorf("commission run: period_id must be non-empty")
+	}
+	// Same reason as the structure check below: TEXT cannot hold a NUL byte
+	// or invalid UTF-8, and Postgres rejects both with SQLSTATE 22021.
+	// period_id is caller-supplied, so without this the memory store accepts
+	// a period the real store cannot write. plan_hash needs no equivalent —
+	// its regex already excludes everything but lowercase hex.
+	if !utf8.ValidString(periodID) {
+		return fmt.Errorf("commission run: period_id %q is not valid UTF-8", periodID)
+	}
+	if strings.ContainsRune(periodID, 0) {
+		return fmt.Errorf("commission run: period_id %q contains a NUL byte, which TEXT cannot store", periodID)
 	}
 	return validatePlanHashOnly(planHash)
 }

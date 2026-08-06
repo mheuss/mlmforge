@@ -2,11 +2,13 @@ package networkengine
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // These tests use raw SQL rather than the store, which does not exist yet.
@@ -21,7 +23,7 @@ func TestCommissionRunsSchema(t *testing.T) {
 	// Subtests share one pool and one truncate, so rows accumulate across
 	// them. Every subtest must use a period_id no other subtest touches, or
 	// it will collide with the partial unique index and fail for a reason
-	// unrelated to what it tests. Periods in use below: 2026-01 .. 2026-15.
+	// unrelated to what it tests. Periods in use below: 2026-01 .. 2026-19.
 	const insert = `INSERT INTO commission_runs
 		(id, period_id, plan_hash, status, completed_at)
 		VALUES ($1, $2, 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', $3, $4)`
@@ -129,11 +131,10 @@ func TestCommissionRunsSchema(t *testing.T) {
 		}
 	})
 
-	// A run cannot supersede itself. The same-period rule for superseded_by
-	// is enforced in Go, but that check is structurally blind to a
-	// self-reference: comparing the old run's period to the new run's period
-	// always passes when they are the same row. Self-reference is expressible
-	// in SQL, so it is caught here instead.
+	// A run cannot supersede itself. The composite foreign key below enforces
+	// the same-period rule, but it is structurally blind to a self-reference:
+	// a row's own (id, period_id) trivially exists, so the FK is satisfied.
+	// That is why this needs its own CHECK.
 	t.Run("a run superseding itself is rejected", func(t *testing.T) {
 		id := uuid.New()
 		_, err := pool.Exec(ctx,
@@ -195,6 +196,14 @@ func TestCommissionRunsSchema(t *testing.T) {
 			uuid.New(), "sha256:"+strings.Repeat("a", 64), other)
 		if err == nil {
 			t.Fatal("expected the composite foreign key to reject a replacement from another period")
+		}
+		// Pin the mechanism, not just the rejection. Every other constraint on
+		// this row shape is satisfied, but a future CHECK could start
+		// rejecting it for an unrelated reason and leave this green while the
+		// foreign key silently stopped working. 23503 is foreign_key_violation.
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != "23503" {
+			t.Fatalf("want a foreign key violation (23503), got %v", err)
 		}
 	})
 

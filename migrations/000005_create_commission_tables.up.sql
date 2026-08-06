@@ -71,12 +71,19 @@ CREATE TABLE commission_results (
     CHECK (jsonb_typeof(detail) = 'object')
 );
 
--- Serves GetResults and GetLiveResults: WHERE run_id = $1 ORDER BY id ASC.
--- Without it Postgres walks the whole primary key index and filters, so the
--- cost scales with total table size rather than with the run being read.
--- Measured at 250k rows across two runs: 200k rows removed by filter to
--- return 50k. Rows are never deleted here, so that gap widens with every run
--- retained.
+-- Serves GetResults: WHERE run_id = $1 ORDER BY id ASC, in one index scan
+-- with no sort. Without it Postgres walks the whole primary key index and
+-- filters, so the cost scales with total table size rather than with the run
+-- being read. Measured at 250k rows across two runs: 200k rows removed by
+-- filter to return 50k. Rows are never deleted here, so that gap widens with
+-- every run retained.
+--
+-- It does NOT serve GetLiveResults, which joins to commission_runs to resolve
+-- the period's live run in one statement. A nested loop takes its ordering
+-- from the outer relation, so the inner scan's (run_id, id) order cannot
+-- satisfy ORDER BY r.id and the planner adds a Sort. Measured at 1.35M rows
+-- with 500k live: 42 MB spilled to disk. Tracked in HEU-555's plan as an open
+-- read-path question, not solved here.
 CREATE INDEX commission_results_run_id_idx
     ON commission_results (run_id, id);
 

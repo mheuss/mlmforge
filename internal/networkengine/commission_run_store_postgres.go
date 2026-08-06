@@ -140,14 +140,19 @@ func scanCommissionRun(row pgx.Row) (*CommissionRun, error) {
 }
 
 // errPostgresUnimplemented keeps the not-yet-written operations loud until
-// Tasks 6 through 8 land. Zero values would be quietly wrong: several suite
-// cases assert an EMPTY result set or a nil error, so stubs returning those
-// would pass against a store that does nothing — the exact drift the shared
-// suite exists to catch.
-var errPostgresUnimplemented = errors.New("commission run store: not implemented until HEU-555 tasks 6-8")
+// Task 8 lands. Zero values would be quietly wrong: several suite cases
+// assert an EMPTY result set or a nil error, so stubs returning those would
+// pass against a store that does nothing — the exact drift the shared suite
+// exists to catch.
+var errPostgresUnimplemented = errors.New("commission run store: not implemented until HEU-555 task 8")
 
+// clock_timestamp(), not now(). now() is transaction_timestamp(), captured
+// before the statement blocks on SaveResults' row lock — measured 3 seconds
+// early behind a held lock, and behind a real million-row write that gap is
+// the whole bulk-write duration. Nothing depends on the value, but an audit
+// timestamp that predates rows written during the wait is a bad record.
 const completeRunSQL = `UPDATE commission_runs
-                        SET status = 'complete', completed_at = now(), carry_forward = $2
+                        SET status = 'complete', completed_at = clock_timestamp(), carry_forward = $2
                         WHERE id = $1 AND status = 'running'`
 
 // CompleteRun flips the run's visibility. The WHERE clause carries the guard,
@@ -178,10 +183,25 @@ func (s *PostgresCommissionRunStore) CompleteRun(ctx context.Context, runID uuid
 // Rows-affected alone cannot tell the two apart: an unknown run and a run in
 // the wrong state both update zero rows, and the suite asserts each
 // separately.
+//
+// The re-read races the state it is reporting on, and that is fine because
+// status is monotone per id: running goes to complete or voided, complete
+// goes to voided, and voided is terminal. Ids are never reused — CreateRun
+// and ReplaceRun both mint a fresh one. So the read can never come back
+// `running` after a genuine guard failure, which is the only self-
+// contradictory answer available. The worst reachable divergence is
+// reporting `voided` when the update actually lost to a `complete`, still a
+// truthful RunNotRunningError. Task 8 owns VoidRun and ReplaceRun; keep
+// status monotone there or this reasoning stops holding.
 func (s *PostgresCommissionRunStore) explainRunGuardFailure(ctx context.Context, runID uuid.UUID) error {
 	run, err := s.GetRun(ctx, runID)
 	if err != nil {
-		return err // already *RunNotFoundError when the run is missing
+		var notFound *RunNotFoundError
+		if errors.As(err, &notFound) {
+			return err // the caller's answer, already typed
+		}
+		// Any other failure loses the operation's name without this.
+		return fmt.Errorf("complete commission run: reading run state after a rejected update: %w", err)
 	}
 	return &RunNotRunningError{RunID: runID, Status: run.Status}
 }

@@ -146,9 +146,44 @@ func scanCommissionRun(row pgx.Row) (*CommissionRun, error) {
 // suite exists to catch.
 var errPostgresUnimplemented = errors.New("commission run store: not implemented until HEU-555 tasks 6-8")
 
-// CompleteRun is implemented in Task 7.
-func (s *PostgresCommissionRunStore) CompleteRun(_ context.Context, _ uuid.UUID, _ json.RawMessage) error {
-	return errPostgresUnimplemented
+const completeRunSQL = `UPDATE commission_runs
+                        SET status = 'complete', completed_at = now(), carry_forward = $2
+                        WHERE id = $1 AND status = 'running'`
+
+// CompleteRun flips the run's visibility. The WHERE clause carries the guard,
+// so a concurrent complete or void makes this a zero-row update rather than a
+// lost write.
+func (s *PostgresCommissionRunStore) CompleteRun(ctx context.Context, runID uuid.UUID, carryForward json.RawMessage) error {
+	if err := validateCarryForward(carryForward); err != nil {
+		return err
+	}
+	// cloneRaw, not carryForward directly. pgx encodes only a nil slice as
+	// SQL NULL; an empty non-nil one is sent as an empty payload and fails
+	// the jsonb insert. cloneRaw collapses empty to nil, which is the
+	// normalization the interface promises — nil and empty mean the same
+	// thing and both read back as nil.
+	tag, err := s.pool.Exec(ctx, completeRunSQL, runID, cloneRaw(carryForward))
+	if err != nil {
+		return fmt.Errorf("complete commission run: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return s.explainRunGuardFailure(ctx, runID)
+	}
+	return nil
+}
+
+// explainRunGuardFailure turns a zero-row update into the right typed error.
+// The extra read only happens on the failure path.
+//
+// Rows-affected alone cannot tell the two apart: an unknown run and a run in
+// the wrong state both update zero rows, and the suite asserts each
+// separately.
+func (s *PostgresCommissionRunStore) explainRunGuardFailure(ctx context.Context, runID uuid.UUID) error {
+	run, err := s.GetRun(ctx, runID)
+	if err != nil {
+		return err // already *RunNotFoundError when the run is missing
+	}
+	return &RunNotRunningError{RunID: runID, Status: run.Status}
 }
 
 // VoidRun is implemented in Task 8.
@@ -334,7 +369,27 @@ func scanCommissionResults(rows pgx.Rows) ([]CommissionResult, error) {
 	return out, rows.Err()
 }
 
-// GetLiveResults is implemented in Task 7.
-func (s *PostgresCommissionRunStore) GetLiveResults(_ context.Context, _ string) ([]CommissionResult, error) {
-	return nil, errPostgresUnimplemented
+// getLiveResultsSQL resolves the period's completed, non-voided run and reads
+// its rows in one statement. Two statements would let a replacement land
+// between them, and a paged reader that re-resolved between pages could
+// return rows from two runs.
+//
+// status = 'complete' carries the non-voided condition implicitly: a run is
+// in exactly one state, so a voided run is excluded by the same predicate.
+const getLiveResultsSQL = `SELECT r.id, r.run_id, r.structure, r.earner_id,
+                                  r.dollar_amount::text, r.detail
+                           FROM commission_results r
+                           JOIN commission_runs run ON run.id = r.run_id
+                           WHERE run.period_id = $1 AND run.status = 'complete'
+                           ORDER BY r.id ASC`
+
+// GetLiveResults returns the period's current results, empty when the period
+// has no run, its run is still running, or its run is voided.
+func (s *PostgresCommissionRunStore) GetLiveResults(ctx context.Context, periodID string) ([]CommissionResult, error) {
+	rows, err := s.pool.Query(ctx, getLiveResultsSQL, periodID)
+	if err != nil {
+		return nil, fmt.Errorf("get live commission results: %w", err)
+	}
+	defer rows.Close()
+	return scanCommissionResults(rows)
 }

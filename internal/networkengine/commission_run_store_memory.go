@@ -3,7 +3,7 @@ package networkengine
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"sort"
 	"sync"
 	"time"
 
@@ -222,26 +222,92 @@ func copyRun(run *CommissionRun) *CommissionRun {
 	return &cp
 }
 
-// errResultsUnimplemented keeps the results half of the interface loud until
-// Task 4 fills it in. Returning zero values instead would be quietly wrong:
-// several of the contract's own cases assert an EMPTY result set — a running
-// run's rows are invisible, a voided run's are too, and saving an empty batch
-// leaves none — so a stub returning (nil, nil) would make them pass against a
-// store that does nothing. That is the exact drift this suite exists to
-// catch.
-var errResultsUnimplemented = errors.New("commission results: not implemented until HEU-555 task 4")
+// SaveResults replaces every row for (runID, structure). Rows keep insertion
+// order within the slice, and ids increase monotonically, matching the
+// Postgres BIGSERIAL and ORDER BY id contract.
+func (s *MemoryCommissionRunStore) SaveResults(_ context.Context, runID uuid.UUID, structure string, results []CommissionResultInput) error {
+	// Validate the whole batch before touching storage, so one bad row cannot
+	// leave the good ones half-written. Postgres gets this from its
+	// transaction.
+	if err := validateResultInputs(structure, results); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-// SaveResults is implemented in Task 4.
-func (s *MemoryCommissionRunStore) SaveResults(_ context.Context, _ uuid.UUID, _ string, _ []CommissionResultInput) error {
-	return errResultsUnimplemented
+	run, ok := s.runs[runID]
+	if !ok {
+		return &RunNotFoundError{RunID: runID}
+	}
+	if run.Status != RunStatusRunning {
+		return &RunNotRunningError{RunID: runID, Status: run.Status}
+	}
+
+	// Drop this structure's prior rows, keeping every other structure.
+	kept := make([]CommissionResult, 0, len(s.results[runID]))
+	for _, r := range s.results[runID] {
+		if r.Structure != structure {
+			kept = append(kept, r)
+		}
+	}
+	for _, in := range results {
+		kept = append(kept, CommissionResult{
+			ID:           s.nextID,
+			RunID:        runID,
+			Structure:    structure,
+			EarnerID:     in.EarnerID,
+			DollarAmount: in.DollarAmount,
+			// Clone: the caller keeps its slice, and Postgres copies the
+			// bytes on write. Storing the caller's array would let a later
+			// mutation rewrite persisted state.
+			Detail: cloneRaw(in.Detail),
+		})
+		s.nextID++
+	}
+	// Already ordered by construction — the filter preserves order and new
+	// ids are strictly larger — but the contract is "ordered by id ascending"
+	// and enforcing it directly is cheaper than depending on that argument
+	// staying true.
+	sort.Slice(kept, func(i, j int) bool { return kept[i].ID < kept[j].ID })
+	s.results[runID] = kept
+	return nil
 }
 
-// GetResults is implemented in Task 4.
-func (s *MemoryCommissionRunStore) GetResults(_ context.Context, _ uuid.UUID) ([]CommissionResult, error) {
-	return nil, errResultsUnimplemented
+// GetResults returns a run's rows ordered by id ascending, whatever the run's
+// status. A voided run's results stay readable for audit.
+func (s *MemoryCommissionRunStore) GetResults(_ context.Context, runID uuid.UUID) ([]CommissionResult, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if _, ok := s.runs[runID]; !ok {
+		return nil, &RunNotFoundError{RunID: runID}
+	}
+	return copyResults(s.results[runID]), nil
 }
 
-// GetLiveResults is implemented in Task 4.
-func (s *MemoryCommissionRunStore) GetLiveResults(_ context.Context, _ string) ([]CommissionResult, error) {
-	return nil, errResultsUnimplemented
+// copyResults returns caller-owned rows. A plain copy() would be shallow,
+// leaving every Detail aliased to the store's buffer, so a caller mutating a
+// returned row would corrupt stored state. Postgres returns independent
+// bytes; this is what keeps the two implementations alike.
+func copyResults(in []CommissionResult) []CommissionResult {
+	out := make([]CommissionResult, len(in))
+	for i, r := range in {
+		r.Detail = cloneRaw(r.Detail)
+		out[i] = r
+	}
+	return out
+}
+
+// GetLiveResults returns the period's current results. Resolving the run and
+// reading its rows happens under one lock, matching the Postgres store's
+// single statement, so a replacement cannot land between the two.
+func (s *MemoryCommissionRunStore) GetLiveResults(_ context.Context, periodID string) ([]CommissionResult, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	run := s.activeRunLocked(periodID)
+	if run == nil || run.Status != RunStatusComplete {
+		return nil, nil
+	}
+	return copyResults(s.results[run.ID]), nil
 }

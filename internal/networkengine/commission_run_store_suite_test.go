@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"slices"
 	"strings"
 	"sync"
@@ -701,6 +702,501 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		var target *RunNotFoundError
 		if !errors.As(err, &target) {
 			t.Fatalf("want *RunNotFoundError, got %v", err)
+		}
+	})
+
+	t.Run("SaveResults then GetResults round-trips in id order", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		runID, err := s.CreateRun(ctx, "2026-01", validHash)
+		if err != nil {
+			t.Fatalf("CreateRun: %v", err)
+		}
+		a, b := uuid.New(), uuid.New()
+		in := []CommissionResultInput{
+			{EarnerID: a, DollarAmount: 10.5, Detail: []byte(`{"v":1,"level":1}`)},
+			{EarnerID: b, DollarAmount: 20.25, Detail: []byte(`{"v":1,"level":2}`)},
+		}
+		if err := s.SaveResults(ctx, runID, "primary", in); err != nil {
+			t.Fatalf("SaveResults: %v", err)
+		}
+		got, err := s.GetResults(ctx, runID)
+		if err != nil {
+			t.Fatalf("GetResults: %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("len = %d, want 2", len(got))
+		}
+		if got[0].EarnerID != a || got[1].EarnerID != b {
+			t.Fatal("results must come back in insertion (id ascending) order")
+		}
+		if got[0].DollarAmount != 10.5 || got[1].DollarAmount != 20.25 {
+			t.Fatalf("amounts = %v, %v", got[0].DollarAmount, got[1].DollarAmount)
+		}
+		if got[0].RunID != runID || got[0].Structure != "primary" {
+			t.Fatalf("run id and structure should be stamped from the call, got %+v", got[0])
+		}
+		if got[0].ID == 0 || got[1].ID <= got[0].ID {
+			t.Fatalf("ids should be assigned and increasing, got %d and %d", got[0].ID, got[1].ID)
+		}
+	})
+
+	// The detail column is the reason the three earning shapes can share one
+	// table, so it has to survive the trip with its values intact. Parsed, not
+	// byte-compared: Postgres normalizes JSONB.
+	t.Run("SaveResults round-trips detail values", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		runID, err := s.CreateRun(ctx, "2026-01", validHash)
+		if err != nil {
+			t.Fatalf("CreateRun: %v", err)
+		}
+		if err := s.SaveResults(ctx, runID, "primary", []CommissionResultInput{
+			{EarnerID: uuid.New(), DollarAmount: 1, Detail: []byte(
+				`{"v":1,"level":3,"rate":0.05,"compressed":true,"source":"11111111-1111-1111-1111-111111111111"}`)},
+		}); err != nil {
+			t.Fatalf("SaveResults: %v", err)
+		}
+		got, err := s.GetResults(ctx, runID)
+		if err != nil {
+			t.Fatalf("GetResults: %v", err)
+		}
+		var detail struct {
+			V          int     `json:"v"`
+			Level      int     `json:"level"`
+			Rate       float64 `json:"rate"`
+			Compressed bool    `json:"compressed"`
+			Source     string  `json:"source"`
+		}
+		if err := json.Unmarshal(got[0].Detail, &detail); err != nil {
+			t.Fatalf("detail is not readable JSON: %v", err)
+		}
+		if detail.V != 1 || detail.Level != 3 || detail.Rate != 0.05 ||
+			!detail.Compressed || detail.Source != "11111111-1111-1111-1111-111111111111" {
+			t.Fatalf("detail = %+v, want every field preserved", detail)
+		}
+	})
+
+	t.Run("SaveResults twice for one structure leaves one copy", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		runID, err := s.CreateRun(ctx, "2026-01", validHash)
+		if err != nil {
+			t.Fatalf("CreateRun: %v", err)
+		}
+		in := []CommissionResultInput{
+			{EarnerID: uuid.New(), DollarAmount: 1, Detail: []byte(`{"v":1}`)},
+		}
+		if err := s.SaveResults(ctx, runID, "primary", in); err != nil {
+			t.Fatalf("first SaveResults: %v", err)
+		}
+		if err := s.SaveResults(ctx, runID, "primary", in); err != nil {
+			t.Fatalf("retry SaveResults: %v", err)
+		}
+		got, err := s.GetResults(ctx, runID)
+		if err != nil {
+			t.Fatalf("GetResults: %v", err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("len = %d, want 1 — a retry must not duplicate earnings", len(got))
+		}
+	})
+
+	t.Run("structures accumulate independently under one run", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		runID, err := s.CreateRun(ctx, "2026-01", validHash)
+		if err != nil {
+			t.Fatalf("CreateRun: %v", err)
+		}
+		one := []CommissionResultInput{{EarnerID: uuid.New(), DollarAmount: 1, Detail: []byte(`{"v":1}`)}}
+		two := []CommissionResultInput{{EarnerID: uuid.New(), DollarAmount: 2, Detail: []byte(`{"v":1}`)}}
+		if err := s.SaveResults(ctx, runID, "unilevel", one); err != nil {
+			t.Fatalf("SaveResults unilevel: %v", err)
+		}
+		if err := s.SaveResults(ctx, runID, "binary", two); err != nil {
+			t.Fatalf("SaveResults binary: %v", err)
+		}
+		// Replacing one structure must not touch the other.
+		if err := s.SaveResults(ctx, runID, "unilevel", one); err != nil {
+			t.Fatalf("replace unilevel: %v", err)
+		}
+		got, err := s.GetResults(ctx, runID)
+		if err != nil {
+			t.Fatalf("GetResults: %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("len = %d, want 2 (one per structure)", len(got))
+		}
+		// The survivor of the untouched structure must be the binary row.
+		var sawBinary bool
+		for _, r := range got {
+			if r.Structure == "binary" && r.DollarAmount == 2 {
+				sawBinary = true
+			}
+		}
+		if !sawBinary {
+			t.Fatalf("replacing unilevel destroyed the binary rows, got %+v", got)
+		}
+		// Order must still be ascending across structures after a replace.
+		if got[0].ID >= got[1].ID {
+			t.Fatalf("ids must stay ascending after a replace, got %d then %d", got[0].ID, got[1].ID)
+		}
+	})
+
+	t.Run("SaveResults with an empty slice clears that structure", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		runID, err := s.CreateRun(ctx, "2026-01", validHash)
+		if err != nil {
+			t.Fatalf("CreateRun: %v", err)
+		}
+		in := []CommissionResultInput{{EarnerID: uuid.New(), DollarAmount: 1, Detail: []byte(`{"v":1}`)}}
+		if err := s.SaveResults(ctx, runID, "primary", in); err != nil {
+			t.Fatalf("SaveResults: %v", err)
+		}
+		if err := s.SaveResults(ctx, runID, "primary", nil); err != nil {
+			t.Fatalf("SaveResults empty: %v", err)
+		}
+		got, err := s.GetResults(ctx, runID)
+		if err != nil {
+			t.Fatalf("GetResults: %v", err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("len = %d, want 0", len(got))
+		}
+	})
+
+	t.Run("SaveResults on a completed run returns RunNotRunningError", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		runID, err := s.CreateRun(ctx, "2026-01", validHash)
+		if err != nil {
+			t.Fatalf("CreateRun: %v", err)
+		}
+		if err := s.CompleteRun(ctx, runID, nil); err != nil {
+			t.Fatalf("CompleteRun: %v", err)
+		}
+		err = s.SaveResults(ctx, runID, "primary", []CommissionResultInput{
+			{EarnerID: uuid.New(), DollarAmount: 1, Detail: []byte(`{"v":1}`)},
+		})
+		var target *RunNotRunningError
+		if !errors.As(err, &target) {
+			t.Fatalf("want *RunNotRunningError, got %v", err)
+		}
+	})
+
+	t.Run("SaveResults on an unknown run returns RunNotFoundError", func(t *testing.T) {
+		s := newStore(t)
+		err := s.SaveResults(context.Background(), uuid.New(), "primary",
+			[]CommissionResultInput{{EarnerID: uuid.New(), DollarAmount: 1, Detail: []byte(`{"v":1}`)}})
+		var target *RunNotFoundError
+		if !errors.As(err, &target) {
+			t.Fatalf("want *RunNotFoundError, got %v", err)
+		}
+	})
+
+	t.Run("GetResults on an unknown run returns RunNotFoundError", func(t *testing.T) {
+		s := newStore(t)
+		_, err := s.GetResults(context.Background(), uuid.New())
+		var target *RunNotFoundError
+		if !errors.As(err, &target) {
+			t.Fatalf("want *RunNotFoundError, got %v", err)
+		}
+	})
+
+	t.Run("a running run's results are invisible to GetLiveResults", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		runID, err := s.CreateRun(ctx, "2026-01", validHash)
+		if err != nil {
+			t.Fatalf("CreateRun: %v", err)
+		}
+		if err := s.SaveResults(ctx, runID, "primary", []CommissionResultInput{
+			{EarnerID: uuid.New(), DollarAmount: 1, Detail: []byte(`{"v":1}`)},
+		}); err != nil {
+			t.Fatalf("SaveResults: %v", err)
+		}
+		live, err := s.GetLiveResults(ctx, "2026-01")
+		if err != nil {
+			t.Fatalf("GetLiveResults: %v", err)
+		}
+		if len(live) != 0 {
+			t.Fatalf("len = %d, want 0 — completion is the visibility flip", len(live))
+		}
+	})
+
+	t.Run("completing a run makes its results live", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		runID, err := s.CreateRun(ctx, "2026-01", validHash)
+		if err != nil {
+			t.Fatalf("CreateRun: %v", err)
+		}
+		if err := s.SaveResults(ctx, runID, "primary", []CommissionResultInput{
+			{EarnerID: uuid.New(), DollarAmount: 7, Detail: []byte(`{"v":1}`)},
+		}); err != nil {
+			t.Fatalf("SaveResults: %v", err)
+		}
+		if err := s.CompleteRun(ctx, runID, nil); err != nil {
+			t.Fatalf("CompleteRun: %v", err)
+		}
+		live, err := s.GetLiveResults(ctx, "2026-01")
+		if err != nil {
+			t.Fatalf("GetLiveResults: %v", err)
+		}
+		if len(live) != 1 || live[0].DollarAmount != 7 {
+			t.Fatalf("live = %+v, want one row of 7", live)
+		}
+	})
+
+	t.Run("a voided run's results stay readable but stop being live", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		runID, err := s.CreateRun(ctx, "2026-01", validHash)
+		if err != nil {
+			t.Fatalf("CreateRun: %v", err)
+		}
+		if err := s.SaveResults(ctx, runID, "primary", []CommissionResultInput{
+			{EarnerID: uuid.New(), DollarAmount: 7, Detail: []byte(`{"v":1}`)},
+		}); err != nil {
+			t.Fatalf("SaveResults: %v", err)
+		}
+		if err := s.CompleteRun(ctx, runID, nil); err != nil {
+			t.Fatalf("CompleteRun: %v", err)
+		}
+		if err := s.VoidRun(ctx, runID); err != nil {
+			t.Fatalf("VoidRun: %v", err)
+		}
+
+		live, err := s.GetLiveResults(ctx, "2026-01")
+		if err != nil {
+			t.Fatalf("GetLiveResults: %v", err)
+		}
+		if len(live) != 0 {
+			t.Fatalf("live = %d rows, want 0 after voiding", len(live))
+		}
+
+		archived, err := s.GetResults(ctx, runID)
+		if err != nil {
+			t.Fatalf("GetResults: %v", err)
+		}
+		if len(archived) != 1 {
+			t.Fatal("a voided run's results must remain readable for audit")
+		}
+	})
+
+	// ADR-013 scenario 2 end to end: the replacement's results become live and
+	// the superseded run's stay readable but invisible.
+	t.Run("after ReplaceRun the new run's results become the live ones", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		oldID, err := s.CreateRun(ctx, "2026-01", validHash)
+		if err != nil {
+			t.Fatalf("CreateRun: %v", err)
+		}
+		if err := s.SaveResults(ctx, oldID, "primary", []CommissionResultInput{
+			{EarnerID: uuid.New(), DollarAmount: 7, Detail: []byte(`{"v":1}`)},
+		}); err != nil {
+			t.Fatalf("SaveResults old: %v", err)
+		}
+		if err := s.CompleteRun(ctx, oldID, nil); err != nil {
+			t.Fatalf("CompleteRun old: %v", err)
+		}
+
+		newID, err := s.ReplaceRun(ctx, oldID, otherHash)
+		if err != nil {
+			t.Fatalf("ReplaceRun: %v", err)
+		}
+		if err := s.SaveResults(ctx, newID, "primary", []CommissionResultInput{
+			{EarnerID: uuid.New(), DollarAmount: 9, Detail: []byte(`{"v":1}`)},
+		}); err != nil {
+			t.Fatalf("SaveResults new: %v", err)
+		}
+		if err := s.CompleteRun(ctx, newID, nil); err != nil {
+			t.Fatalf("CompleteRun new: %v", err)
+		}
+
+		live, err := s.GetLiveResults(ctx, "2026-01")
+		if err != nil {
+			t.Fatalf("GetLiveResults: %v", err)
+		}
+		if len(live) != 1 || live[0].DollarAmount != 9 {
+			t.Fatalf("live = %+v, want only the replacement's row of 9", live)
+		}
+		archived, err := s.GetResults(ctx, oldID)
+		if err != nil {
+			t.Fatalf("GetResults old: %v", err)
+		}
+		if len(archived) != 1 || archived[0].DollarAmount != 7 {
+			t.Fatalf("the superseded run's results must stay readable, got %+v", archived)
+		}
+	})
+
+	t.Run("GetLiveResults on an unknown period is empty, not an error", func(t *testing.T) {
+		s := newStore(t)
+		got, err := s.GetLiveResults(context.Background(), "2099-12")
+		if err != nil {
+			t.Fatalf("GetLiveResults: %v", err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("len = %d, want 0", len(got))
+		}
+	})
+
+	// Both implementations must refuse the same malformed input. Without
+	// these, the memory store accepts values Postgres rejects and a test that
+	// passes in memory fails in production — the exact trap this suite
+	// exists to close. CreateRun and CompleteRun are covered above.
+	t.Run("SaveResults rejects malformed input", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		runID, err := s.CreateRun(ctx, "2026-01", validHash)
+		if err != nil {
+			t.Fatalf("CreateRun: %v", err)
+		}
+		cases := []struct {
+			name      string
+			structure string
+			input     []CommissionResultInput
+		}{
+			{"empty structure", "", nil},
+			{"nil earner id", "primary", []CommissionResultInput{
+				{EarnerID: uuid.Nil, DollarAmount: 1, Detail: []byte(`{"v":1}`)}}},
+			{"NaN amount", "primary", []CommissionResultInput{
+				{EarnerID: uuid.New(), DollarAmount: math.NaN(), Detail: []byte(`{"v":1}`)}}},
+			{"positive infinity", "primary", []CommissionResultInput{
+				{EarnerID: uuid.New(), DollarAmount: math.Inf(1), Detail: []byte(`{"v":1}`)}}},
+			{"negative infinity", "primary", []CommissionResultInput{
+				{EarnerID: uuid.New(), DollarAmount: math.Inf(-1), Detail: []byte(`{"v":1}`)}}},
+			{"array detail", "primary", []CommissionResultInput{
+				{EarnerID: uuid.New(), DollarAmount: 1, Detail: []byte(`[1,2]`)}}},
+			{"JSON null detail", "primary", []CommissionResultInput{
+				{EarnerID: uuid.New(), DollarAmount: 1, Detail: []byte(`null`)}}},
+			{"nil detail", "primary", []CommissionResultInput{
+				{EarnerID: uuid.New(), DollarAmount: 1, Detail: nil}}},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				if err := s.SaveResults(ctx, runID, tc.structure, tc.input); err == nil {
+					t.Fatal("expected an error")
+				}
+			})
+		}
+		// A rejected batch must write nothing.
+		got, err := s.GetResults(ctx, runID)
+		if err != nil {
+			t.Fatalf("GetResults: %v", err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("rejected batches left %d rows behind", len(got))
+		}
+	})
+
+	// A batch is all-or-nothing. Postgres gets this from its transaction; the
+	// memory store has to validate every row before writing any.
+	t.Run("SaveResults rejects a batch for one bad row and writes none", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		runID, err := s.CreateRun(ctx, "2026-01", validHash)
+		if err != nil {
+			t.Fatalf("CreateRun: %v", err)
+		}
+		if err := s.SaveResults(ctx, runID, "primary", []CommissionResultInput{
+			{EarnerID: uuid.New(), DollarAmount: 1, Detail: []byte(`{"v":1}`)},
+			{EarnerID: uuid.New(), DollarAmount: math.NaN(), Detail: []byte(`{"v":1}`)},
+		}); err == nil {
+			t.Fatal("a batch with one bad row should be rejected")
+		}
+		got, err := s.GetResults(ctx, runID)
+		if err != nil {
+			t.Fatalf("GetResults: %v", err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("the good row from a rejected batch was written; got %d rows", len(got))
+		}
+	})
+
+	// json.RawMessage is a byte slice. A store that keeps the caller's array
+	// lets a later mutation rewrite persisted state. Postgres copies the bytes
+	// on write, so the memory store must too.
+	t.Run("mutating a detail passed to SaveResults does not change the store", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		runID, err := s.CreateRun(ctx, "2026-01", validHash)
+		if err != nil {
+			t.Fatalf("CreateRun: %v", err)
+		}
+		detail := []byte(`{"v":1,"level":3}`)
+		if err := s.SaveResults(ctx, runID, "primary", []CommissionResultInput{
+			{EarnerID: uuid.New(), DollarAmount: 1, Detail: detail},
+		}); err != nil {
+			t.Fatalf("SaveResults: %v", err)
+		}
+		copy(detail, []byte(`{"v":9`))
+
+		got, err := s.GetResults(ctx, runID)
+		if err != nil {
+			t.Fatalf("GetResults: %v", err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("len = %d, want 1", len(got))
+		}
+		var parsed map[string]any
+		if err := json.Unmarshal(got[0].Detail, &parsed); err != nil {
+			t.Fatalf("stored detail is not readable JSON: %v", err)
+		}
+		if parsed["level"] != float64(3) {
+			t.Fatalf("stored detail = %s; mutating the input changed stored state", got[0].Detail)
+		}
+	})
+
+	// The read side of the same property.
+	t.Run("mutating a returned detail does not change the store", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		runID, err := s.CreateRun(ctx, "2026-01", validHash)
+		if err != nil {
+			t.Fatalf("CreateRun: %v", err)
+		}
+		if err := s.SaveResults(ctx, runID, "primary", []CommissionResultInput{
+			{EarnerID: uuid.New(), DollarAmount: 1, Detail: []byte(`{"v":1,"level":3}`)},
+		}); err != nil {
+			t.Fatalf("SaveResults: %v", err)
+		}
+		got, err := s.GetResults(ctx, runID)
+		if err != nil {
+			t.Fatalf("GetResults: %v", err)
+		}
+		if len(got) != 1 || len(got[0].Detail) < 6 {
+			t.Fatalf("need a populated detail to test aliasing, got %+v", got)
+		}
+		copy(got[0].Detail, []byte(`{"v":7`))
+
+		again, err := s.GetResults(ctx, runID)
+		if err != nil {
+			t.Fatalf("GetResults again: %v", err)
+		}
+		var parsed map[string]any
+		if err := json.Unmarshal(again[0].Detail, &parsed); err != nil {
+			t.Fatalf("stored detail is not readable JSON: %v", err)
+		}
+		if parsed["v"] != float64(1) {
+			t.Fatalf("stored detail = %s; mutating a returned row changed stored state", again[0].Detail)
 		}
 	})
 }

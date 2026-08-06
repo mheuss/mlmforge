@@ -149,7 +149,11 @@ type CommissionRunStore interface {
 	GetActiveRun(ctx context.Context, periodID string) (*CommissionRun, error)
 
 	// GetResults returns one run's results ordered by id ascending,
-	// regardless of the run's status.
+	// regardless of the run's status. A voided run's rows stay readable, which
+	// is what makes the audit trail survive a replacement.
+	//
+	// Returns *RunNotFoundError when the run does not exist. That is distinct
+	// from a run with no rows, which returns an empty slice and no error.
 	GetResults(ctx context.Context, runID uuid.UUID) ([]CommissionResult, error)
 
 	// GetLiveResults returns the period's current results, ordered by id

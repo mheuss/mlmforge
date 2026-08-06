@@ -1056,12 +1056,21 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 	// mix. That is the guarantee letting a million-row write happen outside
 	// the replacement transaction.
 	//
-	// What this buys, honestly: the memory store passes trivially because its
-	// RWMutex makes the interleaving impossible, and the trigger is
-	// probabilistic. The value is for an implementation that resolves the run
-	// and reads its rows in two round trips, where a replacement between them
-	// can surface rows from two different runs. Each observation is checked
-	// deterministically even though hitting the window is not.
+	// What this buys, honestly. The memory store passes trivially because its
+	// RWMutex makes the interleaving impossible.
+	//
+	// Note what is NOT a violation: resolving the live run and then reading
+	// that run's rows in a second round trip. A complete run's rows are
+	// frozen — SaveResults refuses a non-running run and voiding never
+	// deletes — so the second read returns exactly the state that was live at
+	// the first. Stale by a moment, but a valid linearization point.
+	//
+	// The shape this case exists for is a paged or keyset read that
+	// re-resolves the live run between pages, which is the plausible one at
+	// the million-row scale the interface doc has in mind. The simpler
+	// failure — a period-keyed row query with no run filter, which sees a
+	// voided run's surviving rows — is already pinned sequentially by "after
+	// ReplaceRun the new run's results become the live ones".
 	t.Run("GetLiveResults never mixes rows from two runs", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
@@ -1090,18 +1099,33 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		var wg sync.WaitGroup
 		var mu sync.Mutex
 		var problems []string
+		var sawOld int
 		report := func(format string, args ...any) {
 			mu.Lock()
 			defer mu.Unlock()
 			problems = append(problems, fmt.Sprintf(format, args...))
 		}
 
-		done := make(chan struct{})
+		// Without a barrier the writer finishes before the goroutines are
+		// even scheduled, so the readers only ever see the void window and
+		// the settled new state — the transition this case is named for never
+		// happens. Each reader signals once it has seen the pre-replacement
+		// run, and the writer waits for all of them.
+		var started sync.WaitGroup
 		const readers = 4
+		started.Add(readers)
+
+		done := make(chan struct{})
 		wg.Add(readers)
 		for i := 0; i < readers; i++ {
 			go func() {
 				defer wg.Done()
+				// Once, and via defer, so a reader that bails out early still
+				// releases the writer instead of hanging it forever.
+				var once sync.Once
+				signal := func() { once.Do(started.Done) }
+				defer signal()
+
 				for {
 					select {
 					case <-done:
@@ -1134,10 +1158,19 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 							return
 						}
 					}
+					if runID == oldID {
+						mu.Lock()
+						sawOld++
+						mu.Unlock()
+					}
+					// The writer is still blocked, so this first clean read
+					// is necessarily of the pre-replacement run.
+					signal()
 				}
 			}()
 		}
 
+		started.Wait()
 		newID, err := s.ReplaceRun(ctx, oldID, otherHash)
 		if err != nil {
 			report("ReplaceRun: %v", err)
@@ -1154,6 +1187,11 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 
 		for _, p := range problems {
 			t.Error(p)
+		}
+		// Proves the barrier did its job. Without it this is zero and the
+		// case degenerates into polling an already-settled store.
+		if sawOld == 0 {
+			t.Error("no reader observed the pre-replacement run; the transition was never exercised")
 		}
 
 		// The replacement must be what is live once the dust settles.

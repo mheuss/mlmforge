@@ -18,6 +18,10 @@ func TestCommissionRunsSchema(t *testing.T) {
 	pool := pgContainer.NewPool(t)
 	ctx := context.Background()
 
+	// Subtests share one pool and one truncate, so rows accumulate across
+	// them. Every subtest must use a period_id no other subtest touches, or
+	// it will collide with the partial unique index and fail for a reason
+	// unrelated to what it tests. Periods in use below: 2026-01 .. 2026-15.
 	const insert = `INSERT INTO commission_runs
 		(id, period_id, plan_hash, status, completed_at)
 		VALUES ($1, $2, 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', $3, $4)`
@@ -124,6 +128,74 @@ func TestCommissionRunsSchema(t *testing.T) {
 			t.Fatalf("NULL carry_forward should be allowed, got: %v", err)
 		}
 	})
+
+	// A run cannot supersede itself. The same-period rule for superseded_by
+	// is enforced in Go, but that check is structurally blind to a
+	// self-reference: comparing the old run's period to the new run's period
+	// always passes when they are the same row. Self-reference is expressible
+	// in SQL, so it is caught here instead.
+	t.Run("a run superseding itself is rejected", func(t *testing.T) {
+		id := uuid.New()
+		_, err := pool.Exec(ctx,
+			`INSERT INTO commission_runs (id, period_id, plan_hash, status, voided_at, superseded_by)
+			 VALUES ($1, '2026-10', $2, 'voided', now(), $1)`,
+			id, "sha256:"+strings.Repeat("a", 64))
+		if err == nil {
+			t.Fatal("expected CHECK to reject a run superseding itself; the chain would cycle")
+		}
+	})
+
+	t.Run("superseded_by must reference an existing run", func(t *testing.T) {
+		_, err := pool.Exec(ctx,
+			`INSERT INTO commission_runs (id, period_id, plan_hash, status, voided_at, superseded_by)
+			 VALUES ($1, '2026-11', $2, 'voided', now(), $3)`,
+			uuid.New(), "sha256:"+strings.Repeat("a", 64), uuid.New())
+		if err == nil {
+			t.Fatal("expected the self-referencing foreign key to reject an unknown run")
+		}
+	})
+
+	// Both directions of CHECK ((status = 'voided') = (voided_at IS NOT NULL)).
+	t.Run("voided_at and voided status must agree", func(t *testing.T) {
+		t.Run("voided without voided_at is rejected", func(t *testing.T) {
+			if _, err := pool.Exec(ctx, insert, uuid.New(), "2026-12", "voided", nil); err == nil {
+				t.Fatal("expected CHECK to require voided_at on a voided run")
+			}
+		})
+		t.Run("voided_at on a non-voided run is rejected", func(t *testing.T) {
+			_, err := pool.Exec(ctx,
+				`INSERT INTO commission_runs (id, period_id, plan_hash, status, voided_at)
+				 VALUES ($1, '2026-13', $2, 'running', now())`,
+				uuid.New(), "sha256:"+strings.Repeat("a", 64))
+			if err == nil {
+				t.Fatal("expected CHECK to reject voided_at on a running run")
+			}
+		})
+	})
+
+	t.Run("an unknown status is rejected", func(t *testing.T) {
+		if _, err := pool.Exec(ctx, insert, uuid.New(), "2026-14", "pending", nil); err == nil {
+			t.Fatal("expected CHECK to reject a status outside running/complete/voided")
+		}
+	})
+
+	t.Run("an empty period_id is rejected", func(t *testing.T) {
+		if _, err := pool.Exec(ctx, insert, uuid.New(), "", "running", nil); err == nil {
+			t.Fatal("expected CHECK to reject an empty period_id")
+		}
+	})
+
+	// The interesting half of the unique index: a *complete* run still holds
+	// the period. This is what forces ReplaceRun to void before inserting.
+	t.Run("a complete run blocks a new run for the same period", func(t *testing.T) {
+		done := time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC)
+		if _, err := pool.Exec(ctx, insert, uuid.New(), "2026-15", "complete", done); err != nil {
+			t.Fatalf("seed complete run: %v", err)
+		}
+		if _, err := pool.Exec(ctx, insert, uuid.New(), "2026-15", "running", nil); err == nil {
+			t.Fatal("expected the partial unique index to reject a run alongside a complete one")
+		}
+	})
 }
 
 func TestCommissionResultsSchema(t *testing.T) {
@@ -150,9 +222,16 @@ func TestCommissionResultsSchema(t *testing.T) {
 		}
 	})
 
-	t.Run("NaN dollar_amount is rejected", func(t *testing.T) {
-		if _, err := pool.Exec(ctx, insert, runID, "primary", uuid.New(), "NaN", `{"v":1}`); err == nil {
-			t.Fatal("expected CHECK to reject NaN")
+	// Every non-finite numeric, not just NaN. Postgres 14+ accepts Infinity
+	// in a NUMERIC column, and strconv.FormatFloat(math.Inf(1), 'f', -1, 64)
+	// emits "+Inf" — the exact text this design routes float64 amounts
+	// through. One such row makes SUM over the whole run return NaN forever.
+	t.Run("a non-finite dollar_amount is rejected", func(t *testing.T) {
+		for _, bad := range []string{"NaN", "Infinity", "-Infinity", "+Inf", "-Inf"} {
+			_, err := pool.Exec(ctx, insert, runID, "primary", uuid.New(), bad, `{"v":1}`)
+			if err == nil {
+				t.Fatalf("expected CHECK to reject dollar_amount %q", bad)
+			}
 		}
 	})
 

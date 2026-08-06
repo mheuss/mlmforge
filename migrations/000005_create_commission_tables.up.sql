@@ -31,6 +31,10 @@ CREATE TABLE commission_runs (
     CHECK (status <> 'complete' OR completed_at IS NOT NULL),
     CHECK ((status = 'voided') = (voided_at IS NOT NULL)),
     CHECK (superseded_by IS NULL OR status = 'voided'),
+    -- The same-period rule is enforced in Go, but that check is blind to a
+    -- self-reference: the old run's period always equals its own. A cycle
+    -- here would hang any walk of the supersede chain.
+    CHECK (superseded_by IS NULL OR superseded_by <> id),
     CHECK (carry_forward IS NULL OR jsonb_typeof(carry_forward) = 'object')
 );
 
@@ -52,7 +56,13 @@ CREATE TABLE commission_results (
     dollar_amount NUMERIC     NOT NULL,
     detail        JSONB       NOT NULL,
     CHECK (structure <> ''),
-    CHECK (dollar_amount <> 'NaN'::numeric),
+    -- Every non-finite value, not just NaN. Postgres 14+ accepts Infinity in
+    -- a NUMERIC column, and strconv.FormatFloat(math.Inf(1), 'f', -1, 64)
+    -- emits "+Inf" — the exact text path this design uses for float64
+    -- amounts. A single infinity makes SUM over the run return NaN forever,
+    -- which is the outcome the NaN guard exists to prevent. NaN sorts above
+    -- Infinity in NUMERIC ordering, so the upper bound rejects it too.
+    CHECK (dollar_amount > '-Infinity'::numeric AND dollar_amount < 'Infinity'::numeric),
     CHECK (jsonb_typeof(detail) = 'object')
 );
 

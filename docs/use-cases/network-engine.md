@@ -346,16 +346,28 @@ go test ./internal/config/ && (cd engine && cargo test --test config_width_contr
 
 ### UC-NET-012: Preflight validation before an irreversible mutation
 
-**Added:** Unreleased (HEU-534)
+**Added:** Unreleased (HEU-534, refined HEU-566)
 **Files:** `internal/networkengine/tree_loader.go`
 
 **Problem:** `LoadTree` replays a persisted tree into the Rust worker one node at a time, but the worker has no operation to remove a structure — so a replay that fails partway leaves a half-built tree that cannot be dropped or retried until the process restarts.
 
-**Solution:** Prove the entire input set is reconstructable *before* the first call to the external system. `validateNodes` checks every rule the engine would enforce — tree type, matrix width and spillover, duplicate IDs, exactly one depth-0 root, root parent and position, self-references, reference existence, depth consistency, slot occupancy — and `orderForReplay` proves a workable order exists. Only then does the first mutation happen. Replay failures also report how far they got, because with no rollback that count is the operator's only recovery signal. Every exit after the create says what survived it, not just the replay loop: a failed `AddRoot` reports that the tree was created but left empty, since the worker has no operation to drop it (HEU-557) and only a process restart clears it.
+**Solution:** Prove the input is reconstructable *before* the first call to the external system, in two phases split by what they read. `validateTreeConfig` checks configuration — tree type, matrix width and spillover — and reads no rows, so it runs before the store query and a misconfigured load costs no query. `validateNodes` then checks the node set — duplicate IDs, exactly one depth-0 root, root parent and position, self-references, reference existence, depth consistency, slot occupancy — and `orderForReplay` proves a workable order exists. Only then does the first mutation happen. Replay failures also report how far they got, because with no rollback that count is the operator's only recovery signal. Every exit after the create says what survived it, not just the replay loop: a failed `AddRoot` reports that the tree was created but left empty, since the worker has no operation to drop it (HEU-557) and only a process restart clears it.
 
 **Usage:**
 ```go
-// Every detectable fault fails here, with the engine untouched.
+// Configuration first. It reads no rows, so it runs above the query and an
+// empty tree still reports a bad tree type or missing matrix params.
+if err := validateTreeConfig(treeID, treeType, cfg); err != nil {
+    return err
+}
+nodes, err := l.store.GetByTreeDepthOrdered(ctx, treeID)
+if err != nil {
+    return fmt.Errorf("load tree %s: %w", treeID, err)
+}
+if len(nodes) == 0 {
+    return nil
+}
+// Then the node set. Every detectable fault fails here, engine untouched.
 if err := validateNodes(treeID, treeType, cfg, nodes); err != nil {
     return err
 }
@@ -368,6 +380,8 @@ if err := l.engine.CreateMatrixTree(ctx, treeID, cfg.matrixWidth, cfg.matrixSpil
 ```
 
 **Notes:** The pattern generalises to any external system with no undo: a worker without a delete op, an API without a rollback, a third party that charges on first call. Two things make it worth the duplication of engine rules in Go. First, the validation must mirror what the remote actually enforces, so it is only as good as that audit — `TestTreePersistence_RejectedTreeLeavesEngineLoadable` proves the guarantee against the real worker rather than a stub, and asserts a *corrected retry succeeds*, which is the part no fake can demonstrate. Second, the mirroring drifts silently if the remote adds a rule; the Rust side keeps its own runtime checks, so preflight is a second line of defence rather than a replacement. Deliberately not covered: divergence between what the store recorded and what the remote actually did — both can be internally consistent, so no read-side validation can detect it. HEU-553 closed the write-side contract for placement; removal still diverges (HEU-582), and the type-label trust boundary (HEU-554) and redelivery idempotency (HEU-576) remain open. Related: UC-NET-013, which supplies the ordering half.
+
+One ordering trap the split exists to avoid: an empty-input short circuit placed above the configuration checks hides configuration errors for as long as the input stays empty. HEU-566 found `LoadTree(ctx, id, "matrix")` with no `WithMatrixParams`, and `LoadTree(ctx, id, "streamline")` with an unsupported type, both returning nil on a zero-row tree. Configuration describes the structure, not its contents, so its validity never depends on row count. Put the config phase above both the query and the empty check.
 
 ---
 

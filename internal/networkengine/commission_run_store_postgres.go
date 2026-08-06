@@ -139,13 +139,6 @@ func scanCommissionRun(row pgx.Row) (*CommissionRun, error) {
 	return &r, nil
 }
 
-// errPostgresUnimplemented keeps the not-yet-written operations loud until
-// Task 8 lands. Zero values would be quietly wrong: several suite cases
-// assert an EMPTY result set or a nil error, so stubs returning those would
-// pass against a store that does nothing — the exact drift the shared suite
-// exists to catch.
-var errPostgresUnimplemented = errors.New("commission run store: not implemented until HEU-555 task 8")
-
 // clock_timestamp(), not now(). now() is transaction_timestamp(), captured
 // before the statement blocks on SaveResults' row lock — measured 3 seconds
 // early behind a held lock, and behind a real million-row write that gap is
@@ -206,14 +199,107 @@ func (s *PostgresCommissionRunStore) explainRunGuardFailure(ctx context.Context,
 	return &RunNotRunningError{RunID: runID, Status: run.Status}
 }
 
-// VoidRun is implemented in Task 8.
-func (s *PostgresCommissionRunStore) VoidRun(_ context.Context, _ uuid.UUID) error {
-	return errPostgresUnimplemented
+// voidRunSQL never touches superseded_by. Only linkSupersededBySQL does, and
+// only from inside ReplaceRun's transaction, where the old run's row is
+// locked and its period_id has been read. Keeping the link out of the general
+// void path is what makes the same-period rule enforceable in one place.
+//
+// clock_timestamp() for the same reason as completed_at: now() is the
+// transaction timestamp, taken before this statement can block on a
+// concurrent SaveResults holding the run's row lock.
+const voidRunSQL = `UPDATE commission_runs
+                    SET status = 'voided', voided_at = clock_timestamp()
+                    WHERE id = $1 AND status <> 'voided'`
+
+// VoidRun marks a run voided, without a replacement. Voiding an
+// already-voided run is a no-op returning nil, so a retry after an uncertain
+// commit is safe. Only a missing run is an error.
+func (s *PostgresCommissionRunStore) VoidRun(ctx context.Context, runID uuid.UUID) error {
+	tag, err := s.pool.Exec(ctx, voidRunSQL, runID)
+	if err != nil {
+		return fmt.Errorf("void commission run: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		// Either the run is missing or it was already voided. Only the
+		// first is an error.
+		if _, err := s.GetRun(ctx, runID); err != nil {
+			return err
+		}
+		return nil
+	}
+	return nil
 }
 
-// ReplaceRun is implemented in Task 8.
-func (s *PostgresCommissionRunStore) ReplaceRun(_ context.Context, _ uuid.UUID, _ string) (uuid.UUID, error) {
-	return uuid.Nil, errPostgresUnimplemented
+const lockRunForReplaceSQL = `SELECT period_id, status FROM commission_runs
+                              WHERE id = $1 FOR UPDATE`
+
+const linkSupersededBySQL = `UPDATE commission_runs SET superseded_by = $2 WHERE id = $1`
+
+// ReplaceRun voids oldRunID and opens its replacement for the same period,
+// in one transaction. This is ADR-013 scenario 2.
+//
+// The statement order is forced by two constraints pulling in opposite
+// directions. The partial unique index on (period_id) WHERE status <>
+// 'voided' means the replacement cannot be inserted while the old run is
+// still active, so the void must come first. The superseded_by foreign key
+// means the old run cannot point at the replacement before it exists, so the
+// link must come last. Hence: lock, void, insert, link.
+func (s *PostgresCommissionRunStore) ReplaceRun(ctx context.Context, oldRunID uuid.UUID, planHash string) (uuid.UUID, error) {
+	// Before the transaction opens, so bad input never starts one. Only the
+	// hash: period_id is inherited from the run being replaced rather than
+	// supplied by the caller.
+	if err := validatePlanHashOnly(planHash); err != nil {
+		return uuid.Nil, err
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("replace commission run: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() // no-op after Commit
+
+	// 1. Lock the old run. The lock serializes concurrent replacements, and
+	//    reading period_id from the locked row is what keeps the replacement
+	//    in the same period without a trigger.
+	var periodID string
+	var rawStatus string // plain string then convert, matching scanCommissionRun
+	if err := tx.QueryRow(ctx, lockRunForReplaceSQL, oldRunID).Scan(&periodID, &rawStatus); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, &RunNotFoundError{RunID: oldRunID}
+		}
+		return uuid.Nil, fmt.Errorf("replace commission run: lock old run: %w", err)
+	}
+	if status := CommissionRunStatus(rawStatus); status == RunStatusVoided {
+		// Allowed is set because ReplaceRun takes a complete run too. A bare
+		// "not running" would send an operator looking for the wrong state.
+		return uuid.Nil, &RunNotRunningError{
+			RunID:   oldRunID,
+			Status:  status,
+			Allowed: []CommissionRunStatus{RunStatusRunning, RunStatusComplete},
+		}
+	}
+
+	// 2. Void the old run. The index needs this to happen before the insert.
+	//    voidRunSQL never writes superseded_by; step 4 does that.
+	if _, err := tx.Exec(ctx, voidRunSQL, oldRunID); err != nil {
+		return uuid.Nil, fmt.Errorf("replace commission run: void old run: %w", err)
+	}
+
+	// 3. Insert the replacement for the same period.
+	newID := uuid.New()
+	if _, err := tx.Exec(ctx, insertRunSQL, newID, periodID, planHash); err != nil {
+		return uuid.Nil, fmt.Errorf("replace commission run: insert replacement: %w", err)
+	}
+
+	// 4. Link, now that the target exists. The foreign key needs this last.
+	if _, err := tx.Exec(ctx, linkSupersededBySQL, oldRunID, newID); err != nil {
+		return uuid.Nil, fmt.Errorf("replace commission run: link superseded_by: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return uuid.Nil, fmt.Errorf("replace commission run: commit: %w", err)
+	}
+	return newID, nil
 }
 
 // copyChunkSize bounds the row count of one CopyFrom statement. It is not a

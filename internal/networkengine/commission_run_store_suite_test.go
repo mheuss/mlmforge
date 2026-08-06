@@ -334,8 +334,16 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		if *again.SupersededBy != newID {
 			t.Errorf("SupersededBy = %v, want %s; it is aliased to store state", again.SupersededBy, newID)
 		}
-		if string(again.CarryForward) != `{"v":1}` {
-			t.Errorf("CarryForward = %s, want the stored value; it is aliased", again.CarryForward)
+		// Parsed, not byte-compared. Postgres normalizes JSONB on read —
+		// `{"v":1}` comes back as `{"v": 1}` — so a byte assertion here would
+		// pass in memory and fail against the real store, which is the exact
+		// divergence this suite exists to catch.
+		var parsed map[string]any
+		if err := json.Unmarshal(again.CarryForward, &parsed); err != nil {
+			t.Fatalf("stored carry-forward is not readable JSON: %v", err)
+		}
+		if parsed["v"] != float64(1) {
+			t.Errorf("CarryForward = %s, want key \"v\"; it is aliased to store state", again.CarryForward)
 		}
 	})
 

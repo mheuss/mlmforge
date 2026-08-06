@@ -59,7 +59,11 @@ func (s *PostgresCommissionRunStore) CreateRun(ctx context.Context, periodID, pl
 	if err := validateRunInput(periodID, planHash); err != nil {
 		return uuid.Nil, err
 	}
-	for attempt := 0; attempt < 2; attempt++ {
+	// Two attempts, not more. Each retry is triggered by a winner vanishing
+	// between the conflict and the lookup. One retry covers that race; a
+	// second would mean it happened twice in a row, which points at a caller
+	// voiding runs in a loop rather than at a race worth absorbing.
+	for range 2 {
 		id := uuid.New()
 		_, err := s.pool.Exec(ctx, insertRunSQL, id, periodID, planHash)
 		if err == nil {

@@ -198,6 +198,37 @@ func TestCommissionRunsSchema(t *testing.T) {
 	})
 }
 
+// GetActiveRun's WHERE clause duplicates this index predicate, and QueryRow
+// silently takes the first row of whatever comes back. If HEU-506's
+// multi-tenant scoping changes the index without changing that query,
+// GetActiveRun starts picking an arbitrary row instead of failing. The index
+// name is already pinned indirectly — rename it and isActiveRunConflict stops
+// matching — but nothing pinned the predicate.
+func TestCommissionRunsActivePeriodIndex(t *testing.T) {
+	if pgContainer == nil {
+		t.Skip("postgres container unavailable")
+	}
+	pool := pgContainer.NewPool(t)
+
+	var def string
+	err := pool.QueryRow(context.Background(),
+		`SELECT indexdef FROM pg_indexes WHERE indexname = $1`,
+		"commission_runs_active_period_idx",
+	).Scan(&def)
+	if err != nil {
+		t.Fatalf("read index definition: %v", err)
+	}
+	if !strings.Contains(def, "UNIQUE") {
+		t.Errorf("index must be UNIQUE to arbitrate CreateRun, got: %s", def)
+	}
+	if !strings.Contains(def, "(period_id)") {
+		t.Errorf("index must key on period_id alone, got: %s", def)
+	}
+	if !strings.Contains(def, "status <> 'voided'") {
+		t.Errorf("index predicate must match GetActiveRun's WHERE clause, got: %s", def)
+	}
+}
+
 func TestCommissionResultsSchema(t *testing.T) {
 	if pgContainer == nil {
 		t.Skip("postgres container unavailable")

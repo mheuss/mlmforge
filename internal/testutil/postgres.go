@@ -68,19 +68,27 @@ func (c *PostgresContainer) Terminate() {
 
 // NewPool creates a connection pool and truncates all application tables
 // for test isolation. The pool is closed when the test finishes.
-func (c *PostgresContainer) NewPool(t *testing.T) *pgxpool.Pool {
-	t.Helper()
+//
+// It takes testing.TB rather than *testing.T so benchmarks can use it too.
+// Every existing caller passes a *testing.T, which already satisfies
+// testing.TB, so no call site changes.
+func (c *PostgresContainer) NewPool(tb testing.TB) *pgxpool.Pool {
+	tb.Helper()
 	ctx := context.Background()
 
 	pool, err := pgxpool.New(ctx, c.DSN)
 	if err != nil {
-		t.Fatalf("create pool: %v", err)
+		tb.Fatalf("create pool: %v", err)
 	}
-	t.Cleanup(func() { pool.Close() })
+	tb.Cleanup(func() { pool.Close() })
 
-	_, err = pool.Exec(ctx, "TRUNCATE events, tree_nodes, qualification_history RESTART IDENTITY")
+	// One TRUNCATE covers all tables atomically, so the foreign key from
+	// commission_results to commission_runs needs neither CASCADE nor a
+	// particular order.
+	_, err = pool.Exec(ctx, "TRUNCATE events, tree_nodes, qualification_history, "+
+		"commission_results, commission_runs RESTART IDENTITY")
 	if err != nil {
-		t.Fatalf("truncate tables: %v", err)
+		tb.Fatalf("truncate tables: %v", err)
 	}
 
 	return pool

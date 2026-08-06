@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"slices"
 	"strings"
@@ -842,9 +843,16 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		if !sawBinary {
 			t.Fatalf("replacing unilevel destroyed the binary rows, got %+v", got)
 		}
-		// Order must still be ascending across structures after a replace.
+		// Order must still be ascending across structures after a replace,
+		// and the untouched structure must sort first. Ids are never reused,
+		// so a replaced structure's new rows always land after rows that were
+		// already there — the property a payout reader would depend on.
 		if got[0].ID >= got[1].ID {
 			t.Fatalf("ids must stay ascending after a replace, got %d then %d", got[0].ID, got[1].ID)
+		}
+		if got[0].Structure != "binary" {
+			t.Fatalf("got[0].Structure = %q, want the untouched structure first; "+
+				"a replaced structure must not reuse ids", got[0].Structure)
 		}
 	})
 
@@ -1043,6 +1051,121 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		}
 	})
 
+	// The interface requires GetLiveResults to resolve the run and read its
+	// rows atomically, so a replacement landing mid-read cannot produce a
+	// mix. That is the guarantee letting a million-row write happen outside
+	// the replacement transaction.
+	//
+	// What this buys, honestly: the memory store passes trivially because its
+	// RWMutex makes the interleaving impossible, and the trigger is
+	// probabilistic. The value is for an implementation that resolves the run
+	// and reads its rows in two round trips, where a replacement between them
+	// can surface rows from two different runs. Each observation is checked
+	// deterministically even though hitting the window is not.
+	t.Run("GetLiveResults never mixes rows from two runs", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		rows := func(amount float64) []CommissionResultInput {
+			out := make([]CommissionResultInput, 3)
+			for i := range out {
+				out[i] = CommissionResultInput{
+					EarnerID: uuid.New(), DollarAmount: amount, Detail: []byte(`{"v":1}`),
+				}
+			}
+			return out
+		}
+
+		oldID, err := s.CreateRun(ctx, "2026-01", validHash)
+		if err != nil {
+			t.Fatalf("CreateRun: %v", err)
+		}
+		if err := s.SaveResults(ctx, oldID, "primary", rows(7)); err != nil {
+			t.Fatalf("SaveResults old: %v", err)
+		}
+		if err := s.CompleteRun(ctx, oldID, nil); err != nil {
+			t.Fatalf("CompleteRun old: %v", err)
+		}
+
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		var problems []string
+		report := func(format string, args ...any) {
+			mu.Lock()
+			defer mu.Unlock()
+			problems = append(problems, fmt.Sprintf(format, args...))
+		}
+
+		done := make(chan struct{})
+		const readers = 4
+		wg.Add(readers)
+		for i := 0; i < readers; i++ {
+			go func() {
+				defer wg.Done()
+				for {
+					select {
+					case <-done:
+						return
+					default:
+					}
+					live, err := s.GetLiveResults(ctx, "2026-01")
+					if err != nil {
+						report("GetLiveResults: %v", err)
+						return
+					}
+					if len(live) == 0 {
+						// Legal: the period has no completed run during the
+						// window between voiding the old one and completing
+						// its replacement.
+						continue
+					}
+					if len(live) != 3 {
+						report("saw %d rows, want a whole run's 3 — a partial read", len(live))
+						return
+					}
+					runID, amount := live[0].RunID, live[0].DollarAmount
+					for _, r := range live[1:] {
+						if r.RunID != runID {
+							report("rows from two runs in one read: %s and %s", runID, r.RunID)
+							return
+						}
+						if r.DollarAmount != amount {
+							report("amounts %v and %v in one read", amount, r.DollarAmount)
+							return
+						}
+					}
+				}
+			}()
+		}
+
+		newID, err := s.ReplaceRun(ctx, oldID, otherHash)
+		if err != nil {
+			report("ReplaceRun: %v", err)
+		} else {
+			if err := s.SaveResults(ctx, newID, "primary", rows(9)); err != nil {
+				report("SaveResults new: %v", err)
+			}
+			if err := s.CompleteRun(ctx, newID, nil); err != nil {
+				report("CompleteRun new: %v", err)
+			}
+		}
+		close(done)
+		wg.Wait()
+
+		for _, p := range problems {
+			t.Error(p)
+		}
+
+		// The replacement must be what is live once the dust settles.
+		live, err := s.GetLiveResults(ctx, "2026-01")
+		if err != nil {
+			t.Fatalf("final GetLiveResults: %v", err)
+		}
+		if len(live) != 3 || live[0].DollarAmount != 9 {
+			t.Fatalf("final live = %+v, want the replacement's three rows of 9", live)
+		}
+	})
+
 	t.Run("GetLiveResults on an unknown period is empty, not an error", func(t *testing.T) {
 		s := newStore(t)
 		got, err := s.GetLiveResults(context.Background(), "2099-12")
@@ -1159,7 +1282,10 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		if err := json.Unmarshal(got[0].Detail, &parsed); err != nil {
 			t.Fatalf("stored detail is not readable JSON: %v", err)
 		}
-		if parsed["level"] != float64(3) {
+		// Assert on "v", the key the mutation above actually overwrites.
+		// Checking "level" would be vacuous: the six-byte copy cannot reach
+		// it, so the assertion would hold whether or not the store cloned.
+		if parsed["v"] != float64(1) {
 			t.Fatalf("stored detail = %s; mutating the input changed stored state", got[0].Detail)
 		}
 	})

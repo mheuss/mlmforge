@@ -15,10 +15,10 @@ var _ CommissionRunStore = (*MemoryCommissionRunStore)(nil)
 
 // MemoryCommissionRunStore is an in-memory CommissionRunStore for tests.
 //
-// It enforces in code what the Postgres store gets from the database. Today
-// that is one active run per period, which Postgres gets from a partial
-// unique index. Per-structure result replacement and id-ascending result
-// order land with the results half in Task 4.
+// It enforces in code what the Postgres store gets from the database: one
+// active run per period (a partial unique index there), per-structure result
+// replacement (a DELETE inside the write transaction), and id-ascending
+// result order (BIGSERIAL plus ORDER BY id).
 //
 // The shared suite asserts the two implementations behave identically, so
 // anything an index or a constraint enforces there has to be enforced here.

@@ -42,6 +42,100 @@ func TestTreeLoader_LoadEmptyTree(t *testing.T) {
 	assert.Empty(t, transport.ops, "no engine calls for empty tree")
 }
 
+// TestTreeLoader_EmptyTreeStillChecksConfig proves configuration errors surface
+// on a zero-row tree. Tree type and matrix params describe the structure, not
+// its contents, so their validity does not depend on node count. A typo in
+// startup wiring has to fail on the spot. If it waits for the first node to
+// arrive, it stays invisible for as long as the tree stays empty.
+func TestTreeLoader_EmptyTreeStillChecksConfig(t *testing.T) {
+	tests := []struct {
+		name     string
+		treeType string
+		opts     []LoadTreeOption
+		wantErr  string
+	}{
+		{
+			name:     "unsupported tree type",
+			treeType: "streamline",
+			wantErr:  `tree t has unsupported type "streamline"`,
+		},
+		{
+			name:     "matrix without params",
+			treeType: "matrix",
+			wantErr:  "requires width and spillover",
+		},
+		{
+			name:     "matrix width below the supported range",
+			treeType: "matrix",
+			opts:     []LoadTreeOption{WithMatrixParams(1, "breadth_first")},
+			wantErr:  "outside the supported range",
+		},
+		{
+			name:     "unsupported spillover",
+			treeType: "matrix",
+			opts:     []LoadTreeOption{WithMatrixParams(3, "sideways")},
+			wantErr:  `tree t has unsupported spillover "sideways"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// A rejecting store, not MemoryTreeStore. The claim is that a bad
+			// config costs no query, and MemoryTreeStore would serve the read
+			// silently, leaving that half untested.
+			store := &rejectingTreeStore{TreeStore: NewMemoryTreeStore(), t: t}
+			mutator := &stubMutator{}
+
+			err := NewTreeLoader(store, mutator).LoadTree(context.Background(), "t", tt.treeType, tt.opts...)
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+			assert.Zero(t, mutator.totalCalls(), "config failure must make no engine calls")
+		})
+	}
+}
+
+// rejectingTreeStore fails the test if LoadTree reads it. Config validation
+// runs above the store call, so an invalid configuration must never reach a
+// query. Embeds TreeStore so only the method under test needs overriding.
+type rejectingTreeStore struct {
+	TreeStore
+	t *testing.T
+}
+
+func (s *rejectingTreeStore) GetByTreeDepthOrdered(_ context.Context, treeID string) ([]TreeNodeRow, error) {
+	s.t.Helper()
+	s.t.Errorf("store read for tree %s: config validation must fail before the query", treeID)
+	return nil, nil
+}
+
+// TestTreeLoader_EmptyTreeWithValidConfigIsANoOp pins the other half of the
+// contract. A zero-row tree whose configuration is sound still creates nothing.
+// Matrix is covered alongside unilevel because the matrix config path is the
+// one that moved above the node-count check.
+func TestTreeLoader_EmptyTreeWithValidConfigIsANoOp(t *testing.T) {
+	tests := []struct {
+		name     string
+		treeType string
+		opts     []LoadTreeOption
+	}{
+		{name: "unilevel", treeType: "unilevel"},
+		{
+			name:     "matrix",
+			treeType: "matrix",
+			opts:     []LoadTreeOption{WithMatrixParams(3, "breadth_first")},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mutator, err := loadWithStub(t, tt.treeType, nil, tt.opts...)
+			require.NoError(t, err)
+			assert.Zero(t, mutator.totalCalls(), "empty tree must create nothing")
+		})
+	}
+}
+
 func TestTreeLoader_LoadSingleRoot(t *testing.T) {
 	store := NewMemoryTreeStore()
 	root := makeNode("tree-1", "root-user", 0, nil, ptr("root-user"), nil)
@@ -800,6 +894,59 @@ func TestTreeLoader_AddRootFailureReportsCreatedTree(t *testing.T) {
 	// The create really did land, which is what makes the message true.
 	assert.Equal(t, []string{"t"}, mutator.created)
 	assert.Empty(t, mutator.roots)
+}
+
+// TestTreeLoader_CreateTreeFailureLeavesNothingBuilt covers the CreateTree
+// error path. failAfterNMutator cannot reach it, because it delegates the
+// create so a replay can start. This is the case stubMutator.failWith exists
+// for: failing every call means the very first one fails.
+//
+// The distinction from the AddRoot case above is what the operator does next.
+// Nothing was created, so a retry is clean and needs no restart. The message
+// must not claim a surviving tree.
+func TestTreeLoader_CreateTreeFailureLeavesNothingBuilt(t *testing.T) {
+	store := NewMemoryTreeStore()
+	ctx := context.Background()
+	boom := errors.New("transport closed")
+
+	root := makeNode("t", "u0", 0, nil, ptr("u0"), nil)
+	require.NoError(t, store.InsertNode(ctx, root))
+
+	mutator := &stubMutator{failWith: boom}
+	err := NewTreeLoader(store, mutator).LoadTree(ctx, "t", "unilevel")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "create tree t")
+	assert.ErrorIs(t, err, boom, "the transport error must stay wrapped")
+
+	// The create was attempted and nothing followed it.
+	assert.Equal(t, []string{"t"}, mutator.created)
+	assert.Empty(t, mutator.roots, "replay must not start after the create fails")
+	assert.Empty(t, mutator.nodes)
+}
+
+// TestTreeLoader_CreateMatrixTreeFailureLeavesNothingBuilt is the matrix half.
+// Matrix routes through CreateMatrixTree rather than CreateTree, so its failure
+// path is separate code and was equally untested.
+func TestTreeLoader_CreateMatrixTreeFailureLeavesNothingBuilt(t *testing.T) {
+	store := NewMemoryTreeStore()
+	ctx := context.Background()
+	boom := errors.New("transport closed")
+
+	root := makeNode("t", "u0", 0, nil, ptr("u0"), nil)
+	require.NoError(t, store.InsertNode(ctx, root))
+
+	mutator := &stubMutator{failWith: boom}
+	err := NewTreeLoader(store, mutator).LoadTree(ctx, "t", "matrix", WithMatrixParams(3, "breadth_first"))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "create tree t")
+	assert.ErrorIs(t, err, boom, "the transport error must stay wrapped")
+
+	assert.Equal(t, []matrixCreate{{structure: "t", width: 3, spillover: "breadth_first"}}, mutator.matrixCreated)
+	assert.Empty(t, mutator.created, "matrix must not route through CreateTree")
+	assert.Empty(t, mutator.roots, "replay must not start after the create fails")
+	assert.Empty(t, mutator.nodesAt)
 }
 
 // TestTreeLoader_MatrixParamsIgnoredForNonMatrix pins the documented contract

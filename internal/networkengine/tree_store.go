@@ -40,8 +40,27 @@ type TreeStore interface {
 	// GetByTree returns all active nodes in a tree.
 	GetByTree(ctx context.Context, treeID string) ([]TreeNodeRow, error)
 
-	// GetByTreeDepthOrdered returns all active nodes in a tree ordered
-	// by depth ascending. Used for startup bulk-load (parents before children).
+	// GetByTreeDepthOrdered returns all active nodes in a tree ordered by
+	// depth ascending, then enrolled_at. Used for startup bulk-load by
+	// TreeLoader.LoadTree, its only caller.
+	//
+	// Replay does not depend on this order. orderForReplay sorts by
+	// (Depth, EnrolledAt, UserID), a total order over a set whose duplicate
+	// user IDs validateNodes already rejected. So both the replay sequence and
+	// its "%d of %d" progress counter are fixed by the node set alone.
+	// TestOrderForReplay_IsIndependentOfInputOrder pins that. GetByTree returns
+	// the same set unordered and would replay identically.
+	//
+	// What the sort buys is deterministic preflight errors, which is a
+	// different thing from replay order. validateNodes runs before
+	// orderForReplay and returns on the first fault it meets. On data with
+	// several faults the message therefore depends on row order: which pair
+	// "more than one depth-0 root (%s and %s)" names, and which of several
+	// dangling nodes gets reported. A stable input makes a failing startup load
+	// fail the same way every time, which is what an operator needs to act on.
+	//
+	// idx_tree_nodes_depth(tree_id, depth) backs the leading key, so the cost
+	// is a sort within each depth group.
 	GetByTreeDepthOrdered(ctx context.Context, treeID string) ([]TreeNodeRow, error)
 
 	// BulkInsert adds multiple nodes in a single transaction.

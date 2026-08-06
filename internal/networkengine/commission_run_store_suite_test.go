@@ -303,11 +303,13 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		if err != nil {
 			t.Fatalf("GetRun: %v", err)
 		}
-		if got.CompletedAt == nil || got.VoidedAt == nil || got.SupersededBy == nil {
-			t.Fatalf("need all three optional fields set to test aliasing, got %+v", got)
+		if got.CompletedAt == nil || got.VoidedAt == nil || got.SupersededBy == nil ||
+			len(got.CarryForward) < 3 {
+			t.Fatalf("need all four reference fields populated to test aliasing, got %+v", got)
 		}
-		*got.CompletedAt = time.Unix(0, 0).UTC()
-		*got.VoidedAt = time.Unix(0, 0).UTC()
+		poison := time.Unix(0, 0).UTC()
+		*got.CompletedAt = poison
+		*got.VoidedAt = poison
 		*got.SupersededBy = uuid.Nil
 		got.CarryForward[2] = 'X'
 
@@ -315,10 +317,16 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		if err != nil {
 			t.Fatalf("second GetRun: %v", err)
 		}
-		if again.CompletedAt.Equal(time.Unix(0, 0).UTC()) {
+		// Guard before dereferencing. A nil here would panic and take the
+		// whole test binary down, hiding every later subtest — the worst
+		// failure mode for the implementation this suite is meant to serve.
+		if again.CompletedAt == nil || again.VoidedAt == nil || again.SupersededBy == nil {
+			t.Fatalf("the second read lost a field the first one had: %+v", again)
+		}
+		if again.CompletedAt.Equal(poison) {
 			t.Error("CompletedAt is aliased to store state")
 		}
-		if again.VoidedAt.Equal(time.Unix(0, 0).UTC()) {
+		if again.VoidedAt.Equal(poison) {
 			t.Error("VoidedAt is aliased to store state")
 		}
 		if *again.SupersededBy != newID {
@@ -326,6 +334,37 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		}
 		if string(again.CarryForward) != `{"v":1}` {
 			t.Errorf("CarryForward = %s, want the stored value; it is aliased", again.CarryForward)
+		}
+	})
+
+	// The mirror of the case above, on the write side. A store that keeps the
+	// caller's slice lets a later mutation rewrite persisted state. Postgres
+	// copies the bytes on write, so it satisfies this for free.
+	t.Run("mutating the carry-forward passed to CompleteRun does not change the store", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		id, err := s.CreateRun(ctx, "2026-01", validHash)
+		if err != nil {
+			t.Fatalf("CreateRun: %v", err)
+		}
+		cf := json.RawMessage(`{"v":1}`)
+		if err := s.CompleteRun(ctx, id, cf); err != nil {
+			t.Fatalf("CompleteRun: %v", err)
+		}
+		cf[2] = 'X'
+
+		run, err := s.GetRun(ctx, id)
+		if err != nil {
+			t.Fatalf("GetRun: %v", err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(run.CarryForward, &got); err != nil {
+			t.Fatalf("stored carry-forward is not readable JSON: %v", err)
+		}
+		if _, ok := got["v"]; !ok {
+			t.Errorf("stored carry-forward = %s, want key \"v\"; the store kept the caller's slice",
+				run.CarryForward)
 		}
 	})
 

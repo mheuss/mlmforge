@@ -48,20 +48,27 @@ func WithMatrixParams(width int, spillover string) LoadTreeOption {
 // placement by spillover. Matrix trees need width and spillover supplied
 // through WithMatrixParams, which plain CreateTree does not carry.
 func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts ...LoadTreeOption) error {
+	var cfg loadTreeConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
+	// Configuration is checked before the store is read, and before the
+	// node-count check below. Tree type and matrix params describe the
+	// structure, not its contents, so their validity does not depend on how
+	// many rows came back. Checking them after an empty-set short circuit
+	// would let a typo in startup wiring stay invisible until the first node
+	// arrived.
+	if err := validateTreeConfig(treeID, treeType, cfg); err != nil {
+		return err
+	}
+
 	nodes, err := l.store.GetByTreeDepthOrdered(ctx, treeID)
 	if err != nil {
 		return fmt.Errorf("load tree %s: %w", treeID, err)
 	}
 	if len(nodes) == 0 {
 		return nil
-	}
-
-	var cfg loadTreeConfig
-	for _, opt := range opts {
-		opt(&cfg)
-	}
-	if treeType == treeTypeMatrix && !cfg.matrixParamsSet {
-		return fmt.Errorf("create tree %s: matrix tree requires width and spillover (use WithMatrixParams)", treeID)
 	}
 
 	// Preflight. Nothing below this point runs until both phases succeed.
@@ -169,6 +176,35 @@ type slotKey struct {
 	position int
 }
 
+// validateTreeConfig proves the load's configuration is sound: a supported tree
+// type, and for a matrix tree a width and spillover the engine will accept.
+//
+// It is split from validateNodes because it reads no rows. LoadTree runs it
+// before touching the store, so a misconfigured load costs no query and an
+// empty tree reports the same configuration errors a populated one does.
+func validateTreeConfig(treeID, treeType string, cfg loadTreeConfig) error {
+	if !supportedTreeTypes[treeType] {
+		return fmt.Errorf("tree %s has unsupported type %q", treeID, treeType)
+	}
+	if treeType != treeTypeMatrix {
+		return nil
+	}
+	// The adjacency store keeps per-node data, not the structure's width and
+	// spillover, so a matrix load cannot recreate the tree without them.
+	if !cfg.matrixParamsSet {
+		return fmt.Errorf("matrix tree %s requires width and spillover (use WithMatrixParams)", treeID)
+	}
+	// MatrixTree::new rejects width < 2, and width is a u8 on the wire.
+	if cfg.matrixWidth < 2 || cfg.matrixWidth > math.MaxUint8 {
+		return fmt.Errorf("tree %s has matrix width %d outside the supported range 2..%d",
+			treeID, cfg.matrixWidth, math.MaxUint8)
+	}
+	if !supportedSpillover[cfg.matrixSpillover] {
+		return fmt.Errorf("tree %s has unsupported spillover %q", treeID, cfg.matrixSpillover)
+	}
+	return nil
+}
+
 // validateNodes proves the node set is structurally consistent before any
 // engine mutation. A tree that fails here leaves the engine untouched, so the
 // load can be retried once the data is corrected. This matters because the
@@ -182,23 +218,10 @@ type slotKey struct {
 // sponsor at insert time, so depth order alone can still fail mid-replay.
 // orderForReplay closes that half.
 //
-// cfg supplies matrix width and spillover. Binary positions are fixed at 0
-// and 1; unilevel nodes carry no position.
+// cfg supplies matrix width and spillover for the slot rule below.
+// validateTreeConfig has already proved both are in range. Binary positions are
+// fixed at 0 and 1; unilevel nodes carry no position.
 func validateNodes(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNodeRow) error {
-	if !supportedTreeTypes[treeType] {
-		return fmt.Errorf("tree %s has unsupported type %q", treeID, treeType)
-	}
-	if treeType == treeTypeMatrix {
-		// MatrixTree::new rejects width < 2, and width is a u8 on the wire.
-		if cfg.matrixWidth < 2 || cfg.matrixWidth > math.MaxUint8 {
-			return fmt.Errorf("tree %s has matrix width %d outside the supported range 2..%d",
-				treeID, cfg.matrixWidth, math.MaxUint8)
-		}
-		if !supportedSpillover[cfg.matrixSpillover] {
-			return fmt.Errorf("tree %s has unsupported spillover %q", treeID, cfg.matrixSpillover)
-		}
-	}
-
 	// Pointers, not values: a distributor network can hold hundreds of
 	// thousands of rows, and TreeNodeRow is wide. nodes is never mutated here,
 	// so the pointers stay valid for the life of the call.

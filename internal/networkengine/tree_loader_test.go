@@ -42,6 +42,79 @@ func TestTreeLoader_LoadEmptyTree(t *testing.T) {
 	assert.Empty(t, transport.ops, "no engine calls for empty tree")
 }
 
+// TestTreeLoader_EmptyTreeStillChecksConfig proves configuration errors surface
+// on a zero-row tree. Tree type and matrix params describe the structure, not
+// its contents, so their validity does not depend on node count. A typo in
+// startup wiring has to fail on the spot. If it waits for the first node to
+// arrive, it stays invisible for as long as the tree stays empty.
+func TestTreeLoader_EmptyTreeStillChecksConfig(t *testing.T) {
+	tests := []struct {
+		name     string
+		treeType string
+		opts     []LoadTreeOption
+		wantErr  string
+	}{
+		{
+			name:     "unsupported tree type",
+			treeType: "streamline",
+			wantErr:  `tree t has unsupported type "streamline"`,
+		},
+		{
+			name:     "matrix without params",
+			treeType: "matrix",
+			wantErr:  "requires width and spillover",
+		},
+		{
+			name:     "matrix width below the supported range",
+			treeType: "matrix",
+			opts:     []LoadTreeOption{WithMatrixParams(1, "breadth_first")},
+			wantErr:  "outside the supported range",
+		},
+		{
+			name:     "unsupported spillover",
+			treeType: "matrix",
+			opts:     []LoadTreeOption{WithMatrixParams(3, "sideways")},
+			wantErr:  `tree t has unsupported spillover "sideways"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mutator, err := loadWithStub(t, tt.treeType, nil, tt.opts...)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+			assert.Zero(t, mutator.totalCalls(), "config failure must make no engine calls")
+		})
+	}
+}
+
+// TestTreeLoader_EmptyTreeWithValidConfigIsANoOp pins the other half of the
+// contract. A zero-row tree whose configuration is sound still creates nothing.
+// Matrix is covered alongside unilevel because the matrix config path is the
+// one that moved above the node-count check.
+func TestTreeLoader_EmptyTreeWithValidConfigIsANoOp(t *testing.T) {
+	tests := []struct {
+		name     string
+		treeType string
+		opts     []LoadTreeOption
+	}{
+		{name: "unilevel", treeType: "unilevel"},
+		{
+			name:     "matrix",
+			treeType: "matrix",
+			opts:     []LoadTreeOption{WithMatrixParams(3, "breadth_first")},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mutator, err := loadWithStub(t, tt.treeType, nil, tt.opts...)
+			require.NoError(t, err)
+			assert.Zero(t, mutator.totalCalls(), "empty tree must create nothing")
+		})
+	}
+}
+
 func TestTreeLoader_LoadSingleRoot(t *testing.T) {
 	store := NewMemoryTreeStore()
 	root := makeNode("tree-1", "root-user", 0, nil, ptr("root-user"), nil)

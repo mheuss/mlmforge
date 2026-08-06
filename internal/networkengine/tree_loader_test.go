@@ -875,6 +875,59 @@ func TestTreeLoader_AddRootFailureReportsCreatedTree(t *testing.T) {
 	assert.Empty(t, mutator.roots)
 }
 
+// TestTreeLoader_CreateTreeFailureLeavesNothingBuilt covers the CreateTree
+// error path. failAfterNMutator cannot reach it, because it delegates the
+// create so a replay can start. This is the case stubMutator.failWith exists
+// for: failing every call means the very first one fails.
+//
+// The distinction from the AddRoot case above is what the operator does next.
+// Nothing was created, so a retry is clean and needs no restart. The message
+// must not claim a surviving tree.
+func TestTreeLoader_CreateTreeFailureLeavesNothingBuilt(t *testing.T) {
+	store := NewMemoryTreeStore()
+	ctx := context.Background()
+	boom := errors.New("transport closed")
+
+	root := makeNode("t", "u0", 0, nil, ptr("u0"), nil)
+	require.NoError(t, store.InsertNode(ctx, root))
+
+	mutator := &stubMutator{failWith: boom}
+	err := NewTreeLoader(store, mutator).LoadTree(ctx, "t", "unilevel")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "create tree t")
+	assert.ErrorIs(t, err, boom, "the transport error must stay wrapped")
+
+	// The create was attempted and nothing followed it.
+	assert.Equal(t, []string{"t"}, mutator.created)
+	assert.Empty(t, mutator.roots, "replay must not start after the create fails")
+	assert.Empty(t, mutator.nodes)
+}
+
+// TestTreeLoader_CreateMatrixTreeFailureLeavesNothingBuilt is the matrix half.
+// Matrix routes through CreateMatrixTree rather than CreateTree, so its failure
+// path is separate code and was equally untested.
+func TestTreeLoader_CreateMatrixTreeFailureLeavesNothingBuilt(t *testing.T) {
+	store := NewMemoryTreeStore()
+	ctx := context.Background()
+	boom := errors.New("transport closed")
+
+	root := makeNode("t", "u0", 0, nil, ptr("u0"), nil)
+	require.NoError(t, store.InsertNode(ctx, root))
+
+	mutator := &stubMutator{failWith: boom}
+	err := NewTreeLoader(store, mutator).LoadTree(ctx, "t", "matrix", WithMatrixParams(3, "breadth_first"))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "create tree t")
+	assert.ErrorIs(t, err, boom, "the transport error must stay wrapped")
+
+	assert.Equal(t, []matrixCreate{{structure: "t", width: 3, spillover: "breadth_first"}}, mutator.matrixCreated)
+	assert.Empty(t, mutator.created, "matrix must not route through CreateTree")
+	assert.Empty(t, mutator.roots, "replay must not start after the create fails")
+	assert.Empty(t, mutator.nodesAt)
+}
+
 // TestTreeLoader_MatrixParamsIgnoredForNonMatrix pins the documented contract
 // that WithMatrixParams is inert for other tree types. A width and spillover
 // that would be rejected outright for a matrix must not affect a binary load.

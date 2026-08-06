@@ -1,1 +1,1 @@
-{"v":1,"position_id":"44444444-4444-4444-4444-444444444444","left_volume":500,"right_volume":300,"matched_volume":300,"ratio":1,"percent":0.1,"capped":false}
+{"v":1,"kind":"binary_pairing","position_id":"44444444-4444-4444-4444-444444444444","left_volume":500,"right_volume":300,"matched_volume":300,"ratio":1,"percent":0.1,"capped":false}

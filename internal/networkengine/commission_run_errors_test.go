@@ -92,7 +92,8 @@ func TestRunNotRunningErrorNamesEveryAllowedState(t *testing.T) {
 }
 
 // Unwrapping is a property of fmt.Errorf rather than of each type, but the
-// store wraps these on the way out, so all three are pinned.
+// store wraps these on the way out, so it is pinned for each. LiveRunExists
+// has its own test above; these are the other two.
 func TestTypedErrorsSurviveWrapping(t *testing.T) {
 	notFound := &RunNotFoundError{RunID: uuid.New()}
 	if wrapped := fmt.Errorf("get run: %w", notFound); !errors.As(wrapped, new(*RunNotFoundError)) {
@@ -180,6 +181,13 @@ func TestValidateCarryForward(t *testing.T) {
 		{"a bare number is rejected", json.RawMessage(`42`), true},
 		{"a bare string is rejected", json.RawMessage(`"hi"`), true},
 		{"trailing data after an object is rejected", json.RawMessage(`{} nope`), true},
+		{"a second value after an object is rejected", json.RawMessage(`{}{}`), true},
+		// A stray closing brace or bracket is the case json.Decoder.More
+		// misses: it exists for streaming container elements and treats both
+		// as terminators, not as data. Postgres rejects them.
+		{"a trailing brace is rejected", json.RawMessage(`{}}`), true},
+		{"a trailing bracket is rejected", json.RawMessage(`{}]`), true},
+		{"a trailing brace past whitespace is rejected", json.RawMessage(`{"a":1}   }`), true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

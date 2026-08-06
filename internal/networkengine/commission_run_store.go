@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"regexp"
 	"strings"
@@ -108,9 +109,10 @@ type CommissionRunStore interface {
 	// to GetLiveResults.
 	//
 	// carryForward may be nil, meaning the run produced no carry-over state.
-	// An empty non-nil slice means the same thing: implementations normalize
-	// len == 0 to nil on write, because Postgres stores it as NULL and reads
-	// it back as nil, and the two stores must not disagree on that value.
+	// An empty non-nil slice means the same thing: implementations must
+	// normalize len == 0 to nil on write. This is not something the driver
+	// does for you — pgx encodes only a nil slice as SQL NULL, and an empty
+	// non-nil one is sent as an empty payload that fails the jsonb insert.
 	//
 	// Returns *RunNotFoundError when the run does not exist, and
 	// *RunNotRunningError when it exists but is not running.
@@ -266,6 +268,11 @@ func validatePlanHashOnly(planHash string) error {
 // free-form text into Detail or CarryForward would meet them as a
 // Postgres-only insert failure.
 func checkJSONObject(raw json.RawMessage) error {
+	// Explicit, so the wrapped message says what happened. Falling through to
+	// the decoder works but surfaces a bare "EOF".
+	if len(raw) == 0 {
+		return fmt.Errorf("no value")
+	}
 	// Raw invalid UTF-8 bytes: Go substitutes U+FFFD and accepts, Postgres
 	// rejects at the encoding layer. Cheap to catch here, unlike the escape
 	// cases above.
@@ -278,9 +285,14 @@ func checkJSONObject(raw json.RawMessage) error {
 	if err := d.Decode(&probe); err != nil {
 		return err
 	}
-	// Decode stops after one value. json.Unmarshal rejects trailing data and
-	// so must this, or `{} garbage` would pass.
-	if d.More() {
+	// Decode stops after one value, so trailing junk needs its own check or
+	// `{} garbage` would pass where json.Unmarshal rejected it.
+	//
+	// Not Decoder.More: that exists for streaming the elements of a container
+	// and returns false on ']' or '}', so it reads a stray closing brace as
+	// end-of-input rather than as data. `{}}` would slip through. Draining to
+	// io.EOF has no such blind spot.
+	if _, err := d.Token(); err != io.EOF {
 		return fmt.Errorf("unexpected data after the JSON value")
 	}
 	if _, ok := probe.(map[string]any); !ok {
@@ -352,10 +364,10 @@ func validateResultInputs(structure string, results []CommissionResultInput) err
 // corrupt the store. Postgres hands back independent bytes, so cloning is
 // also what keeps the two implementations behaving alike.
 //
-// Empty collapses to nil rather than round-tripping as an empty slice.
-// Postgres writes a zero-length carry-forward as NULL and reads it back as
-// nil, so preserving the distinction here would make the two stores disagree
-// on a value the shared suite compares.
+// Empty collapses to nil rather than round-tripping as an empty slice. pgx
+// encodes only a nil slice as SQL NULL; an empty non-nil one is sent as an
+// empty payload and fails the jsonb insert. Preserving the distinction here
+// would make the two stores disagree on a value the shared suite compares.
 func cloneRaw(b json.RawMessage) json.RawMessage {
 	if len(b) == 0 {
 		return nil

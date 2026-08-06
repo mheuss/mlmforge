@@ -632,6 +632,100 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		}
 	})
 
+	// A run's lifecycle has to read forward. If the replacement's start is
+	// stamped before the old run's void, anyone reconstructing the sequence
+	// from timestamps sees the successor beginning before its predecessor
+	// ended — in a table that exists to be an audit record.
+	t.Run("the replacement starts no earlier than the old run was voided", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		oldID, err := s.CreateRun(ctx, "2026-01", validHash)
+		if err != nil {
+			t.Fatalf("CreateRun: %v", err)
+		}
+		newID, err := s.ReplaceRun(ctx, oldID, otherHash)
+		if err != nil {
+			t.Fatalf("ReplaceRun: %v", err)
+		}
+
+		old, err := s.GetRun(ctx, oldID)
+		if err != nil {
+			t.Fatalf("GetRun old: %v", err)
+		}
+		fresh, err := s.GetRun(ctx, newID)
+		if err != nil {
+			t.Fatalf("GetRun new: %v", err)
+		}
+		if old.VoidedAt == nil {
+			t.Fatal("the replaced run should carry VoidedAt")
+		}
+		if fresh.StartedAt.Before(*old.VoidedAt) {
+			t.Errorf("replacement StartedAt %v precedes the old run's VoidedAt %v by %v",
+				fresh.StartedAt, *old.VoidedAt, old.VoidedAt.Sub(fresh.StartedAt))
+		}
+	})
+
+	// The one-active-run invariant under a real race. Sequential cases would
+	// pass even without the row lock that actually enforces it: drop
+	// FOR UPDATE and this is the only case that notices.
+	t.Run("concurrent ReplaceRun yields exactly one winner", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		oldID, err := s.CreateRun(ctx, "2026-01", validHash)
+		if err != nil {
+			t.Fatalf("CreateRun: %v", err)
+		}
+
+		const racers = 6
+		var wg sync.WaitGroup
+		ids := make([]uuid.UUID, racers)
+		errs := make([]error, racers)
+		wg.Add(racers)
+		for i := 0; i < racers; i++ {
+			go func(i int) {
+				defer wg.Done()
+				ids[i], errs[i] = s.ReplaceRun(ctx, oldID, otherHash)
+			}(i)
+		}
+		wg.Wait()
+
+		var winners []uuid.UUID
+		for i := 0; i < racers; i++ {
+			if errs[i] == nil {
+				winners = append(winners, ids[i])
+				continue
+			}
+			// Every loser must lose the documented way. A raw driver error
+			// here means the typed contract does not hold under contention.
+			var target *RunNotRunningError
+			if !errors.As(errs[i], &target) {
+				t.Errorf("racer %d: want *RunNotRunningError, got %v", i, errs[i])
+			}
+		}
+		if len(winners) != 1 {
+			t.Fatalf("got %d winners, want exactly 1", len(winners))
+		}
+
+		// The period must hold exactly the winner, and the old run must point
+		// at it.
+		active, err := s.GetActiveRun(ctx, "2026-01")
+		if err != nil {
+			t.Fatalf("GetActiveRun: %v", err)
+		}
+		if active == nil || active.ID != winners[0] {
+			t.Fatalf("GetActiveRun = %+v, want the winning replacement %s", active, winners[0])
+		}
+		old, err := s.GetRun(ctx, oldID)
+		if err != nil {
+			t.Fatalf("GetRun old: %v", err)
+		}
+		if old.SupersededBy == nil || *old.SupersededBy != winners[0] {
+			t.Fatalf("old.SupersededBy = %v, want the winner %s", old.SupersededBy, winners[0])
+		}
+	})
+
 	t.Run("ReplaceRun works on a running run", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()

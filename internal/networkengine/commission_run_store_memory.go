@@ -132,7 +132,9 @@ func (s *MemoryCommissionRunStore) ReplaceRun(_ context.Context, oldRunID uuid.U
 	if !ok {
 		return uuid.Nil, &RunNotFoundError{RunID: oldRunID}
 	}
-	if old.Status == RunStatusVoided {
+	// An allow-list, not "reject voided", matching the Postgres store: a
+	// status added later must not be silently accepted and voided.
+	if old.Status != RunStatusRunning && old.Status != RunStatusComplete {
 		// Allowed is set because ReplaceRun takes a complete run too. Without
 		// it the message would read "not running" and send an operator
 		// looking for the wrong state.

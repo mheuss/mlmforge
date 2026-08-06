@@ -34,8 +34,15 @@ const activeRunIndex = "commission_runs_active_period_idx"
 const runColumns = `id, period_id, plan_hash, status, carry_forward,
                     started_at, completed_at, voided_at, superseded_by`
 
-const insertRunSQL = `INSERT INTO commission_runs (id, period_id, plan_hash, status)
-                      VALUES ($1, $2, $3, 'running')`
+// started_at is set explicitly rather than left to the column DEFAULT. The
+// default is now(), which is transaction_timestamp() — stamped at BEGIN,
+// before ReplaceRun's SELECT ... FOR UPDATE can block on a held run lock.
+// Measured 1.95s early behind a bulk write, which puts the replacement's
+// start before its predecessor's voided_at and makes the lifecycle read
+// backwards in a table that exists to be an audit record. Same reason
+// completed_at and voided_at use clock_timestamp().
+const insertRunSQL = `INSERT INTO commission_runs (id, period_id, plan_hash, status, started_at)
+                      VALUES ($1, $2, $3, 'running', clock_timestamp())`
 
 const getRunSQL = `SELECT ` + runColumns + ` FROM commission_runs WHERE id = $1`
 
@@ -223,9 +230,15 @@ func (s *PostgresCommissionRunStore) VoidRun(ctx context.Context, runID uuid.UUI
 		// Either the run is missing or it was already voided. Only the
 		// first is an error.
 		if _, err := s.GetRun(ctx, runID); err != nil {
-			return err
+			var notFound *RunNotFoundError
+			if errors.As(err, &notFound) {
+				return err // the caller's answer, already typed
+			}
+			// Without this a transient read failure gets logged under
+			// GetRun's name rather than VoidRun's.
+			return fmt.Errorf("void commission run: reading run state after a no-op update: %w", err)
 		}
-		return nil
+		return nil // already voided, so the retry is a no-op
 	}
 	return nil
 }
@@ -252,7 +265,13 @@ func (s *PostgresCommissionRunStore) ReplaceRun(ctx context.Context, oldRunID uu
 		return uuid.Nil, err
 	}
 
-	tx, err := s.pool.Begin(ctx)
+	// READ COMMITTED explicitly, not the session default. The loser of a
+	// concurrent replace relies on EvalPlanQual: its SELECT ... FOR UPDATE
+	// re-reads the row after the winner commits and sees 'voided', which is
+	// what produces *RunNotRunningError. Under REPEATABLE READ that same
+	// statement raises 40001 instead, and the typed error the interface
+	// promises turns into a generic wrapped failure.
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("replace commission run: begin tx: %w", err)
 	}
@@ -269,7 +288,11 @@ func (s *PostgresCommissionRunStore) ReplaceRun(ctx context.Context, oldRunID uu
 		}
 		return uuid.Nil, fmt.Errorf("replace commission run: lock old run: %w", err)
 	}
-	if status := CommissionRunStatus(rawStatus); status == RunStatusVoided {
+	// An allow-list, not "reject voided". Equivalent today under the status
+	// CHECK, but a status added later would otherwise be silently accepted
+	// and voided, contradicting this function's own contract.
+	status := CommissionRunStatus(rawStatus)
+	if status != RunStatusRunning && status != RunStatusComplete {
 		// Allowed is set because ReplaceRun takes a complete run too. A bare
 		// "not running" would send an operator looking for the wrong state.
 		return uuid.Nil, &RunNotRunningError{
@@ -322,7 +345,10 @@ func (s *PostgresCommissionRunStore) SaveResults(ctx context.Context, runID uuid
 	if err := validateResultInputs(structure, results); err != nil {
 		return err
 	}
-	tx, err := s.pool.Begin(ctx)
+	// READ COMMITTED explicitly, for the same reason as ReplaceRun: the
+	// FOR UPDATE below depends on re-reading the row after a concurrent
+	// writer commits, which REPEATABLE READ turns into a 40001 instead.
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return fmt.Errorf("save commission results: begin tx: %w", err)
 	}

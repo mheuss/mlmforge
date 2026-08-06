@@ -71,6 +71,15 @@ CREATE TABLE commission_results (
     CHECK (jsonb_typeof(detail) = 'object')
 );
 
+-- Serves GetResults and GetLiveResults: WHERE run_id = $1 ORDER BY id ASC.
+-- Without it Postgres walks the whole primary key index and filters, so the
+-- cost scales with total table size rather than with the run being read.
+-- Measured at 250k rows across two runs: 200k rows removed by filter to
+-- return 50k. Rows are never deleted here, so that gap widens with every run
+-- retained.
+CREATE INDEX commission_results_run_id_idx
+    ON commission_results (run_id, id);
+
 -- Serves "this distributor's earnings in this run", the dispute query.
 CREATE INDEX commission_results_run_earner_idx
     ON commission_results (run_id, earner_id);

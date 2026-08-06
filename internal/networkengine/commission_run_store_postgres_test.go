@@ -18,6 +18,9 @@ func TestCommissionResultCopySourceRejectsBadRows(t *testing.T) {
 		name string
 		in   CommissionResultInput
 	}{
+		// The one field with no CHECK behind it. Everything else here would
+		// also be caught by the database; a nil earner would not.
+		{"nil earner id", CommissionResultInput{EarnerID: uuid.Nil, DollarAmount: 1, Detail: json.RawMessage(`{"v":1}`)}},
 		{"NaN", CommissionResultInput{EarnerID: uuid.New(), DollarAmount: math.NaN(), Detail: json.RawMessage(`{"v":1}`)}},
 		{"positive infinity", CommissionResultInput{EarnerID: uuid.New(), DollarAmount: math.Inf(1), Detail: json.RawMessage(`{"v":1}`)}},
 		{"negative infinity", CommissionResultInput{EarnerID: uuid.New(), DollarAmount: math.Inf(-1), Detail: json.RawMessage(`{"v":1}`)}},

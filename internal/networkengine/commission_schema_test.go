@@ -229,6 +229,30 @@ func TestCommissionRunsActivePeriodIndex(t *testing.T) {
 	}
 }
 
+// GetResults and GetLiveResults both read WHERE run_id = $1 ORDER BY id ASC.
+// Without an index leading on run_id and carrying id, Postgres walks the
+// whole primary key index and filters, so the cost scales with total table
+// size rather than with the run being read. Rows are never deleted here, so
+// that gap only widens.
+func TestCommissionResultsRunIndex(t *testing.T) {
+	if pgContainer == nil {
+		t.Skip("postgres container unavailable")
+	}
+	pool := pgContainer.NewPool(t)
+
+	var def string
+	err := pool.QueryRow(context.Background(),
+		`SELECT indexdef FROM pg_indexes WHERE indexname = $1`,
+		"commission_results_run_id_idx",
+	).Scan(&def)
+	if err != nil {
+		t.Fatalf("read index definition: %v", err)
+	}
+	if !strings.Contains(def, "(run_id, id)") {
+		t.Errorf("index must lead on run_id and carry id so the read needs no sort, got: %s", def)
+	}
+}
+
 func TestCommissionResultsSchema(t *testing.T) {
 	if pgContainer == nil {
 		t.Skip("postgres container unavailable")

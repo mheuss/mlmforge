@@ -161,8 +161,9 @@ func (s *PostgresCommissionRunStore) ReplaceRun(_ context.Context, _ uuid.UUID, 
 	return uuid.Nil, errPostgresUnimplemented
 }
 
-// copyChunkSize bounds one CopyFrom call. A million-row write arrives as
-// twenty chunks inside one transaction rather than as a single statement.
+// copyChunkSize bounds the row count of one CopyFrom statement. It is not a
+// memory control: pgx streams CopyFrom through a 64 KB pipe, so a single call
+// over a million rows never buffers the batch either way.
 const copyChunkSize = 50_000
 
 const deleteStructureResultsSQL = `DELETE FROM commission_results
@@ -222,10 +223,13 @@ func (s *PostgresCommissionRunStore) SaveResults(ctx context.Context, runID uuid
 // writes in this package.
 //
 // DollarAmount is formatted with strconv.FormatFloat(v, 'f', -1, 64), the
-// shortest decimal string that round-trips the float exactly. Passing the
-// float64 directly would let pgx choose its own textual form, and NUMERIC
-// exists here precisely so the stored value is not at the mercy of float
-// formatting.
+// shortest decimal string that round-trips the float exactly.
+//
+// pgx's own float64-to-numeric encoder happens to call the same function
+// today, so this is not a correction of the driver. It pins the behavior in
+// this package rather than depending on a pgx internal that could change in a
+// patch release, and it keeps NaN and infinities from being quietly encoded
+// as numeric NaN/Infinity and pushed down to the table CHECK.
 type commissionResultCopySource struct {
 	runID     uuid.UUID
 	structure string
@@ -242,13 +246,23 @@ func (s *commissionResultCopySource) Next() bool {
 	return s.idx < len(s.results)
 }
 
-// Values re-checks what validateResultInputs already rejected. This is the
-// bypass guard: the copy path is where bytes reach the money table, and a
-// future caller reaching it another way must fail loudly rather than write a
-// silent default. Every branch here aborts the CopyFrom, which rolls back the
-// whole transaction.
+// Values re-checks three of the four things validateResultInputs rejects.
+// This is the bypass guard: the copy path is where bytes reach the money
+// table, and a future caller building this source directly must fail loudly
+// rather than write a silent default.
+//
+// Note the returned error does not reach the caller as-is. pgx sends CopyFail
+// and the server answers with its own error, so SaveResults surfaces a
+// *pgconn.PgError carrying this text. Loud enough for a guard, but errors.As
+// on a typed error here would not work, which is why these are plain.
 func (s *commissionResultCopySource) Values() ([]any, error) {
 	r := s.results[s.idx]
+	// The one field with no database backstop. dollar_amount and detail both
+	// have CHECK constraints behind them; earner_id has none, so a nil UUID
+	// reaching here would be written into the money table unopposed.
+	if r.EarnerID == uuid.Nil {
+		return nil, fmt.Errorf("row %d: earner id must not be nil", s.idx)
+	}
 	if math.IsNaN(r.DollarAmount) || math.IsInf(r.DollarAmount, 0) {
 		return nil, fmt.Errorf("earner %s: dollar_amount must be finite, got %v", r.EarnerID, r.DollarAmount)
 	}
@@ -305,6 +319,14 @@ func scanCommissionResults(rows pgx.Rows) ([]CommissionResult, error) {
 		v, err := strconv.ParseFloat(amount, 64)
 		if err != nil {
 			return nil, fmt.Errorf("scan commission_results row: dollar_amount %q: %w", amount, err)
+		}
+		// ParseFloat accepts "NaN", "Infinity" and "+Inf". The table CHECK
+		// should mean no such row exists, but the write path guards this twice
+		// and the read path guarded it zero times. One such value silently
+		// destroys every SUM over the run, so refuse it rather than return it.
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return nil, fmt.Errorf(
+				"scan commission_results row %d: dollar_amount %q is not finite", r.ID, amount)
 		}
 		r.DollarAmount = v
 		out = append(out, r)

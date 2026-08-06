@@ -52,8 +52,10 @@ type CommissionResultInput struct {
 // DollarAmount is float64 because that is what the engine emits and what
 // CommissionEarningDTO carries. The Postgres store converts to NUMERIC on
 // write via strconv.FormatFloat(v, 'f', -1, 64), the shortest representation
-// that round-trips, so the Go boundary is lossless both ways. NUMERIC still
-// buys exact, order-independent SUM in SQL, which is why it was chosen.
+// that round-trips, so the Go boundary is lossless both ways — with one
+// exception: NUMERIC does not carry the sign of zero, so -0.0 comes back as
+// +0.0. Harmless for money, since -0.0 == 0.0 in Go. NUMERIC still buys
+// exact, order-independent SUM in SQL, which is why it was chosen.
 //
 // Caveat for future readers: a SQL-side SUM over a million rows may not be
 // exactly representable as float64. A payout reader should pull that total as

@@ -35,7 +35,12 @@ func TestDollarAmountRoundTripsThroughNumeric(t *testing.T) {
 		1.0 / 3.0,
 		123456.789,
 		math.SmallestNonzeroFloat64,
-		math.MaxFloat64 / 1e300,
+		// The extremes, not a scaled-down stand-in. Under 'f' with -1
+		// precision these format to 309 and 326 characters, against NUMERIC
+		// limits of 131072 integer and 16383 fractional digits — so no
+		// float64 exists that NUMERIC cannot hold, and this pins both ends.
+		math.MaxFloat64,
+		-math.MaxFloat64,
 		// Clawbacks are why negatives must survive, and the finite-range
 		// CHECK is the constraint most likely to be tightened by mistake.
 		-0.01, -123456.789,
@@ -68,6 +73,9 @@ func TestDollarAmountRoundTripsThroughNumeric(t *testing.T) {
 	if len(got) != len(amounts) {
 		t.Fatalf("len = %d, want %d", len(got), len(amounts))
 	}
+	// got[i] lines up with amounts[i] because BIGSERIAL ids ascend in COPY
+	// order, GetResults sorts by id, and NewPool truncates with RESTART
+	// IDENTITY. The suite pins the ordering half separately.
 	for i, r := range got {
 		// Compare bits, not values: NaN would compare unequal to itself and
 		// -0.0 equals +0.0, so == would hide exactly the cases worth pinning.
@@ -115,10 +123,19 @@ func TestNegativeZeroLosesItsSign(t *testing.T) {
 	}
 }
 
-// TestSaveResultsRejectsNonFiniteAmounts confirms the copy source refuses NaN
-// and infinities before they reach the database, so the caller gets a named
-// earner rather than a constraint violation.
-func TestSaveResultsRejectsNonFiniteAmounts(t *testing.T) {
+// SaveResults is DELETE-then-COPY inside one transaction, so a write that
+// fails partway must leave the structure's prior rows intact. Nothing pinned
+// that: the suite's malformed-input cases all write their bad batch first, so
+// they never exercise a rollback over existing rows, and the risk is losing
+// the old rows rather than duplicating them.
+//
+// Reaching the failure requires input the Go validator accepts and Postgres
+// refuses, since validateResultInputs runs before the transaction opens and
+// pre-empts every other bad value. checkJSONObject documents exactly such a
+// case: Go's decoder replaces an unpaired surrogate with U+FFFD and accepts,
+// while Postgres rejects it at the jsonb parse. So this doubles as proof that
+// the documented divergence is real.
+func TestAFailedWriteLeavesPriorRowsIntact(t *testing.T) {
 	if pgContainer == nil {
 		t.Skip("postgres container unavailable")
 	}
@@ -130,34 +147,41 @@ func TestSaveResultsRejectsNonFiniteAmounts(t *testing.T) {
 		t.Fatalf("CreateRun: %v", err)
 	}
 
-	// A slice, not a map: map iteration order is randomized, and subtest
-	// order should be stable.
-	cases := []struct {
-		name   string
-		amount float64
-	}{
-		{"NaN", math.NaN()},
-		{"+Inf", math.Inf(1)},
-		{"-Inf", math.Inf(-1)},
+	good := []CommissionResultInput{
+		{EarnerID: uuid.New(), DollarAmount: 10, Detail: []byte(`{"v":1}`)},
+		{EarnerID: uuid.New(), DollarAmount: 20, Detail: []byte(`{"v":1}`)},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			err := store.SaveResults(ctx, runID, "primary", []CommissionResultInput{
-				{EarnerID: uuid.New(), DollarAmount: tc.amount, Detail: []byte(`{"v":1}`)},
-			})
-			if err == nil {
-				t.Fatalf("expected SaveResults to reject %s", tc.name)
-			}
-		})
+	if err := store.SaveResults(ctx, runID, "primary", good); err != nil {
+		t.Fatalf("seed SaveResults: %v", err)
 	}
 
-	// A rejected batch must leave nothing behind, or a retry after one bad
-	// row would double the good ones.
-	got, err := store.GetResults(ctx, runID)
+	// Six characters — backslash, u, d, 8, 0, 0 — assembled rather than
+	// written as one literal so nothing in the toolchain folds it into an
+	// actual code point.
+	loneSurrogate := `\u` + "d800"
+	poison := []byte(`{"v":1,"note":"` + loneSurrogate + `"}`)
+	if err := checkJSONObject(poison); err != nil {
+		t.Fatalf("premise broken: Go should accept the lone surrogate, got %v", err)
+	}
+
+	err = store.SaveResults(ctx, runID, "primary", []CommissionResultInput{
+		{EarnerID: uuid.New(), DollarAmount: 30, Detail: poison},
+	})
+	if err == nil {
+		t.Fatal("premise broken: Postgres should reject a lone surrogate in jsonb")
+	}
+
+	// The rollback is the point. A DELETE that committed without its COPY
+	// would show zero rows here, silently destroying a structure's earnings.
+	after, err := store.GetResults(ctx, runID)
 	if err != nil {
 		t.Fatalf("GetResults: %v", err)
 	}
-	if len(got) != 0 {
-		t.Fatalf("rejected batches left %d rows behind", len(got))
+	if len(after) != len(good) {
+		t.Fatalf("got %d rows after a failed write, want the original %d; the DELETE was not rolled back",
+			len(after), len(good))
+	}
+	if after[0].DollarAmount != 10 || after[1].DollarAmount != 20 {
+		t.Fatalf("prior rows changed: %v, %v", after[0].DollarAmount, after[1].DollarAmount)
 	}
 }

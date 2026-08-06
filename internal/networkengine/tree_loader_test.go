@@ -80,12 +80,33 @@ func TestTreeLoader_EmptyTreeStillChecksConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mutator, err := loadWithStub(t, tt.treeType, nil, tt.opts...)
+			// A rejecting store, not MemoryTreeStore. The claim is that a bad
+			// config costs no query, and MemoryTreeStore would serve the read
+			// silently, leaving that half untested.
+			store := &rejectingTreeStore{TreeStore: NewMemoryTreeStore(), t: t}
+			mutator := &stubMutator{}
+
+			err := NewTreeLoader(store, mutator).LoadTree(context.Background(), "t", tt.treeType, tt.opts...)
+
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.wantErr)
 			assert.Zero(t, mutator.totalCalls(), "config failure must make no engine calls")
 		})
 	}
+}
+
+// rejectingTreeStore fails the test if LoadTree reads it. Config validation
+// runs above the store call, so an invalid configuration must never reach a
+// query. Embeds TreeStore so only the method under test needs overriding.
+type rejectingTreeStore struct {
+	TreeStore
+	t *testing.T
+}
+
+func (s *rejectingTreeStore) GetByTreeDepthOrdered(_ context.Context, treeID string) ([]TreeNodeRow, error) {
+	s.t.Helper()
+	s.t.Errorf("store read for tree %s: config validation must fail before the query", treeID)
+	return nil, nil
 }
 
 // TestTreeLoader_EmptyTreeWithValidConfigIsANoOp pins the other half of the

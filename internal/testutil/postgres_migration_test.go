@@ -114,8 +114,9 @@ func TestMigrations_SlotUniqueDownUp(t *testing.T) {
 	// are LIFO, so this restore fires before m.Close. This is the
 	// failure-path net only — the happy path restores head explicitly below,
 	// because a discarded error here would leave the shared container short
-	// of head and break later tests in another package. On a dirty version
-	// Up returns ErrDirty, which is safely discarded.
+	// of head and break later tests in this package. Each package builds its
+	// own container in TestMain, so the blast radius stops here. On a dirty
+	// version Up returns ErrDirty, which is safely discarded.
 	t.Cleanup(func() { _ = m.Up() })
 	// Pinned to versions 3 and 4, not Steps(-1): a relative step would roll
 	// back whichever migration is newest and fail confusingly. This test is

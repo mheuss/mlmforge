@@ -216,9 +216,14 @@ func TestCommissionResultsSchema(t *testing.T) {
 		(run_id, structure, earner_id, dollar_amount, detail)
 		VALUES ($1, $2, $3, $4, $5)`
 
+	// Negatives are legal. Clawbacks are the reason, and the finite-range
+	// CHECK narrows this column's domain, so a future tightening to
+	// dollar_amount >= 0 has to fail here rather than pass silently.
 	t.Run("a valid result row is accepted", func(t *testing.T) {
-		if _, err := pool.Exec(ctx, insert, runID, "primary", uuid.New(), "12.34", `{"v":1}`); err != nil {
-			t.Fatalf("valid row rejected: %v", err)
+		for _, good := range []string{"12.34", "-12.34", "0"} {
+			if _, err := pool.Exec(ctx, insert, runID, "primary", uuid.New(), good, `{"v":1}`); err != nil {
+				t.Fatalf("valid dollar_amount %q rejected: %v", good, err)
+			}
 		}
 	})
 

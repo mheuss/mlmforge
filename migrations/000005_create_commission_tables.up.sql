@@ -59,9 +59,14 @@ CREATE TABLE commission_results (
     -- Every non-finite value, not just NaN. Postgres 14+ accepts Infinity in
     -- a NUMERIC column, and strconv.FormatFloat(math.Inf(1), 'f', -1, 64)
     -- emits "+Inf" — the exact text path this design uses for float64
-    -- amounts. A single infinity makes SUM over the run return NaN forever,
-    -- which is the outcome the NaN guard exists to prevent. NaN sorts above
-    -- Infinity in NUMERIC ordering, so the upper bound rejects it too.
+    -- amounts. One infinity makes SUM over the run return Infinity; a mixed
+    -- pair makes it NaN. Either way the run's total is destroyed, which is
+    -- what the NaN guard alone failed to prevent. NaN sorts above Infinity
+    -- in NUMERIC ordering, so the upper bound rejects it too.
+    --
+    -- Note this pins Postgres 14 or newer: 'Infinity'::numeric does not
+    -- parse before 14, so the CREATE TABLE itself would fail. The test
+    -- container is pinned to postgres:16-alpine.
     CHECK (dollar_amount > '-Infinity'::numeric AND dollar_amount < 'Infinity'::numeric),
     CHECK (jsonb_typeof(detail) = 'object')
 );

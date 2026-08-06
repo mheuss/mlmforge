@@ -1041,6 +1041,15 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		if len(live) != 0 {
 			t.Fatalf("len = %d, want 0 — completion is the visibility flip", len(live))
 		}
+		// Invisible must mean hidden, not absent. Without this the assertion
+		// above passes against a store whose SaveResults writes nothing.
+		stored, err := s.GetResults(ctx, runID)
+		if err != nil {
+			t.Fatalf("GetResults: %v", err)
+		}
+		if len(stored) != 1 {
+			t.Fatalf("stored rows = %d, want 1; the row must exist while being invisible", len(stored))
+		}
 	})
 
 	t.Run("completing a run makes its results live", func(t *testing.T) {

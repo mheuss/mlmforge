@@ -2,6 +2,7 @@ package networkengine
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/google/uuid"
@@ -10,6 +11,12 @@ import (
 // TestCommissionLifecycleEndToEnd walks the full ADR-013 path: run a period,
 // complete it, then re-run it and confirm the old run is archived rather than
 // destroyed while the period's live results switch over cleanly.
+//
+// "End to end" means the store's own lifecycle, not a request path. Nothing
+// calls this store in production until HEU-592 lands, so the test drives the
+// interface directly and the amounts are constants rather than engine output.
+// It does not show that computed commissions persist — only that the
+// lifecycle they will travel through behaves as designed.
 func TestCommissionLifecycleEndToEnd(t *testing.T) {
 	if pgContainer == nil {
 		t.Skip("postgres container unavailable")
@@ -66,6 +73,17 @@ func TestCommissionLifecycleEndToEnd(t *testing.T) {
 	}
 	if len(live) != 2 {
 		t.Fatalf("live results = %d, want 2", len(live))
+	}
+	// Per structure, not just the total. One earner holds both rows, so a sum
+	// alone would pass against a store that swapped the two amounts between
+	// structures. This is also the only place in the repo that reads
+	// Structure off a GetLiveResults return rather than GetResults.
+	byStructure := map[string]float64{}
+	for _, r := range live {
+		byStructure[r.Structure] += r.DollarAmount
+	}
+	if byStructure["unilevel"] != 100 || byStructure["binary"] != 50 {
+		t.Fatalf("live results by structure = %v, want unilevel 100 and binary 50", byStructure)
 	}
 	total := live[0].DollarAmount + live[1].DollarAmount
 	if total != 150 {
@@ -129,8 +147,22 @@ func TestCommissionLifecycleEndToEnd(t *testing.T) {
 	if old.CompletedAt == nil {
 		t.Fatal("voiding erased the old run's completion time")
 	}
-	if len(old.CarryForward) == 0 {
-		t.Fatal("voiding erased the old run's carry-forward")
+	// Parsed, not just non-empty. A store that replaced the carry-forward
+	// with {} on void would satisfy a length check while having erased the
+	// thing the check claims to protect.
+	var carryBack struct {
+		V          int `json:"v"`
+		Structures struct {
+			Binary struct {
+				Kind string `json:"kind"`
+			} `json:"binary"`
+		} `json:"structures"`
+	}
+	if err := json.Unmarshal(old.CarryForward, &carryBack); err != nil {
+		t.Fatalf("the voided run's carry-forward is not readable JSON: %v", err)
+	}
+	if carryBack.V != 1 || carryBack.Structures.Binary.Kind != "binary_legs" {
+		t.Fatalf("voiding altered the old run's carry-forward: %s", old.CarryForward)
 	}
 	// The old run also keeps its own plan identity, so a dispute can say
 	// which plan produced the superseded numbers.
@@ -146,12 +178,22 @@ func TestCommissionLifecycleEndToEnd(t *testing.T) {
 		t.Fatalf("archived results = %d, want 2 — a voided run's results must survive", len(archived))
 	}
 	// Both structures survive, not just the one the replacement rewrote.
-	structures := map[string]bool{}
+	// Amounts and detail, not just labels. Archiving that kept the rows but
+	// dropped what they said would be worthless for the dispute resolution
+	// these rows are retained for.
+	archivedAmounts := map[string]float64{}
 	for _, r := range archived {
-		structures[r.Structure] = true
+		archivedAmounts[r.Structure] += r.DollarAmount
+		var detail map[string]any
+		if err := json.Unmarshal(r.Detail, &detail); err != nil {
+			t.Fatalf("archived %s detail is not readable JSON: %v", r.Structure, err)
+		}
+		if detail["v"] != float64(1) {
+			t.Fatalf("archived %s detail lost its version: %s", r.Structure, r.Detail)
+		}
 	}
-	if !structures["unilevel"] || !structures["binary"] {
-		t.Fatalf("archived structures = %v, want both unilevel and binary", structures)
+	if archivedAmounts["unilevel"] != 100 || archivedAmounts["binary"] != 50 {
+		t.Fatalf("archived amounts = %v, want the original unilevel 100 and binary 50", archivedAmounts)
 	}
 	t.Logf("run 1 archived: voided, superseded_by set, %d results still readable", len(archived))
 }

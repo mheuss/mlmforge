@@ -1,12 +1,15 @@
 package networkengine
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"math"
 	"regexp"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
@@ -92,15 +95,25 @@ type CommissionRunStore interface {
 	// a retry after an uncertain commit safe. Different structures accumulate
 	// independently under one run.
 	//
-	// Returns *RunNotRunningError when the run is not running.
+	// Passing an empty results slice deletes the structure's rows and writes
+	// none, which is how a structure that earned nothing is recorded.
+	//
+	// Returns *RunNotFoundError when the run does not exist, and
+	// *RunNotRunningError when it exists but is not running.
 	SaveResults(ctx context.Context, runID uuid.UUID, structure string,
 		results []CommissionResultInput) error
 
 	// CompleteRun marks the run complete and records the carry-forward it
 	// produced. This is the point at which the run's results become visible
-	// to GetLiveResults. carryForward may be nil.
+	// to GetLiveResults.
 	//
-	// Returns *RunNotRunningError when the run is not running.
+	// carryForward may be nil, meaning the run produced no carry-over state.
+	// An empty non-nil slice means the same thing: implementations normalize
+	// len == 0 to nil on write, because Postgres stores it as NULL and reads
+	// it back as nil, and the two stores must not disagree on that value.
+	//
+	// Returns *RunNotFoundError when the run does not exist, and
+	// *RunNotRunningError when it exists but is not running.
 	CompleteRun(ctx context.Context, runID uuid.UUID, carryForward json.RawMessage) error
 
 	// VoidRun voids a run without a replacement. Valid from running or
@@ -119,6 +132,10 @@ type CommissionRunStore interface {
 	// ReplaceRun voids oldRunID and opens its replacement for the same period
 	// in one transaction. This is ADR-013 scenario 2. Valid when oldRunID is
 	// running or complete.
+	//
+	// Returns *RunNotFoundError when oldRunID does not exist, and
+	// *RunNotRunningError with Allowed set to {running, complete} when it is
+	// already voided.
 	ReplaceRun(ctx context.Context, oldRunID uuid.UUID, planHash string) (uuid.UUID, error)
 
 	// GetRun returns one run, or *RunNotFoundError.
@@ -163,15 +180,32 @@ func (e *RunNotFoundError) Error() string {
 	return fmt.Sprintf("commission run %s not found", e.RunID)
 }
 
-// RunNotRunningError reports an operation that requires a running run being
-// attempted against one in another state.
+// RunNotRunningError reports an operation being attempted against a run in a
+// state that operation does not accept.
 type RunNotRunningError struct {
 	RunID  uuid.UUID
 	Status CommissionRunStatus
+
+	// Allowed names the states the attempted operation does accept. Empty
+	// means running only, which covers SaveResults and CompleteRun.
+	//
+	// ReplaceRun sets it, because it accepts running or complete. Without
+	// that, replacing a voided run would report "is voided, not running",
+	// telling an operator the run had to be running when a complete one
+	// would have worked too.
+	Allowed []CommissionRunStatus
 }
 
 func (e *RunNotRunningError) Error() string {
-	return fmt.Sprintf("commission run %s is %s, not running", e.RunID, e.Status)
+	if len(e.Allowed) == 0 {
+		return fmt.Sprintf("commission run %s is %s, not running", e.RunID, e.Status)
+	}
+	names := make([]string, len(e.Allowed))
+	for i, s := range e.Allowed {
+		names[i] = string(s)
+	}
+	return fmt.Sprintf("commission run %s is %s, must be %s",
+		e.RunID, e.Status, strings.Join(names, " or "))
 }
 
 // planHashPattern mirrors the plan_hash CHECK in migration 000005.
@@ -204,18 +238,50 @@ func validatePlanHashOnly(planHash string) error {
 	return nil
 }
 
-// isJSONObject reports whether raw is a JSON object.
+// checkJSONObject reports whether raw is a JSON object, approximating what
+// Postgres accepts into a JSONB column carrying
+// CHECK (jsonb_typeof(col) = 'object').
 //
-// It unmarshals into any and type-asserts rather than unmarshaling into
+// It decodes into any and type-asserts rather than unmarshaling into
 // map[string]any directly. The direct form looks equivalent but silently
 // accepts the JSON literal null: json.Unmarshal([]byte("null"), &m) returns a
 // nil error and leaves the map nil. Postgres rejects that value, because
-// jsonb_typeof('null'::jsonb) is 'null', not 'object', so accepting it here
-// would let the memory store take input the real store refuses.
-func isJSONObject(raw json.RawMessage) error {
+// jsonb_typeof('null'::jsonb) is 'null', not 'object'.
+//
+// UseNumber keeps big numbers out of float64. Without it, {"a":1e400} fails
+// here while Postgres accepts it, since jsonb numbers are NUMERIC — a
+// rejection Postgres would not have made.
+//
+// Known limits, because Go's decoder is not Postgres's jsonb parser and this
+// does not reimplement one. Two cases still pass here that Postgres rejects,
+// both confined to escape sequences inside strings:
+//
+//   - a \u0000 escape — Postgres cannot represent NUL in text.
+//   - an unpaired surrogate such as "\ud800" — Go replaces it with U+FFFD
+//     during decoding, so it is indistinguishable afterward from a legitimate
+//     U+FFFD in the input.
+//
+// Neither is reachable from the values this package writes today, which are
+// built from UUIDs, numbers, and fixed enum strings. A caller putting
+// free-form text into Detail or CarryForward would meet them as a
+// Postgres-only insert failure.
+func checkJSONObject(raw json.RawMessage) error {
+	// Raw invalid UTF-8 bytes: Go substitutes U+FFFD and accepts, Postgres
+	// rejects at the encoding layer. Cheap to catch here, unlike the escape
+	// cases above.
+	if !utf8.Valid(raw) {
+		return fmt.Errorf("not valid UTF-8")
+	}
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.UseNumber()
 	var probe any
-	if err := json.Unmarshal(raw, &probe); err != nil {
+	if err := d.Decode(&probe); err != nil {
 		return err
+	}
+	// Decode stops after one value. json.Unmarshal rejects trailing data and
+	// so must this, or `{} garbage` would pass.
+	if d.More() {
+		return fmt.Errorf("unexpected data after the JSON value")
 	}
 	if _, ok := probe.(map[string]any); !ok {
 		return fmt.Errorf("want a JSON object, got %s", jsonKind(probe))
@@ -223,14 +289,16 @@ func isJSONObject(raw json.RawMessage) error {
 	return nil
 }
 
-// jsonKind names the JSON type of a decoded value, for error messages.
+// jsonKind names the JSON type of a decoded value, for error messages. The
+// decoder produces only these kinds plus map[string]any, which the caller
+// handles before calling.
 func jsonKind(v any) string {
 	switch v.(type) {
 	case nil:
 		return "null"
 	case bool:
 		return "boolean"
-	case float64:
+	case json.Number:
 		return "number"
 	case string:
 		return "string"
@@ -247,7 +315,7 @@ func validateCarryForward(cf json.RawMessage) error {
 	if len(cf) == 0 {
 		return nil
 	}
-	if err := isJSONObject(cf); err != nil {
+	if err := checkJSONObject(cf); err != nil {
 		return fmt.Errorf("commission run: carry_forward must be a JSON object: %w", err)
 	}
 	return nil
@@ -265,7 +333,11 @@ func validateResultInputs(structure string, results []CommissionResultInput) err
 			return fmt.Errorf("commission results: row %d (earner %s): dollar_amount must be finite, got %v",
 				i, r.EarnerID, r.DollarAmount)
 		}
-		if err := isJSONObject(r.Detail); err != nil {
+		// A nil or empty Detail falls through to the decoder, which rejects
+		// it. That mirrors detail JSONB NOT NULL, and unlike carry_forward
+		// there is deliberately no len==0 shortcut: an earning with no detail
+		// is a caller bug, not an absent-value case.
+		if err := checkJSONObject(r.Detail); err != nil {
 			return fmt.Errorf("commission results: row %d (earner %s): detail must be a JSON object: %w",
 				i, r.EarnerID, err)
 		}
@@ -279,8 +351,13 @@ func validateResultInputs(structure string, results []CommissionResultInput) err
 // change memory-store state, and a caller mutating a returned value would
 // corrupt the store. Postgres hands back independent bytes, so cloning is
 // also what keeps the two implementations behaving alike.
+//
+// Empty collapses to nil rather than round-tripping as an empty slice.
+// Postgres writes a zero-length carry-forward as NULL and reads it back as
+// nil, so preserving the distinction here would make the two stores disagree
+// on a value the shared suite compares.
 func cloneRaw(b json.RawMessage) json.RawMessage {
-	if b == nil {
+	if len(b) == 0 {
 		return nil
 	}
 	out := make(json.RawMessage, len(b))

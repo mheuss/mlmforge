@@ -16,9 +16,14 @@ CREATE TABLE commission_runs (
     started_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at  TIMESTAMPTZ,
     voided_at     TIMESTAMPTZ,
-    -- Must reference a run for the same period. Not expressible as a foreign
-    -- key. Enforced in Go inside ReplaceRun's transaction, not by a trigger.
-    superseded_by UUID        REFERENCES commission_runs(id),
+    -- Must reference a run for the same period. That IS expressible as a
+    -- foreign key, contrary to the original design note: the composite
+    -- reference below, against the UNIQUE (id, period_id) declared after the
+    -- checks, forces the referenced run to carry this row's period. Since id
+    -- is the primary key, exactly one row has that id, so its period_id must
+    -- match. ReplaceRun still inherits period_id from the locked old row —
+    -- the constraint is what stops a future writer getting it wrong.
+    superseded_by UUID,
     CHECK (period_id <> ''),
     -- The full digest, not just the namespace. LIKE 'sha256:%' would accept
     -- 'sha256:' and 'sha256:anything', which are not hashes.
@@ -29,13 +34,23 @@ CREATE TABLE commission_runs (
     -- biconditional would make complete -> voided impossible without erasing
     -- completed_at, destroying the audit fact the row exists to hold.
     CHECK (status <> 'complete' OR completed_at IS NOT NULL),
+    -- The other side of that one-directional rule: a run still running has
+    -- not completed, so it must not carry a completion time. Without this,
+    -- 'running' with a completed_at is a reachable nonsense state.
+    CHECK (status <> 'running' OR completed_at IS NULL),
     CHECK ((status = 'voided') = (voided_at IS NOT NULL)),
     CHECK (superseded_by IS NULL OR status = 'voided'),
     -- The same-period rule is enforced in Go, but that check is blind to a
     -- self-reference: the old run's period always equals its own. A cycle
     -- here would hang any walk of the supersede chain.
     CHECK (superseded_by IS NULL OR superseded_by <> id),
-    CHECK (carry_forward IS NULL OR jsonb_typeof(carry_forward) = 'object')
+    CHECK (carry_forward IS NULL OR jsonb_typeof(carry_forward) = 'object'),
+    -- The target of the composite foreign key below. Redundant with the
+    -- primary key on its own, and that is the point: it is what lets another
+    -- column pair reference (id, period_id) together.
+    UNIQUE (id, period_id),
+    -- A replacement must live in the same period as the run it supersedes.
+    FOREIGN KEY (superseded_by, period_id) REFERENCES commission_runs (id, period_id)
 );
 
 -- One active run per period. ReplaceRun voids before inserting, inside one

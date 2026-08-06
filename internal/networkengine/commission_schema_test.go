@@ -173,6 +173,47 @@ func TestCommissionRunsSchema(t *testing.T) {
 		})
 	})
 
+	t.Run("completed_at on a running run is rejected", func(t *testing.T) {
+		done := time.Date(2026, 1, 31, 0, 0, 0, 0, time.UTC)
+		if _, err := pool.Exec(ctx, insert, uuid.New(), "2026-16", "running", done); err == nil {
+			t.Fatal("expected CHECK to reject a completion time on a run still running")
+		}
+	})
+
+	// The same-period rule the original design called "not expressible as a
+	// foreign key". The composite reference against UNIQUE (id, period_id)
+	// does express it: id is the primary key, so requiring (superseded_by,
+	// period_id) to exist forces the referenced run into this row's period.
+	t.Run("superseding a run in another period is rejected", func(t *testing.T) {
+		other := uuid.New()
+		if _, err := pool.Exec(ctx, insert, other, "2026-17", "running", nil); err != nil {
+			t.Fatalf("seed the other period's run: %v", err)
+		}
+		_, err := pool.Exec(ctx,
+			`INSERT INTO commission_runs (id, period_id, plan_hash, status, voided_at, superseded_by)
+			 VALUES ($1, '2026-18', $2, 'voided', now(), $3)`,
+			uuid.New(), "sha256:"+strings.Repeat("a", 64), other)
+		if err == nil {
+			t.Fatal("expected the composite foreign key to reject a replacement from another period")
+		}
+	})
+
+	t.Run("superseding a run in the same period is accepted", func(t *testing.T) {
+		replacement := uuid.New()
+		if _, err := pool.Exec(ctx, insert, replacement, "2026-19", "running", nil); err != nil {
+			t.Fatalf("seed the replacement: %v", err)
+		}
+		// The superseded row is voided, so it does not contend for the
+		// period's single active slot.
+		_, err := pool.Exec(ctx,
+			`INSERT INTO commission_runs (id, period_id, plan_hash, status, voided_at, superseded_by)
+			 VALUES ($1, '2026-19', $2, 'voided', now(), $3)`,
+			uuid.New(), "sha256:"+strings.Repeat("a", 64), replacement)
+		if err != nil {
+			t.Fatalf("a same-period replacement must be allowed, got: %v", err)
+		}
+	})
+
 	t.Run("an unknown status is rejected", func(t *testing.T) {
 		if _, err := pool.Exec(ctx, insert, uuid.New(), "2026-14", "pending", nil); err == nil {
 			t.Fatal("expected CHECK to reject a status outside running/complete/voided")

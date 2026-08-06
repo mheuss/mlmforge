@@ -128,6 +128,15 @@ func (s *MemoryCommissionRunStore) ReplaceRun(_ context.Context, oldRunID uuid.U
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Hash first, matching the Postgres store, which must validate before
+	// opening its transaction. Checking status first here would make
+	// ReplaceRun(unknownID, badHash) return RunNotFoundError in memory and a
+	// hash error against Postgres — a divergence the suite's single-variable
+	// cases cannot see.
+	if err := validatePlanHashOnly(planHash); err != nil {
+		return uuid.Nil, err
+	}
+
 	old, ok := s.runs[oldRunID]
 	if !ok {
 		return uuid.Nil, &RunNotFoundError{RunID: oldRunID}
@@ -144,16 +153,11 @@ func (s *MemoryCommissionRunStore) ReplaceRun(_ context.Context, oldRunID uuid.U
 			Allowed: []CommissionRunStatus{RunStatusRunning, RunStatusComplete},
 		}
 	}
+	// period_id is inherited from the run being replaced rather than supplied
+	// by the caller, so only the hash needed checking and that already
+	// happened above — before anything could mutate, so a bad hash cannot
+	// leave the old run voided with no replacement.
 	periodID := old.PeriodID
-	// Only the hash needs checking. period_id is inherited from the run being
-	// replaced, not supplied by the caller, so validating it here could
-	// report an error about a value the caller never passed.
-	//
-	// Validate before mutating anything, so a bad hash cannot leave the old
-	// run voided with no replacement.
-	if err := validatePlanHashOnly(planHash); err != nil {
-		return uuid.Nil, err
-	}
 
 	// Void first: the replacement cannot exist alongside a non-voided run.
 	if err := s.voidRunLocked(oldRunID); err != nil {
@@ -291,7 +295,15 @@ func (s *MemoryCommissionRunStore) GetResults(_ context.Context, runID uuid.UUID
 // leaving every Detail aliased to the store's buffer, so a caller mutating a
 // returned row would corrupt stored state. Postgres returns independent
 // bytes; this is what keeps the two implementations alike.
+//
+// Empty returns nil, not an empty slice. The Postgres store's row scan never
+// appends, so it hands back nil, and a caller testing == nil would otherwise
+// see different answers from the two implementations. The suite only checks
+// len(), so it cannot catch that on its own.
 func copyResults(in []CommissionResult) []CommissionResult {
+	if len(in) == 0 {
+		return nil
+	}
 	out := make([]CommissionResult, len(in))
 	for i, r := range in {
 		r.Detail = cloneRaw(r.Detail)

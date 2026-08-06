@@ -350,6 +350,17 @@ func validateResultInputs(structure string, results []CommissionResultInput) err
 	if structure == "" {
 		return fmt.Errorf("commission results: structure must be non-empty")
 	}
+	// Postgres refuses a NUL byte in TEXT outright ("invalid byte sequence for
+	// encoding UTF8"), and invalid UTF-8 the same way. Structure names come
+	// from plan config, where the schema constrains them only to minLength 1,
+	// so this is reachable. Without it the memory store accepts a name the
+	// real store cannot write.
+	if !utf8.ValidString(structure) {
+		return fmt.Errorf("commission results: structure %q is not valid UTF-8", structure)
+	}
+	if strings.ContainsRune(structure, 0) {
+		return fmt.Errorf("commission results: structure %q contains a NUL byte, which TEXT cannot store", structure)
+	}
 	for i, r := range results {
 		if r.EarnerID == uuid.Nil {
 			return fmt.Errorf("commission results: row %d has a nil earner id", i)

@@ -808,6 +808,26 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		}
 	})
 
+	// Both inputs bad at once. Every other ReplaceRun error case varies one
+	// input, so neither reaches the combination — and the two stores check in
+	// different orders unless pinned. Postgres must validate the hash before
+	// opening its transaction, so the hash error is the one both must give.
+	t.Run("ReplaceRun rejects a bad hash before an unknown id", func(t *testing.T) {
+		s := newStore(t)
+		_, err := s.ReplaceRun(context.Background(), uuid.New(), "sha256:anything")
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		var notFound *RunNotFoundError
+		if errors.As(err, &notFound) {
+			t.Fatalf("got *RunNotFoundError, want the plan-hash error: the hash is "+
+				"checked first because Postgres cannot check the id without a transaction. err = %v", err)
+		}
+		if !strings.Contains(err.Error(), "plan_hash") {
+			t.Fatalf("want a plan_hash error, got %v", err)
+		}
+	})
+
 	t.Run("SaveResults then GetResults round-trips in id order", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
@@ -1326,6 +1346,31 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		}
 	})
 
+	// Nil, not an empty slice. Postgres returns nil because its row scan
+	// never appends; a memory store returning make([]T, 0) would look
+	// identical to every len() check in this suite and different to a caller
+	// testing == nil.
+	t.Run("an empty result set is nil, not an empty slice", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		if got, err := s.GetLiveResults(ctx, "2099-12"); err != nil {
+			t.Fatalf("GetLiveResults: %v", err)
+		} else if got != nil {
+			t.Errorf("GetLiveResults on an unknown period = %#v, want nil", got)
+		}
+
+		runID, err := s.CreateRun(ctx, "2026-01", validHash)
+		if err != nil {
+			t.Fatalf("CreateRun: %v", err)
+		}
+		if got, err := s.GetResults(ctx, runID); err != nil {
+			t.Fatalf("GetResults: %v", err)
+		} else if got != nil {
+			t.Errorf("GetResults on a run with no rows = %#v, want nil", got)
+		}
+	})
+
 	// Both implementations must refuse the same malformed input. Without
 	// these, the memory store accepts values Postgres rejects and a test that
 	// passes in memory fails in production — the exact trap this suite
@@ -1358,6 +1403,15 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 				{EarnerID: uuid.New(), DollarAmount: 1, Detail: []byte(`null`)}}},
 			{"nil detail", "primary", []CommissionResultInput{
 				{EarnerID: uuid.New(), DollarAmount: 1, Detail: nil}}},
+			// TEXT cannot hold a NUL byte — Postgres rejects it with
+			// "invalid byte sequence for encoding UTF8". Structure names come
+			// from plan config, where the schema only requires minLength 1,
+			// so a memory store that accepted this would diverge on real
+			// input rather than on a contrived one.
+			{"NUL in structure", "pri\x00mary", []CommissionResultInput{
+				{EarnerID: uuid.New(), DollarAmount: 1, Detail: []byte(`{"v":1}`)}}},
+			{"invalid UTF-8 in structure", "pri\xffmary", []CommissionResultInput{
+				{EarnerID: uuid.New(), DollarAmount: 1, Detail: []byte(`{"v":1}`)}}},
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {

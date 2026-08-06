@@ -125,7 +125,13 @@ func BenchmarkSaveResultsOneMillionLiveHeap(b *testing.B) {
 	b.ReportMetric(float64(nfr1Rows), "rows/op")
 	b.ReportMetric(peakLiveHeapMB, "peakLiveHeapMB")
 
-	if peakLiveHeapMB > nfr1MaxLiveHeapMB {
+	// Zero first. A sampler that never fired reports 0, which would sail
+	// through the upper bound below and read as a spectacular pass. The write
+	// allocates GBs, so some live-heap growth is certain to be observable.
+	if peakLiveHeapMB <= 0 {
+		b.Errorf("peak live heap measured as %.2f MB, which means the sampler never observed growth; "+
+			"the memory target was not actually measured", peakLiveHeapMB)
+	} else if peakLiveHeapMB > nfr1MaxLiveHeapMB {
 		b.Errorf("NFR1: peak live heap %.2f MB during the write, target is under %.0f MB",
 			peakLiveHeapMB, nfr1MaxLiveHeapMB)
 	}

@@ -273,6 +273,11 @@ func validatePlanHashOnly(planHash string) error {
 // built from UUIDs, numbers, and fixed enum strings. A caller putting
 // free-form text into Detail or CarryForward would meet them as a
 // Postgres-only insert failure.
+//
+// PlanHash is a third caller with a different reason: it needs "is this one
+// JSON object" as a guard before hashing, and never writes the bytes to
+// Postgres. Tightening this helper for a Postgres reason would move
+// PlanHash's accept boundary too.
 func checkJSONObject(raw json.RawMessage) error {
 	// Explicit, so the wrapped message says what happened. Falling through to
 	// the decoder works but surfaces a bare "EOF". TrimSpace so whitespace-only

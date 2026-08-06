@@ -2,9 +2,87 @@ package networkengine
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mlmforge/mlmforge/internal/config"
 )
+
+// PlanHash's doc makes two factual claims about a different package: that
+// stage-5 pipeline output is always a JSON object, and that it is byte-stable
+// for a given plan. Both hold today, and nothing enforced either. A
+// translateToEngine that returned a top-level array, or gained a map-to-slice
+// conversion without a sort, would break PlanHash at runtime with every test
+// still green.
+//
+// This runs real plan fixtures through the actual pipeline rather than
+// asserting on hand-written JSON, because the claim is about the pipeline.
+func TestPlanHashOverRealPipelineOutput(t *testing.T) {
+	root := filepath.Join("..", "..")
+	pipeline, err := config.NewPipeline(filepath.Join(root, "schemas", "compensation-plan.schema.json"))
+	if err != nil {
+		t.Fatalf("NewPipeline: %v", err)
+	}
+
+	dir := filepath.Join(root, "internal", "config", "testdata", "valid")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read fixtures: %v", err)
+	}
+	var ran int
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
+			continue
+		}
+		t.Run(e.Name(), func(t *testing.T) {
+			yamlBytes, err := os.ReadFile(filepath.Join(dir, e.Name()))
+			if err != nil {
+				t.Fatalf("read %s: %v", e.Name(), err)
+			}
+
+			first, hash := hashPipelineOutput(t, pipeline, yamlBytes)
+			// Same input, fresh pipeline run: the hash must not move. A map
+			// iterated without sorting would show up here.
+			second, again := hashPipelineOutput(t, pipeline, yamlBytes)
+			if hash != again {
+				t.Fatalf("hash moved across runs of identical input:\n%s\n%s", hash, again)
+			}
+			if string(first) != string(second) {
+				t.Fatal("pipeline output bytes are not stable for identical input")
+			}
+			if err := validatePlanHashOnly(hash); err != nil {
+				t.Fatalf("hash of real pipeline output failed the store's validator: %v", err)
+			}
+		})
+		ran++
+	}
+	if ran == 0 {
+		t.Fatal("no plan fixtures found; this test would pass vacuously")
+	}
+}
+
+// hashPipelineOutput runs one plan through stage 5 and hashes the result,
+// failing on any validation error so a fixture that stops being valid cannot
+// quietly skip the assertion.
+func hashPipelineOutput(t *testing.T, p *config.Pipeline, yamlBytes []byte) ([]byte, string) {
+	t.Helper()
+	engineJSON, verrs, err := p.LoadAndValidate(yamlBytes)
+	if err != nil {
+		t.Fatalf("LoadAndValidate: %v", err)
+	}
+	for _, ve := range verrs {
+		if ve.Severity == config.SeverityError {
+			t.Fatalf("fixture failed validation: %+v", ve)
+		}
+	}
+	hash, err := PlanHash(engineJSON)
+	if err != nil {
+		t.Fatalf("PlanHash over real pipeline output: %v", err)
+	}
+	return engineJSON, hash
+}
 
 func TestPlanHashIsStableForIdenticalBytes(t *testing.T) {
 	in := json.RawMessage(`{"name":"demo","version":1}`)

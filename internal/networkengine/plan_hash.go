@@ -40,11 +40,11 @@ func PlanHash(engineJSON json.RawMessage) (string, error) {
 	// truncated buffer, or a fragment, without changing the bytes hashed.
 	//
 	// checkJSONObject rather than json.Valid: a plan is an object, and
-	// json.Valid would happily accept a bare string or array and hand back a
-	// legitimate-looking hash for something that is not a plan. It also
-	// rejects trailing data after the value.
+	// json.Valid accepts a bare string or array, handing back a
+	// legitimate-looking hash for something that is not a plan. (Both reject
+	// trailing data, so that is not the difference.)
 	if err := checkJSONObject(engineJSON); err != nil {
-		return "", fmt.Errorf("plan hash: engine JSON must be a JSON object: %w", err)
+		return "", fmt.Errorf("plan hash: invalid engine JSON: %w", err)
 	}
 	sum := sha256.Sum256(engineJSON)
 	return "sha256:" + hex.EncodeToString(sum[:]), nil

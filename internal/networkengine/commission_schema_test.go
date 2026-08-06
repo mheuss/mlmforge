@@ -82,16 +82,35 @@ func TestCommissionRunsSchema(t *testing.T) {
 		}
 	})
 
+	// The seeded run shares this row's period on purpose. Point at another
+	// period and the row would violate the composite foreign key as well as
+	// the CHECK named here, so the test would stay green if the CHECK were
+	// dropped. Same period leaves the CHECK as the only possible rejector.
 	t.Run("superseded_by on a non-voided run is rejected", func(t *testing.T) {
 		other := uuid.New()
-		if _, err := pool.Exec(ctx, insert, other, "2026-05", "running", nil); err != nil {
+		if _, err := pool.Exec(ctx, insert, other, "2026-05", "voided", nil); err == nil {
+			t.Fatal("a voided seed needs voided_at; this insert should have failed")
+		}
+		// Seed the period's one active run, then try to supersede from a
+		// second row in the same period that is still running.
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO commission_runs (id, period_id, plan_hash, status, voided_at)
+			 VALUES ($1, '2026-05', $2, 'voided', now())`,
+			other, "sha256:"+strings.Repeat("a", 64)); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
 		_, err := pool.Exec(ctx,
 			`INSERT INTO commission_runs (id, period_id, plan_hash, status, superseded_by)
-			 VALUES ($1, '2026-06', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'running', $2)`, uuid.New(), other)
+			 VALUES ($1, '2026-05', $2, 'running', $3)`,
+			uuid.New(), "sha256:"+strings.Repeat("a", 64), other)
 		if err == nil {
 			t.Fatal("expected CHECK to reject superseded_by on a non-voided run")
+		}
+		// 23514 is check_violation. Without this the composite foreign key or
+		// the partial unique index could satisfy the assertion instead.
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+			t.Fatalf("want a CHECK violation (23514), got %v", err)
 		}
 	})
 
@@ -348,6 +367,14 @@ func TestCommissionResultsSchema(t *testing.T) {
 	t.Run("a non-object detail is rejected", func(t *testing.T) {
 		if _, err := pool.Exec(ctx, insert, runID, "primary", uuid.New(), "1.0", `[1,2]`); err == nil {
 			t.Fatal("expected CHECK to require a JSON object in detail")
+		}
+	})
+
+	// Go rejects this twice, but neither guard is on the path a manual SQL
+	// writer takes into the money table.
+	t.Run("a nil earner_id is rejected", func(t *testing.T) {
+		if _, err := pool.Exec(ctx, insert, runID, "primary", uuid.Nil, "1.0", `{"v":1}`); err == nil {
+			t.Fatal("expected CHECK to reject the all-zero earner id")
 		}
 	})
 

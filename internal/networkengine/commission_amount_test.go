@@ -2,11 +2,13 @@ package networkengine
 
 import (
 	"context"
+	"errors"
 	"math"
 	"math/rand"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // TestDollarAmountRoundTripsThroughNumeric is the property behind design
@@ -169,6 +171,17 @@ func TestAFailedWriteLeavesPriorRowsIntact(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("premise broken: Postgres should reject a lone surrogate in jsonb")
+	}
+	// Pin which rejection. A type-only check would also accept an error from
+	// the run lock or anything else in the transaction, and this test's whole
+	// premise is that the failure lands inside CopyFrom, after the DELETE.
+	//
+	// 22P02 is invalid_text_representation. Postgres reports an unpaired
+	// surrogate as malformed json input, not as 22P05
+	// untranslatable_character — that one is for encoding conversion.
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "22P02" {
+		t.Fatalf("want invalid json input (22P02) from the copy, got %v", err)
 	}
 
 	// The rollback is the point. A DELETE that committed without its COPY

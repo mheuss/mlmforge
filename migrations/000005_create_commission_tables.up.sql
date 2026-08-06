@@ -72,6 +72,12 @@ CREATE TABLE commission_results (
     dollar_amount NUMERIC     NOT NULL,
     detail        JSONB       NOT NULL,
     CHECK (structure <> ''),
+    -- Go rejects the all-zero UUID in validateResultInputs and again in the
+    -- copy source, but both are bypassed by manual SQL or a future writer
+    -- that does not go through the store. This is the money table's system of
+    -- record, so the invariant belongs here too — the fail-loud-on-bypass-
+    -- paths rule in docs/development/config-types.md.
+    CHECK (earner_id <> '00000000-0000-0000-0000-000000000000'::uuid),
     -- Every non-finite value, not just NaN. Postgres 14+ accepts Infinity in
     -- a NUMERIC column, and strconv.FormatFloat(math.Inf(1), 'f', -1, 64)
     -- emits "+Inf" — the exact text path this design uses for float64

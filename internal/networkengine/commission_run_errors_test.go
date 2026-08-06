@@ -125,6 +125,12 @@ func TestValidateRunInput(t *testing.T) {
 		{"prefix with junk", "2026-01", "sha256:anything", true},
 		{"digest too short", "2026-01", "sha256:abc", true},
 		{"uppercase hex", "2026-01", "sha256:" + strings.ToUpper("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"), true},
+		// TEXT cannot hold either; Postgres rejects both with 22021. The
+		// shared suite covers them through both stores, but without a case
+		// here, deleting the guard leaves this file green and breaks parity
+		// only against a live database.
+		{"period with a NUL byte", "2026\x00-01", goodHash, true},
+		{"period that is not valid UTF-8", "2026-\xff", goodHash, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -214,6 +220,10 @@ func TestValidateResultInputs(t *testing.T) {
 		{"valid", "primary",
 			CommissionResultInput{EarnerID: uuid.New(), DollarAmount: 1.5, Detail: json.RawMessage(`{"v":1}`)}, false},
 		{"empty structure", "",
+			CommissionResultInput{EarnerID: uuid.New(), DollarAmount: 1.5, Detail: json.RawMessage(`{"v":1}`)}, true},
+		{"structure with a NUL byte", "pri\x00mary",
+			CommissionResultInput{EarnerID: uuid.New(), DollarAmount: 1.5, Detail: json.RawMessage(`{"v":1}`)}, true},
+		{"structure that is not valid UTF-8", "prim\xffary",
 			CommissionResultInput{EarnerID: uuid.New(), DollarAmount: 1.5, Detail: json.RawMessage(`{"v":1}`)}, true},
 		{"nil earner id", "primary",
 			CommissionResultInput{EarnerID: uuid.Nil, DollarAmount: 1, Detail: json.RawMessage(`{"v":1}`)}, true},

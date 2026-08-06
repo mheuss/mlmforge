@@ -275,7 +275,10 @@ func (s *PostgresCommissionRunStore) ReplaceRun(ctx context.Context, oldRunID uu
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("replace commission run: begin tx: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }() // no-op after Commit
+	// WithoutCancel, not ctx. On a cancelled caller context Rollback fails
+	// immediately and pgx destroys the connection instead of returning it to
+	// the pool — so cancellation load leaks pool capacity. No-op after Commit.
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
 	// 1. Lock the old run. The lock serializes concurrent replacements, and
 	//    reading period_id from the locked row is what keeps the replacement
@@ -352,7 +355,10 @@ func (s *PostgresCommissionRunStore) SaveResults(ctx context.Context, runID uuid
 	if err != nil {
 		return fmt.Errorf("save commission results: begin tx: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }() // no-op after Commit
+	// WithoutCancel for the same reason as ReplaceRun: a cancelled caller
+	// context would make Rollback fail and cost the pool a connection.
+	// No-op after Commit.
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
 	// Plain string then convert, matching scanCommissionRun.
 	var rawStatus string

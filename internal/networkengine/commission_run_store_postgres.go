@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -159,14 +161,155 @@ func (s *PostgresCommissionRunStore) ReplaceRun(_ context.Context, _ uuid.UUID, 
 	return uuid.Nil, errPostgresUnimplemented
 }
 
-// SaveResults is implemented in Task 6.
-func (s *PostgresCommissionRunStore) SaveResults(_ context.Context, _ uuid.UUID, _ string, _ []CommissionResultInput) error {
-	return errPostgresUnimplemented
+// copyChunkSize bounds one CopyFrom call. A million-row write arrives as
+// twenty chunks inside one transaction rather than as a single statement.
+const copyChunkSize = 50_000
+
+const deleteStructureResultsSQL = `DELETE FROM commission_results
+                                   WHERE run_id = $1 AND structure = $2`
+
+const lockRunSQL = `SELECT status FROM commission_runs WHERE id = $1 FOR UPDATE`
+
+// SaveResults replaces every row for (runID, structure) inside one
+// transaction. The run is locked first so it cannot complete or be voided
+// while rows are landing under it.
+func (s *PostgresCommissionRunStore) SaveResults(ctx context.Context, runID uuid.UUID, structure string, results []CommissionResultInput) error {
+	// Validate before opening a transaction, so a malformed batch never
+	// starts one. The copy source repeats the checks as a last line of
+	// defense on the write path itself.
+	if err := validateResultInputs(structure, results); err != nil {
+		return err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("save commission results: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() // no-op after Commit
+
+	// Plain string then convert, matching scanCommissionRun.
+	var rawStatus string
+	if err := tx.QueryRow(ctx, lockRunSQL, runID).Scan(&rawStatus); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return &RunNotFoundError{RunID: runID}
+		}
+		return fmt.Errorf("save commission results: lock run: %w", err)
+	}
+	if status := CommissionRunStatus(rawStatus); status != RunStatusRunning {
+		return &RunNotRunningError{RunID: runID, Status: status}
+	}
+
+	if _, err := tx.Exec(ctx, deleteStructureResultsSQL, runID, structure); err != nil {
+		return fmt.Errorf("save commission results: clear prior rows: %w", err)
+	}
+
+	columns := []string{"run_id", "structure", "earner_id", "dollar_amount", "detail"}
+	for start := 0; start < len(results); start += copyChunkSize {
+		end := min(start+copyChunkSize, len(results))
+		src := newCommissionResultCopySource(runID, structure, results[start:end])
+		if _, err := tx.CopyFrom(ctx, pgx.Identifier{"commission_results"}, columns, src); err != nil {
+			return fmt.Errorf("save commission results: copy from: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("save commission results: commit: %w", err)
+	}
+	return nil
 }
 
-// GetResults is implemented in Task 6.
-func (s *PostgresCommissionRunStore) GetResults(_ context.Context, _ uuid.UUID) ([]CommissionResult, error) {
-	return nil, errPostgresUnimplemented
+// commissionResultCopySource is a pgx.CopyFromSource over result inputs.
+// It follows qualificationHistoryCopySource, the reference adapter for bulk
+// writes in this package.
+//
+// DollarAmount is formatted with strconv.FormatFloat(v, 'f', -1, 64), the
+// shortest decimal string that round-trips the float exactly. Passing the
+// float64 directly would let pgx choose its own textual form, and NUMERIC
+// exists here precisely so the stored value is not at the mercy of float
+// formatting.
+type commissionResultCopySource struct {
+	runID     uuid.UUID
+	structure string
+	results   []CommissionResultInput
+	idx       int
+}
+
+func newCommissionResultCopySource(runID uuid.UUID, structure string, results []CommissionResultInput) *commissionResultCopySource {
+	return &commissionResultCopySource{runID: runID, structure: structure, results: results, idx: -1}
+}
+
+func (s *commissionResultCopySource) Next() bool {
+	s.idx++
+	return s.idx < len(s.results)
+}
+
+// Values re-checks what validateResultInputs already rejected. This is the
+// bypass guard: the copy path is where bytes reach the money table, and a
+// future caller reaching it another way must fail loudly rather than write a
+// silent default. Every branch here aborts the CopyFrom, which rolls back the
+// whole transaction.
+func (s *commissionResultCopySource) Values() ([]any, error) {
+	r := s.results[s.idx]
+	if math.IsNaN(r.DollarAmount) || math.IsInf(r.DollarAmount, 0) {
+		return nil, fmt.Errorf("earner %s: dollar_amount must be finite, got %v", r.EarnerID, r.DollarAmount)
+	}
+	// Not defaulted to {}. detail is NOT NULL with a jsonb_typeof = 'object'
+	// CHECK, and substituting an empty object here would turn a caller bug
+	// into a persisted row that looks deliberate.
+	if len(r.Detail) == 0 {
+		return nil, fmt.Errorf("earner %s: detail must be a JSON object, got nothing", r.EarnerID)
+	}
+	return []any{
+		s.runID,
+		s.structure,
+		r.EarnerID,
+		strconv.FormatFloat(r.DollarAmount, 'f', -1, 64),
+		r.Detail,
+	}, nil
+}
+
+func (s *commissionResultCopySource) Err() error { return nil }
+
+const getResultsSQL = `SELECT id, run_id, structure, earner_id,
+                              dollar_amount::text, detail
+                       FROM commission_results
+                       WHERE run_id = $1
+                       ORDER BY id ASC`
+
+// GetResults returns a run's rows ordered by id ascending, whatever the run's
+// status. A voided run's results stay readable for audit.
+func (s *PostgresCommissionRunStore) GetResults(ctx context.Context, runID uuid.UUID) ([]CommissionResult, error) {
+	// Resolve the run first so an unknown id is *RunNotFoundError rather than
+	// an empty slice. A run with no rows is a different answer.
+	if _, err := s.GetRun(ctx, runID); err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, getResultsSQL, runID)
+	if err != nil {
+		return nil, fmt.Errorf("get commission results: %w", err)
+	}
+	defer rows.Close()
+	return scanCommissionResults(rows)
+}
+
+// scanCommissionResults reads dollar_amount as text and parses it, rather
+// than letting the driver map NUMERIC to a float. The text is the exact
+// stored decimal, so ParseFloat reproduces the original float64.
+func scanCommissionResults(rows pgx.Rows) ([]CommissionResult, error) {
+	var out []CommissionResult
+	for rows.Next() {
+		var r CommissionResult
+		var amount string
+		if err := rows.Scan(&r.ID, &r.RunID, &r.Structure, &r.EarnerID, &amount, &r.Detail); err != nil {
+			return nil, fmt.Errorf("scan commission_results row: %w", err)
+		}
+		v, err := strconv.ParseFloat(amount, 64)
+		if err != nil {
+			return nil, fmt.Errorf("scan commission_results row: dollar_amount %q: %w", amount, err)
+		}
+		r.DollarAmount = v
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // GetLiveResults is implemented in Task 7.

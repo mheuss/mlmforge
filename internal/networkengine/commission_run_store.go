@@ -269,8 +269,10 @@ func validatePlanHashOnly(planHash string) error {
 // Postgres-only insert failure.
 func checkJSONObject(raw json.RawMessage) error {
 	// Explicit, so the wrapped message says what happened. Falling through to
-	// the decoder works but surfaces a bare "EOF".
-	if len(raw) == 0 {
+	// the decoder works but surfaces a bare "EOF". TrimSpace so whitespace-only
+	// input takes this branch too, rather than the EOF path this exists to
+	// avoid.
+	if len(bytes.TrimSpace(raw)) == 0 {
 		return fmt.Errorf("no value")
 	}
 	// Raw invalid UTF-8 bytes: Go substitutes U+FFFD and accepts, Postgres
@@ -345,10 +347,10 @@ func validateResultInputs(structure string, results []CommissionResultInput) err
 			return fmt.Errorf("commission results: row %d (earner %s): dollar_amount must be finite, got %v",
 				i, r.EarnerID, r.DollarAmount)
 		}
-		// A nil or empty Detail falls through to the decoder, which rejects
-		// it. That mirrors detail JSONB NOT NULL, and unlike carry_forward
-		// there is deliberately no len==0 shortcut: an earning with no detail
-		// is a caller bug, not an absent-value case.
+		// A nil or empty Detail is rejected by checkJSONObject. That mirrors
+		// detail JSONB NOT NULL. Unlike carry_forward there is deliberately
+		// no shortcut here letting it pass: an earning with no detail is a
+		// caller bug, not an absent-value case.
 		if err := checkJSONObject(r.Detail); err != nil {
 			return fmt.Errorf("commission results: row %d (earner %s): detail must be a JSON object: %w",
 				i, r.EarnerID, err)

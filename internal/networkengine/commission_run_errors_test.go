@@ -188,6 +188,8 @@ func TestValidateCarryForward(t *testing.T) {
 		{"a trailing brace is rejected", json.RawMessage(`{}}`), true},
 		{"a trailing bracket is rejected", json.RawMessage(`{}]`), true},
 		{"a trailing brace past whitespace is rejected", json.RawMessage(`{"a":1}   }`), true},
+		{"whitespace only is rejected", json.RawMessage("  \t\r\n "), true},
+		{"whitespace around an object is allowed", json.RawMessage(" \n{\"v\":1}\n "), false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -2660,9 +2660,13 @@ fn calculate_streamline_ignores_request_scoped_config() {
 /// The engine-side miss, twin of `calculate_streamline_unknown_structure_returns_not_found`.
 /// The plan has the structure; no engine was created. Both misses return
 /// STRUCTURE_NOT_FOUND and differ only by message, so pinning both messages is
-/// what makes the pair meaningful — and what locks the
-/// get_streamline_ref-before-find_streamline_structure ordering. Mirrors
+/// what makes the pair meaningful. Mirrors
 /// `calculate_unilevel_without_tree_returns_structure_not_found`.
+///
+/// This pair does NOT pin the order of the two lookups: each test arranges for
+/// exactly one of them to miss, so the same one misses either way. Swapping them
+/// leaves both green. `calculate_streamline_both_lookups_miss_reports_the_engine`
+/// is the test that locks the order.
 #[test]
 fn calculate_streamline_without_engine_returns_not_found() {
     let mut worker = common::spawn_worker();
@@ -2691,6 +2695,48 @@ fn calculate_streamline_without_engine_returns_not_found() {
     assert!(
         resp.contains(&format!("structure '{}' not found", SL_STRUCTURE)),
         "expected the get_streamline_ref miss message, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Locks the order of the two lookups, which the single-miss pair above cannot.
+///
+/// Neither the engine nor the plan knows "Nowhere", so both lookups miss and the
+/// response reports whichever ran first. `get_streamline_ref` runs first, so the
+/// engine-side message wins. Swap the two lookups in the handler and only this
+/// test fails.
+///
+/// The order matters because it decides which error a caller sees for a wholly
+/// unknown structure, and it matches all five sibling commission handlers, which
+/// resolve the tree before the structure.
+#[test]
+fn calculate_streamline_both_lookups_miss_reports_the_engine() {
+    let mut worker = common::spawn_worker();
+    load_streamline_test_plan(&mut worker);
+    // No engine, and "Nowhere" is not in the plan either.
+
+    let params = r#"{"structure":"Nowhere","snapshots":{},"volume":[]}"#;
+    let request = format!(
+        r#"{{"id":"calc-sl-both","op":"calculate_streamline","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains("STRUCTURE_NOT_FOUND"),
+        "expected STRUCTURE_NOT_FOUND, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("structure 'Nowhere' not found"),
+        "expected get_streamline_ref to answer first, got: {}",
+        resp
+    );
+    assert!(
+        !resp.contains("no streamline structure named"),
+        "find_streamline_structure answered first; the lookups are out of order: {}",
         resp
     );
 

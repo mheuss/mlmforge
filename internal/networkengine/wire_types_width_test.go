@@ -30,9 +30,12 @@ import (
 //     dynamic_compression keys to 1-255 via propertyNames.pattern (test:
 //     TestSchemaRejectsStreamlineLevelOverU8), and internal/config/translate.go
 //     rejects out-of-range levels (test: TestSortStreamlineLevelsOutOfRange).
-//   - CommissionableDepth and AdditionalPerRank: internal/config.StreamlineCommission
-//     and StreamConfig are both registered in internal/config/width_contract_test.go,
-//     so both fields keep a direct pin there.
+//   - CommissionableDepth and AdditionalPerRank: both keep a field-level pin in
+//     engine/testdata/config_contract/width_manifest.json, under go_struct
+//     StreamlineCommission and StreamConfig. Each entry declares go_type,
+//     rust_type and over_max: 256, and TestConfigContract_FieldsMatchAndRejectOverMax
+//     asserts the declared type AND that an over-max value is rejected by the real
+//     two-pass decode — strictly more than the reflect-string rows did.
 func TestWireTypesNarrowMirrors(t *testing.T) {
 	cases := []struct {
 		name  string

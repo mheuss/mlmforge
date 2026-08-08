@@ -24,7 +24,9 @@ This is the same defect as HEU-583, not a deliberate carve-out. HEU-603 tracks i
 
 **Validation happens once, at the boundary.** `handle_load_plan` is the only door the *compensation plan* walks through, so `WorkerState.plan` is valid by construction. A commission handler does not re-validate it and does not need to know how validation works.
 
-Tree-level engine config is a separate door and is not yet closed. `handle_create_board_plan` takes `config: BoardPlanConfig` from request params, and `BoardPlanEngine::new` checks only the width and height bounds before storing it verbatim — `BoardPlanConfig::validate` never runs on that path. `handle_create_streamline` likewise builds its `StreamlineConfig` from request params. Both land in `WorkerState.trees`. HEU-603 and HEU-558 track them. So "valid by construction" is a claim about the plan, not about all of `WorkerState`.
+Tree-level engine config is a separate door and is not yet closed. `handle_create_board_plan` takes `config: BoardPlanConfig` from request params, and `BoardPlanEngine::new` checks only the width and height bounds before storing it verbatim — `BoardPlanConfig::validate` never runs on that path. That is HEU-607. `handle_create_streamline` likewise builds its `StreamlineConfig` from request params, never checked against the plan's `stream_config`; that is HEU-598, open question 1. Both land in `WorkerState.trees`.
+
+So "valid by construction" is a claim about the plan, not about all of `WorkerState`. Note that HEU-603 is a different gap — the board *calculate* path, not the create path — and closing it leaves this door open.
 
 **Config on the request creates a second door.** Adding `plan.validate()` to the streamline handler would not have fixed HEU-583. `validate` walks `plan.structures`. The request carried a separate `structure_config` field that fed the calculator directly. Two sources of the same config can disagree, and the one that drove the math was the one nothing checked.
 

@@ -438,7 +438,8 @@ pub(crate) fn handle_calculate_streamline(state: &WorkerState, request: &Request
     //   against the plan's `streams` block. That is payout-relevant, since
     //   freeze_on_demotion decides which streams stay active and only active
     //   streams are paid. No divergence is reachable today because `streams` is
-    //   dead config, read nowhere outside tests. Tracked by HEU-558.
+    //   dead config, read nowhere outside tests (HEU-558 decides its semantics,
+    //   which would make it live). The door itself is HEU-598, open question 1.
     // - require_plan returns whatever plan was loaded last, so a load_plan that
     //   replaces the plan while streams already exist re-rates them. Tracked by
     //   HEU-598.

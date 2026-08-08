@@ -2428,8 +2428,9 @@ fn load_plan_rejects_streamline_percent_out_of_range() {
         resp
     );
     assert!(
-        resp.contains("must be a fraction"),
-        "expected the fraction gate to reject it, not a deserialize failure, got: {}",
+        resp.contains("dynamic_compression") && resp.contains("must be a fraction"),
+        "expected the streamline fraction gate to reject it, not a deserialize \
+         failure or an unrelated fraction check, got: {}",
         resp
     );
 

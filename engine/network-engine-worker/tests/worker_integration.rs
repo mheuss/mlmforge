@@ -2562,15 +2562,118 @@ fn calculate_streamline_uses_the_loaded_plan_structure() {
         params
     );
     let resp = common::send_receive(&mut worker, &request);
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
     assert!(
-        resp.contains(r#""ok":true"#),
+        parsed["ok"].as_bool().unwrap_or(false),
         "expected success, got: {}",
         resp
     );
+    // Assert the whole earning, not just that some field contains "10.0" —
+    // a `contains` check prefix-matches 10.05 and would not notice a spurious
+    // second earning alongside the correct one.
+    let earnings = parsed["result"].as_array().expect("result is an array");
+    assert_eq!(
+        earnings.len(),
+        1,
+        "expected exactly one earning, got: {}",
+        resp
+    );
+    assert_eq!(earnings[0]["earner_id"].as_str().unwrap(), SL_USER1);
+    assert_eq!(earnings[0]["source_id"].as_str().unwrap(), SL_USER2);
+    assert_eq!(earnings[0]["level"].as_u64().unwrap(), 1);
     // 100 CV * 1.0 multiplier * 0.10 level-1 percent = 10.0
+    assert_eq!(earnings[0]["dollar_amount"].as_f64().unwrap(), 10.0);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// The regression guard for the HEU-583 vulnerability itself.
+///
+/// Sends the legacy wire shape — the request still carrying `plan` and a
+/// `structure_config` whose percent is 500% — and asserts the payout still comes
+/// from the loaded plan. That is the shape the Go client sends today, so this is
+/// not hypothetical. Nothing else in this suite would catch a regression: if
+/// someone re-adds `structure_config` to `Params` or flattens it back in, every
+/// other streamline test stays green and only this one fails.
+#[test]
+fn calculate_streamline_ignores_request_scoped_config() {
+    let mut worker = common::spawn_worker();
+    load_streamline_test_plan(&mut worker);
+    create_streamline(&mut worker);
+    sl_add_member(&mut worker, "sl-m1", SL_USER1, ROOT, 1001);
+    sl_add_member(&mut worker, "sl-m2", SL_USER2, SL_USER1, 1002);
+
+    // percent 5.0 and a 1000x multiplier: if either were honoured the payout
+    // would be wildly larger than the plan's $10.
+    let hostile_config = r#""structure_config":{"name":"TestStreamline","streamline_commission":{"volume_to_dollar_multiplier":1000.0,"commissionable_depth":5,"dynamic_compression":[{"level":1,"min_rank":"member","percent":5.0}],"streams":null}},"plan":{"bogus":true},"#;
+    let params = format!(
+        r#"{{{}"structure":"{}","snapshots":{{"{}":{{"rank":"member","personal_volume":100.0,"status":"active","has_order_in_period":true}},"{}":{{"rank":"member","personal_volume":100.0,"status":"active","has_order_in_period":true}}}},"volume":[{{"source_id":"{}","cv_amount":100.0}}]}}"#,
+        hostile_config, SL_STRUCTURE, SL_USER1, SL_USER2, SL_USER2
+    );
+    let request = format!(
+        r#"{{"id":"calc-sl-legacy","op":"calculate_streamline","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
     assert!(
-        resp.contains(r#""dollar_amount":10.0"#),
-        "expected a $10 level-1 earning, got: {}",
+        parsed["ok"].as_bool().unwrap_or(false),
+        "legacy-shaped params must be ignored, not rejected, got: {}",
+        resp
+    );
+    let earnings = parsed["result"].as_array().expect("result is an array");
+    assert_eq!(
+        earnings.len(),
+        1,
+        "expected exactly one earning, got: {}",
+        resp
+    );
+    assert_eq!(
+        earnings[0]["dollar_amount"].as_f64().unwrap(),
+        10.0,
+        "the request-scoped percent reached the calculator: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// The engine-side miss, twin of `calculate_streamline_unknown_structure_returns_not_found`.
+/// The plan has the structure; no engine was created. Both misses return
+/// STRUCTURE_NOT_FOUND and differ only by message, so pinning both messages is
+/// what makes the pair meaningful — and what locks the
+/// get_streamline_ref-before-find_streamline_structure ordering. Mirrors
+/// `calculate_unilevel_without_tree_returns_structure_not_found`.
+#[test]
+fn calculate_streamline_without_engine_returns_not_found() {
+    let mut worker = common::spawn_worker();
+    load_streamline_test_plan(&mut worker);
+    // Deliberately no create_streamline.
+
+    let params = format!(
+        r#"{{"structure":"{}","snapshots":{{}},"volume":[]}}"#,
+        SL_STRUCTURE
+    );
+    let request = format!(
+        r#"{{"id":"calc-sl-noengine","op":"calculate_streamline","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#),
+        "expected failure, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("STRUCTURE_NOT_FOUND"),
+        "expected STRUCTURE_NOT_FOUND, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains(&format!("structure '{}' not found", SL_STRUCTURE)),
+        "expected the get_streamline_ref miss message, got: {}",
         resp
     );
 

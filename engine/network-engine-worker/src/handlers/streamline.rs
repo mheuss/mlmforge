@@ -429,10 +429,19 @@ fn find_streamline_structure<'a>(
 }
 
 pub(crate) fn handle_calculate_streamline(state: &WorkerState, request: &Request) -> Response {
-    // Config comes from the plan validated by handle_load_plan, never from
-    // request params (HEU-583, design rationale 028). require_plan returns
-    // whatever plan was loaded last; a load_plan that replaces the plan while
-    // streams already exist is a separate gap, tracked by HEU-598.
+    // The *commission* config comes from the plan validated by handle_load_plan,
+    // never from request params (HEU-583, design rationale 028). Two adjacent
+    // gaps are deliberately not closed here:
+    //
+    // - The engine's *stream* config (assignment_mode, freeze_on_demotion) still
+    //   comes from create_streamline's request params and is never cross-checked
+    //   against the plan's `streams` block. That is payout-relevant, since
+    //   freeze_on_demotion decides which streams stay active and only active
+    //   streams are paid. No divergence is reachable today because `streams` is
+    //   dead config, read nowhere outside tests. Tracked by HEU-558.
+    // - require_plan returns whatever plan was loaded last, so a load_plan that
+    //   replaces the plan while streams already exist re-rates them. Tracked by
+    //   HEU-598.
     let plan = match require_plan(state, &request.id) {
         Ok(p) => p,
         Err(resp) => return resp,

@@ -19,6 +19,7 @@ Use-cases for the Network Engine bounded context.
 - [UC-NET-013: Dependency-aware replay ordering over multiple edge types](#uc-net-013-dependency-aware-replay-ordering-over-multiple-edge-types)
 - [UC-NET-014: Pre-projection event gate with database backstop](#uc-net-014-pre-projection-event-gate-with-database-backstop)
 - [UC-NET-015: Immutable run registry with a visibility-flip results store](#uc-net-015-immutable-run-registry-with-a-visibility-flip-results-store)
+- [UC-NET-016: Removing a wire field without a red interval](#uc-net-016-removing-a-wire-field-without-a-red-interval)
 
 ---
 
@@ -448,3 +449,31 @@ newID, _ := store.ReplaceRun(ctx, runID, newPlanHash)
 - A re-run whose partial output must never be visible.
 
 **Notes:** One active run per period comes from a partial unique index on `(period_id) WHERE status <> 'voided'`. The same-period rule for `superseded_by` is a composite foreign key against `UNIQUE (id, period_id)` — it does not need a trigger. Voiding preserves `completed_at` and `carry_forward`, which is why the completion CHECK is one-directional: a biconditional would make complete → voided impossible without erasing the audit fact the row exists to hold. Audit timestamps use `clock_timestamp()`, not `now()`, which is stamped at BEGIN and can predate a lock wait. Both implementations run one shared behavioral suite; see `docs/development/postgres-stores.md` for the Go/Postgres seams that suite exists to catch. The store has no production caller until HEU-592. HEU-595 adds `ListRuns` for walking the supersede chain, and HEU-596 owns the read-path paging contract.
+
+---
+
+### UC-NET-016: Removing a wire field without a red interval
+
+**Added:** v0.0.2 (HEU-583)
+**Files:** `engine/network-engine-worker/tests/worker_integration.rs` (`calculate_streamline_ignores_request_scoped_config`), `internal/networkengine/engine_client_test.go` (`TestEngineClient_CalculateStreamline_MockParams`)
+
+**Problem:** Deleting a field from an NDJSON request is a breaking change across two languages. Doing it in one commit leaves every intermediate commit red for one side or the other, and a caller still sending the field silently gets a different answer with nothing to catch it.
+
+**Solution:** Three ordered steps, exploiting the fact that neither Rust crate sets `#[serde(deny_unknown_fields)]` — extra params are ignored, not rejected.
+
+1. Migrate every caller to the new source **first**, leaving the old field in place. Both suites stay green against the unchanged worker.
+2. Flip the handler to read from the new source. Callers still sending the old field are silently ignored, and unchanged expected results are what prove the migration was behavior-preserving.
+3. Delete the field and its now-orphaned types.
+
+This inverts the obvious order. HEU-583's plan deliberately deviated from its own design's delivery phases to get it, on two verified facts: no `deny_unknown_fields` anywhere, and `setup`/`setup_raw` mutual exclusivity in the contract harness.
+
+**Guarding it:** one test sends the *legacy* wire shape with a hostile value and asserts the payout still comes from the new source. Make the two halves of the payload differ deliberately:
+
+- a **valid** old-shaped field catches "re-added and honored" — the calculation pays the hostile value.
+- a **deliberately malformed** one catches "re-added at all" — it fails deserialization before anything reads it, which is the leading indicator, since a field usually reappears unused before something wires it up.
+
+Without that test, reintroducing the field leaves the entire suite green. Verified by mutation: re-adding the field and preferring it failed exactly one test out of seventy.
+
+**When to use this pattern:** any `calculate_*` handler still taking request-scoped config. HEU-603 and HEU-607 both need this sequence.
+
+**Notes:** The silence that makes the migration safe is also unobservable — nothing reports that a caller sent an ignored field. HEU-613 covers that. Do not add `deny_unknown_fields` until callers have migrated, or the red interval this pattern avoids comes straight back.

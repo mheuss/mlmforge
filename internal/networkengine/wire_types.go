@@ -313,6 +313,7 @@ type StreamSummaryDTO struct {
 // CalculateStreamlineRequest is the input for streamline commission calculation.
 // The plan and structure config come from the worker's loaded plan, not the
 // request (HEU-583), so this mirrors CalculateUnilevelRequest exactly.
+// Wire field "structure" matches the Rust CalculateStreamlineParams serde rename.
 type CalculateStreamlineRequest struct {
 	StructureName string                            `json:"structure"`
 	Snapshots     map[string]DistributorSnapshotDTO `json:"snapshots"`

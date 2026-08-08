@@ -1176,6 +1176,8 @@ func TestEngineClient_CalculateStreamline(t *testing.T) {
 	assert.InDelta(t, 10.0, earning.DollarAmount, 1e-9)
 }
 
+// --- Streamline commission calculation test (mock) ---
+
 // TestEngineClient_CalculateStreamline_MockParams pins the serialized param set.
 // Streamline was the only calculate op without a _MockParams sibling, and this
 // change is precisely a wire-shape change, so the gap is worth closing here.
@@ -1213,10 +1215,17 @@ func TestEngineClient_CalculateStreamline_MockParams(t *testing.T) {
 		"volume": [{"source_id":"00000000-0000-0000-0000-000000000002","cv_amount":100.0}]
 	}`, string(mock.lastParams))
 
-	// Raw-byte checks as well as JSONEq: the point of this test is that two keys
-	// are gone, and byte-level absence says so directly rather than by
-	// implication. Unmarshaling collapses null, [] and omitted into the same
-	// empty value, so a struct-level check cannot prove a field is absent.
+	// These duplicate what JSONEq above already catches — JSONEq decodes into
+	// interface{}, so it sees an extra key. They earn their place as an
+	// independent tripwire: someone re-adding a field is likely to "fix" the
+	// failure by regenerating the golden JSON, which silences JSONEq but not
+	// these. Deleting the guard then has to be deliberate.
+	//
+	// Neither catches a field re-added with `,omitempty` and left unpopulated.
+	// That shape serializes to nothing, so it is dead weight rather than a
+	// bypass, and the Rust-side guard
+	// (calculate_streamline_ignores_request_scoped_config) catches it the moment
+	// anything populates it.
 	assert.NotContains(t, string(mock.lastParams), `"plan"`)
 	assert.NotContains(t, string(mock.lastParams), `"structure_config"`)
 }

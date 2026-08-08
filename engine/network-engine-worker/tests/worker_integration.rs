@@ -2596,10 +2596,12 @@ fn calculate_streamline_uses_the_loaded_plan_structure() {
 ///
 /// Sends the legacy wire shape — the request still carrying `plan` and a
 /// `structure_config` whose percent is 500% — and asserts the payout still comes
-/// from the loaded plan. That is the shape the Go client sends today, so this is
-/// not hypothetical. Nothing else in this suite would catch a regression: if
-/// someone re-adds `structure_config` to `Params` or flattens it back in, every
-/// other streamline test stays green and only this one fails.
+/// from the loaded plan. That is the shape the Go client sent before HEU-583,
+/// and since the worker sets no `deny_unknown_fields`, nothing stops a
+/// hand-rolled or third-party client from sending it again. Nothing else in this
+/// suite would catch a regression: if someone re-adds `structure_config` to
+/// `Params` or flattens it back in, every other streamline test stays green and
+/// only this one fails.
 ///
 /// The two halves of the payload catch different regressions, so keep both:
 ///

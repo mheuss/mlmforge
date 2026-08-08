@@ -36,6 +36,8 @@ So "valid by construction" is a claim about the plan, not about all of `WorkerSt
 
 **Per-calculation data is different.** Snapshots and volume change every call and describe a period, not a policy. They belong on the request. Config describes policy and belongs in state.
 
+This rule is about config. It is not a claim that request params cannot move money — they still can, and today nothing validates them. An asserted `snapshot.rank` clears dynamic-compression thresholds (HEU-608); omitting an upline's snapshot promotes every ancestor above it a level (HEU-609); a repeated volume `source_id` pays twice (HEU-610). Only CV *values* are checked, by `validate_cv`. Sourcing config from state closes one door, not the room.
+
 ## Revisit Trigger
 
 This rule is a call-site convention. Nothing in the type system enforces it. A new handler can still take config from the request, and nothing will fail until someone sends a bad value.

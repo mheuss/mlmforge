@@ -2571,18 +2571,22 @@ fn calculate_streamline_uses_the_loaded_plan_structure() {
     // Assert the whole earning, not just that some field contains "10.0" —
     // a `contains` check prefix-matches 10.05 and would not notice a spurious
     // second earning alongside the correct one.
-    let earnings = parsed["result"].as_array().expect("result is an array");
+    // `.expect(&resp)` rather than `.unwrap()` throughout: a bare unwrap fires
+    // before assert_eq! formats its message, so a renamed field would panic
+    // with "called Option::unwrap() on a None value" and the response body —
+    // the only useful part — would never print.
+    let earnings = parsed["result"].as_array().expect(&resp);
     assert_eq!(
         earnings.len(),
         1,
         "expected exactly one earning, got: {}",
         resp
     );
-    assert_eq!(earnings[0]["earner_id"].as_str().unwrap(), SL_USER1);
-    assert_eq!(earnings[0]["source_id"].as_str().unwrap(), SL_USER2);
-    assert_eq!(earnings[0]["level"].as_u64().unwrap(), 1);
+    assert_eq!(earnings[0]["earner_id"].as_str().expect(&resp), SL_USER1);
+    assert_eq!(earnings[0]["source_id"].as_str().expect(&resp), SL_USER2);
+    assert_eq!(earnings[0]["level"].as_u64().expect(&resp), 1);
     // 100 CV * 1.0 multiplier * 0.10 level-1 percent = 10.0
-    assert_eq!(earnings[0]["dollar_amount"].as_f64().unwrap(), 10.0);
+    assert_eq!(earnings[0]["dollar_amount"].as_f64().expect(&resp), 10.0);
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -2596,6 +2600,19 @@ fn calculate_streamline_uses_the_loaded_plan_structure() {
 /// not hypothetical. Nothing else in this suite would catch a regression: if
 /// someone re-adds `structure_config` to `Params` or flattens it back in, every
 /// other streamline test stays green and only this one fails.
+///
+/// The two halves of the payload catch different regressions, so keep both:
+///
+/// - `structure_config` is *valid*, so it catches a field re-added **and
+///   honoured** — the calculation would pay 500000.0 instead of 10.0.
+/// - `plan` is deliberately **bogus** (`{"bogus":true}`), so it catches a field
+///   re-added **at all**: deserializing it into `CompensationPlan` fails and the
+///   request is rejected outright. That is the leading indicator, since a field
+///   usually reappears unused before anything reads it.
+///
+/// Do not "improve" the bogus plan into a realistic one. A valid plan would
+/// deserialize cleanly, the payout would still be $10, and the second half of
+/// this guard would silently stop working.
 #[test]
 fn calculate_streamline_ignores_request_scoped_config() {
     let mut worker = common::spawn_worker();
@@ -2622,7 +2639,7 @@ fn calculate_streamline_ignores_request_scoped_config() {
         "legacy-shaped params must be ignored, not rejected, got: {}",
         resp
     );
-    let earnings = parsed["result"].as_array().expect("result is an array");
+    let earnings = parsed["result"].as_array().expect(&resp);
     assert_eq!(
         earnings.len(),
         1,
@@ -2630,7 +2647,7 @@ fn calculate_streamline_ignores_request_scoped_config() {
         resp
     );
     assert_eq!(
-        earnings[0]["dollar_amount"].as_f64().unwrap(),
+        earnings[0]["dollar_amount"].as_f64().expect(&resp),
         10.0,
         "the request-scoped percent reached the calculator: {}",
         resp

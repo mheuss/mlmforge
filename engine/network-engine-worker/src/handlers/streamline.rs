@@ -2,12 +2,14 @@ use std::collections::HashMap;
 
 use network_engine::commission::{DistributorSnapshot, VolumeSource, calculate_streamline};
 use network_engine::config::streamline::StreamAssignmentMode;
-use network_engine::config::{CompensationPlan, StreamlineStructureConfig};
+use network_engine::config::{CompensationPlan, StreamlineStructureConfig, StructureConfig};
 use network_engine::streamline::StreamlineEngine;
 use network_engine::streamline::engine::StreamlineConfig;
 use uuid::Uuid;
 
-use super::common::{extract_structure_name, parse_params, parse_u32_param, parse_uuid};
+use super::common::{
+    extract_structure_name, parse_params, parse_u32_param, parse_uuid, require_plan,
+};
 use crate::protocol::{Request, Response};
 use crate::state::{TreeInstance, WorkerState};
 
@@ -411,12 +413,35 @@ pub(crate) fn handle_streamline_get_stream(state: &WorkerState, request: &Reques
     }
 }
 
+/// Resolves a streamline structure by name from a validated plan.
+///
+/// Lives here rather than in `commission.rs` alongside its five siblings,
+/// which are private to that module. Adding a sixth there and widening it to
+/// `pub(crate)` would touch five working handlers for no gain.
+fn find_streamline_structure<'a>(
+    plan: &'a CompensationPlan,
+    name: &str,
+) -> Option<&'a StreamlineStructureConfig> {
+    plan.structures.iter().find_map(|s| match s {
+        StructureConfig::Streamline(c) if c.name == name => Some(c),
+        _ => None,
+    })
+}
+
 pub(crate) fn handle_calculate_streamline(state: &WorkerState, request: &Request) -> Response {
+    // Config comes from the plan validated by handle_load_plan, never from
+    // request params (HEU-583, design rationale 028). require_plan returns
+    // whatever plan was loaded last; a load_plan that replaces the plan while
+    // streams already exist is a separate gap, tracked by HEU-598.
+    let plan = match require_plan(state, &request.id) {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+
     #[derive(serde::Deserialize)]
     struct Params {
-        structure: String,
-        plan: CompensationPlan,
-        structure_config: StreamlineStructureConfig,
+        #[serde(rename = "structure")]
+        structure_name: String,
         snapshots: HashMap<Uuid, DistributorSnapshot>,
         volume: Vec<VolumeSource>,
     }
@@ -428,29 +453,23 @@ pub(crate) fn handle_calculate_streamline(state: &WorkerState, request: &Request
         }
     };
 
-    if params.structure_config.name != params.structure {
-        return Response::error(
-            request.id.clone(),
-            "INVALID_PARAMS",
-            format!(
-                "structure_config.name '{}' does not match structure '{}'",
-                params.structure_config.name, params.structure
-            ),
-        );
-    }
-
-    let engine = match get_streamline_ref(state, &params.structure, &request.id) {
+    let engine = match get_streamline_ref(state, &params.structure_name, &request.id) {
         Ok(e) => e,
         Err(resp) => return resp,
     };
 
-    match calculate_streamline(
-        engine,
-        &params.plan,
-        &params.structure_config,
-        &params.snapshots,
-        &params.volume,
-    ) {
+    let structure = match find_streamline_structure(plan, &params.structure_name) {
+        Some(s) => s,
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "STRUCTURE_NOT_FOUND",
+                format!("no streamline structure named '{}'", params.structure_name),
+            );
+        }
+    };
+
+    match calculate_streamline(engine, plan, structure, &params.snapshots, &params.volume) {
         Ok(earnings) => Response::success(
             request.id.clone(),
             serde_json::to_value(&earnings).expect("serialization infallible"),

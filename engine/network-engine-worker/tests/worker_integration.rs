@@ -2227,17 +2227,36 @@ const STREAMLINE_TEST_PLAN_JSON: &str = r#"{
     "placement": { "donated_placement": null, "holding_tank": null, "binary_placement": null }
 }"#;
 
-fn create_streamline(worker: &mut std::process::Child) {
+/// Creates a streamline engine under an arbitrary name. Tests that need the
+/// engine and the plan to disagree use this directly; everything else uses
+/// `create_streamline`, which pins the name to `SL_STRUCTURE`.
+fn create_streamline_named(worker: &mut std::process::Child, name: &str) {
     let resp = common::send_receive(
         worker,
         &format!(
             r#"{{"id":"sl-create","op":"create_streamline","params":{{"structure":"{}","assignment_mode":"sponsor_stream","freeze_on_demotion":true,"timestamp":1000}}}}"#,
-            SL_STRUCTURE
+            name
         ),
     );
     assert!(
         resp.contains(r#""ok":true"#),
         "create_streamline failed: {}",
+        resp
+    );
+}
+
+fn create_streamline(worker: &mut std::process::Child) {
+    create_streamline_named(worker, SL_STRUCTURE);
+}
+
+/// Loads `STREAMLINE_TEST_PLAN_JSON` and asserts it took. `calculate_streamline`
+/// resolves its structure config from this plan (HEU-583), so a test that skips
+/// this gets `NO_PLAN` rather than earnings.
+fn load_streamline_test_plan(worker: &mut std::process::Child) {
+    let resp = send_load_plan(worker, STREAMLINE_TEST_PLAN_JSON);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "load_plan (streamline) failed: {}",
         resp
     );
 }
@@ -2451,6 +2470,148 @@ fn load_plan_accepts_valid_streamline_plan() {
         "streamline plan should load: {}",
         resp
     );
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// T5: no plan loaded at all. `require_plan` is the first thing the handler does.
+#[test]
+fn calculate_streamline_without_plan_returns_no_plan() {
+    let mut worker = common::spawn_worker();
+    create_streamline(&mut worker);
+
+    let params = format!(
+        r#"{{"structure":"{}","snapshots":{{}},"volume":[]}}"#,
+        SL_STRUCTURE
+    );
+    let request = format!(
+        r#"{{"id":"calc-sl-np","op":"calculate_streamline","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#),
+        "expected failure, got: {}",
+        resp
+    );
+    assert!(resp.contains("NO_PLAN"), "expected NO_PLAN, got: {}", resp);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// T2: a failed load stores nothing, so the following calculate sees no plan.
+/// Runs in a fresh worker: `handle_load_plan` writes `state.plan` only on
+/// success, so a reused worker with an earlier valid plan would not show
+/// `NO_PLAN` here.
+#[test]
+fn calculate_streamline_after_rejected_plan_returns_no_plan() {
+    let mut worker = common::spawn_worker();
+
+    let bad = STREAMLINE_TEST_PLAN_JSON.replace("\"percent\": 0.10", "\"percent\": 5.0");
+    let load_resp = send_load_plan(&mut worker, &bad);
+    assert!(
+        load_resp.contains("INVALID_PLAN"),
+        "expected the load to be rejected, got: {}",
+        load_resp
+    );
+
+    create_streamline(&mut worker);
+    let params = format!(
+        r#"{{"structure":"{}","snapshots":{{}},"volume":[]}}"#,
+        SL_STRUCTURE
+    );
+    let request = format!(
+        r#"{{"id":"calc-sl-rej","op":"calculate_streamline","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#),
+        "expected failure, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("NO_PLAN"),
+        "an out-of-range percent must not reach the calculator, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// T3: the happy path. Config comes from the loaded plan, not the request.
+#[test]
+fn calculate_streamline_uses_the_loaded_plan_structure() {
+    let mut worker = common::spawn_worker();
+    load_streamline_test_plan(&mut worker);
+    create_streamline(&mut worker);
+    // ROOT is not a stream member, so SL_USER1 becomes the stream root and
+    // SL_USER2 sits one level below it. Same shape the other streamline tests
+    // use (streamline_create_and_add_members).
+    sl_add_member(&mut worker, "sl-m1", SL_USER1, ROOT, 1001);
+    sl_add_member(&mut worker, "sl-m2", SL_USER2, SL_USER1, 1002);
+
+    let params = format!(
+        r#"{{"structure":"{}","snapshots":{{"{}":{{"rank":"member","personal_volume":100.0,"status":"active","has_order_in_period":true}},"{}":{{"rank":"member","personal_volume":100.0,"status":"active","has_order_in_period":true}}}},"volume":[{{"source_id":"{}","cv_amount":100.0}}]}}"#,
+        SL_STRUCTURE, SL_USER1, SL_USER2, SL_USER2
+    );
+    let request = format!(
+        r#"{{"id":"calc-sl-ok","op":"calculate_streamline","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "expected success, got: {}",
+        resp
+    );
+    // 100 CV * 1.0 multiplier * 0.10 level-1 percent = 10.0
+    assert!(
+        resp.contains(r#""dollar_amount":10.0"#),
+        "expected a $10 level-1 earning, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// T4: the plan-side miss, distinguished from the engine-side miss. A "Ghost"
+/// streamline engine exists, but the plan's only streamline structure is
+/// "TestStreamline". `get_streamline_ref` hits; `find_streamline_structure`
+/// misses. Mirrors `calculate_matrix_unknown_structure_returns_not_found`.
+#[test]
+fn calculate_streamline_unknown_structure_returns_not_found() {
+    let mut worker = common::spawn_worker();
+    load_streamline_test_plan(&mut worker);
+    create_streamline_named(&mut worker, "Ghost");
+
+    let params = r#"{"structure":"Ghost","snapshots":{},"volume":[]}"#;
+    let request = format!(
+        r#"{{"id":"calc-sl-us","op":"calculate_streamline","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#),
+        "expected failure, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("STRUCTURE_NOT_FOUND"),
+        "expected STRUCTURE_NOT_FOUND, got: {}",
+        resp
+    );
+    // Distinct from the no-engine case: this is the find_streamline_structure
+    // miss. get_streamline_ref's message is "structure 'Ghost' not found".
+    assert!(
+        resp.contains("no streamline structure named 'Ghost'"),
+        "expected the find_streamline_structure miss message, got: {}",
+        resp
+    );
+
     drop(worker.stdin.take());
     worker.wait().unwrap();
 }

@@ -2190,9 +2190,10 @@ const SL_USER2: &str = "00000000-0000-0000-0000-000000000012";
 const SL_USER3: &str = "00000000-0000-0000-0000-000000000013";
 const SL_STRUCTURE: &str = "TestStreamline";
 
-/// Minimal plan carrying a single streamline structure named `TestStreamline`,
-/// matching `SL_STRUCTURE` so `create_streamline` and the plan agree. Its
-/// level-1 `percent` of 0.10 is the value the out-of-range tests mutate.
+/// Minimal plan carrying a single streamline structure named `TestStreamline`.
+/// The name matches `SL_STRUCTURE` so the plan and `create_streamline` agree
+/// when a test needs both a loaded plan and a live engine (HEU-583). Its level-1
+/// `percent` of 0.10 is the value mutated to exercise the load-time gate.
 const STREAMLINE_TEST_PLAN_JSON: &str = r#"{
     "name": "Integration Test Plan",
     "version": 1,
@@ -2401,9 +2402,15 @@ fn streamline_snapshot_round_trip() {
 }
 
 /// The HEU-517 gate rejects an out-of-range streamline percent at load time.
-/// `calculate_streamline` resolves its config from the loaded plan (HEU-583),
-/// so this gate is the only thing standing between a bad percent and a payout.
-/// Pinned here because the handler no longer validates anything itself.
+/// HEU-583 makes `calculate_streamline` resolve its config from the loaded plan
+/// rather than from request params, at which point this gate is the only thing
+/// standing between a bad percent and a payout. Pinned before that change so the
+/// guard is already in place when the handler stops validating.
+///
+/// Asserts the rejection *message*, not just the code. `handle_load_plan`
+/// returns `INVALID_PLAN` for a deserialize failure as well as a validation
+/// failure, so a code-only check would stay green if a schema change broke the
+/// plan constant and the fraction gate were never reached.
 #[test]
 fn load_plan_rejects_streamline_percent_out_of_range() {
     let mut worker = common::spawn_worker();
@@ -2413,24 +2420,36 @@ fn load_plan_rejects_streamline_percent_out_of_range() {
         bad.contains("\"percent\": 5.0"),
         "the percent replacement did not match; the plan constant changed shape"
     );
-    let minified: String = bad.lines().map(|l| l.trim()).collect::<Vec<_>>().join("");
-    let request = format!(
-        r#"{{"id":"load-bad","op":"load_plan","params":{}}}"#,
-        minified
-    );
 
-    let resp = common::send_receive(&mut worker, &request);
+    let resp = send_load_plan(&mut worker, &bad);
     assert!(
-        resp.contains(r#""ok":false"#),
-        "expected failure, got: {}",
-        resp
-    );
-    assert!(
-        resp.contains("INVALID_PLAN"),
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PLAN"),
         "expected INVALID_PLAN, got: {}",
         resp
     );
+    assert!(
+        resp.contains("must be a fraction"),
+        "expected the fraction gate to reject it, not a deserialize failure, got: {}",
+        resp
+    );
 
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Companion to the rejection test above. Proves `STREAMLINE_TEST_PLAN_JSON` is
+/// otherwise valid, so that rejection comes from the mutated percent and not
+/// from drift in the constant. Mirrors `load_plan_accepts_valid_baseline_plan`,
+/// which does the same job for `TEST_PLAN_JSON`.
+#[test]
+fn load_plan_accepts_valid_streamline_plan() {
+    let mut worker = common::spawn_worker();
+    let resp = send_load_plan(&mut worker, STREAMLINE_TEST_PLAN_JSON);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "streamline plan should load: {}",
+        resp
+    );
     drop(worker.stdin.take());
     worker.wait().unwrap();
 }

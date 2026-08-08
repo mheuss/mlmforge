@@ -2190,6 +2190,42 @@ const SL_USER2: &str = "00000000-0000-0000-0000-000000000012";
 const SL_USER3: &str = "00000000-0000-0000-0000-000000000013";
 const SL_STRUCTURE: &str = "TestStreamline";
 
+/// Minimal plan carrying a single streamline structure named `TestStreamline`,
+/// matching `SL_STRUCTURE` so `create_streamline` and the plan agree. Its
+/// level-1 `percent` of 0.10 is the value the out-of-range tests mutate.
+const STREAMLINE_TEST_PLAN_JSON: &str = r#"{
+    "name": "Integration Test Plan",
+    "version": 1,
+    "structures": [
+        {
+            "type": "streamline",
+            "config": {
+                "name": "TestStreamline",
+                "streamline_commission": {
+                    "volume_to_dollar_multiplier": 1.0,
+                    "commissionable_depth": 5,
+                    "dynamic_compression": [
+                        { "level": 1, "min_rank": "member", "percent": 0.10 }
+                    ],
+                    "streams": null
+                }
+            }
+        }
+    ],
+    "period": { "length": "month", "start_date": "2026-03-01", "payout_lag_days": 14 },
+    "volume": { "inhibit_signup_volume": false, "base_currency": "USD", "volume_to_dollar_multiplier": 1.0, "deduct_qualifying_volume": false },
+    "ranks": [
+        { "name": "member", "ordinal": 1, "qualification": { "structures": [], "required_products": [] }, "qualified_structures": ["TestStreamline"], "demotion_policy": "promotion_only" }
+    ],
+    "rank_tracking": { "track_achieved_rank": false },
+    "rank_features": { "constraints_enabled": false, "overrides_enabled": false },
+    "commission_eligibility": { "min_personal_volume": 0.0, "require_order_in_period": false, "eligible_statuses": [], "active_leg_tiers": [] },
+    "bonuses": { "matching": null, "sponsor": null, "fast_start": null, "rank_advancement": null, "leadership_development": null, "infinity": null, "lifestyle": null, "pool": null, "matrix_completion": null, "position": null, "board_cycling": null },
+    "payout": { "base_currency": "USD", "minimum_amount": 50.0, "split_payouts_enabled": true, "methods": [ { "type": "bank_transfer", "fee": 2.50 } ] },
+    "caps": { "per_distributor_per_period": null, "company_payout_cap_percent": 0.42, "cap_enforcement": "pro_rata", "clawback_on_refund": false },
+    "placement": { "donated_placement": null, "holding_tank": null, "binary_placement": null }
+}"#;
+
 fn create_streamline(worker: &mut std::process::Child) {
     let resp = common::send_receive(
         worker,
@@ -2359,6 +2395,41 @@ fn streamline_snapshot_round_trip() {
     assert!(parsed["ok"].as_bool().unwrap());
     let streams = parsed["result"]["streams"].as_array().unwrap();
     assert_eq!(streams.len(), 1);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// The HEU-517 gate rejects an out-of-range streamline percent at load time.
+/// `calculate_streamline` resolves its config from the loaded plan (HEU-583),
+/// so this gate is the only thing standing between a bad percent and a payout.
+/// Pinned here because the handler no longer validates anything itself.
+#[test]
+fn load_plan_rejects_streamline_percent_out_of_range() {
+    let mut worker = common::spawn_worker();
+
+    let bad = STREAMLINE_TEST_PLAN_JSON.replace("\"percent\": 0.10", "\"percent\": 5.0");
+    assert!(
+        bad.contains("\"percent\": 5.0"),
+        "the percent replacement did not match; the plan constant changed shape"
+    );
+    let minified: String = bad.lines().map(|l| l.trim()).collect::<Vec<_>>().join("");
+    let request = format!(
+        r#"{{"id":"load-bad","op":"load_plan","params":{}}}"#,
+        minified
+    );
+
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#),
+        "expected failure, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("INVALID_PLAN"),
+        "expected INVALID_PLAN, got: {}",
+        resp
+    );
 
     drop(worker.stdin.take());
     worker.wait().unwrap();

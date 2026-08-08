@@ -1222,10 +1222,10 @@ func TestEngineClient_CalculateStreamline_MockParams(t *testing.T) {
 	// these. Deleting the guard then has to be deliberate.
 	//
 	// Neither catches a field re-added with `,omitempty` and left unpopulated.
-	// That shape serializes to nothing, so it is dead weight rather than a
-	// bypass, and the Rust-side guard
-	// (calculate_streamline_ignores_request_scoped_config) catches it the moment
-	// anything populates it.
+	// That shape is dead weight rather than a bypass: the worker ignores unknown
+	// params, and calculate_streamline_ignores_request_scoped_config is what pins
+	// that it keeps doing so. That Rust test builds its own request string, so it
+	// watches the worker, not this client.
 	assert.NotContains(t, string(mock.lastParams), `"plan"`)
 	assert.NotContains(t, string(mock.lastParams), `"structure_config"`)
 }

@@ -25,9 +25,6 @@ func TestWireTypesNarrowMirrors(t *testing.T) {
 		field string
 		want  string
 	}{
-		{"StreamlineCommissionDTO.CommissionableDepth", reflect.TypeFor[StreamlineCommissionDTO](), "CommissionableDepth", "uint8"},
-		{"StreamlineLevelDTO.Level", reflect.TypeFor[StreamlineLevelDTO](), "Level", "uint8"},
-		{"StreamConfigDTO.AdditionalPerRank", reflect.TypeFor[StreamConfigDTO](), "AdditionalPerRank", "map[string]uint8"},
 		{"EvaluatedRankDTO.Ordinal", reflect.TypeFor[EvaluatedRankDTO](), "Ordinal", "uint16"},
 	}
 	for _, c := range cases {

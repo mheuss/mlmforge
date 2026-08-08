@@ -977,36 +977,36 @@ const testPlanJSON = `{
 // calculate_streamline resolves its config from the loaded plan (HEU-583),
 // so this plan must be loaded before the calculate call.
 const streamlinePlanJSON = `{
-	"name": "Streamline Test Plan",
-	"version": 1,
-	"structures": [
-		{
-			"type": "streamline",
-			"config": {
-				"name": "StreamTest",
-				"streamline_commission": {
-					"volume_to_dollar_multiplier": 1.0,
-					"commissionable_depth": 5,
-					"dynamic_compression": [
-						{ "level": 1, "min_rank": "member", "percent": 0.10 }
-					],
-					"streams": null
-				}
-			}
-		}
-	],
-	"period": { "length": "month", "start_date": "2026-03-01", "payout_lag_days": 14 },
-	"volume": { "inhibit_signup_volume": false, "base_currency": "USD", "volume_to_dollar_multiplier": 1.0, "deduct_qualifying_volume": false },
-	"ranks": [
-		{ "name": "member", "ordinal": 1, "qualification": { "structures": [], "required_products": [] }, "qualified_structures": ["StreamTest"], "demotion_policy": "promotion_only" }
-	],
-	"rank_tracking": { "track_achieved_rank": false },
-	"rank_features": { "constraints_enabled": false, "overrides_enabled": false },
-	"commission_eligibility": { "min_personal_volume": 0.0, "require_order_in_period": false, "eligible_statuses": [], "active_leg_tiers": [] },
-	"bonuses": { "matching": null, "sponsor": null, "fast_start": null, "rank_advancement": null, "leadership_development": null, "infinity": null, "lifestyle": null, "pool": null, "matrix_completion": null, "position": null, "board_cycling": null },
-	"payout": { "base_currency": "USD", "minimum_amount": 50.0, "split_payouts_enabled": true, "methods": [ { "type": "bank_transfer", "fee": 2.50 } ] },
-	"caps": { "per_distributor_per_period": null, "company_payout_cap_percent": 0.42, "cap_enforcement": "pro_rata", "clawback_on_refund": false },
-	"placement": { "donated_placement": null, "holding_tank": null, "binary_placement": null }
+    "name": "Streamline Test Plan",
+    "version": 1,
+    "structures": [
+        {
+            "type": "streamline",
+            "config": {
+                "name": "StreamTest",
+                "streamline_commission": {
+                    "volume_to_dollar_multiplier": 1.0,
+                    "commissionable_depth": 5,
+                    "dynamic_compression": [
+                        { "level": 1, "min_rank": "member", "percent": 0.10 }
+                    ],
+                    "streams": null
+                }
+            }
+        }
+    ],
+    "period": { "length": "month", "start_date": "2026-03-01", "payout_lag_days": 14 },
+    "volume": { "inhibit_signup_volume": false, "base_currency": "USD", "volume_to_dollar_multiplier": 1.0, "deduct_qualifying_volume": false },
+    "ranks": [
+        { "name": "member", "ordinal": 1, "qualification": { "structures": [], "required_products": [] }, "qualified_structures": ["StreamTest"], "demotion_policy": "promotion_only" }
+    ],
+    "rank_tracking": { "track_achieved_rank": false },
+    "rank_features": { "constraints_enabled": false, "overrides_enabled": false },
+    "commission_eligibility": { "min_personal_volume": 0.0, "require_order_in_period": false, "eligible_statuses": [], "active_leg_tiers": [] },
+    "bonuses": { "matching": null, "sponsor": null, "fast_start": null, "rank_advancement": null, "leadership_development": null, "infinity": null, "lifestyle": null, "pool": null, "matrix_completion": null, "position": null, "board_cycling": null },
+    "payout": { "base_currency": "USD", "minimum_amount": 50.0, "split_payouts_enabled": true, "methods": [ { "type": "bank_transfer", "fee": 2.50 } ] },
+    "caps": { "per_distributor_per_period": null, "company_payout_cap_percent": 0.42, "cap_enforcement": "pro_rata", "clawback_on_refund": false },
+    "placement": { "donated_placement": null, "holding_tank": null, "binary_placement": null }
 }`
 
 func TestEngineClient_CalculateUnilevel(t *testing.T) {
@@ -1141,10 +1141,10 @@ func TestEngineClient_CalculateStreamline(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// 2. Calculate streamline commissions. The plan rides in the request.
+	// 2. Calculate streamline commissions. The plan and structure config come
+	//    from the plan loaded above, not the request (HEU-583).
 	//    member2 generates 100 CV, which walks up one level to member1.
 	//    Dollar amount: 100 * 1.0 (broad) * 1.0 (multiplier) * 0.10 (level 1) = 10.0
-	multiplier := 1.0
 	snap := DistributorSnapshotDTO{
 		Rank:             "member",
 		PersonalVolume:   100.0,
@@ -1152,18 +1152,7 @@ func TestEngineClient_CalculateStreamline(t *testing.T) {
 		HasOrderInPeriod: true,
 	}
 	req := CalculateStreamlineRequest{
-		Structure: structure,
-		Plan:      json.RawMessage(testPlanJSON),
-		StructureConfig: StreamlineStructureConfigDTO{
-			Name: structure,
-			StreamlineCommission: StreamlineCommissionDTO{
-				VolumeToDollarMultiplier: &multiplier,
-				CommissionableDepth:      5,
-				DynamicCompression: []StreamlineLevelDTO{
-					{Level: 1, MinRank: "member", Percent: 0.10},
-				},
-			},
-		},
+		StructureName: structure,
 		Snapshots: map[string]DistributorSnapshotDTO{
 			member1: snap,
 			member2: snap,
@@ -1185,6 +1174,51 @@ func TestEngineClient_CalculateStreamline(t *testing.T) {
 	assert.InDelta(t, 0.10, earning.Rate, 1e-9)
 	assert.InDelta(t, 100.0, earning.CVAmount, 1e-9)
 	assert.InDelta(t, 10.0, earning.DollarAmount, 1e-9)
+}
+
+// TestEngineClient_CalculateStreamline_MockParams pins the serialized param set.
+// Streamline was the only calculate op without a _MockParams sibling, and this
+// change is precisely a wire-shape change, so the gap is worth closing here.
+func TestEngineClient_CalculateStreamline_MockParams(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`[{"earner_id":"00000000-0000-0000-0000-000000000001","source_id":"00000000-0000-0000-0000-000000000002","level":1,"rate":0.10,"cv_amount":100.0,"dollar_amount":10.0}]`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	req := CalculateStreamlineRequest{
+		StructureName: "StreamTest",
+		Snapshots: map[string]DistributorSnapshotDTO{
+			"00000000-0000-0000-0000-000000000001": {
+				Rank:             "member",
+				PersonalVolume:   100.0,
+				Status:           "active",
+				HasOrderInPeriod: true,
+			},
+		},
+		Volume: []VolumeSourceDTO{
+			{SourceID: "00000000-0000-0000-0000-000000000002", CVAmount: 100.0},
+		},
+	}
+
+	earnings, err := client.CalculateStreamline(context.Background(), req)
+	require.NoError(t, err)
+	require.Len(t, earnings, 1)
+
+	assert.Equal(t, "calculate_streamline", mock.lastOp)
+	// The plan and structure config no longer cross the wire (HEU-583).
+	// Asserting the exact param set is what makes their removal stick.
+	assert.JSONEq(t, `{
+		"structure": "StreamTest",
+		"snapshots": {"00000000-0000-0000-0000-000000000001": {"rank":"member","personal_volume":100.0,"status":"active","has_order_in_period":true}},
+		"volume": [{"source_id":"00000000-0000-0000-0000-000000000002","cv_amount":100.0}]
+	}`, string(mock.lastParams))
+
+	// Raw-byte checks as well as JSONEq: the point of this test is that two keys
+	// are gone, and byte-level absence says so directly rather than by
+	// implication. Unmarshaling collapses null, [] and omitted into the same
+	// empty value, so a struct-level check cannot prove a field is absent.
+	assert.NotContains(t, string(mock.lastParams), `"plan"`)
+	assert.NotContains(t, string(mock.lastParams), `"structure_config"`)
 }
 
 // --- Binary pairing commission calculation tests (mock) ---

@@ -415,9 +415,9 @@ pub(crate) fn handle_streamline_get_stream(state: &WorkerState, request: &Reques
 
 /// Resolves a streamline structure by name from a validated plan.
 ///
-/// Lives here rather than in `commission.rs` alongside its five siblings,
-/// which are private to that module. Adding a sixth there and widening it to
-/// `pub(crate)` would touch five working handlers for no gain.
+/// Co-located with its only caller, next to the other streamline lookups
+/// (`get_streamline_ref`, `get_streamline_mut`), rather than in `commission.rs`
+/// where its five siblings live private to that module.
 fn find_streamline_structure<'a>(
     plan: &'a CompensationPlan,
     name: &str,
@@ -430,8 +430,13 @@ fn find_streamline_structure<'a>(
 
 pub(crate) fn handle_calculate_streamline(state: &WorkerState, request: &Request) -> Response {
     // The *commission* config comes from the plan validated by handle_load_plan,
-    // never from request params (HEU-583, design rationale 028). Two adjacent
-    // gaps are deliberately not closed here:
+    // never from request params (HEU-583, design rationale 028). "Validated"
+    // means whatever StreamlineCommissionConfig::validate checks, which is not
+    // everything — it leaves commissionable_depth unbounded above and does not
+    // check dynamic_compression for ordering, gaps, or duplicates (HEU-612).
+    // This change is what made that validator the sole point of trust.
+    //
+    // Three adjacent gaps are deliberately not closed here:
     //
     // - The engine's *stream* config (assignment_mode, freeze_on_demotion) still
     //   comes from create_streamline's request params and is never cross-checked
@@ -443,6 +448,9 @@ pub(crate) fn handle_calculate_streamline(state: &WorkerState, request: &Request
     // - require_plan returns whatever plan was loaded last, so a load_plan that
     //   replaces the plan while streams already exist re-rates them. Tracked by
     //   HEU-598.
+    // - Volume for a source in no stream, or in a frozen one, is filtered out
+    //   before the walk and returns ok with an empty result rather than an
+    //   error. Tracked by HEU-611.
     let plan = match require_plan(state, &request.id) {
         Ok(p) => p,
         Err(resp) => return resp,

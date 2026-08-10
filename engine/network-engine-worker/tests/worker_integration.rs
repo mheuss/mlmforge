@@ -2276,6 +2276,106 @@ fn sl_add_member(worker: &mut std::process::Child, id: &str, user: &str, sponsor
     );
 }
 
+// --- Board plan commission integration tests ---
+
+/// Unused until the handler flip gives it callers.
+#[allow(dead_code)]
+const BP_STRUCTURE: &str = "BoardTest";
+
+/// Board plan test plan. `board_calculate_commissions` resolves its
+/// `board_cycling` config from this plan (HEU-603), so a test that skips
+/// `load_board_test_plan` gets NO_PLAN rather than earnings.
+///
+/// The unilevel structure is not decoration. Go's `validateBoardPlanCompanion`
+/// (`internal/config/rules.go:812`) requires every board plan to have a
+/// companion unilevel, and Rust's `CompensationPlan::validate` does not enforce
+/// that rule. Without it this constant would encode a plan production Go
+/// rejects. `STREAMLINE_TEST_PLAN_JSON` above has the same treatment for the
+/// twin rule `validateStreamlineCompanion`.
+///
+/// `cycle_commission: 500.0` and `max_cycles_per_period: 3` match the values
+/// the contract fixture used inline before HEU-603. Keep them: the fixture's
+/// unchanged expected response is what proves the migration was
+/// behavior-preserving.
+const BOARD_TEST_PLAN_JSON: &str = r#"{
+    "name": "Integration Test Plan",
+    "version": 1,
+    "structures": [
+        {
+            "type": "unilevel",
+            "config": {
+                "name": "TestUnilevel",
+                "level_commission": {
+                    "broad_commission_percent": 0.40,
+                    "volume_to_dollar_multiplier": null,
+                    "commissionable_depth": 3,
+                    "rate_table": { "member": { "1": 0.05, "2": 0.05, "3": 0.05 } }
+                },
+                "compression": null
+            }
+        },
+        {
+            "type": "board_plan",
+            "config": {
+                "name": "BoardTest",
+                "width": 2,
+                "height": 2,
+                "board_cycling": {
+                    "cycle_commission": 500.0,
+                    "re_entry_enabled": true,
+                    "re_entry_position": "bottom",
+                    "max_cycles_per_period": 3,
+                    "max_cascade_depth": 10,
+                    "stall_threshold_periods": 3,
+                    "inactive_compression": false
+                }
+            }
+        }
+    ],
+    "period": { "length": "month", "start_date": "2026-03-01", "payout_lag_days": 14 },
+    "volume": { "inhibit_signup_volume": false, "base_currency": "USD", "volume_to_dollar_multiplier": 1.0, "deduct_qualifying_volume": false },
+    "ranks": [
+        { "name": "member", "ordinal": 1, "qualification": { "structures": [], "required_products": [] }, "qualified_structures": ["TestUnilevel", "BoardTest"], "demotion_policy": "promotion_only" }
+    ],
+    "rank_tracking": { "track_achieved_rank": false },
+    "rank_features": { "constraints_enabled": false, "overrides_enabled": false },
+    "commission_eligibility": { "min_personal_volume": 0.0, "require_order_in_period": false, "eligible_statuses": [], "active_leg_tiers": [] },
+    "bonuses": { "matching": null, "sponsor": null, "fast_start": null, "rank_advancement": null, "leadership_development": null, "infinity": null, "lifestyle": null, "pool": null, "matrix_completion": null, "position": null, "board_cycling": null },
+    "payout": { "base_currency": "USD", "minimum_amount": 50.0, "split_payouts_enabled": true, "methods": [ { "type": "bank_transfer", "fee": 2.50 } ] },
+    "caps": { "per_distributor_per_period": null, "company_payout_cap_percent": 0.42, "cap_enforcement": "pro_rata", "clawback_on_refund": false },
+    "placement": { "donated_placement": null, "holding_tank": null, "binary_placement": null }
+}"#;
+
+/// Loads `BOARD_TEST_PLAN_JSON` and asserts it took.
+///
+/// Unused until the handler flip gives it callers.
+#[allow(dead_code)]
+fn load_board_test_plan(worker: &mut std::process::Child) {
+    let resp = send_load_plan(worker, BOARD_TEST_PLAN_JSON);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "load_plan (board) failed: {}",
+        resp
+    );
+}
+
+/// Companion to `load_plan_rejects_board_cycle_commission_negative`. Proves
+/// `BOARD_TEST_PLAN_JSON` is otherwise valid, so that rejection comes from the
+/// mutated value and not from drift in the constant. Mirrors
+/// `load_plan_accepts_valid_streamline_plan`.
+#[test]
+fn load_plan_accepts_valid_board_plan() {
+    let mut worker = common::spawn_worker();
+    let resp = send_load_plan(&mut worker, BOARD_TEST_PLAN_JSON);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "board plan should load: {}",
+        resp
+    );
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 #[test]
 fn streamline_create_and_add_members() {
     let mut worker = common::spawn_worker();

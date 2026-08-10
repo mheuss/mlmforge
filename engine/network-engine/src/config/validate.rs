@@ -117,9 +117,15 @@ impl CompensationPlan {
     /// repeats the check because it is its own trust boundary: a direct caller
     /// that skips the Go pipeline would otherwise load an ambiguous plan.
     ///
-    /// Names are compared exactly, matching the Go rule. Runs before the
-    /// per-structure loop so that every later error, which names the structure
-    /// it came from, points at exactly one structure.
+    /// The rule is uniqueness across the whole plan, not within a structure
+    /// type. Two structures named `X`, one unilevel and one streamline, each
+    /// resolve through their own lookup helper and would never collide at
+    /// calculate time, but Go rejects that pair and the two layers have to
+    /// agree on what a valid plan is. Names are compared exactly, also matching
+    /// Go.
+    ///
+    /// Runs before the per-structure loop so that every later error, which
+    /// names the structure it came from, points at exactly one structure.
     fn check_unique_structure_names(&self) -> Result<(), String> {
         let mut seen = HashSet::with_capacity(self.structures.len());
         for structure in &self.structures {

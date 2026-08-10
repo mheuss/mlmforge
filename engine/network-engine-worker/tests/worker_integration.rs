@@ -2474,6 +2474,73 @@ fn load_plan_accepts_valid_streamline_plan() {
     worker.wait().unwrap();
 }
 
+/// HEU-605: two structures sharing a name make the `find_*_structure` helpers,
+/// which take the first match, pick one commission config over another by plan
+/// order with no error anywhere. `CompensationPlan::validate` rejects that, and
+/// this pins the wiring: `handle_load_plan` has to surface it as `INVALID_PLAN`
+/// instead of storing an ambiguous plan.
+///
+/// The duplicate is cross-type on purpose. A unilevel and a streamline both
+/// named `TestStreamline` reach calculate time through separate lookup helpers,
+/// so nothing would collide there. The rule is uniqueness across the whole
+/// plan, matching Go's `duplicate_structure_name`.
+#[test]
+fn load_plan_rejects_duplicate_structure_names() {
+    let mut worker = common::spawn_worker();
+
+    // Built by editing the parsed plan rather than by string replacement, which
+    // the sibling gate tests use. `"structures": [` also matches the empty
+    // `qualification.structures` array on every rank, so a textual insert lands
+    // in two places.
+    let duplicate_unilevel: serde_json::Value = serde_json::from_str(
+        r#"{
+            "type": "unilevel",
+            "config": {
+                "name": "TestStreamline",
+                "level_commission": {
+                    "broad_commission_percent": 0.40,
+                    "volume_to_dollar_multiplier": null,
+                    "commissionable_depth": 3,
+                    "rate_table": { "member": { "1": 0.05 } }
+                },
+                "compression": null
+            }
+        }"#,
+    )
+    .unwrap();
+    let mut plan: serde_json::Value = serde_json::from_str(STREAMLINE_TEST_PLAN_JSON).unwrap();
+    let structures = plan["structures"]
+        .as_array_mut()
+        .expect("the plan constant changed shape: structures is not an array");
+    structures.push(duplicate_unilevel);
+    let names: Vec<&str> = structures
+        .iter()
+        .map(|s| s["config"]["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        vec!["TestStreamline", "TestStreamline"],
+        "the plan should hold exactly two structures sharing one name"
+    );
+    let bad = plan.to_string();
+
+    let resp = send_load_plan(&mut worker, &bad);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PLAN"),
+        "expected INVALID_PLAN, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("duplicate structure name") && resp.contains("TestStreamline"),
+        "expected the duplicate-name gate to reject it, not a deserialize failure \
+         or an unrelated check, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 /// T5: no plan loaded at all. `require_plan` is the first thing the handler does.
 #[test]
 fn calculate_streamline_without_plan_returns_no_plan() {

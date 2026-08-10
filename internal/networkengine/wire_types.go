@@ -311,12 +311,14 @@ type StreamSummaryDTO struct {
 }
 
 // CalculateStreamlineRequest is the input for streamline commission calculation.
+// The plan and structure config come from the worker's loaded plan, not the
+// request (HEU-583), so this mirrors CalculateUnilevelRequest exactly.
+// Wire field "structure" matches the serde rename on handle_calculate_streamline's
+// local Params struct (engine/network-engine-worker/src/handlers/streamline.rs).
 type CalculateStreamlineRequest struct {
-	Structure       string                            `json:"structure"`
-	Plan            json.RawMessage                   `json:"plan"` // Full CompensationPlan — see HEU-391
-	StructureConfig StreamlineStructureConfigDTO      `json:"structure_config"`
-	Snapshots       map[string]DistributorSnapshotDTO `json:"snapshots"`
-	Volume          []VolumeSourceDTO                 `json:"volume"`
+	StructureName string                            `json:"structure"`
+	Snapshots     map[string]DistributorSnapshotDTO `json:"snapshots"`
+	Volume        []VolumeSourceDTO                 `json:"volume"`
 }
 
 // SnapshotResultDTO is the wire format for a take_snapshot response.
@@ -324,42 +326,6 @@ type CalculateStreamlineRequest struct {
 type SnapshotResultDTO struct {
 	TreeType string          `json:"tree_type"`
 	Data     json.RawMessage `json:"data"`
-}
-
-// --- Streamline structure DTOs ---
-
-// StreamlineStructureConfigDTO mirrors Rust StreamlineStructureConfig.
-type StreamlineStructureConfigDTO struct {
-	Name                 string                  `json:"name"`
-	StreamlineCommission StreamlineCommissionDTO `json:"streamline_commission"`
-}
-
-// StreamlineCommissionDTO mirrors Rust StreamlineCommissionConfig (wire names).
-// uint8 fields match Rust u8. Go's JSON decoder returns an error for
-// out-of-range or non-integer values during unmarshalling.
-type StreamlineCommissionDTO struct {
-	VolumeToDollarMultiplier *float64             `json:"volume_to_dollar_multiplier,omitempty"`
-	CommissionableDepth      uint8                `json:"commissionable_depth"`
-	DynamicCompression       []StreamlineLevelDTO `json:"dynamic_compression"`
-	Streams                  *StreamConfigDTO     `json:"streams,omitempty"`
-}
-
-// StreamlineLevelDTO mirrors Rust StreamlineLevel.
-type StreamlineLevelDTO struct {
-	Level   uint8  `json:"level"`
-	MinRank string `json:"min_rank"`
-	// Percent is the commission rate for this level, as a fraction in
-	// [0, 1] where 1.0 = 100%, not a whole-number percent: 0.05 means 5%.
-	// See internal/config.StreamlineLevel.Percent for the full contract.
-	Percent float64 `json:"percent"`
-}
-
-// StreamConfigDTO mirrors Rust StreamConfig (wire names).
-type StreamConfigDTO struct {
-	AdditionalPerRank   map[string]uint8 `json:"additional_per_rank"`
-	AssignmentMode      string           `json:"assignment_mode"`
-	PerEnrollmentChoice bool             `json:"per_enrollment_choice"`
-	FreezeOnDemotion    bool             `json:"freeze_on_demotion"`
 }
 
 // --- Rank evaluation wire types (HEU-443) ---

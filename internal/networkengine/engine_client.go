@@ -712,6 +712,8 @@ func (c *EngineClient) StreamlineGetStream(ctx context.Context, structure string
 }
 
 // CalculateStreamline runs streamline commission calculation.
+// Requires LoadPlan first: the plan and structure config come from worker state,
+// not the request (HEU-583). Without a loaded plan the worker returns NO_PLAN.
 func (c *EngineClient) CalculateStreamline(ctx context.Context, req CalculateStreamlineRequest) ([]CommissionEarningDTO, error) {
 	return callInto[[]CommissionEarningDTO](c, ctx, "calculate_streamline", req)
 }

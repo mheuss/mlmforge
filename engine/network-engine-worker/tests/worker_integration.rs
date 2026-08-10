@@ -2190,17 +2190,73 @@ const SL_USER2: &str = "00000000-0000-0000-0000-000000000012";
 const SL_USER3: &str = "00000000-0000-0000-0000-000000000013";
 const SL_STRUCTURE: &str = "TestStreamline";
 
-fn create_streamline(worker: &mut std::process::Child) {
+/// Minimal plan carrying a single streamline structure named `TestStreamline`.
+/// The name matches `SL_STRUCTURE` so the plan and `create_streamline` agree
+/// when a test needs both a loaded plan and a live engine (HEU-583). Its level-1
+/// `percent` of 0.10 is the value mutated to exercise the load-time gate.
+const STREAMLINE_TEST_PLAN_JSON: &str = r#"{
+    "name": "Integration Test Plan",
+    "version": 1,
+    "structures": [
+        {
+            "type": "streamline",
+            "config": {
+                "name": "TestStreamline",
+                "streamline_commission": {
+                    "volume_to_dollar_multiplier": 1.0,
+                    "commissionable_depth": 5,
+                    "dynamic_compression": [
+                        { "level": 1, "min_rank": "member", "percent": 0.10 }
+                    ],
+                    "streams": null
+                }
+            }
+        }
+    ],
+    "period": { "length": "month", "start_date": "2026-03-01", "payout_lag_days": 14 },
+    "volume": { "inhibit_signup_volume": false, "base_currency": "USD", "volume_to_dollar_multiplier": 1.0, "deduct_qualifying_volume": false },
+    "ranks": [
+        { "name": "member", "ordinal": 1, "qualification": { "structures": [], "required_products": [] }, "qualified_structures": ["TestStreamline"], "demotion_policy": "promotion_only" }
+    ],
+    "rank_tracking": { "track_achieved_rank": false },
+    "rank_features": { "constraints_enabled": false, "overrides_enabled": false },
+    "commission_eligibility": { "min_personal_volume": 0.0, "require_order_in_period": false, "eligible_statuses": [], "active_leg_tiers": [] },
+    "bonuses": { "matching": null, "sponsor": null, "fast_start": null, "rank_advancement": null, "leadership_development": null, "infinity": null, "lifestyle": null, "pool": null, "matrix_completion": null, "position": null, "board_cycling": null },
+    "payout": { "base_currency": "USD", "minimum_amount": 50.0, "split_payouts_enabled": true, "methods": [ { "type": "bank_transfer", "fee": 2.50 } ] },
+    "caps": { "per_distributor_per_period": null, "company_payout_cap_percent": 0.42, "cap_enforcement": "pro_rata", "clawback_on_refund": false },
+    "placement": { "donated_placement": null, "holding_tank": null, "binary_placement": null }
+}"#;
+
+/// Creates a streamline engine under an arbitrary name. Tests that need the
+/// engine and the plan to disagree use this directly; everything else uses
+/// `create_streamline`, which pins the name to `SL_STRUCTURE`.
+fn create_streamline_named(worker: &mut std::process::Child, name: &str) {
     let resp = common::send_receive(
         worker,
         &format!(
             r#"{{"id":"sl-create","op":"create_streamline","params":{{"structure":"{}","assignment_mode":"sponsor_stream","freeze_on_demotion":true,"timestamp":1000}}}}"#,
-            SL_STRUCTURE
+            name
         ),
     );
     assert!(
         resp.contains(r#""ok":true"#),
         "create_streamline failed: {}",
+        resp
+    );
+}
+
+fn create_streamline(worker: &mut std::process::Child) {
+    create_streamline_named(worker, SL_STRUCTURE);
+}
+
+/// Loads `STREAMLINE_TEST_PLAN_JSON` and asserts it took. `calculate_streamline`
+/// resolves its structure config from this plan (HEU-583), so a test that skips
+/// this gets `NO_PLAN` rather than earnings.
+fn load_streamline_test_plan(worker: &mut std::process::Child) {
+    let resp = send_load_plan(worker, STREAMLINE_TEST_PLAN_JSON);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "load_plan (streamline) failed: {}",
         resp
     );
 }
@@ -2359,6 +2415,379 @@ fn streamline_snapshot_round_trip() {
     assert!(parsed["ok"].as_bool().unwrap());
     let streams = parsed["result"]["streams"].as_array().unwrap();
     assert_eq!(streams.len(), 1);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// The HEU-517 gate rejects an out-of-range streamline percent at load time.
+/// HEU-583 makes `calculate_streamline` resolve its config from the loaded plan
+/// rather than from request params, at which point this gate is the only thing
+/// standing between a bad percent and a payout. Pinned before that change so the
+/// guard is already in place when the handler stops validating.
+///
+/// Asserts the rejection *message*, not just the code. `handle_load_plan`
+/// returns `INVALID_PLAN` for a deserialize failure as well as a validation
+/// failure, so a code-only check would stay green if a schema change broke the
+/// plan constant and the fraction gate were never reached.
+#[test]
+fn load_plan_rejects_streamline_percent_out_of_range() {
+    let mut worker = common::spawn_worker();
+
+    let bad = STREAMLINE_TEST_PLAN_JSON.replace("\"percent\": 0.10", "\"percent\": 5.0");
+    assert!(
+        bad.contains("\"percent\": 5.0"),
+        "the percent replacement did not match; the plan constant changed shape"
+    );
+
+    let resp = send_load_plan(&mut worker, &bad);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PLAN"),
+        "expected INVALID_PLAN, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("dynamic_compression") && resp.contains("must be a fraction"),
+        "expected the streamline fraction gate to reject it, not a deserialize \
+         failure or an unrelated fraction check, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Companion to the rejection test above. Proves `STREAMLINE_TEST_PLAN_JSON` is
+/// otherwise valid, so that rejection comes from the mutated percent and not
+/// from drift in the constant. Mirrors `load_plan_accepts_valid_baseline_plan`,
+/// which does the same job for `TEST_PLAN_JSON`.
+#[test]
+fn load_plan_accepts_valid_streamline_plan() {
+    let mut worker = common::spawn_worker();
+    let resp = send_load_plan(&mut worker, STREAMLINE_TEST_PLAN_JSON);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "streamline plan should load: {}",
+        resp
+    );
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// T5: no plan loaded at all. `require_plan` is the first thing the handler does.
+#[test]
+fn calculate_streamline_without_plan_returns_no_plan() {
+    let mut worker = common::spawn_worker();
+    create_streamline(&mut worker);
+
+    let params = format!(
+        r#"{{"structure":"{}","snapshots":{{}},"volume":[]}}"#,
+        SL_STRUCTURE
+    );
+    let request = format!(
+        r#"{{"id":"calc-sl-np","op":"calculate_streamline","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#),
+        "expected failure, got: {}",
+        resp
+    );
+    assert!(resp.contains("NO_PLAN"), "expected NO_PLAN, got: {}", resp);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// T2: a failed load stores nothing, so the following calculate sees no plan.
+/// Runs in a fresh worker: `handle_load_plan` writes `state.plan` only on
+/// success, so a reused worker with an earlier valid plan would not show
+/// `NO_PLAN` here.
+#[test]
+fn calculate_streamline_after_rejected_plan_returns_no_plan() {
+    let mut worker = common::spawn_worker();
+
+    let bad = STREAMLINE_TEST_PLAN_JSON.replace("\"percent\": 0.10", "\"percent\": 5.0");
+    let load_resp = send_load_plan(&mut worker, &bad);
+    assert!(
+        load_resp.contains("INVALID_PLAN"),
+        "expected the load to be rejected, got: {}",
+        load_resp
+    );
+
+    create_streamline(&mut worker);
+    let params = format!(
+        r#"{{"structure":"{}","snapshots":{{}},"volume":[]}}"#,
+        SL_STRUCTURE
+    );
+    let request = format!(
+        r#"{{"id":"calc-sl-rej","op":"calculate_streamline","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#),
+        "expected failure, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("NO_PLAN"),
+        "an out-of-range percent must not reach the calculator, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// T3: the happy path. Config comes from the loaded plan, not the request.
+#[test]
+fn calculate_streamline_uses_the_loaded_plan_structure() {
+    let mut worker = common::spawn_worker();
+    load_streamline_test_plan(&mut worker);
+    create_streamline(&mut worker);
+    // ROOT is not a stream member, so SL_USER1 becomes the stream root and
+    // SL_USER2 sits one level below it. Same shape the other streamline tests
+    // use (streamline_create_and_add_members).
+    sl_add_member(&mut worker, "sl-m1", SL_USER1, ROOT, 1001);
+    sl_add_member(&mut worker, "sl-m2", SL_USER2, SL_USER1, 1002);
+
+    let params = format!(
+        r#"{{"structure":"{}","snapshots":{{"{}":{{"rank":"member","personal_volume":100.0,"status":"active","has_order_in_period":true}},"{}":{{"rank":"member","personal_volume":100.0,"status":"active","has_order_in_period":true}}}},"volume":[{{"source_id":"{}","cv_amount":100.0}}]}}"#,
+        SL_STRUCTURE, SL_USER1, SL_USER2, SL_USER2
+    );
+    let request = format!(
+        r#"{{"id":"calc-sl-ok","op":"calculate_streamline","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(
+        parsed["ok"].as_bool().unwrap_or(false),
+        "expected success, got: {}",
+        resp
+    );
+    // Assert the whole earning, not just that some field contains "10.0" —
+    // a `contains` check prefix-matches 10.05 and would not notice a spurious
+    // second earning alongside the correct one.
+    // `.expect(&resp)` rather than `.unwrap()` throughout: a bare unwrap fires
+    // before assert_eq! formats its message, so a renamed field would panic
+    // with "called Option::unwrap() on a None value" and the response body —
+    // the only useful part — would never print.
+    let earnings = parsed["result"].as_array().expect(&resp);
+    assert_eq!(
+        earnings.len(),
+        1,
+        "expected exactly one earning, got: {}",
+        resp
+    );
+    assert_eq!(earnings[0]["earner_id"].as_str().expect(&resp), SL_USER1);
+    assert_eq!(earnings[0]["source_id"].as_str().expect(&resp), SL_USER2);
+    assert_eq!(earnings[0]["level"].as_u64().expect(&resp), 1);
+    // 100 CV * 1.0 multiplier * 0.10 level-1 percent = 10.0. Compared with a
+    // tolerance so a change to the multiplication order inside the calculator
+    // can't fail this test by one ULP — the config source is what it guards.
+    let dollar = earnings[0]["dollar_amount"].as_f64().expect(&resp);
+    assert!(
+        (dollar - 10.0).abs() < 1e-10,
+        "dollar_amount should be 10.0, got {}: {}",
+        dollar,
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// The regression guard for the HEU-583 vulnerability itself.
+///
+/// Sends the legacy wire shape — the request still carrying `plan` and a
+/// `structure_config` whose percent is 500% — and asserts the payout still comes
+/// from the loaded plan. That is the shape the Go client sent before HEU-583,
+/// and since the worker sets no `deny_unknown_fields`, nothing stops a
+/// hand-rolled or third-party client from sending it again. Nothing else in this
+/// suite would catch a regression: if someone re-adds `structure_config` to
+/// `Params` or flattens it back in, every other streamline test stays green and
+/// only this one fails.
+///
+/// The two halves of the payload catch different regressions, so keep both:
+///
+/// - `structure_config` is *valid*, so it catches a field re-added **and
+///   honoured** — the calculation would pay 500000.0 instead of 10.0.
+/// - `plan` is deliberately **bogus** (`{"bogus":true}`), so it catches a field
+///   re-added **at all**: deserializing it into `CompensationPlan` fails and the
+///   request is rejected outright. That is the leading indicator, since a field
+///   usually reappears unused before anything reads it.
+///
+/// Do not "improve" the bogus plan into a realistic one. A valid plan would
+/// deserialize cleanly, the payout would still be $10, and the second half of
+/// this guard would silently stop working.
+#[test]
+fn calculate_streamline_ignores_request_scoped_config() {
+    let mut worker = common::spawn_worker();
+    load_streamline_test_plan(&mut worker);
+    create_streamline(&mut worker);
+    sl_add_member(&mut worker, "sl-m1", SL_USER1, ROOT, 1001);
+    sl_add_member(&mut worker, "sl-m2", SL_USER2, SL_USER1, 1002);
+
+    // percent 5.0 and a 1000x multiplier: if either were honoured the payout
+    // would be wildly larger than the plan's $10.
+    let hostile_config = r#""structure_config":{"name":"TestStreamline","streamline_commission":{"volume_to_dollar_multiplier":1000.0,"commissionable_depth":5,"dynamic_compression":[{"level":1,"min_rank":"member","percent":5.0}],"streams":null}},"plan":{"bogus":true},"#;
+    let params = format!(
+        r#"{{{}"structure":"{}","snapshots":{{"{}":{{"rank":"member","personal_volume":100.0,"status":"active","has_order_in_period":true}},"{}":{{"rank":"member","personal_volume":100.0,"status":"active","has_order_in_period":true}}}},"volume":[{{"source_id":"{}","cv_amount":100.0}}]}}"#,
+        hostile_config, SL_STRUCTURE, SL_USER1, SL_USER2, SL_USER2
+    );
+    let request = format!(
+        r#"{{"id":"calc-sl-legacy","op":"calculate_streamline","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(
+        parsed["ok"].as_bool().unwrap_or(false),
+        "legacy-shaped params must be ignored, not rejected, got: {}",
+        resp
+    );
+    let earnings = parsed["result"].as_array().expect(&resp);
+    assert_eq!(
+        earnings.len(),
+        1,
+        "expected exactly one earning, got: {}",
+        resp
+    );
+    let dollar = earnings[0]["dollar_amount"].as_f64().expect(&resp);
+    assert!(
+        (dollar - 10.0).abs() < 1e-10,
+        "the request-scoped percent reached the calculator, got {}: {}",
+        dollar,
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// The engine-side miss, twin of `calculate_streamline_unknown_structure_returns_not_found`.
+/// The plan has the structure; no engine was created. Both misses return
+/// STRUCTURE_NOT_FOUND and differ only by message, so pinning both messages is
+/// what makes the pair meaningful. Mirrors
+/// `calculate_unilevel_without_tree_returns_structure_not_found`.
+///
+/// This pair does NOT pin the order of the two lookups: each test arranges for
+/// exactly one of them to miss, so the same one misses either way. Swapping them
+/// leaves both green. `calculate_streamline_both_lookups_miss_reports_the_engine`
+/// is the test that locks the order.
+#[test]
+fn calculate_streamline_without_engine_returns_not_found() {
+    let mut worker = common::spawn_worker();
+    load_streamline_test_plan(&mut worker);
+    // Deliberately no create_streamline.
+
+    let params = format!(
+        r#"{{"structure":"{}","snapshots":{{}},"volume":[]}}"#,
+        SL_STRUCTURE
+    );
+    let request = format!(
+        r#"{{"id":"calc-sl-noengine","op":"calculate_streamline","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#),
+        "expected failure, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("STRUCTURE_NOT_FOUND"),
+        "expected STRUCTURE_NOT_FOUND, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains(&format!("structure '{}' not found", SL_STRUCTURE)),
+        "expected the get_streamline_ref miss message, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Locks the order of the two lookups, which the single-miss pair above cannot.
+///
+/// Neither the engine nor the plan knows "Nowhere", so both lookups miss and the
+/// response reports whichever ran first. `get_streamline_ref` runs first, so the
+/// engine-side message wins. Swap the two lookups in the handler and only this
+/// test fails.
+///
+/// The order matters because it decides which error a caller sees for a wholly
+/// unknown structure, and it matches all five sibling commission handlers, which
+/// resolve the tree before the structure.
+#[test]
+fn calculate_streamline_both_lookups_miss_reports_the_engine() {
+    let mut worker = common::spawn_worker();
+    load_streamline_test_plan(&mut worker);
+    // No engine, and "Nowhere" is not in the plan either.
+
+    let params = r#"{"structure":"Nowhere","snapshots":{},"volume":[]}"#;
+    let request = format!(
+        r#"{{"id":"calc-sl-both","op":"calculate_streamline","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains("STRUCTURE_NOT_FOUND"),
+        "expected STRUCTURE_NOT_FOUND, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("structure 'Nowhere' not found"),
+        "expected get_streamline_ref to answer first, got: {}",
+        resp
+    );
+    assert!(
+        !resp.contains("no streamline structure named"),
+        "find_streamline_structure answered first; the lookups are out of order: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// T4: the plan-side miss, distinguished from the engine-side miss. A "Ghost"
+/// streamline engine exists, but the plan's only streamline structure is
+/// "TestStreamline". `get_streamline_ref` hits; `find_streamline_structure`
+/// misses. Mirrors `calculate_matrix_unknown_structure_returns_not_found`.
+#[test]
+fn calculate_streamline_unknown_structure_returns_not_found() {
+    let mut worker = common::spawn_worker();
+    load_streamline_test_plan(&mut worker);
+    create_streamline_named(&mut worker, "Ghost");
+
+    let params = r#"{"structure":"Ghost","snapshots":{},"volume":[]}"#;
+    let request = format!(
+        r#"{{"id":"calc-sl-us","op":"calculate_streamline","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#),
+        "expected failure, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("STRUCTURE_NOT_FOUND"),
+        "expected STRUCTURE_NOT_FOUND, got: {}",
+        resp
+    );
+    // Distinct from the no-engine case: this is the find_streamline_structure
+    // miss. get_streamline_ref's message is "structure 'Ghost' not found".
+    assert!(
+        resp.contains("no streamline structure named 'Ghost'"),
+        "expected the find_streamline_structure miss message, got: {}",
+        resp
+    );
 
     drop(worker.stdin.take());
     worker.wait().unwrap();

@@ -13,8 +13,9 @@
 //! a field-by-field mirror of the JSON schema — that contract is HEU-513
 //! codegen territory. Concretely: commission percents in `[0, 1]`, CV-to-dollar
 //! multipliers finite and positive, per-period caps finite and non-negative,
-//! breakaway tiers non-empty and `<= 255`, and matrix parameters the engine can
-//! actually run (`width >= 2`, breadth-first spillover only).
+//! breakaway tiers non-empty and `<= 255`, matrix parameters the engine can
+//! actually run (`width >= 2`, breadth-first spillover only), and structure
+//! names unique across the plan so name-based lookup is unambiguous.
 //!
 //! The pattern follows `CycleStepConfig::validate` (config/binary.rs): `&mut
 //! self` so normalization can ride along with the checks, and `Result<(),
@@ -23,6 +24,8 @@
 //! response code. The separate `plan.version` gate lives in the handler with
 //! its own `UNSUPPORTED_PLAN_VERSION` code, because a valid future-version plan
 //! is not a malformed one.
+
+use std::collections::HashSet;
 
 use super::binary::{BinaryCommissionConfig, BinaryCommissionMode, PairingConfig};
 use super::board_plan::BoardPlanConfig;
@@ -99,8 +102,31 @@ impl CompensationPlan {
     pub fn validate(&mut self) -> Result<(), String> {
         self.volume.validate().map_err(|e| format!("volume: {e}"))?;
         self.caps.validate().map_err(|e| format!("caps: {e}"))?;
+        self.check_unique_structure_names()?;
         for structure in &mut self.structures {
             structure.validate()?;
+        }
+        Ok(())
+    }
+
+    /// Reject two structures that share a name.
+    ///
+    /// Structure lookup is by name and takes the first match, so duplicate
+    /// names make the payout depend on plan ordering. Go already rejects this
+    /// in `validateStructureNames` (internal/config/rules.go). The engine
+    /// repeats the check because it is its own trust boundary: a direct caller
+    /// that skips the Go pipeline would otherwise load an ambiguous plan.
+    ///
+    /// Names are compared exactly, matching the Go rule. Runs before the
+    /// per-structure loop so that every later error, which names the structure
+    /// it came from, points at exactly one structure.
+    fn check_unique_structure_names(&self) -> Result<(), String> {
+        let mut seen = HashSet::with_capacity(self.structures.len());
+        for structure in &self.structures {
+            let name = structure.name();
+            if !seen.insert(name) {
+                return Err(format!("structures: duplicate structure name '{name}'"));
+            }
         }
         Ok(())
     }
@@ -356,6 +382,7 @@ mod tests {
 
     use crate::config::binary::{PairingCalculation, VolumeAfterPayout};
     use crate::config::board_plan::ReEntryPosition;
+    use crate::config::eligibility::CommissionEligibility;
     use crate::config::generation::GenerationBoundaryMode;
     use crate::config::matrix::SpilloverDirection;
     use crate::config::payout::CapEnforcement;
@@ -363,6 +390,8 @@ mod tests {
         BreakawayGenerationConfig, BreakawayTier, FixedOverrideConfig, MultiTierConfig,
     };
     use crate::config::streamline::StreamlineLevel;
+    use crate::config::{StreamlineStructureConfig, UnilevelStructureConfig};
+    use crate::test_support::build_test_plan;
 
     // --- numeric helpers ---
 
@@ -653,5 +682,66 @@ mod tests {
             ..ok
         };
         assert!(negative.validate().is_err());
+    }
+
+    // --- plan-level rules ---
+
+    fn test_eligibility() -> CommissionEligibility {
+        CommissionEligibility {
+            minimum_pv: 100.0,
+            require_order_in_period: false,
+            eligible_statuses: vec!["active".to_string()],
+            active_leg_tiers: vec![],
+        }
+    }
+
+    fn named_streamline(name: &str) -> StructureConfig {
+        StructureConfig::Streamline(StreamlineStructureConfig {
+            name: name.to_string(),
+            streamline_commission: StreamlineCommissionConfig {
+                volume_to_dollar_multiplier: None,
+                max_depth: 3,
+                levels: vec![StreamlineLevel {
+                    level: 1,
+                    min_rank: "associate".to_string(),
+                    percent: 0.1,
+                }],
+                stream_config: None,
+            },
+        })
+    }
+
+    fn named_unilevel(name: &str) -> StructureConfig {
+        StructureConfig::Unilevel(UnilevelStructureConfig {
+            name: name.to_string(),
+            level_commission: level_config(0.40, None, 0.05),
+            compression: None,
+            pass_up: None,
+        })
+    }
+
+    /// Build a plan whose structures are exactly `structures`.
+    fn plan_with_structures(structures: Vec<StructureConfig>) -> CompensationPlan {
+        let mut plan = build_test_plan(test_eligibility(), named_streamline("seed"), "seed");
+        plan.structures = structures;
+        plan
+    }
+
+    #[test]
+    fn plan_rejects_duplicate_structure_names() {
+        // Structure lookup is by name and takes the first match, so two
+        // structures sharing a name make the payout depend on plan ordering.
+        // Go rejects this (validateStructureNames in internal/config/rules.go);
+        // the engine has to reject it too, or a direct engine caller that skips
+        // the Go pipeline loads an ambiguous plan.
+        let mut plan = plan_with_structures(vec![named_streamline("main"), named_unilevel("main")]);
+        assert!(plan.validate().is_err());
+    }
+
+    #[test]
+    fn plan_accepts_distinct_structure_names() {
+        let mut plan =
+            plan_with_structures(vec![named_streamline("stream"), named_unilevel("uni")]);
+        assert!(plan.validate().is_ok());
     }
 }

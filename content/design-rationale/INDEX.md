@@ -45,6 +45,7 @@ Code comments that reference "ADR-NNN" use the DEVELOPMENT.md numbering.
 | [025](025-public-test-support-module.md) | **Public Test Support Module** | Why `network_engine::test_support` is public for integration tests, and why it is still treated as internal-only support code |
 | [026](026-bottom-up-rank-evaluation.md) | **Bottom-Up Rank Evaluation** | Why rank evaluation iterates to a fixpoint over an accumulating descendant-rank map, so predicates read downline ranks even with multiple structure trees |
 | [027](027-provenance-as-primary-data.md) | **Provenance as Primary Data** | Why commission provenance is stored as primary data rather than a rebuildable event projection, and where the four kinds of commission data each live |
+| [028](028-commission-config-from-validated-state.md) | **Commission Config From Validated State** | Why commission handlers read the plan and structure config from `WorkerState` instead of request params, so the `load_plan` validation gate cannot be bypassed |
 
 ## Reading Order
 

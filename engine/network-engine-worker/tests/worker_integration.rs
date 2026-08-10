@@ -2301,13 +2301,19 @@ fn sl_add_member(worker: &mut std::process::Child, id: &str, user: &str, sponsor
 
 // --- Board plan commission integration tests ---
 
-/// Unused until the handler flip gives it callers.
-#[allow(dead_code)]
+/// The board structure's name. Must match the `board_plan` structure inside
+/// `BOARD_TEST_PLAN_JSON`, the way `SL_STRUCTURE` matches its streamline twin.
+/// `load_plan_accepts_valid_board_plan` asserts the two agree, so drift fails
+/// there rather than surfacing later as a confusing STRUCTURE_NOT_FOUND.
 const BP_STRUCTURE: &str = "BoardTest";
 
-/// Board plan test plan. `board_calculate_commissions` resolves its
-/// `board_cycling` config from this plan (HEU-603), so a test that skips
-/// `load_board_test_plan` gets NO_PLAN rather than earnings.
+/// Board plan test plan.
+///
+/// Once HEU-603 flips the handler, `board_calculate_commissions` will resolve
+/// its `board_cycling` config from this plan, and a test that skips
+/// `load_board_test_plan` will get NO_PLAN instead of earnings. That is not
+/// true yet: the handler still takes `_state` and reads `config` from request
+/// params, so a calculate with no plan loaded currently returns real earnings.
 ///
 /// The unilevel structure is not decoration. Go's `validateBoardPlanCompanion`
 /// (`internal/config/rules.go:812`) requires every board plan to have a
@@ -2370,9 +2376,6 @@ const BOARD_TEST_PLAN_JSON: &str = r#"{
 }"#;
 
 /// Loads `BOARD_TEST_PLAN_JSON` and asserts it took.
-///
-/// Unused until the handler flip gives it callers.
-#[allow(dead_code)]
 fn load_board_test_plan(worker: &mut std::process::Child) {
     let resp = send_load_plan(worker, BOARD_TEST_PLAN_JSON);
     assert!(
@@ -2382,19 +2385,25 @@ fn load_board_test_plan(worker: &mut std::process::Child) {
     );
 }
 
-/// Companion to `load_plan_rejects_board_cycle_commission_negative`. Proves
-/// `BOARD_TEST_PLAN_JSON` is otherwise valid, so that rejection comes from the
-/// mutated value and not from drift in the constant. Mirrors
-/// `load_plan_accepts_valid_streamline_plan`.
+/// Proves `BOARD_TEST_PLAN_JSON` is a valid plan, so that when the negative
+/// `cycle_commission` gate test arrives it can attribute its rejection to the
+/// mutated value rather than to drift in the constant. Mirrors
+/// `load_plan_accepts_valid_streamline_plan`, which does the same job for the
+/// streamline constant.
+///
+/// Also pins `BP_STRUCTURE` to the name inside the JSON. Nothing else ties the
+/// two together, and a silent drift would surface later as a confusing
+/// STRUCTURE_NOT_FOUND rather than a failure here.
 #[test]
 fn load_plan_accepts_valid_board_plan() {
-    let mut worker = common::spawn_worker();
-    let resp = send_load_plan(&mut worker, BOARD_TEST_PLAN_JSON);
     assert!(
-        resp.contains(r#""ok":true"#),
-        "board plan should load: {}",
-        resp
+        BOARD_TEST_PLAN_JSON.contains(&format!(r#""name": "{}""#, BP_STRUCTURE)),
+        "BP_STRUCTURE ({}) is not the structure name in BOARD_TEST_PLAN_JSON",
+        BP_STRUCTURE
     );
+
+    let mut worker = common::spawn_worker();
+    load_board_test_plan(&mut worker);
     drop(worker.stdin.take());
     worker.wait().unwrap();
 }

@@ -2190,10 +2190,20 @@ const SL_USER2: &str = "00000000-0000-0000-0000-000000000012";
 const SL_USER3: &str = "00000000-0000-0000-0000-000000000013";
 const SL_STRUCTURE: &str = "TestStreamline";
 
-/// Minimal plan carrying a single streamline structure named `TestStreamline`.
-/// The name matches `SL_STRUCTURE` so the plan and `create_streamline` agree
-/// when a test needs both a loaded plan and a live engine (HEU-583). Its level-1
-/// `percent` of 0.10 is the value mutated to exercise the load-time gate.
+/// Minimal plan carrying a streamline structure named `TestStreamline` and a
+/// companion unilevel. The streamline name matches `SL_STRUCTURE` so the plan
+/// and `create_streamline` agree when a test needs both a loaded plan and a
+/// live engine (HEU-583). Its level-1 `percent` of 0.10 is the value mutated to
+/// exercise the load-time gate.
+///
+/// The unilevel is required, not decoration. Go's `validateStreamlineCompanion`
+/// (`internal/config/rules.go:839`) requires every streamline structure to have
+/// a companion unilevel, and Rust's `CompensationPlan::validate` does not
+/// enforce that rule. Without it this constant encodes a plan production Go
+/// rejects, which is what it did between HEU-583 and HEU-603.
+///
+/// It is the *second* structure on purpose. `load_plan_rejects_duplicate_structure_names`
+/// pushes a third onto this list and asserts the exact resulting name order.
 const STREAMLINE_TEST_PLAN_JSON: &str = r#"{
     "name": "Integration Test Plan",
     "version": 1,
@@ -2211,12 +2221,25 @@ const STREAMLINE_TEST_PLAN_JSON: &str = r#"{
                     "streams": null
                 }
             }
+        },
+        {
+            "type": "unilevel",
+            "config": {
+                "name": "TestUnilevel",
+                "level_commission": {
+                    "broad_commission_percent": 0.40,
+                    "volume_to_dollar_multiplier": null,
+                    "commissionable_depth": 3,
+                    "rate_table": { "member": { "1": 0.05, "2": 0.05, "3": 0.05 } }
+                },
+                "compression": null
+            }
         }
     ],
     "period": { "length": "month", "start_date": "2026-03-01", "payout_lag_days": 14 },
     "volume": { "inhibit_signup_volume": false, "base_currency": "USD", "volume_to_dollar_multiplier": 1.0, "deduct_qualifying_volume": false },
     "ranks": [
-        { "name": "member", "ordinal": 1, "qualification": { "structures": [], "required_products": [] }, "qualified_structures": ["TestStreamline"], "demotion_policy": "promotion_only" }
+        { "name": "member", "ordinal": 1, "qualification": { "structures": [], "required_products": [] }, "qualified_structures": ["TestStreamline", "TestUnilevel"], "demotion_policy": "promotion_only" }
     ],
     "rank_tracking": { "track_achieved_rank": false },
     "rank_features": { "constraints_enabled": false, "overrides_enabled": false },
@@ -2619,8 +2642,8 @@ fn load_plan_rejects_duplicate_structure_names() {
         .collect();
     assert_eq!(
         names,
-        vec!["TestStreamline", "TestStreamline"],
-        "the plan should hold exactly two structures sharing one name"
+        vec!["TestStreamline", "TestUnilevel", "TestStreamline"],
+        "the plan should hold three structures, two of them sharing one name"
     );
     let bad = plan.to_string();
 

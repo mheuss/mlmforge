@@ -330,7 +330,11 @@ Unilevel carries no position; it appends to the parent's child list. A unilevel 
 
 ### Why preflight validates everything before mutating anything
 
-The worker has **no operation to remove a structure** (HEU-557). A load that fails partway leaves the tree stuck until the process restarts. So `LoadTree` proves the whole node set is reconstructable before the first engine call, and its replay failures report how far they got, because that count is the only recovery signal an operator has.
+The worker has **no operation to remove a structure** (HEU-557). A load that fails partway leaves the tree stuck until the process restarts. So `LoadTree` proves a load is sound before the first engine call, and its replay failures report how far they got, because that count is the only recovery signal an operator has.
+
+Preflight runs in two phases with different inputs. `validateTreeConfig` checks the tree type, and for a matrix the width and spillover. It reads no rows, so it runs before the store query. A misconfigured load costs no query. `validateNodes` runs after the query and proves the node set is structurally consistent.
+
+The empty-tree short circuit sits between the two phases. A tree with zero rows still reports configuration errors. That is why a typo in startup wiring surfaces at the first load instead of staying invisible until the first node arrives.
 
 ### Sponsored-list order is not restored
 

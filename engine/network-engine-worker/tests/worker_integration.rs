@@ -2585,8 +2585,16 @@ fn calculate_streamline_uses_the_loaded_plan_structure() {
     assert_eq!(earnings[0]["earner_id"].as_str().expect(&resp), SL_USER1);
     assert_eq!(earnings[0]["source_id"].as_str().expect(&resp), SL_USER2);
     assert_eq!(earnings[0]["level"].as_u64().expect(&resp), 1);
-    // 100 CV * 1.0 multiplier * 0.10 level-1 percent = 10.0
-    assert_eq!(earnings[0]["dollar_amount"].as_f64().expect(&resp), 10.0);
+    // 100 CV * 1.0 multiplier * 0.10 level-1 percent = 10.0. Compared with a
+    // tolerance so a change to the multiplication order inside the calculator
+    // can't fail this test by one ULP — the config source is what it guards.
+    let dollar = earnings[0]["dollar_amount"].as_f64().expect(&resp);
+    assert!(
+        (dollar - 10.0).abs() < 1e-10,
+        "dollar_amount should be 10.0, got {}: {}",
+        dollar,
+        resp
+    );
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -2648,10 +2656,11 @@ fn calculate_streamline_ignores_request_scoped_config() {
         "expected exactly one earning, got: {}",
         resp
     );
-    assert_eq!(
-        earnings[0]["dollar_amount"].as_f64().expect(&resp),
-        10.0,
-        "the request-scoped percent reached the calculator: {}",
+    let dollar = earnings[0]["dollar_amount"].as_f64().expect(&resp);
+    assert!(
+        (dollar - 10.0).abs() < 1e-10,
+        "the request-scoped percent reached the calculator, got {}: {}",
+        dollar,
         resp
     );
 

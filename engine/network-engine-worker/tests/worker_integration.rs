@@ -2323,9 +2323,9 @@ const BP_STRUCTURE: &str = "BoardTest";
 /// twin rule `validateStreamlineCompanion`.
 ///
 /// `cycle_commission: 500.0` and `max_cycles_per_period: 3` match the values
-/// the contract fixture used inline before HEU-603. Keep them: the fixture's
-/// unchanged expected response is what proves the migration was
-/// behavior-preserving.
+/// the contract fixture carries inline today. Keep them: once the fixture
+/// switches to loading this plan instead, its expected response staying
+/// unchanged is what will prove the migration was behavior-preserving.
 const BOARD_TEST_PLAN_JSON: &str = r#"{
     "name": "Integration Test Plan",
     "version": 1,
@@ -2398,7 +2398,10 @@ fn load_board_test_plan(worker: &mut std::process::Child) {
 fn load_plan_accepts_valid_board_plan() {
     assert!(
         BOARD_TEST_PLAN_JSON.contains(&format!(r#""name": "{}""#, BP_STRUCTURE)),
-        "BP_STRUCTURE ({}) is not the structure name in BOARD_TEST_PLAN_JSON",
+        "BP_STRUCTURE ({}) does not appear as a structure name in \
+         BOARD_TEST_PLAN_JSON. Either the name drifted, or the JSON was \
+         reformatted away from the `\"name\": \"value\"` spacing this \
+         substring match depends on.",
         BP_STRUCTURE
     );
 

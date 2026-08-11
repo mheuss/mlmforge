@@ -2648,16 +2648,19 @@ fn board_calculate_ignores_request_scoped_config() {
 /// fails today, but only because `BoardPlanConfig`'s fields lack defaults. Add
 /// `#[serde(default)]` at the container level, a routine forward-compat edit,
 /// and an object payload starts deserializing into a default config while this
-/// guard stays green forever. A number cannot deserialize into a struct
-/// whatever that struct's attributes say.
+/// guard stays green forever. No ordinary derive attribute makes a struct
+/// accept a number.
 ///
 /// Do not "improve" it into a realistic config either. A valid one would
 /// deserialize cleanly, the payout would still be $500, and the guard would
 /// silently stop working.
 ///
 /// `board_calculate_ignores_request_scoped_config` is the other half, catching
-/// re-added *and honoured*. Both are keyed to the literal name `config`, so an
-/// override re-added under a different name and honoured passes both.
+/// re-added *and honoured*. The boundary of the pair runs along two axes. By
+/// name: both send the literal key `config`, so an override re-added under
+/// another name and honoured passes both. By type: this one needs the field to
+/// be struct-typed, so a `config` returning as `serde_json::Value` swallows the
+/// number and stays green. The honoured half still catches that.
 #[test]
 fn board_calculate_ignores_malformed_request_config() {
     let mut worker = common::spawn_worker();

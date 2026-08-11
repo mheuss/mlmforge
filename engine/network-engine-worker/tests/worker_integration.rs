@@ -2533,9 +2533,17 @@ fn board_calculate_rejects_legacy_shape_without_structure() {
 
     let request = r#"{"id":"bp-legacy","op":"board_calculate_commissions","params":{"cycle_events":[],"period_cycle_counts":{},"config":{"cycle_commission":999999.0,"re_entry_enabled":true,"re_entry_position":"bottom","max_cycles_per_period":99,"max_cascade_depth":10,"stall_threshold_periods":3,"inactive_compression":false}}}"#;
     let resp = common::send_receive(&mut worker, request);
+    // Asserts the field name, not just the code. Every deserialize failure in
+    // this handler returns INVALID_PARAMS, including one from the hostile
+    // `config` itself, so a code-only check goes green the day a
+    // `BoardPlanConfig` field is renamed — with the missing-`structure` path
+    // never exercised. Same reasoning as the money-path test above.
     assert!(
-        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
-        "a request with no structure must be rejected, got: {}",
+        resp.contains(r#""ok":false"#)
+            && resp.contains("INVALID_PARAMS")
+            && resp.contains("structure"),
+        "a request with no structure must be rejected, naming the missing \
+         field, got: {}",
         resp
     );
 
@@ -2550,6 +2558,11 @@ fn board_calculate_rejects_legacy_shape_without_structure() {
 /// commission proves `cycle_commission` comes from the plan; the cap proves
 /// `max_cycles_per_period` does too. The calculator reads exactly these two
 /// fields (`commission/board_plan.rs:35-36`), so together they cover it.
+///
+/// For whoever deletes `config` from `Params`: this test needs the field
+/// accepted and ignored. Nothing sets `deny_unknown_fields`, so deleting it
+/// leaves this green. Adding `deny_unknown_fields` in the same change would
+/// flip this to INVALID_PARAMS, and that is why, not a regression.
 #[test]
 fn board_calculate_ignores_request_scoped_config() {
     let mut worker = common::spawn_worker();
@@ -2590,11 +2603,30 @@ fn board_calculate_ignores_request_scoped_config() {
         resp
     );
 
+    // Pins the cap at exactly 3, not merely somewhere in 1..=3. Without the
+    // third-cycle assertion a drifted cap of 1 or 2 leaves the fourth-cycle
+    // check green, and so does a `>` that became `>=` at
+    // `commission/board_plan.rs:35`.
+    let third = earnings[2]["dollar_amount"].as_f64().expect(&resp);
+    assert!(
+        (third - 500.0).abs() < 1e-10 && !earnings[2]["capped"].as_bool().expect(&resp),
+        "the third cycle is within the plan's cap of 3 and must pay, got: {}",
+        resp
+    );
+
     let fourth = earnings[3]["dollar_amount"].as_f64().expect(&resp);
     assert!(
-        fourth == 0.0 && earnings[3]["capped"].as_bool().unwrap_or(false),
+        (fourth - 0.0).abs() < 1e-10 && earnings[3]["capped"].as_bool().expect(&resp),
         "the request-scoped max_cycles_per_period reached the calculator; the \
          fourth cycle should be capped under the plan's cap of 3, got: {}",
+        resp
+    );
+
+    // Records that index is event order rather than leaving it implied.
+    assert_eq!(
+        earnings[3]["cycle_number"].as_u64().expect(&resp),
+        4,
+        "earnings must come back in event order, got: {}",
         resp
     );
 

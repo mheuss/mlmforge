@@ -2535,8 +2535,8 @@ fn board_calculate_rejects_legacy_shape_without_structure() {
     let resp = common::send_receive(&mut worker, request);
     // Asserts the field name, not just the code. Every deserialize failure in
     // this handler returns INVALID_PARAMS, including one from the hostile
-    // `config` itself, so a code-only check goes green the day a
-    // `BoardPlanConfig` field is renamed — with the missing-`structure` path
+    // `config` itself. So a code-only check goes green the day a
+    // `BoardPlanConfig` field is renamed. The missing-`structure` path is then
     // never exercised. Same reasoning as the money-path test above.
     assert!(
         resp.contains(r#""ok":false"#)
@@ -2603,10 +2603,10 @@ fn board_calculate_ignores_request_scoped_config() {
         resp
     );
 
-    // Pins the cap at exactly 3, not merely somewhere in 1..=3. Without the
-    // third-cycle assertion a drifted cap of 1 or 2 leaves the fourth-cycle
-    // check green, and so does a `>` that became `>=` at
-    // `commission/board_plan.rs:35`.
+    // Pins the cap at exactly 3, not merely somewhere in 1..=3. The
+    // fourth-cycle check alone stays green under a drifted cap of 1 or 2. It
+    // also stays green if the `>` at `commission/board_plan.rs:35` became
+    // `>=`. Only this assertion catches either.
     let third = earnings[2]["dollar_amount"].as_f64().expect(&resp);
     assert!(
         (third - 500.0).abs() < 1e-10 && !earnings[2]["capped"].as_bool().expect(&resp),

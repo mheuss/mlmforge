@@ -2639,6 +2639,45 @@ fn board_calculate_ignores_request_scoped_config() {
     worker.wait().unwrap();
 }
 
+/// Catches the field being re-added **at all**, which is the leading indicator:
+/// a field usually reappears unused before anything reads it. The config here
+/// is deliberately bogus, so if `Params` ever declares it again this request
+/// fails deserialization and this test goes red.
+///
+/// Do not "improve" the bogus config into a realistic one. A valid config would
+/// deserialize cleanly, the payout would still be $500, and this guard would
+/// silently stop working. `board_calculate_ignores_request_scoped_config` is
+/// the other half, catching re-added *and honoured*.
+#[test]
+fn board_calculate_ignores_malformed_request_config() {
+    let mut worker = common::spawn_worker();
+    load_board_test_plan(&mut worker);
+
+    let request = format!(
+        r#"{{"id":"bp-bogus","op":"board_calculate_commissions","params":{{"config":{{"bogus":true}},"structure":"{}","cycle_events":[{{"board_id":"00000000-0000-0000-0000-000000000010","cycled_member":"{}","new_boards":[],"re_entry_board":null}}],"period_cycle_counts":{{}}}}}}"#,
+        BP_STRUCTURE, ROOT
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(
+        parsed["ok"].as_bool().unwrap_or(false),
+        "a malformed config must be ignored, not deserialized, got: {}",
+        resp
+    );
+    let dollar = parsed["result"]["earnings"][0]["dollar_amount"]
+        .as_f64()
+        .expect(&resp);
+    assert!(
+        (dollar - 500.0).abs() < 1e-10,
+        "expected the plan's 500.0, got {}: {}",
+        dollar,
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 #[test]
 fn streamline_create_and_add_members() {
     let mut worker = common::spawn_worker();

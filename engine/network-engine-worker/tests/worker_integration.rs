@@ -2468,6 +2468,60 @@ fn board_calculate_unknown_structure_returns_not_found() {
     worker.wait().unwrap();
 }
 
+/// The money path. A negative cycle_commission must be rejected at load_plan,
+/// which is the only gate now that the handler no longer takes config.
+///
+/// Asserts the rejection *message*, not just the code. `handle_load_plan`
+/// returns INVALID_PLAN for a deserialize failure as well as a validation
+/// failure (`handlers/common.rs:123-137`), so a code-only check would stay
+/// green if the plan constant drifted and `check_non_negative` were never
+/// reached. `load_plan_accepts_valid_board_plan` is the companion that proves
+/// the unmutated constant loads.
+#[test]
+fn load_plan_rejects_board_cycle_commission_negative() {
+    let mut worker = common::spawn_worker();
+
+    let bad = BOARD_TEST_PLAN_JSON.replace(
+        "\"cycle_commission\": 500.0",
+        "\"cycle_commission\": -500.0",
+    );
+    assert!(
+        bad.contains("\"cycle_commission\": -500.0"),
+        "the cycle_commission replacement did not match; the plan constant changed shape"
+    );
+
+    let resp = send_load_plan(&mut worker, &bad);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PLAN"),
+        "expected INVALID_PLAN, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("cycle_commission") && resp.contains("must be finite and non-negative"),
+        "expected the board dollar-law gate to reject it, not a deserialize \
+         failure or an unrelated check, got: {}",
+        resp
+    );
+
+    // The rejected plan stored nothing, so this fresh worker still has no plan.
+    // A failed load_plan does NOT clear a previously loaded plan; state.plan is
+    // only assigned after validation passes. That is why this assertion is only
+    // meaningful on a worker that never loaded a good plan.
+    let request = format!(
+        r#"{{"id":"bp-after-reject","op":"board_calculate_commissions","params":{{"structure":"{}","cycle_events":[],"period_cycle_counts":{{}}}}}}"#,
+        BP_STRUCTURE
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains("NO_PLAN"),
+        "a rejected plan must leave nothing to calculate with, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 #[test]
 fn streamline_create_and_add_members() {
     let mut worker = common::spawn_worker();

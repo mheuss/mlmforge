@@ -1832,6 +1832,7 @@ func TestEngineClient_CalculateBoardCommissions_MockResponse(t *testing.T) {
 	client := NewEngineClientWithTransport(mock)
 
 	req := CalculateBoardCommissionsRequest{
+		StructureName: "BoardTest",
 		CycleEvents: []CycleEventDTO{
 			{
 				BoardID:      "board-001",
@@ -1851,6 +1852,17 @@ func TestEngineClient_CalculateBoardCommissions_MockResponse(t *testing.T) {
 	require.NotNil(t, result)
 
 	assert.Equal(t, "board_calculate_commissions", mock.lastOp)
+	assert.JSONEq(t, `{
+		"structure": "BoardTest",
+		"cycle_events": [{
+			"board_id": "board-001",
+			"cycled_member": "00000000-0000-0000-0000-000000000001",
+			"new_boards": ["board-002"],
+			"re_entry_board": null
+		}],
+		"period_cycle_counts": {"00000000-0000-0000-0000-000000000001": 2},
+		"config": {"cycle_commission":25.50,"max_cycles_per_period":5}
+	}`, string(mock.lastParams))
 	require.Len(t, result.Earnings, 1)
 	assert.Equal(t, "00000000-0000-0000-0000-000000000001", result.Earnings[0].EarnerID)
 	assert.Equal(t, "board-001", result.Earnings[0].BoardID)

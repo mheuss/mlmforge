@@ -3,9 +3,10 @@ use std::collections::HashMap;
 use network_engine::board_plan::BoardPlanEngine;
 use network_engine::commission::calculate_board_commissions;
 use network_engine::config::board_plan::BoardPlanConfig;
+use network_engine::config::{BoardPlanStructureConfig, CompensationPlan, StructureConfig};
 use uuid::Uuid;
 
-use super::common::{extract_structure_name, parse_params, parse_uuid};
+use super::common::{extract_structure_name, parse_params, parse_uuid, require_plan};
 use crate::protocol::{Request, Response};
 use crate::state::{TreeInstance, WorkerState};
 
@@ -51,6 +52,26 @@ fn get_board_plan<'a>(
             format!("structure '{}' not found", structure),
         )),
     }
+}
+
+/// Resolves a board plan structure by name from a validated plan.
+///
+/// Co-located with its only caller, matching `find_streamline_structure`
+/// (`handlers/streamline.rs:421`) rather than the five lookups private to
+/// `commission.rs`.
+///
+/// The `StructureConfig::BoardPlan` variant guard cannot be defeated by a
+/// same-named structure of another type: `check_unique_structure_names`
+/// (HEU-605, `config/validate.rs:129`) rejects duplicate names across the
+/// whole plan. The guard is what makes the return type work, not a filter.
+fn find_board_plan_structure<'a>(
+    plan: &'a CompensationPlan,
+    name: &str,
+) -> Option<&'a BoardPlanStructureConfig> {
+    plan.structures.iter().find_map(|s| match s {
+        StructureConfig::BoardPlan(c) if c.name == name => Some(c),
+        _ => None,
+    })
 }
 
 /// Maps a `BoardPlanError` to a `Response` with an appropriate error code.
@@ -463,30 +484,65 @@ pub(crate) fn handle_board_list(state: &WorkerState, request: &Request) -> Respo
 
 /// Calculates board cycle commissions for a set of cycle events.
 ///
-/// Params: cycle_events, period_cycle_counts, config.
+/// Params: structure, cycle_events, period_cycle_counts. The named
+/// structure's board_cycling config comes from the loaded plan.
 pub(crate) fn handle_board_calculate_commissions(
-    _state: &WorkerState,
+    state: &WorkerState,
     request: &Request,
 ) -> Response {
+    // Config comes from the plan validated by handle_load_plan, never from
+    // request params (HEU-603, design rationale 028). BoardPlanConfig::validate
+    // checks exactly one thing: cycle_commission is finite and non-negative.
+    // Only the negative half is reachable from a request. JSON carries no NaN
+    // literal and serde_json rejects float overflow, so a wire value is always
+    // finite. The non-finite guard covers in-process construction.
+    //
+    // Unlike the six sibling handlers this one never reads state.trees. Cycle
+    // events arrive on the request, so a tree lookup would add a precondition
+    // without adding a guarantee, and would break replay of events from a
+    // board that has since dissolved. That also means nothing checks the events
+    // were produced by the structure named here. HEU-614 tracks it.
+    let plan = match require_plan(state, &request.id) {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+
     #[derive(serde::Deserialize)]
     struct Params {
+        #[serde(rename = "structure")]
+        structure_name: String,
         cycle_events: Vec<network_engine::board_plan::CycleEvent>,
         #[serde(default)]
         period_cycle_counts: HashMap<Uuid, u32>,
-        config: BoardPlanConfig,
+        // Deleted in Task 7. Still declared so Phase 2 callers that send it
+        // deserialize cleanly; nothing reads it.
+        #[allow(dead_code)]
+        config: Option<BoardPlanConfig>,
     }
 
     let params: Params = match serde_json::from_str(request.params.get()) {
         Ok(p) => p,
-        Err(e) => {
-            return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string());
+        Err(e) => return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string()),
+    };
+
+    let structure = match find_board_plan_structure(plan, &params.structure_name) {
+        Some(s) => s,
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "STRUCTURE_NOT_FOUND",
+                format!(
+                    "board plan structure '{}' not found in plan",
+                    params.structure_name
+                ),
+            );
         }
     };
 
     let result = calculate_board_commissions(
         &params.cycle_events,
         &params.period_cycle_counts,
-        &params.config,
+        &structure.board_cycling,
     );
 
     Response::success(

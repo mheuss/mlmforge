@@ -2416,6 +2416,59 @@ fn load_plan_accepts_valid_board_plan() {
     worker.wait().unwrap();
 }
 
+/// The plan gate. Without a loaded plan there is no config to rate with.
+///
+/// Carries a valid legacy `config` on purpose. Before the fix this request
+/// returns ok:true and pays 500.0 from request params; omitting `config`
+/// instead would fail with INVALID_PARAMS and demonstrate nothing.
+#[test]
+fn board_calculate_without_plan_returns_no_plan() {
+    let mut worker = common::spawn_worker();
+
+    let legacy_config = r#""config":{"cycle_commission":500.0,"re_entry_enabled":true,"re_entry_position":"bottom","max_cycles_per_period":3,"max_cascade_depth":10,"stall_threshold_periods":3,"inactive_compression":false},"#;
+    let request = format!(
+        r#"{{"id":"bp-noplan","op":"board_calculate_commissions","params":{{{}"structure":"{}","cycle_events":[],"period_cycle_counts":{{}}}}}}"#,
+        legacy_config, BP_STRUCTURE
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("NO_PLAN"),
+        "expected NO_PLAN, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// The structure gate. A plan IS loaded, so the error cannot come from
+/// `require_plan`. Written without `load_board_test_plan` this test returns
+/// NO_PLAN, passes, and proves nothing — the same trap HEU-583 hit with
+/// `get_streamline_ref`. The load call is the point of the test.
+///
+/// Also carries the legacy `config`, for the same reason as the test above.
+#[test]
+fn board_calculate_unknown_structure_returns_not_found() {
+    let mut worker = common::spawn_worker();
+    load_board_test_plan(&mut worker);
+
+    let request = r#"{"id":"bp-nostruct","op":"board_calculate_commissions","params":{"config":{"cycle_commission":500.0,"re_entry_enabled":true,"re_entry_position":"bottom","max_cycles_per_period":3,"max_cascade_depth":10,"stall_threshold_periods":3,"inactive_compression":false},"structure":"NoSuchBoard","cycle_events":[],"period_cycle_counts":{}}}"#;
+    let resp = common::send_receive(&mut worker, request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("STRUCTURE_NOT_FOUND"),
+        "expected STRUCTURE_NOT_FOUND, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("NoSuchBoard"),
+        "the error should name the structure that missed, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 #[test]
 fn streamline_create_and_add_members() {
     let mut worker = common::spawn_worker();

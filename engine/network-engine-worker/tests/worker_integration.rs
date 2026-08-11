@@ -2417,11 +2417,12 @@ fn load_plan_accepts_valid_board_plan() {
 
 /// The plan gate. Without a loaded plan there is no config to rate with.
 ///
-/// Carries a valid legacy `config` on purpose. It was load-bearing when this
-/// test was written: the handler still declared the field, so omitting it
-/// failed with INVALID_PARAMS and demonstrated nothing. The field is gone now
-/// and the payload is inert, kept because it also proves `NO_PLAN` wins over
-/// a legacy-shaped request.
+/// Carries a valid legacy `config`. It mattered while this test was red,
+/// against the pre-fix handler that required `config` and had no plan gate:
+/// omitting it failed with INVALID_PARAMS and proved nothing about state.
+/// Since the flip, `require_plan` runs before the params are parsed, so no
+/// payload shape reaches the deserializer on this path. The block is inert
+/// and kept only as the legacy shape a caller would send.
 #[test]
 fn board_calculate_without_plan_returns_no_plan() {
     let mut worker = common::spawn_worker();

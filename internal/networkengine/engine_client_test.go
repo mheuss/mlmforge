@@ -1816,7 +1816,7 @@ func TestEngineClient_BoardListBoards_MockResponse(t *testing.T) {
 	assert.Equal(t, parentID, *boards[0].ParentBoardID)
 }
 
-func TestEngineClient_CalculateBoardCommissions_MockResponse(t *testing.T) {
+func TestEngineClient_CalculateBoardCommissions_MockParams(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`{
 			"earnings":[{
@@ -1851,46 +1851,8 @@ func TestEngineClient_CalculateBoardCommissions_MockResponse(t *testing.T) {
 	require.NotNil(t, result)
 
 	assert.Equal(t, "board_calculate_commissions", mock.lastOp)
-	require.Len(t, result.Earnings, 1)
-	assert.Equal(t, "00000000-0000-0000-0000-000000000001", result.Earnings[0].EarnerID)
-	assert.Equal(t, "board-001", result.Earnings[0].BoardID)
-	assert.InDelta(t, 25.50, result.Earnings[0].DollarAmount, 1e-9)
-	assert.Equal(t, 2, result.Earnings[0].CycleNumber)
-	assert.False(t, result.Earnings[0].Capped)
-
-	require.Contains(t, result.UpdatedCycleCounts, "00000000-0000-0000-0000-000000000001")
-	assert.Equal(t, 3, result.UpdatedCycleCounts["00000000-0000-0000-0000-000000000001"])
-}
-
-// TestEngineClient_CalculateBoardCommissions_MockParams pins the exact bytes on
-// the wire. The sibling above covers the response side.
-//
-// JSONEq is exact on the key set, so this fails on a wrong json tag, a missing
-// key, or a stray extra one. That last case is the point: config used to ride
-// here and the worker now has no field to receive it, so a reintroduced Config
-// would go out ignored and silent without this golden to catch it (HEU-603).
-func TestEngineClient_CalculateBoardCommissions_MockParams(t *testing.T) {
-	mock := &mockTransport{response: json.RawMessage(`{"earnings":[],"updated_cycle_counts":{}}`)}
-	client := NewEngineClientWithTransport(mock)
-
-	req := CalculateBoardCommissionsRequest{
-		StructureName: "BoardTest",
-		CycleEvents: []CycleEventDTO{
-			{
-				BoardID:      "board-001",
-				CycledMember: "00000000-0000-0000-0000-000000000001",
-				NewBoards:    []string{"board-002"},
-				ReEntryBoard: nil,
-			},
-		},
-		PeriodCycleCounts: map[string]int{
-			"00000000-0000-0000-0000-000000000001": 2,
-		},
-	}
-
-	_, err := client.CalculateBoardCommissions(context.Background(), req)
-	require.NoError(t, err)
-
+	// The board cycling config no longer crosses the wire (HEU-603).
+	// Asserting the exact param set is what makes its removal stick.
 	assert.JSONEq(t, `{
 		"structure": "BoardTest",
 		"cycle_events": [{
@@ -1901,6 +1863,28 @@ func TestEngineClient_CalculateBoardCommissions_MockParams(t *testing.T) {
 		}],
 		"period_cycle_counts": {"00000000-0000-0000-0000-000000000001": 2}
 	}`, string(mock.lastParams))
+
+	// Duplicates what JSONEq already catches, and earns its place for the same
+	// reason the streamline twin above gives: someone re-adding the field is
+	// likely to "fix" the red JSONEq by regenerating the golden, which silences
+	// it but not this. Deleting the guard then has to be deliberate.
+	//
+	// Neither catches a field re-added with `,omitempty` and left unpopulated.
+	// That shape is dead weight rather than a bypass: the worker ignores unknown
+	// params, and board_calculate_ignores_request_scoped_config pins that it
+	// keeps doing so. That Rust test builds its own request string, so it
+	// watches the worker, not this client.
+	assert.NotContains(t, string(mock.lastParams), `"config"`)
+
+	require.Len(t, result.Earnings, 1)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000001", result.Earnings[0].EarnerID)
+	assert.Equal(t, "board-001", result.Earnings[0].BoardID)
+	assert.InDelta(t, 25.50, result.Earnings[0].DollarAmount, 1e-9)
+	assert.Equal(t, 2, result.Earnings[0].CycleNumber)
+	assert.False(t, result.Earnings[0].Capped)
+
+	require.Contains(t, result.UpdatedCycleCounts, "00000000-0000-0000-0000-000000000001")
+	assert.Equal(t, 3, result.UpdatedCycleCounts["00000000-0000-0000-0000-000000000001"])
 }
 
 // mockTransport is a test double for EngineTransport.

@@ -2417,9 +2417,11 @@ fn load_plan_accepts_valid_board_plan() {
 
 /// The plan gate. Without a loaded plan there is no config to rate with.
 ///
-/// Carries a valid legacy `config` on purpose. Before the fix this request
-/// returns ok:true and pays 500.0 from request params; omitting `config`
-/// instead would fail with INVALID_PARAMS and demonstrate nothing.
+/// Carries a valid legacy `config` on purpose. It was load-bearing when this
+/// test was written: the handler still declared the field, so omitting it
+/// failed with INVALID_PARAMS and demonstrated nothing. The field is gone now
+/// and the payload is inert, kept because it also proves `NO_PLAN` wins over
+/// a legacy-shaped request.
 #[test]
 fn board_calculate_without_plan_returns_no_plan() {
     let mut worker = common::spawn_worker();
@@ -2445,7 +2447,8 @@ fn board_calculate_without_plan_returns_no_plan() {
 /// NO_PLAN, passes, and proves nothing — the same trap HEU-583 hit with
 /// `get_streamline_ref`. The load call is the point of the test.
 ///
-/// Also carries the legacy `config`, for the same reason as the test above.
+/// Also carries the legacy `config`, now inert, for the same reason as the
+/// test above.
 #[test]
 fn board_calculate_unknown_structure_returns_not_found() {
     let mut worker = common::spawn_worker();

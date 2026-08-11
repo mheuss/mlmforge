@@ -2322,14 +2322,14 @@ const BP_STRUCTURE: &str = "BoardTest";
 /// twin rule `validateStreamlineCompanion`.
 ///
 /// `cycle_commission: 500.0` and `max_cycles_per_period: 3` are the values the
-/// contract fixture uses, both in its inline `config` and in its own embedded
-/// copy of this plan. All three have to agree, and the paragraph below is why.
+/// contract fixture expects, and the paragraph below is why they must match.
 ///
 /// `engine/testdata/contracts/board_calculate_commissions.json` embeds a
 /// hand-maintained copy of this plan in its `setup_raw`. Nothing keeps the two
-/// in sync. Since the handler flip, a wrong value over there changes what the
-/// fixture pays rather than being masked by its inline `config`. Change one,
-/// change both. HEU-604 tracks consolidating the copies.
+/// in sync. Two copies now, not three: the fixture's request carried its own
+/// inline `config` until that field left the wire. A wrong value in the
+/// embedded plan changes what the fixture pays, with nothing masking it.
+/// Change one, change both. HEU-604 tracks consolidating the copies.
 const BOARD_TEST_PLAN_JSON: &str = r#"{
     "name": "Integration Test Plan",
     "version": 1,
@@ -2640,22 +2640,35 @@ fn board_calculate_ignores_request_scoped_config() {
 }
 
 /// Catches the field being re-added **at all**, which is the leading indicator:
-/// a field usually reappears unused before anything reads it. The config here
-/// is deliberately bogus, so if `Params` ever declares it again this request
-/// fails deserialization and this test goes red.
+/// a field usually reappears unused before anything reads it. The value here is
+/// a bare number, so if `Params` ever declares `config` again, at any struct
+/// type, this request fails deserialization and this test goes red.
 ///
-/// Do not "improve" the bogus config into a realistic one. A valid config would
-/// deserialize cleanly, the payout would still be $500, and this guard would
-/// silently stop working. `board_calculate_ignores_request_scoped_config` is
-/// the other half, catching re-added *and honoured*.
+/// A scalar on purpose, not an object full of junk keys. `{"bogus":true}` also
+/// fails today, but only because `BoardPlanConfig`'s fields lack defaults. Add
+/// `#[serde(default)]` at the container level, a routine forward-compat edit,
+/// and an object payload starts deserializing into a default config while this
+/// guard stays green forever. A number cannot deserialize into a struct
+/// whatever that struct's attributes say.
+///
+/// Do not "improve" it into a realistic config either. A valid one would
+/// deserialize cleanly, the payout would still be $500, and the guard would
+/// silently stop working.
+///
+/// `board_calculate_ignores_request_scoped_config` is the other half, catching
+/// re-added *and honoured*. Both are keyed to the literal name `config`, so an
+/// override re-added under a different name and honoured passes both.
 #[test]
 fn board_calculate_ignores_malformed_request_config() {
     let mut worker = common::spawn_worker();
     load_board_test_plan(&mut worker);
 
+    // Deliberately un-deserializable at any struct type. Read the note above
+    // before changing this.
+    let bogus = r#""config":42,"#;
     let request = format!(
-        r#"{{"id":"bp-bogus","op":"board_calculate_commissions","params":{{"config":{{"bogus":true}},"structure":"{}","cycle_events":[{{"board_id":"00000000-0000-0000-0000-000000000010","cycled_member":"{}","new_boards":[],"re_entry_board":null}}],"period_cycle_counts":{{}}}}}}"#,
-        BP_STRUCTURE, ROOT
+        r#"{{"id":"bp-bogus","op":"board_calculate_commissions","params":{{{}"structure":"{}","cycle_events":[{{"board_id":"00000000-0000-0000-0000-000000000010","cycled_member":"{}","new_boards":[],"re_entry_board":null}}],"period_cycle_counts":{{}}}}}}"#,
+        bogus, BP_STRUCTURE, ROOT
     );
     let resp = common::send_receive(&mut worker, &request);
     let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();

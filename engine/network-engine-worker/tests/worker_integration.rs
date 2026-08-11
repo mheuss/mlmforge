@@ -2469,7 +2469,8 @@ fn board_calculate_unknown_structure_returns_not_found() {
 }
 
 /// The money path. A negative cycle_commission must be rejected at load_plan,
-/// which is the only gate now that the handler no longer takes config.
+/// which is the only gate now that the handler no longer reads config from
+/// request params. The field is still declared on `Params` and ignored.
 ///
 /// Asserts the rejection *message*, not just the code. `handle_load_plan`
 /// returns INVALID_PLAN for a deserialize failure as well as a validation
@@ -2513,7 +2514,7 @@ fn load_plan_rejects_board_cycle_commission_negative() {
     );
     let resp = common::send_receive(&mut worker, &request);
     assert!(
-        resp.contains("NO_PLAN"),
+        resp.contains(r#""ok":false"#) && resp.contains("NO_PLAN"),
         "a rejected plan must leave nothing to calculate with, got: {}",
         resp
     );

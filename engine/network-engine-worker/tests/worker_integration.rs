@@ -2469,8 +2469,8 @@ fn board_calculate_unknown_structure_returns_not_found() {
 }
 
 /// The money path. A negative cycle_commission must be rejected at load_plan,
-/// which is the only gate now that the handler no longer reads config from
-/// request params. The field is still declared on `Params` and ignored.
+/// which is the only gate now that the handler sources config from the plan.
+/// The request-scoped `config` param has since been deleted from the wire.
 ///
 /// Asserts the rejection *message*, not just the code. `handle_load_plan`
 /// returns INVALID_PLAN for a deserialize failure as well as a validation
@@ -2534,10 +2534,11 @@ fn board_calculate_rejects_legacy_shape_without_structure() {
     let request = r#"{"id":"bp-legacy","op":"board_calculate_commissions","params":{"cycle_events":[],"period_cycle_counts":{},"config":{"cycle_commission":999999.0,"re_entry_enabled":true,"re_entry_position":"bottom","max_cycles_per_period":99,"max_cascade_depth":10,"stall_threshold_periods":3,"inactive_compression":false}}}"#;
     let resp = common::send_receive(&mut worker, request);
     // Asserts the field name, not just the code. Every deserialize failure in
-    // this handler returns INVALID_PARAMS, including one from the hostile
-    // `config` itself. So a code-only check goes green the day a
-    // `BoardPlanConfig` field is renamed. The missing-`structure` path is then
-    // never exercised. Same reasoning as the money-path test above.
+    // this handler returns INVALID_PARAMS, so a code-only check cannot tell a
+    // missing `structure` from any other malformed param. The legacy `config`
+    // is an unknown field now and is ignored, which leaves the missing
+    // `structure` as the only thing under test. Same reasoning as the
+    // money-path test above.
     assert!(
         resp.contains(r#""ok":false"#)
             && resp.contains("INVALID_PARAMS")
@@ -2559,10 +2560,10 @@ fn board_calculate_rejects_legacy_shape_without_structure() {
 /// `max_cycles_per_period` does too. The calculator reads exactly these two
 /// fields (`commission/board_plan.rs:35-36`), so together they cover it.
 ///
-/// For whoever deletes `config` from `Params`: this test needs the field
-/// accepted and ignored. Nothing sets `deny_unknown_fields`, so deleting it
-/// leaves this green. Adding `deny_unknown_fields` in the same change would
-/// flip this to INVALID_PARAMS, and that is why, not a regression.
+/// `config` has since been deleted from `Params`. This test still sends it,
+/// and that is the point: nothing sets `deny_unknown_fields`, so the worker
+/// ignores the stray field. If anyone adds `deny_unknown_fields`, this flips
+/// to INVALID_PARAMS by design rather than as a regression.
 #[test]
 fn board_calculate_ignores_request_scoped_config() {
     let mut worker = common::spawn_worker();

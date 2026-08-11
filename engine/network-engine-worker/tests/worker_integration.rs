@@ -2309,11 +2309,10 @@ const BP_STRUCTURE: &str = "BoardTest";
 
 /// Board plan test plan.
 ///
-/// Once HEU-603 flips the handler, `board_calculate_commissions` will resolve
-/// its `board_cycling` config from this plan, and a test that skips
-/// `load_board_test_plan` will get NO_PLAN instead of earnings. That is not
-/// true yet: the handler still takes `_state` and reads `config` from request
-/// params, so a calculate with no plan loaded currently returns real earnings.
+/// `board_calculate_commissions` resolves its `board_cycling` config from this
+/// plan (HEU-603), so a test that skips `load_board_test_plan` gets NO_PLAN
+/// instead of earnings. `board_calculate_without_plan_returns_no_plan` below
+/// pins that.
 ///
 /// The unilevel structure is not decoration. Go's `validateBoardPlanCompanion`
 /// (`internal/config/rules.go:812`) requires every board plan to have a
@@ -2328,9 +2327,9 @@ const BP_STRUCTURE: &str = "BoardTest";
 ///
 /// `engine/testdata/contracts/board_calculate_commissions.json` embeds a
 /// hand-maintained copy of this plan in its `setup_raw`. Nothing keeps the two
-/// in sync, and a wrong value over there is invisible until the handler flips,
-/// because the fixture's inline `config` wins until then. Change one, change
-/// both. HEU-604 tracks consolidating the copies.
+/// in sync. Since the handler flip, a wrong value over there changes what the
+/// fixture pays rather than being masked by its inline `config`. Change one,
+/// change both. HEU-604 tracks consolidating the copies.
 const BOARD_TEST_PLAN_JSON: &str = r#"{
     "name": "Integration Test Plan",
     "version": 1,

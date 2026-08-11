@@ -514,8 +514,8 @@ pub(crate) fn handle_board_calculate_commissions(
         cycle_events: Vec<network_engine::board_plan::CycleEvent>,
         #[serde(default)]
         period_cycle_counts: HashMap<Uuid, u32>,
-        // Deleted in Task 7. Still declared so Phase 2 callers that send it
-        // deserialize cleanly; nothing reads it.
+        // Deleted in HEU-603's final phase. Still declared so Phase 2 callers
+        // that send it deserialize cleanly; nothing reads it.
         #[allow(dead_code)]
         config: Option<BoardPlanConfig>,
     }

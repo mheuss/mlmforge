@@ -2523,6 +2523,85 @@ fn load_plan_rejects_board_cycle_commission_negative() {
     worker.wait().unwrap();
 }
 
+/// The exact legacy shape: config, no structure. An unmigrated caller must
+/// fail, not silently continue. This is the case that proves the compatibility
+/// requirement; the hybrid test below does not, because it supplies `structure`.
+#[test]
+fn board_calculate_rejects_legacy_shape_without_structure() {
+    let mut worker = common::spawn_worker();
+    load_board_test_plan(&mut worker);
+
+    let request = r#"{"id":"bp-legacy","op":"board_calculate_commissions","params":{"cycle_events":[],"period_cycle_counts":{},"config":{"cycle_commission":999999.0,"re_entry_enabled":true,"re_entry_position":"bottom","max_cycles_per_period":99,"max_cascade_depth":10,"stall_threshold_periods":3,"inactive_compression":false}}}"#;
+    let resp = common::send_receive(&mut worker, request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a request with no structure must be rejected, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// The hybrid shape: a valid structure alongside a hostile legacy config.
+/// Catches the field being re-added **and honoured**.
+///
+/// Both hostile values differ from the plan's, and both are asserted. The
+/// commission proves `cycle_commission` comes from the plan; the cap proves
+/// `max_cycles_per_period` does too. The calculator reads exactly these two
+/// fields (`commission/board_plan.rs:35-36`), so together they cover it.
+#[test]
+fn board_calculate_ignores_request_scoped_config() {
+    let mut worker = common::spawn_worker();
+    load_board_test_plan(&mut worker);
+
+    // Plan says 500.0 and a cap of 3. Hostile config says 999999.0 and 99.
+    // Four cycle events for one member: under the plan's cap of 3 the fourth
+    // is capped and pays 0. Under the hostile cap of 99 it would pay.
+    let hostile = r#""config":{"cycle_commission":999999.0,"re_entry_enabled":true,"re_entry_position":"bottom","max_cycles_per_period":99,"max_cascade_depth":10,"stall_threshold_periods":3,"inactive_compression":false},"#;
+    let events = (0..4)
+        .map(|_| {
+            format!(
+                r#"{{"board_id":"00000000-0000-0000-0000-000000000010","cycled_member":"{}","new_boards":[],"re_entry_board":null}}"#,
+                ROOT
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let request = format!(
+        r#"{{"id":"bp-hybrid","op":"board_calculate_commissions","params":{{{}"structure":"{}","cycle_events":[{}],"period_cycle_counts":{{}}}}}}"#,
+        hostile, BP_STRUCTURE, events
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(
+        parsed["ok"].as_bool().unwrap_or(false),
+        "legacy-shaped config must be ignored, not rejected, got: {}",
+        resp
+    );
+    let earnings = parsed["result"]["earnings"].as_array().expect(&resp);
+    assert_eq!(earnings.len(), 4, "expected four earnings, got: {}", resp);
+
+    let first = earnings[0]["dollar_amount"].as_f64().expect(&resp);
+    assert!(
+        (first - 500.0).abs() < 1e-10,
+        "the request-scoped cycle_commission reached the calculator, got {}: {}",
+        first,
+        resp
+    );
+
+    let fourth = earnings[3]["dollar_amount"].as_f64().expect(&resp);
+    assert!(
+        fourth == 0.0 && earnings[3]["capped"].as_bool().unwrap_or(false),
+        "the request-scoped max_cycles_per_period reached the calculator; the \
+         fourth cycle should be capped under the plan's cap of 3, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 #[test]
 fn streamline_create_and_add_members() {
     let mut worker = common::spawn_worker();

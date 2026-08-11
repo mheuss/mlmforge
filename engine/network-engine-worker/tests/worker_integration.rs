@@ -2322,10 +2322,9 @@ const BP_STRUCTURE: &str = "BoardTest";
 /// rejects. `STREAMLINE_TEST_PLAN_JSON` above has the same treatment for the
 /// twin rule `validateStreamlineCompanion`.
 ///
-/// `cycle_commission: 500.0` and `max_cycles_per_period: 3` match the values
-/// the contract fixture carries inline today. Keep them: the fixture's expected
-/// response staying unchanged through the flip is what will prove the migration
-/// was behavior-preserving.
+/// `cycle_commission: 500.0` and `max_cycles_per_period: 3` are the values the
+/// contract fixture uses, both in its inline `config` and in its own embedded
+/// copy of this plan. All three have to agree, and the paragraph below is why.
 ///
 /// `engine/testdata/contracts/board_calculate_commissions.json` embeds a
 /// hand-maintained copy of this plan in its `setup_raw`. Nothing keeps the two

@@ -514,10 +514,6 @@ pub(crate) fn handle_board_calculate_commissions(
         cycle_events: Vec<network_engine::board_plan::CycleEvent>,
         #[serde(default)]
         period_cycle_counts: HashMap<Uuid, u32>,
-        // Deleted in HEU-603's final phase. Still declared so Phase 2 callers
-        // that send it deserialize cleanly; nothing reads it.
-        #[allow(dead_code)]
-        config: Option<BoardPlanConfig>,
     }
 
     let params: Params = match serde_json::from_str(request.params.get()) {

@@ -234,12 +234,13 @@ type BoardCommissionResultDTO struct {
 }
 
 // CalculateBoardCommissionsRequest is the input for board cycle commission calculation.
-// The handler is stateless: it takes cycle events, prior counts, and config directly.
+// The named structure's board_cycling config comes from the loaded plan (HEU-603),
+// so LoadPlan must run first.
+// Wire field "structure" matches the Rust Params serde rename.
 type CalculateBoardCommissionsRequest struct {
 	StructureName     string          `json:"structure"`
 	CycleEvents       []CycleEventDTO `json:"cycle_events"`
 	PeriodCycleCounts map[string]int  `json:"period_cycle_counts"`
-	Config            json.RawMessage `json:"config"`
 }
 
 // --- Streamline wire types ---

@@ -1844,7 +1844,6 @@ func TestEngineClient_CalculateBoardCommissions_MockResponse(t *testing.T) {
 		PeriodCycleCounts: map[string]int{
 			"00000000-0000-0000-0000-000000000001": 2,
 		},
-		Config: json.RawMessage(`{"cycle_commission":25.50,"max_cycles_per_period":5}`),
 	}
 
 	result, err := client.CalculateBoardCommissions(context.Background(), req)
@@ -1852,17 +1851,6 @@ func TestEngineClient_CalculateBoardCommissions_MockResponse(t *testing.T) {
 	require.NotNil(t, result)
 
 	assert.Equal(t, "board_calculate_commissions", mock.lastOp)
-	assert.JSONEq(t, `{
-		"structure": "BoardTest",
-		"cycle_events": [{
-			"board_id": "board-001",
-			"cycled_member": "00000000-0000-0000-0000-000000000001",
-			"new_boards": ["board-002"],
-			"re_entry_board": null
-		}],
-		"period_cycle_counts": {"00000000-0000-0000-0000-000000000001": 2},
-		"config": {"cycle_commission":25.50,"max_cycles_per_period":5}
-	}`, string(mock.lastParams))
 	require.Len(t, result.Earnings, 1)
 	assert.Equal(t, "00000000-0000-0000-0000-000000000001", result.Earnings[0].EarnerID)
 	assert.Equal(t, "board-001", result.Earnings[0].BoardID)
@@ -1872,6 +1860,47 @@ func TestEngineClient_CalculateBoardCommissions_MockResponse(t *testing.T) {
 
 	require.Contains(t, result.UpdatedCycleCounts, "00000000-0000-0000-0000-000000000001")
 	assert.Equal(t, 3, result.UpdatedCycleCounts["00000000-0000-0000-0000-000000000001"])
+}
+
+// TestEngineClient_CalculateBoardCommissions_MockParams pins the exact bytes on
+// the wire. The sibling above covers the response side.
+//
+// JSONEq is exact on the key set, so this fails on a wrong json tag, a missing
+// key, or a stray extra one. That last case is the point: config used to ride
+// here and the worker now has no field to receive it, so a reintroduced Config
+// would go out ignored and silent without this golden to catch it (HEU-603).
+func TestEngineClient_CalculateBoardCommissions_MockParams(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`{"earnings":[],"updated_cycle_counts":{}}`)}
+	client := NewEngineClientWithTransport(mock)
+
+	req := CalculateBoardCommissionsRequest{
+		StructureName: "BoardTest",
+		CycleEvents: []CycleEventDTO{
+			{
+				BoardID:      "board-001",
+				CycledMember: "00000000-0000-0000-0000-000000000001",
+				NewBoards:    []string{"board-002"},
+				ReEntryBoard: nil,
+			},
+		},
+		PeriodCycleCounts: map[string]int{
+			"00000000-0000-0000-0000-000000000001": 2,
+		},
+	}
+
+	_, err := client.CalculateBoardCommissions(context.Background(), req)
+	require.NoError(t, err)
+
+	assert.JSONEq(t, `{
+		"structure": "BoardTest",
+		"cycle_events": [{
+			"board_id": "board-001",
+			"cycled_member": "00000000-0000-0000-0000-000000000001",
+			"new_boards": ["board-002"],
+			"re_entry_board": null
+		}],
+		"period_cycle_counts": {"00000000-0000-0000-0000-000000000001": 2}
+	}`, string(mock.lastParams))
 }
 
 // mockTransport is a test double for EngineTransport.

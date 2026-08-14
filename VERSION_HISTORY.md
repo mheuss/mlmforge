@@ -82,7 +82,7 @@
 - Multi-tree rank evaluation no longer undercounts ranks. `evaluate_ranks` iterates to a fixpoint instead of a single ordered pass, so a distributor's descendants are counted regardless of cross-structure depth. (HEU-460)
 
 ### Removed
--
+- None.
 
 ---
 
@@ -96,10 +96,10 @@
 - Domain space index (30 domains cataloged from legacy system)
 
 ### Changed
--
+- None.
 
 ### Fixed
--
+- None.
 
 ### Removed
--
+- None.

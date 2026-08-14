@@ -83,16 +83,23 @@ credentials.json
 # ============================================================
 # Project internal — development process docs and tooling
 # ============================================================
+#
+# The developer context files now ship: CLAUDE.md, AGENTS.md, DEVELOPMENT.md,
+# VERSION_HISTORY.md, CHANGELOG.md. MLMForge is open source, and tracked Go and
+# Rust source cites ADR-NNN from DEVELOPMENT.md. A clone without that file
+# cannot resolve those references. See HEU-546.
+#
+# What stays below is local machine state and working material. .claude/ holds
+# settings.local.json and audit transcripts, none of which belong to a clone.
+#
+# Anchor these to the repo root with a leading slash. An unanchored name
+# matches at any depth, and core.ignorecase is true on macOS, so bare
+# "ACCESSIBILITY.md" also swallowed docs/standards/accessibility.md.
 .claude/
 .antigravitycli/
 .cgcignore
-CLAUDE.md
-AGENTS.md
-BUGS_AND_TODOS.md
-VERSION_HISTORY.md
-DEVELOPMENT.md
-ACCESSIBILITY.md
-CHANGELOG.md
+/BUGS_AND_TODOS.md
+/ACCESSIBILITY.md
 
 # Most of docs/ is working material that should not ship: plans, handoff
 # notes, review transcripts, audits, and third-party compensation-plan PDFs.
@@ -105,6 +112,7 @@ CHANGELOG.md
 # is deliberate: docs stay private until someone opts them in. See HEU-551.
 docs/*
 !docs/development/
+!docs/standards/
 !docs/use-cases/
 
 # Git worktrees

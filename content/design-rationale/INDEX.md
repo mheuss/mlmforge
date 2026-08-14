@@ -8,11 +8,13 @@ MLMForge's architecture is informed by years of building and operating a product
 
 ## Numbering
 
-This folder uses its own numbering sequence. DEVELOPMENT.md has a separate ADR sequence. The two are independent. Some numbers appear in both and refer to different decisions.
+This folder uses its own numbering sequence. [DEVELOPMENT.md](../../DEVELOPMENT.md) has a separate ADR sequence. The two are independent. Some numbers appear in both and refer to different decisions.
 
 The two sequences cover different scopes. DEVELOPMENT.md ADRs document high-level architectural decisions like language choice, persistence strategy, and modularity. The `content/design-rationale/` folder documents detailed per-domain design decisions like tree implementation, compensation config, and interface contracts.
 
-Code comments that reference "ADR-NNN" use the DEVELOPMENT.md numbering.
+Code comments that reference "ADR-NNN" use the DEVELOPMENT.md numbering. Open that file, not the same-numbered document here. Both files ship, so every citation resolves.
+
+Watch the overlap. ADR-014 through ADR-020 happen to line up with the file of the same number in this folder. Every other number points at a different decision. ADR-020 is Tree Topology Separation in both. ADR-011 is Reporting Ownership in DEVELOPMENT.md and Matrix Compensation Config here.
 
 ## Documents
 

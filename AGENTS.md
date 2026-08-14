@@ -15,11 +15,11 @@
 - test (Rust): `cargo test`
 
 ## codegraphcontext
-- note: mixed-language root indexing is unreliable; prefer language-specific subtrees instead of `/Users/michaelheuss/Projects/mlmforge`
-- rust scope: `/Users/michaelheuss/Projects/mlmforge/engine`
-- go scope: `/Users/michaelheuss/Projects/mlmforge/cmd`
-- go scope: `/Users/michaelheuss/Projects/mlmforge/internal`
-- sql/schema scope: `/Users/michaelheuss/Projects/mlmforge/schemas`
+- note: mixed-language root indexing is unreliable. Prefer language-specific subtrees over the repository root.
+- rust scope: `<repo-root>/engine`
+- go scope: `<repo-root>/cmd`
+- go scope: `<repo-root>/internal`
+- sql/schema scope: `<repo-root>/schemas`
 - usage: when running CGC queries, target the subtree that contains the file or function you are inspecting
 
 ## upstream

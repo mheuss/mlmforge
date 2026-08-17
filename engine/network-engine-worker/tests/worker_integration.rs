@@ -2446,7 +2446,7 @@ fn board_calculate_without_plan_returns_no_plan() {
 /// nothing cycled, no events either. `#[serde(default)]` does not cover it —
 /// that handles an *absent* key, while Go sends the key with a null value.
 ///
-/// The Go twin is `TestEngineClient_CalculateBoardCommissions_NilCountsOmitKey`.
+/// The Go twin is `TestEngineClient_CalculateBoardCommissions_NilCollections`.
 /// Go also omits `period_cycle_counts` when nil, so both sides are covered:
 /// Go stops sending the bad shape, and the worker stops rejecting it whoever
 /// sends it.
@@ -2476,7 +2476,7 @@ fn board_calculate_accepts_null_collections() {
 }
 
 /// Omitting `cycle_events` altogether stays an error. This is the other half of
-/// `board_calculate_accepts_null_cycle_events`: widening null must not quietly
+/// `board_calculate_accepts_null_collections`: widening null must not quietly
 /// widen absent, or a caller that forgets the field gets a zero payout instead
 /// of a complaint.
 #[test]

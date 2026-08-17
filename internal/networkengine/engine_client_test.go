@@ -1915,19 +1915,26 @@ func TestEngineClient_CalculateBoardCommissions_MockParams(t *testing.T) {
 	assert.Equal(t, 3, result.UpdatedCycleCounts["00000000-0000-0000-0000-000000000001"])
 }
 
-// TestEngineClient_CalculateBoardCommissions_NilCountsOmitKey pins that a nil
-// PeriodCycleCounts leaves the key off the wire instead of sending null.
+// TestEngineClient_CalculateBoardCommissions_NilCollections pins the wire shape
+// of a first-period call, where the natural Go request leaves both collections
+// nil: no prior cycle counts, and nothing cycled.
 //
-// A first period has no prior cycle counts, so the natural Go call leaves the
-// map nil. Without omitempty that marshals to "period_cycle_counts": null, and
-// the worker rejects it: serde's #[serde(default)] covers an absent key, not an
-// explicit null, so the request dies with INVALID_PARAMS "invalid type: null,
-// expected a map". Verified against the worker both ways -- absent succeeds,
-// null does not.
+// The two fields are treated differently on purpose, and this test is what
+// holds that difference in place.
 //
-// CarryForward on CalculateBinaryRequest (wire_types.go:92) already solves the
-// same problem the same way.
-func TestEngineClient_CalculateBoardCommissions_NilCountsOmitKey(t *testing.T) {
+// PeriodCycleCounts is optional, so it carries omitempty and drops off the
+// wire. CarryForward on CalculateBinaryPairingRequest (wire_types.go:92)
+// already does the same.
+//
+// CycleEvents must NOT get omitempty, which is why the assertion pins it
+// present as null rather than merely absent. It is required on the Rust side,
+// and dropping the key entirely returns INVALID_PARAMS "missing field". That
+// loud failure is deliberate: a caller who forgets the field should hear about
+// it, not be paid zero. The worker reads an explicit null as empty
+// (null_as_default in handlers/board_plan.rs), so null is the correct shape to
+// send. board_calculate_still_requires_cycle_events guards the other half from
+// the Rust side, but it builds its own JSON and never touches this struct.
+func TestEngineClient_CalculateBoardCommissions_NilCollections(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`{"earnings":[],"updated_cycle_counts":{}}`),
 	}
@@ -1935,15 +1942,19 @@ func TestEngineClient_CalculateBoardCommissions_NilCountsOmitKey(t *testing.T) {
 
 	req := CalculateBoardCommissionsRequest{
 		StructureName:     "BoardTest",
-		CycleEvents:       []CycleEventDTO{},
+		CycleEvents:       nil,
 		PeriodCycleCounts: nil,
 	}
 
 	_, err := client.CalculateBoardCommissions(context.Background(), req)
 	require.NoError(t, err)
 
-	assert.NotContains(t, string(mock.lastParams), `"period_cycle_counts":null`,
-		"a nil map must omit the key, not send null the worker rejects")
+	// Positive on the whole param set, matching the _MockParams sibling. A
+	// NotContains on one key would also pass if the field were renamed away.
+	assert.JSONEq(t, `{
+		"structure": "BoardTest",
+		"cycle_events": null
+	}`, string(mock.lastParams))
 }
 
 // mockTransport is a test double for EngineTransport.

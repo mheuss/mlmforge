@@ -165,7 +165,11 @@ A possible follow-up is to register every loaded structure in the navigator map,
 
 ## Contract-Test Harness: `setup_raw` for Adjacent-Tagged Enums
 
-`engine/network-engine-worker/tests/contract_tests.rs` and `internal/networkengine/contract_test.go` round-trip fixture setup steps through `serde_json::Value` / `map[string]any`. Both serializers re-emit JSON object keys in alphabetical order. This breaks deserialization of adjacent-tagged enums whose content carries non-string map keys.
+`engine/network-engine-worker/tests/contract_tests.rs` and `internal/networkengine/contract_test.go` round-trip fixture setup steps through `serde_json::Value` / `map[string]any`. The Go side re-emits JSON object keys in alphabetical order. That breaks deserialization of adjacent-tagged enums whose content carries non-string map keys.
+
+Go is the driver here, not Rust. `json.Marshal` always sorts map keys, so the Go harness reorders every time. The Rust harness usually does not: `network-engine` enables `serde_json/preserve_order` as a dev-dependency (`engine/network-engine/Cargo.toml:14-20`), and `network-engine-worker`'s tests inherit it through Cargo feature unification, so under `cargo test --workspace` insertion order survives. Rust only sorts in a narrow build that misses that feature — see the `--workspace` section below.
+
+Either way, `setup_raw` is mandatory. The same fixture runs in both harnesses, and the Go one reorders unconditionally.
 
 Concrete case: `StructureConfig` uses `#[serde(tag = "type", content = "config")]`. The `Unilevel` variant's content includes `rate_table: BTreeMap<u8, f64>`. After alphabetical sort, `"config"` precedes `"type"`, and serde fails the deserialize because it sees the rate-table content before knowing the variant.
 
@@ -193,6 +197,18 @@ Filtering by one — `cargo test --test contract_tests calculate_streamline` —
 Run it unfiltered. To confirm a specific fixture actually executed, add `-- --nocapture`: the harness prints `contract: <name> -- <description>` for each one.
 
 HEU-583's plan specified the filtered form on three steps, including the two that changed the money path and the wire contract. Following it literally would have recorded "Expected: PASS" against a run that asserted nothing.
+
+## Rust Tests: Always Run `--workspace`
+
+Never scope a Rust test run below `--workspace`. `cargo test -p network-engine-worker` produces failures that do not exist in the tree.
+
+`network-engine` enables `serde_json/preserve_order` as a dev-dependency. `network-engine-worker`'s tests get it only through Cargo feature unification, which needs both crates in the same build. Scope to one crate and the feature drops, `serde_json::Value` reverts to sorted keys, and any test that round-trips a plan through `Value` breaks on the adjacently-tagged `StructureConfig`.
+
+The failure is convincing: `invalid type: string "1", expected u8`, pointing at the rate table. It looks like a real deserialize bug. It is a build-scope artifact. The same tree fails narrow and passes wide.
+
+This nearly produced a false "main is red" report during HEU-603. Confirm with `cargo tree -e features` both ways if you ever doubt it. The full suite runs in about 1.5 seconds, so scoping buys nothing.
+
+Same false-green family as the per-fixture filter above: a test command that reports something other than what the code does.
 
 ## Streamline: Rank Gates Qualification, Not Rate
 

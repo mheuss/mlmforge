@@ -1915,6 +1915,37 @@ func TestEngineClient_CalculateBoardCommissions_MockParams(t *testing.T) {
 	assert.Equal(t, 3, result.UpdatedCycleCounts["00000000-0000-0000-0000-000000000001"])
 }
 
+// TestEngineClient_CalculateBoardCommissions_NilCountsOmitKey pins that a nil
+// PeriodCycleCounts leaves the key off the wire instead of sending null.
+//
+// A first period has no prior cycle counts, so the natural Go call leaves the
+// map nil. Without omitempty that marshals to "period_cycle_counts": null, and
+// the worker rejects it: serde's #[serde(default)] covers an absent key, not an
+// explicit null, so the request dies with INVALID_PARAMS "invalid type: null,
+// expected a map". Verified against the worker both ways -- absent succeeds,
+// null does not.
+//
+// CarryForward on CalculateBinaryRequest (wire_types.go:92) already solves the
+// same problem the same way.
+func TestEngineClient_CalculateBoardCommissions_NilCountsOmitKey(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{"earnings":[],"updated_cycle_counts":{}}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	req := CalculateBoardCommissionsRequest{
+		StructureName:     "BoardTest",
+		CycleEvents:       []CycleEventDTO{},
+		PeriodCycleCounts: nil,
+	}
+
+	_, err := client.CalculateBoardCommissions(context.Background(), req)
+	require.NoError(t, err)
+
+	assert.NotContains(t, string(mock.lastParams), `"period_cycle_counts":null`,
+		"a nil map must omit the key, not send null the worker rejects")
+}
+
 // mockTransport is a test double for EngineTransport.
 type mockTransport struct {
 	response   json.RawMessage

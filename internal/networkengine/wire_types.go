@@ -238,9 +238,12 @@ type BoardCommissionResultDTO struct {
 // so LoadPlan must run first.
 // Wire field "structure" matches the Rust Params serde rename.
 type CalculateBoardCommissionsRequest struct {
-	StructureName     string          `json:"structure"`
-	CycleEvents       []CycleEventDTO `json:"cycle_events"`
-	PeriodCycleCounts map[string]int  `json:"period_cycle_counts"`
+	StructureName string          `json:"structure"`
+	CycleEvents   []CycleEventDTO `json:"cycle_events"`
+	// omitempty because a nil map marshals to null, and the Rust side's
+	// #[serde(default)] covers an absent key but not an explicit null. A first
+	// period legitimately has no prior counts. Mirrors CarryForward above.
+	PeriodCycleCounts map[string]int `json:"period_cycle_counts,omitempty"`
 }
 
 // --- Streamline wire types ---

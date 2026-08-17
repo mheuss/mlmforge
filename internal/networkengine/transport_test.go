@@ -349,12 +349,17 @@ func staleWorkerBinary(binPath, sourceRoot string) (string, error) {
 
 // findWorkerBinary returns the path to the compiled Rust worker binary.
 //
-// An absent binary skips. A binary older than the Rust sources fails: tests
-// that run against a stale worker assert about engine code that is no longer
-// on the branch, and a green Go suite then means nothing (HEU-615).
+// An absent binary skips. Any other stat error fails, because a skip on a
+// permission or I/O error is indistinguishable from a pass. A binary older
+// than the Rust sources fails too: tests that run against a stale worker
+// assert about engine code that is no longer on the branch, and a green Go
+// suite then means nothing (HEU-615).
 func findWorkerBinary(t *testing.T) string {
 	t.Helper()
 	if _, err := os.Stat(workerBinaryPath); err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			require.NoError(t, err, "could not stat worker binary %s", workerBinaryPath)
+		}
 		t.Skipf("worker binary not found at %s (run 'cargo build --workspace' in engine/)", workerBinaryPath)
 	}
 	workerFreshnessOnce.Do(func() {

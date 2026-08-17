@@ -216,7 +216,7 @@ Same false-green family as the per-fixture filter above: a test command that rep
 
 `preserve_order` is dev-only, so `cargo build` never activates it. The shipped worker runs `serde_json` with sorted keys — the same behavior as a narrow test build, not the wide one.
 
-Nothing breaks today. `handle_load_plan` deserializes straight off the `RawValue` (`network-engine-worker/src/handlers/common.rs:104`) and never touches `serde_json::Value`. But `parse_params` (`common.rs:262`) does produce a `Value`, so a future handler that routes plan-bearing params through it would pass under `--workspace` and fail in the built binary.
+Nothing breaks today. `handle_load_plan` deserializes straight off the `RawValue` (`network-engine-worker/src/handlers/common.rs:105`) and never touches `serde_json::Value`. But `parse_params` (`common.rs:262`) does produce a `Value`, so a future handler that routes plan-bearing params through it would pass under `--workspace` and fail in the built binary.
 
 That direction is the dangerous one. A narrow test build fails loudly in CI. A production-only reorder fails in production. Never round-trip an adjacently-tagged enum through `Value` on a path the shipped binary takes.
 

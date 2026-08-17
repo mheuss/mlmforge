@@ -55,4 +55,4 @@ A second trigger: if a genuine what-if or preview use case appears, where a call
 - No `calculate_*` request carries a plan or a structure config.
 - Go has no per-structure config DTOs. The plan travels once, as raw JSON, through `LoadPlan`.
 
-`docs/development/config-types.md` lists three bypass paths where a money-seam invariant must be guarded. This rule closes the third one, where a worker handler deserializes config from request params. That file tracks the seam. Both calculate handlers that were on the wrong side of it have moved; the create doors it names are still open.
+`docs/development/config-types.md` lists three bypass paths where a money-seam invariant must be guarded. This rule closes the third one, where a worker handler deserializes config from request params. That file tracks the seam. Both calculate handlers that were on the wrong side of it have moved; the one create door it names is still open.

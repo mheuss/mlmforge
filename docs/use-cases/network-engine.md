@@ -488,7 +488,7 @@ This inverts the obvious order. HEU-583's plan deliberately deviated from its ow
 
 Without that test, reintroducing the field leaves the entire suite green. Verified by mutation: re-adding the field and preferring it failed exactly one test out of seventy.
 
-**When to use this pattern:** any `calculate_*` handler still taking request-scoped config. HEU-603 applied it to `board_calculate_commissions`. HEU-607 is the remaining case.
+**When to use this pattern:** any handler still taking request-scoped config. All seven `calculate_*` handlers have moved — streamline in HEU-583, board plan in HEU-603. The remaining case is the create door, `handle_create_board_plan` (HEU-607), which is not a `calculate_*` handler but has the same shape: config off the request, never validated.
 
 One asymmetry showed up on the board application. Streamline carried two legacy fields, so a single request could hold a valid-hostile value in one and a malformed value in the other. Board carried only `config`, and one field cannot be both at once, so the two halves of the guard became two tests instead of one request. Count the legacy fields before assuming one test covers both halves.
 

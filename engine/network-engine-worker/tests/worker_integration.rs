@@ -2417,20 +2417,16 @@ fn load_plan_accepts_valid_board_plan() {
 
 /// The plan gate. Without a loaded plan there is no config to rate with.
 ///
-/// Carries a valid legacy `config`. It mattered while this test was red,
-/// against the pre-fix handler that required `config` and had no plan gate:
-/// omitting it failed with INVALID_PARAMS and proved nothing about state.
-/// Since the flip, `require_plan` runs before the params are parsed, so no
-/// payload shape reaches the deserializer on this path. The block is inert
-/// and kept only as the legacy shape a caller would send.
+/// `require_plan` runs before the params are parsed, so the payload shape does
+/// not affect this path. `board_calculate_ignores_request_scoped_config` owns
+/// the legacy-shape behavior.
 #[test]
 fn board_calculate_without_plan_returns_no_plan() {
     let mut worker = common::spawn_worker();
 
-    let legacy_config = r#""config":{"cycle_commission":500.0,"re_entry_enabled":true,"re_entry_position":"bottom","max_cycles_per_period":3,"max_cascade_depth":10,"stall_threshold_periods":3,"inactive_compression":false},"#;
     let request = format!(
-        r#"{{"id":"bp-noplan","op":"board_calculate_commissions","params":{{{}"structure":"{}","cycle_events":[],"period_cycle_counts":{{}}}}}}"#,
-        legacy_config, BP_STRUCTURE
+        r#"{{"id":"bp-noplan","op":"board_calculate_commissions","params":{{"structure":"{}","cycle_events":[],"period_cycle_counts":{{}}}}}}"#,
+        BP_STRUCTURE
     );
     let resp = common::send_receive(&mut worker, &request);
     assert!(
@@ -2447,15 +2443,12 @@ fn board_calculate_without_plan_returns_no_plan() {
 /// `require_plan`. Written without `load_board_test_plan` this test returns
 /// NO_PLAN, passes, and proves nothing — the same trap HEU-583 hit with
 /// `get_streamline_ref`. The load call is the point of the test.
-///
-/// Also carries the legacy `config`, now inert, for the same reason as the
-/// test above.
 #[test]
 fn board_calculate_unknown_structure_returns_not_found() {
     let mut worker = common::spawn_worker();
     load_board_test_plan(&mut worker);
 
-    let request = r#"{"id":"bp-nostruct","op":"board_calculate_commissions","params":{"config":{"cycle_commission":500.0,"re_entry_enabled":true,"re_entry_position":"bottom","max_cycles_per_period":3,"max_cascade_depth":10,"stall_threshold_periods":3,"inactive_compression":false},"structure":"NoSuchBoard","cycle_events":[],"period_cycle_counts":{}}}"#;
+    let request = r#"{"id":"bp-nostruct","op":"board_calculate_commissions","params":{"structure":"NoSuchBoard","cycle_events":[],"period_cycle_counts":{}}}"#;
     let resp = common::send_receive(&mut worker, request);
     assert!(
         resp.contains(r#""ok":false"#) && resp.contains("STRUCTURE_NOT_FOUND"),

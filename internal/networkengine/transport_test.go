@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -291,12 +293,151 @@ func newTestTransport(stdin io.WriteCloser, stdout io.Reader, handler func(json.
 	return transport
 }
 
+// workerBinaryPath is the compiled Rust worker, relative to this package.
+const workerBinaryPath = "../../engine/target/debug/network-engine-worker"
+
+// engineSourceRoot is the Rust workspace whose sources back that binary.
+const engineSourceRoot = "../../engine"
+
+var (
+	workerFreshnessOnce  sync.Once
+	workerFreshnessNewer string
+	workerFreshnessErr   error
+)
+
+// staleWorkerBinary returns the newest Rust source under sourceRoot that
+// postdates binPath, or "" when the binary is current. Sources under
+// sourceRoot/target are skipped, because cargo regenerates them during the
+// same build that produces the binary.
+func staleWorkerBinary(binPath, sourceRoot string) (string, error) {
+	binary, err := os.Stat(binPath)
+	if err != nil {
+		return "", err
+	}
+	built := binary.ModTime()
+	generated := filepath.Join(sourceRoot, "target")
+
+	var newest string
+	var newestMod time.Time
+	walkErr := filepath.WalkDir(sourceRoot, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if path == generated {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(path) != ".rs" {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.ModTime().After(built) && info.ModTime().After(newestMod) {
+			newest, newestMod = path, info.ModTime()
+		}
+		return nil
+	})
+	if walkErr != nil {
+		return "", walkErr
+	}
+	return newest, nil
+}
+
 // findWorkerBinary returns the path to the compiled Rust worker binary.
+//
+// An absent binary skips. Any other stat error fails, because a skip on a
+// permission or I/O error is indistinguishable from a pass. A binary older
+// than the Rust sources fails too: tests that run against a stale worker
+// assert about engine code that is no longer on the branch, and a green Go
+// suite then means nothing (HEU-615).
 func findWorkerBinary(t *testing.T) string {
 	t.Helper()
-	path := "../../engine/target/debug/network-engine-worker"
-	if _, err := os.Stat(path); err != nil {
-		t.Skipf("worker binary not found at %s (run 'cargo build --workspace' in engine/)", path)
+	if _, err := os.Stat(workerBinaryPath); err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			require.NoError(t, err, "could not stat worker binary %s", workerBinaryPath)
+		}
+		t.Skipf("worker binary not found at %s (run 'cargo build --workspace' in engine/)", workerBinaryPath)
 	}
+	workerFreshnessOnce.Do(func() {
+		workerFreshnessNewer, workerFreshnessErr = staleWorkerBinary(workerBinaryPath, engineSourceRoot)
+	})
+	require.NoError(t, workerFreshnessErr, "could not tell whether %s is current", workerBinaryPath)
+	if workerFreshnessNewer != "" {
+		t.Fatalf(
+			"worker binary %s is older than %s (run 'cargo build --workspace' in engine/ before the Go suite)",
+			workerBinaryPath, workerFreshnessNewer,
+		)
+	}
+	return workerBinaryPath
+}
+
+// writeRustSource writes a .rs file at rel under root and stamps it with mod.
+func writeRustSource(t *testing.T, root, rel string, mod time.Time) string {
+	t.Helper()
+	path := filepath.Join(root, rel)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte("fn main() {}\n"), 0o644))
+	require.NoError(t, os.Chtimes(path, mod, mod))
 	return path
+}
+
+// writeWorkerBinary writes a stand-in for the compiled worker and stamps it
+// with mod. Only the modification time matters to staleWorkerBinary.
+func writeWorkerBinary(t *testing.T, dir string, mod time.Time) string {
+	t.Helper()
+	path := filepath.Join(dir, "network-engine-worker")
+	require.NoError(t, os.WriteFile(path, []byte("binary"), 0o755))
+	require.NoError(t, os.Chtimes(path, mod, mod))
+	return path
+}
+
+func TestStaleWorkerBinary_ReportsSourceNewerThanBinary(t *testing.T) {
+	root := t.TempDir()
+	built := time.Now().Add(-time.Hour)
+	binary := writeWorkerBinary(t, root, built)
+	edited := writeRustSource(t, root, "network-engine/src/lib.rs", built.Add(time.Minute))
+
+	newer, err := staleWorkerBinary(binary, root)
+
+	require.NoError(t, err)
+	assert.Equal(t, edited, newer)
+}
+
+func TestStaleWorkerBinary_ReportsNothingWhenBinaryIsCurrent(t *testing.T) {
+	root := t.TempDir()
+	built := time.Now()
+	binary := writeWorkerBinary(t, root, built)
+	writeRustSource(t, root, "network-engine/src/lib.rs", built.Add(-time.Minute))
+
+	newer, err := staleWorkerBinary(binary, root)
+
+	require.NoError(t, err)
+	assert.Empty(t, newer)
+}
+
+// Cargo regenerates sources under target/ as part of the same build that
+// produces the binary. Counting them would report the binary as stale against
+// its own build output.
+func TestStaleWorkerBinary_IgnoresGeneratedSourcesUnderTarget(t *testing.T) {
+	root := t.TempDir()
+	built := time.Now().Add(-time.Hour)
+	binary := writeWorkerBinary(t, root, built)
+	writeRustSource(t, root, "target/debug/build/generated.rs", built.Add(time.Minute))
+
+	newer, err := staleWorkerBinary(binary, root)
+
+	require.NoError(t, err)
+	assert.Empty(t, newer)
+}
+
+func TestStaleWorkerBinary_ErrorsWhenBinaryIsMissing(t *testing.T) {
+	root := t.TempDir()
+
+	_, err := staleWorkerBinary(filepath.Join(root, "absent"), root)
+
+	require.Error(t, err)
 }

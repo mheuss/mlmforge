@@ -302,29 +302,75 @@ one), so labels stay sortable and unique. `TestLabelSortable` verifies this
 across 53-week ISO years. Do not "fix" the label to use the input date's ISO
 week.
 
-## `evaluate_ranks` Request: Nil Maps/Slices Must Marshal as Empty, Not Null
+## Nil Go Collections Marshal as `null`, and the Worker Rejects Them
 
-The `EvaluateRanksRequest` DTO (`internal/networkengine/wire_types.go`) mirrors
-the Rust `EvaluationInputs`. Three fields have **no** `omitempty` on the Go side
-and **no** `#[serde(default)]` on the Rust side: `distributors` (map),
-`volume_sources` (slice), and each distributor's `active_products` (slice). A nil
-Go map or slice marshals to JSON `null`, and the Rust worker then fails to
-deserialize the whole request.
+This bites every request DTO with a map or slice, not one handler. Read it
+before adding a handler that takes a collection param.
 
-So any code that builds an `EvaluateRanksRequest` must normalize nil to empty
-(`{}` / `[]`) before the call. `RankDriver.EvaluatePeriod` does this at all three
-levels, and copies the distributors map first so it never mutates the provider's
-stored input. A real `PeriodInputProvider` (HEU-505) must hand over empties, not
-nils, or rely on the driver's normalization.
+A nil Go map or slice marshals to JSON `null`, not `{}` or `[]`. On the Rust
+side `#[serde(default)]` covers an **absent** key; it does not cover a key
+present with a null value. So a caller that leaves a collection unset sends the
+one shape neither serde path accepts, and the whole request dies with
+`INVALID_PARAMS`.
 
-Contrast: `history_window` and `history` **do** carry `omitempty` +
-`serde(default)`, so a no-gate plan omits them entirely. That is correct, not a
-bug.
+The trap is that the failing call is usually the *natural* one — a first period
+with no prior counts, a period with no volume events, a plan with no history.
 
-Pin the wire shape with raw-byte assertions, because unmarshaling into the Go
-struct collapses `null`, `[]`, and omitted into the same empty value. Assert the
-literal bytes: `"active_products":[]` is present and `:null` is absent (see
-`rank_driver_test.go`).
+### Two fixes, and when each applies
+
+**Engine-side null tolerance** is the default. The worker treats request params
+as unvalidated input (design rationale 028), so it should not depend on one
+client's marshalling. Use the `null_as_default` helper:
+
+| The field is | Attribute | Absent | Null |
+|---|---|---|---|
+| Required | `#[serde(deserialize_with = "null_as_default")]` | error | empty |
+| Optional | `#[serde(default, deserialize_with = "null_as_default")]` | empty | empty |
+
+Do **not** reach for Go's `omitempty` on a required field. It makes a dropped
+field indistinguishable from an empty one, and on a money path that pays zero
+instead of complaining.
+
+**Caller-side normalization** is the older approach, still used by
+`RankDriver.EvaluatePeriod` for `evaluate_ranks`. It normalizes nil to empty at
+all three levels before the call, and copies the distributors map first so it
+never mutates the provider's stored input. It works, but it only binds callers
+you control: a non-Go client sending null still fails. Prefer the engine-side
+fix for anything new.
+
+Go's `omitempty` is a complement to either, not a fix on its own — it keeps the
+bad shape off the wire but leaves the worker rejecting it from anyone else.
+
+### Current state
+
+- `board_calculate_commissions` — fixed both ways (HEU-603). `cycle_events` is
+  required and null-tolerant; `period_cycle_counts` is optional, null-tolerant,
+  and carries `omitempty` on the Go side.
+- `evaluate_ranks` — `distributors`, `volume_sources`, and each distributor's
+  `active_products` have neither `omitempty` nor `serde(default)`. Safe only
+  because `RankDriver.EvaluatePeriod` normalizes. A real `PeriodInputProvider`
+  (HEU-505) must hand over empties, not nils, or rely on that normalization.
+- The six other commission handlers — `snapshots` and `volume` still reject
+  null, and `carry_forward` still depends on Go's `omitempty`. **HEU-626.**
+- `history_window` and `history` carry `omitempty` + `serde(default)`, so a
+  no-gate plan omits them. Correct, not a bug.
+
+`null_as_default` currently lives module-private in
+`network-engine-worker/src/handlers/board_plan.rs`. HEU-626 moves it. Note it
+widens null to `T::default()` for any `T: Default` — on a collection that reads
+as "empty", but on a numeric field it would silently produce `0`.
+
+### Testing it
+
+Pin the wire shape with assertions on the raw bytes. Unmarshaling into the Go
+struct collapses `null`, `[]`, and omitted into the same empty value, so a
+round-trip test proves nothing. Assert the literal bytes — `"active_products":[]`
+present and `:null` absent (`rank_driver_test.go`), or `assert.JSONEq` on the
+whole param set (`TestEngineClient_CalculateBoardCommissions_NilCollections`).
+
+Cover both halves on the Rust side too: one test that null is accepted, one that
+absent still fails. See `board_calculate_accepts_null_collections` and
+`board_calculate_still_requires_cycle_events`.
 
 ## Tree Reload: What `LoadTree` Restores, and What It Does Not
 

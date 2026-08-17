@@ -3,13 +3,29 @@ use std::collections::HashMap;
 use network_engine::board_plan::BoardPlanEngine;
 use network_engine::commission::calculate_board_commissions;
 use network_engine::config::board_plan::BoardPlanConfig;
+use network_engine::config::{BoardPlanStructureConfig, CompensationPlan, StructureConfig};
 use uuid::Uuid;
 
-use super::common::{extract_structure_name, parse_params, parse_uuid};
+use super::common::{extract_structure_name, parse_params, parse_uuid, require_plan};
 use crate::protocol::{Request, Response};
 use crate::state::{TreeInstance, WorkerState};
 
 // --- Board plan helpers ---
+
+/// Reads an explicit JSON `null` as `T::default()`, leaving the field required.
+///
+/// `#[serde(default)]` covers an *absent* key; it does not cover a key present
+/// with a null value. Go marshals a nil slice or map to null, so a caller that
+/// leaves a collection unset sends the one shape neither plain serde path
+/// accepts. Pair this with a required field when absent should stay an error
+/// but null should mean empty.
+fn null_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Default + serde::Deserialize<'de>,
+{
+    Ok(<Option<T> as serde::Deserialize>::deserialize(deserializer)?.unwrap_or_default())
+}
 
 /// Looks up a board plan engine by structure name (mutable).
 fn get_board_plan_mut<'a>(
@@ -51,6 +67,26 @@ fn get_board_plan<'a>(
             format!("structure '{}' not found", structure),
         )),
     }
+}
+
+/// Resolves a board plan structure by name from a validated plan.
+///
+/// Co-located with its only caller, matching `find_streamline_structure`
+/// (`handlers/streamline.rs:421`) rather than the five lookups private to
+/// `commission.rs`.
+///
+/// The `StructureConfig::BoardPlan` variant guard cannot be defeated by a
+/// same-named structure of another type: `check_unique_structure_names`
+/// (HEU-605, `config/validate.rs:129`) rejects duplicate names across the
+/// whole plan. The guard is what makes the return type work, not a filter.
+fn find_board_plan_structure<'a>(
+    plan: &'a CompensationPlan,
+    name: &str,
+) -> Option<&'a BoardPlanStructureConfig> {
+    plan.structures.iter().find_map(|s| match s {
+        StructureConfig::BoardPlan(c) if c.name == name => Some(c),
+        _ => None,
+    })
 }
 
 /// Maps a `BoardPlanError` to a `Response` with an appropriate error code.
@@ -463,30 +499,68 @@ pub(crate) fn handle_board_list(state: &WorkerState, request: &Request) -> Respo
 
 /// Calculates board cycle commissions for a set of cycle events.
 ///
-/// Params: cycle_events, period_cycle_counts, config.
+/// Params: structure, cycle_events, period_cycle_counts. The named
+/// structure's board_cycling config comes from the loaded plan.
 pub(crate) fn handle_board_calculate_commissions(
-    _state: &WorkerState,
+    state: &WorkerState,
     request: &Request,
 ) -> Response {
+    // Config comes from the plan validated by handle_load_plan, never from
+    // request params (HEU-603, design rationale 028). BoardPlanConfig::validate
+    // checks exactly one thing: cycle_commission is finite and non-negative.
+    // Only the negative half is reachable from a request. JSON carries no NaN
+    // literal and serde_json rejects float overflow, so a wire value is always
+    // finite. The non-finite guard covers in-process construction.
+    //
+    // Unlike the six sibling handlers this one never reads state.trees. Cycle
+    // events arrive on the request, so a tree lookup would add a precondition
+    // without adding a guarantee, and would break replay of events from a
+    // board that has since dissolved. That also means nothing checks the events
+    // were produced by the structure named here. HEU-614 tracks it.
+    let plan = match require_plan(state, &request.id) {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+
     #[derive(serde::Deserialize)]
     struct Params {
+        #[serde(rename = "structure")]
+        structure_name: String,
+        // Required, but tolerant of an explicit null: a nil Go slice marshals
+        // to null rather than []. Deliberately not `default` — an absent
+        // cycle_events is a caller bug, and on a money path a loud
+        // INVALID_PARAMS beats silently paying zero.
+        #[serde(deserialize_with = "null_as_default")]
         cycle_events: Vec<network_engine::board_plan::CycleEvent>,
-        #[serde(default)]
+        // Optional *and* null-tolerant: absent and null both mean "no prior
+        // counts", which is every first period.
+        #[serde(default, deserialize_with = "null_as_default")]
         period_cycle_counts: HashMap<Uuid, u32>,
-        config: BoardPlanConfig,
     }
 
     let params: Params = match serde_json::from_str(request.params.get()) {
         Ok(p) => p,
-        Err(e) => {
-            return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string());
+        Err(e) => return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string()),
+    };
+
+    let structure = match find_board_plan_structure(plan, &params.structure_name) {
+        Some(s) => s,
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "STRUCTURE_NOT_FOUND",
+                format!(
+                    "board plan structure '{}' not found in plan",
+                    params.structure_name
+                ),
+            );
         }
     };
 
     let result = calculate_board_commissions(
         &params.cycle_events,
         &params.period_cycle_counts,
-        &params.config,
+        &structure.board_cycling,
     );
 
     Response::success(

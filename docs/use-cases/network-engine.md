@@ -468,8 +468,8 @@ newID, _ := store.ReplaceRun(ctx, runID, newPlanHash)
 
 ### UC-NET-016: Removing a wire field without a red interval
 
-**Added:** v0.0.2 (HEU-583)
-**Files:** `engine/network-engine-worker/tests/worker_integration.rs` (`calculate_streamline_ignores_request_scoped_config`), `internal/networkengine/engine_client_test.go` (`TestEngineClient_CalculateStreamline_MockParams`)
+**Added:** v0.0.2 (HEU-583), applied to board plan in HEU-603
+**Files:** `engine/network-engine-worker/tests/worker_integration.rs` (`calculate_streamline_ignores_request_scoped_config`, `board_calculate_ignores_request_scoped_config`, `board_calculate_ignores_malformed_request_config`, `board_calculate_rejects_legacy_shape_without_structure`), `internal/networkengine/engine_client_test.go` (`TestEngineClient_CalculateStreamline_MockParams`, `TestEngineClient_CalculateBoardCommissions_MockParams`)
 
 **Problem:** Deleting a field from an NDJSON request is a breaking change across two languages. Doing it in one commit leaves every intermediate commit red for one side or the other, and a caller still sending the field silently gets a different answer with nothing to catch it.
 
@@ -488,6 +488,8 @@ This inverts the obvious order. HEU-583's plan deliberately deviated from its ow
 
 Without that test, reintroducing the field leaves the entire suite green. Verified by mutation: re-adding the field and preferring it failed exactly one test out of seventy.
 
-**When to use this pattern:** any `calculate_*` handler still taking request-scoped config. HEU-603 and HEU-607 both need this sequence.
+**When to use this pattern:** any handler still taking request-scoped config. Both handlers that were on the wrong side of it have moved — `calculate_streamline` in HEU-583, `board_calculate_commissions` in HEU-603. The other five commission handlers never carried request config. The remaining case is the create door, `handle_create_board_plan` (HEU-607): not a commission handler, but the same shape, config off the request and never validated.
+
+One asymmetry showed up on the board application. Streamline carried two legacy fields, so a single request could hold a valid-hostile value in one and a malformed value in the other. Board carried only `config`, and one field cannot be both at once, so the two halves of the guard became two tests instead of one request. Count the legacy fields before assuming one test covers both halves.
 
 **Notes:** The silence that makes the migration safe is also unobservable — nothing reports that a caller sent an ignored field. HEU-613 covers that. Do not add `deny_unknown_fields` until callers have migrated, or the red interval this pattern avoids comes straight back.

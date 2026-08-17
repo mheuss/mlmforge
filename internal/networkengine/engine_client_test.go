@@ -973,9 +973,24 @@ const testPlanJSON = `{
     }
 }`
 
-// streamlinePlanJSON carries a streamline structure named StreamTest.
-// calculate_streamline resolves its config from the loaded plan (HEU-583),
-// so this plan must be loaded before the calculate call.
+// streamlinePlanJSON carries a streamline structure named StreamTest and a
+// companion unilevel. calculate_streamline resolves its config from the loaded
+// plan (HEU-583), so this plan must be loaded before the calculate call.
+//
+// The unilevel is required, not decoration. validateStreamlineCompanion
+// (internal/config/rules.go:839) requires every streamline structure to have a
+// companion unilevel. Delete StreamTestUnilevel and this constant goes back to
+// describing a plan those rules reject.
+//
+// Nothing here would catch that. Rust's CompensationPlan::validate does not
+// enforce the companion rule, so the worker loads either shape and every test
+// still passes. Pipeline does enforce it, but this constant can never reach
+// Pipeline: that path takes authoring-shape YAML, not the Rust-shape JSON
+// below. The pairing is held by hand, which is why it is written down here.
+//
+// Mirrors STREAMLINE_TEST_PLAN_JSON in worker_integration.rs, which carries
+// the same pairing for the same reason. Both are copies HEU-604 will
+// consolidate.
 const streamlinePlanJSON = `{
     "name": "Streamline Test Plan",
     "version": 1,
@@ -993,12 +1008,25 @@ const streamlinePlanJSON = `{
                     "streams": null
                 }
             }
+        },
+        {
+            "type": "unilevel",
+            "config": {
+                "name": "StreamTestUnilevel",
+                "level_commission": {
+                    "broad_commission_percent": 0.40,
+                    "volume_to_dollar_multiplier": null,
+                    "commissionable_depth": 3,
+                    "rate_table": { "member": { "1": 0.05, "2": 0.05, "3": 0.05 } }
+                },
+                "compression": null
+            }
         }
     ],
     "period": { "length": "month", "start_date": "2026-03-01", "payout_lag_days": 14 },
     "volume": { "inhibit_signup_volume": false, "base_currency": "USD", "volume_to_dollar_multiplier": 1.0, "deduct_qualifying_volume": false },
     "ranks": [
-        { "name": "member", "ordinal": 1, "qualification": { "structures": [], "required_products": [] }, "qualified_structures": ["StreamTest"], "demotion_policy": "promotion_only" }
+        { "name": "member", "ordinal": 1, "qualification": { "structures": [], "required_products": [] }, "qualified_structures": ["StreamTest", "StreamTestUnilevel"], "demotion_policy": "promotion_only" }
     ],
     "rank_tracking": { "track_achieved_rank": false },
     "rank_features": { "constraints_enabled": false, "overrides_enabled": false },
@@ -1816,7 +1844,7 @@ func TestEngineClient_BoardListBoards_MockResponse(t *testing.T) {
 	assert.Equal(t, parentID, *boards[0].ParentBoardID)
 }
 
-func TestEngineClient_CalculateBoardCommissions_MockResponse(t *testing.T) {
+func TestEngineClient_CalculateBoardCommissions_MockParams(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`{
 			"earnings":[{
@@ -1832,6 +1860,7 @@ func TestEngineClient_CalculateBoardCommissions_MockResponse(t *testing.T) {
 	client := NewEngineClientWithTransport(mock)
 
 	req := CalculateBoardCommissionsRequest{
+		StructureName: "BoardTest",
 		CycleEvents: []CycleEventDTO{
 			{
 				BoardID:      "board-001",
@@ -1843,7 +1872,6 @@ func TestEngineClient_CalculateBoardCommissions_MockResponse(t *testing.T) {
 		PeriodCycleCounts: map[string]int{
 			"00000000-0000-0000-0000-000000000001": 2,
 		},
-		Config: json.RawMessage(`{"cycle_commission":25.50,"max_cycles_per_period":5}`),
 	}
 
 	result, err := client.CalculateBoardCommissions(context.Background(), req)
@@ -1851,6 +1879,31 @@ func TestEngineClient_CalculateBoardCommissions_MockResponse(t *testing.T) {
 	require.NotNil(t, result)
 
 	assert.Equal(t, "board_calculate_commissions", mock.lastOp)
+	// The board cycling config no longer crosses the wire (HEU-603).
+	// Asserting the exact param set is what makes its removal stick.
+	assert.JSONEq(t, `{
+		"structure": "BoardTest",
+		"cycle_events": [{
+			"board_id": "board-001",
+			"cycled_member": "00000000-0000-0000-0000-000000000001",
+			"new_boards": ["board-002"],
+			"re_entry_board": null
+		}],
+		"period_cycle_counts": {"00000000-0000-0000-0000-000000000001": 2}
+	}`, string(mock.lastParams))
+
+	// Duplicates what JSONEq already catches, and earns its place for the same
+	// reason the streamline twin above gives: someone re-adding the field is
+	// likely to "fix" the red JSONEq by regenerating the golden, which silences
+	// it but not this. Deleting the guard then has to be deliberate.
+	//
+	// Neither catches a field re-added with `,omitempty` and left unpopulated.
+	// That shape is dead weight rather than a bypass: the worker ignores unknown
+	// params, and board_calculate_ignores_request_scoped_config pins that it
+	// keeps doing so. That Rust test builds its own request string, so it
+	// watches the worker, not this client.
+	assert.NotContains(t, string(mock.lastParams), `"config"`)
+
 	require.Len(t, result.Earnings, 1)
 	assert.Equal(t, "00000000-0000-0000-0000-000000000001", result.Earnings[0].EarnerID)
 	assert.Equal(t, "board-001", result.Earnings[0].BoardID)
@@ -1860,6 +1913,48 @@ func TestEngineClient_CalculateBoardCommissions_MockResponse(t *testing.T) {
 
 	require.Contains(t, result.UpdatedCycleCounts, "00000000-0000-0000-0000-000000000001")
 	assert.Equal(t, 3, result.UpdatedCycleCounts["00000000-0000-0000-0000-000000000001"])
+}
+
+// TestEngineClient_CalculateBoardCommissions_NilCollections pins the wire shape
+// of a first-period call, where the natural Go request leaves both collections
+// nil: no prior cycle counts, and nothing cycled.
+//
+// The two fields are treated differently on purpose, and this test is what
+// holds that difference in place.
+//
+// PeriodCycleCounts is optional, so it carries omitempty and drops off the
+// wire. CarryForward on CalculateBinaryPairingRequest (wire_types.go:92)
+// already does the same.
+//
+// CycleEvents must NOT get omitempty, which is why the assertion pins it
+// present as null rather than merely absent. It is required on the Rust side,
+// and dropping the key entirely returns INVALID_PARAMS "missing field". That
+// loud failure is deliberate: a caller who forgets the field should hear about
+// it, not be paid zero. The worker reads an explicit null as empty
+// (null_as_default in handlers/board_plan.rs), so null is the correct shape to
+// send. board_calculate_still_requires_cycle_events guards the other half from
+// the Rust side, but it builds its own JSON and never touches this struct.
+func TestEngineClient_CalculateBoardCommissions_NilCollections(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{"earnings":[],"updated_cycle_counts":{}}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	req := CalculateBoardCommissionsRequest{
+		StructureName:     "BoardTest",
+		CycleEvents:       nil,
+		PeriodCycleCounts: nil,
+	}
+
+	_, err := client.CalculateBoardCommissions(context.Background(), req)
+	require.NoError(t, err)
+
+	// Positive on the whole param set, matching the _MockParams sibling. A
+	// NotContains on one key would also pass if the field were renamed away.
+	assert.JSONEq(t, `{
+		"structure": "BoardTest",
+		"cycle_events": null
+	}`, string(mock.lastParams))
 }
 
 // mockTransport is a test double for EngineTransport.

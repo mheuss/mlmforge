@@ -2190,10 +2190,20 @@ const SL_USER2: &str = "00000000-0000-0000-0000-000000000012";
 const SL_USER3: &str = "00000000-0000-0000-0000-000000000013";
 const SL_STRUCTURE: &str = "TestStreamline";
 
-/// Minimal plan carrying a single streamline structure named `TestStreamline`.
-/// The name matches `SL_STRUCTURE` so the plan and `create_streamline` agree
-/// when a test needs both a loaded plan and a live engine (HEU-583). Its level-1
-/// `percent` of 0.10 is the value mutated to exercise the load-time gate.
+/// Minimal plan carrying a streamline structure named `TestStreamline` and a
+/// companion unilevel. The streamline name matches `SL_STRUCTURE` so the plan
+/// and `create_streamline` agree when a test needs both a loaded plan and a
+/// live engine (HEU-583). Its level-1 `percent` of 0.10 is the value mutated to
+/// exercise the load-time gate.
+///
+/// The unilevel is required, not decoration. Go's `validateStreamlineCompanion`
+/// (`internal/config/rules.go:839`) requires every streamline structure to have
+/// a companion unilevel, and Rust's `CompensationPlan::validate` does not
+/// enforce that rule. Without it this constant encodes a plan production Go
+/// rejects, which is what it did between HEU-583 and HEU-603.
+///
+/// It is the *second* structure on purpose. `load_plan_rejects_duplicate_structure_names`
+/// pushes a third onto this list and asserts the exact resulting name order.
 const STREAMLINE_TEST_PLAN_JSON: &str = r#"{
     "name": "Integration Test Plan",
     "version": 1,
@@ -2211,12 +2221,25 @@ const STREAMLINE_TEST_PLAN_JSON: &str = r#"{
                     "streams": null
                 }
             }
+        },
+        {
+            "type": "unilevel",
+            "config": {
+                "name": "TestUnilevel",
+                "level_commission": {
+                    "broad_commission_percent": 0.40,
+                    "volume_to_dollar_multiplier": null,
+                    "commissionable_depth": 3,
+                    "rate_table": { "member": { "1": 0.05, "2": 0.05, "3": 0.05 } }
+                },
+                "compression": null
+            }
         }
     ],
     "period": { "length": "month", "start_date": "2026-03-01", "payout_lag_days": 14 },
     "volume": { "inhibit_signup_volume": false, "base_currency": "USD", "volume_to_dollar_multiplier": 1.0, "deduct_qualifying_volume": false },
     "ranks": [
-        { "name": "member", "ordinal": 1, "qualification": { "structures": [], "required_products": [] }, "qualified_structures": ["TestStreamline"], "demotion_policy": "promotion_only" }
+        { "name": "member", "ordinal": 1, "qualification": { "structures": [], "required_products": [] }, "qualified_structures": ["TestStreamline", "TestUnilevel"], "demotion_policy": "promotion_only" }
     ],
     "rank_tracking": { "track_achieved_rank": false },
     "rank_features": { "constraints_enabled": false, "overrides_enabled": false },
@@ -2274,6 +2297,454 @@ fn sl_add_member(worker: &mut std::process::Child, id: &str, user: &str, sponsor
         "streamline_add_member failed: {}",
         resp
     );
+}
+
+// --- Board plan commission integration tests ---
+
+/// The board structure's name. Must match the `board_plan` structure inside
+/// `BOARD_TEST_PLAN_JSON`, the way `SL_STRUCTURE` matches its streamline twin.
+/// `load_plan_accepts_valid_board_plan` asserts the two agree, so drift fails
+/// there rather than surfacing later as a confusing STRUCTURE_NOT_FOUND.
+const BP_STRUCTURE: &str = "BoardTest";
+
+/// Board plan test plan.
+///
+/// `board_calculate_commissions` resolves its `board_cycling` config from this
+/// plan (HEU-603), so a test that skips `load_board_test_plan` gets NO_PLAN
+/// instead of earnings. `board_calculate_without_plan_returns_no_plan` below
+/// pins that.
+///
+/// The unilevel structure is not decoration. Go's `validateBoardPlanCompanion`
+/// (`internal/config/rules.go:812`) requires every board plan to have a
+/// companion unilevel, and Rust's `CompensationPlan::validate` does not enforce
+/// that rule. Without it this constant would encode a plan production Go
+/// rejects. `STREAMLINE_TEST_PLAN_JSON` above has the same treatment for the
+/// twin rule `validateStreamlineCompanion`.
+///
+/// `cycle_commission: 500.0` and `max_cycles_per_period: 3` are the values the
+/// contract fixture expects, and the paragraph below is why they must match.
+///
+/// `engine/testdata/contracts/board_calculate_commissions.json` embeds a
+/// hand-maintained copy of this plan in its `setup_raw`. Nothing keeps the two
+/// in sync. Two copies now, not three: the fixture's request carried its own
+/// inline `config` until that field left the wire. A wrong value in the
+/// embedded plan changes what the fixture pays, with nothing masking it.
+/// Change one, change both. HEU-604 tracks consolidating the copies.
+const BOARD_TEST_PLAN_JSON: &str = r#"{
+    "name": "Integration Test Plan",
+    "version": 1,
+    "structures": [
+        {
+            "type": "unilevel",
+            "config": {
+                "name": "TestUnilevel",
+                "level_commission": {
+                    "broad_commission_percent": 0.40,
+                    "volume_to_dollar_multiplier": null,
+                    "commissionable_depth": 3,
+                    "rate_table": { "member": { "1": 0.05, "2": 0.05, "3": 0.05 } }
+                },
+                "compression": null
+            }
+        },
+        {
+            "type": "board_plan",
+            "config": {
+                "name": "BoardTest",
+                "width": 2,
+                "height": 2,
+                "board_cycling": {
+                    "cycle_commission": 500.0,
+                    "re_entry_enabled": true,
+                    "re_entry_position": "bottom",
+                    "max_cycles_per_period": 3,
+                    "max_cascade_depth": 10,
+                    "stall_threshold_periods": 3,
+                    "inactive_compression": false
+                }
+            }
+        }
+    ],
+    "period": { "length": "month", "start_date": "2026-03-01", "payout_lag_days": 14 },
+    "volume": { "inhibit_signup_volume": false, "base_currency": "USD", "volume_to_dollar_multiplier": 1.0, "deduct_qualifying_volume": false },
+    "ranks": [
+        { "name": "member", "ordinal": 1, "qualification": { "structures": [], "required_products": [] }, "qualified_structures": ["TestUnilevel", "BoardTest"], "demotion_policy": "promotion_only" }
+    ],
+    "rank_tracking": { "track_achieved_rank": false },
+    "rank_features": { "constraints_enabled": false, "overrides_enabled": false },
+    "commission_eligibility": { "min_personal_volume": 0.0, "require_order_in_period": false, "eligible_statuses": [], "active_leg_tiers": [] },
+    "bonuses": { "matching": null, "sponsor": null, "fast_start": null, "rank_advancement": null, "leadership_development": null, "infinity": null, "lifestyle": null, "pool": null, "matrix_completion": null, "position": null, "board_cycling": null },
+    "payout": { "base_currency": "USD", "minimum_amount": 50.0, "split_payouts_enabled": true, "methods": [ { "type": "bank_transfer", "fee": 2.50 } ] },
+    "caps": { "per_distributor_per_period": null, "company_payout_cap_percent": 0.42, "cap_enforcement": "pro_rata", "clawback_on_refund": false },
+    "placement": { "donated_placement": null, "holding_tank": null, "binary_placement": null }
+}"#;
+
+/// Loads `BOARD_TEST_PLAN_JSON` and asserts it took.
+fn load_board_test_plan(worker: &mut std::process::Child) {
+    let resp = send_load_plan(worker, BOARD_TEST_PLAN_JSON);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "load_plan (board) failed: {}",
+        resp
+    );
+}
+
+/// Proves `BOARD_TEST_PLAN_JSON` is a valid plan, so that when the negative
+/// `cycle_commission` gate test arrives it can attribute its rejection to the
+/// mutated value rather than to drift in the constant. Mirrors
+/// `load_plan_accepts_valid_streamline_plan`, which does the same job for the
+/// streamline constant.
+///
+/// Also pins `BP_STRUCTURE` to the name inside the JSON. Nothing else ties the
+/// two together, and a silent drift would surface later as a confusing
+/// STRUCTURE_NOT_FOUND rather than a failure here.
+#[test]
+fn load_plan_accepts_valid_board_plan() {
+    assert!(
+        BOARD_TEST_PLAN_JSON.contains(&format!(r#""name": "{}""#, BP_STRUCTURE)),
+        "BP_STRUCTURE ({}) does not appear as a structure name in \
+         BOARD_TEST_PLAN_JSON. Either the name drifted, or the JSON was \
+         reformatted away from the `\"name\": \"value\"` spacing this \
+         substring match depends on.",
+        BP_STRUCTURE
+    );
+
+    let mut worker = common::spawn_worker();
+    load_board_test_plan(&mut worker);
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// The plan gate. Without a loaded plan there is no config to rate with.
+///
+/// `require_plan` runs before the params are parsed, so the payload shape does
+/// not affect this path. `board_calculate_ignores_request_scoped_config` owns
+/// the legacy-shape behavior.
+#[test]
+fn board_calculate_without_plan_returns_no_plan() {
+    let mut worker = common::spawn_worker();
+
+    let request = format!(
+        r#"{{"id":"bp-noplan","op":"board_calculate_commissions","params":{{"structure":"{}","cycle_events":[],"period_cycle_counts":{{}}}}}}"#,
+        BP_STRUCTURE
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("NO_PLAN"),
+        "expected NO_PLAN, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// A nil Go collection marshals to `null`, not `[]` or `{}`, and both request
+/// collections must read that as empty rather than rejecting it.
+///
+/// This is the shape of a first-period call: no prior cycle counts, and if
+/// nothing cycled, no events either. `#[serde(default)]` does not cover it —
+/// that handles an *absent* key, while Go sends the key with a null value.
+///
+/// The Go twin is `TestEngineClient_CalculateBoardCommissions_NilCollections`.
+/// Go also omits `period_cycle_counts` when nil, so both sides are covered:
+/// Go stops sending the bad shape, and the worker stops rejecting it whoever
+/// sends it.
+#[test]
+fn board_calculate_accepts_null_collections() {
+    let mut worker = common::spawn_worker();
+    load_board_test_plan(&mut worker);
+
+    let request = format!(
+        r#"{{"id":"bp-nullevents","op":"board_calculate_commissions","params":{{"structure":"{}","cycle_events":null,"period_cycle_counts":null}}}}"#,
+        BP_STRUCTURE
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "null collections must read as empty, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains(r#""earnings":[]"#),
+        "no cycle events means no earnings, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Omitting `cycle_events` altogether stays an error. This is the other half of
+/// `board_calculate_accepts_null_collections`: widening null must not quietly
+/// widen absent, or a caller that forgets the field gets a zero payout instead
+/// of a complaint.
+#[test]
+fn board_calculate_still_requires_cycle_events() {
+    let mut worker = common::spawn_worker();
+    load_board_test_plan(&mut worker);
+
+    let request = format!(
+        r#"{{"id":"bp-noevents","op":"board_calculate_commissions","params":{{"structure":"{}","period_cycle_counts":{{}}}}}}"#,
+        BP_STRUCTURE
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a missing cycle_events must still fail, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// The structure gate. A plan IS loaded, so the error cannot come from
+/// `require_plan`. Written without `load_board_test_plan` this test returns
+/// NO_PLAN, passes, and proves nothing — the same trap HEU-583 hit with
+/// `get_streamline_ref`. The load call is the point of the test.
+#[test]
+fn board_calculate_unknown_structure_returns_not_found() {
+    let mut worker = common::spawn_worker();
+    load_board_test_plan(&mut worker);
+
+    let request = r#"{"id":"bp-nostruct","op":"board_calculate_commissions","params":{"structure":"NoSuchBoard","cycle_events":[],"period_cycle_counts":{}}}"#;
+    let resp = common::send_receive(&mut worker, request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("STRUCTURE_NOT_FOUND"),
+        "expected STRUCTURE_NOT_FOUND, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("NoSuchBoard"),
+        "the error should name the structure that missed, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// The money path. A negative cycle_commission must be rejected at load_plan,
+/// which is the only gate now that the handler sources config from the plan.
+/// The request-scoped `config` param has since been deleted from the wire.
+///
+/// Asserts the rejection *message*, not just the code. `handle_load_plan`
+/// returns INVALID_PLAN for a deserialize failure as well as a validation
+/// failure (`handlers/common.rs:123-137`), so a code-only check would stay
+/// green if the plan constant drifted and `check_non_negative` were never
+/// reached. `load_plan_accepts_valid_board_plan` is the companion that proves
+/// the unmutated constant loads.
+#[test]
+fn load_plan_rejects_board_cycle_commission_negative() {
+    let mut worker = common::spawn_worker();
+
+    let bad = BOARD_TEST_PLAN_JSON.replace(
+        "\"cycle_commission\": 500.0",
+        "\"cycle_commission\": -500.0",
+    );
+    assert!(
+        bad.contains("\"cycle_commission\": -500.0"),
+        "the cycle_commission replacement did not match; the plan constant changed shape"
+    );
+
+    let resp = send_load_plan(&mut worker, &bad);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PLAN"),
+        "expected INVALID_PLAN, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("cycle_commission") && resp.contains("must be finite and non-negative"),
+        "expected the board dollar-law gate to reject it, not a deserialize \
+         failure or an unrelated check, got: {}",
+        resp
+    );
+
+    // The rejected plan stored nothing, so this fresh worker still has no plan.
+    // A failed load_plan does NOT clear a previously loaded plan; state.plan is
+    // only assigned after validation passes. That is why this assertion is only
+    // meaningful on a worker that never loaded a good plan.
+    let request = format!(
+        r#"{{"id":"bp-after-reject","op":"board_calculate_commissions","params":{{"structure":"{}","cycle_events":[],"period_cycle_counts":{{}}}}}}"#,
+        BP_STRUCTURE
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("NO_PLAN"),
+        "a rejected plan must leave nothing to calculate with, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// The exact legacy shape: config, no structure. An unmigrated caller must
+/// fail, not silently continue. This is the case that proves the compatibility
+/// requirement; the hybrid test below does not, because it supplies `structure`.
+#[test]
+fn board_calculate_rejects_legacy_shape_without_structure() {
+    let mut worker = common::spawn_worker();
+    load_board_test_plan(&mut worker);
+
+    let request = r#"{"id":"bp-legacy","op":"board_calculate_commissions","params":{"cycle_events":[],"period_cycle_counts":{},"config":{"cycle_commission":999999.0,"re_entry_enabled":true,"re_entry_position":"bottom","max_cycles_per_period":99,"max_cascade_depth":10,"stall_threshold_periods":3,"inactive_compression":false}}}"#;
+    let resp = common::send_receive(&mut worker, request);
+    // Asserts the field name, not just the code. Every deserialize failure in
+    // this handler returns INVALID_PARAMS, so a code-only check cannot tell a
+    // missing `structure` from any other malformed param. The legacy `config`
+    // is an unknown field now and is ignored, which leaves the missing
+    // `structure` as the only thing under test. Same reasoning as the
+    // money-path test above.
+    assert!(
+        resp.contains(r#""ok":false"#)
+            && resp.contains("INVALID_PARAMS")
+            && resp.contains("structure"),
+        "a request with no structure must be rejected, naming the missing \
+         field, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// The hybrid shape: a valid structure alongside a hostile legacy config.
+/// Catches the field being re-added **and honoured**.
+///
+/// Both hostile values differ from the plan's, and both are asserted. The
+/// commission proves `cycle_commission` comes from the plan; the cap proves
+/// `max_cycles_per_period` does too. The calculator reads exactly these two
+/// fields (`commission/board_plan.rs:35-36`), so together they cover it.
+///
+/// `config` has since been deleted from `Params`. This test still sends it,
+/// and that is the point: nothing sets `deny_unknown_fields`, so the worker
+/// ignores the stray field. If anyone adds `deny_unknown_fields`, this flips
+/// to INVALID_PARAMS by design rather than as a regression.
+#[test]
+fn board_calculate_ignores_request_scoped_config() {
+    let mut worker = common::spawn_worker();
+    load_board_test_plan(&mut worker);
+
+    // Plan says 500.0 and a cap of 3. Hostile config says 999999.0 and 99.
+    // Four cycle events for one member: under the plan's cap of 3 the fourth
+    // is capped and pays 0. Under the hostile cap of 99 it would pay.
+    let hostile = r#""config":{"cycle_commission":999999.0,"re_entry_enabled":true,"re_entry_position":"bottom","max_cycles_per_period":99,"max_cascade_depth":10,"stall_threshold_periods":3,"inactive_compression":false},"#;
+    let events = (0..4)
+        .map(|_| {
+            format!(
+                r#"{{"board_id":"00000000-0000-0000-0000-000000000010","cycled_member":"{}","new_boards":[],"re_entry_board":null}}"#,
+                ROOT
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let request = format!(
+        r#"{{"id":"bp-hybrid","op":"board_calculate_commissions","params":{{{}"structure":"{}","cycle_events":[{}],"period_cycle_counts":{{}}}}}}"#,
+        hostile, BP_STRUCTURE, events
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(
+        parsed["ok"].as_bool().unwrap_or(false),
+        "legacy-shaped config must be ignored, not rejected, got: {}",
+        resp
+    );
+    let earnings = parsed["result"]["earnings"].as_array().expect(&resp);
+    assert_eq!(earnings.len(), 4, "expected four earnings, got: {}", resp);
+
+    let first = earnings[0]["dollar_amount"].as_f64().expect(&resp);
+    assert!(
+        (first - 500.0).abs() < 1e-10,
+        "the request-scoped cycle_commission reached the calculator, got {}: {}",
+        first,
+        resp
+    );
+
+    // Pins the cap at exactly 3, not merely somewhere in 1..=3. The
+    // fourth-cycle check alone stays green under a drifted cap of 1 or 2. It
+    // also stays green if the `>` at `commission/board_plan.rs:35` became
+    // `>=`. Only this assertion catches either.
+    let third = earnings[2]["dollar_amount"].as_f64().expect(&resp);
+    assert!(
+        (third - 500.0).abs() < 1e-10 && !earnings[2]["capped"].as_bool().expect(&resp),
+        "the third cycle is within the plan's cap of 3 and must pay, got: {}",
+        resp
+    );
+
+    let fourth = earnings[3]["dollar_amount"].as_f64().expect(&resp);
+    assert!(
+        (fourth - 0.0).abs() < 1e-10 && earnings[3]["capped"].as_bool().expect(&resp),
+        "the request-scoped max_cycles_per_period reached the calculator; the \
+         fourth cycle should be capped under the plan's cap of 3, got: {}",
+        resp
+    );
+
+    // Records that index is event order rather than leaving it implied.
+    assert_eq!(
+        earnings[3]["cycle_number"].as_u64().expect(&resp),
+        4,
+        "earnings must come back in event order, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Catches the field being re-added **at all**, which is the leading indicator:
+/// a field usually reappears unused before anything reads it. The value here is
+/// a bare number, so if `Params` ever declares `config` again, at any struct
+/// type, this request fails deserialization and this test goes red.
+///
+/// A scalar on purpose, not an object full of junk keys. `{"bogus":true}` also
+/// fails today, but only because `BoardPlanConfig`'s fields lack defaults. Add
+/// `#[serde(default)]` at the container level, a routine forward-compat edit,
+/// and an object payload starts deserializing into a default config while this
+/// guard stays green forever. No ordinary derive attribute makes a struct
+/// accept a number.
+///
+/// Do not "improve" it into a realistic config either. A valid one would
+/// deserialize cleanly, the payout would still be $500, and the guard would
+/// silently stop working.
+///
+/// `board_calculate_ignores_request_scoped_config` is the other half, catching
+/// re-added *and honoured*. The boundary of the pair runs along two axes. By
+/// name: both send the literal key `config`, so an override re-added under
+/// another name and honoured passes both. By type: this one needs the field to
+/// be struct-typed, so a `config` returning as `serde_json::Value` swallows the
+/// number and stays green. The honoured half still catches that.
+#[test]
+fn board_calculate_ignores_malformed_request_config() {
+    let mut worker = common::spawn_worker();
+    load_board_test_plan(&mut worker);
+
+    // Deliberately un-deserializable at any struct type. Read the note above
+    // before changing this.
+    let bogus = r#""config":42,"#;
+    let request = format!(
+        r#"{{"id":"bp-bogus","op":"board_calculate_commissions","params":{{{}"structure":"{}","cycle_events":[{{"board_id":"00000000-0000-0000-0000-000000000010","cycled_member":"{}","new_boards":[],"re_entry_board":null}}],"period_cycle_counts":{{}}}}}}"#,
+        bogus, BP_STRUCTURE, ROOT
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(
+        parsed["ok"].as_bool().unwrap_or(false),
+        "a malformed config must be ignored, not deserialized, got: {}",
+        resp
+    );
+    let dollar = parsed["result"]["earnings"][0]["dollar_amount"]
+        .as_f64()
+        .expect(&resp);
+    assert!(
+        (dollar - 500.0).abs() < 1e-10,
+        "expected the plan's 500.0, got {}: {}",
+        dollar,
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
 }
 
 #[test]
@@ -2519,8 +2990,8 @@ fn load_plan_rejects_duplicate_structure_names() {
         .collect();
     assert_eq!(
         names,
-        vec!["TestStreamline", "TestStreamline"],
-        "the plan should hold exactly two structures sharing one name"
+        vec!["TestStreamline", "TestUnilevel", "TestStreamline"],
+        "the plan should hold three structures, two of them sharing one name"
     );
     let bad = plan.to_string();
 

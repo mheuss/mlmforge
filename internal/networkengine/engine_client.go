@@ -598,7 +598,8 @@ func (c *EngineClient) BoardListBoards(ctx context.Context, structure string) ([
 }
 
 // CalculateBoardCommissions computes cycle commissions for a set of board cycle events.
-// This is a stateless calculation: pass cycle events, prior counts, and config.
+// The named structure's cycling config comes from the loaded plan, so LoadPlan
+// must run first. Pass cycle events and prior counts.
 func (c *EngineClient) CalculateBoardCommissions(ctx context.Context, req CalculateBoardCommissionsRequest) (*BoardCommissionResultDTO, error) {
 	r, err := callInto[BoardCommissionResultDTO](c, ctx, "board_calculate_commissions", req)
 	if err != nil {

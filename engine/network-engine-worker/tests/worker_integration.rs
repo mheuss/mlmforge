@@ -2439,6 +2439,66 @@ fn board_calculate_without_plan_returns_no_plan() {
     worker.wait().unwrap();
 }
 
+/// A nil Go collection marshals to `null`, not `[]` or `{}`, and both request
+/// collections must read that as empty rather than rejecting it.
+///
+/// This is the shape of a first-period call: no prior cycle counts, and if
+/// nothing cycled, no events either. `#[serde(default)]` does not cover it —
+/// that handles an *absent* key, while Go sends the key with a null value.
+///
+/// The Go twin is `TestEngineClient_CalculateBoardCommissions_NilCountsOmitKey`.
+/// Go also omits `period_cycle_counts` when nil, so both sides are covered:
+/// Go stops sending the bad shape, and the worker stops rejecting it whoever
+/// sends it.
+#[test]
+fn board_calculate_accepts_null_collections() {
+    let mut worker = common::spawn_worker();
+    load_board_test_plan(&mut worker);
+
+    let request = format!(
+        r#"{{"id":"bp-nullevents","op":"board_calculate_commissions","params":{{"structure":"{}","cycle_events":null,"period_cycle_counts":null}}}}"#,
+        BP_STRUCTURE
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "null collections must read as empty, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains(r#""earnings":[]"#),
+        "no cycle events means no earnings, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Omitting `cycle_events` altogether stays an error. This is the other half of
+/// `board_calculate_accepts_null_cycle_events`: widening null must not quietly
+/// widen absent, or a caller that forgets the field gets a zero payout instead
+/// of a complaint.
+#[test]
+fn board_calculate_still_requires_cycle_events() {
+    let mut worker = common::spawn_worker();
+    load_board_test_plan(&mut worker);
+
+    let request = format!(
+        r#"{{"id":"bp-noevents","op":"board_calculate_commissions","params":{{"structure":"{}","period_cycle_counts":{{}}}}}}"#,
+        BP_STRUCTURE
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a missing cycle_events must still fail, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 /// The structure gate. A plan IS loaded, so the error cannot come from
 /// `require_plan`. Written without `load_board_test_plan` this test returns
 /// NO_PLAN, passes, and proves nothing — the same trap HEU-583 hit with

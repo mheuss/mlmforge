@@ -12,6 +12,21 @@ use crate::state::{TreeInstance, WorkerState};
 
 // --- Board plan helpers ---
 
+/// Reads an explicit JSON `null` as `T::default()`, leaving the field required.
+///
+/// `#[serde(default)]` covers an *absent* key; it does not cover a key present
+/// with a null value. Go marshals a nil slice or map to null, so a caller that
+/// leaves a collection unset sends the one shape neither plain serde path
+/// accepts. Pair this with a required field when absent should stay an error
+/// but null should mean empty.
+fn null_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Default + serde::Deserialize<'de>,
+{
+    Ok(<Option<T> as serde::Deserialize>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 /// Looks up a board plan engine by structure name (mutable).
 fn get_board_plan_mut<'a>(
     state: &'a mut WorkerState,
@@ -511,8 +526,15 @@ pub(crate) fn handle_board_calculate_commissions(
     struct Params {
         #[serde(rename = "structure")]
         structure_name: String,
+        // Required, but tolerant of an explicit null: a nil Go slice marshals
+        // to null rather than []. Deliberately not `default` — an absent
+        // cycle_events is a caller bug, and on a money path a loud
+        // INVALID_PARAMS beats silently paying zero.
+        #[serde(deserialize_with = "null_as_default")]
         cycle_events: Vec<network_engine::board_plan::CycleEvent>,
-        #[serde(default)]
+        // Optional *and* null-tolerant: absent and null both mean "no prior
+        // counts", which is every first period.
+        #[serde(default, deserialize_with = "null_as_default")]
         period_cycle_counts: HashMap<Uuid, u32>,
     }
 

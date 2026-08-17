@@ -200,7 +200,9 @@ HEU-583's plan specified the filtered form on three steps, including the two tha
 
 ## Rust Tests: Always Run `--workspace`
 
-Never scope a Rust test run below `--workspace`. `cargo test -p network-engine-worker` produces failures that do not exist in the tree.
+Never select a subset of packages when running Rust tests. `cargo test -p network-engine-worker` produces failures that do not exist in the tree.
+
+This is about `-p`, not about naming a target. `cargo test --test config_width_contract` is fine, because that target belongs to `network-engine` and the dev-dependency it needs is declared right there. `docs/use-cases/network-engine.md` recommends exactly that command.
 
 `network-engine` enables `serde_json/preserve_order` as a dev-dependency. `network-engine-worker`'s tests get it only through Cargo feature unification, which needs both crates in the same build. Scope to one crate and the feature drops, `serde_json::Value` reverts to sorted keys, and any test that round-trips a plan through `Value` breaks on the adjacently-tagged `StructureConfig`.
 
@@ -209,6 +211,14 @@ The failure is convincing: `invalid type: string "1", expected u8`, pointing at 
 This nearly produced a false "main is red" report during HEU-603. Confirm with `cargo tree -e features` both ways if you ever doubt it. The full suite runs in about 1.5 seconds, so scoping buys nothing.
 
 Same false-green family as the per-fixture filter above: a test command that reports something other than what the code does.
+
+### The production binary is a third configuration
+
+`preserve_order` is dev-only, so `cargo build` never activates it. The shipped worker runs `serde_json` with sorted keys — the same behavior as a narrow test build, not the wide one.
+
+Nothing breaks today. `handle_load_plan` deserializes straight off the `RawValue` (`network-engine-worker/src/handlers/common.rs:104`) and never touches `serde_json::Value`. But `parse_params` (`common.rs:262`) does produce a `Value`, so a future handler that routes plan-bearing params through it would pass under `--workspace` and fail in the built binary.
+
+That direction is the dangerous one. A narrow test build fails loudly in CI. A production-only reorder fails in production. Never round-trip an adjacently-tagged enum through `Value` on a path the shipped binary takes.
 
 ## Streamline: Rank Gates Qualification, Not Rate
 

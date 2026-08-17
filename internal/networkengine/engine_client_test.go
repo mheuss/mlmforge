@@ -978,10 +978,13 @@ const testPlanJSON = `{
 // plan (HEU-583), so this plan must be loaded before the calculate call.
 //
 // The unilevel is required, not decoration. validateStreamlineCompanion
-// (internal/config/rules.go:838) requires every streamline structure to have a
+// (internal/config/rules.go:839) requires every streamline structure to have a
 // companion unilevel, and Rust's CompensationPlan::validate does not enforce
 // that rule. The worker accepts this plan either way, so without the companion
-// the constant silently encodes a plan our own config pipeline rejects. Mirrors
+// the constant silently encodes a plan our Go business rules reject. It could
+// not reach those rules through Pipeline, which takes authoring-shape YAML
+// rather than the Rust-shape JSON here, but the plan content violates them
+// all the same. Mirrors
 // STREAMLINE_TEST_PLAN_JSON in worker_integration.rs, which carries the same
 // pairing for the same reason. Both are copies HEU-604 will consolidate.
 const streamlinePlanJSON = `{

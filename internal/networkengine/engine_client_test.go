@@ -973,9 +973,17 @@ const testPlanJSON = `{
     }
 }`
 
-// streamlinePlanJSON carries a streamline structure named StreamTest.
-// calculate_streamline resolves its config from the loaded plan (HEU-583),
-// so this plan must be loaded before the calculate call.
+// streamlinePlanJSON carries a streamline structure named StreamTest and a
+// companion unilevel. calculate_streamline resolves its config from the loaded
+// plan (HEU-583), so this plan must be loaded before the calculate call.
+//
+// The unilevel is required, not decoration. validateStreamlineCompanion
+// (internal/config/rules.go:838) requires every streamline structure to have a
+// companion unilevel, and Rust's CompensationPlan::validate does not enforce
+// that rule. The worker accepts this plan either way, so without the companion
+// the constant silently encodes a plan our own config pipeline rejects. Mirrors
+// STREAMLINE_TEST_PLAN_JSON in worker_integration.rs, which carries the same
+// pairing for the same reason. Both are copies HEU-604 will consolidate.
 const streamlinePlanJSON = `{
     "name": "Streamline Test Plan",
     "version": 1,
@@ -993,12 +1001,25 @@ const streamlinePlanJSON = `{
                     "streams": null
                 }
             }
+        },
+        {
+            "type": "unilevel",
+            "config": {
+                "name": "StreamTestUnilevel",
+                "level_commission": {
+                    "broad_commission_percent": 0.40,
+                    "volume_to_dollar_multiplier": null,
+                    "commissionable_depth": 3,
+                    "rate_table": { "member": { "1": 0.05, "2": 0.05, "3": 0.05 } }
+                },
+                "compression": null
+            }
         }
     ],
     "period": { "length": "month", "start_date": "2026-03-01", "payout_lag_days": 14 },
     "volume": { "inhibit_signup_volume": false, "base_currency": "USD", "volume_to_dollar_multiplier": 1.0, "deduct_qualifying_volume": false },
     "ranks": [
-        { "name": "member", "ordinal": 1, "qualification": { "structures": [], "required_products": [] }, "qualified_structures": ["StreamTest"], "demotion_policy": "promotion_only" }
+        { "name": "member", "ordinal": 1, "qualification": { "structures": [], "required_products": [] }, "qualified_structures": ["StreamTest", "StreamTestUnilevel"], "demotion_policy": "promotion_only" }
     ],
     "rank_tracking": { "track_achieved_rank": false },
     "rank_features": { "constraints_enabled": false, "overrides_enabled": false },

@@ -1289,8 +1289,10 @@ mod calculate_tests {
     /// Volume naming a source with no snapshot must fail loudly, on the
     /// generation-only path too.
     ///
-    /// The five sibling calculators inherit this guard from
-    /// `walk_level_commissions`. Generation reaches that walk only when
+    /// Four sibling calculators inherit this guard from
+    /// `walk_level_commissions`; binary pairing has its own (`binary.rs:61`),
+    /// keyed on the resolved owner rather than the source. Generation reaches
+    /// that walk only when
     /// `level_commissions_enabled`, so with level commissions off it needs its
     /// own — without it the walk derives an empty `boundary_set` from the empty
     /// snapshots, pays nobody, and returns `Ok(vec![])`. On a money path that

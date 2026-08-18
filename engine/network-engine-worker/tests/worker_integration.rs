@@ -1037,7 +1037,8 @@ fn calculate_generation_accepts_null_collections() {
 /// paying nobody while reporting `ok` would hide it.
 ///
 /// This fixture enables level commissions, so the rejection here comes from
-/// `walk_level_commissions` (`walk.rs`) — the guard all six handlers share. The
+/// `walk_level_commissions` (`walk.rs`) — the guard four of the six inherit.
+/// Binary pairing reimplements it against the resolved owner. The
 /// generation-*only* path (level commissions off) had no such guard until this
 /// branch added one; that path is not reachable from this fixture, so it is
 /// pinned at the library level instead by

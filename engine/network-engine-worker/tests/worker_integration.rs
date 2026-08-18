@@ -2475,6 +2475,35 @@ fn board_calculate_accepts_null_collections() {
     worker.wait().unwrap();
 }
 
+/// Omitting `period_cycle_counts` is legitimate and must succeed. It is the
+/// optional half of the pair, so it carries `serde(default)` where
+/// `cycle_events` deliberately does not.
+///
+/// This is the shape Go actually sends most often: `wire_types.go` puts
+/// `omitempty` on the field, which drops the key whenever the map is nil, and
+/// a nil map is every first period. Without this test, stripping `default`
+/// from the annotation leaves the whole suite green while breaking the most
+/// common production call.
+#[test]
+fn board_calculate_accepts_absent_period_cycle_counts() {
+    let mut worker = common::spawn_worker();
+    load_board_test_plan(&mut worker);
+
+    let request = format!(
+        r#"{{"id":"bp-nocounts","op":"board_calculate_commissions","params":{{"structure":"{}","cycle_events":[]}}}}"#,
+        BP_STRUCTURE
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "an absent period_cycle_counts must default to empty, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 /// Omitting `cycle_events` altogether stays an error. This is the other half of
 /// `board_calculate_accepts_null_collections`: widening null must not quietly
 /// widen absent, or a caller that forgets the field gets a zero payout instead

@@ -952,6 +952,127 @@ fn calculate_unilevel_still_requires_volume() {
     worker.wait().unwrap();
 }
 
+// --- Generation integration tests ---
+//
+// `calculate_generation` had no integration coverage before HEU-626. It
+// appeared only as a name in the dispatch-completeness gate.
+
+/// Pulled in with `include_str!` rather than pasted as a second copy of a large
+/// plan literal. The repo already carries 19 near-identical plan literals, which
+/// is what HEU-604 exists to fix — don't add a twentieth.
+///
+/// This fixture belongs to the integer-width contract (UC-NET-011), where
+/// deserializability is the requirement, not validity. It happens to load clean
+/// through `load_plan`. Its siblings do not all share that property —
+/// `stairstep.json` fails validation — so don't reach for the others without
+/// checking.
+const GENERATION_TEST_PLAN_JSON: &str =
+    include_str!("../../testdata/config_contract/fixtures/generation.json");
+
+/// Matches the generation structure inside `GENERATION_TEST_PLAN_JSON`, the way
+/// `SL_STRUCTURE` matches its streamline twin.
+const GEN_STRUCTURE: &str = "GenTree";
+
+/// Loads `GENERATION_TEST_PLAN_JSON` and asserts it took.
+fn load_generation_test_plan(worker: &mut std::process::Child) {
+    let resp = send_load_plan(worker, GENERATION_TEST_PLAN_JSON);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "generation plan should load, got: {}",
+        resp
+    );
+}
+
+/// A nil Go collection marshals to `null`, not `{}` or `[]`, and both request
+/// collections must read that as empty rather than rejecting it. This is the
+/// shape of a first-period call.
+///
+/// The Go twin is `TestEngineClient_CalculateGeneration_NilCollections`.
+#[test]
+fn calculate_generation_accepts_null_collections() {
+    let mut worker = common::spawn_worker();
+    load_generation_test_plan(&mut worker);
+    create_tree(&mut worker, GEN_STRUCTURE);
+
+    let request = format!(
+        r#"{{"id":"g-null","op":"calculate_generation","params":{{"structure":"{}","snapshots":null,"volume":null}}}}"#,
+        GEN_STRUCTURE
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "null collections must read as empty, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains(r#""result":[]"#),
+        "no volume means no earnings, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Omitting `snapshots` stays an error. The other half of
+/// `calculate_generation_accepts_null_collections`: widening null must not
+/// quietly widen absent, or a caller who forgets the field is paid zero
+/// instead of being told.
+#[test]
+fn calculate_generation_still_requires_snapshots() {
+    let mut worker = common::spawn_worker();
+    load_generation_test_plan(&mut worker);
+    create_tree(&mut worker, GEN_STRUCTURE);
+
+    let request = format!(
+        r#"{{"id":"g-nosnap","op":"calculate_generation","params":{{"structure":"{}","volume":[]}}}}"#,
+        GEN_STRUCTURE
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a missing snapshots must still fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("snapshots"),
+        "the error should name the field that is missing, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Omitting `volume` stays an error. The mirror of
+/// `calculate_generation_still_requires_snapshots` — one guard per required
+/// field, so adding `default` to either one fails loudly.
+#[test]
+fn calculate_generation_still_requires_volume() {
+    let mut worker = common::spawn_worker();
+    load_generation_test_plan(&mut worker);
+    create_tree(&mut worker, GEN_STRUCTURE);
+
+    let request = format!(
+        r#"{{"id":"g-novol","op":"calculate_generation","params":{{"structure":"{}","snapshots":{{}}}}}}"#,
+        GEN_STRUCTURE
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a missing volume must still fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("volume"),
+        "the error should name the field that is missing, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 // --- Binary tree integration tests ---
 //
 // These tests exercise binary tree operations through the NDJSON protocol

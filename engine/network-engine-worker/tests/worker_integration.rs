@@ -914,8 +914,8 @@ fn calculate_unilevel_still_requires_snapshots() {
         resp
     );
     assert!(
-        resp.contains("snapshots"),
-        "the error should name the field that is missing, got: {}",
+        resp.contains("missing field") && resp.contains("snapshots"),
+        "the error should be a missing-field error naming snapshots, got: {}",
         resp
     );
 
@@ -943,8 +943,8 @@ fn calculate_unilevel_still_requires_volume() {
         resp
     );
     assert!(
-        resp.contains("volume"),
-        "the error should name the field that is missing, got: {}",
+        resp.contains("missing field") && resp.contains("volume"),
+        "the error should be a missing-field error naming volume, got: {}",
         resp
     );
 
@@ -998,6 +998,16 @@ fn calculate_generation_accepts_null_collections() {
     let mut worker = common::spawn_worker();
     load_generation_test_plan(&mut worker);
     create_tree(&mut worker, GEN_STRUCTURE);
+    // Populate the tree so the empty result is caused by the empty collections
+    // rather than by there being nobody to pay.
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"g-null-root","op":"add_root","params":{{"structure":"{}","user_id":"{}","enrolled_at":100}}}}"#,
+            GEN_STRUCTURE, ROOT
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
 
     let request = format!(
         r#"{{"id":"g-null","op":"calculate_generation","params":{{"structure":"{}","snapshots":null,"volume":null}}}}"#,
@@ -1011,7 +1021,61 @@ fn calculate_generation_accepts_null_collections() {
     );
     assert!(
         resp.contains(r#""result":[]"#),
-        "an empty tree means no earnings, got: {}",
+        "no volume means no earnings, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Empty snapshots plus real volume is a caller bug, and it must be loud.
+///
+/// This is the half the null-widening does *not* cover. `snapshots:null` reads
+/// as empty, which is right when there is genuinely no volume — but if volume
+/// names a source, an empty snapshots map means the caller lost data, and
+/// paying nobody while reporting `ok` would hide it.
+///
+/// This fixture enables level commissions, so the rejection here comes from
+/// `walk_level_commissions` (`walk.rs`) — the guard all six handlers share. The
+/// generation-*only* path (level commissions off) had no such guard until this
+/// branch added one; that path is not reachable from this fixture, so it is
+/// pinned at the library level instead by
+/// `generation_only_rejects_volume_with_no_snapshot`.
+///
+/// What this test adds over those: it proves the worker surfaces the failure as
+/// `CALCULATION_ERROR` rather than swallowing it, which a library test cannot
+/// observe.
+#[test]
+fn calculate_generation_rejects_volume_with_no_snapshot() {
+    let mut worker = common::spawn_worker();
+    load_generation_test_plan(&mut worker);
+    create_tree(&mut worker, GEN_STRUCTURE);
+
+    // The source must be in the tree, or SourceNotInTree fires first and this
+    // would pass without exercising the snapshot guard at all.
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"g-root","op":"add_root","params":{{"structure":"{}","user_id":"{}","enrolled_at":100}}}}"#,
+            GEN_STRUCTURE, ROOT
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
+
+    let request = format!(
+        r#"{{"id":"g-nosnap-vol","op":"calculate_generation","params":{{"structure":"{}","snapshots":{{}},"volume":[{{"source_id":"{}","cv_amount":100.0}}]}}}}"#,
+        GEN_STRUCTURE, ROOT
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("CALCULATION_ERROR"),
+        "volume naming a source with no snapshot must fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains(ROOT),
+        "the error should name the source that is missing, got: {}",
         resp
     );
 
@@ -1040,8 +1104,8 @@ fn calculate_generation_still_requires_snapshots() {
         resp
     );
     assert!(
-        resp.contains("snapshots"),
-        "the error should name the field that is missing, got: {}",
+        resp.contains("missing field") && resp.contains("snapshots"),
+        "the error should be a missing-field error naming snapshots, got: {}",
         resp
     );
 
@@ -1069,8 +1133,8 @@ fn calculate_generation_still_requires_volume() {
         resp
     );
     assert!(
-        resp.contains("volume"),
-        "the error should name the field that is missing, got: {}",
+        resp.contains("missing field") && resp.contains("volume"),
+        "the error should be a missing-field error naming volume, got: {}",
         resp
     );
 
@@ -1808,8 +1872,8 @@ fn calculate_binary_pairing_still_requires_snapshots() {
         resp
     );
     assert!(
-        resp.contains("snapshots"),
-        "the error should name the field that is missing, got: {}",
+        resp.contains("missing field") && resp.contains("snapshots"),
+        "the error should be a missing-field error naming snapshots, got: {}",
         resp
     );
 
@@ -1834,8 +1898,8 @@ fn calculate_binary_pairing_still_requires_volume() {
         resp
     );
     assert!(
-        resp.contains("volume"),
-        "the error should name the field that is missing, got: {}",
+        resp.contains("missing field") && resp.contains("volume"),
+        "the error should be a missing-field error naming volume, got: {}",
         resp
     );
 
@@ -3717,8 +3781,8 @@ fn calculate_streamline_still_requires_snapshots() {
         resp
     );
     assert!(
-        resp.contains("snapshots"),
-        "the error should name the field that is missing, got: {}",
+        resp.contains("missing field") && resp.contains("snapshots"),
+        "the error should be a missing-field error naming snapshots, got: {}",
         resp
     );
 
@@ -3747,8 +3811,8 @@ fn calculate_streamline_still_requires_volume() {
         resp
     );
     assert!(
-        resp.contains("volume"),
-        "the error should name the field that is missing, got: {}",
+        resp.contains("missing field") && resp.contains("volume"),
+        "the error should be a missing-field error naming volume, got: {}",
         resp
     );
 
@@ -4148,18 +4212,7 @@ fn evaluate_ranks_honors_window_history() {
 /// root — the setup every `evaluate_ranks` test needs before it can reach the
 /// handler's parse step.
 fn load_rank_plan_with_root(child: &mut std::process::Child) {
-    let minified_plan: String = RANK_TEST_PLAN_JSON
-        .lines()
-        .map(|l| l.trim())
-        .collect::<Vec<_>>()
-        .join("");
-    let resp = common::send_receive(
-        child,
-        &format!(
-            r#"{{"id":"rank-setup-plan","op":"load_plan","params":{}}}"#,
-            minified_plan
-        ),
-    );
+    let resp = send_load_plan(child, RANK_TEST_PLAN_JSON);
     assert!(resp.contains(r#""ok":true"#), "load_plan failed: {}", resp);
 
     create_tree(child, "Test");
@@ -4646,6 +4699,16 @@ fn calculate_matrix_accepts_null_collections() {
     let mut worker = common::spawn_worker();
     load_matrix_test_plan(&mut worker);
     create_matrix_tree(&mut worker, TREE_NAME);
+    // Populate the tree so the empty result is caused by the empty collections
+    // rather than by there being nobody to pay.
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"m-null-root","op":"add_root","params":{{"structure":"{}","user_id":"{}","enrolled_at":100}}}}"#,
+            TREE_NAME, ROOT
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
 
     let request = format!(
         r#"{{"id":"m-null","op":"calculate_matrix","params":{{"structure":"{}","snapshots":null,"volume":null}}}}"#,
@@ -4659,7 +4722,7 @@ fn calculate_matrix_accepts_null_collections() {
     );
     assert!(
         resp.contains(r#""result":[]"#),
-        "an empty tree means no earnings, got: {}",
+        "no volume means no earnings, got: {}",
         resp
     );
 
@@ -4688,8 +4751,8 @@ fn calculate_matrix_still_requires_snapshots() {
         resp
     );
     assert!(
-        resp.contains("snapshots"),
-        "the error should name the field that is missing, got: {}",
+        resp.contains("missing field") && resp.contains("snapshots"),
+        "the error should be a missing-field error naming snapshots, got: {}",
         resp
     );
 
@@ -4717,8 +4780,8 @@ fn calculate_matrix_still_requires_volume() {
         resp
     );
     assert!(
-        resp.contains("volume"),
-        "the error should name the field that is missing, got: {}",
+        resp.contains("missing field") && resp.contains("volume"),
+        "the error should be a missing-field error naming volume, got: {}",
         resp
     );
 
@@ -5000,8 +5063,8 @@ fn calculate_stairstep_still_requires_snapshots() {
         resp
     );
     assert!(
-        resp.contains("snapshots"),
-        "the error should name the field that is missing, got: {}",
+        resp.contains("missing field") && resp.contains("snapshots"),
+        "the error should be a missing-field error naming snapshots, got: {}",
         resp
     );
 
@@ -5029,8 +5092,8 @@ fn calculate_stairstep_still_requires_volume() {
         resp
     );
     assert!(
-        resp.contains("volume"),
-        "the error should name the field that is missing, got: {}",
+        resp.contains("missing field") && resp.contains("volume"),
+        "the error should be a missing-field error naming volume, got: {}",
         resp
     );
 

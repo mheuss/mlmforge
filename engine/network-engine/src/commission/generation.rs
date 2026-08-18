@@ -264,6 +264,13 @@ pub fn calculate_generation(
                 walk::validate_cv(source)?;
                 tree.get_upline(source.source_id, 0)
                     .map_err(|_| CalculationError::SourceNotInTree(source.source_id))?;
+                // Mirrors walk_level_commissions (walk.rs). Generation only
+                // reaches that walk when level_commissions_enabled, so without
+                // this the generation-only path pays nobody and reports ok
+                // when volume names a source with no snapshot.
+                if !snapshots.contains_key(&source.source_id) {
+                    return Err(CalculationError::SourceNotInSnapshot(source.source_id));
+                }
 
                 let gen_entries = count_generations_upward(
                     tree,
@@ -323,6 +330,11 @@ pub fn calculate_generation(
                 walk::validate_cv(source)?;
                 tree.get_upline(source.source_id, 0)
                     .map_err(|_| CalculationError::SourceNotInTree(source.source_id))?;
+                // Mirrors walk_level_commissions (walk.rs) — see the
+                // ThresholdRank arm above for why generation needs its own.
+                if !snapshots.contains_key(&source.source_id) {
+                    return Err(CalculationError::SourceNotInSnapshot(source.source_id));
+                }
             }
 
             // The boundary check is rank-independent, so build it once and
@@ -1272,6 +1284,58 @@ mod calculate_tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].earner_id, uuid(0));
         assert_eq!(result[0].level, 1);
+    }
+
+    /// Volume naming a source with no snapshot must fail loudly, on the
+    /// generation-only path too.
+    ///
+    /// The five sibling calculators inherit this guard from
+    /// `walk_level_commissions`. Generation reaches that walk only when
+    /// `level_commissions_enabled`, so with level commissions off it needs its
+    /// own — without it the walk derives an empty `boundary_set` from the empty
+    /// snapshots, pays nobody, and returns `Ok(vec![])`. On a money path that
+    /// is a silent zero for a caller who lost their snapshot data.
+    ///
+    /// `threshold_structure` leaves `level_commissions_enabled` false, which is
+    /// what puts this test on the uncovered path.
+    #[test]
+    fn generation_only_rejects_volume_with_no_snapshot() {
+        let tree = build_chain(3);
+        let plan = two_rank_plan();
+        let structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
+
+        // Deliberately empty: the source below is in the tree but not here.
+        let snapshots = HashMap::new();
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let err = calculate_generation(&tree, &plan, &structure, &snapshots, &volume)
+            .expect_err("volume naming a source with no snapshot must fail");
+        assert_eq!(err, CalculationError::SourceNotInSnapshot(uuid(2)));
+    }
+
+    /// The same guard on the `SameRank` boundary arm, which has its own
+    /// source-validation loop.
+    #[test]
+    fn generation_same_rank_rejects_volume_with_no_snapshot() {
+        let tree = build_chain(3);
+        let plan = two_rank_plan();
+        let mut structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
+        structure.generation_commission.boundary_mode = GenerationBoundaryMode::SameRank;
+
+        let snapshots = HashMap::new();
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let err = calculate_generation(&tree, &plan, &structure, &snapshots, &volume)
+            .expect_err("volume naming a source with no snapshot must fail");
+        assert_eq!(err, CalculationError::SourceNotInSnapshot(uuid(2)));
     }
 
     /// Combined level + generation with an invalid generation boundary_rank.

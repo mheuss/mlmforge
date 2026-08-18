@@ -3659,6 +3659,103 @@ fn calculate_streamline_ignores_request_scoped_config() {
     worker.wait().unwrap();
 }
 
+/// A nil Go collection marshals to `null`, not `{}` or `[]`, and both request
+/// collections must read that as empty rather than rejecting it. This is the
+/// shape of a first-period call.
+///
+/// The stream is populated, so an empty result is caused by the empty
+/// collections rather than by an empty structure.
+///
+/// The Go twin is `TestEngineClient_CalculateStreamline_NilCollections`.
+#[test]
+fn calculate_streamline_accepts_null_collections() {
+    let mut worker = common::spawn_worker();
+    load_streamline_test_plan(&mut worker);
+    create_streamline(&mut worker);
+    sl_add_member(&mut worker, "sl-m1", SL_USER1, ROOT, 1001);
+    sl_add_member(&mut worker, "sl-m2", SL_USER2, SL_USER1, 1002);
+
+    let request = format!(
+        r#"{{"id":"sl-null","op":"calculate_streamline","params":{{"structure":"{}","snapshots":null,"volume":null}}}}"#,
+        SL_STRUCTURE
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "null collections must read as empty, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains(r#""result":[]"#),
+        "no volume means no earnings, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Omitting `snapshots` stays an error. The other half of
+/// `calculate_streamline_accepts_null_collections`: widening null must not
+/// quietly widen absent, or a caller who forgets the field is paid zero instead
+/// of being told.
+#[test]
+fn calculate_streamline_still_requires_snapshots() {
+    let mut worker = common::spawn_worker();
+    load_streamline_test_plan(&mut worker);
+    create_streamline(&mut worker);
+    sl_add_member(&mut worker, "sl-m1", SL_USER1, ROOT, 1001);
+
+    let request = format!(
+        r#"{{"id":"sl-nosnap","op":"calculate_streamline","params":{{"structure":"{}","volume":[]}}}}"#,
+        SL_STRUCTURE
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a missing snapshots must still fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("snapshots"),
+        "the error should name the field that is missing, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Omitting `volume` stays an error. The mirror of
+/// `calculate_streamline_still_requires_snapshots` — one guard per required
+/// field, so adding `default` to either one fails loudly.
+#[test]
+fn calculate_streamline_still_requires_volume() {
+    let mut worker = common::spawn_worker();
+    load_streamline_test_plan(&mut worker);
+    create_streamline(&mut worker);
+    sl_add_member(&mut worker, "sl-m1", SL_USER1, ROOT, 1001);
+
+    let request = format!(
+        r#"{{"id":"sl-novol","op":"calculate_streamline","params":{{"structure":"{}","snapshots":{{}}}}}}"#,
+        SL_STRUCTURE
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a missing volume must still fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("volume"),
+        "the error should name the field that is missing, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 /// The engine-side miss, twin of `calculate_streamline_unknown_structure_returns_not_found`.
 /// The plan has the structure; no engine was created. Both misses return
 /// STRUCTURE_NOT_FOUND and differ only by message, so pinning both messages is

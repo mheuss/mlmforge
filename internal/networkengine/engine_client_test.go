@@ -1930,11 +1930,11 @@ func TestEngineClient_CalculateBoardCommissions_MockParams(t *testing.T) {
 // present as null rather than merely absent. It is required on the Rust side,
 // and dropping the key entirely returns INVALID_PARAMS "missing field". That
 // loud failure is deliberate: a caller who forgets the field should hear about
-// it, not be paid zero. The worker reads an explicit null as empty
-// (network_engine::serde_helpers::null_as_empty, applied in
-// handlers/board_plan.rs), so null is the correct shape to
-// send. board_calculate_still_requires_cycle_events guards the other half from
-// the Rust side, but it builds its own JSON and never touches this struct.
+// it, not be paid zero. The worker reads an explicit null as empty via
+// network_engine::serde_helpers::null_as_empty, applied in
+// handlers/board_plan.rs, so null is the correct shape to send.
+// board_calculate_still_requires_cycle_events guards the other half from the
+// Rust side, but it builds its own JSON and never touches this struct.
 func TestEngineClient_CalculateBoardCommissions_NilCollections(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`{"earnings":[],"updated_cycle_counts":{}}`),

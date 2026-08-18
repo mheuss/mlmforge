@@ -225,8 +225,9 @@ func TestRankDriver_EvaluatePeriod_UnknownPeriodSendsEmptyNotNull(t *testing.T) 
 	_, err = driver.EvaluatePeriod(ctx, time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC))
 	require.NoError(t, err)
 
-	// nil must normalize to empty {} / [], never null, or the Rust worker fails
-	// to deserialize (distributors/volume_sources have no serde default).
+	// nil must normalize to empty {} / [], never null. Since HEU-626 the worker
+	// reads null as empty on distributors/volume_sources too, so this pins the
+	// driver's normalization rather than protecting against a rejection.
 	params := string(mock.lastParams)
 	assert.Contains(t, params, `"distributors":{}`)
 	assert.Contains(t, params, `"volume_sources":[]`)

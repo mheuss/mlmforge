@@ -499,12 +499,12 @@ One asymmetry showed up on the board application. Streamline carried two legacy 
 
 ### UC-NET-017: Reading a nil caller collection as empty
 
-**Added:** v0.0.3 (HEU-626)
+**Added:** Unreleased (HEU-626)
 **Files:** `engine/network-engine/src/serde_helpers.rs` (`null_as_empty`), `engine/network-engine-worker/src/handlers/commission.rs`, `engine/network-engine-worker/src/handlers/streamline.rs`, `engine/network-engine-worker/src/handlers/board_plan.rs`, `engine/network-engine/src/rank/types.rs`, `internal/networkengine/engine_client_test.go` (the `_NilCollections` tests)
 
 **Problem:** A nil Go map or slice marshals to JSON `null`, not `{}` or `[]`. On the Rust side `#[serde(default)]` covers an *absent* key; it does not cover a key present with a null value. So a caller that leaves a collection unset sends the one shape neither plain serde path accepts, and the whole request dies with `INVALID_PARAMS`.
 
-The trap is that the failing call is usually the *natural* one — a first period with no prior counts, a period with no volume events, a plan with no history. It also only shows up from clients you do not control: the Go driver normalized nils away, so the defect sat unnoticed until someone asked what a third-party client would get.
+The trap is that the failing call is usually the *natural* one — a first period with no prior counts, a period with no volume events, a plan with no history. It also only shows up from clients you do not control, which is why it sat unnoticed: Go callers always populated the fields. The rank driver normalized nils away explicitly; the commission methods simply had no non-test caller sending an empty one.
 
 **Solution:** One helper, applied by requiredness. `null_as_empty` deserializes through `Option<T>` and unwraps to `T::default()`, which widens null and nothing else.
 
@@ -533,7 +533,7 @@ carry_forward: HashMap<Uuid, LegVolumes>,
 
 The `T: Default` widening is the caveat. On a collection, `default` reads as "empty", which is what it is for. On a numeric field it would silently produce `0` — the name is chosen so that misuse reads wrong at the call site.
 
-Do not reach for Go's `omitempty` on a required field to solve this. On its own it breaks the call, since the key vanishes and a required field has no `default` to fall back on. Adding `default` to fix that is the actual hazard: a dropped field becomes indistinguishable from an empty one, which on a money path pays zero.
+Do not reach for Go's `omitempty` on a required field to solve this. On its own it breaks the call: when the collection is empty the key vanishes, and a required field has no `default` to fall back on. Adding `default` to fix that is the actual hazard — a dropped field becomes indistinguishable from an empty one, which on a money path pays zero.
 
 Still null-intolerant, tracked by HEU-632: `history`'s inner per-period map (a null there has no defined meaning — absent-key and `Some(None)` are the two documented states), `cycle_events[].new_boards`, and `board_compress_inactive`'s `member_ids`.
 

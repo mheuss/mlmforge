@@ -329,8 +329,9 @@ helper:
 | Optional | `#[serde(default, deserialize_with = "null_as_empty")]` | empty | empty |
 
 Do **not** reach for Go's `omitempty` on a required field. On its own it breaks
-the call: the key vanishes, the required attribute has no `default` to fall back
-on, and the caller gets `INVALID_PARAMS`. The real trap is what comes next — add
+the call: when the collection is empty the key vanishes, the required attribute
+has no `default` to fall back on, and the caller gets `INVALID_PARAMS`. The real
+trap is what comes next — add
 `serde(default)` to make it work again and a dropped field becomes
 indistinguishable from an empty one, which on a money path pays zero instead of
 complaining. Keep required fields null-tolerant and nothing more.
@@ -338,19 +339,22 @@ complaining. Keep required fields null-tolerant and nothing more.
 **Caller-side normalization** is the older approach, still used by
 `RankDriver.EvaluatePeriod` for `evaluate_ranks`. It normalizes nil to empty at
 all three levels before the call, and copies the distributors map first so it
-never mutates the provider's stored input. It works, but it only binds callers
-you control: a non-Go client sending null still fails. Prefer the engine-side
-fix for anything new.
+never mutates the provider's stored input. On its own it only binds callers you
+control, so on a field without the engine-side fix a non-Go client sending null
+still fails. `evaluate_ranks` now has both, which makes the normalization belt
+and braces there. Prefer the engine-side fix for anything new.
 
 Go's `omitempty` is a complement to either, not a fix on its own — it keeps the
-bad shape off the wire but leaves the worker rejecting it from anyone else.
+bad shape off the wire, but on a field without the engine-side fix the worker
+still rejects that shape from anyone else.
 
 ### Current state
 
-Every named request collection is now null-tolerant (HEU-626) — across all seven
-commission handlers (the six siblings plus `board_calculate_commissions`) and
-`evaluate_ranks`. What differs between them is only whether *absent* is also
-allowed.
+Every **top-level** named request collection is now null-tolerant (HEU-626) —
+across all seven commission handlers (the six siblings plus
+`board_calculate_commissions`) and `evaluate_ranks`. What differs between them is
+only whether *absent* is also allowed. Nested collections are a separate matter;
+HEU-632 tracks the three that remain, listed below.
 
 - `board_calculate_commissions` — fixed both ways (HEU-603). `cycle_events` is
   required and null-tolerant; `period_cycle_counts` is optional, null-tolerant,

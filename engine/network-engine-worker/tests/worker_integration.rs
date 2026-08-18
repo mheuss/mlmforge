@@ -4367,6 +4367,96 @@ fn calculate_matrix_unknown_structure_returns_not_found() {
     worker.wait().unwrap();
 }
 
+/// A nil Go collection marshals to `null`, not `{}` or `[]`, and both request
+/// collections must read that as empty rather than rejecting it. This is the
+/// shape of a first-period call.
+///
+/// The Go twin is `TestEngineClient_CalculateMatrix_NilCollections`.
+#[test]
+fn calculate_matrix_accepts_null_collections() {
+    let mut worker = common::spawn_worker();
+    load_matrix_test_plan(&mut worker);
+    create_matrix_tree(&mut worker, TREE_NAME);
+
+    let request = format!(
+        r#"{{"id":"m-null","op":"calculate_matrix","params":{{"structure":"{}","snapshots":null,"volume":null}}}}"#,
+        TREE_NAME
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "null collections must read as empty, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains(r#""result":[]"#),
+        "an empty tree means no earnings, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Omitting `snapshots` stays an error. The other half of
+/// `calculate_matrix_accepts_null_collections`: widening null must not quietly
+/// widen absent, or a caller who forgets the field is paid zero instead of
+/// being told.
+#[test]
+fn calculate_matrix_still_requires_snapshots() {
+    let mut worker = common::spawn_worker();
+    load_matrix_test_plan(&mut worker);
+    create_matrix_tree(&mut worker, TREE_NAME);
+
+    let request = format!(
+        r#"{{"id":"m-nosnap","op":"calculate_matrix","params":{{"structure":"{}","volume":[]}}}}"#,
+        TREE_NAME
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a missing snapshots must still fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("snapshots"),
+        "the error should name the field that is missing, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Omitting `volume` stays an error. The mirror of
+/// `calculate_matrix_still_requires_snapshots` — one guard per required field,
+/// so adding `default` to either one fails loudly.
+#[test]
+fn calculate_matrix_still_requires_volume() {
+    let mut worker = common::spawn_worker();
+    load_matrix_test_plan(&mut worker);
+    create_matrix_tree(&mut worker, TREE_NAME);
+
+    let request = format!(
+        r#"{{"id":"m-novol","op":"calculate_matrix","params":{{"structure":"{}","snapshots":{{}}}}}}"#,
+        TREE_NAME
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a missing volume must still fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("volume"),
+        "the error should name the field that is missing, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 /// Stairstep test plan. structures[0] is a stairstep structure with the same
 /// level_commission block as the unilevel fixture. Walk 1 (level commissions)
 /// pays regardless of breakaway, so breakaway: null still pays.

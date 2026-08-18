@@ -34,21 +34,6 @@ mod validate;
 
 use serde::{Deserialize, Serialize};
 
-/// Deserializes a value, treating JSON `null` or a missing field as
-/// `Default::default()`. Go serializes a nil slice as JSON `null`, and serde's
-/// `#[serde(default)]` alone only covers a *missing* field, not an explicit
-/// `null` — so plan-config collection fields that Go may emit as `null` pair
-/// `default` with this to accept absent, `null`, and empty identically. Shared
-/// by bonus/eligibility/rank so the null-tolerance is consistent across them.
-pub(crate) fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    T: Default + Deserialize<'de>,
-{
-    let opt = Option::deserialize(deserializer)?;
-    Ok(opt.unwrap_or_default())
-}
-
 pub use binary::BinaryCommissionConfig;
 pub use board_plan::{BoardPlanConfig, ReEntryPosition};
 pub use bonus::{BonusConfig, PassUpConfig};

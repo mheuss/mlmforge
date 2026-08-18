@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::deserialize_null_default;
+use crate::serde_helpers::null_as_empty;
 
 // ---------------------------------------------------------------------------
 // Top-level container
@@ -107,7 +107,7 @@ pub struct SponsorBonusConfig {
 
     /// Product IDs that qualify for the sponsor bonus. Empty means
     /// all products qualify.
-    #[serde(default, deserialize_with = "deserialize_null_default")]
+    #[serde(default, deserialize_with = "null_as_empty")]
     pub qualifying_products: Vec<String>,
 }
 

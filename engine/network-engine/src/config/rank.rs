@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::deserialize_null_default;
+use crate::serde_helpers::null_as_empty;
 
 /// A single rank in the compensation plan ladder.
 ///
@@ -39,7 +39,7 @@ pub struct RankDefinition {
     /// In a hybrid plan (e.g., binary + unilevel), lower ranks might
     /// earn only on the unilevel while higher ranks unlock the binary.
     /// References structure names defined in the plan.
-    #[serde(default, deserialize_with = "deserialize_null_default")]
+    #[serde(default, deserialize_with = "null_as_empty")]
     pub qualified_structures: Vec<String>,
 
     /// How demotion is handled when the distributor fails to maintain
@@ -70,7 +70,7 @@ pub struct RankQualification {
     /// The distributor must maintain a current membership of at least
     /// one of the specified products. Used to tie rank eligibility to
     /// enrollment package tier.
-    #[serde(default, deserialize_with = "deserialize_null_default")]
+    #[serde(default, deserialize_with = "null_as_empty")]
     pub required_products: Vec<String>,
 
     /// Optional windowed gate (G2): achieved >= threshold rank in N of the
@@ -588,7 +588,7 @@ mod tests {
 
     #[test]
     fn qualified_structures_absent_or_null_deserializes_to_empty() {
-        // deserialize_null_default: Go omits an empty qualified_structures via
+        // null_as_empty: Go omits an empty qualified_structures via
         // omitempty and may emit null; absent, null, and [] all yield empty.
         for tail in [
             "",

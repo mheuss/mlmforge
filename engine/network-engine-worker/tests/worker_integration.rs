@@ -958,13 +958,18 @@ fn calculate_unilevel_still_requires_volume() {
 // appeared only as a name in the dispatch-completeness gate.
 
 /// Pulled in with `include_str!` rather than pasted as a second copy of a large
-/// plan literal. The repo already carries 19 near-identical plan literals, which
-/// is what HEU-604 exists to fix — don't add a twentieth.
+/// plan literal. HEU-604 tracks the near-identical plan copies already spread
+/// across Go, Rust, and fixtures — don't add another.
 ///
-/// This fixture belongs to the integer-width contract (UC-NET-011), where
+/// **This file is generated.** `internal/config/genfixtures_test.go` writes it
+/// from `internal/config/testdata/valid/generation-plan.yaml` through the real
+/// Go pipeline. Edit the YAML, not the JSON.
+///
+/// The fixture belongs to the integer-width contract (UC-NET-011), where
 /// deserializability is the requirement, not validity. It happens to load clean
 /// through `load_plan`. Its siblings do not all share that property —
-/// `stairstep.json` fails validation — so don't reach for the others without
+/// `stairstep.json` fails validation with `differential min_override must be a
+/// fraction in [0.0, 1.0], got 10` — so don't reach for the others without
 /// checking.
 const GENERATION_TEST_PLAN_JSON: &str =
     include_str!("../../testdata/config_contract/fixtures/generation.json");
@@ -1006,7 +1011,7 @@ fn calculate_generation_accepts_null_collections() {
     );
     assert!(
         resp.contains(r#""result":[]"#),
-        "no volume means no earnings, got: {}",
+        "an empty tree means no earnings, got: {}",
         resp
     );
 

@@ -331,14 +331,19 @@ mod tests {
         );
     }
 
-    /// The inner `history` map is deliberately *not* null-tolerant, unlike the
-    /// outer one. `{"<uuid>": null}` has no defined meaning — this type
-    /// documents absent-key and `Some(None)`, and a null inner map is an
-    /// undefined third state. HEU-632 decides what it should mean.
+    /// A null *value* in the outer, per-distributor map — `{"<uuid>": null}` —
+    /// stays an error. The outer map is null-tolerant; its values are not.
     ///
-    /// Pinned here so the asymmetry is recorded rather than incidental, and so
-    /// HEU-632 has a red test to flip. `BuildHistoryWindow` cannot emit this
-    /// shape, so it is reachable only by hand-populating the request.
+    /// The field's two documented states both sit one level further down, on
+    /// the inner per-period map: an absent period key means "not evaluated",
+    /// and a present `null` ordinal means Unranked. A null inner map is
+    /// neither, and HEU-632 decides what it should mean.
+    ///
+    /// Pinned so the asymmetry is recorded rather than incidental, and so
+    /// HEU-632 gets a failure the moment this behavior changes.
+    /// `BuildHistoryWindow` cannot emit the shape — it only ever inserts a map
+    /// it just built — so it is reachable only by hand-populating
+    /// `EvaluateRanksRequest.History`.
     #[test]
     fn evaluation_inputs_still_rejects_null_inner_history() {
         let uid = Uuid::nil();

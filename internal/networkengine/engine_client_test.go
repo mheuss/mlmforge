@@ -1931,7 +1931,8 @@ func TestEngineClient_CalculateBoardCommissions_MockParams(t *testing.T) {
 // and dropping the key entirely returns INVALID_PARAMS "missing field". That
 // loud failure is deliberate: a caller who forgets the field should hear about
 // it, not be paid zero. The worker reads an explicit null as empty
-// (null_as_default in handlers/board_plan.rs), so null is the correct shape to
+// (network_engine::serde_helpers::null_as_empty, applied in
+// handlers/board_plan.rs), so null is the correct shape to
 // send. board_calculate_still_requires_cycle_events guards the other half from
 // the Rust side, but it builds its own JSON and never touches this struct.
 func TestEngineClient_CalculateBoardCommissions_NilCollections(t *testing.T) {

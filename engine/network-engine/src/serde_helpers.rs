@@ -15,9 +15,12 @@
 /// | Required | `#[serde(deserialize_with = "null_as_empty")]` | error | empty |
 /// | Optional | `#[serde(default, deserialize_with = "null_as_empty")]` | empty | empty |
 ///
-/// Do **not** reach for Go's `omitempty` on a required field. It makes a
-/// dropped field indistinguishable from an empty one, and on a money path that
-/// pays zero instead of complaining.
+/// Do **not** reach for Go's `omitempty` on a required field. On its own it
+/// breaks the call: the key vanishes, this attribute has no `default` to fall
+/// back on, and the caller gets `INVALID_PARAMS`. The real trap is what comes
+/// next — add `default` to make it work again and a dropped field becomes
+/// indistinguishable from an empty one, which on a money path pays zero instead
+/// of complaining. Keep required fields null-tolerant and nothing more.
 ///
 /// This widens null to `T::default()` for any `T: Default`. On a collection
 /// that reads as "empty", which is what it is for. On a numeric field it would

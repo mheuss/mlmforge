@@ -193,7 +193,10 @@ func TestRankDriver_EvaluatePeriod_NoGatePlanSendsNoHistory(t *testing.T) {
 	assert.Empty(t, sent.History)       // no history fetched
 
 	// Raw-byte guard: Empty() above collapses omitted/null/[], so also assert the
-	// wire omits both history fields rather than sending an unparseable null.
+	// wire omits both history fields rather than sending them at all. Since
+	// HEU-626 a null would parse fine, so this no longer guards against a decode
+	// failure — it guards the omitempty contract itself, which is what lets a
+	// no-gate plan skip the keys entirely.
 	// "history" is a prefix of "history_window", so this one check proves neither
 	// the axis nor the history map is serialized.
 	params := string(mock.lastParams)
@@ -238,8 +241,9 @@ func TestRankDriver_EvaluatePeriod_NilActiveProductsSendsEmptyNotNull(t *testing
 	client := NewEngineClientWithTransport(mock)
 
 	// Distributor with a nil ActiveProducts slice (the field is omitted). Without
-	// normalization it marshals to "active_products":null, which the Rust worker
-	// rejects (the field has no serde default) -- the same hazard as a nil
+	// normalization it marshals to "active_products":null. Since HEU-626 the Rust
+	// worker reads that as empty, so this pins the driver's normalization rather
+	// than protecting against a rejection -- the same belt-and-braces as the nil
 	// distributors map, one level down.
 	provider := NewMemoryPeriodInputProvider()
 	provider.Set("2026-06", PeriodInputs{

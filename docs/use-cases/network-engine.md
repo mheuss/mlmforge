@@ -20,6 +20,7 @@ Use-cases for the Network Engine bounded context.
 - [UC-NET-014: Pre-projection event gate with database backstop](#uc-net-014-pre-projection-event-gate-with-database-backstop)
 - [UC-NET-015: Immutable run registry with a visibility-flip results store](#uc-net-015-immutable-run-registry-with-a-visibility-flip-results-store)
 - [UC-NET-016: Removing a wire field without a red interval](#uc-net-016-removing-a-wire-field-without-a-red-interval)
+- [UC-NET-017: Reading a nil caller collection as empty](#uc-net-017-reading-a-nil-caller-collection-as-empty)
 
 ---
 
@@ -310,7 +311,7 @@ _ = driver.Backfill(ctx, from, to)
 - You need to populate or backfill `qualification_history` so windowed/tenure gates have an axis to read.
 - You need ordered, sortable `period_id`s from a plan's period config.
 
-**Notes:** The driver normalizes nil `distributors`/`volume_sources`/`active_products` to `{}`/`[]` before the engine call — those Rust fields have no `serde(default)`, so a JSON `null` fails to deserialize (see `docs/development/network-engine.md`). A no-gate plan (depth 0) sends no history axis. `Backfill` is fail-stop: the first failing period stops the run and is named; earlier periods stay persisted and re-running replaces them (full-replacement `SaveResult`), so retry is safe. Evaluating a period before the plan's start is rejected (BR9). Single-plan/context assumption: `qualification_history` PK is `(period_id, user_id)` with no plan/tenant scope (multi-plan scoping is HEU-506). Builds on UC-NET-008 (persistence) and UC-NET-009 (gates).
+**Notes:** The driver normalizes nil `distributors`/`volume_sources`/`active_products` to `{}`/`[]` before the engine call. Since HEU-626 the engine reads an explicit `null` as empty on all three, so that normalization is belt and braces rather than a requirement — it only ever bound Go callers, and a non-Go client sending `null` is now fine (see UC-NET-017 and `docs/development/network-engine.md`). A no-gate plan (depth 0) sends no history axis. `Backfill` is fail-stop: the first failing period stops the run and is named; earlier periods stay persisted and re-running replaces them (full-replacement `SaveResult`), so retry is safe. Evaluating a period before the plan's start is rejected (BR9). Single-plan/context assumption: `qualification_history` PK is `(period_id, user_id)` with no plan/tenant scope (multi-plan scoping is HEU-506). Builds on UC-NET-008 (persistence) and UC-NET-009 (gates).
 
 ---
 
@@ -493,3 +494,47 @@ Without that test, reintroducing the field leaves the entire suite green. Verifi
 One asymmetry showed up on the board application. Streamline carried two legacy fields, so a single request could hold a valid-hostile value in one and a malformed value in the other. Board carried only `config`, and one field cannot be both at once, so the two halves of the guard became two tests instead of one request. Count the legacy fields before assuming one test covers both halves.
 
 **Notes:** The silence that makes the migration safe is also unobservable — nothing reports that a caller sent an ignored field. HEU-613 covers that. Do not add `deny_unknown_fields` until callers have migrated, or the red interval this pattern avoids comes straight back.
+
+---
+
+### UC-NET-017: Reading a nil caller collection as empty
+
+**Added:** v0.0.3 (HEU-626)
+**Files:** `engine/network-engine/src/serde_helpers.rs` (`null_as_empty`), `engine/network-engine-worker/src/handlers/commission.rs`, `engine/network-engine-worker/src/handlers/streamline.rs`, `engine/network-engine-worker/src/handlers/board_plan.rs`, `engine/network-engine/src/rank/types.rs`, `internal/networkengine/engine_client_test.go` (the `_NilCollections` tests)
+
+**Problem:** A nil Go map or slice marshals to JSON `null`, not `{}` or `[]`. On the Rust side `#[serde(default)]` covers an *absent* key; it does not cover a key present with a null value. So a caller that leaves a collection unset sends the one shape neither plain serde path accepts, and the whole request dies with `INVALID_PARAMS`.
+
+The trap is that the failing call is usually the *natural* one — a first period with no prior counts, a period with no volume events, a plan with no history. It also only shows up from clients you do not control: the Go driver normalized nils away, so the defect sat unnoticed until someone asked what a third-party client would get.
+
+**Solution:** One helper, applied by requiredness. `null_as_empty` deserializes through `Option<T>` and unwraps to `T::default()`, which widens null and nothing else.
+
+| The field is | Attribute | Absent | Null |
+|---|---|---|---|
+| Required | `#[serde(deserialize_with = "null_as_empty")]` | error | empty |
+| Optional | `#[serde(default, deserialize_with = "null_as_empty")]` | empty | empty |
+
+The required row is the point. Widening null must not quietly widen absent, or a caller who forgets a field is paid zero instead of being told. Guard both halves, one absence test per required field — a single guard still passes if someone adds `default` to the other field.
+
+**Usage:**
+
+```rust
+use network_engine::serde_helpers::null_as_empty;
+
+// Required: absent stays a loud INVALID_PARAMS.
+#[serde(deserialize_with = "null_as_empty")]
+snapshots: HashMap<Uuid, DistributorSnapshot>,
+
+// Optional: absent and null both mean empty.
+#[serde(default, deserialize_with = "null_as_empty")]
+carry_forward: HashMap<Uuid, LegVolumes>,
+```
+
+**Notes:** The reason this is catalogued rather than left in the dev guide: the repo grew **two** independently written copies of this helper before anyone noticed — `deserialize_null_default` in `config/`, then `null_as_default` added to `handlers/board_plan.rs` by HEU-603, which did the identical job. One helper, one name, one place.
+
+The `T: Default` widening is the caveat. On a collection, `default` reads as "empty", which is what it is for. On a numeric field it would silently produce `0` — the name is chosen so that misuse reads wrong at the call site.
+
+Do not reach for Go's `omitempty` on a required field to solve this. On its own it breaks the call, since the key vanishes and a required field has no `default` to fall back on. Adding `default` to fix that is the actual hazard: a dropped field becomes indistinguishable from an empty one, which on a money path pays zero.
+
+Still null-intolerant, tracked by HEU-632: `history`'s inner per-period map (a null there has no defined meaning — absent-key and `Some(None)` are the two documented states), `cycle_events[].new_boards`, and `board_compress_inactive`'s `member_ids`.
+
+Cross-reference UC-NET-007, the other `deserialize_with` serde-edge entry, and `docs/development/network-engine.md` for the fuller treatment including the Go-side wire assertions.

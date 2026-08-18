@@ -347,8 +347,10 @@ bad shape off the wire but leaves the worker rejecting it from anyone else.
 
 ### Current state
 
-Every named request collection across the seven handlers is now null-tolerant
-(HEU-626). What differs between them is only whether *absent* is also allowed.
+Every named request collection is now null-tolerant (HEU-626) — across all seven
+commission handlers (the six siblings plus `board_calculate_commissions`) and
+`evaluate_ranks`. What differs between them is only whether *absent* is also
+allowed.
 
 - `board_calculate_commissions` — fixed both ways (HEU-603). `cycle_events` is
   required and null-tolerant; `period_cycle_counts` is optional, null-tolerant,

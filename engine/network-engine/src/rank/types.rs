@@ -17,22 +17,24 @@ use crate::commission::types::VolumeSource;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvaluationInputs {
     /// Per-distributor facts, keyed by user_id.
+    #[serde(deserialize_with = "crate::serde_helpers::null_as_empty")]
     pub distributors: HashMap<Uuid, DistributorPrimitives>,
 
     /// Volume events for the period. Used to compute GV and leg volumes.
+    #[serde(deserialize_with = "crate::serde_helpers::null_as_empty")]
     pub volume_sources: Vec<VolumeSource>,
 
     /// Ordered period axis for time-gated evaluation, most-recent-first
     /// (period_id DESC). Caller-supplied; length >= the max window depth
     /// across the plan. Empty when no rank uses a time gate. Opaque ordered
     /// labels — the caller owns period semantics and ordering.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::serde_helpers::null_as_empty")]
     pub history_window: Vec<String>,
 
     /// Per-distributor achieved-rank ordinals keyed by period_id, for axis
     /// periods that have a persisted row. Absent key = not evaluated;
     /// Some(None) = Unranked. Both gate as "below threshold" (BR6).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::serde_helpers::null_as_empty")]
     pub history: HashMap<Uuid, HashMap<String, Option<u16>>>,
 }
 
@@ -54,6 +56,7 @@ pub struct DistributorPrimitives {
 
     /// Active product enrollments held by the distributor.
     /// Used by `RankQualification.required_products`.
+    #[serde(deserialize_with = "crate::serde_helpers::null_as_empty")]
     pub active_products: Vec<String>,
 }
 
@@ -222,5 +225,113 @@ mod tests {
         assert_eq!(inputs.history_window, vec!["2026-05", "2026-04"]);
         assert_eq!(inputs.history[&uid]["2026-05"], Some(2));
         assert_eq!(inputs.history[&uid]["2026-04"], None);
+    }
+
+    // --- Null tolerance (HEU-626) ---
+    //
+    // A nil Go map or slice marshals to JSON `null`, not `{}` or `[]`.
+    // `#[serde(default)]` covers an *absent* key but not a key present with a
+    // null value, so the natural first-period call was rejected outright.
+    //
+    // Each required field gets both halves: null reads as empty, absent stays a
+    // loud error. One absence guard per required field, so adding `default` to
+    // any one of them fails here rather than silently paying zero.
+
+    /// The minimum valid payload, used to isolate one field per test.
+    const MINIMAL: &str = r#"{"distributors":{},"volume_sources":[]}"#;
+
+    /// One distributor with every `DistributorPrimitives` field but
+    /// `active_products`, which each caller appends.
+    fn distributor_with(active_products: &str) -> String {
+        format!(
+            r#"{{"personal_volume":0.0,"retail_volume":0.0,"status":"active","has_order_in_period":false{active_products}}}"#
+        )
+    }
+
+    #[test]
+    fn evaluation_inputs_accepts_null_distributors() {
+        let json = r#"{"distributors":null,"volume_sources":[]}"#;
+        let inputs: EvaluationInputs = serde_json::from_str(json).unwrap();
+        assert!(inputs.distributors.is_empty());
+    }
+
+    #[test]
+    fn evaluation_inputs_accepts_null_volume_sources() {
+        let json = r#"{"distributors":{},"volume_sources":null}"#;
+        let inputs: EvaluationInputs = serde_json::from_str(json).unwrap();
+        assert!(inputs.volume_sources.is_empty());
+    }
+
+    /// The nested field. It can only be reached through a populated
+    /// `distributors` map — a null outer map leaves no distributor to carry it.
+    #[test]
+    fn evaluation_inputs_accepts_null_active_products() {
+        let uid = Uuid::nil();
+        let json = format!(
+            r#"{{"distributors":{{"{uid}":{}}},"volume_sources":[]}}"#,
+            distributor_with(r#","active_products":null"#)
+        );
+        let inputs: EvaluationInputs = serde_json::from_str(&json).unwrap();
+        assert!(inputs.distributors[&uid].active_products.is_empty());
+    }
+
+    #[test]
+    fn evaluation_inputs_accepts_null_history_window() {
+        let json = r#"{"distributors":{},"volume_sources":[],"history_window":null}"#;
+        let inputs: EvaluationInputs = serde_json::from_str(json).unwrap();
+        assert!(inputs.history_window.is_empty());
+    }
+
+    #[test]
+    fn evaluation_inputs_accepts_null_history() {
+        let json = r#"{"distributors":{},"volume_sources":[],"history":null}"#;
+        let inputs: EvaluationInputs = serde_json::from_str(json).unwrap();
+        assert!(inputs.history.is_empty());
+    }
+
+    #[test]
+    fn evaluation_inputs_still_requires_distributors() {
+        let err = serde_json::from_str::<EvaluationInputs>(r#"{"volume_sources":[]}"#)
+            .expect_err("an absent distributors must still fail");
+        assert!(
+            err.to_string().contains("distributors"),
+            "the error should name the missing field, got: {err}"
+        );
+    }
+
+    #[test]
+    fn evaluation_inputs_still_requires_volume_sources() {
+        let err = serde_json::from_str::<EvaluationInputs>(r#"{"distributors":{}}"#)
+            .expect_err("an absent volume_sources must still fail");
+        assert!(
+            err.to_string().contains("volume_sources"),
+            "the error should name the missing field, got: {err}"
+        );
+    }
+
+    #[test]
+    fn evaluation_inputs_still_requires_active_products() {
+        let uid = Uuid::nil();
+        let json = format!(
+            r#"{{"distributors":{{"{uid}":{}}},"volume_sources":[]}}"#,
+            distributor_with("")
+        );
+        let err = serde_json::from_str::<EvaluationInputs>(&json)
+            .expect_err("an absent active_products must still fail");
+        assert!(
+            err.to_string().contains("active_products"),
+            "the error should name the missing field, got: {err}"
+        );
+    }
+
+    /// `MINIMAL` is the control for the five `accepts_null` tests: it proves
+    /// they fail for the field under test rather than for a malformed payload.
+    #[test]
+    fn evaluation_inputs_minimal_payload_deserializes() {
+        let inputs: EvaluationInputs = serde_json::from_str(MINIMAL).unwrap();
+        assert!(inputs.distributors.is_empty());
+        assert!(inputs.volume_sources.is_empty());
+        assert!(inputs.history_window.is_empty());
+        assert!(inputs.history.is_empty());
     }
 }

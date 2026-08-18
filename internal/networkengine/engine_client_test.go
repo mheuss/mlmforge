@@ -2160,3 +2160,206 @@ func TestEngineClient_AddNodeAt_WireParams(t *testing.T) {
 		"enrolled_at": 1700000000
 	}`, string(mock.lastParams))
 }
+
+// --- Nil collection wire shapes (HEU-626) ---
+//
+// A nil Go map or slice marshals to JSON null, not {} or []. These pin the
+// shape each request DTO puts on the wire, so that adding omitempty to a
+// required field fails here rather than silently paying zero downstream.
+//
+// Every case asserts positively over the whole param set with assert.JSONEq. A
+// NotContains on one key would also pass if the field were renamed away.
+// JSONEq compares parsed JSON, so it catches a null that should be [] and any
+// extra or missing key, but not key order or whitespace.
+//
+// Each is the Go twin named in the doc comment of the matching Rust test in
+// engine/network-engine-worker/tests/worker_integration.rs.
+
+func TestEngineClient_CalculateUnilevel_NilCollections(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`[]`)}
+	client := NewEngineClientWithTransport(mock)
+
+	_, err := client.CalculateUnilevel(context.Background(), CalculateUnilevelRequest{
+		StructureName: "Test",
+		Snapshots:     nil,
+		Volume:        nil,
+	})
+	require.NoError(t, err)
+
+	assert.JSONEq(t, `{
+		"structure": "Test",
+		"snapshots": null,
+		"volume": null
+	}`, string(mock.lastParams))
+}
+
+func TestEngineClient_CalculateGeneration_NilCollections(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`[]`)}
+	client := NewEngineClientWithTransport(mock)
+
+	_, err := client.CalculateGeneration(context.Background(), CalculateGenerationRequest{
+		StructureName: "GenTree",
+		Snapshots:     nil,
+		Volume:        nil,
+	})
+	require.NoError(t, err)
+
+	assert.JSONEq(t, `{
+		"structure": "GenTree",
+		"snapshots": null,
+		"volume": null
+	}`, string(mock.lastParams))
+}
+
+func TestEngineClient_CalculateMatrix_NilCollections(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`[]`)}
+	client := NewEngineClientWithTransport(mock)
+
+	_, err := client.CalculateMatrix(context.Background(), CalculateMatrixRequest{
+		StructureName: "Test",
+		Snapshots:     nil,
+		Volume:        nil,
+	})
+	require.NoError(t, err)
+
+	assert.JSONEq(t, `{
+		"structure": "Test",
+		"snapshots": null,
+		"volume": null
+	}`, string(mock.lastParams))
+}
+
+func TestEngineClient_CalculateStairstep_NilCollections(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`[]`)}
+	client := NewEngineClientWithTransport(mock)
+
+	_, err := client.CalculateStairstep(context.Background(), CalculateStairstepRequest{
+		StructureName: "Test",
+		Snapshots:     nil,
+		Volume:        nil,
+	})
+	require.NoError(t, err)
+
+	assert.JSONEq(t, `{
+		"structure": "Test",
+		"snapshots": null,
+		"volume": null
+	}`, string(mock.lastParams))
+}
+
+func TestEngineClient_CalculateStreamline_NilCollections(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`[]`)}
+	client := NewEngineClientWithTransport(mock)
+
+	_, err := client.CalculateStreamline(context.Background(), CalculateStreamlineRequest{
+		StructureName: "TestStreamline",
+		Snapshots:     nil,
+		Volume:        nil,
+	})
+	require.NoError(t, err)
+
+	assert.JSONEq(t, `{
+		"structure": "TestStreamline",
+		"snapshots": null,
+		"volume": null
+	}`, string(mock.lastParams))
+}
+
+// CarryForward and Ownership both carry omitempty, so a nil map drops the key
+// rather than sending null. That is correct for these two: both are optional,
+// and the Rust side pairs serde default with the null tolerance, so absent and
+// null mean the same thing. Snapshots and Volume have no omitempty and must
+// still appear as null.
+func TestEngineClient_CalculateBinaryPairing_NilCollections(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{"earnings":[],"carry_forward":{}}`),
+	}
+	client := NewEngineClientWithTransport(mock)
+
+	_, err := client.CalculateBinaryPairing(context.Background(), CalculateBinaryPairingRequest{
+		StructureName: "BinaryCalc",
+		Snapshots:     nil,
+		Volume:        nil,
+		CarryForward:  nil,
+		Ownership:     nil,
+	})
+	require.NoError(t, err)
+
+	assert.JSONEq(t, `{
+		"structure": "BinaryCalc",
+		"snapshots": null,
+		"volume": null
+	}`, string(mock.lastParams))
+}
+
+func TestEngineClient_EvaluateRanks_NilCollections(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`{"ranks":{}}`)}
+	client := NewEngineClientWithTransport(mock)
+
+	_, err := client.EvaluateRanks(context.Background(), EvaluateRanksRequest{
+		Distributors:  nil,
+		VolumeSources: nil,
+	})
+	require.NoError(t, err)
+
+	assert.JSONEq(t, `{
+		"distributors": null,
+		"volume_sources": null
+	}`, string(mock.lastParams))
+}
+
+// The nested field needs a populated Distributors map: a nil outer map leaves
+// no distributor to carry it. ActiveProducts has no omitempty, so a nil slice
+// reaches the wire as null and the Rust DistributorPrimitives must read it as
+// empty.
+func TestEngineClient_EvaluateRanks_NilActiveProducts(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`{"ranks":{}}`)}
+	client := NewEngineClientWithTransport(mock)
+
+	_, err := client.EvaluateRanks(context.Background(), EvaluateRanksRequest{
+		Distributors: map[string]DistributorPrimitivesDTO{
+			"00000000-0000-0000-0000-000000000001": {
+				PersonalVolume: 0.0,
+				Status:         "active",
+				ActiveProducts: nil,
+			},
+		},
+		VolumeSources: []VolumeSourceDTO{},
+	})
+	require.NoError(t, err)
+
+	assert.JSONEq(t, `{
+		"distributors": {
+			"00000000-0000-0000-0000-000000000001": {
+				"personal_volume": 0,
+				"retail_volume": 0,
+				"status": "active",
+				"has_order_in_period": false,
+				"active_products": null
+			}
+		},
+		"volume_sources": []
+	}`, string(mock.lastParams))
+}
+
+// HistoryWindow and History both carry omitempty, so nil drops them entirely
+// rather than sending null. Unlike the required collections above, that is the
+// intended shape: the Rust side pairs serde default with the null tolerance, so
+// absent means "no history" and a no-gate plan never sends the keys.
+func TestEngineClient_EvaluateRanks_OmitsEmptyHistory(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`{"ranks":{}}`)}
+	client := NewEngineClientWithTransport(mock)
+
+	_, err := client.EvaluateRanks(context.Background(), EvaluateRanksRequest{
+		Distributors:  map[string]DistributorPrimitivesDTO{},
+		VolumeSources: []VolumeSourceDTO{},
+		HistoryWindow: nil,
+		History:       nil,
+	})
+	require.NoError(t, err)
+
+	assert.JSONEq(t, `{
+		"distributors": {},
+		"volume_sources": []
+	}`, string(mock.lastParams))
+}

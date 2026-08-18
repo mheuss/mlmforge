@@ -4173,14 +4173,6 @@ fn load_rank_plan_with_root(child: &mut std::process::Child) {
     assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
 }
 
-/// One distributor, valid in every field. `active_products` is emitted from the
-/// caller's raw JSON so a test can pass `null` as easily as a real array.
-fn rank_distributor(active_products: &str) -> String {
-    format!(
-        r#"{{"personal_volume":0.0,"retail_volume":0.0,"status":"active","has_order_in_period":false,"active_products":{active_products}}}"#
-    )
-}
-
 /// The two top-level collections read an explicit null as empty.
 ///
 /// The Go twin is `TestEngineClient_EvaluateRanks_NilCollections`.
@@ -4196,6 +4188,14 @@ fn evaluate_ranks_accepts_null_collections() {
         parsed["ok"].as_bool(),
         Some(true),
         "null collections must read as empty, got: {}",
+        resp
+    );
+    // Pins the "as empty" half: an empty distributors map evaluates nobody, so
+    // ranks comes back empty rather than merely parsing.
+    assert_eq!(
+        parsed["result"]["ranks"],
+        serde_json::json!({}),
+        "no distributors means no ranks, got: {}",
         resp
     );
 
@@ -4215,9 +4215,8 @@ fn evaluate_ranks_accepts_null_nested_and_history() {
     load_rank_plan_with_root(&mut child);
 
     let req = format!(
-        r#"{{"id":"r-nested","op":"evaluate_ranks","params":{{"distributors":{{"{}":{}}},"volume_sources":[],"history_window":null,"history":null}}}}"#,
-        ROOT,
-        rank_distributor("null")
+        r#"{{"id":"r-nested","op":"evaluate_ranks","params":{{"distributors":{{"{}":{{"personal_volume":0.0,"retail_volume":0.0,"status":"active","has_order_in_period":false,"active_products":null}}}},"volume_sources":[],"history_window":null,"history":null}}}}"#,
+        ROOT
     );
     let resp = common::send_receive(&mut child, &req);
     let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();

@@ -4,6 +4,7 @@ use network_engine::board_plan::BoardPlanEngine;
 use network_engine::commission::calculate_board_commissions;
 use network_engine::config::board_plan::BoardPlanConfig;
 use network_engine::config::{BoardPlanStructureConfig, CompensationPlan, StructureConfig};
+use network_engine::serde_helpers::null_as_empty;
 use uuid::Uuid;
 
 use super::common::{extract_structure_name, parse_params, parse_uuid, require_plan};
@@ -11,21 +12,6 @@ use crate::protocol::{Request, Response};
 use crate::state::{TreeInstance, WorkerState};
 
 // --- Board plan helpers ---
-
-/// Reads an explicit JSON `null` as `T::default()`, leaving the field required.
-///
-/// `#[serde(default)]` covers an *absent* key; it does not cover a key present
-/// with a null value. Go marshals a nil slice or map to null, so a caller that
-/// leaves a collection unset sends the one shape neither plain serde path
-/// accepts. Pair this with a required field when absent should stay an error
-/// but null should mean empty.
-fn null_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    T: Default + serde::Deserialize<'de>,
-{
-    Ok(<Option<T> as serde::Deserialize>::deserialize(deserializer)?.unwrap_or_default())
-}
 
 /// Looks up a board plan engine by structure name (mutable).
 fn get_board_plan_mut<'a>(
@@ -530,11 +516,11 @@ pub(crate) fn handle_board_calculate_commissions(
         // to null rather than []. Deliberately not `default` — an absent
         // cycle_events is a caller bug, and on a money path a loud
         // INVALID_PARAMS beats silently paying zero.
-        #[serde(deserialize_with = "null_as_default")]
+        #[serde(deserialize_with = "null_as_empty")]
         cycle_events: Vec<network_engine::board_plan::CycleEvent>,
         // Optional *and* null-tolerant: absent and null both mean "no prior
         // counts", which is every first period.
-        #[serde(default, deserialize_with = "null_as_default")]
+        #[serde(default, deserialize_with = "null_as_empty")]
         period_cycle_counts: HashMap<Uuid, u32>,
     }
 

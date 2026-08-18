@@ -2164,16 +2164,28 @@ func TestEngineClient_AddNodeAt_WireParams(t *testing.T) {
 // --- Nil collection wire shapes (HEU-626) ---
 //
 // A nil Go map or slice marshals to JSON null, not {} or []. These pin the
-// shape each request DTO puts on the wire, so that adding omitempty to a
-// required field fails here rather than silently paying zero downstream.
+// shape each request DTO puts on the wire, and pin which fields are
+// deliberately optional.
+//
+// What they catch: adding omitempty to a required field. That would drop the
+// key, and the Rust side takes deserialize_with with no serde default on every
+// required collection, so the key going missing is a hard serde error --
+// INVALID_PARAMS "missing field" at runtime, on a money path. These tests turn
+// that into a test failure instead. The silent-zero hazard the fail-loud rule
+// warns about needs omitempty AND a serde default; the required fields
+// deliberately have neither, which is what keeps the failure loud. See the
+// board comment above for the same reasoning stated per-field.
 //
 // Every case asserts positively over the whole param set with assert.JSONEq. A
 // NotContains on one key would also pass if the field were renamed away.
 // JSONEq compares parsed JSON, so it catches a null that should be [] and any
 // extra or missing key, but not key order or whitespace.
 //
-// Each is the Go twin named in the doc comment of the matching Rust test in
-// engine/network-engine-worker/tests/worker_integration.rs.
+// Eight of the nine are the Go twin named in the doc comment of the matching
+// Rust test in engine/network-engine-worker/tests/worker_integration.rs.
+// EvaluateRanks_OmitsEmptyHistory is the exception: it pins the omitempty
+// shape, which no Rust test names because there is nothing on that side to
+// observe about a key that never arrives.
 
 func TestEngineClient_CalculateUnilevel_NilCollections(t *testing.T) {
 	mock := &mockTransport{response: json.RawMessage(`[]`)}
@@ -2266,10 +2278,11 @@ func TestEngineClient_CalculateStreamline_NilCollections(t *testing.T) {
 }
 
 // CarryForward and Ownership both carry omitempty, so a nil map drops the key
-// rather than sending null. That is correct for these two: both are optional,
-// and the Rust side pairs serde default with the null tolerance, so absent and
-// null mean the same thing. Snapshots and Volume have no omitempty and must
-// still appear as null.
+// rather than sending null. That is correct for these two, though by different
+// routes: carry_forward pairs serde default with null_as_empty, while ownership
+// is an Option<HashMap<..>> whose serde default plus Option absorb null
+// natively without the helper. Either way absent and null mean the same thing.
+// Snapshots and Volume have no omitempty and must still appear as null.
 func TestEngineClient_CalculateBinaryPairing_NilCollections(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`{"earnings":[],"carry_forward":{}}`),

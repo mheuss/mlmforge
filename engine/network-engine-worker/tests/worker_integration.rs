@@ -1874,10 +1874,16 @@ fn calculate_binary_pairing_accepts_null_carry_forward() {
 /// money path: prior carry, no volume this period, and the carry alone must
 /// produce the earning.
 ///
-/// `accumulate_leg_volumes` adds the prior legs to each node's subtree totals
-/// (`binary.rs:134-136`), so 500/500 of carry on the root with zero volume
-/// matches 500 and pays `500 * 0.10 = 50.0` — the same arithmetic
+/// `accumulate_leg_volumes` adds the prior legs to each node's **own** leg
+/// volumes, after the subtree totals are computed from volume alone
+/// (`binary.rs:134-136`). Carry therefore does not propagate up the tree —
+/// carry on B would credit B's legs, not A's left leg — which is why the carry
+/// goes on the root here. 500/500 on the root with zero volume matches 500 and
+/// pays `500 * 0.10 = 50.0`, the same arithmetic
 /// `calculate_binary_pairing_balanced_legs` reaches through volume instead.
+///
+/// The plan is `full_flush`, so the matched volume is consumed: the returned
+/// `carry_forward` for the root comes back `0/0` rather than re-carrying.
 #[test]
 fn calculate_binary_pairing_applies_populated_carry_forward() {
     let mut worker = common::spawn_worker();
@@ -1925,6 +1931,15 @@ fn calculate_binary_pairing_applies_populated_carry_forward() {
         dollar,
         resp
     );
+
+    // full_flush consumes the matched volume, so the carry is retired rather
+    // than paid again next period.
+    let carry = parsed["result"]["carry_forward"].as_object().unwrap();
+    let root_carry = carry
+        .get(NODE_A)
+        .unwrap_or_else(|| panic!("carry_forward should name the root, got: {}", resp));
+    assert_eq!(root_carry["left"].as_f64().unwrap(), 0.0, "got: {}", resp);
+    assert_eq!(root_carry["right"].as_f64().unwrap(), 0.0, "got: {}", resp);
 
     drop(worker.stdin.take());
     worker.wait().unwrap();

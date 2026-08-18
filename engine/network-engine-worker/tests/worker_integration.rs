@@ -4138,6 +4138,179 @@ fn evaluate_ranks_honors_window_history() {
     child.wait().unwrap();
 }
 
+// --- evaluate_ranks null tolerance (HEU-626) ---
+//
+// The library tests in `rank/types.rs` prove `EvaluationInputs` deserializes.
+// These prove the op dispatches and returns the INVALID_PARAMS protocol shape,
+// which a library test cannot observe.
+
+/// Loads `RANK_TEST_PLAN_JSON`, creates the "Test" tree, and adds ROOT as its
+/// root — the setup every `evaluate_ranks` test needs before it can reach the
+/// handler's parse step.
+fn load_rank_plan_with_root(child: &mut std::process::Child) {
+    let minified_plan: String = RANK_TEST_PLAN_JSON
+        .lines()
+        .map(|l| l.trim())
+        .collect::<Vec<_>>()
+        .join("");
+    let resp = common::send_receive(
+        child,
+        &format!(
+            r#"{{"id":"rank-setup-plan","op":"load_plan","params":{}}}"#,
+            minified_plan
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "load_plan failed: {}", resp);
+
+    create_tree(child, "Test");
+    let resp = common::send_receive(
+        child,
+        &format!(
+            r#"{{"id":"rank-setup-root","op":"add_root","params":{{"structure":"Test","user_id":"{}","enrolled_at":100}}}}"#,
+            ROOT
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
+}
+
+/// One distributor, valid in every field. `active_products` is emitted from the
+/// caller's raw JSON so a test can pass `null` as easily as a real array.
+fn rank_distributor(active_products: &str) -> String {
+    format!(
+        r#"{{"personal_volume":0.0,"retail_volume":0.0,"status":"active","has_order_in_period":false,"active_products":{active_products}}}"#
+    )
+}
+
+/// The two top-level collections read an explicit null as empty.
+///
+/// The Go twin is `TestEngineClient_EvaluateRanks_NilCollections`.
+#[test]
+fn evaluate_ranks_accepts_null_collections() {
+    let mut child = common::spawn_worker();
+    load_rank_plan_with_root(&mut child);
+
+    let req = r#"{"id":"r-null","op":"evaluate_ranks","params":{"distributors":null,"volume_sources":null}}"#;
+    let resp = common::send_receive(&mut child, req);
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(
+        parsed["ok"].as_bool(),
+        Some(true),
+        "null collections must read as empty, got: {}",
+        resp
+    );
+
+    drop(child.stdin.take());
+    child.wait().unwrap();
+}
+
+/// The nested field plus both optional ones, in a single request.
+///
+/// `active_products` can only be reached through a *populated* `distributors`
+/// map — a null outer map leaves no distributor to carry it.
+///
+/// The Go twin is `TestEngineClient_EvaluateRanks_NilActiveProducts`.
+#[test]
+fn evaluate_ranks_accepts_null_nested_and_history() {
+    let mut child = common::spawn_worker();
+    load_rank_plan_with_root(&mut child);
+
+    let req = format!(
+        r#"{{"id":"r-nested","op":"evaluate_ranks","params":{{"distributors":{{"{}":{}}},"volume_sources":[],"history_window":null,"history":null}}}}"#,
+        ROOT,
+        rank_distributor("null")
+    );
+    let resp = common::send_receive(&mut child, &req);
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(
+        parsed["ok"].as_bool(),
+        Some(true),
+        "a null active_products, history_window and history must all read as empty, got: {}",
+        resp
+    );
+    assert_eq!(
+        parsed["result"]["ranks"][ROOT]["kind"], "unranked",
+        "a zero-PV distributor should still evaluate to unranked, got: {}",
+        resp
+    );
+
+    drop(child.stdin.take());
+    child.wait().unwrap();
+}
+
+/// Omitting `distributors` stays an error at the protocol seam.
+#[test]
+fn evaluate_ranks_still_requires_distributors() {
+    let mut child = common::spawn_worker();
+    load_rank_plan_with_root(&mut child);
+
+    let req = r#"{"id":"r-nodist","op":"evaluate_ranks","params":{"volume_sources":[]}}"#;
+    let resp = common::send_receive(&mut child, req);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a missing distributors must still fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("missing field") && resp.contains("distributors"),
+        "the error should be a missing-field error naming distributors, got: {}",
+        resp
+    );
+
+    drop(child.stdin.take());
+    child.wait().unwrap();
+}
+
+/// Omitting `volume_sources` stays an error at the protocol seam.
+#[test]
+fn evaluate_ranks_still_requires_volume_sources() {
+    let mut child = common::spawn_worker();
+    load_rank_plan_with_root(&mut child);
+
+    let req = r#"{"id":"r-novol","op":"evaluate_ranks","params":{"distributors":{}}}"#;
+    let resp = common::send_receive(&mut child, req);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a missing volume_sources must still fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("missing field") && resp.contains("volume_sources"),
+        "the error should be a missing-field error naming volume_sources, got: {}",
+        resp
+    );
+
+    drop(child.stdin.take());
+    child.wait().unwrap();
+}
+
+/// Omitting the nested `active_products` stays an error too. BR2 asks for an
+/// absence guard per required field, and this one is required — it just lives a
+/// level down, so it needs a populated `distributors` map to be reachable.
+#[test]
+fn evaluate_ranks_still_requires_active_products() {
+    let mut child = common::spawn_worker();
+    load_rank_plan_with_root(&mut child);
+
+    let req = format!(
+        r#"{{"id":"r-noprod","op":"evaluate_ranks","params":{{"distributors":{{"{}":{{"personal_volume":0.0,"retail_volume":0.0,"status":"active","has_order_in_period":false}}}},"volume_sources":[]}}}}"#,
+        ROOT
+    );
+    let resp = common::send_receive(&mut child, &req);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a missing active_products must still fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("missing field") && resp.contains("active_products"),
+        "the error should be a missing-field error naming active_products, got: {}",
+        resp
+    );
+
+    drop(child.stdin.take());
+    child.wait().unwrap();
+}
+
 #[test]
 fn calculate_unilevel_wrong_tree_type_reports_expected_vs_actual() {
     let mut worker = common::spawn_worker();

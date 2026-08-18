@@ -187,8 +187,7 @@ mod tests {
 
     #[test]
     fn evaluation_inputs_defaults_history_when_absent() {
-        let json = r#"{"distributors":{},"volume_sources":[]}"#;
-        let inputs: EvaluationInputs = serde_json::from_str(json).unwrap();
+        let inputs: EvaluationInputs = serde_json::from_str(MINIMAL).unwrap();
         assert!(inputs.history_window.is_empty());
         assert!(inputs.history.is_empty());
     }
@@ -242,11 +241,16 @@ mod tests {
     /// present and empty, both optional ones absent.
     const MINIMAL: &str = r#"{"distributors":{},"volume_sources":[]}"#;
 
-    /// One distributor with every `DistributorPrimitives` field but
-    /// `active_products`, which each caller appends.
-    fn distributor_with(active_products: &str) -> String {
+    /// One distributor, valid in every field but `active_products`. `None`
+    /// omits that key entirely; `Some(v)` emits it with the given raw JSON
+    /// value, so a caller can pass `null` as well as a real array.
+    fn distributor(active_products: Option<&str>) -> String {
+        let tail = match active_products {
+            Some(v) => format!(r#","active_products":{v}"#),
+            None => String::new(),
+        };
         format!(
-            r#"{{"personal_volume":0.0,"retail_volume":0.0,"status":"active","has_order_in_period":false{active_products}}}"#
+            r#"{{"personal_volume":0.0,"retail_volume":0.0,"status":"active","has_order_in_period":false{tail}}}"#
         )
     }
 
@@ -271,7 +275,7 @@ mod tests {
         let uid = Uuid::nil();
         let json = format!(
             r#"{{"distributors":{{"{uid}":{}}},"volume_sources":[]}}"#,
-            distributor_with(r#","active_products":null"#)
+            distributor(Some("null"))
         );
         let inputs: EvaluationInputs = serde_json::from_str(&json).unwrap();
         assert!(inputs.distributors[&uid].active_products.is_empty());
@@ -296,8 +300,8 @@ mod tests {
         let err = serde_json::from_str::<EvaluationInputs>(r#"{"volume_sources":[]}"#)
             .expect_err("an absent distributors must still fail");
         assert!(
-            err.to_string().contains("distributors"),
-            "the error should name the missing field, got: {err}"
+            err.to_string().contains("missing field") && err.to_string().contains("distributors"),
+            "the error should be a missing-field error naming distributors, got: {err}"
         );
     }
 
@@ -306,8 +310,8 @@ mod tests {
         let err = serde_json::from_str::<EvaluationInputs>(r#"{"distributors":{}}"#)
             .expect_err("an absent volume_sources must still fail");
         assert!(
-            err.to_string().contains("volume_sources"),
-            "the error should name the missing field, got: {err}"
+            err.to_string().contains("missing field") && err.to_string().contains("volume_sources"),
+            "the error should be a missing-field error naming volume_sources, got: {err}"
         );
     }
 
@@ -316,28 +320,35 @@ mod tests {
         let uid = Uuid::nil();
         let json = format!(
             r#"{{"distributors":{{"{uid}":{}}},"volume_sources":[]}}"#,
-            distributor_with("")
+            distributor(None)
         );
         let err = serde_json::from_str::<EvaluationInputs>(&json)
             .expect_err("an absent active_products must still fail");
         assert!(
-            err.to_string().contains("active_products"),
-            "the error should name the missing field, got: {err}"
+            err.to_string().contains("missing field")
+                && err.to_string().contains("active_products"),
+            "the error should be a missing-field error naming active_products, got: {err}"
         );
     }
 
-    /// Pins the baseline shape the `accepts_null` tests each vary one field
-    /// from. They hand-roll their own JSON rather than deriving from `MINIMAL`,
-    /// so this is not a control in the strict sense — its job is to fail first,
-    /// and loudly, if a newly required field ever makes that baseline invalid.
-    /// Without it, adding a required field would fail all eight tests at once
-    /// with nothing saying why.
+    /// The inner `history` map is deliberately *not* null-tolerant, unlike the
+    /// outer one. `{"<uuid>": null}` has no defined meaning — this type
+    /// documents absent-key and `Some(None)`, and a null inner map is an
+    /// undefined third state. HEU-632 decides what it should mean.
+    ///
+    /// Pinned here so the asymmetry is recorded rather than incidental, and so
+    /// HEU-632 has a red test to flip. `BuildHistoryWindow` cannot emit this
+    /// shape, so it is reachable only by hand-populating the request.
     #[test]
-    fn evaluation_inputs_minimal_payload_deserializes() {
-        let inputs: EvaluationInputs = serde_json::from_str(MINIMAL).unwrap();
-        assert!(inputs.distributors.is_empty());
-        assert!(inputs.volume_sources.is_empty());
-        assert!(inputs.history_window.is_empty());
-        assert!(inputs.history.is_empty());
+    fn evaluation_inputs_still_rejects_null_inner_history() {
+        let uid = Uuid::nil();
+        let json =
+            format!(r#"{{"distributors":{{}},"volume_sources":[],"history":{{"{uid}":null}}}}"#);
+        let err = serde_json::from_str::<EvaluationInputs>(&json)
+            .expect_err("a null inner history map has no defined meaning yet");
+        assert!(
+            err.to_string().contains("invalid type: null"),
+            "expected a serde type error, got: {err}"
+        );
     }
 }

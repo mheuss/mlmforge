@@ -7,6 +7,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::commission::types::VolumeSource;
+use crate::serde_helpers::null_as_empty;
 
 /// Inputs to a rank evaluation pass.
 ///
@@ -17,24 +18,24 @@ use crate::commission::types::VolumeSource;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvaluationInputs {
     /// Per-distributor facts, keyed by user_id.
-    #[serde(deserialize_with = "crate::serde_helpers::null_as_empty")]
+    #[serde(deserialize_with = "null_as_empty")]
     pub distributors: HashMap<Uuid, DistributorPrimitives>,
 
     /// Volume events for the period. Used to compute GV and leg volumes.
-    #[serde(deserialize_with = "crate::serde_helpers::null_as_empty")]
+    #[serde(deserialize_with = "null_as_empty")]
     pub volume_sources: Vec<VolumeSource>,
 
     /// Ordered period axis for time-gated evaluation, most-recent-first
     /// (period_id DESC). Caller-supplied; length >= the max window depth
     /// across the plan. Empty when no rank uses a time gate. Opaque ordered
     /// labels — the caller owns period semantics and ordering.
-    #[serde(default, deserialize_with = "crate::serde_helpers::null_as_empty")]
+    #[serde(default, deserialize_with = "null_as_empty")]
     pub history_window: Vec<String>,
 
     /// Per-distributor achieved-rank ordinals keyed by period_id, for axis
     /// periods that have a persisted row. Absent key = not evaluated;
     /// Some(None) = Unranked. Both gate as "below threshold" (BR6).
-    #[serde(default, deserialize_with = "crate::serde_helpers::null_as_empty")]
+    #[serde(default, deserialize_with = "null_as_empty")]
     pub history: HashMap<Uuid, HashMap<String, Option<u16>>>,
 }
 
@@ -56,7 +57,7 @@ pub struct DistributorPrimitives {
 
     /// Active product enrollments held by the distributor.
     /// Used by `RankQualification.required_products`.
-    #[serde(deserialize_with = "crate::serde_helpers::null_as_empty")]
+    #[serde(deserialize_with = "null_as_empty")]
     pub active_products: Vec<String>,
 }
 
@@ -237,7 +238,8 @@ mod tests {
     // loud error. One absence guard per required field, so adding `default` to
     // any one of them fails here rather than silently paying zero.
 
-    /// The minimum valid payload, used to isolate one field per test.
+    /// The smallest payload that deserializes: both required top-level fields
+    /// present and empty, both optional ones absent.
     const MINIMAL: &str = r#"{"distributors":{},"volume_sources":[]}"#;
 
     /// One distributor with every `DistributorPrimitives` field but
@@ -324,8 +326,12 @@ mod tests {
         );
     }
 
-    /// `MINIMAL` is the control for the five `accepts_null` tests: it proves
-    /// they fail for the field under test rather than for a malformed payload.
+    /// Pins the baseline shape the `accepts_null` tests each vary one field
+    /// from. They hand-roll their own JSON rather than deriving from `MINIMAL`,
+    /// so this is not a control in the strict sense — its job is to fail first,
+    /// and loudly, if a newly required field ever makes that baseline invalid.
+    /// Without it, adding a required field would fail all eight tests at once
+    /// with nothing saying why.
     #[test]
     fn evaluation_inputs_minimal_payload_deserializes() {
         let inputs: EvaluationInputs = serde_json::from_str(MINIMAL).unwrap();

@@ -1867,6 +1867,69 @@ fn calculate_binary_pairing_accepts_null_carry_forward() {
     worker.wait().unwrap();
 }
 
+/// A *populated* `carry_forward` still reaches the calculator and still pays.
+///
+/// The null and absent cases both collapse to an empty map, so on their own they
+/// would pass just as well if the field stopped being read at all. This is the
+/// money path: prior carry, no volume this period, and the carry alone must
+/// produce the earning.
+///
+/// `accumulate_leg_volumes` adds the prior legs to each node's subtree totals
+/// (`binary.rs:134-136`), so 500/500 of carry on the root with zero volume
+/// matches 500 and pays `500 * 0.10 = 50.0` — the same arithmetic
+/// `calculate_binary_pairing_balanced_legs` reaches through volume instead.
+#[test]
+fn calculate_binary_pairing_applies_populated_carry_forward() {
+    let mut worker = common::spawn_worker();
+    load_binary_test_plan(&mut worker);
+    build_binary_calc_tree(&mut worker);
+
+    let snap = r#"{"rank":"associate","personal_volume":150.0,"status":"active","has_order_in_period":true}"#;
+    let params = format!(
+        r#"{{"structure":"BinaryCalc","snapshots":{{"{a}":{snap},"{b}":{snap},"{c}":{snap}}},"volume":[],"carry_forward":{{"{a}":{{"left":500.0,"right":500.0}}}}}}"#,
+        a = NODE_A,
+        b = NODE_B,
+        c = NODE_C,
+        snap = snap,
+    );
+    let request = format!(
+        r#"{{"id":"bp-carry","op":"calculate_binary_pairing","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(
+        parsed["ok"].as_bool().unwrap_or(false),
+        "populated carry_forward should calculate, got: {}",
+        resp
+    );
+
+    let earnings = parsed["result"]["earnings"].as_array().unwrap();
+    assert_eq!(
+        earnings.len(),
+        1,
+        "carry alone should pay the root, got: {}",
+        resp
+    );
+
+    let earning = &earnings[0];
+    assert_eq!(earning["earner_id"].as_str().unwrap(), NODE_A);
+    assert_eq!(earning["left_volume"].as_f64().unwrap(), 500.0);
+    assert_eq!(earning["right_volume"].as_f64().unwrap(), 500.0);
+    assert_eq!(earning["matched_volume"].as_f64().unwrap(), 500.0);
+    let dollar = earning["dollar_amount"].as_f64().unwrap();
+    assert!(
+        (dollar - 50.0).abs() < 1e-10,
+        "carry of 500/500 at 10% should pay 50.0, got {} in: {}",
+        dollar,
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 // --- Multi-position binary commission integration test ---
 
 /// UUIDs for multi-position test nodes.

@@ -331,10 +331,10 @@ helper:
 Do **not** reach for Go's `omitempty` on a required field. On its own it breaks
 the call: when the collection is empty the key vanishes, the required attribute
 has no `default` to fall back on, and the caller gets `INVALID_PARAMS`. The real
-trap is what comes next — add
-`serde(default)` to make it work again and a dropped field becomes
-indistinguishable from an empty one, which on a money path pays zero instead of
-complaining. Keep required fields null-tolerant and nothing more.
+trap is what comes next — add `serde(default)` to make it work again and a
+dropped field becomes indistinguishable from an empty one, which on a money path
+pays zero instead of complaining. Keep required fields null-tolerant and nothing
+more.
 
 **Caller-side normalization** is the older approach, still used by
 `RankDriver.EvaluatePeriod` for `evaluate_ranks`. It normalizes nil to empty at
@@ -350,11 +350,11 @@ still rejects that shape from anyone else.
 
 ### Current state
 
-Every **top-level** named request collection is now null-tolerant (HEU-626) —
-across all seven commission handlers (the six siblings plus
-`board_calculate_commissions`) and `evaluate_ranks`. What differs between them is
-only whether *absent* is also allowed. Nested collections are a separate matter;
-HEU-632 tracks the three that remain, listed below.
+Across all seven commission handlers (the six siblings plus
+`board_calculate_commissions`) and `evaluate_ranks`, every top-level named
+request collection is now null-tolerant (HEU-626). What differs between them is
+only whether *absent* is also allowed. Nested and query-op collections are a
+separate matter; HEU-632 tracks the three that remain, listed below.
 
 - `board_calculate_commissions` — fixed both ways (HEU-603). `cycle_events` is
   required and null-tolerant; `period_cycle_counts` is optional, null-tolerant,
@@ -366,7 +366,9 @@ HEU-632 tracks the three that remain, listed below.
   A real `PeriodInputProvider` (HEU-505) may hand over nils safely.
 - The six other commission handlers — `snapshots` and `volume` are required and
   null-tolerant; `carry_forward` is optional and no longer depends on Go's
-  `omitempty` to stay correct.
+  `omitempty` to stay correct. Binary pairing's `ownership` is left alone: it is
+  `Option<HashMap<..>>`, so `Option` absorbs a null natively and it needed no
+  help from this ticket.
 - `history_window` and `history` are optional and null-tolerant, and keep
   `omitempty` + `serde(default)` so a no-gate plan omits them. Absent, null, and
   empty all mean "no history".

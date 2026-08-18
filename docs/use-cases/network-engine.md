@@ -504,7 +504,7 @@ One asymmetry showed up on the board application. Streamline carried two legacy 
 
 **Problem:** A nil Go map or slice marshals to JSON `null`, not `{}` or `[]`. On the Rust side `#[serde(default)]` covers an *absent* key; it does not cover a key present with a null value. So a caller that leaves a collection unset sends the one shape neither plain serde path accepts, and the whole request dies with `INVALID_PARAMS`.
 
-The trap is that the failing call is usually the *natural* one — a first period with no prior counts, a period with no volume events, a plan with no history. It also only shows up from clients you do not control, which is why it sat unnoticed: Go callers always populated the fields. The rank driver normalized nils away explicitly; the commission methods simply had no non-test caller sending an empty one.
+The trap is that the failing call is usually the *natural* one — a first period with no prior counts, a period with no volume events, a plan with no history. It also only shows up from clients you do not control, which is why it sat unnoticed. The rank driver normalized nils away explicitly, so its caller could never send one; the commission methods have no non-test caller yet, so nothing exercised the shape at all.
 
 **Solution:** One helper, applied by requiredness. `null_as_empty` deserializes through `Option<T>` and unwraps to `T::default()`, which widens null and nothing else.
 

@@ -99,7 +99,9 @@ struct CalculateGenerationParams {
 struct CalculateBinaryPairingParams {
     #[serde(rename = "structure")]
     structure_name: String,
+    #[serde(deserialize_with = "null_as_empty")]
     snapshots: HashMap<Uuid, DistributorSnapshot>,
+    #[serde(deserialize_with = "null_as_empty")]
     volume: Vec<VolumeSource>,
     #[serde(default)]
     carry_forward: HashMap<Uuid, LegVolumes>,

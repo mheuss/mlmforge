@@ -1737,6 +1737,112 @@ fn calculate_binary_pairing_wrong_tree_type_returns_error() {
     worker.wait().unwrap();
 }
 
+/// A nil Go collection marshals to `null`, not `{}` or `[]`, and both required
+/// request collections must read that as empty rather than rejecting it. This
+/// is the shape of a first-period call.
+///
+/// Binary's success shape differs from its siblings: it returns
+/// `{"earnings":[...],"carry_forward":{...}}`, not a bare array. And
+/// `carry_forward` is **not** empty here — `accumulate_leg_volumes` creates an
+/// entry per live node and the post-payout phase emits all of them, zero-valued
+/// rows included. So `build_binary_calc_tree`'s three nodes produce three zero
+/// entries even with empty collections. That is existing, correct behavior; do
+/// not "fix" the calculator to drop them.
+///
+/// Asserted structurally rather than by string match, because `HashMap` key
+/// order is nondeterministic.
+///
+/// The Go twin is `TestEngineClient_CalculateBinaryPairing_NilCollections`.
+#[test]
+fn calculate_binary_pairing_accepts_null_collections() {
+    let mut worker = common::spawn_worker();
+    load_binary_test_plan(&mut worker);
+    build_binary_calc_tree(&mut worker);
+
+    let request = r#"{"id":"bp-null","op":"calculate_binary_pairing","params":{"structure":"BinaryCalc","snapshots":null,"volume":null}}"#;
+    let resp = common::send_receive(&mut worker, request);
+
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(
+        parsed["ok"].as_bool().unwrap_or(false),
+        "null collections must read as empty, got: {}",
+        resp
+    );
+
+    let earnings = parsed["result"]["earnings"].as_array().unwrap();
+    assert!(
+        earnings.is_empty(),
+        "no volume means no earnings, got: {}",
+        resp
+    );
+
+    let carry = parsed["result"]["carry_forward"].as_object().unwrap();
+    assert_eq!(carry.len(), 3, "one carry row per live node, got: {}", resp);
+    for node in [NODE_A, NODE_B, NODE_C] {
+        let legs = carry
+            .get(node)
+            .unwrap_or_else(|| panic!("carry_forward should name {}, got: {}", node, resp));
+        assert_eq!(legs["left"].as_f64().unwrap(), 0.0, "got: {}", resp);
+        assert_eq!(legs["right"].as_f64().unwrap(), 0.0, "got: {}", resp);
+    }
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Omitting `snapshots` stays an error. The other half of
+/// `calculate_binary_pairing_accepts_null_collections`: widening null must not
+/// quietly widen absent, or a caller who forgets the field is paid zero
+/// instead of being told.
+#[test]
+fn calculate_binary_pairing_still_requires_snapshots() {
+    let mut worker = common::spawn_worker();
+    load_binary_test_plan(&mut worker);
+    build_binary_calc_tree(&mut worker);
+
+    let request = r#"{"id":"bp-nosnap","op":"calculate_binary_pairing","params":{"structure":"BinaryCalc","volume":[]}}"#;
+    let resp = common::send_receive(&mut worker, request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a missing snapshots must still fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("snapshots"),
+        "the error should name the field that is missing, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Omitting `volume` stays an error. The mirror of
+/// `calculate_binary_pairing_still_requires_snapshots` — one guard per required
+/// field, so adding `default` to either one fails loudly.
+#[test]
+fn calculate_binary_pairing_still_requires_volume() {
+    let mut worker = common::spawn_worker();
+    load_binary_test_plan(&mut worker);
+    build_binary_calc_tree(&mut worker);
+
+    let request = r#"{"id":"bp-novol","op":"calculate_binary_pairing","params":{"structure":"BinaryCalc","snapshots":{}}}"#;
+    let resp = common::send_receive(&mut worker, request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a missing volume must still fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("volume"),
+        "the error should name the field that is missing, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 // --- Multi-position binary commission integration test ---
 
 /// UUIDs for multi-position test nodes.

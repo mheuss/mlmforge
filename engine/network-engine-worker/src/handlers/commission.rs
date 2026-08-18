@@ -9,6 +9,7 @@ use network_engine::config::{
     BinaryStructureConfig, CompensationPlan, GenerationStructureConfig, MatrixStructureConfig,
     StairstepStructureConfig, StructureConfig, UnilevelStructureConfig,
 };
+use network_engine::serde_helpers::null_as_empty;
 use uuid::Uuid;
 
 use super::common::{
@@ -76,7 +77,9 @@ fn find_stairstep_structure<'a>(
 struct CalculateUnilevelParams {
     #[serde(rename = "structure")]
     structure_name: String,
+    #[serde(deserialize_with = "null_as_empty")]
     snapshots: HashMap<Uuid, DistributorSnapshot>,
+    #[serde(deserialize_with = "null_as_empty")]
     volume: Vec<VolumeSource>,
 }
 

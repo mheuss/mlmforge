@@ -125,7 +125,9 @@ struct CalculateMatrixParams {
 struct CalculateStairstepParams {
     #[serde(rename = "structure")]
     structure_name: String,
+    #[serde(deserialize_with = "null_as_empty")]
     snapshots: HashMap<Uuid, DistributorSnapshot>,
+    #[serde(deserialize_with = "null_as_empty")]
     volume: Vec<VolumeSource>,
 }
 

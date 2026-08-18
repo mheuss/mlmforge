@@ -4679,6 +4679,96 @@ fn calculate_stairstep_unknown_structure_returns_not_found() {
     worker.wait().unwrap();
 }
 
+/// A nil Go collection marshals to `null`, not `{}` or `[]`, and both request
+/// collections must read that as empty rather than rejecting it. This is the
+/// shape of a first-period call.
+///
+/// The Go twin is `TestEngineClient_CalculateStairstep_NilCollections`.
+#[test]
+fn calculate_stairstep_accepts_null_collections() {
+    let mut worker = common::spawn_worker();
+    load_stairstep_test_plan(&mut worker);
+    build_three_node_chain(&mut worker);
+
+    let request = format!(
+        r#"{{"id":"s-null","op":"calculate_stairstep","params":{{"structure":"{}","snapshots":null,"volume":null}}}}"#,
+        TREE_NAME
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "null collections must read as empty, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains(r#""result":[]"#),
+        "no volume means no earnings, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Omitting `snapshots` stays an error. The other half of
+/// `calculate_stairstep_accepts_null_collections`: widening null must not
+/// quietly widen absent, or a caller who forgets the field is paid zero instead
+/// of being told.
+#[test]
+fn calculate_stairstep_still_requires_snapshots() {
+    let mut worker = common::spawn_worker();
+    load_stairstep_test_plan(&mut worker);
+    build_three_node_chain(&mut worker);
+
+    let request = format!(
+        r#"{{"id":"s-nosnap","op":"calculate_stairstep","params":{{"structure":"{}","volume":[]}}}}"#,
+        TREE_NAME
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a missing snapshots must still fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("snapshots"),
+        "the error should name the field that is missing, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Omitting `volume` stays an error. The mirror of
+/// `calculate_stairstep_still_requires_snapshots` — one guard per required
+/// field, so adding `default` to either one fails loudly.
+#[test]
+fn calculate_stairstep_still_requires_volume() {
+    let mut worker = common::spawn_worker();
+    load_stairstep_test_plan(&mut worker);
+    build_three_node_chain(&mut worker);
+
+    let request = format!(
+        r#"{{"id":"s-novol","op":"calculate_stairstep","params":{{"structure":"{}","snapshots":{{}}}}}}"#,
+        TREE_NAME
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a missing volume must still fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("volume"),
+        "the error should name the field that is missing, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 /// Compile-time completeness gate. Every StructureConfig variant must map to a
 /// commission op here. Adding a variant without an arm fails to compile the
 /// test crate (this fn is test-only), which forces the new op to be named (and

@@ -103,7 +103,7 @@ struct CalculateBinaryPairingParams {
     snapshots: HashMap<Uuid, DistributorSnapshot>,
     #[serde(deserialize_with = "null_as_empty")]
     volume: Vec<VolumeSource>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty")]
     carry_forward: HashMap<Uuid, LegVolumes>,
     #[serde(default)]
     ownership: Option<HashMap<Uuid, Uuid>>,

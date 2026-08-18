@@ -1843,6 +1843,30 @@ fn calculate_binary_pairing_still_requires_volume() {
     worker.wait().unwrap();
 }
 
+/// `carry_forward` is optional, so absent and null both mean "no carry".
+/// It is safe today only because the Go DTO carries `omitempty`
+/// (`wire_types.go:92`), which binds one client and no other.
+///
+/// Unlike `snapshots` and `volume`, this field keeps its `serde(default)` —
+/// absent is legitimate here, because it is every first period.
+#[test]
+fn calculate_binary_pairing_accepts_null_carry_forward() {
+    let mut worker = common::spawn_worker();
+    load_binary_test_plan(&mut worker);
+    build_binary_calc_tree(&mut worker);
+
+    let request = r#"{"id":"bp-nullcarry","op":"calculate_binary_pairing","params":{"structure":"BinaryCalc","snapshots":{},"volume":[],"carry_forward":null}}"#;
+    let resp = common::send_receive(&mut worker, request);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "a null carry_forward must read as no carry, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 // --- Multi-position binary commission integration test ---
 
 /// UUIDs for multi-position test nodes.

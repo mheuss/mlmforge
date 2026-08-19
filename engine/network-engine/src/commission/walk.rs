@@ -1,9 +1,9 @@
 //! Shared level-commission walk logic.
 //!
-//! Extracts the common prep phase and walk loop used by unilevel,
-//! matrix, and stairstep (Walk 1) commission calculators. Each
-//! calculator remains a standalone public function that delegates
-//! to these shared internals.
+//! Extracts the common prep phase and walk loop used by the unilevel,
+//! matrix, stairstep (Walk 1), generation, and streamline commission
+//! calculators. Each calculator remains a standalone public function
+//! that delegates to these shared internals.
 //!
 //! Binary uses pairing mechanics, not level-based walks. It is
 //! not a consumer of this module.
@@ -157,7 +157,10 @@ pub(crate) fn determine_max_depth(active_leg_count: u16, tiers: &[ActiveLegTier]
 }
 
 /// Validate that a volume source's CV amount is finite and non-negative.
-pub(crate) fn validate_cv(source: &VolumeSource) -> Result<(), CalculationError> {
+///
+/// Private: `validate_source` below is the only caller, and routing everyone
+/// through it is what keeps the check order in one place.
+fn validate_cv(source: &VolumeSource) -> Result<(), CalculationError> {
     if !source.cv_amount.is_finite() || source.cv_amount < 0.0 {
         return Err(CalculationError::InvalidCvAmount(
             source.source_id,

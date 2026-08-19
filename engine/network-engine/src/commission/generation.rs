@@ -226,9 +226,10 @@ pub fn calculate_generation(
     // combination used to report a silent Ok(vec![]) for volume naming a
     // source with no snapshot.
     //
-    // walk_level_commissions validates again when level commissions are on.
-    // The repeat is cheap and pure, and paying it keeps one validation site
-    // for both arms instead of three.
+    // When level commissions are on, walk_level_commissions (above) has
+    // already validated these and this loop repeats the work. The repeat is
+    // pure and costs no extra upline walk, and paying it keeps one validation
+    // site for both arms instead of three.
     for source in volume {
         walk::validate_source(tree, snapshots, source)?;
     }

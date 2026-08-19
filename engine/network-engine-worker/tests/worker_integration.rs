@@ -999,13 +999,17 @@ fn load_generation_test_plan(worker: &mut std::process::Child) {
         .as_array()
         .expect("fixture should carry a structures array")
         .iter()
+        // Scoped to the generation structure. Collecting names across every
+        // type would let a second structure named GenTree mask a rename of
+        // this one, which is the failure this assertion exists to catch.
+        .filter(|s| s["type"] == "generation")
         .filter_map(|s| s["config"]["name"].as_str())
         .collect();
     assert!(
         names.contains(&GEN_STRUCTURE),
-        "fixture has no structure named {} (found {:?}) — the Go-side fixture \
-         was renamed, so update GEN_STRUCTURE rather than chasing the \
-         assertion failures this causes downstream",
+        "fixture has no generation structure named {} (found {:?}) — the \
+         Go-side fixture was renamed, so update GEN_STRUCTURE rather than \
+         chasing the assertion failures this causes downstream",
         GEN_STRUCTURE,
         names
     );

@@ -19,6 +19,7 @@ use crate::config::PassUpConfig;
 use crate::config::commission::{CompressionConfig, CompressionMode};
 use crate::config::eligibility::{ActiveLegTier, CommissionEligibility};
 use crate::tree::navigator::TreeNavigator;
+use crate::tree::node::Node;
 
 use super::is_eligible;
 use super::types::{CalculationError, CommissionEarning, DistributorSnapshot, VolumeSource};
@@ -164,6 +165,33 @@ pub(crate) fn validate_cv(source: &VolumeSource) -> Result<(), CalculationError>
         ));
     }
     Ok(())
+}
+
+/// Validate one volume source against the tree and the period's snapshots,
+/// returning its upline so a caller that needs to walk doesn't re-fetch it.
+///
+/// The three checks run in a fixed order — CV, then tree membership, then
+/// snapshot membership — because callers assert on the specific error. Keeping
+/// them in one place is what keeps that precedence identical everywhere.
+///
+/// Binary is not a caller: it resolves an owner before the snapshot lookup and
+/// checks `contains` rather than the upline, so it validates its own way.
+pub(crate) fn validate_source<'t, T: TreeNavigator>(
+    tree: &'t T,
+    snapshots: &HashMap<Uuid, DistributorSnapshot>,
+    source: &VolumeSource,
+) -> Result<Vec<&'t Node>, CalculationError> {
+    validate_cv(source)?;
+
+    let upline = tree
+        .get_upline(source.source_id, 0)
+        .map_err(|_| CalculationError::SourceNotInTree(source.source_id))?;
+
+    if !snapshots.contains_key(&source.source_id) {
+        return Err(CalculationError::SourceNotInSnapshot(source.source_id));
+    }
+
+    Ok(upline)
 }
 
 /// Sort earnings by (earner_id, source_id, level) for deterministic output.
@@ -357,15 +385,7 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
     let mut all_earnings = Vec::new();
 
     for source in volume {
-        validate_cv(source)?;
-
-        let upline = tree
-            .get_upline(source.source_id, 0)
-            .map_err(|_| CalculationError::SourceNotInTree(source.source_id))?;
-
-        if !snapshots.contains_key(&source.source_id) {
-            return Err(CalculationError::SourceNotInSnapshot(source.source_id));
-        }
+        let upline = validate_source(tree, snapshots, source)?;
 
         let mut level: u8 = 1;
 

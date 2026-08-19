@@ -158,8 +158,9 @@ pub(crate) fn determine_max_depth(active_leg_count: u16, tiers: &[ActiveLegTier]
 
 /// Validate that a volume source's CV amount is finite and non-negative.
 ///
-/// Private: `validate_source` below is the only caller, and routing everyone
-/// through it is what keeps the check order in one place.
+/// Private: `validate_source` below is the only production caller, and routing
+/// everyone through it is what keeps the check order in one place. The
+/// `validate_cv_*` unit tests in this module also call it directly.
 fn validate_cv(source: &VolumeSource) -> Result<(), CalculationError> {
     if !source.cv_amount.is_finite() || source.cv_amount < 0.0 {
         return Err(CalculationError::InvalidCvAmount(

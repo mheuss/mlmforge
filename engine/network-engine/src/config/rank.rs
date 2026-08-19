@@ -588,8 +588,10 @@ mod tests {
 
     #[test]
     fn qualified_structures_absent_or_null_deserializes_to_empty() {
-        // null_as_empty: Go omits an empty qualified_structures via
-        // omitempty and may emit null; absent, null, and [] all yield empty.
+        // Go omits an empty qualified_structures via omitempty and may emit
+        // null. serde(default) supplies the empty Vec when the field is absent,
+        // null_as_empty handles an explicit null, so absent, null, and [] all
+        // yield empty.
         for tail in [
             "",
             r#","qualified_structures":null"#,

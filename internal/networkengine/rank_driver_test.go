@@ -241,8 +241,10 @@ func TestRankDriver_EvaluatePeriod_NilActiveProductsSendsEmptyNotNull(t *testing
 	mock := &mockTransport{response: json.RawMessage(`{"ranks":{}}`)}
 	client := NewEngineClientWithTransport(mock)
 
-	// Distributor with a nil ActiveProducts slice (the field is omitted). Without
-	// normalization it marshals to "active_products":null. Since HEU-626 the Rust
+	// Distributor with a nil ActiveProducts slice -- the struct literal below
+	// leaves the field out, and the DTO carries no omitempty, so nil still
+	// reaches the wire. Without normalization it marshals to
+	// "active_products":null. Since HEU-626 the Rust
 	// worker reads that as empty, so this pins the driver's normalization rather
 	// than protecting against a rejection -- the same belt-and-braces as the nil
 	// distributors map, one level down.

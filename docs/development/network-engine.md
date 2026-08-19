@@ -220,6 +220,23 @@ Nothing breaks today. `handle_load_plan` deserializes straight off the `RawValue
 
 That direction is the dangerous one. A narrow test build fails loudly in CI. A production-only reorder fails in production. Never round-trip an adjacently-tagged enum through `Value` on a path the shipped binary takes.
 
+## Worker Binary Freshness: The Guard Is Coarse
+
+The Go integration suite fails if the Rust worker binary is older than any `.rs` file under `engine/` (`staleWorkerBinary`, `transport_test.go:312-348`, HEU-615). That includes Rust *test* files, which the binary does not depend on.
+
+So editing `engine/network-engine-worker/tests/worker_integration.rs` and then running `cargo build --workspace` leaves the Go suite still failing. Cargo has nothing to rebuild, the binary's mtime never moves, and the walk still finds a newer `.rs`.
+
+The failure message names the offending file, which is the tell. If it points at a `tests/` file, the binary is current and the guard is being over-broad.
+
+Force a real relink:
+
+```bash
+touch engine/network-engine-worker/src/main.rs
+(cd engine && cargo build --workspace)
+```
+
+Do not `touch` the binary itself. That clears the guard without rebuilding, which is exactly the stale-binary state HEU-615 exists to catch.
+
 ## Streamline: Rank Gates Qualification, Not Rate
 
 `calculate_streamline` builds its rate table so every plan rank maps to the *same* per-level percents (`commission/streamline.rs`). Rank does not change what a level pays. It only decides whether a distributor clears that level's `min_rank` threshold, through the dynamic-compression check in `walk.rs`.

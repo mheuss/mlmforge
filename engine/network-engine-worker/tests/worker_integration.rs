@@ -1932,8 +1932,9 @@ fn calculate_binary_pairing_still_requires_volume() {
 }
 
 /// `carry_forward` is optional, so absent and null both mean "no carry".
-/// It is safe today only because the Go DTO carries `omitempty`
-/// (`wire_types.go:92`), which binds one client and no other.
+/// Absent is covered by `serde(default)` and null by `null_as_empty`, so
+/// neither depends on the Go DTO's `omitempty` (`wire_types.go:92`) — that
+/// binds one client, and the guarantee holds for every caller.
 ///
 /// Unlike `snapshots` and `volume`, this field keeps its `serde(default)` —
 /// absent is legitimate here, because it is every first period.

@@ -979,12 +979,35 @@ const GENERATION_TEST_PLAN_JSON: &str =
 const GEN_STRUCTURE: &str = "GenTree";
 
 /// Loads `GENERATION_TEST_PLAN_JSON` and asserts it took.
+///
+/// The structure-name check is the one thing `load_plan` returning ok does not
+/// give us. The fixture is generated from Go and promises deserializability,
+/// not that its structure stays named `GEN_STRUCTURE`. Rename it there and
+/// every caller below would still load fine, then fail its own assertion —
+/// reporting a null-handling regression that never happened. Assert the name
+/// here so the rename names itself.
 fn load_generation_test_plan(worker: &mut std::process::Child) {
     let resp = send_load_plan(worker, GENERATION_TEST_PLAN_JSON);
     assert!(
         resp.contains(r#""ok":true"#),
         "generation plan should load, got: {}",
         resp
+    );
+    let plan: serde_json::Value = serde_json::from_str(GENERATION_TEST_PLAN_JSON)
+        .expect("generation fixture should be valid JSON");
+    let names: Vec<&str> = plan["structures"]
+        .as_array()
+        .expect("fixture should carry a structures array")
+        .iter()
+        .filter_map(|s| s["config"]["name"].as_str())
+        .collect();
+    assert!(
+        names.contains(&GEN_STRUCTURE),
+        "fixture has no structure named {} (found {:?}) — the Go-side fixture \
+         was renamed, so update GEN_STRUCTURE rather than chasing the \
+         assertion failures this causes downstream",
+        GEN_STRUCTURE,
+        names
     );
 }
 

@@ -219,6 +219,20 @@ pub fn calculate_generation(
         }
     }
 
+    // Validate every source before any boundary logic, so a misconfigured
+    // boundary_rank can't return early past these checks. With level
+    // commissions off nothing else validates the volume, and the
+    // ThresholdRank arm's early return sits above its own loop — that
+    // combination used to report a silent Ok(vec![]) for volume naming a
+    // source with no snapshot.
+    //
+    // walk_level_commissions validates again when level commissions are on.
+    // The repeat is cheap and pure, and paying it keeps one validation site
+    // for both arms instead of three.
+    for source in volume {
+        walk::validate_source(tree, snapshots, source)?;
+    }
+
     match gen_config.boundary_mode {
         GenerationBoundaryMode::ThresholdRank => {
             // Resolve boundary rank ordinal. If the boundary rank doesn't
@@ -261,17 +275,6 @@ pub fn calculate_generation(
             let walk_max = walk_depth(gen_config);
 
             for source in volume {
-                walk::validate_cv(source)?;
-                tree.get_upline(source.source_id, 0)
-                    .map_err(|_| CalculationError::SourceNotInTree(source.source_id))?;
-                // Mirrors walk_level_commissions (walk.rs). Generation only
-                // reaches that walk when level_commissions_enabled, so without
-                // this the generation-only path pays nobody and reports ok
-                // when volume names a source with no snapshot.
-                if !snapshots.contains_key(&source.source_id) {
-                    return Err(CalculationError::SourceNotInSnapshot(source.source_id));
-                }
-
                 let gen_entries = count_generations_upward(
                     tree,
                     source.source_id,
@@ -324,18 +327,6 @@ pub fn calculate_generation(
                 .into_iter()
                 .collect();
             unique_ranks.sort_by_key(|(_, ord)| *ord);
-
-            // Validate sources once before the per-rank loops.
-            for source in volume {
-                walk::validate_cv(source)?;
-                tree.get_upline(source.source_id, 0)
-                    .map_err(|_| CalculationError::SourceNotInTree(source.source_id))?;
-                // Mirrors walk_level_commissions (walk.rs) — see the
-                // ThresholdRank arm above for why generation needs its own.
-                if !snapshots.contains_key(&source.source_id) {
-                    return Err(CalculationError::SourceNotInSnapshot(source.source_id));
-                }
-            }
 
             // The boundary check is rank-independent, so build it once and
             // reuse it across every per-rank walk.
@@ -1337,6 +1328,32 @@ mod calculate_tests {
 
         let err = calculate_generation(&tree, &plan, &structure, &snapshots, &volume)
             .expect_err("volume naming a source with no snapshot must fail");
+        assert_eq!(err, CalculationError::SourceNotInSnapshot(uuid(2)));
+    }
+
+    /// The `ThresholdRank` early return fires before the per-source loop when
+    /// `boundary_rank` is missing from the plan's rank ladder. With level
+    /// commissions off, nothing else validates the volume on that path, so a
+    /// source with no snapshot slipped through as `Ok(vec![])` — the same
+    /// silent zero `generation_only_rejects_volume_with_no_snapshot` closes on
+    /// the normal path, left open on the misconfigured-plan one.
+    #[test]
+    fn generation_only_rejects_no_snapshot_when_boundary_rank_missing() {
+        let tree = build_chain(3);
+        let plan = two_rank_plan();
+        // Not in two_rank_plan's ladder (associate, director), so the
+        // ThresholdRank arm takes its early return.
+        let structure = threshold_structure("nonexistent_rank", 3, BTreeMap::from([(1, 0.10)]));
+
+        let snapshots = HashMap::new();
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let err = calculate_generation(&tree, &plan, &structure, &snapshots, &volume)
+            .expect_err("a source with no snapshot must fail even when boundary_rank is missing");
         assert_eq!(err, CalculationError::SourceNotInSnapshot(uuid(2)));
     }
 

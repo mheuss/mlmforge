@@ -535,7 +535,7 @@ The `T: Default` widening is the caveat. On a collection, `default` reads as "em
 
 Do not reach for Go's `omitempty` on a required field to solve this. On its own it breaks the call: when the collection is empty the key vanishes, and a required field has no `default` to fall back on. Adding `default` to fix that is the actual hazard — a dropped field becomes indistinguishable from an empty one, which on a money path pays zero.
 
-Widening `snapshots: null` to empty does not open a silent-zero path of its own. Every calculator rejects volume naming a source with no snapshot — `walk::validate_source` for the level-based walks, `binary.rs` for pairing, which resolves the owner first and reports that UUID instead. An empty `snapshots` with non-empty `volume` is a loud `CALCULATION_ERROR`, not a zero payout.
+Widening `snapshots: null` to empty does not open a silent-zero path of its own. Every calculator that reaches its walk rejects volume naming a source with no snapshot — `walk::validate_source` for the level-based walks, and `binary.rs` for pairing, which resolves the owner first and reports that UUID instead. Streamline is the qualified case: volume for a source in no stream, or in a frozen one, is filtered out before the walk and returns ok with an empty result (HEU-611). That filter keys on stream membership, not snapshots, so the widening neither causes nor worsens it.
 
 Still null-intolerant, tracked by HEU-632: `history`'s inner per-period map (a null there has no defined meaning — absent-key and `Some(None)` are the two documented states), `cycle_events[].new_boards`, and `board_compress_inactive`'s `member_ids`.
 

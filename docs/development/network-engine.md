@@ -379,6 +379,31 @@ copy that had grown in `handlers/board_plan.rs`. Note it widens null to
 `T::default()` for any `T: Default` — on a collection that reads as "empty", but
 on a numeric field it would silently produce `0`.
 
+**One narrowing rode along with HEU-626.** The serde work only widens what the
+worker accepts. `calculate_generation` is the exception: it now *rejects* two
+requests it used to answer with `Ok([])`.
+
+- Volume naming a source with no entry in `snapshots` returns
+  `SourceNotInSnapshot` (`CALCULATION_ERROR` on the wire). Before, a
+  generation-only structure (`level_commissions_enabled: false`) paid nobody and
+  reported success, because nothing on that path validated the sources —
+  `walk_level_commissions` does it, and generation only reaches that walk when
+  level commissions are on.
+- The same now holds when `boundary_rank` is missing from the plan's rank
+  ladder. That arm returns early, above the per-source loop, so it used to skip
+  validation entirely. Source validation is hoisted above the boundary logic,
+  which closes it.
+
+Both were silent zeros on a money path, which is why they were worth closing
+inside this ticket rather than after it. Callers that relied on the old lenient
+answer will now see an error. Nothing calls `CalculateGeneration` outside tests
+today, so the practical blast radius is zero — but HEU-556, HEU-46, and HEU-47
+wire these methods up, and they should expect the strict behavior.
+
+`walk::validate_source` is the one place all of this lives now. Binary is not a
+caller: it resolves an owner before the snapshot lookup, so it validates its own
+way.
+
 **Still null-intolerant, tracked by HEU-632.** These are nested or query-op
 collections the ticket deliberately stopped short of:
 

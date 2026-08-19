@@ -227,9 +227,10 @@ pub fn calculate_generation(
     // source with no snapshot.
     //
     // When level commissions are on, walk_level_commissions (above) has
-    // already validated these and this loop repeats the work. The repeat is
-    // pure and costs no extra upline walk, and paying it keeps one validation
-    // site for both arms instead of three.
+    // already validated these and this loop repeats the work, including a
+    // second upline walk per source. The per-arm loops this replaced walked
+    // the upline and discarded it too, so the repeat is not new cost. Paying
+    // it keeps one validation site for both arms instead of three.
     for source in volume {
         walk::validate_source(tree, snapshots, source)?;
     }

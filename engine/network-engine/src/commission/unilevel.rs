@@ -884,6 +884,7 @@ mod tests {
 
         let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume);
 
+        assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
             CalculationError::InvalidCvAmount(id, _) if id == test_uuid(99)

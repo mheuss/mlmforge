@@ -380,7 +380,7 @@ copy that had grown in `handlers/board_plan.rs`. Note it widens null to
 on a numeric field it would silently produce `0`.
 
 **One narrowing rode along with HEU-626.** The serde work only widens what the
-worker accepts. `calculate_generation` is the exception: it now *rejects* two
+worker accepts. `calculate_generation` is the exception: it now *rejects*
 requests it used to answer with `Ok([])`.
 
 - Volume naming a source with no entry in `snapshots` returns
@@ -389,10 +389,12 @@ requests it used to answer with `Ok([])`.
   reported success, because nothing on that path validated the sources —
   `walk_level_commissions` does it, and generation only reaches that walk when
   level commissions are on.
-- The same now holds when `boundary_rank` is missing from the plan's rank
-  ladder. That arm returns early, above the per-source loop, so it used to skip
-  validation entirely. Source validation is hoisted above the boundary logic,
-  which closes it.
+- When `boundary_rank` is missing from the plan's rank ladder, that arm returns
+  early, above the per-source loop, so it used to skip validation entirely.
+  Source validation is hoisted above the boundary logic, which closes it. All
+  three checks now surface on this path, not just the snapshot one —
+  `InvalidCvAmount` and `SourceNotInTree` existed before but sat below the
+  early return.
 
 Both were silent zeros on a money path, which is why they were worth closing
 inside this ticket rather than after it. Callers that relied on the old lenient

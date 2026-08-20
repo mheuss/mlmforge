@@ -193,7 +193,10 @@ func TestRankDriver_EvaluatePeriod_NoGatePlanSendsNoHistory(t *testing.T) {
 	assert.Empty(t, sent.History)       // no history fetched
 
 	// Raw-byte guard: Empty() above collapses omitted/null/[], so also assert the
-	// wire omits both history fields rather than sending an unparseable null.
+	// wire omits both history fields rather than sending them at all. Since
+	// HEU-626 a null would parse fine, so this no longer guards against a decode
+	// failure — it guards the omitempty contract itself, which is what lets a
+	// no-gate plan skip the keys entirely.
 	// "history" is a prefix of "history_window", so this one check proves neither
 	// the axis nor the history map is serialized.
 	params := string(mock.lastParams)
@@ -222,8 +225,9 @@ func TestRankDriver_EvaluatePeriod_UnknownPeriodSendsEmptyNotNull(t *testing.T) 
 	_, err = driver.EvaluatePeriod(ctx, time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC))
 	require.NoError(t, err)
 
-	// nil must normalize to empty {} / [], never null, or the Rust worker fails
-	// to deserialize (distributors/volume_sources have no serde default).
+	// nil must normalize to empty {} / [], never null. Since HEU-626 the worker
+	// reads null as empty on distributors/volume_sources too, so this pins the
+	// driver's normalization rather than protecting against a rejection.
 	params := string(mock.lastParams)
 	assert.Contains(t, params, `"distributors":{}`)
 	assert.Contains(t, params, `"volume_sources":[]`)
@@ -237,9 +241,12 @@ func TestRankDriver_EvaluatePeriod_NilActiveProductsSendsEmptyNotNull(t *testing
 	mock := &mockTransport{response: json.RawMessage(`{"ranks":{}}`)}
 	client := NewEngineClientWithTransport(mock)
 
-	// Distributor with a nil ActiveProducts slice (the field is omitted). Without
-	// normalization it marshals to "active_products":null, which the Rust worker
-	// rejects (the field has no serde default) -- the same hazard as a nil
+	// Distributor with a nil ActiveProducts slice -- the struct literal below
+	// leaves the field out, and the DTO carries no omitempty, so nil still
+	// reaches the wire. Without normalization it marshals to
+	// "active_products":null. Since HEU-626 the Rust
+	// worker reads that as empty, so this pins the driver's normalization rather
+	// than protecting against a rejection -- the same belt-and-braces as the nil
 	// distributors map, one level down.
 	provider := NewMemoryPeriodInputProvider()
 	provider.Set("2026-06", PeriodInputs{

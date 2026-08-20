@@ -120,3 +120,6 @@ docs/*
 
 # Legacy reference codebase
 osMLM/
+
+# S.O.P. scratch — review diffs and prompts built during finish-branch
+.sop-tmp/

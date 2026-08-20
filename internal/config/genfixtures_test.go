@@ -22,6 +22,17 @@ import (
 // Each authoring plan carries the tightened fields for its structure type;
 // full-unilevel is the rich fixture for the bonus/eligibility/period/placement
 // fields. Shared by the regenerator and the golden guard below.
+//
+// One of these has a consumer outside the width contract. The Rust worker's
+// integration suite pulls `generation.json` in through `include_str!` as its
+// only generation test plan, and depends on two things the width contract does
+// not promise: that the plan passes `load_plan` validation, and that its
+// structure stays named `GenTree`. See `GENERATION_TEST_PLAN_JSON` in
+// `engine/network-engine-worker/tests/worker_integration.rs` (HEU-626).
+//
+// Changing `valid/generation-plan.yaml` in a way that breaks either one fails
+// the Rust tests, not this file. That is loud rather than silent, but the
+// signal arrives in the other language, so look here first.
 var configContractFixtures = map[string]string{
 	"unilevel":   "valid/full-unilevel.yaml",
 	"matrix":     "valid/matrix-plan.yaml",

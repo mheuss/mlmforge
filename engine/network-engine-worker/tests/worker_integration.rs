@@ -862,6 +862,314 @@ fn calculate_unilevel_empty_volume_returns_empty_earnings() {
     worker.wait().unwrap();
 }
 
+/// A nil Go collection marshals to `null`, not `{}` or `[]`, and both request
+/// collections must read that as empty rather than rejecting it. This is the
+/// shape of a first-period call.
+///
+/// The Go twin is `TestEngineClient_CalculateUnilevel_NilCollections`.
+#[test]
+fn calculate_unilevel_accepts_null_collections() {
+    let mut worker = common::spawn_worker();
+    load_test_plan(&mut worker);
+    build_three_node_chain(&mut worker);
+
+    let request = format!(
+        r#"{{"id":"u-null","op":"calculate_unilevel","params":{{"structure":"{}","snapshots":null,"volume":null}}}}"#,
+        TREE_NAME
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "null collections must read as empty, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains(r#""result":[]"#),
+        "no volume means no earnings, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Omitting `snapshots` stays an error. The other half of
+/// `calculate_unilevel_accepts_null_collections`: widening null must not
+/// quietly widen absent, or a caller who forgets the field is paid zero
+/// instead of being told.
+#[test]
+fn calculate_unilevel_still_requires_snapshots() {
+    let mut worker = common::spawn_worker();
+    load_test_plan(&mut worker);
+    build_three_node_chain(&mut worker);
+
+    let request = format!(
+        r#"{{"id":"u-nosnap","op":"calculate_unilevel","params":{{"structure":"{}","volume":[]}}}}"#,
+        TREE_NAME
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a missing snapshots must still fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("missing field") && resp.contains("snapshots"),
+        "the error should be a missing-field error naming snapshots, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Omitting `volume` stays an error. The mirror of
+/// `calculate_unilevel_still_requires_snapshots` — one guard per required
+/// field, so adding `default` to either one fails loudly.
+#[test]
+fn calculate_unilevel_still_requires_volume() {
+    let mut worker = common::spawn_worker();
+    load_test_plan(&mut worker);
+    build_three_node_chain(&mut worker);
+
+    let request = format!(
+        r#"{{"id":"u-novol","op":"calculate_unilevel","params":{{"structure":"{}","snapshots":{{}}}}}}"#,
+        TREE_NAME
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a missing volume must still fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("missing field") && resp.contains("volume"),
+        "the error should be a missing-field error naming volume, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+// --- Generation integration tests ---
+//
+// `calculate_generation` had no integration coverage before HEU-626. It
+// appeared only as a name in the dispatch-completeness gate.
+
+/// Pulled in with `include_str!` rather than pasted as a second copy of a large
+/// plan literal. HEU-604 tracks the near-identical plan copies already spread
+/// across Go, Rust, and fixtures — don't add another.
+///
+/// **This file is generated.** `internal/config/genfixtures_test.go` writes it
+/// from `internal/config/testdata/valid/generation-plan.yaml` through the real
+/// Go pipeline. Edit the YAML, not the JSON.
+///
+/// The fixture belongs to the integer-width contract (UC-NET-011), where
+/// deserializability is the requirement, not validity. It happens to load clean
+/// through `load_plan`. Its siblings do not all share that property —
+/// `stairstep.json` fails validation with `differential min_override must be a
+/// fraction in [0.0, 1.0], got 10` — so don't reach for the others without
+/// checking.
+const GENERATION_TEST_PLAN_JSON: &str =
+    include_str!("../../testdata/config_contract/fixtures/generation.json");
+
+/// Matches the generation structure inside `GENERATION_TEST_PLAN_JSON`, the way
+/// `SL_STRUCTURE` matches its streamline twin.
+const GEN_STRUCTURE: &str = "GenTree";
+
+/// Loads `GENERATION_TEST_PLAN_JSON` and asserts it took.
+///
+/// The structure-name check is the one thing `load_plan` returning ok does not
+/// give us. The fixture is generated from Go and promises deserializability,
+/// not that its structure stays named `GEN_STRUCTURE`. Rename it there and
+/// every caller below would still load fine, then fail its own assertion —
+/// reporting a null-handling regression that never happened. Assert the name
+/// here so the rename names itself.
+fn load_generation_test_plan(worker: &mut std::process::Child) {
+    let resp = send_load_plan(worker, GENERATION_TEST_PLAN_JSON);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "generation plan should load, got: {}",
+        resp
+    );
+    let plan: serde_json::Value = serde_json::from_str(GENERATION_TEST_PLAN_JSON)
+        .expect("generation fixture should be valid JSON");
+    let names: Vec<&str> = plan["structures"]
+        .as_array()
+        .expect("fixture should carry a structures array")
+        .iter()
+        // Scoped to the generation structure. Collecting names across every
+        // type would let a second structure named GenTree mask a rename of
+        // this one, which is the failure this assertion exists to catch.
+        .filter(|s| s["type"] == "generation")
+        .filter_map(|s| s["config"]["name"].as_str())
+        .collect();
+    assert!(
+        names.contains(&GEN_STRUCTURE),
+        "fixture has no generation structure named {} (found {:?}) — the \
+         Go-side fixture was renamed, so update GEN_STRUCTURE rather than \
+         chasing the assertion failures this causes downstream",
+        GEN_STRUCTURE,
+        names
+    );
+}
+
+/// A nil Go collection marshals to `null`, not `{}` or `[]`, and both request
+/// collections must read that as empty rather than rejecting it. This is the
+/// shape of a first-period call.
+///
+/// The Go twin is `TestEngineClient_CalculateGeneration_NilCollections`.
+#[test]
+fn calculate_generation_accepts_null_collections() {
+    let mut worker = common::spawn_worker();
+    load_generation_test_plan(&mut worker);
+    create_tree(&mut worker, GEN_STRUCTURE);
+    // Populate the tree so the empty result is caused by the empty collections
+    // rather than by there being nobody to pay.
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"g-null-root","op":"add_root","params":{{"structure":"{}","user_id":"{}","enrolled_at":100}}}}"#,
+            GEN_STRUCTURE, ROOT
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
+
+    let request = format!(
+        r#"{{"id":"g-null","op":"calculate_generation","params":{{"structure":"{}","snapshots":null,"volume":null}}}}"#,
+        GEN_STRUCTURE
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "null collections must read as empty, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains(r#""result":[]"#),
+        "no volume means no earnings, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Empty snapshots plus real volume is a caller bug, and it must be loud.
+///
+/// This is the half the null-widening does *not* cover. `snapshots:null` reads
+/// as empty, which is right when there is genuinely no volume — but if volume
+/// names a source, an empty snapshots map means the caller lost data, and
+/// paying nobody while reporting `ok` would hide it.
+///
+/// This fixture enables level commissions, so the rejection here comes from
+/// `walk_level_commissions` (`walk.rs`) — the guard four of the six inherit.
+/// Binary pairing reimplements it against the resolved owner. The
+/// generation-*only* path (level commissions off) had no such guard until this
+/// branch added one; that path is not reachable from this fixture, so it is
+/// pinned at the library level instead by
+/// `generation_only_rejects_volume_with_no_snapshot`.
+///
+/// What this test adds over those: it proves the worker surfaces the failure as
+/// `CALCULATION_ERROR` rather than swallowing it, which a library test cannot
+/// observe.
+#[test]
+fn calculate_generation_rejects_volume_with_no_snapshot() {
+    let mut worker = common::spawn_worker();
+    load_generation_test_plan(&mut worker);
+    create_tree(&mut worker, GEN_STRUCTURE);
+
+    // The source must be in the tree, or SourceNotInTree fires first and this
+    // would pass without exercising the snapshot guard at all.
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"g-root","op":"add_root","params":{{"structure":"{}","user_id":"{}","enrolled_at":100}}}}"#,
+            GEN_STRUCTURE, ROOT
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
+
+    let request = format!(
+        r#"{{"id":"g-nosnap-vol","op":"calculate_generation","params":{{"structure":"{}","snapshots":{{}},"volume":[{{"source_id":"{}","cv_amount":100.0}}]}}}}"#,
+        GEN_STRUCTURE, ROOT
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("CALCULATION_ERROR"),
+        "volume naming a source with no snapshot must fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains(ROOT),
+        "the error should name the source that is missing, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Omitting `snapshots` stays an error. The other half of
+/// `calculate_generation_accepts_null_collections`: widening null must not
+/// quietly widen absent, or a caller who forgets the field is paid zero
+/// instead of being told.
+#[test]
+fn calculate_generation_still_requires_snapshots() {
+    let mut worker = common::spawn_worker();
+    load_generation_test_plan(&mut worker);
+    create_tree(&mut worker, GEN_STRUCTURE);
+
+    let request = format!(
+        r#"{{"id":"g-nosnap","op":"calculate_generation","params":{{"structure":"{}","volume":[]}}}}"#,
+        GEN_STRUCTURE
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a missing snapshots must still fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("missing field") && resp.contains("snapshots"),
+        "the error should be a missing-field error naming snapshots, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Omitting `volume` stays an error. The mirror of
+/// `calculate_generation_still_requires_snapshots` — one guard per required
+/// field, so adding `default` to either one fails loudly.
+#[test]
+fn calculate_generation_still_requires_volume() {
+    let mut worker = common::spawn_worker();
+    load_generation_test_plan(&mut worker);
+    create_tree(&mut worker, GEN_STRUCTURE);
+
+    let request = format!(
+        r#"{{"id":"g-novol","op":"calculate_generation","params":{{"structure":"{}","snapshots":{{}}}}}}"#,
+        GEN_STRUCTURE
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a missing volume must still fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("missing field") && resp.contains("volume"),
+        "the error should be a missing-field error naming volume, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 // --- Binary tree integration tests ---
 //
 // These tests exercise binary tree operations through the NDJSON protocol
@@ -1516,6 +1824,215 @@ fn calculate_binary_pairing_wrong_tree_type_returns_error() {
         "expected INVALID_PARAMS for wrong tree type, got: {}",
         resp
     );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// A nil Go collection marshals to `null`, not `{}` or `[]`, and both required
+/// request collections must read that as empty rather than rejecting it. This
+/// is the shape of a first-period call.
+///
+/// Binary's success shape differs from its siblings: it returns
+/// `{"earnings":[...],"carry_forward":{...}}`, not a bare array. And
+/// `carry_forward` is **not** empty here — `accumulate_leg_volumes` creates an
+/// entry per live node and the post-payout phase emits all of them, zero-valued
+/// rows included. So `build_binary_calc_tree`'s three nodes produce three zero
+/// entries even with empty collections. That is existing, correct behavior; do
+/// not "fix" the calculator to drop them.
+///
+/// Asserted structurally rather than by string match, because `HashMap` key
+/// order is nondeterministic.
+///
+/// The Go twin is `TestEngineClient_CalculateBinaryPairing_NilCollections`.
+#[test]
+fn calculate_binary_pairing_accepts_null_collections() {
+    let mut worker = common::spawn_worker();
+    load_binary_test_plan(&mut worker);
+    build_binary_calc_tree(&mut worker);
+
+    let request = r#"{"id":"bp-null","op":"calculate_binary_pairing","params":{"structure":"BinaryCalc","snapshots":null,"volume":null}}"#;
+    let resp = common::send_receive(&mut worker, request);
+
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(
+        parsed["ok"].as_bool().unwrap_or(false),
+        "null collections must read as empty, got: {}",
+        resp
+    );
+
+    let earnings = parsed["result"]["earnings"].as_array().unwrap();
+    assert!(
+        earnings.is_empty(),
+        "no volume means no earnings, got: {}",
+        resp
+    );
+
+    let carry = parsed["result"]["carry_forward"].as_object().unwrap();
+    assert_eq!(carry.len(), 3, "one carry row per live node, got: {}", resp);
+    for node in [NODE_A, NODE_B, NODE_C] {
+        let legs = carry
+            .get(node)
+            .unwrap_or_else(|| panic!("carry_forward should name {}, got: {}", node, resp));
+        assert_eq!(legs["left"].as_f64().unwrap(), 0.0, "got: {}", resp);
+        assert_eq!(legs["right"].as_f64().unwrap(), 0.0, "got: {}", resp);
+    }
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Omitting `snapshots` stays an error. The other half of
+/// `calculate_binary_pairing_accepts_null_collections`: widening null must not
+/// quietly widen absent, or a caller who forgets the field is paid zero
+/// instead of being told.
+#[test]
+fn calculate_binary_pairing_still_requires_snapshots() {
+    let mut worker = common::spawn_worker();
+    load_binary_test_plan(&mut worker);
+    build_binary_calc_tree(&mut worker);
+
+    let request = r#"{"id":"bp-nosnap","op":"calculate_binary_pairing","params":{"structure":"BinaryCalc","volume":[]}}"#;
+    let resp = common::send_receive(&mut worker, request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a missing snapshots must still fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("missing field") && resp.contains("snapshots"),
+        "the error should be a missing-field error naming snapshots, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Omitting `volume` stays an error. The mirror of
+/// `calculate_binary_pairing_still_requires_snapshots` — one guard per required
+/// field, so adding `default` to either one fails loudly.
+#[test]
+fn calculate_binary_pairing_still_requires_volume() {
+    let mut worker = common::spawn_worker();
+    load_binary_test_plan(&mut worker);
+    build_binary_calc_tree(&mut worker);
+
+    let request = r#"{"id":"bp-novol","op":"calculate_binary_pairing","params":{"structure":"BinaryCalc","snapshots":{}}}"#;
+    let resp = common::send_receive(&mut worker, request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a missing volume must still fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("missing field") && resp.contains("volume"),
+        "the error should be a missing-field error naming volume, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// `carry_forward` is optional, so absent and null both mean "no carry".
+/// Absent is covered by `serde(default)` and null by `null_as_empty`, so
+/// neither depends on the Go DTO's `omitempty` (`wire_types.go:92`) — that
+/// binds one client, and the guarantee holds for every caller.
+///
+/// Unlike `snapshots` and `volume`, this field keeps its `serde(default)` —
+/// absent is legitimate here, because it is every first period.
+#[test]
+fn calculate_binary_pairing_accepts_null_carry_forward() {
+    let mut worker = common::spawn_worker();
+    load_binary_test_plan(&mut worker);
+    build_binary_calc_tree(&mut worker);
+
+    let request = r#"{"id":"bp-nullcarry","op":"calculate_binary_pairing","params":{"structure":"BinaryCalc","snapshots":{},"volume":[],"carry_forward":null}}"#;
+    let resp = common::send_receive(&mut worker, request);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "a null carry_forward must read as no carry, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// A *populated* `carry_forward` still reaches the calculator and still pays.
+///
+/// The null and absent cases both collapse to an empty map, so on their own they
+/// would pass just as well if the field stopped being read at all. This is the
+/// money path: prior carry, no volume this period, and the carry alone must
+/// produce the earning.
+///
+/// `accumulate_leg_volumes` adds the prior legs to each node's **own** leg
+/// volumes, after the subtree totals are computed from volume alone
+/// (`binary.rs:134-136`). Carry therefore does not propagate up the tree —
+/// carry on B would credit B's legs, not A's left leg — which is why the carry
+/// goes on the root here. 500/500 on the root with zero volume matches 500 and
+/// pays `500 * 0.10 = 50.0`, the same arithmetic
+/// `calculate_binary_pairing_balanced_legs` reaches through volume instead.
+///
+/// The plan is `full_flush`, so the matched volume is consumed: the returned
+/// `carry_forward` for the root comes back `0/0` rather than re-carrying.
+#[test]
+fn calculate_binary_pairing_applies_populated_carry_forward() {
+    let mut worker = common::spawn_worker();
+    load_binary_test_plan(&mut worker);
+    build_binary_calc_tree(&mut worker);
+
+    let snap = r#"{"rank":"associate","personal_volume":150.0,"status":"active","has_order_in_period":true}"#;
+    let params = format!(
+        r#"{{"structure":"BinaryCalc","snapshots":{{"{a}":{snap},"{b}":{snap},"{c}":{snap}}},"volume":[],"carry_forward":{{"{a}":{{"left":500.0,"right":500.0}}}}}}"#,
+        a = NODE_A,
+        b = NODE_B,
+        c = NODE_C,
+        snap = snap,
+    );
+    let request = format!(
+        r#"{{"id":"bp-carry","op":"calculate_binary_pairing","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(
+        parsed["ok"].as_bool().unwrap_or(false),
+        "populated carry_forward should calculate, got: {}",
+        resp
+    );
+
+    let earnings = parsed["result"]["earnings"].as_array().unwrap();
+    assert_eq!(
+        earnings.len(),
+        1,
+        "carry alone should pay the root, got: {}",
+        resp
+    );
+
+    let earning = &earnings[0];
+    assert_eq!(earning["earner_id"].as_str().unwrap(), NODE_A);
+    assert_eq!(earning["left_volume"].as_f64().unwrap(), 500.0);
+    assert_eq!(earning["right_volume"].as_f64().unwrap(), 500.0);
+    assert_eq!(earning["matched_volume"].as_f64().unwrap(), 500.0);
+    let dollar = earning["dollar_amount"].as_f64().unwrap();
+    assert!(
+        (dollar - 50.0).abs() < 1e-10,
+        "carry of 500/500 at 10% should pay 50.0, got {} in: {}",
+        dollar,
+        resp
+    );
+
+    // full_flush consumes the matched volume, so the carry is retired rather
+    // than paid again next period.
+    let carry = parsed["result"]["carry_forward"].as_object().unwrap();
+    let root_carry = carry
+        .get(NODE_A)
+        .unwrap_or_else(|| panic!("carry_forward should name the root, got: {}", resp));
+    assert_eq!(root_carry["left"].as_f64().unwrap(), 0.0, "got: {}", resp);
+    assert_eq!(root_carry["right"].as_f64().unwrap(), 0.0, "got: {}", resp);
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -2475,6 +2992,35 @@ fn board_calculate_accepts_null_collections() {
     worker.wait().unwrap();
 }
 
+/// Omitting `period_cycle_counts` is legitimate and must succeed. It is the
+/// optional half of the pair, so it carries `serde(default)` where
+/// `cycle_events` deliberately does not.
+///
+/// This is the shape Go actually sends most often: `wire_types.go` puts
+/// `omitempty` on the field, which drops the key whenever the map is nil, and
+/// a nil map is every first period. Without this test, stripping `default`
+/// from the annotation leaves the whole suite green while breaking the most
+/// common production call.
+#[test]
+fn board_calculate_accepts_absent_period_cycle_counts() {
+    let mut worker = common::spawn_worker();
+    load_board_test_plan(&mut worker);
+
+    let request = format!(
+        r#"{{"id":"bp-nocounts","op":"board_calculate_commissions","params":{{"structure":"{}","cycle_events":[]}}}}"#,
+        BP_STRUCTURE
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "an absent period_cycle_counts must default to empty, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 /// Omitting `cycle_events` altogether stays an error. This is the other half of
 /// `board_calculate_accepts_null_collections`: widening null must not quietly
 /// widen absent, or a caller that forgets the field gets a zero payout instead
@@ -3206,6 +3752,103 @@ fn calculate_streamline_ignores_request_scoped_config() {
     worker.wait().unwrap();
 }
 
+/// A nil Go collection marshals to `null`, not `{}` or `[]`, and both request
+/// collections must read that as empty rather than rejecting it. This is the
+/// shape of a first-period call.
+///
+/// The stream is populated, so an empty result is caused by the empty
+/// collections rather than by an empty structure.
+///
+/// The Go twin is `TestEngineClient_CalculateStreamline_NilCollections`.
+#[test]
+fn calculate_streamline_accepts_null_collections() {
+    let mut worker = common::spawn_worker();
+    load_streamline_test_plan(&mut worker);
+    create_streamline(&mut worker);
+    sl_add_member(&mut worker, "sl-m1", SL_USER1, ROOT, 1001);
+    sl_add_member(&mut worker, "sl-m2", SL_USER2, SL_USER1, 1002);
+
+    let request = format!(
+        r#"{{"id":"sl-null","op":"calculate_streamline","params":{{"structure":"{}","snapshots":null,"volume":null}}}}"#,
+        SL_STRUCTURE
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "null collections must read as empty, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains(r#""result":[]"#),
+        "no volume means no earnings, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Omitting `snapshots` stays an error. The other half of
+/// `calculate_streamline_accepts_null_collections`: widening null must not
+/// quietly widen absent, or a caller who forgets the field is paid zero instead
+/// of being told.
+#[test]
+fn calculate_streamline_still_requires_snapshots() {
+    let mut worker = common::spawn_worker();
+    load_streamline_test_plan(&mut worker);
+    create_streamline(&mut worker);
+    sl_add_member(&mut worker, "sl-m1", SL_USER1, ROOT, 1001);
+
+    let request = format!(
+        r#"{{"id":"sl-nosnap","op":"calculate_streamline","params":{{"structure":"{}","volume":[]}}}}"#,
+        SL_STRUCTURE
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a missing snapshots must still fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("missing field") && resp.contains("snapshots"),
+        "the error should be a missing-field error naming snapshots, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Omitting `volume` stays an error. The mirror of
+/// `calculate_streamline_still_requires_snapshots` — one guard per required
+/// field, so adding `default` to either one fails loudly.
+#[test]
+fn calculate_streamline_still_requires_volume() {
+    let mut worker = common::spawn_worker();
+    load_streamline_test_plan(&mut worker);
+    create_streamline(&mut worker);
+    sl_add_member(&mut worker, "sl-m1", SL_USER1, ROOT, 1001);
+
+    let request = format!(
+        r#"{{"id":"sl-novol","op":"calculate_streamline","params":{{"structure":"{}","snapshots":{{}}}}}}"#,
+        SL_STRUCTURE
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a missing volume must still fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("missing field") && resp.contains("volume"),
+        "the error should be a missing-field error naming volume, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 /// The engine-side miss, twin of `calculate_streamline_unknown_structure_returns_not_found`.
 /// The plan has the structure; no engine was created. Both misses return
 /// STRUCTURE_NOT_FOUND and differ only by message, so pinning both messages is
@@ -3588,6 +4231,167 @@ fn evaluate_ranks_honors_window_history() {
     child.wait().unwrap();
 }
 
+// --- evaluate_ranks null tolerance (HEU-626) ---
+//
+// The library tests in `rank/types.rs` prove `EvaluationInputs` deserializes.
+// These prove the op dispatches and returns the INVALID_PARAMS protocol shape,
+// which a library test cannot observe.
+
+/// Loads `RANK_TEST_PLAN_JSON`, creates the "Test" tree, and adds ROOT as its
+/// root — the setup every `evaluate_ranks` test needs before it can reach the
+/// handler's parse step.
+fn load_rank_plan_with_root(child: &mut std::process::Child) {
+    let resp = send_load_plan(child, RANK_TEST_PLAN_JSON);
+    assert!(resp.contains(r#""ok":true"#), "load_plan failed: {}", resp);
+
+    create_tree(child, "Test");
+    let resp = common::send_receive(
+        child,
+        &format!(
+            r#"{{"id":"rank-setup-root","op":"add_root","params":{{"structure":"Test","user_id":"{}","enrolled_at":100}}}}"#,
+            ROOT
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
+}
+
+/// The two top-level collections read an explicit null as empty.
+///
+/// The Go twin is `TestEngineClient_EvaluateRanks_NilCollections`.
+#[test]
+fn evaluate_ranks_accepts_null_collections() {
+    let mut child = common::spawn_worker();
+    load_rank_plan_with_root(&mut child);
+
+    let req = r#"{"id":"r-null","op":"evaluate_ranks","params":{"distributors":null,"volume_sources":null}}"#;
+    let resp = common::send_receive(&mut child, req);
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(
+        parsed["ok"].as_bool(),
+        Some(true),
+        "null collections must read as empty, got: {}",
+        resp
+    );
+    // Pins the "as empty" half: an empty distributors map evaluates nobody, so
+    // ranks comes back empty rather than merely parsing.
+    assert_eq!(
+        parsed["result"]["ranks"],
+        serde_json::json!({}),
+        "no distributors means no ranks, got: {}",
+        resp
+    );
+
+    drop(child.stdin.take());
+    child.wait().unwrap();
+}
+
+/// The nested field plus both optional ones, in a single request.
+///
+/// `active_products` can only be reached through a *populated* `distributors`
+/// map — a null outer map leaves no distributor to carry it.
+///
+/// The Go twin is `TestEngineClient_EvaluateRanks_NilActiveProducts`.
+#[test]
+fn evaluate_ranks_accepts_null_nested_and_history() {
+    let mut child = common::spawn_worker();
+    load_rank_plan_with_root(&mut child);
+
+    let req = format!(
+        r#"{{"id":"r-nested","op":"evaluate_ranks","params":{{"distributors":{{"{}":{{"personal_volume":0.0,"retail_volume":0.0,"status":"active","has_order_in_period":false,"active_products":null}}}},"volume_sources":[],"history_window":null,"history":null}}}}"#,
+        ROOT
+    );
+    let resp = common::send_receive(&mut child, &req);
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(
+        parsed["ok"].as_bool(),
+        Some(true),
+        "a null active_products, history_window and history must all read as empty, got: {}",
+        resp
+    );
+    assert_eq!(
+        parsed["result"]["ranks"][ROOT]["kind"], "unranked",
+        "a zero-PV distributor should still evaluate to unranked, got: {}",
+        resp
+    );
+
+    drop(child.stdin.take());
+    child.wait().unwrap();
+}
+
+/// Omitting `distributors` stays an error at the protocol seam.
+#[test]
+fn evaluate_ranks_still_requires_distributors() {
+    let mut child = common::spawn_worker();
+    load_rank_plan_with_root(&mut child);
+
+    let req = r#"{"id":"r-nodist","op":"evaluate_ranks","params":{"volume_sources":[]}}"#;
+    let resp = common::send_receive(&mut child, req);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a missing distributors must still fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("missing field") && resp.contains("distributors"),
+        "the error should be a missing-field error naming distributors, got: {}",
+        resp
+    );
+
+    drop(child.stdin.take());
+    child.wait().unwrap();
+}
+
+/// Omitting `volume_sources` stays an error at the protocol seam.
+#[test]
+fn evaluate_ranks_still_requires_volume_sources() {
+    let mut child = common::spawn_worker();
+    load_rank_plan_with_root(&mut child);
+
+    let req = r#"{"id":"r-novol","op":"evaluate_ranks","params":{"distributors":{}}}"#;
+    let resp = common::send_receive(&mut child, req);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a missing volume_sources must still fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("missing field") && resp.contains("volume_sources"),
+        "the error should be a missing-field error naming volume_sources, got: {}",
+        resp
+    );
+
+    drop(child.stdin.take());
+    child.wait().unwrap();
+}
+
+/// Omitting the nested `active_products` stays an error too. BR2 asks for an
+/// absence guard per required field, and this one is required — it just lives a
+/// level down, so it needs a populated `distributors` map to be reachable.
+#[test]
+fn evaluate_ranks_still_requires_active_products() {
+    let mut child = common::spawn_worker();
+    load_rank_plan_with_root(&mut child);
+
+    let req = format!(
+        r#"{{"id":"r-noprod","op":"evaluate_ranks","params":{{"distributors":{{"{}":{{"personal_volume":0.0,"retail_volume":0.0,"status":"active","has_order_in_period":false}}}},"volume_sources":[]}}}}"#,
+        ROOT
+    );
+    let resp = common::send_receive(&mut child, &req);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a missing active_products must still fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("missing field") && resp.contains("active_products"),
+        "the error should be a missing-field error naming active_products, got: {}",
+        resp
+    );
+
+    drop(child.stdin.take());
+    child.wait().unwrap();
+}
+
 #[test]
 fn calculate_unilevel_wrong_tree_type_reports_expected_vs_actual() {
     let mut worker = common::spawn_worker();
@@ -3914,6 +4718,106 @@ fn calculate_matrix_unknown_structure_returns_not_found() {
     worker.wait().unwrap();
 }
 
+/// A nil Go collection marshals to `null`, not `{}` or `[]`, and both request
+/// collections must read that as empty rather than rejecting it. This is the
+/// shape of a first-period call.
+///
+/// The Go twin is `TestEngineClient_CalculateMatrix_NilCollections`.
+#[test]
+fn calculate_matrix_accepts_null_collections() {
+    let mut worker = common::spawn_worker();
+    load_matrix_test_plan(&mut worker);
+    create_matrix_tree(&mut worker, TREE_NAME);
+    // Populate the tree so the empty result is caused by the empty collections
+    // rather than by there being nobody to pay.
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"m-null-root","op":"add_root","params":{{"structure":"{}","user_id":"{}","enrolled_at":100}}}}"#,
+            TREE_NAME, ROOT
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
+
+    let request = format!(
+        r#"{{"id":"m-null","op":"calculate_matrix","params":{{"structure":"{}","snapshots":null,"volume":null}}}}"#,
+        TREE_NAME
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "null collections must read as empty, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains(r#""result":[]"#),
+        "no volume means no earnings, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Omitting `snapshots` stays an error. The other half of
+/// `calculate_matrix_accepts_null_collections`: widening null must not quietly
+/// widen absent, or a caller who forgets the field is paid zero instead of
+/// being told.
+#[test]
+fn calculate_matrix_still_requires_snapshots() {
+    let mut worker = common::spawn_worker();
+    load_matrix_test_plan(&mut worker);
+    create_matrix_tree(&mut worker, TREE_NAME);
+
+    let request = format!(
+        r#"{{"id":"m-nosnap","op":"calculate_matrix","params":{{"structure":"{}","volume":[]}}}}"#,
+        TREE_NAME
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a missing snapshots must still fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("missing field") && resp.contains("snapshots"),
+        "the error should be a missing-field error naming snapshots, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Omitting `volume` stays an error. The mirror of
+/// `calculate_matrix_still_requires_snapshots` — one guard per required field,
+/// so adding `default` to either one fails loudly.
+#[test]
+fn calculate_matrix_still_requires_volume() {
+    let mut worker = common::spawn_worker();
+    load_matrix_test_plan(&mut worker);
+    create_matrix_tree(&mut worker, TREE_NAME);
+
+    let request = format!(
+        r#"{{"id":"m-novol","op":"calculate_matrix","params":{{"structure":"{}","snapshots":{{}}}}}}"#,
+        TREE_NAME
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a missing volume must still fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("missing field") && resp.contains("volume"),
+        "the error should be a missing-field error naming volume, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 /// Stairstep test plan. structures[0] is a stairstep structure with the same
 /// level_commission block as the unilevel fixture. Walk 1 (level commissions)
 /// pays regardless of breakaway, so breakaway: null still pays.
@@ -4129,6 +5033,96 @@ fn calculate_stairstep_unknown_structure_returns_not_found() {
     assert!(
         resp.contains("no stairstep structure named 'Ghost'"),
         "expected the find_stairstep_structure miss message, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// A nil Go collection marshals to `null`, not `{}` or `[]`, and both request
+/// collections must read that as empty rather than rejecting it. This is the
+/// shape of a first-period call.
+///
+/// The Go twin is `TestEngineClient_CalculateStairstep_NilCollections`.
+#[test]
+fn calculate_stairstep_accepts_null_collections() {
+    let mut worker = common::spawn_worker();
+    load_stairstep_test_plan(&mut worker);
+    build_three_node_chain(&mut worker);
+
+    let request = format!(
+        r#"{{"id":"s-null","op":"calculate_stairstep","params":{{"structure":"{}","snapshots":null,"volume":null}}}}"#,
+        TREE_NAME
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "null collections must read as empty, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains(r#""result":[]"#),
+        "no volume means no earnings, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Omitting `snapshots` stays an error. The other half of
+/// `calculate_stairstep_accepts_null_collections`: widening null must not
+/// quietly widen absent, or a caller who forgets the field is paid zero instead
+/// of being told.
+#[test]
+fn calculate_stairstep_still_requires_snapshots() {
+    let mut worker = common::spawn_worker();
+    load_stairstep_test_plan(&mut worker);
+    build_three_node_chain(&mut worker);
+
+    let request = format!(
+        r#"{{"id":"s-nosnap","op":"calculate_stairstep","params":{{"structure":"{}","volume":[]}}}}"#,
+        TREE_NAME
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a missing snapshots must still fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("missing field") && resp.contains("snapshots"),
+        "the error should be a missing-field error naming snapshots, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Omitting `volume` stays an error. The mirror of
+/// `calculate_stairstep_still_requires_snapshots` — one guard per required
+/// field, so adding `default` to either one fails loudly.
+#[test]
+fn calculate_stairstep_still_requires_volume() {
+    let mut worker = common::spawn_worker();
+    load_stairstep_test_plan(&mut worker);
+    build_three_node_chain(&mut worker);
+
+    let request = format!(
+        r#"{{"id":"s-novol","op":"calculate_stairstep","params":{{"structure":"{}","snapshots":{{}}}}}}"#,
+        TREE_NAME
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "a missing volume must still fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("missing field") && resp.contains("volume"),
+        "the error should be a missing-field error naming volume, got: {}",
         resp
     );
 

@@ -860,6 +860,37 @@ mod tests {
         ));
     }
 
+    /// Pins CV-before-tree, the half of `walk::validate_source`'s documented
+    /// check order that no other test constrains. Every other
+    /// `InvalidCvAmount` test puts its source in both the tree and the
+    /// snapshots, so moving `validate_cv` below `get_upline` would leave the
+    /// suite green. This source is in neither: only the order decides which
+    /// error surfaces.
+    #[test]
+    fn invalid_cv_wins_over_source_not_in_tree() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+
+        let structure = test_structure(test_rate_table());
+        let plan = test_plan(default_eligibility());
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+
+        // Not in the tree, and not in snapshots either.
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(99),
+            cv_amount: -50.0,
+        }];
+
+        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume);
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            CalculationError::InvalidCvAmount(id, _) if id == test_uuid(99)
+        ));
+    }
+
     #[test]
     fn error_negative_cv_amount() {
         let mut tree = UnilevelTree::new();

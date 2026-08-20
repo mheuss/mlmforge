@@ -62,18 +62,22 @@ func (d *RankDriver) EvaluatePeriod(ctx context.Context, asOf time.Time) (*Evalu
 	if err != nil {
 		return nil, fmt.Errorf("rank driver: inputs for %s: %w", periodID, err)
 	}
-	// Normalize nil to empty: EvaluateRanksRequest.Distributors and .VolumeSources
-	// have no omitempty, so a nil map/slice marshals to JSON null, and the matching
-	// Rust EvaluationInputs fields lack serde(default), so that null fails to
-	// deserialize at the worker. Empty {} / [] are required. HistoryWindow and
-	// History do have omitempty, so they are omitted when empty, not sent as null.
+	// Normalize nil to empty. EvaluateRanksRequest.Distributors and .VolumeSources
+	// have no omitempty, so a nil map/slice marshals to JSON null. Since HEU-626
+	// the matching Rust EvaluationInputs fields read null as empty, so this is
+	// belt and braces rather than a requirement — it keeps the wire bytes tidy
+	// and predates the engine-side fix. Do not treat it as load-bearing: it only
+	// ever bound Go callers, and a non-Go client sending null is fine now.
+	// HistoryWindow and History do have omitempty, so they are omitted when
+	// empty, not sent as null.
 	if inputs.VolumeSources == nil {
 		inputs.VolumeSources = []VolumeSourceDTO{}
 	}
 	// Copy distributors into a fresh map so the provider's stored inputs are never
-	// mutated, normalizing each entry's nil ActiveProducts to [] (same null hazard
-	// one level down: the Rust active_products field has no serde default either).
-	// A nil source map yields an empty {} here too.
+	// mutated, normalizing each entry's nil ActiveProducts to []. The copy is the
+	// load-bearing part; the normalization is the same belt-and-braces as above,
+	// one level down, since the Rust active_products field now reads null as
+	// empty too. A nil source map yields an empty {} here.
 	distributors := make(map[string]DistributorPrimitivesDTO, len(inputs.Distributors))
 	for k, dp := range inputs.Distributors {
 		if dp.ActiveProducts == nil {

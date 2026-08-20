@@ -1,9 +1,9 @@
 //! Shared level-commission walk logic.
 //!
-//! Extracts the common prep phase and walk loop used by unilevel,
-//! matrix, and stairstep (Walk 1) commission calculators. Each
-//! calculator remains a standalone public function that delegates
-//! to these shared internals.
+//! Extracts the common prep phase and walk loop used by the unilevel,
+//! matrix, stairstep (Walk 1), generation, and streamline commission
+//! calculators. Each calculator remains a standalone public function
+//! that delegates to these shared internals.
 //!
 //! Binary uses pairing mechanics, not level-based walks. It is
 //! not a consumer of this module.
@@ -19,6 +19,7 @@ use crate::config::PassUpConfig;
 use crate::config::commission::{CompressionConfig, CompressionMode};
 use crate::config::eligibility::{ActiveLegTier, CommissionEligibility};
 use crate::tree::navigator::TreeNavigator;
+use crate::tree::node::Node;
 
 use super::is_eligible;
 use super::types::{CalculationError, CommissionEarning, DistributorSnapshot, VolumeSource};
@@ -156,7 +157,11 @@ pub(crate) fn determine_max_depth(active_leg_count: u16, tiers: &[ActiveLegTier]
 }
 
 /// Validate that a volume source's CV amount is finite and non-negative.
-pub(crate) fn validate_cv(source: &VolumeSource) -> Result<(), CalculationError> {
+///
+/// Private: `validate_source` below is the only production caller, and routing
+/// everyone through it is what keeps the check order in one place. The
+/// `validate_cv_*` unit tests in this module also call it directly.
+fn validate_cv(source: &VolumeSource) -> Result<(), CalculationError> {
     if !source.cv_amount.is_finite() || source.cv_amount < 0.0 {
         return Err(CalculationError::InvalidCvAmount(
             source.source_id,
@@ -164,6 +169,33 @@ pub(crate) fn validate_cv(source: &VolumeSource) -> Result<(), CalculationError>
         ));
     }
     Ok(())
+}
+
+/// Validate one volume source against the tree and the period's snapshots,
+/// returning its upline so a caller that needs to walk doesn't re-fetch it.
+///
+/// The three checks run in a fixed order — CV, then tree membership, then
+/// snapshot membership — because callers assert on the specific error. Keeping
+/// them in one place is what keeps that precedence identical everywhere.
+///
+/// Binary is not a caller: it resolves an owner before the snapshot lookup and
+/// checks `contains` rather than the upline, so it validates its own way.
+pub(crate) fn validate_source<'t, T: TreeNavigator>(
+    tree: &'t T,
+    snapshots: &HashMap<Uuid, DistributorSnapshot>,
+    source: &VolumeSource,
+) -> Result<Vec<&'t Node>, CalculationError> {
+    validate_cv(source)?;
+
+    let upline = tree
+        .get_upline(source.source_id, 0)
+        .map_err(|_| CalculationError::SourceNotInTree(source.source_id))?;
+
+    if !snapshots.contains_key(&source.source_id) {
+        return Err(CalculationError::SourceNotInSnapshot(source.source_id));
+    }
+
+    Ok(upline)
 }
 
 /// Sort earnings by (earner_id, source_id, level) for deterministic output.
@@ -357,15 +389,7 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
     let mut all_earnings = Vec::new();
 
     for source in volume {
-        validate_cv(source)?;
-
-        let upline = tree
-            .get_upline(source.source_id, 0)
-            .map_err(|_| CalculationError::SourceNotInTree(source.source_id))?;
-
-        if !snapshots.contains_key(&source.source_id) {
-            return Err(CalculationError::SourceNotInSnapshot(source.source_id));
-        }
+        let upline = validate_source(tree, snapshots, source)?;
 
         let mut level: u8 = 1;
 

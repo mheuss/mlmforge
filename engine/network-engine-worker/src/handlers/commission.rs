@@ -9,6 +9,7 @@ use network_engine::config::{
     BinaryStructureConfig, CompensationPlan, GenerationStructureConfig, MatrixStructureConfig,
     StairstepStructureConfig, StructureConfig, UnilevelStructureConfig,
 };
+use network_engine::serde_helpers::null_as_empty;
 use uuid::Uuid;
 
 use super::common::{
@@ -76,7 +77,9 @@ fn find_stairstep_structure<'a>(
 struct CalculateUnilevelParams {
     #[serde(rename = "structure")]
     structure_name: String,
+    #[serde(deserialize_with = "null_as_empty")]
     snapshots: HashMap<Uuid, DistributorSnapshot>,
+    #[serde(deserialize_with = "null_as_empty")]
     volume: Vec<VolumeSource>,
 }
 
@@ -85,7 +88,9 @@ struct CalculateUnilevelParams {
 struct CalculateGenerationParams {
     #[serde(rename = "structure")]
     structure_name: String,
+    #[serde(deserialize_with = "null_as_empty")]
     snapshots: HashMap<Uuid, DistributorSnapshot>,
+    #[serde(deserialize_with = "null_as_empty")]
     volume: Vec<VolumeSource>,
 }
 
@@ -94,9 +99,11 @@ struct CalculateGenerationParams {
 struct CalculateBinaryPairingParams {
     #[serde(rename = "structure")]
     structure_name: String,
+    #[serde(deserialize_with = "null_as_empty")]
     snapshots: HashMap<Uuid, DistributorSnapshot>,
+    #[serde(deserialize_with = "null_as_empty")]
     volume: Vec<VolumeSource>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty")]
     carry_forward: HashMap<Uuid, LegVolumes>,
     #[serde(default)]
     ownership: Option<HashMap<Uuid, Uuid>>,
@@ -107,7 +114,9 @@ struct CalculateBinaryPairingParams {
 struct CalculateMatrixParams {
     #[serde(rename = "structure")]
     structure_name: String,
+    #[serde(deserialize_with = "null_as_empty")]
     snapshots: HashMap<Uuid, DistributorSnapshot>,
+    #[serde(deserialize_with = "null_as_empty")]
     volume: Vec<VolumeSource>,
 }
 
@@ -116,7 +125,9 @@ struct CalculateMatrixParams {
 struct CalculateStairstepParams {
     #[serde(rename = "structure")]
     structure_name: String,
+    #[serde(deserialize_with = "null_as_empty")]
     snapshots: HashMap<Uuid, DistributorSnapshot>,
+    #[serde(deserialize_with = "null_as_empty")]
     volume: Vec<VolumeSource>,
 }
 

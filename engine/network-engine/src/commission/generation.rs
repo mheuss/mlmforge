@@ -219,6 +219,22 @@ pub fn calculate_generation(
         }
     }
 
+    // Validate every source before any boundary logic, so a misconfigured
+    // boundary_rank can't return early past these checks. With level
+    // commissions off nothing else validates the volume, and the
+    // ThresholdRank arm's early return sits above its own loop — that
+    // combination used to report a silent Ok(vec![]) for volume naming a
+    // source with no snapshot.
+    //
+    // When level commissions are on, walk_level_commissions (above) has
+    // already validated these and this loop repeats the work, including a
+    // second upline walk per source. The per-arm loops this replaced walked
+    // the upline and discarded it too, so the repeat is not new cost. Paying
+    // it keeps one validation site for both arms instead of three.
+    for source in volume {
+        walk::validate_source(tree, snapshots, source)?;
+    }
+
     match gen_config.boundary_mode {
         GenerationBoundaryMode::ThresholdRank => {
             // Resolve boundary rank ordinal. If the boundary rank doesn't
@@ -261,10 +277,6 @@ pub fn calculate_generation(
             let walk_max = walk_depth(gen_config);
 
             for source in volume {
-                walk::validate_cv(source)?;
-                tree.get_upline(source.source_id, 0)
-                    .map_err(|_| CalculationError::SourceNotInTree(source.source_id))?;
-
                 let gen_entries = count_generations_upward(
                     tree,
                     source.source_id,
@@ -317,13 +329,6 @@ pub fn calculate_generation(
                 .into_iter()
                 .collect();
             unique_ranks.sort_by_key(|(_, ord)| *ord);
-
-            // Validate sources once before the per-rank loops.
-            for source in volume {
-                walk::validate_cv(source)?;
-                tree.get_upline(source.source_id, 0)
-                    .map_err(|_| CalculationError::SourceNotInTree(source.source_id))?;
-            }
 
             // The boundary check is rank-independent, so build it once and
             // reuse it across every per-rank walk.
@@ -1272,6 +1277,86 @@ mod calculate_tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].earner_id, uuid(0));
         assert_eq!(result[0].level, 1);
+    }
+
+    /// Volume naming a source with no snapshot must fail loudly, on the
+    /// generation-only path too.
+    ///
+    /// Four sibling calculators inherit this guard from
+    /// `walk_level_commissions`; binary pairing has its own (`binary.rs:61`),
+    /// keyed on the resolved owner rather than the source. Generation reaches
+    /// that walk only when
+    /// `level_commissions_enabled`, so with level commissions off it needs its
+    /// own — without it the walk derives an empty `boundary_set` from the empty
+    /// snapshots, pays nobody, and returns `Ok(vec![])`. On a money path that
+    /// is a silent zero for a caller who lost their snapshot data.
+    ///
+    /// `threshold_structure` leaves `level_commissions_enabled` false, which is
+    /// what puts this test on the uncovered path.
+    #[test]
+    fn generation_only_rejects_volume_with_no_snapshot() {
+        let tree = build_chain(3);
+        let plan = two_rank_plan();
+        let structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
+
+        // Deliberately empty: the source below is in the tree but not here.
+        let snapshots = HashMap::new();
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let err = calculate_generation(&tree, &plan, &structure, &snapshots, &volume)
+            .expect_err("volume naming a source with no snapshot must fail");
+        assert_eq!(err, CalculationError::SourceNotInSnapshot(uuid(2)));
+    }
+
+    /// The same guard on the `SameRank` boundary arm, which has its own
+    /// source-validation loop.
+    #[test]
+    fn generation_same_rank_rejects_volume_with_no_snapshot() {
+        let tree = build_chain(3);
+        let plan = two_rank_plan();
+        let mut structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
+        structure.generation_commission.boundary_mode = GenerationBoundaryMode::SameRank;
+
+        let snapshots = HashMap::new();
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let err = calculate_generation(&tree, &plan, &structure, &snapshots, &volume)
+            .expect_err("volume naming a source with no snapshot must fail");
+        assert_eq!(err, CalculationError::SourceNotInSnapshot(uuid(2)));
+    }
+
+    /// The `ThresholdRank` early return fires before the per-source loop when
+    /// `boundary_rank` is missing from the plan's rank ladder. With level
+    /// commissions off, nothing else validates the volume on that path, so a
+    /// source with no snapshot slipped through as `Ok(vec![])` — the same
+    /// silent zero `generation_only_rejects_volume_with_no_snapshot` closes on
+    /// the normal path, left open on the misconfigured-plan one.
+    #[test]
+    fn generation_only_rejects_no_snapshot_when_boundary_rank_missing() {
+        let tree = build_chain(3);
+        let plan = two_rank_plan();
+        // Not in two_rank_plan's ladder (associate, director), so the
+        // ThresholdRank arm takes its early return.
+        let structure = threshold_structure("nonexistent_rank", 3, BTreeMap::from([(1, 0.10)]));
+
+        let snapshots = HashMap::new();
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let err = calculate_generation(&tree, &plan, &structure, &snapshots, &volume)
+            .expect_err("a source with no snapshot must fail even when boundary_rank is missing");
+        assert_eq!(err, CalculationError::SourceNotInSnapshot(uuid(2)));
     }
 
     /// Combined level + generation with an invalid generation boundary_rank.

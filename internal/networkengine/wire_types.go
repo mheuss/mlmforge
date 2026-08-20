@@ -240,9 +240,11 @@ type BoardCommissionResultDTO struct {
 type CalculateBoardCommissionsRequest struct {
 	StructureName string          `json:"structure"`
 	CycleEvents   []CycleEventDTO `json:"cycle_events"`
-	// omitempty because a nil map marshals to null, and the Rust side's
-	// #[serde(default)] covers an absent key but not an explicit null. A first
-	// period legitimately has no prior counts. Mirrors CarryForward above.
+	// omitempty because a first period legitimately has no prior counts, and the
+	// Rust side pairs serde default with null_as_empty here, so absent and null
+	// both mean "no counts". The engine has read null fine since HEU-603 — this
+	// tag is about keeping the wire tidy, not about avoiding a rejection.
+	// Mirrors CarryForward above.
 	PeriodCycleCounts map[string]int `json:"period_cycle_counts,omitempty"`
 }
 

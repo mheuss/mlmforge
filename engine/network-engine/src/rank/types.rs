@@ -7,6 +7,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::commission::types::VolumeSource;
+use crate::serde_helpers::null_as_empty;
 
 /// Inputs to a rank evaluation pass.
 ///
@@ -17,22 +18,24 @@ use crate::commission::types::VolumeSource;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvaluationInputs {
     /// Per-distributor facts, keyed by user_id.
+    #[serde(deserialize_with = "null_as_empty")]
     pub distributors: HashMap<Uuid, DistributorPrimitives>,
 
     /// Volume events for the period. Used to compute GV and leg volumes.
+    #[serde(deserialize_with = "null_as_empty")]
     pub volume_sources: Vec<VolumeSource>,
 
     /// Ordered period axis for time-gated evaluation, most-recent-first
     /// (period_id DESC). Caller-supplied; length >= the max window depth
     /// across the plan. Empty when no rank uses a time gate. Opaque ordered
     /// labels — the caller owns period semantics and ordering.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty")]
     pub history_window: Vec<String>,
 
     /// Per-distributor achieved-rank ordinals keyed by period_id, for axis
     /// periods that have a persisted row. Absent key = not evaluated;
     /// Some(None) = Unranked. Both gate as "below threshold" (BR6).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty")]
     pub history: HashMap<Uuid, HashMap<String, Option<u16>>>,
 }
 
@@ -54,6 +57,7 @@ pub struct DistributorPrimitives {
 
     /// Active product enrollments held by the distributor.
     /// Used by `RankQualification.required_products`.
+    #[serde(deserialize_with = "null_as_empty")]
     pub active_products: Vec<String>,
 }
 
@@ -183,8 +187,7 @@ mod tests {
 
     #[test]
     fn evaluation_inputs_defaults_history_when_absent() {
-        let json = r#"{"distributors":{},"volume_sources":[]}"#;
-        let inputs: EvaluationInputs = serde_json::from_str(json).unwrap();
+        let inputs: EvaluationInputs = serde_json::from_str(MINIMAL).unwrap();
         assert!(inputs.history_window.is_empty());
         assert!(inputs.history.is_empty());
     }
@@ -222,5 +225,135 @@ mod tests {
         assert_eq!(inputs.history_window, vec!["2026-05", "2026-04"]);
         assert_eq!(inputs.history[&uid]["2026-05"], Some(2));
         assert_eq!(inputs.history[&uid]["2026-04"], None);
+    }
+
+    // --- Null tolerance (HEU-626) ---
+    //
+    // A nil Go map or slice marshals to JSON `null`, not `{}` or `[]`.
+    // `#[serde(default)]` covers an *absent* key but not a key present with a
+    // null value, so the natural first-period call was rejected outright.
+    //
+    // Each required field gets both halves: null reads as empty, absent stays a
+    // loud error. One absence guard per required field, so adding `default` to
+    // any one of them fails here rather than silently paying zero.
+
+    /// The smallest payload that deserializes: both required top-level fields
+    /// present and empty, both optional ones absent.
+    const MINIMAL: &str = r#"{"distributors":{},"volume_sources":[]}"#;
+
+    /// One distributor, valid in every field but `active_products`. `None`
+    /// omits that key entirely; `Some(v)` emits it with the given raw JSON
+    /// value, so a caller can pass `null` as well as a real array.
+    fn distributor(active_products: Option<&str>) -> String {
+        let tail = match active_products {
+            Some(v) => format!(r#","active_products":{v}"#),
+            None => String::new(),
+        };
+        format!(
+            r#"{{"personal_volume":0.0,"retail_volume":0.0,"status":"active","has_order_in_period":false{tail}}}"#
+        )
+    }
+
+    #[test]
+    fn evaluation_inputs_accepts_null_distributors() {
+        let json = r#"{"distributors":null,"volume_sources":[]}"#;
+        let inputs: EvaluationInputs = serde_json::from_str(json).unwrap();
+        assert!(inputs.distributors.is_empty());
+    }
+
+    #[test]
+    fn evaluation_inputs_accepts_null_volume_sources() {
+        let json = r#"{"distributors":{},"volume_sources":null}"#;
+        let inputs: EvaluationInputs = serde_json::from_str(json).unwrap();
+        assert!(inputs.volume_sources.is_empty());
+    }
+
+    /// The nested field. It can only be reached through a populated
+    /// `distributors` map — a null outer map leaves no distributor to carry it.
+    #[test]
+    fn evaluation_inputs_accepts_null_active_products() {
+        let uid = Uuid::nil();
+        let json = format!(
+            r#"{{"distributors":{{"{uid}":{}}},"volume_sources":[]}}"#,
+            distributor(Some("null"))
+        );
+        let inputs: EvaluationInputs = serde_json::from_str(&json).unwrap();
+        assert!(inputs.distributors[&uid].active_products.is_empty());
+    }
+
+    #[test]
+    fn evaluation_inputs_accepts_null_history_window() {
+        let json = r#"{"distributors":{},"volume_sources":[],"history_window":null}"#;
+        let inputs: EvaluationInputs = serde_json::from_str(json).unwrap();
+        assert!(inputs.history_window.is_empty());
+    }
+
+    #[test]
+    fn evaluation_inputs_accepts_null_history() {
+        let json = r#"{"distributors":{},"volume_sources":[],"history":null}"#;
+        let inputs: EvaluationInputs = serde_json::from_str(json).unwrap();
+        assert!(inputs.history.is_empty());
+    }
+
+    #[test]
+    fn evaluation_inputs_still_requires_distributors() {
+        let err = serde_json::from_str::<EvaluationInputs>(r#"{"volume_sources":[]}"#)
+            .expect_err("an absent distributors must still fail");
+        assert!(
+            err.to_string().contains("missing field") && err.to_string().contains("distributors"),
+            "the error should be a missing-field error naming distributors, got: {err}"
+        );
+    }
+
+    #[test]
+    fn evaluation_inputs_still_requires_volume_sources() {
+        let err = serde_json::from_str::<EvaluationInputs>(r#"{"distributors":{}}"#)
+            .expect_err("an absent volume_sources must still fail");
+        assert!(
+            err.to_string().contains("missing field") && err.to_string().contains("volume_sources"),
+            "the error should be a missing-field error naming volume_sources, got: {err}"
+        );
+    }
+
+    #[test]
+    fn evaluation_inputs_still_requires_active_products() {
+        let uid = Uuid::nil();
+        let json = format!(
+            r#"{{"distributors":{{"{uid}":{}}},"volume_sources":[]}}"#,
+            distributor(None)
+        );
+        let err = serde_json::from_str::<EvaluationInputs>(&json)
+            .expect_err("an absent active_products must still fail");
+        assert!(
+            err.to_string().contains("missing field")
+                && err.to_string().contains("active_products"),
+            "the error should be a missing-field error naming active_products, got: {err}"
+        );
+    }
+
+    /// A null *value* in the outer, per-distributor map — `{"<uuid>": null}` —
+    /// stays an error. The outer map is null-tolerant; its values are not.
+    ///
+    /// The field's two documented states both sit one level further down, on
+    /// the inner per-period map: an absent period key means "not evaluated",
+    /// and a present `null` ordinal means Unranked. A null inner map is
+    /// neither, and HEU-632 decides what it should mean.
+    ///
+    /// Pinned so the asymmetry is recorded rather than incidental, and so
+    /// HEU-632 gets a failure the moment this behavior changes.
+    /// `BuildHistoryWindow` cannot emit the shape — it only ever inserts a map
+    /// it just built — so it is reachable only by hand-populating
+    /// `EvaluateRanksRequest.History`.
+    #[test]
+    fn evaluation_inputs_still_rejects_null_inner_history() {
+        let uid = Uuid::nil();
+        let json =
+            format!(r#"{{"distributors":{{}},"volume_sources":[],"history":{{"{uid}":null}}}}"#);
+        let err = serde_json::from_str::<EvaluationInputs>(&json)
+            .expect_err("a null inner history map has no defined meaning yet");
+        assert!(
+            err.to_string().contains("invalid type: null"),
+            "expected a serde type error, got: {err}"
+        );
     }
 }

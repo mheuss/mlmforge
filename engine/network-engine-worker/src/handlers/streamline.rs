@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use network_engine::commission::{DistributorSnapshot, VolumeSource, calculate_streamline};
 use network_engine::config::streamline::StreamAssignmentMode;
 use network_engine::config::{CompensationPlan, StreamlineStructureConfig, StructureConfig};
+use network_engine::serde_helpers::null_as_empty;
 use network_engine::streamline::StreamlineEngine;
 use network_engine::streamline::engine::StreamlineConfig;
 use uuid::Uuid;
@@ -460,7 +461,9 @@ pub(crate) fn handle_calculate_streamline(state: &WorkerState, request: &Request
     struct Params {
         #[serde(rename = "structure")]
         structure_name: String,
+        #[serde(deserialize_with = "null_as_empty")]
         snapshots: HashMap<Uuid, DistributorSnapshot>,
+        #[serde(deserialize_with = "null_as_empty")]
         volume: Vec<VolumeSource>,
     }
 

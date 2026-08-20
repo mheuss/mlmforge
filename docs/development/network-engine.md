@@ -220,6 +220,23 @@ Nothing breaks today. `handle_load_plan` deserializes straight off the `RawValue
 
 That direction is the dangerous one. A narrow test build fails loudly in CI. A production-only reorder fails in production. Never round-trip an adjacently-tagged enum through `Value` on a path the shipped binary takes.
 
+## Worker Binary Freshness: The Guard Is Coarse
+
+The Go integration suite fails if the Rust worker binary is older than any `.rs` file under `engine/` (`staleWorkerBinary`, `transport_test.go:312-348`, HEU-615). That includes Rust *test* files, which the binary does not depend on.
+
+So editing `engine/network-engine-worker/tests/worker_integration.rs` and then running `cargo build --workspace` leaves the Go suite still failing. Cargo has nothing to rebuild, the binary's mtime never moves, and the walk still finds a newer `.rs`.
+
+The failure message names the offending file, which is the tell. If it points at a `tests/` file, the binary is current and the guard is being over-broad.
+
+Force a real relink:
+
+```bash
+touch engine/network-engine-worker/src/main.rs
+(cd engine && cargo build --workspace)
+```
+
+Do not `touch` the binary itself. That clears the guard without rebuilding, which is exactly the stale-binary state HEU-615 exists to catch.
+
 ## Streamline: Rank Gates Qualification, Not Rate
 
 `calculate_streamline` builds its rate table so every plan rank maps to the *same* per-level percents (`commission/streamline.rs`). Rank does not change what a level pays. It only decides whether a distributor clears that level's `min_rank` threshold, through the dynamic-compression check in `walk.rs`.
@@ -302,7 +319,7 @@ one), so labels stay sortable and unique. `TestLabelSortable` verifies this
 across 53-week ISO years. Do not "fix" the label to use the input date's ISO
 week.
 
-## Nil Go Collections Marshal as `null`, and the Worker Rejects Them
+## Nil Go Collections Marshal as `null`
 
 This bites every request DTO with a map or slice, not one handler. Read it
 before adding a handler that takes a collection param.
@@ -320,45 +337,101 @@ with no prior counts, a period with no volume events, a plan with no history.
 
 **Engine-side null tolerance** is the default. The worker treats request params
 as unvalidated input (design rationale 028), so it should not depend on one
-client's marshalling. Use the `null_as_default` helper:
+client's marshalling. Use the `network_engine::serde_helpers::null_as_empty`
+helper:
 
 | The field is | Attribute | Absent | Null |
 |---|---|---|---|
-| Required | `#[serde(deserialize_with = "null_as_default")]` | error | empty |
-| Optional | `#[serde(default, deserialize_with = "null_as_default")]` | empty | empty |
+| Required | `#[serde(deserialize_with = "null_as_empty")]` | error | empty |
+| Optional | `#[serde(default, deserialize_with = "null_as_empty")]` | empty | empty |
 
-Do **not** reach for Go's `omitempty` on a required field. It makes a dropped
-field indistinguishable from an empty one, and on a money path that pays zero
-instead of complaining.
+Do **not** reach for Go's `omitempty` on a required field. On its own it breaks
+the call: when the collection is empty the key vanishes, the required attribute
+has no `default` to fall back on, and the caller gets `INVALID_PARAMS`. The real
+trap is what comes next — add `serde(default)` to make it work again and a
+dropped field becomes indistinguishable from an empty one, which on a money path
+pays zero instead of complaining. Keep required fields null-tolerant and nothing
+more.
 
 **Caller-side normalization** is the older approach, still used by
 `RankDriver.EvaluatePeriod` for `evaluate_ranks`. It normalizes nil to empty at
 all three levels before the call, and copies the distributors map first so it
-never mutates the provider's stored input. It works, but it only binds callers
-you control: a non-Go client sending null still fails. Prefer the engine-side
-fix for anything new.
+never mutates the provider's stored input. On its own it only binds callers you
+control, so on a field without the engine-side fix a non-Go client sending null
+still fails. `evaluate_ranks` now has both, which makes the normalization belt
+and braces there. Prefer the engine-side fix for anything new.
 
 Go's `omitempty` is a complement to either, not a fix on its own — it keeps the
-bad shape off the wire but leaves the worker rejecting it from anyone else.
+bad shape off the wire, but on a field without the engine-side fix the worker
+still rejects that shape from anyone else.
 
 ### Current state
+
+Across all seven commission handlers (the six siblings plus
+`board_calculate_commissions`) and `evaluate_ranks`, every top-level named
+request collection is now null-tolerant (HEU-626). What differs between them is
+only whether *absent* is also allowed. Nested and query-op collections are a
+separate matter; HEU-632 tracks the three that remain, listed below.
 
 - `board_calculate_commissions` — fixed both ways (HEU-603). `cycle_events` is
   required and null-tolerant; `period_cycle_counts` is optional, null-tolerant,
   and carries `omitempty` on the Go side.
 - `evaluate_ranks` — `distributors`, `volume_sources`, and each distributor's
-  `active_products` have neither `omitempty` nor `serde(default)`. Safe only
-  because `RankDriver.EvaluatePeriod` normalizes. A real `PeriodInputProvider`
-  (HEU-505) must hand over empties, not nils, or rely on that normalization.
-- The six other commission handlers — `snapshots` and `volume` still reject
-  null, and `carry_forward` still depends on Go's `omitempty`. **HEU-626.**
-- `history_window` and `history` carry `omitempty` + `serde(default)`, so a
-  no-gate plan omits them. Correct, not a bug.
+  `active_products` are required and null-tolerant. `RankDriver.EvaluatePeriod`
+  still normalizes nil to empty before the call; that is now belt and braces
+  rather than the thing keeping it working, and it only ever bound Go callers.
+  A real `PeriodInputProvider` (HEU-505) may hand over nils safely.
+- The six other commission handlers — `snapshots` and `volume` are required and
+  null-tolerant; `carry_forward` is optional and no longer depends on Go's
+  `omitempty` to stay correct. Binary pairing's `ownership` is left alone: it is
+  `Option<HashMap<..>>`, so `Option` absorbs a null natively and it needed no
+  help from this ticket.
+- `history_window` and `history` are optional and null-tolerant, and keep
+  `omitempty` + `serde(default)` so a no-gate plan omits them. Absent, null, and
+  empty all mean "no history".
 
-`null_as_default` currently lives module-private in
-`network-engine-worker/src/handlers/board_plan.rs`. HEU-626 moves it. Note it
-widens null to `T::default()` for any `T: Default` — on a collection that reads
-as "empty", but on a numeric field it would silently produce `0`.
+One helper, `network_engine::serde_helpers::null_as_empty`, backs all of it.
+HEU-626 moved it out of `config` and deleted a second, independently written
+copy that had grown in `handlers/board_plan.rs`. Note it widens null to
+`T::default()` for any `T: Default` — on a collection that reads as "empty", but
+on a numeric field it would silently produce `0`.
+
+**One narrowing rode along with HEU-626.** The serde work only widens what the
+worker accepts. `calculate_generation` is the exception: it now *rejects*
+requests it used to answer with `Ok([])`.
+
+- Volume naming a source with no entry in `snapshots` returns
+  `SourceNotInSnapshot` (`CALCULATION_ERROR` on the wire). Before, a
+  generation-only structure (`level_commissions_enabled: false`) paid nobody and
+  reported success, because nothing on that path validated the sources —
+  `walk_level_commissions` does it, and generation only reaches that walk when
+  level commissions are on.
+- When `boundary_rank` is missing from the plan's rank ladder, that arm returns
+  early, above the per-source loop, so it used to skip validation entirely.
+  Source validation is hoisted above the boundary logic, which closes it. All
+  three checks now surface on this path, not just the snapshot one —
+  `InvalidCvAmount` and `SourceNotInTree` existed before but sat below the
+  early return.
+
+Both were silent zeros on a money path, which is why they were worth closing
+inside this ticket rather than after it. Callers that relied on the old lenient
+answer will now see an error. Nothing calls `CalculateGeneration` outside tests
+today, so the practical blast radius is zero — but HEU-556, HEU-46, and HEU-47
+wire these methods up, and they should expect the strict behavior.
+
+`walk::validate_source` is the one place all of this lives now. Binary is not a
+caller: it resolves an owner before the snapshot lookup, so it validates its own
+way.
+
+**Still null-intolerant, tracked by HEU-632.** These are nested or query-op
+collections the ticket deliberately stopped short of:
+
+- `history`'s inner per-period map. `{"<uuid>": null}` has no defined meaning —
+  absent-key and `Some(None)` are the two documented states, and a null inner
+  map is neither. `evaluation_inputs_still_rejects_null_inner_history` pins the
+  current behavior.
+- `cycle_events[].new_boards`.
+- `board_compress_inactive`'s `member_ids`.
 
 ### Testing it
 

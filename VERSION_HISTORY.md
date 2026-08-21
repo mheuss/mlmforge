@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-**Test count:** 818 (Rust), 218 (Go)
+**Test count:** 819 (Rust), 218 (Go)
 
 ### Added
 - Project research documentation (MLM fundamentals, compensation plans, glossary, competitive landscape, legal/regulatory)
@@ -80,6 +80,7 @@
 - `cv_amount` validation added (rejects negative and NaN)
 - JSON Schema `search_mode` enum aligned with Rust types and ADR-008
 - Multi-tree rank evaluation no longer undercounts ranks. `evaluate_ranks` iterates to a fixpoint instead of a single ordered pass, so a distributor's descendants are counted regardless of cross-structure depth. (HEU-460)
+- Clippy `--all-targets` gate. Boxed `Response`'s `result` and `error` fields so the worker's 15 `result_large_err` errors clear, then tightened CI's clippy step to `--all-targets`. The NDJSON wire format is unchanged. Boxing also makes `Response` 48 bytes in every build, where it was 112 or 152 depending on whether a sibling crate's dev-dependencies were in the build graph. (HEU-560)
 
 ### Removed
 - None.

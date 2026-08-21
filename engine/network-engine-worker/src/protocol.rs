@@ -31,11 +31,11 @@ fn default_raw_params() -> Box<serde_json::value::RawValue> {
 pub struct Response {
     pub id: String,
     pub ok: bool,
-    /// Boxed to keep `Response` under clippy's `large-error-threshold`. It is
-    /// the `Err` type of the parse and lookup helpers in `handlers/`, and this
-    /// is the field that carried the weight: held inline, a `serde_json::Value`
-    /// made `Response`'s size depend on a feature flag. See
-    /// `response_stays_small_enough_for_clippy`.
+    /// Boxed to keep `Response` under clippy's `large-error-threshold`.
+    /// `Response` is the `Err` type of the parse and lookup helpers in
+    /// `handlers/`, and this is the field that carried the weight: held inline,
+    /// a `serde_json::Value` made `Response`'s size depend on a feature flag.
+    /// See `response_stays_small_enough_for_clippy`.
     ///
     /// `serde` serializes `Box<T>` as `T`, so the NDJSON shape is unchanged.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -86,13 +86,16 @@ mod tests {
     /// overridden here. `Response` is the error type of the parse and lookup
     /// helpers in `handlers/`.
     ///
-    /// It measures 48 bytes, in every build. That last part took some finding.
-    /// Before `result` was boxed, `Response` held a `serde_json::Value` inline
-    /// and so changed size with `serde_json`'s `preserve_order` feature, which
-    /// `network-engine` declares in `[dev-dependencies]`. It came out at 112
-    /// bytes or 152 depending on whether that crate's dev targets were in the
-    /// build graph, which is why clippy failed under `--workspace` and passed
-    /// under `-p network-engine-worker`. Boxing removed the coupling.
+    /// It measures 48 bytes, in every build. Before `result` was boxed,
+    /// `Response` held a `serde_json::Value` inline and so changed size with
+    /// `serde_json`'s `preserve_order` feature, which `network-engine` declares
+    /// in `[dev-dependencies]`. It came out at 112 bytes or 152 depending on
+    /// whether that crate's dev targets were in the build graph. That is why
+    /// `clippy --all-targets --workspace` failed while
+    /// `clippy --all-targets -p network-engine-worker` passed. Holding
+    /// `--all-targets` fixed is what makes the comparison mean anything: plain
+    /// `clippy --workspace` was green throughout, which is why CI never caught
+    /// this. Boxing removed the coupling.
     ///
     /// Prefer boxing a new field over raising this bound.
     #[test]

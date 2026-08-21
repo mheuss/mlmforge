@@ -145,21 +145,29 @@ mod tests {
         assert!(req.span_id.is_none());
     }
 
+    /// Exact-string, not `contains`. ADR-019 makes the NDJSON shape a contract
+    /// with the Go side, and a substring check cannot see field order, so it
+    /// would pass through a reordering of the `Response` struct.
+    ///
+    /// Keep the `result` payload a scalar. A JSON object here would serialize
+    /// its keys sorted or in insertion order depending on whether
+    /// `serde_json/preserve_order` is in the build graph, and this assertion
+    /// would then hold under `cargo test` and fail against the shipped binary.
     #[test]
     fn serialize_success_response() {
         let resp = Response::success("req-1".into(), serde_json::json!("pong"));
         let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains(r#""ok":true"#));
-        assert!(json.contains(r#""result":"pong""#));
-        assert!(!json.contains("error"));
+        assert_eq!(json, r#"{"id":"req-1","ok":true,"result":"pong"}"#);
     }
 
+    /// Exact-string for the same reason as `serialize_success_response`.
     #[test]
     fn serialize_error_response() {
         let resp = Response::error("req-1".into(), "NOT_FOUND", "thing not found");
         let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains(r#""ok":false"#));
-        assert!(json.contains(r#""code":"NOT_FOUND""#));
-        assert!(!json.contains("result"));
+        assert_eq!(
+            json,
+            r#"{"id":"req-1","ok":false,"error":{"code":"NOT_FOUND","message":"thing not found"}}"#
+        );
     }
 }

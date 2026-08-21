@@ -254,10 +254,10 @@ If any of these files are missing, incomplete, or don't answer your questions ab
 | Format (Go) | `gofmt -w .` |
 | Format (Rust) | `cargo fmt` |
 | Lint (Go) | `golangci-lint run` |
-| Lint (Rust) | `cargo clippy -- -D warnings` |
+| Lint (Rust) | `cargo clippy --all-targets --workspace -- -D warnings` |
 | All tests | `go test ./... && cargo test` |
 | All format | `gofmt -w . && cargo fmt` |
-| All lint | `golangci-lint run && cargo clippy -- -D warnings` |
+| All lint | `golangci-lint run && cargo clippy --all-targets --workspace -- -D warnings` |
 
 ---
 

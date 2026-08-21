@@ -245,9 +245,9 @@ If any of these files are missing, incomplete, or don't answer your questions ab
 ## Commands
 
 Run `go` commands from the repo root and `cargo` commands from `engine/`.
-There is no `Cargo.toml` at the root, so a cargo command run from there
-fails outright. The two combined rows below need both directories, so run
-their halves separately.
+There is no `Cargo.toml` at the root, so a bare cargo command run from
+there fails outright. The combined rows carry their own `cd`, so they copy
+and paste from the repo root as written.
 
 | Task | Command |
 |------|---------|
@@ -260,9 +260,9 @@ their halves separately.
 | Format (Rust) | `cargo fmt` |
 | Lint (Go) | `golangci-lint run` |
 | Lint (Rust) | `cargo clippy --all-targets --workspace -- -D warnings` |
-| All tests | `go test ./... && cargo test` |
-| All format | `gofmt -w . && cargo fmt` |
-| All lint | `golangci-lint run && cargo clippy --all-targets --workspace -- -D warnings` |
+| All tests | `go test ./... && (cd engine && cargo test)` |
+| All format | `gofmt -w . && (cd engine && cargo fmt)` |
+| All lint | `golangci-lint run && (cd engine && cargo clippy --all-targets --workspace -- -D warnings)` |
 
 ---
 

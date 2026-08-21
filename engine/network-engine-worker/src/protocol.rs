@@ -157,23 +157,39 @@ mod tests {
     /// which ignore order. So a reorder tripping this test is a heads-up, not a
     /// compatibility break.
     ///
-    /// The payload must stay object-free, and the assertion below enforces it
-    /// rather than trusting this note. A JSON object would serialize its keys
-    /// sorted or in insertion order depending on whether
-    /// `serde_json/preserve_order` is in the build graph, so an exact-string
-    /// assertion over one would hold under `cargo test` and fail against the
-    /// shipped binary. HEU-638 tracks that split.
+    /// This test's own fixture must stay object-free, and `contains_object`
+    /// below enforces that. It is a constraint on the fixture, not on
+    /// `Response::success`, which takes objects freely — most handlers pass
+    /// one. Object key order depends on whether `serde_json/preserve_order` is
+    /// in the build graph, so an exact-string assertion over an object would
+    /// hold under `cargo test` and fail against the shipped binary. HEU-638
+    /// tracks that split.
     #[test]
     fn serialize_success_response() {
         let payload = serde_json::json!("pong");
         assert!(
-            !serde_json::to_string(&payload).unwrap().contains('{'),
-            "keep the payload object-free: key order depends on serde_json/preserve_order"
+            !contains_object(&payload),
+            "this test's payload must contain no JSON object: key order depends \
+             on serde_json/preserve_order, so the exact-string assertion below \
+             would pass here and fail against the shipped binary"
         );
 
         let resp = Response::success("req-1".into(), payload);
         let json = serde_json::to_string(&resp).unwrap();
         assert_eq!(json, r#"{"id":"req-1","ok":true,"result":"pong"}"#);
+    }
+
+    /// Whether `v` holds a JSON object at any depth, arrays included.
+    ///
+    /// Checks the `Value` structurally rather than searching the serialized
+    /// text for a brace. A scalar string like `"a{b"` serializes with a brace
+    /// in it and is perfectly safe here.
+    fn contains_object(v: &serde_json::Value) -> bool {
+        match v {
+            serde_json::Value::Object(_) => true,
+            serde_json::Value::Array(items) => items.iter().any(contains_object),
+            _ => false,
+        }
     }
 
     /// Exact-string for the same reason as `serialize_success_response`.

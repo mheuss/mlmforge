@@ -244,6 +244,11 @@ If any of these files are missing, incomplete, or don't answer your questions ab
 
 ## Commands
 
+Run `go` commands from the repo root and `cargo` commands from `engine/`.
+There is no `Cargo.toml` at the root, so a cargo command run from there
+fails outright. The two combined rows below need both directories, so run
+their halves separately.
+
 | Task | Command |
 |------|---------|
 | Build (Go) | `go build ./...` |

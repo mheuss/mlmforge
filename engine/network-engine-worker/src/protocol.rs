@@ -146,16 +146,27 @@ mod tests {
     }
 
     /// Exact-string, not `contains`. ADR-019 makes the NDJSON shape a contract
-    /// with the Go side, and a substring check cannot see field order, so it
-    /// would pass through a reordering of the `Response` struct.
+    /// with the Go side, and a substring check passes through an added field, a
+    /// renamed one, or a lost `skip_serializing_if`. Field order is not part of
+    /// that contract: the Go side decodes with `encoding/json` struct tags,
+    /// which ignore order. So a reorder tripping this test is a heads-up, not a
+    /// compatibility break.
     ///
-    /// Keep the `result` payload a scalar. A JSON object here would serialize
-    /// its keys sorted or in insertion order depending on whether
-    /// `serde_json/preserve_order` is in the build graph, and this assertion
-    /// would then hold under `cargo test` and fail against the shipped binary.
+    /// The payload must stay object-free, and the assertion below enforces it
+    /// rather than trusting this note. A JSON object would serialize its keys
+    /// sorted or in insertion order depending on whether
+    /// `serde_json/preserve_order` is in the build graph, so an exact-string
+    /// assertion over one would hold under `cargo test` and fail against the
+    /// shipped binary. HEU-638 tracks that split.
     #[test]
     fn serialize_success_response() {
-        let resp = Response::success("req-1".into(), serde_json::json!("pong"));
+        let payload = serde_json::json!("pong");
+        assert!(
+            !serde_json::to_string(&payload).unwrap().contains('{'),
+            "keep the payload object-free: key order depends on serde_json/preserve_order"
+        );
+
+        let resp = Response::success("req-1".into(), payload);
         let json = serde_json::to_string(&resp).unwrap();
         assert_eq!(json, r#"{"id":"req-1","ok":true,"result":"pong"}"#);
     }

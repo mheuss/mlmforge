@@ -32,14 +32,17 @@ pub struct Response {
     pub id: String,
     pub ok: bool,
     /// Boxed to keep `Response` under clippy's `large-error-threshold`. It is
-    /// the `Err` type of 15 helpers in `handlers/`, and this is the field that
-    /// carried the weight. See `response_stays_small_enough_for_clippy` for the
-    /// sizes and why they differ between builds.
+    /// the `Err` type of the parse and lookup helpers in `handlers/`, and this
+    /// is the field that carried the weight: held inline, a `serde_json::Value`
+    /// made `Response`'s size depend on a feature flag. See
+    /// `response_stays_small_enough_for_clippy`.
     ///
     /// `serde` serializes `Box<T>` as `T`, so the NDJSON shape is unchanged.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<Box<serde_json::Value>>,
-    /// Boxed for the same reason as `result`.
+    /// Also boxed, for headroom. Boxing `result` alone already clears the
+    /// threshold at 88 bytes. Boxing this one too brings `Response` to 48, and
+    /// error responses are the cold path.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<Box<ErrorPayload>>,
 }
@@ -80,15 +83,16 @@ mod tests {
 
     /// Clippy's `result_large_err` rejects an `Err` variant over its
     /// `large-error-threshold`, which defaults to 128 bytes and is not
-    /// overridden here. `Response` is the error type of 15 helpers in
-    /// `handlers/`.
+    /// overridden here. `Response` is the error type of the parse and lookup
+    /// helpers in `handlers/`.
     ///
-    /// Run this under `--workspace`. `network-engine` declares
-    /// `serde_json/preserve_order` in `[dev-dependencies]`, so a build graph
-    /// carrying that crate's dev targets unifies the feature onto our
-    /// `serde_json` and `Value` grows from 32 bytes to 72. `Response` is 112
-    /// bytes without it and 152 with it. `cargo test -p network-engine-worker`
-    /// sees the small one and passes even while clippy is failing.
+    /// It measures 48 bytes, in every build. That last part took some finding.
+    /// Before `result` was boxed, `Response` held a `serde_json::Value` inline
+    /// and so changed size with `serde_json`'s `preserve_order` feature, which
+    /// `network-engine` declares in `[dev-dependencies]`. It came out at 112
+    /// bytes or 152 depending on whether that crate's dev targets were in the
+    /// build graph, which is why clippy failed under `--workspace` and passed
+    /// under `-p network-engine-worker`. Boxing removed the coupling.
     ///
     /// Prefer boxing a new field over raising this bound.
     #[test]

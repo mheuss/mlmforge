@@ -31,10 +31,17 @@ fn default_raw_params() -> Box<serde_json::value::RawValue> {
 pub struct Response {
     pub id: String,
     pub ok: bool,
+    /// Boxed to keep `Response` under clippy's `large-error-threshold`. It is
+    /// the `Err` type of 15 helpers in `handlers/`, and this is the field that
+    /// carried the weight. See `response_stays_small_enough_for_clippy` for the
+    /// sizes and why they differ between builds.
+    ///
+    /// `serde` serializes `Box<T>` as `T`, so the NDJSON shape is unchanged.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<serde_json::Value>,
+    pub result: Option<Box<serde_json::Value>>,
+    /// Boxed for the same reason as `result`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<ErrorPayload>,
+    pub error: Option<Box<ErrorPayload>>,
 }
 
 /// Error details included in a failed response.
@@ -49,7 +56,7 @@ impl Response {
         Self {
             id,
             ok: true,
-            result: Some(result),
+            result: Some(Box::new(result)),
             error: None,
         }
     }
@@ -59,10 +66,10 @@ impl Response {
             id,
             ok: false,
             result: None,
-            error: Some(ErrorPayload {
+            error: Some(Box::new(ErrorPayload {
                 code: code.into(),
                 message: message.into(),
-            }),
+            })),
         }
     }
 }

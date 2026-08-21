@@ -71,6 +71,34 @@ impl Response {
 mod tests {
     use super::*;
 
+    /// `Response` is the error type of 15 `pub(crate)` helpers in `handlers/`.
+    /// Clippy's `result_large_err` rejects an `Err` variant over its
+    /// `large-error-threshold`, which defaults to 128 bytes.
+    ///
+    /// Why the lint fires only on the test target: `network-engine` puts
+    /// `serde_json`'s `preserve_order` in its `[dev-dependencies]`. Resolver 2
+    /// withholds dev-dependency features from non-dev builds, so a `--bins`
+    /// build gets a `BTreeMap`-backed `serde_json::Value` at 32 bytes, and a
+    /// `--tests` build gets the `IndexMap`-backed one at 72. That moved
+    /// `Response` between 112 and 152 bytes — one side of the threshold each.
+    ///
+    /// Boxing both large fields is what makes this size independent of that
+    /// feature, so the bound below means the same thing in either build.
+    ///
+    /// This bound is what stops a future field on `Response` from silently
+    /// pushing it back over. Prefer boxing the new field over raising the
+    /// number.
+    #[test]
+    fn response_stays_small_enough_for_clippy() {
+        let size = std::mem::size_of::<Response>();
+        assert!(
+            size <= 128,
+            "Response is {size} bytes, over clippy's 128-byte \
+             large-error-threshold; box the largest field rather than \
+             raising this bound"
+        );
+    }
+
     #[test]
     fn deserialize_request() {
         let json = r#"{"id":"req-1","op":"ping"}"#;

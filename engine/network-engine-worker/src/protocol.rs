@@ -97,6 +97,11 @@ mod tests {
     /// `clippy --workspace` was green throughout, which is why CI never caught
     /// this. Boxing removed the coupling.
     ///
+    /// `docs/development/network-engine.md`, "Rust Tests: Always Run
+    /// `--workspace`", covers this build-scope split in full, including the
+    /// third configuration the shipped binary uses. Read it before concluding
+    /// anything from a narrow-scope cargo run.
+    ///
     /// Prefer boxing a new field over raising this bound.
     #[test]
     fn response_stays_small_enough_for_clippy() {

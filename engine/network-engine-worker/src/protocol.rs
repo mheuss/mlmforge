@@ -71,8 +71,10 @@ impl Response {
 mod tests {
     use super::*;
 
-    /// Clippy's `result_large_err` rejects an `Err` variant over 128 bytes, and
-    /// `Response` is the error type of 15 helpers in `handlers/`.
+    /// Clippy's `result_large_err` rejects an `Err` variant over its
+    /// `large-error-threshold`, which defaults to 128 bytes and is not
+    /// overridden here. `Response` is the error type of 15 helpers in
+    /// `handlers/`.
     ///
     /// Run this under `--workspace`. `network-engine` declares
     /// `serde_json/preserve_order` in `[dev-dependencies]`, so a build graph

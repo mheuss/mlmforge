@@ -71,31 +71,27 @@ impl Response {
 mod tests {
     use super::*;
 
-    /// `Response` is the error type of 15 `pub(crate)` helpers in `handlers/`.
-    /// Clippy's `result_large_err` rejects an `Err` variant over its
-    /// `large-error-threshold`, which defaults to 128 bytes.
+    /// Clippy's `result_large_err` rejects an `Err` variant over 128 bytes, and
+    /// `Response` is the error type of 15 helpers in `handlers/`.
     ///
-    /// Why the lint fires only on the test target: `network-engine` puts
-    /// `serde_json`'s `preserve_order` in its `[dev-dependencies]`. Resolver 2
-    /// withholds dev-dependency features from non-dev builds, so a `--bins`
-    /// build gets a `BTreeMap`-backed `serde_json::Value` at 32 bytes, and a
-    /// `--tests` build gets the `IndexMap`-backed one at 72. That moved
-    /// `Response` between 112 and 152 bytes — one side of the threshold each.
+    /// Run this under `--workspace`. `network-engine` declares
+    /// `serde_json/preserve_order` in `[dev-dependencies]`, so a build graph
+    /// carrying that crate's dev targets unifies the feature onto our
+    /// `serde_json` and `Value` grows from 32 bytes to 72. `Response` is 112
+    /// bytes without it and 152 with it. `cargo test -p network-engine-worker`
+    /// sees the small one and passes even while clippy is failing.
     ///
-    /// Boxing both large fields is what makes this size independent of that
-    /// feature, so the bound below means the same thing in either build.
-    ///
-    /// This bound is what stops a future field on `Response` from silently
-    /// pushing it back over. Prefer boxing the new field over raising the
-    /// number.
+    /// Prefer boxing a new field over raising this bound.
     #[test]
     fn response_stays_small_enough_for_clippy() {
+        const CLIPPY_LARGE_ERROR_THRESHOLD: usize = 128;
+
         let size = std::mem::size_of::<Response>();
         assert!(
-            size <= 128,
-            "Response is {size} bytes, over clippy's 128-byte \
-             large-error-threshold; box the largest field rather than \
-             raising this bound"
+            size <= CLIPPY_LARGE_ERROR_THRESHOLD,
+            "Response is {size} bytes, over clippy's \
+             {CLIPPY_LARGE_ERROR_THRESHOLD}-byte large-error-threshold; box the \
+             largest field rather than raising this bound"
         );
     }
 

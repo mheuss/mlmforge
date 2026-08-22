@@ -305,6 +305,35 @@ pub struct BoardPlanStructureConfig {
 mod tests {
     use super::*;
 
+    /// A structure whose `config` key precedes its `type` key must still
+    /// deserialize. Sorted-key input takes serde's `Content` buffer, which
+    /// strips serde_json's string-to-integer map-key coercion. Before HEU-648
+    /// this failed with `invalid type: string "1", expected u8`.
+    #[test]
+    fn structure_deserializes_with_config_before_type() {
+        let json = r#"{
+            "config": {
+                "name": "Test",
+                "level_commission": {
+                    "broad_commission_percent": 0.4,
+                    "volume_to_dollar_multiplier": null,
+                    "commissionable_depth": 3,
+                    "rate_table": { "member": { "1": 0.05 } }
+                },
+                "compression": null
+            },
+            "type": "unilevel"
+        }"#;
+        let parsed: StructureConfig =
+            serde_json::from_str(json).expect("config-before-type must parse");
+        match parsed {
+            StructureConfig::Unilevel(u) => {
+                assert_eq!(u.level_commission.rate_table["member"][&1], 0.05);
+            }
+            other => panic!("expected unilevel, got {other:?}"),
+        }
+    }
+
     #[test]
     fn deserialize_structure_config_unilevel() {
         let json = r#"{

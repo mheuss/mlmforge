@@ -1,6 +1,8 @@
 //! Serde helpers shared by the plan config types and the worker's request
 //! params.
 
+use std::collections::BTreeMap;
+
 /// Deserializes a value, reading an explicit JSON `null` as `T::default()`.
 ///
 /// A nil Go slice or map marshals to JSON `null`, not `[]` or `{}`.
@@ -34,4 +36,162 @@ where
 {
     let opt = <Option<T> as serde::Deserialize>::deserialize(deserializer)?;
     Ok(opt.unwrap_or_default())
+}
+
+/// Parses JSON string map keys into `u8`, rejecting two spellings of one key.
+///
+/// `str::parse::<u8>` accepts `"01"`, and so do the schema's `propertyNames`
+/// patterns (`^0*(...)`) and Go's `strconv.ParseUint` in `validateU8MapKeys`
+/// (`internal/config/rules.go:118`). Rejecting leading zeros here alone would
+/// make the worker refuse plans the validated Go pipeline accepts, so this
+/// stays as permissive as they are.
+///
+/// What it will not accept is `"1"` and `"01"` in the same map. Those name one
+/// entry, one value silently wins, and on a money path that is a wrong payout.
+/// No caller can have meant it, so it is an error rather than a policy.
+fn parse_u8_keys<E>(raw: BTreeMap<String, f64>) -> Result<BTreeMap<u8, f64>, E>
+where
+    E: serde::de::Error,
+{
+    let mut out = BTreeMap::new();
+    for (k, v) in raw {
+        let key = k
+            .parse::<u8>()
+            .map_err(|e| E::custom(format!("invalid integer key '{k}': {e}")))?;
+        if out.insert(key, v).is_some() {
+            return Err(E::custom(format!(
+                "duplicate integer key {key}: the map spells it more than one way"
+            )));
+        }
+    }
+    Ok(out)
+}
+
+/// Deserializes a `BTreeMap<u8, f64>` from JSON string keys.
+///
+/// JSON object keys are always strings. Reading them into `BTreeMap<u8, _>`
+/// directly works only on `serde_json`'s native path, which coerces string keys
+/// to integers. Serde's `Content` buffer, used whenever an adjacently- or
+/// internally-tagged enum meets its content before its tag, does not coerce.
+/// Reading into `BTreeMap<String, _>` first sidesteps the coercion path
+/// entirely, so both routes parse the same JSON.
+///
+/// See `config/mod.rs` on `StructureConfig` for why the buffer gets used, and
+/// UC-NET-007 in `docs/use-cases/network-engine.md`.
+pub(crate) fn u8_keyed_map<'de, D>(deserializer: D) -> Result<BTreeMap<u8, f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let string_keyed = <BTreeMap<String, f64> as serde::Deserialize>::deserialize(deserializer)?;
+    parse_u8_keys::<D::Error>(string_keyed)
+}
+
+/// Deserializes a rank-keyed table of `u8`-keyed rate maps.
+///
+/// Same reasoning as [`u8_keyed_map`]. The outer keys are rank names and stay
+/// strings; only the inner keys are parsed. This cannot delegate to
+/// [`u8_keyed_map`] through `deserialize_with`, because that attribute applies
+/// at the outer field.
+pub(crate) fn rank_keyed_u8_map<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<String, BTreeMap<u8, f64>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw =
+        <BTreeMap<String, BTreeMap<String, f64>> as serde::Deserialize>::deserialize(deserializer)?;
+    raw.into_iter()
+        .map(|(rank, rates)| parse_u8_keys::<D::Error>(rates).map(|parsed| (rank, parsed)))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::Deserialize;
+
+    // `Debug` is required: `unwrap_err()` formats the success type.
+    #[derive(Debug, Deserialize)]
+    struct Flat {
+        #[serde(deserialize_with = "u8_keyed_map")]
+        rates: BTreeMap<u8, f64>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Nested {
+        #[serde(deserialize_with = "rank_keyed_u8_map")]
+        table: BTreeMap<String, BTreeMap<u8, f64>>,
+    }
+
+    #[test]
+    fn flat_map_parses_string_keys() {
+        let v: Flat = serde_json::from_str(r#"{"rates":{"1":0.05,"255":0.01}}"#).unwrap();
+        assert_eq!(v.rates[&1], 0.05);
+        assert_eq!(v.rates[&255], 0.01);
+    }
+
+    #[test]
+    fn flat_map_accepts_empty() {
+        let v: Flat = serde_json::from_str(r#"{"rates":{}}"#).unwrap();
+        assert!(v.rates.is_empty());
+    }
+
+    #[test]
+    fn flat_map_rejects_out_of_range_key() {
+        let e = serde_json::from_str::<Flat>(r#"{"rates":{"256":0.05}}"#).unwrap_err();
+        assert!(e.to_string().contains("256"), "got: {e}");
+    }
+
+    #[test]
+    fn flat_map_rejects_nonnumeric_key() {
+        assert!(serde_json::from_str::<Flat>(r#"{"rates":{"gold":0.05}}"#).is_err());
+    }
+
+    /// Leading zeros are accepted, matching the schema's `^0*(...)`
+    /// `propertyNames` patterns and Go's `strconv.ParseUint` in
+    /// `validateU8MapKeys`. Rejecting them in Rust alone would make the worker
+    /// refuse plans the validated Go pipeline accepts.
+    #[test]
+    fn flat_map_accepts_leading_zeros() {
+        let v: Flat = serde_json::from_str(r#"{"rates":{"01":0.05}}"#).unwrap();
+        assert_eq!(v.rates[&1], 0.05);
+    }
+
+    /// Two spellings of one key is the case worth rejecting. Silently keeping
+    /// one of them is a wrong payout on a money path, and no caller can have
+    /// meant it.
+    #[test]
+    fn flat_map_rejects_duplicate_parsed_keys() {
+        let e = serde_json::from_str::<Flat>(r#"{"rates":{"1":0.05,"01":0.09}}"#).unwrap_err();
+        assert!(e.to_string().contains("duplicate"), "got: {e}");
+    }
+
+    #[test]
+    fn nested_map_rejects_duplicate_parsed_inner_keys() {
+        let json = r#"{"table":{"silver":{"2":0.05,"02":0.09}}}"#;
+        assert!(serde_json::from_str::<Nested>(json).is_err());
+    }
+
+    #[test]
+    fn flat_map_accepts_zero_key() {
+        let v: Flat = serde_json::from_str(r#"{"rates":{"0":0.05}}"#).unwrap();
+        assert_eq!(v.rates[&0], 0.05);
+    }
+
+    #[test]
+    fn nested_map_parses_inner_keys() {
+        let v: Nested =
+            serde_json::from_str(r#"{"table":{"silver":{"3":0.05},"gold":{"1":0.1}}}"#).unwrap();
+        assert_eq!(v.table["silver"][&3], 0.05);
+        assert_eq!(v.table["gold"][&1], 0.1);
+    }
+
+    #[test]
+    fn nested_map_accepts_empty_outer_and_inner() {
+        let v: Nested = serde_json::from_str(r#"{"table":{}}"#).unwrap();
+        assert!(v.table.is_empty());
+
+        let v: Nested = serde_json::from_str(r#"{"table":{"silver":{}}}"#).unwrap();
+        assert!(v.table["silver"].is_empty());
+    }
 }

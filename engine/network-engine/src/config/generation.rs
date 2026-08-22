@@ -40,7 +40,13 @@ pub struct GenerationCommissionConfig {
     ///
     /// Missing generation = no commission. Keys are generation numbers.
     /// Values are percentages between 0.0 and 1.0.
-    #[serde(rename = "generation_rates")]
+    ///
+    /// Deserialized via [`crate::serde_helpers::u8_keyed_map`] so the keys
+    /// parse whether or not serde buffered this value.
+    #[serde(
+        rename = "generation_rates",
+        deserialize_with = "crate::serde_helpers::u8_keyed_map"
+    )]
     pub rates: BTreeMap<u8, f64>,
 
     /// How generation boundaries are determined.

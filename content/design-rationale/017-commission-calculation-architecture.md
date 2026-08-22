@@ -42,7 +42,7 @@ We considered returning grouped results (by earner, by level, by source). Every 
 
 ### Prep + Walk Two-Phase Pattern
 
-All calculators run a prep pass before the main calculation loop. The prep pass evaluates eligibility, counts active legs, determines per-distributor depth limits, and caches the results. The walk phase uses O(1) lookups against the cache.
+The five level-based calculators run a prep pass before the main calculation loop. The prep pass evaluates eligibility, counts active legs, determines per-distributor depth limits, and caches the results. The walk phase uses O(1) lookups against the cache. Binary runs a narrower prep: it evaluates eligibility without a tree, so it counts no active legs and derives no depth limits. Board plan has no prep phase at all, because it receives cycle events rather than snapshots.
 
 Active leg counting requires querying the tree for each distributor's children and checking each child's eligibility. Doing this inline during the walk would repeat the work for every volume source. A single prep pass pays the cost once.
 
@@ -64,7 +64,7 @@ Binary calculation has fundamentally different inputs. It pairs volume from two 
 
 The project follows the rule of three. Extract common patterns when we have three concrete implementations. Two is not enough to see the real shape.
 
-**Status update (HEU-200 complete):** Three calculators now exist: unilevel, matrix, and stairstep. The rule of three was satisfied. Shared logic was extracted into `commission/walk.rs` as generic functions over `TreeNavigator`. No `CommissionCalculator` trait was created — the duplication was internal (walk loop, prep phase), not external (calling convention). Callers already know which calculator to use from the config type, so polymorphic dispatch adds no value. The standalone public functions remain. See decision 022 for the full rationale.
+**Status update (HEU-200 complete):** The rule of three was satisfied once unilevel, matrix, and stairstep existed. Shared logic was extracted into `commission/walk.rs` as generic functions over `TreeNavigator`. No `CommissionCalculator` trait was created — the duplication was internal (walk loop, prep phase), not external (calling convention). Callers already know which calculator to use from the config type, so polymorphic dispatch adds no value. The standalone public functions remain. See decision 022 for the full rationale.
 
 ### Compression Is Part of the Walk
 
@@ -72,7 +72,7 @@ Compression affects level counting during the walk itself. When compression is e
 
 Compression cannot be applied as a post-processing step. The level assignments depend on which nodes were skipped. Post-processing would need to reconstruct the skip decisions, which means reimplementing the walk logic.
 
-This means compression behavior is tightly coupled to the walk loop. Each plan type that supports compression must implement it inline. This is acceptable. Compression rules vary between plan types anyway.
+This means compression behavior is tightly coupled to the walk loop. It has to be applied inline, inside the loop that assigns levels. Since HEU-200 that loop is shared: compression lives once in `walk_level_commissions`, and the five level-based calculators inherit it through `LevelWalkConfig.compression` rather than each implementing it. See decision [022](022-shared-commission-walk.md).
 
 ### Defensive on Missing Data, Strict on Source Data
 

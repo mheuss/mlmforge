@@ -46,7 +46,7 @@ In the modular monolith, a command call is a function call. Zero network overhea
 
 ## Ownership Resolutions
 
-Applying this principle resolved 13 ownership disputes from the legacy analysis.
+Applying this principle resolved 13 ownership disputes from the legacy analysis. The seven below are the ones worth showing.
 
 | Entity | Legacy Problem | Resolution |
 |--------|---------------|------------|

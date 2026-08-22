@@ -2,7 +2,7 @@
 
 ## The Problem
 
-Decision 015 defines what the compensation plan schema looks like and where the validation boundary sits between JSON Schema and Go. It left open the mechanics of the Go-side pipeline. How does YAML become Rust-ready JSON? How do six different commission types get parsed when the YAML structure is flat? How do errors and warnings coexist without blocking valid plans?
+Decision 015 defines what the compensation plan schema looks like and where the validation boundary sits between JSON Schema and Go. It left open the mechanics of the Go-side pipeline. How does YAML become Rust-ready JSON? How do seven different commission types get parsed when the YAML structure is flat? How do errors and warnings coexist without blocking valid plans?
 
 These decisions affect how plan authors experience validation errors, how new compensation plan types are added, and how much code changes when the schema evolves.
 
@@ -32,7 +32,7 @@ This two-pass approach keeps the YAML format flat for plan authors while giving 
 
 ### Commission Marker Interface
 
-The `Commission` interface has a single unexported method: `isCommission()`. All six commission types implement it. `StructureConfig.resolvedCommission` is typed as `Commission` instead of `any`.
+The `Commission` interface has a single unexported method: `isCommission()`. All seven commission types implement it: unilevel, binary, matrix, stairstep, generation, streamline, and board plan. `StructureConfig.resolvedCommission` is typed as `Commission` instead of `any`.
 
 This provides compile-time safety. Adding a new commission type requires implementing the marker method. Translation code that type-asserts on `resolvedCommission` gets a meaningful type rather than `any`. The unexported method prevents external packages from satisfying the interface accidentally.
 

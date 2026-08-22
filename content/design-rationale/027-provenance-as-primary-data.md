@@ -14,6 +14,14 @@
 > external readers yet. HEU-546 tracks moving the cited decisions into this
 > folder.
 
+> **Storage is decided, not built.** The table below and the "What This Means"
+> list describe where provenance is *to* live. No provenance table exists:
+> migration 000005 creates `commission_runs` and `commission_results` and
+> nothing else. `AuditWriter` is still an interface with no implementation and
+> no caller (`internal/platform/interfaces.go:23`). The decision holds. The
+> storage has not landed, and [029](029-commission-provenance-on-the-wire.md)
+> covers what the engine has to emit before it can.
+
 ## The Problem
 
 Commission calculations are the source of disputes and regulatory audits. Every
@@ -160,12 +168,13 @@ retention argument does not weaken, and it is the one carrying the weight.
 
 ## What This Means
 
-- Calculation provenance lives in its own table. It is primary data. Do not
-  document it as a projection and do not write code that assumes it can be
-  rebuilt.
+- Calculation provenance is to live in its own table, once that table exists.
+  It is primary data. Do not document it as a projection and do not write code
+  that assumes it can be rebuilt.
 - Commission runs and results live in relational tables, not event streams.
-- Operational audit goes through `AuditWriter`, which gains its first
-  implementation and production caller from commission runs.
+- Operational audit goes through `AuditWriter`, which is to gain its first
+  implementation and production caller from commission runs. Neither exists
+  yet.
 - `CommissionEarned` goes to the EventStore at one event per distributor per
   run.
 - ADR-021's rule that projections are rebuildable from events still holds

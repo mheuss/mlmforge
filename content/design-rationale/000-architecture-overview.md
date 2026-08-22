@@ -33,8 +33,8 @@ flowchart TD
 
     ne --> pf
     ne --> cfg
-    ne --> obs
     ne --> per
+    ne -. "signal handler, not wired" .-> obs
 
     classDef built fill:#2d6a4f,stroke:#1b4332,color:#fff
     classDef support fill:#40516e,stroke:#2b3648,color:#fff
@@ -45,12 +45,22 @@ flowchart TD
 ```
 
 Green has an implementation. Blue is a support package, not a bounded context.
-Grey and dashed means the package exists and declares interfaces and types, but
-no method bodies. Nothing imports the grey packages yet.
+Grey and dashed means the package exists but has no method bodies. Five of the
+six declare interfaces and types. `portals` is four lines of package comment.
+Nothing imports any of them.
 
-The one real cross-context edge is `TreeEventConsumer` in
-`tree_consumer.go`, which reads `platform.Event`. There is no event bus. Domain
-events are declared as structs and nothing emits or consumes them.
+Edges are the non-test imports reported by `go list`. The one real
+cross-context edge is `TreeEventConsumer` in `tree_consumer.go`, which reads
+`platform.Event`. `config` and `period` are pulled in by `rank_driver.go`.
+
+The dashed edge is a relationship the code intends and does not yet have.
+`observability.Observer.HandleSignal` is built to receive the worker's signal
+lines through `networkengine.WithSignalHandler`, but nothing in production
+registers it, so there is no import in either direction. `cmd/mlmforge` uses
+`observability` and `platform` and never constructs an `EngineClient`.
+
+There is no event bus. Domain events are declared as structs and nothing emits
+or consumes them.
 
 | Read next | For |
 |-----------|-----|
@@ -60,8 +70,10 @@ events are declared as structs and nothing emits or consumes them.
 
 ## The Go to Rust Seam
 
-Commission math runs in Rust. Everything else runs in Go. The two talk over
-NDJSON on a subprocess pipe. Go consumers never see Rust.
+The Network Engine is the Rust component. It owns tree structures, rank
+evaluation, plan validation, streamline and board plan operations, snapshots,
+and commission calculation. Every other context is Go. The two talk over NDJSON
+on a subprocess pipe, and Go consumers never see Rust.
 
 ```mermaid
 flowchart LR
@@ -112,7 +124,7 @@ line by whether it carries `"type": "signal"`.
 |-----------|-----|
 | [003](003-network-engine-design.md) | Why Rust, why CV-only volume, why position-indexed trees |
 | [019](019-ndjson-protocol.md) | The envelope, all 42 error codes, panic recovery, cancellation |
-| [023](023-snapshot-persistence.md) | How `WorkerState` is snapshotted and restored |
+| [023](023-snapshot-persistence.md) | How one structure at a time is serialized and restored |
 
 ## A Commission Calculation
 
@@ -216,12 +228,19 @@ flowchart TD
 ```
 
 Every node is state. Blue is the source of truth for what it feeds. Green is
-derived and can be rebuilt from the blue. Yellow is primary data that nothing
-can rebuild. Grey and dashed is not built.
+derived and can be rebuilt from the blue. Yellow is primary data held in
+relational tables rather than rebuilt from events. Grey and dashed is not
+built.
+
+The two projection arrows are code that exists but is not yet wired. Both
+`TreeEventConsumer` and `TreeMutator` are implemented, and no production code
+appends a tree event or calls them. `qualification_history` is grouped with the
+primary data because that is where rank results are written and read. Decision
+027 does not classify it; that grouping is this diagram's, not 027's.
 
 The split exists because of retention, and the retention it guards against is
 not built yet. ADR-003 makes Compact the default mode, which purges raw events
-after a ninety day window. Nothing implements it. `PostgresEventStore` has no
+after a ninety-day window. Nothing implements it. `PostgresEventStore` has no
 purge, and no migration enforces a window, so no event is deleted today.
 HEU-19 tracks the work and is unstarted.
 

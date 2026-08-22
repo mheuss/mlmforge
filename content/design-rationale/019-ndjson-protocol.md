@@ -135,7 +135,7 @@ which maps every `TreeError` variant, plus a few handler-level checks.
 | Code | Meaning |
 |------|---------|
 | `INVALID_REQUEST` | Request JSON itself is malformed |
-| `INVALID_PARAMS` | Params are missing, malformed, or not a JSON object |
+| `INVALID_PARAMS` | Params are malformed or not a JSON object. Omitting `params` entirely is legal and deserializes as `{}`, so a genuinely required field that is absent returns `MISSING_PARAM` instead |
 | `MISSING_PARAM` | A required parameter is absent |
 | `INVALID_UUID` | A user ID is not a valid UUID |
 | `UNKNOWN_OP` | Unrecognized operation name |
@@ -166,7 +166,7 @@ Without this, a panic in any handler would crash the process. The Go side would 
 
 A background goroutine owns the read side of stdout. It runs for the life of the transport and drains stdout line by line into a buffered channel.
 
-`StdioTransport.Call` writes the request to stdin, then reads lines from the channel. It forwards signals to the observability pipeline and returns the first response to the caller. The read selects against `ctx.Done()`.
+`StdioTransport.Call` writes the request to stdin, then reads lines from the channel. It forwards signals to a registered signal handler and returns the first response to the caller. The handler is opt-in: with none registered, `deliverSignal` drops the line (`transport_stdio.go:258`). `observability.Observer.HandleSignal` is the intended handler, wired via `WithSignalHandler`, but nothing in production registers it today. The read selects against `ctx.Done()`.
 
 ```
 write request to stdin
@@ -218,4 +218,4 @@ The commission ops are `calculate_unilevel`, `calculate_binary_pairing`, `calcul
 - **Typed error handling.** Go callers match on error codes, not message strings. Adding a new error code requires no Go-side changes until a caller needs to handle it specifically.
 - **Resilient worker.** A panic in one handler does not crash the process. The Go side sees a typed error and the connection stays alive.
 - **Clean cancellation.** Go contexts propagate through to the transport layer. Timeouts and cancellations work as expected.
-- **Cross-language observability.** The worker's logs cross the boundary as signals on the same stdout stream. Go forwards them to its telemetry pipeline, correlated by trace context when the request carried it.
+- **Cross-language observability.** The worker's logs cross the boundary as signals on the same stdout stream, correlated by trace context when the request carried it. The Go side can forward them to its telemetry pipeline by registering a handler. That wiring is not in place yet, so signals are drained and discarded today.

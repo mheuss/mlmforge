@@ -2,7 +2,7 @@
 
 ## The Problem
 
-Domain events need persistent storage. Network Engine rebuilds commission state from event replay (event sourcing). All bounded contexts communicate through domain events (cross-context data flow, decision 004). The legacy system had no event persistence. Events were fire-and-forget function calls. If a handler failed or the system crashed, the event was lost.
+Domain events need persistent storage. Network Engine rebuilds tree state from event replay (event sourcing). All bounded contexts communicate through domain events (cross-context data flow, decision 004). The legacy system had no event persistence. Events were fire-and-forget function calls. If a handler failed or the system crashed, the event was lost.
 
 Two distinct use cases share the same storage pattern: append-only writes and sequential reads. Event sourcing writes to a single stream and replays in version order. Domain event consumers read across all streams of a category in insertion order. Both need optimistic concurrency to prevent conflicting writes.
 
@@ -96,7 +96,7 @@ Unit tests run against the in-memory implementation. Integration tests run again
 
 ## What This Enables
 
-- **Event sourcing for Network Engine.** Commission periods, volume attribution, and rank changes are stored as events. State is rebuilt by replaying the stream. No mutable state tables.
+- **Event sourcing for tree topology.** Tree mutations are stored as events, and both the adjacency table and the in-memory Rust engine are rebuilt by replaying them. Commission runs, results, and qualification history are not event sourced. They are primary relational data, and `commission_runs` is a mutable row with a `status` and a `superseded_by`. Decision [027](027-provenance-as-primary-data.md) explains why that is deliberate.
 - **Domain event persistence.** `OrderCompleted`, `AutoshipProcessed`, and other cross-context events survive process crashes. Consumers can replay from a position to catch up after failures.
 - **Audit trail.** Every event is immutable and timestamped. The global position provides a total ordering across all streams.
 - **Clean extraction path.** The `EventStore` interface can be backed by PostgreSQL, EventStoreDB, or a message broker. Consumer code does not change.

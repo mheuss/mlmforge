@@ -70,7 +70,7 @@ Every parameter and return type is a named struct with documented fields. This m
 
 ### The Rust Boundary is Invisible
 
-Network Engine's 7 interfaces are pure Go. Consumers have no idea Rust is involved. The package handles subprocess communication (NDJSON over stdin/stdout via StdioTransport) internally.
+The seven Network Engine contracts in the inventory above are a planned Go-facing surface, and only `EngineTransport` exists today. See the status banner. The intent is that consumers have no idea Rust is involved. The package handles subprocess communication (NDJSON over stdin/stdout via StdioTransport) internally.
 
 Consumers do not need Rust tooling. The Rust engine can be replaced or upgraded without touching any consumer. Testing consumers requires only a Go mock, not a running Rust binary.
 
@@ -86,7 +86,7 @@ Consumers do not need Rust tooling. The Rust engine can be replaced or upgraded 
 
 ## Interface Inventory
 
-26 interfaces across 7 provider contexts. Portals is a pure consumer with no interfaces.
+25 interfaces across 7 provider contexts. Portals is a pure consumer with no interfaces.
 
 | Context | Interfaces |
 |---------|-----------|

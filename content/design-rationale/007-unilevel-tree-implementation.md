@@ -42,7 +42,7 @@ This avoids the complexity of arena compaction. The trade-off is that tombstoned
 
 Child position equals the index in the parent's `children` Vec. Position 0 is the first enrolled child, position 1 is the second. Width is unbounded for unilevel.
 
-Binary trees will use positions 0 (left) and 1 (right). Matrix trees will use positions 0 through width-1. The same `get_branch(user, position)` call works across all tree types.
+Binary trees use positions 0 (left) and 1 (right). Matrix trees use positions 0 through width-1. Both are built. The same `get_branch(user, position)` call works across all tree types.
 
 This validates the generalized tree model from decision 003. No tree-type-specific queries are needed.
 

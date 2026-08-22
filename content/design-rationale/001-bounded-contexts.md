@@ -73,7 +73,7 @@ flowchart TD
 
     classDef foundation fill:#2d6a4f,stroke:#1b4332,color:#fff
     classDef business fill:#40516e,stroke:#2b3648,color:#fff
-    classDef consumer fill:#5a5a5a,stroke:#3d3d3d,color:#fff
+    classDef consumer fill:#6b4a7a,stroke:#472f52,color:#fff
     class pf,id,ne foundation
     class fin,com,eng,ops business
     class por consumer
@@ -81,6 +81,11 @@ flowchart TD
 
 Every context also depends on Platform. Only the Portals arrow is drawn, so
 the rest stays readable.
+
+The two count columns below do not reconcile. "Depended Upon By" sums to 31
+and "Depends On" sums to 33, and in a directed graph those totals have to
+match. They came from the legacy analysis and were never rechecked. Read them
+as rough weight, not as an edge count.
 
 | Context | Depended Upon By | Depends On | Role |
 |---------|-----------------|------------|------|

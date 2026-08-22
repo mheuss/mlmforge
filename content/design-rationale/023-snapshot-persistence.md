@@ -6,11 +6,13 @@ Tree types in the network engine reconstruct from domain event replay. For the b
 
 ## Decision
 
-All tree-layer data structures must remain serde-serializable. Snapshot persistence uses `serde_json` to serialize the full engine state. Go handles storage and scheduling.
+All tree-layer data structures must remain serde-serializable. Snapshot persistence uses `serde_json`. Go handles storage and scheduling.
+
+`take_snapshot` and `restore_snapshot` work on one named structure at a time, not on the whole worker. The handler reads a `structure` param and serializes that entry of `WorkerState.trees`. The loaded plan and every other structure are outside the snapshot, so recovering a worker means restoring each structure and calling `load_plan` again. Snapshot scheduling and a Go-side snapshot store are not built.
 
 ### Constraint
 
-Any future field addition to Arena, Node, UnilevelTree, BinaryTree, MatrixTree, BoardPlanEngine, or Board that introduces a non-serializable type (function pointers, file handles, runtime-only state) breaks snapshot persistence. This is a breaking change.
+Any future field addition to Arena, Node, UnilevelTree, BinaryTree, MatrixTree, StreamlineEngine, Stream, BoardPlanEngine, or Board that introduces a non-serializable type (function pointers, file handles, runtime-only state) breaks snapshot persistence. This is a breaking change.
 
 ### Format
 

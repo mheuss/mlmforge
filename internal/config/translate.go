@@ -46,14 +46,17 @@ func translateToEngine(plan *CompensationPlan) ([]byte, error) {
 }
 
 // taggedStructure marshals its fields in declaration order (type before config).
-// This is now about byte stability, not correctness: TestConfigContractFixtures
+// A map[string]any would marshal them alphabetically, config before type.
+//
+// This is about byte stability, not correctness. TestConfigContractFixtures
 // MatchPipeline byte-compares this output against committed fixtures, so the
-// order must not drift. Serde reads the "type" tag first and decodes "config"
-// directly, which is the cheaper path, but since HEU-648 the reverse order
-// deserializes too. A map[string]any
-// marshals keys alphabetically ("config" before "type"), which forces serde to
-// buffer the content before it knows the variant — and that buffer fails on
-// non-string map keys such as rate_table's u8 keys (HEU-513: contract round-trip).
+// order must not drift. Type-first is also the cheaper parse: serde reads the
+// tag and decodes the content directly instead of buffering it.
+//
+// It used to be a correctness requirement. The buffered path stripped the
+// string-to-integer coercion that rate_table's u8 keys need, so config-first
+// input failed outright (HEU-513: contract round-trip). HEU-648 fixed that in
+// the engine's config types. Either order parses now.
 type taggedStructure struct {
 	Type   string         `json:"type"`
 	Config map[string]any `json:"config"`

@@ -26,10 +26,14 @@ type contractFixtureSetup struct {
 type contractFixture struct {
 	Description string                 `json:"description"`
 	Setup       []contractFixtureSetup `json:"setup,omitempty"`
-	// SetupRaw holds NDJSON lines to send as setup, bypassing the
-	// map[string]any round-trip. Use it when re-marshaling would reorder
-	// keys the worker treats as significant (for example, adjacent-tagged
-	// enum payloads). Mirrors RequestRaw. Mutually exclusive with Setup.
+	// SetupRaw holds NDJSON lines to send as setup verbatim, bypassing the
+	// map[string]any round-trip. Use it when the fixture needs to control its
+	// own bytes: malformed JSON, duplicate keys, or a specific key order the
+	// assertion depends on. Mirrors RequestRaw. Mutually exclusive with Setup.
+	//
+	// It is no longer needed just because a fixture loads a plan. Re-marshaling
+	// reorders keys alphabetically, which used to break adjacent-tagged enum
+	// payloads; HEU-648 made that order parse fine.
 	SetupRaw         []string         `json:"setup_raw,omitempty"`
 	Request          *json.RawMessage `json:"request,omitempty"`
 	RequestRaw       *string          `json:"request_raw,omitempty"`
@@ -97,11 +101,8 @@ func TestContractFixtures(t *testing.T) {
 				"[%s] fixture has both 'setup' and 'setup_raw'; pick one", tc.name)
 
 			// Run setup steps (e.g., create_tree) before the main request.
-			// SetupRaw is sent verbatim, mirroring RequestRaw. Use it where the
-			// fixture's exact wire bytes are the point. It is no longer needed to make
-			// plans deserialize: HEU-648 made content-before-tag parse fine. Use it for
-			// payloads where key order matters (for example, adjacent-tagged
-			// enum discriminants).
+			// SetupRaw is sent verbatim, mirroring RequestRaw. See its doc
+			// comment on contractFixture for when a fixture needs it.
 			var setupLines []string
 			if len(tc.fixture.SetupRaw) > 0 {
 				setupLines = tc.fixture.SetupRaw

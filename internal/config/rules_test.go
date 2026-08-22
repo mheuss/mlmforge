@@ -1889,20 +1889,21 @@ func TestRateKeyWidth_DuplicateCheckReachesRateTables(t *testing.T) {
 
 	found := false
 	for _, e := range errs {
-		if e.Code == "duplicate_value" {
+		if e.Code == "duplicate_value" && e.Path == "/structures/0/commission/rate_table/Associate" {
 			found = true
 		}
 	}
-	assert.True(t, found, "expected duplicate_value for the inner rate-table keys, got: %v", errs)
+	assert.True(t, found, "expected duplicate_value at the inner rate-table path, got: %v", errs)
 }
 
 // TestRateKeyWidth_DistinctKeysAreNotDuplicates guards the obvious false
 // positive: keys that parse to different integers must stay accepted.
 func TestRateKeyWidth_DistinctKeysAreNotDuplicates(t *testing.T) {
 	plan := minimalPlan()
-	plan.Bonuses.Matching = &MatchingBonusConfig{Rates: map[string]float64{"1": 0.05, "01x": 0.09, "2": 0.1}}
-	delete(plan.Bonuses.Matching.Rates, "01x")
-	plan.Bonuses.Matching.Rates["010"] = 0.2 // parses to 10, distinct from 1 and 2
+	// "010" parses to 10, distinct from 1 and 2, so none of these collide.
+	plan.Bonuses.Matching = &MatchingBonusConfig{
+		Rates: map[string]float64{"1": 0.05, "2": 0.1, "010": 0.2},
+	}
 
 	errs := validateRateKeyWidths(plan)
 

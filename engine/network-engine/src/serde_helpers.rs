@@ -40,14 +40,17 @@ where
 
 /// Parses JSON string map keys into `u8`, rejecting two spellings of one key.
 ///
-/// `str::parse::<u8>` accepts `"01"`, and so do the schema's `propertyNames`
-/// patterns (`^0*(...)`) and Go's `strconv.ParseUint` in `validateU8MapKeys`
-/// (`internal/config/rules.go:118`). Rejecting leading zeros here alone would
-/// make the worker refuse plans the validated Go pipeline accepts, so this
-/// stays *at least* as permissive as they are. It is slightly more permissive
-/// in one direction that does not matter: `parse::<u8>` accepts a leading `+`,
-/// which both the schema pattern and `strconv.ParseUint` reject. The gate
-/// refuses those before the worker ever sees them.
+/// The accepted spelling has to match the other two layers exactly, in both
+/// directions. The schema's `propertyNames` patterns are `^0*(...)` and Go's
+/// `validateU8MapKeys` (`internal/config/rules.go`) uses
+/// `strconv.ParseUint(key, 10, 8)`. Both accept leading zeros and both reject a
+/// sign, so this does the same.
+///
+/// `str::parse::<u8>` on its own is not that: it accepts `"+5"`, which the other
+/// two refuse. Matching them cannot be left to the upstream gate, because the
+/// engine deliberately does not trust that the gate ran — that distrust is why
+/// `handle_load_plan` validates at all (HEU-517). Digits are checked here
+/// instead.
 ///
 /// What it will not accept is `"1"` and `"01"` in the same map. Those name one
 /// entry, one value silently wins, and on a money path that is a wrong payout.
@@ -63,6 +66,14 @@ where
 {
     let mut out = BTreeMap::new();
     for (k, v) in raw {
+        // `parse::<u8>` would accept "+5"; the schema pattern and
+        // `strconv.ParseUint` both refuse a sign. Check before parsing so all
+        // three layers accept the same set.
+        if k.is_empty() || !k.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(E::custom(format!(
+                "invalid integer key '{k}': expected decimal digits only"
+            )));
+        }
         let key = k
             .parse::<u8>()
             .map_err(|e| E::custom(format!("invalid integer key '{k}': {e}")))?;
@@ -177,6 +188,21 @@ mod tests {
     #[test]
     fn flat_map_rejects_nonnumeric_key() {
         assert!(serde_json::from_str::<Flat>(r#"{"rates":{"gold":0.05}}"#).is_err());
+    }
+
+    /// The schema pattern and Go's `strconv.ParseUint` both refuse a sign, and
+    /// `parse::<u8>` alone would accept `"+5"`. The engine cannot defer this to
+    /// the upstream gate: it validates precisely because it does not trust that
+    /// the gate ran.
+    #[test]
+    fn flat_map_rejects_signed_and_empty_keys() {
+        for key in ["+5", "", " 5", "5 "] {
+            let json = format!(r#"{{"rates":{{"{key}":0.05}}}}"#);
+            assert!(
+                serde_json::from_str::<Flat>(&json).is_err(),
+                "key {key:?} should be rejected, Go and the schema both refuse it"
+            );
+        }
     }
 
     /// Leading zeros are accepted, matching the schema's `^0*(...)`

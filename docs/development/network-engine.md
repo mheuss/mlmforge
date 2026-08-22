@@ -163,17 +163,15 @@ This trips up tests and ad-hoc verification that load a plan whose ranks have em
 
 A possible follow-up is to register every loaded structure in the navigator map, not just those referenced by qualifications, so empty-qualification ranks behave as "always pass." That requires product-team alignment on the intended semantics — the current behavior is a defensible reading too.
 
-## Contract-Test Harness: `setup_raw` for Adjacent-Tagged Enums
+## Contract-Test Harness: `setup_raw` for Byte-Sensitive Fixtures
 
-`engine/network-engine-worker/tests/contract_tests.rs` and `internal/networkengine/contract_test.go` round-trip fixture setup steps through `serde_json::Value` / `map[string]any`. The Go side re-emits JSON object keys in alphabetical order. That breaks deserialization of adjacent-tagged enums whose content carries non-string map keys.
+`engine/network-engine-worker/tests/contract_tests.rs` and `internal/networkengine/contract_test.go` round-trip fixture setup steps through `serde_json::Value` / `map[string]any`, which sorts object keys. Go's `json.Marshal` always sorts, and the Rust side sorts too since `serde_json::Value` is a `BTreeMap`.
 
-Go is the driver here. `json.Marshal` always sorts map keys, so the Go harness reorders every time. The Rust harness sorts too, in every build, because `serde_json::Value` is backed by a `BTreeMap`.
+**Use `setup_raw` when the fixture needs to control its own bytes.** Malformed JSON, duplicate keys, or a specific key order the assertion depends on — none of those survive a round-trip through a map. `setup_raw` lines are sent verbatim as NDJSON. `setup` and `setup_raw` are mutually exclusive per fixture, and the harness asserts it.
 
-`setup_raw` stays mandatory, but the reason narrowed. It is now about byte fidelity: a fixture that survives a `Value` round-trip unchanged is a fixture whose exact wire bytes are being asserted. It is no longer about deserialization failing, because HEU-648 made the reorder harmless.
+**It is no longer required just because a fixture loads a plan.** That rule existed because sorting puts `config` before `type` in an adjacently-tagged `StructureConfig`, which made serde buffer the content, which stripped the string-to-`u8` coercion that `rate_table: BTreeMap<u8, f64>` needs. Loading a plan through `setup` failed outright. HEU-648 fixed that with `deserialize_with` helpers in `engine/network-engine/src/serde_helpers.rs`, so either key order parses now.
 
-Historical case, kept because the mechanism still explains the harness design: `StructureConfig` uses `#[serde(tag = "type", content = "config")]`. The `Unilevel` variant's content includes `rate_table: BTreeMap<u8, f64>`. After alphabetical sort `"config"` precedes `"type"`, so serde buffers the content before it knows the variant, and the buffered path used to lose the string-to-`u8` key coercion. HEU-648 fixed that with `deserialize_with` helpers in `engine/network-engine/src/serde_helpers.rs`. Content-before-tag now deserializes fine.
-
-Fixtures that load plans (or any other adjacent-tagged enum with non-string-keyed content) must use the `setup_raw: ["..."]` field instead of `setup: [{...}]`. The harness sends `setup_raw` strings verbatim as NDJSON, bypassing the `Value` round-trip. Both `setup` and `setup_raw` are mutually exclusive per fixture (the harness asserts).
+Existing plan fixtures still use `setup_raw`. Leave them: changing a fixture's encoding path changes the bytes the worker sees, which is not a change worth making without a reason.
 
 Pattern: `request_raw` exists for the same reason on the request side. If you find yourself adding a new escape hatch for `params`, follow that precedent.
 

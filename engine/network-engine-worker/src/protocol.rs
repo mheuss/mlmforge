@@ -13,11 +13,17 @@ pub struct Request {
     pub trace_id: Option<String>,
     #[serde(default)]
     pub span_id: Option<String>,
-    /// Raw JSON params preserved as-is to avoid the serde_json::Value
-    /// intermediate representation. Value's BTreeMap key ordering and
-    /// buffered content deserialization breaks non-string map keys
-    /// (like BTreeMap<u8, f64> in rate tables) and adjacently-tagged
-    /// enums when field order differs from tag order.
+    /// Raw JSON params preserved as-is, so handlers deserialize straight into
+    /// their own types instead of through a `serde_json::Value` intermediate.
+    /// That skips a full reparse of every request body and keeps the caller's
+    /// bytes intact.
+    ///
+    /// It used to be load-bearing for correctness too: `Value` sorts keys, and
+    /// the sorted order made serde buffer an adjacently-tagged enum's content,
+    /// which stripped the string-to-integer coercion that `BTreeMap<u8, f64>`
+    /// rate tables need. HEU-648 fixed that in the config types, so a `Value`
+    /// round-trip no longer breaks a plan. `RawValue` stays for the reasons
+    /// above.
     #[serde(default = "default_raw_params")]
     pub params: Box<serde_json::value::RawValue>,
 }
@@ -89,19 +95,20 @@ mod tests {
     /// It measures 48 bytes, in every build. Before `result` was boxed,
     /// `Response` held a `serde_json::Value` inline and so changed size with
     /// `serde_json`'s `preserve_order` feature, which `network-engine` declared
-    /// in `[dev-dependencies]` at the time. HEU-648 removed that feature, so all
-    /// three build configurations now link the same `serde_json`. It came out at 112 bytes or 152 depending on
-    /// whether that crate's dev targets were in the build graph. That is why
-    /// `clippy --all-targets --workspace` failed while
+    /// in `[dev-dependencies]` at the time. It came out at 112 bytes or 152
+    /// depending on whether that crate's dev targets were in the build graph.
+    /// That is why `clippy --all-targets --workspace` failed while
     /// `clippy --all-targets -p network-engine-worker` passed. Holding
     /// `--all-targets` fixed is what makes the comparison mean anything: plain
     /// `clippy --workspace` was green throughout, which is why CI never caught
     /// this. Boxing removed the coupling.
     ///
-    /// `docs/development/network-engine.md`, "Rust Tests: Always Run
-    /// `--workspace`", covers this build-scope split in full, including the
-    /// third configuration the shipped binary uses. Read it before concluding
-    /// anything from a narrow-scope cargo run.
+    /// HEU-648 later removed the feature entirely, so all three build
+    /// configurations now link the same `serde_json`.
+    ///
+    /// `docs/development/network-engine.md`, "Rust Tests: Package Scope Used
+    /// To Lie", covers that build-scope split in full, including the third
+    /// configuration the shipped binary used to be.
     ///
     /// Prefer boxing a new field over raising this bound.
     #[test]

@@ -334,6 +334,40 @@ mod tests {
         }
     }
 
+    /// The `Generation` variant is as reachable as `Unilevel` and carries its
+    /// own integer-keyed map, so it needs its own pin. Without this, dropping
+    /// the `deserialize_with` from `GenerationCommissionConfig::rates` leaves
+    /// the whole suite green.
+    #[test]
+    fn generation_structure_deserializes_with_config_before_type() {
+        let json = r#"{
+            "config": {
+                "name": "Generation Plan",
+                "level_commission": null,
+                "compression": null,
+                "generation_commission": {
+                    "max_generations": 4,
+                    "generation_rates": { "1": 0.10, "2": 0.06 },
+                    "boundary_mode": "threshold_rank",
+                    "boundary_rank": "director",
+                    "empty_generation_consumes_number": true,
+                    "volume_to_dollar_multiplier": null
+                },
+                "level_commissions_enabled": false
+            },
+            "type": "generation"
+        }"#;
+        let parsed: StructureConfig =
+            serde_json::from_str(json).expect("config-before-type must parse");
+        match parsed {
+            StructureConfig::Generation(g) => {
+                assert_eq!(g.generation_commission.rates[&1], 0.10);
+                assert_eq!(g.generation_commission.rates[&2], 0.06);
+            }
+            other => panic!("expected generation, got {other:?}"),
+        }
+    }
+
     #[test]
     fn deserialize_structure_config_unilevel() {
         let json = r#"{

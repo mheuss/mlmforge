@@ -44,11 +44,19 @@ where
 /// patterns (`^0*(...)`) and Go's `strconv.ParseUint` in `validateU8MapKeys`
 /// (`internal/config/rules.go:118`). Rejecting leading zeros here alone would
 /// make the worker refuse plans the validated Go pipeline accepts, so this
-/// stays as permissive as they are.
+/// stays *at least* as permissive as they are. It is slightly more permissive
+/// in one direction that does not matter: `parse::<u8>` accepts a leading `+`,
+/// which both the schema pattern and `strconv.ParseUint` reject. The gate
+/// refuses those before the worker ever sees them.
 ///
 /// What it will not accept is `"1"` and `"01"` in the same map. Those name one
 /// entry, one value silently wins, and on a money path that is a wrong payout.
 /// No caller can have meant it, so it is an error rather than a policy.
+///
+/// This does not cover a literally repeated key, `{"1": 0.05, "1": 0.09}`.
+/// Serde's map visitor collapses that to the last value before this function
+/// sees it, so the collision is already gone. Go's `encoding/json` does the
+/// same, so both sides agree — but do not read the check below as covering it.
 fn parse_u8_keys<E>(raw: BTreeMap<String, f64>) -> Result<BTreeMap<u8, f64>, E>
 where
     E: serde::de::Error,
@@ -166,10 +174,22 @@ mod tests {
         assert!(e.to_string().contains("duplicate"), "got: {e}");
     }
 
+    /// Assert on the message, not just `is_err()`. A bare `is_err()` would also
+    /// pass if the helper had rejected `"02"` outright as a bad key, which is
+    /// exactly the wrong behavior the Go/schema parity constraint rules out.
     #[test]
     fn nested_map_rejects_duplicate_parsed_inner_keys() {
         let json = r#"{"table":{"silver":{"2":0.05,"02":0.09}}}"#;
-        assert!(serde_json::from_str::<Nested>(json).is_err());
+        let e = serde_json::from_str::<Nested>(json).unwrap_err();
+        assert!(e.to_string().contains("duplicate"), "got: {e}");
+    }
+
+    /// The permissiveness guarantee has to hold on the nested path too, not
+    /// only the flat one.
+    #[test]
+    fn nested_map_accepts_leading_zeros() {
+        let v: Nested = serde_json::from_str(r#"{"table":{"silver":{"03":0.05}}}"#).unwrap();
+        assert_eq!(v.table["silver"][&3], 0.05);
     }
 
     #[test]

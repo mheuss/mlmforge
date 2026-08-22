@@ -31,10 +31,20 @@ fn default_raw_params() -> Box<serde_json::value::RawValue> {
 pub struct Response {
     pub id: String,
     pub ok: bool,
+    /// Boxed to keep `Response` under clippy's `large-error-threshold`.
+    /// `Response` is the `Err` type of the parse and lookup helpers in
+    /// `handlers/`, and this is the field that carried the weight: held inline,
+    /// a `serde_json::Value` made `Response`'s size depend on a feature flag.
+    /// See `response_stays_small_enough_for_clippy`.
+    ///
+    /// `serde` serializes `Box<T>` as `T`, so the NDJSON shape is unchanged.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<serde_json::Value>,
+    pub result: Option<Box<serde_json::Value>>,
+    /// Also boxed, for headroom. Boxing `result` alone already clears the
+    /// threshold at 88 bytes. Boxing this one too brings `Response` to 48, and
+    /// error responses are the cold path.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<ErrorPayload>,
+    pub error: Option<Box<ErrorPayload>>,
 }
 
 /// Error details included in a failed response.
@@ -49,7 +59,7 @@ impl Response {
         Self {
             id,
             ok: true,
-            result: Some(result),
+            result: Some(Box::new(result)),
             error: None,
         }
     }
@@ -59,10 +69,10 @@ impl Response {
             id,
             ok: false,
             result: None,
-            error: Some(ErrorPayload {
+            error: Some(Box::new(ErrorPayload {
                 code: code.into(),
                 message: message.into(),
-            }),
+            })),
         }
     }
 }
@@ -70,6 +80,41 @@ impl Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Clippy's `result_large_err` rejects an `Err` variant over its
+    /// `large-error-threshold`, which defaults to 128 bytes and is not
+    /// overridden here. `Response` is the error type of the parse and lookup
+    /// helpers in `handlers/`.
+    ///
+    /// It measures 48 bytes, in every build. Before `result` was boxed,
+    /// `Response` held a `serde_json::Value` inline and so changed size with
+    /// `serde_json`'s `preserve_order` feature, which `network-engine` declares
+    /// in `[dev-dependencies]`. It came out at 112 bytes or 152 depending on
+    /// whether that crate's dev targets were in the build graph. That is why
+    /// `clippy --all-targets --workspace` failed while
+    /// `clippy --all-targets -p network-engine-worker` passed. Holding
+    /// `--all-targets` fixed is what makes the comparison mean anything: plain
+    /// `clippy --workspace` was green throughout, which is why CI never caught
+    /// this. Boxing removed the coupling.
+    ///
+    /// `docs/development/network-engine.md`, "Rust Tests: Always Run
+    /// `--workspace`", covers this build-scope split in full, including the
+    /// third configuration the shipped binary uses. Read it before concluding
+    /// anything from a narrow-scope cargo run.
+    ///
+    /// Prefer boxing a new field over raising this bound.
+    #[test]
+    fn response_stays_small_enough_for_clippy() {
+        const CLIPPY_LARGE_ERROR_THRESHOLD: usize = 128;
+
+        let size = std::mem::size_of::<Response>();
+        assert!(
+            size <= CLIPPY_LARGE_ERROR_THRESHOLD,
+            "Response is {size} bytes, over clippy's \
+             {CLIPPY_LARGE_ERROR_THRESHOLD}-byte large-error-threshold; box the \
+             largest field rather than raising this bound"
+        );
+    }
 
     #[test]
     fn deserialize_request() {
@@ -105,21 +150,56 @@ mod tests {
         assert!(req.span_id.is_none());
     }
 
+    /// Exact-string, not `contains`. ADR-019 makes the NDJSON shape a contract
+    /// with the Go side, and a substring check passes through an added field, a
+    /// renamed one, or a lost `skip_serializing_if`. Field order is not part of
+    /// that contract: the Go side decodes with `encoding/json` struct tags,
+    /// which ignore order. So a reorder tripping this test is a heads-up, not a
+    /// compatibility break.
+    ///
+    /// This test's own fixture must stay object-free, and `contains_object`
+    /// below enforces that. It is a constraint on the fixture, not on
+    /// `Response::success`, which takes objects freely — most handlers pass
+    /// one. Object key order depends on whether `serde_json/preserve_order` is
+    /// in the build graph, so an exact-string assertion over an object would
+    /// hold under `cargo test` and fail against the shipped binary. HEU-638
+    /// tracks that split.
     #[test]
     fn serialize_success_response() {
-        let resp = Response::success("req-1".into(), serde_json::json!("pong"));
+        let payload = serde_json::json!("pong");
+        assert!(
+            !contains_object(&payload),
+            "this test's payload must contain no JSON object: key order depends \
+             on serde_json/preserve_order, so the exact-string assertion below \
+             would pass here and fail against the shipped binary"
+        );
+
+        let resp = Response::success("req-1".into(), payload);
         let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains(r#""ok":true"#));
-        assert!(json.contains(r#""result":"pong""#));
-        assert!(!json.contains("error"));
+        assert_eq!(json, r#"{"id":"req-1","ok":true,"result":"pong"}"#);
     }
 
+    /// Whether `v` holds a JSON object at any depth, arrays included.
+    ///
+    /// Checks the `Value` structurally rather than searching the serialized
+    /// text for a brace. A scalar string like `"a{b"` serializes with a brace
+    /// in it and is perfectly safe here.
+    fn contains_object(v: &serde_json::Value) -> bool {
+        match v {
+            serde_json::Value::Object(_) => true,
+            serde_json::Value::Array(items) => items.iter().any(contains_object),
+            _ => false,
+        }
+    }
+
+    /// Exact-string for the same reason as `serialize_success_response`.
     #[test]
     fn serialize_error_response() {
         let resp = Response::error("req-1".into(), "NOT_FOUND", "thing not found");
         let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains(r#""ok":false"#));
-        assert!(json.contains(r#""code":"NOT_FOUND""#));
-        assert!(!json.contains("result"));
+        assert_eq!(
+            json,
+            r#"{"id":"req-1","ok":false,"error":{"code":"NOT_FOUND","message":"thing not found"}}"#
+        );
     }
 }

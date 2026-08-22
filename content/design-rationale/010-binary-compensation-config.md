@@ -95,22 +95,17 @@ Binary placement is more complex than any other structure type because of spillo
 |--------|------|-----------------|
 | **Default placement** | `balanced`, `left`, `right` | System-wide default. Balanced: place on the side with less volume. Left/right: always place on the specified side. |
 | **Per-user preference** | boolean | Whether individual distributors can set their own placement preference, overriding the default. This is the "power leg" strategy: a distributor builds one side aggressively while the company/upline fills the other via spillover. |
-| **Spillover** | always enabled | When a sponsor's two positions are full, new recruits spill down to the next available position on the chosen side. Spillover is the primary growth mechanic for binary. It is always enabled. |
+| **Spillover enabled** | boolean | When a sponsor's two positions are full, new recruits spill down to the next available position on the chosen side. Spillover is the primary growth mechanic for binary and nearly every plan turns it on, but `spillover_enabled` is a required field, not an assumption. |
 
 Spillover creates excitement because distributors see new people appearing in their downline without personally recruiting them. It also means sponsor and placement parent are almost always different people. The engine tracks both.
 
-**Holding tank** is available for binary structures. New recruits can be parked before placement so the sponsor can decide which side.
+**Holding tank** is configurable for binary in `HoldingTankConfig.applicable_structures`, but the engine does not implement it. `get_holding_tank` and `place_from_tank` reject every non-matrix tree (`handlers/tree.rs:426-430`, `:477-481`). See [003](003-network-engine-design.md).
 
 ## Binary-Specific Gaps From Legacy
 
 The legacy system had an empty stub for binary volume propagation and no pairing bonus implementation. The commission calculation was delegated to custom per-deployment code.
 
-Priority order for implementation:
-1. Volume propagation (without this, nothing else works)
-2. Pairing bonus calculation (the primary commission type)
-3. Carry-forward / flush modes (directly affects payout amounts)
-4. Commission cap
-5. Placement preferences with spillover
+That gap is closed. `calculate_binary_pairing` (`commission/binary.rs:154`) handles both the pairing and cycle/step modes and returns `BinaryCalculationResult` with post-payout leg volumes for carry-forward. Placement preference and spillover are config the Go placement layer reads; the tree itself takes an explicit position.
 
 ## What This Enables
 

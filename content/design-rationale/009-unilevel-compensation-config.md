@@ -62,15 +62,17 @@ Without compression, the company keeps the money that would have gone to unquali
 
 A configuration option on unilevel where a new distributor's first X recruits are "passed up" to their sponsor. The distributor earns nothing on those recruits. After completing the pass-up requirement, the distributor keeps all future recruits.
 
+There is no `enabled` flag. Presence of the `pass_up` block turns it on; omit
+the block to turn it off.
+
 | Option | Type | What it controls |
 |--------|------|-----------------|
-| **Enabled** | boolean | Whether pass-up is active. |
-| **Count** | integer (>= 1) | Number of recruits passed to sponsor. A "2-up" plan passes the first 2 recruits. |
+| **Count** | integer (1-255) | Number of recruits passed to sponsor. A "2-up" plan passes the first 2 recruits. |
 | **Includes commissions** | boolean | Whether commissions from passed-up recruits also go to the sponsor. When false, only the recruits themselves are passed up (they appear in the sponsor's downline), but commissions still flow normally. |
 
 This creates a mentorship investment: the sponsor benefits from the new distributor's early recruiting, which incentivizes the sponsor to help them get started. After the pass-up, everything the distributor builds is theirs.
 
-Only applicable to unilevel and generation structures.
+Only applicable to unilevel. `pass_up` is a field on `UnilevelCommission` and has no equivalent on any other structure type.
 
 ### Donated Placement
 

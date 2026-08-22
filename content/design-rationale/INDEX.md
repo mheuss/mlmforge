@@ -55,9 +55,16 @@ What it did **not** check, and where the escaped errors lived:
 - **Behavior.** That a symbol exists says nothing about what it does. Return
   types, wiring, and whether a code path has a production caller all need
   reading.
-- **Per-option coverage in 008 through 013.** Those catalog configurable
-  options per plan type. The names are real. Whether each option has a working
-  implementation was not verified option by option.
+- **Per-option coverage in 008 through 013.** This gap has since been closed.
+  A second pass on 2026-08-22 checked every documented option against the JSON
+  Schema and the Rust config, and checked whether a calculator consumes it. It
+  found 18 problems, including an entire section of 008 describing bonus
+  programs that nothing computes. Those documents are corrected and 008 and 011
+  now carry banners.
+
+What remains unswept: the commission math itself. The audit checked
+signatures, wiring, and the claims the documents make about them. It did not
+verify that any calculator computes correct commissions.
 
 Treat a blank Status as "nobody has found a problem here yet."
 
@@ -73,10 +80,10 @@ Treat a blank Status as "nobody has found a problem here yet."
 | [005](005-multi-currency.md) | **Multi-Currency** | Design intent | Regional product catalogs, CV points, and the three-context currency chain |
 | [006](006-enrollment-orchestration.md) | **Enrollment Orchestration** | Not built | The saga pattern, configurable payment failure, and structure placement |
 | [007](007-unilevel-tree-implementation.md) | **Unilevel Tree Implementation** | | Arena storage, UUID user IDs, iterative BFS, position-indexed model |
-| [008](008-common-compensation-config.md) | **Common Compensation Config** | | Periods, volume, ranks, eligibility, bonuses, payout, caps, placement, audit |
+| [008](008-common-compensation-config.md) | **Common Compensation Config** |Partial | Periods, volume, ranks, eligibility, bonuses, payout, caps, placement, audit |
 | [009](009-unilevel-compensation-config.md) | **Unilevel Compensation Config** | | Rate table, compression, pass-up variant, donated placement |
 | [010](010-binary-compensation-config.md) | **Binary Compensation Config** | | Pairing bonus, volume-after-payout modes, carry-forward, cycle/step, spillover |
-| [011](011-matrix-compensation-config.md) | **Matrix Compensation Config** | | Width/height, forced placement, completion bonus, position bonus, board plan |
+| [011](011-matrix-compensation-config.md) | **Matrix Compensation Config** |Partial | Width/height, forced placement, completion bonus, position bonus, board plan |
 | [012](012-stairstep-compensation-config.md) | **Stairstep Compensation Config** | | Breakaway threshold, differential overrides, generation counting |
 | [013](013-generation-compensation-config.md) | **Generation Compensation Config** | | Boundary modes, generation rates, empty generations, combined level+generation |
 | [014](014-streamline-compensation-config.md) | **Streamline Compensation Config** | | Dynamic compression, streams, rank expansion, freeze on demotion, monoline |

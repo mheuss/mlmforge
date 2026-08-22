@@ -47,7 +47,9 @@ Forced placement is the defining mechanic for matrix. The system decides where r
 
 | Option | Type | What it controls |
 |--------|------|-----------------|
-| **Spillover direction** | `breadth_first` or `depth_first` | How the matrix fills. Breadth first (default): fill each level completely before the next. Balanced growth. Industry standard. Depth first: fill one branch completely before starting the next. Creates deep, narrow structures. Rare. |
+| **Spillover direction** | `breadth_first` | How the matrix fills. Fill each level completely before the next. Balanced growth. Industry standard. |
+
+`depth_first` is not available. The schema enum accepts only `breadth_first`, and `MatrixTree::new` rejects `SpilloverDirection::DepthFirst` with `UNSUPPORTED_SPILLOVER` (`tree/matrix.rs:57-59`). The variant exists in the Rust enum as a placeholder for a plan type nobody has asked for yet.
 
 Forced placement means sponsor and placement parent are almost always different people. The engine tracks both.
 
@@ -62,11 +64,15 @@ When a node is removed from the matrix and has children, two behaviors are avail
 | **Promote earliest** | The earliest child (by enrollment date) inherits the removed node's position. Remaining children are repositioned under the inheritor. No admin action needed. | Default behavior. Works well when removals are rare and the order of inheritance is not contentious. |
 | **Holding tank** | All children are moved to the holding tank. Admin decides where to re-place them. | When the company wants full control over post-removal placement. Safest option but requires admin action. |
 
-Both modes emit domain events for audit. Volume redistribution from repositioning triggers a note for the affected period's commission calculation.
+Both modes are intended to emit domain events for audit, and volume redistribution from repositioning should flag the affected period's commission calculation. Neither is wired: there is no event bus, and no production code appends a tree event. See [000](000-architecture-overview.md).
 
 ## Matrix-Specific Bonuses
 
 ### Matrix Completion Bonus
+
+**Not implemented.** The config block parses and nothing reads it. See the
+banner in [008](008-common-compensation-config.md), which covers every bonus
+type.
 
 Earned when a matrix level is fully filled or the entire structure is complete. This is a defining feature for matrix plans.
 
@@ -80,6 +86,8 @@ Detection requires the tree to track fill state: positions filled at each level 
 Per-level completion is more practical than full-matrix completion for large matrices. A 3x9 matrix has 29,524 positions. Full completion is unrealistic. Per-level triggers are the real incentive driver.
 
 ### Position Bonus
+
+**Not implemented**, same as the completion bonus above.
 
 Earned when a personally sponsored recruit is placed in the matrix.
 
@@ -105,11 +113,16 @@ A board plan is a cycling matrix variant implemented as its own structure type (
 
 | Option | Type | What it controls |
 |--------|------|-----------------|
-| **Cycling enabled** | boolean | Whether board cycling is active. When false, the matrix behaves normally. |
 | **Cycle commission** | float | Amount earned when cycling out of a board. |
 | **Re-entry enabled** | boolean | Whether cycled-out members automatically re-enter a new board. |
 | **Re-entry position** | `bottom` or `sponsor_board` | Where re-entered members are placed. Bottom: lowest available position in any board. Sponsor board: placed in the same board as their sponsor. |
-| **Max cycles per period** | integer | Cap on how many times a member can cycle per period. Prevents runaway earnings on fast-filling boards. |
+| **Max cycles per period** | integer (>= 1) | Cap on how many times a member can cycle per period. Prevents runaway earnings on fast-filling boards. |
+| **Stall threshold periods** | integer (>= 1) | Periods a board can go without filling before it is flagged as stalled. |
+| **Inactive compression** | boolean | Whether inactive members are compressed out when a board cycles. |
+| **Max cascade depth** | integer (>= 1) | How far a single cycle may cascade into further cycles. Optional. |
+
+There is no separate "cycling enabled" switch. A structure is a board plan by
+being typed `board_plan`; presence of the `board_cycling` block configures it.
 
 ### Board Plan Status
 

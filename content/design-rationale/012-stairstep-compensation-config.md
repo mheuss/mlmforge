@@ -35,8 +35,12 @@ These level commissions continue to apply to the portion of the downline that ha
 
 The override is the difference between the sponsor's rank rate and the breakaway leader's rank rate, applied to the breakaway group's total volume. This is what makes stairstep "stairstep."
 
+`overrides` is a tagged union on `type`, with two strategies. Everything in this
+section describes `single_walk`. The `multi_tier` strategy is covered below.
+
 | Option | Type | What it controls |
 |--------|------|-----------------|
+| **Type** | `single_walk` | Selects the classic rank-walk override described here. |
 | **Override calculation** | `differential` or `fixed_override` | How the override percentage is determined. |
 | **Rank rates** | rank x rate map | Base rate per rank. Used to calculate the differential. |
 | **Min override** | float (default: 0.0) | Floor for the override percentage. Standard: 0 (never negative). |
@@ -72,13 +76,24 @@ You earn a different override percentage on each generation's group volume. Rate
 
 **This is the same generation counting model used by standalone generation plans (decision 013).** One implementation serves both. Stairstep adds generation counting after breakaway. The standalone generation plan uses it as the primary commission model.
 
+### Multi-Tier Overrides
+
+The second `overrides` strategy, `type: multi_tier`, pays on a ladder keyed to
+how many First-Line Split-Out Groups the earner owns rather than on a rank
+differential. Each tier is a `{min_split_out_groups, rate}` pair, and the rate
+applies to the leg's breakaway volume. It is implemented in
+`walk_multi_tier_overrides` (`commission/stairstep.rs`).
+
+This document does not yet describe when a company would pick it over
+`single_walk`, or how it interacts with generation overrides.
+
 ### Compression
 
 Same shared mechanism as unilevel and matrix (decision 009). Skip unqualified nodes in the upline walk for level commissions. Does not affect differential override calculation (overrides are on group volume totals, not individual orders).
 
 ## Stairstep-Specific Considerations
 
-**Pruning eligibility.** The legacy system only allowed pruning of non-Good-status distributors from stairstep structures. This should be configurable. Different companies have different rules about when a distributor can be removed. Some require a formal cancellation process regardless of status.
+**Pruning eligibility.** The legacy system only allowed pruning of non-Good-status distributors from stairstep structures. This should be configurable. Different companies have different rules about when a distributor can be removed. Some require a formal cancellation process regardless of status. `PruningConfig` exists but is matrix-only (`promote_earliest` or `holding_tank`); there is no stairstep equivalent.
 
 **Group volume definition.** Group volume for stairstep = sum of all personal volume from the distributor and their downline, excluding any sub-groups that have broken away. Each breakaway creates a volume boundary. The engine must recalculate these boundaries whenever a rank change creates or removes a breakaway.
 

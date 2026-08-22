@@ -1013,10 +1013,12 @@ mod buffer_probe_tests {
             .unwrap_or_else(|e| panic!("{variant} must parse with config before type: {e}"))
     }
 
-    /// Each case asserts the parsed key, not just that parsing succeeded.
-    /// A bare "it parsed" check would pass even if the map came back empty.
+    /// One test per field. Bundled into a single test, the first failure
+    /// short-circuits and you learn about the other four one rerun at a time.
+    /// Each asserts the parsed key value, not just that parsing succeeded: a
+    /// bare "it parsed" check would pass against an empty map.
     #[test]
-    fn bonus_integer_keyed_maps_survive_content_buffering() {
+    fn matching_bonus_rates_survive_content_buffering() {
         match probe(
             "matching",
             serde_json::json!({
@@ -1028,7 +1030,10 @@ mod buffer_probe_tests {
             BufferProbe::Matching(c) => assert_eq!(c.rates[&1], 0.1),
             other => panic!("expected matching, got {other:?}"),
         }
+    }
 
+    #[test]
+    fn fast_start_rate_table_survives_content_buffering() {
         match probe(
             "fast_start",
             serde_json::json!({
@@ -1039,7 +1044,10 @@ mod buffer_probe_tests {
             BufferProbe::FastStart(c) => assert_eq!(c.enhanced_rate_table["associate"][&1], 0.2),
             other => panic!("expected fast_start, got {other:?}"),
         }
+    }
 
+    #[test]
+    fn leadership_bonus_rates_survive_content_buffering() {
         match probe(
             "leadership",
             serde_json::json!({
@@ -1051,7 +1059,10 @@ mod buffer_probe_tests {
             BufferProbe::Leadership(c) => assert_eq!(c.rates[&1], 0.03),
             other => panic!("expected leadership, got {other:?}"),
         }
+    }
 
+    #[test]
+    fn infinity_decreasing_rates_survive_content_buffering() {
         match probe(
             "infinity",
             serde_json::json!({
@@ -1066,7 +1077,10 @@ mod buffer_probe_tests {
             }
             other => panic!("expected infinity, got {other:?}"),
         }
+    }
 
+    #[test]
+    fn matrix_completion_per_level_survives_content_buffering() {
         match probe(
             "matrix_completion",
             serde_json::json!({

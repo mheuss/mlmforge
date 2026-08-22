@@ -88,8 +88,9 @@ mod tests {
     ///
     /// It measures 48 bytes, in every build. Before `result` was boxed,
     /// `Response` held a `serde_json::Value` inline and so changed size with
-    /// `serde_json`'s `preserve_order` feature, which `network-engine` declares
-    /// in `[dev-dependencies]`. It came out at 112 bytes or 152 depending on
+    /// `serde_json`'s `preserve_order` feature, which `network-engine` declared
+    /// in `[dev-dependencies]` at the time. HEU-648 removed that feature, so all
+    /// three build configurations now link the same `serde_json`. It came out at 112 bytes or 152 depending on
     /// whether that crate's dev targets were in the build graph. That is why
     /// `clippy --all-targets --workspace` failed while
     /// `clippy --all-targets -p network-engine-worker` passed. Holding
@@ -157,19 +158,38 @@ mod tests {
     /// which ignore order. So a reorder tripping this test is a heads-up, not a
     /// compatibility break.
     ///
-    /// The payload is an object whose keys are authored out of alphabetical
-    /// order on purpose. `serde_json::Value` is backed by a `BTreeMap`, so it
-    /// emits them sorted, in every build configuration. If
-    /// `serde_json/preserve_order` ever re-enters the build graph, this emits
-    /// insertion order and fails. That is the point: this assertion is how the
-    /// build-scope split from HEU-648 gets caught if it comes back. It detects
-    /// a regression; it does not promise the Go side anything about key order.
-    ///
-    /// Before HEU-648 this test could not use an object at all. A guard here
-    /// forced the payload to stay scalar, because key order depended on whether
-    /// `network-engine`'s dev-dependencies were in the build graph.
+    /// This test owns the envelope shape only. The build-graph detector lives
+    /// in `value_payload_emits_sorted_keys`, so tidying this fixture cannot
+    /// silently delete it.
     #[test]
     fn serialize_success_response() {
+        let resp = Response::success("req-1".into(), serde_json::json!("pong"));
+        let json = serde_json::to_string(&resp).unwrap();
+        assert_eq!(json, r#"{"id":"req-1","ok":true,"result":"pong"}"#);
+    }
+
+    /// Detects `serde_json/preserve_order` re-entering the build graph.
+    ///
+    /// The payload's keys are authored out of alphabetical order on purpose.
+    /// `serde_json::Value` is backed by a `BTreeMap`, so it emits them sorted.
+    /// With `preserve_order` linked, `Value` becomes an `IndexMap` and emits
+    /// insertion order instead, and this fails.
+    ///
+    /// **Scope matters.** This only fires under `cargo test --workspace`, which
+    /// is what CI runs (`.github/workflows/ci.yml`). Under
+    /// `cargo test -p network-engine-worker` the feature would not reach this
+    /// crate even if it were restored, so the test passes and proves nothing.
+    /// That asymmetry is the exact bug HEU-648 removed, and it applies to the
+    /// detector as much as to anything else.
+    ///
+    /// It detects a regression. It does not promise the Go side anything about
+    /// key order — see `serialize_success_response` above.
+    ///
+    /// Before HEU-648 this could not be tested at all. A guard here forced the
+    /// payload to stay scalar, because key order depended on whether
+    /// `network-engine`'s dev-dependencies were in the build graph.
+    #[test]
+    fn value_payload_emits_sorted_keys() {
         let payload = serde_json::json!({"zebra": 1, "alpha": 2});
         let resp = Response::success("req-1".into(), payload);
         let json = serde_json::to_string(&resp).unwrap();

@@ -33,7 +33,12 @@ auditor cannot check a decision without knowing the config that produced it.
 
 The commission calculators return an object, not an array.
 
-```
+This supersedes [017](017-commission-calculation-architecture.md)'s
+`Vec<CommissionEarning>` return contract. Only the envelope changes. The
+earnings list inside the object keeps 017's shape exactly: flat,
+self-contained, one entry per earner-per-source, no grouping and no nesting.
+
+```text
 { "earnings": [ … ], "walks": [ … ], "plan": { … } }
 ```
 
@@ -76,8 +81,13 @@ source. Multi-tier overrides can also select the same ancestor for several
 tiers. `sort_earnings` says so in its own doc comment, which is why it carries
 a level tiebreaker.
 
-A walk index is unique by construction. This is worth stating because the wrong
-key looks correct until stairstep runs.
+A walk index is unique **within one calculator response**. Walks are collected,
+sorted into a total order, and then numbered, so the index is stable across
+runs over identical input but means nothing outside the response that produced
+it. Storage has to qualify it with the run and structure that produced it, which
+is what HEU-46's per-walk key does.
+
+This is worth stating because the wrong key looks correct until stairstep runs.
 
 ### There are three traversals, and only two are instrumented
 
@@ -157,6 +167,13 @@ input that is genuinely unrecoverable, and a walk's ordered node list is that
 tree along the path. Everything else the engine could say about a node is
 recomputable from the upline, the snapshots, and the plan.
 
+The node list is not enough for these two, though. Sponsored-child counts and
+enrollment order are not recoverable from an ordered list of ancestor IDs. So
+either the engine states these outcomes and the reader trusts them, or the
+inputs behind them get recorded somewhere. HEU-556 settles which, and no phase
+ships a `depth_cap` or `pass_up` outcome as independently verifiable until it
+does.
+
 ## The volume problem
 
 The taxonomy below assumes the engine states its classifications and that the
@@ -227,6 +244,12 @@ its rate from both the ancestor's rank and the breakaway's rank. Those earnings
 are out of scope, and the explicit name stops the field being widened by
 assumption when they arrive.
 
+This is an explicit exception to [027](027-provenance-as-primary-data.md),
+which lists rank at calculation time among the facts every earning's provenance
+carries. That requirement holds wherever a rank was read. For binary and board
+there is no such rank, and 027's list should be read as scoped to the
+calculators that have one.
+
 Binary's real gap is different. `binaryPairingDetail` cannot say which mode
 produced a row. That is closed by emitting mode discriminants, not a rank.
 
@@ -240,9 +263,12 @@ Today there are none. Nothing is deployed, the Go and Rust sides ship from one
 tree, and HEU-592's commission runner is not built.
 
 The one real hazard is a stale worker binary, which has silently backed the Go
-test suite before. `ping` returned a bare `"pong"` with no version. It now
-reports a protocol version that moves on every change to wire semantics, not
-only on shape changes. A worker that emits partial provenance and a client that
+test suite before. `ping` returns a bare `"pong"` with no version
+today. Phase A changes it to report a protocol version that moves on every
+change to wire semantics, not only on shape changes. The Go client reads that
+version at startup and refuses to run against a worker whose version it does
+not match, naming both in the error. Rejection is exact, not a range: a scalar
+version cannot express which feature combinations a worker actually has. A worker that emits partial provenance and a client that
 expects complete provenance are incompatible even though both speak the same
 schema, and a version tracking only shape would let that pair through.
 
@@ -281,9 +307,10 @@ a real one.
   null and say why.
 - Stairstep Walk 2 earnings carry a null walk. That is a recorded gap, not an
   oversight, and it is not evidence that no traversal occurred.
-- The `outcome`, `stop`, and mode strings are persisted by HEU-46. Changing one
-  orphans every row carrying the old value, the same way the `kind` strings in
-  `commission_detail.go` do.
+- The `outcome`, `stop`, and mode strings are persisted by HEU-46. Nothing
+  persists them today, so the provisional names cost nothing to change while
+  HEU-556 is open. Once HEU-46 lands, changing one orphans every row carrying
+  the old value, the same way the `kind` strings in `commission_detail.go` do.
 - Counter reconstruction is a count of consumed steps. Any new skip or forfeit
   path must record a step, or the count silently drifts.
 - The storage half must persist the run's snapshot set. Steps name nodes, and

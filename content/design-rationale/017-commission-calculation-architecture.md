@@ -22,6 +22,8 @@ We considered including derived fields like `is_eligible` or `max_depth` in the 
 
 All calculators return `Vec<CommissionEarning>`. One entry per earner-per-source. Each entry is self-contained with the earner, the volume source, the level, the rate, and the dollar amount. No pre-grouping. No nesting. No aggregation.
 
+> **Envelope superseded by [029](029-commission-provenance-on-the-wire.md).** The commission calculators now return `{earnings, walks, plan}` rather than a bare array. Everything this section says about the earnings themselves still holds. The list inside `earnings` is flat, self-contained, and ungrouped exactly as described here. Only the envelope around it changed.
+
 Consumers aggregate however they need. A payout system sums by earner. An audit report groups by source. A dashboard shows level breakdowns. None of these consumption patterns should constrain the calculator's output format.
 
 We considered returning grouped results (by earner, by level, by source). Every grouping assumes a consumption pattern. The flat list is the most flexible. Grouping is cheap to do downstream.

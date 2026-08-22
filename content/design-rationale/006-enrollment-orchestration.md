@@ -1,5 +1,12 @@
 # 006: Enrollment Orchestration
 
+> **Status: not built.** No enrollment saga orchestrator exists.
+> `internal/identity/identity.go` is a package comment and nothing else.
+> `QualifyAndPlace` and `GetPendingPlacements` are not in the codebase, and
+> neither is the enrollment policy configuration. Steps 4 and 5 of the sequence
+> depend on an event bus that has not been written. Read this document as the
+> design to build against, not as a description of current behavior.
+
 ## The Problem
 
 Enrollment is the most complex cross-cutting workflow in an MLM platform. It touches 5 bounded contexts in sequence:

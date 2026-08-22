@@ -1,5 +1,17 @@
 # 004: Interface Contracts
 
+> **Status: design intent, partly built.** The provider-owned interface rule is
+> real and followed. The **Interface Inventory** table is not a description of
+> the code. Six of the seven names in its Network Engine row do not exist:
+> `TreeNavigator` is a Rust trait, and `VolumeRecorder`, `CommissionResult`,
+> `CommissionAdmin`, `StructurePlacer`, and `PlanConfiguration` were never
+> written. The seven that do exist are `EngineTransport`, `TreeStore`,
+> `TreeMutator`, `CommissionRunStore`, `QualificationHistoryStore`,
+> `PeriodInputProvider`, and `EvaluateRanksOption`. `RecordVolume` in the
+> Signatures Use Domain Types example does not exist either. The domain events
+> are declared as structs, but no event bus has been built, so nothing emits or
+> consumes them.
+
 ## The Problem
 
 MLMForge is a modular monolith designed for eventual service extraction. The interfaces between bounded contexts are the seams along which the system can be decomposed. Get them right and extraction is a deployment decision. Get them wrong and extraction becomes a rewrite.

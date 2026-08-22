@@ -2,9 +2,9 @@
 
 ## The Problem
 
-The commission engine needs to calculate earnings across multiple compensation plan types. Unilevel is the first. Binary, matrix, stairstep, generation, and streamline follow later. Each plan type has fundamentally different mechanics. Unilevel walks a tree upward counting levels. Binary pairs left and right leg volume. Matrix fills a fixed-width grid.
+The commission engine needs to calculate earnings across multiple compensation plan types. Unilevel is the first. Binary, matrix, stairstep, generation, streamline, and board plan follow later. Each plan type has fundamentally different mechanics. Unilevel walks a tree upward counting levels. Binary pairs left and right leg volume. Matrix fills a fixed-width grid.
 
-Despite these differences, the calculators share structural concerns. What data do they receive? What do they return? How do they handle missing data? How do they separate input facts from business rules? Getting these decisions wrong in the first calculator means fixing them across all six later.
+Despite these differences, the calculators share structural concerns. What data do they receive? What do they return? How do they handle missing data? How do they separate input facts from business rules? Getting these decisions wrong in the first calculator means fixing them across all seven later.
 
 These decisions apply to all commission calculators. They were identified during the unilevel calculator design but are intentionally plan-type-agnostic.
 
@@ -48,7 +48,7 @@ This reinforces the decision to keep calculators as standalone functions. The un
 
 ### No Shared Calculator Abstraction Yet
 
-Each calculator is a standalone public function. No `CommissionCalculator` trait. No shared interface. The unilevel calculator is `calculate_unilevel`. The binary calculator will be `calculate_binary`. Each takes the inputs it needs and returns `Vec<CommissionEarning>`, becoming `CommissionCalculationResult` when 029's phase B lands. The standalone-function decision is unaffected either way.
+Each calculator is a standalone public function. No `CommissionCalculator` trait. No shared interface. The unilevel calculator is `calculate_unilevel`. The binary calculator is `calculate_binary_pairing`. Each takes the inputs it needs and returns `Vec<CommissionEarning>`, becoming `CommissionCalculationResult` when 029's phase B lands. The standalone-function decision is unaffected either way.
 
 Binary calculation has fundamentally different inputs. It pairs volume from two legs rather than walking levels. We do not know what a shared interface would look like. Premature abstraction here would constrain future designs.
 
@@ -79,4 +79,4 @@ This split reflects the difference between "the caller gave us bad input" and "t
 - **Consistent calculator behavior.** All plan types follow the same input/output contract. Code that consumes commission results works regardless of which calculator produced them.
 - **Independent calculator development.** Each calculator is a standalone function with no shared abstraction to coordinate. Teams or sessions can build different calculators in parallel.
 - **Clean testing boundaries.** Snapshot-in, earnings-out. No hidden state. No setup beyond providing the input data. Property-based testing works naturally against the flat output list.
-- **Trait extraction ready.** Three calculators (unilevel, matrix, stairstep) now exist. The common patterns are visible. HEU-200 tracks extracting a shared abstraction. The standalone functions can be wrapped in a trait without changing their internals.
+- **Shared logic extracted, no trait.** HEU-200 pulled the common walk into `commission/walk.rs` as generic functions over `TreeNavigator`. No `CommissionCalculator` trait was created, and the standalone functions remain. They can still be wrapped in a trait later without changing their internals. See the status update above and decision 022.

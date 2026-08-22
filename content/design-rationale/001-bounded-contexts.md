@@ -1,5 +1,14 @@
 # 001: Bounded Contexts
 
+> **Status: design intent, partly built.** The eight packages exist under
+> `internal/`, but only Platform and Network Engine have implementations.
+> Identity, Financial, Commerce, Engagement, and Operations hold interface and
+> type declarations with no method bodies. Portals is a package comment.
+> Per-context PostgreSQL schemas were never created. Every table in
+> `migrations/` lands in `public`. Read the context table as the target
+> decomposition, not as a description of shipped code.
+> [000](000-architecture-overview.md) diagrams what is actually wired today.
+
 ## The Problem
 
 The legacy system had 30 domain spaces across 2,273 files. Billing logic reached into user records. Order processing mutated commission tables directly. Reports joined every table in the database. Changing one area broke another. Nothing could be understood in isolation.
@@ -31,30 +40,47 @@ Each context has its own Go package (`internal/{context}/`), its own PostgreSQL 
 
 ## Dependency Graph
 
-The contexts form a layered dependency structure.
+The contexts form a layered dependency structure. The diagram shows the
+principal edges. It is not the full graph. The counts in the table below
+include edges that would clutter the picture, which is why Portals shows five
+arrows here and depends on seven contexts in the table.
 
+```mermaid
+flowchart TD
+    por["Portals<br/>thin"]
+    pf["Platform"]
+    id["Identity"]
+    ne["Network Engine"]
+    fin["Financial"]
+    com["Commerce"]
+    eng["Engagement"]
+    ops["Operations"]
+
+    por --> pf
+    por --> id
+    por --> ne
+    por --> eng
+    por --> ops
+
+    com --> id
+    com --> fin
+    fin --> com
+    fin --> ne
+    id --> ne
+    ne --> eng
+    eng --> fin
+    ops --> eng
+
+    classDef foundation fill:#2d6a4f,stroke:#1b4332,color:#fff
+    classDef business fill:#40516e,stroke:#2b3648,color:#fff
+    classDef consumer fill:#5a5a5a,stroke:#3d3d3d,color:#fff
+    class pf,id,ne foundation
+    class fin,com,eng,ops business
+    class por consumer
 ```
-                    ┌──────────┐
-               ┌───▶│ Platform │◀─── (all contexts)
-               │    └──────────┘
-┌─────────┐    │  ┌──────────┐       ┌──────────────┐
-│ Portals │───▶├─▶│ Identity │◀──────│   Commerce   │
-│ (thin)  │    │  └──────────┘       └──────────────┘
-│         │───▶│       │                  │      ▲
-│         │    │       ▼                  ▼      │
-│         │───▶├─▶┌──────────────┐  ┌──────────────┐
-│         │    │  │Network Engine│◀─│  Financial   │
-│         │───▶│  └──────────────┘  └──────────────┘
-│         │    │       │                  ▲
-│         │───▶│       ▼                  │
-│         │    │  ┌──────────────┐        │
-│         │───▶├─▶│  Engagement  │────────┘
-│         │    │  └──────────────┘
-│         │───▶│       ▲
-│         │    │  ┌──────────────┐
-│         │───▶└─▶│  Operations  │
-└─────────┘       └──────────────┘
-```
+
+Every context also depends on Platform. Only the Portals arrow is drawn, so
+the rest stays readable.
 
 | Context | Depended Upon By | Depends On | Role |
 |---------|-----------------|------------|------|

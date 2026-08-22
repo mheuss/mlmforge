@@ -97,6 +97,6 @@ Unit tests run against the in-memory implementation. Integration tests run again
 ## What This Enables
 
 - **Event sourcing for Network Engine.** Commission periods, volume attribution, and rank changes are stored as events. State is rebuilt by replaying the stream. No mutable state tables.
-- **Domain event persistence.** `OrderCompleted`, `EnrollmentCompleted`, and other cross-context events survive process crashes. Consumers can replay from a position to catch up after failures.
+- **Domain event persistence.** `OrderCompleted`, `AutoshipProcessed`, and other cross-context events survive process crashes. Consumers can replay from a position to catch up after failures.
 - **Audit trail.** Every event is immutable and timestamped. The global position provides a total ordering across all streams.
 - **Clean extraction path.** The `EventStore` interface can be backed by PostgreSQL, EventStoreDB, or a message broker. Consumer code does not change.

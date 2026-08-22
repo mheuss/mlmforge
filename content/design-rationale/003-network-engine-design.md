@@ -1,5 +1,14 @@
 # 003: Network Engine Design
 
+> **Status: mostly built, one section is not.** The Rust engine, CV-only
+> volume, position-indexed trees, holding tanks, wire type separation, and the
+> `EngineError` code taxonomy all ship. Two things to watch. The
+> **Cross-Structure Queries** section describes a `QueryTree` method that was
+> never built. It survives only as a stale comment at
+> `internal/networkengine/types.go:8`. And `TreeNavigator`, named under
+> Generalized Tree Positions, is a Rust trait at
+> `engine/network-engine/src/tree/navigator.rs`, not a Go interface.
+
 ## The Problem
 
 The commission engine is the core of an MLM platform. It walks tree structures that can contain millions of nodes, applies qualification rules at every level, and calculates commissions that must be auditable to the penny. The legacy PHP system did this work in interpreted code with database queries at every tree level. It worked for thousands of distributors but could not scale beyond that.

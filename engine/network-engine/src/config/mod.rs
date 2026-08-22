@@ -120,10 +120,17 @@ pub struct CompensationPlan {
 /// of different or same types.
 ///
 /// Adjacent tagging (`tag` + `content`) is used instead of internal
-/// tagging because serde's internal tagging buffers content into an
-/// intermediate representation that cannot deserialize non-string map
-/// keys (e.g., `BTreeMap<u8, f64>` in rate tables). Adjacent tagging
-/// avoids this limitation.
+/// tagging because serde's internal tagging *always* buffers content into
+/// an intermediate representation that cannot deserialize non-string map
+/// keys (e.g., `BTreeMap<u8, f64>` in rate tables).
+///
+/// Adjacent tagging narrows that exposure but does not remove it. Serde
+/// buffers here too whenever `config` arrives before `type`, which is what
+/// any sorted-key JSON emitter produces — including `serde_json::Value`.
+/// What actually makes those maps safe is the `deserialize_with` helpers
+/// in [`crate::serde_helpers`], which read integer keys as strings on
+/// either path. See UC-NET-007 in `docs/use-cases/network-engine.md`.
+/// HEU-648.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "config", rename_all = "snake_case")]
 pub enum StructureConfig {

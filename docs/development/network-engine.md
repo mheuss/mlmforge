@@ -217,6 +217,55 @@ That is closed. The same NDJSON request piped through a `cargo build -p network-
 
 `handle_load_plan` still deserializes straight off the `RawValue` (`network-engine-worker/src/handlers/common.rs`) rather than through `Value`, which remains the right shape for a hot path. But routing plan-bearing params through `parse_params` is no longer a correctness hazard.
 
+## Serde And Cargo Gotchas (HEU-648)
+
+Four things that cost real time on HEU-648. All are live traps for the next
+person, not history.
+
+### `Option<T>` plus `deserialize_with` silently makes a field required
+
+Serde reads a bare `Option<T>` field as `None` when the key is absent. Adding
+`deserialize_with` **disables that**, and the field starts erroring on absence.
+Measured:
+
+| Field shape | Absent key |
+|---|---|
+| `Option<T>` | `Ok(None)` |
+| `Option<T>` + `deserialize_with` | `Err("missing field")` |
+| `Option<T>` + `default` + `deserialize_with` | `Ok(None)` |
+
+Always pair the two. `config/bonus.rs`'s `decreasing_rates` shows the shape.
+Getting this wrong is a silent wire-contract break: every payload omitting the
+field starts failing, and no existing test necessarily covers absence.
+
+### `from_value` coerces integer map keys; serde's `Content` buffer does not
+
+`serde_json::from_value::<T>(v)` deserializes integer map keys fine, because
+serde_json's own map-key deserializer coerces numeric strings. Serde's `Content`
+buffer — reached through a tagged enum whose content arrives before its tag —
+does not.
+
+The consequence for tests: **a test that uses `from_value` to "exercise the
+buffered path" is not exercising it.** It passes against code that has no key
+handling at all. To reach the buffer you need a tagged enum with the content key
+emitted first. `config/bonus.rs`'s `BufferProbe` test enum does exactly that.
+
+### `pub(crate)` helpers used only from `#[cfg(test)]` fail `clippy --all-targets`
+
+A helper introduced in one commit and first used in the next is dead code in
+between, and `cargo clippy --all-targets --workspace -- -D warnings` rejects it.
+If your branch may not contain a red commit, a helper has to land in the same
+commit as its first real caller. This reshapes commit boundaries, so plan for it
+rather than discovering it at commit time.
+
+### Cargo does not relink on a bare feature-graph change
+
+Comparing what two build configurations emit — say `cargo build -p foo` against
+`cargo build --workspace --all-targets` — requires `touch`ing a source file
+between the builds. Otherwise the second build reuses the first artifact, the
+outputs are trivially identical, and the comparison proves nothing. This one is
+quiet: the check appears to pass.
+
 ## Worker Binary Freshness: The Guard Is Coarse
 
 The Go integration suite fails if the Rust worker binary is older than any `.rs` file under `engine/` (`staleWorkerBinary`, `transport_test.go:312-348`, HEU-615). That includes Rust *test* files, which the binary does not depend on.

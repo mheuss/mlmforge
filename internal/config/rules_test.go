@@ -1851,3 +1851,62 @@ func TestValidatePeriodAcceptsWellFormedStartDate(t *testing.T) {
 		})
 	}
 }
+
+// TestRateKeyWidth_RejectsDuplicateNormalizedKeys verifies that two spellings of
+// one integer key are caught here rather than in the Rust worker.
+//
+// The schema's propertyNames pattern is `^0*(...)`, so "1" and "01" are both
+// valid property names and both pass ParseUint. They name the same Rust u8 map
+// entry, so one rate silently wins. HEU-648 made the engine reject that; without
+// this rule the plan would validate green in Go and then fail at load_plan with
+// an opaque serde message.
+func TestRateKeyWidth_RejectsDuplicateNormalizedKeys(t *testing.T) {
+	plan := minimalPlan()
+	plan.Bonuses.Matching = &MatchingBonusConfig{Rates: map[string]float64{"1": 0.05, "01": 0.09}}
+
+	errs := validateRateKeyWidths(plan)
+
+	found := false
+	for _, e := range errs {
+		if e.Code == "duplicate_value" && e.Path == "/bonuses/matching/rates" {
+			found = true
+			assert.Contains(t, e.Message, `"01"`, "message should name both spellings")
+			assert.Contains(t, e.Message, `"1"`, "message should name both spellings")
+		}
+	}
+	assert.True(t, found, "expected duplicate_value for /bonuses/matching/rates, got: %v", errs)
+}
+
+// TestRateKeyWidth_DuplicateCheckReachesRateTables verifies the inner keys of a
+// rank-by-level rate table get the same collision check.
+func TestRateKeyWidth_DuplicateCheckReachesRateTables(t *testing.T) {
+	plan := minimalPlan()
+	plan.Structures[0].resolvedCommission = &UnilevelCommission{
+		RateTable: map[string]map[string]float64{"Associate": {"2": 0.1, "002": 0.2}},
+	}
+
+	errs := validateRateKeyWidths(plan)
+
+	found := false
+	for _, e := range errs {
+		if e.Code == "duplicate_value" {
+			found = true
+		}
+	}
+	assert.True(t, found, "expected duplicate_value for the inner rate-table keys, got: %v", errs)
+}
+
+// TestRateKeyWidth_DistinctKeysAreNotDuplicates guards the obvious false
+// positive: keys that parse to different integers must stay accepted.
+func TestRateKeyWidth_DistinctKeysAreNotDuplicates(t *testing.T) {
+	plan := minimalPlan()
+	plan.Bonuses.Matching = &MatchingBonusConfig{Rates: map[string]float64{"1": 0.05, "01x": 0.09, "2": 0.1}}
+	delete(plan.Bonuses.Matching.Rates, "01x")
+	plan.Bonuses.Matching.Rates["010"] = 0.2 // parses to 10, distinct from 1 and 2
+
+	errs := validateRateKeyWidths(plan)
+
+	for _, e := range errs {
+		assert.NotEqual(t, "duplicate_value", e.Code, "unexpected duplicate for distinct keys: %v", e)
+	}
+}

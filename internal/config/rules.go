@@ -117,19 +117,48 @@ func getRateTable(commission Commission) map[string]map[string]float64 {
 // "Cross-layer enforcement of byte-width caps".
 func validateU8MapKeys(m map[string]float64, path string) []ValidationError {
 	var errs []ValidationError
+
+	// Sorted so the reported spelling pair is stable. Go map iteration order is
+	// randomized, and a collision message that names a different key each run is
+	// not something a plan author can act on.
+	keys := make([]string, 0, len(m))
 	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	seen := make(map[uint64]string, len(keys))
+	for _, key := range keys {
 		// ParseUint(_, 10, 8) accepts exactly a Rust u8 key: digits only (no
 		// sign), 0-255. This matches the schema propertyNames pattern, so the
 		// bypass-path Go guard is as strict as the happy-path schema gate (Atoi
 		// would leak signed forms like "-0" that Rust u8 rejects).
-		if _, err := strconv.ParseUint(key, 10, 8); err != nil {
+		n, err := strconv.ParseUint(key, 10, 8)
+		if err != nil {
 			errs = append(errs, ValidationError{
 				Path:     path + "/" + key,
 				Code:     "invalid_value",
 				Message:  fmt.Sprintf("rate key %q must be an integer in [0, 255] to fit the Rust u8 map key", key),
 				Severity: SeverityError,
 			})
+			continue
 		}
+
+		// The schema pattern is `^0*(...)`, so "1" and "01" are both valid
+		// property names that name the same Rust u8 entry. One rate would
+		// silently win. The engine rejects this (HEU-648); catching it here
+		// means the author gets a path and both spellings instead of a serde
+		// message from the worker.
+		if prev, dup := seen[n]; dup {
+			errs = append(errs, ValidationError{
+				Path:     path,
+				Code:     "duplicate_value",
+				Message:  fmt.Sprintf("rate keys %q and %q both mean level %d; use one spelling", prev, key, n),
+				Severity: SeverityError,
+			})
+			continue
+		}
+		seen[n] = key
 	}
 	return errs
 }

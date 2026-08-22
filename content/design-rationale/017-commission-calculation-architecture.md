@@ -20,7 +20,7 @@ We considered including derived fields like `is_eligible` or `max_depth` in the 
 
 ### Flat Earnings List as Output
 
-Five of the seven calculators succeed with a `Vec<CommissionEarning>`: unilevel, matrix, stairstep, generation, and streamline. The table below gives all seven exact signatures. Each entry is self-contained with the earner, the volume source, the level, the rate, and the dollar amount. No pre-grouping. No nesting. No aggregation.
+Five of the seven calculators succeed with a `Vec<CommissionEarning>`: unilevel, matrix, stairstep, generation, and streamline. Each entry is self-contained with the earner, the volume source, the level, the rate, and the dollar amount. No pre-grouping. No nesting. No aggregation.
 
 Two do not, because they carry state a flat list cannot hold.
 
@@ -34,7 +34,7 @@ Binary has to return post-payout leg volumes for every distributor, earners and 
 
 An earner can appear more than once for the same volume source. Stairstep pays a level commission and an override on one source, and multi-tier overrides can select the same ancestor for several tiers. `sort_earnings` carries a level tiebreaker for exactly this reason, and says so in its own doc comment. `(earner_id, source_id)` is not an identity.
 
-> **Envelope changing under [029](029-commission-provenance-on-the-wire.md).** Phase B of that arc replaces the bare array with `{earnings, walks, plan}`, and adds a `walk` reference to each earning. It has not landed: the five level-based calculators still succeed with a bare `Vec<CommissionEarning>` today, and the worker serializes that directly. Everything this section says about the earnings themselves survives the change. The list inside `earnings` stays flat, self-contained, and ungrouped exactly as described here. Only the envelope around it moves.
+> **Envelope changing under [029](029-commission-provenance-on-the-wire.md).** Phase B of that arc replaces the bare array with `{earnings, walks, plan}`, and adds a `walk` reference to each earning. It has not landed: the five level-based calculators still succeed with a bare `Vec<CommissionEarning>` today. Everything this section says about the earnings themselves survives the change. The list inside `earnings` stays flat, self-contained, and ungrouped exactly as described here. Only the envelope around it moves.
 
 Consumers aggregate however they need. A payout system sums by earner. An audit report groups by source. A dashboard shows level breakdowns. None of these consumption patterns should constrain the calculator's output format.
 
@@ -42,7 +42,7 @@ We considered returning grouped results (by earner, by level, by source). Every 
 
 ### Prep + Walk Two-Phase Pattern
 
-The five level-based calculators run a prep pass before the main calculation loop. The prep pass evaluates eligibility, counts active legs, determines per-distributor depth limits, and caches the results. The walk phase uses O(1) lookups against the cache. Binary runs a narrower prep: it evaluates eligibility without a tree, so it counts no active legs and derives no depth limits. Board plan has no prep phase at all, because it receives cycle events rather than snapshots.
+The level-based calculators run a prep pass before the main calculation loop. The prep pass evaluates eligibility, counts active legs, determines per-distributor depth limits, and caches the results. The walk phase uses O(1) lookups against the cache.
 
 Active leg counting requires querying the tree for each distributor's children and checking each child's eligibility. Doing this inline during the walk would repeat the work for every volume source. A single prep pass pays the cost once.
 
@@ -72,7 +72,7 @@ Compression affects level counting during the walk itself. When compression is e
 
 Compression cannot be applied as a post-processing step. The level assignments depend on which nodes were skipped. Post-processing would need to reconstruct the skip decisions, which means reimplementing the walk logic.
 
-This means compression behavior is tightly coupled to the walk loop. It has to be applied inline, inside the loop that assigns levels. Since HEU-200 that loop is shared: compression lives once in `walk_level_commissions`, and the five level-based calculators inherit it through `LevelWalkConfig.compression` rather than each implementing it. See decision [022](022-shared-commission-walk.md).
+This means compression behavior is tightly coupled to the walk loop. It has to be applied inline, inside the loop that assigns levels. Since HEU-200 that loop lives in `walk_level_commissions`. See decision [022](022-shared-commission-walk.md).
 
 ### Defensive on Missing Data, Strict on Source Data
 

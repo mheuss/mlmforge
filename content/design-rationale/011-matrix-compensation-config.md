@@ -137,6 +137,4 @@ Board cycling adds board splitting, re-entry tracking, and cycle event recording
 ## What This Enables
 
 - Standard matrix plans are fully configurable through width, height, rate table, compression, and placement direction.
-- Matrix completion bonuses incentivize fill-out at each level, which is the primary motivational mechanic for matrix plans.
-- Position bonuses with sponsor-only filtering correctly distinguish personal recruiting from spillover placement.
 - Board plan cycling handles board lifecycle, splitting, re-entry, stall detection, and inactive compression.

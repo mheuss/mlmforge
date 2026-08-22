@@ -1,8 +1,7 @@
 # 000: Architecture Overview
 
-> **Status: current.** Three of the four diagrams below show shipped code
-> only. The context wiring diagram shows what is wired today and marks what is
-> not. For the target decomposition the system is built toward, read
+> **Three of the four diagrams below show shipped code only.** The context
+> wiring diagram shows what is wired today and marks what is not. For the target decomposition the system is built toward, read
 > [001](001-bounded-contexts.md), which carries its own status banner.
 
 This document is the map. It shows how the pieces fit together so you can find

@@ -43,7 +43,7 @@ What the audit checked across every document:
 - Every backticked symbol, type, function, and file path resolves in the code
 - Every inter-document link resolves
 - The error code table in 019 matches the codes the worker emits, exactly
-- The mermaid diagrams in 000 and 001 parse
+- The mermaid diagrams in 000 and 001 parse. They were never rendered
 
 What it did **not** check, and where the escaped errors lived:
 
@@ -59,8 +59,7 @@ What it did **not** check, and where the escaped errors lived:
   A second pass on 2026-08-22 checked every documented option against the JSON
   Schema and the Rust config, and checked whether a calculator consumes it. It
   found 18 problems, including an entire section of 008 describing bonus
-  programs that nothing computes. Those documents are corrected and 008 and 011
-  now carry banners.
+  programs that nothing computes. Those documents are corrected.
 
 What remains unswept: the commission math itself. The audit checked
 signatures, wiring, and the claims the documents make about them. It did not
@@ -80,26 +79,26 @@ Treat a blank Status as "nobody has found a problem here yet."
 | [005](005-multi-currency.md) | **Multi-Currency** | Design intent | Regional product catalogs, CV points, and the three-context currency chain |
 | [006](006-enrollment-orchestration.md) | **Enrollment Orchestration** | Not built | The saga pattern, configurable payment failure, and structure placement |
 | [007](007-unilevel-tree-implementation.md) | **Unilevel Tree Implementation** | | Arena storage, UUID user IDs, iterative BFS, position-indexed model |
-| [008](008-common-compensation-config.md) | **Common Compensation Config** |Partial | Periods, volume, ranks, eligibility, bonuses, payout, caps, placement, audit |
+| [008](008-common-compensation-config.md) | **Common Compensation Config** | Partial | Periods, volume, ranks, eligibility, bonuses, payout, caps, placement, audit |
 | [009](009-unilevel-compensation-config.md) | **Unilevel Compensation Config** | | Rate table, compression, pass-up variant, donated placement |
 | [010](010-binary-compensation-config.md) | **Binary Compensation Config** | | Pairing bonus, volume-after-payout modes, carry-forward, cycle/step, spillover |
-| [011](011-matrix-compensation-config.md) | **Matrix Compensation Config** |Partial | Width/height, forced placement, completion bonus, position bonus, board plan |
+| [011](011-matrix-compensation-config.md) | **Matrix Compensation Config** | Partial | Width/height, forced placement, completion bonus, position bonus, board plan |
 | [012](012-stairstep-compensation-config.md) | **Stairstep Compensation Config** | | Breakaway threshold, differential overrides, generation counting |
 | [013](013-generation-compensation-config.md) | **Generation Compensation Config** | | Boundary modes, generation rates, empty generations, combined level+generation |
 | [014](014-streamline-compensation-config.md) | **Streamline Compensation Config** | | Dynamic compression, streams, rank expansion, freeze on demotion, monoline |
-| [015](015-compensation-plan-schema-and-wire-format.md) | **Schema and Wire Format** |Known drift | One wire format, JSON Schema validation, serde renames, structural translations |
-| [016](016-eventstore-design.md) | **EventStore Design** |Known drift | Unified store, JSON envelope, category-ID streams, optimistic concurrency, pgx v5 |
+| [015](015-compensation-plan-schema-and-wire-format.md) | **Schema and Wire Format** | Known drift | One wire format, JSON Schema validation, serde renames, structural translations |
+| [016](016-eventstore-design.md) | **EventStore Design** | Known drift | Unified store, JSON envelope, category-ID streams, optimistic concurrency, pgx v5 |
 | [017](017-commission-calculation-architecture.md) | **Commission Calculation Architecture** | | Snapshot vs rules separation, flat earnings output, prep+walk phases, no premature abstraction |
-| [018](018-config-pipeline.md) | **Config Pipeline** |Known drift | Five-stage validation, two-pass commission parsing, Commission marker interface, severity model |
+| [018](018-config-pipeline.md) | **Config Pipeline** | Known drift | Five-stage validation, two-pass commission parsing, Commission marker interface, severity model |
 | [019](019-ndjson-protocol.md) | **NDJSON Protocol** | | Request-response envelope, RawValue params, error code taxonomy, panic recovery, context cancellation |
-| [020](020-tree-topology-separation.md) | **Tree Topology Separation** |Known drift | Trees enforce shape, callers decide placement, position validation vs placement logic |
+| [020](020-tree-topology-separation.md) | **Tree Topology Separation** | Known drift | Trees enforce shape, callers decide placement, position validation vs placement logic |
 | [021](021-sponsor-vs-placement-in-commission.md) | **Sponsor vs. Placement in Commission** | | Placement edges determine commission flow, sponsor edges determine personal qualification |
-| [022](022-shared-commission-walk.md) | **Shared Commission Walk** |Known drift | Generic functions over TreeNavigator, no CommissionCalculator trait, callback injection for plan-specific behavior |
+| [022](022-shared-commission-walk.md) | **Shared Commission Walk** | Known drift | Generic functions over TreeNavigator, no CommissionCalculator trait, callback injection for plan-specific behavior |
 | [023](023-snapshot-persistence.md) | **Snapshot Persistence** | | Serde-based serialization for all tree types, JSON format, Go-managed storage |
 | [024](024-generation-calculator-reuse.md) | **Generation Calculator Reuse** | | Why the standalone generation calculator reuses `count_generations_upward()` with a semantic mismatch instead of extracting a shared interface |
 | [025](025-public-test-support-module.md) | **Public Test Support Module** | | Why `network_engine::test_support` is public for integration tests, and why it is still treated as internal-only support code |
 | [026](026-bottom-up-rank-evaluation.md) | **Bottom-Up Rank Evaluation** | | Why rank evaluation iterates to a fixpoint over an accumulating descendant-rank map, so predicates read downline ranks even with multiple structure trees |
-| [027](027-provenance-as-primary-data.md) | **Provenance as Primary Data** |Partial | Why commission provenance is stored as primary data rather than a rebuildable event projection, and where the four kinds of commission data each live |
+| [027](027-provenance-as-primary-data.md) | **Provenance as Primary Data** | Partial | Why commission provenance is stored as primary data rather than a rebuildable event projection, and where the four kinds of commission data each live |
 | [028](028-commission-config-from-validated-state.md) | **Commission Config From Validated State** | | Why commission handlers read the plan and structure config from `WorkerState` instead of request params, so the `load_plan` validation gate cannot be bypassed |
 | [029](029-commission-provenance-on-the-wire.md) | **Commission Provenance on the Wire** | Partial | Why provenance is emitted per walk rather than per earning, why the walk index is the correlation key rather than `(earner_id, source_id)`, and why the outcome taxonomy is still provisional |
 

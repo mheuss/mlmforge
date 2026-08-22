@@ -89,8 +89,6 @@ The structure is not set here. `distributor_count` sits inside a structure quali
 
 **Grace periods and demotion:**
 
-| Option | Values | What it controls |
-|--------|--------|-----------------|
 These are not three independent switches. `demotion_policy` on a rank is a
 tagged choice: either the string `promotion_only`, or an object carrying a
 `grace` block. Pick one.

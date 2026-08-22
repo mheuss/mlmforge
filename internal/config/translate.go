@@ -45,9 +45,12 @@ func translateToEngine(plan *CompensationPlan) ([]byte, error) {
 	return json.Marshal(doc)
 }
 
-// taggedStructure marshals its fields in declaration order (type before config)
-// so the engine's adjacently-tagged StructureConfig deserializes cleanly: serde
-// reads the "type" tag first, then decodes "config" directly. A map[string]any
+// taggedStructure marshals its fields in declaration order (type before config).
+// This is now about byte stability, not correctness: TestConfigContractFixtures
+// MatchPipeline byte-compares this output against committed fixtures, so the
+// order must not drift. Serde reads the "type" tag first and decodes "config"
+// directly, which is the cheaper path, but since HEU-648 the reverse order
+// deserializes too. A map[string]any
 // marshals keys alphabetically ("config" before "type"), which forces serde to
 // buffer the content before it knows the variant — and that buffer fails on
 // non-string map keys such as rate_table's u8 keys (HEU-513: contract round-trip).

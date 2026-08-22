@@ -143,7 +143,9 @@ fn contract_fixtures_match_worker_behavior() {
         // Each setup response must succeed; a silent failure here would
         // cause the main request to pass vacuously against wrong state.
         // `setup_raw` is sent verbatim (no Value round-trip), mirroring
-        // `request_raw`. Use it for payloads where key order matters.
+        // `request_raw`. Use it where the fixture's exact wire bytes are the
+        // point. It is no longer needed to make plans deserialize: HEU-648
+        // made content-before-tag parse fine.
         let setup_lines: Vec<String> = if !fixture.setup_raw.is_empty() {
             fixture.setup_raw.clone()
         } else {

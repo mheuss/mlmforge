@@ -82,7 +82,7 @@ pub struct MatchingBonusConfig {
     /// Level (1-indexed) to matching percentage. Level 1 is the direct
     /// sponsor. Levels not listed receive no matching bonus.
     ///
-    /// Deserialized via [`crate::serde_helpers::u8_keyed_map`] so the keys
+    /// Deserialized via `crate::serde_helpers::u8_keyed_map` so the keys
     /// parse whether or not serde buffered this value.
     #[serde(deserialize_with = "crate::serde_helpers::u8_keyed_map")]
     pub rates: BTreeMap<u8, f64>,
@@ -148,7 +148,7 @@ pub struct FastStartBonusConfig {
     /// rate table. Outer key is rank name. Inner key is level
     /// (1-indexed). Value is the enhanced percentage.
     ///
-    /// Deserialized via [`crate::serde_helpers::rank_keyed_u8_map`] so the
+    /// Deserialized via `crate::serde_helpers::rank_keyed_u8_map` so the
     /// inner integer keys parse whether or not serde buffered this value.
     #[serde(
         rename = "rate_table",
@@ -193,7 +193,7 @@ pub struct LeadershipDevelopmentBonusConfig {
     /// Level (1-indexed) to bonus amount or percentage. Consistent
     /// with MatchingBonusConfig.rates which also uses `u8` keys.
     ///
-    /// Deserialized via [`crate::serde_helpers::u8_keyed_map`] so the keys
+    /// Deserialized via `crate::serde_helpers::u8_keyed_map` so the keys
     /// parse whether or not serde buffered this value.
     #[serde(deserialize_with = "crate::serde_helpers::u8_keyed_map")]
     pub rates: BTreeMap<u8, f64>,
@@ -417,7 +417,7 @@ pub struct MatrixCompletionBonusConfig {
     /// Level (1-indexed) to bonus amount when that level is fully
     /// filled.
     ///
-    /// Deserialized via [`crate::serde_helpers::u8_keyed_map`] so the keys
+    /// Deserialized via `crate::serde_helpers::u8_keyed_map` so the keys
     /// parse whether or not serde buffered this value.
     #[serde(
         rename = "per_level",

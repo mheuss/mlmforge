@@ -126,11 +126,14 @@ pub struct CompensationPlan {
 ///
 /// Adjacent tagging narrows that exposure but does not remove it. Serde
 /// buffers here too whenever `config` arrives before `type`, which is what
-/// any sorted-key JSON emitter produces — including `serde_json::Value`.
-/// What actually makes those maps safe is the `deserialize_with` helpers
-/// in [`crate::serde_helpers`], which read integer keys as strings on
-/// either path. See UC-NET-007 in `docs/use-cases/network-engine.md`.
-/// HEU-648.
+/// any sorted-key JSON emitter produces. That includes `serde_json::Value`.
+///
+/// It is still the right choice, and changing it now would break the wire
+/// format. Type-first input skips the buffer entirely, and the Go pipeline
+/// emits type-first on purpose (`internal/config/translate.go`). What makes
+/// the maps safe on the *other* path is the `deserialize_with` helpers in
+/// `crate::serde_helpers`, which read integer keys as strings either way.
+/// HEU-648 added them. See UC-NET-007 in `docs/use-cases/network-engine.md`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "config", rename_all = "snake_case")]
 pub enum StructureConfig {

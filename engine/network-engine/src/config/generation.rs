@@ -41,7 +41,7 @@ pub struct GenerationCommissionConfig {
     /// Missing generation = no commission. Keys are generation numbers.
     /// Values are percentages between 0.0 and 1.0.
     ///
-    /// Deserialized via [`crate::serde_helpers::u8_keyed_map`] so the keys
+    /// Deserialized via `crate::serde_helpers::u8_keyed_map` so the keys
     /// parse whether or not serde buffered this value.
     #[serde(
         rename = "generation_rates",

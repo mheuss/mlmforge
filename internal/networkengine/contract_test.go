@@ -97,7 +97,9 @@ func TestContractFixtures(t *testing.T) {
 				"[%s] fixture has both 'setup' and 'setup_raw'; pick one", tc.name)
 
 			// Run setup steps (e.g., create_tree) before the main request.
-			// SetupRaw is sent verbatim, mirroring RequestRaw. Use it for
+			// SetupRaw is sent verbatim, mirroring RequestRaw. Use it where the
+			// fixture's exact wire bytes are the point. It is no longer needed to make
+			// plans deserialize: HEU-648 made content-before-tag parse fine. Use it for
 			// payloads where key order matters (for example, adjacent-tagged
 			// enum discriminants).
 			var setupLines []string

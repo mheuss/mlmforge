@@ -1,5 +1,13 @@
 # 005: Multi-Currency and Internationalization
 
+> **Status: design intent, barely built.** `VolumeSourceItem` exists and the
+> engine is genuinely currency-free, so the Network Engine half of the chain is
+> real. The other two links are not. Commerce has no product catalog
+> implementation and Financial has no conversion or disbursement code. Both are
+> interface and type declarations only. Identity's `Address` does carry
+> `Region` and `Meta` as described. See [001](001-bounded-contexts.md) for
+> which contexts have code.
+
 ## The Problem
 
 MLM companies frequently operate internationally. A company might sell products in the US, EU, and Japan with different pricing, different product suites, and different regulatory requirements. The commission engine needs to calculate commissions across all markets. Volume and commissions must be comparable regardless of where the sale originated.

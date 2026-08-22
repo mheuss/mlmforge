@@ -64,7 +64,12 @@ The Rust `Request` struct deserializes `params` as `Box<serde_json::value::RawVa
 
 ### Error Code Taxonomy
 
-The worker uses a fixed set of error codes. Handlers return these codes in the `error.code` field.
+The worker returns an error code in the `error.code` field. There are 42 of
+them, grouped below by the area that raises them. Codes are shared across areas
+where the condition is the same, so each one is listed once.
+
+**Tree topology.** Raised by `tree_error_to_response` in `handlers/common.rs`,
+which maps every `TreeError` variant, plus a few handler-level checks.
 
 | Code | Meaning |
 |------|---------|
@@ -73,25 +78,81 @@ The worker uses a fixed set of error codes. Handlers return these codes in the `
 | `USER_ALREADY_EXISTS` | User already exists in the tree |
 | `ROOT_ALREADY_EXISTS` | Tree already has a root node |
 | `POSITION_OCCUPIED` | Target position in the tree is already taken |
-| `INVALID_POSITION` | Position value is not valid for this tree type |
-| `TREE_EXISTS` | A tree with this name already exists |
-| `INVALID_PLAN` | Compensation plan data is malformed or invalid |
-| `UNSUPPORTED_PLAN_VERSION` | Plan `version` is not supported by this engine build. Distinct from `INVALID_PLAN`: the plan parsed cleanly but targets a schema version the engine does not implement |
+| `INVALID_POSITION` | Position value is out of range for this tree type |
+| `TREE_EXISTS` | A structure with this name already exists. Also returned when restoring a snapshot over a live structure |
 | `HAS_CHILDREN` | Cannot remove a node that has children |
-| `NO_ROOT` | Reserved. Tree operation requires a root but none has been set. Currently handled via `STRUCTURE_NOT_FOUND`. |
-| `NO_PLAN` | Commission calculation requires a loaded plan |
-| `INVALID_PARAMS` | Params are missing, malformed, or not a JSON object |
+| `CANNOT_REMOVE_ROOT` | Cannot remove the root node |
+| `TREE_EMPTY` | Operation requires at least one node and the tree has none |
+| `INVALID_WIDTH` | Configured matrix width is not valid |
+| `SPONSOR_NOT_FOUND` | Named sponsor does not exist. Also raised by board and streamline placement |
+| `USER_NOT_IN_HOLDING_TANK` | `place_from_tank` named a user who is not in the tank |
+| `UNSUPPORTED_SPILLOVER` | The requested spillover strategy is not implemented for this tree type |
+| `SUBTREE_FULL` | Spillover found no open slot in the target subtree |
+
+**Plan loading.** Raised by `handle_load_plan` and by the commission handlers'
+`require_plan` gate. See [028](028-commission-config-from-validated-state.md).
+
+| Code | Meaning |
+|------|---------|
+| `INVALID_PLAN` | Plan failed to deserialize, or failed validation |
+| `UNSUPPORTED_PLAN_VERSION` | Plan `version` is not supported by this engine build. Distinct from `INVALID_PLAN`: the plan parsed cleanly but targets a schema version the engine does not implement |
+| `NO_PLAN` | The operation requires a loaded plan and `load_plan` has not been called |
+
+**Board plan.** Mapped from `BoardPlanError` in `handlers/board_plan.rs`.
+
+| Code | Meaning |
+|------|---------|
+| `BOARD_NOT_FOUND` | Named board does not exist in the structure |
+| `MEMBER_NOT_FOUND` | Referenced member is not on the board. Also raised by streamline |
+| `MEMBER_ALREADY_EXISTS` | Member is already on the board. Also raised by streamline |
+| `MEMBER_NOT_DISPLACED` | Operation requires a displaced member and this one is not displaced |
+| `NO_BOARDS_AVAILABLE` | No board has an open slot for placement |
+| `INVALID_DIMENSIONS` | Board width or height is outside the allowed bounds |
+
+**Streamline.** Mapped from `StreamlineError` in `handlers/streamline.rs`.
+
+| Code | Meaning |
+|------|---------|
+| `STREAM_NOT_FOUND` | Named stream does not exist in the structure |
+| `STREAM_FROZEN` | Stream is frozen after a rank demotion and cannot take placements |
+| `STREAM_CHOICE_NOT_ALLOWED` | Caller supplied a stream but the config does not permit enrollment stream choice |
+| `SPONSOR_NOT_OWNER` | Sponsor does not own the stream they named |
+| `NO_STREAMS_AVAILABLE` | No stream can take the placement |
+| `NO_OWNED_STREAMS` | Sponsor owns no stream to place into |
+| `TREE_ERROR` | A `TreeError` surfaced from inside a stream's underlying `UnilevelTree` |
+| `STREAMLINE_ERROR` | Fallback for a streamline condition with no dedicated code |
+
+**Calculation and state.**
+
+| Code | Meaning |
+|------|---------|
+| `CALCULATION_ERROR` | Commission calculation failed (bad input data) |
+| `EVALUATION_ERROR` | Rank evaluation failed, including non-convergence |
+| `SERIALIZATION_ERROR` | Snapshot could not be serialized |
+
+**Protocol.**
+
+| Code | Meaning |
+|------|---------|
+| `INVALID_REQUEST` | Request JSON itself is malformed |
+| `INVALID_PARAMS` | Params are malformed or not a JSON object. Omitting `params` entirely is legal and deserializes as `{}`, so a genuinely required field that is absent returns `MISSING_PARAM` instead |
 | `MISSING_PARAM` | A required parameter is absent |
 | `INVALID_UUID` | A user ID is not a valid UUID |
-| `CALCULATION_ERROR` | Commission calculation failed (bad input data) |
-| `INVALID_REQUEST` | Request JSON itself is malformed |
 | `UNKNOWN_OP` | Unrecognized operation name |
-| `PARSE_ERROR` | Reserved. JSON parsing failed on the request or params. Currently handled via `INVALID_PARAMS` or `INVALID_REQUEST`. |
+| `UNSUPPORTED_OP` | Known operation, but not supported for this structure type |
 | `INTERNAL_ERROR` | Handler panicked unexpectedly |
 
-The error codes evolved during implementation to be more specific. The original design used generic codes like `NO_TREE`, `NOT_FOUND`, and `DUPLICATE_USER`. Implementation revealed that callers need finer distinctions (e.g., `POSITION_OCCUPIED` vs. `USER_ALREADY_EXISTS`, `TREE_EXISTS` vs. `ROOT_ALREADY_EXISTS`).
+The codes grew more specific during implementation. The original design used
+generic codes like `NO_TREE`, `NOT_FOUND`, and `DUPLICATE_USER`. Implementation
+revealed that callers need finer distinctions, for example `POSITION_OCCUPIED`
+versus `USER_ALREADY_EXISTS`, and `TREE_EXISTS` versus `ROOT_ALREADY_EXISTS`.
+None of the generic codes survive in the worker. Two codes this document once
+reserved, `NO_ROOT` and `PARSE_ERROR`, were never implemented and have been
+dropped. `NO_ROOT`'s condition is reported as `STRUCTURE_NOT_FOUND` or
+`TREE_EMPTY`, and `PARSE_ERROR`'s as `INVALID_PARAMS` or `INVALID_REQUEST`.
 
-On the Go side, `EngineError` wraps these codes. Callers use `errors.As` to match on specific codes without parsing error message strings.
+On the Go side, `EngineError` wraps these codes. Callers use `errors.As` to
+match on specific codes without parsing error message strings.
 
 ### Panic Recovery
 
@@ -105,7 +166,7 @@ Without this, a panic in any handler would crash the process. The Go side would 
 
 A background goroutine owns the read side of stdout. It runs for the life of the transport and drains stdout line by line into a buffered channel.
 
-`StdioTransport.Call` writes the request to stdin, then reads lines from the channel. It forwards signals to the observability pipeline and returns the first response to the caller. The read selects against `ctx.Done()`.
+`StdioTransport.Call` writes the request to stdin, then reads lines from the channel. It forwards signals to a registered signal handler and returns the first response to the caller. The handler is opt-in: with none registered, `deliverSignal` drops the line (`transport_stdio.go:258`). `observability.Observer.HandleSignal` is the intended handler, wired via `WithSignalHandler`, but nothing in production registers it today. The read selects against `ctx.Done()`.
 
 ```
 write request to stdin
@@ -157,4 +218,4 @@ The commission ops are `calculate_unilevel`, `calculate_binary_pairing`, `calcul
 - **Typed error handling.** Go callers match on error codes, not message strings. Adding a new error code requires no Go-side changes until a caller needs to handle it specifically.
 - **Resilient worker.** A panic in one handler does not crash the process. The Go side sees a typed error and the connection stays alive.
 - **Clean cancellation.** Go contexts propagate through to the transport layer. Timeouts and cancellations work as expected.
-- **Cross-language observability.** The worker's logs cross the boundary as signals on the same stdout stream. Go forwards them to its telemetry pipeline, correlated by trace context when the request carried it.
+- **Cross-language observability.** The worker's logs cross the boundary as signals on the same stdout stream, correlated by trace context when the request carried it. The Go side can forward them to its telemetry pipeline by registering a handler. That wiring is not in place yet, so signals are drained and discarded today.

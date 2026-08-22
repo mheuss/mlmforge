@@ -1,5 +1,20 @@
 # 003: Network Engine Design
 
+> **Status: mostly built, one section is not.** The Rust engine, CV-only
+> volume, position-indexed trees, holding tanks, wire type separation, and the
+> `EngineError` code taxonomy all ship. Two things to watch. The
+> **Cross-Structure Queries** section describes a `QueryTree` method that was
+> never built. It survives only as a stale comment at
+> `internal/networkengine/types.go:8`, and the **Query power at the boundary**
+> bullet repeats the claim. `TreeNavigator`, named under Generalized Tree
+> Positions, is an engine-internal Rust trait at
+> `engine/network-engine/src/tree/navigator.rs`, not a Go interface. The Go
+> boundary is `EngineClient` over `EngineTransport`. And **Holding Tanks**
+> describes per-structure tanks, but only `MatrixTree` has one: `get_holding_tank`
+> and `place_from_tank` reject every other tree type with `INVALID_PARAMS` and
+> "only supported for matrix trees" (`handlers/tree.rs:426-430`, `:477-481`). The matrix tank is filled by node removal
+> (`tree/matrix.rs:441`), not by an enrollment-time position choice.
+
 ## The Problem
 
 The commission engine is the core of an MLM platform. It walks tree structures that can contain millions of nodes, applies qualification rules at every level, and calculates commissions that must be auditable to the penny. The legacy PHP system did this work in interpreted code with database queries at every tree level. It worked for thousands of distributors but could not scale beyond that.
@@ -56,7 +71,7 @@ When a user is enrolled, they may qualify for placement on multiple tree structu
 
 The sponsor or an admin later places the user from their back office dashboard.
 
-Holding tanks are per-structure. A user can be placed on the unilevel immediately (auto-placement) while sitting in the binary holding tank waiting for their sponsor to choose left or right. The legacy system had a single holding tank, which meant a user stuck in the binary tank also could not be placed on the matrix. Per-structure tanks allow independent placement timelines.
+Holding tanks are per-structure. A user can be placed on the unilevel immediately (auto-placement) while sitting in another structure's holding tank waiting for their sponsor to choose. Only matrix implements a tank today, and it is fed by removal rather than enrollment. The legacy system had a single holding tank, which meant a user stuck in the binary tank also could not be placed on the matrix. Per-structure tanks allow independent placement timelines.
 
 ### Cross-Structure Queries
 

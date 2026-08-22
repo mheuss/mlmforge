@@ -12,7 +12,7 @@ This document covers the configurable options specific to streamline commission 
 
 Each stream is a linear chain. Width = 1. Each person has exactly one person above and one below. A distributor can have positions on multiple streams within the same structure. This one-to-many mapping (one user to many positions) is unique to streamline.
 
-**Arena storage model.** Each stream is a separate arena instance with width=1 enforced. A `StreamlineStructure` wrapper manages a collection of stream arenas with a user-to-stream index. This keeps the arena model clean. No special-casing needed.
+**Arena storage model.** Each stream is a width-1 `UnilevelTree`, which owns its own arena. A `StreamlineEngine` manages the collection of streams with a user-to-streams index. This keeps the arena model clean. No special-casing needed.
 
 ## Commission Options
 

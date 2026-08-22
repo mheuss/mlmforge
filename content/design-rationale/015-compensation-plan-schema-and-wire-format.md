@@ -24,13 +24,13 @@ This eliminates 28 field name mappings that would otherwise live in the Go trans
 
 A single JSON Schema file (`schemas/compensation-plan.schema.json`) validates compensation plan YAML. The schema uses Draft 2020-12 for `if/then/else` support and broad tooling compatibility.
 
-**Monolithic file with `$defs`.** All 55 types live in one file. No multi-file `$ref`. Simpler to distribute, load, and version.
+**Monolithic file with `$defs`.** All 63 types live in one file. No multi-file `$ref`. Simpler to distribute, load, and version.
 
 **Structure type discriminator.** `StructureConfig` uses `allOf` with `if/then` blocks keyed on the `type` field. Each structure type selects its required fields and commission shape. The same pattern applies to `BinaryCommission` (keyed on `mode`: pairing vs cycle/step).
 
 **Descriptions on every property.** Each field has a 1-3 sentence description so plan authors get inline help without opening documentation.
 
-**No `additionalProperties: false`.** Extra fields are silently accepted. This favors forward compatibility over typo detection. Stricter validation can be added selectively later.
+**`additionalProperties: false` off by default.** Extra fields are silently accepted almost everywhere. This favors forward compatibility over typo detection. Three board-plan definitions opt in and are closed: `BoardCyclingConfig`, `BoardPlanStructureParams`, and `BoardPlanCommission`. They are the "selectively later" case this decision left room for.
 
 **Nullable fields use `oneOf`.** Fields that accept null in YAML use `"oneOf": [{"$ref": "..."}, {"type": "null"}]`.
 
@@ -98,7 +98,7 @@ The YAML format favors human readability. Flat structures, maps with numeric key
 
 **Per-field Go mapping.** Go translates every field name between YAML and Rust. This was the default assumption before we counted the renames. With 28 fields that differ, the translation layer would be a significant source of bugs and maintenance burden. Serde rename attributes on the Rust side are simpler, verified by compilation, and require zero Go code.
 
-**Multi-file schema with `$ref`.** Split the schema into one file per config area. Better organization on paper but adds complexity to schema loading, distribution, and versioning. A single file with internal `$defs` is simpler. At 1,900 lines the file is large but manageable.
+**Multi-file schema with `$ref`.** Split the schema into one file per config area. Better organization on paper but adds complexity to schema loading, distribution, and versioning. A single file with internal `$defs` is simpler. At roughly 2,500 lines the file is large but manageable.
 
 **`additionalProperties: false`.** Catches typos immediately. But it also breaks forward compatibility. Adding a new field to the schema would invalidate existing YAML files until they upgrade. The open-by-default approach lets old schemas validate new files with extra fields. Go-level validation can add specific typo detection later.
 

@@ -38,7 +38,7 @@ From Alice's perspective (boundary rank = 8):
 
 Alice earns a configured percentage on each generation's total volume. Dave and Frank each earn their own generation commissions from their perspective.
 
-This example is specified as the first integration test case for generation commission implementation.
+This example was the first integration test case for the generation calculator.
 
 ## Commission Options
 
@@ -46,7 +46,8 @@ This example is specified as the first integration test case for generation comm
 
 | Option | Type | What it controls |
 |--------|------|-----------------|
-| **Max generations** | integer | Maximum number of generations to pay on. |
+| **Max generations** | integer (1-255) | Maximum number of generations to pay on. |
+| **Max generations per rank** | rank x integer map | Per-rank override for max generations. When a rank has an entry, it replaces the plan-wide value for earners at that rank. `earner_max_generations` resolves it (`commission/generation.rs:24`). |
 | **Generation rates** | generation x rate map | Override percentage per generation. Gen 1 = 10%, Gen 2 = 7%, Gen 3 = 5%, Gen 4 = 3%. |
 | **Volume-to-dollar multiplier** | float | CV to currency conversion. Can differ from the level commission multiplier. |
 
@@ -121,6 +122,9 @@ When both are enabled: Level commissions reward the immediate upline (levels 1-5
 
 ### Infinity Bonus in Generation Context
 
+**Not implemented.** No bonus of any kind is calculated; see the banner in
+[008](008-common-compensation-config.md).
+
 The infinity bonus (unlimited depth until hitting a same-rank blocker) is particularly natural in generation plans. Earn on unlimited generations until hitting a same-rank blocker.
 
 This shares the "blocker" concept with the standard infinity bonus from decision 008. The difference is what defines a "step": tree depth (unilevel infinity) versus generation boundary (generation infinity). The engine uses the same walk mechanism with different step criteria.
@@ -135,14 +139,14 @@ Both use the same walk, the same boundary detection, and the same per-generation
 
 ## Edge Cases
 
-No legacy implementation exists for generation plans. The algorithm must be validated from industry research. Key edge cases to test:
+No legacy implementation existed for generation plans, so the algorithm was validated from industry research. `calculate_generation` (`commission/generation.rs:170`) is built and `tests/generation_commission_properties.rs` covers it. The edge cases below are the ones that mattered:
 
 1. **No boundaries in downline.** Everything is Generation 1. The walk finds no boundaries. Earner receives Gen 1 rate on all downline volume.
 2. **Consecutive boundaries.** Two qualified leaders parent-child with no one between them. Creates an empty generation (behavior determined by the `empty_generation_consumes_number` setting).
 3. **Volume generator is a boundary leader.** They do not earn on their own volume (consistent with all plan types), but they create a boundary for earners above them.
 4. **Max generations reached mid-walk.** Earners above the cutoff receive nothing on deeper volume.
 
-Property-based test requirements:
+Property-based test coverage:
 - Total commissions paid on a volume event should equal the sum of all generation percentages for all qualified earners in the walk.
 - Every volume event should produce at least one earner (assuming at least one boundary-rank leader exists above the generator).
 - Generation number should never exceed `max_generations` for any earner.

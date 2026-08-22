@@ -35,7 +35,7 @@ Three factors conspire to hide the bug:
 
 ## What This Means for Future Calculators
 
-Every commission calculator that supports active leg tiers must use `get_sponsored`, not `get_children`. This includes stairstep, generation, and streamline when they are built.
+Every commission calculator that supports active leg tiers must use `get_sponsored`, not `get_children`. Stairstep, generation, and streamline have since been built and all comply. They route through the shared walk, and `count_active_legs` in `commission/walk.rs` calls `get_sponsored`, so the rule is inherited rather than restated per calculator.
 
 The same principle extends to any commission logic that evaluates personal recruiting activity. If the question is "what did this distributor do?" the answer comes from sponsor edges. If the question is "where does this distributor sit?" the answer comes from placement edges.
 

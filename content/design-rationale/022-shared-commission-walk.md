@@ -1,5 +1,12 @@
 # 022: Shared Commission Walk
 
+> **Status: known drift.** Written when four calculators existed. There are now
+> seven, and generation and streamline are built rather than upcoming. The
+> decision itself holds: `walk.rs` is still `pub(crate)` generic functions over
+> `TreeNavigator`, there is still no `CommissionCalculator` trait, and all five
+> level-based calculators route through the shared walk. Counts and tense below
+> are stale.
+
 ## The Problem
 
 The unilevel, matrix, and stairstep calculators duplicated ~200 lines of identical logic: eligibility evaluation, active leg counting, compression handling, rate table lookup, and the upline walk loop. When compression behavior needed updating, the change had to be made in three files. The rule of three (decision 017) was satisfied, triggering extraction.
@@ -17,7 +24,7 @@ A `CommissionCalculator` trait would unify the calling convention. But the calli
 A trait also doesn't fit naturally:
 
 - **Different config types.** Unilevel takes `UnilevelStructureConfig`, matrix takes `MatrixStructureConfig`, stairstep takes `StairstepStructureConfig`. Unifying these behind a trait requires wrapper structs or enum dispatch. Both add indirection for no behavioral gain.
-- **Binary doesn't fit.** It uses pairing mechanics, returns `BinaryCalculationResult`, and has carry-forward state. A trait that covers three of four calculators is a leaky abstraction.
+- **Binary doesn't fit.** It uses pairing mechanics, returns `BinaryCalculationResult`, and has carry-forward state. A trait that covers five of seven calculators is a leaky abstraction. Board plan does not fit either: it takes cycle events rather than snapshots and returns `BoardCommissionResult`.
 - **Callers already know the type.** The Go layer picks the calculator based on the config structure type. There is no scenario where someone has "a calculator" but doesn't know which kind.
 
 A trait can be added later if a consumer needs polymorphic dispatch. The standalone functions can be wrapped without changing their internals.
@@ -45,7 +52,7 @@ Walk 2 (stairstep differential/generation overrides) stays in `stairstep.rs`. It
 
 ## What This Means for Future Calculators
 
-Generation and streamline calculators should follow the same pattern:
+Generation and streamline have since been built and both follow this pattern. A future level-based calculator should too:
 
 1. Build a `LevelWalkConfig` with plan-specific parameters
 2. Call `walk::evaluate_eligibility` for the prep phase

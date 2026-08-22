@@ -1,5 +1,17 @@
 # 004: Interface Contracts
 
+> **Status: design intent, partly built.** The provider-owned interface rule is
+> real and followed. The **Interface Inventory** table is not a description of
+> the code. Six of the seven names in its Network Engine row do not exist:
+> `TreeNavigator` is a Rust trait, and `VolumeRecorder`, `CommissionResult`,
+> `CommissionAdmin`, `StructurePlacer`, and `PlanConfiguration` were never
+> written. The seven that do exist are `EngineTransport`, `TreeStore`,
+> `TreeMutator`, `CommissionRunStore`, `QualificationHistoryStore`,
+> `PeriodInputProvider`, and `EvaluateRanksOption`. `RecordVolume` in the
+> Signatures Use Domain Types example does not exist either. The domain events
+> are declared as structs, but no event bus has been built, so nothing emits or
+> consumes them.
+
 ## The Problem
 
 MLMForge is a modular monolith designed for eventual service extraction. The interfaces between bounded contexts are the seams along which the system can be decomposed. Get them right and extraction is a deployment decision. Get them wrong and extraction becomes a rewrite.
@@ -58,7 +70,7 @@ Every parameter and return type is a named struct with documented fields. This m
 
 ### The Rust Boundary is Invisible
 
-Network Engine's 7 interfaces are pure Go. Consumers have no idea Rust is involved. The package handles subprocess communication (NDJSON over stdin/stdout via StdioTransport) internally.
+The seven Network Engine contracts in the inventory above are a planned Go-facing surface, and only `EngineTransport` exists today. See the status banner. The intent is that consumers have no idea Rust is involved. The package handles subprocess communication (NDJSON over stdin/stdout via StdioTransport) internally.
 
 Consumers do not need Rust tooling. The Rust engine can be replaced or upgraded without touching any consumer. Testing consumers requires only a Go mock, not a running Rust binary.
 
@@ -74,7 +86,7 @@ Consumers do not need Rust tooling. The Rust engine can be replaced or upgraded 
 
 ## Interface Inventory
 
-26 interfaces across 7 provider contexts. Portals is a pure consumer with no interfaces.
+25 interfaces across 7 provider contexts. Portals is a pure consumer with no interfaces.
 
 | Context | Interfaces |
 |---------|-----------|

@@ -1,5 +1,14 @@
 # 008: Common Compensation Plan Configuration
 
+> **Status: config is real, bonuses are not.** Everything here is parsed and
+> validated by `internal/config` and `engine/network-engine/src/config`. That is
+> the extent of it for one section. **No bonus is calculated anywhere.**
+> `plan.bonuses` is never read outside the config packages, and
+> `engine/network-engine/src/commission/` has no bonus calculator. Read
+> **Shared Bonus Types** as the configuration surface those programs will use,
+> not as behavior the engine performs. Period, volume, rank, eligibility,
+> payout, caps, and placement config are consumed by the engine.
+
 ## The Problem
 
 Every compensation plan shares a set of configuration options regardless of structure type. Period timing, volume handling, rank qualification, bonus programs, payout rules, and financial caps apply to unilevel, binary, matrix, stairstep, generation, and streamline plans alike.
@@ -67,9 +76,10 @@ Each rank defines requirements. A distributor must meet ALL of them simultaneous
 | **Min rank** | rank ref | Minimum rank those distributors must hold. |
 | **Search mode** | `first_levels` or `any_level` | Search direct recruits (first N levels) or anywhere in the downline. First levels rewards personal recruiting. Any level rewards deep team building. |
 | **Search depth** | integer | How many levels deep to search. Only used with `first_levels`. |
-| **Structure** | structure ref | Which structure to evaluate on. |
 | **Total count** | integer | Minimum total distributors (any rank) at the same levels. Ensures breadth. |
 | **Min leg group volume** | float | Minimum GV per qualifying distributor's group. Ensures counted leaders are actually producing. |
+
+The structure is not set here. `distributor_count` sits inside a structure qualification block, and that block's `structure` field says which structure the count is evaluated on.
 
 **Signup product requirements:** A list of product IDs. The distributor must maintain an active membership of at least one. A $49 starter kit might cap rank at Silver. A $299 premium kit unlocks the full ladder.
 
@@ -79,11 +89,15 @@ Each rank defines requirements. A distributor must meet ALL of them simultaneous
 
 **Grace periods and demotion:**
 
+These are not three independent switches. `demotion_policy` on a rank is a
+tagged choice: either the string `promotion_only`, or an object carrying a
+`grace` block. Pick one.
+
 | Option | Values | What it controls |
 |--------|--------|-----------------|
-| **Grace count** | integer | How many grace units before demotion. 0 = immediate demotion on failure. |
-| **Grace unit** | `days`, `weeks`, `months` | Unit of time for the grace count. |
-| **Promotion only** | boolean | When true, ranks only go up. A Gold distributor stays Gold forever regardless of performance. Alternative to grace periods. |
+| **`promotion_only`** | (variant) | Ranks only go up. A Gold distributor stays Gold forever regardless of performance. |
+| **`grace.count`** | integer (>= 1) | How many grace units before demotion. The minimum is 1. For immediate demotion, omit the grace variant rather than setting 0. |
+| **`grace.unit`** | `days`, `weeks`, `months` | Unit of time for the grace count. |
 
 **Paid-as rank vs. achieved rank:**
 
@@ -109,13 +123,18 @@ Separate from rank qualification. These criteria determine whether a distributor
 | **Min personal volume** | float | Minimum PV to receive any commissions this period. 0 = no requirement. |
 | **Require order in period** | boolean | Must have placed at least one order this period. |
 | **Eligible statuses** | list of strings | Account statuses that can receive commissions. Typically "Good" and optionally "Probation." |
-| **Active leg tiers** | list of {min_legs, max_depth} | Tiered commission depth based on active frontline legs. More active legs unlock deeper earning. |
+| **Active leg tiers** | list of {`min_active_legs`, `max_commission_depth`} | Tiered commission depth based on active frontline legs. More active legs unlock deeper earning. |
 
 Active leg tiers force wide building before deep earning. Example: 1 active leg unlocks levels 1-3. 3 legs unlock levels 1-5. 5 legs unlock levels 1-8. 7 legs unlock unlimited. A leg is "active" when its frontline distributor meets the PV minimum and status criteria.
 
 ### Shared Bonus Types
 
 These bonuses apply to all or most structure types. Structure-specific bonuses are documented in their respective decision files.
+
+**None of them are implemented.** The eleven bonus blocks in `BonusConfig` parse
+and validate, and nothing consumes them. The descriptions below are written in
+the present tense because they specify intended behavior. Treat every one as
+pending.
 
 **Matching bonus.** A sponsor earns a percentage of their recruit's commissions. Walks the sponsor chain, not the tree. Configurable depth and per-level rates. Configurable which commission types are matched (level, pairing, generation). Most companies match only the primary commission type.
 
@@ -173,7 +192,7 @@ These bonuses apply to all or most structure types. Structure-specific bonuses a
 
 These are engine guarantees, not configurable options. They are documented here because they are non-negotiable requirements.
 
-**Audit trail.** Every commission record stores the triggering volume event, the walk path, the multipliers applied, and the resulting amount. Always on.
+**Audit trail.** Every commission record stores the triggering volume event, the multipliers applied, and the resulting amount. The walk path is not stored yet. Emitting it is [029](029-commission-provenance-on-the-wire.md), and storing it is [027](027-provenance-as-primary-data.md); neither has landed.
 
 **Idempotency.** Running the same commission calculation twice on the same volume produces the same result. No duplicates. Always on.
 

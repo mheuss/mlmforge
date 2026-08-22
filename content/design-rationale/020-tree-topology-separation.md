@@ -1,5 +1,28 @@
 # 020: Tree Topology Separation
 
+> **Status: known drift.** The rule holds for unilevel and binary. `MatrixTree`
+> broke it and this document never caught up.
+>
+> - The tree owns a holding tank (`tree/matrix.rs:49`) and its spillover
+>   strategy (`:47`, exposed at `:75`), both listed below under "A tree does
+>   not know".
+> - `MatrixTree::add_node` (`:229`) takes `(user_id, sponsor_id, enrolled_at)`.
+>   No parent, no position. It calls `find_spillover_slot` (`:199`) and picks
+>   the slot itself. The "Spillover inside the tree" alternative rejected below
+>   is what shipped.
+> - Matrix also has `add_node_at` (`:129`) for explicit placement, so the tree
+>   offers both paths. That is the "Hybrid approach" this document rejects.
+> - `add_node` signatures differ per tree type, against the "same `add_node`
+>   contract" claim below. Unilevel takes `(user_id, parent_id, sponsor_id,
+>   enrolled_at)`, binary adds `position`, matrix takes neither parent nor
+>   position.
+>
+> The Go side already records the consequence:
+> `internal/networkengine/tree_mutator.go:14-16` notes that matrix `AddNode`
+> "re-derives placement by spillover and ignores the stored parent and
+> position." Reconciling the decision with the code is real work, not a doc
+> edit, so this banner marks the gap rather than papering over it.
+
 ## The Problem
 
 The Network Engine implements multiple tree structures (unilevel, binary, matrix). Each structure has different placement strategies. Unilevel auto-appends children. Binary requires left/right choice with spillover. Matrix uses forced placement within a fixed grid.

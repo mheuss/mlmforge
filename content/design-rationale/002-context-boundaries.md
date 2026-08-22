@@ -1,5 +1,13 @@
 # 002: Context Boundaries
 
+> **Status: design intent, partly built.** The rule holds where it has been
+> implemented, but several interfaces named below do not exist.
+> `CommissionAdmin` and `VolumeRecorder` were never written.
+> `CommissionResult` is a struct in `networkengine`, not a read interface.
+> There is no `RefundProcessed` event. Commerce declares `OrderRefunded`, and
+> no context emits it, because no event bus has been built. See
+> [001](001-bounded-contexts.md) for which contexts have code.
+
 ## The Problem
 
 The legacy system let any subsystem write to any other subsystem's data. Financial changed user statuses. Commerce toggled order states. Operations modified commission records. There was no single audit point for anything. Race conditions were common and business rules were scattered everywhere.
@@ -38,7 +46,7 @@ In the modular monolith, a command call is a function call. Zero network overhea
 
 ## Ownership Resolutions
 
-Applying this principle resolved 13 ownership disputes from the legacy analysis.
+Applying this principle resolved 13 ownership disputes from the legacy analysis. The seven below are the ones worth showing.
 
 | Entity | Legacy Problem | Resolution |
 |--------|---------------|------------|

@@ -48,6 +48,7 @@ Watch the overlap. ADR-014 through ADR-020 happen to line up with the file of th
 | [026](026-bottom-up-rank-evaluation.md) | **Bottom-Up Rank Evaluation** | Why rank evaluation iterates to a fixpoint over an accumulating descendant-rank map, so predicates read downline ranks even with multiple structure trees |
 | [027](027-provenance-as-primary-data.md) | **Provenance as Primary Data** | Why commission provenance is stored as primary data rather than a rebuildable event projection, and where the four kinds of commission data each live |
 | [028](028-commission-config-from-validated-state.md) | **Commission Config From Validated State** | Why commission handlers read the plan and structure config from `WorkerState` instead of request params, so the `load_plan` validation gate cannot be bypassed |
+| [029](029-commission-provenance-on-the-wire.md) | **Commission Provenance on the Wire** | Why provenance is emitted per walk rather than per earning, why the walk index is the correlation key rather than `(earner_id, source_id)`, and why the outcome taxonomy is still provisional |
 
 ## Reading Order
 

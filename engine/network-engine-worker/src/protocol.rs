@@ -157,39 +157,26 @@ mod tests {
     /// which ignore order. So a reorder tripping this test is a heads-up, not a
     /// compatibility break.
     ///
-    /// This test's own fixture must stay object-free, and `contains_object`
-    /// below enforces that. It is a constraint on the fixture, not on
-    /// `Response::success`, which takes objects freely — most handlers pass
-    /// one. Object key order depends on whether `serde_json/preserve_order` is
-    /// in the build graph, so an exact-string assertion over an object would
-    /// hold under `cargo test` and fail against the shipped binary. HEU-638
-    /// tracks that split.
+    /// The payload is an object whose keys are authored out of alphabetical
+    /// order on purpose. `serde_json::Value` is backed by a `BTreeMap`, so it
+    /// emits them sorted, in every build configuration. If
+    /// `serde_json/preserve_order` ever re-enters the build graph, this emits
+    /// insertion order and fails. That is the point: this assertion is how the
+    /// build-scope split from HEU-648 gets caught if it comes back. It detects
+    /// a regression; it does not promise the Go side anything about key order.
+    ///
+    /// Before HEU-648 this test could not use an object at all. A guard here
+    /// forced the payload to stay scalar, because key order depended on whether
+    /// `network-engine`'s dev-dependencies were in the build graph.
     #[test]
     fn serialize_success_response() {
-        let payload = serde_json::json!("pong");
-        assert!(
-            !contains_object(&payload),
-            "this test's payload must contain no JSON object: key order depends \
-             on serde_json/preserve_order, so the exact-string assertion below \
-             would pass here and fail against the shipped binary"
-        );
-
+        let payload = serde_json::json!({"zebra": 1, "alpha": 2});
         let resp = Response::success("req-1".into(), payload);
         let json = serde_json::to_string(&resp).unwrap();
-        assert_eq!(json, r#"{"id":"req-1","ok":true,"result":"pong"}"#);
-    }
-
-    /// Whether `v` holds a JSON object at any depth, arrays included.
-    ///
-    /// Checks the `Value` structurally rather than searching the serialized
-    /// text for a brace. A scalar string like `"a{b"` serializes with a brace
-    /// in it and is perfectly safe here.
-    fn contains_object(v: &serde_json::Value) -> bool {
-        match v {
-            serde_json::Value::Object(_) => true,
-            serde_json::Value::Array(items) => items.iter().any(contains_object),
-            _ => false,
-        }
+        assert_eq!(
+            json,
+            r#"{"id":"req-1","ok":true,"result":{"alpha":2,"zebra":1}}"#
+        );
     }
 
     /// Exact-string for the same reason as `serialize_success_response`.

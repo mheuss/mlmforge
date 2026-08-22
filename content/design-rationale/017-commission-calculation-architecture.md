@@ -20,9 +20,11 @@ We considered including derived fields like `is_eligible` or `max_depth` in the 
 
 ### Flat Earnings List as Output
 
-All calculators return `Vec<CommissionEarning>`. One entry per earner-per-source. Each entry is self-contained with the earner, the volume source, the level, the rate, and the dollar amount. No pre-grouping. No nesting. No aggregation.
+All calculators return `Vec<CommissionEarning>`. Each entry is self-contained with the earner, the volume source, the level, the rate, and the dollar amount. No pre-grouping. No nesting. No aggregation.
 
-> **Envelope superseded by [029](029-commission-provenance-on-the-wire.md).** The commission calculators now return `{earnings, walks, plan}` rather than a bare array. Everything this section says about the earnings themselves still holds. The list inside `earnings` is flat, self-contained, and ungrouped exactly as described here. Only the envelope around it changed.
+An earner can appear more than once for the same volume source. Stairstep pays a level commission and an override on one source, and multi-tier overrides can select the same ancestor for several tiers. `sort_earnings` carries a level tiebreaker for exactly this reason, and says so in its own doc comment. `(earner_id, source_id)` is not an identity.
+
+> **Envelope changing under [029](029-commission-provenance-on-the-wire.md).** Phase B of that arc replaces the bare array with `{earnings, walks, plan}`, and adds a `walk` reference to each earning. It has not landed: the calculators return `Vec<CommissionEarning>` today and the worker serializes it directly. Everything this section says about the earnings themselves survives the change. The list inside `earnings` stays flat, self-contained, and ungrouped exactly as described here. Only the envelope around it moves.
 
 Consumers aggregate however they need. A payout system sums by earner. An audit report groups by source. A dashboard shows level breakdowns. None of these consumption patterns should constrain the calculator's output format.
 
@@ -46,7 +48,7 @@ This reinforces the decision to keep calculators as standalone functions. The un
 
 ### No Shared Calculator Abstraction Yet
 
-Each calculator is a standalone public function. No `CommissionCalculator` trait. No shared interface. The unilevel calculator is `calculate_unilevel`. The binary calculator will be `calculate_binary`. Each takes the inputs it needs and returns `Vec<CommissionEarning>`.
+Each calculator is a standalone public function. No `CommissionCalculator` trait. No shared interface. The unilevel calculator is `calculate_unilevel`. The binary calculator will be `calculate_binary`. Each takes the inputs it needs and returns `Vec<CommissionEarning>`, becoming `CommissionCalculationResult` when 029's phase B lands. The standalone-function decision is unaffected either way.
 
 Binary calculation has fundamentally different inputs. It pairs volume from two legs rather than walking levels. We do not know what a shared interface would look like. Premature abstraction here would constrain future designs.
 

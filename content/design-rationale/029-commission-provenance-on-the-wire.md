@@ -44,8 +44,17 @@ self-contained, one entry per earner-per-source, no grouping and no nesting.
 
 A **walk** is one traversal. It carries an index, the source, a kind, optional
 context, an ordered list of steps, and how it ended. Each step names a node, an
-outcome, and whether it advanced the walk's counter. Each earning names the
-walk it came from.
+outcome, and whether it advanced the walk's counter.
+
+Each earning gains a `walk` field holding the index of the walk that produced
+it. The field is nullable, and the null case is real: stairstep Walk 2 earnings
+carry `null` because that traversal is not instrumented. Nullable means "no
+walk recorded," never "no traversal happened."
+
+The reference is many-to-one. A walk produces zero or more earnings, and an
+earning belongs to at most one walk. `(earner_id, source_id)` does not identify
+an earning and cannot be used to join the two, which is the whole reason the
+index exists.
 
 Provenance is emitted **per walk, not per earning**. Two of the three traversal
 mechanics are instrumented. The response states which plan the engine used.

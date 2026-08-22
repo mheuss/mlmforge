@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-**Test count:** 994 (Rust), 577 (Go)
+**Test count:** 1018 (Rust), 580 (Go)
 
 ### Added
 - Project research documentation (MLM fundamentals, compensation plans, glossary, competitive landscape, legal/regulatory)
@@ -81,6 +81,9 @@
 - JSON Schema `search_mode` enum aligned with Rust types and ADR-008
 - Multi-tree rank evaluation no longer undercounts ranks. `evaluate_ranks` iterates to a fixpoint instead of a single ordered pass, so a distributor's descendants are counted regardless of cross-structure depth. (HEU-460)
 - Clippy `--all-targets` gate. Boxed `Response`'s `result` and `error` fields so the worker's 15 `result_large_err` errors clear, then tightened CI's clippy step to `--all-targets`. The NDJSON wire format is unchanged. Boxing also fixes `Response`'s size at 48 bytes in every build. (HEU-560)
+- Worker test build and shipped build now link the same `serde_json`. A `preserve_order` dev-feature reached the worker through Cargo feature unification under `cargo test` and `cargo clippy --all-targets`, but never under `cargo build`, so `serde_json::Value` payloads emitted insertion order in test builds and sorted order in production. Nothing exercised the bytes that shipped. Eight integer-keyed config maps now parse their keys through `deserialize_with` helpers in `serde_helpers.rs`, which works on both serde's native path and its `Content` buffer, so key order stopped mattering and the feature could go. The two binaries now emit byte-identical NDJSON. (HEU-648)
+- `cargo test -p network-engine-worker` passes. It failed `load_plan_rejects_duplicate_structure_names` with `invalid type: string "1", expected u8`, which read as a deserialize bug and was a build-scope artifact of the same feature split. (HEU-638)
+- Duplicate rate-key spellings are rejected. The schema's `propertyNames` patterns are `^0*(...)`, so `"1"` and `"01"` are both valid and name the same Rust `u8` map entry, and one rate silently won. Caught in Go validation with a `duplicate_value` error naming both spellings, and in the engine as a parse error. Accepted spellings are otherwise unchanged. (HEU-648)
 
 ### Removed
 - None.

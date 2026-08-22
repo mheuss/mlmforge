@@ -295,7 +295,7 @@ Full document: [`content/design-rationale/018-config-pipeline.md`](content/desig
 
 Full document: [`content/design-rationale/019-ndjson-protocol.md`](content/design-rationale/019-ndjson-protocol.md)
 
-**Summary:** The Go/Rust subprocess protocol uses NDJSON (one JSON object per line) over stdin/stdout. Requests carry an `id` and `op` field. Responses carry the same `id` with an `ok` boolean. A fixed error code taxonomy (`STRUCTURE_NOT_FOUND`, `USER_NOT_FOUND`, `INVALID_PARAMS`, etc.) enables typed error handling on the Go side. The Rust worker recovers from panics via `catch_unwind`. Go supports context cancellation for blocked reads.
+**Summary:** The Go/Rust subprocess protocol uses NDJSON (one JSON object per line) over stdin/stdout. Requests carry an `id` and `op` field. Responses carry the same `id` with an `ok` boolean. A fixed error code taxonomy (`STRUCTURE_NOT_FOUND`, `USER_NOT_FOUND`, `INVALID_PARAMS`, etc.) enables typed error handling on the Go side. The Rust worker recovers from panics via `catch_unwind`. Go supports context cancellation for blocked reads. JSON object key order is deterministic and build-independent but is explicitly not part of the contract; Go decodes by struct tag and must not depend on it (HEU-648).
 
 ### ADR-020: Tree Topology Separation
 

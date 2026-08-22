@@ -10,7 +10,7 @@ Use-cases for the Network Engine bounded context.
 - [UC-NET-004: Per-earner thresholds via filter-before-emit](#uc-net-004-per-earner-thresholds-via-filter-before-emit)
 - [UC-NET-005: Bottom-up rank evaluation with accumulating descendant context](#uc-net-005-bottom-up-rank-evaluation-with-accumulating-descendant-context)
 - [UC-NET-006: Per-leg structural rank qualification](#uc-net-006-per-leg-structural-rank-qualification)
-- [UC-NET-007: Integer-keyed BTreeMap inside an internally-tagged serde enum](#uc-net-007-integer-keyed-btreemap-inside-an-internally-tagged-serde-enum)
+- [UC-NET-007: Integer-keyed BTreeMap behind serde's Content buffer](#uc-net-007-integer-keyed-btreemap-behind-serdes-content-buffer)
 - [UC-NET-008: Per-period rank result persistence](#uc-net-008-per-period-rank-result-persistence)
 - [UC-NET-009: Windowed and tenure rank-qualification gates](#uc-net-009-windowed-and-tenure-rank-qualification-gates)
 - [UC-NET-010: Periodic rank-evaluation driver](#uc-net-010-periodic-rank-evaluation-driver)
@@ -205,34 +205,79 @@ The handler at `engine/network-engine-worker/src/handlers/rank.rs` only register
 
 ---
 
-### UC-NET-007: Integer-keyed BTreeMap inside an internally-tagged serde enum
+### UC-NET-007: Integer-keyed BTreeMap behind serde's Content buffer
 
-**Added:** 0.x (HEU-428)
-**Files:** `engine/network-engine/src/config/stairstep.rs`
+**Added:** 0.x (HEU-428), widened 0.x (HEU-648)
+**Files:** `engine/network-engine/src/serde_helpers.rs`
 
-**Problem:** When a Rust type with `#[serde(tag = "type")]` nests another type whose field is `BTreeMap<u8, _>` (or any integer-keyed map), `serde_json`'s string-to-int key coercion is stripped by the internally-tagged enum's `Content` intermediate buffer. JSON like `{"1": 0.05}` no longer deserializes into the map. The inner type passes its own tests in isolation; the bug only appears at the tagged-enum boundary.
+**Problem:** Serde buffers a tagged enum's content into an intermediate
+`Content` representation, and that buffer strips `serde_json`'s
+string-to-integer map-key coercion. JSON like `{"1": 0.05}` then fails to
+deserialize into `BTreeMap<u8, _>`. The inner type passes its own tests in
+isolation; the failure only appears at the tagged-enum boundary, with the
+message `invalid type: string "1", expected u8`.
 
-**Solution:** Add a `#[serde(deserialize_with = "...")]` helper on the field that goes through `BTreeMap<String, _>` first and parses the keys:
+Both tagging modes reach it:
+
+| Tagging | When it buffers |
+|---|---|
+| Internal (`#[serde(tag = "type")]`) | Always |
+| Adjacent (`#[serde(tag = "type", content = "config")]`) | Whenever the content key arrives **before** the tag |
+
+Adjacent tagging was originally chosen to dodge this (`config/mod.rs`,
+`StructureConfig`) and it does help, because type-first input skips the buffer.
+It is not a fix. Any sorted-key JSON emitter puts `config` before `type`
+alphabetically, including `serde_json::Value`, and the buffer comes back.
+
+**Solution:** A `deserialize_with` helper on the field that reads the map with
+`String` keys first, then parses them. Three shapes live in
+`engine/network-engine/src/serde_helpers.rs`:
+
+| Helper | Field shape |
+|---|---|
+| `u8_keyed_map` | `BTreeMap<u8, f64>` |
+| `rank_keyed_u8_map` | `BTreeMap<String, BTreeMap<u8, f64>>` |
+| `optional_u8_keyed_map` | `Option<BTreeMap<u8, f64>>` |
 
 ```rust
-fn deserialize_u8_keyed_rates<'de, D>(d: D) -> Result<BTreeMap<u8, f64>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let raw: BTreeMap<String, f64> = BTreeMap::deserialize(d)?;
-    raw.into_iter()
-        .map(|(k, v)| k.parse::<u8>().map(|k| (k, v)).map_err(serde::de::Error::custom))
-        .collect()
-}
+#[serde(deserialize_with = "crate::serde_helpers::u8_keyed_map")]
+pub rates: BTreeMap<u8, f64>,
 ```
-
-The same `deserialize_with` precedent exists in `engine/network-engine/src/config/bonus.rs`.
 
 **When to use this pattern:**
 - A type owns a `BTreeMap<Int, _>` field that needs to accept JSON string keys.
-- That type is nested inside an internally-tagged enum (`#[serde(tag = "type")]`).
+- That type is reachable through any tagged enum, internal or adjacent, or
+  through any other path that buffers.
 
-**Notes:** Discovered in HEU-428 Task 2 when restructuring `BreakawayConfig` into an `OverrideStrategy` tagged enum. Without the helper, the existing `deserialize_breakaway_config` test broke even though the JSON shape was the migrated equivalent of the original. Rejected alternatives: pulling `serde_json` into main deps (heavier surface change), a `Value`-based manual deserialize (requires the dep), and a hand-rolled `Visitor` (verbose).
+**Two traps.**
+
+`Option<T>` needs `#[serde(default, deserialize_with = "...")]`. Serde reads a
+bare `Option<T>` as `None` when the key is absent, and `deserialize_with`
+disables that, so without `default` the field silently becomes required.
+
+Key spellings must stay as permissive as the rest of the stack. The schema's
+`propertyNames` patterns are `^0*(...)` and Go's `validateU8MapKeys`
+(`internal/config/rules.go`) uses `strconv.ParseUint`, so both accept `"01"`.
+Rejecting it in Rust alone would make the worker refuse plans the validated Go
+pipeline passed. The helpers accept it and reject only the genuinely ambiguous
+case: two spellings of one key in the same map, where one rate would silently
+win. `validateU8MapKeys` reports the same collision Go-side so the author sees
+it before the engine does.
+
+**Notes:** Discovered in HEU-428 Task 2 when restructuring `BreakawayConfig`
+into an `OverrideStrategy` tagged enum. Rejected alternatives: pulling
+`serde_json` into main deps (heavier surface change), a `Value`-based manual
+deserialize (requires the dep), and a hand-rolled `Visitor` (verbose).
+
+HEU-648 widened this entry. The adjacent-tagging half was missing, and the
+gap was load-bearing: a `serde_json/preserve_order` dev-feature held key order
+across the whole workspace so the buffer was never hit under `cargo test`. The
+shipped binary never had that feature, so the test build and the shipped build
+disagreed. Eight call sites now carry a helper, the feature is gone, and the
+private copy of the helper that lived in `config/stairstep.rs` was folded into
+`serde_helpers.rs`. The `deserialize_with` precedent in
+`engine/network-engine/src/config/bonus.rs` is `null_as_empty`, a different
+serde edge covered by UC-NET-017.
 
 ---
 

@@ -120,10 +120,20 @@ pub struct CompensationPlan {
 /// of different or same types.
 ///
 /// Adjacent tagging (`tag` + `content`) is used instead of internal
-/// tagging because serde's internal tagging buffers content into an
-/// intermediate representation that cannot deserialize non-string map
-/// keys (e.g., `BTreeMap<u8, f64>` in rate tables). Adjacent tagging
-/// avoids this limitation.
+/// tagging because serde's internal tagging *always* buffers content into
+/// an intermediate representation that cannot deserialize non-string map
+/// keys (e.g., `BTreeMap<u8, f64>` in rate tables).
+///
+/// Adjacent tagging narrows that exposure but does not remove it. Serde
+/// buffers here too whenever `config` arrives before `type`, which is what
+/// any sorted-key JSON emitter produces. That includes `serde_json::Value`.
+///
+/// It is still the right choice, and changing it now would break the wire
+/// format. Type-first input skips the buffer entirely, and the Go pipeline
+/// emits type-first on purpose (`internal/config/translate.go`). What makes
+/// the maps safe on the *other* path is the `deserialize_with` helpers in
+/// `crate::serde_helpers`, which read integer keys as strings either way.
+/// HEU-648 added them. See UC-NET-007 in `docs/use-cases/network-engine.md`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "config", rename_all = "snake_case")]
 pub enum StructureConfig {
@@ -304,6 +314,69 @@ pub struct BoardPlanStructureConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A structure whose `config` key precedes its `type` key must still
+    /// deserialize. Sorted-key input takes serde's `Content` buffer, which
+    /// strips serde_json's string-to-integer map-key coercion. Before HEU-648
+    /// this failed with `invalid type: string "1", expected u8`.
+    #[test]
+    fn structure_deserializes_with_config_before_type() {
+        let json = r#"{
+            "config": {
+                "name": "Test",
+                "level_commission": {
+                    "broad_commission_percent": 0.4,
+                    "volume_to_dollar_multiplier": null,
+                    "commissionable_depth": 3,
+                    "rate_table": { "member": { "1": 0.05 } }
+                },
+                "compression": null
+            },
+            "type": "unilevel"
+        }"#;
+        let parsed: StructureConfig =
+            serde_json::from_str(json).expect("config-before-type must parse");
+        match parsed {
+            StructureConfig::Unilevel(u) => {
+                assert_eq!(u.level_commission.rate_table["member"][&1], 0.05);
+            }
+            other => panic!("expected unilevel, got {other:?}"),
+        }
+    }
+
+    /// The `Generation` variant is as reachable as `Unilevel` and carries its
+    /// own integer-keyed map, so it needs its own pin. Without this, dropping
+    /// the `deserialize_with` from `GenerationCommissionConfig::rates` leaves
+    /// the whole suite green.
+    #[test]
+    fn generation_structure_deserializes_with_config_before_type() {
+        let json = r#"{
+            "config": {
+                "name": "Generation Plan",
+                "level_commission": null,
+                "compression": null,
+                "generation_commission": {
+                    "max_generations": 4,
+                    "generation_rates": { "1": 0.10, "2": 0.06 },
+                    "boundary_mode": "threshold_rank",
+                    "boundary_rank": "director",
+                    "empty_generation_consumes_number": true,
+                    "volume_to_dollar_multiplier": null
+                },
+                "level_commissions_enabled": false
+            },
+            "type": "generation"
+        }"#;
+        let parsed: StructureConfig =
+            serde_json::from_str(json).expect("config-before-type must parse");
+        match parsed {
+            StructureConfig::Generation(g) => {
+                assert_eq!(g.generation_commission.rates[&1], 0.10);
+                assert_eq!(g.generation_commission.rates[&2], 0.06);
+            }
+            other => panic!("expected generation, got {other:?}"),
+        }
+    }
 
     #[test]
     fn deserialize_structure_config_unilevel() {

@@ -202,6 +202,41 @@ Some operations serve multiple calculation modes through one op string, selected
 
 The commission ops are `calculate_unilevel`, `calculate_binary_pairing`, `calculate_matrix`, `calculate_stairstep`, `calculate_generation`, `calculate_streamline`, and `board_calculate_commissions`. That is one op per plan type.
 
+### JSON Object Key Order Is Not Part Of The Contract
+
+Object key order in worker responses is deterministic and identical in every
+build configuration. It is **not** an interoperability guarantee, and the Go
+side must not depend on it.
+
+Go decodes with `encoding/json` struct tags, which ignore order. A reorder on
+the Rust side is a heads-up that something changed, not a compatibility break.
+Nothing on either side may compare raw response bytes.
+
+For the record, since the mechanism is easy to re-derive wrongly:
+
+| What | Order emitted |
+|---|---|
+| `serde_json::Value` payloads (the `result` body) | Sorted, because `Value` is backed by a `BTreeMap` |
+| The response envelope (`id`, `ok`, `result`, `error`) | Struct declaration order, which is *not* alphabetical |
+
+So "the worker sorts its keys" is true of payloads and false of the envelope.
+Writing the guarantee down as "sorted" would have been wrong at the top level of
+every response.
+
+This was worth stating because it was briefly untrue. Until HEU-648, a
+`serde_json/preserve_order` dev-feature reached the worker through Cargo feature
+unification under `cargo test` and `cargo clippy --all-targets`, but never under
+`cargo build`. `Value` payloads emitted insertion order in test builds and
+sorted order in the shipped binary, so the wire format was verified against a
+configuration that never shipped. `network-engine-worker/src/protocol.rs` holds
+a regression test, `value_payload_emits_sorted_keys`, that fails if that feature
+returns. It fires only at workspace scope, which is what CI runs.
+
+Deterministic-and-build-independent is the property that matters. If a future
+change moves responses off `serde_json::Value` and serializes from typed structs
+instead, the emitted order changes and that is not a contract break. ADR-029's
+volume work is a live candidate for exactly that.
+
 ## What We Considered
 
 **Multiplexed requests.** Allow multiple in-flight requests with ID-based response matching. The subprocess model is inherently single-threaded (one stdin, one stdout). Multiplexing adds complexity for no throughput benefit. The mutex serializes requests, which matches the worker's single-threaded dispatch loop.

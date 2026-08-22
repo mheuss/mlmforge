@@ -23,8 +23,10 @@ const SPAN_ID: &str = "b7ad6b7169203331";
 /// `rank_threshold`. `calculate_unilevel` warns about this misconfiguration
 /// during walk setup, which the installed subscriber turns into a signal.
 ///
-/// Serialized from the typed struct so the adjacently-tagged `StructureConfig`
-/// round-trips correctly (no `serde_json::Value` intermediate).
+/// Serialized from the typed struct rather than through a `serde_json::Value`,
+/// which avoids a needless reparse. This used to be required for correctness:
+/// a `Value` sorts keys, and the sorted order broke the adjacently-tagged
+/// `StructureConfig`. HEU-648 fixed that, so it is now just the cheaper path.
 fn warn_triggering_plan_json() -> String {
     let structure = UnilevelStructureConfig {
         name: STRUCTURE.to_string(),

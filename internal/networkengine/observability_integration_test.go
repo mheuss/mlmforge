@@ -41,8 +41,10 @@ func (e *e2eLogExporter) snapshot() []sdklog.Record {
 // unilevelPlanBadCompression is a valid unilevel plan whose compression is
 // SkipBelowRank with no rank_threshold. That is a misconfiguration the engine
 // warns about (target network_engine::commission::walk) while still returning a
-// normal result — a debug-safe way to trigger a real signal. Raw JSON, not a
-// map[string]any, so the adjacent-tagged structure config deserializes
+// normal result — a debug-safe way to trigger a real signal. Raw JSON rather
+// than a map[string]any, which avoids re-marshaling. That used to be required:
+// re-marshaling sorts keys, and the sorted order broke the adjacent-tagged
+// structure config. HEU-648 fixed that, so it is now just the cheaper path
 // (docs/development/network-engine.md).
 const unilevelPlanBadCompression = `{"name":"Integration Test Plan","version":1,"structures":[{"type":"unilevel","config":{"name":"Test","level_commission":{"broad_commission_percent":0.40,"volume_to_dollar_multiplier":null,"commissionable_depth":3,"rate_table":{"member":{"1":0.05,"2":0.05,"3":0.05}}},"compression":{"enabled":true,"mode":"skip_below_rank","rank_threshold":null}}}],"period":{"length":"month","start_date":"2026-03-01","payout_lag_days":14},"volume":{"inhibit_signup_volume":false,"base_currency":"USD","volume_to_dollar_multiplier":1.0,"deduct_qualifying_volume":false},"ranks":[{"name":"member","ordinal":1,"qualification":{"structures":[],"required_products":[]},"qualified_structures":["Test"],"demotion_policy":"promotion_only"}],"rank_tracking":{"track_achieved_rank":false},"rank_features":{"constraints_enabled":false,"overrides_enabled":false},"commission_eligibility":{"min_personal_volume":0.0,"require_order_in_period":false,"eligible_statuses":[],"active_leg_tiers":[]},"bonuses":{"matching":null,"sponsor":null,"fast_start":null,"rank_advancement":null,"leadership_development":null,"infinity":null,"lifestyle":null,"pool":null,"matrix_completion":null,"position":null,"board_cycling":null},"payout":{"base_currency":"USD","minimum_amount":50.0,"split_payouts_enabled":true,"methods":[{"type":"bank_transfer","fee":2.50}]},"caps":{"per_distributor_per_period":null,"company_payout_cap_percent":0.42,"cap_enforcement":"pro_rata","clawback_on_refund":false},"placement":{"donated_placement":null,"holding_tank":null,"binary_placement":null}}`
 

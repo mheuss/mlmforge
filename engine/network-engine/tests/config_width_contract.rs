@@ -59,9 +59,12 @@ fn load_engine_fixture(name: &str) -> Value {
     let path = contract_dir().join("fixtures").join(format!("{name}.json"));
     let data = fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
-    // The serde_json `preserve_order` dev-feature keeps object key order, so each
-    // structure stays type-before-config and the adjacently-tagged StructureConfig
-    // deserializes (a sorted Value would emit config-before-type and fail).
+    // `Value` sorts object keys, so each structure comes back out as
+    // config-before-type and the adjacently-tagged StructureConfig buffers its
+    // content. That is harmless: the integer-keyed rate maps parse through
+    // `crate::serde_helpers`, which reads their keys as strings on either path.
+    // Before HEU-648 this worked for a different reason — a `preserve_order`
+    // dev-feature held the key order — and that feature is gone.
     serde_json::from_str(&data).expect("parse engine fixture")
 }
 

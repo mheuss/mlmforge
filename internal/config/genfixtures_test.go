@@ -75,7 +75,8 @@ func TestGenerateConfigContractFixtures(t *testing.T) {
 // TestConfigContractFixturesMatchPipeline is the golden guard for the engine
 // config-contract fixtures: it asserts that live translateToEngine output
 // byte-equals each committed fixture. This locks the wire SHAPE — including the
-// type-before-config key order that HEU-513's contract fix and the Rust width
+// type-before-config key order (byte-stability since HEU-648, not a parsing
+// requirement) that HEU-513's contract fix and the Rust width
 // test (Task 15) depend on. Without it, a translate.go regression would desync
 // the fixtures from real output while every other test stayed green (the fixtures
 // are only REGEN-written, never compared; the Rust test reads the stale files).

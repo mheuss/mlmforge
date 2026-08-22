@@ -16,11 +16,21 @@ struct ContractFixture {
     /// testing operations that require an existing tree.
     #[serde(default)]
     setup: Vec<serde_json::Value>,
-    /// Raw NDJSON lines to send as setup, bypassing the `serde_json::Value`
-    /// round-trip. Use this when the worker rejects a re-serialized payload
-    /// (for example, an adjacent-tagged enum whose discriminant key would be
-    /// reordered relative to its content key). Mirrors `request_raw`.
-    /// Mutually exclusive with `setup`.
+    /// Raw NDJSON lines to send as setup verbatim, bypassing the
+    /// `serde_json::Value` round-trip. Use this when the fixture needs to
+    /// control its own bytes: duplicate keys, or a specific key order the
+    /// assertion depends on. Mirrors `request_raw`. Mutually exclusive with
+    /// `setup`.
+    ///
+    /// Not for malformed input. Every setup response is asserted to contain
+    /// `"ok":true` in `contract_fixtures_match_worker_behavior`, so a payload
+    /// the worker rejects fails the harness rather than exercising anything.
+    /// Malformed-input coverage belongs on `request_raw`, where the rejection
+    /// is the assertion.
+    ///
+    /// It is no longer needed just because a fixture loads a plan. The
+    /// round-trip reorders keys, which used to break adjacent-tagged enum
+    /// payloads; HEU-648 made that order parse fine.
     #[serde(default)]
     setup_raw: Vec<String>,
     /// Structured request object. Present for well-formed requests.
@@ -143,7 +153,8 @@ fn contract_fixtures_match_worker_behavior() {
         // Each setup response must succeed; a silent failure here would
         // cause the main request to pass vacuously against wrong state.
         // `setup_raw` is sent verbatim (no Value round-trip), mirroring
-        // `request_raw`. Use it for payloads where key order matters.
+        // `request_raw`. See the `setup_raw` field's doc comment for when a
+        // fixture needs it.
         let setup_lines: Vec<String> = if !fixture.setup_raw.is_empty() {
             fixture.setup_raw.clone()
         } else {

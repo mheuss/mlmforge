@@ -48,6 +48,10 @@ pub struct LevelCommissionConfig {
     ///
     /// Example: `rate_table["silver"][3] = 0.05` means Silver-ranked
     /// distributors earn 5% on level 3.
+    ///
+    /// Deserialized via `crate::serde_helpers::rank_keyed_u8_map` so the
+    /// inner integer keys parse whether or not serde buffered this value.
+    #[serde(deserialize_with = "crate::serde_helpers::rank_keyed_u8_map")]
     pub rate_table: BTreeMap<String, BTreeMap<u8, f64>>,
 }
 

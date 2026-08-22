@@ -152,13 +152,11 @@ pub struct BreakawayGenerationConfig {
     /// Missing generation = no override. Keys are generation numbers.
     /// Values are percentages between 0.0 and 1.0.
     ///
-    /// Deserialized via [`deserialize_u8_keyed_rates`] so the field works
-    /// both directly from JSON and through the `Content` intermediate that
-    /// internally-tagged enums use, which strips serde_json's
-    /// string-to-integer map-key coercion.
+    /// Deserialized via `crate::serde_helpers::u8_keyed_map` so the keys
+    /// parse whether or not serde buffered this value.
     #[serde(
         rename = "generation_rates",
-        deserialize_with = "deserialize_u8_keyed_rates"
+        deserialize_with = "crate::serde_helpers::u8_keyed_map"
     )]
     pub rates: BTreeMap<u8, f64>,
 
@@ -167,28 +165,6 @@ pub struct BreakawayGenerationConfig {
     /// Each leader at or above this rank in the breakaway chain starts
     /// a new generation.
     pub boundary_rank: String,
-}
-
-/// Deserialize a `BTreeMap<u8, f64>` from JSON-string-keyed input.
-///
-/// JSON object keys are always strings. Direct `serde_json` deserialization
-/// of `BTreeMap<u8, f64>` coerces string keys to integers. Internally-tagged
-/// enums route through a `Content` intermediate that does not. Reading into
-/// `BTreeMap<String, f64>` first sidesteps the coercion path entirely, so
-/// both call sites parse the same JSON.
-fn deserialize_u8_keyed_rates<'de, D>(deserializer: D) -> Result<BTreeMap<u8, f64>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let string_keyed: BTreeMap<String, f64> = BTreeMap::deserialize(deserializer)?;
-    string_keyed
-        .into_iter()
-        .map(|(k, v)| {
-            k.parse::<u8>()
-                .map(|key| (key, v))
-                .map_err(|e| serde::de::Error::custom(format!("invalid generation key '{k}': {e}")))
-        })
-        .collect()
 }
 
 // ---------------------------------------------------------------------------

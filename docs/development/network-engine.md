@@ -163,17 +163,15 @@ This trips up tests and ad-hoc verification that load a plan whose ranks have em
 
 A possible follow-up is to register every loaded structure in the navigator map, not just those referenced by qualifications, so empty-qualification ranks behave as "always pass." That requires product-team alignment on the intended semantics — the current behavior is a defensible reading too.
 
-## Contract-Test Harness: `setup_raw` for Adjacent-Tagged Enums
+## Contract-Test Harness: `setup_raw` for Byte-Sensitive Fixtures
 
-`engine/network-engine-worker/tests/contract_tests.rs` and `internal/networkengine/contract_test.go` round-trip fixture setup steps through `serde_json::Value` / `map[string]any`. The Go side re-emits JSON object keys in alphabetical order. That breaks deserialization of adjacent-tagged enums whose content carries non-string map keys.
+`engine/network-engine-worker/tests/contract_tests.rs` and `internal/networkengine/contract_test.go` round-trip fixture setup steps through `serde_json::Value` / `map[string]any`, which sorts object keys. Go's `json.Marshal` always sorts, and the Rust side sorts too since `serde_json::Value` is a `BTreeMap`.
 
-Go is the driver here, not Rust. `json.Marshal` always sorts map keys, so the Go harness reorders every time. The Rust harness usually does not: `network-engine` enables `serde_json/preserve_order` as a dev-dependency (`engine/network-engine/Cargo.toml:14-20`), and `network-engine-worker`'s tests inherit it through Cargo feature unification, so under `cargo test --workspace` insertion order survives. Rust only sorts in a narrow build that misses that feature — see the `--workspace` section below.
+**Use `setup_raw` when the fixture needs to control its own bytes.** Malformed JSON, duplicate keys, or a specific key order the assertion depends on — none of those survive a round-trip through a map. `setup_raw` lines are sent verbatim as NDJSON. `setup` and `setup_raw` are mutually exclusive per fixture, and the harness asserts it.
 
-Either way, `setup_raw` is mandatory. The same fixture runs in both harnesses, and the Go one reorders unconditionally.
+**It is no longer required just because a fixture loads a plan.** That rule existed because sorting puts `config` before `type` in an adjacently-tagged `StructureConfig`, which made serde buffer the content, which stripped the string-to-`u8` coercion that `rate_table: BTreeMap<u8, f64>` needs. Loading a plan through `setup` failed outright. HEU-648 fixed that with `deserialize_with` helpers in `engine/network-engine/src/serde_helpers.rs`, so either key order parses now.
 
-Concrete case: `StructureConfig` uses `#[serde(tag = "type", content = "config")]`. The `Unilevel` variant's content includes `rate_table: BTreeMap<u8, f64>`. After alphabetical sort, `"config"` precedes `"type"`, and serde fails the deserialize because it sees the rate-table content before knowing the variant.
-
-Fixtures that load plans (or any other adjacent-tagged enum with non-string-keyed content) must use the `setup_raw: ["..."]` field instead of `setup: [{...}]`. The harness sends `setup_raw` strings verbatim as NDJSON, bypassing the `Value` round-trip. Both `setup` and `setup_raw` are mutually exclusive per fixture (the harness asserts).
+Existing plan fixtures still use `setup_raw`. Leave them: changing a fixture's encoding path changes the bytes the worker sees, which is not a change worth making without a reason.
 
 Pattern: `request_raw` exists for the same reason on the request side. If you find yourself adding a new escape hatch for `params`, follow that precedent.
 
@@ -198,27 +196,75 @@ Run it unfiltered. To confirm a specific fixture actually executed, add `-- --no
 
 HEU-583's plan specified the filtered form on three steps, including the two that changed the money path and the wire contract. Following it literally would have recorded "Expected: PASS" against a run that asserted nothing.
 
-## Rust Tests: Always Run `--workspace`
+## Rust Tests: Package Scope Used To Lie (fixed, HEU-648)
 
-Never select a subset of packages when running Rust tests. `cargo test -p network-engine-worker` produces failures that do not exist in the tree.
+`cargo test -p network-engine-worker` is safe now. It was not before 2026-08-22, and the history is worth keeping because the failure mode was so convincing.
 
-This is about `-p`, not about naming a target. `cargo test --test config_width_contract` is fine, because that target belongs to `network-engine` and the dev-dependency it needs is declared right there. `docs/use-cases/network-engine.md` recommends exactly that command.
+`network-engine` used to enable `serde_json/preserve_order` as a dev-dependency. `network-engine-worker`'s tests inherited it through Cargo feature unification, which needs both crates in the same build. Scoping to one crate dropped the feature, `serde_json::Value` reverted to sorted keys, and any test that round-tripped a plan through `Value` broke on the adjacently-tagged `StructureConfig` with `invalid type: string "1", expected u8`. It looked like a real deserialize bug. It was a build-scope artifact, and it nearly produced a false "main is red" report during HEU-603.
 
-`network-engine` enables `serde_json/preserve_order` as a dev-dependency. `network-engine-worker`'s tests get it only through Cargo feature unification, which needs both crates in the same build. Scope to one crate and the feature drops, `serde_json::Value` reverts to sorted keys, and any test that round-trips a plan through `Value` breaks on the adjacently-tagged `StructureConfig`.
+HEU-648 removed the feature. The integer-keyed config maps now parse their keys on either path, so key order stopped mattering and nothing needs `preserve_order` to hold. All build configurations link the same `serde_json`: `cargo tree -i serde_json` reports `default, raw_value, std` under `-e normal,features --workspace`, `-e all --workspace`, and `-e all -p network-engine-worker` alike.
 
-The failure is convincing: `invalid type: string "1", expected u8`, pointing at the rate table. It looks like a real deserialize bug. It is a build-scope artifact. The same tree fails narrow and passes wide.
+Two rules survive, for different reasons:
 
-This nearly produced a false "main is red" report during HEU-603. Confirm with `cargo tree -e features` both ways if you ever doubt it. The full suite runs in about 1.5 seconds, so scoping buys nothing.
+- **Run the full suite anyway.** It takes about 1.5 seconds, so scoping buys nothing, and a per-package run is one more thing to get wrong.
+- **Lint with `cargo clippy --all-targets --workspace -- -D warnings`.** That is what CI runs (`.github/workflows/ci.yml`), and `--all-targets` is what catches lints in test code. HEU-560 added it.
 
-Same false-green family as the per-fixture filter above: a test command that reports something other than what the code does.
+### The production binary is no longer a third configuration
 
-### The production binary is a third configuration
+It used to be. `preserve_order` was dev-only, so `cargo build` never activated it and the shipped worker sorted keys while the wide test build did not. Nothing in the test suite exercised the bytes production emitted.
 
-`preserve_order` is dev-only, so `cargo build` never activates it. The shipped worker runs `serde_json` with sorted keys — the same behavior as a narrow test build, not the wide one.
+That is closed. The same NDJSON request piped through a `cargo build -p network-engine-worker` binary and a `cargo build --workspace --all-targets` binary now produces byte-identical output. `network-engine-worker/src/protocol.rs` carries a regression test, `value_payload_emits_sorted_keys`, that fails if `preserve_order` ever re-enters the graph — though only at workspace scope, since a `-p` run would not pull the dev-dependency in either.
 
-Nothing breaks today. `handle_load_plan` deserializes straight off the `RawValue` (`network-engine-worker/src/handlers/common.rs:105`) and never touches `serde_json::Value`. But `parse_params` (`common.rs:262`) does produce a `Value`, so a future handler that routes plan-bearing params through it would pass under `--workspace` and fail in the built binary.
+`handle_load_plan` still deserializes straight off the `RawValue` (`network-engine-worker/src/handlers/common.rs`) rather than through `Value`, which remains the right shape for a hot path. But routing plan-bearing params through `parse_params` is no longer a correctness hazard.
 
-That direction is the dangerous one. A narrow test build fails loudly in CI. A production-only reorder fails in production. Never round-trip an adjacently-tagged enum through `Value` on a path the shipped binary takes.
+## Serde And Cargo Gotchas (HEU-648)
+
+Four things that cost real time on HEU-648. All are live traps for the next
+person, not history.
+
+### `Option<T>` plus `deserialize_with` silently makes a field required
+
+Serde reads a bare `Option<T>` field as `None` when the key is absent. Adding
+`deserialize_with` **disables that**, and the field starts erroring on absence.
+Measured:
+
+| Field shape | Absent key |
+|---|---|
+| `Option<T>` | `Ok(None)` |
+| `Option<T>` + `deserialize_with` | `Err("missing field")` |
+| `Option<T>` + `default` + `deserialize_with` | `Ok(None)` |
+
+Always pair the two. `config/bonus.rs`'s `decreasing_rates` shows the shape.
+Getting this wrong is a silent wire-contract break: every payload omitting the
+field starts failing, and no existing test necessarily covers absence.
+
+### `from_value` coerces integer map keys; serde's `Content` buffer does not
+
+`serde_json::from_value::<T>(v)` deserializes integer map keys fine, because
+serde_json's own map-key deserializer coerces numeric strings. Serde's `Content`
+buffer — reached through a tagged enum whose content arrives before its tag —
+does not.
+
+The consequence for tests: **a test that uses `from_value` to "exercise the
+buffered path" is not exercising it.** It passes against code that has no key
+handling at all. To reach the buffer you need a tagged enum with the content key
+emitted first. `config/bonus.rs`'s `BufferProbe` test enum does exactly that.
+
+### `pub(crate)` helpers used only from `#[cfg(test)]` fail `clippy --all-targets`
+
+A helper introduced in one commit and first used in the next is dead code in
+between, and `cargo clippy --all-targets --workspace -- -D warnings` rejects it.
+If your branch may not contain a red commit, a helper has to land in the same
+commit as its first real caller. This reshapes commit boundaries, so plan for it
+rather than discovering it at commit time.
+
+### Cargo does not relink on a bare feature-graph change
+
+Comparing what two build configurations emit — say `cargo build -p foo` against
+`cargo build --workspace --all-targets` — requires `touch`ing a source file
+between the builds. Otherwise the second build reuses the first artifact, the
+outputs are trivially identical, and the comparison proves nothing. This one is
+quiet: the check appears to pass.
 
 ## Worker Binary Freshness: The Guard Is Coarse
 

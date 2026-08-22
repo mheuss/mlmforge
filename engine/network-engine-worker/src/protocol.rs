@@ -13,11 +13,17 @@ pub struct Request {
     pub trace_id: Option<String>,
     #[serde(default)]
     pub span_id: Option<String>,
-    /// Raw JSON params preserved as-is to avoid the serde_json::Value
-    /// intermediate representation. Value's BTreeMap key ordering and
-    /// buffered content deserialization breaks non-string map keys
-    /// (like BTreeMap<u8, f64> in rate tables) and adjacently-tagged
-    /// enums when field order differs from tag order.
+    /// Raw JSON params preserved as-is, so handlers deserialize straight into
+    /// their own types instead of through a `serde_json::Value` intermediate.
+    /// That skips a full reparse of every request body and keeps the caller's
+    /// bytes intact.
+    ///
+    /// It used to be load-bearing for correctness too: `Value` sorts keys, and
+    /// the sorted order made serde buffer an adjacently-tagged enum's content,
+    /// which stripped the string-to-integer coercion that `BTreeMap<u8, f64>`
+    /// rate tables need. HEU-648 fixed that in the config types, so a `Value`
+    /// round-trip no longer breaks a plan. `RawValue` stays for the reasons
+    /// above.
     #[serde(default = "default_raw_params")]
     pub params: Box<serde_json::value::RawValue>,
 }
@@ -88,19 +94,21 @@ mod tests {
     ///
     /// It measures 48 bytes, in every build. Before `result` was boxed,
     /// `Response` held a `serde_json::Value` inline and so changed size with
-    /// `serde_json`'s `preserve_order` feature, which `network-engine` declares
-    /// in `[dev-dependencies]`. It came out at 112 bytes or 152 depending on
-    /// whether that crate's dev targets were in the build graph. That is why
-    /// `clippy --all-targets --workspace` failed while
+    /// `serde_json`'s `preserve_order` feature, which `network-engine` declared
+    /// in `[dev-dependencies]` at the time. It came out at 112 bytes or 152
+    /// depending on whether that crate's dev targets were in the build graph.
+    /// That is why `clippy --all-targets --workspace` failed while
     /// `clippy --all-targets -p network-engine-worker` passed. Holding
     /// `--all-targets` fixed is what makes the comparison mean anything: plain
     /// `clippy --workspace` was green throughout, which is why CI never caught
     /// this. Boxing removed the coupling.
     ///
-    /// `docs/development/network-engine.md`, "Rust Tests: Always Run
-    /// `--workspace`", covers this build-scope split in full, including the
-    /// third configuration the shipped binary uses. Read it before concluding
-    /// anything from a narrow-scope cargo run.
+    /// HEU-648 later removed the feature entirely, so all three build
+    /// configurations now link the same `serde_json`.
+    ///
+    /// `docs/development/network-engine.md`, "Rust Tests: Package Scope Used
+    /// To Lie", covers that build-scope split in full, including the third
+    /// configuration the shipped binary used to be.
     ///
     /// Prefer boxing a new field over raising this bound.
     #[test]
@@ -157,39 +165,45 @@ mod tests {
     /// which ignore order. So a reorder tripping this test is a heads-up, not a
     /// compatibility break.
     ///
-    /// This test's own fixture must stay object-free, and `contains_object`
-    /// below enforces that. It is a constraint on the fixture, not on
-    /// `Response::success`, which takes objects freely — most handlers pass
-    /// one. Object key order depends on whether `serde_json/preserve_order` is
-    /// in the build graph, so an exact-string assertion over an object would
-    /// hold under `cargo test` and fail against the shipped binary. HEU-638
-    /// tracks that split.
+    /// This test owns the envelope shape only. The build-graph detector lives
+    /// in `value_payload_emits_sorted_keys`, so tidying this fixture cannot
+    /// silently delete it.
     #[test]
     fn serialize_success_response() {
-        let payload = serde_json::json!("pong");
-        assert!(
-            !contains_object(&payload),
-            "this test's payload must contain no JSON object: key order depends \
-             on serde_json/preserve_order, so the exact-string assertion below \
-             would pass here and fail against the shipped binary"
-        );
-
-        let resp = Response::success("req-1".into(), payload);
+        let resp = Response::success("req-1".into(), serde_json::json!("pong"));
         let json = serde_json::to_string(&resp).unwrap();
         assert_eq!(json, r#"{"id":"req-1","ok":true,"result":"pong"}"#);
     }
 
-    /// Whether `v` holds a JSON object at any depth, arrays included.
+    /// Detects `serde_json/preserve_order` re-entering the build graph.
     ///
-    /// Checks the `Value` structurally rather than searching the serialized
-    /// text for a brace. A scalar string like `"a{b"` serializes with a brace
-    /// in it and is perfectly safe here.
-    fn contains_object(v: &serde_json::Value) -> bool {
-        match v {
-            serde_json::Value::Object(_) => true,
-            serde_json::Value::Array(items) => items.iter().any(contains_object),
-            _ => false,
-        }
+    /// The payload's keys are authored out of alphabetical order on purpose.
+    /// `serde_json::Value` is backed by a `BTreeMap`, so it emits them sorted.
+    /// With `preserve_order` linked, `Value` becomes an `IndexMap` and emits
+    /// insertion order instead, and this fails.
+    ///
+    /// **Scope matters.** This only fires under `cargo test --workspace`, which
+    /// is what CI runs (`.github/workflows/ci.yml`). Under
+    /// `cargo test -p network-engine-worker` the feature would not reach this
+    /// crate even if it were restored, so the test passes and proves nothing.
+    /// That asymmetry is the exact bug HEU-648 removed, and it applies to the
+    /// detector as much as to anything else.
+    ///
+    /// It detects a regression. It does not promise the Go side anything about
+    /// key order — see `serialize_success_response` above.
+    ///
+    /// Before HEU-648 this could not be tested at all. A guard here forced the
+    /// payload to stay scalar, because key order depended on whether
+    /// `network-engine`'s dev-dependencies were in the build graph.
+    #[test]
+    fn value_payload_emits_sorted_keys() {
+        let payload = serde_json::json!({"zebra": 1, "alpha": 2});
+        let resp = Response::success("req-1".into(), payload);
+        let json = serde_json::to_string(&resp).unwrap();
+        assert_eq!(
+            json,
+            r#"{"id":"req-1","ok":true,"result":{"alpha":2,"zebra":1}}"#
+        );
     }
 
     /// Exact-string for the same reason as `serialize_success_response`.

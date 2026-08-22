@@ -219,10 +219,16 @@ Every node is state. Blue is the source of truth for what it feeds. Green is
 derived and can be rebuilt from the blue. Yellow is primary data that nothing
 can rebuild. Grey and dashed is not built.
 
-The split exists because of retention. The default retention mode purges raw
-events after ninety days. Commission records are kept for years. Putting
-provenance in the event stream would put a regulatory requirement one config
-toggle away from being violated.
+The split exists because of retention, and the retention it guards against is
+not built yet. ADR-003 makes Compact the default mode, which purges raw events
+after a ninety day window. Nothing implements it. `PostgresEventStore` has no
+purge, and no migration enforces a window, so no event is deleted today.
+HEU-19 tracks the work and is unstarted.
+
+The split is defensive on purpose. Commission records are kept for years. Once
+retention does land, provenance in the event stream would put a regulatory
+requirement one config toggle away from being violated. Deciding that now costs
+nothing. Discovering it after the purge ships costs the records.
 
 Every table lives in the `public` schema. `DEVELOPMENT.md` assigns per-context
 schemas, but no migration creates one.

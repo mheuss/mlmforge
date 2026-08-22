@@ -25,15 +25,19 @@ missing.
 
 | Value | Means |
 |-------|-------|
-| Current | Checked against the code. What it describes is what is built. |
+| Current | Every implementation claim in it was checked against the code and holds. See the scope note below for what that does not cover. |
 | Design intent | The decision stands, but named interfaces or workflows in it do not exist yet. Read the banner first. |
 | Not built | None of it exists in the codebase. |
 | Partial | Some of the decision has landed and the document says which parts. |
 
-Last checked 2026-08-22. "Current" means the symbols, file paths, counts, and
-behavior claims in the document resolve against the code as of that date. It is
-not a promise that every configurable option described in 008 through 015 has a
-working implementation behind it, only that the names and structures are real.
+Last checked 2026-08-22. "Current" is a claim about the document, not a claim
+that every feature it mentions is finished. It means the symbols, file paths,
+counts, and behavior claims resolve against the code as of that date.
+
+Two things it deliberately does not cover. Documents 008 through 015 catalog
+configurable options per plan type, and Current there means the option names
+and structures are real, not that each one has a working implementation behind
+it. A Current document may also describe planned work, as long as it says so.
 
 
 ## Documents
@@ -75,4 +79,4 @@ working implementation behind it, only that the names and structures are real.
 
 Start with [000 Architecture Overview](000-architecture-overview.md). It is the map, and its diagrams link out to everything else. Then read [001 Bounded Contexts](001-bounded-contexts.md), which establishes the vocabulary. After that, [002 Context Boundaries](002-context-boundaries.md) and [004 Interface Contracts](004-interface-contracts.md) cover how the contexts are meant to communicate. The rest can be read in any order.
 
-000 is Current. 001, 002, and 004 are Design intent. Those three give you the model the system is built toward, which is what makes them the right place to start, but do not treat the interfaces they name as code you can call. Read each banner before the body. For what is implemented today, 000's diagrams and documents 007 and up are the reliable picture.
+000 is Current. 001, 002, and 004 are Design intent. Those three give you the model the system is built toward, which is what makes them the right place to start, but do not treat the interfaces they name as code you can call. Read each banner before the body. For what is implemented today, start with 000's diagrams and documents 007 through 028. 029 is Partial and says up front which parts of its decision have landed.

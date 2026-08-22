@@ -2,7 +2,7 @@
 
 ## The Problem
 
-The commission engine needs to calculate earnings across multiple compensation plan types. Unilevel is the first. Binary, matrix, stairstep, generation, streamline, and board plan follow later. Each plan type has fundamentally different mechanics. Unilevel walks a tree upward counting levels. Binary pairs left and right leg volume. Matrix fills a fixed-width grid.
+The commission engine needs to calculate earnings across multiple compensation plan types. Unilevel came first. Binary, matrix, stairstep, generation, streamline, and board plan followed, and all seven now exist. Each plan type has fundamentally different mechanics. Unilevel walks a tree upward counting levels. Binary pairs left and right leg volume. Matrix fills a fixed-width grid.
 
 Despite these differences, the calculators share structural concerns. What data do they receive? What do they return? How do they handle missing data? How do they separate input facts from business rules? Getting these decisions wrong in the first calculator means fixing them across all seven later.
 
@@ -20,11 +20,21 @@ We considered including derived fields like `is_eligible` or `max_depth` in the 
 
 ### Flat Earnings List as Output
 
-All calculators return `Vec<CommissionEarning>`. Each entry is self-contained with the earner, the volume source, the level, the rate, and the dollar amount. No pre-grouping. No nesting. No aggregation.
+Five of the seven calculators return `Vec<CommissionEarning>`: unilevel, matrix, stairstep, generation, and streamline. Each entry is self-contained with the earner, the volume source, the level, the rate, and the dollar amount. No pre-grouping. No nesting. No aggregation.
+
+Two do not, because they carry state a flat list cannot hold.
+
+| Calculator | Returns |
+|------------|---------|
+| unilevel, matrix, stairstep, generation, streamline | `Result<Vec<CommissionEarning>, CalculationError>` |
+| `calculate_binary_pairing` | `Result<BinaryCalculationResult, CalculationError>`, which is `earnings: Vec<BinaryCommissionEarning>` plus `carry_forward` |
+| `calculate_board_commissions` | `BoardCommissionResult`, which is `earnings: Vec<BoardCycleEarning>` plus `updated_cycle_counts`. Not a `Result`, because it cannot fail |
+
+Binary has to return post-payout leg volumes for every distributor, earners and non-earners alike, or the next period cannot resume. Board plan has to return updated cycle counts for the same reason. Both are period state, not earnings. Decision [022](022-shared-commission-walk.md) treats the same split as one reason binary stays out of the shared walk. The flat-list rule below is about the earnings themselves, and it holds inside all three shapes.
 
 An earner can appear more than once for the same volume source. Stairstep pays a level commission and an override on one source, and multi-tier overrides can select the same ancestor for several tiers. `sort_earnings` carries a level tiebreaker for exactly this reason, and says so in its own doc comment. `(earner_id, source_id)` is not an identity.
 
-> **Envelope changing under [029](029-commission-provenance-on-the-wire.md).** Phase B of that arc replaces the bare array with `{earnings, walks, plan}`, and adds a `walk` reference to each earning. It has not landed: the calculators return `Vec<CommissionEarning>` today and the worker serializes it directly. Everything this section says about the earnings themselves survives the change. The list inside `earnings` stays flat, self-contained, and ungrouped exactly as described here. Only the envelope around it moves.
+> **Envelope changing under [029](029-commission-provenance-on-the-wire.md).** Phase B of that arc replaces the bare array with `{earnings, walks, plan}`, and adds a `walk` reference to each earning. It has not landed: the five level-based calculators return `Vec<CommissionEarning>` today and the worker serializes it directly. Everything this section says about the earnings themselves survives the change. The list inside `earnings` stays flat, self-contained, and ungrouped exactly as described here. Only the envelope around it moves.
 
 Consumers aggregate however they need. A payout system sums by earner. An audit report groups by source. A dashboard shows level breakdowns. None of these consumption patterns should constrain the calculator's output format.
 
@@ -48,7 +58,7 @@ This reinforces the decision to keep calculators as standalone functions. The un
 
 ### No Shared Calculator Abstraction Yet
 
-Each calculator is a standalone public function. No `CommissionCalculator` trait. No shared interface. The unilevel calculator is `calculate_unilevel`. The binary calculator is `calculate_binary_pairing`. Each takes the inputs it needs and returns `Vec<CommissionEarning>`, becoming `CommissionCalculationResult` when 029's phase B lands. The standalone-function decision is unaffected either way.
+Each calculator is a standalone public function. No `CommissionCalculator` trait. No shared interface. The unilevel calculator is `calculate_unilevel`. The binary calculator is `calculate_binary_pairing`. Each takes the inputs it needs and returns its own shape, described in the Flat Earnings List section above. The five level-based calculators return `Vec<CommissionEarning>`, and those become `CommissionCalculationResult` when 029's phase B lands. The standalone-function decision is unaffected either way.
 
 Binary calculation has fundamentally different inputs. It pairs volume from two legs rather than walking levels. We do not know what a shared interface would look like. Premature abstraction here would constrain future designs.
 
@@ -76,7 +86,7 @@ This split reflects the difference between "the caller gave us bad input" and "t
 
 ## What This Enables
 
-- **Consistent calculator behavior.** All plan types follow the same input/output contract. Code that consumes commission results works regardless of which calculator produced them.
+- **Consistent calculator behavior.** The five level-based calculators share one input and output contract, so code that consumes their results does not care which one produced them. Binary and board plan return their own shapes, and a caller has to know which it asked for.
 - **Independent calculator development.** Each calculator is a standalone function with no shared abstraction to coordinate. Teams or sessions can build different calculators in parallel.
 - **Clean testing boundaries.** Snapshot-in, earnings-out. No hidden state. No setup beyond providing the input data. Property-based testing works naturally against the flat output list.
 - **Shared logic extracted, no trait.** HEU-200 pulled the common walk into `commission/walk.rs` as generic functions over `TreeNavigator`. No `CommissionCalculator` trait was created, and the standalone functions remain. They can still be wrapped in a trait later without changing their internals. See the status update above and decision 022.

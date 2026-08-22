@@ -18,9 +18,15 @@ struct ContractFixture {
     setup: Vec<serde_json::Value>,
     /// Raw NDJSON lines to send as setup verbatim, bypassing the
     /// `serde_json::Value` round-trip. Use this when the fixture needs to
-    /// control its own bytes: malformed JSON, duplicate keys, or a specific key
-    /// order the assertion depends on. Mirrors `request_raw`. Mutually
-    /// exclusive with `setup`.
+    /// control its own bytes: duplicate keys, or a specific key order the
+    /// assertion depends on. Mirrors `request_raw`. Mutually exclusive with
+    /// `setup`.
+    ///
+    /// Not for malformed input. Every setup response is asserted to contain
+    /// `"ok":true` in `contract_fixtures_match_worker_behavior`, so a payload
+    /// the worker rejects fails the harness rather than exercising anything.
+    /// Malformed-input coverage belongs on `request_raw`, where the rejection
+    /// is the assertion.
     ///
     /// It is no longer needed just because a fixture loads a plan. The
     /// round-trip reorders keys, which used to break adjacent-tagged enum

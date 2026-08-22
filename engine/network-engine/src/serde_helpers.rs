@@ -113,6 +113,21 @@ where
         .collect()
 }
 
+/// Deserializes an optional `BTreeMap<u8, f64>` from JSON string keys.
+///
+/// Same reasoning as [`u8_keyed_map`]. Pair it with `#[serde(default)]` at the
+/// call site: `deserialize_with` disables serde's built-in "absent `Option` is
+/// `None`" handling, and without `default` the field silently becomes required.
+pub(crate) fn optional_u8_keyed_map<'de, D>(
+    deserializer: D,
+) -> Result<Option<BTreeMap<u8, f64>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = <Option<BTreeMap<String, f64>> as serde::Deserialize>::deserialize(deserializer)?;
+    raw.map(parse_u8_keys::<D::Error>).transpose()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,6 +144,15 @@ mod tests {
     struct Nested {
         #[serde(deserialize_with = "rank_keyed_u8_map")]
         table: BTreeMap<String, BTreeMap<u8, f64>>,
+    }
+
+    // `default` is mandatory alongside `deserialize_with` on an Option field.
+    // Serde reads a bare `Option<T>` as `None` when absent; adding
+    // `deserialize_with` disables that and makes the field required.
+    #[derive(Debug, Deserialize)]
+    struct Optional {
+        #[serde(default, deserialize_with = "optional_u8_keyed_map")]
+        rates: Option<BTreeMap<u8, f64>>,
     }
 
     #[test]
@@ -213,5 +237,32 @@ mod tests {
 
         let v: Nested = serde_json::from_str(r#"{"table":{"silver":{}}}"#).unwrap();
         assert!(v.table["silver"].is_empty());
+    }
+
+    #[test]
+    fn optional_map_reads_null_as_none() {
+        let v: Optional = serde_json::from_str(r#"{"rates":null}"#).unwrap();
+        assert!(v.rates.is_none());
+    }
+
+    #[test]
+    fn optional_map_reads_empty_object_as_some_empty() {
+        let v: Optional = serde_json::from_str(r#"{"rates":{}}"#).unwrap();
+        assert_eq!(v.rates, Some(BTreeMap::new()));
+    }
+
+    /// Absent must stay `None`. A bare `Option<T>` already behaves that way, so
+    /// losing it would be a silent breaking change to `InfinityBonusConfig`,
+    /// which the schema does not mark required.
+    #[test]
+    fn optional_map_reads_absent_as_none() {
+        let v: Optional = serde_json::from_str(r#"{}"#).unwrap();
+        assert!(v.rates.is_none());
+    }
+
+    #[test]
+    fn optional_map_parses_string_keys() {
+        let v: Optional = serde_json::from_str(r#"{"rates":{"2":0.03}}"#).unwrap();
+        assert_eq!(v.rates.unwrap()[&2], 0.03);
     }
 }

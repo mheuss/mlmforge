@@ -81,6 +81,10 @@ pub struct MatchingBonusConfig {
 
     /// Level (1-indexed) to matching percentage. Level 1 is the direct
     /// sponsor. Levels not listed receive no matching bonus.
+    ///
+    /// Deserialized via [`crate::serde_helpers::u8_keyed_map`] so the keys
+    /// parse whether or not serde buffered this value.
+    #[serde(deserialize_with = "crate::serde_helpers::u8_keyed_map")]
     pub rates: BTreeMap<u8, f64>,
 
     /// Which commission types are matched. References commission type
@@ -143,7 +147,13 @@ pub struct FastStartBonusConfig {
     /// Enhanced rate table. Same structure as the level commission
     /// rate table. Outer key is rank name. Inner key is level
     /// (1-indexed). Value is the enhanced percentage.
-    #[serde(rename = "rate_table")]
+    ///
+    /// Deserialized via [`crate::serde_helpers::rank_keyed_u8_map`] so the
+    /// inner integer keys parse whether or not serde buffered this value.
+    #[serde(
+        rename = "rate_table",
+        deserialize_with = "crate::serde_helpers::rank_keyed_u8_map"
+    )]
     pub enhanced_rate_table: BTreeMap<String, BTreeMap<u8, f64>>,
 }
 
@@ -182,6 +192,10 @@ pub struct LeadershipDevelopmentBonusConfig {
 
     /// Level (1-indexed) to bonus amount or percentage. Consistent
     /// with MatchingBonusConfig.rates which also uses `u8` keys.
+    ///
+    /// Deserialized via [`crate::serde_helpers::u8_keyed_map`] so the keys
+    /// parse whether or not serde buffered this value.
+    #[serde(deserialize_with = "crate::serde_helpers::u8_keyed_map")]
     pub rates: BTreeMap<u8, f64>,
 
     /// How to handle multi-rank jumps.
@@ -219,6 +233,15 @@ pub struct InfinityBonusConfig {
 
     /// Used when `rate_mode` is `Decreasing`. Generation (1-indexed)
     /// to rate. Rate decreases per generation.
+    ///
+    /// `default` is not optional here. `deserialize_with` disables serde's
+    /// built-in handling of an absent `Option` field, so without it this field
+    /// becomes required and every plan omitting it starts failing. The schema
+    /// does not mark it required.
+    #[serde(
+        default,
+        deserialize_with = "crate::serde_helpers::optional_u8_keyed_map"
+    )]
     pub decreasing_rates: Option<BTreeMap<u8, f64>>,
 
     /// Whether rates are flat or decreasing per generation.
@@ -393,7 +416,13 @@ pub enum PoolShareMode {
 pub struct MatrixCompletionBonusConfig {
     /// Level (1-indexed) to bonus amount when that level is fully
     /// filled.
-    #[serde(rename = "per_level")]
+    ///
+    /// Deserialized via [`crate::serde_helpers::u8_keyed_map`] so the keys
+    /// parse whether or not serde buffered this value.
+    #[serde(
+        rename = "per_level",
+        deserialize_with = "crate::serde_helpers::u8_keyed_map"
+    )]
     pub per_level_amounts: BTreeMap<u8, f64>,
 
     /// Bonus paid when the entire matrix is complete.
@@ -947,5 +976,126 @@ mod tests {
         let deserialized: PassUpConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.count, 3);
         assert!(!deserialized.includes_commissions);
+    }
+}
+
+#[cfg(test)]
+mod buffer_probe_tests {
+    use super::*;
+    use serde::Deserialize;
+
+    /// Forces serde's `Content` buffer, which a plain `from_value` does not.
+    ///
+    /// `serde_json::from_value` deserializes integer map keys on serde_json's
+    /// own path, which coerces numeric strings, so these types parse today
+    /// without any helper. The buffer is only reached through a tagged enum
+    /// whose content arrives before its tag, which is what this wrapper
+    /// reproduces. Without it, this whole module would pass unchanged against
+    /// the pre-HEU-648 code and prove nothing.
+    #[derive(Debug, Deserialize)]
+    #[serde(tag = "type", content = "config", rename_all = "snake_case")]
+    enum BufferProbe {
+        Matching(MatchingBonusConfig),
+        FastStart(FastStartBonusConfig),
+        Leadership(LeadershipDevelopmentBonusConfig),
+        Infinity(InfinityBonusConfig),
+        MatrixCompletion(MatrixCompletionBonusConfig),
+    }
+
+    /// Parses `config` with the content key deliberately before the tag.
+    fn probe(variant: &str, config: serde_json::Value) -> BufferProbe {
+        let wrapped = format!(
+            r#"{{"config":{},"type":"{}"}}"#,
+            serde_json::to_string(&config).unwrap(),
+            variant
+        );
+        serde_json::from_str(&wrapped)
+            .unwrap_or_else(|e| panic!("{variant} must parse with config before type: {e}"))
+    }
+
+    /// Each case asserts the parsed key, not just that parsing succeeded.
+    /// A bare "it parsed" check would pass even if the map came back empty.
+    #[test]
+    fn bonus_integer_keyed_maps_survive_content_buffering() {
+        match probe(
+            "matching",
+            serde_json::json!({
+                "depth": 3,
+                "rates": { "1": 0.1, "2": 0.05 },
+                "matched_commission_types": ["level"]
+            }),
+        ) {
+            BufferProbe::Matching(c) => assert_eq!(c.rates[&1], 0.1),
+            other => panic!("expected matching, got {other:?}"),
+        }
+
+        match probe(
+            "fast_start",
+            serde_json::json!({
+                "window_days": 30,
+                "rate_table": { "associate": { "1": 0.2 } }
+            }),
+        ) {
+            BufferProbe::FastStart(c) => assert_eq!(c.enhanced_rate_table["associate"][&1], 0.2),
+            other => panic!("expected fast_start, got {other:?}"),
+        }
+
+        match probe(
+            "leadership",
+            serde_json::json!({
+                "depth": 2,
+                "rates": { "1": 0.03 },
+                "rank_skip_mode": "highest_only"
+            }),
+        ) {
+            BufferProbe::Leadership(c) => assert_eq!(c.rates[&1], 0.03),
+            other => panic!("expected leadership, got {other:?}"),
+        }
+
+        match probe(
+            "infinity",
+            serde_json::json!({
+                "blocker_mode": "same_or_higher",
+                "flat_rate": null,
+                "decreasing_rates": { "1": 0.04 },
+                "rate_mode": "decreasing"
+            }),
+        ) {
+            BufferProbe::Infinity(c) => {
+                assert_eq!(c.decreasing_rates.as_ref().unwrap()[&1], 0.04)
+            }
+            other => panic!("expected infinity, got {other:?}"),
+        }
+
+        match probe(
+            "matrix_completion",
+            serde_json::json!({
+                "per_level": { "1": 25.0 },
+                "full_matrix": 500.0
+            }),
+        ) {
+            BufferProbe::MatrixCompletion(c) => assert_eq!(c.per_level_amounts[&1], 25.0),
+            other => panic!("expected matrix_completion, got {other:?}"),
+        }
+    }
+
+    /// `decreasing_rates` must stay optional. A bare `Option<T>` reads absent as
+    /// `None`; `deserialize_with` disables that, so the call site needs
+    /// `default` too. Verified: dropping `default` fails this with
+    /// `missing field decreasing_rates`.
+    #[test]
+    fn infinity_bonus_decreasing_rates_stays_optional() {
+        let parsed = probe(
+            "infinity",
+            serde_json::json!({
+                "blocker_mode": "same_or_higher",
+                "flat_rate": 0.02,
+                "rate_mode": "flat"
+            }),
+        );
+        match parsed {
+            BufferProbe::Infinity(c) => assert!(c.decreasing_rates.is_none()),
+            other => panic!("expected infinity, got {other:?}"),
+        }
     }
 }

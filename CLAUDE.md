@@ -130,13 +130,14 @@ You must understand context before writing any code. Before starting work, ensur
 | **Trivial** | Typo fix, config tweak, single-line change | Proceed directly |
 | **Small** | Bug fix in one file, add simple function | Confirm approach with user before coding |
 | **Medium** | Feature touching multiple files, refactoring | `/sop:write-plan` |
-| **Large** | New system, architectural change, multi-component feature | `/sop:brainstorm`, then `/sop:write-plan`. Also identify parallel work opportunities |
+| **Large** | New system, architectural change, multi-component feature | `/sop:brainstorm`, unless the design is already settled. Then `/sop:write-plan`. Also identify parallel work opportunities |
 
 ### Execution
 
-After planning is complete, run `/sop:execute-plan` to build, then `/sop:finish-branch` to
-review and merge. The full four-step path is `/sop:brainstorm` -> `/sop:write-plan` ->
-`/sop:execute-plan` -> `/sop:finish-branch`. Skip brainstorm when the design is already settled.
+Run `/sop:execute-plan` to build. Run `/sop:finish-branch` to review and merge.
+
+The full path is `/sop:brainstorm` -> `/sop:write-plan` -> `/sop:execute-plan` ->
+`/sop:finish-branch`. Skip brainstorm when the design is already settled.
 
 ### Pre-Execution Audit
 
@@ -278,12 +279,22 @@ and paste from the repo root as written.
 ## Git Conventions
 
 - **Versioning:** Semantic Versioning (major.minor.patch)
-- **Branching:** two patterns are in use, and the choice matters.
-  - **Ticket work:** use the branch name Linear generates, `mrheuss/heu-NNN-slug`. It carries
-    the identifier, which is what links the PR back to the issue.
-  - **Work spanning several tickets, or none:** use `type/description`
-    (e.g. `docs/claude-md-and-index-drift`, `fix/binary-tree-calc`).
-  - A ticket identifier in a branch name is one of four places that can auto-close an issue.
-    The others are the PR title, the PR body, and commit messages. See HEU-655.
+- **Branching:** two patterns are in use. The choice matters.
+  - **Ticket work:** use the branch name Linear generates, `mrheuss/heu-NNN-slug`.
+    It carries the identifier. That is what links the PR to the issue.
+  - **Work spanning several tickets, or none:** use `type/description`.
+    For example `docs/claude-md-and-index-drift` or `fix/binary-tree-calc`.
+- **Ticket identifiers reach Linear from four places.** Branch name, PR title, PR
+  body, and commit messages. Rebases carry trailers, so check what you inherited.
+  - A bare identifier in a **branch name or PR title** links the issue.
+  - A **closing magic word** next to the identifier in a **PR body or commit
+    message** moves the issue on merge. Those words are `close`, `fix`, `resolve`,
+    `complete`, `implement` and their inflections.
+  - **The parser does not read negations.** "Does not close HEU-656" contains
+    `close HEU-656` and closes the issue.
+  - To link without closing, use `ref` or `part of`. To suppress linking
+    entirely, put `skip HEU-NNN` in the PR body.
+  - Whether a linked issue moves, and to which status, depends on the team's
+    workflow settings. See HEU-655.
 - **Commits:** Conventional Commits (`type[scope]: description`)
 - **Branch types:** `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `perf`, `build`, `ci`

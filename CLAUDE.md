@@ -293,10 +293,14 @@ and paste from the repo root as written.
 - **Ticket identifiers reach Linear from four places.** Branch name, PR title, PR
   body, and commit messages. Rebases carry trailers, so check what you inherited.
   - A **bare** identifier in a **branch name or PR title** links the issue.
-  - A **closing magic word** next to the identifier moves the issue on merge. It
-    works in a **PR title, PR body, or commit message**. Those words are `close`,
-    `fix`, `resolve`, `complete`, `implement`, their inflections, and
-    `linear issue`.
+  - A **closing magic word** next to the identifier moves the issue. Those words
+    are `close`, `fix`, `resolve`, `complete`, `implement`, their inflections,
+    and `linear issue`. **When it fires depends on where you wrote it:**
+    - **PR title or PR body:** on PR merge.
+    - **Commit message:** when the commit reaches `main`, which does not require
+      a PR merge. Pushing the branch also moves the issue to In Progress.
+    - That difference matters here because squash is disabled, so every branch
+      commit lands on `main` verbatim, carrying whatever it says.
   - **The parser does not read negations.** A sentence saying an issue is *not*
     being closed still contains the word `close` beside `HEU-NNN`, and closes it.
     Do not write a negated closing word next to an identifier. Reword it.

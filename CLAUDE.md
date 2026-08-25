@@ -44,7 +44,7 @@ We build software through small, verified steps:
 - Follow existing conventions — match the project's style, not your preferences
 - Use project tooling — the project's formatter, linter, and build system
 - No commented-out code — version control is the archive
-- No TODO comments without tracking — every TODO must be tracked in [Linear](https://linear.app/heuss-enterprises/project/mlmforge-aa8bdeecd6ac)
+- No TODO comments without tracking — every TODO must be tracked in [Linear](https://linear.app/heuss-enterprises/team/HEU/active)
 
 **Documentation voice:**
 - Short sentences. One idea per sentence.
@@ -129,12 +129,14 @@ You must understand context before writing any code. Before starting work, ensur
 |------|----------|----------|
 | **Trivial** | Typo fix, config tweak, single-line change | Proceed directly |
 | **Small** | Bug fix in one file, add simple function | Confirm approach with user before coding |
-| **Medium** | Feature touching multiple files, refactoring | `/groom` |
-| **Large** | New system, architectural change, multi-component feature | `/groom`, plus identify parallel work opportunities |
+| **Medium** | Feature touching multiple files, refactoring | `/sop:write-plan` |
+| **Large** | New system, architectural change, multi-component feature | `/sop:brainstorm`, then `/sop:write-plan`. Also identify parallel work opportunities |
 
 ### Execution
 
-After planning is complete, `/groom` hands off to `/preflight` which offers execution options (subagent-driven, parallel session, manual, or save for later).
+After planning is complete, run `/sop:execute-plan` to build, then `/sop:finish-branch` to
+review and merge. The full four-step path is `/sop:brainstorm` -> `/sop:write-plan` ->
+`/sop:execute-plan` -> `/sop:finish-branch`. Skip brainstorm when the design is already settled.
 
 ### Pre-Execution Audit
 
@@ -234,7 +236,7 @@ See `docs/use-cases/FORMAT.md` for entry format and documentation guidelines.
 Read these at the start of every session:
 
 - `VERSION_HISTORY.md` — Current version and recent changes
-- [Linear backlog](https://linear.app/heuss-enterprises/project/mlmforge-aa8bdeecd6ac) — Bugs, todos, and in-flight technical items
+- [Linear backlog](https://linear.app/heuss-enterprises/team/HEU/active) — Bugs, todos, and in-flight technical items
 - `DEVELOPMENT.md` — Architectural decisions and patterns
 - `docs/standards/accessibility.md` — Accessibility and localization requirements
 
@@ -276,6 +278,12 @@ and paste from the repo root as written.
 ## Git Conventions
 
 - **Versioning:** Semantic Versioning (major.minor.patch)
-- **Branching:** `type/description` (e.g., `feat/commission-engine`, `fix/binary-tree-calc`)
+- **Branching:** two patterns are in use, and the choice matters.
+  - **Ticket work:** use the branch name Linear generates, `mrheuss/heu-NNN-slug`. It carries
+    the identifier, which is what links the PR back to the issue.
+  - **Work spanning several tickets, or none:** use `type/description`
+    (e.g. `docs/claude-md-and-index-drift`, `fix/binary-tree-calc`).
+  - A ticket identifier in a branch name is one of four places that can auto-close an issue.
+    The others are the PR title, the PR body, and commit messages. See HEU-655.
 - **Commits:** Conventional Commits (`type[scope]: description`)
 - **Branch types:** `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `perf`, `build`, `ci`

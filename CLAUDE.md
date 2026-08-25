@@ -136,14 +136,20 @@ You must understand context before writing any code. Before starting work, ensur
 
 Run `/sop:execute-plan` to build. Run `/sop:finish-branch` to review and merge.
 
-The full path is `/sop:brainstorm` -> `/sop:write-plan` -> `/sop:execute-plan` ->
-`/sop:finish-branch`. Skip brainstorm when the design is already settled.
+The path depends on task size.
+
+- **Medium:** `/sop:write-plan` -> `/sop:execute-plan` -> `/sop:finish-branch`.
+- **Large:** the same, with `/sop:brainstorm` first.
+
+Skip brainstorm on a Large task only when a design already exists. Name it in the
+plan. The Pre-Execution Audit below compares the plan against a design document,
+so an unnamed design means that step has nothing to audit against.
 
 ### Pre-Execution Audit
 
 For Medium/Large tasks, before writing any code, verify the implementation plan covers the design document:
 
-1. Compare the design document (from brainstorming) to the implementation plan
+1. Compare the design document to the implementation plan. It comes from `/sop:brainstorm`, or it is the existing design the plan names when brainstorm was skipped
 2. Check: Does every design intention have a corresponding plan task?
 3. If gaps found, present them: "The design document mentions X, but the plan doesn't cover it."
 4. Resolve gaps before proceeding — add missing tasks or confirm they're intentionally deferred
@@ -286,14 +292,19 @@ and paste from the repo root as written.
     For example `docs/claude-md-and-index-drift` or `fix/binary-tree-calc`.
 - **Ticket identifiers reach Linear from four places.** Branch name, PR title, PR
   body, and commit messages. Rebases carry trailers, so check what you inherited.
-  - A bare identifier in a **branch name or PR title** links the issue.
-  - A **closing magic word** next to the identifier in a **PR body or commit
-    message** moves the issue on merge. Those words are `close`, `fix`, `resolve`,
-    `complete`, `implement` and their inflections.
-  - **The parser does not read negations.** "Does not close HEU-656" contains
-    `close HEU-656` and closes the issue.
-  - To link without closing, use `ref` or `part of`. To suppress linking
-    entirely, put `skip HEU-NNN` in the PR body.
+  - A **bare** identifier in a **branch name or PR title** links the issue.
+  - A **closing magic word** next to the identifier moves the issue on merge. It
+    works in a **PR title, PR body, or commit message**. Those words are `close`,
+    `fix`, `resolve`, `complete`, `implement`, their inflections, and
+    `linear issue`.
+  - **The parser does not read negations.** A sentence saying an issue is *not*
+    being closed still contains the word `close` beside `HEU-NNN`, and closes it.
+    Do not write a negated closing word next to an identifier. Reword it.
+  - To link without closing, use `ref`, `refs`, `references`, `part of`,
+    `contributes to`, `toward` or `towards`. For a pure relation with no status
+    change, `relates to` or `related to`.
+  - To suppress linking entirely, put `skip HEU-NNN` or `ignore HEU-NNN` in the
+    PR body.
   - Whether a linked issue moves, and to which status, depends on the team's
     workflow settings. See HEU-655.
 - **Commits:** Conventional Commits (`type[scope]: description`)

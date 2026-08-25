@@ -11,18 +11,18 @@
 - Go module structure with 8 bounded context packages (`internal/{context}/`)
 - Rust workspace with `network-engine` crate (`engine/`)
 - CI pipeline. GitHub Actions for Go (build, test, fmt, vet) and Rust (build, test, fmt, clippy).
-- Domain discovery. 8 bounded context analyses from legacy osMLM codebase (`docs/discovery/`).
-- Cross-domain synthesis. Dependency graph, 6 shared concerns, 13 ownership disputes, ~20 interface candidates (`docs/discovery/synthesis.md`).
+- Domain discovery. 8 bounded context analyses from legacy osMLM codebase (`mlmforge-hub:docs/discovery/`).
+- Cross-domain synthesis. Dependency graph, 6 shared concerns, 13 ownership disputes, ~20 interface candidates (`mlmforge-hub:docs/discovery/synthesis.md`).
 - ADRs 006–011: Context boundary immutability, enrollment orchestration, event bus strategy, sponsor as tree relationship, domain events for data flow, reporting ownership
 - Go interface definitions for all 8 bounded contexts. 26 interfaces, 70+ domain types, 10 domain events (Platform, Identity, Network Engine, Financial, Commerce, Engagement, Operations, Portals).
 - Unilevel tree implementation in Rust. Arena storage, 12 operations (add_root, add_node, remove_node, get_parent, get_children, get_upline, get_downline, get_position, get_branch, count_downline, count_branch, is_descendant_of), 44 unit tests, 6 property-based tests, 4 edge case tests.
 - Decision 007: Unilevel tree implementation choices (arena storage, UUID user IDs, iterative BFS, tombstone deletion, position-indexed model)
 - Network engine development guide (`docs/development/network-engine.md`)
-- Compensation plan discovery. Per-structure configuration analysis for all 7 plan types (`docs/discovery/compensation-plans/`), combining legacy system extraction with industry research.
+- Compensation plan discovery. Per-structure configuration analysis for all 7 plan types (`mlmforge-hub:docs/discovery/compensation-plans/`), combining legacy system extraction with industry research.
 - Identified industry-standard bonus types not in legacy: matching bonus, infinity bonus, rank advancement, override/differential, sponsor/introducer, fast start, pairing, matrix completion, car/lifestyle, leadership pool
 - Identified additional plan types: generation plan (new file), monoline (degenerate streamline config), Australian X-Up (unilevel variant), board plan (matrix cycling mode)
 - Confirmed hybrid plans are already supported by multi-structure architecture
-- Review guide for compensation plan annotation workflow (`docs/discovery/compensation-plans/REVIEW-GUIDE.md`)
+- Review guide for compensation plan annotation workflow (`mlmforge-hub:docs/discovery/compensation-plans/REVIEW-GUIDE.md`)
 - ADRs 012–013: Compensation plan configuration storage (hybrid relational + JSONB, typed Rust structs, Go config pipeline, version lifecycle, immutability rules), commission run integrity and mid-period plan changes (void-and-rerun, adjustment records)
 - Unilevel compensation plan review annotations. MUST (6 industry-standard features), SHOULD (leadership development bonus, donated placement, rollover volume lifespan), active leg requirement documented.
 - Compensation plan configuration design document. Brainstorm resolving all 9 open questions, full design covering 6 plan types x 10 configuration areas with plain-English narrative, YAML schema, Rust types, and validation rules (`docs/plans/2026-02-12-compensation-plan-config-design.md`).

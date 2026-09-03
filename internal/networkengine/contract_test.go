@@ -388,3 +388,29 @@ func TestContractBoardPlan_SnapshotRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, len(origBoards), len(restoredBoards), "board count should match after restore")
 }
+
+// TestPingFixtureMatchesExpectedProtocolVersion pins the shared ping fixture to
+// the Go constant.
+//
+// The Go test job has no worker binary, so every test that needs one skips, and
+// go test reports a skip as success. Without this check a later phase could
+// bump the worker and the fixture together, leave the Go constant behind, and
+// see the job pass. This test reads the fixture off disk and needs no binary,
+// so it runs.
+func TestPingFixtureMatchesExpectedProtocolVersion(t *testing.T) {
+	path := filepath.Join("..", "..", "engine", "testdata", "contracts", "ping.json")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err, "failed to read %s", path)
+
+	var fixture struct {
+		ExpectedResponse struct {
+			Result pingResult `json:"result"`
+		} `json:"expected_response"`
+	}
+	require.NoError(t, json.Unmarshal(data, &fixture), "failed to parse %s", path)
+
+	require.NotNil(t, fixture.ExpectedResponse.Result.ProtocolVersion,
+		"%s must pin a protocol_version", path)
+	assert.Equal(t, expectedProtocolVersion, *fixture.ExpectedResponse.Result.ProtocolVersion,
+		"ping.json and expectedProtocolVersion have drifted; the Go job cannot catch this any other way")
+}

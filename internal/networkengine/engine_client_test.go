@@ -401,9 +401,8 @@ func TestEngineClient_PingReturnsProtocolVersion(t *testing.T) {
 
 	version, err := client.Ping(context.Background())
 	require.NoError(t, err)
-	// The literal, not expectedProtocolVersion: Ping returns whatever the
-	// worker said and never reads the constant, so coupling them here would
-	// fail this test on a version bump for a reason unrelated to Ping.
+	// Deliberately a literal, not the constant: this test pins decode, not
+	// version agreement.
 	assert.Equal(t, 1, version)
 	assert.Equal(t, "ping", mock.lastOp)
 }
@@ -449,8 +448,8 @@ func TestEngineClient_PingTruncatesLongResponseInError(t *testing.T) {
 	require.Error(t, err)
 	assert.Less(t, len(err.Error()), 200, "wire data must not produce an unbounded error")
 	assert.Contains(t, err.Error(), "...")
-	assert.Contains(t, err.Error(), strings.Repeat("x", 40), "the surviving prefix must be quoted, not dropped")
-	assert.NotContains(t, err.Error(), strings.Repeat("x", 100), "the tail must be cut")
+	assert.Contains(t, err.Error(), strings.Repeat("x", maxPingResponseInError-1), "the surviving prefix must be quoted, not dropped")
+	assert.NotContains(t, err.Error(), strings.Repeat("x", maxPingResponseInError+1), "the tail must be cut")
 }
 
 // The bound is inclusive: a response of exactly maxPingResponseInError bytes is

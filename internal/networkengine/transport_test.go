@@ -443,7 +443,8 @@ func TestStaleWorkerBinary_ErrorsWhenBinaryIsMissing(t *testing.T) {
 func TestStdioTransport_CloseDoesNotHangOnAChattyWorker(t *testing.T) {
 	fake := filepath.Join(t.TempDir(), "chatty-worker.sh")
 	script := "#!/bin/sh\n" +
-		"pad=$(printf 'x%.0s' $(seq 1 200))\n" +
+		"pad=xxxxxxxxxxxxxxxxxxxxxxxxx\n" +
+		"pad=$pad$pad$pad; pad=$pad$pad$pad\n" +
 		"while IFS= read -r _line; do\n" +
 		"  printf '%s\\n' '{\"id\":\"req-1\",\"ok\":true,\"result\":{\"protocol_version\":1}}'\n" +
 		"  i=0\n" +
@@ -460,16 +461,19 @@ func TestStdioTransport_CloseDoesNotHangOnAChattyWorker(t *testing.T) {
 	_, err = transport.Call(context.Background(), "ping", json.RawMessage("null"))
 	require.NoError(t, err)
 
-	done := make(chan struct{})
-	go func() {
-		_ = transport.Close()
-		close(done)
-	}()
+	closeErr := make(chan error, 1)
+	go func() { closeErr <- transport.Close() }()
 
+	// Well under closeGracePeriod, and asserting the worker was not killed.
+	// Both matter: if draining regressed to a no-op the kill fallback would
+	// still return, and a test that only waits for Close to return would pass
+	// on the very path it exists to rule out.
 	select {
-	case <-done:
-	case <-time.After(closeGracePeriod + 10*time.Second):
-		t.Fatal("Close did not return; the chatty worker wedged it")
+	case err := <-closeErr:
+		require.NotErrorIs(t, err, ErrWorkerNotExited,
+			"the worker should have exited once stdout was drained, not been killed")
+	case <-time.After(closeGracePeriod - 2*time.Second):
+		t.Fatal("Close did not return promptly; the chatty worker wedged it")
 	}
 }
 
@@ -494,7 +498,7 @@ func TestStdioTransport_CloseKillsAWorkerThatIgnoresStdin(t *testing.T) {
 
 	select {
 	case err := <-closeErr:
-		assert.ErrorIs(t, err, ErrWorkerKilled, "an unresponsive worker must be reported as killed")
+		assert.ErrorIs(t, err, ErrWorkerNotExited, "an unresponsive worker must be reported as not having exited")
 	case <-time.After(closeGracePeriod + 10*time.Second):
 		t.Fatal("Close did not return; the kill fallback did not fire")
 	}

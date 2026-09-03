@@ -132,6 +132,12 @@ func NewStdioTransport(binaryPath string, opts ...TransportOption) (*StdioTransp
 		opt(transport)
 	}
 	cmd.Stderr = &transport.stderr
+	// Bounds the wait for stderr copying after the process exits. Stderr is a
+	// buffer rather than a file, so os/exec copies it on a goroutine that ends
+	// only when every write end of that pipe closes. Killing the worker does
+	// not close one an orphaned grandchild inherited, so without this the wait
+	// outlives the kill that was supposed to bound it.
+	cmd.WaitDelay = waitIODelay
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start worker: %w", err)
 	}
@@ -268,10 +274,19 @@ func (t *StdioTransport) deliverSignal(line json.RawMessage) {
 // any other reason, is killed rather than blocking the caller forever.
 const closeGracePeriod = 5 * time.Second
 
-// ErrWorkerKilled reports that the worker did not exit within closeGracePeriod
-// after stdin was closed and had to be killed. The transport is shut down
-// either way; this says the exit was not clean.
-var ErrWorkerKilled = errors.New("worker did not exit after stdin close and was killed")
+// waitIODelay bounds the wait for the process's I/O to finish once it has
+// exited. See where it is set for why that is a separate deadline.
+const waitIODelay = 2 * time.Second
+
+// drainTailBound caps the wait for the reader to finish after the process is
+// gone. Reaching it means the reader did not stop when its input closed, which
+// should not happen; the bound is here so that surprise cannot hang a caller.
+const drainTailBound = 2 * time.Second
+
+// ErrWorkerNotExited reports that the worker was still running when the close
+// grace period elapsed, so a kill was attempted. It says what was observed;
+// whether the kill succeeded is reported separately by the joined error.
+var ErrWorkerNotExited = errors.New("worker did not exit within the close grace period")
 
 // Close shuts down the worker process by closing stdin and waiting for exit.
 //
@@ -307,10 +322,48 @@ func (t *StdioTransport) Close() error {
 				lines = nil
 			}
 		case waitErr := <-waited:
-			return errors.Join(stdinErr, waitErr)
+			return errors.Join(stdinErr, waitErr, drainTail(lines))
 		case <-timer.C:
-			_ = t.cmd.Process.Kill()
-			return errors.Join(stdinErr, <-waited, ErrWorkerKilled)
+			killErr := t.kill()
+			waitErr := <-waited
+			return errors.Join(stdinErr, killErr, waitErr, ErrWorkerNotExited, drainTail(lines))
 		}
 	}
 }
+
+// kill stops the worker. Process is nil only for a transport that was never
+// started, which NewStdioTransport cannot produce.
+func (t *StdioTransport) kill() error {
+	if t.cmd.Process == nil {
+		return nil
+	}
+	return t.cmd.Process.Kill()
+}
+
+// drainTail keeps receiving until the reader closes lines, so a reader blocked
+// on a full channel is released rather than abandoned with its goroutine and
+// buffered messages held for the life of the process.
+//
+// It terminates on its own: waiting on the process closes the read end of the
+// pipe the reader is using, so its next read fails and it closes the channel.
+func drainTail(lines <-chan json.RawMessage) error {
+	if lines == nil {
+		return nil
+	}
+	timer := time.NewTimer(drainTailBound)
+	defer timer.Stop()
+	for {
+		select {
+		case _, ok := <-lines:
+			if !ok {
+				return nil
+			}
+		case <-timer.C:
+			return errReaderStillRunning
+		}
+	}
+}
+
+// errReaderStillRunning reports that the reader had not stopped once the
+// process was gone and the drain deadline elapsed.
+var errReaderStillRunning = errors.New("stdout reader still running after the worker exited")

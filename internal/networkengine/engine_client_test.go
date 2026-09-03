@@ -401,7 +401,10 @@ func TestEngineClient_PingReturnsProtocolVersion(t *testing.T) {
 
 	version, err := client.Ping(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, expectedProtocolVersion, version)
+	// The literal, not expectedProtocolVersion: Ping returns whatever the
+	// worker said and never reads the constant, so coupling them here would
+	// fail this test on a version bump for a reason unrelated to Ping.
+	assert.Equal(t, 1, version)
 	assert.Equal(t, "ping", mock.lastOp)
 }
 
@@ -446,6 +449,22 @@ func TestEngineClient_PingTruncatesLongResponseInError(t *testing.T) {
 	require.Error(t, err)
 	assert.Less(t, len(err.Error()), 200, "wire data must not produce an unbounded error")
 	assert.Contains(t, err.Error(), "...")
+	assert.Contains(t, err.Error(), strings.Repeat("x", 40), "the surviving prefix must be quoted, not dropped")
+	assert.NotContains(t, err.Error(), strings.Repeat("x", 100), "the tail must be cut")
+}
+
+// The bound is inclusive: a response of exactly maxPingResponseInError bytes is
+// quoted whole, with no ellipsis.
+func TestEngineClient_PingDoesNotTruncateAtTheBoundary(t *testing.T) {
+	exact := `{"x":"` + strings.Repeat("y", maxPingResponseInError-8) + `"}`
+	require.Len(t, exact, maxPingResponseInError)
+	mock := &mockTransport{response: json.RawMessage(exact)}
+	client := NewEngineClientWithTransport(mock)
+
+	_, err := client.Ping(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), exact)
+	assert.NotContains(t, err.Error(), "...")
 }
 
 // --- Error handling tests (mock) ---

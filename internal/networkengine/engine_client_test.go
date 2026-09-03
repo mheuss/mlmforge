@@ -7,6 +7,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -450,6 +451,41 @@ func TestEngineClient_PingTruncatesLongResponseInError(t *testing.T) {
 	assert.Contains(t, err.Error(), "...")
 	assert.Contains(t, err.Error(), strings.Repeat("x", maxPingResponseInError-1), "the surviving prefix must be quoted, not dropped")
 	assert.NotContains(t, err.Error(), strings.Repeat("x", maxPingResponseInError+1), "the tail must be cut")
+}
+
+// A worker that sends the key with a value this client cannot read has
+// reported a version, just not a usable one. Saying it reported none names a
+// cause that was not observed and sends the reader after the wrong thing.
+func TestEngineClient_PingDistinguishesAnUnreadableVersion(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`{"protocol_version":"2"}`)}
+	client := NewEngineClientWithTransport(mock)
+
+	_, err := client.Ping(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot read")
+	assert.Contains(t, err.Error(), `"2"`, "the error should quote what it saw")
+	assert.NotContains(t, err.Error(), "does not report a protocol version",
+		"the worker did report one, so the message must not say otherwise")
+}
+
+func TestEngineClient_PingRendersAnEmptyResponse(t *testing.T) {
+	mock := &mockTransport{response: nil}
+	client := NewEngineClientWithTransport(mock)
+
+	_, err := client.Ping(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `responded ""`, "an empty response must not render as a blank gap")
+}
+
+// The bound is a byte count, so a multi-byte rune can straddle it.
+func TestEngineClient_PingErrorStaysValidUTF8(t *testing.T) {
+	// Greek alpha is two bytes, so this run crosses the bound mid-rune.
+	mock := &mockTransport{response: json.RawMessage(`{"note":"` + strings.Repeat("α", 200) + `"}`)}
+	client := NewEngineClientWithTransport(mock)
+
+	_, err := client.Ping(context.Background())
+	require.Error(t, err)
+	assert.True(t, utf8.ValidString(err.Error()), "error text must not carry a half rune")
 }
 
 // The bound is inclusive: a response of exactly maxPingResponseInError bytes is

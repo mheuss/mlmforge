@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // expectedProtocolVersion is the NDJSON wire semantics this client is built
@@ -75,25 +76,51 @@ func (c *EngineClient) Ping(ctx context.Context) (int, error) {
 	}
 
 	var result pingResult
-	// A non-object response (the legacy bare "pong") fails to unmarshal, and an
-	// object without the key unmarshals to a nil pointer. Same diagnosis, same
-	// fix, so they share one error.
-	if unmarshalErr := json.Unmarshal(raw, &result); unmarshalErr != nil || result.ProtocolVersion == nil {
+	decodeErr := json.Unmarshal(raw, &result)
+	switch {
+	case decodeErr != nil && carriesVersionKey(raw):
+		return 0, fmt.Errorf(
+			"worker reported a protocol version this client cannot read (responded %s); rebuild the worker binary",
+			renderForError(raw),
+		)
+	// A non-object response (the legacy bare "pong") fails to decode, and an
+	// object without the key decodes to a nil pointer. Both reported no
+	// version, so they share one error.
+	case decodeErr != nil, result.ProtocolVersion == nil:
 		return 0, fmt.Errorf(
 			"worker does not report a protocol version (responded %s); rebuild the worker binary",
-			truncateForError(raw),
+			renderForError(raw),
 		)
 	}
 	return *result.ProtocolVersion, nil
 }
 
-// truncateForError renders a wire payload for an error message, bounded so a
-// large or hostile response cannot produce an unbounded error string.
-func truncateForError(raw json.RawMessage) string {
-	if len(raw) <= maxPingResponseInError {
-		return string(raw)
+// carriesVersionKey reports whether raw is a JSON object holding a
+// protocol_version key, whatever its value decodes to.
+func carriesVersionKey(raw json.RawMessage) bool {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return false
 	}
-	return string(raw[:maxPingResponseInError]) + "..."
+	_, present := fields["protocol_version"]
+	return present
+}
+
+// renderForError renders a wire payload for an error message. It is bounded, so
+// a large or hostile response cannot produce an unbounded error string, and it
+// is never empty or invalid UTF-8, so the text stays readable where it lands.
+//
+// The bound is a byte count and the payload may hold multi-byte runes, so the
+// cut can land mid-rune. Dropping the partial rune is what keeps the result
+// printable.
+func renderForError(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return `""`
+	}
+	if len(raw) <= maxPingResponseInError {
+		return strings.ToValidUTF8(string(raw), "")
+	}
+	return strings.ToValidUTF8(string(raw[:maxPingResponseInError]), "") + "..."
 }
 
 // LoadPlan sends a compensation plan to the worker.

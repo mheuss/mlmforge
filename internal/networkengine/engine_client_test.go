@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
@@ -507,7 +508,8 @@ func TestEngineClient_PingDoesNotTruncateAtTheBoundary(t *testing.T) {
 // --- Construction version check ---
 
 func TestNewCheckedClient_AcceptsMatchingVersion(t *testing.T) {
-	mock := &mockTransport{response: json.RawMessage(`{"protocol_version":1}`)}
+	mock := &mockTransport{response: json.RawMessage(
+		fmt.Sprintf(`{"protocol_version":%d}`, expectedProtocolVersion))}
 
 	client, err := newCheckedClient(context.Background(), mock)
 	require.NoError(t, err)
@@ -521,8 +523,9 @@ func TestNewCheckedClient_RejectsVersionMismatch(t *testing.T) {
 	client, err := newCheckedClient(context.Background(), mock)
 	require.Error(t, err)
 	assert.Nil(t, client)
-	assert.Contains(t, err.Error(), "1", "the error must name the expected version")
-	assert.Contains(t, err.Error(), "99", "the error must name the worker's version")
+	assert.Contains(t, err.Error(),
+		fmt.Sprintf("client expects %d, worker reports 99", expectedProtocolVersion),
+		"the error must name both versions")
 	assert.True(t, mock.closed, "a rejected worker must be closed")
 }
 
@@ -561,11 +564,17 @@ func TestNewEngineClient_RejectsWorkerWithWrongVersion(t *testing.T) {
 		"done\n"
 	require.NoError(t, os.WriteFile(fake, []byte(script), 0o755))
 
-	client, err := NewEngineClient(context.Background(), fake)
+	// Bounded so a wedged construction fails fast and labelled, rather than
+	// as a whole-suite timeout panic ten minutes later.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	client, err := NewEngineClient(ctx, fake)
 	require.Error(t, err)
 	assert.Nil(t, client)
-	assert.Contains(t, err.Error(), "99", "the error must name the worker's version")
-	assert.Contains(t, err.Error(), "1", "the error must name the expected version")
+	assert.Contains(t, err.Error(),
+		fmt.Sprintf("client expects %d, worker reports 99", expectedProtocolVersion),
+		"the error must name both versions")
 }
 
 // --- Error handling tests (mock) ---

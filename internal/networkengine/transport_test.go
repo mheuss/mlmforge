@@ -73,14 +73,12 @@ func TestStdioTransport_SignalDemux(t *testing.T) {
 	// A fresh transport's first Call generates id "req-1".
 	go func() {
 		_, _ = io.WriteString(stdoutW, signal+"\n")
-		_, _ = io.WriteString(stdoutW, `{"id":"req-1","ok":true,"result":"pong"}`+"\n")
+		_, _ = io.WriteString(stdoutW, `{"id":"req-1","ok":true,"result":{"demux":"payload"}}`+"\n")
 	}()
 
-	result, err := transport.Call(context.Background(), "ping", json.RawMessage("null"))
+	result, err := transport.Call(context.Background(), "demux_probe", json.RawMessage("null"))
 	require.NoError(t, err)
-	var pong string
-	require.NoError(t, json.Unmarshal(result, &pong))
-	assert.Equal(t, "pong", pong)
+	assert.JSONEq(t, `{"demux":"payload"}`, string(result))
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -109,14 +107,12 @@ func TestStdioTransport_SignalDemux_Multiple(t *testing.T) {
 	go func() {
 		_, _ = io.WriteString(stdoutW, `{"type":"signal","level":"info","message":"one"}`+"\n")
 		_, _ = io.WriteString(stdoutW, `{"type":"signal","level":"warn","message":"two"}`+"\n")
-		_, _ = io.WriteString(stdoutW, `{"id":"req-1","ok":true,"result":"pong"}`+"\n")
+		_, _ = io.WriteString(stdoutW, `{"id":"req-1","ok":true,"result":{"demux":"payload"}}`+"\n")
 	}()
 
-	result, err := transport.Call(context.Background(), "ping", json.RawMessage("null"))
+	result, err := transport.Call(context.Background(), "demux_probe", json.RawMessage("null"))
 	require.NoError(t, err)
-	var pong string
-	require.NoError(t, json.Unmarshal(result, &pong))
-	assert.Equal(t, "pong", pong)
+	assert.JSONEq(t, `{"demux":"payload"}`, string(result))
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -139,14 +135,12 @@ func TestStdioTransport_SignalHandlerPanic(t *testing.T) {
 
 	go func() {
 		_, _ = io.WriteString(stdoutW, `{"type":"signal","level":"warn","message":"boom"}`+"\n")
-		_, _ = io.WriteString(stdoutW, `{"id":"req-1","ok":true,"result":"pong"}`+"\n")
+		_, _ = io.WriteString(stdoutW, `{"id":"req-1","ok":true,"result":{"demux":"payload"}}`+"\n")
 	}()
 
-	result, err := transport.Call(context.Background(), "ping", json.RawMessage("null"))
+	result, err := transport.Call(context.Background(), "demux_probe", json.RawMessage("null"))
 	require.NoError(t, err)
-	var pong string
-	require.NoError(t, json.Unmarshal(result, &pong))
-	assert.Equal(t, "pong", pong)
+	assert.JSONEq(t, `{"demux":"payload"}`, string(result))
 
 	_ = stdoutW.Close()
 	_ = stdinR.Close()

@@ -78,7 +78,11 @@ func newCheckedClient(ctx context.Context, transport EngineTransport) (*EngineCl
 }
 
 // NewEngineClientWithTransport creates a client with a custom transport.
-// Used for testing with mock transports.
+//
+// It performs NO protocol version check. This is the mock seam for tests, and
+// it is not a supported way to reach a real worker: a client built this way may
+// be talking to a worker whose wire semantics it cannot interpret. Production
+// code goes through NewEngineClient.
 func NewEngineClientWithTransport(transport EngineTransport) *EngineClient {
 	return &EngineClient{transport: transport}
 }

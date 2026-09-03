@@ -606,7 +606,7 @@ func TestEngineClient_UnmarshalError(t *testing.T) {
 }
 
 func TestEngineClient_StopClosesTransport(t *testing.T) {
-	mock := &mockTransport{response: json.RawMessage(`{"protocol_version":1}`)}
+	mock := &mockTransport{}
 	client := NewEngineClientWithTransport(mock)
 
 	err := client.Stop()

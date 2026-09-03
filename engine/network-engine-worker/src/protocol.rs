@@ -4,15 +4,13 @@ use serde::{Deserialize, Serialize};
 ///
 /// Version 1 is the first *self-reporting* version. A worker that answers
 /// `ping` with a bare `"pong"` predates this constant and is versionless --
-/// not version 0, and not version 1. The Go client refuses such a worker
-/// rather than assuming an equivalence nobody verified.
+/// not version 0, and not version 1.
 ///
 /// This moves on any change to wire semantics, not only on shape changes. Two
 /// workers can share a schema and still disagree about what a field means.
 ///
-/// There is deliberately no compatibility arm. Recognising a legacy `"pong"`
-/// is done on the Go side, and it exists to diagnose an old binary rather than
-/// to accept one.
+/// There is deliberately no compatibility arm here: the worker has exactly one
+/// answer.
 pub const PROTOCOL_VERSION: u32 = 1;
 
 /// An NDJSON request from the Go platform layer.

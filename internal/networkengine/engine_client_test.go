@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -16,8 +17,9 @@ func TestEngineClient_StartAndPing(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = client.Stop() }()
 
-	err = client.Ping(context.Background())
+	version, err := client.Ping(context.Background())
 	require.NoError(t, err)
+	assert.Equal(t, expectedProtocolVersion, version)
 }
 
 func TestEngineClient_StopIsIdempotent(t *testing.T) {
@@ -34,11 +36,11 @@ func TestEngineClient_StopIsIdempotent(t *testing.T) {
 
 func TestEngineClient_WithMockTransport(t *testing.T) {
 	mock := &mockTransport{
-		response: json.RawMessage(`"pong"`),
+		response: json.RawMessage(`{"protocol_version":1}`),
 	}
 	client := NewEngineClientWithTransport(mock)
 
-	err := client.Ping(context.Background())
+	_, err := client.Ping(context.Background())
 	require.NoError(t, err)
 
 	assert.Equal(t, "ping", mock.lastOp)
@@ -393,6 +395,59 @@ func TestEngineClient_GetSponsored_MockParams(t *testing.T) {
 	assert.JSONEq(t, `{"structure":"Test","user_id":"00000000-0000-0000-0000-000000000001"}`, string(mock.lastParams))
 }
 
+func TestEngineClient_PingReturnsProtocolVersion(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`{"protocol_version":1}`)}
+	client := NewEngineClientWithTransport(mock)
+
+	version, err := client.Ping(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, expectedProtocolVersion, version)
+	assert.Equal(t, "ping", mock.lastOp)
+}
+
+func TestEngineClient_PingRejectsLegacyPong(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`"pong"`)}
+	client := NewEngineClientWithTransport(mock)
+
+	_, err := client.Ping(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not report a protocol version")
+	assert.Contains(t, err.Error(), `"pong"`, "the error should quote what it saw")
+	assert.Contains(t, err.Error(), "rebuild", "the error should say what to do")
+}
+
+func TestEngineClient_PingRejectsObjectWithoutVersion(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`{"something_else":1}`)}
+	client := NewEngineClientWithTransport(mock)
+
+	_, err := client.Ping(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not report a protocol version")
+}
+
+// An explicit 0 is a version claim, not an absent one. This is the whole
+// reason pingResult.ProtocolVersion is a pointer: a plain int would decode
+// both this and {} to 0 and report the wrong failure.
+func TestEngineClient_PingTreatsZeroAsAVersion(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`{"protocol_version":0}`)}
+	client := NewEngineClientWithTransport(mock)
+
+	version, err := client.Ping(context.Background())
+	require.NoError(t, err, "0 is a reported version, not a missing one")
+	assert.Equal(t, 0, version)
+}
+
+func TestEngineClient_PingTruncatesLongResponseInError(t *testing.T) {
+	long := `"` + strings.Repeat("x", 500) + `"`
+	mock := &mockTransport{response: json.RawMessage(long)}
+	client := NewEngineClientWithTransport(mock)
+
+	_, err := client.Ping(context.Background())
+	require.Error(t, err)
+	assert.Less(t, len(err.Error()), 200, "wire data must not produce an unbounded error")
+	assert.Contains(t, err.Error(), "...")
+}
+
 // --- Error handling tests (mock) ---
 
 func TestEngineClient_TransportErrorPropagation(t *testing.T) {
@@ -400,7 +455,7 @@ func TestEngineClient_TransportErrorPropagation(t *testing.T) {
 	mock := &mockTransport{err: transportErr}
 	client := NewEngineClientWithTransport(mock)
 
-	err := client.Ping(context.Background())
+	_, err := client.Ping(context.Background())
 	assert.ErrorIs(t, err, transportErr)
 
 	err = client.AddRoot(context.Background(), "Test", "user-1", 1000)
@@ -422,7 +477,7 @@ func TestEngineClient_UnmarshalError(t *testing.T) {
 }
 
 func TestEngineClient_StopClosesTransport(t *testing.T) {
-	mock := &mockTransport{response: json.RawMessage(`"pong"`)}
+	mock := &mockTransport{response: json.RawMessage(`{"protocol_version":1}`)}
 	client := NewEngineClientWithTransport(mock)
 
 	err := client.Stop()

@@ -6,6 +6,29 @@ import (
 	"fmt"
 )
 
+// expectedProtocolVersion is the NDJSON wire semantics this client is built
+// for. It is compared exactly, not as a range: a worker can share a schema and
+// still disagree about what a field means, so "at least version N" is not a
+// question this number can answer.
+//
+// Changing this number without changing the shared ping contract fixture, or
+// the reverse, rejects a worker that is otherwise correct.
+const expectedProtocolVersion = 1
+
+// maxPingResponseInError bounds how much of an unexpected ping response is
+// quoted back in an error. The response is wire data and is otherwise
+// unbounded.
+const maxPingResponseInError = 64
+
+// pingResult decodes the ping response.
+//
+// ProtocolVersion is a pointer so an absent key is distinguishable from an
+// explicit 0. A versionless worker and a worker claiming version 0 are
+// different failures, and a plain int collapses them into one.
+type pingResult struct {
+	ProtocolVersion *int `json:"protocol_version"`
+}
+
 // EngineClient manages the Rust Network Engine subprocess and provides
 // typed methods for all engine operations.
 type EngineClient struct {
@@ -24,8 +47,8 @@ func NewEngineClient(ctx context.Context, binaryPath string, opts ...TransportOp
 	}
 	client := &EngineClient{transport: transport}
 
-	// Verify the worker is alive.
-	if err := client.Ping(ctx); err != nil {
+	// Verify the worker is alive. Task 3 turns this into the version check.
+	if _, err := client.Ping(ctx); err != nil {
 		_ = transport.Close()
 		return nil, fmt.Errorf("initial ping failed: %w", err)
 	}
@@ -39,10 +62,38 @@ func NewEngineClientWithTransport(transport EngineTransport) *EngineClient {
 	return &EngineClient{transport: transport}
 }
 
-// Ping sends a ping to the worker and returns an error if it does not respond.
-func (c *EngineClient) Ping(ctx context.Context) error {
-	_, err := c.transport.Call(ctx, "ping", json.RawMessage("null"))
-	return err
+// Ping asks the worker which NDJSON protocol version it speaks and returns it.
+//
+// A worker that predates protocol versioning answers with a bare "pong", and a
+// malformed one may answer with an object that carries no version. Both are
+// versionless and both are an error here: this client cannot confirm what such
+// a worker means by any field, so it refuses to guess.
+func (c *EngineClient) Ping(ctx context.Context) (int, error) {
+	raw, err := c.transport.Call(ctx, "ping", json.RawMessage("null"))
+	if err != nil {
+		return 0, err
+	}
+
+	var result pingResult
+	// A non-object response (the legacy bare "pong") fails to unmarshal, and an
+	// object without the key unmarshals to a nil pointer. Same diagnosis, same
+	// fix, so they share one error.
+	if unmarshalErr := json.Unmarshal(raw, &result); unmarshalErr != nil || result.ProtocolVersion == nil {
+		return 0, fmt.Errorf(
+			"worker does not report a protocol version (responded %s); rebuild the worker binary",
+			truncateForError(raw),
+		)
+	}
+	return *result.ProtocolVersion, nil
+}
+
+// truncateForError renders a wire payload for an error message, bounded so a
+// large or hostile response cannot produce an unbounded error string.
+func truncateForError(raw json.RawMessage) string {
+	if len(raw) <= maxPingResponseInError {
+		return string(raw)
+	}
+	return string(raw[:maxPingResponseInError]) + "..."
 }
 
 // LoadPlan sends a compensation plan to the worker.

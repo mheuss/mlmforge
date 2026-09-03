@@ -473,7 +473,7 @@ func TestStdioTransport_CloseDoesNotHangOnAChattyWorker(t *testing.T) {
 	}
 }
 
-// A worker that never reads stdin cannot be shut down by closing it, so Close
+// A worker that stops reading stdin cannot be shut down by closing it, so Close
 // falls back to killing the process. Without the fallback this blocks forever.
 func TestStdioTransport_CloseKillsAWorkerThatIgnoresStdin(t *testing.T) {
 	fake := filepath.Join(t.TempDir(), "deaf-worker.sh")

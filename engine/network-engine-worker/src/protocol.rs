@@ -8,9 +8,6 @@ use serde::{Deserialize, Serialize};
 ///
 /// This moves on any change to wire semantics, not only on shape changes. Two
 /// workers can share a schema and still disagree about what a field means.
-///
-/// There is deliberately no compatibility arm here: the worker has exactly one
-/// answer.
 pub const PROTOCOL_VERSION: u32 = 1;
 
 /// An NDJSON request from the Go platform layer.

@@ -435,3 +435,73 @@ func TestStaleWorkerBinary_ErrorsWhenBinaryIsMissing(t *testing.T) {
 
 	require.Error(t, err)
 }
+
+// A worker that keeps writing after answering must not be able to wedge Close.
+//
+// readLoop is the only reader of stdout and blocks once the lines channel is
+// full. Nothing drains that channel after Call returns, so a chatty worker
+// fills it, readLoop stops reading, the stdout pipe fills, and the worker
+// blocks in write without ever reaching its stdin read -- never seeing the EOF
+// Close just sent. A bare cmd.Wait() then never returns.
+//
+// The payload has to exceed the OS pipe buffer as well as the channel: a few
+// hundred short lines fit in the pipe and exit cleanly, proving nothing.
+func TestStdioTransport_CloseDoesNotHangOnAChattyWorker(t *testing.T) {
+	fake := filepath.Join(t.TempDir(), "chatty-worker.sh")
+	script := "#!/bin/sh\n" +
+		"pad=$(printf 'x%.0s' $(seq 1 200))\n" +
+		"while IFS= read -r _line; do\n" +
+		"  printf '%s\\n' '{\"id\":\"req-1\",\"ok\":true,\"result\":{\"protocol_version\":1}}'\n" +
+		"  i=0\n" +
+		"  while [ $i -lt 5000 ]; do\n" +
+		"    printf '%s\\n' \"{\\\"signal\\\":\\\"$pad\\\"}\"\n" +
+		"    i=$((i+1))\n" +
+		"  done\n" +
+		"done\n"
+	require.NoError(t, os.WriteFile(fake, []byte(script), 0o755))
+
+	transport, err := NewStdioTransport(fake)
+	require.NoError(t, err)
+
+	_, err = transport.Call(context.Background(), "ping", json.RawMessage("null"))
+	require.NoError(t, err)
+
+	done := make(chan struct{})
+	go func() {
+		_ = transport.Close()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(closeGracePeriod + 10*time.Second):
+		t.Fatal("Close did not return; the chatty worker wedged it")
+	}
+}
+
+// A worker that never reads stdin cannot be shut down by closing it, so Close
+// falls back to killing the process. Without the fallback this blocks forever.
+func TestStdioTransport_CloseKillsAWorkerThatIgnoresStdin(t *testing.T) {
+	fake := filepath.Join(t.TempDir(), "deaf-worker.sh")
+	script := "#!/bin/sh\n" +
+		"IFS= read -r _line\n" +
+		"printf '%s\\n' '{\"id\":\"req-1\",\"ok\":true,\"result\":{\"protocol_version\":1}}'\n" +
+		"while true; do sleep 1; done\n"
+	require.NoError(t, os.WriteFile(fake, []byte(script), 0o755))
+
+	transport, err := NewStdioTransport(fake)
+	require.NoError(t, err)
+
+	_, err = transport.Call(context.Background(), "ping", json.RawMessage("null"))
+	require.NoError(t, err)
+
+	closeErr := make(chan error, 1)
+	go func() { closeErr <- transport.Close() }()
+
+	select {
+	case err := <-closeErr:
+		assert.ErrorIs(t, err, ErrWorkerKilled, "an unresponsive worker must be reported as killed")
+	case <-time.After(closeGracePeriod + 10*time.Second):
+		t.Fatal("Close did not return; the kill fallback did not fire")
+	}
+}

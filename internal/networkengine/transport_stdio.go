@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"go.opentelemetry.io/otel/trace"
 )
@@ -262,12 +263,54 @@ func (t *StdioTransport) deliverSignal(line json.RawMessage) {
 	t.signalHandler(line)
 }
 
+// closeGracePeriod bounds how long Close waits for the worker to exit on its
+// own after stdin is closed. A worker that ignores EOF, or that is wedged for
+// any other reason, is killed rather than blocking the caller forever.
+const closeGracePeriod = 5 * time.Second
+
+// ErrWorkerKilled reports that the worker did not exit within closeGracePeriod
+// after stdin was closed and had to be killed. The transport is shut down
+// either way; this says the exit was not clean.
+var ErrWorkerKilled = errors.New("worker did not exit after stdin close and was killed")
+
 // Close shuts down the worker process by closing stdin and waiting for exit.
+//
+// It keeps draining stdout while it waits. readLoop is the only sender on
+// lines and blocks once that channel is full, and nothing else drains it after
+// the last Call returns. A worker that keeps writing therefore stops readLoop,
+// fills the stdout pipe, and blocks in write without ever reaching its stdin
+// read -- so it never sees the EOF this function just sent, and waiting on it
+// alone would never return.
+//
+// Lines drained here are discarded rather than forwarded to signalHandler. The
+// transport is shutting down, and a handler running after Close was called
+// would be a surprise to the caller.
 func (t *StdioTransport) Close() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.closed.Store(true)
 	stdinErr := t.stdin.Close()
-	waitErr := t.cmd.Wait()
-	return errors.Join(stdinErr, waitErr)
+
+	waited := make(chan error, 1)
+	go func() { waited <- t.cmd.Wait() }()
+
+	// A nil channel blocks forever in select, which is what should happen once
+	// readLoop has closed lines and there is nothing left to drain.
+	lines := t.lines
+	timer := time.NewTimer(closeGracePeriod)
+	defer timer.Stop()
+
+	for {
+		select {
+		case _, ok := <-lines:
+			if !ok {
+				lines = nil
+			}
+		case waitErr := <-waited:
+			return errors.Join(stdinErr, waitErr)
+		case <-timer.C:
+			_ = t.cmd.Process.Kill()
+			return errors.Join(stdinErr, <-waited, ErrWorkerKilled)
+		}
+	}
 }

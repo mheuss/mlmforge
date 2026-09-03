@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -500,6 +502,70 @@ func TestEngineClient_PingDoesNotTruncateAtTheBoundary(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), exact)
 	assert.NotContains(t, err.Error(), "...")
+}
+
+// --- Construction version check ---
+
+func TestNewCheckedClient_AcceptsMatchingVersion(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`{"protocol_version":1}`)}
+
+	client, err := newCheckedClient(context.Background(), mock)
+	require.NoError(t, err)
+	require.NotNil(t, client)
+	assert.False(t, mock.closed, "a matching worker must not be closed")
+}
+
+func TestNewCheckedClient_RejectsVersionMismatch(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`{"protocol_version":99}`)}
+
+	client, err := newCheckedClient(context.Background(), mock)
+	require.Error(t, err)
+	assert.Nil(t, client)
+	assert.Contains(t, err.Error(), "1", "the error must name the expected version")
+	assert.Contains(t, err.Error(), "99", "the error must name the worker's version")
+	assert.True(t, mock.closed, "a rejected worker must be closed")
+}
+
+func TestNewCheckedClient_RejectsVersionlessWorker(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`"pong"`)}
+
+	client, err := newCheckedClient(context.Background(), mock)
+	require.Error(t, err)
+	assert.Nil(t, client)
+	assert.Contains(t, err.Error(), "does not report a protocol version")
+	assert.True(t, mock.closed, "a versionless worker must be closed")
+}
+
+// TestNewEngineClient_RejectsWorkerWithWrongVersion proves the PUBLIC
+// constructor performs the check.
+//
+// The three tests above call newCheckedClient directly, and all of them would
+// still pass if the helper were added and NewEngineClient never rewired: the
+// real worker reports the matching version, so nothing else would notice.
+//
+// The fake worker is a shell script, so this needs no Rust binary and runs
+// where the Go job has none.
+//
+// COUPLING: the script answers with a hardcoded id of "req-1" because the
+// stdio transport numbers requests from 1, so a fresh transport's first call is
+// always req-1. If that scheme changes, this test hangs or fails confusingly
+// rather than pointing at the cause -- come back here first.
+//
+// Version 99 sits far from any planned value. Phases A through D use 1, 2, 3
+// and 4, so 99 cannot collide with a real version and be mistaken for one.
+func TestNewEngineClient_RejectsWorkerWithWrongVersion(t *testing.T) {
+	fake := filepath.Join(t.TempDir(), "fake-worker.sh")
+	script := "#!/bin/sh\n" +
+		"while IFS= read -r _line; do\n" +
+		"  printf '%s\\n' '{\"id\":\"req-1\",\"ok\":true,\"result\":{\"protocol_version\":99}}'\n" +
+		"done\n"
+	require.NoError(t, os.WriteFile(fake, []byte(script), 0o755))
+
+	client, err := NewEngineClient(context.Background(), fake)
+	require.Error(t, err)
+	assert.Nil(t, client)
+	assert.Contains(t, err.Error(), "99", "the error must name the worker's version")
+	assert.Contains(t, err.Error(), "1", "the error must name the expected version")
 }
 
 // --- Error handling tests (mock) ---

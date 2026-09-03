@@ -37,21 +37,41 @@ type EngineClient struct {
 }
 
 // NewEngineClient creates a client backed by a subprocess at binaryPath.
-// Spawns the worker and verifies it responds to ping. Transport options are
-// forwarded to the underlying StdioTransport, so a caller can opt into
-// observability with WithSignalHandler(observer.HandleSignal). Observability
-// stays opt-in — no handler is installed by default.
+// Spawns the worker and verifies it speaks the protocol version this client
+// was built for. Transport options are forwarded to the underlying
+// StdioTransport, so a caller can opt into observability with
+// WithSignalHandler(observer.HandleSignal). Observability stays opt-in — no
+// handler is installed by default.
 func NewEngineClient(ctx context.Context, binaryPath string, opts ...TransportOption) (*EngineClient, error) {
 	transport, err := NewStdioTransport(binaryPath, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("create transport: %w", err)
 	}
+	return newCheckedClient(ctx, transport)
+}
+
+// newCheckedClient wires a transport into a client and verifies the worker
+// speaks the protocol version this client was built for. It closes the
+// transport on either failure, so a rejected worker does not leak a subprocess.
+//
+// It takes an EngineTransport rather than a binary path so a test can present a
+// worker reporting any version. NewEngineClient builds its own transport and
+// offers no such seam, which would otherwise leave "does construction actually
+// check?" unproven.
+func newCheckedClient(ctx context.Context, transport EngineTransport) (*EngineClient, error) {
 	client := &EngineClient{transport: transport}
 
-	// Verify the worker is alive. Task 3 turns this into the version check.
-	if _, err := client.Ping(ctx); err != nil {
+	version, err := client.Ping(ctx)
+	if err != nil {
 		_ = transport.Close()
 		return nil, fmt.Errorf("initial ping failed: %w", err)
+	}
+	if version != expectedProtocolVersion {
+		_ = transport.Close()
+		return nil, fmt.Errorf(
+			"engine protocol version mismatch: client expects %d, worker reports %d",
+			expectedProtocolVersion, version,
+		)
 	}
 
 	return client, nil

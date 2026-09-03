@@ -551,8 +551,8 @@ func TestNewCheckedClient_RejectsVersionlessWorker(t *testing.T) {
 // always req-1. If that scheme changes, this test hangs or fails confusingly
 // rather than pointing at the cause -- come back here first.
 //
-// Version 99 sits far from any planned value. Phases A through D use 1, 2, 3
-// and 4, so 99 cannot collide with a real version and be mistaken for one.
+// Version 99 sits far from any version this arc will plausibly reach, so it
+// cannot collide with a real one and be mistaken for it.
 func TestNewEngineClient_RejectsWorkerWithWrongVersion(t *testing.T) {
 	fake := filepath.Join(t.TempDir(), "fake-worker.sh")
 	script := "#!/bin/sh\n" +

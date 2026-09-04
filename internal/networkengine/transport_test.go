@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -455,8 +457,10 @@ func TestStdioTransport_CloseDoesNotHangOnAChattyWorker(t *testing.T) {
 		"done\n"
 	require.NoError(t, os.WriteFile(fake, []byte(script), 0o755))
 
+	before := readLoopGoroutines()
 	transport, err := NewStdioTransport(fake)
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = transport.Close() })
 
 	_, err = transport.Call(context.Background(), "ping", json.RawMessage("null"))
 	require.NoError(t, err)
@@ -468,6 +472,8 @@ func TestStdioTransport_CloseDoesNotHangOnAChattyWorker(t *testing.T) {
 	// Both matter: if draining regressed to a no-op the kill fallback would
 	// still return, and a test that only waits for Close to return would pass
 	// on the very path it exists to rule out.
+	require.Greater(t, closeGracePeriod, 3*time.Second,
+		"this test's bound assumes the grace period leaves room under it")
 	select {
 	case err := <-closeErr:
 		require.NotErrorIs(t, err, ErrWorkerNotExited,
@@ -475,6 +481,13 @@ func TestStdioTransport_CloseDoesNotHangOnAChattyWorker(t *testing.T) {
 	case <-time.After(closeGracePeriod - 2*time.Second):
 		t.Fatal("Close did not return promptly; the chatty worker wedged it")
 	}
+
+	// The reader must be gone once Close returns. In this case it ends on its
+	// own, because the worker exits and its pipe closes; TestDrainTail covers
+	// the case where it does not.
+	require.Eventually(t, func() bool { return readLoopGoroutines() <= before },
+		5*time.Second, 50*time.Millisecond,
+		"the reader goroutine was abandoned rather than released")
 }
 
 // A worker that stops reading stdin cannot be shut down by closing it, so Close
@@ -489,6 +502,7 @@ func TestStdioTransport_CloseKillsAWorkerThatIgnoresStdin(t *testing.T) {
 
 	transport, err := NewStdioTransport(fake)
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = transport.Close() })
 
 	_, err = transport.Call(context.Background(), "ping", json.RawMessage("null"))
 	require.NoError(t, err)
@@ -502,4 +516,114 @@ func TestStdioTransport_CloseKillsAWorkerThatIgnoresStdin(t *testing.T) {
 	case <-time.After(closeGracePeriod + 10*time.Second):
 		t.Fatal("Close did not return; the kill fallback did not fire")
 	}
+}
+
+// readLoopGoroutines counts the readers currently running, so a test can prove
+// Close released the one it started.
+func readLoopGoroutines() int {
+	buf := make([]byte, 1<<20)
+	n := runtime.Stack(buf, true)
+	return strings.Count(string(buf[:n]), "networkengine.(*StdioTransport).readLoop")
+}
+
+// A worker whose child outlives it keeps the stderr pipe open, so waiting on the
+// worker does not finish just because the worker was killed. Nothing else bounds
+// that wait: the delay os/exec applies starts only once the process has exited,
+// which never happens if the kill does not take. Remove the bound and this test
+// hangs rather than failing.
+func TestStdioTransport_CloseBoundsTheWaitForAnOrphanedChild(t *testing.T) {
+	fake := filepath.Join(t.TempDir(), "forking-worker.sh")
+	script := "#!/bin/sh\n" +
+		"IFS= read -r _line\n" +
+		"printf '%s\\n' '{\"id\":\"req-1\",\"ok\":true,\"result\":{\"protocol_version\":1}}'\n" +
+		"sleep 30 &\n" +
+		"while true; do sleep 1; done\n"
+	require.NoError(t, os.WriteFile(fake, []byte(script), 0o755))
+
+	transport, err := NewStdioTransport(fake)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = transport.Close() })
+
+	_, err = transport.Call(context.Background(), "ping", json.RawMessage("null"))
+	require.NoError(t, err)
+
+	start := time.Now()
+	closeErr := make(chan error, 1)
+	go func() { closeErr <- transport.Close() }()
+
+	select {
+	case err := <-closeErr:
+		assert.ErrorIs(t, err, ErrWorkerNotExited)
+		// Comfortably under the orphan's own lifetime, so passing cannot mean
+		// "we waited for the child to go away on its own".
+		assert.Less(t, time.Since(start), 15*time.Second,
+			"Close waited on the orphaned child rather than bounding the wait")
+	case <-time.After(25 * time.Second):
+		t.Fatal("Close did not return; the wait after the kill is unbounded")
+	}
+}
+
+// A worker can exit promptly and still leave a child holding the stderr pipe,
+// and waiting on the worker does not finish until that pipe closes. Without a
+// bound on the post-exit wait, Close sits until the grace period, kills a
+// process that already exited, and reports it as not having exited.
+func TestStdioTransport_CloseReturnsCleanlyWhenAChildOutlivesTheWorker(t *testing.T) {
+	fake := filepath.Join(t.TempDir(), "forking-exiter.sh")
+	script := "#!/bin/sh\n" +
+		"IFS= read -r _line\n" +
+		"printf '%s\\n' '{\"id\":\"req-1\",\"ok\":true,\"result\":{\"protocol_version\":1}}'\n" +
+		"sleep 30 &\n" +
+		"exit 0\n"
+	require.NoError(t, os.WriteFile(fake, []byte(script), 0o755))
+
+	transport, err := NewStdioTransport(fake)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = transport.Close() })
+
+	_, err = transport.Call(context.Background(), "ping", json.RawMessage("null"))
+	require.NoError(t, err)
+
+	start := time.Now()
+	closeErr := make(chan error, 1)
+	go func() { closeErr <- transport.Close() }()
+
+	select {
+	case err := <-closeErr:
+		assert.NotErrorIs(t, err, ErrWorkerNotExited,
+			"the worker exited on its own; only its child lingered")
+		assert.Less(t, time.Since(start), closeGracePeriod,
+			"Close waited for the grace period on a worker that had already exited")
+	case <-time.After(25 * time.Second):
+		t.Fatal("Close did not return; the post-exit wait is unbounded")
+	}
+}
+
+// drainTail keeps Close from abandoning a reader that is blocked on a full
+// channel, and must give up rather than block if the reader never stops.
+func TestDrainTail(t *testing.T) {
+	t.Run("returns once the reader closes the channel", func(t *testing.T) {
+		lines := make(chan json.RawMessage, 4)
+		lines <- json.RawMessage(`{"a":1}`)
+		lines <- json.RawMessage(`{"b":2}`)
+		close(lines)
+
+		require.NoError(t, drainTail(lines))
+	})
+
+	t.Run("gives up when the reader does not stop", func(t *testing.T) {
+		// Never written to and never closed, standing in for a reader that
+		// outlived the process it was reading.
+		lines := make(chan json.RawMessage)
+
+		start := time.Now()
+		err := drainTail(lines)
+
+		require.ErrorIs(t, err, errReaderStillRunning)
+		assert.GreaterOrEqual(t, time.Since(start), drainTailBound,
+			"it must wait the bound out rather than returning early")
+	})
+
+	t.Run("a nil channel is nothing to drain", func(t *testing.T) {
+		require.NoError(t, drainTail(nil))
+	})
 }

@@ -471,6 +471,32 @@ func TestEngineClient_PingDistinguishesAnUnreadableVersion(t *testing.T) {
 		"the worker did report one, so the message must not say otherwise")
 }
 
+// An explicit null decodes cleanly and leaves no version, so the decode result
+// cannot tell this apart from a response with no key at all. The worker did send
+// the key, and the quoted response shows it, so the message has to agree.
+func TestEngineClient_PingTreatsAnExplicitNullAsUnreadable(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`{"protocol_version":null}`)}
+	client := NewEngineClientWithTransport(mock)
+
+	_, err := client.Ping(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot read")
+	assert.NotContains(t, err.Error(), "does not report a protocol version",
+		"the response visibly carries the key, so the message must not deny it")
+}
+
+// encoding/json matches field tags case-insensitively, so the accepting path
+// takes this spelling. The diagnosing path has to agree, or a worker whose
+// version is merely unreadable is told it reported none.
+func TestEngineClient_PingDiagnosesAnOddlyCasedKey(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`{"PROTOCOL_VERSION":"x"}`)}
+	client := NewEngineClientWithTransport(mock)
+
+	_, err := client.Ping(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot read")
+}
+
 func TestEngineClient_PingRendersAnEmptyResponse(t *testing.T) {
 	mock := &mockTransport{response: nil}
 	client := NewEngineClientWithTransport(mock)
@@ -564,8 +590,9 @@ func TestNewEngineClient_RejectsWorkerWithWrongVersion(t *testing.T) {
 		"done\n"
 	require.NoError(t, os.WriteFile(fake, []byte(script), 0o755))
 
-	// Bounded so a wedged construction fails fast and labelled, rather than
-	// as a whole-suite timeout panic ten minutes later.
+	// Bounds the ping, not the whole call: the rejection path closes the
+	// transport, and that close has its own deadlines and does not consult this
+	// context. Construction can outlast the timeout set here.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 

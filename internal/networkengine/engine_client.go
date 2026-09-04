@@ -99,23 +99,23 @@ func (c *EngineClient) Ping(ctx context.Context) (int, error) {
 	}
 
 	var result pingResult
-	decodeErr := json.Unmarshal(raw, &result)
-	switch {
-	case decodeErr != nil && carriesVersionKey(raw):
+	if err := json.Unmarshal(raw, &result); err == nil && result.ProtocolVersion != nil {
+		return *result.ProtocolVersion, nil
+	}
+
+	// Two different failures with two different remedies, told apart by whether
+	// the key is there at all. Decoding cannot tell them apart: an explicit null
+	// decodes cleanly and still leaves no version.
+	if carriesVersionKey(raw) {
 		return 0, fmt.Errorf(
 			"worker reported a protocol version this client cannot read (responded %s); rebuild the worker binary",
 			renderForError(raw),
 		)
-	// A non-object response (the legacy bare "pong") fails to decode, and an
-	// object without the key decodes to a nil pointer. Both reported no
-	// version, so they share one error.
-	case decodeErr != nil, result.ProtocolVersion == nil:
-		return 0, fmt.Errorf(
-			"worker does not report a protocol version (responded %s); rebuild the worker binary",
-			renderForError(raw),
-		)
 	}
-	return *result.ProtocolVersion, nil
+	return 0, fmt.Errorf(
+		"worker does not report a protocol version (responded %s); rebuild the worker binary",
+		renderForError(raw),
+	)
 }
 
 // carriesVersionKey reports whether raw is a JSON object holding a
@@ -125,8 +125,16 @@ func carriesVersionKey(raw json.RawMessage) bool {
 	if json.Unmarshal(raw, &fields) != nil {
 		return false
 	}
-	_, present := fields["protocol_version"]
-	return present
+	for name := range fields {
+		// Matched the way encoding/json matches a field tag, which is
+		// case-insensitively. The accepting path would take any of these
+		// spellings, so this has to agree with it about what counts as a
+		// version key.
+		if strings.EqualFold(name, "protocol_version") {
+			return true
+		}
+	}
+	return false
 }
 
 // renderForError renders a wire payload for an error message. It is bounded, so

@@ -288,6 +288,11 @@ const drainTailBound = 2 * time.Second
 // whether the kill succeeded is reported separately by the joined error.
 var ErrWorkerNotExited = errors.New("worker did not exit within the close grace period")
 
+// ErrWorkerUnreaped reports that the worker had still not been reaped after it
+// was killed and the reap deadline elapsed. Close gives up and returns rather
+// than holding the caller for a process it cannot stop.
+var ErrWorkerUnreaped = errors.New("worker was not reaped after being killed")
+
 // Close shuts down the worker process by closing stdin and waiting for exit.
 //
 // It keeps draining stdout while it waits. readLoop is the only sender on
@@ -324,10 +329,35 @@ func (t *StdioTransport) Close() error {
 		case waitErr := <-waited:
 			return errors.Join(stdinErr, waitErr, drainTail(lines))
 		case <-timer.C:
-			killErr := t.kill()
-			waitErr := <-waited
-			return errors.Join(stdinErr, killErr, waitErr, ErrWorkerNotExited, drainTail(lines))
+			// The timer and the wait can become ready together, and select picks
+			// uniformly between them. Take the wait when it is already there:
+			// the worker did exit in time, and killing it and reporting
+			// otherwise would name a cause that was not observed.
+			select {
+			case waitErr := <-waited:
+				return errors.Join(stdinErr, waitErr, drainTail(lines))
+			default:
+			}
+			return errors.Join(stdinErr, t.killAndReap(lines, waited))
 		}
+	}
+}
+
+// killAndReap stops a worker that outlasted the grace period, then waits a
+// bounded time to reap it.
+//
+// The reap needs its own bound because nothing else supplies one. WaitDelay
+// starts counting once the process has exited, so it does nothing while the
+// process is still running -- which is the case here whenever the kill did not
+// take. Giving up leaves the wait running on its goroutine; the channel it
+// sends to is buffered, so that goroutine still finishes on its own.
+func (t *StdioTransport) killAndReap(lines <-chan json.RawMessage, waited <-chan error) error {
+	killErr := t.kill()
+	select {
+	case waitErr := <-waited:
+		return errors.Join(killErr, waitErr, ErrWorkerNotExited, drainTail(lines))
+	case <-time.After(waitIODelay):
+		return errors.Join(killErr, ErrWorkerNotExited, ErrWorkerUnreaped, drainTail(lines))
 	}
 }
 

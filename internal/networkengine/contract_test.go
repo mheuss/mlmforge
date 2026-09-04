@@ -400,7 +400,7 @@ func TestContractBoardPlan_SnapshotRoundTrip(t *testing.T) {
 // phase could bump the worker and the fixture together, leave the Go constant
 // behind, and see a green suite.
 func TestPingFixtureMatchesExpectedProtocolVersion(t *testing.T) {
-	path := filepath.Join("..", "..", "engine", "testdata", "contracts", "ping.json")
+	path := filepath.Join(contractFixtureDir, "ping.json")
 	data, err := os.ReadFile(path)
 	require.NoError(t, err, "failed to read %s", path)
 

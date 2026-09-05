@@ -401,7 +401,23 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
 
             // Past the break, level fits in u8 by construction:
             // level <= max_depth <= u8::MAX. This is the only narrowing
-            // point, and it is below the break on purpose.
+            // point, and it is below the break on purpose. The break is the
+            // whole guarantee, so assert it rather than only documenting it:
+            // a future edit that moves the break or increments level above
+            // this line would otherwise truncate silently and emit earnings
+            // at wrong levels. debug_assert follows validate_broad_pct above,
+            // but without its tracing::warn half: that one guards a value the
+            // caller supplies, while this holds by construction, so a release
+            // branch here would be dead code in the walk's hot loop.
+            //
+            // The saturating_add(1) increments below are likewise safe only
+            // because max_depth is u8, which caps level at 256. On a u16
+            // max_depth they would resaturate at u16::MAX and reintroduce
+            // exactly the bug this counter widening fixed.
+            debug_assert!(
+                level <= u16::from(u8::MAX),
+                "level {level} exceeds u8 before narrowing"
+            );
             let level_u8 = level as u8;
 
             if should_stop(node.user_id) {
@@ -992,6 +1008,44 @@ mod tests {
         assert_eq!(result[0].level, 1);
         assert_eq!(result[254].level, 255);
         assert_eq!(result[254].earner_id, test_uuid_u16(45)); // 300 - 255
+    }
+
+    #[test]
+    fn walk_terminates_at_max_depth_254() {
+        use crate::tree::test_helpers::test_uuid_u16;
+
+        // The value one below the newly reachable break. 255 is the case the
+        // u8 counter could not reach; 254 is the neighbour that proves the
+        // widening did not shift the boundary by one (design risk 2).
+        let (tree, snapshots) = deep_chain(300);
+        let elig = crate::commission::test_helpers::default_eligibility();
+        let cache = evaluate_eligibility(&snapshots, &tree, &elig);
+        let rank_ordinals = HashMap::from([("associate", 1u16)]);
+        let rate_table = full_depth_rate_table();
+
+        let config = LevelWalkConfig {
+            max_depth: 254,
+            broad_pct: 0.40,
+            multiplier: 1.0,
+            compression: None,
+            threshold_ordinal: None,
+            rank_ordinals: &rank_ordinals,
+            rate_table: &rate_table,
+            pass_up: None,
+            dynamic_thresholds: None,
+        };
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid_u16(300),
+            cv_amount: 100.0,
+        }];
+
+        let result =
+            walk_level_commissions(&tree, &config, &cache, &snapshots, &volume, |_| false).unwrap();
+
+        assert_eq!(result.len(), 254);
+        assert_eq!(result[253].level, 254);
+        assert_eq!(result[253].earner_id, test_uuid_u16(46)); // 300 - 254
     }
 
     #[test]

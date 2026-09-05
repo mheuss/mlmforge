@@ -238,8 +238,8 @@ proptest! {
 proptest! {
     /// Every streamline earning's dollar amount must equal
     /// `cv_amount * broad_pct * volume_to_dollar_multiplier * level.percent`,
-    /// where streamline hardcodes `broad_pct = 1.0` (streamline.rs:86) and the
-    /// per-level rate comes from the config-built rate table (walk.rs:474-488).
+    /// where streamline hardcodes `broad_pct = 1.0` (streamline.rs:137) and the
+    /// per-level rate comes from the config-built rate table (walk.rs:519-524).
     ///
     /// Companion to `commission_walk_completeness`: that pins the earner set,
     /// this pins the money. Stays in the clean monoline, fully-qualified
@@ -310,7 +310,7 @@ proptest! {
         // exercised on real earnings and the property keeps its teeth.
         prop_assert!(!earnings.is_empty(), "expected at least one earning");
 
-        // streamline.rs:86 hardcodes broad_pct = 1.0.
+        // streamline.rs:137 hardcodes broad_pct = 1.0.
         let broad_pct = 1.0f64;
         let cfg_levels = &structure.streamline_commission.levels;
         for earning in &earnings {
@@ -333,5 +333,109 @@ proptest! {
                 expected
             );
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Property 7: Declared-level permutation invariance
+// ---------------------------------------------------------------------------
+
+proptest! {
+    /// `calculate_streamline` must pair each threshold and rate with the level
+    /// its entry *declares*, not with the entry's position in the vector. So
+    /// permuting a contiguous table cannot change the earnings (HEU-612).
+    ///
+    /// The unit test `shuffled_table_pairs_threshold_to_declared_level` pins
+    /// one hardcoded 3-element permutation. This covers the general case: a
+    /// placement bug that only shows at four or more levels, or one that
+    /// depends on where the maximum sits in the vector, survives the unit test
+    /// and dies here.
+    ///
+    /// Levels carry distinct percents AND distinct ascending min_ranks, so
+    /// both halves of the pairing are load-bearing. Distributors sit at a
+    /// middle rank, which means the thresholds actually gate: a misplaced
+    /// threshold changes who earns, not just what they are paid. Comparing the
+    /// two runs rather than a predicted value is the point — the property is
+    /// invariance, and `calculate_streamline` sorts before returning, so the
+    /// comparison is order-stable.
+    #[test]
+    fn permuting_a_contiguous_table_does_not_change_earnings(
+        (level_count, keys) in (2_usize..6)
+            .prop_flat_map(|n| (Just(n), prop::collection::vec(any::<u64>(), n))),
+    ) {
+        use std::collections::HashMap;
+        use network_engine::commission::calculate_streamline;
+        use network_engine::commission::types::{DistributorSnapshot, VolumeSource};
+        use network_engine::config::streamline::{StreamlineCommissionConfig, StreamlineLevel};
+        use network_engine::config::StreamlineStructureConfig;
+        use network_engine::test_support::make_rank;
+
+        let chain_depth = level_count + 1;
+        let engine = build_engine(chain_depth);
+
+        // Level i requires rank "r{i}" at ordinal i, and pays 0.01 * i.
+        let sorted: Vec<StreamlineLevel> = (1..=level_count)
+            .map(|i| StreamlineLevel {
+                level: i as u8,
+                min_rank: format!("r{i}"),
+                percent: 0.01 * i as f64,
+            })
+            .collect();
+
+        // Shuffle by sorting a copy against the generated keys. Deterministic
+        // for a given input, and a permutation by construction.
+        let mut order: Vec<usize> = (0..sorted.len()).collect();
+        order.sort_by_key(|&i| keys[i]);
+        let shuffled: Vec<StreamlineLevel> =
+            order.iter().map(|&i| sorted[i].clone()).collect();
+
+        let run = |levels: Vec<StreamlineLevel>| {
+            let structure = StreamlineStructureConfig {
+                name: "Test".to_string(),
+                streamline_commission: StreamlineCommissionConfig {
+                    volume_to_dollar_multiplier: Some(1.0),
+                    max_depth: level_count as u8,
+                    levels,
+                    stream_config: None,
+                },
+            };
+            let mut plan = common::build_base_plan(
+                common::permissive_eligibility(),
+                network_engine::config::StructureConfig::Streamline(structure.clone()),
+                "Test",
+            );
+            plan.ranks = (1..=level_count)
+                .map(|i| make_rank(&format!("r{i}"), i as u16, vec!["Test".to_string()]))
+                .collect();
+
+            // Everyone sits at r2, a middle rank, so levels above it are gated
+            // out and levels at or below it pay. A misplaced threshold moves
+            // that boundary.
+            let mut snapshots = HashMap::new();
+            for i in 1..=chain_depth {
+                snapshots.insert(uuid_from_index(i), DistributorSnapshot {
+                    rank: "r2".to_string(),
+                    personal_volume: 150.0,
+                    status: "active".to_string(),
+                    has_order_in_period: true,
+                });
+            }
+
+            let volume = vec![VolumeSource {
+                source_id: uuid_from_index(chain_depth),
+                cv_amount: 100.0,
+            }];
+
+            calculate_streamline(&engine, &plan, &structure, &snapshots, &volume)
+                .expect("a contiguous table must calculate")
+        };
+
+        let from_sorted = run(sorted);
+        let from_shuffled = run(shuffled);
+        // Equality is trivially true if both runs return nothing, which is how
+        // this property would rot into a vacuous pass. Property 6 guards the
+        // same way.
+        prop_assert!(!from_sorted.is_empty(), "fixture must produce earnings");
+        prop_assert_eq!(from_sorted, from_shuffled);
     }
 }

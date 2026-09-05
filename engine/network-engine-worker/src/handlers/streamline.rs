@@ -432,10 +432,13 @@ fn find_streamline_structure<'a>(
 pub(crate) fn handle_calculate_streamline(state: &WorkerState, request: &Request) -> Response {
     // The *commission* config comes from the plan validated by handle_load_plan,
     // never from request params (HEU-583, design rationale 028). "Validated"
-    // means whatever StreamlineCommissionConfig::validate checks, which is not
-    // everything — it leaves commissionable_depth unbounded above and does not
-    // check dynamic_compression for ordering, gaps, or duplicates (HEU-612).
-    // This change is what made that validator the sole point of trust.
+    // means whatever StreamlineCommissionConfig::validate checks. HEU-612 closed
+    // the two holes that used to sit here: the depth limit is now enforced by
+    // the walk itself, which counts levels in u16 so the break fires even at
+    // commissionable_depth 255, and validate rejects a dynamic_compression
+    // table that is empty, out of order, gapped, or duplicated.
+    // HEU-583 is what made that validator the sole point of trust; HEU-612 is
+    // what made it worth trusting.
     //
     // Three adjacent gaps are deliberately not closed here:
     //

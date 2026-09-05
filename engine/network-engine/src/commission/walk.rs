@@ -55,12 +55,13 @@ pub(crate) struct PassUpContext {
 /// stairstep Walk 1. The caller computes any plan-specific values
 /// (e.g., matrix height ceiling) before constructing this struct.
 pub(crate) struct LevelWalkConfig<'a> {
-    /// u8 is sufficient because realistic max_depth values are 1-20. A
-    /// 255-level commission plan doesn't exist. If level saturates at
-    /// u8::MAX due to a pathological config, the walk would emit extra
-    /// earnings at level 255. The Go validation pipeline enforces
-    /// reasonable max_depth values upstream, so we accept this as a
-    /// known non-risk rather than widening to u16.
+    /// Realistic max_depth values are 1-20, and a 255-level commission plan
+    /// does not exist, but the full u8 range is valid config and the schema
+    /// publishes it. The walk counts levels in u16 so the break below fires
+    /// even at max_depth 255, where a u8 counter would saturate and never
+    /// exceed it. The engine does not rely on the Go pipeline having run
+    /// (HEU-517), so the counter, not upstream validation, is what makes
+    /// this safe.
     pub max_depth: u8,
     pub broad_pct: f64,
     pub multiplier: f64,
@@ -391,12 +392,34 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
     for source in volume {
         let upline = validate_source(tree, snapshots, source)?;
 
-        let mut level: u8 = 1;
+        let mut level: u16 = 1;
 
         for node in &upline {
-            if level > config.max_depth {
+            if level > u16::from(config.max_depth) {
                 break;
             }
+
+            // Past the break, level fits in u8 by construction:
+            // level <= max_depth <= u8::MAX. This is the only narrowing
+            // point, and it is below the break on purpose. The break is the
+            // whole guarantee, so assert it rather than only documenting it:
+            // a future edit that moves the break or increments level above
+            // this line would otherwise truncate silently and emit earnings
+            // at wrong levels. A bare debug_assert is the convention for a
+            // by-construction invariant on a hot path (tree/arena.rs:44, :54,
+            // :77). The debug_assert + tracing::warn pairing used by
+            // validate_broad_pct below is for caller-supplied values, where
+            // the warn branch is actually reachable in release.
+            //
+            // The saturating_add(1) increments below are likewise safe only
+            // because max_depth is u8, which caps level at 256. On a u16
+            // max_depth they would resaturate at u16::MAX and reintroduce
+            // exactly the bug this counter widening fixed.
+            debug_assert!(
+                level <= u16::from(u8::MAX),
+                "level {level} exceeds u8 before narrowing"
+            );
+            let level_u8 = level as u8;
 
             if should_stop(node.user_id) {
                 break;
@@ -486,7 +509,7 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
 
             // Check per-distributor depth limit from active leg tiers
             if let Some(max_personal) = elig.and_then(|e| e.max_earning_depth) {
-                if level > max_personal {
+                if level > u16::from(max_personal) {
                     level = level.saturating_add(1);
                     continue;
                 }
@@ -496,7 +519,7 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
             let rate = config
                 .rate_table
                 .get(&snapshot.rank)
-                .and_then(|levels| levels.get(&level))
+                .and_then(|levels| levels.get(&level_u8))
                 .copied()
                 .unwrap_or(0.0);
 
@@ -504,7 +527,7 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
                 all_earnings.push(CommissionEarning {
                     earner_id: node.user_id,
                     source_id: source.source_id,
-                    level,
+                    level: level_u8,
                     rate,
                     cv_amount: source.cv_amount,
                     dollar_amount: source.cv_amount * config.broad_pct * config.multiplier * rate,
@@ -844,6 +867,45 @@ mod tests {
 
     // --- walk_level_commissions ---
 
+    /// Builds a linear unilevel chain `depth` nodes below the root, all
+    /// eligible. Node 0 is the root; node `depth` is the bottom.
+    fn deep_chain(depth: u16) -> (UnilevelTree, HashMap<Uuid, DistributorSnapshot>) {
+        use crate::tree::test_helpers::test_uuid_u16;
+
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid_u16(0), 0).unwrap();
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid_u16(0),
+            crate::commission::test_helpers::eligible_snapshot(),
+        );
+        for i in 1..=depth {
+            tree.add_node(
+                test_uuid_u16(i),
+                test_uuid_u16(i - 1),
+                test_uuid_u16(i - 1),
+                i as i64,
+            )
+            .unwrap();
+            snapshots.insert(
+                test_uuid_u16(i),
+                crate::commission::test_helpers::eligible_snapshot(),
+            );
+        }
+        (tree, snapshots)
+    }
+
+    /// A rate table that pays at every level from 1 to 255.
+    fn full_depth_rate_table() -> BTreeMap<String, BTreeMap<u8, f64>> {
+        let mut rates = BTreeMap::new();
+        for l in 1..=255u8 {
+            rates.insert(l, 0.01);
+        }
+        let mut table = BTreeMap::new();
+        table.insert("associate".to_string(), rates);
+        table
+    }
+
     fn test_rate_table() -> BTreeMap<String, BTreeMap<u8, f64>> {
         let mut table = BTreeMap::new();
         let mut rates = BTreeMap::new();
@@ -907,6 +969,123 @@ mod tests {
         assert_eq!(result[0].level, 1);
         assert_eq!(result[0].rate, 0.05);
         assert!((result[0].dollar_amount - 2.0).abs() < 1e-10); // 100 * 0.40 * 1.0 * 0.05
+    }
+
+    #[test]
+    fn walk_terminates_at_max_depth_255() {
+        use crate::tree::test_helpers::test_uuid_u16;
+
+        // 300 nodes below the root, so the source has 300 ancestors. With a
+        // u8 counter the break `level > max_depth` is unreachable at 255: the
+        // counter saturates and every ancestor past 255 keeps earning at
+        // level 255. The walk must stop instead (HEU-612).
+        let (tree, snapshots) = deep_chain(300);
+        let elig = crate::commission::test_helpers::default_eligibility();
+        let cache = evaluate_eligibility(&snapshots, &tree, &elig);
+        let rank_ordinals = HashMap::from([("associate", 1u16)]);
+        let rate_table = full_depth_rate_table();
+
+        let config = LevelWalkConfig {
+            max_depth: 255,
+            broad_pct: 0.40,
+            multiplier: 1.0,
+            compression: None,
+            threshold_ordinal: None,
+            rank_ordinals: &rank_ordinals,
+            rate_table: &rate_table,
+            pass_up: None,
+            dynamic_thresholds: None,
+        };
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid_u16(300),
+            cv_amount: 100.0,
+        }];
+
+        let result =
+            walk_level_commissions(&tree, &config, &cache, &snapshots, &volume, |_| false).unwrap();
+
+        assert_eq!(result.len(), 255, "walk must pay exactly 255 levels");
+        assert_eq!(result[0].level, 1);
+        assert_eq!(result[254].level, 255);
+        assert_eq!(result[254].earner_id, test_uuid_u16(45)); // 300 - 255
+    }
+
+    #[test]
+    fn walk_terminates_at_max_depth_254() {
+        use crate::tree::test_helpers::test_uuid_u16;
+
+        // The value one below the newly reachable break. 255 is the case the
+        // u8 counter could not reach; 254 is the neighbour that proves the
+        // widening did not shift the boundary by one (design risk 2).
+        let (tree, snapshots) = deep_chain(300);
+        let elig = crate::commission::test_helpers::default_eligibility();
+        let cache = evaluate_eligibility(&snapshots, &tree, &elig);
+        let rank_ordinals = HashMap::from([("associate", 1u16)]);
+        let rate_table = full_depth_rate_table();
+
+        let config = LevelWalkConfig {
+            max_depth: 254,
+            broad_pct: 0.40,
+            multiplier: 1.0,
+            compression: None,
+            threshold_ordinal: None,
+            rank_ordinals: &rank_ordinals,
+            rate_table: &rate_table,
+            pass_up: None,
+            dynamic_thresholds: None,
+        };
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid_u16(300),
+            cv_amount: 100.0,
+        }];
+
+        let result =
+            walk_level_commissions(&tree, &config, &cache, &snapshots, &volume, |_| false).unwrap();
+
+        assert_eq!(result.len(), 254);
+        assert_eq!(result[0].level, 1);
+        assert_eq!(result[253].level, 254);
+        assert_eq!(result[253].earner_id, test_uuid_u16(46)); // 300 - 254
+    }
+
+    #[test]
+    fn walk_earning_level_stays_u8() {
+        use crate::tree::test_helpers::test_uuid_u16;
+
+        // CommissionEarning.level is the public wire type. Widening the walk
+        // counter must not widen it (HEU-612 requirement 2). This one is a
+        // compatibility guard, not a red test: it passes before the fix too,
+        // and its job is to fail if a later change widens the wire type.
+        let (tree, snapshots) = deep_chain(300);
+        let elig = crate::commission::test_helpers::default_eligibility();
+        let cache = evaluate_eligibility(&snapshots, &tree, &elig);
+        let rank_ordinals = HashMap::from([("associate", 1u16)]);
+        let rate_table = full_depth_rate_table();
+
+        let config = LevelWalkConfig {
+            max_depth: 255,
+            broad_pct: 0.40,
+            multiplier: 1.0,
+            compression: None,
+            threshold_ordinal: None,
+            rank_ordinals: &rank_ordinals,
+            rate_table: &rate_table,
+            pass_up: None,
+            dynamic_thresholds: None,
+        };
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid_u16(300),
+            cv_amount: 100.0,
+        }];
+
+        let result =
+            walk_level_commissions(&tree, &config, &cache, &snapshots, &volume, |_| false).unwrap();
+
+        let deepest: u8 = result[254].level;
+        assert_eq!(deepest, 255);
     }
 
     #[test]

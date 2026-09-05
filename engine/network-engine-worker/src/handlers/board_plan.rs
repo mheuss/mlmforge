@@ -63,7 +63,7 @@ fn get_board_plan<'a>(
 ///
 /// The `StructureConfig::BoardPlan` variant guard cannot be defeated by a
 /// same-named structure of another type: `check_unique_structure_names`
-/// (HEU-605, `config/validate.rs:129`) rejects duplicate names across the
+/// (HEU-605, `config/validate.rs:136`) rejects duplicate names across the
 /// whole plan. The guard is what makes the return type work, not a filter.
 fn find_board_plan_structure<'a>(
     plan: &'a CompensationPlan,

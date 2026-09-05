@@ -26,15 +26,48 @@ pub fn calculate_streamline(
 ) -> Result<Vec<CommissionEarning>, CalculationError> {
     let rank_ordinals = walk::build_rank_ordinals(plan);
 
-    // Build dynamic threshold array from the per-level config.
-    // Convert each level's min_rank name to its ordinal. Empty
-    // min_rank means no threshold (ordinal 0).
-    let mut thresholds: Vec<u16> = Vec::with_capacity(structure.streamline_commission.levels.len());
+    // Place each threshold at its declared level rather than at its position.
+    // walk.rs reads thresholds[level - 1] and the rate table is keyed by the
+    // declared level, so a position fill desynchronizes the two whenever the
+    // table is not contiguous. validate() rejects such tables; this keeps the
+    // pairing correct on any path that reaches here without it (HEU-612).
+    //
+    // Empty min_rank means no threshold (ordinal 0).
+    //
+    // An empty table is the third member of this guard family and the one with
+    // the worst failure mode. Without this it falls through: max_level is 0,
+    // slots is empty, the gap map over an empty vec yields Ok, and the walk
+    // gets dynamic_thresholds: Some(&[]) — no level gated, no rate in the
+    // table, so every rate falls to 0.0 and the call pays nobody without
+    // saying why. validate() rejects it at load; this covers the direct
+    // caller (HEU-670).
+    if structure.streamline_commission.levels.is_empty() {
+        return Err(CalculationError::ConfigError(
+            "streamline dynamic_compression is empty; no level can pay".to_string(),
+        ));
+    }
+
+    let max_level = structure
+        .streamline_commission
+        .levels
+        .iter()
+        .map(|l| l.level)
+        .max()
+        .expect("levels is non-empty; guarded above");
+    let mut slots: Vec<Option<u16>> = vec![None; usize::from(max_level)];
+
     for level in &structure.streamline_commission.levels {
-        if level.min_rank.is_empty() {
-            thresholds.push(0);
+        // Levels are 1-based. A declared 0 would underflow the index below,
+        // and a panic in the worker is worse than the bug being fixed.
+        if level.level < 1 {
+            return Err(CalculationError::ConfigError(
+                "streamline dynamic_compression level 0 is invalid; levels are 1-based".to_string(),
+            ));
+        }
+        let ordinal = if level.min_rank.is_empty() {
+            0
         } else {
-            let ordinal = rank_ordinals
+            rank_ordinals
                 .get(level.min_rank.as_str())
                 .copied()
                 .ok_or_else(|| {
@@ -42,10 +75,28 @@ pub fn calculate_streamline(
                         "streamline level {} references unknown rank {:?}",
                         level.level, level.min_rank
                     ))
-                })?;
-            thresholds.push(ordinal);
-        }
+                })?
+        };
+        // In bounds: slots is sized to max_level, and the guard above proved
+        // level.level >= 1.
+        slots[usize::from(level.level) - 1] = Some(ordinal);
     }
+
+    // A gap means no threshold was declared for that level. There is no safe
+    // default: 0 pays everyone, and any sentinel is a real ordinal, because
+    // rank ordinals span the whole u16 range (config/rank.rs:29). Refuse.
+    let thresholds: Vec<u16> = slots
+        .into_iter()
+        .enumerate()
+        .map(|(idx, slot)| {
+            slot.ok_or_else(|| {
+                CalculationError::ConfigError(format!(
+                    "streamline dynamic_compression has no entry for level {}",
+                    idx + 1
+                ))
+            })
+        })
+        .collect::<Result<_, _>>()?;
 
     let multiplier = structure
         .streamline_commission
@@ -156,6 +207,18 @@ mod tests {
             }
         }
         engine
+    }
+
+    fn rank_def(name: &str, ordinal: u16) -> crate::config::rank::RankDefinition {
+        test_helpers::make_rank(name, ordinal, vec!["test_streamline".to_string()])
+    }
+
+    fn level(n: u8, min_rank: &str, percent: f64) -> StreamlineLevel {
+        StreamlineLevel {
+            level: n,
+            min_rank: min_rank.to_string(),
+            percent,
+        }
     }
 
     #[test]
@@ -425,5 +488,203 @@ mod tests {
             calculate_streamline(&engine, &plan, &structure, &snapshots, &volume).unwrap();
         // Only 2 levels paid (depth cutoff), not 4.
         assert_eq!(earnings.len(), 2);
+    }
+
+    #[test]
+    fn shuffled_table_pairs_threshold_to_declared_level() {
+        // calculate_streamline is reachable without validate(), so a shuffled
+        // table must pair each threshold with its own declared level's rate,
+        // not with its position in the vector (HEU-612).
+        let engine = make_engine(5);
+
+        let sorted = vec![
+            level(1, "associate", 0.10),
+            level(2, "bronze", 0.05),
+            level(3, "silver", 0.02),
+        ];
+        let shuffled = vec![
+            level(3, "silver", 0.02),
+            level(1, "associate", 0.10),
+            level(2, "bronze", 0.05),
+        ];
+
+        let run = |levels: Vec<StreamlineLevel>| {
+            let structure = make_structure(levels, 5);
+            let mut plan = test_helpers::build_test_plan(
+                test_helpers::default_eligibility(),
+                crate::config::StructureConfig::Streamline(structure.clone()),
+                "test_streamline",
+            );
+            plan.ranks = vec![
+                rank_def("associate", 0),
+                rank_def("bronze", 1),
+                rank_def("silver", 2),
+            ];
+
+            let mut snapshots = HashMap::new();
+            // Chain 1 -> 2 -> 3 -> 4 -> 5. Volume at 5 walks up 4, 3, 2, 1.
+            let ranks = ["silver", "bronze", "associate", "bronze", "associate"];
+            for (i, rank) in ranks.iter().enumerate() {
+                snapshots.insert(
+                    test_uuid((i + 1) as u8),
+                    DistributorSnapshot {
+                        rank: rank.to_string(),
+                        personal_volume: 150.0,
+                        status: "active".to_string(),
+                        has_order_in_period: true,
+                    },
+                );
+            }
+
+            let volume = vec![VolumeSource {
+                source_id: test_uuid(5),
+                cv_amount: 100.0,
+            }];
+
+            calculate_streamline(&engine, &plan, &structure, &snapshots, &volume).unwrap()
+        };
+
+        let from_sorted = run(sorted);
+        let from_shuffled = run(shuffled);
+        assert_eq!(from_sorted, from_shuffled);
+
+        // Pin the shape too. Equality alone would still hold if rank gating
+        // were accidentally disabled on both runs, which is the failure this
+        // test is least able to see.
+        //
+        // Walk up from 5: node 4 is bronze (ordinal 1) and level 1 needs
+        // associate (0), so it earns at level 1 and 0.10. Node 3 is associate
+        // (0) and level 2 needs bronze (1), so it is compressed without
+        // consuming the level. Node 2 is bronze and earns at level 2 and 0.05.
+        // Node 1 is silver (2) and level 3 needs silver, so it earns at level 3
+        // and 0.02.
+        //
+        // calculate_streamline ends with walk::sort_earnings, which orders by
+        // (earner_id, source_id, level). test_uuid puts the index in the
+        // leading byte, so the earners come back ascending: 1, 2, 4.
+        let shape: Vec<(Uuid, u8, f64)> = from_shuffled
+            .iter()
+            .map(|e| (e.earner_id, e.level, e.rate))
+            .collect();
+        assert_eq!(
+            shape,
+            vec![
+                (test_uuid(1), 3, 0.02),
+                (test_uuid(2), 2, 0.05),
+                (test_uuid(4), 1, 0.10),
+            ]
+        );
+    }
+
+    #[test]
+    fn gapped_table_errors_rather_than_paying() {
+        // The apex rank at ordinal 65535 is why no gap sentinel is safe:
+        // u16::MAX is itself a legitimate ordinal. It does not change this
+        // test's outcome, which turns only on the error. See design decision 5.
+        let engine = make_engine(5);
+        let levels = vec![level(1, "associate", 0.10), level(3, "apex", 0.02)];
+        let structure = make_structure(levels, 5);
+
+        let mut plan = test_helpers::build_test_plan(
+            test_helpers::default_eligibility(),
+            crate::config::StructureConfig::Streamline(structure.clone()),
+            "test_streamline",
+        );
+        plan.ranks = vec![rank_def("associate", 0), rank_def("apex", 65535)];
+
+        let mut snapshots = HashMap::new();
+        for i in 1..=5u8 {
+            snapshots.insert(
+                test_uuid(i),
+                DistributorSnapshot {
+                    rank: "apex".to_string(),
+                    personal_volume: 150.0,
+                    status: "active".to_string(),
+                    has_order_in_period: true,
+                },
+            );
+        }
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(5),
+            cv_amount: 100.0,
+        }];
+
+        let err = calculate_streamline(&engine, &plan, &structure, &snapshots, &volume)
+            .expect_err("a gapped table must not produce earnings");
+        match err {
+            CalculationError::ConfigError(msg) => {
+                assert!(msg.contains("level 2"), "unexpected message: {msg}");
+            }
+            other => panic!("expected ConfigError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn empty_table_errors_rather_than_paying_nobody() {
+        // The third guard. Before HEU-670 this returned Ok(vec![]) and paid
+        // nobody, which is quieter and worse than the gap case beside it.
+        let engine = make_engine(3);
+        let structure = make_structure(vec![], 5);
+
+        let plan = test_helpers::build_test_plan(
+            test_helpers::default_eligibility(),
+            crate::config::StructureConfig::Streamline(structure.clone()),
+            "test_streamline",
+        );
+
+        let mut snapshots = HashMap::new();
+        for i in 1..=3u8 {
+            snapshots.insert(test_uuid(i), test_helpers::eligible_snapshot());
+        }
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let err = calculate_streamline(&engine, &plan, &structure, &snapshots, &volume)
+            .expect_err("an empty table must not silently pay nobody");
+        match err {
+            CalculationError::ConfigError(msg) => {
+                assert!(msg.contains("is empty"), "unexpected message: {msg}");
+            }
+            other => panic!("expected ConfigError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn level_zero_errors_rather_than_panicking() {
+        // Levels are 1-based. A declared level of 0 would underflow the index.
+        let engine = make_engine(3);
+        let levels = vec![level(0, "associate", 0.10)];
+        let structure = make_structure(levels, 5);
+
+        let plan = test_helpers::build_test_plan(
+            test_helpers::default_eligibility(),
+            crate::config::StructureConfig::Streamline(structure.clone()),
+            "test_streamline",
+        );
+
+        let mut snapshots = HashMap::new();
+        for i in 1..=3u8 {
+            snapshots.insert(test_uuid(i), test_helpers::eligible_snapshot());
+        }
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let err = calculate_streamline(&engine, &plan, &structure, &snapshots, &volume)
+            .expect_err("level 0 must be rejected, not panic");
+        match err {
+            CalculationError::ConfigError(msg) => {
+                // Pin the message: the shared fixture could otherwise satisfy
+                // this test with an unrelated ConfigError.
+                assert!(msg.contains("1-based"), "unexpected message: {msg}");
+            }
+            other => panic!("expected ConfigError, got {other:?}"),
+        }
     }
 }

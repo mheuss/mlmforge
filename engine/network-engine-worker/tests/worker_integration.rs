@@ -3437,6 +3437,258 @@ fn streamline_snapshot_round_trip() {
     worker.wait().unwrap();
 }
 
+/// An empty `dynamic_compression` table is rejected at load time (HEU-612).
+///
+/// Asserts the *message*, not just the code. `handle_load_plan` returns
+/// `INVALID_PLAN` for a deserialize failure too, so a code-only check would
+/// stay green if the plan constant changed shape and this rule never ran. That
+/// is not hypothetical: the contract fixture for this rule asserts only the
+/// code, and renaming a plan field makes it pass while asserting nothing.
+/// HEU-674 covers that at the harness level; this covers it here.
+#[test]
+fn load_plan_rejects_empty_compression_table() {
+    let mut worker = common::spawn_worker();
+
+    let plan = STREAMLINE_TEST_PLAN_JSON.replace(
+        r#"[
+                        { "level": 1, "min_rank": "member", "percent": 0.10 }
+                    ]"#,
+        "[]",
+    );
+    assert!(
+        plan.contains(r#""dynamic_compression": []"#),
+        "the level replacement did not match; the plan constant changed shape"
+    );
+
+    let resp = send_load_plan(&mut worker, &plan);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PLAN"),
+        "expected INVALID_PLAN, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("at least one level"),
+        "expected the empty-table gate to reject it, not a deserialize failure \
+         or an unrelated rule, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// A `commissionable_depth` below the declared level count is rejected at load
+/// time (HEU-612). Same message-asserting rationale as its two siblings above.
+#[test]
+fn load_plan_rejects_depth_below_level_count() {
+    let mut worker = common::spawn_worker();
+
+    // Two levels at depth 1. Both mutations are needed: the constant declares
+    // one level at depth 5, so dropping depth alone gives 1 >= 1 and passes.
+    let plan = STREAMLINE_TEST_PLAN_JSON
+        .replace(
+            r#""commissionable_depth": 5"#,
+            r#""commissionable_depth": 1"#,
+        )
+        .replace(
+            r#"{ "level": 1, "min_rank": "member", "percent": 0.10 }"#,
+            r#"{ "level": 1, "min_rank": "member", "percent": 0.10 },
+                        { "level": 2, "min_rank": "member", "percent": 0.05 }"#,
+        );
+    assert!(
+        plan.contains(r#""commissionable_depth": 1"#) && plan.contains(r#""level": 2"#),
+        "the depth or level replacement did not match; the plan constant changed shape"
+    );
+
+    let resp = send_load_plan(&mut worker, &plan);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PLAN"),
+        "expected INVALID_PLAN, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("must be >= number of levels"),
+        "expected the depth gate to reject it, not a deserialize failure or an \
+         unrelated rule, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// A gap in `dynamic_compression` is rejected at load time, over the real
+/// NDJSON seam (HEU-612). The calculator indexes its threshold vector by
+/// declared level and the rate table is keyed the same way, so a gapped table
+/// would otherwise pair one level's rate with another level's rank threshold.
+///
+/// Asserts the rejection *message*, not just the code, for the same reason
+/// `load_plan_rejects_streamline_percent_out_of_range` does: `handle_load_plan`
+/// returns `INVALID_PLAN` for a deserialize failure too, so a code-only check
+/// would stay green if the contiguity gate were never reached.
+#[test]
+fn load_plan_rejects_gapped_compression_table() {
+    let mut worker = common::spawn_worker();
+
+    // Levels 1 and 3 with nothing at 2. The gate must reject this rather than
+    // let the calculator pair level 2's rate with level 3's threshold.
+    let plan = STREAMLINE_TEST_PLAN_JSON.replace(
+        r#"{ "level": 1, "min_rank": "member", "percent": 0.10 }"#,
+        r#"{ "level": 1, "min_rank": "member", "percent": 0.10 },
+                        { "level": 3, "min_rank": "member", "percent": 0.05 }"#,
+    );
+    assert!(
+        plan != STREAMLINE_TEST_PLAN_JSON,
+        "the level replacement did not match; the plan constant changed shape"
+    );
+
+    let resp = send_load_plan(&mut worker, &plan);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PLAN"),
+        "expected INVALID_PLAN, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("contiguous ascending run"),
+        "expected the contiguity gate to reject it, not a deserialize failure \
+         or an unrelated rule, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn calculate_streamline_at_depth_255() {
+    let mut worker = common::spawn_worker();
+
+    // 255 levels at depth 255. The walk must stop at 255 rather than saturate
+    // and keep paying every remaining ancestor at level 255 (HEU-612).
+    let levels: Vec<String> = (1..=255u16)
+        .map(|l| {
+            format!(
+                r#"{{ "level": {}, "min_rank": "member", "percent": 0.01 }}"#,
+                l
+            )
+        })
+        .collect();
+    let plan = STREAMLINE_TEST_PLAN_JSON
+        .replace(
+            r#""commissionable_depth": 5"#,
+            r#""commissionable_depth": 255"#,
+        )
+        .replace(
+            r#"{ "level": 1, "min_rank": "member", "percent": 0.10 }"#,
+            &levels.join(","),
+        );
+    assert!(
+        plan.contains(r#""commissionable_depth": 255"#) && plan.contains(r#""level": 255"#),
+        "the depth or level replacement did not match; the plan constant changed shape"
+    );
+
+    let resp = send_load_plan(&mut worker, &plan);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "depth-255 plan should load: {}",
+        resp
+    );
+
+    create_streamline(&mut worker);
+
+    // 257 members: the source at position 257 has 256 ancestors, one more than
+    // the depth limit. Under the old u8 counter all 256 earned.
+    //
+    // This has to be an integration test. `make_engine` in the streamline unit
+    // tests takes `n_members: u8`, so 256 ancestors is unreachable from there.
+    //
+    // Every member after the bootstrap sponsors from member 1, not from its
+    // predecessor. In sponsor_stream mode placement requires the sponsor to own
+    // a stream and only the bootstrap member does, so a predecessor chain would
+    // return NoOwnedStreams. The physical chain is linear regardless, because
+    // add_member always appends to the stream's current bottom. Same shape
+    // `make_engine` uses.
+    //
+    // The bootstrap discards its sponsor argument, so 999 is arbitrary. It is a
+    // high number for the same reason make_engine uses test_uuid(99): it reads
+    // as "not one of the members".
+    let uid = |i: u32| format!("00000000-0000-0000-0000-{:012}", i);
+    for i in 1..=257u32 {
+        let sponsor = if i == 1 { uid(999) } else { uid(1) };
+        sl_add_member(
+            &mut worker,
+            &format!("m-{i}"),
+            &uid(i),
+            &sponsor,
+            1000 + i as i64,
+        );
+    }
+
+    let snapshots: Vec<String> = (1..=257u32)
+        .map(|i| {
+            format!(
+                r#""{}":{{"rank":"member","personal_volume":100.0,"status":"active","has_order_in_period":true}}"#,
+                uid(i)
+            )
+        })
+        .collect();
+    let request = format!(
+        r#"{{"id":"sl-255","op":"calculate_streamline","params":{{"structure":"{}","snapshots":{{{}}},"volume":[{{"source_id":"{}","cv_amount":100.0}}]}}}}"#,
+        SL_STRUCTURE,
+        snapshots.join(","),
+        uid(257)
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    let parsed: serde_json::Value = serde_json::from_str(&resp).expect(&resp);
+    assert_eq!(parsed["ok"], serde_json::json!(true), "got: {}", resp);
+    let earnings = parsed["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("expected an earnings array, got: {resp}"));
+
+    // Assert the whole walk, not just its length. A count of 255 with a max
+    // level of 255 also survives an off-by-one in upline collection, or 254
+    // earnings at level 1 plus one at level 255.
+    assert_eq!(earnings.len(), 255, "walk must stop at level 255");
+
+    let mut levels_paid: Vec<u64> = earnings
+        .iter()
+        .map(|e| e["level"].as_u64().expect(&resp))
+        .collect();
+    levels_paid.sort_unstable();
+    assert_eq!(
+        levels_paid,
+        (1..=255u64).collect::<Vec<_>>(),
+        "levels must be exactly 1..=255 with no duplicates"
+    );
+
+    // Level N pays the ancestor N positions above the source, so level 1 is
+    // member 256 and level 255 is member 2. Member 1 owns the stream and sits
+    // one past the depth limit, so it earns nothing.
+    let earner_at = |lvl: u64| -> String {
+        let earning = earnings
+            .iter()
+            .find(|e| e["level"].as_u64() == Some(lvl))
+            .unwrap_or_else(|| panic!("no earning at level {lvl}, got: {resp}"));
+        earning["earner_id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("earning at level {lvl} has no earner_id: {resp}"))
+            .to_string()
+    };
+    assert_eq!(earner_at(1), uid(256));
+    assert_eq!(earner_at(255), uid(2));
+
+    // 100 CV * 1.0 multiplier * 0.01 is exactly 1.0 in binary floating point,
+    // so the total is bit-exact and safe to assert.
+    let total: f64 = earnings
+        .iter()
+        .map(|e| e["dollar_amount"].as_f64().expect(&resp))
+        .sum();
+    assert_eq!(total, 255.0, "each of 255 levels pays exactly 1.00");
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 /// The HEU-517 gate rejects an out-of-range streamline percent at load time.
 /// HEU-583 makes `calculate_streamline` resolve its config from the loaded plan
 /// rather than from request params, at which point this gate is the only thing

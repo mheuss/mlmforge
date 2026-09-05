@@ -17,6 +17,13 @@
 //! actually run (`width >= 2`, breadth-first spillover only), and structure
 //! names unique across the plan so name-based lookup is unambiguous.
 //!
+//! Streamline `dynamic_compression` is checked too: non-empty, a contiguous
+//! ascending run from 1, and no longer than `commissionable_depth` (HEU-612).
+//! Those three mirror rules Go already enforces, so Rust does not refuse a plan
+//! the Go pipeline passed. The parity argument rests on two Go files rather
+//! than one. Read the notes on `StreamlineCommissionConfig::validate` before
+//! auditing it.
+//!
 //! The pattern follows `CycleStepConfig::validate` (config/binary.rs): `&mut
 //! self` so normalization can ride along with the checks, and `Result<(),
 //! String>` where the string names the violated invariant. `handle_load_plan`
@@ -262,6 +269,66 @@ impl StreamlineCommissionConfig {
             return Err(format!(
                 "commissionable_depth must be >= 1, got {}",
                 self.max_depth
+            ));
+        }
+        // Go rejects an empty table (empty_compression_table,
+        // internal/config/rules.go:914). Mirror it. An empty table pays
+        // nothing at any level, which is a config error rather than a valid
+        // plan.
+        if self.levels.is_empty() {
+            return Err("dynamic_compression must have at least one level".to_string());
+        }
+        // The threshold vector is indexed by declared level and the rate table
+        // is keyed by the declared level, so the two agree only when the
+        // declared levels are a contiguous ascending run starting at 1. This
+        // gate does not trust that the Go pipeline ran (HEU-517).
+        //
+        // Go splits that guarantee across two files, and the split matters if
+        // you are checking parity. validateStreamlineCommission
+        // (internal/config/rules.go:923-946) enforces the *set*: it sorts a
+        // copy of the level keys first, so it is indifferent to order and
+        // would accept [2, 1]. The *order* comes from sortStreamlineLevels
+        // (internal/config/translate.go:290), which sorts ascending before the
+        // array is handed to Rust. Reading rules.go alone makes this check look
+        // stricter than Go. It is not, but only because that sort exists.
+        //
+        // The expected value is computed in usize so it cannot overflow: a
+        // table longer than 255 entries must reject at position 255, not wrap.
+        // The message names the offending entry rather than echoing the table,
+        // which is attacker-sized here.
+        //
+        // Duplicates are parity too, not an added rule. Go keys the table by
+        // string, and the schema's propertyNames pattern is ^0*(...)
+        // (schemas/compensation-plan.schema.json:1002), so "1" and "01" are
+        // both valid keys naming level 1. A duplicate is representable in Go,
+        // and Go rejects it through non_sequential_levels: the sorted list
+        // becomes [1, 1, ...] and fails n != j+1 at index 1.
+        //
+        // Note it is caught there and nowhere else. The duplicate_value guard
+        // in validateU8MapKeys (rules.go:118) never sees dynamic_compression:
+        // it takes a map[string]float64 and is reached only through
+        // getRateTable (rules.go:98), whose switch returns nil for
+        // StreamlineCommission. So a "1"/"01" collision here surfaces as a
+        // sequencing error, not a duplicate one.
+        for (idx, level) in self.levels.iter().enumerate() {
+            if usize::from(level.level) != idx + 1 {
+                return Err(format!(
+                    "dynamic_compression levels must be a contiguous ascending run \
+                     starting at 1, got {} at position {} (table has {} entries)",
+                    level.level,
+                    idx,
+                    self.levels.len()
+                ));
+            }
+        }
+        // Go rejects depth < level count (depth_less_than_levels,
+        // internal/config/rules.go:969). Without this, a table of 255 levels
+        // with depth 254 passes Rust and fails Go.
+        if usize::from(self.max_depth) < self.levels.len() {
+            return Err(format!(
+                "commissionable_depth ({}) must be >= number of levels ({})",
+                self.max_depth,
+                self.levels.len()
             ));
         }
         // dynamic_compression percents scale CV directly (the streamline
@@ -571,6 +638,95 @@ mod tests {
 
         config.levels[0].percent = 5.0; // whole-number percent — rejected
         assert!(config.validate().is_err());
+    }
+
+    /// Builds a streamline config with the given declared levels. Every entry
+    /// uses the same rank and percent, so only the level numbers vary.
+    fn streamline_with_levels(levels: &[u8], max_depth: u8) -> StreamlineCommissionConfig {
+        StreamlineCommissionConfig {
+            volume_to_dollar_multiplier: None,
+            max_depth,
+            levels: levels
+                .iter()
+                .map(|l| StreamlineLevel {
+                    level: *l,
+                    min_rank: "associate".to_string(),
+                    percent: 0.1,
+                })
+                .collect(),
+            stream_config: None,
+        }
+    }
+
+    #[test]
+    fn streamline_rejects_empty_compression_table() {
+        // Mirrors Go's empty_compression_table (internal/config/rules.go:914).
+        // An empty table pays nothing at any level, which is a config error.
+        let config = streamline_with_levels(&[], 3);
+        let err = config.validate().unwrap_err();
+        assert!(
+            err.contains("at least one level"),
+            "unexpected message: {err}"
+        );
+    }
+
+    #[test]
+    fn streamline_rejects_non_contiguous_levels() {
+        // Mirrors Go's non_sequential_levels (internal/config/rules.go:943).
+        // One check catches all three malformed shapes: out of order fails at
+        // the first transposed entry, a gap at the entry after it, and a
+        // duplicate at the second copy.
+        let err = streamline_with_levels(&[2, 1], 5).validate().unwrap_err();
+        assert!(
+            err.contains("contiguous ascending run"),
+            "a different rule fired: {err}"
+        );
+        assert!(streamline_with_levels(&[1, 3], 5).validate().is_err());
+        assert!(streamline_with_levels(&[1, 1], 5).validate().is_err());
+        assert!(streamline_with_levels(&[2, 3], 5).validate().is_err());
+
+        // The contiguous run is still accepted.
+        assert!(streamline_with_levels(&[1, 2, 3], 5).validate().is_ok());
+    }
+
+    #[test]
+    fn streamline_rejects_depth_below_level_count() {
+        // Mirrors Go's depth_less_than_levels (internal/config/rules.go:969).
+        let err = streamline_with_levels(&[1, 2], 1).validate().unwrap_err();
+        assert!(
+            err.contains("commissionable_depth"),
+            "unexpected message: {err}"
+        );
+
+        // Depth equal to the level count is fine.
+        assert!(streamline_with_levels(&[1, 2], 2).validate().is_ok());
+    }
+
+    #[test]
+    fn streamline_error_message_is_bounded() {
+        // 255 valid sequential entries followed by a 256th. The mismatch lands
+        // at position 255, where the expected value is 256 and no u8 can match
+        // it. That pins the late mismatch rather than a first-entry bail, and
+        // the bounded message on a long table. It does not distinguish usize
+        // from the u16 form: both compare 255 against 256 and error. What it
+        // does rule out is a naive u8 expected value, which would overflow on
+        // 255 + 1 before ever reaching the comparison.
+        //
+        // The contiguity check runs before the depth check, so depth 255
+        // against 256 entries is fine here: contiguity rejects first.
+        let mut levels: Vec<u8> = (1..=255u8).collect();
+        levels.push(255);
+        let err = streamline_with_levels(&levels, 255).validate().unwrap_err();
+
+        assert!(
+            err.contains("position 255") && err.contains("256 entries"),
+            "should reject at the 256th entry: {err}"
+        );
+        assert!(
+            err.len() < 200,
+            "message should stay short, got {} chars: {err}",
+            err.len()
+        );
     }
 
     #[test]

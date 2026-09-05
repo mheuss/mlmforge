@@ -14,12 +14,15 @@
 //! codegen territory. Concretely: commission percents in `[0, 1]`, CV-to-dollar
 //! multipliers finite and positive, per-period caps finite and non-negative,
 //! breakaway tiers non-empty and `<= 255`, matrix parameters the engine can
-//! actually run (`width >= 2`, breadth-first spillover only), structure names
-//! unique across the plan so name-based lookup is unambiguous, and streamline
-//! `dynamic_compression` non-empty, a contiguous ascending run from 1, and no
-//! longer than `commissionable_depth` (HEU-612). Those three streamline rules
-//! mirror `validateStreamlineCommission` in `internal/config/rules.go`, so Rust
-//! does not refuse a plan the Go pipeline passed.
+//! actually run (`width >= 2`, breadth-first spillover only), and structure
+//! names unique across the plan so name-based lookup is unambiguous.
+//!
+//! Streamline `dynamic_compression` is checked too: non-empty, a contiguous
+//! ascending run from 1, and no longer than `commissionable_depth` (HEU-612).
+//! Those three mirror rules Go already enforces, so Rust does not refuse a plan
+//! the Go pipeline passed. The parity argument rests on two Go files rather
+//! than one. Read the notes on `StreamlineCommissionConfig::validate` before
+//! auditing it.
 //!
 //! The pattern follows `CycleStepConfig::validate` (config/binary.rs): `&mut
 //! self` so normalization can ride along with the checks, and `Result<(),

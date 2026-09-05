@@ -437,7 +437,8 @@ pub(crate) fn handle_calculate_streamline(state: &WorkerState, request: &Request
     // the walk itself, which counts levels in u16 so the break fires even at
     // commissionable_depth 255, and validate rejects a dynamic_compression
     // table that is empty, out of order, gapped, or duplicated.
-    // This change is what made that validator the sole point of trust.
+    // HEU-583 is what made that validator the sole point of trust; HEU-612 is
+    // what made it worth trusting.
     //
     // Three adjacent gaps are deliberately not closed here:
     //

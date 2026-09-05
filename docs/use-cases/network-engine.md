@@ -21,6 +21,7 @@ Use-cases for the Network Engine bounded context.
 - [UC-NET-015: Immutable run registry with a visibility-flip results store](#uc-net-015-immutable-run-registry-with-a-visibility-flip-results-store)
 - [UC-NET-016: Removing a wire field without a red interval](#uc-net-016-removing-a-wire-field-without-a-red-interval)
 - [UC-NET-017: Reading a nil caller collection as empty](#uc-net-017-reading-a-nil-caller-collection-as-empty)
+- [UC-NET-018: Telling an absent JSON key from an explicit null](#uc-net-018-telling-an-absent-json-key-from-an-explicit-null)
 
 ---
 
@@ -585,3 +586,47 @@ Widening `snapshots: null` to empty does not open a silent-zero path of its own.
 Still null-intolerant, tracked by HEU-632: `history`'s inner per-period map (a null there has no defined meaning — absent-key and `Some(None)` are the two documented states), `cycle_events[].new_boards`, and `board_compress_inactive`'s `member_ids`.
 
 Cross-reference UC-NET-007, the other `deserialize_with` serde-edge entry, and `docs/development/network-engine.md` for the fuller treatment including the Go-side wire assertions.
+
+---
+
+### UC-NET-018: Telling an absent JSON key from an explicit null
+
+**Added:** Unreleased (HEU-640)
+**Files:** `internal/networkengine/engine_client.go` (`pingResult`, `carriesVersionKey`, `renderForError`, `Ping`), `internal/networkengine/engine_client_test.go` (the ping rejection tests)
+
+**Problem:** The client refuses a worker that does not report a protocol version. Two different workers reach that outcome and they need two different remedies. An old worker answers `ping` with the bare string `"pong"` and has to be rebuilt. A worker that sends `{"protocol_version": null}`, or a value that will not decode, is reporting something the client cannot read.
+
+Decoding alone cannot separate them. `encoding/json` leaves a pointer field nil for an absent key and for an explicit `null` alike. Both arrive at the same nil, so the error message would have to guess which one happened.
+
+**Solution:** Decode for the happy path. Inspect the raw bytes only to choose the error.
+
+`pingResult.ProtocolVersion` is a `*int` rather than an `int`. That separates "no version" from a worker claiming version 0, which a plain `int` collapses into one.
+
+When the pointer is nil, `carriesVersionKey` re-unmarshals the payload into `map[string]json.RawMessage` and asks whether the key is there at all, whatever its value decodes to. Present means unreadable. Absent means versionless. Each branch gets its own message naming its own fix.
+
+The key match uses `strings.EqualFold` because `encoding/json` matches field tags case-insensitively. The diagnosing path has to agree with the accepting path about what counts as a version key. Otherwise a worker sending `Protocol_Version` is told it sent no version, when the decoder would have accepted it.
+
+**Usage:**
+
+```go
+var result pingResult
+if err := json.Unmarshal(raw, &result); err == nil && result.ProtocolVersion != nil {
+	return *result.ProtocolVersion, nil
+}
+
+// Nil pointer, two causes. Only the raw bytes tell them apart.
+if carriesVersionKey(raw) {
+	return 0, fmt.Errorf(
+		"worker reported a protocol version this client cannot read (responded %s); rebuild the worker binary",
+		renderForError(raw),
+	)
+}
+return 0, fmt.Errorf(
+	"worker does not report a protocol version (responded %s); rebuild the worker binary",
+	renderForError(raw),
+)
+```
+
+**Notes:** Quoting the payload back is what makes the message actionable, and it is also the risk. The response is wire data and otherwise unbounded, so `renderForError` caps it. The cap is a byte count and the payload may hold multi-byte runes, so the cut can land mid-rune. `strings.ToValidUTF8` drops the partial rune, which keeps the text readable wherever it is logged. An empty payload renders as a quoted empty string rather than nothing, so the message never trails off.
+
+Related serde and JSON edge entries: UC-NET-007 covers a Rust-side decode edge, and UC-NET-017 covers null versus absent on the Rust side of this same wire. This entry is the Go side of that distinction, reached for the opposite reason. UC-NET-017 widens null to empty so a call can succeed. This one keeps null and absent apart so a failure can say which it was.

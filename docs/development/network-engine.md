@@ -118,6 +118,28 @@ The walk function does not sort its output. Callers sort after combining results
 
 Stairstep calls the walk once per volume source rather than passing the full slice. This is because the `should_stop` closure captures a per-source group leader for breakaway boundary detection.
 
+### A counter compared against a `uN` bound must be wider than `uN`
+
+`walk_level_commissions` counted levels in `u8` and broke on
+`level > config.max_depth`, where `max_depth` is also `u8`. At `max_depth: 255`
+the counter saturates at 255, `255 > 255` is false, and the break never fires —
+every ancestor past position 255 keeps earning at level 255. The bug is
+unreachable for every other value, so it hides behind a green suite.
+
+The fix is to widen the counter, not to bound the config: the JSON schema
+publishes `"maximum": 255` at every `commissionable_depth` site, so a 254 ceiling
+would tighten a published contract in three layers. The walk now counts in `u16`
+and narrows back to `u8` once, immediately below the break, where
+`level <= max_depth <= u8::MAX` holds by construction. `CommissionEarning.level`
+stays `u8`, so nothing changes on the wire.
+
+Same shape to watch for elsewhere: `GenerationCommissionConfig.max_generations`
+and `MatrixStructureConfig.height` are unbounded `u8` config fields.
+`count_generations_upward` happens to be safe because it checks before
+incrementing, but the pattern is worth recognising. When a loop counter is
+compared against a config bound, the counter needs headroom above the bound's
+maximum or the comparison is unreachable there. (HEU-612)
+
 ### Pass-up testing gotcha
 
 Pass-up is plan-level config (same count for every distributor). In a linear chain tree, each node sponsors exactly one child, so that child is always passed up. This causes cascading skips where nearly every node is skipped. Use wider tree shapes (multiple children per node, with buffer nodes) when testing pass-up to avoid this artifact. Chain topologies are valid for property tests that verify invariants but not for integration tests that assert specific earning patterns.
@@ -193,6 +215,8 @@ This tripped up every fixture in HEU-514. Any new commission-result fixture (HEU
 Filtering by one — `cargo test --test contract_tests calculate_streamline` — matches zero tests, prints `0 passed; 1 filtered out`, and **exits 0**. That reads as a pass, which is worse than a failure.
 
 Run it unfiltered. To confirm a specific fixture actually executed, add `-- --nocapture`: the harness prints `contract: <name> -- <description>` for each one.
+
+That line is indented two spaces, so `grep '^contract: '` matches nothing and exits nonzero **with no test failure** — the same reads-as-a-pass trap in a different disguise. Grep without the anchor.
 
 HEU-583's plan specified the filtered form on three steps, including the two that changed the money path and the wire contract. Following it literally would have recorded "Expected: PASS" against a run that asserted nothing.
 

@@ -13,6 +13,9 @@
     "expected_response": {
         "id": "cm-2",
         "ok": false,
-        "error": {"code": "INVALID_WIDTH"}
+        "error": {
+            "code": "INVALID_WIDTH",
+            "message_contains": "matrix width 1"
+        }
     }
 }

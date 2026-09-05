@@ -5,7 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,8 +21,9 @@ func TestEngineClient_StartAndPing(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = client.Stop() }()
 
-	err = client.Ping(context.Background())
+	version, err := client.Ping(context.Background())
 	require.NoError(t, err)
+	assert.Equal(t, expectedProtocolVersion, version)
 }
 
 func TestEngineClient_StopIsIdempotent(t *testing.T) {
@@ -27,18 +33,16 @@ func TestEngineClient_StopIsIdempotent(t *testing.T) {
 	err = client.Stop()
 	require.NoError(t, err)
 
-	// Second stop should not panic or return a surprising error.
-	// The underlying process is already gone, so we accept any error.
-	_ = client.Stop()
+	assert.NoError(t, client.Stop())
 }
 
 func TestEngineClient_WithMockTransport(t *testing.T) {
 	mock := &mockTransport{
-		response: json.RawMessage(`"pong"`),
+		response: json.RawMessage(`{"protocol_version":1}`),
 	}
 	client := NewEngineClientWithTransport(mock)
 
-	err := client.Ping(context.Background())
+	_, err := client.Ping(context.Background())
 	require.NoError(t, err)
 
 	assert.Equal(t, "ping", mock.lastOp)
@@ -393,6 +397,211 @@ func TestEngineClient_GetSponsored_MockParams(t *testing.T) {
 	assert.JSONEq(t, `{"structure":"Test","user_id":"00000000-0000-0000-0000-000000000001"}`, string(mock.lastParams))
 }
 
+func TestEngineClient_PingReturnsProtocolVersion(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`{"protocol_version":1}`)}
+	client := NewEngineClientWithTransport(mock)
+
+	version, err := client.Ping(context.Background())
+	require.NoError(t, err)
+	// Deliberately a literal, not the constant: this test pins decode, not
+	// version agreement.
+	assert.Equal(t, 1, version)
+	assert.Equal(t, "ping", mock.lastOp)
+}
+
+func TestEngineClient_PingRejectsLegacyPong(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`"pong"`)}
+	client := NewEngineClientWithTransport(mock)
+
+	_, err := client.Ping(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not report a protocol version")
+	assert.Contains(t, err.Error(), `"pong"`, "the error should quote what it saw")
+	assert.Contains(t, err.Error(), "rebuild", "the error should say what to do")
+}
+
+func TestEngineClient_PingRejectsObjectWithoutVersion(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`{"something_else":1}`)}
+	client := NewEngineClientWithTransport(mock)
+
+	_, err := client.Ping(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not report a protocol version")
+}
+
+// An explicit 0 is a version claim, not an absent one. This is the whole
+// reason pingResult.ProtocolVersion is a pointer: a plain int would decode
+// both this and {} to 0 and report the wrong failure.
+func TestEngineClient_PingTreatsZeroAsAVersion(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`{"protocol_version":0}`)}
+	client := NewEngineClientWithTransport(mock)
+
+	version, err := client.Ping(context.Background())
+	require.NoError(t, err, "0 is a reported version, not a missing one")
+	assert.Equal(t, 0, version)
+}
+
+func TestEngineClient_PingTruncatesLongResponseInError(t *testing.T) {
+	long := `"` + strings.Repeat("x", 500) + `"`
+	mock := &mockTransport{response: json.RawMessage(long)}
+	client := NewEngineClientWithTransport(mock)
+
+	_, err := client.Ping(context.Background())
+	require.Error(t, err)
+	assert.Less(t, len(err.Error()), 200, "wire data must not produce an unbounded error")
+	assert.Contains(t, err.Error(), "...")
+	assert.Contains(t, err.Error(), strings.Repeat("x", maxPingResponseInError-1), "the surviving prefix must be quoted, not dropped")
+	assert.NotContains(t, err.Error(), strings.Repeat("x", maxPingResponseInError+1), "the tail must be cut")
+}
+
+// A worker that sends the key with a value this client cannot read has
+// reported a version, just not a usable one. Saying it reported none names a
+// cause that was not observed and sends the reader after the wrong thing.
+func TestEngineClient_PingDistinguishesAnUnreadableVersion(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`{"protocol_version":"2"}`)}
+	client := NewEngineClientWithTransport(mock)
+
+	_, err := client.Ping(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot read")
+	assert.Contains(t, err.Error(), `"2"`, "the error should quote what it saw")
+	assert.NotContains(t, err.Error(), "does not report a protocol version",
+		"the worker did report one, so the message must not say otherwise")
+}
+
+// An explicit null decodes cleanly and leaves no version, so the decode result
+// cannot tell this apart from a response with no key at all. The worker did send
+// the key, and the quoted response shows it, so the message has to agree.
+func TestEngineClient_PingTreatsAnExplicitNullAsUnreadable(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`{"protocol_version":null}`)}
+	client := NewEngineClientWithTransport(mock)
+
+	_, err := client.Ping(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot read")
+	assert.NotContains(t, err.Error(), "does not report a protocol version",
+		"the response visibly carries the key, so the message must not deny it")
+}
+
+// encoding/json matches field tags case-insensitively, so the accepting path
+// takes this spelling. The diagnosing path has to agree, or a worker whose
+// version is merely unreadable is told it reported none.
+func TestEngineClient_PingDiagnosesAnOddlyCasedKey(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`{"PROTOCOL_VERSION":"x"}`)}
+	client := NewEngineClientWithTransport(mock)
+
+	_, err := client.Ping(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot read")
+}
+
+func TestEngineClient_PingRendersAnEmptyResponse(t *testing.T) {
+	mock := &mockTransport{response: nil}
+	client := NewEngineClientWithTransport(mock)
+
+	_, err := client.Ping(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `responded ""`, "an empty response must not render as a blank gap")
+}
+
+// The bound is a byte count, so a multi-byte rune can straddle it.
+func TestEngineClient_PingErrorStaysValidUTF8(t *testing.T) {
+	// Greek alpha is two bytes, so this run crosses the bound mid-rune.
+	mock := &mockTransport{response: json.RawMessage(`{"note":"` + strings.Repeat("α", 200) + `"}`)}
+	client := NewEngineClientWithTransport(mock)
+
+	_, err := client.Ping(context.Background())
+	require.Error(t, err)
+	assert.True(t, utf8.ValidString(err.Error()), "error text must not carry a half rune")
+}
+
+// The bound is inclusive: a response of exactly maxPingResponseInError bytes is
+// quoted whole, with no ellipsis.
+func TestEngineClient_PingDoesNotTruncateAtTheBoundary(t *testing.T) {
+	exact := `{"x":"` + strings.Repeat("y", maxPingResponseInError-8) + `"}`
+	require.Len(t, exact, maxPingResponseInError)
+	mock := &mockTransport{response: json.RawMessage(exact)}
+	client := NewEngineClientWithTransport(mock)
+
+	_, err := client.Ping(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), exact)
+	assert.NotContains(t, err.Error(), "...")
+}
+
+// --- Construction version check ---
+
+func TestNewCheckedClient_AcceptsMatchingVersion(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(
+		fmt.Sprintf(`{"protocol_version":%d}`, expectedProtocolVersion))}
+
+	client, err := newCheckedClient(context.Background(), mock)
+	require.NoError(t, err)
+	require.NotNil(t, client)
+	assert.False(t, mock.closed, "a matching worker must not be closed")
+}
+
+func TestNewCheckedClient_RejectsVersionMismatch(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`{"protocol_version":99}`)}
+
+	client, err := newCheckedClient(context.Background(), mock)
+	require.Error(t, err)
+	assert.Nil(t, client)
+	assert.Contains(t, err.Error(),
+		fmt.Sprintf("client expects %d, worker reports 99", expectedProtocolVersion),
+		"the error must name both versions")
+	assert.True(t, mock.closed, "a rejected worker must be closed")
+}
+
+func TestNewCheckedClient_RejectsVersionlessWorker(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`"pong"`)}
+
+	client, err := newCheckedClient(context.Background(), mock)
+	require.Error(t, err)
+	assert.Nil(t, client)
+	assert.Contains(t, err.Error(), "does not report a protocol version")
+	assert.True(t, mock.closed, "a versionless worker must be closed")
+}
+
+// TestNewEngineClient_RejectsWorkerWithWrongVersion proves the PUBLIC
+// constructor performs the check.
+//
+// The three tests above call newCheckedClient directly, and all of them would
+// still pass if the helper were added and NewEngineClient never rewired: the
+// real worker reports the matching version, so nothing else would notice.
+//
+// The fake worker is a shell script, so this needs no Rust binary and runs
+// where the Go job has none.
+//
+// COUPLING: the script answers with a hardcoded id of "req-1" because the
+// stdio transport numbers requests from 1, so a fresh transport's first call is
+// always req-1. If that scheme changes, this test hangs or fails confusingly
+// rather than pointing at the cause -- come back here first.
+//
+// Version 99 sits far from any version this arc will plausibly reach, so it
+// cannot collide with a real one and be mistaken for it.
+func TestNewEngineClient_RejectsWorkerWithWrongVersion(t *testing.T) {
+	fake := filepath.Join(t.TempDir(), "fake-worker.sh")
+	script := "#!/bin/sh\n" +
+		"while IFS= read -r _line; do\n" +
+		"  printf '%s\\n' '{\"id\":\"req-1\",\"ok\":true,\"result\":{\"protocol_version\":99}}'\n" +
+		"done\n"
+	require.NoError(t, os.WriteFile(fake, []byte(script), 0o755))
+
+	// Bounds the ping, not the whole call: the rejection path closes the
+	// transport, and that close has its own deadlines and does not consult this
+	// context. Construction can outlast the timeout set here.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	client, err := NewEngineClient(ctx, fake)
+	require.Error(t, err)
+	assert.Nil(t, client)
+	assert.Contains(t, err.Error(),
+		fmt.Sprintf("client expects %d, worker reports 99", expectedProtocolVersion),
+		"the error must name both versions")
+}
+
 // --- Error handling tests (mock) ---
 
 func TestEngineClient_TransportErrorPropagation(t *testing.T) {
@@ -400,7 +609,7 @@ func TestEngineClient_TransportErrorPropagation(t *testing.T) {
 	mock := &mockTransport{err: transportErr}
 	client := NewEngineClientWithTransport(mock)
 
-	err := client.Ping(context.Background())
+	_, err := client.Ping(context.Background())
 	assert.ErrorIs(t, err, transportErr)
 
 	err = client.AddRoot(context.Background(), "Test", "user-1", 1000)
@@ -422,7 +631,7 @@ func TestEngineClient_UnmarshalError(t *testing.T) {
 }
 
 func TestEngineClient_StopClosesTransport(t *testing.T) {
-	mock := &mockTransport{response: json.RawMessage(`"pong"`)}
+	mock := &mockTransport{}
 	client := NewEngineClientWithTransport(mock)
 
 	err := client.Stop()

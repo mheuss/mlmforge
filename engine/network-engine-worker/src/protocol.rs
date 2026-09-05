@@ -1,5 +1,15 @@
 use serde::{Deserialize, Serialize};
 
+/// The NDJSON wire semantics this worker speaks.
+///
+/// Version 1 is the first *self-reporting* version. A worker that answers
+/// `ping` with a bare `"pong"` predates this constant and is versionless --
+/// not version 0, and not version 1.
+///
+/// This moves on any change to wire semantics, not only on shape changes. Two
+/// workers can share a schema and still disagree about what a field means.
+pub const PROTOCOL_VERSION: u32 = 1;
+
 /// An NDJSON request from the Go platform layer.
 #[derive(Debug, Deserialize)]
 pub struct Request {

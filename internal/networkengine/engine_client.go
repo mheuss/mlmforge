@@ -4,7 +4,31 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
+
+// expectedProtocolVersion is the NDJSON wire semantics this client is built
+// for. It is compared exactly, not as a range: a worker can share a schema and
+// still disagree about what a field means, so "at least version N" is not a
+// question this number can answer.
+//
+// Changing this number without changing the shared ping contract fixture, or
+// the reverse, rejects a worker that is otherwise correct.
+const expectedProtocolVersion = 1
+
+// maxPingResponseInError bounds how much of an unexpected ping response is
+// quoted back in an error. The response is wire data and is otherwise
+// unbounded.
+const maxPingResponseInError = 64
+
+// pingResult decodes the ping response.
+//
+// ProtocolVersion is a pointer so an absent key is distinguishable from an
+// explicit 0. A versionless worker and a worker claiming version 0 are
+// different failures, and a plain int collapses them into one.
+type pingResult struct {
+	ProtocolVersion *int `json:"protocol_version"`
+}
 
 // EngineClient manages the Rust Network Engine subprocess and provides
 // typed methods for all engine operations.
@@ -13,36 +37,121 @@ type EngineClient struct {
 }
 
 // NewEngineClient creates a client backed by a subprocess at binaryPath.
-// Spawns the worker and verifies it responds to ping. Transport options are
-// forwarded to the underlying StdioTransport, so a caller can opt into
-// observability with WithSignalHandler(observer.HandleSignal). Observability
-// stays opt-in — no handler is installed by default.
+// Spawns the worker and verifies it speaks the protocol version this client
+// was built for. Transport options are forwarded to the underlying
+// StdioTransport, so a caller can opt into observability with
+// WithSignalHandler(observer.HandleSignal). Observability stays opt-in — no
+// handler is installed by default.
 func NewEngineClient(ctx context.Context, binaryPath string, opts ...TransportOption) (*EngineClient, error) {
 	transport, err := NewStdioTransport(binaryPath, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("create transport: %w", err)
 	}
+	return newCheckedClient(ctx, transport)
+}
+
+// newCheckedClient wires a transport into a client and verifies the worker
+// speaks the protocol version this client was built for. It closes the
+// transport on either failure, so a rejected worker does not leak a subprocess.
+//
+// It takes an EngineTransport rather than a binary path so a test can present a
+// worker reporting any version. NewEngineClient builds its own transport and
+// offers no such seam, which would otherwise leave "does construction actually
+// check?" unproven.
+func newCheckedClient(ctx context.Context, transport EngineTransport) (*EngineClient, error) {
 	client := &EngineClient{transport: transport}
 
-	// Verify the worker is alive.
-	if err := client.Ping(ctx); err != nil {
+	version, err := client.Ping(ctx)
+	if err != nil {
 		_ = transport.Close()
 		return nil, fmt.Errorf("initial ping failed: %w", err)
+	}
+	if version != expectedProtocolVersion {
+		_ = transport.Close()
+		return nil, fmt.Errorf(
+			"engine protocol version mismatch: client expects %d, worker reports %d",
+			expectedProtocolVersion, version,
+		)
 	}
 
 	return client, nil
 }
 
 // NewEngineClientWithTransport creates a client with a custom transport.
-// Used for testing with mock transports.
+//
+// It performs NO protocol version check, so a client built this way may be
+// talking to a worker whose wire semantics it cannot interpret. Use
+// NewEngineClient to reach a real worker.
 func NewEngineClientWithTransport(transport EngineTransport) *EngineClient {
 	return &EngineClient{transport: transport}
 }
 
-// Ping sends a ping to the worker and returns an error if it does not respond.
-func (c *EngineClient) Ping(ctx context.Context) error {
-	_, err := c.transport.Call(ctx, "ping", json.RawMessage("null"))
-	return err
+// Ping asks the worker which NDJSON protocol version it speaks and returns it.
+//
+// A worker that predates protocol versioning answers with a bare "pong", and a
+// malformed one may answer with an object that carries no version. Both are
+// versionless and both are an error here: this client cannot confirm what such
+// a worker means by any field, so it refuses to guess.
+func (c *EngineClient) Ping(ctx context.Context) (int, error) {
+	raw, err := c.transport.Call(ctx, "ping", json.RawMessage("null"))
+	if err != nil {
+		return 0, err
+	}
+
+	var result pingResult
+	if err := json.Unmarshal(raw, &result); err == nil && result.ProtocolVersion != nil {
+		return *result.ProtocolVersion, nil
+	}
+
+	// Two different failures with two different remedies, told apart by whether
+	// the key is there at all. Decoding cannot tell them apart: an explicit null
+	// decodes cleanly and still leaves no version.
+	if carriesVersionKey(raw) {
+		return 0, fmt.Errorf(
+			"worker reported a protocol version this client cannot read (responded %s); rebuild the worker binary",
+			renderForError(raw),
+		)
+	}
+	return 0, fmt.Errorf(
+		"worker does not report a protocol version (responded %s); rebuild the worker binary",
+		renderForError(raw),
+	)
+}
+
+// carriesVersionKey reports whether raw is a JSON object holding a
+// protocol_version key, whatever its value decodes to.
+func carriesVersionKey(raw json.RawMessage) bool {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return false
+	}
+	for name := range fields {
+		// Matched the way encoding/json matches a field tag, which is
+		// case-insensitively. The accepting path would take any of these
+		// spellings, so this has to agree with it about what counts as a
+		// version key.
+		if strings.EqualFold(name, "protocol_version") {
+			return true
+		}
+	}
+	return false
+}
+
+// renderForError renders a wire payload for an error message. It is bounded, so
+// a large or hostile response cannot produce an unbounded error string, and it
+// is never empty or invalid UTF-8, so the text stays readable where it lands.
+//
+// The bound is a byte count and the payload may hold multi-byte runes, so the
+// cut can land mid-rune. Dropping the partial rune is what keeps the result
+// printable.
+func renderForError(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return `""`
+	}
+	if len(raw) <= maxPingResponseInError {
+		return strings.ToValidUTF8(string(raw), "")
+	}
+	return strings.ToValidUTF8(string(raw[:maxPingResponseInError]), "") + "..."
 }
 
 // LoadPlan sends a compensation plan to the worker.

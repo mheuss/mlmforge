@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -19,6 +21,17 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+func TestStdioTransport_CloseIsIdempotent(t *testing.T) {
+	transport, err := NewStdioTransport(findWorkerBinary(t))
+	require.NoError(t, err)
+
+	first := transport.Close()
+	second := transport.Close()
+
+	require.NoError(t, first)
+	assert.NoError(t, second)
+}
+
 func TestStdioTransport_Ping(t *testing.T) {
 	transport, err := NewStdioTransport(findWorkerBinary(t))
 	require.NoError(t, err)
@@ -27,10 +40,7 @@ func TestStdioTransport_Ping(t *testing.T) {
 	result, err := transport.Call(context.Background(), "ping", json.RawMessage("null"))
 	require.NoError(t, err)
 
-	var pong string
-	err = json.Unmarshal(result, &pong)
-	require.NoError(t, err)
-	assert.Equal(t, "pong", pong)
+	assert.JSONEq(t, `{"protocol_version":1}`, string(result))
 }
 
 func TestStdioTransport_UnknownOp(t *testing.T) {
@@ -52,10 +62,7 @@ func TestStdioTransport_MultipleCalls(t *testing.T) {
 		result, err := transport.Call(context.Background(), "ping", json.RawMessage("null"))
 		require.NoError(t, err)
 
-		var pong string
-		err = json.Unmarshal(result, &pong)
-		require.NoError(t, err)
-		assert.Equal(t, "pong", pong)
+		assert.JSONEq(t, `{"protocol_version":1}`, string(result))
 	}
 }
 
@@ -79,14 +86,12 @@ func TestStdioTransport_SignalDemux(t *testing.T) {
 	// A fresh transport's first Call generates id "req-1".
 	go func() {
 		_, _ = io.WriteString(stdoutW, signal+"\n")
-		_, _ = io.WriteString(stdoutW, `{"id":"req-1","ok":true,"result":"pong"}`+"\n")
+		_, _ = io.WriteString(stdoutW, `{"id":"req-1","ok":true,"result":{"demux":"payload"}}`+"\n")
 	}()
 
-	result, err := transport.Call(context.Background(), "ping", json.RawMessage("null"))
+	result, err := transport.Call(context.Background(), "demux_probe", json.RawMessage("null"))
 	require.NoError(t, err)
-	var pong string
-	require.NoError(t, json.Unmarshal(result, &pong))
-	assert.Equal(t, "pong", pong)
+	assert.JSONEq(t, `{"demux":"payload"}`, string(result))
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -115,14 +120,12 @@ func TestStdioTransport_SignalDemux_Multiple(t *testing.T) {
 	go func() {
 		_, _ = io.WriteString(stdoutW, `{"type":"signal","level":"info","message":"one"}`+"\n")
 		_, _ = io.WriteString(stdoutW, `{"type":"signal","level":"warn","message":"two"}`+"\n")
-		_, _ = io.WriteString(stdoutW, `{"id":"req-1","ok":true,"result":"pong"}`+"\n")
+		_, _ = io.WriteString(stdoutW, `{"id":"req-1","ok":true,"result":{"demux":"payload"}}`+"\n")
 	}()
 
-	result, err := transport.Call(context.Background(), "ping", json.RawMessage("null"))
+	result, err := transport.Call(context.Background(), "demux_probe", json.RawMessage("null"))
 	require.NoError(t, err)
-	var pong string
-	require.NoError(t, json.Unmarshal(result, &pong))
-	assert.Equal(t, "pong", pong)
+	assert.JSONEq(t, `{"demux":"payload"}`, string(result))
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -145,14 +148,12 @@ func TestStdioTransport_SignalHandlerPanic(t *testing.T) {
 
 	go func() {
 		_, _ = io.WriteString(stdoutW, `{"type":"signal","level":"warn","message":"boom"}`+"\n")
-		_, _ = io.WriteString(stdoutW, `{"id":"req-1","ok":true,"result":"pong"}`+"\n")
+		_, _ = io.WriteString(stdoutW, `{"id":"req-1","ok":true,"result":{"demux":"payload"}}`+"\n")
 	}()
 
-	result, err := transport.Call(context.Background(), "ping", json.RawMessage("null"))
+	result, err := transport.Call(context.Background(), "demux_probe", json.RawMessage("null"))
 	require.NoError(t, err)
-	var pong string
-	require.NoError(t, json.Unmarshal(result, &pong))
-	assert.Equal(t, "pong", pong)
+	assert.JSONEq(t, `{"demux":"payload"}`, string(result))
 
 	_ = stdoutW.Close()
 	_ = stdinR.Close()
@@ -440,4 +441,200 @@ func TestStaleWorkerBinary_ErrorsWhenBinaryIsMissing(t *testing.T) {
 	_, err := staleWorkerBinary(filepath.Join(root, "absent"), root)
 
 	require.Error(t, err)
+}
+
+// A worker that keeps writing after answering must not be able to wedge Close.
+//
+// readLoop is the only reader of stdout and blocks once the lines channel is
+// full. Nothing drains that channel after Call returns, so a chatty worker
+// fills it, readLoop stops reading, the stdout pipe fills, and the worker
+// blocks in write without ever reaching its stdin read -- never seeing the EOF
+// Close just sent. A bare cmd.Wait() then never returns.
+//
+// The payload has to exceed the OS pipe buffer as well as the channel: a few
+// hundred short lines fit in the pipe and exit cleanly, proving nothing.
+func TestStdioTransport_CloseDoesNotHangOnAChattyWorker(t *testing.T) {
+	fake := filepath.Join(t.TempDir(), "chatty-worker.sh")
+	script := "#!/bin/sh\n" +
+		"pad=xxxxxxxxxxxxxxxxxxxxxxxxx\n" +
+		"pad=$pad$pad$pad; pad=$pad$pad$pad\n" +
+		"while IFS= read -r _line; do\n" +
+		"  printf '%s\\n' '{\"id\":\"req-1\",\"ok\":true,\"result\":{\"protocol_version\":1}}'\n" +
+		"  i=0\n" +
+		"  while [ $i -lt 5000 ]; do\n" +
+		"    printf '%s\\n' \"{\\\"signal\\\":\\\"$pad\\\"}\"\n" +
+		"    i=$((i+1))\n" +
+		"  done\n" +
+		"done\n"
+	require.NoError(t, os.WriteFile(fake, []byte(script), 0o755))
+
+	before := readLoopGoroutines()
+	transport, err := NewStdioTransport(fake)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = transport.Close() })
+
+	_, err = transport.Call(context.Background(), "ping", json.RawMessage("null"))
+	require.NoError(t, err)
+
+	closeErr := make(chan error, 1)
+	go func() { closeErr <- transport.Close() }()
+
+	// Well under closeGracePeriod, and asserting the worker was not killed.
+	// Both matter: if draining regressed to a no-op the kill fallback would
+	// still return, and a test that only waits for Close to return would pass
+	// on the very path it exists to rule out.
+	require.Greater(t, closeGracePeriod, 3*time.Second,
+		"this test's bound assumes the grace period leaves room under it")
+	select {
+	case err := <-closeErr:
+		require.NotErrorIs(t, err, ErrWorkerNotExited,
+			"the worker should have exited once stdout was drained, not been killed")
+	case <-time.After(closeGracePeriod - 2*time.Second):
+		t.Fatal("Close did not return promptly; the chatty worker wedged it")
+	}
+
+	// The reader must be gone once Close returns. In this case it ends on its
+	// own, because the worker exits and its pipe closes; TestDrainTail covers
+	// the case where it does not.
+	require.Eventually(t, func() bool { return readLoopGoroutines() <= before },
+		5*time.Second, 50*time.Millisecond,
+		"the reader goroutine was abandoned rather than released")
+}
+
+// A worker that stops reading stdin cannot be shut down by closing it, so Close
+// falls back to killing the process. Without the fallback this blocks forever.
+func TestStdioTransport_CloseKillsAWorkerThatIgnoresStdin(t *testing.T) {
+	fake := filepath.Join(t.TempDir(), "deaf-worker.sh")
+	script := "#!/bin/sh\n" +
+		"IFS= read -r _line\n" +
+		"printf '%s\\n' '{\"id\":\"req-1\",\"ok\":true,\"result\":{\"protocol_version\":1}}'\n" +
+		"while true; do sleep 1; done\n"
+	require.NoError(t, os.WriteFile(fake, []byte(script), 0o755))
+
+	transport, err := NewStdioTransport(fake)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = transport.Close() })
+
+	_, err = transport.Call(context.Background(), "ping", json.RawMessage("null"))
+	require.NoError(t, err)
+
+	closeErr := make(chan error, 1)
+	go func() { closeErr <- transport.Close() }()
+
+	select {
+	case err := <-closeErr:
+		assert.ErrorIs(t, err, ErrWorkerNotExited, "an unresponsive worker must be reported as not having exited")
+	case <-time.After(closeGracePeriod + 10*time.Second):
+		t.Fatal("Close did not return; the kill fallback did not fire")
+	}
+}
+
+// readLoopGoroutines counts the readers currently running, so a test can prove
+// Close released the one it started.
+func readLoopGoroutines() int {
+	buf := make([]byte, 1<<20)
+	n := runtime.Stack(buf, true)
+	return strings.Count(string(buf[:n]), "networkengine.(*StdioTransport).readLoop")
+}
+
+// A worker whose child outlives it keeps the stderr pipe open, so waiting on the
+// worker does not finish just because the worker was killed. Nothing else bounds
+// that wait: the delay os/exec applies starts only once the process has exited,
+// which never happens if the kill does not take. Remove the bound and this test
+// hangs rather than failing.
+func TestStdioTransport_CloseBoundsTheWaitForAnOrphanedChild(t *testing.T) {
+	fake := filepath.Join(t.TempDir(), "forking-worker.sh")
+	script := "#!/bin/sh\n" +
+		"IFS= read -r _line\n" +
+		"printf '%s\\n' '{\"id\":\"req-1\",\"ok\":true,\"result\":{\"protocol_version\":1}}'\n" +
+		"sleep 30 &\n" +
+		"while true; do sleep 1; done\n"
+	require.NoError(t, os.WriteFile(fake, []byte(script), 0o755))
+
+	transport, err := NewStdioTransport(fake)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = transport.Close() })
+
+	_, err = transport.Call(context.Background(), "ping", json.RawMessage("null"))
+	require.NoError(t, err)
+
+	start := time.Now()
+	closeErr := make(chan error, 1)
+	go func() { closeErr <- transport.Close() }()
+
+	select {
+	case err := <-closeErr:
+		assert.ErrorIs(t, err, ErrWorkerNotExited)
+		// Comfortably under the orphan's own lifetime, so passing cannot mean
+		// "we waited for the child to go away on its own".
+		assert.Less(t, time.Since(start), 15*time.Second,
+			"Close waited on the orphaned child rather than bounding the wait")
+	case <-time.After(25 * time.Second):
+		t.Fatal("Close did not return; the wait after the kill is unbounded")
+	}
+}
+
+// A worker can exit promptly and still leave a child holding the stderr pipe,
+// and waiting on the worker does not finish until that pipe closes. Without a
+// bound on the post-exit wait, Close sits until the grace period, kills a
+// process that already exited, and reports it as not having exited.
+func TestStdioTransport_CloseReturnsCleanlyWhenAChildOutlivesTheWorker(t *testing.T) {
+	fake := filepath.Join(t.TempDir(), "forking-exiter.sh")
+	script := "#!/bin/sh\n" +
+		"IFS= read -r _line\n" +
+		"printf '%s\\n' '{\"id\":\"req-1\",\"ok\":true,\"result\":{\"protocol_version\":1}}'\n" +
+		"sleep 30 &\n" +
+		"exit 0\n"
+	require.NoError(t, os.WriteFile(fake, []byte(script), 0o755))
+
+	transport, err := NewStdioTransport(fake)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = transport.Close() })
+
+	_, err = transport.Call(context.Background(), "ping", json.RawMessage("null"))
+	require.NoError(t, err)
+
+	start := time.Now()
+	closeErr := make(chan error, 1)
+	go func() { closeErr <- transport.Close() }()
+
+	select {
+	case err := <-closeErr:
+		assert.NotErrorIs(t, err, ErrWorkerNotExited,
+			"the worker exited on its own; only its child lingered")
+		assert.Less(t, time.Since(start), closeGracePeriod,
+			"Close waited for the grace period on a worker that had already exited")
+	case <-time.After(25 * time.Second):
+		t.Fatal("Close did not return; the post-exit wait is unbounded")
+	}
+}
+
+// drainTail keeps Close from abandoning a reader that is blocked on a full
+// channel, and must give up rather than block if the reader never stops.
+func TestDrainTail(t *testing.T) {
+	t.Run("returns once the reader closes the channel", func(t *testing.T) {
+		lines := make(chan json.RawMessage, 4)
+		lines <- json.RawMessage(`{"a":1}`)
+		lines <- json.RawMessage(`{"b":2}`)
+		close(lines)
+
+		require.NoError(t, drainTail(lines))
+	})
+
+	t.Run("gives up when the reader does not stop", func(t *testing.T) {
+		// Never written to and never closed, standing in for a reader that
+		// outlived the process it was reading.
+		lines := make(chan json.RawMessage)
+
+		start := time.Now()
+		err := drainTail(lines)
+
+		require.ErrorIs(t, err, errReaderStillRunning)
+		assert.GreaterOrEqual(t, time.Since(start), drainTailBound,
+			"it must wait the bound out rather than returning early")
+	})
+
+	t.Run("a nil channel is nothing to drain", func(t *testing.T) {
+		require.NoError(t, drainTail(nil))
+	})
 }

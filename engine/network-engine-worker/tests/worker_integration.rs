@@ -56,14 +56,14 @@ fn build_three_node_chain(child: &mut std::process::Child) {
 }
 
 #[test]
-fn ping_pong() {
+fn ping_returns_protocol_version() {
     let mut child = common::spawn_worker();
     let response = common::send_receive(&mut child, r#"{"id":"1","op":"ping"}"#);
     assert!(response.contains(r#""ok":true"#));
-    assert!(response.contains(r#""pong""#));
 
     let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
     assert_eq!(parsed["id"], "1");
+    assert_eq!(parsed["result"]["protocol_version"], 1);
 
     drop(child.stdin.take());
     child.wait().unwrap();
@@ -830,7 +830,7 @@ fn malformed_json_does_not_crash_worker() {
     // Worker should still be alive -- send a follow-up ping
     let resp2 = common::send_receive(&mut child, r#"{"id":"2","op":"ping"}"#);
     assert!(resp2.contains(r#""ok":true"#));
-    assert!(resp2.contains(r#""pong""#));
+    assert!(resp2.contains(r#""protocol_version""#));
     drop(child.stdin.take());
     child.wait().unwrap();
 }

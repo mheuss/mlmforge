@@ -14,6 +14,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// contractFixtureDir is where both language harnesses read their shared
+// fixtures from.
+var contractFixtureDir = filepath.Join("..", "..", "engine", "testdata", "contracts")
+
 // contractFixtureSetup represents a setup step that runs before the main request.
 type contractFixtureSetup struct {
 	ID     string         `json:"id"`
@@ -51,7 +55,7 @@ func loadContractFixtures(t *testing.T) []struct {
 } {
 	t.Helper()
 
-	dir := filepath.Join("..", "..", "engine", "testdata", "contracts")
+	dir := contractFixtureDir
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err, "failed to read fixtures dir: %s", dir)
 
@@ -387,4 +391,35 @@ func TestContractBoardPlan_SnapshotRoundTrip(t *testing.T) {
 	restoredBoards, err := client.BoardListBoards(ctx, restored)
 	require.NoError(t, err)
 	assert.Equal(t, len(origBoards), len(restoredBoards), "board count should match after restore")
+}
+
+// TestPingFixtureMatchesExpectedProtocolVersion pins the shared ping fixture to
+// the Go constant.
+//
+// It reads the fixture off disk and needs no worker binary. Without it, a later
+// phase could bump the worker and the fixture together, leave the Go constant
+// behind, and see a green suite.
+func TestPingFixtureMatchesExpectedProtocolVersion(t *testing.T) {
+	path := filepath.Join(contractFixtureDir, "ping.json")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err, "failed to read %s", path)
+
+	var fixture struct {
+		ExpectedResponse struct {
+			Result json.RawMessage `json:"result"`
+		} `json:"expected_response"`
+	}
+	require.NoError(t, json.Unmarshal(data, &fixture), "failed to parse %s", path)
+
+	// Decoded separately so a fixture that went back to a bare "pong" reports as
+	// the wrong shape rather than as malformed JSON.
+	var result pingResult
+	require.NoError(t, json.Unmarshal(fixture.ExpectedResponse.Result, &result),
+		"%s pins a result that is not a protocol version object: %s",
+		path, fixture.ExpectedResponse.Result)
+
+	require.NotNil(t, result.ProtocolVersion,
+		"%s must pin a protocol_version", path)
+	assert.Equal(t, expectedProtocolVersion, *result.ProtocolVersion,
+		"ping.json and expectedProtocolVersion have drifted; the Go job cannot catch this any other way")
 }

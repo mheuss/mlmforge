@@ -549,3 +549,54 @@ Matrix startup reload is no longer blocked by this defect.
 ### Postgres index order is a redelivery discriminator
 
 `tree_nodes.id` is the event ID, and the primary key is declared inline in `CREATE TABLE`, so it carries the lowest OID and Postgres checks it before either named partial index. The failure mode therefore identifies the cause. A `tree_nodes_pkey` violation means this exact event was already stored. It does not prove the engine applied it. The store insert lands before the engine call, so a delivery that failed at the engine leaves the row behind (HEU-576). An `idx_tree_nodes_tree_user` violation means a different event claims the same active user, which is real corruption. HEU-576's idempotent redelivery leans on this distinction. `MemoryTreeStore.InsertNode` mirrors the same check order, so the discriminator holds against the test double too. `TestTreePersistence_DuplicateDeliveryPinsNonIdempotence` pins today's behavior and flips to clean success when HEU-576 lands.
+
+## Worker Shutdown
+
+Three things about closing a worker that are not obvious from the code, all
+found by review on HEU-640 after the first two attempts at the fix were wrong.
+
+### A blocked reader wedges the worker
+
+`readLoop` is the only reader of the worker's stdout and the only sender on the
+`lines` channel, and that send blocks once the channel is full. Nothing drains
+`lines` between the return of one `Call` and the start of the next.
+
+So a worker that keeps writing after answering fills the channel, which stops
+`readLoop` reading, which fills the OS stdout pipe, which blocks the worker in
+`write`. A worker blocked in `write` never reaches its stdin read, so it never
+sees the EOF that closing stdin sends it, and waiting for it to exit never
+finishes.
+
+The design note that draining stdout continuously keeps the worker from
+blocking on a full pipe is true only while something is draining. Shutdown is
+the gap.
+
+### `WaitDelay` is not a deadline for `Wait`
+
+`exec.Cmd.WaitDelay` bounds the wait for I/O to finish **after the process has
+exited**, or after an attached `Context` is done. A command built without a
+context and still running is bounded by neither: its timer has not started.
+
+So `WaitDelay` does not rescue a wait on a process that will not die. It rescues
+a wait on a process that has died while its output is still being copied. Those
+are different failures and they need separate bounds.
+
+### An orphaned grandchild keeps stderr open
+
+Stderr is copied into a buffer rather than being a file, so `os/exec` allocates
+a pipe and a goroutine to copy it, and `Wait` does not return until that copy
+sees EOF. EOF needs every write end closed.
+
+Killing the worker does not close a write end that a child inherited and still
+holds. A worker that spawns anything outliving it therefore keeps `Wait` blocked
+after the kill, which is the case `WaitDelay` covers.
+
+### Testing this
+
+A worker script that emits a few hundred short lines proves nothing: it fits in
+the pipe buffer, so the worker never blocks and the wedge never happens. The
+payload has to exceed both the channel and the pipe.
+
+Three lines here were each deletable with the whole suite green until tests were
+written specifically to fail without them. A shutdown path that is only
+exercised by well-behaved workers is not exercised at all.

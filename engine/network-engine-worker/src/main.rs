@@ -14,7 +14,10 @@ use state::WorkerState;
 
 fn dispatch(state: &mut WorkerState, request: &Request) -> Response {
     match request.op.as_str() {
-        "ping" => Response::success(request.id.clone(), serde_json::json!("pong")),
+        "ping" => Response::success(
+            request.id.clone(),
+            serde_json::json!({ "protocol_version": protocol::PROTOCOL_VERSION }),
+        ),
         "load_plan" => handlers::common::handle_load_plan(state, request),
         // Tree lifecycle
         "create_tree" => handlers::tree::handle_create_tree(state, request),

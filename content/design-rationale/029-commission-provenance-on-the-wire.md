@@ -272,8 +272,8 @@ Today there are none. Nothing is deployed, the Go and Rust sides ship from one
 tree, and HEU-592's commission runner is not built.
 
 The one real hazard is a stale worker binary, which has silently backed the Go
-test suite before. `ping` returns a bare `"pong"` with no version
-today. Phase A changes it to report a protocol version that moves on every
+test suite before. `ping` used to return a bare `"pong"` with no version.
+Phase A changed it to report a protocol version that moves on every
 change to wire semantics, not only on shape changes. The Go client reads that
 version at startup and refuses to run against a worker whose version it does
 not match, naming both in the error. Rejection is exact, not a range: a scalar

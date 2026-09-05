@@ -1,9 +1,9 @@
 {
-    "description": "ping returns pong",
+    "description": "ping returns the protocol version",
     "request": {"id": "c-1", "op": "ping"},
     "expected_response": {
         "id": "c-1",
         "ok": true,
-        "result": "pong"
+        "result": {"protocol_version": 1}
     }
 }

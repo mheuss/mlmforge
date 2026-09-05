@@ -281,6 +281,13 @@ impl StreamlineCommissionConfig {
         // table longer than 255 entries must reject at position 255, not wrap.
         // The message names the offending entry rather than echoing the table,
         // which is attacker-sized here.
+        //
+        // One asymmetry, and it is not a divergence. Go models the table as
+        // map[string]StreamlineLevel (internal/config/types.go:304), so a
+        // duplicate level is unrepresentable there and Go has no rule against
+        // it. Rust holds a Vec and can carry one. Rejecting it still cannot
+        // refuse a plan the Go pipeline passed, because a duplicate cannot
+        // survive translation out of a map in the first place.
         for (idx, level) in self.levels.iter().enumerate() {
             if usize::from(level.level) != idx + 1 {
                 return Err(format!(

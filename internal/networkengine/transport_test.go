@@ -21,6 +21,17 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+func TestStdioTransport_CloseIsIdempotent(t *testing.T) {
+	transport, err := NewStdioTransport(findWorkerBinary(t))
+	require.NoError(t, err)
+
+	first := transport.Close()
+	second := transport.Close()
+
+	require.NoError(t, first)
+	assert.NoError(t, second)
+}
+
 func TestStdioTransport_Ping(t *testing.T) {
 	transport, err := NewStdioTransport(findWorkerBinary(t))
 	require.NoError(t, err)

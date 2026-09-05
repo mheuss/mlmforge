@@ -238,8 +238,8 @@ proptest! {
 proptest! {
     /// Every streamline earning's dollar amount must equal
     /// `cv_amount * broad_pct * volume_to_dollar_multiplier * level.percent`,
-    /// where streamline hardcodes `broad_pct = 1.0` (streamline.rs:86) and the
-    /// per-level rate comes from the config-built rate table (walk.rs:474-488).
+    /// where streamline hardcodes `broad_pct = 1.0` (streamline.rs:137) and the
+    /// per-level rate comes from the config-built rate table (walk.rs:519-524).
     ///
     /// Companion to `commission_walk_completeness`: that pins the earner set,
     /// this pins the money. Stays in the clean monoline, fully-qualified
@@ -310,7 +310,7 @@ proptest! {
         // exercised on real earnings and the property keeps its teeth.
         prop_assert!(!earnings.is_empty(), "expected at least one earning");
 
-        // streamline.rs:86 hardcodes broad_pct = 1.0.
+        // streamline.rs:137 hardcodes broad_pct = 1.0.
         let broad_pct = 1.0f64;
         let cfg_levels = &structure.streamline_commission.levels;
         for earning in &earnings {
@@ -360,8 +360,8 @@ proptest! {
     /// comparison is order-stable.
     #[test]
     fn permuting_a_contiguous_table_does_not_change_earnings(
-        level_count in 2_usize..6,
-        keys in prop::collection::vec(any::<u64>(), 2..6),
+        (level_count, keys) in (2_usize..6)
+            .prop_flat_map(|n| (Just(n), prop::collection::vec(any::<u64>(), n))),
     ) {
         use std::collections::HashMap;
         use network_engine::commission::calculate_streamline;
@@ -385,7 +385,7 @@ proptest! {
         // Shuffle by sorting a copy against the generated keys. Deterministic
         // for a given input, and a permutation by construction.
         let mut order: Vec<usize> = (0..sorted.len()).collect();
-        order.sort_by_key(|&i| keys.get(i).copied().unwrap_or(0));
+        order.sort_by_key(|&i| keys[i]);
         let shuffled: Vec<StreamlineLevel> =
             order.iter().map(|&i| sorted[i].clone()).collect();
 
@@ -432,6 +432,10 @@ proptest! {
 
         let from_sorted = run(sorted);
         let from_shuffled = run(shuffled);
+        // Equality is trivially true if both runs return nothing, which is how
+        // this property would rot into a vacuous pass. Property 6 guards the
+        // same way.
+        prop_assert!(!from_sorted.is_empty(), "fixture must produce earnings");
         prop_assert_eq!(from_sorted, from_shuffled);
     }
 }

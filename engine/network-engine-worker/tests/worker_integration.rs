@@ -3437,6 +3437,86 @@ fn streamline_snapshot_round_trip() {
     worker.wait().unwrap();
 }
 
+/// An empty `dynamic_compression` table is rejected at load time (HEU-612).
+///
+/// Asserts the *message*, not just the code. `handle_load_plan` returns
+/// `INVALID_PLAN` for a deserialize failure too, so a code-only check would
+/// stay green if the plan constant changed shape and this rule never ran. That
+/// is not hypothetical: the contract fixture for this rule asserts only the
+/// code, and renaming a plan field makes it pass while asserting nothing.
+/// HEU-674 covers that at the harness level; this covers it here.
+#[test]
+fn load_plan_rejects_empty_compression_table() {
+    let mut worker = common::spawn_worker();
+
+    let plan = STREAMLINE_TEST_PLAN_JSON.replace(
+        r#"[
+                        { "level": 1, "min_rank": "member", "percent": 0.10 }
+                    ]"#,
+        "[]",
+    );
+    assert!(
+        plan.contains(r#""dynamic_compression": []"#),
+        "the level replacement did not match; the plan constant changed shape"
+    );
+
+    let resp = send_load_plan(&mut worker, &plan);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PLAN"),
+        "expected INVALID_PLAN, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("at least one level"),
+        "expected the empty-table gate to reject it, not a deserialize failure \
+         or an unrelated rule, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// A `commissionable_depth` below the declared level count is rejected at load
+/// time (HEU-612). Same message-asserting rationale as its two siblings above.
+#[test]
+fn load_plan_rejects_depth_below_level_count() {
+    let mut worker = common::spawn_worker();
+
+    // Two levels at depth 1. Both mutations are needed: the constant declares
+    // one level at depth 5, so dropping depth alone gives 1 >= 1 and passes.
+    let plan = STREAMLINE_TEST_PLAN_JSON
+        .replace(
+            r#""commissionable_depth": 5"#,
+            r#""commissionable_depth": 1"#,
+        )
+        .replace(
+            r#"{ "level": 1, "min_rank": "member", "percent": 0.10 }"#,
+            r#"{ "level": 1, "min_rank": "member", "percent": 0.10 },
+                        { "level": 2, "min_rank": "member", "percent": 0.05 }"#,
+        );
+    assert!(
+        plan.contains(r#""commissionable_depth": 1"#) && plan.contains(r#""level": 2"#),
+        "the depth or level replacement did not match; the plan constant changed shape"
+    );
+
+    let resp = send_load_plan(&mut worker, &plan);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PLAN"),
+        "expected INVALID_PLAN, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains("must be >= number of levels"),
+        "expected the depth gate to reject it, not a deserialize failure or an \
+         unrelated rule, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 /// A gap in `dynamic_compression` is rejected at load time, over the real
 /// NDJSON seam (HEU-612). The calculator indexes its threshold vector by
 /// declared level and the rate table is keyed the same way, so a gapped table

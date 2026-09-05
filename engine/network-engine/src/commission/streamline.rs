@@ -33,13 +33,27 @@ pub fn calculate_streamline(
     // pairing correct on any path that reaches here without it (HEU-612).
     //
     // Empty min_rank means no threshold (ordinal 0).
+    //
+    // An empty table is the third member of this guard family and the one with
+    // the worst failure mode. Without this it falls through: max_level is 0,
+    // slots is empty, the gap map over an empty vec yields Ok, and the walk
+    // gets dynamic_thresholds: Some(&[]) — no level gated, no rate in the
+    // table, so every rate falls to 0.0 and the call pays nobody without
+    // saying why. validate() rejects it at load; this covers the direct
+    // caller (HEU-670).
+    if structure.streamline_commission.levels.is_empty() {
+        return Err(CalculationError::ConfigError(
+            "streamline dynamic_compression is empty; no level can pay".to_string(),
+        ));
+    }
+
     let max_level = structure
         .streamline_commission
         .levels
         .iter()
         .map(|l| l.level)
         .max()
-        .unwrap_or(0);
+        .expect("levels is non-empty; guarded above");
     let mut slots: Vec<Option<u16>> = vec![None; usize::from(max_level)];
 
     for level in &structure.streamline_commission.levels {
@@ -601,6 +615,39 @@ mod tests {
         match err {
             CalculationError::ConfigError(msg) => {
                 assert!(msg.contains("level 2"), "unexpected message: {msg}");
+            }
+            other => panic!("expected ConfigError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn empty_table_errors_rather_than_paying_nobody() {
+        // The third guard. Before HEU-670 this returned Ok(vec![]) and paid
+        // nobody, which is quieter and worse than the gap case beside it.
+        let engine = make_engine(3);
+        let structure = make_structure(vec![], 5);
+
+        let plan = test_helpers::build_test_plan(
+            test_helpers::default_eligibility(),
+            crate::config::StructureConfig::Streamline(structure.clone()),
+            "test_streamline",
+        );
+
+        let mut snapshots = HashMap::new();
+        for i in 1..=3u8 {
+            snapshots.insert(test_uuid(i), test_helpers::eligible_snapshot());
+        }
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let err = calculate_streamline(&engine, &plan, &structure, &snapshots, &volume)
+            .expect_err("an empty table must not silently pay nobody");
+        match err {
+            CalculationError::ConfigError(msg) => {
+                assert!(msg.contains("is empty"), "unexpected message: {msg}");
             }
             other => panic!("expected ConfigError, got {other:?}"),
         }

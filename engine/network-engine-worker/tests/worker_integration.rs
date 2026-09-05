@@ -2801,6 +2801,110 @@ fn load_streamline_test_plan(worker: &mut std::process::Child) {
     );
 }
 
+#[test]
+fn load_plan_rejects_gapped_compression_table() {
+    let mut worker = common::spawn_worker();
+    // Levels 1 and 3 with nothing at 2. The gate must reject this rather than
+    // let the calculator pair level 2's rate with level 3's threshold.
+    let plan = STREAMLINE_TEST_PLAN_JSON.replace(
+        r#"{ "level": 1, "min_rank": "member", "percent": 0.10 }"#,
+        r#"{ "level": 1, "min_rank": "member", "percent": 0.10 },
+                        { "level": 3, "min_rank": "member", "percent": 0.05 }"#,
+    );
+    let resp = send_load_plan(&mut worker, &plan);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PLAN"),
+        "expected INVALID_PLAN, got: {}",
+        resp
+    );
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn calculate_streamline_at_depth_255() {
+    let mut worker = common::spawn_worker();
+
+    // 255 levels at depth 255. The walk must stop at 255 rather than saturate
+    // and keep paying every remaining ancestor at level 255 (HEU-612).
+    let levels: Vec<String> = (1..=255u16)
+        .map(|l| {
+            format!(
+                r#"{{ "level": {}, "min_rank": "member", "percent": 0.01 }}"#,
+                l
+            )
+        })
+        .collect();
+    let plan = STREAMLINE_TEST_PLAN_JSON
+        .replace(
+            r#""commissionable_depth": 5"#,
+            r#""commissionable_depth": 255"#,
+        )
+        .replace(
+            r#"{ "level": 1, "min_rank": "member", "percent": 0.10 }"#,
+            &levels.join(","),
+        );
+    let resp = send_load_plan(&mut worker, &plan);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "depth-255 plan should load: {}",
+        resp
+    );
+
+    create_streamline(&mut worker);
+
+    // 257 members: the source at position 257 has 256 ancestors, one more than
+    // the depth limit. Under the old u8 counter all 256 earned.
+    //
+    // Every member after the bootstrap sponsors from member 1. In
+    // sponsor_stream mode find_placement_stream requires the sponsor to own a
+    // stream and only the bootstrap member does, so chaining sponsor to
+    // predecessor returns NoOwnedStreams. The physical chain is linear
+    // regardless: add_member always appends to the stream's current bottom.
+    let uid = |i: u32| format!("00000000-0000-0000-0000-{:012}", i);
+    for i in 1..=257u32 {
+        let sponsor = if i == 1 { uid(999) } else { uid(1) };
+        sl_add_member(
+            &mut worker,
+            &format!("m-{i}"),
+            &uid(i),
+            &sponsor,
+            1000 + i as i64,
+        );
+    }
+
+    let snapshots: Vec<String> = (1..=257u32)
+        .map(|i| {
+            format!(
+                r#""{}":{{"rank":"member","personal_volume":100.0,"status":"active","has_order_in_period":true}}"#,
+                uid(i)
+            )
+        })
+        .collect();
+    let request = format!(
+        r#"{{"id":"sl-255","op":"calculate_streamline","params":{{"structure":"{}","snapshots":{{{}}},"volume":[{{"source_id":"{}","cv_amount":100.0}}]}}}}"#,
+        SL_STRUCTURE,
+        snapshots.join(","),
+        uid(257)
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let earnings = parsed["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("expected an earnings array, got: {resp}"));
+
+    assert_eq!(earnings.len(), 255, "walk must stop at level 255");
+    let deepest = earnings
+        .iter()
+        .map(|e| e["level"].as_u64().unwrap())
+        .max()
+        .unwrap();
+    assert_eq!(deepest, 255);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 fn sl_add_member(worker: &mut std::process::Child, id: &str, user: &str, sponsor: &str, ts: i64) {
     let resp = common::send_receive(
         worker,

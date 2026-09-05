@@ -529,6 +529,47 @@ func TestEngineClient_PingDoesNotTruncateAtTheBoundary(t *testing.T) {
 	assert.NotContains(t, err.Error(), "...")
 }
 
+// Rejection messages, pinned whole. These compare the entire string,
+// so a reworded message fails here even where a check on the failure's class
+// would still pass.
+func TestEngineClient_RejectionMessagesAreStable(t *testing.T) {
+	t.Run("absent key", func(t *testing.T) {
+		mock := &mockTransport{response: json.RawMessage(`"pong"`)}
+		client := NewEngineClientWithTransport(mock)
+
+		_, err := client.Ping(context.Background())
+		require.EqualError(t, err,
+			`worker does not report a protocol version (responded "pong"); rebuild the worker binary`)
+	})
+
+	t.Run("unreadable key", func(t *testing.T) {
+		mock := &mockTransport{response: json.RawMessage(`{"protocol_version":"2"}`)}
+		client := NewEngineClientWithTransport(mock)
+
+		_, err := client.Ping(context.Background())
+		require.EqualError(t, err,
+			`worker reported a protocol version this client cannot read (responded {"protocol_version":"2"}); rebuild the worker binary`)
+	})
+
+	// Built from the constant, not a literal, so raising the expected version
+	// does not turn this guard into a failure.
+	t.Run("mismatch", func(t *testing.T) {
+		mock := &mockTransport{response: json.RawMessage(`{"protocol_version":99}`)}
+		_, err := newCheckedClient(context.Background(), mock)
+		require.EqualError(t, err, fmt.Sprintf(
+			"engine protocol version mismatch: client expects %d, worker reports 99",
+			expectedProtocolVersion))
+	})
+
+	// This pins the wrapped text, not just the inner message.
+	t.Run("absent key through construction", func(t *testing.T) {
+		mock := &mockTransport{response: json.RawMessage(`"pong"`)}
+		_, err := newCheckedClient(context.Background(), mock)
+		require.EqualError(t, err,
+			`initial ping failed: worker does not report a protocol version (responded "pong"); rebuild the worker binary`)
+	})
+}
+
 // --- Construction version check ---
 
 func TestNewCheckedClient_AcceptsMatchingVersion(t *testing.T) {

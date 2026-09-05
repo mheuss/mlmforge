@@ -577,11 +577,11 @@ func TestNewCheckedClient_RejectsVersionMismatch(t *testing.T) {
 	mock := &mockTransport{response: json.RawMessage(`{"protocol_version":99}`)}
 
 	client, err := newCheckedClient(context.Background(), mock)
-	require.Error(t, err)
+	var mismatch *ProtocolVersionMismatchError
+	require.ErrorAs(t, err, &mismatch, "a mismatch must be matchable without reading text")
 	assert.Nil(t, client)
-	assert.Contains(t, err.Error(),
-		fmt.Sprintf("client expects %d, worker reports 99", expectedProtocolVersion),
-		"the error must name both versions")
+	assert.Equal(t, expectedProtocolVersion, mismatch.Expected)
+	assert.Equal(t, 99, mismatch.Reported)
 	assert.True(t, mock.closed, "a rejected worker must be closed")
 }
 
@@ -626,11 +626,11 @@ func TestNewEngineClient_RejectsWorkerWithWrongVersion(t *testing.T) {
 	defer cancel()
 
 	client, err := NewEngineClient(ctx, fake)
-	require.Error(t, err)
+	var mismatch *ProtocolVersionMismatchError
+	require.ErrorAs(t, err, &mismatch, "the public constructor must reject through the typed error too")
 	assert.Nil(t, client)
-	assert.Contains(t, err.Error(),
-		fmt.Sprintf("client expects %d, worker reports 99", expectedProtocolVersion),
-		"the error must name both versions")
+	assert.Equal(t, expectedProtocolVersion, mismatch.Expected)
+	assert.Equal(t, 99, mismatch.Reported)
 }
 
 // --- Error handling tests (mock) ---

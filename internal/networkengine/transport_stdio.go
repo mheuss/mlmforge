@@ -307,6 +307,9 @@ var ErrWorkerUnreaped = errors.New("worker was not reaped after being killed")
 // Lines drained here are discarded rather than forwarded to signalHandler. The
 // transport is shutting down, and a handler running after Close was called
 // would be a surprise to the caller.
+//
+// Calling it more than once is safe. The first call runs the shutdown and every
+// later call repeats its result, having observed nothing further itself.
 func (t *StdioTransport) Close() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -314,12 +317,12 @@ func (t *StdioTransport) Close() error {
 	return t.closeErr
 }
 
-// shutdown runs the close sequence once. It needs a latch of its own rather
-// than closed, which Call also sets to retire a transport with an abandoned
-// request still in flight.
+// shutdown closes stdin and waits for the worker to exit, killing it if the
+// grace period elapses first.
 //
-// Running it twice starts a second cmd.Wait, which is not allowed while the
-// first is still running, and re-closes stdin.
+// Reach it only through the latch in Close. Running it twice starts a second
+// cmd.Wait, which is not allowed while the first is still running, and closes
+// stdin a second time.
 func (t *StdioTransport) shutdown() error {
 	t.closed.Store(true)
 	stdinErr := t.stdin.Close()

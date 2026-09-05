@@ -33,9 +33,7 @@ func TestEngineClient_StopIsIdempotent(t *testing.T) {
 	err = client.Stop()
 	require.NoError(t, err)
 
-	// Second stop should not panic or return a surprising error.
-	// The underlying process is already gone, so we accept any error.
-	_ = client.Stop()
+	assert.NoError(t, client.Stop())
 }
 
 func TestEngineClient_WithMockTransport(t *testing.T) {

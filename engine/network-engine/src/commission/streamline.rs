@@ -573,10 +573,16 @@ mod tests {
 
     #[test]
     fn gapped_table_errors_rather_than_paying() {
-        // The plan defines a rank at ordinal 65535 on purpose. That is the
-        // exact input that made the first design draft's u16::MAX gap sentinel
-        // pay instead of skip, so without it this test passes against the
-        // broken design too.
+        // The plan defines a rank at ordinal 65535. Be honest about what that
+        // does here: nothing. A gapped table errors before the walk runs, so
+        // this test fails against the rejected u16::MAX sentinel design for a
+        // simpler reason than the design claimed — expect_err panics on the
+        // Ok that design returns, whatever ordinals the plan defines.
+        //
+        // The rank stays because it keeps the fixture honest about WHY the
+        // sentinel was rejected: 65535 is a legitimate ordinal, so u16::MAX
+        // cannot mean "no threshold". But that is a property of the walk's
+        // `dist_ordinal < min_ordinal` test, not of this function.
         let engine = make_engine(5);
         let levels = vec![level(1, "associate", 0.10), level(3, "apex", 0.02)];
         let structure = make_structure(levels, 5);

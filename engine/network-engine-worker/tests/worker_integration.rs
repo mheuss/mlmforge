@@ -3437,16 +3437,15 @@ fn streamline_snapshot_round_trip() {
     worker.wait().unwrap();
 }
 
-/// The HEU-517 gate rejects an out-of-range streamline percent at load time.
-/// HEU-583 makes `calculate_streamline` resolve its config from the loaded plan
-/// rather than from request params, at which point this gate is the only thing
-/// standing between a bad percent and a payout. Pinned before that change so the
-/// guard is already in place when the handler stops validating.
+/// A gap in `dynamic_compression` is rejected at load time, over the real
+/// NDJSON seam (HEU-612). The calculator indexes its threshold vector by
+/// declared level and the rate table is keyed the same way, so a gapped table
+/// would otherwise pair one level's rate with another level's rank threshold.
 ///
-/// Asserts the rejection *message*, not just the code. `handle_load_plan`
-/// returns `INVALID_PLAN` for a deserialize failure as well as a validation
-/// failure, so a code-only check would stay green if a schema change broke the
-/// plan constant and the fraction gate were never reached.
+/// Asserts the rejection *message*, not just the code, for the same reason
+/// `load_plan_rejects_streamline_percent_out_of_range` does: `handle_load_plan`
+/// returns `INVALID_PLAN` for a deserialize failure too, so a code-only check
+/// would stay green if the contiguity gate were never reached.
 #[test]
 fn load_plan_rejects_gapped_compression_table() {
     let mut worker = common::spawn_worker();
@@ -3530,8 +3529,9 @@ fn calculate_streamline_at_depth_255() {
     // add_member always appends to the stream's current bottom. Same shape
     // `make_engine` uses.
     //
-    // 999 is an arbitrary non-member for the bootstrap's sponsor slot, which is
-    // discarded. It only has to stay above the member count.
+    // The bootstrap discards its sponsor argument, so 999 is arbitrary. It is a
+    // high number for the same reason make_engine uses test_uuid(99): it reads
+    // as "not one of the members".
     let uid = |i: u32| format!("00000000-0000-0000-0000-{:012}", i);
     for i in 1..=257u32 {
         let sponsor = if i == 1 { uid(999) } else { uid(1) };
@@ -3585,11 +3585,13 @@ fn calculate_streamline_at_depth_255() {
     // member 256 and level 255 is member 2. Member 1 owns the stream and sits
     // one past the depth limit, so it earns nothing.
     let earner_at = |lvl: u64| -> String {
-        earnings
+        let earning = earnings
             .iter()
             .find(|e| e["level"].as_u64() == Some(lvl))
-            .and_then(|e| e["earner_id"].as_str())
-            .unwrap_or_else(|| panic!("no earning at level {lvl}, got: {resp}"))
+            .unwrap_or_else(|| panic!("no earning at level {lvl}, got: {resp}"));
+        earning["earner_id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("earning at level {lvl} has no earner_id: {resp}"))
             .to_string()
     };
     assert_eq!(earner_at(1), uid(256));
@@ -3607,6 +3609,16 @@ fn calculate_streamline_at_depth_255() {
     worker.wait().unwrap();
 }
 
+/// The HEU-517 gate rejects an out-of-range streamline percent at load time.
+/// HEU-583 makes `calculate_streamline` resolve its config from the loaded plan
+/// rather than from request params, at which point this gate is the only thing
+/// standing between a bad percent and a payout. Pinned before that change so the
+/// guard is already in place when the handler stops validating.
+///
+/// Asserts the rejection *message*, not just the code. `handle_load_plan`
+/// returns `INVALID_PLAN` for a deserialize failure as well as a validation
+/// failure, so a code-only check would stay green if a schema change broke the
+/// plan constant and the fraction gate were never reached.
 #[test]
 fn load_plan_rejects_streamline_percent_out_of_range() {
     let mut worker = common::spawn_worker();

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -357,23 +358,90 @@ func staleWorkerBinary(binPath, sourceRoot string) (string, error) {
 // suite then means nothing (HEU-615).
 func findWorkerBinary(t *testing.T) string {
 	t.Helper()
-	if _, err := os.Stat(workerBinaryPath); err != nil {
+	return findWorkerBinaryAt(t, workerBinaryPath, engineSourceRoot)
+}
+
+// workerBinaryReporter is the testing.T surface findWorkerBinaryAt needs.
+type workerBinaryReporter interface {
+	Helper()
+	Skipf(format string, args ...any)
+	Fatalf(format string, args ...any)
+	Errorf(format string, args ...any)
+	FailNow()
+}
+
+func findWorkerBinaryAt(r workerBinaryReporter, binPath, sourceRoot string) string {
+	r.Helper()
+	if _, err := os.Stat(binPath); err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
-			require.NoError(t, err, "could not stat worker binary %s", workerBinaryPath)
+			require.NoError(r, err, "could not stat worker binary %s", binPath)
 		}
-		t.Skipf("worker binary not found at %s (run 'cargo build --workspace' in engine/)", workerBinaryPath)
+		r.Skipf("worker binary not found at %s (run 'cargo build --workspace' in engine/)", binPath)
+		return ""
 	}
 	workerFreshnessOnce.Do(func() {
-		workerFreshnessNewer, workerFreshnessErr = staleWorkerBinary(workerBinaryPath, engineSourceRoot)
+		workerFreshnessNewer, workerFreshnessErr = staleWorkerBinary(binPath, sourceRoot)
 	})
-	require.NoError(t, workerFreshnessErr, "could not tell whether %s is current", workerBinaryPath)
+	require.NoError(r, workerFreshnessErr, "could not tell whether %s is current", binPath)
 	if workerFreshnessNewer != "" {
-		t.Fatalf(
+		r.Fatalf(
 			"worker binary %s is older than %s (run 'cargo build --workspace' in engine/ before the Go suite)",
-			workerBinaryPath, workerFreshnessNewer,
+			binPath, workerFreshnessNewer,
 		)
+		return ""
 	}
-	return workerBinaryPath
+	return binPath
+}
+
+// fakeReporter records which terminal method findWorkerBinaryAt reached.
+type fakeReporter struct {
+	skipped  bool
+	failed   bool
+	messages []string
+}
+
+func (f *fakeReporter) Helper() {}
+
+func (f *fakeReporter) Skipf(format string, args ...any) {
+	f.skipped = true
+	f.messages = append(f.messages, fmt.Sprintf(format, args...))
+}
+
+func (f *fakeReporter) Fatalf(format string, args ...any) {
+	f.failed = true
+	f.messages = append(f.messages, fmt.Sprintf(format, args...))
+}
+
+func (f *fakeReporter) Errorf(format string, args ...any) {
+	f.failed = true
+	f.messages = append(f.messages, fmt.Sprintf(format, args...))
+}
+
+func (f *fakeReporter) FailNow() { f.failed = true }
+
+func TestFindWorkerBinaryAt_SkipsWhenBinaryAbsentAndCIUnset(t *testing.T) {
+	t.Setenv("CI", "")
+	reporter := &fakeReporter{}
+
+	findWorkerBinaryAt(reporter, filepath.Join(t.TempDir(), "absent"), engineSourceRoot)
+
+	assert.True(t, reporter.skipped, "expected a skip; messages: %v", reporter.messages)
+	assert.False(t, reporter.failed, "expected no failure; messages: %v", reporter.messages)
+}
+
+func TestFindWorkerBinaryAt_ReturnsPathWhenBinaryPresent(t *testing.T) {
+	root := t.TempDir()
+	binary := filepath.Join(root, "network-engine-worker")
+	require.NoError(t, os.WriteFile(binary, []byte("stub"), 0o755))
+	sources := filepath.Join(root, "sources")
+	require.NoError(t, os.MkdirAll(sources, 0o755))
+	reporter := &fakeReporter{}
+
+	got := findWorkerBinaryAt(reporter, binary, sources)
+
+	assert.Equal(t, binary, got)
+	assert.False(t, reporter.skipped, "messages: %v", reporter.messages)
+	assert.False(t, reporter.failed, "messages: %v", reporter.messages)
 }
 
 // writeRustSource writes a .rs file at rel under root and stamps it with mod.

@@ -294,11 +294,15 @@ impl StreamlineCommissionConfig {
         // string, and the schema's propertyNames pattern is ^0*(...)
         // (schemas/compensation-plan.schema.json:1002), so "1" and "01" are
         // both valid keys naming level 1. A duplicate is representable in Go,
-        // and Go rejects it twice over: validateU8MapKeys reports the key
-        // collision (duplicate_value, rules.go:155), and the sorted level list
-        // [1, 1] fails non_sequential_levels at position 1. Rust holds a Vec
-        // rather than a map, so it meets the same input in a different shape
-        // and rejects it in this one check.
+        // and Go rejects it through non_sequential_levels: the sorted list
+        // becomes [1, 1, ...] and fails n != j+1 at index 1.
+        //
+        // Note it is caught there and nowhere else. The duplicate_value guard
+        // in validateU8MapKeys (rules.go:118) never sees dynamic_compression:
+        // it takes a map[string]float64 and is reached only through
+        // getRateTable (rules.go:98), whose switch returns nil for
+        // StreamlineCommission. So a "1"/"01" collision here surfaces as a
+        // sequencing error, not a duplicate one.
         for (idx, level) in self.levels.iter().enumerate() {
             if usize::from(level.level) != idx + 1 {
                 return Err(format!(

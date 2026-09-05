@@ -405,10 +405,11 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
             // whole guarantee, so assert it rather than only documenting it:
             // a future edit that moves the break or increments level above
             // this line would otherwise truncate silently and emit earnings
-            // at wrong levels. debug_assert follows validate_broad_pct above,
-            // but without its tracing::warn half: that one guards a value the
-            // caller supplies, while this holds by construction, so a release
-            // branch here would be dead code in the walk's hot loop.
+            // at wrong levels. A bare debug_assert is the convention for a
+            // by-construction invariant on a hot path (tree/arena.rs:44, :54,
+            // :77). The debug_assert + tracing::warn pairing used by
+            // validate_broad_pct below is for caller-supplied values, where
+            // the warn branch is actually reachable in release.
             //
             // The saturating_add(1) increments below are likewise safe only
             // because max_depth is u8, which caps level at 256. On a u16
@@ -1044,6 +1045,7 @@ mod tests {
             walk_level_commissions(&tree, &config, &cache, &snapshots, &volume, |_| false).unwrap();
 
         assert_eq!(result.len(), 254);
+        assert_eq!(result[0].level, 1);
         assert_eq!(result[253].level, 254);
         assert_eq!(result[253].earner_id, test_uuid_u16(46)); // 300 - 254
     }

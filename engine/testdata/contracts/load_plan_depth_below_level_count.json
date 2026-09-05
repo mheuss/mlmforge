@@ -1,0 +1,136 @@
+{
+    "description": "load_plan rejects a streamline commissionable_depth below the number of declared levels. Mirrors Go's depth_less_than_levels (internal/config/rules.go:969). HEU-612. Unlike its two sibling fixtures this one mutates two fields of the calculate_streamline base plan, and both are needed: the base declares one level at depth 5, so dropping depth alone gives 1 >= 1 and passes. The table grows to two levels first, then depth drops to 1.",
+    "request": {
+        "id": "lp-shallow",
+        "op": "load_plan",
+        "params": {
+            "name": "Contract Test Plan",
+            "version": 1,
+            "structures": [
+                {
+                    "type": "unilevel",
+                    "config": {
+                        "name": "Test",
+                        "level_commission": {
+                            "broad_commission_percent": 0.4,
+                            "volume_to_dollar_multiplier": null,
+                            "commissionable_depth": 3,
+                            "rate_table": {
+                                "member": {
+                                    "1": 0.05,
+                                    "2": 0.05,
+                                    "3": 0.05
+                                }
+                            }
+                        },
+                        "compression": null
+                    }
+                },
+                {
+                    "type": "streamline",
+                    "config": {
+                        "name": "StreamTest",
+                        "streamline_commission": {
+                            "volume_to_dollar_multiplier": 1.0,
+                            "commissionable_depth": 1,
+                            "dynamic_compression": [
+                                {
+                                    "level": 1,
+                                    "min_rank": "member",
+                                    "percent": 0.1
+                                },
+                                {
+                                    "level": 2,
+                                    "min_rank": "member",
+                                    "percent": 0.05
+                                }
+                            ],
+                            "streams": null
+                        }
+                    }
+                }
+            ],
+            "period": {
+                "length": "month",
+                "start_date": "2026-03-01",
+                "payout_lag_days": 14
+            },
+            "volume": {
+                "inhibit_signup_volume": false,
+                "base_currency": "USD",
+                "volume_to_dollar_multiplier": 1.0,
+                "deduct_qualifying_volume": false
+            },
+            "ranks": [
+                {
+                    "name": "member",
+                    "ordinal": 1,
+                    "qualification": {
+                        "structures": [],
+                        "required_products": []
+                    },
+                    "qualified_structures": [
+                        "Test",
+                        "StreamTest"
+                    ],
+                    "demotion_policy": "promotion_only"
+                }
+            ],
+            "rank_tracking": {
+                "track_achieved_rank": false
+            },
+            "rank_features": {
+                "constraints_enabled": false,
+                "overrides_enabled": false
+            },
+            "commission_eligibility": {
+                "min_personal_volume": 0.0,
+                "require_order_in_period": false,
+                "eligible_statuses": [],
+                "active_leg_tiers": []
+            },
+            "bonuses": {
+                "matching": null,
+                "sponsor": null,
+                "fast_start": null,
+                "rank_advancement": null,
+                "leadership_development": null,
+                "infinity": null,
+                "lifestyle": null,
+                "pool": null,
+                "matrix_completion": null,
+                "position": null,
+                "board_cycling": null
+            },
+            "payout": {
+                "base_currency": "USD",
+                "minimum_amount": 50.0,
+                "split_payouts_enabled": true,
+                "methods": [
+                    {
+                        "type": "bank_transfer",
+                        "fee": 2.5
+                    }
+                ]
+            },
+            "caps": {
+                "per_distributor_per_period": null,
+                "company_payout_cap_percent": 0.42,
+                "cap_enforcement": "pro_rata",
+                "clawback_on_refund": false
+            },
+            "placement": {
+                "donated_placement": null,
+                "holding_tank": null,
+                "binary_placement": null
+            }
+        }
+    },
+    "expected_response": {
+        "id": "lp-shallow",
+        "ok": false,
+        "error": {
+            "code": "INVALID_PLAN"
+        }
+    }
+}

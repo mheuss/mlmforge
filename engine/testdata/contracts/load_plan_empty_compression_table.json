@@ -1,5 +1,5 @@
 {
-    "description": "load_plan rejects a streamline structure with an empty dynamic_compression table. Mirrors Go's empty_compression_table (internal/config/rules.go:914). HEU-612.",
+    "description": "load_plan rejects a streamline structure with an empty dynamic_compression table. Mirrors Go's empty_compression_table (internal/config/rules.go:914). HEU-612. This plan is a hand-maintained copy of the one embedded in calculate_streamline.json's setup_raw, mutated as described. Nothing keeps them in sync: if that base plan's shape changes, this file keeps passing because the plan stops deserializing rather than because the rule fired. Change one, change all. HEU-604 tracks consolidating the copies.",
     "request": {
         "id": "lp-empty",
         "op": "load_plan",

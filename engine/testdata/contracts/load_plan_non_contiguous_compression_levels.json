@@ -1,5 +1,5 @@
 {
-    "description": "load_plan rejects a streamline dynamic_compression table whose declared levels are not a contiguous ascending run from 1. Mirrors Go's non_sequential_levels (internal/config/rules.go:943). HEU-612.",
+    "description": "load_plan rejects a streamline dynamic_compression table whose declared levels are not a contiguous ascending run from 1. Mirrors Go's non_sequential_levels (internal/config/rules.go:943). HEU-612. The Rust-side twin load_plan_rejects_gapped_compression_table in worker_integration.rs covers the same gap and additionally asserts the message, so it is stronger there. This fixture earns its place by running the case from the Go harness too, and by keeping all three rules present rather than two of three. This plan is a hand-maintained copy of the one embedded in calculate_streamline.json's setup_raw, mutated as described. Nothing keeps them in sync: if that base plan's shape changes, this file keeps passing because the plan stops deserializing rather than because the rule fired. Change one, change all. HEU-604 tracks consolidating the copies.",
     "request": {
         "id": "lp-gap",
         "op": "load_plan",

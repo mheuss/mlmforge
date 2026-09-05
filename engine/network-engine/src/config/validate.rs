@@ -273,21 +273,32 @@ impl StreamlineCommissionConfig {
         }
         // The threshold vector is indexed by declared level and the rate table
         // is keyed by the declared level, so the two agree only when the
-        // declared levels are a contiguous ascending run starting at 1. Go's
-        // validateStreamlineCommission enforces the same shape; this gate does
-        // not trust that it ran (HEU-517).
+        // declared levels are a contiguous ascending run starting at 1. This
+        // gate does not trust that the Go pipeline ran (HEU-517).
+        //
+        // Go splits that guarantee across two files, and the split matters if
+        // you are checking parity. validateStreamlineCommission
+        // (internal/config/rules.go:923-946) enforces the *set*: it sorts a
+        // copy of the level keys first, so it is indifferent to order and
+        // would accept [2, 1]. The *order* comes from sortStreamlineLevels
+        // (internal/config/translate.go:290), which sorts ascending before the
+        // array is handed to Rust. Reading rules.go alone makes this check look
+        // stricter than Go. It is not, but only because that sort exists.
         //
         // The expected value is computed in usize so it cannot overflow: a
         // table longer than 255 entries must reject at position 255, not wrap.
         // The message names the offending entry rather than echoing the table,
         // which is attacker-sized here.
         //
-        // One asymmetry, and it is not a divergence. Go models the table as
-        // map[string]StreamlineLevel (internal/config/types.go:304), so a
-        // duplicate level is unrepresentable there and Go has no rule against
-        // it. Rust holds a Vec and can carry one. Rejecting it still cannot
-        // refuse a plan the Go pipeline passed, because a duplicate cannot
-        // survive translation out of a map in the first place.
+        // Duplicates are parity too, not an added rule. Go keys the table by
+        // string, and the schema's propertyNames pattern is ^0*(...)
+        // (schemas/compensation-plan.schema.json:1002), so "1" and "01" are
+        // both valid keys naming level 1. A duplicate is representable in Go,
+        // and Go rejects it twice over: validateU8MapKeys reports the key
+        // collision (duplicate_value, rules.go:155), and the sorted level list
+        // [1, 1] fails non_sequential_levels at position 1. Rust holds a Vec
+        // rather than a map, so it meets the same input in a different shape
+        // and rejects it in this one check.
         for (idx, level) in self.levels.iter().enumerate() {
             if usize::from(level.level) != idx + 1 {
                 return Err(format!(
@@ -654,7 +665,11 @@ mod tests {
         // One check catches all three malformed shapes: out of order fails at
         // the first transposed entry, a gap at the entry after it, and a
         // duplicate at the second copy.
-        assert!(streamline_with_levels(&[2, 1], 5).validate().is_err());
+        let err = streamline_with_levels(&[2, 1], 5).validate().unwrap_err();
+        assert!(
+            err.contains("contiguous ascending run"),
+            "a different rule fired: {err}"
+        );
         assert!(streamline_with_levels(&[1, 3], 5).validate().is_err());
         assert!(streamline_with_levels(&[1, 1], 5).validate().is_err());
         assert!(streamline_with_levels(&[2, 3], 5).validate().is_err());
@@ -680,9 +695,11 @@ mod tests {
     fn streamline_error_message_is_bounded() {
         // 255 valid sequential entries followed by a 256th. The mismatch lands
         // at position 255, where the expected value is 256 and no u8 can match
-        // it. That exercises three things at once: the late mismatch rather
-        // than a first-entry bail, the usize comparison that keeps the expected
-        // value from wrapping, and the bounded message.
+        // it. That pins the late mismatch rather than a first-entry bail, and
+        // the bounded message on a long table. It does not distinguish usize
+        // from the u16 form: both compare 255 against 256 and error. What it
+        // does rule out is a naive u8 expected value, which would overflow on
+        // 255 + 1 before ever reaching the comparison.
         //
         // The contiguity check runs before the depth check, so depth 255
         // against 256 entries is fine here: contiguity rejects first.

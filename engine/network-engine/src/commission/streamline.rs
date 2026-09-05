@@ -63,6 +63,8 @@ pub fn calculate_streamline(
                     ))
                 })?
         };
+        // In bounds: slots is sized to max_level, and the guard above proved
+        // level.level >= 1.
         slots[usize::from(level.level) - 1] = Some(ordinal);
     }
 
@@ -194,18 +196,7 @@ mod tests {
     }
 
     fn rank_def(name: &str, ordinal: u16) -> crate::config::rank::RankDefinition {
-        crate::config::rank::RankDefinition {
-            name: name.to_string(),
-            ordinal,
-            qualification: crate::config::rank::RankQualification {
-                structures: vec![],
-                required_products: vec![],
-                window: None,
-                tenure: None,
-            },
-            qualified_structures: vec!["test_streamline".to_string()],
-            demotion_policy: crate::config::rank::DemotionPolicy::PromotionOnly,
-        }
+        test_helpers::make_rank(name, ordinal, vec!["test_streamline".to_string()])
     }
 
     fn level(n: u8, min_rank: &str, percent: f64) -> StreamlineLevel {
@@ -573,16 +564,9 @@ mod tests {
 
     #[test]
     fn gapped_table_errors_rather_than_paying() {
-        // The plan defines a rank at ordinal 65535. Be honest about what that
-        // does here: nothing. A gapped table errors before the walk runs, so
-        // this test fails against the rejected u16::MAX sentinel design for a
-        // simpler reason than the design claimed — expect_err panics on the
-        // Ok that design returns, whatever ordinals the plan defines.
-        //
-        // The rank stays because it keeps the fixture honest about WHY the
-        // sentinel was rejected: 65535 is a legitimate ordinal, so u16::MAX
-        // cannot mean "no threshold". But that is a property of the walk's
-        // `dist_ordinal < min_ordinal` test, not of this function.
+        // The apex rank at ordinal 65535 is why no gap sentinel is safe:
+        // u16::MAX is itself a legitimate ordinal. It does not change this
+        // test's outcome, which turns only on the error. See design decision 5.
         let engine = make_engine(5);
         let levels = vec![level(1, "associate", 0.10), level(3, "apex", 0.02)];
         let structure = make_structure(levels, 5);
@@ -647,6 +631,13 @@ mod tests {
 
         let err = calculate_streamline(&engine, &plan, &structure, &snapshots, &volume)
             .expect_err("level 0 must be rejected, not panic");
-        assert!(matches!(err, CalculationError::ConfigError(_)));
+        match err {
+            CalculationError::ConfigError(msg) => {
+                // Pin the message: the shared fixture could otherwise satisfy
+                // this test with an unrelated ConfigError.
+                assert!(msg.contains("1-based"), "unexpected message: {msg}");
+            }
+            other => panic!("expected ConfigError, got {other:?}"),
+        }
     }
 }

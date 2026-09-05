@@ -1,5 +1,5 @@
 use crate::config::eligibility::CommissionEligibility;
-pub use crate::test_support::{build_test_plan, uuid_from_index};
+pub use crate::test_support::{build_test_plan, make_rank, uuid_from_index};
 
 /// Default eligibility config for tests.
 ///

@@ -757,6 +757,73 @@ fn load_plan_rejects_out_of_range_percent() {
 }
 
 #[test]
+fn a_calculate_response_carries_earnings_walks_and_plan() {
+    // Task 11's shape check. Nothing else proves `walks` and `plan` reach the
+    // wire at all: the other worker tests only reach through `result.earnings`,
+    // so a handler that dropped the other two keys would pass every one of
+    // them.
+    let mut worker = common::spawn_worker();
+    load_test_plan(&mut worker);
+    build_three_node_chain(&mut worker);
+
+    let snap =
+        r#"{"rank":"member","personal_volume":100.0,"status":"active","has_order_in_period":true}"#;
+    let params = format!(
+        r#"{{"structure":"Test","snapshots":{{"{root}":{snap},"{child}":{snap},"{gc}":{snap}}},"volume":[{{"source_id":"{gc}","cv_amount":100.0}}]}}"#,
+        root = ROOT,
+        child = CHILD,
+        gc = GRANDCHILD,
+        snap = snap,
+    );
+    let request = format!(
+        r#"{{"id":"shape-1","op":"calculate_unilevel","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    let parsed: serde_json::Value = serde_json::from_str(&resp).expect(&resp);
+    assert!(parsed["ok"].as_bool().unwrap(), "calculate failed: {resp}");
+
+    let result = parsed["result"]
+        .as_object()
+        .unwrap_or_else(|| panic!("result must be an object, got: {resp}"));
+    let mut keys: Vec<&str> = result.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        vec!["earnings", "plan", "walks"],
+        "the v2 result is exactly these three keys: {resp}"
+    );
+
+    let walks = result["walks"].as_array().expect("walks is an array");
+    assert_eq!(walks.len(), 1, "one volume source is one walk: {resp}");
+    assert_eq!(walks[0]["kind"], "level");
+    assert_eq!(walks[0]["stop"], "root_reached");
+    assert!(
+        walks[0].get("stopped_at").is_none(),
+        "root_reached names no node: {resp}"
+    );
+
+    // Every earning points at a walk that is actually present.
+    let indexes: Vec<u64> = walks.iter().map(|w| w["index"].as_u64().unwrap()).collect();
+    for e in result["earnings"].as_array().unwrap() {
+        let w = e["walk"]
+            .as_u64()
+            .expect("a level earning references a walk");
+        assert!(indexes.contains(&w), "earning references walk {w}: {resp}");
+    }
+
+    let hash = result["plan"]["hash"]
+        .as_str()
+        .expect("plan carries a hash");
+    let hex = hash.strip_prefix("sha256:").expect("sha256: prefix");
+    assert_eq!(hex.len(), 64, "64 hex characters: {hash}");
+    assert!(hex.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')));
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
 fn calculate_unilevel_three_node_chain() {
     let mut worker = common::spawn_worker();
 

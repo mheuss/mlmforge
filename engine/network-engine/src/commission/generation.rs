@@ -2057,6 +2057,12 @@ mod calculate_tests {
             "the walks must be distinguishable by rank, got {ranks:?}"
         );
 
+        // The (ordinal, name) ordering itself is pinned by
+        // walk_order::tests::ranks_sort_by_ordinal_then_name, which fails when
+        // the rank key is removed. An assertion here would not: this fixture's
+        // emission order already matches its sorted order, so it would pass
+        // with the key gone and read as coverage it does not provide.
+
         // And every earning points at one of them, rather than all at index 0.
         let indexes: Vec<u32> = result.walks.iter().map(|w| w.index).collect();
         for e in &result.earnings {

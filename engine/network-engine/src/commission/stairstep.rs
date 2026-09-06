@@ -1372,6 +1372,89 @@ mod tests {
     // --- Walk 2: Generation override tests ---
 
     #[test]
+    fn stairstep_walk_two_earnings_carry_null_walk() {
+        // The invariant the doc comment describes, made executable. Walk 1 is
+        // instrumented and its earnings reference a real walk; Walk 2 is not,
+        // and design 029 records that as a deliberate gap rather than an
+        // oversight. Without this test the gap is only prose.
+        let tree = build_chain(5);
+        let mut structure = test_stairstep_structure();
+        let OverrideStrategy::SingleWalk {
+            generation_overrides,
+            ..
+        } = &mut structure.breakaway.as_mut().unwrap().overrides
+        else {
+            panic!("expected SingleWalk override strategy");
+        };
+        *generation_overrides = Some(BreakawayGenerationConfig {
+            max_generations: 3,
+            rates: {
+                let mut m = BTreeMap::new();
+                m.insert(1, 0.05);
+                m.insert(2, 0.03);
+                m.insert(3, 0.01);
+                m
+            },
+            boundary_rank: "director".to_string(),
+        });
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", 150.0));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(3), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(4), snapshot_with_rank("associate", 150.0));
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(4),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap();
+
+        // Walk 1 runs once per volume source.
+        assert_eq!(
+            result.walks.len(),
+            volume.len(),
+            "stairstep calls the level walk once per source"
+        );
+
+        let with_walk = result.earnings.iter().filter(|e| e.walk.is_some()).count();
+        let without = result.earnings.iter().filter(|e| e.walk.is_none()).count();
+        assert!(with_walk > 0, "Walk 1 must produce instrumented earnings");
+        assert!(
+            without > 0,
+            "this fixture must produce Walk 2 earnings, or the test proves nothing"
+        );
+
+        // Every recorded reference resolves; the nulls stay null.
+        let indexes: Vec<u32> = result.walks.iter().map(|w| w.index).collect();
+        for e in &result.earnings {
+            if let Some(w) = e.walk {
+                assert!(indexes.contains(&w), "earning references walk {w}");
+            }
+        }
+
+        // And no walk claims to be a generation walk: Walk 2 emits none.
+        assert!(
+            result
+                .walks
+                .iter()
+                .all(|w| w.kind == crate::commission::WalkKind::Level),
+            "Walk 2 must not emit a generation walk"
+        );
+    }
+
+    #[test]
     fn generation_overrides_multi_breakaway() {
         // Tree: 0(senior_director) -> 1(director) -> 2(assoc) -> 3(director) -> 4(assoc)
         // Breakaways: nodes 1 and 3 (both director = threshold_rank).

@@ -294,12 +294,14 @@ pub struct Walk {
     /// from the order walks happened to be emitted in, which for streamline
     /// is a `HashMap` iteration.
     ///
-    /// `walk_level_commissions` sets this to a collector id, unique within
-    /// one calculator's collector. HEU-641 Task 5 adds
-    /// `walk_order::assign_indexes`, which sorts the response's walks into
-    /// the total order and replaces every collector id with the real index.
-    /// Until that lands, this field holds emission order and must not be
-    /// read as a position.
+    /// The emitters set this to a collector id, unique within one
+    /// calculator's collector. `walk_order::assign_indexes` then sorts the
+    /// response's walks into the total order and replaces every collector id
+    /// with the real index, returning the map callers use to translate their
+    /// earnings' references.
+    ///
+    /// So a `Walk` seen between emission and assignment holds emission order,
+    /// not a position. Only the assembled result's indexes are positions.
     pub index: u32,
 
     /// The distributor whose volume triggered the traversal.

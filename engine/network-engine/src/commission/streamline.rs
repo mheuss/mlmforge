@@ -245,6 +245,140 @@ mod tests {
     }
 
     #[test]
+    fn every_streamline_walk_carries_its_stream_id() {
+        let engine = make_engine(5);
+        let levels = vec![
+            StreamlineLevel {
+                level: 1,
+                min_rank: "bronze".to_string(),
+                percent: 0.05,
+            },
+            StreamlineLevel {
+                level: 2,
+                min_rank: "bronze".to_string(),
+                percent: 0.04,
+            },
+            StreamlineLevel {
+                level: 3,
+                min_rank: "silver".to_string(),
+                percent: 0.03,
+            },
+        ];
+        let structure = make_structure(levels, 5);
+
+        let mut plan = test_helpers::build_test_plan(
+            test_helpers::default_eligibility(),
+            crate::config::StructureConfig::Streamline(structure.clone()),
+            "test_streamline",
+        );
+        // Add multiple ranks.
+        plan.ranks = vec![
+            crate::config::rank::RankDefinition {
+                name: "associate".to_string(),
+                ordinal: 0,
+                qualification: crate::config::rank::RankQualification {
+                    structures: vec![],
+                    required_products: vec![],
+                    window: None,
+                    tenure: None,
+                },
+                qualified_structures: vec!["test_streamline".to_string()],
+                demotion_policy: crate::config::rank::DemotionPolicy::PromotionOnly,
+            },
+            crate::config::rank::RankDefinition {
+                name: "bronze".to_string(),
+                ordinal: 1,
+                qualification: crate::config::rank::RankQualification {
+                    structures: vec![],
+                    required_products: vec![],
+                    window: None,
+                    tenure: None,
+                },
+                qualified_structures: vec!["test_streamline".to_string()],
+                demotion_policy: crate::config::rank::DemotionPolicy::PromotionOnly,
+            },
+            crate::config::rank::RankDefinition {
+                name: "silver".to_string(),
+                ordinal: 2,
+                qualification: crate::config::rank::RankQualification {
+                    structures: vec![],
+                    required_products: vec![],
+                    window: None,
+                    tenure: None,
+                },
+                qualified_structures: vec!["test_streamline".to_string()],
+                demotion_policy: crate::config::rank::DemotionPolicy::PromotionOnly,
+            },
+        ];
+
+        let mut snapshots = HashMap::new();
+        // Chain: 1 → 2 → 3 → 4 → 5
+        // Node 1 = silver, 2 = bronze, 3 = associate, 4 = bronze, 5 = associate
+        let ranks = ["silver", "bronze", "associate", "bronze", "associate"];
+        for (i, rank) in ranks.iter().enumerate() {
+            snapshots.insert(
+                test_uuid((i + 1) as u8),
+                DistributorSnapshot {
+                    rank: rank.to_string(),
+                    personal_volume: 150.0,
+                    status: "active".to_string(),
+                    has_order_in_period: true,
+                },
+            );
+        }
+
+        // Volume at node 5 (bottom of chain).
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(5),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap();
+
+        assert!(!result.walks.is_empty(), "the fixture must produce a walk");
+
+        // Every streamline walk names the stream it came from. This is what
+        // walk_order sorts on, and without it the index order falls through to
+        // a collector id assigned in HashMap iteration order, which design 029
+        // forbids.
+        for w in &result.walks {
+            assert!(
+                w.stream_id.is_some(),
+                "a streamline walk must carry its stream id, got {w:?}"
+            );
+        }
+
+        // Running again over the same input yields the same index-to-stream
+        // mapping. A HashMap-order dependency would show up here.
+        let again = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap();
+
+        let first: Vec<(u32, Option<u32>)> = result
+            .walks
+            .iter()
+            .map(|w| (w.index, w.stream_id))
+            .collect();
+        let second: Vec<(u32, Option<u32>)> =
+            again.walks.iter().map(|w| (w.index, w.stream_id)).collect();
+        assert_eq!(first, second, "walk indexes must be stable across runs");
+    }
+
+    #[test]
     fn single_stream_dynamic_compression() {
         let engine = make_engine(5);
         let levels = vec![

@@ -59,6 +59,33 @@ func StartPostgres() (*PostgresContainer, error) {
 	}, nil
 }
 
+// RequirePostgresInCI ends the run when StartPostgres failed and CI is set.
+//
+// Call it from TestMain immediately after StartPostgres, before m.Run(). go
+// test counts a skipped test as a success, so a CI run whose container never
+// started would report green having asserted nothing about any Postgres seam
+// (HEU-678). With CI unset it reports and returns, leaving the per-test
+// container checks to skip as they always have.
+//
+// Exported: an external test package calls it.
+func RequirePostgresInCI(err error) {
+	if err == nil {
+		return
+	}
+	ci := os.Getenv("CI")
+	if postgresStartupIsFatal(err, ci) {
+		fmt.Fprintf(os.Stderr, "Postgres container failed to start and CI=%q; not skipping (HEU-678): %v\n", ci, err)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stderr, "Postgres container unavailable: %v\n", err)
+}
+
+// postgresStartupIsFatal reports whether a failed StartPostgres should end the
+// run rather than let the per-test container checks skip.
+func postgresStartupIsFatal(err error, ci string) bool {
+	return err != nil && ci != ""
+}
+
 // Terminate stops and removes the container.
 func (c *PostgresContainer) Terminate() {
 	if c != nil && c.container != nil {

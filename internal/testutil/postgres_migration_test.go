@@ -19,10 +19,7 @@ var migrationContainer *testutil.PostgresContainer
 func TestMain(m *testing.M) {
 	var err error
 	migrationContainer, err = testutil.StartPostgres()
-	if err != nil {
-		// Skip in environments without Docker; the test below will t.Skip.
-		fmt.Fprintf(os.Stderr, "Postgres container unavailable: %v\n", err)
-	}
+	testutil.RequirePostgresInCI(err)
 	code := m.Run()
 	if migrationContainer != nil {
 		migrationContainer.Terminate()

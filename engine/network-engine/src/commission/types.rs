@@ -163,9 +163,225 @@ pub struct BinaryCalculationResult {
     pub carry_forward: HashMap<Uuid, LegVolumes>,
 }
 
+/// Which traversal mechanic produced a walk.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WalkKind {
+    Level,
+    Generation,
+}
+
+/// What happened to a node the walk visited.
+///
+/// Both variants are consumed. Non-consuming skips are not recorded in
+/// protocol version 2, so a walk's `steps` is the consumed subset of the
+/// path, not the full ordered node list.
+///
+/// `Forfeited` deliberately does not say why the level was forfeited. One
+/// of its three branches is a per-distributor depth cap, which design 029
+/// names `depth_cap` and forbids shipping as an outcome until HEU-556
+/// settles whether it is independently verifiable. Naming that branch
+/// correctly would break 029; naming it anything else would assert a
+/// reason the code does not support.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StepOutcome {
+    /// The node earned.
+    Paid,
+    /// The node consumed a level without earning.
+    Forfeited,
+}
+
+/// How a walk ended.
+///
+/// One variant per real exit. A traversal that cannot make one of these
+/// claims emits no walk at all.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WalkStop {
+    /// The upline ran out. No node caused this, so `stopped_at` is absent.
+    RootReached,
+    /// The configured depth limit.
+    MaxDepthReached,
+    /// The caller's stop predicate.
+    ///
+    /// Named for the boundary rather than for stairstep's breakaway,
+    /// because the predicate is caller-supplied and stairstep is only its
+    /// current user. If a calculator ever passes a predicate that is not a
+    /// boundary in any meaningful sense, this name stops being honest and
+    /// must change before that caller ships.
+    BoundaryReached,
+    /// The configured generation limit.
+    MaxGenerationsReached,
+}
+
+/// One visited node and what the walk decided about it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WalkStep {
+    /// The distributor this step visited.
+    pub node_id: Uuid,
+
+    /// What the walk decided.
+    pub outcome: StepOutcome,
+
+    /// Whether this step advanced the walk's level counter. Counter
+    /// reconstruction is a count of consumed steps.
+    pub consumed: bool,
+
+    /// The rank the calculator read for this node.
+    ///
+    /// Named `earner_rank` rather than `rank` because stairstep Walk 2's
+    /// differential resolves its rate from both the ancestor's rank and the
+    /// breakaway's. The narrow name stops the field being widened by
+    /// assumption when those earnings arrive.
+    ///
+    /// Absent where no rank was read, never null-and-present. A rank in an
+    /// audit record implies a rank that affected the payout, so emitting one
+    /// the calculation never used is misleading.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub earner_rank: Option<String>,
+}
+
+/// One traversal, and the decisions along it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Walk {
+    /// Position in the response's total order. Earnings reference this.
+    pub index: u32,
+
+    /// The distributor whose volume triggered the traversal.
+    pub source_id: Uuid,
+
+    /// Which mechanic ran.
+    pub kind: WalkKind,
+
+    /// Streamline context. Absent for every other calculator.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_id: Option<u32>,
+
+    /// Generation SameRank context. Absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rank: Option<String>,
+
+    /// Visited nodes in order, consumed steps only.
+    pub steps: Vec<WalkStep>,
+
+    /// How the traversal ended.
+    pub stop: WalkStop,
+
+    /// The node that caused the stop.
+    ///
+    /// Present for every stop except `RootReached`, where the upline simply
+    /// ran out and naming a node would be false. Absent means no node caused
+    /// it, never that the node is unknown.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stopped_at: Option<Uuid>,
+}
+
+/// The plan the engine actually had when it calculated.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlanIdentity {
+    pub name: String,
+    pub version: u32,
+    /// `sha256:<64 lowercase hex>`, over the raw `load_plan` bytes.
+    pub hash: String,
+}
+
+/// What a commission calculator returns.
+///
+/// Supersedes design 017's bare `Vec<CommissionEarning>` return contract.
+/// The earnings list inside keeps 017's shape exactly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CommissionCalculationResult {
+    pub earnings: Vec<CommissionEarning>,
+    pub walks: Vec<Walk>,
+    pub plan: PlanIdentity,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn walk_serializes_with_absent_optional_context() {
+        let walk = Walk {
+            index: 0,
+            source_id: Uuid::nil(),
+            kind: WalkKind::Level,
+            stream_id: None,
+            rank: None,
+            steps: vec![WalkStep {
+                node_id: Uuid::nil(),
+                outcome: StepOutcome::Paid,
+                consumed: true,
+                earner_rank: Some("member".to_string()),
+            }],
+            stop: WalkStop::RootReached,
+            stopped_at: None,
+        };
+        let json = serde_json::to_value(&walk).expect("serialize walk");
+        assert_eq!(json["kind"], "level");
+        assert_eq!(json["stop"], "root_reached");
+        assert_eq!(json["steps"][0]["outcome"], "paid");
+        assert_eq!(json["steps"][0]["consumed"], true);
+        assert!(
+            json.get("stream_id").is_none(),
+            "absent context must not serialize: {json}"
+        );
+        assert!(
+            json.get("stopped_at").is_none(),
+            "absent stopped_at must not serialize: {json}"
+        );
+        assert!(
+            json.get("rank").is_none(),
+            "absent rank must be omitted, not null: {json}"
+        );
+    }
+
+    #[test]
+    fn every_stop_and_outcome_value_has_its_wire_name() {
+        // These strings are persisted by HEU-46. Changing one orphans every
+        // row carrying the old value, so pin them rather than trusting the
+        // rename_all attribute.
+        let stops = [
+            (WalkStop::RootReached, "root_reached"),
+            (WalkStop::MaxDepthReached, "max_depth_reached"),
+            (WalkStop::BoundaryReached, "boundary_reached"),
+            (WalkStop::MaxGenerationsReached, "max_generations_reached"),
+        ];
+        for (value, name) in stops {
+            assert_eq!(serde_json::to_value(&value).expect("serialize stop"), name);
+        }
+
+        let outcomes = [
+            (StepOutcome::Paid, "paid"),
+            (StepOutcome::Forfeited, "forfeited"),
+        ];
+        for (value, name) in outcomes {
+            assert_eq!(
+                serde_json::to_value(&value).expect("serialize outcome"),
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn stopped_at_names_the_node_for_every_stop_but_root() {
+        let walk = Walk {
+            index: 0,
+            source_id: Uuid::nil(),
+            kind: WalkKind::Level,
+            stream_id: None,
+            rank: None,
+            steps: Vec::new(),
+            stop: WalkStop::MaxDepthReached,
+            stopped_at: Some(Uuid::nil()),
+        };
+        let json = serde_json::to_value(&walk).expect("serialize walk");
+        assert!(
+            json.get("stopped_at").is_some(),
+            "a node-caused stop must name the node: {json}"
+        );
+    }
 
     #[test]
     fn tree_config_mismatch_message_names_structure_and_values() {

@@ -222,8 +222,21 @@ pub struct WalkStep {
 
     pub outcome: StepOutcome,
 
-    /// Whether this step advanced the walk's level counter. Counter
-    /// reconstruction is a count of consumed steps.
+    /// Whether this step advanced the walk's level counter.
+    ///
+    /// **Always `true` in protocol version 2.** Both `StepOutcome` variants
+    /// consume, and non-consuming skips (compression, pass-up, a dynamic
+    /// threshold) are not recorded at all, so no emitted step carries
+    /// `false`. Counter reconstruction is therefore `steps.len()` in v2, and
+    /// a count of consumed steps from v3 on.
+    ///
+    /// The field is here rather than deferred because the taxonomy phase
+    /// starts recording non-consuming steps, and HEU-46 persists this
+    /// column. Adding it later would mean a schema change and a backfill
+    /// where every existing row means `true`.
+    ///
+    /// Do not emit `false` before that phase lands. A `false` here would
+    /// break `steps.len()` for every reader written against v2.
     pub consumed: bool,
 
     /// The rank the calculator read for this node.
@@ -244,6 +257,14 @@ pub struct WalkStep {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Walk {
     /// Position in the response's total order. Earnings reference this.
+    ///
+    /// **Not knowable at construction.** Design 029 requires indexes to come
+    /// from a defined total order applied across the whole response, never
+    /// from the order walks happened to be emitted in, which for streamline
+    /// is a `HashMap` iteration. Construct through `Walk::level`,
+    /// `Walk::streamline` or `Walk::generation`, which take a collector id,
+    /// and let `walk_order::assign_indexes` overwrite it with the real
+    /// index once every walk exists.
     pub index: u32,
 
     /// The distributor whose volume triggered the traversal.

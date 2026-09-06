@@ -10,6 +10,12 @@ jobs:
   go:
     name: Go
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        # Naming bash explicitly is what turns on pipefail. Without it a step
+        # ending in a pipe reports the last command's status, so a failing
+        # `go test` upstream of `jq` would pass.
+        shell: bash
     steps:
       - uses: actions/checkout@v4
 
@@ -27,7 +33,44 @@ jobs:
         run: go build ./...
 
       - name: Test
-        run: go test ./...
+        run: |
+          go test ./... -json | tee "$RUNNER_TEMP/gotest.json" \
+            | jq -j 'select(.Action == "output") | .Output'
+
+      - name: Test summary
+        if: always()
+        run: |
+          counts=$(jq -r '
+            select(.Test != null and (.Test | contains("/") | not))
+            | select(.Action == "pass" or .Action == "fail" or .Action == "skip")
+            | .Action
+          ' "$RUNNER_TEMP/gotest.json" | sort | uniq -c)
+
+          skipped=$(jq -r '
+            select(.Action == "skip" and .Test != null and (.Test | contains("/") | not))
+            | "\(.Package)\t\(.Test)"
+          ' "$RUNNER_TEMP/gotest.json" | sort)
+
+          {
+            echo "### Go test results (top-level tests, subtests not counted)"
+            echo
+            echo '```'
+            echo "$counts"
+            echo '```'
+            echo
+            echo "Skipped tests:"
+            echo
+            echo '```'
+            echo "${skipped:-none}"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload test record
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: go-test-json
+          path: ${{ runner.temp }}/gotest.json
 
       - name: Format check
         run: |

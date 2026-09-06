@@ -351,8 +351,10 @@ func staleWorkerBinary(binPath, sourceRoot string) (string, error) {
 
 // findWorkerBinary returns the path to the compiled Rust worker binary.
 //
-// An absent binary skips. Any other stat error fails, because a skip on a
-// permission or I/O error is indistinguishable from a pass. A binary older
+// An absent binary skips locally and fails when CI is set, because a skip in
+// CI reports as a pass and the run then proves nothing (HEU-660). Any other
+// stat error fails, because a skip on a permission or I/O error is
+// indistinguishable from a pass. A binary older
 // than the Rust sources fails too: tests that run against a stale worker
 // assert about engine code that is no longer on the branch, and a green Go
 // suite then means nothing (HEU-615).
@@ -376,7 +378,14 @@ func findWorkerBinaryAt(r workerBinaryReporter, binPath, sourceRoot string) stri
 		if !errors.Is(err, fs.ErrNotExist) {
 			require.NoError(r, err, "could not stat worker binary %s", binPath)
 		}
-		r.Skipf("worker binary not found at %s (run 'cargo build --workspace' in engine/)", binPath)
+		if ci := os.Getenv("CI"); ci != "" {
+			r.Fatalf(
+				"worker binary not found at %s and CI=%q; not skipping (HEU-660). Build it with 'cargo build --package network-engine-worker' in engine/",
+				binPath, ci,
+			)
+		} else {
+			r.Skipf("worker binary not found at %s (run 'cargo build --workspace' in engine/)", binPath)
+		}
 		return ""
 	}
 	workerFreshnessOnce.Do(func() {
@@ -427,6 +436,20 @@ func TestFindWorkerBinaryAt_SkipsWhenBinaryAbsentAndCIUnset(t *testing.T) {
 
 	assert.True(t, reporter.skipped, "expected a skip; messages: %v", reporter.messages)
 	assert.False(t, reporter.failed, "expected no failure; messages: %v", reporter.messages)
+}
+
+func TestFindWorkerBinaryAt_FailsWhenBinaryAbsentAndCISet(t *testing.T) {
+	t.Setenv("CI", "true")
+	reporter := &fakeReporter{}
+	absent := filepath.Join(t.TempDir(), "absent")
+
+	findWorkerBinaryAt(reporter, absent, engineSourceRoot)
+
+	assert.True(t, reporter.failed, "expected a failure; messages: %v", reporter.messages)
+	assert.False(t, reporter.skipped, "expected no skip; messages: %v", reporter.messages)
+	require.Len(t, reporter.messages, 1)
+	assert.Contains(t, reporter.messages[0], absent)
+	assert.Contains(t, reporter.messages[0], `CI="true"`)
 }
 
 func TestFindWorkerBinaryAt_ReturnsPathWhenBinaryPresent(t *testing.T) {

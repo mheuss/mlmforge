@@ -130,7 +130,8 @@
         "id": "lp-gap",
         "ok": false,
         "error": {
-            "code": "INVALID_PLAN"
+            "code": "INVALID_PLAN",
+            "message_contains": "got 3 at position 1"
         }
     }
 }

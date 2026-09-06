@@ -20,7 +20,8 @@
         "id": "err-pos-1",
         "ok": false,
         "error": {
-            "code": "INVALID_POSITION"
+            "code": "INVALID_POSITION",
+            "message_contains": "position 5"
         }
     }
 }

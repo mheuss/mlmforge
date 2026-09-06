@@ -5,7 +5,8 @@
         "id": "c-2",
         "ok": false,
         "error": {
-            "code": "UNKNOWN_OP"
+            "code": "UNKNOWN_OP",
+            "message_contains": "bogus"
         }
     }
 }

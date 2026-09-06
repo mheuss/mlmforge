@@ -83,7 +83,8 @@ fn load_fixtures() -> Vec<(String, ContractFixture)> {
 /// - `id` must match exactly.
 /// - If `expected.result` is present, `actual.result` must match exactly.
 /// - If `expected.error.code` is present, `actual.error.code` must match.
-///   The error message is not compared because it may contain implementation details.
+/// - If `expected.error.message_contains` is present, `actual.error.message`
+///   must contain it. When the key is absent the message is not compared.
 fn assert_response_matches(fixture_name: &str, expected: &serde_json::Value, actual: &str) {
     let actual: serde_json::Value = serde_json::from_str(actual)
         .unwrap_or_else(|e| panic!("[{}] failed to parse actual response: {}", fixture_name, e));
@@ -111,21 +112,126 @@ fn assert_response_matches(fixture_name: &str, expected: &serde_json::Value, act
         );
     }
 
-    // If expected has an error with a code, compare the code.
+    // If expected has an error, compare the error object.
     if let Some(expected_error) = expected.get("error") {
         let actual_error = actual
             .get("error")
             .unwrap_or_else(|| panic!("[{}] expected error but got none", fixture_name));
 
-        if let Some(expected_code) = expected_error.get("code") {
-            assert_eq!(
-                expected_code,
-                actual_error.get("code").unwrap_or(&serde_json::Value::Null),
-                "[{}] error 'code' mismatch",
-                fixture_name
-            );
+        if let Err(e) = check_expected_error(fixture_name, expected_error, actual_error) {
+            panic!("{}", e);
         }
     }
+}
+
+/// Every key a fixture may put under `expected_response.error`. A key outside
+/// this set fails the fixture rather than being ignored, so a misspelled
+/// assertion cannot pass by asserting nothing.
+const EXPECTED_ERROR_KEYS: [&str; 2] = ["code", "message_contains"];
+
+/// Compares a fixture's expected error object against the worker's actual one.
+///
+/// `code` is compared exactly when present. `message_contains` is compared as a
+/// substring of the actual message when present, and the message is not read at
+/// all when it is absent.
+fn check_expected_error(
+    fixture_name: &str,
+    expected_error: &serde_json::Value,
+    actual_error: &serde_json::Value,
+) -> Result<(), String> {
+    let expected_obj = expected_error.as_object().ok_or_else(|| {
+        format!(
+            "[{}] expected_response.error is not an object: {}",
+            fixture_name, expected_error
+        )
+    })?;
+
+    if expected_obj.is_empty() {
+        return Err(format!(
+            "[{}] expected_response.error is empty, so it asserts nothing",
+            fixture_name
+        ));
+    }
+
+    for key in expected_obj.keys() {
+        if !EXPECTED_ERROR_KEYS.contains(&key.as_str()) {
+            return Err(format!(
+                "[{}] unrecognized key \"{}\" under expected_response.error",
+                fixture_name, key
+            ));
+        }
+    }
+
+    if let Some(expected_code) = expected_obj.get("code") {
+        let want = expected_code.as_str().ok_or_else(|| {
+            format!(
+                "[{}] expected error code is not a JSON string: {}",
+                fixture_name, expected_code
+            )
+        })?;
+
+        let Some(actual_code) = actual_error.get("code") else {
+            return Err(format!(
+                "[{}] expected error code \"{}\" but the response carried no code",
+                fixture_name, want
+            ));
+        };
+
+        let got = actual_code.as_str().ok_or_else(|| {
+            format!(
+                "[{}] actual error code is not a JSON string: {}",
+                fixture_name, actual_code
+            )
+        })?;
+
+        if got != want {
+            return Err(format!(
+                "[{}] error code mismatch: want \"{}\", got \"{}\"",
+                fixture_name, want, got
+            ));
+        }
+    }
+
+    let Some(want) = expected_obj.get("message_contains") else {
+        return Ok(());
+    };
+
+    let want = want.as_str().ok_or_else(|| {
+        format!(
+            "[{}] message_contains is not a JSON string: {}",
+            fixture_name, want
+        )
+    })?;
+
+    if want.is_empty() {
+        return Err(format!(
+            "[{}] message_contains is empty, which every message contains",
+            fixture_name
+        ));
+    }
+
+    let Some(actual_message) = actual_error.get("message") else {
+        return Err(format!(
+            "[{}] message_contains wants \"{}\" but the response carried no error message",
+            fixture_name, want
+        ));
+    };
+
+    let actual_message = actual_message.as_str().ok_or_else(|| {
+        format!(
+            "[{}] actual error message is not a JSON string: {}",
+            fixture_name, actual_message
+        )
+    })?;
+
+    if !actual_message.contains(want) {
+        return Err(format!(
+            "[{}] error message does not contain \"{}\"; message was \"{}\"",
+            fixture_name, want, actual_message
+        ));
+    }
+
+    Ok(())
 }
 
 #[test]
@@ -194,4 +300,122 @@ fn contract_fixtures_match_worker_behavior() {
 
         eprintln!("  contract: {} -- {}", name, fixture.description);
     }
+}
+
+#[test]
+fn check_expected_error_skips_the_message_when_message_contains_is_absent() {
+    let expected = serde_json::json!({"code": "INVALID_PLAN"});
+    let actual = serde_json::json!({"code": "INVALID_PLAN", "message": "anything at all"});
+    assert!(check_expected_error("fx", &expected, &actual).is_ok());
+}
+
+#[test]
+fn check_expected_error_accepts_a_message_containing_the_substring() {
+    let expected =
+        serde_json::json!({"code": "INVALID_PLAN", "message_contains": "failed validation"});
+    let actual =
+        serde_json::json!({"code": "INVALID_PLAN", "message": "plan failed validation: level 3"});
+    assert!(check_expected_error("fx", &expected, &actual).is_ok());
+}
+
+#[test]
+fn check_expected_error_rejects_a_message_missing_the_substring() {
+    let expected =
+        serde_json::json!({"code": "INVALID_PLAN", "message_contains": "failed validation"});
+    let actual =
+        serde_json::json!({"code": "INVALID_PLAN", "message": "failed to deserialize plan: eof"});
+    let err = check_expected_error("fx", &expected, &actual).unwrap_err();
+    assert!(err.contains("failed validation"), "{}", err);
+    assert!(err.contains("failed to deserialize plan: eof"), "{}", err);
+}
+
+#[test]
+fn check_expected_error_rejects_message_contains_when_there_is_no_message() {
+    let expected =
+        serde_json::json!({"code": "INVALID_PLAN", "message_contains": "failed validation"});
+    let actual = serde_json::json!({"code": "INVALID_PLAN"});
+    let err = check_expected_error("fx", &expected, &actual).unwrap_err();
+    assert!(err.contains("no error message"), "{}", err);
+}
+
+#[test]
+fn check_expected_error_rejects_a_code_mismatch() {
+    let expected = serde_json::json!({"code": "INVALID_PLAN"});
+    let actual = serde_json::json!({"code": "INVALID_PARAMS"});
+    let err = check_expected_error("fx", &expected, &actual).unwrap_err();
+    assert!(err.contains("INVALID_PLAN"), "{}", err);
+    assert!(err.contains("INVALID_PARAMS"), "{}", err);
+}
+
+#[test]
+fn check_expected_error_rejects_a_misspelled_key() {
+    let expected =
+        serde_json::json!({"code": "INVALID_PLAN", "message_contain": "failed validation"});
+    let actual = serde_json::json!({"code": "INVALID_PLAN", "message": "unrelated"});
+    let err = check_expected_error("fx", &expected, &actual).unwrap_err();
+    assert!(err.contains("message_contain"), "{}", err);
+}
+
+#[test]
+fn check_expected_error_rejects_a_non_object_error() {
+    let expected = serde_json::Value::Null;
+    let actual = serde_json::json!({"code": "UNKNOWN_OP", "message": "unknown operation: bogus"});
+    let err = check_expected_error("fx", &expected, &actual).unwrap_err();
+    assert!(err.contains("not an object"), "{}", err);
+}
+
+#[test]
+fn check_expected_error_rejects_a_null_message_contains() {
+    let expected = serde_json::json!({"code": "UNKNOWN_OP", "message_contains": null});
+    let actual = serde_json::json!({"code": "UNKNOWN_OP", "message": "unknown operation: bogus"});
+    let err = check_expected_error("fx", &expected, &actual).unwrap_err();
+    assert!(err.contains("not a JSON string"), "{}", err);
+}
+
+#[test]
+fn check_expected_error_rejects_a_non_string_message_contains() {
+    let expected = serde_json::json!({"code": "UNKNOWN_OP", "message_contains": 5});
+    let actual = serde_json::json!({"code": "UNKNOWN_OP", "message": "unknown operation: bogus"});
+    let err = check_expected_error("fx", &expected, &actual).unwrap_err();
+    assert!(err.contains("not a JSON string"), "{}", err);
+}
+
+#[test]
+fn check_expected_error_rejects_an_empty_message_contains() {
+    let expected = serde_json::json!({"code": "UNKNOWN_OP", "message_contains": ""});
+    let actual = serde_json::json!({"code": "UNKNOWN_OP", "message": "unknown operation: bogus"});
+    let err = check_expected_error("fx", &expected, &actual).unwrap_err();
+    assert!(err.contains("empty"), "{}", err);
+}
+
+#[test]
+fn check_expected_error_rejects_an_empty_error_object() {
+    let expected = serde_json::json!({});
+    let actual = serde_json::json!({"code": "UNKNOWN_OP", "message": "unknown operation: bogus"});
+    let err = check_expected_error("fx", &expected, &actual).unwrap_err();
+    assert!(err.contains("asserts nothing"), "{}", err);
+}
+
+#[test]
+fn check_expected_error_rejects_a_null_code() {
+    let expected = serde_json::json!({"code": null});
+    let actual = serde_json::json!({"message": "unknown operation: bogus"});
+    let err = check_expected_error("fx", &expected, &actual).unwrap_err();
+    assert!(err.contains("not a JSON string"), "{}", err);
+}
+
+/// A fixture may assert the message alone. A message that is diagnostic across
+/// two codes is worth pinning without also pinning which code carried it.
+#[test]
+fn check_expected_error_treats_code_as_optional() {
+    let actual = serde_json::json!({"code": "UNKNOWN_OP", "message": "unknown operation: bogus"});
+
+    let expected = serde_json::json!({"message_contains": "bogus"});
+    assert!(check_expected_error("fx", &expected, &actual).is_ok());
+
+    let expected = serde_json::json!({"message_contains": "NOTPRESENT"});
+    assert!(
+        check_expected_error("fx", &expected, &actual).is_err(),
+        "the message check must still bite when no code is asserted"
+    );
 }

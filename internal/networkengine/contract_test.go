@@ -174,10 +174,14 @@ func TestContractFixtures(t *testing.T) {
 				assertJSONFieldEqual(t, tc.name, "result", expected, actualMap)
 			}
 
-			// Compare error code if expected has one.
+			// Compare the error object if expected has one.
 			if errRaw, ok := expected["error"]; ok {
 				var expectedErr map[string]json.RawMessage
 				require.NoError(t, json.Unmarshal(errRaw, &expectedErr))
+				// A JSON null decodes to a nil map without erroring, so the
+				// type check has to be explicit or the fixture asserts nothing.
+				require.NotNil(t, expectedErr,
+					"[%s] expected_response.error is not an object: %s", tc.name, errRaw)
 
 				actualErrRaw, ok := actualMap["error"]
 				require.True(t, ok, "[%s] expected error but got none", tc.name)
@@ -185,15 +189,103 @@ func TestContractFixtures(t *testing.T) {
 				var actualErr map[string]json.RawMessage
 				require.NoError(t, json.Unmarshal(actualErrRaw, &actualErr))
 
-				if code, ok := expectedErr["code"]; ok {
-					assert.JSONEq(t, string(code), string(actualErr["code"]),
-						"[%s] error code mismatch", tc.name)
-				}
+				assert.NoError(t, checkExpectedError(tc.name, expectedErr, actualErr))
 			}
 
 			t.Logf("contract: %s -- %s", tc.name, tc.fixture.Description)
 		})
 	}
+}
+
+// expectedErrorKeys is every key a fixture may put under expected_response.error.
+// A key outside this set fails the fixture rather than being ignored, so a
+// misspelled assertion cannot pass by asserting nothing.
+var expectedErrorKeys = map[string]bool{
+	"code":             true,
+	"message_contains": true,
+}
+
+// checkExpectedError compares a fixture's expected error object against the
+// worker's actual one.
+//
+// code is compared exactly when present. message_contains is compared as a
+// substring of the actual message when present, and the message is not read at
+// all when it is absent.
+func checkExpectedError(fixtureName string, expectedErr, actualErr map[string]json.RawMessage) error {
+	if len(expectedErr) == 0 {
+		return fmt.Errorf("[%s] expected_response.error is empty, so it asserts nothing", fixtureName)
+	}
+
+	for key := range expectedErr {
+		if !expectedErrorKeys[key] {
+			return fmt.Errorf("[%s] unrecognized key %q under expected_response.error", fixtureName, key)
+		}
+	}
+
+	if codeRaw, ok := expectedErr["code"]; ok {
+		// Decode through any for the same reason message_contains does: a JSON
+		// null unmarshals into a string as a no-op with no error, which would
+		// compare an empty code and report a mismatch that does not exist.
+		var wantAny any
+		if err := json.Unmarshal(codeRaw, &wantAny); err != nil {
+			return fmt.Errorf("[%s] expected error code is not valid JSON: %s", fixtureName, codeRaw)
+		}
+		want, isString := wantAny.(string)
+		if !isString {
+			return fmt.Errorf("[%s] expected error code is not a JSON string: %s", fixtureName, codeRaw)
+		}
+
+		actualCodeRaw, ok := actualErr["code"]
+		if !ok {
+			return fmt.Errorf("[%s] expected error code %q but the response carried no code", fixtureName, want)
+		}
+
+		var got string
+		if err := json.Unmarshal(actualCodeRaw, &got); err != nil {
+			return fmt.Errorf("[%s] actual error code is not a JSON string: %s", fixtureName, actualCodeRaw)
+		}
+
+		if got != want {
+			return fmt.Errorf("[%s] error code mismatch: want %q, got %q", fixtureName, want, got)
+		}
+	}
+
+	substrRaw, hasSubstr := expectedErr["message_contains"]
+	if !hasSubstr {
+		return nil
+	}
+
+	// Unmarshaling a JSON null into a string is a documented no-op that leaves
+	// want empty and returns no error, and strings.Contains against "" is
+	// always true. Both have to be rejected explicitly or the key asserts
+	// nothing while looking like it asserts something.
+	var wantAny any
+	if err := json.Unmarshal(substrRaw, &wantAny); err != nil {
+		return fmt.Errorf("[%s] message_contains is not valid JSON: %s", fixtureName, substrRaw)
+	}
+	want, ok := wantAny.(string)
+	if !ok {
+		return fmt.Errorf("[%s] message_contains is not a JSON string: %s", fixtureName, substrRaw)
+	}
+	if want == "" {
+		return fmt.Errorf("[%s] message_contains is empty, which every message contains", fixtureName)
+	}
+
+	actualMsgRaw, hasMessage := actualErr["message"]
+	if !hasMessage {
+		return fmt.Errorf("[%s] message_contains wants %q but the response carried no error message", fixtureName, want)
+	}
+
+	var got string
+	if err := json.Unmarshal(actualMsgRaw, &got); err != nil {
+		return fmt.Errorf("[%s] actual error message is not a JSON string: %s", fixtureName, actualMsgRaw)
+	}
+
+	if !strings.Contains(got, want) {
+		return fmt.Errorf("[%s] error message does not contain %q; message was %q", fixtureName, want, got)
+	}
+
+	return nil
 }
 
 // sendRawLine writes a raw line to the worker's stdin and reads the response.
@@ -422,4 +514,174 @@ func TestPingFixtureMatchesExpectedProtocolVersion(t *testing.T) {
 		"%s must pin a protocol_version", path)
 	assert.Equal(t, expectedProtocolVersion, *result.ProtocolVersion,
 		"ping.json and expectedProtocolVersion have drifted; the Go job cannot catch this any other way")
+}
+
+func TestCheckExpectedError(t *testing.T) {
+	raw := func(m map[string]string) map[string]json.RawMessage {
+		out := make(map[string]json.RawMessage, len(m))
+		for k, v := range m {
+			encoded, err := json.Marshal(v)
+			require.NoError(t, err)
+			out[k] = encoded
+		}
+		return out
+	}
+
+	tests := []struct {
+		name        string
+		expected    map[string]string
+		actual      map[string]string
+		wantErr     bool
+		errContains []string
+	}{
+		{
+			name:     "code matches and no message_contains skips the message",
+			expected: map[string]string{"code": "INVALID_PLAN"},
+			actual:   map[string]string{"code": "INVALID_PLAN", "message": "anything at all"},
+		},
+		{
+			name:     "message_contains is a substring",
+			expected: map[string]string{"code": "INVALID_PLAN", "message_contains": "failed validation"},
+			actual:   map[string]string{"code": "INVALID_PLAN", "message": "plan failed validation: level 3"},
+		},
+		{
+			name:        "message_contains is not a substring",
+			expected:    map[string]string{"code": "INVALID_PLAN", "message_contains": "failed validation"},
+			actual:      map[string]string{"code": "INVALID_PLAN", "message": "failed to deserialize plan: eof"},
+			wantErr:     true,
+			errContains: []string{"failed validation", "failed to deserialize plan: eof"},
+		},
+		{
+			name:        "message_contains set but the response carried no message",
+			expected:    map[string]string{"code": "INVALID_PLAN", "message_contains": "failed validation"},
+			actual:      map[string]string{"code": "INVALID_PLAN"},
+			wantErr:     true,
+			errContains: []string{"no error message"},
+		},
+		{
+			name:        "code mismatch",
+			expected:    map[string]string{"code": "INVALID_PLAN"},
+			actual:      map[string]string{"code": "INVALID_PARAMS"},
+			wantErr:     true,
+			errContains: []string{"INVALID_PLAN", "INVALID_PARAMS"},
+		},
+		{
+			name:        "a misspelled key asserts nothing, so it fails",
+			expected:    map[string]string{"code": "INVALID_PLAN", "message_contain": "failed validation"},
+			actual:      map[string]string{"code": "INVALID_PLAN", "message": "unrelated"},
+			wantErr:     true,
+			errContains: []string{"message_contain"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkExpectedError("fx", raw(tc.expected), raw(tc.actual))
+			if !tc.wantErr {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			for _, want := range tc.errContains {
+				assert.Contains(t, err.Error(), want)
+			}
+		})
+	}
+}
+
+// TestCheckExpectedErrorRejectsNonStringValues covers the branches the
+// string-valued table above cannot reach. A JSON null unmarshals into a Go
+// string as a no-op with no error, which would leave the wanted substring
+// empty and match every message.
+func TestCheckExpectedErrorRejectsNonStringValues(t *testing.T) {
+	actual := map[string]json.RawMessage{
+		"code":    json.RawMessage(`"UNKNOWN_OP"`),
+		"message": json.RawMessage(`"unknown operation: bogus"`),
+	}
+
+	tests := []struct {
+		name        string
+		expected    map[string]json.RawMessage
+		errContains string
+	}{
+		{
+			name: "message_contains is null",
+			expected: map[string]json.RawMessage{
+				"code":             json.RawMessage(`"UNKNOWN_OP"`),
+				"message_contains": json.RawMessage(`null`),
+			},
+			errContains: "not a JSON string",
+		},
+		{
+			name: "message_contains is a number",
+			expected: map[string]json.RawMessage{
+				"code":             json.RawMessage(`"UNKNOWN_OP"`),
+				"message_contains": json.RawMessage(`5`),
+			},
+			errContains: "not a JSON string",
+		},
+		{
+			name: "message_contains is empty",
+			expected: map[string]json.RawMessage{
+				"code":             json.RawMessage(`"UNKNOWN_OP"`),
+				"message_contains": json.RawMessage(`""`),
+			},
+			errContains: "empty",
+		},
+		{
+			name: "code is not a string",
+			expected: map[string]json.RawMessage{
+				"code": json.RawMessage(`5`),
+			},
+			errContains: "not a JSON string",
+		},
+		{
+			name: "code is null",
+			expected: map[string]json.RawMessage{
+				"code": json.RawMessage(`null`),
+			},
+			errContains: "not a JSON string",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkExpectedError("fx", tc.expected, actual)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.errContains)
+		})
+	}
+}
+
+// TestCheckExpectedErrorRejectsANilMap covers a null expected_response.error
+// reaching the check directly. A JSON null decodes to a nil map, which has no
+// keys to compare, so it has to be rejected rather than iterated.
+func TestCheckExpectedErrorRejectsANilMap(t *testing.T) {
+	actual := map[string]json.RawMessage{"code": json.RawMessage(`"ANYTHING"`)}
+	err := checkExpectedError("fx", nil, actual)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "asserts nothing")
+}
+
+func TestCheckExpectedErrorRejectsAnEmptyErrorObject(t *testing.T) {
+	actual := map[string]json.RawMessage{"code": json.RawMessage(`"UNKNOWN_OP"`)}
+	err := checkExpectedError("fx", map[string]json.RawMessage{}, actual)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "asserts nothing")
+}
+
+// TestCheckExpectedErrorCodeIsOptional pins that a fixture may assert the
+// message alone. A message that is diagnostic across two codes is worth
+// pinning without also pinning which code carried it.
+func TestCheckExpectedErrorCodeIsOptional(t *testing.T) {
+	actual := map[string]json.RawMessage{
+		"code":    json.RawMessage(`"UNKNOWN_OP"`),
+		"message": json.RawMessage(`"unknown operation: bogus"`),
+	}
+	expected := map[string]json.RawMessage{"message_contains": json.RawMessage(`"bogus"`)}
+	assert.NoError(t, checkExpectedError("fx", expected, actual))
+
+	expected["message_contains"] = json.RawMessage(`"NOTPRESENT"`)
+	assert.Error(t, checkExpectedError("fx", expected, actual),
+		"the message check must still bite when no code is asserted")
 }

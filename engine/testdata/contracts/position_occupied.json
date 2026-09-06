@@ -21,7 +21,8 @@
         "id": "c-occ-1",
         "ok": false,
         "error": {
-            "code": "POSITION_OCCUPIED"
+            "code": "POSITION_OCCUPIED",
+            "message_contains": "00000000-0000-0000-0000-000000000001"
         }
     }
 }

@@ -130,7 +130,8 @@
         "id": "lp-shallow",
         "ok": false,
         "error": {
-            "code": "INVALID_PLAN"
+            "code": "INVALID_PLAN",
+            "message_contains": "commissionable_depth (1)"
         }
     }
 }

@@ -119,7 +119,8 @@
         "id": "lp-empty",
         "ok": false,
         "error": {
-            "code": "INVALID_PLAN"
+            "code": "INVALID_PLAN",
+            "message_contains": "StreamTest"
         }
     }
 }

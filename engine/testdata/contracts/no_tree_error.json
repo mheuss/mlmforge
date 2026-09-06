@@ -12,7 +12,8 @@
         "id": "err-1",
         "ok": false,
         "error": {
-            "code": "STRUCTURE_NOT_FOUND"
+            "code": "STRUCTURE_NOT_FOUND",
+            "message_contains": "nonexistent"
         }
     }
 }

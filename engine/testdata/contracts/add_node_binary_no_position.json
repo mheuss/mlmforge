@@ -19,7 +19,8 @@
         "id": "c-nopos-1",
         "ok": false,
         "error": {
-            "code": "MISSING_PARAM"
+            "code": "MISSING_PARAM",
+            "message_contains": "missing position"
         }
     }
 }

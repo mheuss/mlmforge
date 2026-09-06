@@ -16,7 +16,8 @@
         "id": "err-nf-1",
         "ok": false,
         "error": {
-            "code": "USER_NOT_FOUND"
+            "code": "USER_NOT_FOUND",
+            "message_contains": "00000000-0000-0000-0000-000000000099"
         }
     }
 }

@@ -17,7 +17,8 @@
         "id": "cm-mismatch",
         "ok": false,
         "error": {
-            "code": "INVALID_PARAMS"
+            "code": "INVALID_PARAMS",
+            "message_contains": "width 2 vs expected 3"
         }
     }
 }

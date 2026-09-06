@@ -199,10 +199,18 @@ pub enum StepOutcome {
 ///
 /// **Precedence, when more than one would fire at the same node:**
 /// `MaxDepthReached`, then `BoundaryReached`, then `MaxGenerationsReached`.
-/// That mirrors the order the checks run in `walk_level_commissions`, where
-/// the depth break precedes the predicate break. It is stated here because
-/// it is wire-visible, which makes reordering those checks a contract change
-/// rather than a silent shift in what the response says.
+///
+/// Only the first pair is an observation about existing code:
+/// `walk_level_commissions` checks depth at `walk.rs:398` before the
+/// predicate at `:424`. Stating it makes reordering those two a contract
+/// change rather than a silent shift in what the response says.
+///
+/// The third position is a **forward requirement on the generation
+/// emitter**, not a description. `MaxGenerationsReached` comes from
+/// `count_generations_upward`, a different traversal, and generation plans
+/// pass `|_| false` as their predicate, so `BoundaryReached` cannot fire on
+/// a generation walk today. The ordering is fixed now so the two emitters
+/// cannot disagree later.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WalkStop {
@@ -268,10 +276,14 @@ pub struct Walk {
     /// **Not knowable at construction.** Design 029 requires indexes to come
     /// from a defined total order applied across the whole response, never
     /// from the order walks happened to be emitted in, which for streamline
-    /// is a `HashMap` iteration. Construct through `Walk::level`,
-    /// `Walk::streamline` or `Walk::generation`, which take a collector id,
-    /// and let `walk_order::assign_indexes` overwrite it with the real
-    /// index once every walk exists.
+    /// is a `HashMap` iteration.
+    ///
+    /// Nothing constructs a `Walk` yet. HEU-641 Task 3 adds the emitters and
+    /// `walk_order::assign_indexes`, and Task 3 is also where the
+    /// `Walk::level` / `Walk::streamline` / `Walk::generation` constructors
+    /// land, once there is a non-test caller to keep them out of dead code.
+    /// Until then, set this field to a collector id that is unique within
+    /// the response and let `assign_indexes` overwrite it.
     pub index: u32,
 
     /// The distributor whose volume triggered the traversal.
@@ -301,7 +313,9 @@ pub struct Walk {
     ///
     /// **It is never in `steps`.** All three node-caused breaks fire at the
     /// top of the loop, before the node is decided about, so this names the
-    /// next ancestor the walk would have visited. Joining `stopped_at`
+    /// next ancestor the walk would have considered. "Considered" rather
+    /// than "visited" because the generation loop's next statement can skip
+    /// a non-breakaway node outright. Joining `stopped_at`
     /// against the step list finds nothing, and that is correct. Naming the
     /// last visited node instead would repeat the final entry of `steps`,
     /// and a field that duplicates another field is worse than absent in an
@@ -357,8 +371,8 @@ mod tests {
             stopped_at: None,
         };
         let json = serde_json::to_value(&walk).expect("serialize walk");
-        // Wire strings belong to every_stop_and_outcome_value_has_its_wire_name.
-        // This test owns the omission rule only.
+        // Wire strings belong to every_wire_string_is_pinned. This test owns
+        // the omission rule and field identity.
         assert!(
             json.get("stream_id").is_none(),
             "absent context must not serialize: {json}"
@@ -409,8 +423,13 @@ mod tests {
     }
 
     // The three functions below go through an exhaustive `match` rather than
-    // a literal list. Adding a variant then fails to compile until someone
-    // pins its wire string, which a bare array would not do.
+    // a literal list, so adding a variant fails to compile until someone
+    // writes its wire string.
+    //
+    // That forces a name to be DECLARED, not VERIFIED. The loops below still
+    // iterate bare arrays, so a new variant can get a match arm and never be
+    // compared against serde's output. Closing that needs a compile-time
+    // variant count, which is unstable. Add new variants to both places.
     fn stop_wire_name(stop: WalkStop) -> &'static str {
         match stop {
             WalkStop::RootReached => "root_reached",
@@ -435,7 +454,7 @@ mod tests {
     }
 
     #[test]
-    fn every_stop_and_outcome_value_has_its_wire_name() {
+    fn every_wire_string_is_pinned() {
         // These strings are persisted by HEU-46. Changing one orphans every
         // row carrying the old value, so pin them rather than trusting the
         // rename_all attribute.
@@ -466,45 +485,35 @@ mod tests {
         }
     }
 
-    /// The presence rule for `stopped_at`, stated once so the test and any
-    /// future constructor agree: absent for `RootReached`, present for every
-    /// other stop.
-    fn stop_names_a_node(stop: WalkStop) -> bool {
-        match stop {
-            WalkStop::RootReached => false,
-            WalkStop::MaxDepthReached
-            | WalkStop::BoundaryReached
-            | WalkStop::MaxGenerationsReached => true,
-        }
-    }
-
     #[test]
-    fn stopped_at_serializes_for_every_stop_that_names_a_node() {
-        for stop in [
-            WalkStop::RootReached,
-            WalkStop::MaxDepthReached,
-            WalkStop::BoundaryReached,
-            WalkStop::MaxGenerationsReached,
-        ] {
-            let stopped_at = stop_names_a_node(stop).then(|| uuid_from_index(9));
-            let walk = Walk {
-                index: 0,
-                source_id: uuid_from_index(1),
-                kind: WalkKind::Level,
-                stream_id: None,
-                rank: None,
-                steps: Vec::new(),
-                stop,
-                stopped_at,
-            };
-            let json = serde_json::to_value(&walk).expect("serialize walk");
-            assert_eq!(
-                json.get("stopped_at").is_some(),
-                stop_names_a_node(stop),
-                "stop {:?} got the wrong stopped_at presence: {json}",
-                stop
-            );
-        }
+    fn stopped_at_is_omitted_when_none_and_present_when_some() {
+        // Scoped to what this file can actually prove. The rule that ties a
+        // stop to whether it names a node needs a producer to check against,
+        // and nothing constructs a Walk outside these tests yet. HEU-641
+        // Task 3 tests that rule against the real emitters.
+        let with_node = Walk {
+            index: 0,
+            source_id: uuid_from_index(1),
+            kind: WalkKind::Level,
+            stream_id: None,
+            rank: None,
+            steps: Vec::new(),
+            stop: WalkStop::MaxDepthReached,
+            stopped_at: Some(uuid_from_index(9)),
+        };
+        let json = serde_json::to_value(&with_node).expect("serialize walk");
+        assert_eq!(json["stopped_at"], uuid_from_index(9).to_string());
+
+        let without = Walk {
+            stop: WalkStop::RootReached,
+            stopped_at: None,
+            ..with_node
+        };
+        let json = serde_json::to_value(&without).expect("serialize walk");
+        assert!(
+            json.get("stopped_at").is_none(),
+            "None must be omitted, not null: {json}"
+        );
     }
 
     #[test]
@@ -532,10 +541,12 @@ mod tests {
     }
 
     #[test]
-    fn plan_identity_carries_the_hash_format_plan_hash_go_produces() {
-        // `internal/networkengine/plan_hash.go` emits "sha256:" plus 64
-        // lowercase hex characters, and the commission_runs table has a CHECK
-        // on that prefix. This pins the Rust side of that shared format.
+    fn plan_identity_serializes_its_three_keys() {
+        // Serialization only. This does NOT verify the cross-language hash
+        // format: no Rust code produces or validates a plan hash yet, so the
+        // assertions below check a literal this test wrote. The real contract
+        // lives in `internal/networkengine/plan_hash.go` and the
+        // `commission_runs` CHECK, and HEU-641 Task 17 tests it end to end.
         let identity = PlanIdentity {
             name: "Integration Test Plan".to_string(),
             version: 1,

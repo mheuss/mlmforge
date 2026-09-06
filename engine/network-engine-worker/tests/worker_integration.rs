@@ -611,6 +611,104 @@ fn send_load_plan(worker: &mut std::process::Child, plan_json: &str) -> String {
     common::send_receive(worker, &request)
 }
 
+/// The bytes `load_plan` hashes are the ones it received, not a re-serialized
+/// form. `send_load_plan` minifies before sending, so the request's `params`
+/// and this expectation are byte-identical by construction.
+fn expected_plan_hash(plan_json: &str) -> String {
+    let minified: String = plan_json
+        .lines()
+        .map(|l| l.trim())
+        .collect::<Vec<_>>()
+        .join("");
+    // sha2 0.11 returns a `hybrid_array::Array`, which does not implement
+    // LowerHex. The `{:x}` idiom that works on 0.10's `generic-array` does not
+    // compile here.
+    let digest = <sha2::Sha256 as sha2::Digest>::digest(minified.as_bytes());
+    let mut hex = String::with_capacity(64);
+    for byte in digest {
+        use std::fmt::Write;
+        write!(hex, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    format!("sha256:{hex}")
+}
+
+#[test]
+fn load_plan_records_a_plan_hash_over_the_bytes_it_received() {
+    let mut worker = common::spawn_worker();
+    let resp = send_load_plan(&mut worker, STREAMLINE_TEST_PLAN_JSON);
+    assert!(resp.contains(r#""ok":true"#), "load_plan failed: {resp}");
+
+    let parsed: serde_json::Value = serde_json::from_str(&resp).expect("parse response");
+    let hash = parsed["result"]["plan"]["hash"]
+        .as_str()
+        .unwrap_or_else(|| panic!("load_plan must report a plan hash: {resp}"));
+
+    assert_eq!(
+        hash,
+        expected_plan_hash(STREAMLINE_TEST_PLAN_JSON),
+        "the worker hashed different bytes than it was sent"
+    );
+}
+
+#[test]
+fn a_plan_hash_is_sha256_prefixed_64_lowercase_hex() {
+    // The format is pinned by internal/networkengine/plan_hash.go and by a
+    // CHECK on the commission_runs table, so a wrong hex idiom must fail here
+    // rather than produce a plausible-looking string that only differs from
+    // Go's.
+    let mut worker = common::spawn_worker();
+    let resp = send_load_plan(&mut worker, STREAMLINE_TEST_PLAN_JSON);
+    let parsed: serde_json::Value = serde_json::from_str(&resp).expect("parse response");
+    let hash = parsed["result"]["plan"]["hash"]
+        .as_str()
+        .unwrap_or_else(|| panic!("load_plan must report a plan hash: {resp}"));
+
+    let hex = hash
+        .strip_prefix("sha256:")
+        .unwrap_or_else(|| panic!("hash must carry the sha256: prefix: {hash}"));
+    assert_eq!(hex.len(), 64, "expected 64 hex characters: {hash}");
+    assert!(
+        hex.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')),
+        "hash must be lowercase hex: {hash}"
+    );
+}
+
+#[test]
+fn a_rejected_plan_leaves_the_previous_identity_in_place() {
+    // Identity is stored only after deserialization and validation. A plan
+    // that fails the gate must not overwrite the identity of the plan the
+    // worker is still holding, or a later calculation would report a hash for
+    // a plan it never loaded.
+    let mut worker = common::spawn_worker();
+    let good = send_load_plan(&mut worker, STREAMLINE_TEST_PLAN_JSON);
+    assert!(good.contains(r#""ok":true"#), "setup load failed: {good}");
+    let first: serde_json::Value = serde_json::from_str(&good).expect("parse");
+    let first_hash = first["result"]["plan"]["hash"]
+        .as_str()
+        .expect("hash")
+        .to_string();
+
+    let bad = STREAMLINE_TEST_PLAN_JSON.replace("\"percent\": 0.10", "\"percent\": 5.0");
+    assert!(
+        bad != STREAMLINE_TEST_PLAN_JSON,
+        "the replacement did not match"
+    );
+    let rejected = send_load_plan(&mut worker, &bad);
+    assert!(
+        rejected.contains(r#""ok":false"#),
+        "the invalid plan should have been rejected: {rejected}"
+    );
+
+    // Reload the good plan and confirm the identity is unchanged, which it
+    // could not be if the rejected one had overwritten it.
+    let again = send_load_plan(&mut worker, STREAMLINE_TEST_PLAN_JSON);
+    let second: serde_json::Value = serde_json::from_str(&again).expect("parse");
+    assert_eq!(
+        second["result"]["plan"]["hash"].as_str(),
+        Some(first_hash.as_str())
+    );
+}
+
 #[test]
 fn load_plan_accepts_valid_baseline_plan() {
     // Guards against the HEU-517 validator over-rejecting the known-good plan.

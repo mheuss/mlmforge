@@ -1,9 +1,11 @@
+use network_engine::commission::PlanIdentity;
 use network_engine::config::CompensationPlan;
 use network_engine::tree::binary::BinaryTree;
 use network_engine::tree::error::TreeError;
 use network_engine::tree::matrix::{MatrixTree, PruningMode};
 use network_engine::tree::node::Node;
 use network_engine::tree::unilevel::UnilevelTree;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::protocol::{Request, Response};
@@ -102,6 +104,23 @@ pub(crate) fn tree_error_to_response(request_id: &str, e: TreeError) -> Response
 
 // --- Plan handler ---
 
+/// `sha256:<64 lowercase hex>`, matching `internal/networkengine/plan_hash.go`
+/// and the CHECK on the `commission_runs` table.
+///
+/// Formats the digest a byte at a time. sha2 0.11 returns a
+/// `hybrid_array::Array`, which does not implement `LowerHex`, so the `{:x}`
+/// idiom that works on 0.10's `generic-array` does not compile.
+fn sha256_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+
+    let digest = Sha256::digest(bytes);
+    let mut hex = String::with_capacity(64);
+    for byte in digest {
+        write!(hex, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    format!("sha256:{hex}")
+}
+
 pub(crate) fn handle_load_plan(state: &mut WorkerState, request: &Request) -> Response {
     match serde_json::from_str::<CompensationPlan>(request.params.get()) {
         Ok(mut plan) => {
@@ -127,8 +146,27 @@ pub(crate) fn handle_load_plan(state: &mut WorkerState, request: &Request) -> Re
                     format!("plan failed validation: {}", e),
                 );
             }
+            // Hash the bytes the worker actually received, not a
+            // re-serialization of the parsed plan. `request.params` is a
+            // RawValue, so `.get()` is the exact byte sequence the caller
+            // sent, which is what `internal/networkengine/plan_hash.go`
+            // hashes on the Go side.
+            //
+            // Computed here rather than earlier so a plan that fails the
+            // version check or validation above leaves the previous identity
+            // untouched.
+            let hash = sha256_hex(request.params.get().as_bytes());
+            let identity = PlanIdentity {
+                name: plan.name.clone(),
+                version: plan.version,
+                hash: hash.clone(),
+            };
+            state.plan_identity = Some(identity);
             state.plan = Some(plan);
-            Response::success(request.id.clone(), serde_json::json!({"loaded": true}))
+            Response::success(
+                request.id.clone(),
+                serde_json::json!({"loaded": true, "plan": {"hash": hash}}),
+            )
         }
         Err(e) => Response::error(
             request.id.clone(),

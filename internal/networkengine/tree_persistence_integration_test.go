@@ -233,7 +233,7 @@ func TestTreePersistence_EngineFailureRetry(t *testing.T) {
 
 	// Use a failN transport instead of a real engine to test retry behavior.
 	transport := newFailNTransport(1)
-	mockEngine := NewEngineClientWithTransport(transport)
+	mockEngine := newEngineClientWithTransport(transport)
 	consumer := NewTreeEventConsumer(treeStore, mockEngine)
 
 	rootPayload := RootAddedPayload{

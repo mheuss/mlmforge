@@ -69,7 +69,7 @@ func TestNewRankDriver_RequiresStartDate(t *testing.T) {
 	plan := monthlyWindowPlan("2026-01-01", 6)
 	plan.Period.StartDate = nil
 
-	client := NewEngineClientWithTransport(&mockTransport{response: json.RawMessage(`null`)})
+	client := newEngineClientWithTransport(&mockTransport{response: json.RawMessage(`null`)})
 	store := NewMemoryQualificationHistoryStore()
 	provider := NewMemoryPeriodInputProvider()
 
@@ -79,7 +79,7 @@ func TestNewRankDriver_RequiresStartDate(t *testing.T) {
 }
 
 func TestNewRankDriver_Succeeds(t *testing.T) {
-	client := NewEngineClientWithTransport(&mockTransport{response: json.RawMessage(`null`)})
+	client := newEngineClientWithTransport(&mockTransport{response: json.RawMessage(`null`)})
 	store := NewMemoryQualificationHistoryStore()
 	provider := NewMemoryPeriodInputProvider()
 
@@ -90,7 +90,7 @@ func TestNewRankDriver_Succeeds(t *testing.T) {
 
 func TestRankDriver_GuardAfterStart(t *testing.T) {
 	// Plan starts 2026-03-01; evaluating 2026-02-15 is before the plan start.
-	client := NewEngineClientWithTransport(&mockTransport{response: json.RawMessage(`null`)})
+	client := newEngineClientWithTransport(&mockTransport{response: json.RawMessage(`null`)})
 	store := NewMemoryQualificationHistoryStore()
 	provider := NewMemoryPeriodInputProvider()
 
@@ -104,7 +104,7 @@ func TestRankDriver_GuardAfterStart(t *testing.T) {
 }
 
 func TestNewRankDriver_NilCollaboratorsError(t *testing.T) {
-	client := NewEngineClientWithTransport(&mockTransport{response: json.RawMessage(`null`)})
+	client := newEngineClientWithTransport(&mockTransport{response: json.RawMessage(`null`)})
 	store := NewMemoryQualificationHistoryStore()
 	plan := monthlyWindowPlan("2026-01-01", 6)
 	provider := NewMemoryPeriodInputProvider()
@@ -141,7 +141,7 @@ func TestRankDriver_EvaluatePeriod_BuildsAxisAndPersists(t *testing.T) {
 	require.NoError(t, store.SaveResult(ctx, "2026-04", []QualificationHistoryEntry{{UserID: uidA, Rank: strPtr("Director"), Ordinal: u16Ptr(3)}}))
 
 	mock := &mockTransport{response: json.RawMessage(fmt.Sprintf(`{"ranks":{"%s":{"kind":"qualified","rank":"Director","ordinal":3}}}`, userA))}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	provider := NewMemoryPeriodInputProvider()
 	provider.Set("2026-06", PeriodInputs{
@@ -173,7 +173,7 @@ func TestRankDriver_EvaluatePeriod_NoGatePlanSendsNoHistory(t *testing.T) {
 
 	store := NewMemoryQualificationHistoryStore()
 	mock := &mockTransport{response: json.RawMessage(`{"ranks":{}}`)}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	provider := NewMemoryPeriodInputProvider()
 	provider.Set("2026-06", PeriodInputs{
@@ -213,7 +213,7 @@ func TestRankDriver_EvaluatePeriod_UnknownPeriodSendsEmptyNotNull(t *testing.T) 
 
 	store := NewMemoryQualificationHistoryStore()
 	mock := &mockTransport{response: json.RawMessage(`{"ranks":{}}`)}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	// Provider has no entry for 2026-06, so InputsFor returns a zero PeriodInputs
 	// with nil Distributors and nil VolumeSources.
@@ -239,7 +239,7 @@ func TestRankDriver_EvaluatePeriod_NilActiveProductsSendsEmptyNotNull(t *testing
 
 	store := NewMemoryQualificationHistoryStore()
 	mock := &mockTransport{response: json.RawMessage(`{"ranks":{}}`)}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	// Distributor with a nil ActiveProducts slice -- the struct literal below
 	// leaves the field out, and the DTO carries no omitempty, so nil still
@@ -271,7 +271,7 @@ func TestRankDriver_EvaluatePeriod_DoesNotMutateProviderInputs(t *testing.T) {
 
 	store := NewMemoryQualificationHistoryStore()
 	mock := &mockTransport{response: json.RawMessage(`{"ranks":{}}`)}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	provider := NewMemoryPeriodInputProvider()
 	provider.Set("2026-06", PeriodInputs{
@@ -297,7 +297,7 @@ func TestRankDriver_EvaluatePeriod_BadDistributorIDErrors(t *testing.T) {
 
 	store := NewMemoryQualificationHistoryStore()
 	mock := &mockTransport{response: json.RawMessage(`{"ranks":{}}`)}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	provider := NewMemoryPeriodInputProvider()
 	provider.Set("2026-06", PeriodInputs{
@@ -362,7 +362,7 @@ func TestRankDriver_Backfill_Accumulates(t *testing.T) {
 
 	store := NewMemoryQualificationHistoryStore()
 	mock := &mockTransport{response: json.RawMessage(fmt.Sprintf(`{"ranks":{"%s":{"kind":"qualified","rank":"Director","ordinal":3}}}`, userA))}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	provider := NewMemoryPeriodInputProvider()
 	provider.Set("2026-01", qualifiedDirectorInputs(userA))
@@ -394,7 +394,7 @@ func TestRankDriver_Backfill_Accumulates(t *testing.T) {
 func TestRankDriver_Backfill_InvertedRangeErrors(t *testing.T) {
 	ctx := context.Background()
 
-	client := NewEngineClientWithTransport(&mockTransport{response: json.RawMessage(`{"ranks":{}}`)})
+	client := newEngineClientWithTransport(&mockTransport{response: json.RawMessage(`{"ranks":{}}`)})
 	store := NewMemoryQualificationHistoryStore()
 	provider := NewMemoryPeriodInputProvider()
 
@@ -409,7 +409,7 @@ func TestRankDriver_Backfill_InvertedRangeErrors(t *testing.T) {
 func TestRankDriver_Backfill_SamePeriodInvertedRangeErrors(t *testing.T) {
 	ctx := context.Background()
 
-	client := NewEngineClientWithTransport(&mockTransport{response: json.RawMessage(`{"ranks":{}}`)})
+	client := newEngineClientWithTransport(&mockTransport{response: json.RawMessage(`{"ranks":{}}`)})
 	store := NewMemoryQualificationHistoryStore()
 	provider := NewMemoryPeriodInputProvider()
 
@@ -426,7 +426,7 @@ func TestRankDriver_Backfill_SamePeriodInvertedRangeErrors(t *testing.T) {
 func TestRankDriver_Backfill_PreStartErrors(t *testing.T) {
 	ctx := context.Background()
 
-	client := NewEngineClientWithTransport(&mockTransport{response: json.RawMessage(`{"ranks":{}}`)})
+	client := newEngineClientWithTransport(&mockTransport{response: json.RawMessage(`{"ranks":{}}`)})
 	store := NewMemoryQualificationHistoryStore()
 	provider := NewMemoryPeriodInputProvider()
 
@@ -444,7 +444,7 @@ func TestRankDriver_Backfill_FailStop(t *testing.T) {
 
 	store := NewMemoryQualificationHistoryStore()
 	mock := &mockTransport{response: json.RawMessage(fmt.Sprintf(`{"ranks":{"%s":{"kind":"qualified","rank":"Director","ordinal":3}}}`, userA))}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	provider := NewMemoryPeriodInputProvider()
 	provider.Set("2026-01", qualifiedDirectorInputs(userA))
@@ -473,7 +473,7 @@ func TestRankDriver_Backfill_SamePeriodEvaluatesOnce(t *testing.T) {
 
 	store := NewMemoryQualificationHistoryStore()
 	transport := &countingTransport{mockTransport: mockTransport{response: json.RawMessage(fmt.Sprintf(`{"ranks":{"%s":{"kind":"qualified","rank":"Director","ordinal":3}}}`, userA))}}
-	client := NewEngineClientWithTransport(transport)
+	client := newEngineClientWithTransport(transport)
 
 	provider := NewMemoryPeriodInputProvider()
 	provider.Set("2026-01", qualifiedDirectorInputs(userA))
@@ -498,7 +498,7 @@ func TestRankDriver_Backfill_FailStopOnStoreWrite(t *testing.T) {
 
 	store := &failOnPeriodStore{QualificationHistoryStore: NewMemoryQualificationHistoryStore(), failPeriod: "2026-02"}
 	mock := &mockTransport{response: json.RawMessage(fmt.Sprintf(`{"ranks":{"%s":{"kind":"qualified","rank":"Director","ordinal":3}}}`, userA))}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	provider := NewMemoryPeriodInputProvider()
 	provider.Set("2026-01", qualifiedDirectorInputs(userA))

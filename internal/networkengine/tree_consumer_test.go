@@ -65,7 +65,7 @@ func makeEvent(eventType string, payload any) platform.Event {
 func TestTreeConsumer_HandleRootAdded(t *testing.T) {
 	store := NewMemoryTreeStore()
 	transport := newRecordingTransport()
-	engine := NewEngineClientWithTransport(transport)
+	engine := newEngineClientWithTransport(transport)
 	consumer := NewTreeEventConsumer(store, engine)
 
 	payload := RootAddedPayload{
@@ -94,7 +94,7 @@ func TestTreeConsumer_HandleRootAdded(t *testing.T) {
 func TestTreeConsumer_HandleNodePlaced(t *testing.T) {
 	store := NewMemoryTreeStore()
 	transport := newRecordingTransport()
-	engine := NewEngineClientWithTransport(transport)
+	engine := newEngineClientWithTransport(transport)
 	consumer := NewTreeEventConsumer(store, engine)
 
 	// Set up parent in store so depth can be derived.
@@ -129,7 +129,7 @@ func TestTreeConsumer_HandleNodePlaced(t *testing.T) {
 func TestTreeConsumer_HandleNodeRemoved(t *testing.T) {
 	store := NewMemoryTreeStore()
 	transport := newRecordingTransport()
-	engine := NewEngineClientWithTransport(transport)
+	engine := newEngineClientWithTransport(transport)
 	consumer := NewTreeEventConsumer(store, engine)
 
 	// Insert node first.
@@ -159,7 +159,7 @@ func TestTreeConsumer_HandleNodeRemoved(t *testing.T) {
 func TestTreeConsumer_NodePlacedMissingParent(t *testing.T) {
 	store := NewMemoryTreeStore()
 	transport := newRecordingTransport()
-	engine := NewEngineClientWithTransport(transport)
+	engine := newEngineClientWithTransport(transport)
 	consumer := NewTreeEventConsumer(store, engine)
 
 	// No parent in store — should error, not silently default to depth 0.
@@ -220,7 +220,7 @@ func TestTreeConsumer_NodePlacedGateRejections(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			store := NewMemoryTreeStore()
 			transport := newRecordingTransport()
-			engine := NewEngineClientWithTransport(transport)
+			engine := newEngineClientWithTransport(transport)
 			consumer := NewTreeEventConsumer(store, engine)
 
 			payload := valid()
@@ -264,7 +264,7 @@ func TestTreeConsumer_NodePlacedGateAccepts(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			store := NewMemoryTreeStore()
 			transport := newRecordingTransport()
-			engine := NewEngineClientWithTransport(transport)
+			engine := newEngineClientWithTransport(transport)
 			consumer := NewTreeEventConsumer(store, engine)
 
 			parent := makeNode("tree1", "user-root", 0, nil, nil, nil)
@@ -289,7 +289,7 @@ func TestTreeConsumer_NodePlacedGateAccepts(t *testing.T) {
 func TestTreeConsumer_MatrixNodePlacedRoutesThroughAddNodeAt(t *testing.T) {
 	store := NewMemoryTreeStore()
 	transport := newRecordingTransport()
-	engine := NewEngineClientWithTransport(transport)
+	engine := newEngineClientWithTransport(transport)
 	consumer := NewTreeEventConsumer(store, engine)
 
 	parent := makeNode("tree1", "user-root", 0, nil, nil, nil)
@@ -345,7 +345,7 @@ func TestTreeConsumer_UnilevelAndBinaryDispatchUnchanged(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			store := NewMemoryTreeStore()
 			transport := newRecordingTransport()
-			engine := NewEngineClientWithTransport(transport)
+			engine := newEngineClientWithTransport(transport)
 			consumer := NewTreeEventConsumer(store, engine)
 
 			parent := makeNode("tree1", "user-root", 0, nil, nil, nil)
@@ -382,7 +382,7 @@ func TestTreeConsumer_UnilevelAndBinaryDispatchUnchanged(t *testing.T) {
 func TestTreeConsumer_MatrixStoreProjectionPrecedesEngine(t *testing.T) {
 	store := NewMemoryTreeStore()
 	transport := newFailNTransport(10) // engine always fails
-	engine := NewEngineClientWithTransport(transport)
+	engine := newEngineClientWithTransport(transport)
 	consumer := NewTreeEventConsumer(store, engine)
 	consumer.retryDelay = 0 // ordering is the behavior under test, not retry pacing
 
@@ -415,7 +415,7 @@ func TestTreeConsumer_MatrixStoreProjectionPrecedesEngine(t *testing.T) {
 func TestTreeConsumer_ContextCancellation(t *testing.T) {
 	store := NewMemoryTreeStore()
 	transport := newFailNTransport(10) // Fail all attempts.
-	engine := NewEngineClientWithTransport(transport)
+	engine := newEngineClientWithTransport(transport)
 	consumer := NewTreeEventConsumer(store, engine)
 	consumer.retryDelay = 500 * time.Millisecond // Slow enough to cancel during wait.
 
@@ -445,7 +445,7 @@ func TestTreeConsumer_ContextCancellation(t *testing.T) {
 func TestTreeConsumer_UnknownEventType(t *testing.T) {
 	store := NewMemoryTreeStore()
 	transport := newRecordingTransport()
-	engine := NewEngineClientWithTransport(transport)
+	engine := newEngineClientWithTransport(transport)
 	consumer := NewTreeEventConsumer(store, engine)
 
 	event := makeEvent("tree.unknown", map[string]string{"foo": "bar"})
@@ -484,7 +484,7 @@ func (f *failNTransport) Close() error { return nil }
 func TestTreeConsumer_EngineRetry(t *testing.T) {
 	store := NewMemoryTreeStore()
 	transport := newFailNTransport(1) // Fail first call, succeed on retry.
-	engine := NewEngineClientWithTransport(transport)
+	engine := newEngineClientWithTransport(transport)
 	consumer := NewTreeEventConsumer(store, engine)
 
 	payload := RootAddedPayload{
@@ -510,7 +510,7 @@ func TestTreeConsumer_EngineRetry(t *testing.T) {
 func TestTreeConsumer_EngineRetriesExhausted(t *testing.T) {
 	store := NewMemoryTreeStore()
 	transport := newFailNTransport(10) // Fail all retries.
-	engine := NewEngineClientWithTransport(transport)
+	engine := newEngineClientWithTransport(transport)
 	consumer := NewTreeEventConsumer(store, engine)
 
 	payload := RootAddedPayload{
@@ -538,7 +538,7 @@ func TestTreeConsumer_EngineRetriesExhausted(t *testing.T) {
 func TestTreeConsumer_MalformedRootAdded(t *testing.T) {
 	store := NewMemoryTreeStore()
 	transport := newRecordingTransport()
-	engine := NewEngineClientWithTransport(transport)
+	engine := newEngineClientWithTransport(transport)
 	consumer := NewTreeEventConsumer(store, engine)
 
 	event := platform.Event{
@@ -558,7 +558,7 @@ func TestTreeConsumer_MalformedRootAdded(t *testing.T) {
 func TestTreeConsumer_MalformedNodePlaced(t *testing.T) {
 	store := NewMemoryTreeStore()
 	transport := newRecordingTransport()
-	engine := NewEngineClientWithTransport(transport)
+	engine := newEngineClientWithTransport(transport)
 	consumer := NewTreeEventConsumer(store, engine)
 
 	event := platform.Event{
@@ -578,7 +578,7 @@ func TestTreeConsumer_MalformedNodePlaced(t *testing.T) {
 func TestTreeConsumer_MalformedNodeRemoved(t *testing.T) {
 	store := NewMemoryTreeStore()
 	transport := newRecordingTransport()
-	engine := NewEngineClientWithTransport(transport)
+	engine := newEngineClientWithTransport(transport)
 	consumer := NewTreeEventConsumer(store, engine)
 
 	event := platform.Event{
@@ -598,7 +598,7 @@ func TestTreeConsumer_MalformedNodeRemoved(t *testing.T) {
 func TestTreeConsumer_NilPayload(t *testing.T) {
 	store := NewMemoryTreeStore()
 	transport := newRecordingTransport()
-	engine := NewEngineClientWithTransport(transport)
+	engine := newEngineClientWithTransport(transport)
 	consumer := NewTreeEventConsumer(store, engine)
 
 	event := platform.Event{

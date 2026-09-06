@@ -319,7 +319,7 @@ quiet: the check appears to pass.
 
 ## Worker Binary Freshness: The Guard Is Coarse
 
-The Go integration suite fails if the Rust worker binary is older than any `.rs` file under `engine/` (`staleWorkerBinary`, `transport_test.go:312-348`, HEU-615). That includes Rust *test* files, which the binary does not depend on.
+The Go integration suite fails if the Rust worker binary is older than any `.rs` file under `engine/` (`staleWorkerBinary` in `transport_test.go`, HEU-615). That includes Rust *test* files, which the binary does not depend on.
 
 So editing `engine/network-engine-worker/tests/worker_integration.rs` and then running `cargo build --workspace` leaves the Go suite still failing. Cargo has nothing to rebuild, the binary's mtime never moves, and the walk still finds a newer `.rs`.
 
@@ -333,6 +333,37 @@ touch engine/network-engine-worker/src/main.rs
 ```
 
 Do not `touch` the binary itself. That clears the guard without rebuilding, which is exactly the stale-binary state HEU-615 exists to catch.
+
+## An Absent Worker Binary Fails In CI And Skips Locally
+
+`findWorkerBinaryAt` skips when the worker binary is missing, which is what lets
+`go test ./...` work on a machine with no Rust toolchain. When `CI` is set it
+fails instead. Tests reach it through the `findWorkerBinary` wrapper.
+
+The reason is that `go test` counts a skipped test as a success. CI once ran the
+whole Go suite with no worker binary present and reported green while every test
+that needed a live worker did nothing (HEU-660). The Go job now builds the
+worker before the suite runs, and the guard is what tells us if that build ever
+comes out again.
+
+If you meet this failure locally, something in your environment is setting `CI`.
+The message names the path it checked and the value it read.
+
+## The Freshness Verdict Is Cached Per Instance, Not Per Package
+
+`workerFreshness` caches one staleness answer so the source walk runs once
+rather than on every call. The verdict belongs to the binary and source root it
+was computed from.
+
+This used to be three package-level variables behind a `sync.Once`, which meant
+the first caller to reach it fixed the answer for every later caller no matter
+what they asked about. That is fine while one pair of paths is the only pair in
+play, and it broke the moment a test passed a different pair: the cached "not
+stale" verdict from a temp directory answered the real tree's question, and
+HEU-615's guard silently stopped firing. Found in review during HEU-660.
+
+If you need a verdict about a different binary or source root, construct your
+own `workerFreshness`. Do not reach for the package one.
 
 ## Streamline: Rank Gates Qualification, Not Rate
 

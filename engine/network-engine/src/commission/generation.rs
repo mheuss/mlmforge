@@ -14,7 +14,10 @@ use crate::config::generation::GenerationBoundaryMode;
 use crate::config::{CompensationPlan, GenerationStructureConfig};
 use crate::tree::unilevel::UnilevelTree;
 
-use super::types::{CalculationError, CommissionEarning, DistributorSnapshot, VolumeSource};
+use super::types::{
+    CalculationError, CommissionEarning, DistributorSnapshot, StepOutcome, VolumeSource, Walk,
+    WalkKind, WalkStep, WalkStop,
+};
 use super::walk;
 
 /// Returns the generation depth for an earner with the given rank.
@@ -69,6 +72,11 @@ pub struct GenerationEntry {
 /// # Errors
 ///
 /// Returns an empty Vec if `start_id` is not in the tree or has no upline.
+///
+/// **Uninstrumented.** Callers that must not record provenance use this,
+/// which today means stairstep Walk 2. Design 029 excludes that traversal,
+/// so its earnings carry a null walk and no `Walk` may be emitted for it.
+/// Standalone generation calls `count_generations_upward_instrumented`.
 pub fn count_generations_upward(
     tree: &UnilevelTree,
     start_id: Uuid,
@@ -77,16 +85,61 @@ pub fn count_generations_upward(
     max_generations: u8,
     empty_generation_consumes_number: bool,
 ) -> Vec<GenerationEntry> {
+    let mut discard = Vec::new();
+    count_generations_upward_instrumented(
+        tree,
+        start_id,
+        breakaway_set,
+        boundary_check,
+        max_generations,
+        empty_generation_consumes_number,
+        None,
+        &mut discard,
+    )
+}
+
+/// `count_generations_upward`, plus a record of the traversal.
+///
+/// Takes two things the public wrapper cannot supply. `snapshots` is why the
+/// split exists at all: without it there is no rank to put in a step's
+/// `earner_rank`, and the wrapper's callers have no reason to pass one.
+/// `walks` is the collector, appended to exactly as in
+/// `walk::walk_level_commissions`, with `index` holding a collector id.
+///
+/// A failed upline lookup emits no walk. The traversal never reached a root,
+/// so it cannot claim `RootReached`, and none of the other three stops
+/// describes it either. HEU-681 owns the underlying defect: this arm
+/// collapses a real tree error into the same empty `Vec` as a legitimately
+/// empty upline.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn count_generations_upward_instrumented(
+    tree: &UnilevelTree,
+    start_id: Uuid,
+    breakaway_set: &HashSet<Uuid>,
+    boundary_check: &dyn Fn(Uuid) -> bool,
+    max_generations: u8,
+    empty_generation_consumes_number: bool,
+    snapshots: Option<&HashMap<Uuid, DistributorSnapshot>>,
+    walks: &mut Vec<Walk>,
+) -> Vec<GenerationEntry> {
     let upline = match tree.get_upline(start_id, 0) {
         Ok(nodes) => nodes,
+        // No walk is pushed here on purpose. See the doc comment above.
         Err(_) => return Vec::new(),
     };
+
+    let collector_id = walks.len() as u32;
+    let mut steps: Vec<WalkStep> = Vec::new();
+    let mut stop = WalkStop::RootReached;
+    let mut stopped_at: Option<Uuid> = None;
 
     let mut results = Vec::new();
     let mut current_gen: u8 = 0;
 
     for node in &upline {
         if current_gen >= max_generations {
+            stop = WalkStop::MaxGenerationsReached;
+            stopped_at = Some(node.user_id);
             break;
         }
 
@@ -94,16 +147,50 @@ pub fn count_generations_upward(
             continue;
         }
 
+        let rank = snapshots
+            .and_then(|s| s.get(&node.user_id))
+            .map(|s| s.rank.clone());
+
         if boundary_check(node.user_id) {
             current_gen += 1;
+            steps.push(WalkStep {
+                node_id: node.user_id,
+                outcome: StepOutcome::Paid,
+                consumed: true,
+                earner_rank: rank,
+            });
             results.push(GenerationEntry {
                 earner_id: node.user_id,
                 generation: current_gen,
             });
         } else if empty_generation_consumes_number {
+            // A breakaway that failed the boundary check and still consumed a
+            // generation. It produced no entry, so it forfeits. This is the
+            // generation counterpart of the level walk's zero-rate branch, and
+            // omitting it leaves steps.len() short of the counter in exactly
+            // the same way.
+            steps.push(WalkStep {
+                node_id: node.user_id,
+                outcome: StepOutcome::Forfeited,
+                consumed: true,
+                earner_rank: rank,
+            });
             current_gen += 1;
         }
+        // A node absent from breakaway_set was skipped above without touching
+        // the counter, so it records nothing.
     }
+
+    walks.push(Walk {
+        index: collector_id,
+        source_id: start_id,
+        kind: WalkKind::Generation,
+        stream_id: None,
+        rank: None,
+        steps,
+        stop,
+        stopped_at,
+    });
 
     results
 }
@@ -287,13 +374,15 @@ pub fn calculate_generation(
             let walk_max = walk_depth(gen_config);
 
             for source in volume {
-                let gen_entries = count_generations_upward(
+                let gen_entries = count_generations_upward_instrumented(
                     tree,
                     source.source_id,
                     &boundary_set,
                     &boundary_check,
                     walk_max,
                     gen_config.empty_generation_consumes_number,
+                    Some(snapshots),
+                    &mut walks,
                 );
 
                 // Filter: each earner receives at most their per-rank generation
@@ -362,13 +451,15 @@ pub fn calculate_generation(
                     .collect();
 
                 for source in volume {
-                    let gen_entries = count_generations_upward(
+                    let gen_entries = count_generations_upward_instrumented(
                         tree,
                         source.source_id,
                         &boundary_set,
                         &boundary_check,
                         walk_max,
                         gen_config.empty_generation_consumes_number,
+                        Some(snapshots),
+                        &mut walks,
                     );
 
                     // Pre-filter to earners at exactly this rank ordinal.
@@ -420,6 +511,197 @@ mod tests {
             volume_to_dollar_multiplier: None,
             ineligible_creates_boundary: true,
         }
+    }
+
+    #[test]
+    fn count_generations_upward_emits_no_walk_when_upline_lookup_fails() {
+        // uuid(99) is not in the tree, so get_upline fails. The traversal
+        // never reached a root, so it cannot claim root_reached and none of
+        // the other three stops applies either. Emit nothing.
+        let tree = UnilevelTree::new();
+        let breakaway_set = HashSet::new();
+        let boundary_check = |_: Uuid| true;
+        let mut walks = Vec::new();
+
+        let entries = count_generations_upward_instrumented(
+            &tree,
+            uuid(99),
+            &breakaway_set,
+            &boundary_check,
+            10,
+            false,
+            None,
+            &mut walks,
+        );
+
+        assert!(entries.is_empty());
+        assert!(
+            walks.is_empty(),
+            "a failed upline lookup never reached a root, so it must emit no walk"
+        );
+    }
+
+    #[test]
+    fn the_public_wrapper_records_no_walk() {
+        // Stairstep Walk 2 calls the wrapper. Design 029 excludes that
+        // traversal from instrumentation, so the wrapper must not be a route
+        // by which walks leak into a caller's collector.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uuid(0), 0).unwrap();
+        tree.add_node(uuid(1), uuid(0), uuid(0), 1).unwrap();
+        let breakaway_set = HashSet::from([uuid(0)]);
+        let boundary_check = |_: Uuid| true;
+
+        let entries =
+            count_generations_upward(&tree, uuid(1), &breakaway_set, &boundary_check, 10, false);
+
+        assert_eq!(entries.len(), 1, "the wrapper still returns its entries");
+    }
+
+    #[test]
+    fn an_instrumented_generation_walk_records_paid_steps_and_a_stop() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uuid(0), 0).unwrap();
+        tree.add_node(uuid(1), uuid(0), uuid(0), 1).unwrap();
+        tree.add_node(uuid(2), uuid(1), uuid(1), 2).unwrap();
+        let breakaway_set = HashSet::from([uuid(0), uuid(1)]);
+        let boundary_check = |_: Uuid| true;
+        let mut walks = Vec::new();
+
+        let entries = count_generations_upward_instrumented(
+            &tree,
+            uuid(2),
+            &breakaway_set,
+            &boundary_check,
+            10,
+            false,
+            None,
+            &mut walks,
+        );
+
+        assert_eq!(walks.len(), 1, "one traversal is one walk");
+        assert_eq!(walks[0].kind, WalkKind::Generation);
+        assert_eq!(walks[0].source_id, uuid(2));
+        assert_eq!(walks[0].stop, WalkStop::RootReached);
+        assert!(walks[0].stopped_at.is_none());
+        assert_eq!(
+            walks[0].steps.len(),
+            entries.len(),
+            "one step per generation entry"
+        );
+        assert!(
+            walks[0]
+                .steps
+                .iter()
+                .all(|s| s.outcome == StepOutcome::Paid && s.consumed)
+        );
+    }
+
+    #[test]
+    fn an_empty_generation_that_consumes_records_a_forfeit() {
+        // The generation counterpart of the level walk's zero-rate branch: a
+        // breakaway that fails boundary_check while
+        // empty_generation_consumes_number is on advances the counter and
+        // produces no entry. "A step per entry" misses it, and steps.len()
+        // then falls short of the counter.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uuid(0), 0).unwrap();
+        tree.add_node(uuid(1), uuid(0), uuid(0), 1).unwrap();
+        tree.add_node(uuid(2), uuid(1), uuid(1), 2).unwrap();
+
+        // Both ancestors are breakaways; neither passes the boundary check.
+        let breakaway_set = HashSet::from([uuid(0), uuid(1)]);
+        let boundary_check = |_: Uuid| false;
+        let mut walks = Vec::new();
+
+        let entries = count_generations_upward_instrumented(
+            &tree,
+            uuid(2),
+            &breakaway_set,
+            &boundary_check,
+            10,
+            true,
+            None,
+            &mut walks,
+        );
+
+        assert!(entries.is_empty(), "no boundary passed, so no entry");
+        assert_eq!(
+            walks[0].steps.len(),
+            2,
+            "both consumed generations must record a step"
+        );
+        assert!(
+            walks[0]
+                .steps
+                .iter()
+                .all(|s| s.outcome == StepOutcome::Forfeited && s.consumed)
+        );
+    }
+
+    #[test]
+    fn a_non_breakaway_node_records_nothing() {
+        // The non-consuming skip. It never advances the counter, so recording
+        // it would break steps.len() in the other direction.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uuid(0), 0).unwrap();
+        tree.add_node(uuid(1), uuid(0), uuid(0), 1).unwrap();
+        tree.add_node(uuid(2), uuid(1), uuid(1), 2).unwrap();
+
+        // Only the root is a breakaway; uuid(1) is skipped entirely.
+        let breakaway_set = HashSet::from([uuid(0)]);
+        let boundary_check = |_: Uuid| true;
+        let mut walks = Vec::new();
+
+        count_generations_upward_instrumented(
+            &tree,
+            uuid(2),
+            &breakaway_set,
+            &boundary_check,
+            10,
+            true,
+            None,
+            &mut walks,
+        );
+
+        assert_eq!(walks[0].steps.len(), 1, "only the breakaway records a step");
+        assert_eq!(walks[0].steps[0].node_id, uuid(0));
+    }
+
+    #[test]
+    fn a_generation_walk_capped_by_max_generations_names_the_node() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uuid(0), 0).unwrap();
+        tree.add_node(uuid(1), uuid(0), uuid(0), 1).unwrap();
+        tree.add_node(uuid(2), uuid(1), uuid(1), 2).unwrap();
+        let breakaway_set = HashSet::from([uuid(0), uuid(1)]);
+        let boundary_check = |_: Uuid| true;
+        let mut walks = Vec::new();
+
+        count_generations_upward_instrumented(
+            &tree,
+            uuid(2),
+            &breakaway_set,
+            &boundary_check,
+            1,
+            false,
+            None,
+            &mut walks,
+        );
+
+        assert_eq!(walks[0].stop, WalkStop::MaxGenerationsReached);
+        assert_eq!(
+            walks[0].stopped_at,
+            Some(uuid(0)),
+            "names the node the walk did not consider"
+        );
+        assert!(
+            !walks[0]
+                .steps
+                .iter()
+                .any(|s| Some(s.node_id) == walks[0].stopped_at),
+            "stopped_at is never in steps"
+        );
     }
 
     #[test]

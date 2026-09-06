@@ -40,7 +40,7 @@ func TestEngineClient_WithMockTransport(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`{"protocol_version":1}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	_, err := client.Ping(context.Background())
 	require.NoError(t, err)
@@ -52,7 +52,7 @@ func TestEngineClient_LoadPlan(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`null`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	planJSON := json.RawMessage(`{"structures":[]}`)
 	err := client.LoadPlan(context.Background(), planJSON)
@@ -66,7 +66,7 @@ func TestEngineClient_CallMarshalError(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`null`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	// Channels cannot be marshaled to JSON.
 	_, err := client.call(context.Background(), "test", make(chan int))
@@ -80,7 +80,7 @@ func TestEngineClient_CreateTree_MockParams(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`{"created":true}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	err := client.CreateTree(context.Background(), "Test", "unilevel")
 	require.NoError(t, err)
@@ -93,7 +93,7 @@ func TestEngineClient_CreateMatrixTree_MockParams(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`{"created":true}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	err := client.CreateMatrixTree(context.Background(), "Test", 3, "breadth_first")
 	require.NoError(t, err)
@@ -110,7 +110,7 @@ func TestEngineClient_AddRoot_MockParams(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`{"added":true}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	err := client.AddRoot(context.Background(), "Test", "00000000-0000-0000-0000-000000000001", 100)
 	require.NoError(t, err)
@@ -123,7 +123,7 @@ func TestEngineClient_AddNode_MockParams(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`{"added":true}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	// Parent and sponsor are distinct so a transposition fails here. Both are
 	// strings, so the swap would otherwise compile and pass silently.
@@ -148,7 +148,7 @@ func TestEngineClient_AddNode_WithPosition(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`{"added":true}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	err := client.AddNode(context.Background(), "Binary",
 		"00000000-0000-0000-0000-000000000002",
@@ -172,7 +172,7 @@ func TestEngineClient_RemoveNode_MockParams(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`{"removed":true}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	err := client.RemoveNode(context.Background(), "Test", "00000000-0000-0000-0000-000000000001")
 	require.NoError(t, err)
@@ -187,7 +187,7 @@ func TestEngineClient_GetParent_ReturnsNode(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`{"user_id":"00000000-0000-0000-0000-000000000001","depth":0,"enrolled_at":100}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	node, err := client.GetParent(context.Background(), "Test", "00000000-0000-0000-0000-000000000002")
 	require.NoError(t, err)
@@ -203,7 +203,7 @@ func TestEngineClient_GetParent_ReturnsNilForRoot(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`null`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	node, err := client.GetParent(context.Background(), "Test", "00000000-0000-0000-0000-000000000001")
 	require.NoError(t, err)
@@ -214,7 +214,7 @@ func TestEngineClient_GetChildren_ReturnsNodes(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`[{"user_id":"00000000-0000-0000-0000-000000000002","depth":1,"enrolled_at":200}]`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	nodes, err := client.GetChildren(context.Background(), "Test", "00000000-0000-0000-0000-000000000001")
 	require.NoError(t, err)
@@ -229,7 +229,7 @@ func TestEngineClient_GetChildren_EmptyList(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`[]`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	nodes, err := client.GetChildren(context.Background(), "Test", "00000000-0000-0000-0000-000000000001")
 	require.NoError(t, err)
@@ -240,7 +240,7 @@ func TestEngineClient_GetUpline_MockParams(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`[{"user_id":"00000000-0000-0000-0000-000000000001","depth":0,"enrolled_at":100}]`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	nodes, err := client.GetUpline(context.Background(), "Test", "00000000-0000-0000-0000-000000000002", 0)
 	require.NoError(t, err)
@@ -254,7 +254,7 @@ func TestEngineClient_GetDownline_MockParams(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`[{"user_id":"00000000-0000-0000-0000-000000000002","depth":1,"enrolled_at":200}]`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	nodes, err := client.GetDownline(context.Background(), "Test", "00000000-0000-0000-0000-000000000001", 0)
 	require.NoError(t, err)
@@ -277,7 +277,7 @@ func TestEngineClient_GetPosition_MockResponse(t *testing.T) {
 			"enrolled_at":200
 		}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	pos, err := client.GetPosition(context.Background(), "Test", "00000000-0000-0000-0000-000000000002")
 	require.NoError(t, err)
@@ -307,7 +307,7 @@ func TestEngineClient_GetPosition_RootHasNilParentAndSponsor(t *testing.T) {
 			"enrolled_at":100
 		}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	pos, err := client.GetPosition(context.Background(), "Test", "00000000-0000-0000-0000-000000000001")
 	require.NoError(t, err)
@@ -321,7 +321,7 @@ func TestEngineClient_IsDescendantOf_MockResponse(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`{"is_descendant":true}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	result, err := client.IsDescendantOf(context.Background(), "Test", "00000000-0000-0000-0000-000000000002", "00000000-0000-0000-0000-000000000001")
 	require.NoError(t, err)
@@ -335,7 +335,7 @@ func TestEngineClient_IsDescendantOf_False(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`{"is_descendant":false}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	result, err := client.IsDescendantOf(context.Background(), "Test", "00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002")
 	require.NoError(t, err)
@@ -348,7 +348,7 @@ func TestEngineClient_GetSponsor_ReturnsNode(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`{"user_id":"00000000-0000-0000-0000-000000000001","depth":0,"enrolled_at":100}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	node, err := client.GetSponsor(context.Background(), "Test", "00000000-0000-0000-0000-000000000002")
 	require.NoError(t, err)
@@ -362,7 +362,7 @@ func TestEngineClient_GetSponsor_ReturnsNilForRoot(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`null`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	node, err := client.GetSponsor(context.Background(), "Test", "00000000-0000-0000-0000-000000000001")
 	require.NoError(t, err)
@@ -373,7 +373,7 @@ func TestEngineClient_GetSponsorUpline_MockParams(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`[{"user_id":"00000000-0000-0000-0000-000000000001","depth":0,"enrolled_at":100}]`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	nodes, err := client.GetSponsorUpline(context.Background(), "Test", "00000000-0000-0000-0000-000000000002", 0)
 	require.NoError(t, err)
@@ -387,7 +387,7 @@ func TestEngineClient_GetSponsored_MockParams(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`[{"user_id":"00000000-0000-0000-0000-000000000002","depth":1,"enrolled_at":200}]`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	nodes, err := client.GetSponsored(context.Background(), "Test", "00000000-0000-0000-0000-000000000001")
 	require.NoError(t, err)
@@ -399,7 +399,7 @@ func TestEngineClient_GetSponsored_MockParams(t *testing.T) {
 
 func TestEngineClient_PingReturnsProtocolVersion(t *testing.T) {
 	mock := &mockTransport{response: json.RawMessage(`{"protocol_version":1}`)}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	version, err := client.Ping(context.Background())
 	require.NoError(t, err)
@@ -411,7 +411,7 @@ func TestEngineClient_PingReturnsProtocolVersion(t *testing.T) {
 
 func TestEngineClient_PingRejectsLegacyPong(t *testing.T) {
 	mock := &mockTransport{response: json.RawMessage(`"pong"`)}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	_, err := client.Ping(context.Background())
 	require.ErrorIs(t, err, ErrProtocolVersionAbsent)
@@ -421,7 +421,7 @@ func TestEngineClient_PingRejectsLegacyPong(t *testing.T) {
 
 func TestEngineClient_PingRejectsObjectWithoutVersion(t *testing.T) {
 	mock := &mockTransport{response: json.RawMessage(`{"something_else":1}`)}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	_, err := client.Ping(context.Background())
 	require.ErrorIs(t, err, ErrProtocolVersionAbsent)
@@ -432,7 +432,7 @@ func TestEngineClient_PingRejectsObjectWithoutVersion(t *testing.T) {
 // both this and {} to 0 and report the wrong failure.
 func TestEngineClient_PingTreatsZeroAsAVersion(t *testing.T) {
 	mock := &mockTransport{response: json.RawMessage(`{"protocol_version":0}`)}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	version, err := client.Ping(context.Background())
 	require.NoError(t, err, "0 is a reported version, not a missing one")
@@ -442,7 +442,7 @@ func TestEngineClient_PingTreatsZeroAsAVersion(t *testing.T) {
 func TestEngineClient_PingTruncatesLongResponseInError(t *testing.T) {
 	long := `"` + strings.Repeat("x", 500) + `"`
 	mock := &mockTransport{response: json.RawMessage(long)}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	_, err := client.Ping(context.Background())
 	require.Error(t, err)
@@ -457,7 +457,7 @@ func TestEngineClient_PingTruncatesLongResponseInError(t *testing.T) {
 // cause that was not observed and send the reader after the wrong thing.
 func TestEngineClient_PingDistinguishesAnUnreadableVersion(t *testing.T) {
 	mock := &mockTransport{response: json.RawMessage(`{"protocol_version":"2"}`)}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	_, err := client.Ping(context.Background())
 	require.ErrorIs(t, err, ErrProtocolVersionUnreadable)
@@ -470,7 +470,7 @@ func TestEngineClient_PingDistinguishesAnUnreadableVersion(t *testing.T) {
 // the key, so this must be classed as unreadable rather than absent.
 func TestEngineClient_PingTreatsAnExplicitNullAsUnreadable(t *testing.T) {
 	mock := &mockTransport{response: json.RawMessage(`{"protocol_version":null}`)}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	_, err := client.Ping(context.Background())
 	require.ErrorIs(t, err, ErrProtocolVersionUnreadable)
@@ -481,7 +481,7 @@ func TestEngineClient_PingTreatsAnExplicitNullAsUnreadable(t *testing.T) {
 // version is merely unreadable is classed as absent.
 func TestEngineClient_PingDiagnosesAnOddlyCasedKey(t *testing.T) {
 	mock := &mockTransport{response: json.RawMessage(`{"PROTOCOL_VERSION":"x"}`)}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	_, err := client.Ping(context.Background())
 	require.ErrorIs(t, err, ErrProtocolVersionUnreadable)
@@ -489,7 +489,7 @@ func TestEngineClient_PingDiagnosesAnOddlyCasedKey(t *testing.T) {
 
 func TestEngineClient_PingRendersAnEmptyResponse(t *testing.T) {
 	mock := &mockTransport{response: nil}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	_, err := client.Ping(context.Background())
 	require.Error(t, err)
@@ -500,7 +500,7 @@ func TestEngineClient_PingRendersAnEmptyResponse(t *testing.T) {
 func TestEngineClient_PingErrorStaysValidUTF8(t *testing.T) {
 	// Greek alpha is two bytes, so this run crosses the bound mid-rune.
 	mock := &mockTransport{response: json.RawMessage(`{"note":"` + strings.Repeat("α", 200) + `"}`)}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	_, err := client.Ping(context.Background())
 	require.Error(t, err)
@@ -513,7 +513,7 @@ func TestEngineClient_PingDoesNotTruncateAtTheBoundary(t *testing.T) {
 	exact := `{"x":"` + strings.Repeat("y", maxPingResponseInError-8) + `"}`
 	require.Len(t, exact, maxPingResponseInError)
 	mock := &mockTransport{response: json.RawMessage(exact)}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	_, err := client.Ping(context.Background())
 	require.Error(t, err)
@@ -526,7 +526,7 @@ func TestEngineClient_PingDoesNotTruncateAtTheBoundary(t *testing.T) {
 func TestEngineClient_RejectionMessagesAreStable(t *testing.T) {
 	t.Run("absent key", func(t *testing.T) {
 		mock := &mockTransport{response: json.RawMessage(`"pong"`)}
-		client := NewEngineClientWithTransport(mock)
+		client := newEngineClientWithTransport(mock)
 
 		_, err := client.Ping(context.Background())
 		require.EqualError(t, err,
@@ -535,7 +535,7 @@ func TestEngineClient_RejectionMessagesAreStable(t *testing.T) {
 
 	t.Run("unreadable key", func(t *testing.T) {
 		mock := &mockTransport{response: json.RawMessage(`{"protocol_version":"2"}`)}
-		client := NewEngineClientWithTransport(mock)
+		client := newEngineClientWithTransport(mock)
 
 		_, err := client.Ping(context.Background())
 		require.EqualError(t, err,
@@ -638,7 +638,7 @@ func TestNewEngineClient_RejectsWorkerWithWrongVersion(t *testing.T) {
 func TestEngineClient_TransportErrorPropagation(t *testing.T) {
 	transportErr := fmt.Errorf("transport down")
 	mock := &mockTransport{err: transportErr}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	_, err := client.Ping(context.Background())
 	assert.ErrorIs(t, err, transportErr)
@@ -654,7 +654,7 @@ func TestEngineClient_UnmarshalError(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`{not json}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	_, err := client.GetChildren(context.Background(), "Test", "user-1")
 	assert.Error(t, err)
@@ -663,7 +663,7 @@ func TestEngineClient_UnmarshalError(t *testing.T) {
 
 func TestEngineClient_StopClosesTransport(t *testing.T) {
 	mock := &mockTransport{}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	err := client.Stop()
 	require.NoError(t, err)
@@ -926,7 +926,7 @@ func TestEngineClient_CalculateUnilevel_MockParams(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`[{"earner_id":"00000000-0000-0000-0000-000000000001","source_id":"00000000-0000-0000-0000-000000000002","level":1,"rate":0.05,"cv_amount":100.0,"dollar_amount":2.0}]`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	req := CalculateUnilevelRequest{
 		StructureName: "Test",
@@ -960,7 +960,7 @@ func TestEngineClient_CalculateUnilevel_EmptyEarnings(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`[]`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	req := CalculateUnilevelRequest{
 		StructureName: "Test",
@@ -979,7 +979,7 @@ func TestEngineClient_CalculateGeneration_MockParams(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`[{"earner_id":"00000000-0000-0000-0000-000000000001","source_id":"00000000-0000-0000-0000-000000000002","level":1,"rate":0.10,"cv_amount":100.0,"dollar_amount":10.0}]`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	req := CalculateGenerationRequest{
 		StructureName: "GenTree",
@@ -1013,7 +1013,7 @@ func TestEngineClient_CalculateGeneration_EmptyEarnings(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`[]`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	req := CalculateGenerationRequest{
 		StructureName: "GenTree",
@@ -1032,7 +1032,7 @@ func TestEngineClient_CalculateMatrix_MockParams(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`[{"earner_id":"00000000-0000-0000-0000-000000000001","source_id":"00000000-0000-0000-0000-000000000002","level":1,"rate":0.05,"cv_amount":100.0,"dollar_amount":2.0}]`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	req := CalculateMatrixRequest{
 		StructureName: "Test",
@@ -1061,7 +1061,7 @@ func TestEngineClient_CalculateMatrix_MockParams(t *testing.T) {
 
 func TestEngineClient_CalculateMatrix_EmptyEarnings(t *testing.T) {
 	mock := &mockTransport{response: json.RawMessage(`[]`)}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	req := CalculateMatrixRequest{
 		StructureName: "Test",
@@ -1080,7 +1080,7 @@ func TestEngineClient_CalculateStairstep_MockParams(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`[{"earner_id":"00000000-0000-0000-0000-000000000001","source_id":"00000000-0000-0000-0000-000000000003","level":2,"rate":0.05,"cv_amount":100.0,"dollar_amount":2.0}]`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	req := CalculateStairstepRequest{
 		StructureName: "Test",
@@ -1109,7 +1109,7 @@ func TestEngineClient_CalculateStairstep_MockParams(t *testing.T) {
 
 func TestEngineClient_CalculateStairstep_EmptyEarnings(t *testing.T) {
 	mock := &mockTransport{response: json.RawMessage(`[]`)}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	req := CalculateStairstepRequest{
 		StructureName: "Test",
@@ -1453,7 +1453,7 @@ func TestEngineClient_CalculateStreamline_MockParams(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`[{"earner_id":"00000000-0000-0000-0000-000000000001","source_id":"00000000-0000-0000-0000-000000000002","level":1,"rate":0.10,"cv_amount":100.0,"dollar_amount":10.0}]`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	req := CalculateStreamlineRequest{
 		StructureName: "StreamTest",
@@ -1507,7 +1507,7 @@ func TestEngineClient_CalculateBinaryPairing_MockParams(t *testing.T) {
 			"carry_forward":{"00000000-0000-0000-0000-000000000001":{"left":0.0,"right":0.0}}
 		}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	req := CalculateBinaryPairingRequest{
 		StructureName: "BinaryCalc",
@@ -1555,7 +1555,7 @@ func TestEngineClient_CalculateBinaryPairing_EmptyResult(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`{"earnings":[],"carry_forward":{}}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	req := CalculateBinaryPairingRequest{
 		StructureName: "BinaryCalc",
@@ -1573,7 +1573,7 @@ func TestEngineClient_EvaluateRanks_MockParams(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`{"ranks":{"00000000-0000-0000-0000-000000000001":{"kind":"unranked"}}}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	req := EvaluateRanksRequest{
 		Distributors: map[string]DistributorPrimitivesDTO{
@@ -1600,7 +1600,7 @@ func TestEngineClient_EvaluateRanks_VariadicSignature_AcceptsWithPersistence(t *
 	mock := &mockTransport{
 		response: json.RawMessage(`{"ranks":{}}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	req := EvaluateRanksRequest{
 		Distributors:  map[string]DistributorPrimitivesDTO{},
@@ -1774,7 +1774,7 @@ func TestEngineClient_EvaluateRanks_WithPersistence_WritesEntries(t *testing.T) 
             "00000000-0000-0000-0000-000000000002":{"kind":"unranked"}
         }}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 	store := NewMemoryQualificationHistoryStore()
 	ctx := context.Background()
 
@@ -1814,7 +1814,7 @@ func TestEngineClient_EvaluateRanks_WithPersistence_NilStoreReturnsResultAndErro
 	mock := &mockTransport{
 		response: json.RawMessage(`{"ranks":{"00000000-0000-0000-0000-000000000001":{"kind":"unranked"}}}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	req := EvaluateRanksRequest{
 		Distributors:  map[string]DistributorPrimitivesDTO{},
@@ -1831,7 +1831,7 @@ func TestEngineClient_EvaluateRanks_WithPersistence_EmptyPeriodIDReturnsResultAn
 	mock := &mockTransport{
 		response: json.RawMessage(`{"ranks":{"00000000-0000-0000-0000-000000000001":{"kind":"unranked"}}}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 	store := NewMemoryQualificationHistoryStore()
 
 	req := EvaluateRanksRequest{
@@ -1857,7 +1857,7 @@ func TestEngineClient_EvaluateRanks_WithPersistence_BothInvalidReturnsResultAndE
 	mock := &mockTransport{
 		response: json.RawMessage(`{"ranks":{}}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	req := EvaluateRanksRequest{
 		Distributors:  map[string]DistributorPrimitivesDTO{},
@@ -1876,7 +1876,7 @@ func TestEngineClient_BoardCreateBoardPlan_MockParams(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`null`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	config := json.RawMessage(`{"cycle_commission":10.0,"re_entry":true}`)
 	err := client.CreateBoardPlan(context.Background(), "BoardTest", 2, 3, config)
@@ -1904,7 +1904,7 @@ func TestEngineClient_BoardAddMember_MockResponse(t *testing.T) {
 			}]
 		}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	result, err := client.BoardAddMember(context.Background(), "BoardTest",
 		"00000000-0000-0000-0000-000000000001",
@@ -1930,7 +1930,7 @@ func TestEngineClient_BoardRemoveMember_MockResponse(t *testing.T) {
 			"cycle_events":[]
 		}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	result, err := client.BoardRemoveMember(context.Background(), "BoardTest",
 		"00000000-0000-0000-0000-000000000001", 2000)
@@ -1957,7 +1957,7 @@ func TestEngineClient_BoardCompressInactive_MockResponse(t *testing.T) {
 			}]
 		}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	result, err := client.BoardCompressInactive(context.Background(), "BoardTest",
 		[]string{"00000000-0000-0000-0000-000000000001"}, 3000)
@@ -1983,7 +1983,7 @@ func TestEngineClient_BoardDetectStalled_MockResponse(t *testing.T) {
 			"members":["00000000-0000-0000-0000-000000000001","00000000-0000-0000-0000-000000000002"]
 		}]`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	stalled, err := client.BoardDetectStalled(context.Background(), "BoardTest", 1000)
 	require.NoError(t, err)
@@ -2004,7 +2004,7 @@ func TestEngineClient_BoardDissolve_MockResponse(t *testing.T) {
 			"displaced_members":["00000000-0000-0000-0000-000000000001","00000000-0000-0000-0000-000000000002"]
 		}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	result, err := client.BoardDissolve(context.Background(), "BoardTest", "board-001", 4000)
 	require.NoError(t, err)
@@ -2022,7 +2022,7 @@ func TestEngineClient_BoardGetState_MockResponse(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`{"board_id":"board-001","positions":[null,"00000000-0000-0000-0000-000000000001"]}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	result, err := client.BoardGetState(context.Background(), "BoardTest", "board-001")
 	require.NoError(t, err)
@@ -2035,7 +2035,7 @@ func TestEngineClient_BoardGetMember_MockResponse(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`{"board_id":"board-001"}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	info, err := client.BoardGetMember(context.Background(), "BoardTest", "00000000-0000-0000-0000-000000000001")
 	require.NoError(t, err)
@@ -2049,7 +2049,7 @@ func TestEngineClient_BoardGetMember_ReturnsNilWhenNotFound(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`null`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	info, err := client.BoardGetMember(context.Background(), "BoardTest", "00000000-0000-0000-0000-000000000099")
 	require.NoError(t, err)
@@ -2068,7 +2068,7 @@ func TestEngineClient_BoardListBoards_MockResponse(t *testing.T) {
 			"parent_board_id":"board-000"
 		}]`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	boards, err := client.BoardListBoards(context.Background(), "BoardTest")
 	require.NoError(t, err)
@@ -2097,7 +2097,7 @@ func TestEngineClient_CalculateBoardCommissions_MockParams(t *testing.T) {
 			"updated_cycle_counts":{"00000000-0000-0000-0000-000000000001":3}
 		}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	req := CalculateBoardCommissionsRequest{
 		StructureName: "BoardTest",
@@ -2179,7 +2179,7 @@ func TestEngineClient_CalculateBoardCommissions_NilCollections(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`{"earnings":[],"updated_cycle_counts":{}}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	req := CalculateBoardCommissionsRequest{
 		StructureName:     "BoardTest",
@@ -2385,7 +2385,7 @@ func TestEngineClient_StreamlineSnapshotRoundTrip(t *testing.T) {
 // a swap fail here instead of in production.
 func TestEngineClient_AddNodeAt_WireParams(t *testing.T) {
 	mock := &mockTransport{response: json.RawMessage(`{"added":true}`)}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	err := client.AddNodeAt(context.Background(), "m-tree",
 		"user-child", "user-parent", "user-sponsor", 2, 1700000000)
@@ -2430,7 +2430,7 @@ func TestEngineClient_AddNodeAt_WireParams(t *testing.T) {
 
 func TestEngineClient_CalculateUnilevel_NilCollections(t *testing.T) {
 	mock := &mockTransport{response: json.RawMessage(`[]`)}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	_, err := client.CalculateUnilevel(context.Background(), CalculateUnilevelRequest{
 		StructureName: "Test",
@@ -2448,7 +2448,7 @@ func TestEngineClient_CalculateUnilevel_NilCollections(t *testing.T) {
 
 func TestEngineClient_CalculateGeneration_NilCollections(t *testing.T) {
 	mock := &mockTransport{response: json.RawMessage(`[]`)}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	_, err := client.CalculateGeneration(context.Background(), CalculateGenerationRequest{
 		StructureName: "GenTree",
@@ -2466,7 +2466,7 @@ func TestEngineClient_CalculateGeneration_NilCollections(t *testing.T) {
 
 func TestEngineClient_CalculateMatrix_NilCollections(t *testing.T) {
 	mock := &mockTransport{response: json.RawMessage(`[]`)}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	_, err := client.CalculateMatrix(context.Background(), CalculateMatrixRequest{
 		StructureName: "Test",
@@ -2484,7 +2484,7 @@ func TestEngineClient_CalculateMatrix_NilCollections(t *testing.T) {
 
 func TestEngineClient_CalculateStairstep_NilCollections(t *testing.T) {
 	mock := &mockTransport{response: json.RawMessage(`[]`)}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	_, err := client.CalculateStairstep(context.Background(), CalculateStairstepRequest{
 		StructureName: "Test",
@@ -2502,7 +2502,7 @@ func TestEngineClient_CalculateStairstep_NilCollections(t *testing.T) {
 
 func TestEngineClient_CalculateStreamline_NilCollections(t *testing.T) {
 	mock := &mockTransport{response: json.RawMessage(`[]`)}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	_, err := client.CalculateStreamline(context.Background(), CalculateStreamlineRequest{
 		StructureName: "TestStreamline",
@@ -2528,7 +2528,7 @@ func TestEngineClient_CalculateBinaryPairing_NilCollections(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`{"earnings":[],"carry_forward":{}}`),
 	}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	_, err := client.CalculateBinaryPairing(context.Background(), CalculateBinaryPairingRequest{
 		StructureName: "BinaryCalc",
@@ -2548,7 +2548,7 @@ func TestEngineClient_CalculateBinaryPairing_NilCollections(t *testing.T) {
 
 func TestEngineClient_EvaluateRanks_NilCollections(t *testing.T) {
 	mock := &mockTransport{response: json.RawMessage(`{"ranks":{}}`)}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	_, err := client.EvaluateRanks(context.Background(), EvaluateRanksRequest{
 		Distributors:  nil,
@@ -2568,7 +2568,7 @@ func TestEngineClient_EvaluateRanks_NilCollections(t *testing.T) {
 // empty.
 func TestEngineClient_EvaluateRanks_NilActiveProducts(t *testing.T) {
 	mock := &mockTransport{response: json.RawMessage(`{"ranks":{}}`)}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	_, err := client.EvaluateRanks(context.Background(), EvaluateRanksRequest{
 		Distributors: map[string]DistributorPrimitivesDTO{
@@ -2602,7 +2602,7 @@ func TestEngineClient_EvaluateRanks_NilActiveProducts(t *testing.T) {
 // absent means "no history" and a no-gate plan never sends the keys.
 func TestEngineClient_EvaluateRanks_OmitsEmptyHistory(t *testing.T) {
 	mock := &mockTransport{response: json.RawMessage(`{"ranks":{}}`)}
-	client := NewEngineClientWithTransport(mock)
+	client := newEngineClientWithTransport(mock)
 
 	_, err := client.EvaluateRanks(context.Background(), EvaluateRanksRequest{
 		Distributors:  map[string]DistributorPrimitivesDTO{},

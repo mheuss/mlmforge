@@ -101,12 +101,13 @@ func newCheckedClient(ctx context.Context, transport EngineTransport) (*EngineCl
 	return client, nil
 }
 
-// NewEngineClientWithTransport creates a client with a custom transport.
+// newEngineClientWithTransport wires a transport into a client and performs no
+// protocol version check, so a client built this way may be talking to a worker
+// whose wire semantics it cannot interpret.
 //
-// It performs NO protocol version check, so a client built this way may be
-// talking to a worker whose wire semantics it cannot interpret. Use
-// NewEngineClient to reach a real worker.
-func NewEngineClientWithTransport(transport EngineTransport) *EngineClient {
+// Unexported deliberately: it is a test seam. Exporting it would hand code
+// outside this package an unchecked client.
+func newEngineClientWithTransport(transport EngineTransport) *EngineClient {
 	return &EngineClient{transport: transport}
 }
 

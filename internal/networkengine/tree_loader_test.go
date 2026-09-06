@@ -34,7 +34,7 @@ func (o *orderRecordingTransport) Close() error { return nil }
 func TestTreeLoader_LoadEmptyTree(t *testing.T) {
 	store := NewMemoryTreeStore()
 	transport := newOrderRecordingTransport()
-	engine := NewEngineClientWithTransport(transport)
+	engine := newEngineClientWithTransport(transport)
 	loader := NewTreeLoader(store, engine)
 
 	err := loader.LoadTree(context.Background(), "tree-1", "unilevel")
@@ -143,7 +143,7 @@ func TestTreeLoader_LoadSingleRoot(t *testing.T) {
 	require.NoError(t, store.InsertNode(context.Background(), root))
 
 	transport := newOrderRecordingTransport()
-	engine := NewEngineClientWithTransport(transport)
+	engine := newEngineClientWithTransport(transport)
 	loader := NewTreeLoader(store, engine)
 
 	err := loader.LoadTree(context.Background(), "tree-1", "unilevel")
@@ -176,7 +176,7 @@ func TestTreeLoader_LoadChain(t *testing.T) {
 	require.NoError(t, store.InsertNode(ctx, node3))
 
 	transport := newOrderRecordingTransport()
-	engine := NewEngineClientWithTransport(transport)
+	engine := newEngineClientWithTransport(transport)
 	loader := NewTreeLoader(store, engine)
 
 	err := loader.LoadTree(ctx, "tree-1", "unilevel")
@@ -208,7 +208,7 @@ func TestTreeLoader_SkipsRemovedNodes(t *testing.T) {
 	require.NoError(t, store.DeleteNode(ctx, "tree-1", "user-1"))
 
 	transport := newOrderRecordingTransport()
-	engine := NewEngineClientWithTransport(transport)
+	engine := newEngineClientWithTransport(transport)
 	loader := NewTreeLoader(store, engine)
 
 	err := loader.LoadTree(ctx, "tree-1", "unilevel")
@@ -229,7 +229,7 @@ func TestTreeLoader_NoDepthZeroRoot(t *testing.T) {
 	require.NoError(t, store.InsertNode(ctx, node))
 
 	transport := newOrderRecordingTransport()
-	engine := NewEngineClientWithTransport(transport)
+	engine := newEngineClientWithTransport(transport)
 	loader := NewTreeLoader(store, engine)
 
 	err := loader.LoadTree(ctx, "tree-1", "unilevel")
@@ -256,7 +256,7 @@ func TestTreeLoader_ChildWithNilParent(t *testing.T) {
 	require.NoError(t, store.InsertNode(ctx, child))
 
 	transport := newOrderRecordingTransport()
-	engine := NewEngineClientWithTransport(transport)
+	engine := newEngineClientWithTransport(transport)
 	loader := NewTreeLoader(store, engine)
 
 	err := loader.LoadTree(ctx, "tree-1", "unilevel")

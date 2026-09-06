@@ -29,6 +29,38 @@ Each use-case entry in a domain file follows this structure:
 **Notes:** Any caveats, edge cases, or related use-cases.
 ````
 
+### The Usage block
+
+A Usage block shows a **caller using the solution**. It does not reproduce the
+implementation.
+
+Show the call, the types that cross the boundary, and the decision a caller
+makes with the result. Do not paste a function body, and do not copy lines out
+of the files the entry names.
+
+This sharpens the template above rather than replacing it. The template already
+says "Example showing how to use the solution". Entries drifted from it because
+the reason was never written down.
+
+The reason: a block that reproduces implementation asserts a fact about code in
+another file, and nothing checks it. Not the build, not the tests, not CI. The
+only detector is a reader who happens to know both the entry and the current
+source. This workspace already applies that rule to comments, where a comment
+may not assert a fact about code outside the lines it sits on. A pasted block is
+the same assertion at a longer distance, with no compiler in between.
+
+A call-site example ages differently. If the implementation changes underneath
+it, the example stays true, because it never claimed to be the implementation.
+If the signature changes, the example is wrong in one visible line, and the
+entry's **Files:** line says where to look.
+
+Where an implementation detail is the point of the entry, put it in
+**Solution:** as prose. Prose that ages reads as dated. A code block that ages
+reads as current, which is what makes it dangerous.
+
+An entry may have no Usage block at all. That is better than a block that
+restates what **Solution:** already says.
+
 ## Domain File Structure
 
 Each domain file (`{domain}.md`) starts with:

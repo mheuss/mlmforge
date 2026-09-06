@@ -65,11 +65,9 @@ func StartPostgres() (*PostgresContainer, error) {
 // test counts a skipped test as a success, so a CI run whose container never
 // started would report green having asserted nothing about any Postgres seam
 // (HEU-678). With CI unset it reports and returns, leaving the per-test
-// container checks to skip as they always have, which is what lets the suite
-// run on a machine without Docker.
+// container checks to skip as they always have.
 //
-// It is exported because three TestMain functions call it and one of them,
-// in postgres_migration_test.go, is in the external test package testutil_test.
+// Exported: an external test package calls it.
 func RequirePostgresInCI(err error) {
 	if err == nil {
 		return

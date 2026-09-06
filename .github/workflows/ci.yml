@@ -102,6 +102,10 @@ jobs:
       CARGO_AUDIT_VERSION: 0.22.1
     defaults:
       run:
+        # Naming bash explicitly is what turns on pipefail. Without it a step
+        # ending in a pipe reports only the last command's status, so an
+        # earlier stage can fail and the step still passes.
+        shell: bash
         working-directory: engine
     steps:
       - uses: actions/checkout@v4
@@ -137,7 +141,8 @@ jobs:
         run: |
           # A restore can succeed and still hand back the wrong or a truncated
           # binary, and the scan would then report green from an unpinned tool.
-          # -F because the pin contains dots, which are any-char unescaped.
+          # -x so a prerelease suffix cannot satisfy the match, -F because the
+          # pin contains dots, which are any-char unescaped.
           cargo audit --version
-          cargo audit --version | grep -qwF "$CARGO_AUDIT_VERSION"
+          cargo audit --version | grep -qxF "cargo-audit-audit $CARGO_AUDIT_VERSION"
           cargo audit

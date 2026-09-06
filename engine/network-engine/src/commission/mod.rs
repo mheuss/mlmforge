@@ -9,6 +9,7 @@ pub mod streamline;
 pub mod types;
 pub mod unilevel;
 pub(crate) mod walk;
+pub(crate) mod walk_order;
 
 #[cfg(test)]
 pub(crate) mod test_helpers;

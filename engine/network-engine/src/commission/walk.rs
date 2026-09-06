@@ -199,12 +199,18 @@ pub(crate) fn validate_source<'t, T: TreeNavigator>(
     Ok(upline)
 }
 
-/// Sort earnings by (earner_id, source_id, level) for deterministic output.
+/// Sort earnings by (earner_id, source_id, level, walk) for deterministic
+/// output.
 ///
 /// Without sorting, the order depends on BFS traversal and volume
 /// source iteration, both of which can vary across runs. The level
 /// tiebreaker ensures deterministic ordering when multiple tiers emit
 /// earnings for the same (earner_id, source_id) pair.
+///
+/// The walk tiebreaker covers the case level cannot: stairstep runs two
+/// walks over the same source, and one ancestor can earn from both at the
+/// same level. An unrecorded walk sorts first, since `Option`'s own `Ord`
+/// puts `None` before any `Some`.
 pub(crate) fn sort_earnings(earnings: &mut [CommissionEarning]) {
     earnings.sort_by(|a, b| {
         a.earner_id

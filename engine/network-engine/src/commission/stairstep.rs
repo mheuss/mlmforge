@@ -1406,10 +1406,20 @@ mod tests {
         snapshots.insert(uuid(3), snapshot_with_rank("director", 150.0));
         snapshots.insert(uuid(4), snapshot_with_rank("associate", 150.0));
 
-        let volume = vec![VolumeSource {
-            source_id: uuid(4),
-            cv_amount: 100.0,
-        }];
+        // Two sources on purpose. Stairstep calls the level walk once per
+        // source rather than once with the slice, because `should_stop`
+        // captures a per-source group leader. At one source both designs
+        // produce one walk, so the count below could not tell them apart.
+        let volume = vec![
+            VolumeSource {
+                source_id: uuid(4),
+                cv_amount: 100.0,
+            },
+            VolumeSource {
+                source_id: uuid(2),
+                cv_amount: 100.0,
+            },
+        ];
 
         let result = calculate_stairstep(
             &tree,
@@ -1421,11 +1431,11 @@ mod tests {
         )
         .unwrap();
 
-        // Walk 1 runs once per volume source.
         assert_eq!(
             result.walks.len(),
             volume.len(),
-            "stairstep calls the level walk once per source"
+            "one Walk 1 per volume source, got {:?}",
+            result.walks.iter().map(|w| w.source_id).collect::<Vec<_>>()
         );
 
         let with_walk = result.earnings.iter().filter(|e| e.walk.is_some()).count();
@@ -1906,6 +1916,70 @@ mod tests {
                 overrides: OverrideStrategy::MultiTier(MultiTierConfig { tiers }),
             }),
         }
+    }
+
+    #[test]
+    fn multi_tier_walk_two_earnings_also_carry_null_walk() {
+        // Plan gotcha 7: Task 10 must cover all three Walk 2 dispatch paths,
+        // not one. The SingleWalk test above exercises walk_single_overrides.
+        // This one exercises walk_multi_tier_overrides, which is a different
+        // arm of the dispatch and the path where two design revisions already
+        // described the behaviour wrongly.
+        let tree = build_chain(4);
+        let structure = test_multi_tier_structure(vec![BreakawayTier {
+            min_split_out_groups: 1,
+            rate: 0.05,
+        }]);
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(2), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", 150.0));
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap();
+
+        // The multi-tier override earnings are Walk 2, so they carry no walk.
+        let overrides: Vec<_> = result
+            .earnings
+            .iter()
+            .filter(|e| e.source_id != uuid(3))
+            .collect();
+        assert!(
+            !overrides.is_empty(),
+            "this fixture must produce multi-tier override earnings"
+        );
+        for e in &overrides {
+            assert_eq!(
+                e.walk, None,
+                "a multi-tier Walk 2 earning must carry a null walk, got {e:?}"
+            );
+        }
+
+        // And the split from Task 4 holds on this path too: Walk 2 goes
+        // through the uninstrumented wrapper, so no generation walk exists.
+        assert!(
+            result
+                .walks
+                .iter()
+                .all(|w| w.kind == crate::commission::WalkKind::Level),
+            "multi-tier Walk 2 must not emit a generation walk, got {:?}",
+            result.walks.iter().map(|w| w.kind).collect::<Vec<_>>()
+        );
     }
 
     #[test]

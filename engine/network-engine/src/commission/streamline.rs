@@ -356,26 +356,12 @@ mod tests {
             );
         }
 
-        // Running again over the same input yields the same index-to-stream
-        // mapping. A HashMap-order dependency would show up here.
-        let again = calculate_streamline(
-            &engine,
-            &plan,
-            &structure,
-            &snapshots,
-            &volume,
-            &crate::test_support::test_plan_identity(),
-        )
-        .unwrap();
-
-        let first: Vec<(u32, Option<u32>)> = result
-            .walks
-            .iter()
-            .map(|w| (w.index, w.stream_id))
-            .collect();
-        let second: Vec<(u32, Option<u32>)> =
-            again.walks.iter().map(|w| (w.index, w.stream_id)).collect();
-        assert_eq!(first, second, "walk indexes must be stable across runs");
+        // No determinism check here. It would be vacuous: this fixture has a
+        // single stream, and re-running against the same `StreamlineEngine`
+        // reuses one `HashMap` with a fixed `RandomState`, so the iteration
+        // order is identical by construction rather than by the sort.
+        // `walk_order::tests::streams_sort_ascending_within_a_kind` pins the
+        // ordering one layer down, where it can actually fail.
     }
 
     #[test]

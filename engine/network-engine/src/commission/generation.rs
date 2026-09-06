@@ -2031,10 +2031,20 @@ mod calculate_tests {
         .unwrap();
 
         // One volume source, three distinct ranks among the earners.
-        assert!(
-            result.walks.len() > 1,
-            "one walk per rank, not one per source: got {} walks",
-            result.walks.len()
+        // Exactly three: the fixture has three distinct ranks across four
+        // snapshots and one volume source, and `walks.push` is unconditional
+        // at the end of every traversal, so a rank that pays nobody still
+        // records a walk. `> 1` would pass if two of the three collapsed,
+        // which is the live bug shape of the per-rank collector id.
+        assert_eq!(
+            result.walks.len(),
+            3,
+            "one walk per rank, not one per source: got {:?}",
+            result
+                .walks
+                .iter()
+                .map(|w| w.rank.as_deref())
+                .collect::<Vec<_>>()
         );
 
         // Every walk names the rank whose traversal produced it, which is what

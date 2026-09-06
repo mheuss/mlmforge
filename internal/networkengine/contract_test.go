@@ -223,8 +223,15 @@ func checkExpectedError(fixtureName string, expectedErr, actualErr map[string]js
 	}
 
 	if codeRaw, ok := expectedErr["code"]; ok {
-		var want string
-		if err := json.Unmarshal(codeRaw, &want); err != nil {
+		// Decode through any for the same reason message_contains does: a JSON
+		// null unmarshals into a string as a no-op with no error, which would
+		// compare an empty code and report a mismatch that does not exist.
+		var wantAny any
+		if err := json.Unmarshal(codeRaw, &wantAny); err != nil {
+			return fmt.Errorf("[%s] expected error code is not valid JSON: %s", fixtureName, codeRaw)
+		}
+		want, isString := wantAny.(string)
+		if !isString {
 			return fmt.Errorf("[%s] expected error code is not a JSON string: %s", fixtureName, codeRaw)
 		}
 
@@ -625,6 +632,13 @@ func TestCheckExpectedErrorRejectsNonStringValues(t *testing.T) {
 			name: "code is not a string",
 			expected: map[string]json.RawMessage{
 				"code": json.RawMessage(`5`),
+			},
+			errContains: "not a JSON string",
+		},
+		{
+			name: "code is null",
+			expected: map[string]json.RawMessage{
+				"code": json.RawMessage(`null`),
 			},
 			errContains: "not a JSON string",
 		},

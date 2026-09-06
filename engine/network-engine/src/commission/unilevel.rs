@@ -84,6 +84,10 @@ pub fn calculate_unilevel(
 
 #[cfg(test)]
 mod tests {
+    // Result-shape coverage for the calculators lives here rather than being
+    // repeated five times: the assembly is shared through walk_order::assemble,
+    // so a break in it breaks all five the same way.
+
     use super::*;
     use crate::commission::is_eligible;
     use crate::commission::test_helpers::build_test_plan;
@@ -192,6 +196,72 @@ mod tests {
     }
 
     // --- is_eligible tests ---
+
+    #[test]
+    fn the_result_carries_earnings_walks_and_the_plan_identity() {
+        // Same three-node chain as basic_walk_three_node_chain: the shape is
+        // known to pay two earnings, so this test can assert on the envelope
+        // rather than re-deriving the amounts.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 0)
+            .unwrap();
+
+        let structure = test_structure(test_rate_table());
+        let plan = test_plan(default_eligibility());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "silver".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(
+            test_uuid(2),
+            DistributorSnapshot {
+                rank: "associate".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let identity = crate::test_support::test_plan_identity();
+
+        let result =
+            calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume, &identity).unwrap();
+
+        assert!(!result.earnings.is_empty(), "the fixture must pay someone");
+        assert_eq!(result.walks.len(), 1, "one volume source is one walk");
+        assert_eq!(
+            result.plan, identity,
+            "the identity is carried, not rebuilt"
+        );
+
+        // Every earning points at a walk that exists. This is the invariant
+        // the remap can break silently: a wrong map still yields real indexes.
+        let indexes: Vec<u32> = result.walks.iter().map(|w| w.index).collect();
+        for e in &result.earnings {
+            let walk = e.walk.expect("a level earning must reference its walk");
+            assert!(
+                indexes.contains(&walk),
+                "earning references walk {walk}, not in {indexes:?}"
+            );
+        }
+
+        // assign_indexes numbers from zero with no gaps.
+        let mut sorted = indexes.clone();
+        sorted.sort_unstable();
+        assert_eq!(sorted, (0..result.walks.len() as u32).collect::<Vec<_>>());
+    }
 
     #[test]
     fn eligible_distributor_passes_all_checks() {
@@ -308,7 +378,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         assert_eq!(result.len(), 2);
 
@@ -351,7 +430,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         assert!(result.is_empty()); // no rate found, no earning
     }
@@ -389,7 +477,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // Associate has rates for levels 1-3 only.
         assert_eq!(result.len(), 3);
@@ -428,7 +525,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // Only levels 1 and 2 should have earnings
         assert_eq!(result.len(), 2);
@@ -463,7 +569,16 @@ mod tests {
             cv_amount: 200.0,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         assert_eq!(result.len(), 1);
         // 200.0 * 0.50 * 0.80 * 0.07 (silver level 1) = 5.6
@@ -498,7 +613,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // 100 * 0.40 * 0.75 * 0.07 = 2.1
         let expected = 100.0 * 0.40 * 0.75 * 0.07;
@@ -549,7 +673,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].earner_id, test_uuid(1));
@@ -598,7 +731,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].earner_id, test_uuid(1));
@@ -642,7 +784,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].earner_id, test_uuid(1));
@@ -683,7 +834,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].earner_id, test_uuid(1));
@@ -719,7 +879,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].level, 2); // level 1 forfeited
@@ -773,7 +942,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // Nodes 4 and 3 earn (levels 1 and 2). Nodes 2 and 1 are beyond depth 2.
         assert_eq!(result.len(), 2);
@@ -822,7 +1000,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // node 2 at level 1, node 1 at level 2. Both should earn.
         assert_eq!(result.len(), 2);
@@ -842,7 +1029,14 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume);
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
 
         assert!(result.is_err());
         assert!(matches!(
@@ -865,7 +1059,14 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume);
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
 
         assert!(result.is_err());
         assert!(matches!(
@@ -896,7 +1097,14 @@ mod tests {
             cv_amount: -50.0,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume);
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
 
         assert!(result.is_err());
         assert!(matches!(
@@ -920,7 +1128,14 @@ mod tests {
             cv_amount: -50.0,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume);
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
 
         assert!(result.is_err());
         assert!(matches!(
@@ -944,7 +1159,14 @@ mod tests {
             cv_amount: f64::NAN,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume);
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
 
         assert!(result.is_err());
         assert!(matches!(
@@ -968,7 +1190,14 @@ mod tests {
             cv_amount: f64::INFINITY,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume);
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
 
         assert!(result.is_err());
         assert!(matches!(
@@ -992,7 +1221,14 @@ mod tests {
             cv_amount: f64::NEG_INFINITY,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume);
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
 
         assert!(result.is_err());
         assert!(matches!(
@@ -1013,7 +1249,16 @@ mod tests {
         let mut snapshots = HashMap::new();
         snapshots.insert(test_uuid(1), eligible_snapshot());
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &[]).unwrap();
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &[],
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         assert!(result.is_empty());
     }
@@ -1034,7 +1279,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         assert!(result.is_empty());
     }
@@ -1073,7 +1327,16 @@ mod tests {
             },
         ];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // root earns from both sources
         assert_eq!(result.len(), 2);
@@ -1204,7 +1467,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         assert_eq!(result.len(), 3);
 
@@ -1257,7 +1529,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // root should still earn from the volume
         assert_eq!(result.len(), 1);
@@ -1289,7 +1570,16 @@ mod tests {
             cv_amount: 0.0,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // cv_amount=0.0 is valid but produces no earnings (rate * 0 = 0, filtered out).
         assert!(
@@ -1364,7 +1654,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // A should not earn (R1 is passed up from A).
         assert!(
@@ -1415,7 +1714,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // A earns at level 1 (R3 is retained, not passed up).
         let a_earning = result
@@ -1474,7 +1782,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // A should not earn (D1 is in A's skip set via includes_commissions).
         assert!(
@@ -1539,7 +1856,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // R1 should not earn (D1 is R1's first recruit, in R1's skip set).
         assert!(
@@ -1611,7 +1937,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // A skipped (pass-up), B skipped (compression). S earns at level 1.
         assert_eq!(result.len(), 1);
@@ -1649,7 +1984,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // S should earn exactly once.
         let s_count = result
@@ -1705,7 +2049,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // R1 skipped (R1a is R1's first recruit, passed up to A).
         assert!(
@@ -1753,7 +2106,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         assert_eq!(result.len(), 2);
 
@@ -1806,7 +2168,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // A should not earn (no snapshot, and pass-up skips before lookup).
         assert!(

@@ -42,7 +42,7 @@ proptest! {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
 
         for earning in &result {
             prop_assert!(
@@ -82,7 +82,7 @@ proptest! {
             cv_amount: cv,
         }];
 
-        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
 
         for earning in &result {
             prop_assert!(
@@ -121,7 +121,7 @@ proptest! {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
 
         let mut seen = std::collections::HashSet::new();
         for earning in &result {
@@ -161,7 +161,7 @@ proptest! {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
 
         for earning in &result {
             prop_assert!(
@@ -205,7 +205,7 @@ proptest! {
             cv_amount: cv,
         }];
 
-        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
 
         let total: f64 = result.iter().map(|e| e.dollar_amount).sum();
         // Level comms: up to max_depth levels * 0.05 each
@@ -277,7 +277,7 @@ proptest! {
             cv_amount: cv,
         }];
 
-        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
 
         let total: f64 = result.iter().map(|e| e.dollar_amount).sum();
         // Level bound: up to max_depth levels at 0.05 each, based on CV.
@@ -353,7 +353,7 @@ proptest! {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
 
         // Partition level earners and override earners.
         // Level earnings: source_id == original volume source.
@@ -446,7 +446,7 @@ proptest! {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
 
         let mut seen = std::collections::HashSet::new();
         for earning in &result {
@@ -506,8 +506,8 @@ proptest! {
             cv_amount: 100.0,
         }];
 
-        let first = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
-        let second = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let first = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
+        let second = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
         prop_assert_eq!(first, second);
     }
 
@@ -566,7 +566,7 @@ proptest! {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
 
         // Multi-tier earnings have source_id == a breakaway distributor;
         // level commissions have source_id == the original volume source.
@@ -611,6 +611,15 @@ fn single_node_no_earnings() {
         cv_amount: 100.0,
     }];
 
-    let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+    let result = calculate_stairstep(
+        &tree,
+        &plan,
+        &structure,
+        &snapshots,
+        &volume,
+        &network_engine::test_support::test_plan_identity(),
+    )
+    .unwrap()
+    .earnings;
     assert!(result.is_empty());
 }

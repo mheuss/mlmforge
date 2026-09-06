@@ -44,6 +44,11 @@ func TestWireTypesNarrowMirrors(t *testing.T) {
 		want  string
 	}{
 		{"EvaluatedRankDTO.Ordinal", reflect.TypeFor[EvaluatedRankDTO](), "Ordinal", "uint16"},
+		{"CommissionEarningDTO.Level", reflect.TypeFor[CommissionEarningDTO](), "Level", "uint8"},
+		{"CommissionEarningDTO.Walk", reflect.TypeFor[CommissionEarningDTO](), "Walk", "*uint32"},
+		{"WalkDTO.Index", reflect.TypeFor[WalkDTO](), "Index", "uint32"},
+		{"WalkDTO.StreamID", reflect.TypeFor[WalkDTO](), "StreamID", "*uint32"},
+		{"PlanIdentityDTO.Version", reflect.TypeFor[PlanIdentityDTO](), "Version", "uint32"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

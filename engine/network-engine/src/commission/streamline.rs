@@ -333,8 +333,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let earnings =
-            calculate_streamline(&engine, &plan, &structure, &snapshots, &volume).unwrap();
+        let earnings = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // Walk upline from 5: 4 (bronze, qualifies L1), 3 (associate, skipped L2),
         // 2 (bronze, qualifies L2), 1 (silver, qualifies L3).
@@ -384,8 +392,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let earnings =
-            calculate_streamline(&engine, &plan, &structure, &snapshots, &volume).unwrap();
+        let earnings = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
         // Only stream 1 is active. Node 1 earns from node 2's volume.
         assert_eq!(earnings.len(), 1);
         assert_eq!(earnings[0].earner_id, test_uuid(1));
@@ -426,8 +442,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let earnings =
-            calculate_streamline(&engine, &plan, &structure, &snapshots, &volume).unwrap();
+        let earnings = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
         // Both nodes 2 and 1 earn (no rank gating = monoline).
         assert_eq!(earnings.len(), 2);
     }
@@ -467,8 +491,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let earnings =
-            calculate_streamline(&engine, &plan, &structure, &snapshots, &volume).unwrap();
+        let earnings = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
         // Node 1 is at root of stream 1, no one above to earn.
         assert_eq!(earnings.len(), 0);
     }
@@ -507,8 +539,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let earnings =
-            calculate_streamline(&engine, &plan, &structure, &snapshots, &volume).unwrap();
+        let earnings = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
         // Only 2 levels paid (depth cutoff), not 4.
         assert_eq!(earnings.len(), 2);
     }
@@ -564,7 +604,16 @@ mod tests {
                 cv_amount: 100.0,
             }];
 
-            calculate_streamline(&engine, &plan, &structure, &snapshots, &volume).unwrap()
+            calculate_streamline(
+                &engine,
+                &plan,
+                &structure,
+                &snapshots,
+                &volume,
+                &crate::test_support::test_plan_identity(),
+            )
+            .unwrap()
+            .earnings
         };
 
         let from_sorted = run(sorted);
@@ -633,8 +682,15 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let err = calculate_streamline(&engine, &plan, &structure, &snapshots, &volume)
-            .expect_err("a gapped table must not produce earnings");
+        let err = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .expect_err("a gapped table must not produce earnings");
         match err {
             CalculationError::ConfigError(msg) => {
                 assert!(msg.contains("level 2"), "unexpected message: {msg}");
@@ -666,8 +722,15 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let err = calculate_streamline(&engine, &plan, &structure, &snapshots, &volume)
-            .expect_err("an empty table must not silently pay nobody");
+        let err = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .expect_err("an empty table must not silently pay nobody");
         match err {
             CalculationError::ConfigError(msg) => {
                 assert!(msg.contains("is empty"), "unexpected message: {msg}");
@@ -699,8 +762,15 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let err = calculate_streamline(&engine, &plan, &structure, &snapshots, &volume)
-            .expect_err("level 0 must be rejected, not panic");
+        let err = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .expect_err("level 0 must be rejected, not panic");
         match err {
             CalculationError::ConfigError(msg) => {
                 // Pin the message: the shared fixture could otherwise satisfy

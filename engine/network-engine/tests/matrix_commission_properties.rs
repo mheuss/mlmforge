@@ -45,7 +45,7 @@ proptest! {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
 
         for earning in &result {
             prop_assert!(
@@ -85,7 +85,7 @@ proptest! {
             cv_amount: cv,
         }];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
 
         prop_assert_eq!(result.len(), 1);
         let expected = cv * broad_pct * multiplier * rate;
@@ -142,7 +142,7 @@ proptest! {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
 
         let mut seen = std::collections::HashSet::new();
         for earning in &result {
@@ -182,7 +182,7 @@ proptest! {
             cv_amount: cv,
         }];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
 
         for earning in &result {
             prop_assert!(
@@ -225,7 +225,7 @@ proptest! {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
 
         for earning in &result {
             prop_assert!(
@@ -278,7 +278,7 @@ proptest! {
             cv_amount: cv,
         }];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
 
         let total: f64 = result.iter().map(|e| e.dollar_amount).sum();
         let upper_bound = cv * broad_pct * multiplier * max_rate * (effective_depth as f64);
@@ -313,7 +313,7 @@ proptest! {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume);
+        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity());
 
         if tree_width != config_width {
             prop_assert!(
@@ -355,7 +355,16 @@ fn single_node_no_earnings() {
         cv_amount: 100.0,
     }];
 
-    let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+    let result = calculate_matrix(
+        &tree,
+        &plan,
+        &structure,
+        &snapshots,
+        &volume,
+        &network_engine::test_support::test_plan_identity(),
+    )
+    .unwrap()
+    .earnings;
     assert!(result.is_empty());
 }
 
@@ -431,7 +440,16 @@ fn skip_below_rank_skips_low_rank_nodes() {
         cv_amount: 100.0,
     }];
 
-    let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+    let result = calculate_matrix(
+        &tree,
+        &plan,
+        &structure,
+        &snapshots,
+        &volume,
+        &network_engine::test_support::test_plan_identity(),
+    )
+    .unwrap()
+    .earnings;
 
     // A (associate) should be skipped — no earning for uuid_from_index(1)
     assert!(
@@ -522,7 +540,16 @@ fn active_leg_tiers_use_sponsor_not_placement() {
         cv_amount: 100.0,
     }];
 
-    let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+    let result = calculate_matrix(
+        &tree,
+        &plan,
+        &structure,
+        &snapshots,
+        &volume,
+        &network_engine::test_support::test_plan_identity(),
+    )
+    .unwrap()
+    .earnings;
 
     // Root has 3 sponsored recruits (A, D, C) — all eligible.
     // That's >= 2 active legs, so root gets max_depth=3.

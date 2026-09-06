@@ -216,8 +216,9 @@ proptest! {
             cv_amount: 100.0,
         }];
 
-        let earnings = calculate_streamline(&engine, &plan, &structure, &snapshots, &volume)
-            .expect("calculation should not fail");
+        let earnings = calculate_streamline(&engine, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity())
+            .expect("calculation should not fail")
+            .earnings;
 
         // In a fully qualified monoline, earnings = min(chain_depth - 1, max_depth).
         let expected = (chain_depth - 1).min(max_depth as usize);
@@ -303,8 +304,9 @@ proptest! {
             cv_amount,
         }];
 
-        let earnings = calculate_streamline(&engine, &plan, &structure, &snapshots, &volume)
-            .expect("calculation should not fail");
+        let earnings = calculate_streamline(&engine, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity())
+            .expect("calculation should not fail")
+            .earnings;
 
         // Fully-qualified monoline pays at least one level, so the law is
         // exercised on real earnings and the property keeps its teeth.
@@ -426,8 +428,9 @@ proptest! {
                 cv_amount: 100.0,
             }];
 
-            calculate_streamline(&engine, &plan, &structure, &snapshots, &volume)
+            calculate_streamline(&engine, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity())
                 .expect("a contiguous table must calculate")
+            .earnings
         };
 
         let from_sorted = run(sorted);

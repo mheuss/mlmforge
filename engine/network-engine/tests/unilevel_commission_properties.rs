@@ -65,7 +65,7 @@ proptest! {
         }];
 
         let result =
-            calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+            calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
 
         for earning in &result {
             prop_assert!(
@@ -111,7 +111,7 @@ proptest! {
         }];
 
         let result =
-            calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+            calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
 
         prop_assert_eq!(result.len(), 1);
         let expected = cv * broad_pct * multiplier * rate;
@@ -167,7 +167,7 @@ proptest! {
         }];
 
         let result =
-            calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+            calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
 
         let mut seen = std::collections::HashSet::new();
         for earning in &result {
@@ -225,11 +225,13 @@ proptest! {
         }];
 
         let without =
-            calculate_unilevel(&tree, &plan, &structure_no_compress, &snapshots, &volume)
-                .unwrap();
+            calculate_unilevel(&tree, &plan, &structure_no_compress, &snapshots, &volume, &network_engine::test_support::test_plan_identity())
+                .unwrap()
+                .earnings;
         let with =
-            calculate_unilevel(&tree, &plan, &structure_compress, &snapshots, &volume)
-                .unwrap();
+            calculate_unilevel(&tree, &plan, &structure_compress, &snapshots, &volume, &network_engine::test_support::test_plan_identity())
+                .unwrap()
+                .earnings;
 
         prop_assert!(
             with.len() >= without.len(),
@@ -288,7 +290,7 @@ proptest! {
         }];
 
         let result =
-            calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+            calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
 
         // All earners must be silver-ranked. Associates are compressed out.
         for earning in &result {
@@ -344,9 +346,9 @@ proptest! {
         }];
 
         let without =
-            calculate_unilevel(&tree, &plan, &structure_no_compress, &snapshots, &volume).unwrap();
+            calculate_unilevel(&tree, &plan, &structure_no_compress, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
         let with =
-            calculate_unilevel(&tree, &plan, &structure_compress, &snapshots, &volume).unwrap();
+            calculate_unilevel(&tree, &plan, &structure_compress, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
 
         // Filter to only silver earners from the uncompressed run for a fair comparison.
         let without_silver: Vec<_> = without.iter()
@@ -402,7 +404,7 @@ proptest! {
         }];
 
         let result =
-            calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+            calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
 
         let mut seen = std::collections::HashSet::new();
         for earning in &result {
@@ -472,7 +474,7 @@ proptest! {
         }];
 
         let result =
-            calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+            calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
 
         // Each earner should have a level <= tier_depth because every
         // node in a linear chain has exactly 1 active leg.
@@ -514,7 +516,7 @@ proptest! {
         }];
 
         let result =
-            calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+            calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
 
         prop_assert!(
             result.is_empty(),
@@ -558,7 +560,7 @@ proptest! {
         }];
 
         let result =
-            calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+            calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
 
         prop_assert_eq!(result.len(), 1);
         prop_assert_eq!(result[0].earner_id, uuid_from_index(0));
@@ -617,7 +619,7 @@ proptest! {
         }];
 
         let result =
-            calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+            calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
 
         // Independently compute skip sets. In a chain, each node sponsors
         // exactly one child (the next node). With count >= 1, every node's
@@ -704,7 +706,7 @@ proptest! {
         }];
 
         let result =
-            calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+            calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
 
         // Group by source_id, sort by level, verify contiguous.
         let mut by_source: HashMap<uuid::Uuid, Vec<u8>> = HashMap::new();
@@ -777,11 +779,13 @@ proptest! {
         }];
 
         let result_with =
-            calculate_unilevel(&tree, &plan_with, &structure_with, &snapshots, &volume)
-                .unwrap();
+            calculate_unilevel(&tree, &plan_with, &structure_with, &snapshots, &volume, &network_engine::test_support::test_plan_identity())
+                .unwrap()
+                .earnings;
         let result_without =
-            calculate_unilevel(&tree, &plan_without, &structure_without, &snapshots, &volume)
-                .unwrap();
+            calculate_unilevel(&tree, &plan_without, &structure_without, &snapshots, &volume, &network_engine::test_support::test_plan_identity())
+                .unwrap()
+                .earnings;
 
         let total_with: f64 = result_with.iter().map(|e| e.dollar_amount).sum();
         let total_without: f64 = result_without.iter().map(|e| e.dollar_amount).sum();
@@ -867,7 +871,7 @@ proptest! {
         }];
 
         let result =
-            calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+            calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
 
         // Independently compute skip sets. Each node's children are
         // sponsored in enrolled_at order (which equals their index).
@@ -977,7 +981,16 @@ fn active_leg_tiers_no_match_uses_config_depth() {
         cv_amount: 100.0,
     }];
 
-    let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+    let result = calculate_unilevel(
+        &tree,
+        &plan,
+        &structure,
+        &snapshots,
+        &volume,
+        &network_engine::test_support::test_plan_identity(),
+    )
+    .unwrap()
+    .earnings;
 
     // Both node 1 (level 1) and node 0 (level 2) should earn.
     // Node 0 has 1 active leg but needs 3 for the tier. No restriction.
@@ -1063,7 +1076,16 @@ fn active_leg_tiers_more_legs_earn_deeper() {
         cv_amount: 100.0,
     }];
 
-    let result = calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+    let result = calculate_unilevel(
+        &tree,
+        &plan,
+        &structure,
+        &snapshots,
+        &volume,
+        &network_engine::test_support::test_plan_identity(),
+    )
+    .unwrap()
+    .earnings;
 
     // Node 1 earns at level 1, root earns at level 2.
     assert_eq!(result.len(), 2);
@@ -1082,7 +1104,14 @@ fn empty_tree_no_volume_no_panic() {
     // Cannot produce volume for a node that doesn't exist.
     // Passing empty volume should produce empty earnings.
     let tree = UnilevelTree::new();
-    let result = calculate_unilevel(&tree, &plan, &structure, &HashMap::new(), &[]);
+    let result = calculate_unilevel(
+        &tree,
+        &plan,
+        &structure,
+        &HashMap::new(),
+        &[],
+        &network_engine::test_support::test_plan_identity(),
+    );
     assert!(result.is_ok());
-    assert!(result.unwrap().is_empty());
+    assert!(result.unwrap().earnings.is_empty());
 }

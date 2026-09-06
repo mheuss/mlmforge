@@ -131,3 +131,17 @@ pub fn make_rank(name: &str, ordinal: u16, qualified_structures: Vec<String>) ->
         demotion_policy: DemotionPolicy::PromotionOnly,
     }
 }
+
+/// A plan identity for tests that need to call a commission calculator but
+/// are not testing identity itself.
+///
+/// The hash is a valid shape, `sha256:` plus 64 lowercase hex, so a test that
+/// does assert on the format sees something real rather than a placeholder
+/// that would pass a weaker check.
+pub fn test_plan_identity() -> crate::commission::PlanIdentity {
+    crate::commission::PlanIdentity {
+        name: "Test Plan".to_string(),
+        version: 1,
+        hash: format!("sha256:{}", "0".repeat(64)),
+    }
+}

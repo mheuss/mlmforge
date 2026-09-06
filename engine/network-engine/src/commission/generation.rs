@@ -200,12 +200,19 @@ pub(crate) fn count_generations_upward_instrumented(
 ///
 /// For SameRank mode, callers pre-filter `gen_entries` to earners at
 /// exactly the target ordinal before calling this function.
+#[allow(clippy::too_many_arguments)]
 fn emit_generation_earnings(
     gen_entries: &[GenerationEntry],
     source: &VolumeSource,
     gen_config: &crate::config::generation::GenerationCommissionConfig,
     eligibility_cache: &HashMap<Uuid, walk::EligibilityResult>,
     multiplier: f64,
+    // The walk these entries came from. Taken as a parameter rather than
+    // derived from `source`, because SameRank runs one traversal per
+    // (rank, source): deriving it would collapse every rank onto one walk,
+    // and every earning would still reference a real walk so nothing would
+    // fail loudly.
+    collector_id: u32,
     earnings: &mut Vec<CommissionEarning>,
 ) {
     for entry in gen_entries {
@@ -235,7 +242,7 @@ fn emit_generation_earnings(
             rate,
             cv_amount: source.cv_amount,
             dollar_amount: source.cv_amount * multiplier * rate,
-            walk: None,
+            walk: Some(collector_id),
         });
     }
 }
@@ -274,11 +281,10 @@ pub fn calculate_generation(
     let mut earnings = Vec::new();
     // One collector for the whole response, hoisted to function scope on
     // purpose. `calculate_generation` calls `count_generations_upward` twice
-    // further down, and Task 9 makes those emit generation walks. A second
-    // collector there would restart ids at 0, and the level earnings stamped
-    // by the walk below would then remap onto generation walks. Every earning
-    // would still reference a real walk, so nothing would fail loudly.
-    // Discarded until Tasks 7-10 assemble the result.
+    // further down and those emit generation walks too. A second collector
+    // there would restart ids at 0, and the level earnings stamped by the walk
+    // below would then remap onto generation walks. Every earning would still
+    // reference a real walk, so nothing would fail loudly.
     let mut walks = Vec::new();
 
     // Optional level commissions. When enabled, these run alongside
@@ -380,6 +386,8 @@ pub fn calculate_generation(
             let walk_max = walk_depth(gen_config);
 
             for source in volume {
+                // The walk this traversal is about to push.
+                let collector_id = walks.len() as u32;
                 let gen_entries = count_generations_upward_instrumented(
                     tree,
                     source.source_id,
@@ -412,6 +420,7 @@ pub fn calculate_generation(
                     gen_config,
                     &eligibility_cache,
                     multiplier,
+                    collector_id,
                     &mut earnings,
                 );
             }
@@ -457,6 +466,7 @@ pub fn calculate_generation(
                     .collect();
 
                 for source in volume {
+                    let collector_id = walks.len() as u32;
                     let gen_entries = count_generations_upward_instrumented(
                         tree,
                         source.source_id,
@@ -467,6 +477,13 @@ pub fn calculate_generation(
                         Some(snapshots),
                         &mut walks,
                     );
+                    // SameRank runs one traversal per rank, so the rank is
+                    // what separates these walks in the total order. Stamped
+                    // on the walks this traversal pushed, which is everything
+                    // from collector_id onward.
+                    for w in &mut walks[collector_id as usize..] {
+                        w.rank = Some(rank_name.to_string());
+                    }
 
                     // Pre-filter to earners at exactly this rank ordinal.
                     let filtered: Vec<_> = gen_entries
@@ -486,6 +503,7 @@ pub fn calculate_generation(
                         gen_config,
                         &eligibility_cache,
                         multiplier,
+                        collector_id,
                         &mut earnings,
                     );
                 }
@@ -1075,7 +1093,16 @@ mod calculate_tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].earner_id, uuid(0));
@@ -1110,7 +1137,16 @@ mod calculate_tests {
             cv_amount: 200.0,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         assert_eq!(result.len(), 3);
 
@@ -1153,7 +1189,16 @@ mod calculate_tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // Only 2 earners: gen 1 (node 4) and gen 2 (node 2). Node 0 is beyond max.
         assert_eq!(result.len(), 2);
@@ -1189,7 +1234,16 @@ mod calculate_tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
         assert!(result.is_empty());
     }
 
@@ -1213,7 +1267,16 @@ mod calculate_tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // Node 0 earns gen 1. Node 2 is excluded because count_generations_upward
         // starts walking from the parent of the source (excludes start_id).
@@ -1245,7 +1308,16 @@ mod calculate_tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         assert_eq!(result.len(), 2);
         let earn_2 = result.iter().find(|e| e.earner_id == uuid(2)).unwrap();
@@ -1272,7 +1344,14 @@ mod calculate_tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume);
+        let result = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
         assert!(matches!(result, Err(CalculationError::SourceNotInTree(_))));
     }
 
@@ -1291,7 +1370,14 @@ mod calculate_tests {
             cv_amount: -50.0,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume);
+        let result = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
         assert!(matches!(result, Err(CalculationError::InvalidCvAmount(..))));
     }
 
@@ -1328,7 +1414,16 @@ mod calculate_tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // mid creates boundary but is filtered at earning time.
         // Root earns gen 2 (mid consumed gen 1 as structure-only boundary).
@@ -1360,7 +1455,16 @@ mod calculate_tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // mid fails boundary_check (ineligible) and empty_consumes=false
         // means no gen number consumed. Root earns gen 1.
@@ -1396,7 +1500,16 @@ mod calculate_tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // mid fails check, but empty_consumes=true advances the counter.
         // Gen 1 consumed by ineligible mid. Root earns gen 2.
@@ -1432,7 +1545,16 @@ mod calculate_tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // Both Directors pass boundary_check. mid=gen1, root=gen2.
         assert_eq!(result.len(), 2);
@@ -1528,7 +1650,16 @@ mod calculate_tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // Level earnings (2) + generation earnings (1) = 3 total
         assert_eq!(result.len(), 3);
@@ -1574,7 +1705,16 @@ mod calculate_tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // Only generation earning: root gen 1
         assert_eq!(result.len(), 1);
@@ -1610,8 +1750,15 @@ mod calculate_tests {
             cv_amount: 100.0,
         }];
 
-        let err = calculate_generation(&tree, &plan, &structure, &snapshots, &volume)
-            .expect_err("volume naming a source with no snapshot must fail");
+        let err = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .expect_err("volume naming a source with no snapshot must fail");
         assert_eq!(err, CalculationError::SourceNotInSnapshot(uuid(2)));
     }
 
@@ -1631,8 +1778,15 @@ mod calculate_tests {
             cv_amount: 100.0,
         }];
 
-        let err = calculate_generation(&tree, &plan, &structure, &snapshots, &volume)
-            .expect_err("volume naming a source with no snapshot must fail");
+        let err = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .expect_err("volume naming a source with no snapshot must fail");
         assert_eq!(err, CalculationError::SourceNotInSnapshot(uuid(2)));
     }
 
@@ -1657,8 +1811,15 @@ mod calculate_tests {
             cv_amount: 100.0,
         }];
 
-        let err = calculate_generation(&tree, &plan, &structure, &snapshots, &volume)
-            .expect_err("a source with no snapshot must fail even when boundary_rank is missing");
+        let err = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .expect_err("a source with no snapshot must fail even when boundary_rank is missing");
         assert_eq!(err, CalculationError::SourceNotInSnapshot(uuid(2)));
     }
 
@@ -1721,7 +1882,16 @@ mod calculate_tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // Level earnings should be preserved despite the invalid boundary_rank.
         // No generation earnings (boundary_rank not found in plan ranks).
@@ -1829,6 +1999,75 @@ mod calculate_tests {
     /// Gold walk (ordinal 2): {root,mid} are boundaries. mid=gen1.
     /// Diamond walk (ordinal 3): {root} is a boundary. root=gen1.
     #[test]
+    fn same_rank_emits_one_walk_per_rank_not_one_per_source() {
+        // SameRank runs a traversal per (rank, source). Deriving the walk
+        // index from the source would collapse every rank onto one walk, and
+        // nothing would fail: the output stays well formed and every earning
+        // still points at a real walk. This is the test that would catch it.
+        let tree = build_chain(4);
+        let rates = BTreeMap::from([(1, 0.10), (2, 0.05), (3, 0.03)]);
+        let structure = same_rank_structure(5, rates);
+        let plan = three_rank_plan(structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), diamond_snapshot());
+        snapshots.insert(uuid(1), gold_snapshot());
+        snapshots.insert(uuid(2), eligible_snapshot());
+        snapshots.insert(uuid(3), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap();
+
+        // One volume source, three distinct ranks among the earners.
+        assert!(
+            result.walks.len() > 1,
+            "one walk per rank, not one per source: got {} walks",
+            result.walks.len()
+        );
+
+        // Every walk names the rank whose traversal produced it, which is what
+        // walk_order sorts on. A None here means the stamp was never applied.
+        for w in &result.walks {
+            assert_eq!(w.kind, super::WalkKind::Generation);
+            assert!(
+                w.rank.is_some(),
+                "a SameRank walk must carry its rank, got {w:?}"
+            );
+        }
+
+        let ranks: std::collections::HashSet<&str> = result
+            .walks
+            .iter()
+            .filter_map(|w| w.rank.as_deref())
+            .collect();
+        assert!(
+            ranks.len() > 1,
+            "the walks must be distinguishable by rank, got {ranks:?}"
+        );
+
+        // And every earning points at one of them, rather than all at index 0.
+        let indexes: Vec<u32> = result.walks.iter().map(|w| w.index).collect();
+        for e in &result.earnings {
+            let walk = e
+                .walk
+                .expect("a generation earning must reference its walk");
+            assert!(indexes.contains(&walk), "earning references walk {walk}");
+        }
+    }
+
+    #[test]
     fn same_rank_mode_different_earner_ranks() {
         let tree = build_chain(4);
         let rates = BTreeMap::from([(1, 0.10), (2, 0.05), (3, 0.03)]);
@@ -1846,7 +2085,16 @@ mod calculate_tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         assert_eq!(result.len(), 3);
 
@@ -1890,7 +2138,16 @@ mod calculate_tests {
             cv_amount: 200.0,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // g2 (Gold): gen 1 — first Gold+ boundary above source
         let earn_g2 = result.iter().find(|e| e.earner_id == uuid(2)).unwrap();
@@ -1950,7 +2207,16 @@ mod calculate_tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // mid (Gold, inactive) does not earn and is invisible to boundary check.
         assert!(
@@ -2049,7 +2315,16 @@ mod calculate_tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // Silver nodes (0, 1) earn nothing: per-rank cap of 2 caps the silver
         // walk at the two diamond nodes above the source, before reaching them.
@@ -2127,7 +2402,16 @@ mod calculate_tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // Silver earners beyond their per-rank cap of 2 must not earn. Under
         // the OLD code these nodes earn at gen 3 and gen 4 because no filter
@@ -2322,7 +2606,16 @@ mod calculate_tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // Silver nodes beyond the per-rank cap of 2 must not earn.
         for capped_node in [1usize, 2, 3, 4] {
@@ -2414,7 +2707,16 @@ mod calculate_tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // Silver nodes beyond the per-rank cap of 2 must not earn. Without
         // the cap the silver walk would extend further and these would
@@ -2490,8 +2792,16 @@ mod calculate_tests {
         // (a) Empty per-rank map (baseline).
         let structure_a = threshold_structure("bronze", max_gen, rates.clone());
         let plan_a = six_rank_plan(structure_a.clone());
-        let result_a =
-            calculate_generation(&tree, &plan_a, &structure_a, &snapshots, &volume).unwrap();
+        let result_a = calculate_generation(
+            &tree,
+            &plan_a,
+            &structure_a,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // (b) Full population: every snapshot rank present, all caps == max_gen.
         // walk_depth = max(max_gen, max_gen, ...) = max_gen. Per-earner filter
@@ -2505,8 +2815,16 @@ mod calculate_tests {
             ("diamond".to_string(), max_gen),
         ]);
         let plan_b = six_rank_plan(structure_b.clone());
-        let result_b =
-            calculate_generation(&tree, &plan_b, &structure_b, &snapshots, &volume).unwrap();
+        let result_b = calculate_generation(
+            &tree,
+            &plan_b,
+            &structure_b,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // (c) Partial population: only bronze and diamond present, both == max_gen.
         // Earners at platinum and associate fall through to the default in
@@ -2518,8 +2836,16 @@ mod calculate_tests {
             ("diamond".to_string(), max_gen),
         ]);
         let plan_c = six_rank_plan(structure_c.clone());
-        let result_c =
-            calculate_generation(&tree, &plan_c, &structure_c, &snapshots, &volume).unwrap();
+        let result_c = calculate_generation(
+            &tree,
+            &plan_c,
+            &structure_c,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // All three must produce identical earnings. The full vec is compared
         // so any divergence in earner_id, level, rate, cv_amount, or
@@ -2557,8 +2883,16 @@ mod calculate_tests {
         // (a) Empty per-rank map (baseline).
         let structure_a = same_rank_structure(max_gen, rates.clone());
         let plan_a = six_rank_plan(structure_a.clone());
-        let result_a =
-            calculate_generation(&tree, &plan_a, &structure_a, &snapshots, &volume).unwrap();
+        let result_a = calculate_generation(
+            &tree,
+            &plan_a,
+            &structure_a,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // (b) Full population: every per-rank-ordinal walk uses walk_max == max_gen.
         let mut structure_b = same_rank_structure(max_gen, rates.clone());
@@ -2569,8 +2903,16 @@ mod calculate_tests {
             ("diamond".to_string(), max_gen),
         ]);
         let plan_b = six_rank_plan(structure_b.clone());
-        let result_b =
-            calculate_generation(&tree, &plan_b, &structure_b, &snapshots, &volume).unwrap();
+        let result_b = calculate_generation(
+            &tree,
+            &plan_b,
+            &structure_b,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // (c) Partial population: only bronze and diamond present, both == max_gen.
         // The platinum and associate per-rank-ordinal walks fall back to the
@@ -2582,8 +2924,16 @@ mod calculate_tests {
             ("diamond".to_string(), max_gen),
         ]);
         let plan_c = six_rank_plan(structure_c.clone());
-        let result_c =
-            calculate_generation(&tree, &plan_c, &structure_c, &snapshots, &volume).unwrap();
+        let result_c = calculate_generation(
+            &tree,
+            &plan_c,
+            &structure_c,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         assert_eq!(result_a, result_b);
         assert_eq!(result_b, result_c);

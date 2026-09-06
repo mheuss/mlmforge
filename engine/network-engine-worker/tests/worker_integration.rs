@@ -794,7 +794,7 @@ fn calculate_unilevel_three_node_chain() {
     );
     assert_eq!(parsed["id"], "calc-1");
 
-    let earnings = parsed["result"].as_array().unwrap();
+    let earnings = parsed["result"]["earnings"].as_array().unwrap();
     assert_eq!(earnings.len(), 2, "expected 2 earnings, got: {}", resp);
 
     // Find mid(002) earning at level 1
@@ -949,7 +949,7 @@ fn calculate_unilevel_empty_volume_returns_empty_earnings() {
 
     let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
     assert!(parsed["ok"].as_bool().unwrap());
-    let earnings = parsed["result"].as_array().unwrap();
+    let earnings = parsed["result"]["earnings"].as_array().unwrap();
     assert!(
         earnings.is_empty(),
         "expected empty earnings, got: {}",
@@ -982,7 +982,7 @@ fn calculate_unilevel_accepts_null_collections() {
         resp
     );
     assert!(
-        resp.contains(r#""result":[]"#),
+        resp.contains(r#""earnings":[]"#),
         "no volume means no earnings, got: {}",
         resp
     );
@@ -1145,7 +1145,7 @@ fn calculate_generation_accepts_null_collections() {
         resp
     );
     assert!(
-        resp.contains(r#""result":[]"#),
+        resp.contains(r#""earnings":[]"#),
         "no volume means no earnings, got: {}",
         resp
     );
@@ -2717,7 +2717,7 @@ fn calculate_unilevel_pass_up_skips_first_recruits() {
         resp
     );
 
-    let earnings = parsed["result"].as_array().unwrap();
+    let earnings = parsed["result"]["earnings"].as_array().unwrap();
 
     // Expected earnings:
     //   From R1: S at level 1 (2.0)          -- A was skipped
@@ -3739,7 +3739,7 @@ fn calculate_streamline_at_depth_255() {
     let resp = common::send_receive(&mut worker, &request);
     let parsed: serde_json::Value = serde_json::from_str(&resp).expect(&resp);
     assert_eq!(parsed["ok"], serde_json::json!(true), "got: {}", resp);
-    let earnings = parsed["result"]
+    let earnings = parsed["result"]["earnings"]
         .as_array()
         .unwrap_or_else(|| panic!("expected an earnings array, got: {resp}"));
 
@@ -4009,7 +4009,7 @@ fn calculate_streamline_uses_the_loaded_plan_structure() {
     // before assert_eq! formats its message, so a renamed field would panic
     // with "called Option::unwrap() on a None value" and the response body —
     // the only useful part — would never print.
-    let earnings = parsed["result"].as_array().expect(&resp);
+    let earnings = parsed["result"]["earnings"].as_array().expect(&resp);
     assert_eq!(
         earnings.len(),
         1,
@@ -4083,7 +4083,7 @@ fn calculate_streamline_ignores_request_scoped_config() {
         "legacy-shaped params must be ignored, not rejected, got: {}",
         resp
     );
-    let earnings = parsed["result"].as_array().expect(&resp);
+    let earnings = parsed["result"]["earnings"].as_array().expect(&resp);
     assert_eq!(
         earnings.len(),
         1,
@@ -4129,7 +4129,7 @@ fn calculate_streamline_accepts_null_collections() {
         resp
     );
     assert!(
-        resp.contains(r#""result":[]"#),
+        resp.contains(r#""earnings":[]"#),
         "no volume means no earnings, got: {}",
         resp
     );
@@ -4907,7 +4907,7 @@ fn calculate_matrix_pays_upline() {
         resp
     );
     assert_eq!(parsed["id"], "calc-m");
-    let earnings = parsed["result"].as_array().unwrap();
+    let earnings = parsed["result"]["earnings"].as_array().unwrap();
     // Volume at child (100 CV) pays only its upline, root, at level 1:
     // 100 * 0.40 (broad_pct) * 1.0 (multiplier) * 0.05 (rate) = 2.0.
     assert_eq!(
@@ -5101,7 +5101,7 @@ fn calculate_matrix_accepts_null_collections() {
         resp
     );
     assert!(
-        resp.contains(r#""result":[]"#),
+        resp.contains(r#""earnings":[]"#),
         "no volume means no earnings, got: {}",
         resp
     );
@@ -5254,7 +5254,7 @@ fn calculate_stairstep_pays_upline() {
         resp
     );
     assert_eq!(parsed["id"], "calc-s");
-    let earnings = parsed["result"].as_array().unwrap();
+    let earnings = parsed["result"]["earnings"].as_array().unwrap();
     // Volume at grandchild (100 CV) pays up the chain: child at level 1 and
     // root at level 2, each 100 * 0.40 * 1.0 * 0.05 = 2.0.
     assert_eq!(
@@ -5413,7 +5413,7 @@ fn calculate_stairstep_accepts_null_collections() {
         resp
     );
     assert!(
-        resp.contains(r#""result":[]"#),
+        resp.contains(r#""earnings":[]"#),
         "no volume means no earnings, got: {}",
         resp
     );

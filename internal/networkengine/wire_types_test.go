@@ -2,6 +2,8 @@ package networkengine
 
 import (
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -111,4 +113,83 @@ func TestEvaluateRanksRequest_PopulatedIncludesHistory(t *testing.T) {
 	require.NoError(t, json.Unmarshal(b, &back))
 	assert.Nil(t, back.History[uid.String()]["2026-04"])
 	assert.Equal(t, uint16(2), *back.History[uid.String()]["2026-05"])
+}
+
+// TestCommissionCalculationResultDTO decodes the shape the five calculators
+// return, with the two opposite null rules in one payload: `walk` is present
+// and null on the second earning, while the walk's own optionals are absent
+// rather than null.
+func TestCommissionCalculationResultDTO(t *testing.T) {
+	const payload = `{
+		"earnings": [
+			{"earner_id":"a","source_id":"b","level":2,"rate":0.05,
+			 "cv_amount":100.0,"dollar_amount":2.0,"walk":0},
+			{"earner_id":"c","source_id":"b","level":1,"rate":0.05,
+			 "cv_amount":100.0,"dollar_amount":2.0,"walk":null}
+		],
+		"walks": [
+			{"index":0,"source_id":"b","kind":"level","steps":[
+				{"node_id":"a","outcome":"paid","consumed":true,"earner_rank":"member"}
+			],"stop":"root_reached"}
+		],
+		"plan": {"name":"Test","version":1,
+		         "hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}
+	}`
+
+	var got CommissionCalculationResultDTO
+	require.NoError(t, json.Unmarshal([]byte(payload), &got))
+
+	require.Len(t, got.Earnings, 2)
+	require.NotNil(t, got.Earnings[0].Walk, "a recorded walk decodes to a value")
+	assert.Equal(t, uint32(0), *got.Earnings[0].Walk)
+	assert.Nil(t, got.Earnings[1].Walk, "an unrecorded walk decodes to nil, not zero")
+	assert.Equal(t, uint8(2), got.Earnings[0].Level)
+
+	require.Len(t, got.Walks, 1)
+	w := got.Walks[0]
+	assert.Equal(t, uint32(0), w.Index)
+	assert.Equal(t, "level", w.Kind)
+	assert.Equal(t, "root_reached", w.Stop)
+	assert.Nil(t, w.StreamID, "an absent stream_id decodes to nil")
+	assert.Nil(t, w.Rank, "an absent rank decodes to nil")
+	assert.Nil(t, w.StoppedAt, "root_reached names no node")
+
+	require.Len(t, w.Steps, 1)
+	require.NotNil(t, w.Steps[0].EarnerRank)
+	assert.Equal(t, "member", *w.Steps[0].EarnerRank)
+	assert.True(t, w.Steps[0].Consumed)
+
+	assert.Equal(t, "Test", got.Plan.Name)
+	assert.Equal(t, uint32(1), got.Plan.Version)
+	assert.True(t, strings.HasPrefix(got.Plan.Hash, "sha256:"))
+}
+
+// TestCommissionEarningDTOEmitsNullWalk pins the asymmetry from the writing
+// side: `walk` must reach the wire as null, never be omitted, because an
+// unrecorded walk has to stay distinguishable from a missing field.
+func TestCommissionEarningDTOEmitsNullWalk(t *testing.T) {
+	b, err := json.Marshal(CommissionEarningDTO{EarnerID: "a", SourceID: "b", Level: 1})
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"walk":null`)
+}
+
+// TestVerifyPlanIdentity covers the check that stops a caller persisting
+// payouts computed under a plan its run does not name.
+func TestVerifyPlanIdentity(t *testing.T) {
+	const good = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+	const other = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+
+	result := CommissionCalculationResultDTO{Plan: PlanIdentityDTO{Hash: good}}
+	assert.NoError(t, VerifyPlanIdentity(result, good))
+
+	err := VerifyPlanIdentity(result, other)
+	require.Error(t, err)
+
+	// Typed, so a caller can tell "do not persist" from "retry" with errors.As.
+	var mismatch *PlanIdentityMismatchError
+	require.True(t, errors.As(err, &mismatch), "must be a PlanIdentityMismatchError")
+	assert.Equal(t, other, mismatch.Expected)
+	assert.Equal(t, good, mismatch.Reported)
+	assert.Contains(t, err.Error(), other)
+	assert.Contains(t, err.Error(), good)
 }

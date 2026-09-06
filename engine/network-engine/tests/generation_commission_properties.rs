@@ -115,7 +115,16 @@ fn reference_tree_threshold_mode() {
         source_id: uuid_from_index(4),
         cv_amount: 100.0,
     }];
-    let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume_eve).unwrap();
+    let result = calculate_generation(
+        &tree,
+        &plan,
+        &structure,
+        &snapshots,
+        &volume_eve,
+        &network_engine::test_support::test_plan_identity(),
+    )
+    .unwrap()
+    .earnings;
 
     assert_eq!(result.len(), 2, "Eve volume: expected 2 earners");
     let dave = result
@@ -139,7 +148,16 @@ fn reference_tree_threshold_mode() {
         source_id: uuid_from_index(7),
         cv_amount: 50.0,
     }];
-    let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume_henry).unwrap();
+    let result = calculate_generation(
+        &tree,
+        &plan,
+        &structure,
+        &snapshots,
+        &volume_henry,
+        &network_engine::test_support::test_plan_identity(),
+    )
+    .unwrap()
+    .earnings;
 
     assert_eq!(result.len(), 1, "Henry volume: expected 1 earner");
     assert_eq!(result[0].earner_id, uuid_from_index(0));
@@ -153,7 +171,16 @@ fn reference_tree_threshold_mode() {
         source_id: uuid_from_index(6),
         cv_amount: 75.0,
     }];
-    let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume_grace).unwrap();
+    let result = calculate_generation(
+        &tree,
+        &plan,
+        &structure,
+        &snapshots,
+        &volume_grace,
+        &network_engine::test_support::test_plan_identity(),
+    )
+    .unwrap()
+    .earnings;
 
     assert_eq!(result.len(), 1, "Grace volume: expected 1 earner");
     assert_eq!(result[0].earner_id, uuid_from_index(0));
@@ -167,7 +194,16 @@ fn reference_tree_threshold_mode() {
         source_id: uuid_from_index(1),
         cv_amount: 200.0,
     }];
-    let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume_bob).unwrap();
+    let result = calculate_generation(
+        &tree,
+        &plan,
+        &structure,
+        &snapshots,
+        &volume_bob,
+        &network_engine::test_support::test_plan_identity(),
+    )
+    .unwrap()
+    .earnings;
 
     assert_eq!(result.len(), 1, "Bob volume: expected 1 earner");
     assert_eq!(result[0].earner_id, uuid_from_index(0));
@@ -186,7 +222,16 @@ fn reference_tree_threshold_mode() {
             cv_amount: 50.0,
         },
     ];
-    let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume_multi).unwrap();
+    let result = calculate_generation(
+        &tree,
+        &plan,
+        &structure,
+        &snapshots,
+        &volume_multi,
+        &network_engine::test_support::test_plan_identity(),
+    )
+    .unwrap()
+    .earnings;
 
     // Alice earns on both sources (gen 2 from Eve, gen 1 from Henry).
     // Dave earns gen 1 from Eve only.
@@ -274,7 +319,7 @@ proptest! {
             cv_amount: cv,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
         for earning in &result {
             prop_assert!(
                 earning.level <= max_gen,
@@ -297,7 +342,7 @@ proptest! {
             cv_amount: cv,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
         for earning in &result {
             prop_assert!(
                 earning.dollar_amount >= 0.0,
@@ -320,7 +365,7 @@ proptest! {
             cv_amount: cv,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
         let mut seen = HashSet::new();
         for earning in &result {
             let key = (earning.earner_id, earning.source_id);
@@ -345,7 +390,7 @@ proptest! {
             cv_amount: cv,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
         let tree_ids: HashSet<_> = (0..size).map(uuid_from_index).collect();
         for earning in &result {
             prop_assert!(
@@ -374,7 +419,7 @@ proptest! {
             cv_amount: cv,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
         prop_assert!(
             !result.is_empty(),
             "Expected at least one earning with director at root, got 0"
@@ -394,7 +439,7 @@ proptest! {
             cv_amount: cv,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
         let total_payout: f64 = result.iter().map(|e| e.dollar_amount).sum();
 
         // Upper bound: cv * multiplier * sum(all gen rates)
@@ -480,7 +525,7 @@ proptest! {
             cv_amount: cv,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
         for earning in &result {
             prop_assert!(
                 earning.level <= max_gen,
@@ -503,7 +548,7 @@ proptest! {
             cv_amount: cv,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
         for earning in &result {
             prop_assert!(
                 earning.dollar_amount >= 0.0,
@@ -526,7 +571,7 @@ proptest! {
             cv_amount: cv,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
         let mut seen = HashSet::new();
         for earning in &result {
             let key = (earning.earner_id, earning.source_id);
@@ -551,7 +596,7 @@ proptest! {
             cv_amount: cv,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
         let tree_ids: HashSet<_> = (0..size).map(uuid_from_index).collect();
         for earning in &result {
             prop_assert!(
@@ -577,7 +622,7 @@ proptest! {
             cv_amount: cv,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
         let total_payout: f64 = result.iter().map(|e| e.dollar_amount).sum();
 
         // Upper bound: each of the 3 rank ordinals can produce up to

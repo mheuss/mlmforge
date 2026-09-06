@@ -571,9 +571,14 @@ fn walk_multi_tier_overrides(
 ///
 /// # Returns
 ///
-/// A flat `Vec<CommissionEarning>` sorted by `(earner_id, source_id)`.
-/// Level earnings have `source_id` equal to the original volume source.
-/// Override earnings have `source_id` equal to the breakaway distributor.
+/// A [`CommissionCalculationResult`]: the earnings, the walks that produced
+/// them, and the identity of the plan they were calculated under. Earnings are
+/// sorted by `(earner_id, source_id, level, walk)`.
+///
+/// Level earnings have `source_id` equal to the original volume source and a
+/// `walk` index into `walks`. Override earnings have `source_id` equal to the
+/// breakaway distributor and `walk: None`: Walk 2 is not instrumented, which
+/// design 029 records as a deliberate gap.
 ///
 /// # Errors
 ///
@@ -622,7 +627,6 @@ pub fn calculate_stairstep(
     let mut all_earnings = Vec::new();
     // Outside the per-source loop on purpose: stairstep calls the walk once
     // per source, so one collector accumulates them and their ids stay unique.
-    // Discarded until Tasks 7-10 assemble the result.
     let mut walks = Vec::new();
 
     for source in volume {
@@ -988,7 +992,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         assert_eq!(result.len(), 2);
 
@@ -1027,7 +1040,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // uuid(2) earns at level 1, uuid(1) earns at level 2.
         // uuid(0) is in a different group, so the walk stops before it.
@@ -1062,7 +1084,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // Node 0 should still earn despite node 1 missing a snapshot.
         let earner_ids: Vec<Uuid> = result.iter().map(|e| e.earner_id).collect();
@@ -1090,7 +1121,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         assert!(result.is_empty());
     }
@@ -1127,7 +1167,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // Walk 2 should produce an override earning for node 0
         let override_earning = result
@@ -1167,7 +1216,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // No override earnings with source_id == uuid(1)
         let override_earnings: Vec<_> = result.iter().filter(|e| e.source_id == uuid(1)).collect();
@@ -1198,7 +1256,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         let override_earning = result
             .iter()
@@ -1228,7 +1295,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // No override earnings (source_id == uuid(0) as breakaway)
         let override_earnings: Vec<_> = result.iter().filter(|e| e.source_id == uuid(0)).collect();
@@ -1268,7 +1344,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // Node 0 should earn override on breakaway node 2's group volume
         // Group volume for node 2: 150 + 150 = 300 (node 2 + node 3)
@@ -1338,7 +1423,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // --- Override earnings for breakaway node 1 (source_id = uuid(1)) ---
         // Node 0 earns differential override on node 1's group volume
@@ -1440,7 +1534,16 @@ mod tests {
             },
         ];
 
-        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // Override earnings: node 0 earns on breakaway node 1's group
         let override_earnings: Vec<_> = result.iter().filter(|e| e.source_id == uuid(1)).collect();
@@ -1482,7 +1585,16 @@ mod tests {
             },
         ];
 
-        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         let override_earnings: Vec<_> = result.iter().filter(|e| e.source_id == uuid(1)).collect();
         assert_eq!(override_earnings.len(), 1);
@@ -1518,7 +1630,16 @@ mod tests {
             },
         ];
 
-        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         let override_earnings: Vec<_> = result.iter().filter(|e| e.source_id == uuid(1)).collect();
         assert!(
@@ -1575,7 +1696,16 @@ mod tests {
             },
         ];
 
-        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // Override earnings on breakaway node 2's group
         let mut override_earnings: Vec<_> =
@@ -1730,7 +1860,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // Override earning on uuid(2)'s group (uuid(2) PV + uuid(3) PV = 150 + 150 = 300).
         // Earner: uuid(1). Rate: 0.05. Dollar = 300 * 1.0 * 0.05 = 15.0.
@@ -1810,7 +1949,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // Override earning on uuid(3)'s group: uuid(3) PV alone = 150.
         // uuid(2) (gen 1) count 1 fails; uuid(1) (gen 2) count 1 fails;
@@ -1865,7 +2013,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // No override earnings on uuid(1)'s group: no ancestor qualifies.
         let on_uuid1: Vec<_> = result.iter().filter(|e| e.source_id == uuid(1)).collect();
@@ -1895,7 +2052,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // No override earnings sourced from uuid(0).
         let overrides: Vec<_> = result.iter().filter(|e| e.source_id == uuid(0)).collect();
@@ -1966,7 +2132,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // uuid(3)'s group volume = uuid(3) PV + uuid(4) PV = 150 + 150 = 300.
         // Tier 0: uuid(2) earns 0.05 * 300 = 15.0 at level 1.
@@ -2080,7 +2255,16 @@ mod tests {
             snapshots.insert(uuid(id), snapshot_with_rank("director", 200.0));
         }
 
-        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &[]).unwrap();
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &[],
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // uuid(6)'s group volume = 200 (PV on uuid(6), no descendants).
         // Tier 0: uuid(0) earns 0.05 * 200 = 10.0 at level 1.
@@ -2196,7 +2380,16 @@ mod tests {
         // `volume = vec![]` so only Walk 2 runs.
         let volume: Vec<VolumeSource> = vec![];
 
-        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // Exactly six earnings, all on source uuid(6), one per tier.
         assert_eq!(

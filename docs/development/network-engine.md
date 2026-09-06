@@ -52,6 +52,32 @@ The one exception: internal consistency violations (e.g., a node claims a parent
 
 Error messages follow the pattern: lowercase, no trailing period, context in parentheses. Example: `"position {position} out of range for user {user_id} (has {child_count} children)"`.
 
+### Go error shapes: sentinel or struct
+
+The Go side splits on one question. Does the condition carry a value a caller
+would act on?
+
+| Carries | Shape | Matched with |
+|---|---|---|
+| nothing to act on | `var ErrX = errors.New(...)` | `errors.Is` |
+| a value to act on | `type XError struct { ... }`, pointer receiver on `Error()` | `errors.As` |
+
+`ErrTransportClosed`, `ErrWorkerNotExited` and `ErrWorkerUnreaped` are the first
+kind. `LiveRunExistsError`, `RunNotFoundError` and `RunNotRunningError` are the
+second, and the first of those names its field as the thing that makes the
+condition recoverable.
+
+A diagnostic string is not a value to act on. The two protocol-version sentinels
+both quote the offending wire payload into their message, and they are still
+sentinels, because nothing branches on that payload.
+
+Wrap with `%w` rather than returning the bare sentinel, so the message keeps its
+context while `errors.Is` still reaches the sentinel.
+
+Prefixes group by subject, not by file. `ErrWorker*` is the subprocess: did it
+exit, was it reaped. `ErrProtocolVersion*` is the handshake: what does it claim
+to speak.
+
 ## Tombstone Deletion
 
 Removed nodes are tombstoned: cleared to `Uuid::nil()` with empty fields, then added to the free list. The slot is reused by the next `add_root` or `add_node`.

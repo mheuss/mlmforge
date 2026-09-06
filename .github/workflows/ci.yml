@@ -17,6 +17,12 @@ jobs:
         with:
           go-version: "1.25.13"
 
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build worker
+        working-directory: engine
+        run: cargo build --package network-engine-worker
+
       - name: Build
         run: go build ./...
 

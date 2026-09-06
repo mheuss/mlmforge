@@ -574,15 +574,13 @@ func TestStdioTransport_CloseBoundsTheWaitForAnOrphanedChild(t *testing.T) {
 	}
 }
 
-// ErrWorkerUnreaped records what was observed when the reap deadline elapsed,
-// not a standing fact. Close abandons the cmd.Wait goroutine on that path and
-// the channel it sends to is buffered, so the reap usually lands moments after
-// Close has already returned. A later Close must observe that rather than
-// replay the earlier verdict (HEU-671).
-//
-// ErrWorkerNotExited is different and must keep replaying: "it did not exit
-// within the grace period" stays true however the process ends afterwards.
-func TestStdioTransport_CloseStopsReportingAnUnreapedWorkerOnceReaped(t *testing.T) {
+// The reap bound and cmd.WaitDelay are nested deadlines. When they were the
+// same constant, killAndReap armed its timer immediately after the kill while
+// os/exec armed WaitDelay only once Process.Wait observed the exit, so the outer
+// deadline preempted the inner one and Close reported a reap failure for a reap
+// that landed 50-150us later. That hit every caller, not just repeat ones, on
+// essentially every orphaned-child shutdown (HEU-671).
+func TestStdioTransport_CloseDoesNotReportAReapThatIsAboutToLand(t *testing.T) {
 	fake := filepath.Join(t.TempDir(), "forking-worker.sh")
 	script := "#!/bin/sh\n" +
 		"IFS= read -r _line\n" +
@@ -598,39 +596,81 @@ func TestStdioTransport_CloseStopsReportingAnUnreapedWorkerOnceReaped(t *testing
 	_, err = transport.Call(context.Background(), "ping", json.RawMessage("null"))
 	require.NoError(t, err)
 
-	first := make(chan error, 1)
-	go func() { first <- transport.Close() }()
+	closeErr := make(chan error, 1)
+	go func() { closeErr <- transport.Close() }()
 
-	var firstErr error
 	select {
-	case firstErr = <-first:
+	case err := <-closeErr:
+		assert.ErrorIs(t, err, ErrWorkerNotExited,
+			"the worker ignored EOF and had to be killed; that stays reported")
+		assert.NotErrorIs(t, err, ErrWorkerUnreaped,
+			"the reap lands well inside reapBound; reporting it as failed is the false alarm")
 	case <-time.After(25 * time.Second):
 		t.Fatal("Close did not return; the wait after the kill is unbounded")
 	}
+}
 
-	// The fixture only produces the bug when the reap deadline actually
-	// elapses. If it did not, there is nothing to re-observe and a pass here
-	// would mean nothing.
-	require.ErrorIs(t, firstErr, ErrWorkerUnreaped,
-		"fixture did not reach the unreaped path; the rest of this test is vacuous")
-	require.ErrorIs(t, firstErr, ErrWorkerNotExited)
+// ErrWorkerUnreaped records what was observed when the reap deadline elapsed,
+// not a standing fact. Close abandons the cmd.Wait goroutine on that path and
+// the channel it sends to is buffered, so a reap can land after Close has
+// already returned. A later Close must observe that rather than replay the
+// earlier verdict (HEU-671).
+//
+// Driven through the struct rather than a subprocess. Once reapBound outlasts
+// cmd.WaitDelay, reaching the unreaped path for real needs a worker that
+// survives SIGKILL, which is not something a test can arrange portably. The
+// revision logic still needs pinning, so this drives it at the seam.
+func TestStdioTransport_RepeatCloseReObservesTheReap(t *testing.T) {
+	newClosed := func(waited chan error) *StdioTransport {
+		tr := &StdioTransport{waited: waited}
+		// Burn the latch so Close replays rather than running shutdown.
+		tr.closeOnce.Do(func() {})
+		tr.closeErr = errors.Join(ErrWorkerNotExited, ErrWorkerUnreaped)
+		tr.closeErrIfReaped = errors.Join(ErrWorkerNotExited)
+		return tr
+	}
 
-	// Give the abandoned cmd.Wait goroutine time to finish and reap. It is
-	// already unblocked by the kill; this is scheduling latency, not the
-	// orphan's own 30s lifetime.
-	require.Eventually(t, func() bool {
-		return !errors.Is(transport.Close(), ErrWorkerUnreaped)
-	}, 10*time.Second, 50*time.Millisecond,
-		"a repeat Close kept reporting a reap failure after the worker was reaped")
+	t.Run("keeps the verdict while the reap has not landed", func(t *testing.T) {
+		tr := newClosed(make(chan error, 1))
 
-	assert.ErrorIs(t, transport.Close(), ErrWorkerNotExited,
-		"the worker still did not exit within the grace period; that stays true")
+		for i := range 3 {
+			err := tr.Close()
+			assert.ErrorIs(t, err, ErrWorkerUnreaped,
+				"call %d: nothing was observed, so the first call's verdict stands", i)
+			assert.ErrorIs(t, err, ErrWorkerNotExited)
+		}
+	})
 
-	// The revised verdict must latch. Reading the waited channel consumes it,
-	// so a third Close that re-derived from scratch would find it empty and
-	// wrongly conclude the reap never landed.
-	assert.NotErrorIs(t, transport.Close(), ErrWorkerUnreaped,
-		"the revised verdict did not latch across repeat calls")
+	t.Run("drops the sentinel once the reap lands, and latches", func(t *testing.T) {
+		waited := make(chan error, 1)
+		tr := newClosed(waited)
+
+		require.ErrorIs(t, tr.Close(), ErrWorkerUnreaped, "not reaped yet")
+
+		waited <- errors.New("signal: killed")
+
+		err := tr.Close()
+		assert.NotErrorIs(t, err, ErrWorkerUnreaped, "the reap landed; stop reporting it as failed")
+		assert.ErrorIs(t, err, ErrWorkerNotExited, "it still did not exit in time; that stays true")
+		assert.ErrorContains(t, err, "signal: killed",
+			"the wait error we just consumed should be reported, not discarded")
+
+		// The receive consumed the value. A third call that re-derived from
+		// scratch would find the channel empty and wrongly re-add the sentinel:
+		// the same read-once-replay-as-current mistake this fix exists to
+		// correct, reappearing inside the fix.
+		for i := range 3 {
+			assert.NotErrorIs(t, tr.Close(), ErrWorkerUnreaped, "call %d did not latch", i)
+		}
+	})
+
+	t.Run("leaves a clean close alone", func(t *testing.T) {
+		tr := &StdioTransport{waited: make(chan error, 1)}
+		tr.closeOnce.Do(func() {})
+		// closeErrIfReaped stays nil: nothing to revise.
+		assert.NoError(t, tr.Close())
+		assert.NoError(t, tr.Close())
+	})
 }
 
 // A worker can exit promptly and still leave a child holding the stderr pipe,

@@ -286,7 +286,26 @@ const closeGracePeriod = 5 * time.Second
 
 // waitIODelay bounds the wait for the process's I/O to finish once it has
 // exited. See where it is set for why that is a separate deadline.
+//
+// It is handed to cmd.WaitDelay, so it and reapBound below are nested: this one
+// bounds the inner wait that os/exec performs, reapBound bounds our wait for
+// that to finish. Setting them equal makes the outer deadline preempt the inner
+// one, because killAndReap arms its timer immediately after the kill while
+// os/exec arms WaitDelay only once Process.Wait observes the exit. The reap then
+// looks failed when it was microseconds away. Keep the gap.
 const waitIODelay = 2 * time.Second
+
+// reapBound bounds how long killAndReap waits to reap a worker it just killed.
+//
+// It must outlast waitIODelay. cmd.Wait returns once the process has exited and
+// its I/O has drained or WaitDelay has cut that short, so waiting any less than
+// WaitDelay plus scheduling slack reports a reap failure for a reap that is
+// still on its way. Measured: with the two equal, the reap landed 50-150us after
+// killAndReap gave up, on essentially every orphaned-child shutdown.
+//
+// Expressed as a delta so the relationship survives someone retuning
+// waitIODelay.
+const reapBound = waitIODelay + 500*time.Millisecond
 
 // drainTailBound caps the wait for the reader to finish after the process is
 // gone. Reaching it means the reader did not stop when its input closed, which
@@ -316,8 +335,16 @@ var ErrWorkerUnreaped = errors.New("worker was not reaped after being killed")
 // transport is shutting down, and a handler running after Close was called
 // would be a surprise to the caller.
 //
-// Calling it more than once is safe. The first call runs the shutdown and every
-// later call repeats its result, having observed nothing further itself.
+// Calling it more than once is safe. The first call runs the shutdown; a later
+// call repeats its result, except that it re-observes one thing the first call
+// could not. When the first call gave up waiting to reap a killed worker, the
+// reap can still land afterwards on the goroutine it abandoned. A later call
+// takes that result if it is there, drops ErrWorkerUnreaped, and reports the
+// wait error the first call never saw -- so a repeat call on that path can
+// return "signal: killed" where the first returned only the sentinels.
+//
+// ErrWorkerNotExited always persists. It says the worker did not exit within
+// the grace period, which stays true however the process ends afterwards.
 func (t *StdioTransport) Close() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -375,8 +402,9 @@ func (t *StdioTransport) shutdown() error {
 	t.closed.Store(true)
 	stdinErr := t.stdin.Close()
 
-	t.waited = make(chan error, 1)
-	go func() { t.waited <- t.cmd.Wait() }()
+	waited := make(chan error, 1)
+	t.waited = waited
+	go func() { waited <- t.cmd.Wait() }()
 
 	// A nil channel blocks forever in select, which is what should happen once
 	// readLoop has closed lines and there is nothing left to drain.
@@ -390,7 +418,7 @@ func (t *StdioTransport) shutdown() error {
 			if !ok {
 				lines = nil
 			}
-		case waitErr := <-t.waited:
+		case waitErr := <-waited:
 			return errors.Join(stdinErr, waitErr, drainTail(lines))
 		case <-timer.C:
 			// The timer and the wait can become ready together, and select picks
@@ -398,11 +426,11 @@ func (t *StdioTransport) shutdown() error {
 			// the worker did exit in time, and killing it and reporting
 			// otherwise would name a cause that was not observed.
 			select {
-			case waitErr := <-t.waited:
+			case waitErr := <-waited:
 				return errors.Join(stdinErr, waitErr, drainTail(lines))
 			default:
 			}
-			now, ifReaped := t.killAndReap(lines)
+			now, ifReaped := t.killAndReap(lines, waited)
 			if ifReaped != nil {
 				t.closeErrIfReaped = errors.Join(stdinErr, ifReaped)
 			}
@@ -422,12 +450,17 @@ func (t *StdioTransport) shutdown() error {
 // It returns two errors. The first is what Close reports now. The second is
 // what Close should report if the abandoned wait later lands, and is nil unless
 // the reap deadline elapsed — there is nothing to revise on any other path.
-func (t *StdioTransport) killAndReap(lines <-chan json.RawMessage) (now, ifReaped error) {
+func (t *StdioTransport) killAndReap(lines <-chan json.RawMessage, waited <-chan error) (now, ifReaped error) {
 	killErr := t.kill()
 	select {
-	case waitErr := <-t.waited:
+	case waitErr := <-waited:
 		return errors.Join(killErr, waitErr, ErrWorkerNotExited, drainTail(lines)), nil
-	case <-time.After(waitIODelay):
+	case <-time.After(reapBound):
+		// tail is replayed verbatim in the revised verdict, and it can carry
+		// errReaderStillRunning, which is itself an observation at a moment.
+		// Documenting rather than removing: reaching here at all needs a worker
+		// that survived SIGKILL, and re-draining on the revision path could
+		// block a Close that must not. Revisit if this path becomes reachable.
 		tail := drainTail(lines)
 		return errors.Join(killErr, ErrWorkerNotExited, ErrWorkerUnreaped, tail),
 			errors.Join(killErr, ErrWorkerNotExited, tail)

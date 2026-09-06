@@ -404,11 +404,14 @@ go test ./internal/config/ && (cd engine && cargo test --test config_width_contr
 ```go
 loader := networkengine.NewTreeLoader(store, engine)
 
-// Every detectable fault returns before the engine is touched, so a rejected
-// load leaves nothing to clean up. An error after that point names how far the
-// replay got, which is the only recovery signal available.
-err := loader.LoadTree(ctx, treeID, "matrix",
-    networkengine.WithMatrixParams(width, spillover))
+// Validation runs before any mutation, so a rejected load leaves nothing to
+// clean up. Once the tree exists, every failure names what survived it: the
+// root failing reports an empty tree, a later node reports how far replay got.
+if err := loader.LoadTree(ctx, treeID, "matrix",
+    networkengine.WithMatrixParams(width, spillover)); err != nil {
+    // No rollback exists, so the error text is the operator's recovery signal.
+    return err
+}
 ```
 
 **Notes:** The pattern generalises to any external system with no undo: a worker without a delete op, an API without a rollback, a third party that charges on first call. Two things make it worth the duplication of engine rules in Go. First, the validation must mirror what the remote actually enforces, so it is only as good as that audit — `TestTreePersistence_RejectedTreeLeavesEngineLoadable` proves the guarantee against the real worker rather than a stub, and asserts a *corrected retry succeeds*, which is the part no fake can demonstrate. Second, the mirroring drifts silently if the remote adds a rule; the Rust side keeps its own runtime checks, so preflight is a second line of defence rather than a replacement. Deliberately not covered: divergence between what the store recorded and what the remote actually did — both can be internally consistent, so no read-side validation can detect it. HEU-553 closed the write-side contract for placement; removal still diverges (HEU-582), and the type-label trust boundary (HEU-554) and redelivery idempotency (HEU-576) remain open. Related: UC-NET-013, which supplies the ordering half.
@@ -582,12 +585,16 @@ The key match uses `strings.EqualFold` because `encoding/json` matches field tag
 
 ```go
 version, err := client.Ping(ctx)
+if err == nil {
+    // Worker is reachable and reports a version this client can read.
+    return version, nil
+}
 switch {
 case errors.Is(err, networkengine.ErrProtocolVersionAbsent):
     // Worker reported no version at all. It predates the field; rebuild it.
 case errors.Is(err, networkengine.ErrProtocolVersionUnreadable):
     // Worker sent the key with a value this client cannot read.
-case err != nil:
+default:
     // Transport or worker failure, unrelated to versioning.
 }
 ```

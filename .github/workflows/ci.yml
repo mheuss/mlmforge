@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main]
 
+# At workflow level rather than per job, so a job added later inherits least
+# privilege instead of relying on its author to declare it. Declaring any
+# permission sets every scope not listed here to none.
+permissions:
+  contents: read
+
 jobs:
   go:
     name: Go
@@ -18,6 +24,10 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+        with:
+          # A later step needing git credentials fails with an auth error
+          # rather than silently inheriting one.
+          persist-credentials: false
 
       - uses: actions/setup-go@v5
         with:
@@ -109,6 +119,10 @@ jobs:
         working-directory: engine
     steps:
       - uses: actions/checkout@v4
+        with:
+          # A later step needing git credentials fails with an auth error
+          # rather than silently inheriting one.
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@stable
         with:

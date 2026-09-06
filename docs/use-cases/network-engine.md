@@ -402,28 +402,16 @@ go test ./internal/config/ && (cd engine && cargo test --test config_width_contr
 
 **Usage:**
 ```go
-// Configuration first. It reads no rows, so it runs above the query and an
-// empty tree still reports a bad tree type or missing matrix params.
-if err := validateTreeConfig(treeID, treeType, cfg); err != nil {
+loader := networkengine.NewTreeLoader(store, engine)
+
+// Validation runs before any mutation, so a rejected load leaves nothing to
+// clean up. Once the tree exists, every failure names what survived it: the
+// root failing reports an empty tree, a later node reports how far replay got.
+if err := loader.LoadTree(ctx, treeID, "matrix",
+    networkengine.WithMatrixParams(width, spillover)); err != nil {
+    // No rollback exists, so the error text is the operator's recovery signal.
     return err
 }
-nodes, err := l.store.GetByTreeDepthOrdered(ctx, treeID)
-if err != nil {
-    return fmt.Errorf("load tree %s: %w", treeID, err)
-}
-if len(nodes) == 0 {
-    return nil
-}
-// Then the node set. Every detectable fault fails here, engine untouched.
-if err := validateNodes(treeID, treeType, cfg, nodes); err != nil {
-    return err
-}
-ordered, err := orderForReplay(treeID, nodes)
-if err != nil {
-    return err
-}
-// First mutation only after both phases pass.
-if err := l.engine.CreateMatrixTree(ctx, treeID, cfg.matrixWidth, cfg.matrixSpillover); err != nil {
 ```
 
 **Notes:** The pattern generalises to any external system with no undo: a worker without a delete op, an API without a rollback, a third party that charges on first call. Two things make it worth the duplication of engine rules in Go. First, the validation must mirror what the remote actually enforces, so it is only as good as that audit — `TestTreePersistence_RejectedTreeLeavesEngineLoadable` proves the guarantee against the real worker rather than a stub, and asserts a *corrected retry succeeds*, which is the part no fake can demonstrate. Second, the mirroring drifts silently if the remote adds a rule; the Rust side keeps its own runtime checks, so preflight is a second line of defence rather than a replacement. Deliberately not covered: divergence between what the store recorded and what the remote actually did — both can be internally consistent, so no read-side validation can detect it. HEU-553 closed the write-side contract for placement; removal still diverges (HEU-582), and the type-label trust boundary (HEU-554) and redelivery idempotency (HEU-576) remain open. Related: UC-NET-013, which supplies the ordering half.
@@ -462,19 +450,6 @@ for _, node := range ordered[1:] {
 **Problem:** A projection consumer writes one event into two targets, the adjacency store and then the engine. An event that cannot be applied faithfully must not land in either. A stored row the engine never honored is silent divergence, and some malformed rows make reload preflight refuse the whole tree. Per-event validation cannot see races between events, and redelivering an already-stored event must stay distinguishable from corruption.
 
 **Solution:** Three layers. A gate at the top of the handler rejects everything checkable from the payload alone (stream identity, known `tree_type`, per-type position rules) before either projection, so a rejected event leaves no trace outside the EventStore. A partial unique index (`idx_tree_nodes_tree_parent_position_active`, migration 000004) arbitrates what the gate cannot see: two events claiming one slot resolve at the insert, loudly, with the store still reloadable. Postgres index order then gives redelivery a discriminator for free: `tree_nodes_pkey` (the row id is the event ID) fires for an already-stored event, the user index for a conflicting one. The layers do not make the two projections atomic. The store insert lands before the engine call, so an engine failure after a successful insert leaves a stored row the engine never applied (HEU-576).
-
-**Usage:**
-```go
-// Gate before either projection: nothing lands anywhere on rejection.
-if want := TreeStreamName(payload.TreeID); event.Stream != want {
-    return fmt.Errorf(...)
-}
-if !supportedTreeTypes[payload.TreeType] {
-    return fmt.Errorf(...)
-}
-// per-type position rules (switch with a loud default), then the store
-// insert, then the engine dispatch — in that order.
-```
 
 **Notes:** Distinct from UC-NET-012, which preflights an irreversible bulk replay. Here each event is individually recoverable, so the gate stays thin (payload-checkable rules only) and the database owns cross-event races. The gate cannot check the matrix width bound because nothing persists width (HEU-554). The u8 ceiling is gated; the width..255 band is the documented residual. Redelivery is not yet idempotent (HEU-576). `MemoryTreeStore` mirrors all three constraints in the same check order, so the discriminator is unit-testable against the double.
 
@@ -609,22 +584,19 @@ The key match uses `strings.EqualFold` because `encoding/json` matches field tag
 **Usage:**
 
 ```go
-var result pingResult
-if err := json.Unmarshal(raw, &result); err == nil && result.ProtocolVersion != nil {
-	return *result.ProtocolVersion, nil
+version, err := client.Ping(ctx)
+if err == nil {
+    // Worker is reachable and reports a version this client can read.
+    return version, nil
 }
-
-// Nil pointer, two causes. Only the raw bytes tell them apart.
-if carriesVersionKey(raw) {
-	return 0, fmt.Errorf(
-		"%w (responded %s); rebuild the worker binary",
-		ErrProtocolVersionUnreadable, renderForError(raw),
-	)
+switch {
+case errors.Is(err, networkengine.ErrProtocolVersionAbsent):
+    // Worker reported no version at all. It predates the field; rebuild it.
+case errors.Is(err, networkengine.ErrProtocolVersionUnreadable):
+    // Worker sent the key with a value this client cannot read.
+default:
+    // Transport or worker failure, unrelated to versioning.
 }
-return 0, fmt.Errorf(
-	"%w (responded %s); rebuild the worker binary",
-	ErrProtocolVersionAbsent, renderForError(raw),
-)
 ```
 
 **Notes:** Quoting the payload back is what makes the message actionable, and it is also the risk. The response is wire data and otherwise unbounded, so `renderForError` caps it. The cap is a byte count and the payload may hold multi-byte runes, so the cut can land mid-rune. `strings.ToValidUTF8` drops the partial rune, which keeps the text readable wherever it is logged. An empty payload renders as a quoted empty string rather than nothing, so the message never trails off. The two causes are also matchable without reading the text. `ErrProtocolVersionAbsent` and `ErrProtocolVersionUnreadable` are the sentinels, and `%w` records each one, so `errors.Is` tells them apart. The format string still renders the payload, so the message a reader sees is unchanged.

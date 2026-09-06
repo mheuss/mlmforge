@@ -98,8 +98,14 @@ jobs:
   rust:
     name: Rust
     runs-on: ubuntu-latest
+    env:
+      CARGO_AUDIT_VERSION: 0.22.1
     defaults:
       run:
+        # Naming bash explicitly is what turns on pipefail. Without it a step
+        # ending in a pipe reports only the last command's status, so an
+        # earlier stage can fail and the step still passes.
+        shell: bash
         working-directory: engine
     steps:
       - uses: actions/checkout@v4
@@ -120,7 +126,23 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets --workspace -- -D warnings
 
+      - name: Restore cargo-audit
+        id: cargo-audit-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-${{ env.CARGO_AUDIT_VERSION }}-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Install cargo-audit
+        if: steps.cargo-audit-cache.outputs.cache-hit != 'true'
+        run: cargo install cargo-audit --version "$CARGO_AUDIT_VERSION" --locked
+
       - name: Security audit
         run: |
-          cargo install cargo-audit --version 0.22.1 --locked
+          # A restore can succeed and still hand back the wrong or a truncated
+          # binary, and the scan would then report green from an unpinned tool.
+          # -x so a prerelease suffix cannot satisfy the match, -F because the
+          # pin contains dots, which are any-char unescaped.
+          cargo audit --version
+          cargo audit --version | grep -qxF "cargo-audit-audit $CARGO_AUDIT_VERSION"
           cargo audit

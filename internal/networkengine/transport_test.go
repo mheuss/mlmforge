@@ -574,6 +574,105 @@ func TestStdioTransport_CloseBoundsTheWaitForAnOrphanedChild(t *testing.T) {
 	}
 }
 
+// The reap bound and cmd.WaitDelay are nested deadlines. When they were the
+// same constant, killAndReap armed its timer immediately after the kill while
+// os/exec armed WaitDelay only once Process.Wait observed the exit, so the outer
+// deadline preempted the inner one and Close reported a reap failure for a reap
+// that landed 50-150us later. That hit every caller, not just repeat ones, on
+// essentially every orphaned-child shutdown (HEU-671).
+func TestStdioTransport_CloseDoesNotReportAReapThatIsAboutToLand(t *testing.T) {
+	fake := filepath.Join(t.TempDir(), "forking-worker.sh")
+	script := "#!/bin/sh\n" +
+		"IFS= read -r _line\n" +
+		"printf '%s\\n' '{\"id\":\"req-1\",\"ok\":true,\"result\":{\"protocol_version\":1}}'\n" +
+		"sleep 30 &\n" +
+		"while true; do sleep 1; done\n"
+	require.NoError(t, os.WriteFile(fake, []byte(script), 0o755))
+
+	transport, err := NewStdioTransport(fake)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = transport.Close() })
+
+	_, err = transport.Call(context.Background(), "ping", json.RawMessage("null"))
+	require.NoError(t, err)
+
+	closeErr := make(chan error, 1)
+	go func() { closeErr <- transport.Close() }()
+
+	select {
+	case err := <-closeErr:
+		assert.ErrorIs(t, err, ErrWorkerNotExited,
+			"the worker ignored EOF and had to be killed; that stays reported")
+		assert.NotErrorIs(t, err, ErrWorkerUnreaped,
+			"the reap lands well inside reapBound; reporting it as failed is the false alarm")
+	case <-time.After(25 * time.Second):
+		t.Fatal("Close did not return; the wait after the kill is unbounded")
+	}
+}
+
+// ErrWorkerUnreaped records what was observed when the reap deadline elapsed,
+// not a standing fact. Close abandons the cmd.Wait goroutine on that path and
+// the channel it sends to is buffered, so a reap can land after Close has
+// already returned. A later Close must observe that rather than replay the
+// earlier verdict (HEU-671).
+//
+// Driven through the struct rather than a subprocess. Once reapBound outlasts
+// cmd.WaitDelay, reaching the unreaped path for real needs a worker that
+// survives SIGKILL, which is not something a test can arrange portably. The
+// revision logic still needs pinning, so this drives it at the seam.
+func TestStdioTransport_RepeatCloseReObservesTheReap(t *testing.T) {
+	newClosed := func(waited chan error) *StdioTransport {
+		tr := &StdioTransport{waited: waited}
+		// Burn the latch so Close replays rather than running shutdown.
+		tr.closeOnce.Do(func() {})
+		tr.closeErr = errors.Join(ErrWorkerNotExited, ErrWorkerUnreaped)
+		tr.closeErrIfReaped = errors.Join(ErrWorkerNotExited)
+		return tr
+	}
+
+	t.Run("keeps the verdict while the reap has not landed", func(t *testing.T) {
+		tr := newClosed(make(chan error, 1))
+
+		for i := range 3 {
+			err := tr.Close()
+			assert.ErrorIs(t, err, ErrWorkerUnreaped,
+				"call %d: nothing was observed, so the first call's verdict stands", i)
+			assert.ErrorIs(t, err, ErrWorkerNotExited)
+		}
+	})
+
+	t.Run("drops the sentinel once the reap lands, and latches", func(t *testing.T) {
+		waited := make(chan error, 1)
+		tr := newClosed(waited)
+
+		require.ErrorIs(t, tr.Close(), ErrWorkerUnreaped, "not reaped yet")
+
+		waited <- errors.New("signal: killed")
+
+		err := tr.Close()
+		assert.NotErrorIs(t, err, ErrWorkerUnreaped, "the reap landed; stop reporting it as failed")
+		assert.ErrorIs(t, err, ErrWorkerNotExited, "it still did not exit in time; that stays true")
+		assert.ErrorContains(t, err, "signal: killed",
+			"the wait error we just consumed should be reported, not discarded")
+
+		// The receive consumed the value. A third call that re-derived from
+		// scratch would find the channel empty and wrongly re-add the sentinel:
+		// the same read-once-replay-as-current mistake this fix exists to
+		// correct, reappearing inside the fix.
+		for i := range 3 {
+			assert.NotErrorIs(t, tr.Close(), ErrWorkerUnreaped, "call %d did not latch", i)
+		}
+	})
+
+	t.Run("leaves a clean close alone", func(t *testing.T) {
+		tr := &StdioTransport{waited: make(chan error, 1)}
+		tr.closeOnce.Do(func() {})
+		// closeErrIfReaped stays nil: nothing to revise.
+		assert.NoError(t, tr.Close())
+		assert.NoError(t, tr.Close())
+	})
+}
+
 // A worker can exit promptly and still leave a child holding the stderr pipe,
 // and waiting on the worker does not finish until that pipe closes. Without a
 // bound on the post-exit wait, Close sits until the grace period, kills a

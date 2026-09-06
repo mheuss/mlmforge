@@ -632,6 +632,35 @@ So `WaitDelay` does not rescue a wait on a process that will not die. It rescues
 a wait on a process that has died while its output is still being copied. Those
 are different failures and they need separate bounds.
 
+### Nested deadlines must not share a constant (HEU-671)
+
+Following from the above: the reap bound and `WaitDelay` are nested. `WaitDelay`
+bounds the inner wait `os/exec` performs; the reap bound is how long we wait for
+that to finish. They were the same 2-second constant, and the outer one
+systematically preempted the inner one.
+
+The values were equal but the start points were not. `killAndReap` arms its
+timer immediately after the kill. `os/exec` arms `WaitDelay` only once
+`Process.Wait` observes the exit, a few milliseconds later. That is not a fair
+race, it is a loaded one, and it lands the same way nearly always: measured, the
+reap arrived 50-150us after the reap bound had already fired, on essentially
+every orphaned-child shutdown. `Close` reported a reap failure for a reap that
+had happened.
+
+Two things worth taking from it. Equal constants do not imply a symmetric race,
+and the only thing that decides one is when each timer starts, which is not
+visible from the constant names. And a race that looks 50/50 from the values can
+be near-deterministic in practice, so "nondeterministic but both outcomes are
+correct" is a claim to measure rather than reason about.
+
+`reapBound` is now `waitIODelay + 500ms`, written as a delta so the ordering
+survives someone retuning the inner bound.
+
+One consequence for testing: once the reap bound outlasts `WaitDelay`, reaching
+the unreaped path at all needs a worker that survives `SIGKILL`. No test can
+arrange that portably, so the revision logic behind it is driven at the seam
+rather than through a subprocess.
+
 ### An orphaned grandchild keeps stderr open
 
 Stderr is copied into a buffer rather than being a file, so `os/exec` allocates

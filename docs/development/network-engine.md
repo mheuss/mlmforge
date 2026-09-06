@@ -317,18 +317,21 @@ between the builds. Otherwise the second build reuses the first artifact, the
 outputs are trivially identical, and the comparison proves nothing. This one is
 quiet: the check appears to pass.
 
-## Worker Binary Freshness: The Guard Is Coarse
+## Worker Binary Freshness
 
-The Go integration suite fails if the Rust worker binary is older than any `.rs` file under `engine/` (`staleWorkerBinary` in `transport_test.go`, HEU-615). That includes Rust *test* files, which the binary does not depend on.
+The Go integration suite fails if the Rust worker binary is older than a `.rs` file the binary is built from (`staleWorkerBinary` in `transport_test.go`, HEU-615). A stale binary used to be picked up silently, so a green `go test ./...` could mean the Rust half of the seam was never rebuilt.
 
-So editing `engine/network-engine-worker/tests/worker_integration.rs` and then running `cargo build --workspace` leaves the Go suite still failing. Cargo has nothing to rebuild, the binary's mtime never moves, and the walk still finds a newer `.rs`.
+The walk skips two things it cannot be stale against.
 
-The failure message names the offending file, which is the tell. If it points at a `tests/` file, the binary is current and the guard is being over-broad.
+`engine/target/` holds sources cargo regenerates during the same build that produces the binary. Counting them would report the binary as stale against its own output.
 
-Force a real relink:
+`<crate>/tests/` holds Rust integration tests. Cargo compiles those as separate crates linked into their own test binaries, never into `network-engine-worker`. Counting them produced a failure that no rebuild could clear, because cargo had nothing to relink and the binary's mtime never moved (HEU-634).
+
+The exclusion is anchored to the crate root, meaning a `tests` directory sitting beside a `Cargo.toml`. A `tests` directory under `src/` is a unit-test module, declared with `mod tests;` and compiled into the crate, so it stays in the walk. Matching on the directory name alone would skip it and silently re-open the false green the guard exists to close.
+
+When the guard fires it names the offending file. Rebuild:
 
 ```bash
-touch engine/network-engine-worker/src/main.rs
 (cd engine && cargo build --workspace)
 ```
 

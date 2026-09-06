@@ -36,16 +36,40 @@
     "expected_response": {
         "id": "sl-1",
         "ok": true,
-        "result": [
-            {
-                "earner_id": "00000000-0000-0000-0000-000000000001",
-                "source_id": "00000000-0000-0000-0000-000000000002",
-                "level": 1,
-                "rate": 0.1,
-                "cv_amount": 100.0,
-                "dollar_amount": 10.0,
-                "walk": 0
-            }
-        ]
+        "result": {
+            "earnings": [
+                {
+                    "cv_amount": 100.0,
+                    "dollar_amount": 10.0,
+                    "earner_id": "00000000-0000-0000-0000-000000000001",
+                    "level": 1,
+                    "rate": 0.1,
+                    "source_id": "00000000-0000-0000-0000-000000000002",
+                    "walk": 0
+                }
+            ],
+            "plan": {
+                "hash": "sha256:7dbc5cafc50e8364c21444ffd4b0b72f00048dcdabf274d72b161aacf4c2e5f2",
+                "name": "Contract Test Plan",
+                "version": 1
+            },
+            "walks": [
+                {
+                    "index": 0,
+                    "kind": "level",
+                    "source_id": "00000000-0000-0000-0000-000000000002",
+                    "steps": [
+                        {
+                            "consumed": true,
+                            "earner_rank": "member",
+                            "node_id": "00000000-0000-0000-0000-000000000001",
+                            "outcome": "paid"
+                        }
+                    ],
+                    "stop": "root_reached",
+                    "stream_id": 1
+                }
+            ]
+        }
     }
 }

@@ -13,8 +13,11 @@ use crate::config::{CompensationPlan, StairstepStructureConfig};
 use crate::tree::unilevel::UnilevelTree;
 
 use super::generation::{GenerationEntry, count_generations_upward};
-use super::types::{CalculationError, CommissionEarning, DistributorSnapshot, VolumeSource};
-use super::walk;
+use super::types::{
+    CalculationError, CommissionCalculationResult, CommissionEarning, DistributorSnapshot,
+    PlanIdentity, VolumeSource,
+};
+use super::{walk, walk_order};
 
 // ---------------------------------------------------------------------------
 // Prep phase internal types
@@ -582,7 +585,8 @@ pub fn calculate_stairstep(
     structure: &StairstepStructureConfig,
     snapshots: &HashMap<Uuid, DistributorSnapshot>,
     volume: &[VolumeSource],
-) -> Result<Vec<CommissionEarning>, CalculationError> {
+    plan_identity: &PlanIdentity,
+) -> Result<CommissionCalculationResult, CalculationError> {
     let rank_ordinals = walk::build_rank_ordinals(plan);
     let prep_result = prep(tree, plan, structure, snapshots, &rank_ordinals);
 
@@ -657,8 +661,13 @@ pub fn calculate_stairstep(
     );
     all_earnings.extend(override_earnings);
 
-    walk::sort_earnings(&mut all_earnings);
-    Ok(all_earnings)
+    Ok(walk_order::assemble(
+        all_earnings,
+        walks,
+        volume,
+        &rank_ordinals,
+        plan_identity,
+    ))
 }
 
 #[cfg(test)]

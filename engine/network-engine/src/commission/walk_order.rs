@@ -11,23 +11,11 @@
 //! the map a caller needs to translate its earnings' collector ids into final
 //! indexes.
 
-// Nothing calls this module yet: Tasks 7 to 10 wire it into the five
-// calculators. `pub(crate)` items whose only callers are `#[cfg(test)]` are
-// dead code in a non-test build, which `docs/development/network-engine.md`
-// records as a trap.
-//
-// `allow` rather than `expect`, which does not work here. Under
-// `clippy --all-targets` the `cfg(test)` build compiles too, and there the
-// tests below do use these functions, so an `expect(dead_code)` is unfulfilled
-// and fails that build. `allow` is a no-op there and suppresses the real dead
-// code in the lib build.
-//
-// Delete this attribute in Task 7. It will not remove itself.
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 
-use super::types::{VolumeSource, Walk, WalkKind};
+use super::types::{
+    CommissionCalculationResult, CommissionEarning, PlanIdentity, VolumeSource, Walk, WalkKind,
+};
 
 /// Sorts `walks` into the total order, writes each `index`, and returns a map
 /// from the collector id a walk carried to the index it now has.
@@ -85,6 +73,42 @@ pub(crate) fn assign_indexes(
         remap.insert(collector_id, new_index);
     }
     remap
+}
+
+/// Assembles a calculator's result: orders the walks, remaps every earning's
+/// collector id to its final index, sorts the earnings, and attaches the plan
+/// identity.
+///
+/// All five calculators go through here so the ordering and the remap cannot
+/// drift between them. Doing it per-calculator is what would let one of them
+/// take an index from emission order, which design 029 forbids.
+pub(crate) fn assemble(
+    mut earnings: Vec<CommissionEarning>,
+    mut walks: Vec<Walk>,
+    volume: &[VolumeSource],
+    rank_ordinals: &HashMap<&str, u16>,
+    plan_identity: &PlanIdentity,
+) -> CommissionCalculationResult {
+    let remap = assign_indexes(&mut walks, volume, rank_ordinals);
+
+    for earning in earnings.iter_mut() {
+        // `if let` rather than a filter: a None walk is stairstep Walk 2's
+        // recorded gap and must survive as None, not be skipped or defaulted.
+        if let Some(collector_id) = earning.walk {
+            earning.walk = Some(*remap.get(&collector_id).unwrap_or_else(|| {
+                panic!("earning references collector id {collector_id}, which no walk carried")
+            }));
+        }
+    }
+
+    // After the remap, so the walk tiebreaker sorts on final indexes.
+    super::walk::sort_earnings(&mut earnings);
+
+    CommissionCalculationResult {
+        earnings,
+        walks,
+        plan: plan_identity.clone(),
+    }
 }
 
 fn kind_key(kind: WalkKind) -> u8 {

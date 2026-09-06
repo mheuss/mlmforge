@@ -13,7 +13,8 @@ use network_engine::serde_helpers::null_as_empty;
 use uuid::Uuid;
 
 use super::common::{
-    require_binary_tree, require_matrix_tree, require_plan, require_unilevel_tree,
+    require_binary_tree, require_matrix_tree, require_plan, require_plan_identity,
+    require_unilevel_tree,
 };
 use crate::protocol::{Request, Response};
 use crate::state::WorkerState;
@@ -149,6 +150,10 @@ pub(crate) fn handle_calculate_unilevel(state: &WorkerState, request: &Request) 
         Ok(p) => p,
         Err(resp) => return resp,
     };
+    let identity = match require_plan_identity(state, &request.id) {
+        Ok(i) => i,
+        Err(resp) => return resp,
+    };
     let params: CalculateUnilevelParams = match serde_json::from_str(request.params.get()) {
         Ok(p) => p,
         Err(e) => {
@@ -170,11 +175,18 @@ pub(crate) fn handle_calculate_unilevel(state: &WorkerState, request: &Request) 
         }
     };
 
-    match calculate_unilevel(tree, plan, structure, &params.snapshots, &params.volume) {
-        Ok(earnings) => Response::success(
+    match calculate_unilevel(
+        tree,
+        plan,
+        structure,
+        &params.snapshots,
+        &params.volume,
+        identity,
+    ) {
+        Ok(result) => Response::success(
             request.id.clone(),
-            serde_json::to_value(&earnings)
-                .expect("serialization of Vec<CommissionEarning> is infallible"),
+            serde_json::to_value(&result)
+                .expect("serialization of CommissionCalculationResult is infallible"),
         ),
         Err(e) => Response::error(request.id.clone(), "CALCULATION_ERROR", e.to_string()),
     }
@@ -183,6 +195,10 @@ pub(crate) fn handle_calculate_unilevel(state: &WorkerState, request: &Request) 
 pub(crate) fn handle_calculate_generation(state: &WorkerState, request: &Request) -> Response {
     let plan = match require_plan(state, &request.id) {
         Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    let identity = match require_plan_identity(state, &request.id) {
+        Ok(i) => i,
         Err(resp) => return resp,
     };
     let params: CalculateGenerationParams = match serde_json::from_str(request.params.get()) {
@@ -206,11 +222,18 @@ pub(crate) fn handle_calculate_generation(state: &WorkerState, request: &Request
         }
     };
 
-    match calculate_generation(tree, plan, structure, &params.snapshots, &params.volume) {
-        Ok(earnings) => Response::success(
+    match calculate_generation(
+        tree,
+        plan,
+        structure,
+        &params.snapshots,
+        &params.volume,
+        identity,
+    ) {
+        Ok(result) => Response::success(
             request.id.clone(),
-            serde_json::to_value(&earnings)
-                .expect("serialization of Vec<CommissionEarning> is infallible"),
+            serde_json::to_value(&result)
+                .expect("serialization of CommissionCalculationResult is infallible"),
         ),
         Err(e) => Response::error(request.id.clone(), "CALCULATION_ERROR", e.to_string()),
     }
@@ -275,6 +298,10 @@ pub(crate) fn handle_calculate_matrix(state: &WorkerState, request: &Request) ->
         Ok(p) => p,
         Err(resp) => return resp,
     };
+    let identity = match require_plan_identity(state, &request.id) {
+        Ok(i) => i,
+        Err(resp) => return resp,
+    };
     let params: CalculateMatrixParams = match serde_json::from_str(request.params.get()) {
         Ok(p) => p,
         Err(e) => {
@@ -296,11 +323,18 @@ pub(crate) fn handle_calculate_matrix(state: &WorkerState, request: &Request) ->
         }
     };
 
-    match calculate_matrix(tree, plan, structure, &params.snapshots, &params.volume) {
-        Ok(earnings) => Response::success(
+    match calculate_matrix(
+        tree,
+        plan,
+        structure,
+        &params.snapshots,
+        &params.volume,
+        identity,
+    ) {
+        Ok(result) => Response::success(
             request.id.clone(),
-            serde_json::to_value(&earnings)
-                .expect("serialization of Vec<CommissionEarning> is infallible"),
+            serde_json::to_value(&result)
+                .expect("serialization of CommissionCalculationResult is infallible"),
         ),
         Err(e @ CalculationError::TreeConfigMismatch { .. }) => {
             // Caller-supplied tree/config incoherence, not a calc failure.
@@ -313,6 +347,10 @@ pub(crate) fn handle_calculate_matrix(state: &WorkerState, request: &Request) ->
 pub(crate) fn handle_calculate_stairstep(state: &WorkerState, request: &Request) -> Response {
     let plan = match require_plan(state, &request.id) {
         Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    let identity = match require_plan_identity(state, &request.id) {
+        Ok(i) => i,
         Err(resp) => return resp,
     };
     let params: CalculateStairstepParams = match serde_json::from_str(request.params.get()) {
@@ -337,11 +375,18 @@ pub(crate) fn handle_calculate_stairstep(state: &WorkerState, request: &Request)
         }
     };
 
-    match calculate_stairstep(tree, plan, structure, &params.snapshots, &params.volume) {
-        Ok(earnings) => Response::success(
+    match calculate_stairstep(
+        tree,
+        plan,
+        structure,
+        &params.snapshots,
+        &params.volume,
+        identity,
+    ) {
+        Ok(result) => Response::success(
             request.id.clone(),
-            serde_json::to_value(&earnings)
-                .expect("serialization of Vec<CommissionEarning> is infallible"),
+            serde_json::to_value(&result)
+                .expect("serialization of CommissionCalculationResult is infallible"),
         ),
         Err(e) => Response::error(request.id.clone(), "CALCULATION_ERROR", e.to_string()),
     }

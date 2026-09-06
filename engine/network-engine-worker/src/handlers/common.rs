@@ -178,6 +178,25 @@ pub(crate) fn handle_load_plan(state: &mut WorkerState, request: &Request) -> Re
 
 // --- Require helpers for commission handlers ---
 
+/// The identity of the plan `require_plan` returns.
+///
+/// `handle_load_plan` sets both together, so an absent identity with a present
+/// plan is a bug in this crate rather than a caller error. It is reported as
+/// INTERNAL_ERROR for that reason: a caller cannot fix it and should not be
+/// told to retry.
+pub(crate) fn require_plan_identity<'a>(
+    state: &'a WorkerState,
+    request_id: &str,
+) -> Result<&'a PlanIdentity, Response> {
+    state.plan_identity.as_ref().ok_or_else(|| {
+        Response::error(
+            request_id.to_string(),
+            "INTERNAL_ERROR",
+            "a plan is loaded but its identity is missing".to_string(),
+        )
+    })
+}
+
 pub(crate) fn require_plan<'a>(
     state: &'a WorkerState,
     request_id: &str,

@@ -60,6 +60,15 @@ type commissionEarningDetail struct {
 	Level    int     `json:"level"`
 	Rate     float64 `json:"rate"`
 	CVAmount float64 `json:"cv_amount"`
+	// Index of the walk that produced this earning, into the walks array of
+	// the same response. Null where none was recorded, which today means
+	// stairstep Walk 2: design 029 excludes that traversal, so the null is a
+	// recorded gap rather than missing data.
+	//
+	// No omitempty. A dropped key would make an unrecorded walk look like a
+	// row written before the field existed, and these rows are retained for
+	// years to settle disputes.
+	Walk *uint32 `json:"walk"`
 }
 
 // binaryPairingDetail is the shape for calculate_binary_pairing.
@@ -98,9 +107,10 @@ func ResultFromCommissionEarning(e CommissionEarningDTO) (CommissionResultInput,
 		V:        detailVersion,
 		Kind:     kindCommissionEarning,
 		SourceID: e.SourceID,
-		Level:    e.Level,
+		Level:    int(e.Level),
 		Rate:     e.Rate,
 		CVAmount: e.CVAmount,
+		Walk:     e.Walk,
 	})
 }
 

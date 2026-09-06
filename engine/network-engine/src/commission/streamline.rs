@@ -9,8 +9,10 @@ use uuid::Uuid;
 use crate::config::{CompensationPlan, StreamlineStructureConfig};
 use crate::streamline::StreamlineEngine;
 
-use super::types::{CalculationError, CommissionEarning, DistributorSnapshot, VolumeSource};
-use super::walk;
+use super::types::{
+    CalculationError, CommissionCalculationResult, DistributorSnapshot, PlanIdentity, VolumeSource,
+};
+use super::{walk, walk_order};
 
 /// Calculate streamline commissions across all active streams.
 ///
@@ -23,7 +25,8 @@ pub fn calculate_streamline(
     structure: &StreamlineStructureConfig,
     snapshots: &HashMap<Uuid, DistributorSnapshot>,
     volume: &[VolumeSource],
-) -> Result<Vec<CommissionEarning>, CalculationError> {
+    plan_identity: &PlanIdentity,
+) -> Result<CommissionCalculationResult, CalculationError> {
     let rank_ordinals = walk::build_rank_ordinals(plan);
 
     // Place each threshold at its declared level rather than at its position.
@@ -119,7 +122,6 @@ pub fn calculate_streamline(
     let mut all_earnings = Vec::new();
     // Outside the per-stream loop on purpose: one collector accumulates every
     // stream's walks, so their ids stay unique across the response.
-    // Discarded until Tasks 7-10 assemble the result.
     let mut walks = Vec::new();
 
     for stream in engine.active_streams() {
@@ -151,6 +153,9 @@ pub fn calculate_streamline(
         // Convert filtered refs to owned slice for the walk.
         let owned_volume: Vec<VolumeSource> = stream_volume.iter().map(|v| (*v).clone()).collect();
 
+        // The walks this stream is about to append start here.
+        let stream_walks_from = walks.len();
+
         let earnings = walk::walk_level_commissions(
             &stream.tree,
             &config,
@@ -161,11 +166,24 @@ pub fn calculate_streamline(
             &mut walks,
         )?;
 
+        // Stamp the stream on exactly the walks it produced. This is what
+        // makes the index order deterministic: `active_streams` iterates a
+        // HashMap, so without `stream_id` the total order would fall through
+        // to a collector id assigned in hash order, which design 029 forbids.
+        for w in &mut walks[stream_walks_from..] {
+            w.stream_id = Some(stream.id);
+        }
+
         all_earnings.extend(earnings);
     }
 
-    walk::sort_earnings(&mut all_earnings);
-    Ok(all_earnings)
+    Ok(walk_order::assemble(
+        all_earnings,
+        walks,
+        volume,
+        &rank_ordinals,
+        plan_identity,
+    ))
 }
 
 #[cfg(test)]

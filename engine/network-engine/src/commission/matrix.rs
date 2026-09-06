@@ -6,8 +6,10 @@ use uuid::Uuid;
 use crate::config::{CompensationPlan, MatrixStructureConfig};
 use crate::tree::matrix::MatrixTree;
 
-use super::types::{CalculationError, CommissionEarning, DistributorSnapshot, VolumeSource};
-use super::walk;
+use super::types::{
+    CalculationError, CommissionCalculationResult, DistributorSnapshot, PlanIdentity, VolumeSource,
+};
+use super::{walk, walk_order};
 
 /// Calculate matrix level commissions for a set of volume events.
 ///
@@ -28,7 +30,8 @@ pub fn calculate_matrix(
     structure: &MatrixStructureConfig,
     snapshots: &HashMap<Uuid, DistributorSnapshot>,
     volume: &[VolumeSource],
-) -> Result<Vec<CommissionEarning>, CalculationError> {
+    plan_identity: &PlanIdentity,
+) -> Result<CommissionCalculationResult, CalculationError> {
     // Guard: the tree must have the topology the plan structure declares.
     // Tree width/spillover are set at create_tree time from op params, not from
     // the config, so nothing else reconciles them. Paying against a mismatched
@@ -76,9 +79,8 @@ pub fn calculate_matrix(
         dynamic_thresholds: None,
     };
 
-    // Discarded until Tasks 7-10 assemble the result.
     let mut walks = Vec::new();
-    let mut earnings = walk::walk_level_commissions(
+    let earnings = walk::walk_level_commissions(
         tree,
         &config,
         &eligibility_cache,
@@ -88,8 +90,13 @@ pub fn calculate_matrix(
         &mut walks,
     )?;
 
-    walk::sort_earnings(&mut earnings);
-    Ok(earnings)
+    Ok(walk_order::assemble(
+        earnings,
+        walks,
+        volume,
+        &rank_ordinals,
+        plan_identity,
+    ))
 }
 
 #[cfg(test)]

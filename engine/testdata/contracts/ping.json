@@ -4,6 +4,6 @@
     "expected_response": {
         "id": "c-1",
         "ok": true,
-        "result": {"protocol_version": 1}
+        "result": {"protocol_version": 2}
     }
 }

@@ -6,8 +6,10 @@ use uuid::Uuid;
 use crate::config::{CompensationPlan, UnilevelStructureConfig};
 use crate::tree::unilevel::UnilevelTree;
 
-use super::types::{CalculationError, CommissionEarning, DistributorSnapshot, VolumeSource};
-use super::walk;
+use super::types::{
+    CalculationError, CommissionCalculationResult, DistributorSnapshot, PlanIdentity, VolumeSource,
+};
+use super::{walk, walk_order};
 
 /// Calculate unilevel commissions for a set of volume events.
 ///
@@ -24,7 +26,8 @@ pub fn calculate_unilevel(
     structure: &UnilevelStructureConfig,
     snapshots: &HashMap<Uuid, DistributorSnapshot>,
     volume: &[VolumeSource],
-) -> Result<Vec<CommissionEarning>, CalculationError> {
+    plan_identity: &PlanIdentity,
+) -> Result<CommissionCalculationResult, CalculationError> {
     let rank_ordinals = walk::build_rank_ordinals(plan);
     let eligibility_cache = walk::evaluate_eligibility(snapshots, tree, &plan.eligibility);
 
@@ -59,9 +62,8 @@ pub fn calculate_unilevel(
         dynamic_thresholds: None,
     };
 
-    // Discarded until Tasks 7-10 assemble the result.
     let mut walks = Vec::new();
-    let mut earnings = walk::walk_level_commissions(
+    let earnings = walk::walk_level_commissions(
         tree,
         &config,
         &eligibility_cache,
@@ -71,8 +73,13 @@ pub fn calculate_unilevel(
         &mut walks,
     )?;
 
-    walk::sort_earnings(&mut earnings);
-    Ok(earnings)
+    Ok(walk_order::assemble(
+        earnings,
+        walks,
+        volume,
+        &rank_ordinals,
+        plan_identity,
+    ))
 }
 
 #[cfg(test)]

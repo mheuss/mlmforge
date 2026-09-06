@@ -15,10 +15,10 @@ use crate::config::{CompensationPlan, GenerationStructureConfig};
 use crate::tree::unilevel::UnilevelTree;
 
 use super::types::{
-    CalculationError, CommissionEarning, DistributorSnapshot, StepOutcome, VolumeSource, Walk,
-    WalkKind, WalkStep, WalkStop,
+    CalculationError, CommissionCalculationResult, CommissionEarning, DistributorSnapshot,
+    PlanIdentity, StepOutcome, VolumeSource, Walk, WalkKind, WalkStep, WalkStop,
 };
-use super::walk;
+use super::{walk, walk_order};
 
 /// Returns the generation depth for an earner with the given rank.
 ///
@@ -261,7 +261,8 @@ pub fn calculate_generation(
     structure: &GenerationStructureConfig,
     snapshots: &HashMap<Uuid, DistributorSnapshot>,
     volume: &[VolumeSource],
-) -> Result<Vec<CommissionEarning>, CalculationError> {
+    plan_identity: &PlanIdentity,
+) -> Result<CommissionCalculationResult, CalculationError> {
     let gen_config = &structure.generation_commission;
     let rank_ordinals = walk::build_rank_ordinals(plan);
     let eligibility_cache = walk::evaluate_eligibility(snapshots, tree, &plan.eligibility);
@@ -349,8 +350,13 @@ pub fn calculate_generation(
                     // Return any level earnings already collected. Don't
                     // discard them just because the generation boundary
                     // rank is misconfigured.
-                    walk::sort_earnings(&mut earnings);
-                    return Ok(earnings);
+                    return Ok(walk_order::assemble(
+                        earnings,
+                        walks,
+                        volume,
+                        &rank_ordinals,
+                        plan_identity,
+                    ));
                 }
             };
 
@@ -487,8 +493,13 @@ pub fn calculate_generation(
         }
     }
 
-    walk::sort_earnings(&mut earnings);
-    Ok(earnings)
+    Ok(walk_order::assemble(
+        earnings,
+        walks,
+        volume,
+        &rank_ordinals,
+        plan_identity,
+    ))
 }
 
 #[cfg(test)]

@@ -619,7 +619,7 @@ pub fn calculate_stairstep(
     // Outside the per-source loop on purpose: stairstep calls the walk once
     // per source, so one collector accumulates them and their ids stay unique.
     // Discarded until Tasks 7-10 assemble the result.
-    let mut _walks = Vec::new();
+    let mut walks = Vec::new();
 
     for source in volume {
         let source_leader = prep_result
@@ -641,7 +641,7 @@ pub fn calculate_stairstep(
                     .map(|&leader| leader != source_leader)
                     .unwrap_or(false)
             },
-            &mut _walks,
+            &mut walks,
         )?;
         all_earnings.extend(source_earnings);
     }

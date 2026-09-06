@@ -60,7 +60,7 @@ pub fn calculate_unilevel(
     };
 
     // Discarded until Tasks 7-10 assemble the result.
-    let mut _walks = Vec::new();
+    let mut walks = Vec::new();
     let mut earnings = walk::walk_level_commissions(
         tree,
         &config,
@@ -68,7 +68,7 @@ pub fn calculate_unilevel(
         snapshots,
         volume,
         |_| false,
-        &mut _walks,
+        &mut walks,
     )?;
 
     walk::sort_earnings(&mut earnings);

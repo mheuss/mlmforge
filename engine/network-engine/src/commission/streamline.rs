@@ -120,7 +120,7 @@ pub fn calculate_streamline(
     // Outside the per-stream loop on purpose: one collector accumulates every
     // stream's walks, so their ids stay unique across the response.
     // Discarded until Tasks 7-10 assemble the result.
-    let mut _walks = Vec::new();
+    let mut walks = Vec::new();
 
     for stream in engine.active_streams() {
         let eligibility_cache =
@@ -158,7 +158,7 @@ pub fn calculate_streamline(
             snapshots,
             &owned_volume,
             |_| false,
-            &mut _walks,
+            &mut walks,
         )?;
 
         all_earnings.extend(earnings);

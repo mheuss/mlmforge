@@ -184,6 +184,14 @@ pub fn calculate_generation(
         .unwrap_or(plan.volume.volume_to_dollar_multiplier);
 
     let mut earnings = Vec::new();
+    // One collector for the whole response, hoisted to function scope on
+    // purpose. `calculate_generation` calls `count_generations_upward` twice
+    // further down, and Task 9 makes those emit generation walks. A second
+    // collector there would restart ids at 0, and the level earnings stamped
+    // by the walk below would then remap onto generation walks. Every earning
+    // would still reference a real walk, so nothing would fail loudly.
+    // Discarded until Tasks 7-10 assemble the result.
+    let mut walks = Vec::new();
 
     // Optional level commissions. When enabled, these run alongside
     // generation commissions on the same volume. Level earnings use
@@ -208,8 +216,6 @@ pub fn calculate_generation(
                 dynamic_thresholds: None,
             };
 
-            // Discarded until Tasks 7-10 assemble the result.
-            let mut _walks = Vec::new();
             let level_earnings = walk::walk_level_commissions(
                 tree,
                 &level_config,
@@ -217,7 +223,7 @@ pub fn calculate_generation(
                 snapshots,
                 volume,
                 |_| false, // no breakaway boundaries in generation plans
-                &mut _walks,
+                &mut walks,
             )?;
             earnings.extend(level_earnings);
         }

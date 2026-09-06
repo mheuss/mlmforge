@@ -215,9 +215,11 @@ pub enum StepOutcome {
 /// `MaxDepthReached`, then `BoundaryReached`, then `MaxGenerationsReached`.
 ///
 /// Only the first pair is an observation about existing code:
-/// `walk_level_commissions` checks depth at `walk.rs:398` before the
-/// predicate at `:424`. Stating it makes reordering those two a contract
-/// change rather than a silent shift in what the response says.
+/// `walk_level_commissions` checks the `max_depth` break before it calls
+/// the caller's `should_stop` predicate. Named by condition rather than by
+/// line, because those line numbers have rotted twice. Stating the order
+/// makes reordering those two a contract change rather than a silent shift
+/// in what the response says.
 ///
 /// The third position is a **forward requirement on the generation
 /// emitter**, not a description. `MaxGenerationsReached` comes from
@@ -292,12 +294,12 @@ pub struct Walk {
     /// from the order walks happened to be emitted in, which for streamline
     /// is a `HashMap` iteration.
     ///
-    /// Nothing constructs a `Walk` yet. HEU-641 Task 3 adds the emitters and
-    /// `walk_order::assign_indexes`, and Task 3 is also where the
-    /// `Walk::level` / `Walk::streamline` / `Walk::generation` constructors
-    /// land, once there is a non-test caller to keep them out of dead code.
-    /// Until then, set this field to a collector id that is unique within
-    /// the response and let `assign_indexes` overwrite it.
+    /// `walk_level_commissions` sets this to a collector id, unique within
+    /// one calculator's collector. HEU-641 Task 5 adds
+    /// `walk_order::assign_indexes`, which sorts the response's walks into
+    /// the total order and replaces every collector id with the real index.
+    /// Until that lands, this field holds emission order and must not be
+    /// read as a position.
     pub index: u32,
 
     /// The distributor whose volume triggered the traversal.

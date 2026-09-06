@@ -61,6 +61,20 @@ pub struct CommissionEarning {
 
     /// Final payout amount in the plan's base currency.
     pub dollar_amount: f64,
+
+    /// Index of the walk that produced this earning.
+    ///
+    /// Null means no walk was recorded, never that no traversal happened.
+    /// Stairstep Walk 2 earnings carry null because that traversal is not
+    /// instrumented, which design 029 records as a deliberate gap rather
+    /// than an oversight.
+    ///
+    /// Serialized even when null. Omitting the key would make an unrecorded
+    /// walk indistinguishable from a missing field, which is the opposite of
+    /// the rule the `Walk` optionals follow: there, absent means the fact was
+    /// never established; here, null means the fact is that nothing was
+    /// recorded.
+    pub walk: Option<u32>,
 }
 
 /// Errors that halt the entire commission calculation.
@@ -451,6 +465,39 @@ mod tests {
             WalkKind::Level => "level",
             WalkKind::Generation => "generation",
         }
+    }
+
+    #[test]
+    fn earning_walk_serializes_as_explicit_null_when_absent() {
+        // The opposite rule to the Walk optionals, deliberately. There, an
+        // absent key means the fact was never established. Here, null means
+        // the fact IS that no walk was recorded, which stairstep Walk 2
+        // relies on. Omitting the key would collapse the two.
+        let earning = CommissionEarning {
+            earner_id: uuid_from_index(1),
+            source_id: uuid_from_index(2),
+            level: 1,
+            rate: 0.05,
+            cv_amount: 100.0,
+            dollar_amount: 5.0,
+            walk: None,
+        };
+        let json = serde_json::to_value(&earning).expect("serialize earning");
+        assert!(
+            json.get("walk").is_some(),
+            "walk must be present even when null: {json}"
+        );
+        assert!(
+            json["walk"].is_null(),
+            "walk must be null, not omitted: {json}"
+        );
+
+        let recorded = CommissionEarning {
+            walk: Some(4),
+            ..earning
+        };
+        let json = serde_json::to_value(&recorded).expect("serialize earning");
+        assert_eq!(json["walk"], 4);
     }
 
     #[test]

@@ -50,7 +50,8 @@
                 "level": 2,
                 "rate": 0.05,
                 "cv_amount": 100.0,
-                "dollar_amount": 2.0
+                "dollar_amount": 2.0,
+                "walk": null
             },
             {
                 "earner_id": "00000000-0000-0000-0000-000000000002",
@@ -58,7 +59,8 @@
                 "level": 1,
                 "rate": 0.05,
                 "cv_amount": 100.0,
-                "dollar_amount": 2.0
+                "dollar_amount": 2.0,
+                "walk": null
             }
         ]
     }

@@ -384,6 +384,7 @@ fn walk_single_overrides(
                         rate,
                         cv_amount: group_vol,
                         dollar_amount: group_vol * broad_pct * multiplier * rate,
+                        walk: None,
                     });
                 } else {
                     // Generation 2+: rate from generation override table
@@ -397,6 +398,7 @@ fn walk_single_overrides(
                             rate,
                             cv_amount: group_vol,
                             dollar_amount: group_vol * broad_pct * multiplier * rate,
+                            walk: None,
                         });
                     }
                 }
@@ -435,6 +437,7 @@ fn walk_single_overrides(
                     rate,
                     cv_amount: group_vol,
                     dollar_amount: group_vol * broad_pct * multiplier * rate,
+                    walk: None,
                 });
 
                 // Without generation overrides, stop after first qualifying ancestor.
@@ -521,6 +524,7 @@ fn walk_multi_tier_overrides(
                     rate: tier.rate,
                     cv_amount: group_vol,
                     dollar_amount: group_vol * multiplier * tier.rate,
+                    walk: None,
                 });
             }
         }

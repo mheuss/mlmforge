@@ -148,6 +148,7 @@ fn emit_generation_earnings(
             rate,
             cv_amount: source.cv_amount,
             dollar_amount: source.cv_amount * multiplier * rate,
+            walk: None,
         });
     }
 }

@@ -211,6 +211,7 @@ pub(crate) fn sort_earnings(earnings: &mut [CommissionEarning]) {
             .cmp(&b.earner_id)
             .then_with(|| a.source_id.cmp(&b.source_id))
             .then_with(|| a.level.cmp(&b.level))
+            .then_with(|| a.walk.cmp(&b.walk))
     });
 }
 
@@ -531,6 +532,7 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
                     rate,
                     cv_amount: source.cv_amount,
                     dollar_amount: source.cv_amount * config.broad_pct * config.multiplier * rate,
+                    walk: None,
                 });
             }
 
@@ -719,6 +721,7 @@ mod tests {
                 rate: 0.01,
                 cv_amount: 100.0,
                 dollar_amount: 1.0,
+                walk: None,
             },
             CommissionEarning {
                 earner_id: uuid_from_index(1),
@@ -727,11 +730,75 @@ mod tests {
                 rate: 0.05,
                 cv_amount: 100.0,
                 dollar_amount: 5.0,
+                walk: None,
             },
         ];
         sort_earnings(&mut earnings);
         assert_eq!(earnings[0].level, 1);
         assert_eq!(earnings[1].level, 3);
+    }
+
+    #[test]
+    fn sort_earnings_breaks_level_ties_by_walk() {
+        // Stairstep pays one ancestor from two walks for the same source, so
+        // (earner_id, source_id, level) is not unique. Design 029 is explicit
+        // that this is why the walk index exists. Without this tiebreaker the
+        // order of two such earnings depends on the input order, and the
+        // persisted record inherits that.
+        let mut earnings = vec![
+            CommissionEarning {
+                earner_id: uuid_from_index(1),
+                source_id: uuid_from_index(2),
+                level: 1,
+                rate: 0.05,
+                cv_amount: 100.0,
+                dollar_amount: 5.0,
+                walk: Some(3),
+            },
+            CommissionEarning {
+                earner_id: uuid_from_index(1),
+                source_id: uuid_from_index(2),
+                level: 1,
+                rate: 0.05,
+                cv_amount: 100.0,
+                dollar_amount: 5.0,
+                walk: Some(1),
+            },
+        ];
+        sort_earnings(&mut earnings);
+        assert_eq!(earnings[0].walk, Some(1));
+        assert_eq!(earnings[1].walk, Some(3));
+    }
+
+    #[test]
+    fn sort_earnings_orders_an_unrecorded_walk_before_a_recorded_one() {
+        // Stairstep Walk 2 earnings carry None. They have to land somewhere
+        // deterministic rather than wherever the input put them. None sorts
+        // first, which is what Option's own Ord gives us; this pins it so a
+        // change to that ordering is a deliberate one.
+        let mut earnings = vec![
+            CommissionEarning {
+                earner_id: uuid_from_index(1),
+                source_id: uuid_from_index(2),
+                level: 1,
+                rate: 0.05,
+                cv_amount: 100.0,
+                dollar_amount: 5.0,
+                walk: Some(0),
+            },
+            CommissionEarning {
+                earner_id: uuid_from_index(1),
+                source_id: uuid_from_index(2),
+                level: 1,
+                rate: 0.05,
+                cv_amount: 100.0,
+                dollar_amount: 5.0,
+                walk: None,
+            },
+        ];
+        sort_earnings(&mut earnings);
+        assert_eq!(earnings[0].walk, None);
+        assert_eq!(earnings[1].walk, Some(0));
     }
 
     #[test]
@@ -744,6 +811,7 @@ mod tests {
                 rate: 0.05,
                 cv_amount: 100.0,
                 dollar_amount: 2.0,
+                walk: None,
             },
             CommissionEarning {
                 earner_id: uuid_from_index(1),
@@ -752,6 +820,7 @@ mod tests {
                 rate: 0.05,
                 cv_amount: 100.0,
                 dollar_amount: 2.0,
+                walk: None,
             },
             CommissionEarning {
                 earner_id: uuid_from_index(1),
@@ -760,6 +829,7 @@ mod tests {
                 rate: 0.05,
                 cv_amount: 100.0,
                 dollar_amount: 2.0,
+                walk: None,
             },
         ];
 

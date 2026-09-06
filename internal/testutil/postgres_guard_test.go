@@ -9,8 +9,8 @@ import (
 
 // go test counts a skipped test as a success, so a CI run that could not start
 // Postgres would report green having asserted nothing about any Postgres seam
-// (HEU-678). Locally the skip is what lets the suite run without Docker, so an
-// unset CI keeps the old behavior.
+// (HEU-678). An unset CI keeps the old behavior, so the per-test container
+// checks still skip.
 func TestPostgresStartupIsFatal(t *testing.T) {
 	failed := errors.New("start postgres container: cannot connect to the docker daemon")
 

@@ -164,7 +164,7 @@ pub struct BinaryCalculationResult {
 }
 
 /// Which traversal mechanic produced a walk.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WalkKind {
     Level,
@@ -183,7 +183,7 @@ pub enum WalkKind {
 /// settles whether it is independently verifiable. Naming that branch
 /// correctly would break 029; naming it anything else would assert a
 /// reason the code does not support.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StepOutcome {
     /// The node earned.
@@ -196,7 +196,7 @@ pub enum StepOutcome {
 ///
 /// One variant per real exit. A traversal that cannot make one of these
 /// claims emits no walk at all.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WalkStop {
     /// The upline ran out. No node caused this, so `stopped_at` is absent.
@@ -216,12 +216,10 @@ pub enum WalkStop {
 }
 
 /// One visited node and what the walk decided about it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WalkStep {
-    /// The distributor this step visited.
     pub node_id: Uuid,
 
-    /// What the walk decided.
     pub outcome: StepOutcome,
 
     /// Whether this step advanced the walk's level counter. Counter
@@ -243,7 +241,7 @@ pub struct WalkStep {
 }
 
 /// One traversal, and the decisions along it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Walk {
     /// Position in the response's total order. Earnings reference this.
     pub index: u32,
@@ -251,7 +249,6 @@ pub struct Walk {
     /// The distributor whose volume triggered the traversal.
     pub source_id: Uuid,
 
-    /// Which mechanic ran.
     pub kind: WalkKind,
 
     /// Streamline context. Absent for every other calculator.
@@ -278,9 +275,13 @@ pub struct Walk {
 }
 
 /// The plan the engine actually had when it calculated.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlanIdentity {
+    /// The plan's display name, as `CompensationPlan.name`.
     pub name: String,
+
+    /// The plan's schema version, as `CompensationPlan.version`. Not the
+    /// NDJSON protocol version, which moves independently.
     pub version: u32,
     /// `sha256:<64 lowercase hex>`, over the raw `load_plan` bytes.
     pub hash: String,
@@ -300,17 +301,18 @@ pub struct CommissionCalculationResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commission::test_helpers::uuid_from_index;
 
     #[test]
     fn walk_serializes_with_absent_optional_context() {
         let walk = Walk {
-            index: 0,
-            source_id: Uuid::nil(),
+            index: 7,
+            source_id: uuid_from_index(1),
             kind: WalkKind::Level,
             stream_id: None,
             rank: None,
             steps: vec![WalkStep {
-                node_id: Uuid::nil(),
+                node_id: uuid_from_index(2),
                 outcome: StepOutcome::Paid,
                 consumed: true,
                 earner_rank: Some("member".to_string()),
@@ -319,10 +321,8 @@ mod tests {
             stopped_at: None,
         };
         let json = serde_json::to_value(&walk).expect("serialize walk");
-        assert_eq!(json["kind"], "level");
-        assert_eq!(json["stop"], "root_reached");
-        assert_eq!(json["steps"][0]["outcome"], "paid");
-        assert_eq!(json["steps"][0]["consumed"], true);
+        // Wire strings belong to every_stop_and_outcome_value_has_its_wire_name.
+        // This test owns the omission rule only.
         assert!(
             json.get("stream_id").is_none(),
             "absent context must not serialize: {json}"
@@ -335,6 +335,11 @@ mod tests {
             json.get("rank").is_none(),
             "absent rank must be omitted, not null: {json}"
         );
+        // Distinct UUIDs above, so a serializer that swapped these two or
+        // dropped one would fail here rather than pass on a shared nil.
+        assert_eq!(json["index"], 7);
+        assert_eq!(json["source_id"], uuid_from_index(1).to_string());
+        assert_eq!(json["steps"][0]["node_id"], uuid_from_index(2).to_string());
     }
 
     #[test]
@@ -367,50 +372,177 @@ mod tests {
         assert_eq!(back, walk);
     }
 
+    // The three functions below go through an exhaustive `match` rather than
+    // a literal list. Adding a variant then fails to compile until someone
+    // pins its wire string, which a bare array would not do.
+    fn stop_wire_name(stop: WalkStop) -> &'static str {
+        match stop {
+            WalkStop::RootReached => "root_reached",
+            WalkStop::MaxDepthReached => "max_depth_reached",
+            WalkStop::BoundaryReached => "boundary_reached",
+            WalkStop::MaxGenerationsReached => "max_generations_reached",
+        }
+    }
+
+    fn outcome_wire_name(outcome: StepOutcome) -> &'static str {
+        match outcome {
+            StepOutcome::Paid => "paid",
+            StepOutcome::Forfeited => "forfeited",
+        }
+    }
+
+    fn kind_wire_name(kind: WalkKind) -> &'static str {
+        match kind {
+            WalkKind::Level => "level",
+            WalkKind::Generation => "generation",
+        }
+    }
+
     #[test]
     fn every_stop_and_outcome_value_has_its_wire_name() {
         // These strings are persisted by HEU-46. Changing one orphans every
         // row carrying the old value, so pin them rather than trusting the
         // rename_all attribute.
-        let stops = [
-            (WalkStop::RootReached, "root_reached"),
-            (WalkStop::MaxDepthReached, "max_depth_reached"),
-            (WalkStop::BoundaryReached, "boundary_reached"),
-            (WalkStop::MaxGenerationsReached, "max_generations_reached"),
-        ];
-        for (value, name) in stops {
-            assert_eq!(serde_json::to_value(&value).expect("serialize stop"), name);
+        for stop in [
+            WalkStop::RootReached,
+            WalkStop::MaxDepthReached,
+            WalkStop::BoundaryReached,
+            WalkStop::MaxGenerationsReached,
+        ] {
+            assert_eq!(
+                serde_json::to_value(stop).expect("serialize stop"),
+                stop_wire_name(stop)
+            );
         }
 
-        let outcomes = [
-            (StepOutcome::Paid, "paid"),
-            (StepOutcome::Forfeited, "forfeited"),
-        ];
-        for (value, name) in outcomes {
+        for outcome in [StepOutcome::Paid, StepOutcome::Forfeited] {
             assert_eq!(
-                serde_json::to_value(&value).expect("serialize outcome"),
-                name
+                serde_json::to_value(outcome).expect("serialize outcome"),
+                outcome_wire_name(outcome)
+            );
+        }
+
+        for kind in [WalkKind::Level, WalkKind::Generation] {
+            assert_eq!(
+                serde_json::to_value(kind).expect("serialize kind"),
+                kind_wire_name(kind)
+            );
+        }
+    }
+
+    /// The presence rule for `stopped_at`, stated once so the test and any
+    /// future constructor agree: absent for `RootReached`, present for every
+    /// other stop.
+    fn stop_names_a_node(stop: WalkStop) -> bool {
+        match stop {
+            WalkStop::RootReached => false,
+            WalkStop::MaxDepthReached
+            | WalkStop::BoundaryReached
+            | WalkStop::MaxGenerationsReached => true,
+        }
+    }
+
+    #[test]
+    fn stopped_at_serializes_for_every_stop_that_names_a_node() {
+        for stop in [
+            WalkStop::RootReached,
+            WalkStop::MaxDepthReached,
+            WalkStop::BoundaryReached,
+            WalkStop::MaxGenerationsReached,
+        ] {
+            let stopped_at = stop_names_a_node(stop).then(|| uuid_from_index(9));
+            let walk = Walk {
+                index: 0,
+                source_id: uuid_from_index(1),
+                kind: WalkKind::Level,
+                stream_id: None,
+                rank: None,
+                steps: Vec::new(),
+                stop,
+                stopped_at,
+            };
+            let json = serde_json::to_value(&walk).expect("serialize walk");
+            assert_eq!(
+                json.get("stopped_at").is_some(),
+                stop_names_a_node(stop),
+                "stop {:?} got the wrong stopped_at presence: {json}",
+                stop
             );
         }
     }
 
     #[test]
-    fn stopped_at_names_the_node_for_every_stop_but_root() {
+    fn a_populated_walk_round_trips_through_its_own_serialized_form() {
+        // The all-None case is covered above. This is the one with more to go
+        // wrong: every optional present, a non-Level kind, a non-root stop.
         let walk = Walk {
-            index: 0,
-            source_id: Uuid::nil(),
-            kind: WalkKind::Level,
-            stream_id: None,
-            rank: None,
-            steps: Vec::new(),
-            stop: WalkStop::MaxDepthReached,
-            stopped_at: Some(Uuid::nil()),
+            index: 4,
+            source_id: uuid_from_index(1),
+            kind: WalkKind::Generation,
+            stream_id: Some(2),
+            rank: Some("silver".to_string()),
+            steps: vec![WalkStep {
+                node_id: uuid_from_index(3),
+                outcome: StepOutcome::Paid,
+                consumed: true,
+                earner_rank: Some("gold".to_string()),
+            }],
+            stop: WalkStop::MaxGenerationsReached,
+            stopped_at: Some(uuid_from_index(4)),
         };
-        let json = serde_json::to_value(&walk).expect("serialize walk");
-        assert!(
-            json.get("stopped_at").is_some(),
-            "a node-caused stop must name the node: {json}"
+        let json = serde_json::to_string(&walk).expect("serialize walk");
+        let back: Walk = serde_json::from_str(&json).expect("deserialize walk");
+        assert_eq!(back, walk);
+    }
+
+    #[test]
+    fn plan_identity_carries_the_hash_format_plan_hash_go_produces() {
+        // `internal/networkengine/plan_hash.go` emits "sha256:" plus 64
+        // lowercase hex characters, and the commission_runs table has a CHECK
+        // on that prefix. This pins the Rust side of that shared format.
+        let identity = PlanIdentity {
+            name: "Integration Test Plan".to_string(),
+            version: 1,
+            hash: format!("sha256:{}", "a1b2c3d4".repeat(8)),
+        };
+        let json = serde_json::to_value(&identity).expect("serialize identity");
+        assert_eq!(json["name"], "Integration Test Plan");
+        assert_eq!(json["version"], 1);
+
+        let hash = json["hash"].as_str().expect("hash is a string");
+        let hex = hash
+            .strip_prefix("sha256:")
+            .expect("hash must carry the sha256: prefix");
+        assert_eq!(
+            hex.len(),
+            64,
+            "expected 64 hex characters, got {}",
+            hex.len()
         );
+        assert!(
+            hex.chars()
+                .all(|c| c.is_ascii_digit() || c.is_ascii_lowercase()),
+            "hash must be lowercase hex: {hash}"
+        );
+    }
+
+    #[test]
+    fn calculation_result_serializes_its_three_keys() {
+        let result = CommissionCalculationResult {
+            earnings: Vec::new(),
+            walks: Vec::new(),
+            plan: PlanIdentity {
+                name: "Test".to_string(),
+                version: 1,
+                hash: format!("sha256:{}", "0".repeat(64)),
+            },
+        };
+        let json = serde_json::to_value(&result).expect("serialize result");
+        // Empty collections serialize as [], never null. A null here would
+        // read to the Go client as "no walks recorded" rather than "none".
+        assert_eq!(json["earnings"], serde_json::json!([]));
+        assert_eq!(json["walks"], serde_json::json!([]));
+        assert!(json["plan"].is_object());
     }
 
     #[test]

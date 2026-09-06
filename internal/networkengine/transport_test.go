@@ -574,6 +574,65 @@ func TestStdioTransport_CloseBoundsTheWaitForAnOrphanedChild(t *testing.T) {
 	}
 }
 
+// ErrWorkerUnreaped records what was observed when the reap deadline elapsed,
+// not a standing fact. Close abandons the cmd.Wait goroutine on that path and
+// the channel it sends to is buffered, so the reap usually lands moments after
+// Close has already returned. A later Close must observe that rather than
+// replay the earlier verdict (HEU-671).
+//
+// ErrWorkerNotExited is different and must keep replaying: "it did not exit
+// within the grace period" stays true however the process ends afterwards.
+func TestStdioTransport_CloseStopsReportingAnUnreapedWorkerOnceReaped(t *testing.T) {
+	fake := filepath.Join(t.TempDir(), "forking-worker.sh")
+	script := "#!/bin/sh\n" +
+		"IFS= read -r _line\n" +
+		"printf '%s\\n' '{\"id\":\"req-1\",\"ok\":true,\"result\":{\"protocol_version\":1}}'\n" +
+		"sleep 30 &\n" +
+		"while true; do sleep 1; done\n"
+	require.NoError(t, os.WriteFile(fake, []byte(script), 0o755))
+
+	transport, err := NewStdioTransport(fake)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = transport.Close() })
+
+	_, err = transport.Call(context.Background(), "ping", json.RawMessage("null"))
+	require.NoError(t, err)
+
+	first := make(chan error, 1)
+	go func() { first <- transport.Close() }()
+
+	var firstErr error
+	select {
+	case firstErr = <-first:
+	case <-time.After(25 * time.Second):
+		t.Fatal("Close did not return; the wait after the kill is unbounded")
+	}
+
+	// The fixture only produces the bug when the reap deadline actually
+	// elapses. If it did not, there is nothing to re-observe and a pass here
+	// would mean nothing.
+	require.ErrorIs(t, firstErr, ErrWorkerUnreaped,
+		"fixture did not reach the unreaped path; the rest of this test is vacuous")
+	require.ErrorIs(t, firstErr, ErrWorkerNotExited)
+
+	// Give the abandoned cmd.Wait goroutine time to finish and reap. It is
+	// already unblocked by the kill; this is scheduling latency, not the
+	// orphan's own 30s lifetime.
+	require.Eventually(t, func() bool {
+		return !errors.Is(transport.Close(), ErrWorkerUnreaped)
+	}, 10*time.Second, 50*time.Millisecond,
+		"a repeat Close kept reporting a reap failure after the worker was reaped")
+
+	assert.ErrorIs(t, transport.Close(), ErrWorkerNotExited,
+		"the worker still did not exit within the grace period; that stays true")
+
+	// The revised verdict must latch. Reading the waited channel consumes it,
+	// so a third Close that re-derived from scratch would find it empty and
+	// wrongly conclude the reap never landed.
+	assert.NotErrorIs(t, transport.Close(), ErrWorkerUnreaped,
+		"the revised verdict did not latch across repeat calls")
+}
+
 // A worker can exit promptly and still leave a child holding the stderr pipe,
 // and waiting on the worker does not finish until that pipe closes. Without a
 // bound on the post-exit wait, Close sits until the grace period, kills a

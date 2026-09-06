@@ -13,8 +13,8 @@ jobs:
     defaults:
       run:
         # Naming bash explicitly is what turns on pipefail. Without it a step
-        # ending in a pipe reports the last command's status, so a failing
-        # `go test` upstream of `jq` would pass.
+        # ending in a pipe reports only the last command's status, so an
+        # earlier stage can fail and the step still passes.
         shell: bash
     steps:
       - uses: actions/checkout@v4
@@ -33,12 +33,13 @@ jobs:
         run: go build ./...
 
       - name: Test
+        id: test
         run: |
           go test ./... -json | tee "$RUNNER_TEMP/gotest.json" \
-            | jq -j 'select(.Action == "output") | .Output'
+            | jq -j 'select(.Action == "output" or .Action == "build-output") | .Output'
 
       - name: Test summary
-        if: always()
+        if: '!cancelled() && steps.test.conclusion != ''skipped'''
         run: |
           counts=$(jq -r '
             select(.Test != null and (.Test | contains("/") | not))
@@ -47,7 +48,7 @@ jobs:
           ' "$RUNNER_TEMP/gotest.json" | sort | uniq -c)
 
           skipped=$(jq -r '
-            select(.Action == "skip" and .Test != null and (.Test | contains("/") | not))
+            select(.Action == "skip" and .Test != null)
             | "\(.Package)\t\(.Test)"
           ' "$RUNNER_TEMP/gotest.json" | sort)
 
@@ -55,10 +56,10 @@ jobs:
             echo "### Go test results (top-level tests, subtests not counted)"
             echo
             echo '```'
-            echo "$counts"
+            echo "${counts:-none}"
             echo '```'
             echo
-            echo "Skipped tests:"
+            echo "Skipped tests (subtests included):"
             echo
             echo '```'
             echo "${skipped:-none}"
@@ -66,7 +67,7 @@ jobs:
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Upload test record
-        if: always()
+        if: '!cancelled() && steps.test.conclusion != ''skipped'''
         uses: actions/upload-artifact@v7
         with:
           name: go-test-json

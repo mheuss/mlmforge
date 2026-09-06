@@ -309,9 +309,9 @@ Do not `touch` the binary itself. That clears the guard without rebuilding, whic
 
 ## An Absent Worker Binary Fails In CI And Skips Locally
 
-`findWorkerBinary` skips when the worker binary is missing, which is what lets
+`findWorkerBinaryAt` skips when the worker binary is missing, which is what lets
 `go test ./...` work on a machine with no Rust toolchain. When `CI` is set it
-fails instead.
+fails instead. Tests reach it through the `findWorkerBinary` wrapper.
 
 The reason is that `go test` counts a skipped test as a success. CI once ran the
 whole Go suite with no worker binary present and reported green while every test

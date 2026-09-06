@@ -3,6 +3,7 @@ package networkengine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -20,6 +21,29 @@ const expectedProtocolVersion = 1
 // quoted back in an error. The response is wire data and is otherwise
 // unbounded.
 const maxPingResponseInError = 64
+
+// ErrProtocolVersionAbsent reports that the ping response carried no
+// protocol_version key at all.
+var ErrProtocolVersionAbsent = errors.New("worker does not report a protocol version")
+
+// ErrProtocolVersionUnreadable reports that the ping response carried a
+// protocol_version key that yielded no usable version.
+var ErrProtocolVersionUnreadable = errors.New("worker reported a protocol version this client cannot read")
+
+// ProtocolVersionMismatchError reports a worker whose protocol version differs
+// from the one this client was built for. Both numbers are fields so a caller
+// can report them without parsing the message.
+type ProtocolVersionMismatchError struct {
+	Expected int
+	Reported int
+}
+
+func (e *ProtocolVersionMismatchError) Error() string {
+	return fmt.Sprintf(
+		"engine protocol version mismatch: client expects %d, worker reports %d",
+		e.Expected, e.Reported,
+	)
+}
 
 // pingResult decodes the ping response.
 //
@@ -68,10 +92,10 @@ func newCheckedClient(ctx context.Context, transport EngineTransport) (*EngineCl
 	}
 	if version != expectedProtocolVersion {
 		_ = transport.Close()
-		return nil, fmt.Errorf(
-			"engine protocol version mismatch: client expects %d, worker reports %d",
-			expectedProtocolVersion, version,
-		)
+		return nil, &ProtocolVersionMismatchError{
+			Expected: expectedProtocolVersion,
+			Reported: version,
+		}
 	}
 
 	return client, nil
@@ -108,13 +132,13 @@ func (c *EngineClient) Ping(ctx context.Context) (int, error) {
 	// decodes cleanly and still leaves no version.
 	if carriesVersionKey(raw) {
 		return 0, fmt.Errorf(
-			"worker reported a protocol version this client cannot read (responded %s); rebuild the worker binary",
-			renderForError(raw),
+			"%w (responded %s); rebuild the worker binary",
+			ErrProtocolVersionUnreadable, renderForError(raw),
 		)
 	}
 	return 0, fmt.Errorf(
-		"worker does not report a protocol version (responded %s); rebuild the worker binary",
-		renderForError(raw),
+		"%w (responded %s); rebuild the worker binary",
+		ErrProtocolVersionAbsent, renderForError(raw),
 	)
 }
 

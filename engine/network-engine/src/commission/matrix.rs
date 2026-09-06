@@ -76,10 +76,17 @@ pub fn calculate_matrix(
         dynamic_thresholds: None,
     };
 
-    let mut earnings =
-        walk::walk_level_commissions(tree, &config, &eligibility_cache, snapshots, volume, |_| {
-            false
-        })?;
+    // Discarded until Tasks 7-10 assemble the result.
+    let mut _walks = Vec::new();
+    let mut earnings = walk::walk_level_commissions(
+        tree,
+        &config,
+        &eligibility_cache,
+        snapshots,
+        volume,
+        |_| false,
+        &mut _walks,
+    )?;
 
     walk::sort_earnings(&mut earnings);
     Ok(earnings)

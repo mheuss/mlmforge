@@ -208,6 +208,8 @@ pub fn calculate_generation(
                 dynamic_thresholds: None,
             };
 
+            // Discarded until Tasks 7-10 assemble the result.
+            let mut _walks = Vec::new();
             let level_earnings = walk::walk_level_commissions(
                 tree,
                 &level_config,
@@ -215,6 +217,7 @@ pub fn calculate_generation(
                 snapshots,
                 volume,
                 |_| false, // no breakaway boundaries in generation plans
+                &mut _walks,
             )?;
             earnings.extend(level_earnings);
         }

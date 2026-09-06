@@ -51,7 +51,7 @@
                 "rate": 0.05,
                 "cv_amount": 100.0,
                 "dollar_amount": 2.0,
-                "walk": null
+                "walk": 0
             },
             {
                 "earner_id": "00000000-0000-0000-0000-000000000002",
@@ -60,7 +60,7 @@
                 "rate": 0.05,
                 "cv_amount": 100.0,
                 "dollar_amount": 2.0,
-                "walk": null
+                "walk": 0
             }
         ]
     }

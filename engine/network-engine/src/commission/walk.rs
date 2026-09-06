@@ -22,7 +22,10 @@ use crate::tree::navigator::TreeNavigator;
 use crate::tree::node::Node;
 
 use super::is_eligible;
-use super::types::{CalculationError, CommissionEarning, DistributorSnapshot, VolumeSource};
+use super::types::{
+    CalculationError, CommissionEarning, DistributorSnapshot, StepOutcome, VolumeSource, Walk,
+    WalkKind, WalkStep, WalkStop,
+};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -403,16 +406,27 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
     // keeps captures simple — just &HashSet<Uuid>. If a future use
     // case needs node data in the stop decision, widen then.
     should_stop: impl Fn(Uuid) -> bool,
+    // Collector, per the plan's Architectural Decision 1. Walks are pushed
+    // carrying a collector id in `index`; `walk_order::assign_indexes`
+    // replaces it with the real index once every walk in the response exists.
+    walks: &mut Vec<Walk>,
 ) -> Result<Vec<CommissionEarning>, CalculationError> {
     let mut all_earnings = Vec::new();
 
     for source in volume {
         let upline = validate_source(tree, snapshots, source)?;
 
+        let collector_id = walks.len() as u32;
+        let mut steps: Vec<WalkStep> = Vec::new();
+        let mut stop = WalkStop::RootReached;
+        let mut stopped_at: Option<Uuid> = None;
+
         let mut level: u16 = 1;
 
         for node in &upline {
             if level > u16::from(config.max_depth) {
+                stop = WalkStop::MaxDepthReached;
+                stopped_at = Some(node.user_id);
                 break;
             }
 
@@ -439,6 +453,8 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
             let level_u8 = level as u8;
 
             if should_stop(node.user_id) {
+                stop = WalkStop::BoundaryReached;
+                stopped_at = Some(node.user_id);
                 break;
             }
 
@@ -467,6 +483,13 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
                     {
                         continue;
                     }
+                    // No snapshot, so no rank to record.
+                    steps.push(WalkStep {
+                        node_id: node.user_id,
+                        outcome: StepOutcome::Forfeited,
+                        consumed: true,
+                        earner_rank: None,
+                    });
                     level = level.saturating_add(1);
                     continue;
                 }
@@ -520,6 +543,12 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
 
             // Not compressed. Check if eligible.
             if !node_eligible {
+                steps.push(WalkStep {
+                    node_id: node.user_id,
+                    outcome: StepOutcome::Forfeited,
+                    consumed: true,
+                    earner_rank: Some(snapshot.rank.clone()),
+                });
                 level = level.saturating_add(1); // forfeit level
                 continue;
             }
@@ -527,6 +556,12 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
             // Check per-distributor depth limit from active leg tiers
             if let Some(max_personal) = elig.and_then(|e| e.max_earning_depth) {
                 if level > u16::from(max_personal) {
+                    steps.push(WalkStep {
+                        node_id: node.user_id,
+                        outcome: StepOutcome::Forfeited,
+                        consumed: true,
+                        earner_rank: Some(snapshot.rank.clone()),
+                    });
                     level = level.saturating_add(1);
                     continue;
                 }
@@ -541,6 +576,12 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
                 .unwrap_or(0.0);
 
             if rate > 0.0 {
+                steps.push(WalkStep {
+                    node_id: node.user_id,
+                    outcome: StepOutcome::Paid,
+                    consumed: true,
+                    earner_rank: Some(snapshot.rank.clone()),
+                });
                 all_earnings.push(CommissionEarning {
                     earner_id: node.user_id,
                     source_id: source.source_id,
@@ -548,12 +589,36 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
                     rate,
                     cv_amount: source.cv_amount,
                     dollar_amount: source.cv_amount * config.broad_pct * config.multiplier * rate,
-                    walk: None,
+                    walk: Some(collector_id),
+                });
+            } else {
+                // Eligible and uncompressed, but the rate table had no entry
+                // for this rank at this level, so the lookup above fell back
+                // to 0.0. The level is still consumed by the increment below,
+                // so this is a forfeit and not a skip. Omitting this step
+                // leaves steps.len() short of the counter for every zero-rate
+                // node, which compiles and passes every fixture.
+                steps.push(WalkStep {
+                    node_id: node.user_id,
+                    outcome: StepOutcome::Forfeited,
+                    consumed: true,
+                    earner_rank: Some(snapshot.rank.clone()),
                 });
             }
 
             level = level.saturating_add(1);
         }
+
+        walks.push(Walk {
+            index: collector_id,
+            source_id: source.source_id,
+            kind: WalkKind::Level,
+            stream_id: None,
+            rank: None,
+            steps,
+            stop,
+            stopped_at,
+        });
     }
 
     Ok(all_earnings)
@@ -1054,6 +1119,234 @@ mod tests {
         }
     }
 
+    /// Three eligible nodes in a chain, source at the bottom. Reused by the
+    /// walk-collection tests below so they differ only in what they assert.
+    fn eligible_chain(depth: u8) -> (UnilevelTree, HashMap<Uuid, DistributorSnapshot>) {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        for i in 1..depth {
+            tree.add_node(
+                test_uuid(i),
+                test_uuid(i - 1),
+                test_uuid(i - 1),
+                i64::from(i),
+            )
+            .unwrap();
+        }
+        let snapshots = (0..depth)
+            .map(|i| {
+                (
+                    test_uuid(i),
+                    crate::commission::test_helpers::eligible_snapshot(),
+                )
+            })
+            .collect();
+        (tree, snapshots)
+    }
+
+    #[test]
+    fn walk_level_commissions_records_one_walk_per_source() {
+        let (tree, snapshots) = eligible_chain(3);
+        let elig = crate::commission::test_helpers::default_eligibility();
+        let cache = evaluate_eligibility(&snapshots, &tree, &elig);
+        let rank_ordinals = HashMap::from([("associate", 1u16)]);
+        let rate_table = test_rate_table();
+        let config = test_walk_config(&rank_ordinals, &rate_table);
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let mut walks = Vec::new();
+        let earnings = walk_level_commissions(
+            &tree,
+            &config,
+            &cache,
+            &snapshots,
+            &volume,
+            |_| false,
+            &mut walks,
+        )
+        .unwrap();
+
+        assert_eq!(walks.len(), 1, "one volume source is one walk");
+        assert_eq!(walks[0].kind, WalkKind::Level);
+        assert_eq!(walks[0].source_id, test_uuid(2));
+        assert_eq!(walks[0].stop, WalkStop::RootReached);
+        assert!(
+            walks[0].stopped_at.is_none(),
+            "root_reached must not name a node"
+        );
+        assert_eq!(
+            walks[0]
+                .steps
+                .iter()
+                .filter(|s| s.outcome == StepOutcome::Paid)
+                .count(),
+            earnings.len(),
+            "one paid step per earning"
+        );
+    }
+
+    #[test]
+    fn consumed_steps_reconstruct_the_level_counter() {
+        // Two forfeit causes in one walk, because they take different code
+        // paths and a test with only one cannot tell you the other was
+        // recorded.
+        //
+        //   1. An ineligible node forfeits via the `continue` branch.
+        //   2. A node past the rate table's deepest level is eligible and
+        //      uncompressed, reaches the loop tail, gets 0.0 from
+        //      `unwrap_or`, and forfeits via the trailing increment.
+        //
+        // Case 2 needs max_depth > the deepest rate_table key. With the
+        // usual depth-3 table this test passes whether or not the loop-tail
+        // step is recorded, which is the bug it exists to catch.
+        let (tree, mut snapshots) = eligible_chain(5);
+        snapshots.insert(
+            test_uuid(3),
+            DistributorSnapshot {
+                rank: "associate".to_string(),
+                personal_volume: 0.0,
+                status: "active".to_string(),
+                has_order_in_period: true,
+            },
+        );
+
+        let elig = crate::commission::test_helpers::default_eligibility();
+        let cache = evaluate_eligibility(&snapshots, &tree, &elig);
+        let rank_ordinals = HashMap::from([("associate", 1u16)]);
+        let mut rate_table = BTreeMap::new();
+        let mut rates = BTreeMap::new();
+        rates.insert(1, 0.05);
+        rates.insert(2, 0.04);
+        rate_table.insert("associate".to_string(), rates);
+        let mut config = test_walk_config(&rank_ordinals, &rate_table);
+        config.max_depth = 5;
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(4),
+            cv_amount: 100.0,
+        }];
+
+        let mut walks = Vec::new();
+        let earnings = walk_level_commissions(
+            &tree,
+            &config,
+            &cache,
+            &snapshots,
+            &volume,
+            |_| false,
+            &mut walks,
+        )
+        .unwrap();
+
+        let consumed = walks[0].steps.iter().filter(|s| s.consumed).count();
+        let paid = walks[0]
+            .steps
+            .iter()
+            .filter(|s| s.outcome == StepOutcome::Paid)
+            .count();
+        let forfeited = walks[0]
+            .steps
+            .iter()
+            .filter(|s| s.outcome == StepOutcome::Forfeited)
+            .count();
+
+        // Exact counts, not `consumed > paid`. The upline is nodes 3, 2, 1, 0:
+        // node 3 is ineligible and forfeits via the `continue` branch, node 2
+        // earns at level 2, and nodes 1 and 0 sit at levels 3 and 4 where the
+        // rate table has no entry, so they forfeit via the loop tail.
+        //
+        // `consumed > paid` would hold from the ineligible node alone and pass
+        // with the loop-tail step deleted. Verified by deleting it.
+        assert_eq!(paid, 1, "one node earns");
+        assert_eq!(paid, earnings.len(), "a paid step for every earning");
+        assert_eq!(
+            forfeited, 3,
+            "one ineligible forfeit and two zero-rate forfeits"
+        );
+        assert_eq!(
+            consumed, 4,
+            "every visited node consumed a level, so steps reconstruct the counter"
+        );
+        assert_eq!(
+            consumed,
+            earnings.iter().map(|e| e.level).max().unwrap() as usize + 2,
+            "consumed steps must equal the levels the walk actually advanced"
+        );
+    }
+
+    #[test]
+    fn a_depth_capped_walk_does_not_claim_the_root() {
+        let (tree, snapshots) = eligible_chain(4);
+        let elig = crate::commission::test_helpers::default_eligibility();
+        let cache = evaluate_eligibility(&snapshots, &tree, &elig);
+        let rank_ordinals = HashMap::from([("associate", 1u16)]);
+        let rate_table = test_rate_table();
+        let mut config = test_walk_config(&rank_ordinals, &rate_table);
+        config.max_depth = 2;
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let mut walks = Vec::new();
+        walk_level_commissions(
+            &tree,
+            &config,
+            &cache,
+            &snapshots,
+            &volume,
+            |_| false,
+            &mut walks,
+        )
+        .unwrap();
+
+        assert_eq!(walks[0].stop, WalkStop::MaxDepthReached);
+        assert!(
+            walks[0].stopped_at.is_some(),
+            "a node-caused stop must name the node"
+        );
+        assert!(
+            !walks[0]
+                .steps
+                .iter()
+                .any(|s| Some(s.node_id) == walks[0].stopped_at),
+            "stopped_at names the node the walk did NOT visit"
+        );
+    }
+
+    #[test]
+    fn a_boundary_stop_names_the_rejected_node() {
+        let (tree, snapshots) = eligible_chain(4);
+        let elig = crate::commission::test_helpers::default_eligibility();
+        let cache = evaluate_eligibility(&snapshots, &tree, &elig);
+        let rank_ordinals = HashMap::from([("associate", 1u16)]);
+        let rate_table = test_rate_table();
+        let config = test_walk_config(&rank_ordinals, &rate_table);
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let mut walks = Vec::new();
+        walk_level_commissions(
+            &tree,
+            &config,
+            &cache,
+            &snapshots,
+            &volume,
+            |id| id == test_uuid(1),
+            &mut walks,
+        )
+        .unwrap();
+
+        assert_eq!(walks[0].stop, WalkStop::BoundaryReached);
+        assert_eq!(walks[0].stopped_at, Some(test_uuid(1)));
+    }
+
     #[test]
     fn walk_basic_single_level() {
         let mut tree = UnilevelTree::new();
@@ -1082,8 +1375,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result =
-            walk_level_commissions(&tree, &config, &cache, &snapshots, &volume, |_| false).unwrap();
+        let result = walk_level_commissions(
+            &tree,
+            &config,
+            &cache,
+            &snapshots,
+            &volume,
+            |_| false,
+            &mut Vec::new(),
+        )
+        .unwrap();
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].earner_id, test_uuid(0));
@@ -1123,8 +1424,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result =
-            walk_level_commissions(&tree, &config, &cache, &snapshots, &volume, |_| false).unwrap();
+        let result = walk_level_commissions(
+            &tree,
+            &config,
+            &cache,
+            &snapshots,
+            &volume,
+            |_| false,
+            &mut Vec::new(),
+        )
+        .unwrap();
 
         assert_eq!(result.len(), 255, "walk must pay exactly 255 levels");
         assert_eq!(result[0].level, 1);
@@ -1162,8 +1471,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result =
-            walk_level_commissions(&tree, &config, &cache, &snapshots, &volume, |_| false).unwrap();
+        let result = walk_level_commissions(
+            &tree,
+            &config,
+            &cache,
+            &snapshots,
+            &volume,
+            |_| false,
+            &mut Vec::new(),
+        )
+        .unwrap();
 
         assert_eq!(result.len(), 254);
         assert_eq!(result[0].level, 1);
@@ -1202,8 +1519,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result =
-            walk_level_commissions(&tree, &config, &cache, &snapshots, &volume, |_| false).unwrap();
+        let result = walk_level_commissions(
+            &tree,
+            &config,
+            &cache,
+            &snapshots,
+            &volume,
+            |_| false,
+            &mut Vec::new(),
+        )
+        .unwrap();
 
         let deepest: u8 = result[254].level;
         assert_eq!(deepest, 255);
@@ -1239,9 +1564,15 @@ mod tests {
 
         // Stop at node 0 (the root). Only node 1 should earn.
         let stop_set: std::collections::HashSet<Uuid> = [test_uuid(0)].into_iter().collect();
-        let result = walk_level_commissions(&tree, &config, &cache, &snapshots, &volume, |id| {
-            stop_set.contains(&id)
-        })
+        let result = walk_level_commissions(
+            &tree,
+            &config,
+            &cache,
+            &snapshots,
+            &volume,
+            |id| stop_set.contains(&id),
+            &mut Vec::new(),
+        )
         .unwrap();
 
         assert_eq!(result.len(), 1);
@@ -1263,7 +1594,15 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = walk_level_commissions(&tree, &config, &cache, &snapshots, &volume, |_| false);
+        let result = walk_level_commissions(
+            &tree,
+            &config,
+            &cache,
+            &snapshots,
+            &volume,
+            |_| false,
+            &mut Vec::new(),
+        );
         assert!(matches!(result, Err(CalculationError::SourceNotInTree(_))));
     }
 
@@ -1297,8 +1636,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result =
-            walk_level_commissions(&tree, &config, &cache, &snapshots, &volume, |_| false).unwrap();
+        let result = walk_level_commissions(
+            &tree,
+            &config,
+            &cache,
+            &snapshots,
+            &volume,
+            |_| false,
+            &mut Vec::new(),
+        )
+        .unwrap();
 
         // max_depth=2, so only levels 1 and 2 earn
         assert_eq!(result.len(), 2);
@@ -1616,6 +1963,7 @@ mod tests {
             &snapshots,
             &volume,
             |_| false,
+            &mut Vec::new(),
         )
         .unwrap();
 
@@ -1669,6 +2017,7 @@ mod tests {
             &snapshots,
             &volume,
             |_| false,
+            &mut Vec::new(),
         )
         .unwrap();
 
@@ -1742,6 +2091,7 @@ mod tests {
             &snapshots,
             &volume,
             |_| false,
+            &mut Vec::new(),
         )
         .unwrap();
 
@@ -1801,6 +2151,7 @@ mod tests {
             &snapshots,
             &volume,
             |_| false,
+            &mut Vec::new(),
         )
         .unwrap();
 

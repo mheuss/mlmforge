@@ -338,6 +338,36 @@ mod tests {
     }
 
     #[test]
+    fn a_walk_round_trips_through_its_own_serialized_form() {
+        // The omitted-optional case is the common one: every level walk omits
+        // stream_id and rank, and every root_reached walk omits stopped_at.
+        //
+        // This round-trips without `#[serde(default)]` because serde treats
+        // `Option<T>` specially — an absent field deserializes to `None` on
+        // its own. `default` would be required if any of these stopped being
+        // an `Option` while keeping `skip_serializing_if`, which is the
+        // change this test exists to catch.
+        let walk = Walk {
+            index: 3,
+            source_id: Uuid::nil(),
+            kind: WalkKind::Level,
+            stream_id: None,
+            rank: None,
+            steps: vec![WalkStep {
+                node_id: Uuid::nil(),
+                outcome: StepOutcome::Forfeited,
+                consumed: true,
+                earner_rank: None,
+            }],
+            stop: WalkStop::RootReached,
+            stopped_at: None,
+        };
+        let json = serde_json::to_string(&walk).expect("serialize walk");
+        let back: Walk = serde_json::from_str(&json).expect("deserialize walk");
+        assert_eq!(back, walk);
+    }
+
+    #[test]
     fn every_stop_and_outcome_value_has_its_wire_name() {
         // These strings are persisted by HEU-46. Changing one orphans every
         // row carrying the old value, so pin them rather than trusting the

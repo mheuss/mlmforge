@@ -25,12 +25,9 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      # SCRATCH, HEU-660: commented out on purpose and restored in the next
-      # commit. With no worker binary present, the guard must fail the run
-      # rather than skip 40 tests and report success.
-      # - name: Build worker
-      #   working-directory: engine
-      #   run: cargo build --package network-engine-worker
+      - name: Build worker
+        working-directory: engine
+        run: cargo build --package network-engine-worker
 
       - name: Build
         run: go build ./...

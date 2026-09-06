@@ -196,6 +196,13 @@ pub enum StepOutcome {
 ///
 /// One variant per real exit. A traversal that cannot make one of these
 /// claims emits no walk at all.
+///
+/// **Precedence, when more than one would fire at the same node:**
+/// `MaxDepthReached`, then `BoundaryReached`, then `MaxGenerationsReached`.
+/// That mirrors the order the checks run in `walk_level_commissions`, where
+/// the depth break precedes the predicate break. It is stated here because
+/// it is wire-visible, which makes reordering those checks a contract change
+/// rather than a silent shift in what the response says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WalkStop {
@@ -286,11 +293,19 @@ pub struct Walk {
     /// How the traversal ended.
     pub stop: WalkStop,
 
-    /// The node that caused the stop.
+    /// The node the walk stopped at, meaning the one it did **not** visit.
     ///
-    /// Present for every stop except `RootReached`, where the upline simply
-    /// ran out and naming a node would be false. Absent means no node caused
-    /// it, never that the node is unknown.
+    /// Present for every stop except `RootReached`, where the upline ran out
+    /// and naming a node would be false. Absent means no node caused the
+    /// stop, never that the node is unknown.
+    ///
+    /// **It is never in `steps`.** All three node-caused breaks fire at the
+    /// top of the loop, before the node is decided about, so this names the
+    /// next ancestor the walk would have visited. Joining `stopped_at`
+    /// against the step list finds nothing, and that is correct. Naming the
+    /// last visited node instead would repeat the final entry of `steps`,
+    /// and a field that duplicates another field is worse than absent in an
+    /// audit record.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stopped_at: Option<Uuid>,
 }

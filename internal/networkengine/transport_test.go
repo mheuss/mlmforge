@@ -301,9 +301,7 @@ const workerBinaryPath = "../../engine/target/debug/network-engine-worker"
 // engineSourceRoot is the Rust workspace whose sources back that binary.
 const engineSourceRoot = "../../engine"
 
-// workerFreshness caches one staleness verdict. The walk is the expensive part
-// of findWorkerBinaryAt, so it runs once per instance and every later caller
-// reads the cached answer.
+// workerFreshness caches one staleness verdict, computed on first use.
 //
 // The verdict belongs to the binary and source root it was computed from. A
 // caller asking about a different pair needs its own instance, or it will be
@@ -392,8 +390,8 @@ type workerBinaryReporter interface {
 // engine code that is no longer on the branch, and a green Go suite then
 // means nothing (HEU-615).
 //
-// Each terminal call is followed by a return, because a fake reporter does not
-// abort the way testing.T does.
+// Each terminal call is followed by a return. A reporter that does not abort
+// would otherwise fall through into the next branch.
 func findWorkerBinaryAt(r workerBinaryReporter, binPath, sourceRoot string, freshness *workerFreshness) string {
 	r.Helper()
 	if _, err := os.Stat(binPath); err != nil {
@@ -503,6 +501,33 @@ func TestFindWorkerBinaryAt_FailsWhenBinaryOlderThanSources(t *testing.T) {
 	assert.False(t, reporter.skipped, "expected no skip; messages: %v", reporter.messages)
 	require.Len(t, reporter.messages, 1)
 	assert.Contains(t, reporter.messages[0], "is older than")
+}
+
+func TestFindWorkerBinaryAt_FailsWhenBinaryPathCannotBeStatted(t *testing.T) {
+	t.Setenv("CI", "")
+	root := t.TempDir()
+	notADir := filepath.Join(root, "file")
+	require.NoError(t, os.WriteFile(notADir, []byte("x"), 0o644))
+	reporter := &fakeReporter{}
+
+	got := findWorkerBinaryAt(reporter, filepath.Join(notADir, "child"), root, &workerFreshness{})
+
+	assert.Empty(t, got)
+	assert.True(t, reporter.errored, "expected a require failure; messages: %v", reporter.messages)
+	assert.False(t, reporter.skipped, "a stat error must not skip; messages: %v", reporter.messages)
+	assert.Len(t, reporter.messages, 1)
+}
+
+func TestFindWorkerBinaryAt_FailsWhenFreshnessCannotBeDetermined(t *testing.T) {
+	root := t.TempDir()
+	binary := filepath.Join(root, "network-engine-worker")
+	require.NoError(t, os.WriteFile(binary, []byte("stub"), 0o755))
+	reporter := &fakeReporter{}
+
+	got := findWorkerBinaryAt(reporter, binary, filepath.Join(root, "missing"), &workerFreshness{})
+
+	assert.Empty(t, got, "an undetermined verdict must not yield a usable path")
+	assert.True(t, reporter.errored, "expected a require failure; messages: %v", reporter.messages)
 }
 
 // TestFindWorkerBinaryAt_FreshnessIsPerInstance pins the property that broke

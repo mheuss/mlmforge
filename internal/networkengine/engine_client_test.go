@@ -462,6 +462,7 @@ func TestEngineClient_PingDistinguishesAnUnreadableVersion(t *testing.T) {
 	_, err := client.Ping(context.Background())
 	require.ErrorIs(t, err, ErrProtocolVersionUnreadable)
 	assert.Contains(t, err.Error(), `"2"`, "the error should quote what it saw")
+	assert.Contains(t, err.Error(), "rebuild", "the error should say what to do")
 }
 
 // An explicit null decodes cleanly and leaves no version, so the decode result
@@ -520,9 +521,8 @@ func TestEngineClient_PingDoesNotTruncateAtTheBoundary(t *testing.T) {
 	assert.NotContains(t, err.Error(), "...")
 }
 
-// Rejection messages, pinned whole. These compare the entire string,
-// so a reworded message fails here even where a check on the failure's class
-// would still pass.
+// Rejection messages, pinned whole. These compare the entire string, so a
+// reworded message fails here.
 func TestEngineClient_RejectionMessagesAreStable(t *testing.T) {
 	t.Run("absent key", func(t *testing.T) {
 		mock := &mockTransport{response: json.RawMessage(`"pong"`)}

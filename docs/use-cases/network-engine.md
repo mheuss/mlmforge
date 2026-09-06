@@ -592,7 +592,7 @@ Cross-reference UC-NET-007, the other `deserialize_with` serde-edge entry, and `
 ### UC-NET-018: Telling an absent JSON key from an explicit null
 
 **Added:** Unreleased (HEU-640)
-**Files:** `internal/networkengine/engine_client.go` (`pingResult`, `carriesVersionKey`, `renderForError`, `Ping`), `internal/networkengine/engine_client_test.go` (the ping rejection tests)
+**Files:** `internal/networkengine/engine_client.go` (`pingResult`, `carriesVersionKey`, `renderForError`, `Ping`, `ErrProtocolVersionAbsent`, `ErrProtocolVersionUnreadable`), `internal/networkengine/engine_client_test.go` (the ping rejection tests)
 
 **Problem:** The client refuses a worker that does not report a protocol version. Two different workers reach that outcome and they need two different remedies. An old worker answers `ping` with the bare string `"pong"` and has to be rebuilt. A worker that sends `{"protocol_version": null}`, or a value that will not decode, is reporting something the client cannot read.
 
@@ -617,16 +617,16 @@ if err := json.Unmarshal(raw, &result); err == nil && result.ProtocolVersion != 
 // Nil pointer, two causes. Only the raw bytes tell them apart.
 if carriesVersionKey(raw) {
 	return 0, fmt.Errorf(
-		"worker reported a protocol version this client cannot read (responded %s); rebuild the worker binary",
-		renderForError(raw),
+		"%w (responded %s); rebuild the worker binary",
+		ErrProtocolVersionUnreadable, renderForError(raw),
 	)
 }
 return 0, fmt.Errorf(
-	"worker does not report a protocol version (responded %s); rebuild the worker binary",
-	renderForError(raw),
+	"%w (responded %s); rebuild the worker binary",
+	ErrProtocolVersionAbsent, renderForError(raw),
 )
 ```
 
-**Notes:** Quoting the payload back is what makes the message actionable, and it is also the risk. The response is wire data and otherwise unbounded, so `renderForError` caps it. The cap is a byte count and the payload may hold multi-byte runes, so the cut can land mid-rune. `strings.ToValidUTF8` drops the partial rune, which keeps the text readable wherever it is logged. An empty payload renders as a quoted empty string rather than nothing, so the message never trails off.
+**Notes:** Quoting the payload back is what makes the message actionable, and it is also the risk. The response is wire data and otherwise unbounded, so `renderForError` caps it. The cap is a byte count and the payload may hold multi-byte runes, so the cut can land mid-rune. `strings.ToValidUTF8` drops the partial rune, which keeps the text readable wherever it is logged. An empty payload renders as a quoted empty string rather than nothing, so the message never trails off. The two causes are also matchable without reading the text. `ErrProtocolVersionAbsent` and `ErrProtocolVersionUnreadable` are the sentinels, and `%w` records each one, so `errors.Is` tells them apart. The format string still renders the payload, so the message a reader sees is unchanged.
 
 Related serde and JSON edge entries: UC-NET-007 covers a Rust-side decode edge, and UC-NET-017 covers null versus absent on the Rust side of this same wire. This entry is the Go side of that distinction, reached for the opposite reason. UC-NET-017 widens null to empty so a call can succeed. This one keeps null and absent apart so a failure can say which it was.

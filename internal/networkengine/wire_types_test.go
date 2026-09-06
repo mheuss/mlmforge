@@ -179,10 +179,10 @@ func TestVerifyPlanIdentity(t *testing.T) {
 	const good = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
 	const other = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
 
-	result := CommissionCalculationResultDTO{Plan: PlanIdentityDTO{Hash: good}}
-	assert.NoError(t, VerifyPlanIdentity(result, good))
+	identity := PlanIdentityDTO{Hash: good}
+	assert.NoError(t, VerifyPlanIdentity(identity, good))
 
-	err := VerifyPlanIdentity(result, other)
+	err := VerifyPlanIdentity(identity, other)
 	require.Error(t, err)
 
 	// Typed, so a caller can tell "do not persist" from "retry" with errors.As.

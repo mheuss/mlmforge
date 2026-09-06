@@ -81,11 +81,14 @@ func (e *PlanIdentityMismatchError) Error() string {
 // Nothing calls this yet. HEU-592's commission runner owns the wiring. It is
 // here rather than there because the comparison can be tested now and the
 // runner does not exist. This is not dead code.
-func VerifyPlanIdentity(result CommissionCalculationResultDTO, expectedHash string) error {
-	if result.Plan.Hash != expectedHash {
+// Takes the identity rather than the whole result, so HEU-592's runner can
+// verify before deciding whether to hold the earnings at all. Narrowed while
+// there is no caller; widening later is easy, narrowing later is not.
+func VerifyPlanIdentity(got PlanIdentityDTO, expectedHash string) error {
+	if got.Hash != expectedHash {
 		return &PlanIdentityMismatchError{
 			Expected: expectedHash,
-			Reported: result.Plan.Hash,
+			Reported: got.Hash,
 		}
 	}
 	return nil

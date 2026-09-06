@@ -128,6 +128,10 @@ pub(crate) fn count_generations_upward_instrumented(
         Err(_) => return Vec::new(),
     };
 
+    debug_assert!(
+        walks.len() <= u32::MAX as usize,
+        "walk collector exceeded u32 before narrowing"
+    );
     let collector_id = walks.len() as u32;
     let mut steps: Vec<WalkStep> = Vec::new();
     let mut stop = WalkStop::RootReached;
@@ -200,7 +204,6 @@ pub(crate) fn count_generations_upward_instrumented(
 ///
 /// For SameRank mode, callers pre-filter `gen_entries` to earners at
 /// exactly the target ordinal before calling this function.
-#[allow(clippy::too_many_arguments)]
 fn emit_generation_earnings(
     gen_entries: &[GenerationEntry],
     source: &VolumeSource,

@@ -13,7 +13,18 @@ import (
 // It is shared across all three shapes, so bumping it relabels rows whose
 // shape did not change. That is tolerable only because kind identifies the
 // shape independently — a reader keys off kind first, then version.
-const detailVersion = 1
+//
+// Bumped to 2 by HEU-641, which added `walk` to commission_earning. The
+// version has to move for that field to be readable: `walk` is serialized
+// even when null, precisely so an unrecorded walk stays distinct from a row
+// written before the field existed. Without a version bump those two are the
+// same bytes and the distinction the field was designed for is unrecoverable.
+//
+// Relabelling binary_pairing and board_cycle costs nothing today. Nothing in
+// production constructs a CommissionResultInput yet, so no v1 row exists
+// outside test fixtures. That is why this is a one-line change now and an
+// unfixable one after HEU-46 starts writing rows.
+const detailVersion = 2
 
 // The kind values stored in every detail object. A version alone cannot say
 // which shape a row is, and the structure column cannot either: it holds a

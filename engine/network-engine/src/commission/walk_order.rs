@@ -44,7 +44,7 @@ use super::types::{
 /// A source in `walks` that is absent from `volume` sorts last rather than
 /// panicking. That should not happen, and if it does the walk is still
 /// ordered deterministically rather than by chance.
-pub(crate) fn assign_indexes(
+fn assign_indexes(
     walks: &mut [Walk],
     volume: &[VolumeSource],
     rank_ordinals: &HashMap<&str, u16>,

@@ -68,8 +68,9 @@ second, and the first of those names its field as the thing that makes the
 condition recoverable.
 
 A diagnostic string is not a value to act on. The two protocol-version sentinels
-both quote the offending wire payload into their message, and they are still
-sentinels, because nothing branches on that payload.
+are fixed strings; the call site wraps each one in a message that quotes the
+offending wire payload. They are still sentinels, because nothing branches on
+that payload.
 
 Wrap with `%w` rather than returning the bare sentinel, so the message keeps its
 context while `errors.Is` still reaches the sentinel.

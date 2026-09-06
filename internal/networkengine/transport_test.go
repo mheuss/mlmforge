@@ -326,7 +326,8 @@ var packageWorkerFreshness workerFreshness
 // staleWorkerBinary returns the newest Rust source under sourceRoot that
 // postdates binPath, or "" when the binary is current. Sources under
 // sourceRoot/target are skipped, because cargo regenerates them during the
-// same build that produces the binary.
+// same build that produces the binary. Crate integration tests are skipped
+// too, because the binary is not built from them.
 func staleWorkerBinary(binPath, sourceRoot string) (string, error) {
 	binary, err := os.Stat(binPath)
 	if err != nil {
@@ -342,7 +343,7 @@ func staleWorkerBinary(binPath, sourceRoot string) (string, error) {
 			return err
 		}
 		if entry.IsDir() {
-			if path == generated {
+			if path == generated || isCrateIntegrationTests(path) {
 				return fs.SkipDir
 			}
 			return nil
@@ -363,6 +364,26 @@ func staleWorkerBinary(binPath, sourceRoot string) (string, error) {
 		return "", walkErr
 	}
 	return newest, nil
+}
+
+// isCrateIntegrationTests reports whether path is a Rust crate's integration
+// test directory, meaning a "tests" directory sitting beside that crate's
+// Cargo.toml. Cargo compiles those files as separate crates linked into their
+// own test binaries, never into the worker, so the worker can never be stale
+// against them. Counting them produced a failure no rebuild could clear
+// (HEU-634).
+//
+// The Cargo.toml check is what keeps a tests directory under src/ in the walk.
+// That one is a unit-test module, declared with `mod tests;` and compiled into
+// the crate, so it is a real input to the binary. Matching on the directory
+// name alone would skip it and silently re-open the false green the guard
+// exists to close (HEU-615).
+func isCrateIntegrationTests(path string) bool {
+	if filepath.Base(path) != "tests" {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(filepath.Dir(path), "Cargo.toml"))
+	return err == nil
 }
 
 // findWorkerBinary returns the path to the compiled Rust worker binary.
@@ -580,6 +601,15 @@ func writeWorkerBinary(t *testing.T, dir string, mod time.Time) string {
 	return path
 }
 
+// writeCrateRoot marks rel under root as a Rust crate root by writing a
+// Cargo.toml there. staleWorkerBinary keys its tests/ exclusion on that file.
+func writeCrateRoot(t *testing.T, root, rel string) {
+	t.Helper()
+	dir := filepath.Join(root, rel)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "Cargo.toml"), []byte("[package]\n"), 0o644))
+}
+
 func TestStaleWorkerBinary_ReportsSourceNewerThanBinary(t *testing.T) {
 	root := t.TempDir()
 	built := time.Now().Add(-time.Hour)
@@ -625,6 +655,56 @@ func TestStaleWorkerBinary_ErrorsWhenBinaryIsMissing(t *testing.T) {
 	_, err := staleWorkerBinary(filepath.Join(root, "absent"), root)
 
 	require.Error(t, err)
+}
+
+// Cargo compiles <crate>/tests/*.rs as separate crates linked into their own
+// test binaries, never into network-engine-worker. Counting them reported the
+// worker as stale against files it cannot depend on, and cargo had nothing to
+// relink to clear it (HEU-634).
+func TestStaleWorkerBinary_IgnoresCrateIntegrationTests(t *testing.T) {
+	root := t.TempDir()
+	built := time.Now().Add(-time.Hour)
+	binary := writeWorkerBinary(t, root, built)
+	writeCrateRoot(t, root, "network-engine")
+	writeRustSource(t, root, "network-engine/tests/rank_evaluator.rs", built.Add(time.Minute))
+
+	newer, err := staleWorkerBinary(binary, root)
+
+	require.NoError(t, err)
+	assert.Empty(t, newer)
+}
+
+// The HEU-615 behavior the exclusion must not disturb: a crate source the
+// binary is built from still reports stale.
+func TestStaleWorkerBinary_ReportsCrateSourceNewerThanBinary(t *testing.T) {
+	root := t.TempDir()
+	built := time.Now().Add(-time.Hour)
+	binary := writeWorkerBinary(t, root, built)
+	writeCrateRoot(t, root, "network-engine")
+	edited := writeRustSource(t, root, "network-engine/src/lib.rs", built.Add(time.Minute))
+
+	newer, err := staleWorkerBinary(binary, root)
+
+	require.NoError(t, err)
+	assert.Equal(t, edited, newer)
+}
+
+// A tests/ directory under src/ is a unit-test module, declared with
+// `mod tests;` and compiled into the crate. It is an input to the binary.
+// Excluding every directory named tests would skip it and silently re-open the
+// false green HEU-615 exists to close, which is why the exclusion is anchored
+// to the crate root rather than to the directory name alone.
+func TestStaleWorkerBinary_ReportsUnitTestModuleUnderSrc(t *testing.T) {
+	root := t.TempDir()
+	built := time.Now().Add(-time.Hour)
+	binary := writeWorkerBinary(t, root, built)
+	writeCrateRoot(t, root, "network-engine")
+	edited := writeRustSource(t, root, "network-engine/src/commission/tests/mod.rs", built.Add(time.Minute))
+
+	newer, err := staleWorkerBinary(binary, root)
+
+	require.NoError(t, err)
+	assert.Equal(t, edited, newer)
 }
 
 // A worker that keeps writing after answering must not be able to wedge Close.

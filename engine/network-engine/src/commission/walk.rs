@@ -207,10 +207,20 @@ pub(crate) fn validate_source<'t, T: TreeNavigator>(
 /// tiebreaker ensures deterministic ordering when multiple tiers emit
 /// earnings for the same (earner_id, source_id) pair.
 ///
-/// The walk tiebreaker covers the case level cannot: stairstep runs two
-/// walks over the same source, and one ancestor can earn from both at the
-/// same level. An unrecorded walk sorts first, since `Option`'s own `Ord`
-/// puts `None` before any `Some`.
+/// The walk key covers a case level cannot: stairstep runs two walks over
+/// the same source, and one ancestor can earn from both at the same level.
+/// An unrecorded walk sorts first, since `Option`'s own `Ord` puts `None`
+/// before any `Some`.
+///
+/// **Inert until walks are assigned.** Every earning carries `walk: None`
+/// today, so this key resolves nothing and every pre-existing tie survives.
+/// It starts doing work when the calculators populate indexes.
+///
+/// The comparator is not total even then. Streamline runs one walk per
+/// stream over the same volume, and a user can hold positions on more than
+/// one stream, so one earner can tie on all four keys. Tie order therefore
+/// rests on `sort_by` being stable. Do not swap it for `sort_unstable_by`:
+/// the output is a persisted audit record and the ties are real.
 pub(crate) fn sort_earnings(earnings: &mut [CommissionEarning]) {
     earnings.sort_by(|a, b| {
         a.earner_id
@@ -774,6 +784,41 @@ mod tests {
         sort_earnings(&mut earnings);
         assert_eq!(earnings[0].walk, Some(1));
         assert_eq!(earnings[1].walk, Some(3));
+    }
+
+    #[test]
+    fn sort_earnings_ranks_level_above_walk() {
+        // Every other sort test holds one of the two constant, so the suite
+        // passes with these two keys swapped. Both vary here, in opposition:
+        // level says the first row sorts last, walk says it sorts first.
+        // Level must win.
+        let mut earnings = vec![
+            CommissionEarning {
+                earner_id: uuid_from_index(1),
+                source_id: uuid_from_index(2),
+                level: 2,
+                rate: 0.05,
+                cv_amount: 100.0,
+                dollar_amount: 5.0,
+                walk: Some(1),
+            },
+            CommissionEarning {
+                earner_id: uuid_from_index(1),
+                source_id: uuid_from_index(2),
+                level: 1,
+                rate: 0.05,
+                cv_amount: 100.0,
+                dollar_amount: 5.0,
+                walk: Some(5),
+            },
+        ];
+        sort_earnings(&mut earnings);
+        assert_eq!(
+            (earnings[0].level, earnings[0].walk),
+            (1, Some(5)),
+            "level must outrank walk"
+        );
+        assert_eq!((earnings[1].level, earnings[1].walk), (2, Some(1)));
     }
 
     #[test]

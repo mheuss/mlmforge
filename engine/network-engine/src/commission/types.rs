@@ -468,7 +468,7 @@ mod tests {
     }
 
     #[test]
-    fn earning_walk_serializes_as_explicit_null_when_absent() {
+    fn earning_walk_serializes_as_null_when_absent_and_a_number_when_set() {
         // The opposite rule to the Walk optionals, deliberately. There, an
         // absent key means the fact was never established. Here, null means
         // the fact IS that no walk was recorded, which stairstep Walk 2

@@ -384,6 +384,9 @@ fn walk_single_overrides(
                         rate,
                         cv_amount: group_vol,
                         dollar_amount: group_vol * broad_pct * multiplier * rate,
+                        // Permanent in protocol v2. This is Walk 2, which
+                        // design 029 excludes from instrumentation, so the
+                        // null is a recorded gap rather than a placeholder.
                         walk: None,
                     });
                 } else {
@@ -398,6 +401,7 @@ fn walk_single_overrides(
                             rate,
                             cv_amount: group_vol,
                             dollar_amount: group_vol * broad_pct * multiplier * rate,
+                            // Walk 2. Permanently null in v2, see above.
                             walk: None,
                         });
                     }
@@ -437,6 +441,7 @@ fn walk_single_overrides(
                     rate,
                     cv_amount: group_vol,
                     dollar_amount: group_vol * broad_pct * multiplier * rate,
+                    // Walk 2. Permanently null in v2, per design 029.
                     walk: None,
                 });
 
@@ -524,6 +529,7 @@ fn walk_multi_tier_overrides(
                     rate: tier.rate,
                     cv_amount: group_vol,
                     dollar_amount: group_vol * multiplier * tier.rate,
+                    // Walk 2. Permanently null in v2, per design 029.
                     walk: None,
                 });
             }

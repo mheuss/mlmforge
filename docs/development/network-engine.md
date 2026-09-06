@@ -229,7 +229,7 @@ Pattern: `request_raw` exists for the same reason on the request side. If you fi
 The Rust contract test asserts the whole `result` subtree with `assert_eq!` on `serde_json::Value`. That comparison treats integers and floats as different types: `Number::Float(500.0) != Number::PosInt(500)`. So a fixture's `expected_response.result` must use the same numeric form the worker emits.
 
 - `f64` fields carry a decimal: `dollar_amount: 500.0`, `rate: 0.1`, `left: 0.0`. Never `500` or `0`.
-- Integer fields (`u8`/`u32`) are bare: `level: 1`, `cycle_number: 1`, and map values like `updated_cycle_counts`. Never `1.0`.
+- Integer fields (`u8`/`u32`) are bare: `level: 1`, `walk: 0`, `cycle_number: 1`, and map values like `updated_cycle_counts`. Never `1.0`. A null `walk` is `null`, which sidesteps the trap entirely; a recorded one does not.
 
 The Go harness uses `assert.JSONEq`, which coerces every JSON number to `float64`. It will not catch an int/float mismatch. Only the Rust side will. Match serde's output and both pass.
 

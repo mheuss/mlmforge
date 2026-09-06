@@ -301,11 +301,29 @@ const workerBinaryPath = "../../engine/target/debug/network-engine-worker"
 // engineSourceRoot is the Rust workspace whose sources back that binary.
 const engineSourceRoot = "../../engine"
 
-var (
-	workerFreshnessOnce  sync.Once
-	workerFreshnessNewer string
-	workerFreshnessErr   error
-)
+// workerFreshness caches one staleness verdict. The walk is the expensive part
+// of findWorkerBinaryAt, so it runs once per instance and every later caller
+// reads the cached answer.
+//
+// The verdict belongs to the binary and source root it was computed from. A
+// caller asking about a different pair needs its own instance, or it will be
+// handed an answer to a question it did not ask.
+type workerFreshness struct {
+	once  sync.Once
+	newer string
+	err   error
+}
+
+// check reports the newest source under sourceRoot that postdates binPath.
+func (w *workerFreshness) check(binPath, sourceRoot string) (string, error) {
+	w.once.Do(func() {
+		w.newer, w.err = staleWorkerBinary(binPath, sourceRoot)
+	})
+	return w.newer, w.err
+}
+
+// packageWorkerFreshness is the verdict for workerBinaryPath.
+var packageWorkerFreshness workerFreshness
 
 // staleWorkerBinary returns the newest Rust source under sourceRoot that
 // postdates binPath, or "" when the binary is current. Sources under
@@ -350,17 +368,9 @@ func staleWorkerBinary(binPath, sourceRoot string) (string, error) {
 }
 
 // findWorkerBinary returns the path to the compiled Rust worker binary.
-//
-// An absent binary skips locally and fails when CI is set, because a skip in
-// CI reports as a pass and the run then proves nothing (HEU-660). Any other
-// stat error fails, because a skip on a permission or I/O error is
-// indistinguishable from a pass. A binary older
-// than the Rust sources fails too: tests that run against a stale worker
-// assert about engine code that is no longer on the branch, and a green Go
-// suite then means nothing (HEU-615).
 func findWorkerBinary(t *testing.T) string {
 	t.Helper()
-	return findWorkerBinaryAt(t, workerBinaryPath, engineSourceRoot)
+	return findWorkerBinaryAt(t, workerBinaryPath, engineSourceRoot, &packageWorkerFreshness)
 }
 
 // workerBinaryReporter is the testing.T surface findWorkerBinaryAt needs.
@@ -372,11 +382,24 @@ type workerBinaryReporter interface {
 	FailNow()
 }
 
-func findWorkerBinaryAt(r workerBinaryReporter, binPath, sourceRoot string) string {
+// findWorkerBinaryAt returns binPath once it is present and current.
+//
+// An absent binary skips locally and fails when CI is set, because a skip in
+// CI reports as a pass and the run then proves nothing (HEU-660). Any other
+// stat error fails, because a skip on a permission or I/O error is
+// indistinguishable from a pass. A binary older than the sources under
+// sourceRoot fails too: tests that run against a stale worker assert about
+// engine code that is no longer on the branch, and a green Go suite then
+// means nothing (HEU-615).
+//
+// Each terminal call is followed by a return, because a fake reporter does not
+// abort the way testing.T does.
+func findWorkerBinaryAt(r workerBinaryReporter, binPath, sourceRoot string, freshness *workerFreshness) string {
 	r.Helper()
 	if _, err := os.Stat(binPath); err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
 			require.NoError(r, err, "could not stat worker binary %s", binPath)
+			return ""
 		}
 		if ci := os.Getenv("CI"); ci != "" {
 			r.Fatalf(
@@ -388,14 +411,15 @@ func findWorkerBinaryAt(r workerBinaryReporter, binPath, sourceRoot string) stri
 		}
 		return ""
 	}
-	workerFreshnessOnce.Do(func() {
-		workerFreshnessNewer, workerFreshnessErr = staleWorkerBinary(binPath, sourceRoot)
-	})
-	require.NoError(r, workerFreshnessErr, "could not tell whether %s is current", binPath)
-	if workerFreshnessNewer != "" {
+	newer, err := freshness.check(binPath, sourceRoot)
+	if err != nil {
+		require.NoError(r, err, "could not tell whether %s is current", binPath)
+		return ""
+	}
+	if newer != "" {
 		r.Fatalf(
 			"worker binary %s is older than %s (run 'cargo build --workspace' in engine/ before the Go suite)",
-			binPath, workerFreshnessNewer,
+			binPath, newer,
 		)
 		return ""
 	}
@@ -403,9 +427,12 @@ func findWorkerBinaryAt(r workerBinaryReporter, binPath, sourceRoot string) stri
 }
 
 // fakeReporter records which terminal method findWorkerBinaryAt reached.
+// Errorf is tracked apart from Fatalf so a test can tell a require failure
+// from the deliberate Fatalf the code under test chose.
 type fakeReporter struct {
 	skipped  bool
 	failed   bool
+	errored  bool
 	messages []string
 }
 
@@ -422,7 +449,7 @@ func (f *fakeReporter) Fatalf(format string, args ...any) {
 }
 
 func (f *fakeReporter) Errorf(format string, args ...any) {
-	f.failed = true
+	f.errored = true
 	f.messages = append(f.messages, fmt.Sprintf(format, args...))
 }
 
@@ -431,8 +458,9 @@ func (f *fakeReporter) FailNow() { f.failed = true }
 func TestFindWorkerBinaryAt_SkipsWhenBinaryAbsentAndCIUnset(t *testing.T) {
 	t.Setenv("CI", "")
 	reporter := &fakeReporter{}
+	root := t.TempDir()
 
-	findWorkerBinaryAt(reporter, filepath.Join(t.TempDir(), "absent"), engineSourceRoot)
+	findWorkerBinaryAt(reporter, filepath.Join(root, "absent"), root, &workerFreshness{})
 
 	assert.True(t, reporter.skipped, "expected a skip; messages: %v", reporter.messages)
 	assert.False(t, reporter.failed, "expected no failure; messages: %v", reporter.messages)
@@ -441,9 +469,10 @@ func TestFindWorkerBinaryAt_SkipsWhenBinaryAbsentAndCIUnset(t *testing.T) {
 func TestFindWorkerBinaryAt_FailsWhenBinaryAbsentAndCISet(t *testing.T) {
 	t.Setenv("CI", "true")
 	reporter := &fakeReporter{}
-	absent := filepath.Join(t.TempDir(), "absent")
+	root := t.TempDir()
+	absent := filepath.Join(root, "absent")
 
-	findWorkerBinaryAt(reporter, absent, engineSourceRoot)
+	findWorkerBinaryAt(reporter, absent, root, &workerFreshness{})
 
 	assert.True(t, reporter.failed, "expected a failure; messages: %v", reporter.messages)
 	assert.False(t, reporter.skipped, "expected no skip; messages: %v", reporter.messages)
@@ -453,18 +482,57 @@ func TestFindWorkerBinaryAt_FailsWhenBinaryAbsentAndCISet(t *testing.T) {
 }
 
 func TestFindWorkerBinaryAt_ReturnsPathWhenBinaryPresent(t *testing.T) {
-	root := t.TempDir()
-	binary := filepath.Join(root, "network-engine-worker")
-	require.NoError(t, os.WriteFile(binary, []byte("stub"), 0o755))
-	sources := filepath.Join(root, "sources")
-	require.NoError(t, os.MkdirAll(sources, 0o755))
+	binary, sources := stubWorkerTree(t, time.Now().Add(-time.Hour))
 	reporter := &fakeReporter{}
 
-	got := findWorkerBinaryAt(reporter, binary, sources)
+	got := findWorkerBinaryAt(reporter, binary, sources, &workerFreshness{})
 
 	assert.Equal(t, binary, got)
 	assert.False(t, reporter.skipped, "messages: %v", reporter.messages)
 	assert.False(t, reporter.failed, "messages: %v", reporter.messages)
+}
+
+func TestFindWorkerBinaryAt_FailsWhenBinaryOlderThanSources(t *testing.T) {
+	binary, sources := stubWorkerTree(t, time.Now().Add(time.Hour))
+	reporter := &fakeReporter{}
+
+	got := findWorkerBinaryAt(reporter, binary, sources, &workerFreshness{})
+
+	assert.Empty(t, got)
+	assert.True(t, reporter.failed, "expected a failure; messages: %v", reporter.messages)
+	assert.False(t, reporter.skipped, "expected no skip; messages: %v", reporter.messages)
+	require.Len(t, reporter.messages, 1)
+	assert.Contains(t, reporter.messages[0], "is older than")
+}
+
+// TestFindWorkerBinaryAt_FreshnessIsPerInstance pins the property that broke
+// HEU-615's guard during HEU-660: one instance's verdict must not answer
+// another instance's question.
+func TestFindWorkerBinaryAt_FreshnessIsPerInstance(t *testing.T) {
+	freshBinary, freshSources := stubWorkerTree(t, time.Now().Add(-time.Hour))
+	staleBinary, staleSources := stubWorkerTree(t, time.Now().Add(time.Hour))
+
+	fresh := &fakeReporter{}
+	findWorkerBinaryAt(fresh, freshBinary, freshSources, &workerFreshness{})
+	require.False(t, fresh.failed, "the fresh tree should not fail; messages: %v", fresh.messages)
+
+	stale := &fakeReporter{}
+	findWorkerBinaryAt(stale, staleBinary, staleSources, &workerFreshness{})
+
+	assert.True(t, stale.failed, "the stale tree must still fail after a fresh verdict was computed; messages: %v", stale.messages)
+}
+
+// stubWorkerTree writes a stub binary and a sibling sources directory holding
+// one .rs file stamped with sourceMod, and returns both paths.
+func stubWorkerTree(t *testing.T, sourceMod time.Time) (binary, sources string) {
+	t.Helper()
+	root := t.TempDir()
+	binary = filepath.Join(root, "network-engine-worker")
+	require.NoError(t, os.WriteFile(binary, []byte("stub"), 0o755))
+	sources = filepath.Join(root, "sources")
+	require.NoError(t, os.MkdirAll(sources, 0o755))
+	writeRustSource(t, sources, "main.rs", sourceMod)
+	return binary, sources
 }
 
 // writeRustSource writes a .rs file at rel under root and stamps it with mod.

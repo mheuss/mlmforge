@@ -26,10 +26,26 @@ type PostgresContainer struct {
 
 // StartPostgres starts a throwaway Postgres container and runs migrations.
 // Call Terminate() when done (typically in TestMain after m.Run()).
-func StartPostgres() (*PostgresContainer, error) {
+func StartPostgres() (pc *PostgresContainer, err error) {
 	ctx := context.Background()
 
-	container, err := postgres.Run(ctx, "postgres:16-alpine",
+	var container *postgres.PostgresContainer
+
+	// Workaround: the container library panics rather than returning an error
+	// when it cannot resolve a Docker host, and a panic reaches no guard
+	// (HEU-682). Recovering here is what gives RequirePostgresInCI a failure
+	// to apply its policy to.
+	defer func() {
+		if r := recover(); r != nil {
+			if container != nil {
+				_ = container.Terminate(ctx)
+			}
+			pc = nil
+			err = panicToError(r)
+		}
+	}()
+
+	container, err = postgres.Run(ctx, "postgres:16-alpine",
 		postgres.WithDatabase("mlmforge_test"),
 		postgres.WithUsername("test"),
 		postgres.WithPassword("test"),
@@ -57,6 +73,17 @@ func StartPostgres() (*PostgresContainer, error) {
 		DSN:       dsn,
 		container: container,
 	}, nil
+}
+
+// panicToError turns a recovered panic value into an error.
+func panicToError(r any) error {
+	if r == nil {
+		return nil
+	}
+	if err, ok := r.(error); ok {
+		return fmt.Errorf("start postgres container panicked: %w", err)
+	}
+	return fmt.Errorf("start postgres container panicked: %v", r)
 }
 
 // RequirePostgresInCI ends the run when StartPostgres failed and CI is set.

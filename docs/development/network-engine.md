@@ -143,7 +143,11 @@ Commission calculators that use level-based walks (unilevel, matrix, stairstep W
 
 The walk function does not sort its output, and since HEU-641 the five commission calculators do not sort either. All five hand their earnings and walks to `walk_order::assemble`, which orders the walks, remaps each earning's collector id to a final walk index, and only then calls `sort_earnings`. Binary and board plan do not go through it. They return their own result types and never produce a walk. Stairstep still combines Walk 1 and Walk 2 before handing them over.
 
-The walk takes a `&mut Vec<Walk>` collector as its last parameter and pushes one walk record per volume source as it goes. It records a step at each of the four sites that consume a level, and a stop on every walk, naming the break site when one fired. The `index` on a pushed walk is a collector id, not a position. `walk_order::assemble` replaces it with the real index and remaps the earnings that reference it.
+The walk takes a `&mut Vec<Walk>` collector as its last parameter and pushes one walk record per volume source as it goes. It records one step per node at each of the four sites that consume a level, and a stop on every walk, naming the break site when one fired.
+
+Four consuming sites, five `steps.push` calls. The loop tail is one site with two mutually exclusive branches: a node with a rate is `Paid`, and a node whose rate table has no entry at its level falls back to 0.0 and is `Forfeited`. Both consume the level, so one node yields one step either way. Counting the pushes instead of the sites gives five and is the wrong number, which has now caught two readers.
+
+The `index` on a pushed walk is a collector id, not a position. `walk_order::assemble` replaces it with the real index and remaps the earnings that reference it.
 
 Every caller of this walk passes a real collector. The throwaway-collector pattern belongs to the generation traversal in `generation.rs`, which has an uninstrumented `count_generations_upward` wrapper for stairstep Walk 2. Those earnings carry `walk: null`. That gap is deliberate, not a miss: design-rationale 029 excludes that traversal.
 

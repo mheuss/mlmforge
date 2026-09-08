@@ -18,8 +18,8 @@ import (
 // pipeline output directly, while the worker takes what arrives in
 // Request.params. Between the two, transport_stdio wraps the plan in a
 // protocolRequest whose Params is a json.RawMessage, and json.Marshal on the
-// outer struct rewrites it — compacting insignificant whitespace and escaping
-// <, > and & as <, > and &.
+// outer struct rewrites it two ways. It compacts insignificant whitespace. It
+// also escapes <, > and & into the six-byte forms \u003c, \u003e and \u0026.
 //
 // A same-slice test cannot see either transformation. It hashes one buffer
 // twice and passes whatever the marshal boundary does to the bytes in
@@ -43,17 +43,20 @@ func TestPlanHashMatchesWorkerAcrossTheWire(t *testing.T) {
 	base, err := os.ReadFile(filepath.Join(root, "internal", "config", "testdata", "valid", "minimal-unilevel.yaml"))
 	require.NoError(t, err)
 
-	// Both constants come from minimal-unilevel.yaml, whose own header calls it
-	// a starting template for new plans. Renaming the plan there fails the name
-	// assertion below; renaming the structure surfaces as STRUCTURE_NOT_FOUND
-	// from the Rust worker, with nothing pointing back here.
+	// All three come from minimal-unilevel.yaml, whose own header calls it a
+	// starting template for new plans. Every assertion against them lives in
+	// assertIdentityMatchesAcrossTheWire, not here. Renaming the plan or bumping
+	// its version there fails an assertion naming the value; renaming the
+	// structure surfaces as STRUCTURE_NOT_FOUND from the Rust worker, with
+	// nothing pointing back here.
 	const (
-		fixturePlanName = "Starter Unilevel"
-		structure       = "Primary"
+		fixturePlanName    = "Starter Unilevel"
+		fixturePlanVersion = uint32(1)
+		structure          = "Primary"
 	)
 
 	t.Run("pipeline fixture", func(t *testing.T) {
-		assertIdentityMatchesAcrossTheWire(t, pipeline, base, fixturePlanName, structure)
+		assertIdentityMatchesAcrossTheWire(t, pipeline, base, fixturePlanName, fixturePlanVersion, structure)
 	})
 
 	// The escaping half of that boundary is invisible to every fixture in
@@ -72,14 +75,14 @@ func TestPlanHashMatchesWorkerAcrossTheWire(t *testing.T) {
 		require.NotEqual(t, base, withEscapes,
 			"the fixture's plan name line moved, so this sub-case substituted nothing and would pass vacuously")
 
-		assertIdentityMatchesAcrossTheWire(t, pipeline, withEscapes, escapedName, structure)
+		assertIdentityMatchesAcrossTheWire(t, pipeline, withEscapes, escapedName, fixturePlanVersion, structure)
 	})
 }
 
 // assertIdentityMatchesAcrossTheWire runs one plan through the real pipeline,
 // hashes it on the Go side, then loads it into a live worker and compares the
 // identity the worker reports back.
-func assertIdentityMatchesAcrossTheWire(t *testing.T, pipeline *config.Pipeline, yamlBytes []byte, wantPlanName, structure string) {
+func assertIdentityMatchesAcrossTheWire(t *testing.T, pipeline *config.Pipeline, yamlBytes []byte, wantPlanName string, wantPlanVersion uint32, structure string) {
 	t.Helper()
 
 	engineJSON, goHash := hashPipelineOutput(t, pipeline, yamlBytes)
@@ -122,8 +125,8 @@ func assertIdentityMatchesAcrossTheWire(t *testing.T, pipeline *config.Pipeline,
 
 	// Identity is attached whether or not anything was earned, so without this
 	// the setup could degenerate into a no-op and every assertion below would
-	// still pass. This tree shape pays two levels.
-	require.NotEmpty(t, result.Earnings, "no earnings, so the setup degenerated and proves less than it looks")
+	// still pass. The leaf's volume pays its two uplines, at levels 1 and 2.
+	require.Len(t, result.Earnings, 2, "this tree pays the leaf's two uplines; a different count means the setup drifted")
 
 	require.Equal(t, goHash, result.Plan.Hash,
 		"the worker hashed different bytes than PlanHash did; json.Marshal both compacts and "+
@@ -133,5 +136,5 @@ func assertIdentityMatchesAcrossTheWire(t *testing.T, pipeline *config.Pipeline,
 	// means identity was assembled from the wrong source rather than from the
 	// plan the worker actually loaded.
 	require.Equal(t, wantPlanName, result.Plan.Name)
-	require.Equal(t, uint32(1), result.Plan.Version)
+	require.Equal(t, wantPlanVersion, result.Plan.Version)
 }

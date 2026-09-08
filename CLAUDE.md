@@ -316,8 +316,10 @@ and paste from the repo root as written.
       closing word in the PR body. The one that also carried it in a commit
       cannot tell the two apart, and a keyword in a commit alone has never
       been seen to move anything.
-    - That documented case matters here because squash is disabled, so every
-      branch commit lands on `main` verbatim, carrying whatever it says.
+    - That documented case matters here because squash is disabled, so a
+      branch commit's message reaches `main` unchanged, carrying whatever it
+      says. Rebase-and-merge gives a commit a new identity but not a new
+      message, and the message is the part that gets read.
     - **Pushing a branch has not been seen to move anything.** Tested once, on
       2026-09-08: a Todo ticket, a branch named for it, one commit, pushed.
       Read before, immediately after, and again about three minutes later. The
@@ -333,7 +335,9 @@ and paste from the repo root as written.
     - That same branch name carried a magic word beside the identifier, and it
       did not fire on the push either.
     - **Never rely on a transition firing, and never rely on it not firing.**
-      Check every ticket the PR named after every merge.
+      Check every ticket the PR named after every merge. `main` requires a
+      pull request, checked 2026-09-08, so every commit reaches it through one
+      and there is no second path to watch.
   - **The parser does not read negations.** A sentence saying an issue is *not*
     being closed still contains the word `close` beside `HEU-NNN`, and closes it.
     Do not write a negated closing word next to an identifier. Reword it.

@@ -2,6 +2,7 @@ mod common;
 
 use common::{
     build_generation_plan, build_same_rank_generation_plan, snapshot_with_rank, uuid_from_index,
+    walk_order_fingerprint,
 };
 
 use network_engine::commission::{DistributorSnapshot, VolumeSource, calculate_generation};
@@ -115,7 +116,16 @@ fn reference_tree_threshold_mode() {
         source_id: uuid_from_index(4),
         cv_amount: 100.0,
     }];
-    let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume_eve).unwrap();
+    let result = calculate_generation(
+        &tree,
+        &plan,
+        &structure,
+        &snapshots,
+        &volume_eve,
+        &network_engine::test_support::test_plan_identity(),
+    )
+    .unwrap()
+    .earnings;
 
     assert_eq!(result.len(), 2, "Eve volume: expected 2 earners");
     let dave = result
@@ -139,7 +149,16 @@ fn reference_tree_threshold_mode() {
         source_id: uuid_from_index(7),
         cv_amount: 50.0,
     }];
-    let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume_henry).unwrap();
+    let result = calculate_generation(
+        &tree,
+        &plan,
+        &structure,
+        &snapshots,
+        &volume_henry,
+        &network_engine::test_support::test_plan_identity(),
+    )
+    .unwrap()
+    .earnings;
 
     assert_eq!(result.len(), 1, "Henry volume: expected 1 earner");
     assert_eq!(result[0].earner_id, uuid_from_index(0));
@@ -153,7 +172,16 @@ fn reference_tree_threshold_mode() {
         source_id: uuid_from_index(6),
         cv_amount: 75.0,
     }];
-    let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume_grace).unwrap();
+    let result = calculate_generation(
+        &tree,
+        &plan,
+        &structure,
+        &snapshots,
+        &volume_grace,
+        &network_engine::test_support::test_plan_identity(),
+    )
+    .unwrap()
+    .earnings;
 
     assert_eq!(result.len(), 1, "Grace volume: expected 1 earner");
     assert_eq!(result[0].earner_id, uuid_from_index(0));
@@ -167,7 +195,16 @@ fn reference_tree_threshold_mode() {
         source_id: uuid_from_index(1),
         cv_amount: 200.0,
     }];
-    let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume_bob).unwrap();
+    let result = calculate_generation(
+        &tree,
+        &plan,
+        &structure,
+        &snapshots,
+        &volume_bob,
+        &network_engine::test_support::test_plan_identity(),
+    )
+    .unwrap()
+    .earnings;
 
     assert_eq!(result.len(), 1, "Bob volume: expected 1 earner");
     assert_eq!(result[0].earner_id, uuid_from_index(0));
@@ -186,7 +223,16 @@ fn reference_tree_threshold_mode() {
             cv_amount: 50.0,
         },
     ];
-    let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume_multi).unwrap();
+    let result = calculate_generation(
+        &tree,
+        &plan,
+        &structure,
+        &snapshots,
+        &volume_multi,
+        &network_engine::test_support::test_plan_identity(),
+    )
+    .unwrap()
+    .earnings;
 
     // Alice earns on both sources (gen 2 from Eve, gen 1 from Henry).
     // Dave earns gen 1 from Eve only.
@@ -274,7 +320,7 @@ proptest! {
             cv_amount: cv,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
         for earning in &result {
             prop_assert!(
                 earning.level <= max_gen,
@@ -297,7 +343,7 @@ proptest! {
             cv_amount: cv,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
         for earning in &result {
             prop_assert!(
                 earning.dollar_amount >= 0.0,
@@ -320,7 +366,7 @@ proptest! {
             cv_amount: cv,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
         let mut seen = HashSet::new();
         for earning in &result {
             let key = (earning.earner_id, earning.source_id);
@@ -345,7 +391,7 @@ proptest! {
             cv_amount: cv,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
         let tree_ids: HashSet<_> = (0..size).map(uuid_from_index).collect();
         for earning in &result {
             prop_assert!(
@@ -374,7 +420,7 @@ proptest! {
             cv_amount: cv,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
         prop_assert!(
             !result.is_empty(),
             "Expected at least one earning with director at root, got 0"
@@ -394,7 +440,7 @@ proptest! {
             cv_amount: cv,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
         let total_payout: f64 = result.iter().map(|e| e.dollar_amount).sum();
 
         // Upper bound: cv * multiplier * sum(all gen rates)
@@ -480,7 +526,7 @@ proptest! {
             cv_amount: cv,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
         for earning in &result {
             prop_assert!(
                 earning.level <= max_gen,
@@ -503,7 +549,7 @@ proptest! {
             cv_amount: cv,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
         for earning in &result {
             prop_assert!(
                 earning.dollar_amount >= 0.0,
@@ -526,7 +572,7 @@ proptest! {
             cv_amount: cv,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
         let mut seen = HashSet::new();
         for earning in &result {
             let key = (earning.earner_id, earning.source_id);
@@ -551,7 +597,7 @@ proptest! {
             cv_amount: cv,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
         let tree_ids: HashSet<_> = (0..size).map(uuid_from_index).collect();
         for earning in &result {
             prop_assert!(
@@ -577,7 +623,7 @@ proptest! {
             cv_amount: cv,
         }];
 
-        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
         let total_payout: f64 = result.iter().map(|e| e.dollar_amount).sum();
 
         // Upper bound: each of the 3 rank ordinals can produce up to
@@ -595,5 +641,78 @@ proptest! {
             "SameRank: total payout {} exceeds upper bound {}",
             total_payout, upper_bound
         );
+    }
+}
+
+proptest! {
+    /// SameRank walk indexes do not move when the snapshot map is built in a
+    /// different order.
+    ///
+    /// **These cannot fail, and the reason is stronger than "not today".**
+    /// `walk_order::assign_indexes` breaks its final tie on the collector id,
+    /// so emission order reaches the sorted output only where keys 1 to 4 tie
+    /// between two walks. This fixture has no such tie: `volume` holds one
+    /// source and `build_same_rank_generation_plan` gives three distinct rank
+    /// ordinals, so key 3 alone separates every walk. So no change to this
+    /// calculator's emission order can make this property fail. Not a
+    /// different loop nesting, not an unsorted intermediate. No reordering of
+    /// emission alone, to be exact: a change that emitted two walks sharing a
+    /// kind, stream, rank and source would create a keys-1-to-4 tie, and key 5
+    /// is the collector id. `walk_order.rs` records that shape as reachable,
+    /// through a `VolumeSource` repeated in the input.
+    ///
+    /// What it does still guard is narrower and real. The calculator reads
+    /// `snapshots` only through key lookups and set membership, so map order
+    /// cannot reach walk *content* today. If some future change let it reach
+    /// the steps or the stop, these two runs would disagree and this fails.
+    ///
+    /// The property that exercises the ordering lives in
+    /// `streamline_properties.rs`, because streamline is the only calculator
+    /// whose emission order is a `HashMap` iteration.
+    ///
+    /// The two snapshot maps below hold identical content and are built in
+    /// opposite insertion orders. Calling one calculator twice over a single
+    /// map would be weaker still: a `HashMap` generally repeats its own
+    /// iteration order, so that version passes even where indexes differ
+    /// across separately built maps.
+    #[test]
+    fn same_rank_walk_indexes_ignore_snapshot_map_insertion_order(
+        (size, ranks, cv, max_gen) in same_rank_inputs()
+    ) {
+        let (plan, structure) = build_same_rank_generation_plan(max_gen);
+
+        let (tree, forward) = build_multi_rank_chain(size, &ranks);
+
+        // Same content, opposite insertion order.
+        let mut reverse: HashMap<uuid::Uuid, DistributorSnapshot> = HashMap::new();
+        for (id, snap) in forward.iter().collect::<Vec<_>>().into_iter().rev() {
+            reverse.insert(*id, snap.clone());
+        }
+        // Key sets rather than lengths: equal counts would not notice two maps
+        // that drifted in content. Values vary by node here, deliberately, since
+        // the rank spread is what SameRank is about. They still match across the
+        // two maps by construction, because reverse is built from forward's own
+        // entries, and DistributorSnapshot derives no PartialEq, so keys are
+        // what can actually be compared.
+        let keys_forward: HashSet<_> = forward.keys().copied().collect();
+        let keys_reverse: HashSet<_> = reverse.keys().copied().collect();
+        prop_assert_eq!(keys_forward, keys_reverse);
+
+        let volume = vec![VolumeSource {
+            source_id: uuid_from_index(size - 1),
+            cv_amount: cv,
+        }];
+
+        let identity = network_engine::test_support::test_plan_identity();
+        let a = calculate_generation(&tree, &plan, &structure, &forward, &volume, &identity).unwrap();
+        let b = calculate_generation(&tree, &plan, &structure, &reverse, &volume, &identity).unwrap();
+
+        // Guards against the assertions below passing on two empty lists.
+        prop_assert!(!a.walks.is_empty(), "no walks emitted, so the comparison proves nothing");
+
+        prop_assert_eq!(walk_order_fingerprint(&a.walks), walk_order_fingerprint(&b.walks));
+        // The whole result, not just the walks. Earnings and plan identity are
+        // part of what must not move.
+        prop_assert_eq!(a, b);
     }
 }

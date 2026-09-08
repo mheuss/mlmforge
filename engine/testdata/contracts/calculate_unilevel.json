@@ -43,23 +43,54 @@
     "expected_response": {
         "id": "ul-1",
         "ok": true,
-        "result": [
-            {
-                "earner_id": "00000000-0000-0000-0000-000000000001",
-                "source_id": "00000000-0000-0000-0000-000000000003",
-                "level": 2,
-                "rate": 0.05,
-                "cv_amount": 100.0,
-                "dollar_amount": 2.0
+        "result": {
+            "earnings": [
+                {
+                    "cv_amount": 100.0,
+                    "dollar_amount": 2.0,
+                    "earner_id": "00000000-0000-0000-0000-000000000001",
+                    "level": 2,
+                    "rate": 0.05,
+                    "source_id": "00000000-0000-0000-0000-000000000003",
+                    "walk": 0
+                },
+                {
+                    "cv_amount": 100.0,
+                    "dollar_amount": 2.0,
+                    "earner_id": "00000000-0000-0000-0000-000000000002",
+                    "level": 1,
+                    "rate": 0.05,
+                    "source_id": "00000000-0000-0000-0000-000000000003",
+                    "walk": 0
+                }
+            ],
+            "plan": {
+                "hash": "sha256:acf776b6c9beea55045aebd11f37f252c1cc6172e0ad17dde8232cabdf8bbae6",
+                "name": "Integration Test Plan",
+                "version": 1
             },
-            {
-                "earner_id": "00000000-0000-0000-0000-000000000002",
-                "source_id": "00000000-0000-0000-0000-000000000003",
-                "level": 1,
-                "rate": 0.05,
-                "cv_amount": 100.0,
-                "dollar_amount": 2.0
-            }
-        ]
+            "walks": [
+                {
+                    "index": 0,
+                    "kind": "level",
+                    "source_id": "00000000-0000-0000-0000-000000000003",
+                    "steps": [
+                        {
+                            "consumed": true,
+                            "earner_rank": "member",
+                            "node_id": "00000000-0000-0000-0000-000000000002",
+                            "outcome": "paid"
+                        },
+                        {
+                            "consumed": true,
+                            "earner_rank": "member",
+                            "node_id": "00000000-0000-0000-0000-000000000001",
+                            "outcome": "paid"
+                        }
+                    ],
+                    "stop": "root_reached"
+                }
+            ]
+        }
     }
 }

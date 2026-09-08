@@ -22,7 +22,10 @@ use crate::tree::navigator::TreeNavigator;
 use crate::tree::node::Node;
 
 use super::is_eligible;
-use super::types::{CalculationError, CommissionEarning, DistributorSnapshot, VolumeSource};
+use super::types::{
+    CalculationError, CommissionEarning, DistributorSnapshot, StepOutcome, VolumeSource, Walk,
+    WalkKind, WalkStep, WalkStop,
+};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -199,18 +202,48 @@ pub(crate) fn validate_source<'t, T: TreeNavigator>(
     Ok(upline)
 }
 
-/// Sort earnings by (earner_id, source_id, level) for deterministic output.
+/// Sort earnings by (earner_id, source_id, level, walk) for deterministic
+/// output.
 ///
 /// Without sorting, the order depends on BFS traversal and volume
 /// source iteration, both of which can vary across runs. The level
 /// tiebreaker ensures deterministic ordering when multiple tiers emit
 /// earnings for the same (earner_id, source_id) pair.
+///
+/// The walk key covers a case level cannot: stairstep runs two walks over
+/// the same source, and one ancestor can earn from both at the same level.
+/// An unrecorded walk sorts first, since `Option`'s own `Ord` puts `None`
+/// before any `Some`.
+///
+/// Stairstep is why this key exists. It pays one ancestor from two walks for
+/// the same source, so `(earner_id, source_id, level)` is not unique there.
+/// An earning with no recorded walk sorts before any `Some`.
+///
+/// The streamline case this comment used to cite is not a tie, and the reason
+/// is simpler than the sort keys. `walk_order::assign_indexes` numbers a
+/// response's walks by position, so every walk in it holds a distinct index by
+/// construction. The sort keys decide which index a walk gets, never whether
+/// two walks differ. So two earnings from different walks cannot tie here at
+/// all, whatever their kind, stream or rank.
+///
+/// That leaves two earnings from the same walk. Within one walk the upline is
+/// a path visited once, with the level advancing as it goes, so no node earns
+/// twice at one level for one source.
+///
+/// `sort_by` stays stable anyway. Those two paths are the ones this comment
+/// walks through, and stairstep Walk 2 is not among them: its earnings all
+/// carry `walk: None` and so tie each other on the fourth key, leaving the
+/// first three to separate them. The output is a persisted audit record,
+/// `sort_unstable_by` would buy nothing measurable at these sizes, and an
+/// emitter that did produce a tie would reorder rows silently rather than
+/// fail.
 pub(crate) fn sort_earnings(earnings: &mut [CommissionEarning]) {
     earnings.sort_by(|a, b| {
         a.earner_id
             .cmp(&b.earner_id)
             .then_with(|| a.source_id.cmp(&b.source_id))
             .then_with(|| a.level.cmp(&b.level))
+            .then_with(|| a.walk.cmp(&b.walk))
     });
 }
 
@@ -361,20 +394,29 @@ pub(crate) fn validate_broad_pct(broad_pct: f64) {
     }
 }
 
-/// Walk the upline from each volume source, producing level commission earnings.
+/// Walk the upline from each volume source, producing level commission
+/// earnings and a record of each traversal.
 ///
-/// This is the shared walk loop used by unilevel, matrix, and stairstep
-/// (Walk 1). Each calculator builds a `LevelWalkConfig` with its own
-/// parameters and delegates to this function.
+/// This is the shared walk loop used by unilevel, matrix, generation's
+/// optional level commissions, streamline, and stairstep (Walk 1). Each
+/// calculator builds a `LevelWalkConfig` with its own parameters and
+/// delegates to this function.
 ///
-/// The `should_stop` callback is checked for each upline node before any
-/// other logic. If it returns `true`, the walk breaks immediately for
-/// this volume source. Unilevel and matrix pass `|_| false`. Stairstep
-/// passes a closure that checks breakaway set membership.
+/// **Appends one `Walk` per volume source to the caller's collector.** The
+/// collector is caller-owned so one calculator can accumulate walks across
+/// several calls: stairstep calls once per source, streamline once per
+/// stream. Each walk's `index` is a collector id, not its final index; see
+/// `Walk::index`.
 ///
-/// Returns earnings unsorted. The caller is responsible for calling
-/// `sort_earnings` after combining results from multiple walk phases
-/// (e.g., stairstep combines Walk 1 and Walk 2 before sorting).
+/// The `should_stop` callback is checked for each upline node, after the
+/// `max_depth` break and before every other decision. That ordering is
+/// wire-visible: a node where both would fire reports `MaxDepthReached`,
+/// which `WalkStop` records as normative. Unilevel, matrix, generation and
+/// streamline pass `|_| false`. Stairstep passes a closure that checks
+/// breakaway set membership.
+///
+/// Returns earnings unsorted. Sorting happens in `walk_order::assemble`,
+/// after collector ids are remapped to final walk indexes.
 pub(crate) fn walk_level_commissions<T: TreeNavigator>(
     tree: &T,
     config: &LevelWalkConfig,
@@ -386,16 +428,34 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
     // keeps captures simple — just &HashSet<Uuid>. If a future use
     // case needs node data in the stop decision, widen then.
     should_stop: impl Fn(Uuid) -> bool,
+    // Collector, per the plan's Architectural Decision 1. Walks are pushed
+    // carrying a collector id in `index`; `walk_order::assign_indexes`
+    // replaces it with the real index once every walk in the response exists.
+    walks: &mut Vec<Walk>,
 ) -> Result<Vec<CommissionEarning>, CalculationError> {
     let mut all_earnings = Vec::new();
 
     for source in volume {
         let upline = validate_source(tree, snapshots, source)?;
 
+        // Unique because the id is read immediately before exactly one push,
+        // with nothing else writing to `walks` in between. A future emitter
+        // sharing this collector must preserve that.
+        debug_assert!(
+            walks.len() <= u32::MAX as usize,
+            "walk collector exceeded u32 before narrowing"
+        );
+        let collector_id = walks.len() as u32;
+        let mut steps: Vec<WalkStep> = Vec::new();
+        let mut stop = WalkStop::RootReached;
+        let mut stopped_at: Option<Uuid> = None;
+
         let mut level: u16 = 1;
 
         for node in &upline {
             if level > u16::from(config.max_depth) {
+                stop = WalkStop::MaxDepthReached;
+                stopped_at = Some(node.user_id);
                 break;
             }
 
@@ -422,6 +482,8 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
             let level_u8 = level as u8;
 
             if should_stop(node.user_id) {
+                stop = WalkStop::BoundaryReached;
+                stopped_at = Some(node.user_id);
                 break;
             }
 
@@ -450,6 +512,13 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
                     {
                         continue;
                     }
+                    // No snapshot, so no rank to record.
+                    steps.push(WalkStep {
+                        node_id: node.user_id,
+                        outcome: StepOutcome::Forfeited,
+                        consumed: true,
+                        earner_rank: None,
+                    });
                     level = level.saturating_add(1);
                     continue;
                 }
@@ -503,6 +572,12 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
 
             // Not compressed. Check if eligible.
             if !node_eligible {
+                steps.push(WalkStep {
+                    node_id: node.user_id,
+                    outcome: StepOutcome::Forfeited,
+                    consumed: true,
+                    earner_rank: Some(snapshot.rank.clone()),
+                });
                 level = level.saturating_add(1); // forfeit level
                 continue;
             }
@@ -510,6 +585,12 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
             // Check per-distributor depth limit from active leg tiers
             if let Some(max_personal) = elig.and_then(|e| e.max_earning_depth) {
                 if level > u16::from(max_personal) {
+                    steps.push(WalkStep {
+                        node_id: node.user_id,
+                        outcome: StepOutcome::Forfeited,
+                        consumed: true,
+                        earner_rank: Some(snapshot.rank.clone()),
+                    });
                     level = level.saturating_add(1);
                     continue;
                 }
@@ -524,6 +605,12 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
                 .unwrap_or(0.0);
 
             if rate > 0.0 {
+                steps.push(WalkStep {
+                    node_id: node.user_id,
+                    outcome: StepOutcome::Paid,
+                    consumed: true,
+                    earner_rank: Some(snapshot.rank.clone()),
+                });
                 all_earnings.push(CommissionEarning {
                     earner_id: node.user_id,
                     source_id: source.source_id,
@@ -531,11 +618,36 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
                     rate,
                     cv_amount: source.cv_amount,
                     dollar_amount: source.cv_amount * config.broad_pct * config.multiplier * rate,
+                    walk: Some(collector_id),
+                });
+            } else {
+                // Eligible and uncompressed, but the rate table had no entry
+                // for this rank at this level, so the lookup above fell back
+                // to 0.0. The level is still consumed by the increment below,
+                // so this is a forfeit and not a skip. Omitting this step
+                // leaves steps.len() short of the counter for every zero-rate
+                // node, which compiles and passes every fixture.
+                steps.push(WalkStep {
+                    node_id: node.user_id,
+                    outcome: StepOutcome::Forfeited,
+                    consumed: true,
+                    earner_rank: Some(snapshot.rank.clone()),
                 });
             }
 
             level = level.saturating_add(1);
         }
+
+        walks.push(Walk {
+            index: collector_id,
+            source_id: source.source_id,
+            kind: WalkKind::Level,
+            stream_id: None,
+            rank: None,
+            steps,
+            stop,
+            stopped_at,
+        });
     }
 
     Ok(all_earnings)
@@ -719,6 +831,7 @@ mod tests {
                 rate: 0.01,
                 cv_amount: 100.0,
                 dollar_amount: 1.0,
+                walk: None,
             },
             CommissionEarning {
                 earner_id: uuid_from_index(1),
@@ -727,11 +840,110 @@ mod tests {
                 rate: 0.05,
                 cv_amount: 100.0,
                 dollar_amount: 5.0,
+                walk: None,
             },
         ];
         sort_earnings(&mut earnings);
         assert_eq!(earnings[0].level, 1);
         assert_eq!(earnings[1].level, 3);
+    }
+
+    #[test]
+    fn sort_earnings_breaks_level_ties_by_walk() {
+        // Stairstep pays one ancestor from two walks for the same source, so
+        // (earner_id, source_id, level) is not unique. Design 029 is explicit
+        // that this is why the walk index exists. Without this tiebreaker the
+        // order of two such earnings depends on the input order, and the
+        // persisted record inherits that.
+        let mut earnings = vec![
+            CommissionEarning {
+                earner_id: uuid_from_index(1),
+                source_id: uuid_from_index(2),
+                level: 1,
+                rate: 0.05,
+                cv_amount: 100.0,
+                dollar_amount: 5.0,
+                walk: Some(3),
+            },
+            CommissionEarning {
+                earner_id: uuid_from_index(1),
+                source_id: uuid_from_index(2),
+                level: 1,
+                rate: 0.05,
+                cv_amount: 100.0,
+                dollar_amount: 5.0,
+                walk: Some(1),
+            },
+        ];
+        sort_earnings(&mut earnings);
+        assert_eq!(earnings[0].walk, Some(1));
+        assert_eq!(earnings[1].walk, Some(3));
+    }
+
+    #[test]
+    fn sort_earnings_ranks_level_above_walk() {
+        // Every other sort test holds one of the two constant, so the suite
+        // passes with these two keys swapped. Both vary here, in opposition:
+        // level says the first row sorts last, walk says it sorts first.
+        // Level must win.
+        let mut earnings = vec![
+            CommissionEarning {
+                earner_id: uuid_from_index(1),
+                source_id: uuid_from_index(2),
+                level: 2,
+                rate: 0.05,
+                cv_amount: 100.0,
+                dollar_amount: 5.0,
+                walk: Some(1),
+            },
+            CommissionEarning {
+                earner_id: uuid_from_index(1),
+                source_id: uuid_from_index(2),
+                level: 1,
+                rate: 0.05,
+                cv_amount: 100.0,
+                dollar_amount: 5.0,
+                walk: Some(5),
+            },
+        ];
+        sort_earnings(&mut earnings);
+        assert_eq!(
+            (earnings[0].level, earnings[0].walk),
+            (1, Some(5)),
+            "level must outrank walk"
+        );
+        assert_eq!((earnings[1].level, earnings[1].walk), (2, Some(1)));
+    }
+
+    #[test]
+    fn sort_earnings_orders_an_unrecorded_walk_before_a_recorded_one() {
+        // Stairstep Walk 2 earnings carry None. They have to land somewhere
+        // deterministic rather than wherever the input put them. None sorts
+        // first, which is what Option's own Ord gives us; this pins it so a
+        // change to that ordering is a deliberate one.
+        let mut earnings = vec![
+            CommissionEarning {
+                earner_id: uuid_from_index(1),
+                source_id: uuid_from_index(2),
+                level: 1,
+                rate: 0.05,
+                cv_amount: 100.0,
+                dollar_amount: 5.0,
+                walk: Some(0),
+            },
+            CommissionEarning {
+                earner_id: uuid_from_index(1),
+                source_id: uuid_from_index(2),
+                level: 1,
+                rate: 0.05,
+                cv_amount: 100.0,
+                dollar_amount: 5.0,
+                walk: None,
+            },
+        ];
+        sort_earnings(&mut earnings);
+        assert_eq!(earnings[0].walk, None);
+        assert_eq!(earnings[1].walk, Some(0));
     }
 
     #[test]
@@ -744,6 +956,7 @@ mod tests {
                 rate: 0.05,
                 cv_amount: 100.0,
                 dollar_amount: 2.0,
+                walk: None,
             },
             CommissionEarning {
                 earner_id: uuid_from_index(1),
@@ -752,6 +965,7 @@ mod tests {
                 rate: 0.05,
                 cv_amount: 100.0,
                 dollar_amount: 2.0,
+                walk: None,
             },
             CommissionEarning {
                 earner_id: uuid_from_index(1),
@@ -760,6 +974,7 @@ mod tests {
                 rate: 0.05,
                 cv_amount: 100.0,
                 dollar_amount: 2.0,
+                walk: None,
             },
         ];
 
@@ -933,6 +1148,388 @@ mod tests {
         }
     }
 
+    /// Three eligible nodes in a chain, source at the bottom. Reused by the
+    /// walk-collection tests below so they differ only in what they assert.
+    fn eligible_chain(depth: u8) -> (UnilevelTree, HashMap<Uuid, DistributorSnapshot>) {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        for i in 1..depth {
+            tree.add_node(
+                test_uuid(i),
+                test_uuid(i - 1),
+                test_uuid(i - 1),
+                i64::from(i),
+            )
+            .unwrap();
+        }
+        let snapshots = (0..depth)
+            .map(|i| {
+                (
+                    test_uuid(i),
+                    crate::commission::test_helpers::eligible_snapshot(),
+                )
+            })
+            .collect();
+        (tree, snapshots)
+    }
+
+    #[test]
+    fn walk_level_commissions_records_one_walk_per_source() {
+        let (tree, snapshots) = eligible_chain(3);
+        let elig = crate::commission::test_helpers::default_eligibility();
+        let cache = evaluate_eligibility(&snapshots, &tree, &elig);
+        let rank_ordinals = HashMap::from([("associate", 1u16)]);
+        let rate_table = test_rate_table();
+        let config = test_walk_config(&rank_ordinals, &rate_table);
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let mut walks = Vec::new();
+        let earnings = walk_level_commissions(
+            &tree,
+            &config,
+            &cache,
+            &snapshots,
+            &volume,
+            |_| false,
+            &mut walks,
+        )
+        .unwrap();
+
+        assert_eq!(walks.len(), 1, "one volume source is one walk");
+        assert_eq!(walks[0].kind, WalkKind::Level);
+        assert_eq!(walks[0].source_id, test_uuid(2));
+        assert_eq!(walks[0].stop, WalkStop::RootReached);
+        assert!(
+            walks[0].stopped_at.is_none(),
+            "root_reached must not name a node"
+        );
+        assert_eq!(
+            walks[0]
+                .steps
+                .iter()
+                .filter(|s| s.outcome == StepOutcome::Paid)
+                .count(),
+            earnings.len(),
+            "one paid step per earning"
+        );
+    }
+
+    #[test]
+    fn consumed_steps_reconstruct_the_level_counter() {
+        // Two forfeit causes in one walk, because they take different code
+        // paths and a test with only one cannot tell you the other was
+        // recorded.
+        //
+        //   1. An ineligible node forfeits via the `continue` branch.
+        //   2. A node past the rate table's deepest level is eligible and
+        //      uncompressed, reaches the loop tail, gets 0.0 from
+        //      `unwrap_or`, and forfeits via the trailing increment.
+        //
+        // Case 2 needs max_depth > the deepest rate_table key. With the
+        // usual depth-3 table this test passes whether or not the loop-tail
+        // step is recorded, which is the bug it exists to catch.
+        let (tree, mut snapshots) = eligible_chain(5);
+        snapshots.insert(
+            test_uuid(3),
+            DistributorSnapshot {
+                rank: "associate".to_string(),
+                personal_volume: 0.0,
+                status: "active".to_string(),
+                has_order_in_period: true,
+            },
+        );
+
+        let elig = crate::commission::test_helpers::default_eligibility();
+        let cache = evaluate_eligibility(&snapshots, &tree, &elig);
+        let rank_ordinals = HashMap::from([("associate", 1u16)]);
+        let mut rate_table = BTreeMap::new();
+        let mut rates = BTreeMap::new();
+        rates.insert(1, 0.05);
+        rates.insert(2, 0.04);
+        rate_table.insert("associate".to_string(), rates);
+        let mut config = test_walk_config(&rank_ordinals, &rate_table);
+        config.max_depth = 5;
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(4),
+            cv_amount: 100.0,
+        }];
+
+        let mut walks = Vec::new();
+        let earnings = walk_level_commissions(
+            &tree,
+            &config,
+            &cache,
+            &snapshots,
+            &volume,
+            |_| false,
+            &mut walks,
+        )
+        .unwrap();
+
+        let consumed = walks[0].steps.iter().filter(|s| s.consumed).count();
+        let paid = walks[0]
+            .steps
+            .iter()
+            .filter(|s| s.outcome == StepOutcome::Paid)
+            .count();
+        let forfeited = walks[0]
+            .steps
+            .iter()
+            .filter(|s| s.outcome == StepOutcome::Forfeited)
+            .count();
+
+        // Exact counts, not `consumed > paid`. The upline is nodes 3, 2, 1, 0:
+        // node 3 is ineligible and forfeits via the `continue` branch, node 2
+        // earns at level 2, and nodes 1 and 0 sit at levels 3 and 4 where the
+        // rate table has no entry, so they forfeit via the loop tail.
+        //
+        // `consumed > paid` would hold from the ineligible node alone and pass
+        // with the loop-tail step deleted. Verified by deleting it.
+        assert_eq!(paid, 1, "one node earns");
+        assert_eq!(paid, earnings.len(), "a paid step for every earning");
+        assert_eq!(
+            forfeited, 3,
+            "one ineligible forfeit and two zero-rate forfeits"
+        );
+        assert_eq!(
+            consumed, 4,
+            "every visited node consumed a level, so steps reconstruct the counter"
+        );
+        // The reconstruction property the test's name claims, stated
+        // positionally rather than as a net count: the step at index k was
+        // decided at level k+1. That catches a spurious or missing step
+        // anywhere in the sequence, not only a change in the total.
+        //
+        // The previous form asserted `consumed == max_level + 2`, where the
+        // 2 was the count of trailing zero-rate forfeits in this particular
+        // chain. Adding a node broke it for reasons unrelated to the
+        // behavior under test.
+        for (i, step) in walks[0].steps.iter().enumerate() {
+            if step.outcome == StepOutcome::Paid {
+                assert!(
+                    earnings
+                        .iter()
+                        .any(|e| e.earner_id == step.node_id && e.level as usize == i + 1),
+                    "the paid step at index {i} must reconstruct to level {}",
+                    i + 1
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_missing_snapshot_without_compression_records_a_forfeit() {
+        // Consuming site 1. An upline node absent from `snapshots` is treated
+        // as ineligible; with no compression configured it forfeits a level
+        // rather than being skipped. Deleting its step leaves the whole suite
+        // green, which is why this test exists.
+        let (tree, mut snapshots) = eligible_chain(4);
+        snapshots.remove(&test_uuid(2));
+
+        let elig = crate::commission::test_helpers::default_eligibility();
+        let cache = evaluate_eligibility(&snapshots, &tree, &elig);
+        let rank_ordinals = HashMap::from([("associate", 1u16)]);
+        let rate_table = test_rate_table();
+        let config = test_walk_config(&rank_ordinals, &rate_table);
+        assert!(
+            config.compression.is_none(),
+            "the forfeit path needs compression off; with it on this node is skipped"
+        );
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let mut walks = Vec::new();
+        walk_level_commissions(
+            &tree,
+            &config,
+            &cache,
+            &snapshots,
+            &volume,
+            |_| false,
+            &mut walks,
+        )
+        .unwrap();
+
+        let step = walks[0]
+            .steps
+            .iter()
+            .find(|s| s.node_id == test_uuid(2))
+            .expect("the node with no snapshot must still record a step");
+        assert_eq!(step.outcome, StepOutcome::Forfeited);
+        assert!(step.consumed);
+        assert!(
+            step.earner_rank.is_none(),
+            "no snapshot means no rank to record"
+        );
+    }
+
+    #[test]
+    fn a_per_distributor_depth_cap_records_a_forfeit() {
+        // Consuming site 3. An active-leg tier caps how deep one distributor
+        // earns. Past that cap the node forfeits rather than skipping, so the
+        // level still advances and a step is owed.
+        let (tree, snapshots) = eligible_chain(4);
+        let elig = CommissionEligibility {
+            minimum_pv: 100.0,
+            require_order_in_period: false,
+            eligible_statuses: vec!["active".to_string()],
+            active_leg_tiers: vec![ActiveLegTier {
+                min_active_legs: 0,
+                max_commission_depth: 1,
+            }],
+        };
+        let cache = evaluate_eligibility(&snapshots, &tree, &elig);
+        assert_eq!(
+            cache.get(&test_uuid(1)).and_then(|e| e.max_earning_depth),
+            Some(1),
+            "the tier must actually cap this distributor, or the test proves nothing"
+        );
+
+        let rank_ordinals = HashMap::from([("associate", 1u16)]);
+        let rate_table = test_rate_table();
+        let config = test_walk_config(&rank_ordinals, &rate_table);
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let mut walks = Vec::new();
+        walk_level_commissions(
+            &tree,
+            &config,
+            &cache,
+            &snapshots,
+            &volume,
+            |_| false,
+            &mut walks,
+        )
+        .unwrap();
+
+        assert!(
+            walks[0]
+                .steps
+                .iter()
+                .any(|s| s.outcome == StepOutcome::Forfeited && s.consumed),
+            "a node past its depth cap must record a consumed forfeit"
+        );
+    }
+
+    #[test]
+    fn a_root_source_records_a_walk_with_no_steps() {
+        // The shape a reader is most likely to mishandle: the source is the
+        // root, so the upline is empty and the walk is correct and empty.
+        let (tree, snapshots) = eligible_chain(1);
+        let elig = crate::commission::test_helpers::default_eligibility();
+        let cache = evaluate_eligibility(&snapshots, &tree, &elig);
+        let rank_ordinals = HashMap::from([("associate", 1u16)]);
+        let rate_table = test_rate_table();
+        let config = test_walk_config(&rank_ordinals, &rate_table);
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(0),
+            cv_amount: 100.0,
+        }];
+
+        let mut walks = Vec::new();
+        let earnings = walk_level_commissions(
+            &tree,
+            &config,
+            &cache,
+            &snapshots,
+            &volume,
+            |_| false,
+            &mut walks,
+        )
+        .unwrap();
+
+        assert_eq!(
+            walks.len(),
+            1,
+            "a walk is emitted even with nothing to visit"
+        );
+        assert!(walks[0].steps.is_empty());
+        assert_eq!(walks[0].stop, WalkStop::RootReached);
+        assert!(walks[0].stopped_at.is_none());
+        assert!(earnings.is_empty());
+    }
+
+    #[test]
+    fn a_depth_capped_walk_does_not_claim_the_root() {
+        let (tree, snapshots) = eligible_chain(4);
+        let elig = crate::commission::test_helpers::default_eligibility();
+        let cache = evaluate_eligibility(&snapshots, &tree, &elig);
+        let rank_ordinals = HashMap::from([("associate", 1u16)]);
+        let rate_table = test_rate_table();
+        let mut config = test_walk_config(&rank_ordinals, &rate_table);
+        config.max_depth = 2;
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let mut walks = Vec::new();
+        walk_level_commissions(
+            &tree,
+            &config,
+            &cache,
+            &snapshots,
+            &volume,
+            |_| false,
+            &mut walks,
+        )
+        .unwrap();
+
+        assert_eq!(walks[0].stop, WalkStop::MaxDepthReached);
+        assert_eq!(
+            walks[0].stopped_at,
+            Some(test_uuid(0)),
+            "names the specific node the cap stopped at, not merely some node"
+        );
+        assert!(
+            !walks[0]
+                .steps
+                .iter()
+                .any(|s| Some(s.node_id) == walks[0].stopped_at),
+            "stopped_at names the node the walk did NOT visit"
+        );
+    }
+
+    #[test]
+    fn a_boundary_stop_names_the_rejected_node() {
+        let (tree, snapshots) = eligible_chain(4);
+        let elig = crate::commission::test_helpers::default_eligibility();
+        let cache = evaluate_eligibility(&snapshots, &tree, &elig);
+        let rank_ordinals = HashMap::from([("associate", 1u16)]);
+        let rate_table = test_rate_table();
+        let config = test_walk_config(&rank_ordinals, &rate_table);
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let mut walks = Vec::new();
+        walk_level_commissions(
+            &tree,
+            &config,
+            &cache,
+            &snapshots,
+            &volume,
+            |id| id == test_uuid(1),
+            &mut walks,
+        )
+        .unwrap();
+
+        assert_eq!(walks[0].stop, WalkStop::BoundaryReached);
+        assert_eq!(walks[0].stopped_at, Some(test_uuid(1)));
+    }
+
     #[test]
     fn walk_basic_single_level() {
         let mut tree = UnilevelTree::new();
@@ -961,8 +1558,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result =
-            walk_level_commissions(&tree, &config, &cache, &snapshots, &volume, |_| false).unwrap();
+        let result = walk_level_commissions(
+            &tree,
+            &config,
+            &cache,
+            &snapshots,
+            &volume,
+            |_| false,
+            &mut Vec::new(),
+        )
+        .unwrap();
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].earner_id, test_uuid(0));
@@ -1002,8 +1607,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result =
-            walk_level_commissions(&tree, &config, &cache, &snapshots, &volume, |_| false).unwrap();
+        let result = walk_level_commissions(
+            &tree,
+            &config,
+            &cache,
+            &snapshots,
+            &volume,
+            |_| false,
+            &mut Vec::new(),
+        )
+        .unwrap();
 
         assert_eq!(result.len(), 255, "walk must pay exactly 255 levels");
         assert_eq!(result[0].level, 1);
@@ -1041,8 +1654,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result =
-            walk_level_commissions(&tree, &config, &cache, &snapshots, &volume, |_| false).unwrap();
+        let result = walk_level_commissions(
+            &tree,
+            &config,
+            &cache,
+            &snapshots,
+            &volume,
+            |_| false,
+            &mut Vec::new(),
+        )
+        .unwrap();
 
         assert_eq!(result.len(), 254);
         assert_eq!(result[0].level, 1);
@@ -1081,8 +1702,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result =
-            walk_level_commissions(&tree, &config, &cache, &snapshots, &volume, |_| false).unwrap();
+        let result = walk_level_commissions(
+            &tree,
+            &config,
+            &cache,
+            &snapshots,
+            &volume,
+            |_| false,
+            &mut Vec::new(),
+        )
+        .unwrap();
 
         let deepest: u8 = result[254].level;
         assert_eq!(deepest, 255);
@@ -1118,9 +1747,15 @@ mod tests {
 
         // Stop at node 0 (the root). Only node 1 should earn.
         let stop_set: std::collections::HashSet<Uuid> = [test_uuid(0)].into_iter().collect();
-        let result = walk_level_commissions(&tree, &config, &cache, &snapshots, &volume, |id| {
-            stop_set.contains(&id)
-        })
+        let result = walk_level_commissions(
+            &tree,
+            &config,
+            &cache,
+            &snapshots,
+            &volume,
+            |id| stop_set.contains(&id),
+            &mut Vec::new(),
+        )
         .unwrap();
 
         assert_eq!(result.len(), 1);
@@ -1142,7 +1777,15 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = walk_level_commissions(&tree, &config, &cache, &snapshots, &volume, |_| false);
+        let result = walk_level_commissions(
+            &tree,
+            &config,
+            &cache,
+            &snapshots,
+            &volume,
+            |_| false,
+            &mut Vec::new(),
+        );
         assert!(matches!(result, Err(CalculationError::SourceNotInTree(_))));
     }
 
@@ -1176,8 +1819,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result =
-            walk_level_commissions(&tree, &config, &cache, &snapshots, &volume, |_| false).unwrap();
+        let result = walk_level_commissions(
+            &tree,
+            &config,
+            &cache,
+            &snapshots,
+            &volume,
+            |_| false,
+            &mut Vec::new(),
+        )
+        .unwrap();
 
         // max_depth=2, so only levels 1 and 2 earn
         assert_eq!(result.len(), 2);
@@ -1495,6 +2146,7 @@ mod tests {
             &snapshots,
             &volume,
             |_| false,
+            &mut Vec::new(),
         )
         .unwrap();
 
@@ -1548,6 +2200,7 @@ mod tests {
             &snapshots,
             &volume,
             |_| false,
+            &mut Vec::new(),
         )
         .unwrap();
 
@@ -1621,6 +2274,7 @@ mod tests {
             &snapshots,
             &volume,
             |_| false,
+            &mut Vec::new(),
         )
         .unwrap();
 
@@ -1680,6 +2334,7 @@ mod tests {
             &snapshots,
             &volume,
             |_| false,
+            &mut Vec::new(),
         )
         .unwrap();
 

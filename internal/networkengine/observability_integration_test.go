@@ -95,7 +95,7 @@ func TestObservabilityEndToEnd(t *testing.T) {
 	})
 	tracedCtx := trace.ContextWithSpanContext(ctx, sc)
 
-	earnings, err := client.CalculateUnilevel(tracedCtx, CalculateUnilevelRequest{
+	result, err := client.CalculateUnilevel(tracedCtx, CalculateUnilevelRequest{
 		StructureName: structure,
 		Snapshots: map[string]DistributorSnapshotDTO{
 			root: {Rank: "member", PersonalVolume: 100, Status: "active", HasOrderInPeriod: true},
@@ -107,6 +107,7 @@ func TestObservabilityEndToEnd(t *testing.T) {
 
 	// (a) The response was demuxed correctly despite the interleaved signal.
 	require.NoError(t, err)
+	earnings := result.Earnings
 	require.NotEmpty(t, earnings, "calculation should still return earnings")
 
 	// Flush the synchronous processor and inspect the captured records.

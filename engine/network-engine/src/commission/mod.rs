@@ -9,6 +9,7 @@ pub mod streamline;
 pub mod types;
 pub mod unilevel;
 pub(crate) mod walk;
+pub(crate) mod walk_order;
 
 #[cfg(test)]
 pub(crate) mod test_helpers;
@@ -20,8 +21,9 @@ pub use matrix::calculate_matrix;
 pub use stairstep::calculate_stairstep;
 pub use streamline::calculate_streamline;
 pub use types::{
-    BinaryCalculationResult, BinaryCommissionEarning, CalculationError, CommissionEarning,
-    DistributorSnapshot, LegVolumes, VolumeSource,
+    BinaryCalculationResult, BinaryCommissionEarning, CalculationError,
+    CommissionCalculationResult, CommissionEarning, DistributorSnapshot, LegVolumes, PlanIdentity,
+    StepOutcome, VolumeSource, Walk, WalkKind, WalkStep, WalkStop,
 };
 pub use unilevel::calculate_unilevel;
 

@@ -41,7 +41,7 @@ func TestStdioTransport_Ping(t *testing.T) {
 	result, err := transport.Call(context.Background(), "ping", json.RawMessage("null"))
 	require.NoError(t, err)
 
-	assert.JSONEq(t, `{"protocol_version":1}`, string(result))
+	assert.JSONEq(t, `{"protocol_version":2}`, string(result))
 }
 
 func TestStdioTransport_UnknownOp(t *testing.T) {
@@ -63,7 +63,7 @@ func TestStdioTransport_MultipleCalls(t *testing.T) {
 		result, err := transport.Call(context.Background(), "ping", json.RawMessage("null"))
 		require.NoError(t, err)
 
-		assert.JSONEq(t, `{"protocol_version":1}`, string(result))
+		assert.JSONEq(t, `{"protocol_version":2}`, string(result))
 	}
 }
 
@@ -723,7 +723,7 @@ func TestStdioTransport_CloseDoesNotHangOnAChattyWorker(t *testing.T) {
 		"pad=xxxxxxxxxxxxxxxxxxxxxxxxx\n" +
 		"pad=$pad$pad$pad; pad=$pad$pad$pad\n" +
 		"while IFS= read -r _line; do\n" +
-		"  printf '%s\\n' '{\"id\":\"req-1\",\"ok\":true,\"result\":{\"protocol_version\":1}}'\n" +
+		"  printf '%s\\n' '{\"id\":\"req-1\",\"ok\":true,\"result\":{\"protocol_version\":2}}'\n" +
 		"  i=0\n" +
 		"  while [ $i -lt 5000 ]; do\n" +
 		"    printf '%s\\n' \"{\\\"signal\\\":\\\"$pad\\\"}\"\n" +
@@ -771,7 +771,7 @@ func TestStdioTransport_CloseKillsAWorkerThatIgnoresStdin(t *testing.T) {
 	fake := filepath.Join(t.TempDir(), "deaf-worker.sh")
 	script := "#!/bin/sh\n" +
 		"IFS= read -r _line\n" +
-		"printf '%s\\n' '{\"id\":\"req-1\",\"ok\":true,\"result\":{\"protocol_version\":1}}'\n" +
+		"printf '%s\\n' '{\"id\":\"req-1\",\"ok\":true,\"result\":{\"protocol_version\":2}}'\n" +
 		"while true; do sleep 1; done\n"
 	require.NoError(t, os.WriteFile(fake, []byte(script), 0o755))
 
@@ -810,7 +810,7 @@ func TestStdioTransport_CloseBoundsTheWaitForAnOrphanedChild(t *testing.T) {
 	fake := filepath.Join(t.TempDir(), "forking-worker.sh")
 	script := "#!/bin/sh\n" +
 		"IFS= read -r _line\n" +
-		"printf '%s\\n' '{\"id\":\"req-1\",\"ok\":true,\"result\":{\"protocol_version\":1}}'\n" +
+		"printf '%s\\n' '{\"id\":\"req-1\",\"ok\":true,\"result\":{\"protocol_version\":2}}'\n" +
 		"sleep 30 &\n" +
 		"while true; do sleep 1; done\n"
 	require.NoError(t, os.WriteFile(fake, []byte(script), 0o755))
@@ -848,7 +848,7 @@ func TestStdioTransport_CloseDoesNotReportAReapThatIsAboutToLand(t *testing.T) {
 	fake := filepath.Join(t.TempDir(), "forking-worker.sh")
 	script := "#!/bin/sh\n" +
 		"IFS= read -r _line\n" +
-		"printf '%s\\n' '{\"id\":\"req-1\",\"ok\":true,\"result\":{\"protocol_version\":1}}'\n" +
+		"printf '%s\\n' '{\"id\":\"req-1\",\"ok\":true,\"result\":{\"protocol_version\":2}}'\n" +
 		"sleep 30 &\n" +
 		"while true; do sleep 1; done\n"
 	require.NoError(t, os.WriteFile(fake, []byte(script), 0o755))
@@ -945,7 +945,7 @@ func TestStdioTransport_CloseReturnsCleanlyWhenAChildOutlivesTheWorker(t *testin
 	fake := filepath.Join(t.TempDir(), "forking-exiter.sh")
 	script := "#!/bin/sh\n" +
 		"IFS= read -r _line\n" +
-		"printf '%s\\n' '{\"id\":\"req-1\",\"ok\":true,\"result\":{\"protocol_version\":1}}'\n" +
+		"printf '%s\\n' '{\"id\":\"req-1\",\"ok\":true,\"result\":{\"protocol_version\":2}}'\n" +
 		"sleep 30 &\n" +
 		"exit 0\n"
 	require.NoError(t, os.WriteFile(fake, []byte(script), 0o755))

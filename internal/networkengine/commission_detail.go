@@ -13,7 +13,24 @@ import (
 // It is shared across all three shapes, so bumping it relabels rows whose
 // shape did not change. That is tolerable only because kind identifies the
 // shape independently — a reader keys off kind first, then version.
-const detailVersion = 1
+//
+// Bumped to 2 by HEU-641, which added `walk` to commission_earning. The
+// version has to move for that field to be readable: `walk` is serialized
+// even when null, precisely so an unrecorded walk stays distinct from a row
+// written before the field existed. Without a version bump those two are the
+// same bytes and the distinction the field was designed for is unrecoverable.
+//
+// Relabelling binary_pairing and board_cycle costs nothing today. Nothing in
+// production constructs a CommissionResultInput yet, so no v1 row exists
+// outside test fixtures. That is why this is a one-line change now and an
+// unfixable one after HEU-46 starts writing rows.
+//
+// Not the NDJSON protocol version. That is also 2, and the two moved to the
+// same number on the same branch by coincidence rather than by coupling. This
+// one labels a stored detail shape; the other is the engine wire contract in
+// engine/network-engine-worker/src/protocol.rs. Either can move without the
+// other, and a stored 2 asserts nothing about the protocol.
+const detailVersion = 2
 
 // The kind values stored in every detail object. A version alone cannot say
 // which shape a row is, and the structure column cannot either: it holds a
@@ -60,6 +77,15 @@ type commissionEarningDetail struct {
 	Level    int     `json:"level"`
 	Rate     float64 `json:"rate"`
 	CVAmount float64 `json:"cv_amount"`
+	// Index of the walk that produced this earning, into the walks array of
+	// the same response. Null where none was recorded, which today means
+	// stairstep Walk 2: design 029 excludes that traversal, so the null is a
+	// recorded gap rather than missing data.
+	//
+	// No omitempty. A dropped key would make an unrecorded walk look like a
+	// row written before the field existed, and these rows are retained for
+	// years to settle disputes.
+	Walk *uint32 `json:"walk"`
 }
 
 // binaryPairingDetail is the shape for calculate_binary_pairing.
@@ -98,9 +124,10 @@ func ResultFromCommissionEarning(e CommissionEarningDTO) (CommissionResultInput,
 		V:        detailVersion,
 		Kind:     kindCommissionEarning,
 		SourceID: e.SourceID,
-		Level:    e.Level,
+		Level:    int(e.Level),
 		Rate:     e.Rate,
 		CVAmount: e.CVAmount,
+		Walk:     e.Walk,
 	})
 }
 

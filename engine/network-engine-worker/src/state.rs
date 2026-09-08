@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use network_engine::board_plan::BoardPlanEngine;
+use network_engine::commission::PlanIdentity;
 use network_engine::config::CompensationPlan;
 use network_engine::streamline::StreamlineEngine;
 use network_engine::tree::binary::BinaryTree;
@@ -40,5 +41,13 @@ impl TreeInstance {
 #[derive(Default)]
 pub struct WorkerState {
     pub plan: Option<CompensationPlan>,
+
+    /// Identity of the plan in `plan`. Set together with it and never apart:
+    /// a calculation reports this to the caller, who compares it against the
+    /// hash its run recorded before persisting any payout. An identity that
+    /// described a different plan than the one loaded would defeat that check
+    /// rather than fail it.
+    pub plan_identity: Option<PlanIdentity>,
+
     pub trees: HashMap<String, TreeInstance>,
 }

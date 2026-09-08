@@ -15,7 +15,7 @@ import (
 //
 // Changing this number without changing the shared ping contract fixture, or
 // the reverse, rejects a worker that is otherwise correct.
-const expectedProtocolVersion = 1
+const expectedProtocolVersion = 2
 
 // maxPingResponseInError bounds how much of an unexpected ping response is
 // quoted back in an error. The response is wire data and is otherwise
@@ -52,6 +52,46 @@ func (e *ProtocolVersionMismatchError) Error() string {
 // different failures, and a plain int collapses them into one.
 type pingResult struct {
 	ProtocolVersion *int `json:"protocol_version"`
+}
+
+// PlanIdentityMismatchError reports that the engine calculated under a plan
+// the run does not name. Both hashes are fields so a caller can report them
+// without parsing the message.
+//
+// Typed rather than a bare fmt.Errorf, matching ProtocolVersionMismatchError
+// above. A caller has to tell this apart from a transport failure with
+// errors.As, because the two need opposite handling: this one means do not
+// persist, the other means retry.
+type PlanIdentityMismatchError struct {
+	Expected string
+	Reported string
+}
+
+func (e *PlanIdentityMismatchError) Error() string {
+	return fmt.Sprintf(
+		"engine plan identity mismatch: run expects %s, engine reports %s",
+		e.Expected, e.Reported,
+	)
+}
+
+// VerifyPlanIdentity reports whether the engine calculated under the plan the
+// run records. A mismatch means the payouts were computed under a plan the run
+// does not name, so the caller must not persist the results.
+//
+// Nothing calls this yet. HEU-592's commission runner owns the wiring. It is
+// here rather than there because the comparison can be tested now and the
+// runner does not exist. This is not dead code.
+// Takes the identity rather than the whole result, so HEU-592's runner can
+// verify before deciding whether to hold the earnings at all. Narrowed while
+// there is no caller; widening later is easy, narrowing later is not.
+func VerifyPlanIdentity(got PlanIdentityDTO, expectedHash string) error {
+	if got.Hash != expectedHash {
+		return &PlanIdentityMismatchError{
+			Expected: expectedHash,
+			Reported: got.Hash,
+		}
+	}
+	return nil
 }
 
 // EngineClient manages the Rust Network Engine subprocess and provides
@@ -105,8 +145,8 @@ func newCheckedClient(ctx context.Context, transport EngineTransport) (*EngineCl
 // protocol version check, so a client built this way may be talking to a worker
 // whose wire semantics it cannot interpret.
 //
-// Unexported deliberately: it is a test seam. Exporting it would hand code
-// outside this package an unchecked client.
+// Unexported deliberately: exporting it would hand code outside this package
+// an unchecked client.
 func newEngineClientWithTransport(transport EngineTransport) *EngineClient {
 	return &EngineClient{transport: transport}
 }
@@ -492,30 +532,30 @@ func (c *EngineClient) GetSponsored(ctx context.Context, structure, userID strin
 
 // CalculateUnilevel runs commission calculation for a unilevel structure.
 // Sends snapshots and volume to the engine and returns the earnings.
-func (c *EngineClient) CalculateUnilevel(ctx context.Context, req CalculateUnilevelRequest) ([]CommissionEarningDTO, error) {
-	return callInto[[]CommissionEarningDTO](c, ctx, "calculate_unilevel", req)
+func (c *EngineClient) CalculateUnilevel(ctx context.Context, req CalculateUnilevelRequest) (CommissionCalculationResultDTO, error) {
+	return callInto[CommissionCalculationResultDTO](c, ctx, "calculate_unilevel", req)
 }
 
 // CalculateGeneration runs commission calculation for a generation structure.
 // Sends snapshots and volume to the engine and returns the earnings.
 // Generation runs on a unilevel tree, so a tree-type mismatch error names
 // "unilevel" (e.g. "is a binary tree, not a unilevel tree").
-func (c *EngineClient) CalculateGeneration(ctx context.Context, req CalculateGenerationRequest) ([]CommissionEarningDTO, error) {
-	return callInto[[]CommissionEarningDTO](c, ctx, "calculate_generation", req)
+func (c *EngineClient) CalculateGeneration(ctx context.Context, req CalculateGenerationRequest) (CommissionCalculationResultDTO, error) {
+	return callInto[CommissionCalculationResultDTO](c, ctx, "calculate_generation", req)
 }
 
 // CalculateMatrix runs commission calculation for a matrix structure.
 // Sends snapshots and volume to the engine and returns the earnings.
-func (c *EngineClient) CalculateMatrix(ctx context.Context, req CalculateMatrixRequest) ([]CommissionEarningDTO, error) {
-	return callInto[[]CommissionEarningDTO](c, ctx, "calculate_matrix", req)
+func (c *EngineClient) CalculateMatrix(ctx context.Context, req CalculateMatrixRequest) (CommissionCalculationResultDTO, error) {
+	return callInto[CommissionCalculationResultDTO](c, ctx, "calculate_matrix", req)
 }
 
 // CalculateStairstep runs commission calculation for a stairstep structure.
 // Sends snapshots and volume to the engine and returns the earnings.
 // Stairstep runs on a unilevel tree, so a tree-type mismatch error names
 // "unilevel" (e.g. "is a binary tree, not a unilevel tree").
-func (c *EngineClient) CalculateStairstep(ctx context.Context, req CalculateStairstepRequest) ([]CommissionEarningDTO, error) {
-	return callInto[[]CommissionEarningDTO](c, ctx, "calculate_stairstep", req)
+func (c *EngineClient) CalculateStairstep(ctx context.Context, req CalculateStairstepRequest) (CommissionCalculationResultDTO, error) {
+	return callInto[CommissionCalculationResultDTO](c, ctx, "calculate_stairstep", req)
 }
 
 // CalculateBinaryPairing runs binary pairing commission calculation.
@@ -849,8 +889,8 @@ func (c *EngineClient) StreamlineGetStream(ctx context.Context, structure string
 // CalculateStreamline runs streamline commission calculation.
 // Requires LoadPlan first: the plan and structure config come from worker state,
 // not the request (HEU-583). Without a loaded plan the worker returns NO_PLAN.
-func (c *EngineClient) CalculateStreamline(ctx context.Context, req CalculateStreamlineRequest) ([]CommissionEarningDTO, error) {
-	return callInto[[]CommissionEarningDTO](c, ctx, "calculate_streamline", req)
+func (c *EngineClient) CalculateStreamline(ctx context.Context, req CalculateStreamlineRequest) (CommissionCalculationResultDTO, error) {
+	return callInto[CommissionCalculationResultDTO](c, ctx, "calculate_streamline", req)
 }
 
 // TakeSnapshot serializes a structure's state for persistence.

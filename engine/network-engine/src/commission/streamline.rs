@@ -9,8 +9,10 @@ use uuid::Uuid;
 use crate::config::{CompensationPlan, StreamlineStructureConfig};
 use crate::streamline::StreamlineEngine;
 
-use super::types::{CalculationError, CommissionEarning, DistributorSnapshot, VolumeSource};
-use super::walk;
+use super::types::{
+    CalculationError, CommissionCalculationResult, DistributorSnapshot, PlanIdentity, VolumeSource,
+};
+use super::{walk, walk_order};
 
 /// Calculate streamline commissions across all active streams.
 ///
@@ -23,7 +25,8 @@ pub fn calculate_streamline(
     structure: &StreamlineStructureConfig,
     snapshots: &HashMap<Uuid, DistributorSnapshot>,
     volume: &[VolumeSource],
-) -> Result<Vec<CommissionEarning>, CalculationError> {
+    plan_identity: &PlanIdentity,
+) -> Result<CommissionCalculationResult, CalculationError> {
     let rank_ordinals = walk::build_rank_ordinals(plan);
 
     // Place each threshold at its declared level rather than at its position.
@@ -117,6 +120,9 @@ pub fn calculate_streamline(
     let max_depth = structure.streamline_commission.max_depth;
 
     let mut all_earnings = Vec::new();
+    // Outside the per-stream loop on purpose: one collector accumulates every
+    // stream's walks, so their ids stay unique across the response.
+    let mut walks = Vec::new();
 
     for stream in engine.active_streams() {
         let eligibility_cache =
@@ -147,6 +153,9 @@ pub fn calculate_streamline(
         // Convert filtered refs to owned slice for the walk.
         let owned_volume: Vec<VolumeSource> = stream_volume.iter().map(|v| (*v).clone()).collect();
 
+        // The walks this stream is about to append start here.
+        let stream_walks_from = walks.len();
+
         let earnings = walk::walk_level_commissions(
             &stream.tree,
             &config,
@@ -154,13 +163,27 @@ pub fn calculate_streamline(
             snapshots,
             &owned_volume,
             |_| false,
+            &mut walks,
         )?;
+
+        // Stamp the stream on exactly the walks it produced. This is what
+        // makes the index order deterministic: `active_streams` iterates a
+        // HashMap, so without `stream_id` the total order would fall through
+        // to a collector id assigned in hash order, which design 029 forbids.
+        for w in &mut walks[stream_walks_from..] {
+            w.stream_id = Some(stream.id);
+        }
 
         all_earnings.extend(earnings);
     }
 
-    walk::sort_earnings(&mut all_earnings);
-    Ok(all_earnings)
+    Ok(walk_order::assemble(
+        all_earnings,
+        walks,
+        volume,
+        &rank_ordinals,
+        plan_identity,
+    ))
 }
 
 #[cfg(test)]
@@ -219,6 +242,126 @@ mod tests {
             min_rank: min_rank.to_string(),
             percent,
         }
+    }
+
+    #[test]
+    fn every_streamline_walk_carries_its_stream_id() {
+        let engine = make_engine(5);
+        let levels = vec![
+            StreamlineLevel {
+                level: 1,
+                min_rank: "bronze".to_string(),
+                percent: 0.05,
+            },
+            StreamlineLevel {
+                level: 2,
+                min_rank: "bronze".to_string(),
+                percent: 0.04,
+            },
+            StreamlineLevel {
+                level: 3,
+                min_rank: "silver".to_string(),
+                percent: 0.03,
+            },
+        ];
+        let structure = make_structure(levels, 5);
+
+        let mut plan = test_helpers::build_test_plan(
+            test_helpers::default_eligibility(),
+            crate::config::StructureConfig::Streamline(structure.clone()),
+            "test_streamline",
+        );
+        // Add multiple ranks.
+        plan.ranks = vec![
+            crate::config::rank::RankDefinition {
+                name: "associate".to_string(),
+                ordinal: 0,
+                qualification: crate::config::rank::RankQualification {
+                    structures: vec![],
+                    required_products: vec![],
+                    window: None,
+                    tenure: None,
+                },
+                qualified_structures: vec!["test_streamline".to_string()],
+                demotion_policy: crate::config::rank::DemotionPolicy::PromotionOnly,
+            },
+            crate::config::rank::RankDefinition {
+                name: "bronze".to_string(),
+                ordinal: 1,
+                qualification: crate::config::rank::RankQualification {
+                    structures: vec![],
+                    required_products: vec![],
+                    window: None,
+                    tenure: None,
+                },
+                qualified_structures: vec!["test_streamline".to_string()],
+                demotion_policy: crate::config::rank::DemotionPolicy::PromotionOnly,
+            },
+            crate::config::rank::RankDefinition {
+                name: "silver".to_string(),
+                ordinal: 2,
+                qualification: crate::config::rank::RankQualification {
+                    structures: vec![],
+                    required_products: vec![],
+                    window: None,
+                    tenure: None,
+                },
+                qualified_structures: vec!["test_streamline".to_string()],
+                demotion_policy: crate::config::rank::DemotionPolicy::PromotionOnly,
+            },
+        ];
+
+        let mut snapshots = HashMap::new();
+        // Chain: 1 → 2 → 3 → 4 → 5
+        // Node 1 = silver, 2 = bronze, 3 = associate, 4 = bronze, 5 = associate
+        let ranks = ["silver", "bronze", "associate", "bronze", "associate"];
+        for (i, rank) in ranks.iter().enumerate() {
+            snapshots.insert(
+                test_uuid((i + 1) as u8),
+                DistributorSnapshot {
+                    rank: rank.to_string(),
+                    personal_volume: 150.0,
+                    status: "active".to_string(),
+                    has_order_in_period: true,
+                },
+            );
+        }
+
+        // Volume at node 5 (bottom of chain).
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(5),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap();
+
+        assert!(!result.walks.is_empty(), "the fixture must produce a walk");
+
+        // Every streamline walk names the stream it came from. This is what
+        // walk_order sorts on, and without it the index order falls through to
+        // a collector id assigned in HashMap iteration order, which design 029
+        // forbids.
+        for w in &result.walks {
+            assert!(
+                w.stream_id.is_some(),
+                "a streamline walk must carry its stream id, got {w:?}"
+            );
+        }
+
+        // No determinism check here. It would be vacuous: this fixture has a
+        // single stream, and re-running against the same `StreamlineEngine`
+        // reuses one `HashMap` with a fixed `RandomState`, so the iteration
+        // order is identical by construction rather than by the sort.
+        // `walk_order::tests::streams_sort_ascending_within_a_kind` pins the
+        // ordering one layer down, where it can actually fail.
     }
 
     #[test]
@@ -310,8 +453,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let earnings =
-            calculate_streamline(&engine, &plan, &structure, &snapshots, &volume).unwrap();
+        let earnings = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // Walk upline from 5: 4 (bronze, qualifies L1), 3 (associate, skipped L2),
         // 2 (bronze, qualifies L2), 1 (silver, qualifies L3).
@@ -361,8 +512,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let earnings =
-            calculate_streamline(&engine, &plan, &structure, &snapshots, &volume).unwrap();
+        let earnings = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
         // Only stream 1 is active. Node 1 earns from node 2's volume.
         assert_eq!(earnings.len(), 1);
         assert_eq!(earnings[0].earner_id, test_uuid(1));
@@ -403,8 +562,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let earnings =
-            calculate_streamline(&engine, &plan, &structure, &snapshots, &volume).unwrap();
+        let earnings = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
         // Both nodes 2 and 1 earn (no rank gating = monoline).
         assert_eq!(earnings.len(), 2);
     }
@@ -444,8 +611,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let earnings =
-            calculate_streamline(&engine, &plan, &structure, &snapshots, &volume).unwrap();
+        let earnings = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
         // Node 1 is at root of stream 1, no one above to earn.
         assert_eq!(earnings.len(), 0);
     }
@@ -484,8 +659,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let earnings =
-            calculate_streamline(&engine, &plan, &structure, &snapshots, &volume).unwrap();
+        let earnings = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
         // Only 2 levels paid (depth cutoff), not 4.
         assert_eq!(earnings.len(), 2);
     }
@@ -541,7 +724,16 @@ mod tests {
                 cv_amount: 100.0,
             }];
 
-            calculate_streamline(&engine, &plan, &structure, &snapshots, &volume).unwrap()
+            calculate_streamline(
+                &engine,
+                &plan,
+                &structure,
+                &snapshots,
+                &volume,
+                &crate::test_support::test_plan_identity(),
+            )
+            .unwrap()
+            .earnings
         };
 
         let from_sorted = run(sorted);
@@ -559,8 +751,8 @@ mod tests {
         // Node 1 is silver (2) and level 3 needs silver, so it earns at level 3
         // and 0.02.
         //
-        // calculate_streamline ends with walk::sort_earnings, which orders by
-        // (earner_id, source_id, level). test_uuid puts the index in the
+        // calculate_streamline ends with walk_order::assemble, which sorts by
+        // (earner_id, source_id, level, walk). test_uuid puts the index in the
         // leading byte, so the earners come back ascending: 1, 2, 4.
         let shape: Vec<(Uuid, u8, f64)> = from_shuffled
             .iter()
@@ -610,8 +802,15 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let err = calculate_streamline(&engine, &plan, &structure, &snapshots, &volume)
-            .expect_err("a gapped table must not produce earnings");
+        let err = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .expect_err("a gapped table must not produce earnings");
         match err {
             CalculationError::ConfigError(msg) => {
                 assert!(msg.contains("level 2"), "unexpected message: {msg}");
@@ -643,8 +842,15 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let err = calculate_streamline(&engine, &plan, &structure, &snapshots, &volume)
-            .expect_err("an empty table must not silently pay nobody");
+        let err = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .expect_err("an empty table must not silently pay nobody");
         match err {
             CalculationError::ConfigError(msg) => {
                 assert!(msg.contains("is empty"), "unexpected message: {msg}");
@@ -676,8 +882,15 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let err = calculate_streamline(&engine, &plan, &structure, &snapshots, &volume)
-            .expect_err("level 0 must be rejected, not panic");
+        let err = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .expect_err("level 0 must be rejected, not panic");
         match err {
             CalculationError::ConfigError(msg) => {
                 // Pin the message: the shared fixture could otherwise satisfy

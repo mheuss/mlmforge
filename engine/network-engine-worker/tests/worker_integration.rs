@@ -63,7 +63,7 @@ fn ping_returns_protocol_version() {
 
     let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
     assert_eq!(parsed["id"], "1");
-    assert_eq!(parsed["result"]["protocol_version"], 1);
+    assert_eq!(parsed["result"]["protocol_version"], 2);
 
     drop(child.stdin.take());
     child.wait().unwrap();
@@ -611,6 +611,123 @@ fn send_load_plan(worker: &mut std::process::Child, plan_json: &str) -> String {
     common::send_receive(worker, &request)
 }
 
+/// The bytes `load_plan` hashes are the ones it received, not a re-serialized
+/// form. `send_load_plan` minifies before sending, so the request's `params`
+/// and this expectation are byte-identical by construction.
+fn expected_plan_hash(plan_json: &str) -> String {
+    let minified: String = plan_json
+        .lines()
+        .map(|l| l.trim())
+        .collect::<Vec<_>>()
+        .join("");
+    // sha2 0.11 returns a `hybrid_array::Array`, which does not implement
+    // LowerHex. The `{:x}` idiom that works on 0.10's `generic-array` does not
+    // compile here.
+    let digest = <sha2::Sha256 as sha2::Digest>::digest(minified.as_bytes());
+    let mut hex = String::with_capacity(64);
+    for byte in digest {
+        use std::fmt::Write;
+        write!(hex, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    format!("sha256:{hex}")
+}
+
+#[test]
+fn load_plan_records_a_plan_hash_over_the_bytes_it_received() {
+    let mut worker = common::spawn_worker();
+    let resp = send_load_plan(&mut worker, STREAMLINE_TEST_PLAN_JSON);
+    assert!(resp.contains(r#""ok":true"#), "load_plan failed: {resp}");
+
+    let parsed: serde_json::Value = serde_json::from_str(&resp).expect("parse response");
+    let hash = parsed["result"]["plan"]["hash"]
+        .as_str()
+        .unwrap_or_else(|| panic!("load_plan must report a plan hash: {resp}"));
+
+    assert_eq!(
+        hash,
+        expected_plan_hash(STREAMLINE_TEST_PLAN_JSON),
+        "the worker hashed different bytes than it was sent"
+    );
+}
+
+#[test]
+fn a_plan_hash_is_sha256_prefixed_64_lowercase_hex() {
+    // The format is pinned by internal/networkengine/plan_hash.go and by a
+    // CHECK on the commission_runs table, so a wrong hex idiom must fail here
+    // rather than produce a plausible-looking string that only differs from
+    // Go's.
+    let mut worker = common::spawn_worker();
+    let resp = send_load_plan(&mut worker, STREAMLINE_TEST_PLAN_JSON);
+    let parsed: serde_json::Value = serde_json::from_str(&resp).expect("parse response");
+    let hash = parsed["result"]["plan"]["hash"]
+        .as_str()
+        .unwrap_or_else(|| panic!("load_plan must report a plan hash: {resp}"));
+
+    let hex = hash
+        .strip_prefix("sha256:")
+        .unwrap_or_else(|| panic!("hash must carry the sha256: prefix: {hash}"));
+    assert_eq!(hex.len(), 64, "expected 64 hex characters: {hash}");
+    assert!(
+        hex.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')),
+        "hash must be lowercase hex: {hash}"
+    );
+}
+
+#[test]
+fn a_rejected_plan_leaves_the_previous_identity_in_place() {
+    // Identity is stored only after deserialization and validation. A plan
+    // that fails the gate must not overwrite the identity of the plan the
+    // worker is still holding, or a later calculation would report a hash for
+    // a plan it never loaded.
+    let mut worker = common::spawn_worker();
+    let good = send_load_plan(&mut worker, STREAMLINE_TEST_PLAN_JSON);
+    assert!(good.contains(r#""ok":true"#), "setup load failed: {good}");
+    let first: serde_json::Value = serde_json::from_str(&good).expect("parse");
+    let first_hash = first["result"]["plan"]["hash"]
+        .as_str()
+        .expect("hash")
+        .to_string();
+
+    let bad = STREAMLINE_TEST_PLAN_JSON.replace("\"percent\": 0.10", "\"percent\": 5.0");
+    assert!(
+        bad != STREAMLINE_TEST_PLAN_JSON,
+        "the replacement did not match"
+    );
+    let rejected = send_load_plan(&mut worker, &bad);
+    assert!(
+        rejected.contains(r#""ok":false"#),
+        "the invalid plan should have been rejected: {rejected}"
+    );
+
+    // Read the identity the worker is still holding, without reloading
+    // anything. Reloading the good plan here would rewrite the identity with
+    // the same bytes, so the assertion would hold whether or not the rejected
+    // plan had clobbered it in between. That version of this test passed with
+    // the identity write moved above both gates, which is the exact violation
+    // this test's name claims to catch.
+    //
+    // A calculate_* response reports the stored identity, so it observes the
+    // post-rejection state directly.
+    // The structure has to exist for the op to resolve, but nothing is added
+    // to it. An empty volume short-circuits every stream body, so the response
+    // carries no earnings and no walks and still carries the identity, which
+    // is the only field this test reads.
+    create_streamline(&mut worker);
+    let probe = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"identity-probe","op":"calculate_streamline","params":{{"structure":"{}","snapshots":{{}},"volume":[]}}}}"#,
+            SL_STRUCTURE
+        ),
+    );
+    let held: serde_json::Value = serde_json::from_str(&probe).expect("parse");
+    assert_eq!(
+        held["result"]["plan"]["hash"].as_str(),
+        Some(first_hash.as_str()),
+        "the rejected plan overwrote the identity of the plan still loaded: {probe}"
+    );
+}
+
 #[test]
 fn load_plan_accepts_valid_baseline_plan() {
     // Guards against the HEU-517 validator over-rejecting the known-good plan.
@@ -659,6 +776,73 @@ fn load_plan_rejects_out_of_range_percent() {
 }
 
 #[test]
+fn a_calculate_response_carries_earnings_walks_and_plan() {
+    // Task 11's shape check. Nothing else proves `walks` and `plan` reach the
+    // wire at all: the other worker tests only reach through `result.earnings`,
+    // so a handler that dropped the other two keys would pass every one of
+    // them.
+    let mut worker = common::spawn_worker();
+    load_test_plan(&mut worker);
+    build_three_node_chain(&mut worker);
+
+    let snap =
+        r#"{"rank":"member","personal_volume":100.0,"status":"active","has_order_in_period":true}"#;
+    let params = format!(
+        r#"{{"structure":"Test","snapshots":{{"{root}":{snap},"{child}":{snap},"{gc}":{snap}}},"volume":[{{"source_id":"{gc}","cv_amount":100.0}}]}}"#,
+        root = ROOT,
+        child = CHILD,
+        gc = GRANDCHILD,
+        snap = snap,
+    );
+    let request = format!(
+        r#"{{"id":"shape-1","op":"calculate_unilevel","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    let parsed: serde_json::Value = serde_json::from_str(&resp).expect(&resp);
+    assert!(parsed["ok"].as_bool().unwrap(), "calculate failed: {resp}");
+
+    let result = parsed["result"]
+        .as_object()
+        .unwrap_or_else(|| panic!("result must be an object, got: {resp}"));
+    let mut keys: Vec<&str> = result.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        vec!["earnings", "plan", "walks"],
+        "the v2 result is exactly these three keys: {resp}"
+    );
+
+    let walks = result["walks"].as_array().expect("walks is an array");
+    assert_eq!(walks.len(), 1, "one volume source is one walk: {resp}");
+    assert_eq!(walks[0]["kind"], "level");
+    assert_eq!(walks[0]["stop"], "root_reached");
+    assert!(
+        walks[0].get("stopped_at").is_none(),
+        "root_reached names no node: {resp}"
+    );
+
+    // Every earning points at a walk that is actually present.
+    let indexes: Vec<u64> = walks.iter().map(|w| w["index"].as_u64().unwrap()).collect();
+    for e in result["earnings"].as_array().unwrap() {
+        let w = e["walk"]
+            .as_u64()
+            .expect("a level earning references a walk");
+        assert!(indexes.contains(&w), "earning references walk {w}: {resp}");
+    }
+
+    let hash = result["plan"]["hash"]
+        .as_str()
+        .expect("plan carries a hash");
+    let hex = hash.strip_prefix("sha256:").expect("sha256: prefix");
+    assert_eq!(hex.len(), 64, "64 hex characters: {hash}");
+    assert!(hex.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')));
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
 fn calculate_unilevel_three_node_chain() {
     let mut worker = common::spawn_worker();
 
@@ -696,7 +880,7 @@ fn calculate_unilevel_three_node_chain() {
     );
     assert_eq!(parsed["id"], "calc-1");
 
-    let earnings = parsed["result"].as_array().unwrap();
+    let earnings = parsed["result"]["earnings"].as_array().unwrap();
     assert_eq!(earnings.len(), 2, "expected 2 earnings, got: {}", resp);
 
     // Find mid(002) earning at level 1
@@ -851,7 +1035,7 @@ fn calculate_unilevel_empty_volume_returns_empty_earnings() {
 
     let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
     assert!(parsed["ok"].as_bool().unwrap());
-    let earnings = parsed["result"].as_array().unwrap();
+    let earnings = parsed["result"]["earnings"].as_array().unwrap();
     assert!(
         earnings.is_empty(),
         "expected empty earnings, got: {}",
@@ -884,7 +1068,7 @@ fn calculate_unilevel_accepts_null_collections() {
         resp
     );
     assert!(
-        resp.contains(r#""result":[]"#),
+        resp.contains(r#""earnings":[]"#),
         "no volume means no earnings, got: {}",
         resp
     );
@@ -1047,7 +1231,7 @@ fn calculate_generation_accepts_null_collections() {
         resp
     );
     assert!(
-        resp.contains(r#""result":[]"#),
+        resp.contains(r#""earnings":[]"#),
         "no volume means no earnings, got: {}",
         resp
     );
@@ -2619,7 +2803,7 @@ fn calculate_unilevel_pass_up_skips_first_recruits() {
         resp
     );
 
-    let earnings = parsed["result"].as_array().unwrap();
+    let earnings = parsed["result"]["earnings"].as_array().unwrap();
 
     // Expected earnings:
     //   From R1: S at level 1 (2.0)          -- A was skipped
@@ -3641,7 +3825,7 @@ fn calculate_streamline_at_depth_255() {
     let resp = common::send_receive(&mut worker, &request);
     let parsed: serde_json::Value = serde_json::from_str(&resp).expect(&resp);
     assert_eq!(parsed["ok"], serde_json::json!(true), "got: {}", resp);
-    let earnings = parsed["result"]
+    let earnings = parsed["result"]["earnings"]
         .as_array()
         .unwrap_or_else(|| panic!("expected an earnings array, got: {resp}"));
 
@@ -3911,7 +4095,7 @@ fn calculate_streamline_uses_the_loaded_plan_structure() {
     // before assert_eq! formats its message, so a renamed field would panic
     // with "called Option::unwrap() on a None value" and the response body —
     // the only useful part — would never print.
-    let earnings = parsed["result"].as_array().expect(&resp);
+    let earnings = parsed["result"]["earnings"].as_array().expect(&resp);
     assert_eq!(
         earnings.len(),
         1,
@@ -3985,7 +4169,7 @@ fn calculate_streamline_ignores_request_scoped_config() {
         "legacy-shaped params must be ignored, not rejected, got: {}",
         resp
     );
-    let earnings = parsed["result"].as_array().expect(&resp);
+    let earnings = parsed["result"]["earnings"].as_array().expect(&resp);
     assert_eq!(
         earnings.len(),
         1,
@@ -4031,7 +4215,7 @@ fn calculate_streamline_accepts_null_collections() {
         resp
     );
     assert!(
-        resp.contains(r#""result":[]"#),
+        resp.contains(r#""earnings":[]"#),
         "no volume means no earnings, got: {}",
         resp
     );
@@ -4809,7 +4993,7 @@ fn calculate_matrix_pays_upline() {
         resp
     );
     assert_eq!(parsed["id"], "calc-m");
-    let earnings = parsed["result"].as_array().unwrap();
+    let earnings = parsed["result"]["earnings"].as_array().unwrap();
     // Volume at child (100 CV) pays only its upline, root, at level 1:
     // 100 * 0.40 (broad_pct) * 1.0 (multiplier) * 0.05 (rate) = 2.0.
     assert_eq!(
@@ -5003,7 +5187,7 @@ fn calculate_matrix_accepts_null_collections() {
         resp
     );
     assert!(
-        resp.contains(r#""result":[]"#),
+        resp.contains(r#""earnings":[]"#),
         "no volume means no earnings, got: {}",
         resp
     );
@@ -5156,7 +5340,7 @@ fn calculate_stairstep_pays_upline() {
         resp
     );
     assert_eq!(parsed["id"], "calc-s");
-    let earnings = parsed["result"].as_array().unwrap();
+    let earnings = parsed["result"]["earnings"].as_array().unwrap();
     // Volume at grandchild (100 CV) pays up the chain: child at level 1 and
     // root at level 2, each 100 * 0.40 * 1.0 * 0.05 = 2.0.
     assert_eq!(
@@ -5315,7 +5499,7 @@ fn calculate_stairstep_accepts_null_collections() {
         resp
     );
     assert!(
-        resp.contains(r#""result":[]"#),
+        resp.contains(r#""earnings":[]"#),
         "no volume means no earnings, got: {}",
         resp
     );

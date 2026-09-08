@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use super::common::{
     extract_structure_name, parse_params, parse_u32_param, parse_uuid, require_plan,
+    require_plan_identity,
 };
 use crate::protocol::{Request, Response};
 use crate::state::{TreeInstance, WorkerState};
@@ -459,6 +460,10 @@ pub(crate) fn handle_calculate_streamline(state: &WorkerState, request: &Request
         Ok(p) => p,
         Err(resp) => return resp,
     };
+    let identity = match require_plan_identity(state, &request.id) {
+        Ok(i) => i,
+        Err(resp) => return resp,
+    };
 
     #[derive(serde::Deserialize)]
     struct Params {
@@ -493,10 +498,17 @@ pub(crate) fn handle_calculate_streamline(state: &WorkerState, request: &Request
         }
     };
 
-    match calculate_streamline(engine, plan, structure, &params.snapshots, &params.volume) {
-        Ok(earnings) => Response::success(
+    match calculate_streamline(
+        engine,
+        plan,
+        structure,
+        &params.snapshots,
+        &params.volume,
+        identity,
+    ) {
+        Ok(result) => Response::success(
             request.id.clone(),
-            serde_json::to_value(&earnings).expect("serialization infallible"),
+            serde_json::to_value(&result).expect("serialization infallible"),
         ),
         Err(e) => Response::error(
             request.id.clone(),

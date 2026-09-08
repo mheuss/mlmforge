@@ -48,15 +48,65 @@ type VolumeSourceDTO struct {
 	CVAmount float64 `json:"cv_amount"`
 }
 
+// WalkStepDTO is one visited node in a traversal. Matches the Rust WalkStep.
+type WalkStepDTO struct {
+	NodeID   string `json:"node_id"`
+	Outcome  string `json:"outcome"`
+	Consumed bool   `json:"consumed"`
+	// Absent when no rank was read, rather than null. A rank in an audit
+	// record implies a rank that affected the payout.
+	EarnerRank *string `json:"earner_rank,omitempty"`
+}
+
+// WalkDTO is one traversal and the decisions along it. Matches the Rust Walk.
+//
+// StreamID, Rank and StoppedAt are omitted when absent, matching the Rust
+// side's skip_serializing_if. That is the opposite rule to
+// CommissionEarningDTO.Walk, which is present as null: there, null is the
+// recorded fact that no walk was captured.
+type WalkDTO struct {
+	Index     uint32        `json:"index"`
+	SourceID  string        `json:"source_id"`
+	Kind      string        `json:"kind"`
+	StreamID  *uint32       `json:"stream_id,omitempty"`
+	Rank      *string       `json:"rank,omitempty"`
+	Steps     []WalkStepDTO `json:"steps"`
+	Stop      string        `json:"stop"`
+	StoppedAt *string       `json:"stopped_at,omitempty"`
+}
+
+// PlanIdentityDTO names the plan the engine actually had when it calculated.
+// Matches the Rust PlanIdentity.
+type PlanIdentityDTO struct {
+	Name    string `json:"name"`
+	Version uint32 `json:"version"`
+	// "sha256:" plus 64 lowercase hex characters, the same format
+	// PlanHash produces and the commission_runs CHECK enforces.
+	Hash string `json:"hash"`
+}
+
+// CommissionCalculationResultDTO is what the five commission calculators
+// return. Matches the Rust CommissionCalculationResult.
+type CommissionCalculationResultDTO struct {
+	Earnings []CommissionEarningDTO `json:"earnings"`
+	Walks    []WalkDTO              `json:"walks"`
+	Plan     PlanIdentityDTO        `json:"plan"`
+}
+
 // CommissionEarningDTO is the wire format for a single commission earning.
 // Matches the Rust CommissionEarning struct.
 type CommissionEarningDTO struct {
-	EarnerID     string  `json:"earner_id"`
-	SourceID     string  `json:"source_id"`
-	Level        int     `json:"level"`
+	EarnerID string `json:"earner_id"`
+	SourceID string `json:"source_id"`
+	// uint8, not int, to mirror the Rust u8. See TestWireTypesNarrowMirrors.
+	Level        uint8   `json:"level"`
 	Rate         float64 `json:"rate"`
 	CVAmount     float64 `json:"cv_amount"`
 	DollarAmount float64 `json:"dollar_amount"`
+	// Index of the walk that produced this earning, and null when none was
+	// recorded. No omitempty: stairstep Walk 2 earnings are null, and dropping
+	// the key would make that indistinguishable from a missing field.
+	Walk *uint32 `json:"walk"`
 }
 
 // CalculateGenerationRequest is the input for generation commission calculation.

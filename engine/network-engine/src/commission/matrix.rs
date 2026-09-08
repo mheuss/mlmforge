@@ -6,8 +6,10 @@ use uuid::Uuid;
 use crate::config::{CompensationPlan, MatrixStructureConfig};
 use crate::tree::matrix::MatrixTree;
 
-use super::types::{CalculationError, CommissionEarning, DistributorSnapshot, VolumeSource};
-use super::walk;
+use super::types::{
+    CalculationError, CommissionCalculationResult, DistributorSnapshot, PlanIdentity, VolumeSource,
+};
+use super::{walk, walk_order};
 
 /// Calculate matrix level commissions for a set of volume events.
 ///
@@ -28,7 +30,8 @@ pub fn calculate_matrix(
     structure: &MatrixStructureConfig,
     snapshots: &HashMap<Uuid, DistributorSnapshot>,
     volume: &[VolumeSource],
-) -> Result<Vec<CommissionEarning>, CalculationError> {
+    plan_identity: &PlanIdentity,
+) -> Result<CommissionCalculationResult, CalculationError> {
     // Guard: the tree must have the topology the plan structure declares.
     // Tree width/spillover are set at create_tree time from op params, not from
     // the config, so nothing else reconciles them. Paying against a mismatched
@@ -76,13 +79,24 @@ pub fn calculate_matrix(
         dynamic_thresholds: None,
     };
 
-    let mut earnings =
-        walk::walk_level_commissions(tree, &config, &eligibility_cache, snapshots, volume, |_| {
-            false
-        })?;
+    let mut walks = Vec::new();
+    let earnings = walk::walk_level_commissions(
+        tree,
+        &config,
+        &eligibility_cache,
+        snapshots,
+        volume,
+        |_| false,
+        &mut walks,
+    )?;
 
-    walk::sort_earnings(&mut earnings);
-    Ok(earnings)
+    Ok(walk_order::assemble(
+        earnings,
+        walks,
+        volume,
+        &rank_ordinals,
+        plan_identity,
+    ))
 }
 
 #[cfg(test)]
@@ -215,7 +229,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].earner_id, test_uuid(0));
@@ -249,7 +272,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         assert_eq!(result.len(), 3);
 
@@ -297,7 +329,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         assert_eq!(result.len(), 2);
         for earning in &result {
@@ -333,7 +374,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         assert_eq!(result.len(), 2);
         for earning in &result {
@@ -373,7 +423,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
         assert!(result.is_empty());
     }
 
@@ -414,7 +473,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].earner_id, test_uuid(0));
@@ -451,7 +519,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].earner_id, test_uuid(0));
@@ -474,7 +551,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
         assert!(result.is_empty());
     }
 
@@ -487,7 +573,16 @@ mod tests {
         tree.add_root(test_uuid(0), 0).unwrap();
 
         let snapshots = HashMap::new();
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &[]).unwrap();
+        let result = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &[],
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
         assert!(result.is_empty());
     }
 
@@ -505,7 +600,14 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume);
+        let result = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
         assert!(matches!(result, Err(CalculationError::SourceNotInTree(_))));
     }
 
@@ -527,7 +629,14 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume);
+        let result = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
         assert!(matches!(
             result,
             Err(CalculationError::SourceNotInSnapshot(_))
@@ -552,7 +661,14 @@ mod tests {
             cv_amount: -50.0,
         }];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume);
+        let result = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
         assert!(matches!(
             result,
             Err(CalculationError::InvalidCvAmount(_, _))
@@ -586,7 +702,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
         assert!(result.is_empty());
     }
 
@@ -609,7 +734,16 @@ mod tests {
             cv_amount: 200.0,
         }];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         assert_eq!(result.len(), 1);
         // 200.0 * 0.40 * 1.0 * 0.05 = 4.0
@@ -635,7 +769,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         assert_eq!(result.len(), 1);
         // 100.0 * 0.40 * 2.0 * 0.05 = 4.0
@@ -670,7 +813,16 @@ mod tests {
             },
         ];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         assert_eq!(result.len(), 2);
         let total: f64 = result.iter().map(|e| e.dollar_amount).sum();
@@ -706,7 +858,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // Placement walk: 4 -> 1 (level 1) -> 0 (level 2)
         assert_eq!(result.len(), 2);
@@ -736,7 +897,16 @@ mod tests {
             cv_amount: 0.0,
         }];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
         // Zero CV passes validation but produces zero dollar amounts.
         // The rate > 0.0 check passes, so an earning is emitted with dollar_amount = 0.
         assert_eq!(result.len(), 1);
@@ -761,7 +931,14 @@ mod tests {
             cv_amount: f64::NAN,
         }];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume);
+        let result = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
         assert!(matches!(
             result,
             Err(CalculationError::InvalidCvAmount(_, _))
@@ -786,7 +963,14 @@ mod tests {
             cv_amount: f64::INFINITY,
         }];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume);
+        let result = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
         assert!(matches!(
             result,
             Err(CalculationError::InvalidCvAmount(_, _))
@@ -811,7 +995,14 @@ mod tests {
             cv_amount: f64::NEG_INFINITY,
         }];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume);
+        let result = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
         assert!(matches!(
             result,
             Err(CalculationError::InvalidCvAmount(_, _))
@@ -860,7 +1051,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // Mid compressed out. Root earns at level 1 (not level 2).
         assert_eq!(result.len(), 1);
@@ -917,7 +1117,16 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume).unwrap();
+        let result = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
 
         // Node 1 earns at level 1. Root earns at level 2 (within depth 3).
         assert_eq!(result.len(), 2);
@@ -937,7 +1146,14 @@ mod tests {
         let tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
 
         let snapshots = HashMap::new();
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &[]);
+        let result = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &[],
+            &crate::test_support::test_plan_identity(),
+        );
 
         assert!(matches!(
             result,
@@ -959,7 +1175,14 @@ mod tests {
         let tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
 
         let snapshots = HashMap::new();
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &[]);
+        let result = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &[],
+            &crate::test_support::test_plan_identity(),
+        );
 
         // Pin the expected/actual spillover direction (expected = config's
         // DepthFirst, actual = tree's BreadthFirst) so a future field swap in
@@ -994,7 +1217,14 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume);
+        let result = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
         assert!(
             !matches!(result, Err(CalculationError::TreeConfigMismatch { .. })),
             "matching topology must not be a mismatch"
@@ -1025,7 +1255,14 @@ mod tests {
             cv_amount: -50.0, // would be InvalidCvAmount if the walk ran
         }];
 
-        let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume);
+        let result = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
         assert!(matches!(
             result,
             Err(CalculationError::TreeConfigMismatch { .. })
@@ -1042,8 +1279,22 @@ mod tests {
         let tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
         let snapshots = HashMap::new();
 
-        let first = calculate_matrix(&tree, &plan, &structure, &snapshots, &[]);
-        let second = calculate_matrix(&tree, &plan, &structure, &snapshots, &[]);
+        let first = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &[],
+            &crate::test_support::test_plan_identity(),
+        );
+        let second = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &[],
+            &crate::test_support::test_plan_identity(),
+        );
 
         assert!(matches!(
             first,

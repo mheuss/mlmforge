@@ -141,7 +141,15 @@ When you add a plan type: add its `StructureConfig` arm to `commission_op`, add 
 
 Commission calculators that use level-based walks (unilevel, matrix, stairstep Walk 1, streamline, and generation) delegate to `commission/walk.rs`. The walk is generic over `TreeNavigator`. Plan-specific behavior is injected via `LevelWalkConfig` (e.g., matrix height ceiling) and the `should_stop` callback (e.g., stairstep breakaway boundaries). Binary uses pairing mechanics and does not use this module.
 
-The walk function does not sort its output. Callers sort after combining results from multiple walk phases (stairstep combines Walk 1 and Walk 2 before sorting).
+The walk function does not sort its output, and since HEU-641 the five commission calculators do not sort either. All five hand their earnings and walks to `walk_order::assemble`, which orders the walks, remaps each earning's collector id to a final walk index, and only then calls `sort_earnings`. Binary and board plan do not go through it. They return their own result types and never produce a walk. Stairstep still combines Walk 1 and Walk 2 before handing them over.
+
+The walk takes a `&mut Vec<Walk>` collector as its last parameter and pushes one walk record per volume source as it goes. It records one step per node at each of the four sites that consume a level, and a stop on every walk, naming the break site when one fired.
+
+Four consuming sites, five `steps.push` calls. The loop tail is one site with two mutually exclusive branches: a node with a rate is `Paid`, and a node whose rate table has no entry at its level falls back to 0.0 and is `Forfeited`. Both consume the level, so one node yields one step either way. Counting the pushes instead of the sites gives five and is the wrong number, which has now caught two readers.
+
+The `index` on a pushed walk is a collector id, not a position. `walk_order::assemble` replaces it with the real index and remaps the earnings that reference it.
+
+Every caller of this walk passes a real collector. The throwaway-collector pattern belongs to the generation traversal in `generation.rs`, which has an uninstrumented `count_generations_upward` wrapper for stairstep Walk 2. Those earnings carry `walk: null`. That gap is deliberate, not a miss: design-rationale 029 excludes that traversal.
 
 Stairstep calls the walk once per volume source rather than passing the full slice. This is because the `should_stop` closure captures a per-source group leader for breakaway boundary detection.
 
@@ -229,7 +237,7 @@ Pattern: `request_raw` exists for the same reason on the request side. If you fi
 The Rust contract test asserts the whole `result` subtree with `assert_eq!` on `serde_json::Value`. That comparison treats integers and floats as different types: `Number::Float(500.0) != Number::PosInt(500)`. So a fixture's `expected_response.result` must use the same numeric form the worker emits.
 
 - `f64` fields carry a decimal: `dollar_amount: 500.0`, `rate: 0.1`, `left: 0.0`. Never `500` or `0`.
-- Integer fields (`u8`/`u32`) are bare: `level: 1`, `cycle_number: 1`, and map values like `updated_cycle_counts`. Never `1.0`.
+- Integer fields (`u8`/`u32`) are bare: `level: 1`, `walk: 0`, `cycle_number: 1`, and map values like `updated_cycle_counts`. Never `1.0`. A null `walk` is `null`, which sidesteps the trap entirely; a recorded one does not.
 
 The Go harness uses `assert.JSONEq`, which coerces every JSON number to `float64`. It will not catch an int/float mismatch. Only the Rust side will. Match serde's output and both pass.
 
@@ -246,6 +254,50 @@ Run it unfiltered. To confirm a specific fixture actually executed, add `-- --no
 That line is indented two spaces, so `grep '^contract: '` matches nothing and exits nonzero **with no test failure** — the same reads-as-a-pass trap in a different disguise. Grep without the anchor.
 
 HEU-583's plan specified the filtered form on three steps, including the two that changed the money path and the wire contract. Following it literally would have recorded "Expected: PASS" against a run that asserted nothing.
+
+## A Determinism Test Only Bites On Streamline
+
+`walk_order::assign_indexes` sorts a response's walks into a total order, but
+for four of the five calculators that sort is a no-op. They already emit in the
+order it produces.
+
+| Calculator | Emission order | Sort is |
+| -- | -- | -- |
+| `calculate_unilevel` | one `walk_level_commissions` call over the whole `volume` slice | a no-op |
+| `calculate_matrix` | same | a no-op |
+| `calculate_stairstep` | `for source in volume` | a no-op |
+| `calculate_generation` SameRank | rank-outer over `unique_ranks`, sorted by ordinal first, then `for source in volume` | a no-op |
+| `calculate_streamline` | `for stream in engine.active_streams()`, a `HashMap` values iteration | **load-bearing** |
+
+So a "two runs produce identical indexes" property written against unilevel or
+generation cannot fail. Deleting the sort outright leaves it green. Write that
+property against streamline, in `tests/streamline_properties.rs`.
+
+Two more traps in it. Build **two** engines rather than running one twice: a
+single `HashMap` repeats its own iteration order, so the one-engine version is
+vacuous. And two separately built maps get different `RandomState` keys but not
+necessarily a different order for a small table, so `prop_assume!` that the two
+emission orders actually differ, or roughly half the small cases prove nothing.
+
+Verified by deleting the sort and watching which tests failed. (HEU-641)
+
+## sha2 0.11 Returns An Array With No `LowerHex`
+
+`Sha256::digest` in sha2 0.11 returns a `hybrid_array::Array`, not something
+that implements `LowerHex`. The 0.10 idiom does not compile:
+
+```rust
+format!("{:x}", Sha256::digest(bytes))   // does not compile on 0.11
+```
+
+Format a byte at a time instead. `engine/network-engine-worker/src/handlers/common.rs`
+has the working shape.
+
+The dependency is declared `default-features = false`, which turns off the
+`oid` feature. That costs 7 new lockfile entries: `sha2`, `digest`,
+`crypto-common`, `block-buffer`, `hybrid-array`, `typenum` and `cpufeatures`.
+Leaving defaults on additionally pulls `const-oid`, which nothing here needs.
+(HEU-641)
 
 ## Rust Tests: Package Scope Used To Lie (fixed, HEU-648)
 

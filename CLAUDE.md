@@ -316,10 +316,16 @@ and paste from the repo root as written.
       commit lands on `main` verbatim, carrying whatever it says.
     - **Pushing a branch has not been seen to move anything.** Tested once, on
       2026-09-08: a Todo ticket, a branch named for it, one commit, pushed.
-      Read before, immediately after, and again about three minutes later.
-      Nothing changed, including the issue's `updatedAt`, so no write to the
-      issue happened at all. One push on one ticket on one day. It did not
-      reproduce the claim. It does not show the behaviour cannot exist.
+      Read before, immediately after, and again about three minutes later. The
+      status stayed Todo, `startedAt` stayed null, the state history kept its
+      two entries and `updatedAt` did not move. One push on one ticket on one
+      day. It did not reproduce the claim. It does not show the behaviour
+      cannot exist.
+    - **An unmoved `updatedAt` does not mean the issue was untouched.** Opening
+      the PR on that same ticket attached it within seconds, and `updatedAt`
+      stayed where it was. So the field does not track everything. Read the
+      field you actually care about rather than treating this one as a sentinel
+      for nothing having happened.
     - That same branch name carried a magic word beside the identifier, and it
       did not fire on the push either.
     - **Never rely on a transition firing, and never rely on it not firing.**

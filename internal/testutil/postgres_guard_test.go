@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // go test counts a skipped test as a success, so a CI run that could not start
@@ -31,4 +32,31 @@ func TestPostgresStartupIsFatal(t *testing.T) {
 			assert.Equal(t, tt.want, postgresStartupIsFatal(tt.err, tt.ci))
 		})
 	}
+}
+
+// A panic reaches no guard. RequirePostgresInCI takes an error, so a container
+// library that panics instead of returning one leaves CI with no policy applied
+// (HEU-682).
+func TestPanicToError(t *testing.T) {
+	inner := errors.New("check host \"unix:///var/run/docker.sock\": docker info: Cannot connect to the Docker daemon")
+
+	t.Run("no panic", func(t *testing.T) {
+		assert.NoError(t, panicToError(nil))
+	})
+
+	t.Run("panic with an error keeps it wrapped", func(t *testing.T) {
+		got := panicToError(inner)
+
+		require.Error(t, got)
+		assert.ErrorIs(t, got, inner)
+		assert.Contains(t, got.Error(), "panicked")
+	})
+
+	t.Run("panic with a non-error keeps its text", func(t *testing.T) {
+		got := panicToError("docker host not set")
+
+		require.Error(t, got)
+		assert.Contains(t, got.Error(), "docker host not set")
+		assert.Contains(t, got.Error(), "panicked")
+	})
 }

@@ -29,15 +29,7 @@ type PostgresContainer struct {
 func StartPostgres() (*PostgresContainer, error) {
 	ctx := context.Background()
 
-	container, err := postgres.Run(ctx, "postgres:16-alpine",
-		postgres.WithDatabase("mlmforge_test"),
-		postgres.WithUsername("test"),
-		postgres.WithPassword("test"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).WithStartupTimeout(30*time.Second),
-		),
-	)
+	container, err := runContainer(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("start postgres container: %w", err)
 	}
@@ -57,6 +49,43 @@ func StartPostgres() (*PostgresContainer, error) {
 		DSN:       dsn,
 		container: container,
 	}, nil
+}
+
+// runContainer starts the Postgres container.
+//
+// Workaround: the container library panics rather than returning an error when
+// it cannot resolve a Docker host, and a panic reaches no guard (HEU-682). The
+// recover is scoped to this call alone so that a panic raised anywhere else
+// still crashes the run.
+func runContainer(ctx context.Context) (c *postgres.PostgresContainer, err error) {
+	// c is still nil here. A panic in the call below never completes the
+	// return, so the named result is never assigned.
+	defer func() {
+		if r := recover(); r != nil {
+			err = panicToError(r)
+		}
+	}()
+
+	return postgres.Run(ctx, "postgres:16-alpine",
+		postgres.WithDatabase("mlmforge_test"),
+		postgres.WithUsername("test"),
+		postgres.WithPassword("test"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).WithStartupTimeout(30*time.Second),
+		),
+	)
+}
+
+// panicToError turns a recovered panic value into an error.
+func panicToError(r any) error {
+	if r == nil {
+		return nil
+	}
+	if err, ok := r.(error); ok {
+		return fmt.Errorf("panicked: %w", err)
+	}
+	return fmt.Errorf("panicked: %v", r)
 }
 
 // RequirePostgresInCI ends the run when StartPostgres failed and CI is set.

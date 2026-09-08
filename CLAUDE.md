@@ -325,7 +325,7 @@ and paste from the repo root as written.
       Read before, immediately after, and again about three minutes later. The
       status stayed Todo, `startedAt` stayed null, the state history kept its
       two entries and `updatedAt` did not move. One push on one ticket on one
-      day. It did not reproduce the claim. It does not show the behaviour
+      day. It did not reproduce the claim. It does not show the behavior
       cannot exist.
     - **An unmoved `updatedAt` does not mean the issue was untouched.** Opening
       the PR on that same ticket attached it within seconds, and `updatedAt`

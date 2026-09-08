@@ -1,6 +1,6 @@
 mod common;
 
-use common::uuid_from_index;
+use common::{uuid_from_index, walk_order_fingerprint};
 use network_engine::config::streamline::StreamAssignmentMode;
 use network_engine::streamline::engine::{StreamlineConfig, StreamlineEngine};
 use proptest::prelude::*;
@@ -440,5 +440,151 @@ proptest! {
         // same way.
         prop_assert!(!from_sorted.is_empty(), "fixture must produce earnings");
         prop_assert_eq!(from_sorted, from_shuffled);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Property 8: walk indexes ignore stream map iteration order
+// ---------------------------------------------------------------------------
+
+fn stream_root(stream: u32) -> uuid::Uuid {
+    uuid_from_index(100 + stream as usize)
+}
+
+/// Only stream 1 gets a child. See `build_multi_stream_engine` for why the
+/// other streams cannot take a second member.
+fn stream_child(stream: u32) -> uuid::Uuid {
+    uuid_from_index(200 + stream as usize)
+}
+
+/// An engine with `stream_count` streams, each holding a root and one child
+/// beneath it, so every stream yields exactly one walk carrying one earning.
+///
+/// Needs `enrollment_stream_choice`, because placing a member into a named
+/// stream is the only way to get volume into more than one of them. The
+/// default config rejects the override with `StreamChoiceNotAllowed`.
+fn build_multi_stream_engine(stream_count: u32) -> StreamlineEngine {
+    let config = StreamlineConfig {
+        enrollment_stream_choice: true,
+        ..default_config()
+    };
+    let mut engine = StreamlineEngine::new(config, 1000);
+
+    // The first member bootstraps stream 1 and owns every stream expanded into.
+    engine
+        .add_member(uuid_from_index(1), uuid_from_index(99), 1000, None)
+        .expect("bootstrap should succeed");
+    engine
+        .expand_streams(uuid_from_index(1), stream_count, 1001)
+        .expect("expansion should succeed");
+
+    // Roots go in by override, sponsored by the owner. The override is the
+    // only way to reach a stream that expansion created but never populated,
+    // and it requires a sponsor who owns that stream, which is why every one
+    // of these names member 1.
+    for s in 2..=stream_count {
+        engine
+            .add_member(stream_root(s), uuid_from_index(1), 1000 + s as i64, Some(s))
+            .expect("stream root should place");
+    }
+
+    // Stream 1 gets a second member so at least one walk has an ancestor to
+    // pay. The other streams stay at one member each, which is a limit of the
+    // engine rather than a choice: SponsorStream placement requires a sponsor
+    // who owns a stream, and only member 1 does, while the override path
+    // additionally requires the sponsor to be in the target stream's tree,
+    // which member 1 is not once that stream has a root of its own.
+    engine
+        .add_member(stream_child(1), uuid_from_index(1), 2000, None)
+        .expect("stream 1 child should place");
+
+    engine
+}
+
+proptest! {
+    /// A walk index comes from the response's total order, never from the
+    /// order the calculator happened to emit walks in.
+    ///
+    /// Streamline is the only calculator where those two orders differ.
+    /// Unilevel emits one walk per volume source in slice order, and
+    /// generation SameRank emits rank-outer over a list already sorted by
+    /// ordinal, source-inner over the volume slice. Both already match what
+    /// `walk_order::assign_indexes` produces, so neither can detect the sort
+    /// being removed. `calculate_streamline` iterates
+    /// `engine.active_streams()`, which is `self.streams.values()` on a
+    /// `HashMap`, and that is the one emission order the sort has to correct.
+    ///
+    /// Two engines, not one engine twice. A single `HashMap` repeats its own
+    /// iteration order, so re-running against one engine is vacuous, which
+    /// `commission/streamline.rs` already records at its single-stream test.
+    /// Two separately constructed maps get different `RandomState` keys, so
+    /// they iterate differently over identical content.
+    #[test]
+    fn walk_indexes_ignore_stream_map_iteration_order(stream_count in 2_u32..6) {
+        use std::collections::HashMap;
+        use network_engine::commission::calculate_streamline;
+        use network_engine::commission::types::{DistributorSnapshot, VolumeSource};
+        use network_engine::config::streamline::{StreamlineCommissionConfig, StreamlineLevel};
+        use network_engine::config::StreamlineStructureConfig;
+
+        let levels = vec![StreamlineLevel {
+            level: 1,
+            min_rank: "member".to_string(),
+            percent: 0.05,
+        }];
+        let structure = StreamlineStructureConfig {
+            name: "Test".to_string(),
+            streamline_commission: StreamlineCommissionConfig {
+                volume_to_dollar_multiplier: Some(1.0),
+                max_depth: 1,
+                levels,
+                stream_config: None,
+            },
+        };
+        let plan = common::build_base_plan(
+            common::permissive_eligibility(),
+            network_engine::config::StructureConfig::Streamline(structure.clone()),
+            "Test",
+        );
+
+        let snapshot = DistributorSnapshot {
+            rank: "member".to_string(),
+            personal_volume: 150.0,
+            status: "active".to_string(),
+            has_order_in_period: true,
+        };
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid_from_index(1), snapshot.clone());
+        snapshots.insert(stream_child(1), snapshot.clone());
+        for s in 2..=stream_count {
+            snapshots.insert(stream_root(s), snapshot.clone());
+        }
+
+        // One source per stream, so every stream contributes a walk. Stream 1
+        // pays its root; the rest are single-member streams whose walk records
+        // a traversal that reached the top immediately. Both are walks, and
+        // walks are what this property orders.
+        let mut volume = vec![VolumeSource { source_id: stream_child(1), cv_amount: 100.0 }];
+        for s in 2..=stream_count {
+            volume.push(VolumeSource { source_id: stream_root(s), cv_amount: 100.0 });
+        }
+
+        let identity = network_engine::test_support::test_plan_identity();
+        let run = |engine: &StreamlineEngine| {
+            calculate_streamline(engine, &plan, &structure, &snapshots, &volume, &identity)
+                .expect("calculation should not fail")
+        };
+
+        let a = run(&build_multi_stream_engine(stream_count));
+        let b = run(&build_multi_stream_engine(stream_count));
+
+        // Guards against the assertions below passing on two empty lists, and
+        // against a fixture that stops spanning more than one stream.
+        prop_assert!(a.walks.len() >= 2, "need walks from at least two streams, got {}", a.walks.len());
+        let streams_seen: HashSet<_> = a.walks.iter().map(|w| w.stream_id).collect();
+        prop_assert!(streams_seen.len() >= 2, "all walks came from one stream, so ordering is untested");
+
+        prop_assert_eq!(walk_order_fingerprint(&a.walks), walk_order_fingerprint(&b.walks));
+        prop_assert_eq!(a.walks, b.walks);
     }
 }

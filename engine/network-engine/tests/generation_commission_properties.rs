@@ -645,20 +645,30 @@ proptest! {
 }
 
 proptest! {
-    /// SameRank is the case that matters for walk index stability, because it
-    /// is the one mode that multiplies walks by rank.
+    /// SameRank walk indexes do not move when the snapshot map is built in a
+    /// different order.
     ///
-    /// `calculate_generation` derives its per-rank passes from
-    /// `snapshots.values()` collected into a `HashSet`, then sorts that by
-    /// ordinal alone. So the order collector ids are handed out in really does
-    /// follow map iteration. What makes the published indexes stable is
-    /// `walk_order::assign_indexes` re-sorting on the `(ordinal, name)` pair.
-    /// Reduce that key to the ordinal and this property fails.
+    /// **This property cannot fail against today's code, and that is worth
+    /// stating rather than leaving for the next person to discover.** SameRank
+    /// emits rank-outer over `unique_ranks`, which is already sorted by
+    /// ordinal, and source-inner over the `volume` slice. That is exactly the
+    /// order `walk_order::assign_indexes` produces, so the sort is a no-op
+    /// here: deleting it outright leaves this test green. Verified by doing
+    /// it, not by reading.
+    ///
+    /// It earns its place as a guard on that coincidence rather than as a test
+    /// of the sort. If `unique_ranks` ever stops being sorted before use, or
+    /// the emission loops swap nesting, this fails and the reason will not be
+    /// obvious from the diff that caused it.
+    ///
+    /// The property that does exercise the sort lives in
+    /// `streamline_properties.rs`, because streamline is the only calculator
+    /// whose emission order is a `HashMap` iteration.
     ///
     /// The two snapshot maps below hold identical content and are built in
     /// opposite insertion orders. Calling one calculator twice over a single
-    /// map would not test this: a `HashMap` generally repeats its own
-    /// iteration order, so that version passes while indexes still differ
+    /// map would be weaker still: a `HashMap` generally repeats its own
+    /// iteration order, so that version passes even where indexes differ
     /// across separately built maps.
     #[test]
     fn same_rank_walk_indexes_ignore_snapshot_map_insertion_order(

@@ -1118,17 +1118,21 @@ fn empty_tree_no_volume_no_panic() {
 }
 
 proptest! {
-    /// A walk index comes from the response's total order, never from the
-    /// iteration order of a map the caller happened to build. Design 029
-    /// forbids taking it from emission order, which for streamline is a
-    /// `HashMap` iteration.
+    /// Unilevel walk indexes do not move when the snapshot map is built in a
+    /// different order.
     ///
-    /// Running one calculator twice over the same map does not test this. A
-    /// single `HashMap` generally repeats its own iteration order, so such a
-    /// test passes while indexes still differ across separately built maps or
-    /// across processes. The two maps here hold identical content and are
-    /// built in opposite insertion orders, so they are unlikely to share a
-    /// bucket layout.
+    /// **This property cannot fail against today's code.** Unilevel emits one
+    /// walk per volume source in slice order, which is already the order
+    /// `walk_order::assign_indexes` produces, so the sort is a no-op here and
+    /// deleting it leaves this test green. Verified by doing it.
+    ///
+    /// It is a guard on that coincidence, not a test of the sort. The property
+    /// that does exercise the sort lives in `streamline_properties.rs`.
+    ///
+    /// The two maps here hold identical content and are built in opposite
+    /// insertion orders, so they are unlikely to share a bucket layout. Running
+    /// one calculator twice over a single map would be weaker still, since a
+    /// `HashMap` generally repeats its own iteration order.
     #[test]
     fn walk_indexes_ignore_snapshot_map_insertion_order(
         tree_size in 4..20usize,

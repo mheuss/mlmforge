@@ -539,9 +539,8 @@ mod tests {
     #[test]
     fn stopped_at_is_omitted_when_none_and_present_when_some() {
         // Scoped to what this file can actually prove. The rule that ties a
-        // stop to whether it names a node needs a producer to check against,
-        // and nothing constructs a Walk outside these tests yet. HEU-641
-        // Task 3 tests that rule against the real emitters.
+        // stop to whether it names a node needs a producer to check against.
+        // The real emitters are covered separately, in the walk tests.
         let with_node = Walk {
             index: 0,
             source_id: uuid_from_index(1),

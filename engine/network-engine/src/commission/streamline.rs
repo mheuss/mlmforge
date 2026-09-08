@@ -751,8 +751,8 @@ mod tests {
         // Node 1 is silver (2) and level 3 needs silver, so it earns at level 3
         // and 0.02.
         //
-        // calculate_streamline ends with walk::sort_earnings, which orders by
-        // (earner_id, source_id, level). test_uuid puts the index in the
+        // calculate_streamline ends with walk_order::assemble, which sorts by
+        // (earner_id, source_id, level, walk). test_uuid puts the index in the
         // leading byte, so the earners come back ascending: 1, 2, 4.
         let shape: Vec<(Uuid, u8, f64)> = from_shuffled
             .iter()

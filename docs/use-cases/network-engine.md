@@ -75,7 +75,9 @@ let engine: BoardPlanEngine = serde_json::from_str(&snapshot)?;
 
 **Solution:** Reuse the shared upward count directly. Map boundary-rank nodes to the `breakaway_set` parameter.
 
-Since HEU-641 there are two entry points, and which one a caller takes is a design decision rather than a convenience. `count_generations_upward_instrumented` takes a snapshot map and a `&mut Vec<Walk>` collector and records a walk. `count_generations_upward` is a thin uninstrumented wrapper over it that discards the collector. Standalone generation calls the instrumented one. Stairstep Walk 2 keeps the wrapper, because design 029 excludes that traversal from provenance, so its earnings carry `walk: null`.
+Since HEU-641 there are two entry points. `count_generations_upward_instrumented` takes a snapshot map and a `&mut Vec<Walk>` collector and records a walk. `count_generations_upward` is a thin uninstrumented wrapper over it that discards the collector. Standalone generation calls the instrumented one. Stairstep Walk 2 keeps the wrapper, because design-rationale 029 excludes that traversal from provenance, so its earnings carry `walk: null`.
+
+`count_generations_upward_instrumented` is crate-internal, and so are the `walk` and `walk_order` modules. The `pub` wrapper is the only entry point reachable from outside the crate, so this choice is only available to a caller inside `network-engine`.
 
 In SameRank mode the caller stamps the rank onto the walks each pass pushed, because the rank is what separates those walks in the response's total order. A pass records the collector length before walking so it knows which walks were its own. The `boundary_check` closure controls whether ineligible nodes create boundaries (`ineligible_creates_boundary` flag). For ThresholdRank mode, one boundary set serves all sources. For SameRank mode, a separate boundary set is built per unique `(rank_name, ordinal)` pair, and results are filtered to earners at exactly that ordinal. The rank name is preserved alongside the ordinal so the per-walk termination depth can resolve via `earner_max_generations` (see UC-NET-004).
 
@@ -84,13 +86,9 @@ In SameRank mode the caller stamps the rank onto the walks each pass pushed, bec
 // ThresholdRank: one boundary set for all sources, one walk per source.
 // Walk depth is the deepest configured cap (walk_depth helper); per-earner
 // filtering happens after the walk (see UC-NET-004).
-let boundary_set: HashSet<Uuid> = snapshots.iter()
-    .filter(|(_, snap)| rank_ordinals.get(snap.rank.as_str()).copied().unwrap_or(0) >= threshold)
-    .map(|(id, _)| *id)
-    .collect();
+let boundary_set: HashSet<Uuid> = /* nodes at or above the threshold ordinal */;
 
 let mut walks: Vec<Walk> = Vec::new();
-let collector_id = walks.len() as u32;
 let entries = count_generations_upward_instrumented(
     tree, source_id, &boundary_set, &boundary_check, walk_depth(cfg),
     empty_consumes, Some(snapshots), &mut walks,
@@ -126,7 +124,9 @@ for &(rank_name, ordinal) in &unique_ranks {
 
 The filter sits between the walk primitive and `emit_*_earnings`. Look up the earner's rank in the snapshot map, resolve the cap via the helper, admit entries where `entry.generation <= cap`. The filter itself is purely at the call site and this pattern did not change it.
 
-The primitive underneath did change in HEU-641. This caller now takes `count_generations_upward_instrumented`, which additionally accepts a snapshot map and a `&mut Vec<Walk>` collector, and `emit_generation_earnings` gained a `collector_id` telling it which walk these entries came from. That id is passed rather than derived from the source, because SameRank runs one traversal per rank and source: deriving it would collapse every rank onto one walk, and every earning would still reference a real walk, so nothing would fail loudly. The earlier version of this entry said the primitive was unchanged, which was true when written and is not now.
+The primitive underneath did change in HEU-641. This caller now takes `count_generations_upward_instrumented`, which additionally accepts a snapshot map and a `&mut Vec<Walk>` collector. `emit_generation_earnings` gained a `collector_id` telling it which walk these entries came from.
+
+That id is passed rather than derived from the source. SameRank runs one traversal per rank and source, so deriving it would collapse every rank onto one walk. The output would still be well-formed, and every earning would still point at a real walk, so no test would fail.
 
 **Usage:**
 ```rust

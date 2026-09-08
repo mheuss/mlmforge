@@ -215,9 +215,9 @@ pub(crate) fn validate_source<'t, T: TreeNavigator>(
 /// An unrecorded walk sorts first, since `Option`'s own `Ord` puts `None`
 /// before any `Some`.
 ///
-/// **Inert until walks are assigned.** Every earning carries `walk: None`
-/// today, so this key resolves nothing and every pre-existing tie survives.
-/// It starts doing work when the calculators populate indexes.
+/// Stairstep is why this key exists. It pays one ancestor from two walks for
+/// the same source, so `(earner_id, source_id, level)` is not unique there.
+/// An earning with no recorded walk sorts before any `Some`.
 ///
 /// The comparator is not total even then. Streamline runs one walk per
 /// stream over the same volume, and a user can hold positions on more than
@@ -402,11 +402,8 @@ pub(crate) fn validate_broad_pct(broad_pct: f64) {
 /// streamline pass `|_| false`. Stairstep passes a closure that checks
 /// breakaway set membership.
 ///
-/// Returns earnings unsorted, and callers no longer sort them. Every
-/// calculator routes its earnings and walks through `walk_order::assemble`,
-/// which remaps the collector ids and then calls `sort_earnings` itself. That
-/// is the only non-test caller of it. Stairstep still combines Walk 1 and
-/// Walk 2 before handing them over.
+/// Returns earnings unsorted. Sorting happens in `walk_order::assemble`,
+/// after collector ids are remapped to final walk indexes.
 pub(crate) fn walk_level_commissions<T: TreeNavigator>(
     tree: &T,
     config: &LevelWalkConfig,

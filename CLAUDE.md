@@ -304,11 +304,12 @@ and paste from the repo root as written.
       2026-08-22**, twice, two and three seconds after the merge. Three later PR
       bodies carried one, on 2026-08-25, 2026-09-05 and 2026-09-06. None moved
       in that two-to-three-second window.
-    - Two of those three did reach Done later, one 20 minutes after its merge
-      and one 30 seconds after. Both sit inside a window when a seat was moving
-      keyword-free tickets by hand, 13 to 69 seconds after each merge. Nobody
-      watched who moved them. Read them as unattributed rather than as a late
-      transition.
+    - Two of those three did reach Done later. Neither is attributed, and the
+      reason differs. One moved 30 seconds after its merge, inside the 13-to-69
+      second window in which a seat was moving keyword-free tickets by hand
+      that night, and well outside the two to three seconds the 2026-08-22
+      transitions took. The other moved 20 minutes after its merge, which is
+      near neither. Nobody watched who moved either one.
     - **Commit message:** when the commit reaches `main`, which does not
       require a PR merge.
     - That last case matters here because squash is disabled, so every branch

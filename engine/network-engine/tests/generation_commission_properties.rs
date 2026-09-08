@@ -655,7 +655,11 @@ proptest! {
     /// source and `build_same_rank_generation_plan` gives three distinct rank
     /// ordinals, so key 3 alone separates every walk. So no change to this
     /// calculator's emission order can make this property fail. Not a
-    /// different loop nesting, not an unsorted intermediate, nothing.
+    /// different loop nesting, not an unsorted intermediate. No reordering of
+    /// emission alone, to be exact: a change that emitted two walks sharing a
+    /// kind, stream, rank and source would create a keys-1-to-4 tie, and key 5
+    /// is the collector id. `walk_order.rs` records that shape as reachable,
+    /// through a `VolumeSource` repeated in the input.
     ///
     /// What it does still guard is narrower and real. The calculator reads
     /// `snapshots` only through key lookups and set membership, so map order
@@ -685,8 +689,11 @@ proptest! {
             reverse.insert(*id, snap.clone());
         }
         // Key sets rather than lengths: equal counts would not notice two maps
-        // that drifted in content. The values are one snapshot cloned, so keys
-        // are the only thing that could differ.
+        // that drifted in content. Values vary by node here, deliberately, since
+        // the rank spread is what SameRank is about. They still match across the
+        // two maps by construction, because reverse is built from forward's own
+        // entries, and DistributorSnapshot derives no PartialEq, so keys are
+        // what can actually be compared.
         let keys_forward: HashSet<_> = forward.keys().copied().collect();
         let keys_reverse: HashSet<_> = reverse.keys().copied().collect();
         prop_assert_eq!(keys_forward, keys_reverse);

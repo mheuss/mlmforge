@@ -504,7 +504,7 @@ fn build_multi_stream_engine(stream_count: u32) -> StreamlineEngine {
     // stream, and only member 1 does. The stream_id_override path needs the
     // sponsor to resolve inside the target stream's tree, which member 1 does
     // not once that stream has a root of its own. Reaching for it anyway
-    // panics rather than returning an error. See the ticket filed for that.
+    // panics rather than returning an error. See HEU-694.
 
     engine
         .add_member(stream_one_child(), uuid_from_index(1), 2000, None)
@@ -613,8 +613,10 @@ proptest! {
 
         prop_assert_eq!(walk_order_fingerprint(&a.walks), walk_order_fingerprint(&b.walks));
         // The whole result, not just the walks: earnings and plan identity are
-        // part of what must not move, and streamline accumulates earnings
-        // across streams in the same iteration order.
+        // part of what must not move, and streamline appends each stream's
+        // earnings in that same iteration order. An append, not a sum. Were it
+        // ever a sum, float non-associativity plus the prop_assume above would
+        // make this flake rather than fail cleanly.
         prop_assert_eq!(a, b);
     }
 }

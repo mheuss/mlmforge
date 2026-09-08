@@ -1127,7 +1127,11 @@ proptest! {
     /// between two walks. This fixture has no such tie: every walk carries a
     /// distinct `source_id`, so key 4 alone separates them. So no change to this
     /// calculator's emission order can make this property fail. Not a
-    /// different loop nesting, not an unsorted intermediate, nothing.
+    /// different loop nesting, not an unsorted intermediate. No reordering of
+    /// emission alone, to be exact: a change that emitted two walks sharing a
+    /// kind, stream, rank and source would create a keys-1-to-4 tie, and key 5
+    /// is the collector id. `walk_order.rs` records that shape as reachable,
+    /// through a `VolumeSource` repeated in the input.
     ///
     /// What it does still guard is narrower and real. The calculator reads
     /// `snapshots` only through key lookups and set membership, so map order
@@ -1165,8 +1169,9 @@ proptest! {
             reverse.insert(uuid_from_index(i), member_snapshot());
         }
         // Key sets rather than lengths: equal counts would not notice two maps
-        // that drifted in content. The values are one snapshot cloned, so keys
-        // are the only thing that could differ.
+        // that drifted in content. Every value here is an identical
+        // member_snapshot(), and DistributorSnapshot derives no PartialEq, so
+        // keys are what can actually be compared.
         let keys_forward: HashSet<_> = forward.keys().copied().collect();
         let keys_reverse: HashSet<_> = reverse.keys().copied().collect();
         prop_assert_eq!(keys_forward, keys_reverse);

@@ -70,9 +70,10 @@ func TestPlanHashMatchesWorkerAcrossTheWire(t *testing.T) {
 	//
 	// Switching the transport's marshal does not, and this sub-case stays
 	// green. translateToEngine has already escaped by then, so the six-byte
-	// \u0026 sequence has nothing left to escape and the transport is a no-op
-	// either way. A reviewer read an earlier version of this comment as
-	// claiming otherwise, which is why it now names the file.
+	// \u0026 sequence has nothing left to escape and that switch changes
+	// nothing this hash can see. It is not a no-op in general: an Encoder also
+	// appends a trailing newline. A reviewer read an earlier version of this
+	// comment as claiming otherwise, which is why it now names the file.
 	//
 	// What still has no guard is PlanHash being fed bytes that did not come
 	// from json.Marshal at all, carrying a raw &. That is the shape a jsonb

@@ -708,9 +708,11 @@ fn a_rejected_plan_leaves_the_previous_identity_in_place() {
     //
     // A calculate_* response reports the stored identity, so it observes the
     // post-rejection state directly.
+    // The structure has to exist for the op to resolve, but nothing is added
+    // to it. An empty volume short-circuits every stream body, so the response
+    // carries no earnings and no walks and still carries the identity, which
+    // is the only field this test reads.
     create_streamline(&mut worker);
-    sl_add_member(&mut worker, "sl-m1", SL_USER1, ROOT, 1001);
-    sl_add_member(&mut worker, "sl-m2", SL_USER2, SL_USER1, 1002);
     let probe = common::send_receive(
         &mut worker,
         &format!(

@@ -219,16 +219,24 @@ pub(crate) fn validate_source<'t, T: TreeNavigator>(
 /// the same source, so `(earner_id, source_id, level)` is not unique there.
 /// An earning with no recorded walk sorts before any `Some`.
 ///
-/// The streamline case this comment used to cite is not a tie. A user holding
-/// positions on two streams earns from two walks, and those get different
-/// indexes because `walk_order` separates them on `stream_id` before it
-/// separates anything else. Within a single walk the upline is a path, so no
-/// node earns twice at one level for one source.
+/// The streamline case this comment used to cite is not a tie, and the reason
+/// is simpler than the sort keys. `walk_order::assign_indexes` numbers a
+/// response's walks by position, so every walk in it holds a distinct index by
+/// construction. The sort keys decide which index a walk gets, never whether
+/// two walks differ. So two earnings from different walks cannot tie here at
+/// all, whatever their kind, stream or rank.
 ///
-/// `sort_by` stays stable anyway. No four-key tie is reachable today, but the
-/// output is a persisted audit record, `sort_unstable_by` would buy nothing
-/// measurable at these sizes, and a future emitter that does produce one
-/// would reorder rows silently rather than fail.
+/// That leaves two earnings from the same walk. Within one walk the upline is
+/// a path visited once, with the level advancing as it goes, so no node earns
+/// twice at one level for one source.
+///
+/// `sort_by` stays stable anyway. Those two paths are the ones this comment
+/// walks through, and stairstep Walk 2 is not among them: its earnings all
+/// carry `walk: None` and so tie each other on the fourth key, leaving the
+/// first three to separate them. The output is a persisted audit record,
+/// `sort_unstable_by` would buy nothing measurable at these sizes, and an
+/// emitter that did produce a tie would reorder rows silently rather than
+/// fail.
 pub(crate) fn sort_earnings(earnings: &mut [CommissionEarning]) {
     earnings.sort_by(|a, b| {
         a.earner_id

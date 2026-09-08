@@ -1121,13 +1121,22 @@ proptest! {
     /// Unilevel walk indexes do not move when the snapshot map is built in a
     /// different order.
     ///
-    /// **This property cannot fail against today's code.** Unilevel emits one
-    /// walk per volume source in slice order, which is already the order
-    /// `walk_order::assign_indexes` produces, so the sort is a no-op here and
-    /// deleting it leaves this test green. Verified by doing it.
+    /// **These cannot fail, and the reason is stronger than "not today".**
+    /// `walk_order::assign_indexes` breaks its final tie on the collector id,
+    /// so emission order reaches the sorted output only where keys 1 to 4 tie
+    /// between two walks. This fixture has no such tie: every walk carries a
+    /// distinct `source_id`, so key 4 alone separates them. So no change to this
+    /// calculator's emission order can make this property fail. Not a
+    /// different loop nesting, not an unsorted intermediate, nothing.
     ///
-    /// It is a guard on that coincidence, not a test of the sort. The property
-    /// that does exercise the sort lives in `streamline_properties.rs`.
+    /// What it does still guard is narrower and real. The calculator reads
+    /// `snapshots` only through key lookups and set membership, so map order
+    /// cannot reach walk *content* today. If some future change let it reach
+    /// the steps or the stop, these two runs would disagree and this fails.
+    ///
+    /// The property that exercises the ordering lives in
+    /// `streamline_properties.rs`, because streamline is the only calculator
+    /// whose emission order is a `HashMap` iteration.
     ///
     /// The two maps here hold identical content and are built in opposite
     /// insertion orders, so they are unlikely to share a bucket layout. Running
@@ -1155,7 +1164,12 @@ proptest! {
         for i in (0..tree_size).rev() {
             reverse.insert(uuid_from_index(i), member_snapshot());
         }
-        prop_assert_eq!(forward.len(), reverse.len());
+        // Key sets rather than lengths: equal counts would not notice two maps
+        // that drifted in content. The values are one snapshot cloned, so keys
+        // are the only thing that could differ.
+        let keys_forward: HashSet<_> = forward.keys().copied().collect();
+        let keys_reverse: HashSet<_> = reverse.keys().copied().collect();
+        prop_assert_eq!(keys_forward, keys_reverse);
 
         // Several sources, so there is a real order to get wrong. One source
         // yields one walk, which sorts correctly by accident.
@@ -1171,6 +1185,8 @@ proptest! {
         prop_assert!(!a.walks.is_empty(), "no walks emitted, so the comparison proves nothing");
 
         prop_assert_eq!(walk_order_fingerprint(&a.walks), walk_order_fingerprint(&b.walks));
-        prop_assert_eq!(a.walks, b.walks);
+        // The whole result, not just the walks. Earnings and plan identity are
+        // part of what must not move.
+        prop_assert_eq!(a, b);
     }
 }

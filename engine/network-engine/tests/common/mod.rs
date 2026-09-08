@@ -608,8 +608,19 @@ pub fn build_two_rank_matrix_plan(
     (plan, structure)
 }
 
-/// One walk's position key: kind, stream id, rank, source and index. These
-/// are the fields `walk_order::assign_indexes` orders a response's walks by.
+/// The five fields Task 18 pins on each walk: kind, stream id, rank, source
+/// and index.
+///
+/// Close to the sort keys `walk_order::assign_indexes` uses, but not the same,
+/// and the difference matters if you reach for this expecting to mirror them.
+/// That sort orders by the source's *position in the volume slice* rather than
+/// by `source_id`, and breaks final ties on the *collector* id rather than on
+/// the published `index`.
+///
+/// `index` here is near-dead weight: after `assemble` it is always the walk's
+/// position in the list, so this projection's last element is always
+/// `0, 1, 2, ...` and cannot disagree between two runs of equal length. It is
+/// carried because the task named it.
 pub type WalkOrderKey = (WalkKind, Option<u32>, Option<String>, uuid::Uuid, u32);
 
 /// Project a response's walks onto their position keys, in list order.

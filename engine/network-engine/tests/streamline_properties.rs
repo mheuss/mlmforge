@@ -447,18 +447,29 @@ proptest! {
 // Property 8: walk indexes ignore stream map iteration order
 // ---------------------------------------------------------------------------
 
+/// Stream 1's root is the bootstrap member, not a synthesised id. Returning
+/// the synthesised one here would hand back an id that is in no tree.
 fn stream_root(stream: u32) -> uuid::Uuid {
-    uuid_from_index(100 + stream as usize)
+    if stream == 1 {
+        uuid_from_index(1)
+    } else {
+        uuid_from_index(100 + stream as usize)
+    }
 }
 
-/// Only stream 1 gets a child. See `build_multi_stream_engine` for why the
-/// other streams cannot take a second member.
-fn stream_child(stream: u32) -> uuid::Uuid {
-    uuid_from_index(200 + stream as usize)
+/// Stream 1 is the only stream that can take a second member, so this needs no
+/// stream argument. See `build_multi_stream_engine`.
+fn stream_one_child() -> uuid::Uuid {
+    uuid_from_index(201)
 }
 
-/// An engine with `stream_count` streams, each holding a root and one child
-/// beneath it, so every stream yields exactly one walk carrying one earning.
+/// An engine with `stream_count` streams. Stream 1 holds a root and a child
+/// beneath it; every other stream holds its root alone.
+///
+/// So the fixture produces one walk per stream but only **one earning in
+/// total**, from stream 1, because a lone root has no ancestor to pay. The
+/// walks are what this property orders, and a walk is emitted per stream and
+/// source whether or not anything was earned.
 ///
 /// Needs `enrollment_stream_choice`, because placing a member into a named
 /// stream is the only way to get volume into more than one of them. The
@@ -488,14 +499,15 @@ fn build_multi_stream_engine(stream_count: u32) -> StreamlineEngine {
             .expect("stream root should place");
     }
 
-    // Stream 1 gets a second member so at least one walk has an ancestor to
-    // pay. The other streams stay at one member each, which is a limit of the
-    // engine rather than a choice: SponsorStream placement requires a sponsor
-    // who owns a stream, and only member 1 does, while the override path
-    // additionally requires the sponsor to be in the target stream's tree,
-    // which member 1 is not once that stream has a root of its own.
+    // Only stream 1 can take a second member, and that is an engine limit
+    // rather than a choice. SponsorStream placement needs a sponsor who owns a
+    // stream, and only member 1 does. The stream_id_override path needs the
+    // sponsor to resolve inside the target stream's tree, which member 1 does
+    // not once that stream has a root of its own. Reaching for it anyway
+    // panics rather than returning an error. See the ticket filed for that.
+
     engine
-        .add_member(stream_child(1), uuid_from_index(1), 2000, None)
+        .add_member(stream_one_child(), uuid_from_index(1), 2000, None)
         .expect("stream 1 child should place");
 
     engine
@@ -555,7 +567,7 @@ proptest! {
         };
         let mut snapshots = HashMap::new();
         snapshots.insert(uuid_from_index(1), snapshot.clone());
-        snapshots.insert(stream_child(1), snapshot.clone());
+        snapshots.insert(stream_one_child(), snapshot.clone());
         for s in 2..=stream_count {
             snapshots.insert(stream_root(s), snapshot.clone());
         }
@@ -564,7 +576,7 @@ proptest! {
         // pays its root; the rest are single-member streams whose walk records
         // a traversal that reached the top immediately. Both are walks, and
         // walks are what this property orders.
-        let mut volume = vec![VolumeSource { source_id: stream_child(1), cv_amount: 100.0 }];
+        let mut volume = vec![VolumeSource { source_id: stream_one_child(), cv_amount: 100.0 }];
         for s in 2..=stream_count {
             volume.push(VolumeSource { source_id: stream_root(s), cv_amount: 100.0 });
         }
@@ -575,8 +587,23 @@ proptest! {
                 .expect("calculation should not fail")
         };
 
-        let a = run(&build_multi_stream_engine(stream_count));
-        let b = run(&build_multi_stream_engine(stream_count));
+        let engine_a = build_multi_stream_engine(stream_count);
+        let engine_b = build_multi_stream_engine(stream_count);
+
+        // Two separately built maps provably get different RandomState keys,
+        // because RandomState::new bumps a thread-local counter. Different keys
+        // do not guarantee a different order for a table this small, though: at
+        // stream_count 2 roughly half of cases would place the two streams the
+        // same way round and compare two identical emission orders, proving
+        // nothing. Rejecting those makes every counted case one where the
+        // orders genuinely disagree, rather than trusting the aggregate.
+        let emission_order = |e: &StreamlineEngine| -> Vec<u32> {
+            e.active_streams().map(|s| s.id).collect()
+        };
+        prop_assume!(emission_order(&engine_a) != emission_order(&engine_b));
+
+        let a = run(&engine_a);
+        let b = run(&engine_b);
 
         // Guards against the assertions below passing on two empty lists, and
         // against a fixture that stops spanning more than one stream.
@@ -585,6 +612,9 @@ proptest! {
         prop_assert!(streams_seen.len() >= 2, "all walks came from one stream, so ordering is untested");
 
         prop_assert_eq!(walk_order_fingerprint(&a.walks), walk_order_fingerprint(&b.walks));
-        prop_assert_eq!(a.walks, b.walks);
+        // The whole result, not just the walks: earnings and plan identity are
+        // part of what must not move, and streamline accumulates earnings
+        // across streams in the same iteration order.
+        prop_assert_eq!(a, b);
     }
 }

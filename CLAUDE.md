@@ -293,14 +293,51 @@ and paste from the repo root as written.
 - **Ticket identifiers reach Linear from four places.** Branch name, PR title, PR
   body, and commit messages. Rebases carry trailers, so check what you inherited.
   - A **bare** identifier in a **branch name or PR title** links the issue.
-  - A **closing magic word** next to the identifier moves the issue. Those words
-    are `close`, `fix`, `resolve`, `complete`, `implement`, their inflections,
-    and `linear issue`. **When it fires depends on where you wrote it:**
-    - **PR title or PR body:** on PR merge.
-    - **Commit message:** when the commit reaches `main`, which does not require
-      a PR merge. Pushing the branch also moves the issue to In Progress.
-    - That difference matters here because squash is disabled, so every branch
-      commit lands on `main` verbatim, carrying whatever it says.
+  - A **closing magic word** next to the identifier is what Linear documents as
+    moving the issue. Those words are `close`, `fix`, `resolve`, `complete`,
+    `implement`, their inflections, and `linear issue`. **What has been watched
+    happen in this repo is narrower than that:**
+    - **PR title and PR body have never been told apart here.** Every PR title
+      that carried a closing word beside an identifier also had one in its body.
+      No observation separates them.
+    - **A closing word in a PR body was last seen to move an issue on
+      2026-08-22**, twice, both within three seconds of the merge. Three later
+      PR bodies carried one, on 2026-08-25, 2026-09-05 and 2026-09-06. None
+      moved in that window.
+    - Two of those three did reach Done later. Neither is attributed, and the
+      reason differs. One moved 30 seconds after its merge, inside the 13-to-69
+      second window in which a seat was moving keyword-free tickets by hand
+      that night, and well outside the three seconds the 2026-08-22
+      transitions took. The other moved 20 minutes after its merge, which is
+      near neither. Nobody watched who moved either one.
+    - **Commit message:** Linear documents this as firing when the commit
+      reaches `main`, which does not require a PR merge. **It has not been
+      separately watched happen here.** Both recorded transitions carried a
+      closing word in the PR body. The one that also carried it in a commit
+      cannot tell the two apart, and a keyword in a commit alone has never
+      been seen to move anything.
+    - That documented case matters here because squash is disabled, so a
+      branch commit's message reaches `main` unchanged, carrying whatever it
+      says. Rebase-and-merge gives a commit a new identity but not a new
+      message, and the message is the part that gets read.
+    - **Pushing a branch has not been seen to move anything.** Tested once, on
+      2026-09-08: a Todo ticket, a branch named for it, one commit, pushed.
+      Read before, immediately after, and again about three minutes later. The
+      status stayed Todo, `startedAt` stayed null, the state history kept its
+      two entries and `updatedAt` did not move. One push on one ticket on one
+      day. It did not reproduce the claim. It does not show the behavior
+      cannot exist.
+    - **An unmoved `updatedAt` does not mean the issue was untouched.** Opening
+      the PR on that same ticket attached it within seconds, and `updatedAt`
+      stayed where it was. So the field does not track everything. Read the
+      field you actually care about rather than treating this one as a sentinel
+      for nothing having happened.
+    - That same branch name carried a magic word beside the identifier, and it
+      did not fire on the push either.
+    - **Never rely on a transition firing, and never rely on it not firing.**
+      Check every ticket the PR named after every merge. `main` requires a
+      pull request, checked 2026-09-08, so every commit reaches it through one
+      and there is no second path to watch.
   - **The parser does not read negations.** A sentence saying an issue is *not*
     being closed still contains the word `close` beside `HEU-NNN`, and closes it.
     Do not write a negated closing word next to an identifier. Reword it.

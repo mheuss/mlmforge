@@ -402,9 +402,11 @@ pub(crate) fn validate_broad_pct(broad_pct: f64) {
 /// streamline pass `|_| false`. Stairstep passes a closure that checks
 /// breakaway set membership.
 ///
-/// Returns earnings unsorted. The caller is responsible for calling
-/// `sort_earnings` after combining results from multiple walk phases
-/// (e.g., stairstep combines Walk 1 and Walk 2 before sorting).
+/// Returns earnings unsorted, and callers no longer sort them. Every
+/// calculator routes its earnings and walks through `walk_order::assemble`,
+/// which remaps the collector ids and then calls `sort_earnings` itself. That
+/// is the only non-test caller of it. Stairstep still combines Walk 1 and
+/// Walk 2 before handing them over.
 pub(crate) fn walk_level_commissions<T: TreeNavigator>(
     tree: &T,
     config: &LevelWalkConfig,

@@ -141,7 +141,11 @@ When you add a plan type: add its `StructureConfig` arm to `commission_op`, add 
 
 Commission calculators that use level-based walks (unilevel, matrix, stairstep Walk 1, streamline, and generation) delegate to `commission/walk.rs`. The walk is generic over `TreeNavigator`. Plan-specific behavior is injected via `LevelWalkConfig` (e.g., matrix height ceiling) and the `should_stop` callback (e.g., stairstep breakaway boundaries). Binary uses pairing mechanics and does not use this module.
 
-The walk function does not sort its output. Callers sort after combining results from multiple walk phases (stairstep combines Walk 1 and Walk 2 before sorting).
+The walk function does not sort its output, and since HEU-641 no calculator sorts either. Every calculator hands its earnings and walks to `walk_order::assemble`, which orders the walks, remaps each earning's collector id to a final walk index, and only then calls `sort_earnings`. That is the single assembly point, and it is the only non-test caller of `sort_earnings`. Stairstep still combines Walk 1 and Walk 2 before handing them over.
+
+The walk takes a `&mut Vec<Walk>` collector as its last parameter and pushes one walk record per volume source as it goes, recording a step at each of the four sites that consume a level and a stop at both break sites. The `index` on a pushed walk is a collector id, not a position. `walk_order::assemble` replaces it with the real index and remaps the earnings that reference it.
+
+A caller that must not record provenance passes a throwaway collector. Stairstep Walk 2 does this through the uninstrumented `count_generations_upward` wrapper, so its earnings carry `walk: null`. That gap is deliberate, not a miss: design 029 excludes that traversal.
 
 Stairstep calls the walk once per volume source rather than passing the full slice. This is because the `should_stop` closure captures a per-source group leader for breakaway boundary detection.
 

@@ -73,7 +73,11 @@ let engine: BoardPlanEngine = serde_json::from_str(&snapshot)?;
 
 **Problem:** The standalone generation calculator needs to walk upward through the tree counting rank boundaries. The `count_generations_upward()` utility already does this for stairstep Walk 2 generation overrides, but its `breakaway_set` parameter is named for the stairstep context.
 
-**Solution:** Reuse `count_generations_upward()` directly. Map boundary-rank nodes to the `breakaway_set` parameter. The `boundary_check` closure controls whether ineligible nodes create boundaries (`ineligible_creates_boundary` flag). For ThresholdRank mode, one boundary set serves all sources. For SameRank mode, a separate boundary set is built per unique `(rank_name, ordinal)` pair, and results are filtered to earners at exactly that ordinal. The rank name is preserved alongside the ordinal so the per-walk termination depth can resolve via `earner_max_generations` (see UC-NET-004).
+**Solution:** Reuse the shared upward count directly. Map boundary-rank nodes to the `breakaway_set` parameter.
+
+Since HEU-641 there are two entry points, and which one a caller takes is a design decision rather than a convenience. `count_generations_upward_instrumented` takes a snapshot map and a `&mut Vec<Walk>` collector and records a walk. `count_generations_upward` is a thin uninstrumented wrapper over it that discards the collector. Standalone generation calls the instrumented one. Stairstep Walk 2 keeps the wrapper, because design 029 excludes that traversal from provenance, so its earnings carry `walk: null`.
+
+In SameRank mode the caller stamps the rank onto the walks each pass pushed, because the rank is what separates those walks in the response's total order. A pass records the collector length before walking so it knows which walks were its own. The `boundary_check` closure controls whether ineligible nodes create boundaries (`ineligible_creates_boundary` flag). For ThresholdRank mode, one boundary set serves all sources. For SameRank mode, a separate boundary set is built per unique `(rank_name, ordinal)` pair, and results are filtered to earners at exactly that ordinal. The rank name is preserved alongside the ordinal so the per-walk termination depth can resolve via `earner_max_generations` (see UC-NET-004).
 
 **Usage:**
 ```rust
@@ -85,14 +89,22 @@ let boundary_set: HashSet<Uuid> = snapshots.iter()
     .map(|(id, _)| *id)
     .collect();
 
-let entries = count_generations_upward(tree, source_id, &boundary_set, &boundary_check, walk_depth(cfg), empty_consumes);
+let mut walks: Vec<Walk> = Vec::new();
+let collector_id = walks.len() as u32;
+let entries = count_generations_upward_instrumented(
+    tree, source_id, &boundary_set, &boundary_check, walk_depth(cfg),
+    empty_consumes, Some(snapshots), &mut walks,
+);
 
 // SameRank: per-(rank_name, ordinal) walks with exact-ordinal filtering.
 // Each walk's termination depth is the per-rank cap (earner_max_generations).
 for &(rank_name, ordinal) in &unique_ranks {
     let walk_max = earner_max_generations(rank_name, cfg);
     let boundary_set = /* nodes >= ordinal */;
-    let entries = count_generations_upward(tree, source_id, &boundary_set, &check, walk_max, empty_consumes);
+    let entries = count_generations_upward_instrumented(
+        tree, source_id, &boundary_set, &check, walk_max,
+        empty_consumes, Some(snapshots), &mut walks,
+    );
     let filtered = entries.into_iter().filter(|e| earner_ordinal(e) == ordinal).collect();
 }
 ```
@@ -112,14 +124,18 @@ for &(rank_name, ordinal) in &unique_ranks {
 - `earner_max_generations(rank, cfg)` returns the per-earner cap with default fallback
 - `walk_depth(cfg)` returns the deepest cap any earner needs (max of default and all per-rank values)
 
-The filter sits between the walk primitive and `emit_*_earnings`. Look up the earner's rank in the snapshot map, resolve the cap via the helper, admit entries where `entry.generation <= cap`. The walk primitive (`count_generations_upward`) is unchanged — the filter is purely at the call site.
+The filter sits between the walk primitive and `emit_*_earnings`. Look up the earner's rank in the snapshot map, resolve the cap via the helper, admit entries where `entry.generation <= cap`. The filter itself is purely at the call site and this pattern did not change it.
+
+The primitive underneath did change in HEU-641. This caller now takes `count_generations_upward_instrumented`, which additionally accepts a snapshot map and a `&mut Vec<Walk>` collector, and `emit_generation_earnings` gained a `collector_id` telling it which walk these entries came from. That id is passed rather than derived from the source, because SameRank runs one traversal per rank and source: deriving it would collapse every rank onto one walk, and every earning would still reference a real walk, so nothing would fail loudly. The earlier version of this entry said the primitive was unchanged, which was true when written and is not now.
 
 **Usage:**
 ```rust
 // ThresholdRank: walk once to the deepest cap, then filter per-earner
-let gen_entries = count_generations_upward(
+let collector_id = walks.len() as u32;
+let gen_entries = count_generations_upward_instrumented(
     tree, source.source_id, &boundary_set, &boundary_check,
     walk_depth(cfg), cfg.empty_generation_consumes_number,
+    Some(snapshots), &mut walks,
 );
 let filtered: Vec<_> = gen_entries.into_iter()
     .filter(|entry| {
@@ -127,7 +143,7 @@ let filtered: Vec<_> = gen_entries.into_iter()
         entry.generation <= earner_max_generations(rank, cfg)
     })
     .collect();
-emit_generation_earnings(&filtered, source, cfg, /* ... */);
+emit_generation_earnings(&filtered, source, cfg, /* ... */, collector_id, &mut earnings);
 ```
 
 **When to use this pattern:**

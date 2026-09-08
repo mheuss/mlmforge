@@ -293,14 +293,28 @@ and paste from the repo root as written.
 - **Ticket identifiers reach Linear from four places.** Branch name, PR title, PR
   body, and commit messages. Rebases carry trailers, so check what you inherited.
   - A **bare** identifier in a **branch name or PR title** links the issue.
-  - A **closing magic word** next to the identifier moves the issue. Those words
-    are `close`, `fix`, `resolve`, `complete`, `implement`, their inflections,
-    and `linear issue`. **When it fires depends on where you wrote it:**
-    - **PR title or PR body:** on PR merge.
+  - A **closing magic word** next to the identifier is what Linear documents as
+    moving the issue. Those words are `close`, `fix`, `resolve`, `complete`,
+    `implement`, their inflections, and `linear issue`. **What has been watched
+    happen in this repo is narrower than that:**
+    - **PR title and PR body have never been told apart here.** Every PR title
+      that carried a closing word beside an identifier also had one in its body.
+      No observation separates them.
+    - **A closing word in a PR body was last seen to move an issue on
+      2026-08-22**, twice, two and three seconds after the merge. Three later PR
+      bodies carried one, on 2026-08-25, 2026-09-05 and 2026-09-06. None moved
+      in that two-to-three-second window.
+    - Two of those three did reach Done later, one 20 minutes after its merge
+      and one 30 seconds after. Both sit inside a window when a seat was moving
+      keyword-free tickets by hand, 13 to 69 seconds after each merge. Nobody
+      watched who moved them. Read them as unattributed rather than as a late
+      transition.
     - **Commit message:** when the commit reaches `main`, which does not require
       a PR merge. Pushing the branch also moves the issue to In Progress.
     - That difference matters here because squash is disabled, so every branch
       commit lands on `main` verbatim, carrying whatever it says.
+    - **Never rely on a transition firing, and never rely on it not firing.**
+      Check every ticket the PR named after every merge.
   - **The parser does not read negations.** A sentence saying an issue is *not*
     being closed still contains the word `close` beside `HEU-NNN`, and closes it.
     Do not write a negated closing word next to an identifier. Reword it.

@@ -766,3 +766,62 @@ payload has to exceed both the channel and the pipe.
 Three lines here were each deletable with the whole suite green until tests were
 written specifically to fail without them. A shutdown path that is only
 exercised by well-behaved workers is not exercised at all.
+
+## The Four Consuming Branches In The Level Walk
+
+The Shared Walk Module section above says the walk records a step at each of the
+four sites that consume a level, and why four is not five. This is what those
+four are.
+
+Anchored by content rather than by line number. These have rotted twice.
+
+| Branch | Condition |
+| -- | -- |
+| `saturating_add` under the missing-snapshot arm | No snapshot, and no compression configured |
+| `saturating_add` with the `// forfeit level` comment | Node is ineligible and was not compressed |
+| `saturating_add` under the `max_earning_depth` check | Per-distributor depth cap from active leg tiers |
+| the trailing `saturating_add` at the bottom of the node loop, **when `rate == 0.0`** | Eligible, uncompressed, but the rate table has no entry for this rank at this level |
+
+**The fourth is the one that reads as safe, and the ticket, the plan and the
+implementation brief all missed it.** All three counted three. The first three
+`continue`, so they look like the exceptional paths. The fourth is the
+unconditional increment every surviving node reaches, and it forfeits only when
+the rate lookup falls back to `unwrap_or(0.0)`.
+
+Missing it leaves `steps.len()` short by one for every zero-rate node. That
+compiles, passes every existing fixture, and silently breaks the one property
+walk records exist to provide.
+
+It is reachable rather than theoretical. Any plan whose `max_depth` exceeds the
+deepest level in its rate table hits it, as does a rank the rate table does not
+list. A test for it needs a plan with that shape or it cannot reach the case.
+
+**Non-consuming skips record nothing**, correctly. Pass-up and both compression
+branches never advance the counter, so omitting them keeps reconstruction exact.
+(HEU-641)
+
+## Adding A Parameter To A `pub` Function Is A Breaking Change
+
+Worth stating because a design document got this wrong and the error survived
+several reviews before anyone checked it.
+
+The provenance work threads a `&mut Vec<Walk>` collector into both instrumented
+traversals rather than changing their return types. One stated reason was that an
+out-parameter avoids breaking `count_generations_upward`'s public signature.
+**That is false.** Adding a parameter breaks a `pub` item exactly as changing the
+return type does. Every caller has to change either way.
+
+What actually preserves the public signature is the split: `count_generations_upward`
+stays as a thin uninstrumented wrapper with its original parameters, and a
+crate-internal helper takes the collector. That was a separate decision, and it is
+doing the work the out-parameter was credited with.
+
+The out-parameter still won, on two grounds that hold. It matches
+`emit_generation_earnings`, which already accumulates through a `&mut Vec`, so it
+introduces no second convention. And it keeps the diff in the traversal bodies and
+the five calculators rather than spreading it across the most densely tested files
+in the repo.
+
+The objection that out-parameters are less idiomatic than returning a value was
+raised and overruled on that precedent. Recorded so a reviewer can see it was
+decided rather than defaulted into. (HEU-641)

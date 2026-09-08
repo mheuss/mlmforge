@@ -281,9 +281,35 @@ version cannot express which feature combinations a worker actually has. A worke
 expects complete provenance are incompatible even though both speak the same
 schema, and a version tracking only shape would let that pair through.
 
+## Naming The `should_stop` Exit
+
+The shared level walk takes a caller-supplied `should_stop` predicate. When it
+fires, the walk records `boundary_reached`.
+
+Two alternatives were rejected, and the reasoning matters because HEU-46
+persists these strings. A later rename orphans every row carrying the old value.
+
+**`breakaway_reached` was rejected.** Breakaway is stairstep's word. The
+predicate is caller-supplied and stairstep is its only non-trivial user today, so
+naming the value after that one caller bakes one plan type's semantics into a
+shared walk. That is the `compressed_inactive` trap described above: a name
+accurate only while there is one caller, and misleading the moment there are two.
+
+**`stop_requested` was rejected.** It is the most literally correct description of
+what happened in the code, and it tells an auditor nothing about what happened to
+the money. A provenance value the audit trail's own reader cannot interpret is
+not doing its job.
+
+`boundary_reached` describes the tree rather than the caller or the mechanism.
+
+**Revisit condition.** If a second calculator passes a `should_stop` that is not a
+boundary in any meaningful sense, this name stops being honest and must change
+before that caller ships. Recorded rather than left to be noticed, because after
+HEU-46 the cost of changing it is a data migration.
+
 ## Revisit Trigger
 
-Three things would reopen this.
+Four things would reopen this.
 
 **Provenance does not fit a single NDJSON response.** Both mechanics walk to
 root and non-consuming steps do not advance the counter, so one walk can span
@@ -306,6 +332,10 @@ HEU-46's call.
 having no pinned behavior, not a judgment that override provenance does not
 matter. Once all three paths are pinned, the null walk reference should become
 a real one.
+
+**A second `should_stop` caller appears that is not a boundary.** See "Naming The
+`should_stop` Exit" above. The value would need renaming before that caller ships,
+and after HEU-46 that is a migration rather than a rename.
 
 ## What This Means
 

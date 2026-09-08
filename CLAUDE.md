@@ -301,19 +301,23 @@ and paste from the repo root as written.
       that carried a closing word beside an identifier also had one in its body.
       No observation separates them.
     - **A closing word in a PR body was last seen to move an issue on
-      2026-08-22**, twice, two and three seconds after the merge. Three later PR
-      bodies carried one, on 2026-08-25, 2026-09-05 and 2026-09-06. None moved
-      in that two-to-three-second window.
+      2026-08-22**, twice, both within three seconds of the merge. Three later
+      PR bodies carried one, on 2026-08-25, 2026-09-05 and 2026-09-06. None
+      moved in that window.
     - Two of those three did reach Done later. Neither is attributed, and the
       reason differs. One moved 30 seconds after its merge, inside the 13-to-69
       second window in which a seat was moving keyword-free tickets by hand
-      that night, and well outside the two to three seconds the 2026-08-22
+      that night, and well outside the three seconds the 2026-08-22
       transitions took. The other moved 20 minutes after its merge, which is
       near neither. Nobody watched who moved either one.
-    - **Commit message:** when the commit reaches `main`, which does not
-      require a PR merge.
-    - That last case matters here because squash is disabled, so every branch
-      commit lands on `main` verbatim, carrying whatever it says.
+    - **Commit message:** Linear documents this as firing when the commit
+      reaches `main`, which does not require a PR merge. **It has not been
+      separately watched happen here.** Both recorded transitions carried a
+      closing word in the PR body. The one that also carried it in a commit
+      cannot tell the two apart, and a keyword in a commit alone has never
+      been seen to move anything.
+    - That documented case matters here because squash is disabled, so every
+      branch commit lands on `main` verbatim, carrying whatever it says.
     - **Pushing a branch has not been seen to move anything.** Tested once, on
       2026-09-08: a Todo ticket, a branch named for it, one commit, pushed.
       Read before, immediately after, and again about three minutes later. The

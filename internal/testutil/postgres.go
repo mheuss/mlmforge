@@ -58,12 +58,10 @@ func StartPostgres() (*PostgresContainer, error) {
 // recover is scoped to this call alone so that a panic raised anywhere else
 // still crashes the run.
 func runContainer(ctx context.Context) (c *postgres.PostgresContainer, err error) {
+	// c is still nil here. A panic in the call below never completes the
+	// return, so the named result is never assigned.
 	defer func() {
 		if r := recover(); r != nil {
-			if c != nil {
-				_ = c.Terminate(ctx)
-			}
-			c = nil
 			err = panicToError(r)
 		}
 	}()

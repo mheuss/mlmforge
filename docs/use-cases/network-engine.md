@@ -99,10 +99,12 @@ let entries = count_generations_upward_instrumented(
 for &(rank_name, ordinal) in &unique_ranks {
     let walk_max = earner_max_generations(rank_name, cfg);
     let boundary_set = /* nodes >= ordinal */;
+    let first = /* walks.len(), so this pass knows which walks are its own */;
     let entries = count_generations_upward_instrumented(
         tree, source_id, &boundary_set, &check, walk_max,
         empty_consumes, Some(snapshots), &mut walks,
     );
+    /* stamp rank_name onto walks[first..]; walk_order sorts on it */
     let filtered = entries.into_iter().filter(|e| earner_ordinal(e) == ordinal).collect();
 }
 ```

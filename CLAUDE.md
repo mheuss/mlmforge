@@ -309,10 +309,18 @@ and paste from the repo root as written.
       keyword-free tickets by hand, 13 to 69 seconds after each merge. Nobody
       watched who moved them. Read them as unattributed rather than as a late
       transition.
-    - **Commit message:** when the commit reaches `main`, which does not require
-      a PR merge. Pushing the branch also moves the issue to In Progress.
-    - That difference matters here because squash is disabled, so every branch
+    - **Commit message:** when the commit reaches `main`, which does not
+      require a PR merge.
+    - That last case matters here because squash is disabled, so every branch
       commit lands on `main` verbatim, carrying whatever it says.
+    - **Pushing a branch has not been seen to move anything.** Tested once, on
+      2026-09-08: a Todo ticket, a branch named for it, one commit, pushed.
+      Read before, immediately after, and again about three minutes later.
+      Nothing changed, including the issue's `updatedAt`, so no write to the
+      issue happened at all. One push on one ticket on one day. It did not
+      reproduce the claim. It does not show the behaviour cannot exist.
+    - That same branch name carried a magic word beside the identifier, and it
+      did not fire on the push either.
     - **Never rely on a transition firing, and never rely on it not firing.**
       Check every ticket the PR named after every merge.
   - **The parser does not read negations.** A sentence saying an issue is *not*

@@ -214,7 +214,7 @@ If found, prompt:
 
 > "Found in-progress work: `{filename}` ({progress summary}). Resume this work?"
 
-If yes, run `/resume-plan`. This ensures work isn't forgotten across session boundaries.
+If yes, run `/sop:resume-plan`. This ensures work isn't forgotten across session boundaries.
 
 ---
 

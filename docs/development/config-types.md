@@ -173,3 +173,33 @@ require.Contains(t, err.Error(), "threshold_rank")
 ```
 
 Discovered in HEU-446 (windowed/tenure gates) and applied to the gate rejection tests.
+
+## `json.Marshal` Rewrites A `json.RawMessage` Two Ways
+
+Anything that hashes or compares plan bytes across the Go/Rust seam has to know
+this. `json.Marshal` on a struct holding a `json.RawMessage` field does not pass
+the raw bytes through. It **compacts** insignificant whitespace, and it
+**escapes** `<`, `>` and `&` into the six-byte forms `\u003c`, `\u003e` and
+`\u0026`.
+
+`internal/networkengine/plan_hash.go` hashes stage-5 pipeline output. The worker
+hashes the bytes that arrive in `Request.params`. Between them sits exactly that
+marshal, in `transport_stdio.go`.
+
+**The two sides agree today only because `translateToEngine` also ends in
+`json.Marshal`,** so the bytes are already compact and already escaped before the
+transport sees them. Moving that function to a `json.Encoder` with
+`SetEscapeHTML(false)` is an ordinary-looking refactor that splits the two hashes
+apart for any plan whose name contains an ampersand.
+
+Two things follow:
+
+- A same-slice test cannot see either transformation. It hashes one buffer twice
+  and passes whatever the boundary did in between. Drive a real worker.
+- No fixture in `internal/config/testdata/valid` contains `<`, `>` or `&`, so
+  nothing in the repo exercises the escaping half by accident. The test that
+  does substitutes a name carrying those characters into the fixture bytes in
+  memory.
+
+Still unguarded: `PlanHash` fed bytes that never came from `json.Marshal` at
+all, carrying a raw `&`. A jsonb round trip would produce that shape. (HEU-641)

@@ -255,6 +255,50 @@ That line is indented two spaces, so `grep '^contract: '` matches nothing and ex
 
 HEU-583's plan specified the filtered form on three steps, including the two that changed the money path and the wire contract. Following it literally would have recorded "Expected: PASS" against a run that asserted nothing.
 
+## A Determinism Test Only Bites On Streamline
+
+`walk_order::assign_indexes` sorts a response's walks into a total order, but
+for four of the five calculators that sort is a no-op. They already emit in the
+order it produces.
+
+| Calculator | Emission order | Sort is |
+| -- | -- | -- |
+| `calculate_unilevel` | one `walk_level_commissions` call over the whole `volume` slice | a no-op |
+| `calculate_matrix` | same | a no-op |
+| `calculate_stairstep` | `for source in volume` | a no-op |
+| `calculate_generation` SameRank | rank-outer over `unique_ranks`, sorted by ordinal first, then `for source in volume` | a no-op |
+| `calculate_streamline` | `for stream in engine.active_streams()`, a `HashMap` values iteration | **load-bearing** |
+
+So a "two runs produce identical indexes" property written against unilevel or
+generation cannot fail. Deleting the sort outright leaves it green. Write that
+property against streamline, in `tests/streamline_properties.rs`.
+
+Two more traps in it. Build **two** engines rather than running one twice: a
+single `HashMap` repeats its own iteration order, so the one-engine version is
+vacuous. And two separately built maps get different `RandomState` keys but not
+necessarily a different order for a small table, so `prop_assume!` that the two
+emission orders actually differ, or roughly half the small cases prove nothing.
+
+Verified by deleting the sort and watching which tests failed. (HEU-641)
+
+## sha2 0.11 Returns An Array With No `LowerHex`
+
+`Sha256::digest` in sha2 0.11 returns a `hybrid_array::Array`, not something
+that implements `LowerHex`. The 0.10 idiom does not compile:
+
+```rust
+format!("{:x}", Sha256::digest(bytes))   // does not compile on 0.11
+```
+
+Format a byte at a time instead. `engine/network-engine-worker/src/handlers/common.rs`
+has the working shape.
+
+The dependency is declared `default-features = false`, which turns off the
+`oid` feature. That costs 7 new lockfile entries: `sha2`, `digest`,
+`crypto-common`, `block-buffer`, `hybrid-array`, `typenum` and `cpufeatures`.
+Leaving defaults on additionally pulls `const-oid`, which nothing here needs.
+(HEU-641)
+
 ## Rust Tests: Package Scope Used To Lie (fixed, HEU-648)
 
 `cargo test -p network-engine-worker` is safe now. It was not before 2026-08-22, and the history is worth keeping because the failure mode was so convincing.

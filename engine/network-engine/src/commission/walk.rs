@@ -219,11 +219,16 @@ pub(crate) fn validate_source<'t, T: TreeNavigator>(
 /// the same source, so `(earner_id, source_id, level)` is not unique there.
 /// An earning with no recorded walk sorts before any `Some`.
 ///
-/// The comparator is not total even then. Streamline runs one walk per
-/// stream over the same volume, and a user can hold positions on more than
-/// one stream, so one earner can tie on all four keys. Tie order therefore
-/// rests on `sort_by` being stable. Do not swap it for `sort_unstable_by`:
-/// the output is a persisted audit record and the ties are real.
+/// The streamline case this comment used to cite is not a tie. A user holding
+/// positions on two streams earns from two walks, and those get different
+/// indexes because `walk_order` separates them on `stream_id` before it
+/// separates anything else. Within a single walk the upline is a path, so no
+/// node earns twice at one level for one source.
+///
+/// `sort_by` stays stable anyway. No four-key tie is reachable today, but the
+/// output is a persisted audit record, `sort_unstable_by` would buy nothing
+/// measurable at these sizes, and a future emitter that does produce one
+/// would reorder rows silently rather than fail.
 pub(crate) fn sort_earnings(earnings: &mut [CommissionEarning]) {
     earnings.sort_by(|a, b| {
         a.earner_id

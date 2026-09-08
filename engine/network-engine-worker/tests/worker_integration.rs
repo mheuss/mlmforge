@@ -699,13 +699,30 @@ fn a_rejected_plan_leaves_the_previous_identity_in_place() {
         "the invalid plan should have been rejected: {rejected}"
     );
 
-    // Reload the good plan and confirm the identity is unchanged, which it
-    // could not be if the rejected one had overwritten it.
-    let again = send_load_plan(&mut worker, STREAMLINE_TEST_PLAN_JSON);
-    let second: serde_json::Value = serde_json::from_str(&again).expect("parse");
+    // Read the identity the worker is still holding, without reloading
+    // anything. Reloading the good plan here would rewrite the identity with
+    // the same bytes, so the assertion would hold whether or not the rejected
+    // plan had clobbered it in between. That version of this test passed with
+    // the identity write moved above both gates, which is the exact violation
+    // this test's name claims to catch.
+    //
+    // A calculate_* response reports the stored identity, so it observes the
+    // post-rejection state directly.
+    create_streamline(&mut worker);
+    sl_add_member(&mut worker, "sl-m1", SL_USER1, ROOT, 1001);
+    sl_add_member(&mut worker, "sl-m2", SL_USER2, SL_USER1, 1002);
+    let probe = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"identity-probe","op":"calculate_streamline","params":{{"structure":"{}","snapshots":{{}},"volume":[]}}}}"#,
+            SL_STRUCTURE
+        ),
+    );
+    let held: serde_json::Value = serde_json::from_str(&probe).expect("parse");
     assert_eq!(
-        second["result"]["plan"]["hash"].as_str(),
-        Some(first_hash.as_str())
+        held["result"]["plan"]["hash"].as_str(),
+        Some(first_hash.as_str()),
+        "the rejected plan overwrote the identity of the plan still loaded: {probe}"
     );
 }
 

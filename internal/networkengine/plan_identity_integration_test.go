@@ -60,12 +60,24 @@ func TestPlanHashMatchesWorkerAcrossTheWire(t *testing.T) {
 	})
 
 	// The escaping half of that boundary is invisible to every fixture in
-	// internal/config/testdata/valid, none of which contains <, > or &. The two
-	// sides agree today only because translateToEngine also uses json.Marshal,
-	// so the bytes are already escaped before the transport sees them. Moving
-	// that to a json.Encoder with SetEscapeHTML(false) is an ordinary-looking
-	// refactor that would split the two hashes apart, and without this case
-	// nothing in the repo would notice.
+	// internal/config/testdata/valid, none of which contains <, > or &.
+	//
+	// Be precise about which refactor this catches, because the two marshal
+	// sites are not interchangeable. Switching translateToEngine
+	// (internal/config/translate.go) to a json.Encoder with
+	// SetEscapeHTML(false) splits the two hashes apart, and this sub-case
+	// fails. Verified by doing it.
+	//
+	// Switching the transport's marshal does not, and this sub-case stays
+	// green. translateToEngine has already escaped by then, so the six-byte
+	// \u0026 sequence has nothing left to escape and the transport is a no-op
+	// either way. A reviewer read an earlier version of this comment as
+	// claiming otherwise, which is why it now names the file.
+	//
+	// What still has no guard is PlanHash being fed bytes that did not come
+	// from json.Marshal at all, carrying a raw &. That is the shape a jsonb
+	// round trip would produce, and it is the risk the paragraph at the top
+	// of this file describes.
 	t.Run("plan name carrying a character json.Marshal escapes", func(t *testing.T) {
 		const escapedName = "Acme & Sons <Unilevel>"
 

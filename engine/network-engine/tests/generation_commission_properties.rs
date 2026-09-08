@@ -2,6 +2,7 @@ mod common;
 
 use common::{
     build_generation_plan, build_same_rank_generation_plan, snapshot_with_rank, uuid_from_index,
+    walk_order_fingerprint,
 };
 
 use network_engine::commission::{DistributorSnapshot, VolumeSource, calculate_generation};
@@ -640,5 +641,53 @@ proptest! {
             "SameRank: total payout {} exceeds upper bound {}",
             total_payout, upper_bound
         );
+    }
+}
+
+proptest! {
+    /// SameRank is the case that matters for walk index stability, because it
+    /// is the one mode that multiplies walks by rank.
+    ///
+    /// `calculate_generation` derives its per-rank passes from
+    /// `snapshots.values()` collected into a `HashSet`, then sorts that by
+    /// ordinal alone. So the order collector ids are handed out in really does
+    /// follow map iteration. What makes the published indexes stable is
+    /// `walk_order::assign_indexes` re-sorting on the `(ordinal, name)` pair.
+    /// Reduce that key to the ordinal and this property fails.
+    ///
+    /// The two snapshot maps below hold identical content and are built in
+    /// opposite insertion orders. Calling one calculator twice over a single
+    /// map would not test this: a `HashMap` generally repeats its own
+    /// iteration order, so that version passes while indexes still differ
+    /// across separately built maps.
+    #[test]
+    fn same_rank_walk_indexes_ignore_snapshot_map_insertion_order(
+        (size, ranks, cv, max_gen) in same_rank_inputs()
+    ) {
+        let (plan, structure) = build_same_rank_generation_plan(max_gen);
+
+        let (tree, forward) = build_multi_rank_chain(size, &ranks);
+
+        // Same content, opposite insertion order.
+        let mut reverse: HashMap<uuid::Uuid, DistributorSnapshot> = HashMap::new();
+        for (id, snap) in forward.iter().collect::<Vec<_>>().into_iter().rev() {
+            reverse.insert(*id, snap.clone());
+        }
+        prop_assert_eq!(forward.len(), reverse.len());
+
+        let volume = vec![VolumeSource {
+            source_id: uuid_from_index(size - 1),
+            cv_amount: cv,
+        }];
+
+        let identity = network_engine::test_support::test_plan_identity();
+        let a = calculate_generation(&tree, &plan, &structure, &forward, &volume, &identity).unwrap();
+        let b = calculate_generation(&tree, &plan, &structure, &reverse, &volume, &identity).unwrap();
+
+        // Guards against the assertions below passing on two empty lists.
+        prop_assert!(!a.walks.is_empty(), "no walks emitted, so the comparison proves nothing");
+
+        prop_assert_eq!(walk_order_fingerprint(&a.walks), walk_order_fingerprint(&b.walks));
+        prop_assert_eq!(a.walks, b.walks);
     }
 }

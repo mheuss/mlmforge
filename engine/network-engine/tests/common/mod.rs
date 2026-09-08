@@ -2,6 +2,7 @@
 // only by some test files appear unused in others.
 #![allow(dead_code)]
 
+use network_engine::commission::{Walk, WalkKind};
 use network_engine::config::binary::{
     BinaryCommissionConfig, BinaryCommissionMode, CycleStepConfig, MultiPositionCapMode,
     PairingCalculation, PairingConfig, VolumeAfterPayout,
@@ -605,4 +606,20 @@ pub fn build_two_rank_matrix_plan(
     ];
 
     (plan, structure)
+}
+
+/// One walk's position key: kind, stream id, rank, source and index. These
+/// are the fields `walk_order::assign_indexes` orders a response's walks by.
+pub type WalkOrderKey = (WalkKind, Option<u32>, Option<String>, uuid::Uuid, u32);
+
+/// Project a response's walks onto their position keys, in list order.
+///
+/// Determinism tests compare this rather than whole `Walk` values so a failure
+/// prints the ordering instead of every step of every traversal. Assert full
+/// equality alongside it to catch what the projection drops.
+pub fn walk_order_fingerprint(walks: &[Walk]) -> Vec<WalkOrderKey> {
+    walks
+        .iter()
+        .map(|w| (w.kind, w.stream_id, w.rank.clone(), w.source_id, w.index))
+        .collect()
 }

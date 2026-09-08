@@ -2,6 +2,7 @@ mod common;
 use common::{
     build_two_rank_unilevel_plan, build_unilevel_plan, build_unilevel_plan_with_eligibility,
     build_unilevel_plan_with_pass_up, member_snapshot, permissive_eligibility, uuid_from_index,
+    walk_order_fingerprint,
 };
 
 use network_engine::commission::{DistributorSnapshot, VolumeSource, calculate_unilevel};
@@ -1114,4 +1115,58 @@ fn empty_tree_no_volume_no_panic() {
     );
     assert!(result.is_ok());
     assert!(result.unwrap().earnings.is_empty());
+}
+
+proptest! {
+    /// A walk index comes from the response's total order, never from the
+    /// iteration order of a map the caller happened to build. Design 029
+    /// forbids taking it from emission order, which for streamline is a
+    /// `HashMap` iteration.
+    ///
+    /// Running one calculator twice over the same map does not test this. A
+    /// single `HashMap` generally repeats its own iteration order, so such a
+    /// test passes while indexes still differ across separately built maps or
+    /// across processes. The two maps here hold identical content and are
+    /// built in opposite insertion orders, so they are unlikely to share a
+    /// bucket layout.
+    #[test]
+    fn walk_indexes_ignore_snapshot_map_insertion_order(
+        tree_size in 4..20usize,
+        max_depth in 2..8u8,
+    ) {
+        let (plan, structure) = build_unilevel_plan(max_depth);
+
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uuid_from_index(0), 0).unwrap();
+        for i in 1..tree_size {
+            tree.add_node(uuid_from_index(i), uuid_from_index(i - 1), uuid_from_index(i - 1), i as i64)
+                .unwrap();
+        }
+
+        let mut forward = HashMap::new();
+        for i in 0..tree_size {
+            forward.insert(uuid_from_index(i), member_snapshot());
+        }
+        let mut reverse = HashMap::new();
+        for i in (0..tree_size).rev() {
+            reverse.insert(uuid_from_index(i), member_snapshot());
+        }
+        prop_assert_eq!(forward.len(), reverse.len());
+
+        // Several sources, so there is a real order to get wrong. One source
+        // yields one walk, which sorts correctly by accident.
+        let volume: Vec<VolumeSource> = (1..tree_size)
+            .map(|i| VolumeSource { source_id: uuid_from_index(i), cv_amount: 100.0 })
+            .collect();
+
+        let identity = network_engine::test_support::test_plan_identity();
+        let a = calculate_unilevel(&tree, &plan, &structure, &forward, &volume, &identity).unwrap();
+        let b = calculate_unilevel(&tree, &plan, &structure, &reverse, &volume, &identity).unwrap();
+
+        // Guards the assertions below against passing on two empty lists.
+        prop_assert!(!a.walks.is_empty(), "no walks emitted, so the comparison proves nothing");
+
+        prop_assert_eq!(walk_order_fingerprint(&a.walks), walk_order_fingerprint(&b.walks));
+        prop_assert_eq!(a.walks, b.walks);
+    }
 }

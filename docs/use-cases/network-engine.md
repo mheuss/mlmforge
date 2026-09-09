@@ -22,6 +22,7 @@ Use-cases for the Network Engine bounded context.
 - [UC-NET-016: Removing a wire field without a red interval](#uc-net-016-removing-a-wire-field-without-a-red-interval)
 - [UC-NET-017: Reading a nil caller collection as empty](#uc-net-017-reading-a-nil-caller-collection-as-empty)
 - [UC-NET-018: Telling an absent JSON key from an explicit null](#uc-net-018-telling-an-absent-json-key-from-an-explicit-null)
+- [UC-NET-019: Walk collection through a caller-owned collector](#uc-net-019-walk-collection-through-a-caller-owned-collector)
 
 ---
 
@@ -77,7 +78,7 @@ let engine: BoardPlanEngine = serde_json::from_str(&snapshot)?;
 
 Since HEU-641 there are two entry points. `count_generations_upward_instrumented` takes a snapshot map and a `&mut Vec<Walk>` collector and records a walk. `count_generations_upward` is a thin uninstrumented wrapper over it that discards the collector. Standalone generation calls the instrumented one. Stairstep Walk 2 keeps the wrapper, because design-rationale 029 excludes that traversal from provenance, so its earnings carry `walk: null`.
 
-`count_generations_upward_instrumented` is crate-internal, and so are the `walk` and `walk_order` modules. The `pub` wrapper is the only entry point reachable from outside the crate, so this choice is only available to a caller inside `network-engine`.
+Threading a collector is only available to a caller inside the `network-engine` crate. UC-NET-019 carries the visibility constraint and the reason for it.
 
 In SameRank mode the caller stamps the rank onto the walks each pass pushed, because the rank is what separates those walks in the response's total order. A pass records the collector length before walking so it knows which walks were its own. The `boundary_check` closure controls whether ineligible nodes create boundaries (`ineligible_creates_boundary` flag). For ThresholdRank mode, one boundary set serves all sources. For SameRank mode, a separate boundary set is built per unique `(rank_name, ordinal)` pair, and results are filtered to earners at exactly that ordinal. The rank name is preserved alongside the ordinal so the per-walk termination depth can resolve via `earner_max_generations` (see UC-NET-004).
 
@@ -620,3 +621,69 @@ default:
 **Notes:** Quoting the payload back is what makes the message actionable, and it is also the risk. The response is wire data and otherwise unbounded, so `renderForError` caps it. The cap is a byte count and the payload may hold multi-byte runes, so the cut can land mid-rune. `strings.ToValidUTF8` drops the partial rune, which keeps the text readable wherever it is logged. An empty payload renders as a quoted empty string rather than nothing, so the message never trails off. The two causes are also matchable without reading the text. `ErrProtocolVersionAbsent` and `ErrProtocolVersionUnreadable` are the sentinels, and `%w` records each one, so `errors.Is` tells them apart. The format string still renders the payload, so the message a reader sees is unchanged.
 
 Related serde and JSON edge entries: UC-NET-007 covers a Rust-side decode edge, and UC-NET-017 covers null versus absent on the Rust side of this same wire. This entry is the Go side of that distinction, reached for the opposite reason. UC-NET-017 widens null to empty so a call can succeed. This one keeps null and absent apart so a failure can say which it was.
+
+---
+
+### UC-NET-019: Walk collection through a caller-owned collector
+
+**Added:** Unreleased (HEU-641, documented in HEU-690)
+**Files:** `engine/network-engine/src/commission/walk.rs` (`walk_level_commissions`, `LevelWalkConfig`), `engine/network-engine/src/commission/generation.rs` (`count_generations_upward`, `count_generations_upward_instrumented`, `emit_generation_earnings`), `engine/network-engine/src/commission/walk_order.rs` (`assemble`, `assign_indexes`), `engine/network-engine/src/commission/types.rs` (`Walk`, `WalkStep`, `WalkStop`, `CommissionCalculationResult`), and the five calculators that thread a collector: `engine/network-engine/src/commission/unilevel.rs`, `engine/network-engine/src/commission/matrix.rs`, `engine/network-engine/src/commission/stairstep.rs`, `engine/network-engine/src/commission/generation.rs`, `engine/network-engine/src/commission/streamline.rs`
+
+**Problem:** The five commission calculators have to return a record of every traversal alongside their earnings, and every walk index in a response has to come out the same on a second run over identical input.
+
+**Solution:** A traversal takes a caller-supplied `walks: &mut Vec<Walk>` and appends to it. It keeps whatever it already returned. `walk_level_commissions` still returns earnings, `count_generations_upward_instrumented` still returns generation entries.
+
+An out-parameter is the less idiomatic choice and it was taken on purpose. `emit_generation_earnings` in `generation.rs` already accumulates into a caller-supplied `Vec`. Matching the convention that was there beat adding a second one.
+
+The collector belongs to the calculator, not to the traversal, so one calculator can accumulate across several calls. Stairstep calls once per volume source. Streamline calls once per stream. Generation in SameRank mode calls once per rank and source, and records the collector length first so it knows which walks that pass pushed.
+
+A pushed walk carries a collector id in `Walk::index`, not its final index. The real index does not exist yet, because it depends on every other walk in the response.
+
+`walk_order::assemble` is the single assembly point. All five calculators end in it. It sorts the walks into the total order, overwrites each `index`, remaps every earning's collector id to the index its walk now has, sorts the earnings, and attaches the plan identity. Doing any of that per-calculator is what would let one of them take an index from emission order.
+
+`count_generations_upward` needed a wrapper split rather than a signature change. The public function delegates to `count_generations_upward_instrumented` and throws the collector away.
+
+The reason for the split is the snapshot map, not the collector. Without snapshots there is no rank to put in a step's `earner_rank`, and the wrapper's callers have no reason to supply one.
+
+Two stairstep Walk 2 call sites use the uninstrumented wrapper deliberately, because design-rationale 029 excludes that traversal from provenance. Its earnings carry `walk: null`, which is a recorded absence rather than a missing field. The test `stairstep_walk_two_earnings_carry_null_walk` asserts that no Walk 2 path emits a walk.
+
+**Usage:**
+```rust
+// The calculator owns the collector and threads it through every traversal
+// it runs. The traversal's return value is unchanged by instrumentation.
+let mut walks: Vec<Walk> = Vec::new();
+let earnings = walk::walk_level_commissions(
+    tree, &config, &eligibility_cache, snapshots, volume,
+    |_| false,
+    &mut walks,
+)?;
+
+// One assembly point. Index assignment and the earning remap happen here,
+// never in the calculator.
+Ok(walk_order::assemble(earnings, walks, volume, &rank_ordinals, plan_identity))
+```
+
+```rust
+// Reading the result. An earning's `walk` indexes `result.walks`; None is
+// the recorded gap, not a lookup failure.
+for earning in &result.earnings {
+    match earning.walk {
+        Some(index) => audit(&result.walks[index as usize]),
+        None => note_uninstrumented(earning),
+    }
+}
+```
+
+**Notes:** Two things about a `Walk` read the opposite way round from the obvious one, and both are normative in the hub contract `contracts/ndjson-engine-protocol.md`, promise 12.
+
+`stopped_at` names the node the walk did not visit. It is the ancestor the traversal was about to process when it stopped, so it never appears in `steps`. A reader joining the two finds nothing, and that is the correct result rather than a gap.
+
+`steps` is the consumed subset of the path, not the ordered node list. Nodes skipped by compression or pass-up never advance the counter and are absent. Do not read `steps` as the full traversal.
+
+`stopped_at` is absent for `root_reached` and present for the other three stops, since only those have a node that caused them.
+
+A traversal does not always push a walk. `count_generations_upward_instrumented` emits none when the upline lookup fails, because a traversal that never reached a root cannot honestly report any of the four stops. That arm returns no entries either, so no earning is left holding a collector id no walk carries. HEU-681 owns the underlying defect.
+
+`count_generations_upward_instrumented`, `walk` and `walk_order` are all crate-internal. The `pub` wrapper is the only entry point reachable from outside `network-engine`, so threading a collector is a choice available only to a caller inside the crate.
+
+Call-site detail for the generation calculators lives in UC-NET-003 and UC-NET-004. This entry covers the shape they share.

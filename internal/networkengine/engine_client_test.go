@@ -1516,7 +1516,7 @@ func TestEngineClient_CalculateStreamline_MockParams(t *testing.T) {
 }
 
 func TestCalculateStreamlineDecodesFrozenStreamSkips(t *testing.T) {
-	raw := []byte(`{"earnings":[],"walks":[],"plan":{"name":"p","version":1,"hash":"sha256:x"},"frozen_stream_skips":[{"volume_index":0,"source_id":"00000000-0000-0000-0000-000000000011","cv_amount":100,"stream_id":2}]}`)
+	raw := []byte(`{"earnings":[],"walks":[],"plan":{"name":"p","version":2,"hash":"sha256:x"},"frozen_stream_skips":[{"volume_index":0,"source_id":"00000000-0000-0000-0000-000000000011","cv_amount":100,"stream_id":2}]}`)
 
 	var got StreamlineCalculationResultDTO
 	require.NoError(t, json.Unmarshal(raw, &got))
@@ -1529,7 +1529,7 @@ func TestCalculateStreamlineDecodesFrozenStreamSkips(t *testing.T) {
 }
 
 func TestCalculateStreamlineDecodesEmptySkips(t *testing.T) {
-	raw := []byte(`{"earnings":[],"walks":[],"plan":{"name":"p","version":1,"hash":"sha256:x"},"frozen_stream_skips":[]}`)
+	raw := []byte(`{"earnings":[],"walks":[],"plan":{"name":"p","version":2,"hash":"sha256:x"},"frozen_stream_skips":[]}`)
 
 	var got StreamlineCalculationResultDTO
 	require.NoError(t, json.Unmarshal(raw, &got))
@@ -1545,7 +1545,7 @@ func TestCalculateStreamlineDecodesEmptySkips(t *testing.T) {
 // Reaches the field through the client, so it pins the wiring and not only the
 // decoded shape.
 func TestCalculateStreamlineReturnsStreamlineDTO(t *testing.T) {
-	raw := `{"earnings":[],"walks":[],"plan":{"name":"p","version":1,"hash":"sha256:x"},"frozen_stream_skips":[{"volume_index":0,"source_id":"00000000-0000-0000-0000-000000000011","cv_amount":100,"stream_id":2}]}`
+	raw := `{"earnings":[],"walks":[],"plan":{"name":"p","version":2,"hash":"sha256:x"},"frozen_stream_skips":[{"volume_index":0,"source_id":"00000000-0000-0000-0000-000000000011","cv_amount":100,"stream_id":2}]}`
 	client := newEngineClientWithTransport(&mockTransport{response: json.RawMessage(raw)})
 
 	got, err := client.CalculateStreamline(context.Background(), CalculateStreamlineRequest{})

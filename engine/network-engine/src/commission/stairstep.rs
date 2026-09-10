@@ -183,31 +183,42 @@ fn prep(
 // Walk 2: Override earnings (differential or fixed)
 // ---------------------------------------------------------------------------
 
-/// Resolve the override rate for a generation-1 ancestor.
+/// What a generation-1 ancestor earns on one breakaway leg.
+///
+/// `Nothing` means this ancestor does not earn and the walk keeps climbing.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Gen1Payout {
+    Rate(f64),
+    Nothing,
+}
+
+/// Resolve what a generation-1 ancestor earns on a breakaway leg.
 ///
 /// Differential: ancestor_rate - breakaway_rate, floored at min_override.
 /// FixedOverride: flat rate from rank_rates lookup.
-/// Returns 0.0 when the ancestor should not earn.
-fn resolve_gen1_rate(
+fn resolve_gen1_payout(
     mode: &crate::config::stairstep::OverrideMode,
     ancestor_rank: &str,
     breakaway_rank: &str,
-) -> f64 {
+) -> Gen1Payout {
     match mode {
         crate::config::stairstep::OverrideMode::Differential(diff) => {
             let ancestor_rate = diff.rank_rates.get(ancestor_rank).copied().unwrap_or(0.0);
             let breakaway_rate = diff.rank_rates.get(breakaway_rank).copied().unwrap_or(0.0);
             let gap = ancestor_rate - breakaway_rate;
             if gap > 0.0 {
-                gap
+                Gen1Payout::Rate(gap)
             } else if ancestor_rate > 0.0 && diff.min_override > 0.0 {
-                diff.min_override
+                Gen1Payout::Rate(diff.min_override)
             } else {
-                0.0
+                Gen1Payout::Nothing
             }
         }
         crate::config::stairstep::OverrideMode::FixedOverride(fixed) => {
-            fixed.rank_rates.get(ancestor_rank).copied().unwrap_or(0.0)
+            match fixed.rank_rates.get(ancestor_rank).copied().unwrap_or(0.0) {
+                r if r > 0.0 => Gen1Payout::Rate(r),
+                _ => Gen1Payout::Nothing,
+            }
         }
     }
 }
@@ -250,7 +261,7 @@ fn walk_overrides(
 /// - **FixedOverride:** flat per-rank rate lookup, independent of the
 ///   breakaway leader's rank.
 ///
-/// Both modes use `resolve_gen1_rate` for generation-1 (or non-generation)
+/// Both modes use `resolve_gen1_payout` for generation-1 (or non-generation)
 /// rate resolution. When generation overrides are configured, generation 1
 /// uses the mode-specific rate. Generations 2+ use rates from the
 /// generation override table regardless of mode.
@@ -375,18 +386,21 @@ fn walk_single_overrides(
                         .map(|s| s.rank.as_str())
                         .unwrap_or("");
 
-                    let rate = resolve_gen1_rate(override_mode, ancestor_rank, breakaway_rank);
-                    if rate <= 0.0 {
-                        continue;
-                    }
+                    let (rate, dollar_amount) =
+                        match resolve_gen1_payout(override_mode, ancestor_rank, breakaway_rank) {
+                            Gen1Payout::Nothing => continue,
+                            Gen1Payout::Rate(r) => {
+                                (Some(r), group_vol * broad_pct * multiplier * r)
+                            }
+                        };
 
                     earnings.push(CommissionEarning {
                         earner_id: entry.earner_id,
                         source_id: breakaway_id,
                         level: entry.generation,
-                        rate: Some(rate),
+                        rate,
                         cv_amount: group_vol,
-                        dollar_amount: group_vol * broad_pct * multiplier * rate,
+                        dollar_amount,
                         // Permanent in protocol v2. This is Walk 2, which
                         // design 029 excludes from instrumentation, so the
                         // null is a recorded gap rather than a placeholder.
@@ -432,18 +446,19 @@ fn walk_single_overrides(
                     None => continue,
                 };
 
-                let rate = resolve_gen1_rate(override_mode, ancestor_rank, breakaway_rank);
-                if rate <= 0.0 {
-                    continue;
-                }
+                let (rate, dollar_amount) =
+                    match resolve_gen1_payout(override_mode, ancestor_rank, breakaway_rank) {
+                        Gen1Payout::Nothing => continue,
+                        Gen1Payout::Rate(r) => (Some(r), group_vol * broad_pct * multiplier * r),
+                    };
 
                 earnings.push(CommissionEarning {
                     earner_id: node.user_id,
                     source_id: breakaway_id,
                     level: 1,
-                    rate: Some(rate),
+                    rate,
                     cv_amount: group_vol,
-                    dollar_amount: group_vol * broad_pct * multiplier * rate,
+                    dollar_amount,
                     // Walk 2. Permanently null in v2, per design 029.
                     walk: None,
                 });
@@ -1233,6 +1248,37 @@ mod tests {
             override_earnings.is_empty(),
             "zero differential with zero min_override should produce no earnings"
         );
+    }
+
+    #[test]
+    fn resolve_gen1_payout_reports_a_rate_for_a_differential_gap() {
+        let mut rank_rates = BTreeMap::new();
+        rank_rates.insert("manager".to_string(), 0.10);
+        rank_rates.insert("member".to_string(), 0.04);
+        let mode = OverrideMode::Differential(DifferentialConfig {
+            rank_rates,
+            min_override: 0.0,
+        });
+
+        match resolve_gen1_payout(&mode, "manager", "member") {
+            Gen1Payout::Rate(r) => assert!((r - 0.06).abs() < FP_TOL, "got {r}"),
+            other => panic!("expected a rate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_gen1_payout_reports_nothing_when_the_gap_is_zero_and_no_floor() {
+        let mut rank_rates = BTreeMap::new();
+        rank_rates.insert("manager".to_string(), 0.10);
+        let mode = OverrideMode::Differential(DifferentialConfig {
+            rank_rates,
+            min_override: 0.0,
+        });
+
+        assert!(matches!(
+            resolve_gen1_payout(&mode, "manager", "manager"),
+            Gen1Payout::Nothing
+        ));
     }
 
     #[test]

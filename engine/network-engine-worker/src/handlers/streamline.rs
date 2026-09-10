@@ -444,6 +444,7 @@ struct FrozenStreamSkip {
     stream_id: u32,
 }
 
+/// The streamline calculate response: the shared result plus the skip list.
 #[derive(serde::Serialize)]
 struct StreamlineCalculationResponse {
     #[serde(flatten)]
@@ -531,7 +532,7 @@ pub(crate) fn handle_calculate_streamline(state: &WorkerState, request: &Request
         Ok(result) => {
             let mut frozen_stream_skips = Vec::new();
             for (volume_index, source) in params.volume.iter().enumerate() {
-                // No streams recorded for this source.
+                // Defensive: no streams recorded for this source.
                 let Some(stream_ids) = engine.get_member_streams(source.source_id) else {
                     continue;
                 };
@@ -542,6 +543,7 @@ pub(crate) fn handle_calculate_streamline(state: &WorkerState, request: &Request
                     .filter(|id| engine.get_stream(*id).is_some_and(|s| s.frozen))
                     .collect();
                 frozen.sort_unstable();
+                frozen.dedup();
                 for stream_id in frozen {
                     frozen_stream_skips.push(FrozenStreamSkip {
                         volume_index,

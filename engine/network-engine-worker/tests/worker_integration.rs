@@ -3045,6 +3045,41 @@ fn calculate_streamline_for(worker: &mut std::process::Child, source: &str, cv: 
     common::send_receive(worker, &request)
 }
 
+/// Volume naming a source no stream holds fails on the wire.
+///
+/// The unit tests pin the error the calculation returns. This one adds what
+/// they cannot observe: that the worker surfaces it as `CALCULATION_ERROR`
+/// rather than swallowing it into an empty success.
+#[test]
+fn calculate_streamline_rejects_volume_with_no_stream() {
+    let mut worker = common::spawn_worker();
+    load_streamline_test_plan(&mut worker);
+    create_streamline(&mut worker);
+    sl_add_member(&mut worker, "sl-m1", SL_USER1, ROOT, 1001);
+
+    // SL_USER3 is never added, so no stream holds it.
+    let request = format!(
+        r#"{{"id":"sl-nostream","op":"calculate_streamline","params":{{"structure":"{}","snapshots":{},"volume":[{{"source_id":"{}","cv_amount":100.0}}]}}}}"#,
+        SL_STRUCTURE,
+        streamline_snapshots_json(),
+        SL_USER3
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("CALCULATION_ERROR"),
+        "volume naming a source no stream holds must fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains(SL_USER3),
+        "the error should name the source, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 /// A frozen stream's skipped volume is reported rather than vanishing.
 #[test]
 fn calculate_streamline_reports_frozen_stream_skips() {

@@ -121,9 +121,7 @@ pub fn calculate_streamline(
         rate_table.insert(rank.name.clone(), level_rates.clone());
     }
 
-    // Validate every source before any stream is walked. The per-stream filter
-    // below would otherwise drop a source no walk reaches, and the call would
-    // return ok having paid nothing.
+    // Validate every source before any stream is walked.
     //
     // The checks run per source rather than per check across the slice, so a
     // faulty source's first failing check is the error that surfaces.

@@ -1496,11 +1496,11 @@ mod tests {
 
     #[test]
     fn currency_min_override_equal_to_a_pool_that_does_not_land_on_its_decimal() {
-        // The boundary test above uses a 120.00 pool, which is exact in
-        // binary, so it cannot tell a sub-cent tolerance from a sub-nanodollar
-        // one. This one can: 2_913_000 * 0.29 is 844769.9999999999, so a floor
-        // written as 844770.00 sits 1.16e-10 above the pool it is meant to
-        // exactly cover. A nanodollar tolerance rejects it and pays zero.
+        // A pool of 120.00 is exact in binary, so a test at that size cannot
+        // tell a sub-cent tolerance from a sub-nanodollar one. This one can:
+        // 2_913_000 * 0.29 is 844769.9999999999, so a floor written as
+        // 844770.00 sits 1.16e-10 above the pool it is meant to exactly
+        // cover. A nanodollar tolerance rejects it and pays zero.
         let tree = build_chain(3);
         let mut structure = test_stairstep_structure();
         structure.level_commission.broad_commission_percent = 0.29;
@@ -1573,10 +1573,9 @@ mod tests {
 
     #[test]
     fn currency_min_override_pays_on_the_generation_branch_too() {
-        // The other call site. Every other currency test builds a structure
-        // with generation_overrides: None and so runs the else branch; this
-        // one drives the generation branch, whose currency arm is a separate
-        // copy of the same code.
+        // This one drives the generation branch, whose currency arm is a
+        // separate copy of the code the no-generation branch runs. A structure
+        // built without generation_overrides cannot reach it.
         //
         // Tree: 0(sr_dir) -> 1(director) -> 2(director) -> 3(assoc)
         // Node 2 breaks away. Generation 1 is node 1, equal rank to the

@@ -97,6 +97,16 @@ One logical assertion per test. Build small trees by hand. Test names follow `me
 
 `test_uuid(n: u8)` generates deterministic UUIDs for small tests. `test_uuid_u16(n: u16)` handles tests exceeding 255 nodes. Shared test helpers live in `tree/test_helpers.rs` and are used by all tree types and property tests.
 
+### Assert what a regression makes false
+
+A test named for a behaviour can pass through the exact regression it describes. Both of HEU-611's cases were found by deleting the code the test was supposed to protect and watching it stay green.
+
+`mixed_active_and_frozen_returns_earnings_and_a_skip` asserted `!earnings.is_empty()` and that the skip list held one entry. Unfilter `active_streams()` so frozen streams get walked and the response comes back with **two** earnings and **still exactly one** skip: both assertions pass, and the property the test is named for is broken. It only bites once it asserts the walk count.
+
+The general shape: asserting a result is non-empty proves something ran, not that the right thing ran. On a partial result, assert what is *absent* — how many walks, which stream ids, which earners — because a regression that does too much leaves every non-emptiness check green.
+
+Deleting the guard and re-running is cheap and it is the only way to know. Do it for any test whose name makes a claim about what did not happen.
+
 ### Property-based tests (proptest)
 
 Every tree type must have these six property tests:
@@ -254,6 +264,10 @@ Run it unfiltered. To confirm a specific fixture actually executed, add `-- --no
 That line is indented two spaces, so `grep '^contract: '` matches nothing and exits nonzero **with no test failure** — the same reads-as-a-pass trap in a different disguise. Grep without the anchor.
 
 HEU-583's plan specified the filtered form on three steps, including the two that changed the money path and the wire contract. Following it literally would have recorded "Expected: PASS" against a run that asserted nothing.
+
+**The trap is not specific to contract tests.** Any name filter that matches nothing prints `filtered out` and exits 0. HEU-611 hit it in `worker_integration`: `cargo test -p network-engine-worker --test worker_integration streamline` never ran `repeated_source_yields_distinguishable_skip_records`, because that name contains no "streamline". The plan prescribed that filter for three steps and the test was RED at the time, so the step would have reported a pass over a test that had never executed.
+
+A filter selects on the *test function's* name, and a suite's tests are not all named after the thing they test. Read the `N passed` count against the number of tests you expect, or run unfiltered. `0 passed` is the loud case; the quiet one is a filter that catches most of a group and drops one.
 
 ## A Determinism Test Only Bites On Streamline
 

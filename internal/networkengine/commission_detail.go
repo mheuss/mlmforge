@@ -29,13 +29,12 @@ import (
 // A v2 row always carried a number there. Without the bump, a reader has no
 // way to know which promise the row was written under.
 //
-// Not the NDJSON protocol version, and not the plan schema version. Three
-// numbers get called a version around here and they are not coupled. This one
+// Not the NDJSON protocol version, and not the plan schema version. This one
 // labels a stored detail shape. The protocol version is the engine wire
 // contract in engine/network-engine-worker/src/protocol.rs. The plan schema
 // version is the authoring format in schemas/compensation-plan.schema.json.
-// Any of the three can move without the others, and this one asserts nothing
-// about either.
+// None of them is coupled to the others, and this one asserts nothing about
+// the rest.
 const detailVersion = 3
 
 // The kind values stored in every detail object. A version alone cannot say

@@ -175,11 +175,9 @@ pub(crate) fn validate_cv(source: &VolumeSource) -> Result<(), CalculationError>
 /// returning its upline so a caller that needs to walk doesn't re-fetch it.
 ///
 /// The three checks run in a fixed order — CV, then tree membership, then
-/// snapshot membership — because callers assert on the specific error. Keeping
-/// them in one place is what keeps that precedence identical everywhere.
-///
-/// Binary is not a caller: it resolves an owner before the snapshot lookup and
-/// checks `contains` rather than the upline, so it validates its own way.
+/// snapshot membership — because callers assert on the specific error. A caller
+/// that cannot use this function reproduces that order rather than picking its
+/// own.
 pub(crate) fn validate_source<'t, T: TreeNavigator>(
     tree: &'t T,
     snapshots: &HashMap<Uuid, DistributorSnapshot>,

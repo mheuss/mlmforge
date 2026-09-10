@@ -602,9 +602,36 @@ answer will now see an error. Nothing calls `CalculateGeneration` outside tests
 today, so the practical blast radius is zero — but HEU-556, HEU-46, and HEU-47
 wire these methods up, and they should expect the strict behavior.
 
-`walk::validate_source` is the one place all of this lives now. Binary is not a
-caller: it resolves an owner before the snapshot lookup, so it validates its own
-way.
+`walk::validate_source` owns the check order, and a caller that hands it the
+source it is validating gets that order for free. Two calculators reproduce the
+order themselves instead. Binary never reaches it: it resolves an owner before
+the snapshot lookup, so it validates its own way. Streamline does reach it, once
+per stream, but only after a filter has already dropped the sources its own
+pre-loop exists to catch. HEU-611 added that pre-loop, described below.
+
+**A second narrowing rode along with HEU-611.** `calculate_streamline` now
+rejects requests it used to answer with `Ok([])`, for the same reason generation
+did.
+
+- Volume naming a source held by no stream returns `SourceNotInTree`. Before, the
+  per-stream filter dropped it before any walk ran and the call reported success
+  with empty earnings.
+- The snapshot half is narrower than it looks. A source in an active stream with
+  no snapshot already errored, because the filter keys on tree membership and the
+  walk validated whatever survived it. What is new is `SourceNotInSnapshot` for a
+  source no *active* stream holds, which no walk ever reached.
+- The checks run in a pre-loop over the whole `volume` slice, ahead of the stream
+  walks, because streamline has no single tree to hand `validate_source` — it has
+  one tree per stream. That is why the CV/tree/snapshot order is written out a
+  second time rather than delegated.
+- A source held only by a *frozen* stream is deliberately not an error. Freezing
+  is a business state and paying nothing is the right answer, so the source is
+  accepted and earns nothing. On its own that is still a silent zero. Making the
+  skipped pairs visible to the caller is the other half of HEU-611 and is not in
+  this commit.
+
+Same blast radius as the generation narrowing: nothing calls `CalculateStreamline`
+outside tests today.
 
 **Still null-intolerant, tracked by HEU-632.** These are nested or query-op
 collections the ticket deliberately stopped short of:

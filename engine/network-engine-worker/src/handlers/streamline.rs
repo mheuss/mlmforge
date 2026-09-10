@@ -462,7 +462,7 @@ pub(crate) fn handle_calculate_streamline(state: &WorkerState, request: &Request
     // HEU-583 is what made that validator the sole point of trust; HEU-612 is
     // what made it worth trusting.
     //
-    // Three adjacent gaps are deliberately not closed here:
+    // Two adjacent gaps are deliberately not closed here:
     //
     // - The engine's *stream* config (assignment_mode, freeze_on_demotion) still
     //   comes from create_streamline's request params and is never cross-checked
@@ -474,9 +474,10 @@ pub(crate) fn handle_calculate_streamline(state: &WorkerState, request: &Request
     // - require_plan returns whatever plan was loaded last, so a load_plan that
     //   replaces the plan while streams already exist re-rates them. Tracked by
     //   HEU-598.
-    // - Volume for a source in no stream, or in a frozen one, is filtered out
-    //   before the walk and returns ok with an empty result rather than an
-    //   error. Tracked by HEU-611.
+    //
+    // Volume this structure cannot pay comes back as an error rather than an
+    // empty success. Volume a frozen stream skips pays nothing and is reported
+    // in the response built below.
     let plan = match require_plan(state, &request.id) {
         Ok(p) => p,
         Err(resp) => return resp,

@@ -108,6 +108,10 @@ impl StreamlineEngine {
     }
 
     /// Returns an iterator over active (unfrozen) streams.
+    ///
+    /// A frozen stream is omitted entirely rather than yielded empty. Membership
+    /// is per stream, so a member of both an active and a frozen stream still
+    /// reaches a caller through the active one.
     pub fn active_streams(&self) -> impl Iterator<Item = &Stream> {
         self.streams.values().filter(|s| !s.frozen)
     }

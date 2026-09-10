@@ -40,10 +40,9 @@ pub struct VolumeSource {
 
 /// A single commission earning. One entry per earner per volume source.
 ///
-/// Where a rate produced the payout, the dollar amount is
-/// `cv_amount * broad_commission_percent * volume_to_dollar_multiplier * rate`.
-/// An earning with a null rate was not produced that way, and its dollar
-/// amount stands on its own.
+/// `dollar_amount` is authoritative. It is not always derivable from the other
+/// fields, because the factors differ by producing walk, so do not back-compute
+/// it or reverse it into a rate.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CommissionEarning {
     /// The distributor who earned this commission.
@@ -57,11 +56,12 @@ pub struct CommissionEarning {
 
     /// Rate applied at this level for this rank.
     ///
-    /// Null means no rate was applied, never that the rate was zero. A
-    /// stairstep override paid from a currency floor has a dollar amount that
-    /// no rate produced, so there is no number to report. This follows the
-    /// rule `walk` documents below: serialized even when null, because null is
-    /// a fact rather than a missing field.
+    /// Null means no rate was applied. It does not mean the rate was zero, and
+    /// a reader that collapses the two gets a wrong answer for any payout a
+    /// rate did not produce.
+    ///
+    /// Serialized even when null. Omitting the key would make an unrecorded
+    /// rate indistinguishable from a missing field.
     pub rate: Option<f64>,
 
     /// Input commission volume from the source.

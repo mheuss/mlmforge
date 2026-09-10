@@ -195,9 +195,10 @@ enum Gen1Payout {
 
 /// Resolve what a generation-1 ancestor earns on a breakaway leg.
 ///
-/// Differential: ancestor_rate - breakaway_rate, floored at `min_override`
-/// when the gap is zero or negative. A positive gap is paid as it stands, even
-/// when it is smaller than the floor.
+/// Differential: ancestor_rate - breakaway_rate. A positive gap is paid as it
+/// stands, even when it is smaller than the floor. A gap of zero or less falls
+/// back to `min_override`, but only when the ancestor has a rate of its own
+/// and the floor is above zero; otherwise nothing is earned.
 /// FixedOverride: flat rate from rank_rates lookup.
 fn resolve_gen1_payout(
     mode: &crate::config::stairstep::OverrideMode,
@@ -259,8 +260,9 @@ fn walk_overrides(
 /// Run the single override walk for a breakaway plan.
 ///
 /// Two override modes determine how the rate is resolved:
-/// - **Differential:** ancestor_rate - breakaway_rate, floored at
-///   `min_override` when the gap is zero or negative.
+/// - **Differential:** ancestor_rate - breakaway_rate, falling back to
+///   `min_override` when the gap is zero or negative and both the ancestor
+///   rate and the floor are above zero.
 /// - **FixedOverride:** flat per-rank rate lookup, independent of the
 ///   breakaway leader's rank.
 ///
@@ -383,13 +385,13 @@ fn walk_single_overrides(
                     continue;
                 }
 
+                let pool = group_vol * broad_pct * multiplier;
                 if entry.generation == 1 {
                     let ancestor_rank = snapshots
                         .get(&entry.earner_id)
                         .map(|s| s.rank.as_str())
                         .unwrap_or("");
 
-                    let pool = group_vol * broad_pct * multiplier;
                     let (rate, dollar_amount) =
                         match resolve_gen1_payout(override_mode, ancestor_rank, breakaway_rank) {
                             Gen1Payout::Nothing => continue,
@@ -419,7 +421,7 @@ fn walk_single_overrides(
                             level: entry.generation,
                             rate: Some(rate),
                             cv_amount: group_vol,
-                            dollar_amount: group_vol * broad_pct * multiplier * rate,
+                            dollar_amount: pool * rate,
                             // Walk 2. Permanently null in v2, see above.
                             walk: None,
                         });
@@ -1837,6 +1839,88 @@ mod tests {
             .find(|e| e.earner_id == uuid(0) && e.source_id == uuid(2) && e.walk.is_none())
             .expect("node 0 must earn the override on node 2 despite node 1 earning nothing");
         assert_eq!(earned.rate, Some(0.08));
+        // 300 group volume * 0.40 broad_pct * 1.0 multiplier * 0.08
+        assert!((earned.cv_amount - 300.0).abs() < 1e-10);
+        assert!((earned.dollar_amount - 9.60).abs() < 1e-10);
+    }
+
+    #[test]
+    fn generation_walk_keeps_paying_past_a_generation_that_earns_nothing() {
+        // Tree: 0(sr_dir) -> 1(director) -> 2(director) -> 3(assoc)
+        // Node 2 is the breakaway. director is the generation boundary but is
+        // removed from rank_rates, so generation 1 earns nothing while
+        // generation 2 still has a rate.
+        //
+        // The sibling of walk_climbs_past_an_ancestor_that_earns_nothing, for
+        // the other call site. Turn that `continue` into a `break` and it
+        // leaves the gen_entries loop, dropping every later generation too.
+        let tree = build_chain(4);
+        let mut structure = test_fixed_override_structure();
+        let OverrideStrategy::SingleWalk {
+            mode,
+            generation_overrides,
+        } = &mut structure.breakaway.as_mut().unwrap().overrides
+        else {
+            panic!("expected SingleWalk override strategy");
+        };
+        let OverrideMode::FixedOverride(fixed) = mode else {
+            panic!("expected FixedOverride mode");
+        };
+        fixed.rank_rates.remove("director");
+        *generation_overrides = Some(BreakawayGenerationConfig {
+            max_generations: 3,
+            rates: {
+                let mut m = BTreeMap::new();
+                m.insert(2, 0.03);
+                m
+            },
+            boundary_rank: "director".to_string(),
+        });
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", 150.0));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(2), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", 150.0));
+
+        let volume = vec![
+            VolumeSource {
+                source_id: uuid(2),
+                cv_amount: 150.0,
+            },
+            VolumeSource {
+                source_id: uuid(3),
+                cv_amount: 150.0,
+            },
+        ];
+
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
+
+        const FP_TOL: f64 = 1e-10;
+        assert!(
+            !result
+                .iter()
+                .any(|e| e.source_id == uuid(2) && e.level == 1 && e.walk.is_none()),
+            "generation 1 has no rate, so it must not earn"
+        );
+        let gen2 = result
+            .iter()
+            .find(|e| e.source_id == uuid(2) && e.level == 2 && e.walk.is_none())
+            .expect("generation 2 must still earn after generation 1 earned nothing");
+        assert_eq!(gen2.earner_id, uuid(0));
+        assert!((gen2.rate.expect("earning has a rate") - 0.03).abs() < FP_TOL);
+        // 300 group volume * 0.40 broad_pct * 1.0 multiplier * 0.03
+        assert!((gen2.dollar_amount - 3.60).abs() < FP_TOL);
     }
 
     #[test]

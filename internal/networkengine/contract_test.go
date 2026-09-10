@@ -516,6 +516,46 @@ func TestPingFixtureMatchesExpectedProtocolVersion(t *testing.T) {
 		"ping.json and expectedProtocolVersion have drifted; the Go job cannot catch this any other way")
 }
 
+// TestStreamlineFixtureDecodesIntoStreamlineDTO pins the Go DTO's json tags to
+// the shared contract fixture.
+//
+// It reads the fixture off disk and needs no worker binary. The fixture harness
+// compares raw maps, so it pins what the worker emits but never what Go decodes.
+// Without this, renaming a tag on the Go side alone leaves every suite green:
+// the field decodes as its zero value and nothing asserts otherwise.
+func TestStreamlineFixtureDecodesIntoStreamlineDTO(t *testing.T) {
+	path := filepath.Join(contractFixtureDir, "calculate_streamline_frozen.json")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err, "failed to read %s", path)
+
+	var fixture struct {
+		ExpectedResponse struct {
+			Result json.RawMessage `json:"result"`
+		} `json:"expected_response"`
+	}
+	require.NoError(t, json.Unmarshal(data, &fixture), "failed to parse %s", path)
+
+	var result StreamlineCalculationResultDTO
+	require.NoError(t, json.Unmarshal(fixture.ExpectedResponse.Result, &result),
+		"%s pins a result the streamline DTO cannot decode: %s",
+		path, fixture.ExpectedResponse.Result)
+
+	require.Len(t, result.FrozenStreamSkips, 1,
+		"%s must pin exactly one skip record, or this test pins nothing", path)
+	skip := result.FrozenStreamSkips[0]
+	assert.Equal(t, 0, skip.VolumeIndex, "volume_index tag has drifted from %s", path)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000002", skip.SourceID,
+		"source_id tag has drifted from %s", path)
+	assert.Equal(t, 100.0, skip.CVAmount, "cv_amount tag has drifted from %s", path)
+	assert.Equal(t, uint32(1), skip.StreamID, "stream_id tag has drifted from %s", path)
+
+	// The embedded type decodes through the same promotion, so a broken
+	// embedding shows up here rather than only in the hand-written tests.
+	assert.Empty(t, result.Earnings, "a frozen stream pays nothing in %s", path)
+	assert.Equal(t, "Contract Test Plan", result.Plan.Name,
+		"plan did not decode through the embedded type in %s", path)
+}
+
 func TestCheckExpectedError(t *testing.T) {
 	raw := func(m map[string]string) map[string]json.RawMessage {
 		out := make(map[string]json.RawMessage, len(m))

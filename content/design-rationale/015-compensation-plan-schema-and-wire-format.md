@@ -57,7 +57,7 @@ The schema and Go have distinct responsibilities. The schema validates structure
 | String patterns | `base_currency`: 3 uppercase letters |
 | Array constraints | `ranks` minItems 1, `structures` minItems 1 |
 | Conditional required fields | `type: matrix` requires `structure` block, `mode: pairing` requires `pairing` block |
-| Const values | `version: 1` |
+| Const values | `version: 2` |
 
 **Go validates:**
 

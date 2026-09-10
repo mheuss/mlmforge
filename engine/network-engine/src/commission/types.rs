@@ -639,12 +639,12 @@ mod tests {
         // `commission_runs` CHECK, and HEU-641 Task 17 tests it end to end.
         let identity = PlanIdentity {
             name: "Integration Test Plan".to_string(),
-            version: 1,
+            version: 2,
             hash: format!("sha256:{}", "a1b2c3d4".repeat(8)),
         };
         let json = serde_json::to_value(&identity).expect("serialize identity");
         assert_eq!(json["name"], "Integration Test Plan");
-        assert_eq!(json["version"], 1);
+        assert_eq!(json["version"], 2);
 
         let hash = json["hash"].as_str().expect("hash is a string");
         let hex = hash
@@ -670,7 +670,7 @@ mod tests {
             walks: Vec::new(),
             plan: PlanIdentity {
                 name: "Test".to_string(),
-                version: 1,
+                version: 2,
                 hash: format!("sha256:{}", "0".repeat(64)),
             },
         };

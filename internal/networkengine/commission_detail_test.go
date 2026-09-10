@@ -390,7 +390,7 @@ func TestResultFromCommissionEarningStoresANullRateAsNull(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResultFromCommissionEarning: %v", err)
 	}
-	if !strings.Contains(string(got.Detail), `"rate":null`) {
-		t.Fatalf("detail = %s, want a null rate", got.Detail)
+	if want := goldenDetail(t, "commission_earning_null_rate.json"); string(got.Detail) != want {
+		t.Fatalf("detail =\n%s\nwant\n%s", got.Detail, want)
 	}
 }

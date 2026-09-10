@@ -25,10 +25,18 @@ import (
 // outside test fixtures. That is why this is a one-line change now and an
 // unfixable one after HEU-46 starts writing rows.
 //
-// Not the NDJSON protocol version. This one labels a stored detail shape; the
-// other is the engine wire contract. Either can move without the other, and a
-// stored version asserts nothing about the protocol.
-const detailVersion = 2
+// Bumped to 3 by HEU-699, which made `rate` nullable on commission_earning.
+// A v2 row always carried a number there. Without the bump, a reader has no
+// way to know which promise the row was written under.
+//
+// Not the NDJSON protocol version, and not the plan schema version. Three
+// numbers get called a version around here and they are not coupled. This one
+// labels a stored detail shape. The protocol version is the engine wire
+// contract in engine/network-engine-worker/src/protocol.rs. The plan schema
+// version is the authoring format in schemas/compensation-plan.schema.json.
+// Any of the three can move without the others, and this one asserts nothing
+// about either.
+const detailVersion = 3
 
 // The kind values stored in every detail object. A version alone cannot say
 // which shape a row is, and the structure column cannot either: it holds a

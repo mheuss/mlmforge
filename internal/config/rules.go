@@ -489,6 +489,36 @@ func validateStructureRefs(plan *CompensationPlan, ranks map[string]bool) []Vali
 						}
 					}
 				}
+				if diff := rc.Breakaway.Overrides.Differential; diff != nil {
+					path := fmt.Sprintf("/structures/%d/commission/breakaway/overrides/differential/min_override", i)
+					switch diff.MinOverride.Type {
+					case "rate":
+						if diff.MinOverride.Value < 0 || diff.MinOverride.Value > 1 {
+							errs = append(errs, ValidationError{
+								Path:     path,
+								Code:     "out_of_range",
+								Message:  fmt.Sprintf("structure %q breakaway differential min_override is a rate, so it must be in [0, 1], got %v", s.Name, diff.MinOverride.Value),
+								Severity: SeverityError,
+							})
+						}
+					case "currency":
+						if diff.MinOverride.Value < 0 {
+							errs = append(errs, ValidationError{
+								Path:     path,
+								Code:     "out_of_range",
+								Message:  fmt.Sprintf("structure %q breakaway differential min_override is currency, so it must be non-negative, got %v", s.Name, diff.MinOverride.Value),
+								Severity: SeverityError,
+							})
+						}
+					default:
+						errs = append(errs, ValidationError{
+							Path:     path,
+							Code:     "undefined_reference",
+							Message:  fmt.Sprintf("structure %q breakaway differential min_override type is %q, want \"rate\" or \"currency\"", s.Name, diff.MinOverride.Type),
+							Severity: SeverityError,
+						})
+					}
+				}
 				if rc.Breakaway.Overrides.FixedOverride != nil {
 					for rankName := range rc.Breakaway.Overrides.FixedOverride.RankRates {
 						if !ranks[rankName] {

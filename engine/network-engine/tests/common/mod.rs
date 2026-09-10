@@ -9,7 +9,7 @@ use network_engine::config::binary::{
 };
 use network_engine::config::eligibility::CommissionEligibility;
 use network_engine::config::stairstep::{
-    BreakawayConfig, BreakawayTier, DifferentialConfig, MultiTierConfig, OverrideMode,
+    BreakawayConfig, BreakawayTier, DifferentialConfig, MinOverride, MultiTierConfig, OverrideMode,
     OverrideStrategy,
 };
 use network_engine::config::{
@@ -244,7 +244,7 @@ pub fn build_two_rank_unilevel_plan(
 /// Build a stairstep plan for property tests.
 ///
 /// Rate table: two ranks "member" and "director" with 5% at every level.
-/// Breakaway threshold: "director". Differential: director=0.10, min_override=0.0.
+/// Breakaway threshold: "director". Differential: director=0.10, min_override=rate 0.0.
 /// No generation overrides. Eligibility is fully permissive.
 pub fn build_stairstep_plan(
     max_depth: u8,
@@ -292,7 +292,7 @@ pub fn build_stairstep_plan_with_eligibility(
                         m.insert("director".to_string(), 0.10);
                         m
                     },
-                    min_override: 0.0,
+                    min_override: MinOverride::Rate { value: 0.0 },
                 }),
                 generation_overrides: None,
             },

@@ -652,7 +652,9 @@ structures:
           differential:
             rank_rates:
               Supervisor: 0.05
-            min_override: 10.00
+            min_override:
+              type: currency
+              value: 10.00
 bonuses: {}
 payout: {base_currency: USD, minimum_amount: 50, methods: [{type: bank_transfer, fee: 2.50}]}
 caps: {company_payout_cap_percent: 0.42, cap_enforcement: pro_rata}
@@ -672,7 +674,7 @@ placement: {donated_placement_enabled: false}
 	assert.Equal(t, "differential", c.Breakaway.Overrides.OverrideCalculation)
 	require.NotNil(t, c.Breakaway.Overrides.Differential)
 	assert.Equal(t, 0.05, c.Breakaway.Overrides.Differential.RankRates["Supervisor"])
-	assert.Equal(t, 10.0, c.Breakaway.Overrides.Differential.MinOverride)
+	assert.Equal(t, MinOverride{Type: "currency", Value: 10.0}, c.Breakaway.Overrides.Differential.MinOverride)
 }
 
 // TestBreakawayConfig_SingleWalk_MarshalsGoEmittedWireShape verifies the
@@ -691,7 +693,7 @@ func TestBreakawayConfig_SingleWalk_MarshalsGoEmittedWireShape(t *testing.T) {
 			OverrideCalculation: "differential",
 			Differential: &DifferentialConfig{
 				RankRates:   map[string]float64{"director": 0.10},
-				MinOverride: 0.02,
+				MinOverride: MinOverride{Type: "rate", Value: 0.02},
 			},
 		},
 	}
@@ -714,7 +716,10 @@ func TestBreakawayConfig_SingleWalk_MarshalsGoEmittedWireShape(t *testing.T) {
 	require.True(t, ok, "differential should be an object")
 	rates := diff["rank_rates"].(map[string]any)
 	assert.Equal(t, 0.10, rates["director"])
-	assert.Equal(t, 0.02, diff["min_override"])
+	mo, ok := diff["min_override"].(map[string]any)
+	require.True(t, ok, "min_override should be an object carrying its unit")
+	assert.Equal(t, "rate", mo["type"])
+	assert.Equal(t, 0.02, mo["value"])
 
 	// Non-selected variant fields must be present and zero-valued. The Rust
 	// internally-tagged enum reads `type` and ignores these. assert.Contains

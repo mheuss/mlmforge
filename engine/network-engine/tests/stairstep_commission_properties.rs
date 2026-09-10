@@ -225,7 +225,7 @@ proptest! {
         cv in 1.0..10000.0f64,
     ) {
         use network_engine::config::stairstep::{
-            BreakawayConfig, DifferentialConfig, OverrideMode, OverrideStrategy,
+            BreakawayConfig, DifferentialConfig, MinOverride, OverrideMode, OverrideStrategy,
         };
 
         let (plan, mut structure) = build_stairstep_plan(5);
@@ -244,7 +244,7 @@ proptest! {
                         m.insert("director".to_string(), 0.10);
                         m
                     },
-                    min_override: 0.02,
+                    min_override: MinOverride::Rate { value: 0.02 },
                 }),
                 generation_overrides: None,
             },
@@ -302,7 +302,7 @@ proptest! {
         tree_size in 3..30usize,
     ) {
         use network_engine::config::stairstep::{
-            BreakawayConfig, DifferentialConfig, OverrideMode, OverrideStrategy,
+            BreakawayConfig, DifferentialConfig, MinOverride, OverrideMode, OverrideStrategy,
         };
 
         let (plan, mut structure) = build_stairstep_plan(5);
@@ -320,7 +320,7 @@ proptest! {
                         m.insert("director".to_string(), 0.10);
                         m
                     },
-                    min_override: 0.02,
+                    min_override: MinOverride::Rate { value: 0.02 },
                 }),
                 generation_overrides: None,
             },

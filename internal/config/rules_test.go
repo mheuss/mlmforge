@@ -200,6 +200,7 @@ func TestBreakawayDifferentialRankRatesMustExist(t *testing.T) {
 						"Silver": 0.05,
 						"Typo":   0.08,
 					},
+					MinOverride: MinOverride{Type: "rate", Value: 0},
 				},
 			},
 		},

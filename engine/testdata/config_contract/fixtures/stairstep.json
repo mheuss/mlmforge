@@ -146,7 +146,10 @@
                 "Manager": 0.08,
                 "Supervisor": 0.05
               },
-              "min_override": 10
+              "min_override": {
+                "type": "currency",
+                "value": 10
+              }
             },
             "fixed_override": null,
             "generation": {

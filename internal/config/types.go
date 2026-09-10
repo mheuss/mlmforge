@@ -419,7 +419,18 @@ type BreakawayTier struct {
 // DifferentialConfig holds differential override commission configuration.
 type DifferentialConfig struct {
 	RankRates   map[string]float64 `yaml:"rank_rates" json:"rank_rates"`
-	MinOverride float64            `yaml:"min_override" json:"min_override"`
+	MinOverride MinOverride        `yaml:"min_override" json:"min_override"`
+}
+
+// MinOverride is a floor and the unit it is measured in. Type selects the
+// unit. Valid values: "rate", "currency".
+//
+// A bare number is not valid. The same digits mean a percentage under one
+// reading and currency under the other, and a value between 0 and 1 passed
+// both sides while paying neither amount the author meant.
+type MinOverride struct {
+	Type  string  `yaml:"type" json:"type"`
+	Value float64 `yaml:"value" json:"value"`
 }
 
 // FixedOverrideConfig holds fixed override commission configuration.

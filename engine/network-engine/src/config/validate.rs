@@ -40,7 +40,7 @@ use super::commission::LevelCommissionConfig;
 use super::generation::GenerationCommissionConfig;
 use super::matrix::{MatrixStructureParams, SpilloverDirection};
 use super::payout::CapsConfig;
-use super::stairstep::{BreakawayConfig, OverrideMode, OverrideStrategy};
+use super::stairstep::{BreakawayConfig, MinOverride, OverrideMode, OverrideStrategy};
 use super::streamline::StreamlineCommissionConfig;
 use super::volume::VolumeConfig;
 use super::{CompensationPlan, StructureConfig};
@@ -63,6 +63,14 @@ fn check_positive(field: &str, v: f64) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// A floor whose bounds depend on the unit it carries.
+fn check_min_override(v: &MinOverride) -> Result<(), String> {
+    match v {
+        MinOverride::Rate { value } => check_fraction("differential min_override", *value),
+        MinOverride::Currency { value } => check_non_negative("differential min_override", *value),
+    }
 }
 
 /// A monetary amount or cap that may be zero but not negative.
@@ -374,7 +382,7 @@ impl BreakawayConfig {
                         for (rank, rate) in &diff.rank_rates {
                             check_fraction(&format!("differential rank_rates[{rank}]"), *rate)?;
                         }
-                        check_fraction("differential min_override", diff.min_override)?;
+                        check_min_override(&diff.min_override)?;
                     }
                     OverrideMode::FixedOverride(fixed) => {
                         for (rank, rate) in &fixed.rank_rates {
@@ -489,6 +497,10 @@ mod tests {
 
     #[test]
     fn non_negative_allows_zero_but_not_negative() {
+        assert!(check_min_override(&MinOverride::Currency { value: 250.0 }).is_ok());
+        assert!(check_min_override(&MinOverride::Rate { value: 1.5 }).is_err());
+        assert!(check_min_override(&MinOverride::Currency { value: -1.0 }).is_err());
+        assert!(check_min_override(&MinOverride::Rate { value: 0.02 }).is_ok());
         assert!(check_non_negative("c", 0.0).is_ok());
         assert!(check_non_negative("c", 10.0).is_ok());
         assert!(check_non_negative("c", -0.01).is_err());

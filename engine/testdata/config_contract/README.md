@@ -21,7 +21,7 @@ loads.** That has already cost one session its time.
 
 ## What loads today
 
-Driven through the worker on 2026-09-08, one `load_plan` per fixture:
+Driven through the worker on 2026-09-10, one `load_plan` per fixture:
 
 | Fixture | `load_plan` |
 | --- | --- |
@@ -30,19 +30,14 @@ Driven through the worker on 2026-09-08, one `load_plan` per fixture:
 | `matrix.json` | loads |
 | `streamline.json` | loads |
 | `unilevel.json` | loads |
-| `stairstep.json` | **rejected** |
+| `stairstep.json` | loads |
 
 A date, not a standing property. Re-run it rather than trusting this table.
 
-`stairstep.json` is rejected for `differential min_override must be a fraction
-in [0.0, 1.0], got 10`.
-
-**That rejection is deliberate here and a symptom elsewhere.** The fixture is a
-valid width target: the manifest points one field at it,
-`StairstepCommission.CommissionableDepth`, and that pointer resolves. The
-`min_override` value is not a mistake in this file. Go's schema and Rust's
-implementation disagree about what the field means, so the same number is valid
-on one side and out of range on the other. See HEU-699. Do not repair it here.
+`stairstep.json` used to be rejected here. HEU-699 gave `min_override` an
+explicit unit, so the 10 it carries is now tagged as currency and the fixture
+loads. The fixture is also still a valid width target: the manifest points
+`StairstepCommission.CommissionableDepth` at it and that pointer resolves.
 
 ## These files are generated
 

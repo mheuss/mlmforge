@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
-use crate::config::stairstep::{BreakawayTier, MultiTierConfig};
+use crate::config::stairstep::{BreakawayTier, MinOverride, MultiTierConfig};
 use crate::config::{CompensationPlan, StairstepStructureConfig};
 use crate::tree::unilevel::UnilevelTree;
 
@@ -190,8 +190,15 @@ fn prep(
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Gen1Payout {
     Rate(f64),
+    /// A fixed currency amount drawn from the leg's pool.
+    Currency(f64),
     Nothing,
 }
+
+/// A floor equal to the pool is payable. Compare with a tolerance so binary
+/// rounding does not reject it: 100.0 * 0.29 is 28.999999999999996, and a
+/// floor of 29.0 is meant to be exactly coverable there.
+const POOL_TOL: f64 = 1e-10;
 
 /// Resolve what a generation-1 ancestor earns on a breakaway leg.
 ///
@@ -211,11 +218,15 @@ fn resolve_gen1_payout(
             let breakaway_rate = diff.rank_rates.get(breakaway_rank).copied().unwrap_or(0.0);
             let gap = ancestor_rate - breakaway_rate;
             if gap > 0.0 {
-                Gen1Payout::Rate(gap)
-            } else if ancestor_rate > 0.0 && diff.min_override > 0.0 {
-                Gen1Payout::Rate(diff.min_override)
-            } else {
-                Gen1Payout::Nothing
+                return Gen1Payout::Rate(gap);
+            }
+            if ancestor_rate <= 0.0 {
+                return Gen1Payout::Nothing;
+            }
+            match diff.min_override {
+                MinOverride::Rate { value } if value > 0.0 => Gen1Payout::Rate(value),
+                MinOverride::Currency { value } if value > 0.0 => Gen1Payout::Currency(value),
+                _ => Gen1Payout::Nothing,
             }
         }
         crate::config::stairstep::OverrideMode::FixedOverride(fixed) => {
@@ -396,6 +407,12 @@ fn walk_single_overrides(
                         match resolve_gen1_payout(override_mode, ancestor_rank, breakaway_rank) {
                             Gen1Payout::Nothing => continue,
                             Gen1Payout::Rate(r) => (Some(r), pool * r),
+                            Gen1Payout::Currency(amount) => {
+                                if amount - pool > POOL_TOL {
+                                    continue;
+                                }
+                                (None, amount)
+                            }
                         };
 
                     earnings.push(CommissionEarning {
@@ -455,6 +472,12 @@ fn walk_single_overrides(
                     match resolve_gen1_payout(override_mode, ancestor_rank, breakaway_rank) {
                         Gen1Payout::Nothing => continue,
                         Gen1Payout::Rate(r) => (Some(r), pool * r),
+                        Gen1Payout::Currency(amount) => {
+                            if amount - pool > POOL_TOL {
+                                continue;
+                            }
+                            (None, amount)
+                        }
                     };
 
                 earnings.push(CommissionEarning {
@@ -703,7 +726,7 @@ mod tests {
     use crate::config::rank::{DemotionPolicy, RankDefinition, RankQualification};
     use crate::config::stairstep::{
         BreakawayConfig, BreakawayGenerationConfig, BreakawayTier, DifferentialConfig,
-        FixedOverrideConfig, MultiTierConfig, OverrideMode, OverrideStrategy,
+        FixedOverrideConfig, MinOverride, MultiTierConfig, OverrideMode, OverrideStrategy,
     };
     use crate::config::{StairstepStructureConfig, StructureConfig};
     use std::collections::BTreeMap;
@@ -768,11 +791,27 @@ mod tests {
                             m.insert("senior_director".to_string(), 0.15);
                             m
                         },
-                        min_override: 0.02,
+                        min_override: MinOverride::Rate { value: 0.02 },
                     }),
                     generation_overrides: None,
                 },
             }),
+        }
+    }
+
+    /// Overwrite the differential floor on a structure built by
+    /// `test_stairstep_structure`.
+    fn set_min_override(structure: &mut StairstepStructureConfig, floor: MinOverride) {
+        let breakaway = structure
+            .breakaway
+            .as_mut()
+            .expect("test structure has a breakaway");
+        match &mut breakaway.overrides {
+            OverrideStrategy::SingleWalk { mode, .. } => match mode {
+                OverrideMode::Differential(diff) => diff.min_override = floor,
+                OverrideMode::FixedOverride(_) => panic!("test structure is differential"),
+            },
+            OverrideStrategy::MultiTier(_) => panic!("test structure is single-walk"),
         }
     }
 
@@ -1219,7 +1258,9 @@ mod tests {
         let mut structure = test_stairstep_structure();
         match &mut structure.breakaway.as_mut().unwrap().overrides {
             OverrideStrategy::SingleWalk { mode, .. } => match mode {
-                OverrideMode::Differential(diff) => diff.min_override = 0.0,
+                OverrideMode::Differential(diff) => {
+                    diff.min_override = MinOverride::Rate { value: 0.0 }
+                }
                 OverrideMode::FixedOverride(_) => panic!("expected Differential override mode"),
             },
             OverrideStrategy::MultiTier(_) => panic!("expected SingleWalk override strategy"),
@@ -1262,7 +1303,7 @@ mod tests {
         rank_rates.insert("member".to_string(), 0.04);
         let mode = OverrideMode::Differential(DifferentialConfig {
             rank_rates,
-            min_override: 0.0,
+            min_override: MinOverride::Rate { value: 0.0 },
         });
 
         match resolve_gen1_payout(&mode, "manager", "member") {
@@ -1277,7 +1318,7 @@ mod tests {
         rank_rates.insert("manager".to_string(), 0.10);
         let mode = OverrideMode::Differential(DifferentialConfig {
             rank_rates,
-            min_override: 0.0,
+            min_override: MinOverride::Rate { value: 0.0 },
         });
 
         assert!(matches!(
@@ -1326,6 +1367,131 @@ mod tests {
         assert!((override_earning.rate.expect("earning has a rate") - 0.02).abs() < FP_TOL);
         assert!((override_earning.cv_amount - 300.0).abs() < FP_TOL);
         assert!((override_earning.dollar_amount - 2.40).abs() < FP_TOL);
+    }
+
+    #[test]
+    fn currency_min_override_pays_a_fixed_amount_with_no_rate() {
+        // Same shape as min_override_floor_applied: both nodes are director,
+        // so the differential is zero and the floor is what pays. The leg's
+        // pool is 300 * 0.40 * 1.0 = 120.00, which covers a 5.00 floor.
+        let tree = build_chain(3);
+        let mut structure = test_stairstep_structure();
+        set_min_override(&mut structure, MinOverride::Currency { value: 5.0 });
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
+
+        let override_earning = result
+            .iter()
+            .find(|e| e.earner_id == uuid(0) && e.source_id == uuid(1))
+            .expect("node 0 should earn the currency floor on breakaway node 1");
+
+        assert_eq!(
+            override_earning.rate, None,
+            "a currency floor applied no rate, so there is none to report"
+        );
+        assert!((override_earning.dollar_amount - 5.0).abs() < FP_TOL);
+    }
+
+    #[test]
+    fn currency_min_override_pays_nothing_when_the_pool_cannot_cover_it() {
+        // The leg's pool is 120.00. A 10_000.00 floor has nowhere to come from,
+        // so it pays what it would have paid with no floor configured at all.
+        let tree = build_chain(3);
+        let mut structure = test_stairstep_structure();
+        set_min_override(&mut structure, MinOverride::Currency { value: 10_000.0 });
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
+
+        assert!(
+            !result.iter().any(|e| e.walk.is_none()),
+            "a floor larger than the leg's pool pays no override: {result:?}"
+        );
+    }
+
+    #[test]
+    fn a_pool_too_small_for_the_floor_does_not_stop_the_walk() {
+        // Tree: 0(sr_dir) -> 1(director) -> 2(director) -> 3(assoc)
+        // Node 2 is the breakaway. Node 1 is equal rank, so it reaches the
+        // floor and cannot afford it. Node 0 outranks the leader and has a
+        // real 0.05 gap, so it must still earn.
+        //
+        // This is the test behind the design's "nothing regresses" claim.
+        // Turn the pool-too-small `continue` into a `break` and node 0 stops
+        // earning.
+        let tree = build_chain(4);
+        let mut structure = test_stairstep_structure();
+        set_min_override(&mut structure, MinOverride::Currency { value: 10_000.0 });
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", 150.0));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(2), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", 150.0));
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
+
+        let earned = result
+            .iter()
+            .find(|e| e.earner_id == uuid(0) && e.source_id == uuid(2) && e.walk.is_none())
+            .expect(
+                "node 0 must still earn its differential past a leg that cannot carry the floor",
+            );
+        assert!((earned.rate.expect("a differential gap is a rate") - 0.05).abs() < FP_TOL);
     }
 
     #[test]

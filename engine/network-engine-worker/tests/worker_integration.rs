@@ -1151,10 +1151,8 @@ fn calculate_unilevel_still_requires_volume() {
 ///
 /// The fixture belongs to the integer-width contract (UC-NET-011), where
 /// deserializability is the requirement, not validity. It happens to load clean
-/// through `load_plan`. Its siblings do not all share that property —
-/// `stairstep.json` fails validation with `differential min_override must be a
-/// fraction in [0.0, 1.0], got 10` — so don't reach for the others without
-/// checking.
+/// through `load_plan`, and that is a property of this file rather than of the
+/// directory, so don't reach for a sibling without checking it loads.
 const GENERATION_TEST_PLAN_JSON: &str =
     include_str!("../../testdata/config_contract/fixtures/generation.json");
 

@@ -114,11 +114,27 @@ pub struct DifferentialConfig {
     /// Keys are rank names. Values are percentages between 0.0 and 1.0.
     pub rank_rates: BTreeMap<String, f64>,
 
-    /// Floor for override percentage.
+    /// Floor applied when the rank gap is zero or negative.
     ///
-    /// Prevents zero overrides at equal rank. Typical range 0.01-0.03
-    /// (1-3%).
-    pub min_override: f64,
+    /// Carries its unit. A bare number is rejected, because the same digits
+    /// mean a percentage under one reading and cents under the other.
+    pub min_override: MinOverride,
+}
+
+/// A minimum override floor, tagged with the unit it is measured in.
+///
+/// `Rate` multiplies the leg's commission pool. `Currency` is drawn from that
+/// pool as a fixed amount in the plan's base currency.
+///
+/// Both variants are struct variants deliberately. Serde's internally tagged
+/// representation accepts struct variants, unit variants, and newtypes around
+/// a struct or map, but not a newtype around a bare scalar, so `Rate(f64)`
+/// would compile and fail to round-trip.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum MinOverride {
+    Rate { value: f64 },
+    Currency { value: f64 },
 }
 
 /// Configuration for fixed override calculation.
@@ -326,6 +342,62 @@ mod tests {
     use super::*;
 
     #[test]
+    fn differential_rejects_a_bare_min_override() {
+        let json = r#"{
+            "rank_rates": {"director": 0.10},
+            "min_override": 0.02
+        }"#;
+        let err = serde_json::from_str::<DifferentialConfig>(json)
+            .expect_err("a bare number carries no unit and must be rejected");
+        assert!(
+            err.to_string().contains("MinOverride"),
+            "error should name the type it expected: {err}"
+        );
+    }
+
+    #[test]
+    fn differential_reads_a_currency_min_override() {
+        let json = r#"{
+            "rank_rates": {"director": 0.10},
+            "min_override": {"type": "currency", "value": 10.0}
+        }"#;
+        let cfg: DifferentialConfig = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(cfg.min_override, MinOverride::Currency { value: 10.0 });
+    }
+
+    #[test]
+    fn currency_min_override_survives_the_tagged_enum_buffer() {
+        // Go marshals 10.00 as `10`, and OverrideStrategyWire always buffers
+        // into serde's Content, so this is the shape the worker receives.
+        // UC-NET-007 was found on this exact path: the inner type passes its
+        // own tests in isolation and fails at the tagged-enum boundary.
+        let json = r#"{
+            "threshold_rank": "director",
+            "group_volume_excludes_breakaway": true,
+            "overrides": {
+                "type": "single_walk",
+                "override_calculation": "differential",
+                "differential": {
+                    "rank_rates": {"director": 0.10},
+                    "min_override": {"type": "currency", "value": 10}
+                },
+                "fixed_override": null,
+                "generation": null
+            }
+        }"#;
+        let cfg: BreakawayConfig = serde_json::from_str(json).expect("deserialize");
+        match cfg.overrides {
+            OverrideStrategy::SingleWalk { mode, .. } => match mode {
+                OverrideMode::Differential(diff) => {
+                    assert_eq!(diff.min_override, MinOverride::Currency { value: 10.0 });
+                }
+                OverrideMode::FixedOverride(_) => panic!("expected differential"),
+            },
+            OverrideStrategy::MultiTier(_) => panic!("expected single_walk"),
+        }
+    }
+
+    #[test]
     fn deserialize_breakaway_config() {
         let json = r#"{
             "threshold_rank": "director",
@@ -339,7 +411,7 @@ mod tests {
                         "senior_director": 0.15,
                         "executive": 0.20
                     },
-                    "min_override": 0.02
+                    "min_override": {"type": "rate", "value": 0.02}
                 },
                 "generation": {
                     "max_generations": 3,
@@ -372,7 +444,7 @@ mod tests {
         assert_eq!(diff.rank_rates["director"], 0.10);
         assert_eq!(diff.rank_rates["senior_director"], 0.15);
         assert_eq!(diff.rank_rates["executive"], 0.20);
-        assert_eq!(diff.min_override, 0.02);
+        assert_eq!(diff.min_override, MinOverride::Rate { value: 0.02 });
 
         let gen_cfg = generation_overrides.as_ref().unwrap();
         assert_eq!(gen_cfg.max_generations, 3);
@@ -403,7 +475,7 @@ mod tests {
                 "platinum": 0.18,
                 "diamond": 0.25
             },
-            "min_override": 0.01
+            "min_override": {"type": "rate", "value": 0.01}
         }"#;
         let config: DifferentialConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.rank_rates.len(), 4);
@@ -411,7 +483,7 @@ mod tests {
         assert_eq!(config.rank_rates["gold"], 0.12);
         assert_eq!(config.rank_rates["platinum"], 0.18);
         assert_eq!(config.rank_rates["diamond"], 0.25);
-        assert_eq!(config.min_override, 0.01);
+        assert_eq!(config.min_override, MinOverride::Rate { value: 0.01 });
     }
 
     #[test]
@@ -482,7 +554,7 @@ mod tests {
             overrides: OverrideStrategy::SingleWalk {
                 mode: OverrideMode::Differential(DifferentialConfig {
                     rank_rates: BTreeMap::from([("director".to_string(), 0.10)]),
-                    min_override: 0.02,
+                    min_override: MinOverride::Rate { value: 0.02 },
                 }),
                 generation_overrides: None,
             },
@@ -559,7 +631,7 @@ mod tests {
                 "override_calculation": "fixed_override",
                 "differential": {
                     "rank_rates": { "director": 0.10 },
-                    "min_override": 0.02
+                    "min_override": {"type": "rate", "value": 0.02}
                 },
                 "fixed_override": {
                     "rank_rates": { "director": 0.05 }
@@ -665,7 +737,7 @@ mod tests {
                 "override_calculation": "differential",
                 "differential": {
                     "rank_rates": { "director": 0.10 },
-                    "min_override": 0.02
+                    "min_override": {"type": "rate", "value": 0.02}
                 }
             }
         }"#;
@@ -682,7 +754,7 @@ mod tests {
             OverrideMode::FixedOverride(_) => panic!("expected Differential"),
         };
         assert_eq!(diff.rank_rates["director"], 0.10);
-        assert_eq!(diff.min_override, 0.02);
+        assert_eq!(diff.min_override, MinOverride::Rate { value: 0.02 });
 
         // Round-trip: serialize then deserialize again, expect the same shape.
         let serialized = serde_json::to_string(&config).unwrap();
@@ -732,7 +804,7 @@ mod tests {
                 "override_calculation": "differential",
                 "differential": {
                     "rank_rates": { "director": 0.10 },
-                    "min_override": 0.02
+                    "min_override": {"type": "rate", "value": 0.02}
                 },
                 "fixed_override": null,
                 "generation": null,
@@ -748,7 +820,7 @@ mod tests {
             panic!("expected Differential override mode");
         };
         assert_eq!(diff.rank_rates["director"], 0.10);
-        assert_eq!(diff.min_override, 0.02);
+        assert_eq!(diff.min_override, MinOverride::Rate { value: 0.02 });
     }
 
     #[test]
@@ -761,7 +833,7 @@ mod tests {
                 "override_calculation": "differential",
                 "differential": {
                     "rank_rates": { "director": 0.10 },
-                    "min_override": 0.02
+                    "min_override": {"type": "rate", "value": 0.02}
                 },
                 "fixed_override": {
                     "rank_rates": { "director": 0.05 }

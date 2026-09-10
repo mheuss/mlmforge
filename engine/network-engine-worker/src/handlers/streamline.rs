@@ -474,10 +474,6 @@ pub(crate) fn handle_calculate_streamline(state: &WorkerState, request: &Request
     // - require_plan returns whatever plan was loaded last, so a load_plan that
     //   replaces the plan while streams already exist re-rates them. Tracked by
     //   HEU-598.
-    //
-    // Volume this structure cannot pay comes back as an error rather than an
-    // empty success. Volume a frozen stream skips pays nothing and is reported
-    // in the response built below.
     let plan = match require_plan(state, &request.id) {
         Ok(p) => p,
         Err(resp) => return resp,
@@ -520,6 +516,10 @@ pub(crate) fn handle_calculate_streamline(state: &WorkerState, request: &Request
         }
     };
 
+    // Volume naming a source in no stream, or with no snapshot, is an error
+    // rather than an empty success. Volume belonging to a frozen stream earns
+    // nothing from that stream, and each skipped (volume entry, stream) pair is
+    // reported below.
     match calculate_streamline(
         engine,
         plan,

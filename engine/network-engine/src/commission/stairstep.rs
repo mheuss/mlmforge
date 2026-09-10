@@ -199,16 +199,17 @@ enum Gen1Payout {
 /// rounding does not reject it: 2913000.0 * 0.29 is 844769.9999999999, and a
 /// floor of 844770.0 is meant to be exactly coverable there.
 ///
-/// The tolerance is absolute and sits below a cent, not below a nanodollar.
-/// Representation error grows with the pool, so a nanodollar tolerance starts
-/// rejecting exactly-coverable floors once the pool passes a few hundred
-/// thousand.
+/// An absolute tolerance stops working once one ULP at the compared magnitude
+/// exceeds it, because that is the smallest gap two f64 values can have. The
+/// dollar figure is a consequence of that, not the rule: this value holds to a
+/// pool of 2^33, about 8.59 billion, and the 1e-10 it replaced held only to
+/// 2^19, about 524 thousand. Raising the tolerance moves the bound; it cannot
+/// remove it.
 ///
-/// A sub-cent tolerance holds to roughly an eight-billion-dollar pool on one
-/// leg, above which an exactly-coverable floor is refused and pays nothing. It
+/// Above the bound an exactly-coverable floor is refused and pays nothing. It
 /// fails closed: the most it can ever overpay is the tolerance itself, a
-/// ten-thousandth of a cent. Fixing the bound properly means comparing money in
-/// minor units rather than f64, which is a wider change than this field.
+/// ten-thousandth of a cent. Removing the bound means comparing money in minor
+/// units rather than f64, which is wider than this field. HEU-717.
 const POOL_TOL: f64 = 1e-6;
 
 /// Resolve what a generation-1 ancestor earns on a breakaway leg.

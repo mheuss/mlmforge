@@ -15,7 +15,16 @@ import (
 //
 // Changing this number without changing the shared ping contract fixture, or
 // the reverse, rejects a worker that is otherwise correct.
-const expectedProtocolVersion = 3
+//
+// Moved to 4 by HEU-699, which made `rate` nullable in the commission result
+// envelope. A nullable field is a change to what a value means, which is the
+// case the exact comparison above exists for.
+//
+// This is the wire contract, not the stored row shape and not the authoring
+// format. Two other numbers nearby are also called a version: `detailVersion`
+// in commission_detail.go, and the plan schema version in
+// schemas/compensation-plan.schema.json. None is coupled to the others.
+const expectedProtocolVersion = 4
 
 // maxPingResponseInError bounds how much of an unexpected ping response is
 // quoted back in an error. The response is wire data and is otherwise

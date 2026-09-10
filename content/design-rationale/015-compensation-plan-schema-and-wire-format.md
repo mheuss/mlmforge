@@ -24,7 +24,7 @@ This eliminates 28 field name mappings that would otherwise live in the Go trans
 
 A single JSON Schema file (`schemas/compensation-plan.schema.json`) validates compensation plan YAML. The schema uses Draft 2020-12 for `if/then/else` support and broad tooling compatibility.
 
-**Monolithic file with `$defs`.** All 63 types live in one file. No multi-file `$ref`. Simpler to distribute, load, and version.
+**Monolithic file with `$defs`.** Every type lives in one file. No multi-file `$ref`. Simpler to distribute, load, and version.
 
 **Structure type discriminator.** `StructureConfig` uses `allOf` with `if/then` blocks keyed on the `type` field. Each structure type selects its required fields and commission shape. The same pattern applies to `BinaryCommission` (keyed on `mode`: pairing vs cycle/step).
 

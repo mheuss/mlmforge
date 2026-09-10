@@ -626,9 +626,11 @@ did.
   second time rather than delegated.
 - A source held only by a *frozen* stream is deliberately not an error. Freezing
   is a business state and paying nothing is the right answer, so the source is
-  accepted and earns nothing. On its own that is still a silent zero. Making the
-  skipped pairs visible to the caller is the other half of HEU-611 and is not in
-  this commit.
+  accepted and earns nothing. What keeps that from being a silent zero is
+  `frozen_stream_skips` on the *worker's* `calculate_streamline` response, not on
+  `CommissionCalculationResult`: one record per (volume entry, frozen stream)
+  pair, always present, ordered by volume index then stream id. A direct Rust
+  caller of the engine function still gets the bare result.
 
 Same blast radius as the generation narrowing: nothing calls `CalculateStreamline`
 outside tests today.

@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use network_engine::commission::{DistributorSnapshot, VolumeSource, calculate_streamline};
+use network_engine::commission::{
+    CommissionCalculationResult, DistributorSnapshot, VolumeSource, calculate_streamline,
+};
 use network_engine::config::streamline::StreamAssignmentMode;
 use network_engine::config::{CompensationPlan, StreamlineStructureConfig, StructureConfig};
 use network_engine::serde_helpers::null_as_empty;
@@ -430,6 +432,30 @@ fn find_streamline_structure<'a>(
     })
 }
 
+/// One (volume entry, frozen stream) pair that contributed nothing.
+///
+/// Scoped to the pair, not to the volume entry. The same entry can still have
+/// paid through another stream that is active, so a record here does not mean
+/// the entry earned nothing.
+///
+/// Carries the index and CV so the list can be read without the request that
+/// produced it. A repeated source is permitted, and two records for the same
+/// source and stream are otherwise identical.
+#[derive(serde::Serialize)]
+struct FrozenStreamSkip {
+    volume_index: usize,
+    source_id: Uuid,
+    cv_amount: f64,
+    stream_id: u32,
+}
+
+#[derive(serde::Serialize)]
+struct StreamlineCalculationResponse {
+    #[serde(flatten)]
+    result: CommissionCalculationResult,
+    frozen_stream_skips: Vec<FrozenStreamSkip>,
+}
+
 pub(crate) fn handle_calculate_streamline(state: &WorkerState, request: &Request) -> Response {
     // The *commission* config comes from the plan validated by handle_load_plan,
     // never from request params (HEU-583, design rationale 028). "Validated"
@@ -506,10 +532,40 @@ pub(crate) fn handle_calculate_streamline(state: &WorkerState, request: &Request
         &params.volume,
         identity,
     ) {
-        Ok(result) => Response::success(
-            request.id.clone(),
-            serde_json::to_value(&result).expect("serialization infallible"),
-        ),
+        Ok(result) => {
+            let mut frozen_stream_skips = Vec::new();
+            for (volume_index, source) in params.volume.iter().enumerate() {
+                // No streams recorded for this source.
+                let Some(stream_ids) = engine.get_member_streams(source.source_id) else {
+                    continue;
+                };
+                // sort_unstable is what gives the stream_id half of the order.
+                // The ids arrive in membership-insertion order.
+                let mut frozen: Vec<u32> = stream_ids
+                    .iter()
+                    .copied()
+                    .filter(|id| engine.get_stream(*id).is_some_and(|s| s.frozen))
+                    .collect();
+                frozen.sort_unstable();
+                for stream_id in frozen {
+                    frozen_stream_skips.push(FrozenStreamSkip {
+                        volume_index,
+                        source_id: source.source_id,
+                        cv_amount: source.cv_amount,
+                        stream_id,
+                    });
+                }
+            }
+
+            let body = StreamlineCalculationResponse {
+                result,
+                frozen_stream_skips,
+            };
+            Response::success(
+                request.id.clone(),
+                serde_json::to_value(&body).expect("serialization infallible"),
+            )
+        }
         Err(e) => Response::error(
             request.id.clone(),
             "CALCULATION_ERROR",

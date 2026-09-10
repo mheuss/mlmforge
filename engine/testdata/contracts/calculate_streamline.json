@@ -48,6 +48,7 @@
                     "walk": 0
                 }
             ],
+            "frozen_stream_skips": [],
             "plan": {
                 "hash": "sha256:7dbc5cafc50e8364c21444ffd4b0b72f00048dcdabf274d72b161aacf4c2e5f2",
                 "name": "Contract Test Plan",

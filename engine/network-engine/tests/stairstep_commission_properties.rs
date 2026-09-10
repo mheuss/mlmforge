@@ -295,6 +295,89 @@ proptest! {
         );
     }
 
+    /// A currency floor never pays more than the leg it is drawn from, and an
+    /// earning it produced carries no rate.
+    ///
+    /// The unit tests for the currency arm use fixed 3- and 4-node chains. This
+    /// covers arbitrary shapes and floor sizes, which is where the pool gate's
+    /// two duplicated copies could diverge.
+    #[test]
+    fn currency_floor_never_exceeds_its_leg_and_reports_no_rate(
+        tree_size in 3..30usize,
+        floor in 0.1..500.0f64,
+    ) {
+        use network_engine::config::stairstep::{
+            BreakawayConfig, DifferentialConfig, MinOverride, OverrideMode, OverrideStrategy,
+        };
+
+        let (plan, mut structure) = build_stairstep_plan(5);
+        let broad_pct = structure.level_commission.broad_commission_percent;
+        let multiplier = plan.volume.volume_to_dollar_multiplier;
+
+        structure.breakaway = Some(BreakawayConfig {
+            threshold_rank: "director".to_string(),
+            exclude_breakaway_gv: false,
+            overrides: OverrideStrategy::SingleWalk {
+                mode: OverrideMode::Differential(DifferentialConfig {
+                    rank_rates: {
+                        let mut m = std::collections::BTreeMap::new();
+                        // Flat ladder, so every gap is zero and the floor is
+                        // what decides. A gap would mask the arm under test.
+                        m.insert("member".to_string(), 0.10);
+                        m.insert("director".to_string(), 0.10);
+                        m
+                    },
+                    min_override: MinOverride::Currency { value: floor },
+                }),
+                generation_overrides: None,
+            },
+        });
+
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uuid_from_index(0), 0).unwrap();
+        for i in 1..tree_size {
+            let parent = i - 1;
+            tree.add_node(uuid_from_index(i), uuid_from_index(parent), uuid_from_index(parent), i as i64).unwrap();
+        }
+
+        let mut snapshots = HashMap::new();
+        for i in 0..tree_size {
+            let rank = if i % 3 == 0 { "director" } else { "member" };
+            snapshots.insert(
+                uuid_from_index(i),
+                DistributorSnapshot {
+                    rank: rank.to_string(),
+                    personal_volume: 100.0,
+                    status: "active".to_string(),
+                    has_order_in_period: true,
+                },
+            );
+        }
+
+        let volume = vec![VolumeSource {
+            source_id: uuid_from_index(tree_size - 1),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_stairstep(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
+
+        for earning in result.iter().filter(|e| e.rate.is_none()) {
+            // A floor-produced earning pays exactly the floor, and only when
+            // its own leg's pool could cover it.
+            prop_assert!(
+                (earning.dollar_amount - floor).abs() < FP_TOL,
+                "a floor-produced earning paid {} rather than the {} floor: {:?}",
+                earning.dollar_amount, floor, earning
+            );
+            let pool = earning.cv_amount * broad_pct * multiplier;
+            prop_assert!(
+                earning.dollar_amount <= pool + 1e-6,
+                "paid {} out of a pool of {} on cv {}: {:?}",
+                earning.dollar_amount, pool, earning.cv_amount, earning
+            );
+        }
+    }
+
     /// Level and override earnings partition cleanly: no earner receives
     /// both a level commission and an override on the same volume source.
     #[test]

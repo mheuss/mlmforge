@@ -196,9 +196,15 @@ enum Gen1Payout {
 }
 
 /// A floor equal to the pool is payable. Compare with a tolerance so binary
-/// rounding does not reject it: 100.0 * 0.29 is 28.999999999999996, and a
-/// floor of 29.0 is meant to be exactly coverable there.
-const POOL_TOL: f64 = 1e-10;
+/// rounding does not reject it: 2913000.0 * 0.29 is 844769.9999999999, and a
+/// floor of 844770.0 is meant to be exactly coverable there.
+///
+/// The tolerance is absolute and sits below a cent, not below a nanodollar.
+/// Representation error grows with the pool, so a nanodollar tolerance starts
+/// rejecting exactly-coverable floors once the pool passes a few hundred
+/// thousand. A sub-cent tolerance holds past a pool of two billion, and it
+/// cannot mask a real shortfall because a cent is the smallest payable unit.
+const POOL_TOL: f64 = 1e-6;
 
 /// Resolve what a generation-1 ancestor earns on a breakaway leg.
 ///
@@ -1446,6 +1452,194 @@ mod tests {
             !result.iter().any(|e| e.walk.is_none()),
             "a floor larger than the leg's pool pays no override: {result:?}"
         );
+    }
+
+    #[test]
+    fn currency_min_override_exactly_equal_to_the_pool_is_payable() {
+        // The leg's pool is 300 * 0.40 * 1.0 = 120.00. A floor of exactly
+        // 120.00 is coverable and must pay. This is the boundary POOL_TOL
+        // exists for: the pool is a product of three floats and need not land
+        // on the same bits as the literal an author writes.
+        let tree = build_chain(3);
+        let mut structure = test_stairstep_structure();
+        set_min_override(&mut structure, MinOverride::Currency { value: 120.0 });
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
+
+        let earned = result
+            .iter()
+            .find(|e| e.earner_id == uuid(0) && e.source_id == uuid(1))
+            .expect("a floor equal to the pool is coverable and must pay");
+        assert_eq!(earned.rate, None);
+        assert!((earned.dollar_amount - 120.0).abs() < FP_TOL);
+    }
+
+    #[test]
+    fn currency_min_override_equal_to_a_pool_that_does_not_land_on_its_decimal() {
+        // The boundary test above uses a 120.00 pool, which is exact in
+        // binary, so it cannot tell a sub-cent tolerance from a sub-nanodollar
+        // one. This one can: 2_913_000 * 0.29 is 844769.9999999999, so a floor
+        // written as 844770.00 sits 1.16e-10 above the pool it is meant to
+        // exactly cover. A nanodollar tolerance rejects it and pays zero.
+        let tree = build_chain(3);
+        let mut structure = test_stairstep_structure();
+        structure.level_commission.broad_commission_percent = 0.29;
+        set_min_override(&mut structure, MinOverride::Currency { value: 844_770.0 });
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), snapshot_with_rank("director", 1_456_500.0));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", 1_456_500.0));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", 1_456_500.0));
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
+
+        let earned = result
+            .iter()
+            .find(|e| e.earner_id == uuid(0) && e.source_id == uuid(1))
+            .expect("a floor equal to the pool must pay even when the pool does not land on its decimal");
+        assert_eq!(earned.rate, None);
+        assert!((earned.dollar_amount - 844_770.0).abs() < FP_TOL);
+    }
+
+    #[test]
+    fn currency_min_override_a_hair_over_the_pool_is_not_payable() {
+        // One cent above the pool is a real shortfall, not rounding.
+        let tree = build_chain(3);
+        let mut structure = test_stairstep_structure();
+        set_min_override(&mut structure, MinOverride::Currency { value: 120.01 });
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
+
+        assert!(
+            !result.iter().any(|e| e.walk.is_none()),
+            "a floor a cent above the pool pays no override: {result:?}"
+        );
+    }
+
+    #[test]
+    fn currency_min_override_pays_on_the_generation_branch_too() {
+        // The other call site. Every other currency test builds a structure
+        // with generation_overrides: None and so runs the else branch; this
+        // one drives the generation branch, whose currency arm is a separate
+        // copy of the same code.
+        //
+        // Tree: 0(sr_dir) -> 1(director) -> 2(director) -> 3(assoc)
+        // Node 2 breaks away. Generation 1 is node 1, equal rank to the
+        // leader, so it reaches the floor. Pool is 300 * 0.40 = 120.00.
+        let tree = build_chain(4);
+        let mut structure = test_stairstep_structure();
+        set_min_override(&mut structure, MinOverride::Currency { value: 5.0 });
+        let OverrideStrategy::SingleWalk {
+            generation_overrides,
+            ..
+        } = &mut structure.breakaway.as_mut().unwrap().overrides
+        else {
+            panic!("expected SingleWalk override strategy");
+        };
+        *generation_overrides = Some(BreakawayGenerationConfig {
+            max_generations: 3,
+            rates: {
+                let mut m = BTreeMap::new();
+                m.insert(2, 0.03);
+                m
+            },
+            boundary_rank: "director".to_string(),
+        });
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", 150.0));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(2), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", 150.0));
+
+        let volume = vec![
+            VolumeSource {
+                source_id: uuid(2),
+                cv_amount: 150.0,
+            },
+            VolumeSource {
+                source_id: uuid(3),
+                cv_amount: 150.0,
+            },
+        ];
+
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
+
+        let gen1 = result
+            .iter()
+            .find(|e| e.source_id == uuid(2) && e.level == 1 && e.walk.is_none())
+            .expect("generation 1 must earn the currency floor");
+        assert_eq!(gen1.earner_id, uuid(1));
+        assert_eq!(
+            gen1.rate, None,
+            "a currency floor applied no rate on the generation branch either"
+        );
+        assert!((gen1.dollar_amount - 5.0).abs() < FP_TOL);
     }
 
     #[test]

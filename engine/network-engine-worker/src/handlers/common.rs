@@ -129,12 +129,12 @@ pub(crate) fn handle_load_plan(state: &mut WorkerState, request: &Request) -> Re
             // here before storing it. Version skew gets a dedicated code so a
             // valid future-version plan stays distinguishable from a malformed
             // one; every other semantic violation reuses INVALID_PLAN.
-            if plan.version != 1 {
+            if plan.version != 2 {
                 return Response::error(
                     request.id.clone(),
                     "UNSUPPORTED_PLAN_VERSION",
                     format!(
-                        "unsupported plan version {}: this engine supports version 1",
+                        "unsupported plan version {}: this engine supports version 2",
                         plan.version
                     ),
                 );

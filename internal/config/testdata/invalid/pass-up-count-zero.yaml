@@ -2,7 +2,7 @@
 # Expected error: schema_violation on pass_up/count.
 
 name: Bad PassUp Count
-version: 1
+version: 2
 
 period:
   length: month

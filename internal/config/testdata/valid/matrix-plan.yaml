@@ -4,7 +4,7 @@
 # matrix type requires a structure block with width, height, spillover_direction.
 
 name: Forced Matrix 3x7
-version: 1
+version: 2
 
 period:
   length: month

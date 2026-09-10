@@ -3,7 +3,7 @@
 # Expected error: "pairing" is a required property.
 
 name: Binary Missing Pairing Config
-version: 1
+version: 2
 
 period:
   length: week

@@ -3,7 +3,7 @@
 # Invalid: a leg_quality contains_rank predicate is missing min_rank.
 
 name: Bad Leg Quality
-version: 1
+version: 2
 
 period:
   length: month

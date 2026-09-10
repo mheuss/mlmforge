@@ -5,7 +5,7 @@
 # contains_personal_volume (Monat Active Lines-style).
 
 name: Leg Quality Plan
-version: 1
+version: 2
 
 period:
   length: month

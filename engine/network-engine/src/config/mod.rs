@@ -63,7 +63,7 @@ pub struct CompensationPlan {
     /// Display name for this compensation plan.
     pub name: String,
 
-    /// Schema version. Currently 1.
+    /// Schema version. Currently 2.
     pub version: u32,
 
     /// One or more compensation structures.

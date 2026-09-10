@@ -51,7 +51,7 @@ func TestPlanHashMatchesWorkerAcrossTheWire(t *testing.T) {
 	// nothing pointing back here.
 	const (
 		fixturePlanName    = "Starter Unilevel"
-		fixturePlanVersion = uint32(1)
+		fixturePlanVersion = uint32(2)
 		structure          = "Primary"
 	)
 

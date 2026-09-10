@@ -2,7 +2,7 @@
 # Expected error: timeframe_days is required when timeframe is "days".
 
 name: Velocity Missing Days
-version: 1
+version: 2
 
 period:
   length: month

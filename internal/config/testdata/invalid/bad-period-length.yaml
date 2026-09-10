@@ -3,7 +3,7 @@
 # Expected error: "biweekly" is not one of the allowed values.
 
 name: Bad Period Length
-version: 1
+version: 2
 
 period:
   length: biweekly

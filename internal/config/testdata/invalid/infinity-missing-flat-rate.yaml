@@ -3,7 +3,7 @@
 # Expected error: flat_rate must be a number (not null).
 
 name: Infinity Missing Flat Rate
-version: 1
+version: 2
 
 period:
   length: month

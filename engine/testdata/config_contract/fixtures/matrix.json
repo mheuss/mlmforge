@@ -139,7 +139,7 @@
       }
     }
   ],
-  "version": 1,
+  "version": 2,
   "volume": {
     "inhibit_signup_volume": false,
     "base_currency": "USD",

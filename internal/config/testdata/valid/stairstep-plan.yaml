@@ -4,7 +4,7 @@
 # override calculation, differential config, and generation overrides.
 
 name: Classic Stairstep Breakaway
-version: 1
+version: 2
 
 period:
   length: month

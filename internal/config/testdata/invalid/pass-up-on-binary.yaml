@@ -4,7 +4,7 @@
 # deserialization because BinaryCommission has no PassUp field.
 
 name: PassUp On Binary
-version: 1
+version: 2
 
 period:
   length: week

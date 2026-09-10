@@ -494,7 +494,7 @@ fn query_without_tree_returns_structure_not_found() {
 /// Modeled after `build_test_plan` in `unilevel_commission_properties.rs`.
 const TEST_PLAN_JSON: &str = r#"{
     "name": "Integration Test Plan",
-    "version": 1,
+    "version": 2,
     "structures": [
         {
             "type": "unilevel",
@@ -746,7 +746,7 @@ fn load_plan_accepts_valid_baseline_plan() {
 fn load_plan_rejects_unsupported_version() {
     let mut worker = common::spawn_worker();
     // A valid future-version plan is not malformed, so it gets its own code.
-    let plan = TEST_PLAN_JSON.replace(r#""version": 1"#, r#""version": 2"#);
+    let plan = TEST_PLAN_JSON.replace(r#""version": 2"#, r#""version": 3"#);
     let resp = send_load_plan(&mut worker, &plan);
     assert!(
         resp.contains(r#""ok":false"#) && resp.contains("UNSUPPORTED_PLAN_VERSION"),
@@ -1765,7 +1765,7 @@ fn create_tree_duplicate_returns_error() {
 /// - No carry-forward cap
 const BINARY_PLAN_JSON: &str = r#"{
     "name": "Binary Test Plan",
-    "version": 1,
+    "version": 2,
     "structures": [
         {
             "type": "binary",
@@ -2240,7 +2240,7 @@ const OWNER_B: &str = "00000000-0000-0000-0000-0000000000b0";
 /// Multi-position binary test plan: 10%, WeakerLeg, FullFlush, aggregate cap 500.
 const MP_BINARY_PLAN_JSON: &str = r#"{
     "name": "Multi-Position Binary Plan",
-    "version": 1,
+    "version": 2,
     "structures": [
         {
             "type": "binary",
@@ -2593,7 +2593,7 @@ const PU_TREE: &str = "PassUpTest";
 /// - No compression
 const PASS_UP_PLAN_JSON: &str = r#"{
     "name": "Pass-Up Test Plan",
-    "version": 1,
+    "version": 2,
     "structures": [
         {
             "type": "unilevel",
@@ -2905,7 +2905,7 @@ const SL_STRUCTURE: &str = "TestStreamline";
 /// pushes a third onto this list and asserts the exact resulting name order.
 const STREAMLINE_TEST_PLAN_JSON: &str = r#"{
     "name": "Integration Test Plan",
-    "version": 1,
+    "version": 2,
     "structures": [
         {
             "type": "streamline",
@@ -3355,7 +3355,7 @@ const BP_STRUCTURE: &str = "BoardTest";
 /// Change one, change both. HEU-604 tracks consolidating the copies.
 const BOARD_TEST_PLAN_JSON: &str = r#"{
     "name": "Integration Test Plan",
-    "version": 1,
+    "version": 2,
     "structures": [
         {
             "type": "unilevel",
@@ -4738,7 +4738,7 @@ fn calculate_streamline_unknown_structure_returns_not_found() {
 /// test and the STRUCTURE_NOT_FOUND error-path test.
 const RANK_TEST_PLAN_JSON: &str = r#"{
     "name": "RankTest",
-    "version": 1,
+    "version": 2,
     "structures": [
         {"type": "unilevel", "config": {
             "name": "Test",
@@ -4890,7 +4890,7 @@ fn evaluate_ranks_returns_structure_not_found_when_tree_missing() {
 /// docs/development/network-engine.md and UC-NET-007.
 const WINDOWED_RANK_TEST_PLAN_JSON: &str = r#"{
     "name": "WindowedRankTest",
-    "version": 1,
+    "version": 2,
     "structures": [
         {"type": "unilevel", "config": {
             "name": "Test",
@@ -5185,7 +5185,7 @@ fn calculate_unilevel_wrong_tree_type_reports_expected_vs_actual() {
 /// it pays the same way; matrix_params drives width/height.
 const MATRIX_TEST_PLAN_JSON: &str = r#"{
     "name": "Integration Test Plan",
-    "version": 1,
+    "version": 2,
     "structures": [
         {
             "type": "matrix",
@@ -5582,7 +5582,7 @@ fn calculate_matrix_still_requires_volume() {
 /// pays regardless of breakaway, so breakaway: null still pays.
 const STAIRSTEP_TEST_PLAN_JSON: &str = r#"{
     "name": "Integration Test Plan",
-    "version": 1,
+    "version": 2,
     "structures": [
         {
             "type": "stairstep",

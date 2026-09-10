@@ -29,7 +29,7 @@ pub fn build_test_plan(
 ) -> CompensationPlan {
     CompensationPlan {
         name: "Test Plan".to_string(),
-        version: 1,
+        version: 2,
         structures: vec![structure],
         period: PeriodConfig {
             length: PeriodLength::Month,
@@ -141,7 +141,7 @@ pub fn make_rank(name: &str, ordinal: u16, qualified_structures: Vec<String>) ->
 pub fn test_plan_identity() -> crate::commission::PlanIdentity {
     crate::commission::PlanIdentity {
         name: "Test Plan".to_string(),
-        version: 1,
+        version: 2,
         hash: format!("sha256:{}", "0".repeat(64)),
     }
 }

@@ -5,7 +5,7 @@
 # prior periods to hold a rank.
 
 name: Tenure Rank Plan
-version: 1
+version: 2
 
 period:
   length: month

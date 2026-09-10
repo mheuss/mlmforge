@@ -13,7 +13,7 @@ import (
 func TestUnmarshalMinimalUnilevelPlan(t *testing.T) {
 	yamlData := []byte(`
 name: Minimal Unilevel
-version: 1
+version: 2
 period:
   length: month
   start_date: "2026-03-01"
@@ -88,7 +88,7 @@ placement:
 	require.NoError(t, err)
 
 	assert.Equal(t, "Minimal Unilevel", plan.Name)
-	assert.Equal(t, 1, plan.Version)
+	assert.Equal(t, 2, plan.Version)
 	assert.Equal(t, "month", plan.Period.Length)
 	assert.Equal(t, uint8(14), plan.Period.PayoutLagDays)
 	assert.Equal(t, "USD", plan.Volume.BaseCurrency)
@@ -173,7 +173,7 @@ commission:
 func TestResolveCommissionsUnilevel(t *testing.T) {
 	yamlData := []byte(`
 name: Test Plan
-version: 1
+version: 2
 period: {length: month, payout_lag_days: 14}
 volume: {base_currency: USD, volume_to_dollar_multiplier: 1.0}
 ranks: []
@@ -489,7 +489,7 @@ func TestHoldingTankExpirationDays_AcceptsMax(t *testing.T) {
 func TestResolveCommissionsBinary(t *testing.T) {
 	yamlData := []byte(`
 name: Test Plan
-version: 1
+version: 2
 period: {length: month, payout_lag_days: 14}
 volume: {base_currency: USD, volume_to_dollar_multiplier: 1.0}
 ranks: []
@@ -532,7 +532,7 @@ placement: {donated_placement_enabled: false}
 func TestResolveCommissionsStreamline(t *testing.T) {
 	yamlData := []byte(`
 name: Test Plan
-version: 1
+version: 2
 period: {length: month, payout_lag_days: 14}
 volume: {base_currency: USD, volume_to_dollar_multiplier: 1.0}
 ranks: []
@@ -575,7 +575,7 @@ placement: {donated_placement_enabled: false}
 func TestResolveCommissionsGeneration(t *testing.T) {
 	yamlData := []byte(`
 name: Test Plan
-version: 1
+version: 2
 period: {length: month, payout_lag_days: 14}
 volume: {base_currency: USD, volume_to_dollar_multiplier: 1.0}
 ranks: []
@@ -628,7 +628,7 @@ placement: {donated_placement_enabled: false}
 func TestResolveCommissionsStairstep(t *testing.T) {
 	yamlData := []byte(`
 name: Test Plan
-version: 1
+version: 2
 period: {length: month, payout_lag_days: 14}
 volume: {base_currency: USD, volume_to_dollar_multiplier: 1.0}
 ranks: []
@@ -828,7 +828,7 @@ rate: 0.05
 func TestResolveCommissionsMatrix(t *testing.T) {
 	yamlData := []byte(`
 name: Test Plan
-version: 1
+version: 2
 period: {length: month, payout_lag_days: 14}
 volume: {base_currency: USD, volume_to_dollar_multiplier: 1.0}
 ranks: []
@@ -896,7 +896,7 @@ func TestResolveCommissionsNilCommissionReturnsError(t *testing.T) {
 func TestResolveCommissionsBoardPlan(t *testing.T) {
 	yamlData := []byte(`
 name: Test Plan
-version: 1
+version: 2
 period: {length: month, payout_lag_days: 14}
 volume: {base_currency: USD, volume_to_dollar_multiplier: 1.0}
 ranks: []

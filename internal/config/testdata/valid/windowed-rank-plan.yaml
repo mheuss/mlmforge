@@ -5,7 +5,7 @@
 # of the last window_periods prior periods to hold a rank.
 
 name: Windowed Rank Plan
-version: 1
+version: 2
 
 period:
   length: month

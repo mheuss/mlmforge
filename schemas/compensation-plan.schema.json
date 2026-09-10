@@ -27,8 +27,8 @@
     },
     "version": {
       "type": "integer",
-      "const": 1,
-      "description": "Schema version. Currently always 1."
+      "const": 2,
+      "description": "Schema version. Moved to 2 by HEU-699, when min_override stopped accepting a bare number. A version 1 document carries nothing in its payload to say which reading of that field it was written against, so it fails on the version rather than being reinterpreted."
     },
     "period": {
       "$ref": "#/$defs/PeriodConfig"

@@ -4,7 +4,7 @@
 # plans where ranks can qualify for specific structures.
 
 name: Hybrid Unilevel-Binary
-version: 1
+version: 2
 
 period:
   length: month

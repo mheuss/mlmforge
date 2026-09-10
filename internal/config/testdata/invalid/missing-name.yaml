@@ -1,7 +1,7 @@
 # Invalid: missing required top-level "name" field.
 # Expected error: "name" is a required property.
 
-version: 1
+version: 2
 
 period:
   length: month

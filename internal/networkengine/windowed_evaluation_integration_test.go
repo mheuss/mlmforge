@@ -25,7 +25,7 @@ import (
 // yield an empty navigator map and the distributor would never be evaluated.
 const windowedRankPlanJSON = `{
     "name": "Windowed Rank Integration Test Plan",
-    "version": 1,
+    "version": 2,
     "structures": [
         {
             "type": "unilevel",

@@ -3,7 +3,7 @@
 # Expected error: "pyramid" is not one of the allowed values.
 
 name: Unknown Structure Type
-version: 1
+version: 2
 
 period:
   length: month

@@ -388,3 +388,15 @@ func TestPipelineBadYAMLReturnsParseError(t *testing.T) {
 	assert.Nil(t, jsonBytes)
 	assert.Equal(t, "yaml_parse_error", errs[0].Code)
 }
+
+// A version 1 document was written against a schema where min_override was a
+// bare number. Nothing in the payload separates that reading from this one, so
+// the version is what has to reject it. HEU-699.
+func TestSchemaRejectsVersionOne(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/stairstep-plan.yaml")
+	require.Empty(t, p.validateSchema(base), "base fixture should validate cleanly")
+	old := replaceInYAML(t, base, "version: 2", "version: 1")
+	require.NotEmpty(t, p.validateSchema(old), "a version 1 document must be rejected")
+}

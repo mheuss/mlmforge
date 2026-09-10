@@ -2,7 +2,7 @@
 # Expected error: -1 is less than the minimum 0.
 
 name: Negative Payout Lag
-version: 1
+version: 2
 
 period:
   length: month

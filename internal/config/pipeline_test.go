@@ -398,5 +398,7 @@ func TestSchemaRejectsVersionOne(t *testing.T) {
 	base := readFixture(t, "valid/stairstep-plan.yaml")
 	require.Empty(t, p.validateSchema(base), "base fixture should validate cleanly")
 	old := replaceInYAML(t, base, "version: 2", "version: 1")
-	require.NotEmpty(t, p.validateSchema(old), "a version 1 document must be rejected")
+	errs := p.validateSchema(old)
+	require.Len(t, errs, 1, "a version 1 document must be rejected")
+	assert.Equal(t, "/version", errs[0].Path)
 }

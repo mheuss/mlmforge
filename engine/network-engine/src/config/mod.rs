@@ -513,7 +513,7 @@ mod tests {
     fn deserialize_multi_structure_plan() {
         let json = r#"{
             "name": "Hybrid Plan",
-            "version": 1,
+            "version": 2,
             "structures": [
                 {
                     "type": "unilevel",
@@ -626,7 +626,7 @@ mod tests {
         }"#;
         let plan: CompensationPlan = serde_json::from_str(json).unwrap();
         assert_eq!(plan.name, "Hybrid Plan");
-        assert_eq!(plan.version, 1);
+        assert_eq!(plan.version, 2);
         assert_eq!(plan.structures.len(), 2);
         assert!(matches!(plan.structures[0], StructureConfig::Unilevel(_)));
         assert!(matches!(plan.structures[1], StructureConfig::Binary(_)));
@@ -636,7 +636,7 @@ mod tests {
     fn deserialize_full_compensation_plan() {
         let json = r#"{
             "name": "Acme Wellness Plan",
-            "version": 1,
+            "version": 2,
             "structures": [
                 {
                     "type": "unilevel",
@@ -817,7 +817,7 @@ mod tests {
 
         // Top-level fields
         assert_eq!(plan.name, "Acme Wellness Plan");
-        assert_eq!(plan.version, 1);
+        assert_eq!(plan.version, 2);
 
         // Structure
         assert_eq!(plan.structures.len(), 1);

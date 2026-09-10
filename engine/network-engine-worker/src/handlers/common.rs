@@ -134,7 +134,7 @@ pub(crate) fn handle_load_plan(state: &mut WorkerState, request: &Request) -> Re
                     request.id.clone(),
                     "UNSUPPORTED_PLAN_VERSION",
                     format!(
-                        "unsupported plan version {}: this engine supports version 2",
+                        "unsupported plan version {}: this engine supports plan version 2",
                         plan.version
                     ),
                 );

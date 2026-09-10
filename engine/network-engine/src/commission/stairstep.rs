@@ -384,7 +384,7 @@ fn walk_single_overrides(
                         earner_id: entry.earner_id,
                         source_id: breakaway_id,
                         level: entry.generation,
-                        rate,
+                        rate: Some(rate),
                         cv_amount: group_vol,
                         dollar_amount: group_vol * broad_pct * multiplier * rate,
                         // Permanent in protocol v2. This is Walk 2, which
@@ -401,7 +401,7 @@ fn walk_single_overrides(
                             earner_id: entry.earner_id,
                             source_id: breakaway_id,
                             level: entry.generation,
-                            rate,
+                            rate: Some(rate),
                             cv_amount: group_vol,
                             dollar_amount: group_vol * broad_pct * multiplier * rate,
                             // Walk 2. Permanently null in v2, see above.
@@ -441,7 +441,7 @@ fn walk_single_overrides(
                     earner_id: node.user_id,
                     source_id: breakaway_id,
                     level: 1,
-                    rate,
+                    rate: Some(rate),
                     cv_amount: group_vol,
                     dollar_amount: group_vol * broad_pct * multiplier * rate,
                     // Walk 2. Permanently null in v2, per design 029.
@@ -529,7 +529,7 @@ fn walk_multi_tier_overrides(
                     earner_id: entry.earner_id,
                     source_id,
                     level: depth_floor,
-                    rate: tier.rate,
+                    rate: Some(tier.rate),
                     cv_amount: group_vol,
                     dollar_amount: group_vol * multiplier * tier.rate,
                     // Walk 2. Permanently null in v2, per design 029.
@@ -1185,7 +1185,7 @@ mod tests {
             .expect("node 0 should earn override on breakaway node 1");
 
         assert_eq!(override_earning.level, 1);
-        assert!((override_earning.rate - 0.05).abs() < FP_TOL);
+        assert!((override_earning.rate.expect("earning has a rate") - 0.05).abs() < FP_TOL);
         assert!((override_earning.cv_amount - 900.0).abs() < FP_TOL);
         assert!((override_earning.dollar_amount - 18.0).abs() < FP_TOL);
     }
@@ -1272,7 +1272,7 @@ mod tests {
             .find(|e| e.earner_id == uuid(0) && e.source_id == uuid(1))
             .expect("node 0 should earn min_override on breakaway node 1");
 
-        assert!((override_earning.rate - 0.02).abs() < FP_TOL);
+        assert!((override_earning.rate.expect("earning has a rate") - 0.02).abs() < FP_TOL);
         assert!((override_earning.cv_amount - 300.0).abs() < FP_TOL);
         assert!((override_earning.dollar_amount - 2.40).abs() < FP_TOL);
     }
@@ -1364,7 +1364,7 @@ mod tests {
             .find(|e| e.earner_id == uuid(0) && e.source_id == uuid(2))
             .expect("node 0 should earn override despite inactive node 1 in between");
 
-        assert!((override_earning.rate - 0.05).abs() < FP_TOL);
+        assert!((override_earning.rate.expect("earning has a rate") - 0.05).abs() < FP_TOL);
         assert!((override_earning.cv_amount - 300.0).abs() < FP_TOL);
         assert!((override_earning.dollar_amount - 6.0).abs() < FP_TOL);
     }
@@ -1537,7 +1537,7 @@ mod tests {
             .find(|e| e.earner_id == uuid(0) && e.source_id == uuid(1))
             .expect("node 0 should earn differential override on breakaway node 1");
         assert_eq!(node0_on_node1.level, 1);
-        assert!((node0_on_node1.rate - 0.05).abs() < FP_TOL);
+        assert!((node0_on_node1.rate.expect("earning has a rate") - 0.05).abs() < FP_TOL);
         assert!((node0_on_node1.cv_amount - 500.0).abs() < FP_TOL);
         assert!((node0_on_node1.dollar_amount - 10.0).abs() < FP_TOL);
 
@@ -1552,7 +1552,7 @@ mod tests {
             .find(|e| e.earner_id == uuid(1) && e.source_id == uuid(3))
             .expect("node 1 should earn gen-1 differential on breakaway node 3");
         assert_eq!(node1_on_node3.level, 1);
-        assert!((node1_on_node3.rate - 0.02).abs() < FP_TOL);
+        assert!((node1_on_node3.rate.expect("earning has a rate") - 0.02).abs() < FP_TOL);
         assert!((node1_on_node3.cv_amount - 300.0).abs() < FP_TOL);
         assert!((node1_on_node3.dollar_amount - 2.40).abs() < FP_TOL);
 
@@ -1564,7 +1564,7 @@ mod tests {
             .find(|e| e.earner_id == uuid(0) && e.source_id == uuid(3))
             .expect("node 0 should earn gen-2 override on breakaway node 3");
         assert_eq!(node0_on_node3.level, 2);
-        assert!((node0_on_node3.rate - 0.03).abs() < FP_TOL);
+        assert!((node0_on_node3.rate.expect("earning has a rate") - 0.03).abs() < FP_TOL);
         assert!((node0_on_node3.cv_amount - 300.0).abs() < FP_TOL);
         assert!((node0_on_node3.dollar_amount - 3.60).abs() < FP_TOL);
     }
@@ -1645,7 +1645,7 @@ mod tests {
         const FP_TOL: f64 = 1e-10;
         let earning = &override_earnings[0];
         assert_eq!(earning.earner_id, uuid(0));
-        assert!((earning.rate - 0.08).abs() < FP_TOL);
+        assert!((earning.rate.expect("earning has a rate") - 0.08).abs() < FP_TOL);
         assert!((earning.cv_amount - 300.0).abs() < FP_TOL);
         assert!((earning.dollar_amount - 9.60).abs() < FP_TOL);
     }
@@ -1695,7 +1695,7 @@ mod tests {
         const FP_TOL: f64 = 1e-10;
         let earning = &override_earnings[0];
         assert_eq!(earning.earner_id, uuid(0));
-        assert!((earning.rate - 0.05).abs() < FP_TOL);
+        assert!((earning.rate.expect("earning has a rate") - 0.05).abs() < FP_TOL);
         assert!((earning.dollar_amount - 6.00).abs() < FP_TOL);
     }
 
@@ -1810,13 +1810,13 @@ mod tests {
         // Gen 1: node 1 earns flat fixed rate for director
         let gen1 = override_earnings.iter().find(|e| e.level == 1).unwrap();
         assert_eq!(gen1.earner_id, uuid(1));
-        assert!((gen1.rate - 0.05).abs() < FP_TOL);
+        assert!((gen1.rate.expect("earning has a rate") - 0.05).abs() < FP_TOL);
         assert!((gen1.dollar_amount - 6.00).abs() < FP_TOL);
 
         // Gen 2: node 0 earns generation override rate
         let gen2 = override_earnings.iter().find(|e| e.level == 2).unwrap();
         assert_eq!(gen2.earner_id, uuid(0));
-        assert!((gen2.rate - 0.03).abs() < FP_TOL);
+        assert!((gen2.rate.expect("earning has a rate") - 0.03).abs() < FP_TOL);
         assert!((gen2.dollar_amount - 3.60).abs() < FP_TOL);
     }
 
@@ -2035,7 +2035,7 @@ mod tests {
             .find(|e| e.source_id == uuid(2) && e.earner_id == uuid(1))
             .expect("uuid(1) should earn tier 1 on uuid(2)'s group");
         assert_eq!(on_uuid2.level, 1);
-        assert!((on_uuid2.rate - 0.05).abs() < FP_TOL);
+        assert!((on_uuid2.rate.expect("earning has a rate") - 0.05).abs() < FP_TOL);
         assert!((on_uuid2.cv_amount - 300.0).abs() < FP_TOL);
         assert!((on_uuid2.dollar_amount - 15.0).abs() < FP_TOL);
 
@@ -2046,7 +2046,7 @@ mod tests {
             .find(|e| e.source_id == uuid(1) && e.earner_id == uuid(0))
             .expect("uuid(0) should earn tier 1 on uuid(1)'s group");
         assert_eq!(on_uuid1.level, 1);
-        assert!((on_uuid1.rate - 0.05).abs() < FP_TOL);
+        assert!((on_uuid1.rate.expect("earning has a rate") - 0.05).abs() < FP_TOL);
         assert!((on_uuid1.cv_amount - 150.0).abs() < FP_TOL);
         assert!((on_uuid1.dollar_amount - 7.5).abs() < FP_TOL);
 
@@ -2126,7 +2126,7 @@ mod tests {
             .expect("expected one override earning on uuid(3)'s group");
         assert_eq!(on_uuid3.earner_id, uuid(0));
         assert_eq!(on_uuid3.level, 1);
-        assert!((on_uuid3.rate - 0.05).abs() < FP_TOL);
+        assert!((on_uuid3.rate.expect("earning has a rate") - 0.05).abs() < FP_TOL);
         assert!((on_uuid3.cv_amount - 150.0).abs() < FP_TOL);
         assert!((on_uuid3.dollar_amount - 7.5).abs() < FP_TOL);
 
@@ -2307,7 +2307,7 @@ mod tests {
             .find(|e| e.source_id == uuid(3) && e.earner_id == uuid(2))
             .expect("uuid(2) should earn tier 0 on uuid(3)'s group");
         assert_eq!(tier0.level, 1);
-        assert!((tier0.rate - 0.05).abs() < FP_TOL);
+        assert!((tier0.rate.expect("earning has a rate") - 0.05).abs() < FP_TOL);
         assert!((tier0.dollar_amount - 15.0).abs() < FP_TOL);
 
         // Tier 1: uuid(1) earns 0.03 * 300 = 9.0 at level 2.
@@ -2316,7 +2316,7 @@ mod tests {
             .find(|e| e.source_id == uuid(3) && e.earner_id == uuid(1))
             .expect("uuid(1) should earn tier 1 on uuid(3)'s group");
         assert_eq!(tier1.level, 2);
-        assert!((tier1.rate - 0.03).abs() < FP_TOL);
+        assert!((tier1.rate.expect("earning has a rate") - 0.03).abs() < FP_TOL);
         assert!((tier1.dollar_amount - 9.0).abs() < FP_TOL);
 
         // Tier 2: uuid(0) earns 0.01 * 300 = 3.0 at level 3.
@@ -2325,7 +2325,7 @@ mod tests {
             .find(|e| e.source_id == uuid(3) && e.earner_id == uuid(0))
             .expect("uuid(0) should earn tier 2 on uuid(3)'s group");
         assert_eq!(tier2.level, 3);
-        assert!((tier2.rate - 0.01).abs() < FP_TOL);
+        assert!((tier2.rate.expect("earning has a rate") - 0.01).abs() < FP_TOL);
         assert!((tier2.dollar_amount - 3.0).abs() < FP_TOL);
 
         // Tier-count invariant: exactly one earner per tier on uuid(3)'s
@@ -2429,7 +2429,7 @@ mod tests {
             .iter()
             .find(|e| e.source_id == uuid(6) && e.earner_id == uuid(0) && e.level == 1)
             .expect("uuid(0) should win Tier 0 on uuid(6)'s group");
-        assert!((tier0.rate - 0.05).abs() < FP_TOL);
+        assert!((tier0.rate.expect("earning has a rate") - 0.05).abs() < FP_TOL);
         assert!((tier0.dollar_amount - 10.0).abs() < FP_TOL);
 
         // Tier 1: uuid(0) earns 0.03 * 200 = 6.0 at level 2.
@@ -2437,7 +2437,7 @@ mod tests {
             .iter()
             .find(|e| e.source_id == uuid(6) && e.earner_id == uuid(0) && e.level == 2)
             .expect("uuid(0) should win Tier 1 on uuid(6)'s group");
-        assert!((tier1.rate - 0.03).abs() < FP_TOL);
+        assert!((tier1.rate.expect("earning has a rate") - 0.03).abs() < FP_TOL);
         assert!((tier1.dollar_amount - 6.0).abs() < FP_TOL);
 
         // uuid(0) wins both tiers: exactly two earnings, one per level.
@@ -2578,7 +2578,7 @@ mod tests {
                     panic!("expected earning for earner {earner:?} at level {level}")
                 });
             assert!(
-                (earning.rate - rate).abs() < FP_TOL,
+                (earning.rate.expect("earning has a rate") - rate).abs() < FP_TOL,
                 "rate mismatch for {earner:?}: {earning:?}",
             );
             assert!(

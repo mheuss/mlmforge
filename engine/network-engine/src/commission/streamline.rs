@@ -772,16 +772,16 @@ mod tests {
         // calculate_streamline ends with walk_order::assemble, which sorts by
         // (earner_id, source_id, level, walk). test_uuid puts the index in the
         // leading byte, so the earners come back ascending: 1, 2, 4.
-        let shape: Vec<(Uuid, u8, f64)> = from_shuffled
+        let shape: Vec<(Uuid, u8, Option<f64>)> = from_shuffled
             .iter()
             .map(|e| (e.earner_id, e.level, e.rate))
             .collect();
         assert_eq!(
             shape,
             vec![
-                (test_uuid(1), 3, 0.02),
-                (test_uuid(2), 2, 0.05),
-                (test_uuid(4), 1, 0.10),
+                (test_uuid(1), 3, Some(0.02)),
+                (test_uuid(2), 2, Some(0.05)),
+                (test_uuid(4), 1, Some(0.10)),
             ]
         );
     }

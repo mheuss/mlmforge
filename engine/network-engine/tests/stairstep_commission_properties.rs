@@ -572,16 +572,19 @@ proptest! {
         // level commissions have source_id == the original volume source.
         // Restrict the property to the override earnings.
         for earning in result.iter().filter(|e| e.source_id != uuid_from_index(source_idx)) {
-            let expected = earning.cv_amount * multiplier * earning.rate;
+            // Every multi-tier override is rate-produced, so a null rate here
+            // is itself a failure rather than a case to skip.
+            let rate = earning.rate.expect("a multi-tier override earning carries a rate");
+            let expected = earning.cv_amount * multiplier * rate;
             prop_assert!(
                 (earning.dollar_amount - expected).abs() < FP_TOL,
                 "dollar_amount {} != cv_amount {} * multiplier {} * rate {} (= {}) for earning {:?}",
-                earning.dollar_amount, earning.cv_amount, multiplier, earning.rate, expected, earning
+                earning.dollar_amount, earning.cv_amount, multiplier, rate, expected, earning
             );
             prop_assert!(
-                tiers.iter().any(|t| (t.rate - earning.rate).abs() < FP_TOL),
+                tiers.iter().any(|t| (t.rate - rate).abs() < FP_TOL),
                 "earning rate {} is not one of the configured tier rates {:?}",
-                earning.rate, tiers.iter().map(|t| t.rate).collect::<Vec<_>>()
+                rate, tiers.iter().map(|t| t.rate).collect::<Vec<_>>()
             );
         }
     }

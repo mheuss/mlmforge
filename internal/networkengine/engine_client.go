@@ -15,7 +15,7 @@ import (
 //
 // Changing this number without changing the shared ping contract fixture, or
 // the reverse, rejects a worker that is otherwise correct.
-const expectedProtocolVersion = 2
+const expectedProtocolVersion = 3
 
 // maxPingResponseInError bounds how much of an unexpected ping response is
 // quoted back in an error. The response is wire data and is otherwise
@@ -889,8 +889,8 @@ func (c *EngineClient) StreamlineGetStream(ctx context.Context, structure string
 // CalculateStreamline runs streamline commission calculation.
 // Requires LoadPlan first: the plan and structure config come from worker state,
 // not the request (HEU-583). Without a loaded plan the worker returns NO_PLAN.
-func (c *EngineClient) CalculateStreamline(ctx context.Context, req CalculateStreamlineRequest) (CommissionCalculationResultDTO, error) {
-	return callInto[CommissionCalculationResultDTO](c, ctx, "calculate_streamline", req)
+func (c *EngineClient) CalculateStreamline(ctx context.Context, req CalculateStreamlineRequest) (StreamlineCalculationResultDTO, error) {
+	return callInto[StreamlineCalculationResultDTO](c, ctx, "calculate_streamline", req)
 }
 
 // TakeSnapshot serializes a structure's state for persistence.

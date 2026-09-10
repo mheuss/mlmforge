@@ -69,12 +69,16 @@ const (
 // calculate_streamline. Named after the DTO rather than after unilevel,
 // because four of its five producers are not unilevel.
 type commissionEarningDetail struct {
-	V        int     `json:"v"`
-	Kind     string  `json:"kind"`
-	SourceID string  `json:"source_id"`
-	Level    int     `json:"level"`
-	Rate     float64 `json:"rate"`
-	CVAmount float64 `json:"cv_amount"`
+	V        int    `json:"v"`
+	Kind     string `json:"kind"`
+	SourceID string `json:"source_id"`
+	Level    int    `json:"level"`
+	// Null means no rate was applied, not a zero rate. These rows are retained
+	// for years to settle disputes, so the two must stay distinguishable.
+	//
+	// No omitempty, for the same reason given on Walk below.
+	Rate     *float64 `json:"rate"`
+	CVAmount float64  `json:"cv_amount"`
 	// Index of the walk that produced this earning, into the walks array of
 	// the same response. Null where none was recorded, which today means
 	// stairstep Walk 2: design 029 excludes that traversal, so the null is a

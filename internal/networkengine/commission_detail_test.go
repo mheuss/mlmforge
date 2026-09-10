@@ -24,6 +24,10 @@ import (
 // Surrounding whitespace is trimmed so an editor adding a trailing newline
 // does not fail the comparison. Everything inside the JSON still has to match
 // exactly.
+// ptrTo is the shorthand for the pointer fields on the wire DTOs, where a nil
+// and a zero mean different things.
+func ptrTo[T any](v T) *T { return &v }
+
 func goldenDetail(t *testing.T, name string) string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join("testdata", "commission_detail", name))
@@ -39,7 +43,7 @@ func TestResultFromCommissionEarning(t *testing.T) {
 		EarnerID:     earner.String(),
 		SourceID:     "33333333-3333-3333-3333-333333333333",
 		Level:        3,
-		Rate:         0.05,
+		Rate:         ptrTo(0.05),
 		CVAmount:     120,
 		DollarAmount: 6,
 	}
@@ -252,7 +256,7 @@ func TestMappedResultsSurviveTheWritePath(t *testing.T) {
 	source := uuid.MustParse("33333333-3333-3333-3333-333333333333")
 
 	unilevel, err := ResultFromCommissionEarning(CommissionEarningDTO{
-		EarnerID: earner.String(), SourceID: source.String(), Level: 1, Rate: 0.1, CVAmount: 10, DollarAmount: 1,
+		EarnerID: earner.String(), SourceID: source.String(), Level: 1, Rate: ptrTo(0.1), CVAmount: 10, DollarAmount: 1,
 	})
 	if err != nil {
 		t.Fatalf("commission earning: %v", err)
@@ -322,7 +326,7 @@ func TestNonFiniteDetailFieldIsRejectedWithTheEarner(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := ResultFromCommissionEarning(CommissionEarningDTO{
-				EarnerID: earner.String(), Rate: tc.value, DollarAmount: 1,
+				EarnerID: earner.String(), Rate: ptrTo(tc.value), DollarAmount: 1,
 			})
 			if err == nil {
 				t.Fatal("expected a non-finite detail field to be rejected")
@@ -349,5 +353,44 @@ func TestNilEarnerIDSurvivesMappingAndIsCaughtByTheStore(t *testing.T) {
 	}
 	if err := validateResultInputs("primary", []CommissionResultInput{got}); err == nil {
 		t.Fatal("the store must reject a nil earner id")
+	}
+}
+
+// A null rate is a fact, not a missing number: the earning was paid by a
+// stairstep currency floor, so no rate produced it. The pointer is what keeps
+// that distinct from a genuine zero rate.
+func TestCommissionEarningDTOKeepsANullRateDistinctFromZero(t *testing.T) {
+	var nullRate, zeroRate CommissionEarningDTO
+	base := `{"earner_id":"11111111-1111-1111-1111-111111111111","source_id":"33333333-3333-3333-3333-333333333333","level":1,"cv_amount":100,"dollar_amount":10,"walk":null,`
+	if err := json.Unmarshal([]byte(base+`"rate":null}`), &nullRate); err != nil {
+		t.Fatalf("unmarshal null rate: %v", err)
+	}
+	if err := json.Unmarshal([]byte(base+`"rate":0}`), &zeroRate); err != nil {
+		t.Fatalf("unmarshal zero rate: %v", err)
+	}
+	if nullRate.Rate != nil {
+		t.Fatalf("a null rate decoded to %v, want nil", *nullRate.Rate)
+	}
+	if zeroRate.Rate == nil || *zeroRate.Rate != 0 {
+		t.Fatalf("a zero rate decoded to %v, want a pointer to 0", zeroRate.Rate)
+	}
+}
+
+// The stored row keeps the same distinction. These rows are retained for years
+// to settle disputes, so a null that arrives as 0 is unrecoverable later.
+func TestResultFromCommissionEarningStoresANullRateAsNull(t *testing.T) {
+	got, err := ResultFromCommissionEarning(CommissionEarningDTO{
+		EarnerID:     "11111111-1111-1111-1111-111111111111",
+		SourceID:     "33333333-3333-3333-3333-333333333333",
+		Level:        1,
+		Rate:         nil,
+		CVAmount:     100,
+		DollarAmount: 10,
+	})
+	if err != nil {
+		t.Fatalf("ResultFromCommissionEarning: %v", err)
+	}
+	if !strings.Contains(string(got.Detail), `"rate":null`) {
+		t.Fatalf("detail = %s, want a null rate", got.Detail)
 	}
 }

@@ -218,9 +218,9 @@ func TestBreakawayDifferentialRankRatesMustExist(t *testing.T) {
 	assert.Contains(t, errs[0].Path, "overrides/differential/rank_rates")
 }
 
-// The min_override unit rule (HEU-699). rules.go is the gate on the
-// schema-bypass path: a caller that builds a plan programmatically reaches
-// validateBusinessRules without the schema ever running.
+// The min_override unit rule (HEU-699). These call validateBusinessRules
+// directly, which is the path a caller takes when it builds a plan
+// programmatically and the schema never runs.
 func TestBreakawayDifferentialMinOverrideUnit(t *testing.T) {
 	cases := []struct {
 		name  string

@@ -607,7 +607,8 @@ source it is validating gets that order for free. Two calculators reproduce the
 order themselves instead. Binary never reaches it: it resolves an owner before
 the snapshot lookup, so it validates its own way. Streamline does reach it, once
 per surviving source per stream, but only after a filter has already dropped the
-sources its own pre-loop exists to catch. HEU-611 added that pre-loop, described below.
+sources its own pre-loop exists to catch. HEU-611 added that pre-loop, described
+below.
 
 **A second narrowing rode along with HEU-611.** `calculate_streamline` now
 rejects requests it used to answer with `Ok([])`, for the same reason generation

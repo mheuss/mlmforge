@@ -3075,6 +3075,13 @@ fn calculate_streamline_rejects_volume_with_no_stream() {
         "the error should name the source, got: {}",
         resp
     );
+    // SL_USER3 has no snapshot either, so without this the snapshot guard
+    // could fire and the test would still pass.
+    assert!(
+        resp.contains("not found in tree"),
+        "expected the tree guard, got: {}",
+        resp
+    );
 
     drop(worker.stdin.take());
     worker.wait().unwrap();

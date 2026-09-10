@@ -517,10 +517,8 @@ pub(crate) fn handle_calculate_streamline(state: &WorkerState, request: &Request
         }
     };
 
-    // Volume naming a source in no stream, or with no snapshot, is an error
-    // rather than an empty success. Volume belonging to a frozen stream earns
-    // nothing from that stream, and each skipped (volume entry, stream) pair is
-    // reported below.
+    // Volume belonging to a frozen stream earns nothing from that stream, and
+    // each skipped (volume entry, stream) pair is reported below.
     match calculate_streamline(
         engine,
         plan,

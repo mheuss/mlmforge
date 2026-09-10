@@ -434,13 +434,8 @@ fn find_streamline_structure<'a>(
 
 /// One (volume entry, frozen stream) pair that contributed nothing.
 ///
-/// Scoped to the pair, not to the volume entry. The same entry can still have
-/// paid through another stream that is active, so a record here does not mean
-/// the entry earned nothing.
-///
-/// Carries the index and CV so the list can be read without the request that
-/// produced it. A repeated source is permitted, and two records for the same
-/// source and stream are otherwise identical.
+/// A record is scoped to the pair. It does not mean the volume entry earned
+/// nothing overall.
 #[derive(serde::Serialize)]
 struct FrozenStreamSkip {
     volume_index: usize,
@@ -540,7 +535,6 @@ pub(crate) fn handle_calculate_streamline(state: &WorkerState, request: &Request
                     continue;
                 };
                 // sort_unstable is what gives the stream_id half of the order.
-                // The ids arrive in membership-insertion order.
                 let mut frozen: Vec<u32> = stream_ids
                     .iter()
                     .copied()

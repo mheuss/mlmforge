@@ -3002,8 +3002,7 @@ fn sl_add_member(worker: &mut std::process::Child, id: &str, user: &str, sponsor
 
 /// Freezes every stream `owner` owns.
 ///
-/// The owner is the first member added to the structure, not the sponsor passed
-/// to `sl_add_member`. An owner with no streams is an error rather than a no-op.
+/// Fails rather than quietly doing nothing when `owner` owns no streams.
 fn freeze_streams_owned_by(worker: &mut std::process::Child, owner: &str) {
     let request = format!(
         r#"{{"id":"sl-freeze","op":"streamline_update_allowance","params":{{"structure":"{}","user_id":"{}","total_allowed":0,"timestamp":2000}}}}"#,
@@ -3011,19 +3010,20 @@ fn freeze_streams_owned_by(worker: &mut std::process::Child, owner: &str) {
     );
     let resp = common::send_receive(worker, &request);
     let v: serde_json::Value = serde_json::from_str(&resp).expect(&resp);
-    assert_eq!(v["ok"], serde_json::json!(true), "freeze failed: {}", resp);
-    // An allowance already at or below the active count returns ok having frozen
-    // nothing. Without this the fixture fails silently and the test under it
-    // reports a derivation bug instead.
+    assert_eq!(
+        v["ok"],
+        serde_json::json!(true),
+        "expected ok:true from the freeze, got: {}",
+        resp
+    );
     assert!(
         !v["result"]["frozen"].as_array().expect(&resp).is_empty(),
-        "freeze froze nothing: {}",
+        "expected at least one frozen stream, got: {}",
         resp
     );
 }
 
-/// Snapshots for `SL_USER1` and `SL_USER2`, in the shape the other streamline
-/// calculate tests use. Rank `member` is the only rank the test plan defines.
+/// Snapshots for `SL_USER1` and `SL_USER2`.
 fn streamline_snapshots_json() -> String {
     let entry = |id: &str| {
         format!(
@@ -3052,19 +3052,17 @@ fn calculate_streamline_reports_frozen_stream_skips() {
     load_streamline_test_plan(&mut worker);
     create_streamline(&mut worker);
     sl_add_member(&mut worker, "sl-m1", SL_USER1, ROOT, 1001);
-    // SL_USER2 sits beneath SL_USER1 so the empty-earnings assertion below can
-    // fail. Volume sourced from SL_USER1 pays nobody whether the stream is
-    // frozen or active, because the stream root has no upline to walk, so that
-    // shape would assert nothing.
-    // calculate_streamline_emits_empty_skips_when_nothing_skipped pins it.
+    // Sourcing from SL_USER2 rather than SL_USER1 is what lets the
+    // empty-earnings assertion below fail. Volume sourced from the stream root
+    // pays nobody either way, which
+    // calculate_streamline_emits_empty_skips_when_nothing_skipped pins.
     sl_add_member(&mut worker, "sl-m2", SL_USER2, SL_USER1, 1002);
     freeze_streams_owned_by(&mut worker, SL_USER1);
 
     let resp = calculate_streamline_for(&mut worker, SL_USER2, 100.0);
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
 
-    // Both halves matter. Paying nothing is correct for a frozen stream, and
-    // the skip record is what tells the caller that is why.
+    // Both assertions matter: nothing paid, and a record saying why.
     assert!(
         v["result"]["earnings"].as_array().unwrap().is_empty(),
         "a frozen stream must pay nothing, got: {}",
@@ -3076,15 +3074,14 @@ fn calculate_streamline_reports_frozen_stream_skips() {
     assert_eq!(skips[0]["volume_index"], 0);
     assert_eq!(skips[0]["source_id"], SL_USER2);
     assert_eq!(skips[0]["cv_amount"], 100.0);
-    // The derived field, pinned exactly. is_number() would pass on any stream.
     assert_eq!(skips[0]["stream_id"], 1);
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
 }
 
-/// The field is present and empty, never absent. An absent field is
-/// distinguishable from "no skips" only by a reader who knows the version.
+/// The field is present and empty, never absent. Absent and "no skips" would
+/// otherwise look the same on the wire.
 #[test]
 fn calculate_streamline_emits_empty_skips_when_nothing_skipped() {
     let mut worker = common::spawn_worker();
@@ -3102,12 +3099,11 @@ fn calculate_streamline_emits_empty_skips_when_nothing_skipped() {
         resp
     );
 
-    // Also the control for the frozen test's fixture choice: this stream is
-    // active, and volume from its root still pays nobody, because the root has
-    // no upline. That is why the frozen test sources from a member beneath it.
+    // Control for calculate_streamline_reports_frozen_stream_skips: an active
+    // stream still pays nobody when the volume comes from its root.
     assert!(
         v["result"]["earnings"].as_array().unwrap().is_empty(),
-        "the stream root has no upline, so nothing is paid, got: {}",
+        "expected no earnings, got: {}",
         resp
     );
 

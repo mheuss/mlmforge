@@ -121,16 +121,12 @@ pub fn calculate_streamline(
         rate_table.insert(rank.name.clone(), level_rates.clone());
     }
 
-    // Validate every source before any stream is walked. Each stream below
-    // filters volume to its own members, and a frozen stream is never walked at
-    // all, so a source that reaches no walked stream would otherwise contribute
-    // nothing and return ok.
+    // Validate every source before any stream is walked. The per-stream filter
+    // below would otherwise drop a source no walk reaches, and the call would
+    // return ok having paid nothing.
     //
     // The checks run per source rather than per check across the slice, so a
     // faulty source's first failing check is the error that surfaces.
-    //
-    // Membership here spans frozen streams too. A source held only by a frozen
-    // stream is valid input that earns nothing, not a caller mistake.
     for source in volume {
         walk::validate_cv(source)?;
         if !engine.contains_member(source.source_id) {
@@ -926,7 +922,7 @@ mod tests {
     }
 
     /// Engine with members 1..=5, a plan and structure that pay, and a snapshot
-    /// for every member. Each validation test breaks exactly one of those.
+    /// for every member.
     fn validation_fixture() -> (
         StreamlineEngine,
         CompensationPlan,
@@ -1017,18 +1013,13 @@ mod tests {
         ));
     }
 
-    /// The pre-loop is the only thing that can catch this one.
+    /// A source held only by a frozen stream, with no snapshot.
     ///
-    /// The test above sources from an active member, so a walk reaches it and
-    /// rejects the missing snapshot there too. That one cannot tell the pre-loop
-    /// from the walk. This source sits only in a frozen stream, and frozen
-    /// streams are not walked, so nothing but the pre-loop sees it. Before this
-    /// change the call returned ok with empty earnings.
+    /// It sits behind the walk, so the pre-loop is what has to reject it.
     #[test]
     fn frozen_only_source_with_no_snapshot_returns_source_not_in_snapshot() {
         let (mut engine, plan, structure, mut snapshots) = validation_fixture();
-        // test_uuid(1) is the bootstrap member and therefore stream 1's owner.
-        // Dropping its allowance to 0 freezes every stream it owns.
+        // Dropping the owner's allowance to 0 freezes every stream it owns.
         engine
             .update_stream_allowance(test_uuid(1), 0, 2000)
             .unwrap();
@@ -1055,11 +1046,8 @@ mod tests {
 
     /// A frozen-only source is valid input, not a caller mistake.
     ///
-    /// Membership spans frozen streams on purpose, so this returns ok and earns
-    /// nothing rather than erroring. Narrowing the membership check to active
-    /// streams would flip this to an error, which the ticket rules out: paying
-    /// nothing for a frozen stream is the right answer, and the skip report is
-    /// what makes it visible.
+    /// Narrowing the membership check to active streams would turn this into an
+    /// error. HEU-611 rules that out.
     #[test]
     fn frozen_only_source_with_snapshot_returns_ok_with_no_earnings() {
         let (mut engine, plan, structure, snapshots) = validation_fixture();
@@ -1079,7 +1067,7 @@ mod tests {
             &volume,
             &crate::test_support::test_plan_identity(),
         )
-        .expect("a frozen-only source is accepted, not rejected");
+        .expect("expected ok from a frozen-only source");
 
         assert!(
             result.earnings.is_empty(),
@@ -1089,8 +1077,8 @@ mod tests {
     }
 
     /// Pins that faults resolve per source in input order, not per check across
-    /// the slice. The siblings resolve this way. An earlier source's missing
-    /// snapshot must beat a later source's NaN.
+    /// the slice. An earlier source's missing snapshot must beat a later
+    /// source's NaN.
     #[test]
     fn earlier_missing_snapshot_beats_later_invalid_cv() {
         let (engine, plan, structure, mut snapshots) = validation_fixture();

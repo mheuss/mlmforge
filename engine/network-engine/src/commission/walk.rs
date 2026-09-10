@@ -176,8 +176,8 @@ pub(crate) fn validate_cv(source: &VolumeSource) -> Result<(), CalculationError>
 ///
 /// The three checks run in a fixed order — CV, then tree membership, then
 /// snapshot membership — because callers assert on the specific error. A caller
-/// that cannot use this function reproduces that order rather than picking its
-/// own.
+/// that cannot use this function must reproduce that order rather than choose
+/// its own.
 pub(crate) fn validate_source<'t, T: TreeNavigator>(
     tree: &'t T,
     snapshots: &HashMap<Uuid, DistributorSnapshot>,

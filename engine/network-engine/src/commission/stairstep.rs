@@ -202,8 +202,13 @@ enum Gen1Payout {
 /// The tolerance is absolute and sits below a cent, not below a nanodollar.
 /// Representation error grows with the pool, so a nanodollar tolerance starts
 /// rejecting exactly-coverable floors once the pool passes a few hundred
-/// thousand. A sub-cent tolerance holds past a pool of two billion, and it
-/// cannot mask a real shortfall because a cent is the smallest payable unit.
+/// thousand.
+///
+/// A sub-cent tolerance holds to roughly an eight-billion-dollar pool on one
+/// leg, above which an exactly-coverable floor is refused and pays nothing. It
+/// fails closed: the most it can ever overpay is the tolerance itself, a
+/// ten-thousandth of a cent. Fixing the bound properly means comparing money in
+/// minor units rather than f64, which is a wider change than this field.
 const POOL_TOL: f64 = 1e-6;
 
 /// Resolve what a generation-1 ancestor earns on a breakaway leg.
@@ -280,6 +285,9 @@ fn walk_overrides(
 /// - **Differential:** ancestor_rate - breakaway_rate, falling back to
 ///   `min_override` when the gap is zero or negative and both the ancestor
 ///   rate and the floor are above zero. Otherwise nothing is earned.
+///   A currency floor larger than the leg's pool is not paid, and the walk
+///   climbs past that ancestor rather than stopping, so a higher one with a
+///   real gap can still earn.
 /// - **FixedOverride:** flat per-rank rate lookup, independent of the
 ///   breakaway leader's rank.
 ///
@@ -1450,7 +1458,9 @@ mod tests {
 
         assert!(
             !result.iter().any(|e| e.walk.is_none()),
-            "a floor larger than the leg's pool pays no override: {result:?}"
+            "the ancestor that reached the floor could not cover it, so it earns \
+             nothing; node 0 is the root here, so no one above it earns either: \
+             {result:?}"
         );
     }
 
@@ -1567,8 +1577,78 @@ mod tests {
 
         assert!(
             !result.iter().any(|e| e.walk.is_none()),
-            "a floor a cent above the pool pays no override: {result:?}"
+            "a cent above the pool is a real shortfall, so that ancestor earns \
+             nothing; node 0 is the root here, so no one above it earns either: \
+             {result:?}"
         );
+    }
+
+    #[test]
+    fn currency_min_override_unaffordable_on_the_generation_branch_pays_nothing() {
+        // The negative case for the generation branch's own pool guard. The
+        // affordable test beside this one passes with that guard deleted; this
+        // one does not. Generation 1 cannot cover the floor and earns nothing,
+        // and generation 2 still earns from the table.
+        let tree = build_chain(4);
+        let mut structure = test_stairstep_structure();
+        set_min_override(&mut structure, MinOverride::Currency { value: 10_000.0 });
+        let OverrideStrategy::SingleWalk {
+            generation_overrides,
+            ..
+        } = &mut structure.breakaway.as_mut().unwrap().overrides
+        else {
+            panic!("expected SingleWalk override strategy");
+        };
+        *generation_overrides = Some(BreakawayGenerationConfig {
+            max_generations: 3,
+            rates: {
+                let mut m = BTreeMap::new();
+                m.insert(2, 0.03);
+                m
+            },
+            boundary_rank: "director".to_string(),
+        });
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", 150.0));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(2), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", 150.0));
+
+        let volume = vec![
+            VolumeSource {
+                source_id: uuid(2),
+                cv_amount: 150.0,
+            },
+            VolumeSource {
+                source_id: uuid(3),
+                cv_amount: 150.0,
+            },
+        ];
+
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
+
+        assert!(
+            !result
+                .iter()
+                .any(|e| e.source_id == uuid(2) && e.level == 1 && e.walk.is_none()),
+            "generation 1 cannot cover the floor, so it earns nothing: {result:?}"
+        );
+        let gen2 = result
+            .iter()
+            .find(|e| e.source_id == uuid(2) && e.level == 2 && e.walk.is_none())
+            .expect("generation 2 still earns from the generation rate table");
+        assert!((gen2.rate.expect("a table rate") - 0.03).abs() < FP_TOL);
     }
 
     #[test]

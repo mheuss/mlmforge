@@ -1,6 +1,7 @@
 package config
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -233,6 +234,9 @@ func TestBreakawayDifferentialMinOverrideUnit(t *testing.T) {
 		{"currency below zero", MinOverride{Type: "currency", Value: -1}, "out_of_range", "must be non-negative"},
 		{"unrecognised unit", MinOverride{Type: "percent", Value: 0.5}, "undefined_reference", `want "rate" or "currency"`},
 		{"empty unit", MinOverride{}, "undefined_reference", `want "rate" or "currency"`},
+		{"NaN rate", MinOverride{Type: "rate", Value: math.NaN()}, "invalid_value", "must be finite"},
+		{"NaN currency", MinOverride{Type: "currency", Value: math.NaN()}, "invalid_value", "must be finite"},
+		{"infinite currency", MinOverride{Type: "currency", Value: math.Inf(1)}, "invalid_value", "must be finite"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

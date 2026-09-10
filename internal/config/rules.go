@@ -491,8 +491,19 @@ func validateStructureRefs(plan *CompensationPlan, ranks map[string]bool) []Vali
 				}
 				if diff := rc.Breakaway.Overrides.Differential; diff != nil {
 					path := fmt.Sprintf("/structures/%d/commission/breakaway/overrides/differential/min_override", i)
-					switch diff.MinOverride.Type {
-					case "rate":
+					switch {
+					// NaN fails every ordered comparison, so it would pass both
+					// unit branches below without this. The Rust validator
+					// rejects a non-finite value; on the bypass path nothing
+					// else does.
+					case math.IsNaN(diff.MinOverride.Value) || math.IsInf(diff.MinOverride.Value, 0):
+						errs = append(errs, ValidationError{
+							Path:     path,
+							Code:     "invalid_value",
+							Message:  fmt.Sprintf("structure %q breakaway differential min_override must be finite, got %v", s.Name, diff.MinOverride.Value),
+							Severity: SeverityError,
+						})
+					case diff.MinOverride.Type == "rate":
 						if diff.MinOverride.Value < 0 || diff.MinOverride.Value > 1 {
 							errs = append(errs, ValidationError{
 								Path:     path,
@@ -501,7 +512,7 @@ func validateStructureRefs(plan *CompensationPlan, ranks map[string]bool) []Vali
 								Severity: SeverityError,
 							})
 						}
-					case "currency":
+					case diff.MinOverride.Type == "currency":
 						if diff.MinOverride.Value < 0 {
 							errs = append(errs, ValidationError{
 								Path:     path,

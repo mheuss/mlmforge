@@ -93,8 +93,8 @@ pub struct BreakawayTier {
 pub enum OverrideMode {
     /// Override = sponsor's rank rate minus breakaway leader's rank rate.
     ///
-    /// If equal rank, override is zero (floored at `min_override`).
-    /// Never negative.
+    /// If equal rank, the gap is zero and `min_override` decides what is
+    /// earned. Never negative.
     Differential(DifferentialConfig),
 
     /// Fixed percentage per rank, not derived from rate differences.
@@ -117,7 +117,7 @@ pub struct DifferentialConfig {
     /// Floor applied when the rank gap is zero or negative.
     ///
     /// Carries its unit. A bare number is rejected, because the same digits
-    /// mean a percentage under one reading and cents under the other.
+    /// mean a percentage under one reading and currency under the other.
     pub min_override: MinOverride,
 }
 
@@ -131,7 +131,7 @@ pub struct DifferentialConfig {
 /// a struct or map, but not a newtype around a bare scalar, so `Rate(f64)`
 /// would compile and fail to round-trip.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum MinOverride {
     Rate { value: f64 },
     Currency { value: f64 },
@@ -363,6 +363,24 @@ mod tests {
         }"#;
         let cfg: DifferentialConfig = serde_json::from_str(json).expect("deserialize");
         assert_eq!(cfg.min_override, MinOverride::Currency { value: 10.0 });
+    }
+
+    #[test]
+    fn min_override_rejects_an_unknown_field() {
+        // The schema closes this object with additionalProperties: false. Serde
+        // ignores unknown fields by default, so without deny_unknown_fields a
+        // worker fed the plan directly would accept what the Go pipeline
+        // refuses, and silently drop whatever the author meant by it.
+        let json = r#"{
+            "rank_rates": {"director": 0.10},
+            "min_override": {"type": "currency", "value": 10, "units": "cents"}
+        }"#;
+        let err = serde_json::from_str::<DifferentialConfig>(json)
+            .expect_err("an unknown field must be rejected");
+        assert!(
+            err.to_string().contains("units"),
+            "error should name the unknown field: {err}"
+        );
     }
 
     #[test]

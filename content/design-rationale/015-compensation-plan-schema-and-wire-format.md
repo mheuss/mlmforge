@@ -30,7 +30,7 @@ A single JSON Schema file (`schemas/compensation-plan.schema.json`) validates co
 
 **Descriptions on every property.** Each field has a 1-3 sentence description so plan authors get inline help without opening documentation.
 
-**`additionalProperties: false` off by default.** Extra fields are silently accepted almost everywhere. This favors forward compatibility over typo detection. Three board-plan definitions opt in and are closed: `BoardCyclingConfig`, `BoardPlanStructureParams`, and `BoardPlanCommission`. They are the "selectively later" case this decision left room for.
+**`additionalProperties: false` off by default.** Extra fields are silently accepted almost everywhere. This favors forward compatibility over typo detection. A few definitions opt in and are closed: `BoardCyclingConfig`, `BoardPlanStructureParams`, `BoardPlanCommission`, and `MinOverride`. They are the "selectively later" case this decision left room for.
 
 **Nullable fields use `oneOf`.** Fields that accept null in YAML use `"oneOf": [{"$ref": "..."}, {"type": "null"}]`.
 

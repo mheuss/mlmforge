@@ -51,7 +51,7 @@ section describes `single_walk`. The `multi_tier` strategy is covered below.
 |----------|---------------|----------------|--------------|
 | You outrank them | 15% | 10% | 5% |
 | Same rank | 12% | 12% | 0% |
-| They outrank you | 10% | 15% | 0% (floored at min_override) |
+| They outrank you | 10% | 15% | 0%, then min_override decides |
 
 Example: You are rank 8 (15%). Your breakaway leader is rank 6 (10%). Their group generated 50,000 GV this period. Your override: (15% - 10%) x 50,000 = $2,500.
 

@@ -185,7 +185,8 @@ fn prep(
 
 /// What a generation-1 ancestor earns on one breakaway leg.
 ///
-/// `Nothing` means this ancestor does not earn and the walk keeps climbing.
+/// `Rate` multiplies the leg's pool. `Nothing` means this ancestor does not
+/// earn and the walk keeps climbing.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Gen1Payout {
     Rate(f64),
@@ -194,7 +195,9 @@ enum Gen1Payout {
 
 /// Resolve what a generation-1 ancestor earns on a breakaway leg.
 ///
-/// Differential: ancestor_rate - breakaway_rate, floored at min_override.
+/// Differential: ancestor_rate - breakaway_rate, floored at `min_override`
+/// when the gap is zero or negative. A positive gap is paid as it stands, even
+/// when it is smaller than the floor.
 /// FixedOverride: flat rate from rank_rates lookup.
 fn resolve_gen1_payout(
     mode: &crate::config::stairstep::OverrideMode,
@@ -386,12 +389,11 @@ fn walk_single_overrides(
                         .map(|s| s.rank.as_str())
                         .unwrap_or("");
 
+                    let pool = group_vol * broad_pct * multiplier;
                     let (rate, dollar_amount) =
                         match resolve_gen1_payout(override_mode, ancestor_rank, breakaway_rank) {
                             Gen1Payout::Nothing => continue,
-                            Gen1Payout::Rate(r) => {
-                                (Some(r), group_vol * broad_pct * multiplier * r)
-                            }
+                            Gen1Payout::Rate(r) => (Some(r), pool * r),
                         };
 
                     earnings.push(CommissionEarning {
@@ -446,10 +448,11 @@ fn walk_single_overrides(
                     None => continue,
                 };
 
+                let pool = group_vol * broad_pct * multiplier;
                 let (rate, dollar_amount) =
                     match resolve_gen1_payout(override_mode, ancestor_rank, breakaway_rank) {
                         Gen1Payout::Nothing => continue,
-                        Gen1Payout::Rate(r) => (Some(r), group_vol * broad_pct * multiplier * r),
+                        Gen1Payout::Rate(r) => (Some(r), pool * r),
                     };
 
                 earnings.push(CommissionEarning {
@@ -1785,6 +1788,55 @@ mod tests {
             override_earnings.is_empty(),
             "associate has no fixed override rate, should earn nothing"
         );
+    }
+
+    #[test]
+    fn walk_climbs_past_an_ancestor_that_earns_nothing() {
+        // Tree: 0(sr_dir) -> 1(assoc) -> 2(director) -> 3(assoc)
+        // Node 2 is the breakaway. Walking up from it, node 1 is eligible but
+        // its rank has no fixed_override rate, so it earns nothing. Node 0
+        // does have a rate and must still be reached.
+        //
+        // This is the test that tells `continue` from `break` at the
+        // non-earner. Turn that `continue` into a `break` and node 0 stops
+        // earning, which is money silently not paid.
+        let tree = build_chain(4);
+        let structure = test_fixed_override_structure();
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", 150.0));
+        snapshots.insert(uuid(1), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(2), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", 150.0));
+
+        let volume = vec![
+            VolumeSource {
+                source_id: uuid(2),
+                cv_amount: 150.0,
+            },
+            VolumeSource {
+                source_id: uuid(3),
+                cv_amount: 150.0,
+            },
+        ];
+
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
+
+        let earned = result
+            .iter()
+            .find(|e| e.earner_id == uuid(0) && e.source_id == uuid(2) && e.walk.is_none())
+            .expect("node 0 must earn the override on node 2 despite node 1 earning nothing");
+        assert_eq!(earned.rate, Some(0.08));
     }
 
     #[test]

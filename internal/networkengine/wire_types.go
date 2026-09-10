@@ -85,8 +85,8 @@ type PlanIdentityDTO struct {
 	Hash string `json:"hash"`
 }
 
-// CommissionCalculationResultDTO is what the five commission calculators
-// return. Matches the Rust CommissionCalculationResult.
+// CommissionCalculationResultDTO is the shared commission result. Matches the
+// Rust CommissionCalculationResult.
 type CommissionCalculationResultDTO struct {
 	Earnings []CommissionEarningDTO `json:"earnings"`
 	Walks    []WalkDTO              `json:"walks"`

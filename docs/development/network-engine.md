@@ -99,7 +99,7 @@ One logical assertion per test. Build small trees by hand. Test names follow `me
 
 ### Assert what a regression makes false
 
-A test named for a behaviour can pass through the exact regression it describes. Both of HEU-611's cases were found by deleting the code the test was supposed to protect and watching it stay green.
+A test named for a behavior can pass through the exact regression it describes. Both of HEU-611's cases were found by deleting the code the test was supposed to protect and watching it stay green.
 
 `mixed_active_and_frozen_returns_earnings_and_a_skip` asserted `!earnings.is_empty()` and that the skip list held one entry. Unfilter `active_streams()` so frozen streams get walked and the response comes back with **two** earnings and **still exactly one** skip: both assertions pass, and the property the test is named for is broken. It only bites once it asserts the walk count.
 

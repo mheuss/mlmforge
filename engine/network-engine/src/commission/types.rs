@@ -268,7 +268,7 @@ pub struct WalkStep {
     /// where every existing row means `true`.
     ///
     /// Do not emit `false` before that phase lands. A `false` here would break
-    /// `steps.len()` for every reader written against the current behaviour.
+    /// `steps.len()` for every reader written against the current behavior.
     pub consumed: bool,
 
     /// The rank the calculator read for this node.

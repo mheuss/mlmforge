@@ -97,6 +97,16 @@ One logical assertion per test. Build small trees by hand. Test names follow `me
 
 `test_uuid(n: u8)` generates deterministic UUIDs for small tests. `test_uuid_u16(n: u16)` handles tests exceeding 255 nodes. Shared test helpers live in `tree/test_helpers.rs` and are used by all tree types and property tests.
 
+### Assert what a regression makes false
+
+A test named for a behavior can pass through the exact regression it describes. Both of HEU-611's cases were found by deleting the code the test was supposed to protect and watching it stay green.
+
+`mixed_active_and_frozen_returns_earnings_and_a_skip` asserted `!earnings.is_empty()` and that the skip list held one entry. Unfilter `active_streams()` so frozen streams get walked and the response comes back with **two** earnings and **still exactly one** skip: both assertions pass, and the property the test is named for is broken. It only bites once it asserts the walk count.
+
+The general shape: asserting a result is non-empty proves something ran, not that the right thing ran. On a partial result, assert what is *absent* — how many walks, which stream ids, which earners — because a regression that does too much leaves every non-emptiness check green.
+
+Deleting the guard and re-running is cheap and it is the only way to know. Do it for any test whose name makes a claim about what did not happen.
+
 ### Property-based tests (proptest)
 
 Every tree type must have these six property tests:
@@ -254,6 +264,10 @@ Run it unfiltered. To confirm a specific fixture actually executed, add `-- --no
 That line is indented two spaces, so `grep '^contract: '` matches nothing and exits nonzero **with no test failure** — the same reads-as-a-pass trap in a different disguise. Grep without the anchor.
 
 HEU-583's plan specified the filtered form on three steps, including the two that changed the money path and the wire contract. Following it literally would have recorded "Expected: PASS" against a run that asserted nothing.
+
+**The trap is not specific to contract tests.** Any name filter that matches nothing prints `filtered out` and exits 0. HEU-611 hit it in `worker_integration`: `cargo test -p network-engine-worker --test worker_integration streamline` never ran `repeated_source_yields_distinguishable_skip_records`, because that name contains no "streamline". The plan prescribed that filter for three steps and the test was RED at the time, so the step would have reported a pass over a test that had never executed.
+
+A filter selects on the *test function's* name, and a suite's tests are not all named after the thing they test. Read the `N passed` count against the number of tests you expect, or run unfiltered. `0 passed` is the loud case; the quiet one is a filter that catches most of a group and drops one.
 
 ## A Determinism Test Only Bites On Streamline
 
@@ -602,9 +616,39 @@ answer will now see an error. Nothing calls `CalculateGeneration` outside tests
 today, so the practical blast radius is zero — but HEU-556, HEU-46, and HEU-47
 wire these methods up, and they should expect the strict behavior.
 
-`walk::validate_source` is the one place all of this lives now. Binary is not a
-caller: it resolves an owner before the snapshot lookup, so it validates its own
-way.
+`walk::validate_source` owns the check order, and a caller that hands it the
+source it is validating gets that order for free. Two calculators reproduce the
+order themselves instead. Binary never reaches it: it resolves an owner before
+the snapshot lookup, so it validates its own way. Streamline does reach it, once
+per surviving source per stream, but only after a filter has already dropped the
+sources its own pre-loop exists to catch. HEU-611 added that pre-loop, described
+below.
+
+**A second narrowing rode along with HEU-611.** `calculate_streamline` now
+rejects requests it used to answer with `Ok([])`, for the same reason generation
+did.
+
+- Volume naming a source held by no stream returns `SourceNotInTree`. Before, the
+  per-stream filter dropped it before any walk ran and the call reported success
+  with empty earnings.
+- The snapshot half is narrower than it looks. A source in an active stream with
+  no snapshot already errored, because the filter keys on tree membership and the
+  walk validated whatever survived it. What is new is `SourceNotInSnapshot` for a
+  source no *active* stream holds, which no walk ever reached.
+- The checks run in a pre-loop over the whole `volume` slice, ahead of the stream
+  walks, because streamline has no single tree to hand `validate_source` — it has
+  one tree per stream. That is why the CV/tree/snapshot order is written out a
+  second time rather than delegated.
+- A source held only by a *frozen* stream is deliberately not an error. Freezing
+  is a business state and paying nothing is the right answer, so the source is
+  accepted and earns nothing. What keeps that from being a silent zero is
+  `frozen_stream_skips` on the *worker's* `calculate_streamline` response, not on
+  `CommissionCalculationResult`: one record per (volume entry, frozen stream)
+  pair, always present, ordered by volume index then stream id. A direct Rust
+  caller of the engine function still gets the bare result.
+
+Same blast radius as the generation narrowing: nothing calls `CalculateStreamline`
+outside tests today.
 
 **Still null-intolerant, tracked by HEU-632.** These are nested or query-op
 collections the ticket deliberately stopped short of:

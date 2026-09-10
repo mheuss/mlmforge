@@ -85,8 +85,8 @@ type PlanIdentityDTO struct {
 	Hash string `json:"hash"`
 }
 
-// CommissionCalculationResultDTO is what the five commission calculators
-// return. Matches the Rust CommissionCalculationResult.
+// CommissionCalculationResultDTO is the shared commission result. Matches the
+// Rust CommissionCalculationResult.
 type CommissionCalculationResultDTO struct {
 	Earnings []CommissionEarningDTO `json:"earnings"`
 	Walks    []WalkDTO              `json:"walks"`
@@ -432,4 +432,21 @@ type EvaluatedRankDTO struct {
 // Mirrors the Rust EvaluationResult struct.
 type EvaluationResultDTO struct {
 	Ranks map[string]EvaluatedRankDTO `json:"ranks"`
+}
+
+// StreamlineCalculationResultDTO is what calculate_streamline returns. It is
+// the generic result plus the streamline-only skip list.
+type StreamlineCalculationResultDTO struct {
+	CommissionCalculationResultDTO
+	FrozenStreamSkips []FrozenStreamSkipDTO `json:"frozen_stream_skips"`
+}
+
+// FrozenStreamSkipDTO is one (volume entry, frozen stream) pair whose volume
+// contributed nothing. A record is scoped to the pair. It does not mean the
+// volume entry earned nothing overall.
+type FrozenStreamSkipDTO struct {
+	VolumeIndex int     `json:"volume_index"`
+	SourceID    string  `json:"source_id"`
+	CVAmount    float64 `json:"cv_amount"`
+	StreamID    uint32  `json:"stream_id"`
 }

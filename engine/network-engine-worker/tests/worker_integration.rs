@@ -63,7 +63,7 @@ fn ping_returns_protocol_version() {
 
     let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
     assert_eq!(parsed["id"], "1");
-    assert_eq!(parsed["result"]["protocol_version"], 2);
+    assert_eq!(parsed["result"]["protocol_version"], 3);
 
     drop(child.stdin.take());
     child.wait().unwrap();
@@ -2997,6 +2997,330 @@ fn sl_add_member(worker: &mut std::process::Child, id: &str, user: &str, sponsor
         resp.contains(r#""ok":true"#),
         "streamline_add_member failed: {}",
         resp
+    );
+}
+
+/// Freezes every stream `owner` owns.
+///
+/// Fails rather than quietly doing nothing when `owner` owns no streams.
+fn freeze_streams_owned_by(worker: &mut std::process::Child, owner: &str) {
+    let request = format!(
+        r#"{{"id":"sl-freeze","op":"streamline_update_allowance","params":{{"structure":"{}","user_id":"{}","total_allowed":0,"timestamp":2000}}}}"#,
+        SL_STRUCTURE, owner
+    );
+    let resp = common::send_receive(worker, &request);
+    let v: serde_json::Value = serde_json::from_str(&resp).expect(&resp);
+    assert_eq!(
+        v["ok"],
+        serde_json::json!(true),
+        "expected ok:true from the freeze, got: {}",
+        resp
+    );
+    assert!(
+        !v["result"]["frozen"].as_array().expect(&resp).is_empty(),
+        "expected at least one frozen stream, got: {}",
+        resp
+    );
+}
+
+/// Snapshots for `SL_USER1` and `SL_USER2`.
+fn streamline_snapshots_json() -> String {
+    let entry = |id: &str| {
+        format!(
+            r#""{}":{{"rank":"member","personal_volume":100.0,"status":"active","has_order_in_period":true}}"#,
+            id
+        )
+    };
+    format!("{{{},{}}}", entry(SL_USER1), entry(SL_USER2))
+}
+
+fn calculate_streamline_for(worker: &mut std::process::Child, source: &str, cv: f64) -> String {
+    let request = format!(
+        r#"{{"id":"sl-calc","op":"calculate_streamline","params":{{"structure":"{}","snapshots":{},"volume":[{{"source_id":"{}","cv_amount":{}}}]}}}}"#,
+        SL_STRUCTURE,
+        streamline_snapshots_json(),
+        source,
+        cv
+    );
+    common::send_receive(worker, &request)
+}
+
+/// Volume naming a source no stream holds fails on the wire.
+///
+/// The unit tests pin the error the calculation returns. This one adds what
+/// they cannot observe: that the worker surfaces it as `CALCULATION_ERROR`
+/// rather than swallowing it into an empty success.
+#[test]
+fn calculate_streamline_rejects_volume_with_no_stream() {
+    let mut worker = common::spawn_worker();
+    load_streamline_test_plan(&mut worker);
+    create_streamline(&mut worker);
+    sl_add_member(&mut worker, "sl-m1", SL_USER1, ROOT, 1001);
+
+    // SL_USER3 is never added, so no stream holds it.
+    let request = format!(
+        r#"{{"id":"sl-nostream","op":"calculate_streamline","params":{{"structure":"{}","snapshots":{},"volume":[{{"source_id":"{}","cv_amount":100.0}}]}}}}"#,
+        SL_STRUCTURE,
+        streamline_snapshots_json(),
+        SL_USER3
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("CALCULATION_ERROR"),
+        "volume naming a source no stream holds must fail, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains(SL_USER3),
+        "the error should name the source, got: {}",
+        resp
+    );
+    // SL_USER3 has no snapshot either, so without this the snapshot guard
+    // could fire and the test would still pass.
+    assert!(
+        resp.contains("not found in tree"),
+        "expected the tree guard, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// A frozen stream's skipped volume is reported rather than vanishing.
+#[test]
+fn calculate_streamline_reports_frozen_stream_skips() {
+    let mut worker = common::spawn_worker();
+    load_streamline_test_plan(&mut worker);
+    create_streamline(&mut worker);
+    sl_add_member(&mut worker, "sl-m1", SL_USER1, ROOT, 1001);
+    // Sourcing from SL_USER2 rather than SL_USER1 is what lets the
+    // empty-earnings assertion below fail. Volume sourced from the stream root
+    // pays nobody either way.
+    sl_add_member(&mut worker, "sl-m2", SL_USER2, SL_USER1, 1002);
+    freeze_streams_owned_by(&mut worker, SL_USER1);
+
+    let resp = calculate_streamline_for(&mut worker, SL_USER2, 100.0);
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+
+    // Both assertions matter: nothing paid, and a record saying why.
+    assert!(
+        v["result"]["earnings"].as_array().unwrap().is_empty(),
+        "a frozen stream must pay nothing, got: {}",
+        resp
+    );
+
+    let skips = v["result"]["frozen_stream_skips"].as_array().unwrap();
+    assert_eq!(skips.len(), 1, "expected one skip, got: {}", resp);
+    assert_eq!(skips[0]["volume_index"], 0);
+    assert_eq!(skips[0]["source_id"], SL_USER2);
+    assert_eq!(skips[0]["cv_amount"], 100.0);
+    assert_eq!(skips[0]["stream_id"], 1);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// The field is present and empty, never absent. Absent and "no skips" would
+/// otherwise look the same on the wire.
+#[test]
+fn calculate_streamline_emits_empty_skips_when_nothing_skipped() {
+    let mut worker = common::spawn_worker();
+    load_streamline_test_plan(&mut worker);
+    create_streamline(&mut worker);
+    sl_add_member(&mut worker, "sl-m1", SL_USER1, ROOT, 1001);
+
+    let resp = calculate_streamline_for(&mut worker, SL_USER1, 100.0);
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+
+    assert_eq!(
+        v["result"]["frozen_stream_skips"],
+        serde_json::json!([]),
+        "the key must be present and empty, got: {}",
+        resp
+    );
+
+    // An active stream still pays nobody when the volume comes from its root.
+    assert!(
+        v["result"]["earnings"].as_array().unwrap().is_empty(),
+        "expected no earnings, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// A repeated source is permitted (HEU-610 owns whether it should be). Two
+/// records are then identical unless they carry index and CV.
+#[test]
+fn repeated_source_yields_distinguishable_skip_records() {
+    let mut worker = common::spawn_worker();
+    load_streamline_test_plan(&mut worker);
+    create_streamline(&mut worker);
+    sl_add_member(&mut worker, "sl-m1", SL_USER1, ROOT, 1001);
+    freeze_streams_owned_by(&mut worker, SL_USER1);
+
+    let request = format!(
+        r#"{{"id":"sl-rep","op":"calculate_streamline","params":{{"structure":"{}","snapshots":{},"volume":[{{"source_id":"{}","cv_amount":100.0}},{{"source_id":"{}","cv_amount":250.0}}]}}}}"#,
+        SL_STRUCTURE,
+        streamline_snapshots_json(),
+        SL_USER1,
+        SL_USER1
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+
+    let skips = v["result"]["frozen_stream_skips"].as_array().unwrap();
+    assert_eq!(skips.len(), 2, "got: {}", resp);
+    assert_eq!(skips[0]["volume_index"], 0);
+    assert_eq!(skips[0]["cv_amount"], 100.0);
+    assert_eq!(skips[1]["volume_index"], 1);
+    assert_eq!(skips[1]["cv_amount"], 250.0);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Two streams, stream 1 active and stream 2 frozen, `SL_USER2` a node in both.
+///
+/// Hand-edited from a captured snapshot. No sequence of worker operations
+/// builds this state.
+const SL_MIXED_SNAPSHOT: &str = r#"{"config":{"assignment_mode":"sponsor_stream","enrollment_stream_choice":false,"freeze_on_demotion":true},"next_stream_id":3,"stream_owners":{"00000000-0000-0000-0000-000000000011":[1,2]},"streams":{"1":{"bottom":"00000000-0000-0000-0000-000000000012","created_at":1000,"frozen":false,"id":1,"owner_id":"00000000-0000-0000-0000-000000000011","tree":{"arena":{"free_list":[],"index":{"00000000-0000-0000-0000-000000000011":0,"00000000-0000-0000-0000-000000000012":1},"nodes":[{"children":[1],"depth":0,"enrolled_at":1001,"parent":null,"sponsor":null,"sponsored":[1],"user_id":"00000000-0000-0000-0000-000000000011"},{"children":[],"depth":1,"enrolled_at":1003,"parent":0,"sponsor":0,"sponsored":[],"user_id":"00000000-0000-0000-0000-000000000012"}],"root":0}}},"2":{"bottom":"00000000-0000-0000-0000-000000000012","created_at":1002,"frozen":true,"id":2,"owner_id":"00000000-0000-0000-0000-000000000011","tree":{"arena":{"free_list":[],"index":{"00000000-0000-0000-0000-000000000011":0,"00000000-0000-0000-0000-000000000012":1},"nodes":[{"children":[1],"depth":0,"enrolled_at":1001,"parent":null,"sponsor":null,"sponsored":[1],"user_id":"00000000-0000-0000-0000-000000000011"},{"children":[],"depth":1,"enrolled_at":1003,"parent":0,"sponsor":0,"sponsored":[],"user_id":"00000000-0000-0000-0000-000000000012"}],"root":0}}}},"user_streams":{"00000000-0000-0000-0000-000000000011":[1,2],"00000000-0000-0000-0000-000000000012":[1,2]}}"#;
+
+/// Both streams frozen, with `user_streams` listing them as `[2, 1]`.
+///
+/// The membership order is reversed on purpose: an implementation that emitted
+/// in membership order would report 2 before 1.
+const SL_UNSORTED_SNAPSHOT: &str = r#"{"config":{"assignment_mode":"sponsor_stream","enrollment_stream_choice":false,"freeze_on_demotion":true},"next_stream_id":3,"stream_owners":{"00000000-0000-0000-0000-000000000011":[1,2]},"streams":{"1":{"bottom":"00000000-0000-0000-0000-000000000012","created_at":1000,"frozen":true,"id":1,"owner_id":"00000000-0000-0000-0000-000000000011","tree":{"arena":{"free_list":[],"index":{"00000000-0000-0000-0000-000000000011":0,"00000000-0000-0000-0000-000000000012":1},"nodes":[{"children":[1],"depth":0,"enrolled_at":1001,"parent":null,"sponsor":null,"sponsored":[1],"user_id":"00000000-0000-0000-0000-000000000011"},{"children":[],"depth":1,"enrolled_at":1003,"parent":0,"sponsor":0,"sponsored":[],"user_id":"00000000-0000-0000-0000-000000000012"}],"root":0}}},"2":{"bottom":"00000000-0000-0000-0000-000000000012","created_at":1002,"frozen":true,"id":2,"owner_id":"00000000-0000-0000-0000-000000000011","tree":{"arena":{"free_list":[],"index":{"00000000-0000-0000-0000-000000000011":0,"00000000-0000-0000-0000-000000000012":1},"nodes":[{"children":[1],"depth":0,"enrolled_at":1001,"parent":null,"sponsor":null,"sponsored":[1],"user_id":"00000000-0000-0000-0000-000000000011"},{"children":[],"depth":1,"enrolled_at":1003,"parent":0,"sponsor":0,"sponsored":[],"user_id":"00000000-0000-0000-0000-000000000012"}],"root":0}}}},"user_streams":{"00000000-0000-0000-0000-000000000011":[2,1],"00000000-0000-0000-0000-000000000012":[2,1]}}"#;
+
+/// `SL_UNSORTED_SNAPSHOT` with the `streams` and `user_streams` object keys
+/// written in the opposite order.
+const SL_UNSORTED_SNAPSHOT_REKEYED: &str = r#"{"config":{"assignment_mode":"sponsor_stream","enrollment_stream_choice":false,"freeze_on_demotion":true},"next_stream_id":3,"stream_owners":{"00000000-0000-0000-0000-000000000011":[1,2]},"streams":{"2":{"bottom":"00000000-0000-0000-0000-000000000012","created_at":1002,"frozen":true,"id":2,"owner_id":"00000000-0000-0000-0000-000000000011","tree":{"arena":{"free_list":[],"index":{"00000000-0000-0000-0000-000000000011":0,"00000000-0000-0000-0000-000000000012":1},"nodes":[{"children":[1],"depth":0,"enrolled_at":1001,"parent":null,"sponsor":null,"sponsored":[1],"user_id":"00000000-0000-0000-0000-000000000011"},{"children":[],"depth":1,"enrolled_at":1003,"parent":0,"sponsor":0,"sponsored":[],"user_id":"00000000-0000-0000-0000-000000000012"}],"root":0}}},"1":{"bottom":"00000000-0000-0000-0000-000000000012","created_at":1000,"frozen":true,"id":1,"owner_id":"00000000-0000-0000-0000-000000000011","tree":{"arena":{"free_list":[],"index":{"00000000-0000-0000-0000-000000000011":0,"00000000-0000-0000-0000-000000000012":1},"nodes":[{"children":[1],"depth":0,"enrolled_at":1001,"parent":null,"sponsor":null,"sponsored":[1],"user_id":"00000000-0000-0000-0000-000000000011"},{"children":[],"depth":1,"enrolled_at":1003,"parent":0,"sponsor":0,"sponsored":[],"user_id":"00000000-0000-0000-0000-000000000012"}],"root":0}}}},"user_streams":{"00000000-0000-0000-0000-000000000012":[2,1],"00000000-0000-0000-0000-000000000011":[2,1]}}"#;
+
+fn restore_streamline_snapshot(worker: &mut std::process::Child, data: &str) {
+    let request = format!(
+        r#"{{"id":"sl-restore","op":"restore_snapshot","params":{{"structure":"{}","tree_type":"streamline","data":{}}}}}"#,
+        SL_STRUCTURE, data
+    );
+    let resp = common::send_receive(worker, &request);
+    assert!(resp.contains(r#""ok":true"#), "restore failed: {}", resp);
+}
+
+/// Asserts each `(stream_id, frozen)` pair against the live engine.
+///
+/// A fixture that restores without producing the state it describes gives a
+/// test that passes for the wrong reason.
+fn assert_stream_frozen_flags(worker: &mut std::process::Child, expected: &[(u64, bool)]) {
+    let request = format!(
+        r#"{{"id":"sl-list","op":"streamline_list_streams","params":{{"structure":"{}"}}}}"#,
+        SL_STRUCTURE
+    );
+    let resp = common::send_receive(worker, &request);
+    let v: serde_json::Value = serde_json::from_str(&resp).expect(&resp);
+    let streams = v["result"].as_array().expect(&resp);
+    let mut got: Vec<(u64, bool)> = streams
+        .iter()
+        .map(|s| {
+            (
+                s["id"].as_u64().expect(&resp),
+                s["frozen"].as_bool().expect(&resp),
+            )
+        })
+        .collect();
+    got.sort_unstable();
+    let mut want = expected.to_vec();
+    want.sort_unstable();
+    assert_eq!(got, want, "stream flags do not match, got: {}", resp);
+}
+
+/// A source on one active and one frozen stream.
+///
+/// The response is not empty, it is short by one stream. Without the skip list a
+/// caller cannot tell that from a complete answer.
+#[test]
+fn mixed_active_and_frozen_returns_earnings_and_a_skip() {
+    let mut worker = common::spawn_worker();
+    load_streamline_test_plan(&mut worker);
+    restore_streamline_snapshot(&mut worker, SL_MIXED_SNAPSHOT);
+    assert_stream_frozen_flags(&mut worker, &[(1, false), (2, true)]);
+
+    let resp = calculate_streamline_for(&mut worker, SL_USER2, 100.0);
+    let v: serde_json::Value = serde_json::from_str(&resp).expect(&resp);
+
+    // Pins which stream was walked.
+    let walks = v["result"]["walks"].as_array().expect(&resp);
+    assert_eq!(walks.len(), 1, "expected one walk, got: {}", resp);
+    assert_eq!(walks[0]["stream_id"], 1, "got: {}", resp);
+
+    let earnings = v["result"]["earnings"].as_array().expect(&resp);
+    assert_eq!(earnings.len(), 1, "expected one earning, got: {}", resp);
+    assert_eq!(earnings[0]["earner_id"], SL_USER1, "got: {}", resp);
+    assert_eq!(earnings[0]["dollar_amount"], 10.0, "got: {}", resp);
+
+    let skips = v["result"]["frozen_stream_skips"].as_array().expect(&resp);
+    assert_eq!(skips.len(), 1, "expected one skip, got: {}", resp);
+    assert_eq!(skips[0]["volume_index"], 0, "got: {}", resp);
+    assert_eq!(skips[0]["source_id"], SL_USER2, "got: {}", resp);
+    assert_eq!(skips[0]["cv_amount"], 100.0, "got: {}", resp);
+    assert_eq!(skips[0]["stream_id"], 2, "got: {}", resp);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Ordering is volume index, then stream id ascending.
+#[test]
+fn skips_sort_by_stream_id_within_one_volume_entry() {
+    let mut worker = common::spawn_worker();
+    load_streamline_test_plan(&mut worker);
+    restore_streamline_snapshot(&mut worker, SL_UNSORTED_SNAPSHOT);
+    assert_stream_frozen_flags(&mut worker, &[(1, true), (2, true)]);
+
+    let resp = calculate_streamline_for(&mut worker, SL_USER2, 100.0);
+    let v: serde_json::Value = serde_json::from_str(&resp).expect(&resp);
+
+    let skips = v["result"]["frozen_stream_skips"].as_array().expect(&resp);
+    assert_eq!(skips.len(), 2, "both streams frozen, got: {}", resp);
+    assert_eq!(skips[0]["stream_id"], 1);
+    assert_eq!(skips[1]["stream_id"], 2);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Two snapshots describing the same engine with their JSON keys in different
+/// orders give the same list.
+///
+/// The final comparison is inert and cannot fail. What earns this test its place
+/// is the helper below: each fixture must restore to the asserted frozen state
+/// and yield two skips. It is not evidence for the ordering guarantee.
+#[test]
+fn skip_order_does_not_depend_on_map_iteration() {
+    fn skips_for_snapshot(data: &str) -> serde_json::Value {
+        let mut worker = common::spawn_worker();
+        load_streamline_test_plan(&mut worker);
+        restore_streamline_snapshot(&mut worker, data);
+        assert_stream_frozen_flags(&mut worker, &[(1, true), (2, true)]);
+
+        let resp = calculate_streamline_for(&mut worker, SL_USER2, 100.0);
+        let v: serde_json::Value = serde_json::from_str(&resp).expect(&resp);
+        let skips = v["result"]["frozen_stream_skips"].clone();
+        assert_eq!(
+            skips.as_array().expect(&resp).len(),
+            2,
+            "expected two skips, got: {}",
+            resp
+        );
+
+        drop(worker.stdin.take());
+        worker.wait().unwrap();
+        skips
+    }
+
+    assert_eq!(
+        skips_for_snapshot(SL_UNSORTED_SNAPSHOT),
+        skips_for_snapshot(SL_UNSORTED_SNAPSHOT_REKEYED)
     );
 }
 

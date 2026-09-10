@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use network_engine::commission::{DistributorSnapshot, VolumeSource, calculate_streamline};
+use network_engine::commission::{
+    CommissionCalculationResult, DistributorSnapshot, VolumeSource, calculate_streamline,
+};
 use network_engine::config::streamline::StreamAssignmentMode;
 use network_engine::config::{CompensationPlan, StreamlineStructureConfig, StructureConfig};
 use network_engine::serde_helpers::null_as_empty;
@@ -430,6 +432,26 @@ fn find_streamline_structure<'a>(
     })
 }
 
+/// One (volume entry, frozen stream) pair that contributed nothing.
+///
+/// A record is scoped to the pair. It does not mean the volume entry earned
+/// nothing overall.
+#[derive(serde::Serialize)]
+struct FrozenStreamSkip {
+    volume_index: usize,
+    source_id: Uuid,
+    cv_amount: f64,
+    stream_id: u32,
+}
+
+/// The streamline calculate response: the shared result plus the skip list.
+#[derive(serde::Serialize)]
+struct StreamlineCalculationResponse {
+    #[serde(flatten)]
+    result: CommissionCalculationResult,
+    frozen_stream_skips: Vec<FrozenStreamSkip>,
+}
+
 pub(crate) fn handle_calculate_streamline(state: &WorkerState, request: &Request) -> Response {
     // The *commission* config comes from the plan validated by handle_load_plan,
     // never from request params (HEU-583, design rationale 028). "Validated"
@@ -441,7 +463,7 @@ pub(crate) fn handle_calculate_streamline(state: &WorkerState, request: &Request
     // HEU-583 is what made that validator the sole point of trust; HEU-612 is
     // what made it worth trusting.
     //
-    // Three adjacent gaps are deliberately not closed here:
+    // Two adjacent gaps are deliberately not closed here:
     //
     // - The engine's *stream* config (assignment_mode, freeze_on_demotion) still
     //   comes from create_streamline's request params and is never cross-checked
@@ -453,9 +475,6 @@ pub(crate) fn handle_calculate_streamline(state: &WorkerState, request: &Request
     // - require_plan returns whatever plan was loaded last, so a load_plan that
     //   replaces the plan while streams already exist re-rates them. Tracked by
     //   HEU-598.
-    // - Volume for a source in no stream, or in a frozen one, is filtered out
-    //   before the walk and returns ok with an empty result rather than an
-    //   error. Tracked by HEU-611.
     let plan = match require_plan(state, &request.id) {
         Ok(p) => p,
         Err(resp) => return resp,
@@ -498,6 +517,8 @@ pub(crate) fn handle_calculate_streamline(state: &WorkerState, request: &Request
         }
     };
 
+    // Volume belonging to a frozen stream earns nothing from that stream, and
+    // each skipped (volume entry, stream) pair is reported below.
     match calculate_streamline(
         engine,
         plan,
@@ -506,10 +527,40 @@ pub(crate) fn handle_calculate_streamline(state: &WorkerState, request: &Request
         &params.volume,
         identity,
     ) {
-        Ok(result) => Response::success(
-            request.id.clone(),
-            serde_json::to_value(&result).expect("serialization infallible"),
-        ),
+        Ok(result) => {
+            let mut frozen_stream_skips = Vec::new();
+            for (volume_index, source) in params.volume.iter().enumerate() {
+                // Defensive: no streams recorded for this source.
+                let Some(stream_ids) = engine.get_member_streams(source.source_id) else {
+                    continue;
+                };
+                // sort_unstable is what gives the stream_id half of the order.
+                let mut frozen: Vec<u32> = stream_ids
+                    .iter()
+                    .copied()
+                    .filter(|id| engine.get_stream(*id).is_some_and(|s| s.frozen))
+                    .collect();
+                frozen.sort_unstable();
+                frozen.dedup();
+                for stream_id in frozen {
+                    frozen_stream_skips.push(FrozenStreamSkip {
+                        volume_index,
+                        source_id: source.source_id,
+                        cv_amount: source.cv_amount,
+                        stream_id,
+                    });
+                }
+            }
+
+            let body = StreamlineCalculationResponse {
+                result,
+                frozen_stream_skips,
+            };
+            Response::success(
+                request.id.clone(),
+                serde_json::to_value(&body).expect("serialization infallible"),
+            )
+        }
         Err(e) => Response::error(
             request.id.clone(),
             "CALCULATION_ERROR",

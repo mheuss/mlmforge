@@ -25,11 +25,9 @@ import (
 // outside test fixtures. That is why this is a one-line change now and an
 // unfixable one after HEU-46 starts writing rows.
 //
-// Not the NDJSON protocol version. That is also 2, and the two moved to the
-// same number on the same branch by coincidence rather than by coupling. This
-// one labels a stored detail shape; the other is the engine wire contract in
-// engine/network-engine-worker/src/protocol.rs. Either can move without the
-// other, and a stored 2 asserts nothing about the protocol.
+// Not the NDJSON protocol version. This one labels a stored detail shape; the
+// other is the engine wire contract. Either can move without the other, and a
+// stored version asserts nothing about the protocol.
 const detailVersion = 2
 
 // The kind values stored in every detail object. A version alone cannot say

@@ -1,13 +1,14 @@
 {
-    "description": "calculate_streamline pins the CommissionEarning array: a 2-member sponsor_stream where member2's 100 CV pays member1 $10 at level 1. The plan is loaded in setup and carries the StreamTest streamline structure (HEU-583).",
+    "description": "calculate_streamline pins a populated frozen_stream_skips record. Same two-member sponsor_stream as calculate_streamline, with member1's stream allowance dropped to 0 so stream 1 freezes. The volume that paid $10 there pays nothing here and is reported instead. This fixture is what cross-pins the record's four field names between Rust and Go; the sibling fixture only pins the empty array.",
     "setup_raw": [
         "{\"id\":\"s-1\",\"op\":\"load_plan\",\"params\":{\"name\":\"Contract Test Plan\",\"version\":1,\"structures\":[{\"type\":\"unilevel\",\"config\":{\"name\":\"Test\",\"level_commission\":{\"broad_commission_percent\":0.40,\"volume_to_dollar_multiplier\":null,\"commissionable_depth\":3,\"rate_table\":{\"member\":{\"1\":0.05,\"2\":0.05,\"3\":0.05}}},\"compression\":null}},{\"type\":\"streamline\",\"config\":{\"name\":\"StreamTest\",\"streamline_commission\":{\"volume_to_dollar_multiplier\":1.0,\"commissionable_depth\":5,\"dynamic_compression\":[{\"level\":1,\"min_rank\":\"member\",\"percent\":0.1}],\"streams\":null}}}],\"period\":{\"length\":\"month\",\"start_date\":\"2026-03-01\",\"payout_lag_days\":14},\"volume\":{\"inhibit_signup_volume\":false,\"base_currency\":\"USD\",\"volume_to_dollar_multiplier\":1.0,\"deduct_qualifying_volume\":false},\"ranks\":[{\"name\":\"member\",\"ordinal\":1,\"qualification\":{\"structures\":[],\"required_products\":[]},\"qualified_structures\":[\"Test\",\"StreamTest\"],\"demotion_policy\":\"promotion_only\"}],\"rank_tracking\":{\"track_achieved_rank\":false},\"rank_features\":{\"constraints_enabled\":false,\"overrides_enabled\":false},\"commission_eligibility\":{\"min_personal_volume\":0.0,\"require_order_in_period\":false,\"eligible_statuses\":[],\"active_leg_tiers\":[]},\"bonuses\":{\"matching\":null,\"sponsor\":null,\"fast_start\":null,\"rank_advancement\":null,\"leadership_development\":null,\"infinity\":null,\"lifestyle\":null,\"pool\":null,\"matrix_completion\":null,\"position\":null,\"board_cycling\":null},\"payout\":{\"base_currency\":\"USD\",\"minimum_amount\":50.0,\"split_payouts_enabled\":true,\"methods\":[{\"type\":\"bank_transfer\",\"fee\":2.50}]},\"caps\":{\"per_distributor_per_period\":null,\"company_payout_cap_percent\":0.42,\"cap_enforcement\":\"pro_rata\",\"clawback_on_refund\":false},\"placement\":{\"donated_placement\":null,\"holding_tank\":null,\"binary_placement\":null}}}",
         "{\"id\":\"s-2\",\"op\":\"create_streamline\",\"params\":{\"structure\":\"StreamTest\",\"assignment_mode\":\"sponsor_stream\",\"freeze_on_demotion\":true,\"timestamp\":1000}}",
         "{\"id\":\"s-3\",\"op\":\"streamline_add_member\",\"params\":{\"structure\":\"StreamTest\",\"user_id\":\"00000000-0000-0000-0000-000000000001\",\"sponsor_id\":\"00000000-0000-0000-0000-000000000009\",\"timestamp\":1000}}",
-        "{\"id\":\"s-4\",\"op\":\"streamline_add_member\",\"params\":{\"structure\":\"StreamTest\",\"user_id\":\"00000000-0000-0000-0000-000000000002\",\"sponsor_id\":\"00000000-0000-0000-0000-000000000001\",\"timestamp\":2000}}"
+        "{\"id\":\"s-4\",\"op\":\"streamline_add_member\",\"params\":{\"structure\":\"StreamTest\",\"user_id\":\"00000000-0000-0000-0000-000000000002\",\"sponsor_id\":\"00000000-0000-0000-0000-000000000001\",\"timestamp\":2000}}",
+        "{\"id\":\"s-5\",\"op\":\"streamline_update_allowance\",\"params\":{\"structure\":\"StreamTest\",\"user_id\":\"00000000-0000-0000-0000-000000000001\",\"total_allowed\":0,\"timestamp\":3000}}"
     ],
     "request": {
-        "id": "sl-1",
+        "id": "sl-frozen",
         "op": "calculate_streamline",
         "params": {
             "structure": "StreamTest",
@@ -34,43 +35,24 @@
         }
     },
     "expected_response": {
-        "id": "sl-1",
+        "id": "sl-frozen",
         "ok": true,
         "result": {
-            "earnings": [
+            "earnings": [],
+            "frozen_stream_skips": [
                 {
                     "cv_amount": 100.0,
-                    "dollar_amount": 10.0,
-                    "earner_id": "00000000-0000-0000-0000-000000000001",
-                    "level": 1,
-                    "rate": 0.1,
                     "source_id": "00000000-0000-0000-0000-000000000002",
-                    "walk": 0
+                    "stream_id": 1,
+                    "volume_index": 0
                 }
             ],
-            "frozen_stream_skips": [],
             "plan": {
                 "hash": "sha256:7dbc5cafc50e8364c21444ffd4b0b72f00048dcdabf274d72b161aacf4c2e5f2",
                 "name": "Contract Test Plan",
                 "version": 1
             },
-            "walks": [
-                {
-                    "index": 0,
-                    "kind": "level",
-                    "source_id": "00000000-0000-0000-0000-000000000002",
-                    "steps": [
-                        {
-                            "consumed": true,
-                            "earner_rank": "member",
-                            "node_id": "00000000-0000-0000-0000-000000000001",
-                            "outcome": "paid"
-                        }
-                    ],
-                    "stop": "root_reached",
-                    "stream_id": 1
-                }
-            ]
+            "walks": []
         }
     }
 }

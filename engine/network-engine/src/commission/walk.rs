@@ -161,11 +161,7 @@ pub(crate) fn determine_max_depth(active_leg_count: u16, tiers: &[ActiveLegTier]
 }
 
 /// Validate that a volume source's CV amount is finite and non-negative.
-///
-/// Private: `validate_source` below is the only production caller, and routing
-/// everyone through it is what keeps the check order in one place. The
-/// `validate_cv_*` unit tests in this module also call it directly.
-fn validate_cv(source: &VolumeSource) -> Result<(), CalculationError> {
+pub(crate) fn validate_cv(source: &VolumeSource) -> Result<(), CalculationError> {
     if !source.cv_amount.is_finite() || source.cv_amount < 0.0 {
         return Err(CalculationError::InvalidCvAmount(
             source.source_id,
@@ -179,11 +175,9 @@ fn validate_cv(source: &VolumeSource) -> Result<(), CalculationError> {
 /// returning its upline so a caller that needs to walk doesn't re-fetch it.
 ///
 /// The three checks run in a fixed order — CV, then tree membership, then
-/// snapshot membership — because callers assert on the specific error. Keeping
-/// them in one place is what keeps that precedence identical everywhere.
-///
-/// Binary is not a caller: it resolves an owner before the snapshot lookup and
-/// checks `contains` rather than the upline, so it validates its own way.
+/// snapshot membership — because callers assert on the specific error. A caller
+/// that cannot use this function must reproduce that order rather than choose
+/// its own.
 pub(crate) fn validate_source<'t, T: TreeNavigator>(
     tree: &'t T,
     snapshots: &HashMap<Uuid, DistributorSnapshot>,

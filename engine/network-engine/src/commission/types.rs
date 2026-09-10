@@ -187,9 +187,9 @@ pub enum WalkKind {
 
 /// What happened to a node the walk visited.
 ///
-/// Both variants are consumed. Non-consuming skips are not recorded in
-/// protocol version 2, so a walk's `steps` is the consumed subset of the
-/// path, not the full ordered node list.
+/// Both variants are consumed. Non-consuming skips are not recorded at all, so
+/// a walk's `steps` is the consumed subset of the path, not the full ordered
+/// node list.
 ///
 /// `Forfeited` deliberately does not say why the level was forfeited. One
 /// of its three branches is a per-distributor depth cap, which design 029
@@ -255,19 +255,20 @@ pub struct WalkStep {
 
     /// Whether this step advanced the walk's level counter.
     ///
-    /// **Always `true` in protocol version 2.** Both `StepOutcome` variants
-    /// consume, and non-consuming skips (compression, pass-up, a dynamic
-    /// threshold) are not recorded at all, so no emitted step carries
-    /// `false`. Counter reconstruction is therefore `steps.len()` in v2, and
-    /// a count of consumed steps from v3 on.
+    /// **Always `true` today.** Both `StepOutcome` variants consume, and
+    /// non-consuming skips (compression, pass-up, a dynamic threshold) are not
+    /// recorded at all, so no emitted step carries `false`. While that holds,
+    /// `steps.len()` reconstructs the counter. Once the taxonomy phase starts
+    /// recording non-consuming steps it becomes a count of consumed steps
+    /// instead.
     ///
     /// The field is here rather than deferred because the taxonomy phase
     /// starts recording non-consuming steps, and HEU-46 persists this
     /// column. Adding it later would mean a schema change and a backfill
     /// where every existing row means `true`.
     ///
-    /// Do not emit `false` before that phase lands. A `false` here would
-    /// break `steps.len()` for every reader written against v2.
+    /// Do not emit `false` before that phase lands. A `false` here would break
+    /// `steps.len()` for every reader written against the current behavior.
     pub consumed: bool,
 
     /// The rank the calculator read for this node.

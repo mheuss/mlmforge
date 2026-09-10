@@ -1462,7 +1462,7 @@ func TestEngineClient_CalculateStreamline(t *testing.T) {
 // change is precisely a wire-shape change, so the gap is worth closing here.
 func TestEngineClient_CalculateStreamline_MockParams(t *testing.T) {
 	mock := &mockTransport{
-		response: json.RawMessage(`{"earnings":[{"earner_id":"00000000-0000-0000-0000-000000000001","source_id":"00000000-0000-0000-0000-000000000002","level":1,"rate":0.10,"cv_amount":100.0,"dollar_amount":10.0}],"walks":[],"plan":{"name":"Test","version":1,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}`),
+		response: json.RawMessage(`{"earnings":[{"earner_id":"00000000-0000-0000-0000-000000000001","source_id":"00000000-0000-0000-0000-000000000002","level":1,"rate":0.10,"cv_amount":100.0,"dollar_amount":10.0}],"walks":[],"plan":{"name":"Test","version":1,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"},"frozen_stream_skips":[]}`),
 	}
 	client := newEngineClientWithTransport(mock)
 
@@ -1508,6 +1508,46 @@ func TestEngineClient_CalculateStreamline_MockParams(t *testing.T) {
 	// watches the worker, not this client.
 	assert.NotContains(t, string(mock.lastParams), `"plan"`)
 	assert.NotContains(t, string(mock.lastParams), `"structure_config"`)
+}
+
+func TestCalculateStreamlineDecodesFrozenStreamSkips(t *testing.T) {
+	raw := []byte(`{"earnings":[],"walks":[],"plan":{"name":"p","version":1,"hash":"sha256:x"},"frozen_stream_skips":[{"volume_index":0,"source_id":"00000000-0000-0000-0000-000000000011","cv_amount":100,"stream_id":2}]}`)
+
+	var got StreamlineCalculationResultDTO
+	require.NoError(t, json.Unmarshal(raw, &got))
+
+	require.Len(t, got.FrozenStreamSkips, 1)
+	assert.Equal(t, 0, got.FrozenStreamSkips[0].VolumeIndex)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000011", got.FrozenStreamSkips[0].SourceID)
+	assert.Equal(t, 100.0, got.FrozenStreamSkips[0].CVAmount)
+	assert.Equal(t, uint32(2), got.FrozenStreamSkips[0].StreamID)
+}
+
+func TestCalculateStreamlineDecodesEmptySkips(t *testing.T) {
+	raw := []byte(`{"earnings":[],"walks":[],"plan":{"name":"p","version":1,"hash":"sha256:x"},"frozen_stream_skips":[]}`)
+
+	var got StreamlineCalculationResultDTO
+	require.NoError(t, json.Unmarshal(raw, &got))
+
+	// NotNil before Empty. An absent key and a null both leave the slice nil,
+	// and assert.Empty passes on nil, so Empty alone cannot tell "present and
+	// empty" from "not there at all" - which is the distinction this field
+	// exists to carry.
+	require.NotNil(t, got.FrozenStreamSkips)
+	assert.Empty(t, got.FrozenStreamSkips)
+}
+
+// Reaches the field through the client, so it pins the wiring and not only the
+// decoded shape.
+func TestCalculateStreamlineReturnsStreamlineDTO(t *testing.T) {
+	raw := `{"earnings":[],"walks":[],"plan":{"name":"p","version":1,"hash":"sha256:x"},"frozen_stream_skips":[{"volume_index":0,"source_id":"00000000-0000-0000-0000-000000000011","cv_amount":100,"stream_id":2}]}`
+	client := newEngineClientWithTransport(&mockTransport{response: json.RawMessage(raw)})
+
+	got, err := client.CalculateStreamline(context.Background(), CalculateStreamlineRequest{})
+	require.NoError(t, err)
+
+	require.Len(t, got.FrozenStreamSkips, 1)
+	assert.Equal(t, uint32(2), got.FrozenStreamSkips[0].StreamID)
 }
 
 // --- Binary pairing commission calculation tests (mock) ---

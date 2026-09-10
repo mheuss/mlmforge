@@ -16,6 +16,10 @@ use super::{walk, walk_order};
 
 /// Calculate streamline commissions across all active streams.
 ///
+/// Rejects volume it cannot pay: a source with a non-finite or negative CV
+/// amount, a source held by no stream, or a source with no snapshot. A source
+/// held only by a frozen stream is accepted and earns nothing.
+///
 /// Each unfrozen stream is walked independently. Dynamic compression
 /// thresholds gate per-level qualification by rank ordinal. Monoline
 /// behavior falls out naturally when all thresholds are zero.
@@ -115,6 +119,20 @@ pub fn calculate_streamline(
     let mut rate_table: BTreeMap<String, BTreeMap<u8, f64>> = BTreeMap::new();
     for rank in &plan.ranks {
         rate_table.insert(rank.name.clone(), level_rates.clone());
+    }
+
+    // Validate every source before any stream is walked.
+    //
+    // The checks run per source rather than per check across the slice, so a
+    // faulty source's first failing check is the error that surfaces.
+    for source in volume {
+        walk::validate_cv(source)?;
+        if !engine.contains_member(source.source_id) {
+            return Err(CalculationError::SourceNotInTree(source.source_id));
+        }
+        if !snapshots.contains_key(&source.source_id) {
+            return Err(CalculationError::SourceNotInSnapshot(source.source_id));
+        }
     }
 
     let max_depth = structure.streamline_commission.max_depth;
@@ -899,5 +917,193 @@ mod tests {
             }
             other => panic!("expected ConfigError, got {other:?}"),
         }
+    }
+
+    /// Engine with members 1..=5, a plan and structure that pay, and a snapshot
+    /// for every member.
+    fn validation_fixture() -> (
+        StreamlineEngine,
+        CompensationPlan,
+        StreamlineStructureConfig,
+        HashMap<Uuid, DistributorSnapshot>,
+    ) {
+        let engine = make_engine(5);
+        let structure = make_structure(vec![level(1, "associate", 0.10)], 5);
+        let plan = test_helpers::build_test_plan(
+            test_helpers::default_eligibility(),
+            crate::config::StructureConfig::Streamline(structure.clone()),
+            "test_streamline",
+        );
+        let mut snapshots = HashMap::new();
+        for i in 1..=5 {
+            snapshots.insert(test_uuid(i), test_helpers::eligible_snapshot());
+        }
+        (engine, plan, structure, snapshots)
+    }
+
+    #[test]
+    fn source_in_no_stream_returns_source_not_in_tree() {
+        let (engine, plan, structure, snapshots) = validation_fixture();
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(99),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
+
+        assert!(matches!(
+            result,
+            Err(CalculationError::SourceNotInTree(id)) if id == test_uuid(99)
+        ));
+    }
+
+    #[test]
+    fn invalid_cv_wins_over_source_not_in_tree() {
+        let (engine, plan, structure, snapshots) = validation_fixture();
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(99),
+            cv_amount: f64::NAN,
+        }];
+
+        let result = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
+
+        assert!(matches!(
+            result,
+            Err(CalculationError::InvalidCvAmount(id, _)) if id == test_uuid(99)
+        ));
+    }
+
+    #[test]
+    fn stream_member_with_no_snapshot_returns_source_not_in_snapshot() {
+        let (engine, plan, structure, mut snapshots) = validation_fixture();
+        snapshots.remove(&test_uuid(3));
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
+
+        assert!(matches!(
+            result,
+            Err(CalculationError::SourceNotInSnapshot(id)) if id == test_uuid(3)
+        ));
+    }
+
+    /// A source held only by a frozen stream, with no snapshot.
+    ///
+    /// It sits behind the walk, so the pre-loop is what has to reject it.
+    #[test]
+    fn frozen_only_source_with_no_snapshot_returns_source_not_in_snapshot() {
+        let (mut engine, plan, structure, mut snapshots) = validation_fixture();
+        // Dropping the owner's allowance to 0 freezes every stream it owns.
+        engine
+            .update_stream_allowance(test_uuid(1), 0, 2000)
+            .unwrap();
+        snapshots.remove(&test_uuid(3));
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
+
+        assert!(matches!(
+            result,
+            Err(CalculationError::SourceNotInSnapshot(id)) if id == test_uuid(3)
+        ));
+    }
+
+    /// A frozen-only source is valid input, not a caller mistake.
+    ///
+    /// Narrowing the membership check to active streams would turn this into an
+    /// error. HEU-611 rules that out.
+    #[test]
+    fn frozen_only_source_with_snapshot_returns_ok_with_no_earnings() {
+        let (mut engine, plan, structure, snapshots) = validation_fixture();
+        engine
+            .update_stream_allowance(test_uuid(1), 0, 2000)
+            .unwrap();
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .expect("expected ok from a frozen-only source");
+
+        assert!(
+            result.earnings.is_empty(),
+            "a frozen stream pays nothing, got: {:?}",
+            result.earnings
+        );
+    }
+
+    /// Pins that faults resolve per source in input order, not per check across
+    /// the slice. An earlier source's missing snapshot must beat a later
+    /// source's NaN.
+    #[test]
+    fn earlier_missing_snapshot_beats_later_invalid_cv() {
+        let (engine, plan, structure, mut snapshots) = validation_fixture();
+        snapshots.remove(&test_uuid(3));
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(3),
+                cv_amount: 100.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(4),
+                cv_amount: f64::NAN,
+            },
+        ];
+
+        let result = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
+
+        assert!(matches!(
+            result,
+            Err(CalculationError::SourceNotInSnapshot(id)) if id == test_uuid(3)
+        ));
     }
 }

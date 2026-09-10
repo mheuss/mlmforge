@@ -396,33 +396,43 @@ func TestResultFromCommissionEarningStoresANullRateAsNull(t *testing.T) {
 }
 
 // The cross-language assertion. A null rate decodes from the wire and reaches
-// the stored row still null. Each half is covered on its own above; this pins
-// the path between them, which is what the field's meaning depends on.
+// the stored row still null. Each half has its own test; this one pins the
+// path between them and the wire shape that enters it.
 //
-// The literal below was captured from a worker run rather than written by
-// hand. Adding omitempty to the stored shape drops the key and fails this.
+// fromWorker is copied verbatim from a network-engine-worker run, so it also
+// pins that Go accepts serde's float formatting. Regenerate it by capturing an
+// earnings entry rather than by editing this literal.
 func TestNullRateSurvivesFromTheWireIntoTheStoredRow(t *testing.T) {
-	const fromWorker = `{"earner_id":"00000000-0000-0000-0000-000000000001",` +
-		`"source_id":"00000000-0000-0000-0000-000000000002","level":1,"rate":null,` +
-		`"cv_amount":1000,"dollar_amount":5,"walk":null}`
+	const fromWorker = `{"cv_amount":1000.0,"dollar_amount":5.0,` +
+		`"earner_id":"00000000-0000-0000-0000-000000000001","level":1,"rate":null,` +
+		`"source_id":"00000000-0000-0000-0000-000000000002","walk":null}`
 
 	var dto CommissionEarningDTO
 	if err := json.Unmarshal([]byte(fromWorker), &dto); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if dto.Rate != nil {
-		t.Fatalf("Rate = %v, want nil", *dto.Rate)
+
+	// Every field, not just rate. Asserting rate alone would stay green if a
+	// sibling key were renamed, which is the drift the golden files catch.
+	want := CommissionEarningDTO{
+		EarnerID:     "00000000-0000-0000-0000-000000000001",
+		SourceID:     "00000000-0000-0000-0000-000000000002",
+		Level:        1,
+		Rate:         nil,
+		CVAmount:     1000,
+		DollarAmount: 5,
+		Walk:         nil,
+	}
+	if !reflect.DeepEqual(dto, want) {
+		t.Fatalf("decoded = %+v, want %+v", dto, want)
 	}
 
 	got, err := ResultFromCommissionEarning(dto)
 	if err != nil {
 		t.Fatalf("ResultFromCommissionEarning: %v", err)
 	}
-	if !strings.Contains(string(got.Detail), `"rate":null`) {
-		t.Fatalf("detail = %s, want a null rate", got.Detail)
-	}
-	if !strings.Contains(string(got.Detail), `"v":3`) {
-		t.Fatalf("detail = %s, want version 3", got.Detail)
+	if want := goldenDetail(t, "commission_earning_wire_null_rate.json"); string(got.Detail) != want {
+		t.Fatalf("detail =\n%s\nwant\n%s", got.Detail, want)
 	}
 	if got.DollarAmount != 5 {
 		t.Fatalf("DollarAmount = %v, want 5", got.DollarAmount)

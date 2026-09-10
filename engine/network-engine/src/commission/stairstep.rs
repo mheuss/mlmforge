@@ -262,7 +262,7 @@ fn walk_overrides(
 /// Two override modes determine how the rate is resolved:
 /// - **Differential:** ancestor_rate - breakaway_rate, falling back to
 ///   `min_override` when the gap is zero or negative and both the ancestor
-///   rate and the floor are above zero.
+///   rate and the floor are above zero. Otherwise nothing is earned.
 /// - **FixedOverride:** flat per-rank rate lookup, independent of the
 ///   breakaway leader's rank.
 ///

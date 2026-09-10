@@ -394,3 +394,37 @@ func TestResultFromCommissionEarningStoresANullRateAsNull(t *testing.T) {
 		t.Fatalf("detail =\n%s\nwant\n%s", got.Detail, want)
 	}
 }
+
+// The cross-language assertion. A null rate decodes from the wire and reaches
+// the stored row still null. Each half is covered on its own above; this pins
+// the path between them, which is what the field's meaning depends on.
+//
+// The literal below was captured from a worker run rather than written by
+// hand. Adding omitempty to the stored shape drops the key and fails this.
+func TestNullRateSurvivesFromTheWireIntoTheStoredRow(t *testing.T) {
+	const fromWorker = `{"earner_id":"00000000-0000-0000-0000-000000000001",` +
+		`"source_id":"00000000-0000-0000-0000-000000000002","level":1,"rate":null,` +
+		`"cv_amount":1000,"dollar_amount":5,"walk":null}`
+
+	var dto CommissionEarningDTO
+	if err := json.Unmarshal([]byte(fromWorker), &dto); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if dto.Rate != nil {
+		t.Fatalf("Rate = %v, want nil", *dto.Rate)
+	}
+
+	got, err := ResultFromCommissionEarning(dto)
+	if err != nil {
+		t.Fatalf("ResultFromCommissionEarning: %v", err)
+	}
+	if !strings.Contains(string(got.Detail), `"rate":null`) {
+		t.Fatalf("detail = %s, want a null rate", got.Detail)
+	}
+	if !strings.Contains(string(got.Detail), `"v":3`) {
+		t.Fatalf("detail = %s, want version 3", got.Detail)
+	}
+	if got.DollarAmount != 5 {
+		t.Fatalf("DollarAmount = %v, want 5", got.DollarAmount)
+	}
+}

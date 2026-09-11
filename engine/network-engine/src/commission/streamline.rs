@@ -745,6 +745,73 @@ mod tests {
         );
     }
 
+    /// Records the boundary of what the ladder check buys: a rank the plan
+    /// defines is accepted even if the distributor has not earned it, so an
+    /// over-claim still clears a level threshold. HEU-714.
+    #[test]
+    fn an_in_ladder_over_claim_clears_a_level_threshold() {
+        let engine = make_engine(5);
+        let structure = make_structure(
+            vec![
+                level(1, "associate", 0.10),
+                level(2, "bronze", 0.05),
+                level(3, "silver", 0.02),
+            ],
+            5,
+        );
+        let mut plan = test_helpers::build_test_plan(
+            test_helpers::default_eligibility(),
+            crate::config::StructureConfig::Streamline(structure.clone()),
+            "test_streamline",
+        );
+        // 1-based. HEU-723.
+        plan.ranks = vec![
+            rank_def("associate", 1),
+            rank_def("bronze", 2),
+            rank_def("silver", 3),
+        ];
+
+        // Chain 1 -> 2 -> 3 -> 4 -> 5. Volume at 5 walks up 4, 3, 2, 1.
+        // Node 1 asserts silver, which the ladder holds, so the check passes it
+        // through and the level-3 threshold is cleared.
+        let mut snapshots = HashMap::new();
+        let ranks = ["silver", "bronze", "associate", "bronze", "associate"];
+        for (i, rank) in ranks.iter().enumerate() {
+            snapshots.insert(
+                test_uuid((i + 1) as u8),
+                DistributorSnapshot {
+                    rank: rank.to_string(),
+                    personal_volume: 150.0,
+                    status: "active".to_string(),
+                    has_order_in_period: true,
+                },
+            );
+        }
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(5),
+            cv_amount: 100.0,
+        }];
+
+        let earnings = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .expect("an in-ladder rank is accepted")
+        .earnings;
+
+        let top = earnings
+            .iter()
+            .find(|e| e.earner_id == test_uuid(1))
+            .expect("the asserted silver rank did not clear the level-3 threshold");
+        assert_eq!(top.level, 3);
+        assert_eq!(top.rate, Some(0.02));
+    }
+
     /// Pins the rank check above the per-source checks, per design decision 2.
     /// This input is bad on both counts: only the check order decides which
     /// error surfaces.

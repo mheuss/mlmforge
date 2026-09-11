@@ -279,7 +279,7 @@ Full document: [`content/design-rationale/016-eventstore-design.md`](content/des
 
 Full document: [`content/design-rationale/017-commission-calculation-architecture.md`](content/design-rationale/017-commission-calculation-architecture.md)
 
-**Summary:** Seven architectural decisions for all commission calculators. Snapshots carry facts, calculators apply rules. Flat `Vec<CommissionEarning>` output with no pre-grouping. Two-phase prep+walk pattern. Matrix reuses the unilevel walk (only difference is effective depth ceiling). No shared trait until three concrete implementations exist. Compression is part of the walk, not post-processing. Strict on caller-supplied state, upline snapshots and restored engine indexes included, which reversed the earlier leniency about missing upline nodes on 2026-09-10.
+**Summary:** Seven architectural decisions for all commission calculators. Snapshots carry facts, calculators apply rules. A flat, ungrouped `earnings` list inside a `CommissionCalculationResult`. Two-phase prep+walk pattern. Matrix reuses the unilevel walk (only difference is effective depth ceiling). No shared trait until three concrete implementations exist. Compression is part of the walk, not post-processing. Strict on caller-supplied state, upline snapshots and restored engine indexes included, which reversed the earlier leniency about missing upline nodes on 2026-09-10.
 
 ### ADR-018: Config Pipeline
 

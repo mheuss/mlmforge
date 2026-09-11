@@ -8,6 +8,7 @@ pub mod commission;
 pub mod config;
 pub mod rank;
 pub mod serde_helpers;
+pub mod snapshot;
 pub mod streamline;
 #[doc(hidden)]
 pub mod test_support;

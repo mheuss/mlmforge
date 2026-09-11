@@ -6264,3 +6264,390 @@ fn restore_rejects_undeserializable_data_with_invalid_params() {
     drop(worker.stdin.take());
     worker.wait().unwrap();
 }
+
+// ---- HEU-706: snapshots the engine produced still restore -------------------
+//
+// Design BR 11 and design Risk 3. A validator that rejects a snapshot the
+// engine itself produced is worse than the gap it closes, and only a positive
+// test catches that. Each case builds a state a strict validator is most likely
+// to reject, round-trips it, and compares a named query on both copies.
+//
+// A failure here means a validator is too strict, not that the test is wrong.
+
+/// Restores `data` under `name` and asserts the restore was accepted.
+fn restore_expecting_success(
+    worker: &mut std::process::Child,
+    name: &str,
+    tree_type: &str,
+    data: serde_json::Value,
+) {
+    let resp = restore_under(worker, name, tree_type, data);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "a snapshot the engine produced was rejected on restore: {}",
+        resp
+    );
+}
+
+fn query(worker: &mut std::process::Child, request: &str) -> serde_json::Value {
+    let resp = common::send_receive(worker, request);
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(
+        parsed["ok"].as_bool().unwrap_or(false),
+        "query failed: {}",
+        resp
+    );
+    parsed["result"].clone()
+}
+
+#[test]
+fn unilevel_snapshot_round_trip_survives_a_tombstone() {
+    // A removal leaves a tombstoned slot and a non-empty free list, which is
+    // the arena state the liveness checks are most likely to over-reject.
+    let mut worker = common::spawn_worker();
+    build_three_node_chain(&mut worker);
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"rm","op":"remove_node","params":{{"structure":"{}","user_id":"{}"}}}}"#,
+            TREE_NAME, GRANDCHILD
+        ),
+    );
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "remove_node failed: {}",
+        resp
+    );
+
+    let data = take_snapshot_data(&mut worker, TREE_NAME);
+    assert!(
+        !data["arena"]["free_list"].as_array().unwrap().is_empty(),
+        "the fixture should carry a free slot: {}",
+        data
+    );
+    restore_expecting_success(&mut worker, "URT", "unilevel", data);
+
+    let before = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"q1","op":"get_downline","params":{{"structure":"{}","user_id":"{}","depth":10}}}}"#,
+            TREE_NAME, ROOT
+        ),
+    );
+    let after = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"q2","op":"get_downline","params":{{"structure":"URT","user_id":"{}","depth":10}}}}"#,
+            ROOT
+        ),
+    );
+    assert_eq!(
+        before, after,
+        "the restored downline differs from the original"
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn binary_snapshot_round_trip_survives_a_vacated_slot() {
+    let mut worker = common::spawn_worker();
+    create_binary_tree(&mut worker, "BRT");
+    let root = "aaaaaaaa-0000-0000-0000-000000000001";
+    let left = "aaaaaaaa-0000-0000-0000-000000000002";
+    let right = "aaaaaaaa-0000-0000-0000-000000000003";
+    for (id, req) in [
+        (
+            "r",
+            format!(
+                r#"{{"id":"r","op":"add_root","params":{{"structure":"BRT","user_id":"{}","enrolled_at":100}}}}"#,
+                root
+            ),
+        ),
+        (
+            "l",
+            format!(
+                r#"{{"id":"l","op":"add_node","params":{{"structure":"BRT","user_id":"{}","parent_id":"{}","position":0,"sponsor_id":"{}","enrolled_at":200}}}}"#,
+                left, root, root
+            ),
+        ),
+        (
+            "rr",
+            format!(
+                r#"{{"id":"rr","op":"add_node","params":{{"structure":"BRT","user_id":"{}","parent_id":"{}","position":1,"sponsor_id":"{}","enrolled_at":300}}}}"#,
+                right, root, root
+            ),
+        ),
+    ] {
+        let resp = common::send_receive(&mut worker, &req);
+        assert!(resp.contains(r#""ok":true"#), "{} failed: {}", id, resp);
+    }
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"rm","op":"remove_node","params":{{"structure":"BRT","user_id":"{}"}}}}"#,
+            left
+        ),
+    );
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "remove_node failed: {}",
+        resp
+    );
+
+    let data = take_snapshot_data(&mut worker, "BRT");
+    restore_expecting_success(&mut worker, "BRT2", "binary", data);
+
+    let before = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"c1","op":"get_children","params":{{"structure":"BRT","user_id":"{}"}}}}"#,
+            root
+        ),
+    );
+    let after = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"c2","op":"get_children","params":{{"structure":"BRT2","user_id":"{}"}}}}"#,
+            root
+        ),
+    );
+    assert_eq!(
+        before, after,
+        "the restored children differ from the original"
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn matrix_snapshot_round_trip_survives_a_holding_tank_entry() {
+    // A width-2 matrix fills fast, so the third enrollment under the root
+    // spills or lands in the tank. Both are states the matrix checks touch.
+    let mut worker = common::spawn_worker();
+    create_matrix_tree_with_width(&mut worker, "MRT", 2);
+    let root = "bbbbbbbb-0000-0000-0000-000000000001";
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"r","op":"add_root","params":{{"structure":"MRT","user_id":"{}","enrolled_at":100}}}}"#,
+            root
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
+    for n in 2..=5u8 {
+        let user = format!("bbbbbbbb-0000-0000-0000-00000000000{}", n);
+        let resp = common::send_receive(
+            &mut worker,
+            &format!(
+                r#"{{"id":"a{}","op":"add_node","params":{{"structure":"MRT","user_id":"{}","sponsor_id":"{}","enrolled_at":{}}}}}"#,
+                n,
+                user,
+                root,
+                100 + n as i64
+            ),
+        );
+        assert!(
+            resp.contains(r#""ok":true"#),
+            "add_node {} failed: {}",
+            n,
+            resp
+        );
+    }
+
+    let data = take_snapshot_data(&mut worker, "MRT");
+    restore_expecting_success(&mut worker, "MRT2", "matrix", data);
+
+    // Guard against a vacuous fixture: a width-2 root holds two, so five
+    // enrollments must have spilled below the root or landed in the tank.
+    let depth = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"d1","op":"get_downline","params":{{"structure":"MRT","user_id":"{}","depth":10}}}}"#,
+            root
+        ),
+    );
+    assert_eq!(
+        depth.as_array().map(|a| a.len()),
+        Some(4),
+        "the fixture should have placed four users under the root: {}",
+        depth
+    );
+
+    let before = query(
+        &mut worker,
+        r#"{"id":"h1","op":"get_holding_tank","params":{"structure":"MRT"}}"#,
+    );
+    let after = query(
+        &mut worker,
+        r#"{"id":"h2","op":"get_holding_tank","params":{"structure":"MRT2"}}"#,
+    );
+    assert_eq!(
+        before, after,
+        "the restored holding tank differs from the original"
+    );
+
+    let pos_before = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"p1","op":"get_position","params":{{"structure":"MRT","user_id":"{}"}}}}"#,
+            root
+        ),
+    );
+    let pos_after = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"p2","op":"get_position","params":{{"structure":"MRT2","user_id":"{}"}}}}"#,
+            root
+        ),
+    );
+    assert_eq!(pos_before, pos_after, "the restored position differs");
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn board_plan_snapshot_round_trip_survives_a_cycled_board() {
+    // A 2x1 board holds three positions, so a fourth member cycles it and
+    // leaves the displaced/re-entry state a strict validator might reject.
+    let mut worker = common::spawn_worker();
+    let create = serde_json::json!({
+        "id": "bp-create", "op": "create_board_plan",
+        "params": {
+            "structure": "BPRT", "width": 2, "height": 1,
+            "config": {
+                "cycle_commission": 500.0, "re_entry_enabled": true,
+                "re_entry_position": "bottom", "max_cycles_per_period": 4,
+                "max_cascade_depth": 10, "stall_threshold_periods": 3,
+                "inactive_compression": false
+            },
+            "timestamp": 0
+        }
+    });
+    let resp = common::send_receive(&mut worker, &create.to_string());
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "create_board_plan failed: {}",
+        resp
+    );
+
+    let first = "cccccccc-0000-0000-0000-000000000001";
+    for n in 1..=4u8 {
+        let user = format!("cccccccc-0000-0000-0000-00000000000{}", n);
+        let add = serde_json::json!({
+            "id": format!("bp-add-{}", n), "op": "board_add_member",
+            "params": { "structure": "BPRT", "user_id": user, "sponsor_id": first, "timestamp": n as i64 }
+        });
+        let resp = common::send_receive(&mut worker, &add.to_string());
+        assert!(
+            resp.contains(r#""ok":true"#),
+            "board_add_member {} failed: {}",
+            n,
+            resp
+        );
+    }
+
+    let data = take_snapshot_data(&mut worker, "BPRT");
+    restore_expecting_success(&mut worker, "BPRT2", "board_plan", data);
+
+    // board_list sorts on created_at alone, and a cycle creates two boards in
+    // the same instant, so their relative order is whatever the map yielded.
+    // Compare the set, not the order.
+    let by_id = |v: serde_json::Value| {
+        let mut boards = v.as_array().expect("board_list returns an array").clone();
+        boards.sort_by_key(|b| b["id"].as_str().unwrap_or_default().to_string());
+        boards
+    };
+    let before = by_id(query(
+        &mut worker,
+        r#"{"id":"bl1","op":"board_list","params":{"structure":"BPRT"}}"#,
+    ));
+    let after = by_id(query(
+        &mut worker,
+        r#"{"id":"bl2","op":"board_list","params":{"structure":"BPRT2"}}"#,
+    ));
+    assert_eq!(
+        before, after,
+        "the restored board list differs from the original"
+    );
+    assert_eq!(
+        before.len(),
+        3,
+        "the fixture should have cycled into three boards"
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn streamline_snapshot_round_trip_survives_a_frozen_stream() {
+    let mut worker = common::spawn_worker();
+    create_streamline(&mut worker);
+    sl_add_member(&mut worker, "sl-1", SL_USER1, ROOT, 1001);
+    sl_add_member(&mut worker, "sl-2", SL_USER2, SL_USER1, 1002);
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"sl-exp","op":"streamline_expand_streams","params":{{"structure":"{}","user_id":"{}","total_allowed":2,"timestamp":2000}}}}"#,
+            SL_STRUCTURE, SL_USER1
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "expand failed: {}", resp);
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"sl-fr","op":"streamline_update_allowance","params":{{"structure":"{}","user_id":"{}","total_allowed":1,"timestamp":2001}}}}"#,
+            SL_STRUCTURE, SL_USER1
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "freeze failed: {}", resp);
+
+    let data = take_snapshot_data(&mut worker, SL_STRUCTURE);
+    restore_expecting_success(&mut worker, "SLRT", "streamline", data);
+
+    let before = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"l1","op":"streamline_list_streams","params":{{"structure":"{}"}}}}"#,
+            SL_STRUCTURE
+        ),
+    );
+    // Guard against a vacuous fixture: without a frozen stream this test
+    // round-trips the same shape the simple case already covers.
+    assert!(
+        before.to_string().contains(r#""frozen":true"#),
+        "the fixture should have frozen a stream: {}",
+        before
+    );
+    let after = query(
+        &mut worker,
+        r#"{"id":"l2","op":"streamline_list_streams","params":{"structure":"SLRT"}}"#,
+    );
+    assert_eq!(
+        before, after,
+        "the restored stream list differs from the original"
+    );
+
+    let m_before = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"m1","op":"streamline_get_member","params":{{"structure":"{}","user_id":"{}"}}}}"#,
+            SL_STRUCTURE, SL_USER2
+        ),
+    );
+    let m_after = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"m2","op":"streamline_get_member","params":{{"structure":"SLRT","user_id":"{}"}}}}"#,
+            SL_USER2
+        ),
+    );
+    assert_eq!(m_before, m_after, "the restored member differs");
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}

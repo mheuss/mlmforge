@@ -862,8 +862,8 @@ mod tests {
 
     #[test]
     fn validate_restored_wraps_a_nested_tree_fault_with_its_stream_id() {
-        // UnilevelTree's arena is private to its own module, so the fault is
-        // injected the way a real restore would produce it: through serde.
+        // Injected through serde, the way a real restore produces it, rather
+        // than by reaching into state this module cannot touch.
         let engine = seeded_streamline();
         let mut json = serde_json::to_value(&engine).unwrap();
         json["streams"]["1"]["tree"]["arena"]["index"]

@@ -28,6 +28,7 @@ pub fn calculate_unilevel(
     volume: &[VolumeSource],
     plan_identity: &PlanIdentity,
 ) -> Result<CommissionCalculationResult, CalculationError> {
+    walk::validate_snapshot_ranks(plan, snapshots)?;
     let rank_ordinals = walk::build_rank_ordinals(plan);
     let eligibility_cache = walk::evaluate_eligibility(snapshots, tree, &plan.eligibility);
 
@@ -414,12 +415,20 @@ mod tests {
 
         let structure = test_structure(test_rate_table());
         let plan = test_plan(default_eligibility());
+        // bronze is in the ladder and deliberately absent from the rate table.
+        // The subject is the rate lookup, not the ladder check.
+        let mut plan = plan;
+        plan.ranks.push(crate::commission::test_helpers::make_rank(
+            "bronze",
+            3,
+            vec!["Test Unilevel".to_string()],
+        ));
 
         let mut snapshots = HashMap::new();
         snapshots.insert(
             test_uuid(1),
             DistributorSnapshot {
-                rank: "bronze".to_string(), // not in rate table
+                rank: "bronze".to_string(), // in the ladder, not in the rate table
                 ..eligible_snapshot()
             },
         );
@@ -442,6 +451,47 @@ mod tests {
         .earnings;
 
         assert!(result.is_empty()); // no rate found, no earning
+    }
+
+    #[test]
+    fn calculate_unilevel_rejects_a_rank_not_in_the_ladder() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+
+        let structure = test_structure(test_rate_table());
+        let plan = test_plan(default_eligibility());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "diamond".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let err = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            CalculationError::UnknownSnapshotRank(test_uuid(1), "diamond".to_string())
+        );
     }
 
     #[test]

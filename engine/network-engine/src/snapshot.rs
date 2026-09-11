@@ -26,7 +26,7 @@ pub enum SnapshotConsistencyError {
     #[error("the index maps {user_id} to node slot {slot}; that slot is a tombstone")]
     IndexSlotTombstoned { user_id: Uuid, slot: usize },
 
-    #[error("node slot {slot} holds {user_id}; the index has no entry for it")]
+    #[error("node slot {slot} holds {user_id}; the index does not map that user to this slot")]
     NodeNotIndexed { slot: usize, user_id: Uuid },
 
     #[error(

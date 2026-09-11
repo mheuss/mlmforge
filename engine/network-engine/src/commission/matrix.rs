@@ -765,9 +765,8 @@ mod tests {
         );
     }
 
-    /// Pins the rank check below the topology guard. That guard's docblock
-    /// says it precedes all other work, so a mismatched tree must still win
-    /// over a bad rank. See HEU-525.
+    /// Pins the rank check below the topology guard: a mismatched tree must
+    /// still win over a bad rank. See HEU-525.
     #[test]
     fn topology_mismatch_wins_over_unknown_rank() {
         let structure = test_matrix_structure(3, 9, 5);

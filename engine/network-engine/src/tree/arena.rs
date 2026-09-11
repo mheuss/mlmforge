@@ -161,6 +161,47 @@ impl Arena {
         Ok(())
     }
 
+    /// Prove a child-slot map entry is in range and names a live slot.
+    pub(crate) fn check_slot_index(&self, slot: usize) -> Result<(), SnapshotConsistencyError> {
+        let node = self
+            .nodes
+            .get(slot)
+            .ok_or(SnapshotConsistencyError::ChildSlotOutOfRange {
+                slot,
+                node_count: self.nodes.len(),
+            })?;
+        if node.user_id == Uuid::nil() {
+            return Err(SnapshotConsistencyError::ChildSlotTombstoned { slot });
+        }
+        Ok(())
+    }
+
+    /// Prove every live node has a child-slot entry.
+    ///
+    /// `has_entry` answers whether a slot is a key in the caller's map. The
+    /// binary and matrix maps hold different value types and only the key
+    /// matters here.
+    ///
+    /// Ascending slot order, so a snapshot with several missing entries names
+    /// the same one on every run.
+    pub(crate) fn check_every_live_node_has_a_slot(
+        &self,
+        has_entry: impl Fn(NodeIndex) -> bool,
+    ) -> Result<(), SnapshotConsistencyError> {
+        for (slot, node) in self.nodes.iter().enumerate() {
+            if node.user_id == Uuid::nil() {
+                continue;
+            }
+            if !has_entry(NodeIndex(slot)) {
+                return Err(SnapshotConsistencyError::SlotEntryMissing {
+                    slot,
+                    user_id: node.user_id,
+                });
+            }
+        }
+        Ok(())
+    }
+
     fn check_edge(
         &self,
         field: &'static str,

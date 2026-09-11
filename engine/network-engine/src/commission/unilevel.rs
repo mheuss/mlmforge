@@ -19,7 +19,8 @@ use super::{walk, walk_order};
 /// # Errors
 ///
 /// Returns `CalculationError` if a snapshot names a rank the plan does not
-/// define, or if a volume source is not found in the tree or snapshot data.
+/// define, if a volume source is not found in the tree or snapshot data, or
+/// if a volume source's cv_amount is negative or not finite.
 pub fn calculate_unilevel(
     tree: &UnilevelTree,
     plan: &CompensationPlan,
@@ -417,7 +418,7 @@ mod tests {
         let mut plan = test_plan(default_eligibility());
         // bronze is in the ladder and deliberately absent from the rate table.
         // The subject is the rate lookup, not the ladder check. The ordinal is
-        // arbitrary and only has to be unique.
+        // arbitrary here; nothing in this test reads it.
         plan.ranks.push(crate::commission::test_helpers::make_rank(
             "bronze",
             3,
@@ -1163,10 +1164,8 @@ mod tests {
         ));
     }
 
-    /// Pins the rank check ahead of `validate_cv`. Every other rank test
-    /// carries a valid cv_amount, so moving the rank check below the volume
-    /// loop would leave the suite green. This input is bad on both counts:
-    /// only the order decides which error surfaces.
+    /// Pins the rank check ahead of `validate_cv`. This input is bad on both
+    /// counts: only the check order decides which error surfaces.
     #[test]
     fn unknown_rank_wins_over_invalid_cv() {
         let mut tree = UnilevelTree::new();

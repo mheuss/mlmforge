@@ -192,6 +192,9 @@ pub fn calculate_binary_pairing(
         }
     };
 
+    // Below the match on purpose. The Pairing arm's percent assert and the
+    // CycleStep arm's config validation each stay first on their own path,
+    // and the CycleStep arm has already returned by here.
     walk::validate_snapshot_ranks(plan, snapshots)?;
 
     let multiplier = structure
@@ -1976,7 +1979,14 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(matches!(err, CalculationError::ConfigError(_)));
+        // Pins which guard fired, so the docblock above stays true if the
+        // validation order inside CycleStepConfig::validate changes.
+        match err {
+            CalculationError::ConfigError(msg) => {
+                assert!(msg.contains("at least one step"), "wrong guard: {msg}")
+            }
+            other => panic!("expected ConfigError, got {other:?}"),
+        }
     }
 
     /// The CycleStep arm returns out of the mode match into its own function,

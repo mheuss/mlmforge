@@ -17,9 +17,10 @@ use super::{walk, walk_order};
 /// Calculate streamline commissions across all active streams.
 ///
 /// Rejects an invalid dynamic-compression config, and a snapshot naming a rank
-/// the plan does not define. Also rejects volume it cannot pay: a source with a non-finite or negative CV amount, a
-/// source held by no stream, or a source with no snapshot. A source held only
-/// by a frozen stream is accepted and earns nothing.
+/// the plan does not define. Also rejects volume it cannot pay: a source with
+/// a non-finite or negative CV amount, a source held by no stream, or a source
+/// with no snapshot. A source held only by a frozen stream is accepted and
+/// earns nothing.
 ///
 /// Each unfrozen stream is walked independently. Dynamic compression
 /// thresholds gate per-level qualification by rank ordinal. Monoline
@@ -706,7 +707,7 @@ mod tests {
             crate::config::StructureConfig::Streamline(structure.clone()),
             "test_streamline",
         );
-        // Ordinals are 1-based; the 0-based ladders nearby are drift. HEU-723.
+        // Ordinals are 1-based. HEU-723.
         plan.ranks = vec![rank_def("associate", 1), rank_def("bronze", 2)];
 
         // Node 1 asserts a rank the ladder does not hold.
@@ -773,7 +774,7 @@ mod tests {
             crate::config::StructureConfig::Streamline(structure.clone()),
             "test_streamline",
         );
-        // Ordinals are 1-based; the 0-based ladders nearby are drift. HEU-723.
+        // Ordinals are 1-based. HEU-723.
         plan.ranks = vec![
             rank_def("associate", 1),
             rank_def("bronze", 2),

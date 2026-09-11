@@ -5,8 +5,7 @@
 //! calculators. Each calculator remains a standalone public function
 //! that delegates to these shared internals.
 //!
-//! Binary uses pairing mechanics, not level-based walks. It calls
-//! `validate_snapshot_ranks` and nothing else here.
+//! Binary uses pairing mechanics, not level-based walks.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use uuid::Uuid;

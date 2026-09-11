@@ -2390,6 +2390,8 @@ mod calculate_tests {
     }
 
     /// Plan for the per-rank-depth tests: associate (1), silver (2), diamond (3).
+    /// Three ranks despite the name: associate joins the ladder because the
+    /// volume source carries it.
     fn silver_diamond_plan(
         structure: GenerationStructureConfig,
     ) -> crate::config::CompensationPlan {
@@ -2440,8 +2442,12 @@ mod calculate_tests {
     /// Chain: 0(Silver) -> 1(Silver) -> 2(Diamond) -> 3(Diamond) -> 4(Associate, source).
     /// SameRank mode. max_generations = 10. Per-rank depth: silver = 2, diamond = 5.
     ///
+    /// Three walks run, one per rank present in the snapshots: associate,
+    /// silver, diamond. The associate walk produces no earners and is not
+    /// traced below.
+    ///
     /// Silver walk (ordinal 2, walk_max=2):
-    ///   boundary_set = all ranked nodes {0, 1, 2, 3}.
+    ///   boundary_set = nodes at ordinal >= 2, which is {0, 1, 2, 3}.
     ///   Walking up from source: 3 (diamond, gen 1) -> 2 (diamond, gen 2) -> STOP.
     ///   Per-rank cap of 2 stops the walk before the actual Silver nodes (1, 0).
     ///   Filter to ordinal 2: zero earners.

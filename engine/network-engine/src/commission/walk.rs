@@ -740,8 +740,8 @@ mod tests {
 
     #[test]
     fn validate_snapshot_ranks_accepts_an_empty_rank() {
-        // An empty rank is how EvaluatedRank::Unranked reaches a commission
-        // snapshot. See design Architectural Decision 6.
+        // An empty rank is how an unranked distributor reaches a commission
+        // snapshot. HEU-608.
         let plan = test_plan_with_ranks(&[("associate", 1)]);
         let mut snapshots = HashMap::new();
         snapshots.insert(test_uuid(1), snapshot_with_rank(""));

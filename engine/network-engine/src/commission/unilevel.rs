@@ -18,8 +18,8 @@ use super::{walk, walk_order};
 ///
 /// # Errors
 ///
-/// Returns `CalculationError` if a volume source is not found in the
-/// tree or snapshot data.
+/// Returns `CalculationError` if a snapshot names a rank the plan does not
+/// define, or if a volume source is not found in the tree or snapshot data.
 pub fn calculate_unilevel(
     tree: &UnilevelTree,
     plan: &CompensationPlan,
@@ -414,10 +414,10 @@ mod tests {
             .unwrap();
 
         let structure = test_structure(test_rate_table());
-        let plan = test_plan(default_eligibility());
+        let mut plan = test_plan(default_eligibility());
         // bronze is in the ladder and deliberately absent from the rate table.
-        // The subject is the rate lookup, not the ladder check.
-        let mut plan = plan;
+        // The subject is the rate lookup, not the ladder check. The ordinal is
+        // arbitrary and only has to be unique.
         plan.ranks.push(crate::commission::test_helpers::make_rank(
             "bronze",
             3,
@@ -1161,6 +1161,46 @@ mod tests {
             result.unwrap_err(),
             CalculationError::InvalidCvAmount(id, _) if id == test_uuid(99)
         ));
+    }
+
+    /// Pins the rank check ahead of `validate_cv`. Every other rank test
+    /// carries a valid cv_amount, so moving the rank check below the volume
+    /// loop would leave the suite green. This input is bad on both counts:
+    /// only the order decides which error surfaces.
+    #[test]
+    fn unknown_rank_wins_over_invalid_cv() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+
+        let structure = test_structure(test_rate_table());
+        let plan = test_plan(default_eligibility());
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "diamond".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(1),
+            cv_amount: -50.0,
+        }];
+
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::UnknownSnapshotRank(test_uuid(1), "diamond".to_string())
+        );
     }
 
     #[test]

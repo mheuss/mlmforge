@@ -20,6 +20,10 @@ import (
 // envelope. A nullable field is a change to what a value means, which is the
 // case the exact comparison above exists for.
 //
+// Moved to 5 by HEU-608, which rejects a snapshot naming a rank the loaded
+// plan does not define. Requests that used to succeed now return an error,
+// so a client built for 4 would read a rejection as a new failure mode.
+//
 // This is the wire contract, not the stored row shape and not the authoring
 // format. Two other numbers nearby are also called a version: `detailVersion`
 // in commission_detail.go, and the plan schema version in

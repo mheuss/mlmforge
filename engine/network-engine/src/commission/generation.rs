@@ -264,8 +264,8 @@ fn emit_generation_earnings(
 /// # Errors
 ///
 /// Returns `CalculationError` if a snapshot names a rank the plan does not
-/// define, if a volume source is not found in the tree, or if a volume source
-/// has an invalid CV amount.
+/// define, if a volume source is not found in the tree or snapshot data, or if
+/// a volume source has an invalid CV amount.
 pub fn calculate_generation(
     tree: &UnilevelTree,
     plan: &CompensationPlan,

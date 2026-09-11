@@ -98,6 +98,27 @@ pub(crate) fn build_rank_ordinals(plan: &CompensationPlan) -> HashMap<&str, u16>
         .collect()
 }
 
+/// Reject a snapshot rank that is neither empty nor a rank in the plan's ladder.
+///
+/// An empty rank is how an unranked distributor is represented.
+pub(crate) fn validate_snapshot_ranks(
+    plan: &CompensationPlan,
+    snapshots: &HashMap<Uuid, DistributorSnapshot>,
+) -> Result<(), CalculationError> {
+    let known: HashSet<&str> = plan.ranks.iter().map(|r| r.name.as_str()).collect();
+    let offender = snapshots
+        .iter()
+        .filter(|(_, s)| !s.rank.is_empty() && !known.contains(s.rank.as_str()))
+        .min_by_key(|(id, _)| **id);
+    match offender {
+        Some((user_id, s)) => Err(CalculationError::UnknownSnapshotRank(
+            *user_id,
+            s.rank.clone(),
+        )),
+        None => Ok(()),
+    }
+}
+
 /// Resolve the SkipBelowRank threshold ordinal from compression config.
 ///
 /// Returns `Some(ordinal)` when compression is configured with
@@ -679,6 +700,95 @@ mod tests {
 
         let ordinals = build_rank_ordinals(&plan);
         assert_eq!(ordinals.get("associate"), Some(&1));
+    }
+
+    // --- validate_snapshot_ranks ---
+
+    fn test_plan_with_ranks(ranks: &[(&str, u16)]) -> CompensationPlan {
+        let mut plan = crate::commission::test_helpers::build_test_plan(
+            crate::commission::test_helpers::default_eligibility(),
+            crate::config::StructureConfig::Unilevel(crate::config::UnilevelStructureConfig {
+                name: "Test".to_string(),
+                level_commission: crate::config::commission::LevelCommissionConfig {
+                    broad_commission_percent: 0.40,
+                    volume_to_dollar_multiplier: None,
+                    max_depth: 5,
+                    rate_table: std::collections::BTreeMap::new(),
+                },
+                compression: None,
+                pass_up: None,
+            }),
+            "Test",
+        );
+        plan.ranks = ranks
+            .iter()
+            .map(|(name, ordinal)| {
+                crate::commission::test_helpers::make_rank(name, *ordinal, vec![])
+            })
+            .collect();
+        plan
+    }
+
+    #[test]
+    fn validate_snapshot_ranks_accepts_a_rank_in_the_ladder() {
+        let plan = test_plan_with_ranks(&[("associate", 1)]);
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), snapshot_with_rank("associate"));
+
+        assert!(validate_snapshot_ranks(&plan, &snapshots).is_ok());
+    }
+
+    #[test]
+    fn validate_snapshot_ranks_accepts_an_empty_rank() {
+        // An empty rank is how EvaluatedRank::Unranked reaches a commission
+        // snapshot. See design Architectural Decision 6.
+        let plan = test_plan_with_ranks(&[("associate", 1)]);
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), snapshot_with_rank(""));
+
+        assert!(validate_snapshot_ranks(&plan, &snapshots).is_ok());
+    }
+
+    #[test]
+    fn validate_snapshot_ranks_rejects_a_rank_not_in_the_ladder() {
+        let plan = test_plan_with_ranks(&[("associate", 1)]);
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), snapshot_with_rank("diamond"));
+
+        assert_eq!(
+            validate_snapshot_ranks(&plan, &snapshots),
+            Err(CalculationError::UnknownSnapshotRank(
+                test_uuid(1),
+                "diamond".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn validate_snapshot_ranks_reports_the_lowest_offending_user_id() {
+        // HashMap iteration order varies per run, so without min_by_key this
+        // test names a different user on different runs of the same input.
+        let plan = test_plan_with_ranks(&[("associate", 1)]);
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(3), snapshot_with_rank("diamond"));
+        snapshots.insert(test_uuid(1), snapshot_with_rank("platinum"));
+        snapshots.insert(test_uuid(2), snapshot_with_rank("associate"));
+
+        assert_eq!(
+            validate_snapshot_ranks(&plan, &snapshots),
+            Err(CalculationError::UnknownSnapshotRank(
+                test_uuid(1),
+                "platinum".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn validate_snapshot_ranks_accepts_an_empty_map() {
+        let plan = test_plan_with_ranks(&[("associate", 1)]);
+        let snapshots = HashMap::new();
+
+        assert!(validate_snapshot_ranks(&plan, &snapshots).is_ok());
     }
 
     // --- resolve_threshold_ordinal ---

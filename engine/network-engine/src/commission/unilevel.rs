@@ -1214,6 +1214,55 @@ mod tests {
         );
     }
 
+    #[test]
+    fn an_empty_upline_rank_is_accepted_and_earns_nothing() {
+        // rate_table has no "" row, so the lookup falls to 0.0 and the node
+        // takes no earning. Whether any caller actually sends an empty rank
+        // is HEU-719.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 0)
+            .unwrap();
+
+        let structure = test_structure(test_rate_table());
+        let plan = test_plan(default_eligibility());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+        snapshots.insert(
+            test_uuid(2),
+            DistributorSnapshot {
+                rank: "".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let earnings = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .expect("an empty rank is a valid unranked distributor")
+        .earnings;
+
+        assert!(
+            !earnings.iter().any(|e| e.earner_id == test_uuid(2)),
+            "the unranked node took an earning: {:?}",
+            earnings
+        );
+    }
+
     /// Pins the rank check above the walk, where `validate_cv` runs. This
     /// input is bad on both counts: only the check order decides which error
     /// surfaces. Holds in every profile.

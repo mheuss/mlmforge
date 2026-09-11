@@ -74,15 +74,15 @@ Compression cannot be applied as a post-processing step. The level assignments d
 
 This means compression behavior is tightly coupled to the walk loop. It has to be applied inline, inside the loop that assigns levels. Since HEU-200 that loop lives in `walk_level_commissions`. See decision [022](022-shared-commission-walk.md).
 
-### Defensive on Missing Data, Strict on Source Data
+### Strict on Caller-Supplied State
 
-Volume sources and their distributors must exist in the tree and snapshot. If they do not, the calculator returns an error. These are the explicit inputs to the calculation. Bad inputs produce meaningless results.
+Volume sources, their distributors, and every upline node the walk reaches must exist in the tree and in the snapshot map. A missing snapshot returns an error. So does a snapshot naming a rank the plan does not define, and a restored engine whose indexes disagree with the structures they index.
 
-Upline nodes missing from snapshots during a walk are treated as ineligible silently. The calculation continues. Missing upline data is a completeness issue, not an integrity issue. Halting an entire commission run because one distributor's snapshot is missing would be disproportionate.
+Volume amounts are validated too: `cv_amount` must be finite and non-negative. NaN, positive infinity, negative infinity, and negative values all produce `InvalidCvAmount` errors. These are input integrity checks, not business rules. A non-finite CV amount is always a bug upstream.
 
-Volume amounts are also validated: `cv_amount` must be finite and non-negative. NaN, positive infinity, negative infinity, and negative values all produce `InvalidCvAmount` errors. These are input integrity checks, not business rules. A non-finite CV amount is always a bug upstream.
+This decision was the reverse until 2026-09-10. Upline nodes missing from snapshots were treated as ineligible with no signal, on the grounds that missing upline data is a completeness issue rather than an integrity issue. That reasoning missed one thing. The snapshot map is a request parameter. Under compression a missing upline is skipped without consuming a level, so omitting one promotes every ancestor above it. Absence chosen by the caller and absence caused by a data gap are indistinguishable at the point of use. The engine cannot be lenient about one without being lenient about both.
 
-This split reflects the difference between "the caller gave us bad input" and "the data has gaps we can safely work around." Strict on the former. Defensive on the latter.
+> **Decided, and three parts of it have not landed.** Checked 2026-09-11. What holds today: volume sources and their distributors must exist in the tree and snapshot, `cv_amount` is validated as described above, and streamline errors on volume it cannot pay rather than dropping it silently, which HEU-611 landed at protocol 3. What does not hold yet: a missing upline snapshot is still skipped silently, and `UplineNotInSnapshot` does not exist in `commission/` (HEU-609, protocol 6). A snapshot rank absent from the plan's ladder still reaches a rate lookup (HEU-608, protocol 5). A restored engine's indexes are still unchecked (HEU-706, protocol 7). The decision above is what the engine is being moved to, not a description of what it does in every case right now.
 
 ## What This Enables
 

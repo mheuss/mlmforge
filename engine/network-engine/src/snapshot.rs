@@ -29,7 +29,9 @@ pub enum SnapshotConsistencyError {
     #[error("node slot {slot} holds {user_id}; the index has no entry for it")]
     NodeNotIndexed { slot: usize, user_id: Uuid },
 
-    #[error("{field} on node slot {slot} names node slot {target}; the arena holds {node_count} slots")]
+    #[error(
+        "{field} on node slot {slot} names node slot {target}; the arena holds {node_count} slots"
+    )]
     EdgeOutOfRange {
         field: &'static str,
         slot: usize,
@@ -71,7 +73,9 @@ pub enum SnapshotConsistencyError {
     #[error("node slot {slot} holds {user_id}; the child slot map has no entry for it")]
     SlotEntryMissing { slot: usize, user_id: Uuid },
 
-    #[error("the child slot map gives node slot {slot} {found} child slots; the tree width is {width}")]
+    #[error(
+        "the child slot map gives node slot {slot} {found} child slots; the tree width is {width}"
+    )]
     ChildSlotWidthMismatch {
         slot: usize,
         found: usize,
@@ -84,19 +88,27 @@ pub enum SnapshotConsistencyError {
     #[error("member_boards puts {user_id} on board {board_id}; the engine holds no such board")]
     BoardAbsent { user_id: Uuid, board_id: Uuid },
 
-    #[error("member_boards puts {user_id} on board {board_id}; that board's positions do not hold them")]
+    #[error(
+        "member_boards puts {user_id} on board {board_id}; that board's positions do not hold them"
+    )]
     MemberNotOnBoard { user_id: Uuid, board_id: Uuid },
 
     #[error("user_streams lists stream {stream_id} for {user_id}; the engine holds no such stream")]
     StreamAbsent { user_id: Uuid, stream_id: u32 },
 
-    #[error("user_streams lists stream {stream_id} for {user_id}; that stream's tree does not hold them")]
+    #[error(
+        "user_streams lists stream {stream_id} for {user_id}; that stream's tree does not hold them"
+    )]
     UserNotInStreamTree { user_id: Uuid, stream_id: u32 },
 
-    #[error("stream_owners lists stream {stream_id} for {user_id}; the engine holds no such stream")]
+    #[error(
+        "stream_owners lists stream {stream_id} for {user_id}; the engine holds no such stream"
+    )]
     OwnerStreamAbsent { user_id: Uuid, stream_id: u32 },
 
-    #[error("stream_owners lists stream {stream_id} for {user_id}; that stream's owner is {owner_id}")]
+    #[error(
+        "stream_owners lists stream {stream_id} for {user_id}; that stream's owner is {owner_id}"
+    )]
     StreamOwnerMismatch {
         user_id: Uuid,
         stream_id: u32,

@@ -1164,6 +1164,50 @@ mod tests {
         ));
     }
 
+    /// Pins the rank check ahead of `validate_broad_pct`, whose `debug_assert`
+    /// aborts the call rather than returning. An `Err` here means the rank
+    /// check ran first; a panic means it did not.
+    ///
+    /// `unknown_rank_wins_over_invalid_cv` only pins the check above the walk.
+    /// This one pins it above the config guards too.
+    #[test]
+    fn unknown_rank_is_rejected_before_the_broad_pct_guard() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+
+        let mut structure = test_structure(test_rate_table());
+        structure.level_commission.broad_commission_percent = 1.5;
+        let plan = test_plan(default_eligibility());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "diamond".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(1),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::UnknownSnapshotRank(test_uuid(1), "diamond".to_string())
+        );
+    }
+
     /// Pins the rank check ahead of `validate_cv`. This input is bad on both
     /// counts: only the check order decides which error surfaces.
     #[test]

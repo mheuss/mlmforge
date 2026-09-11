@@ -107,8 +107,8 @@ impl MatrixTree {
                 });
             }
         }
-        // Same completeness rule as binary. A live node the map has forgotten
-        // panics on the next query rather than returning a wrong answer.
+        // A live node the map has forgotten panics on the next query rather
+        // than returning a wrong answer.
         self.arena.check_every_live_node_has_a_slot(&self.slots)?;
         Ok(())
     }

@@ -43,32 +43,46 @@ impl Arena {
         let node_count = self.nodes.len();
 
         // index -> nodes
+        //
+        // Keep the lowest-user_id fault rather than returning on the first one
+        // found: self.index is a HashMap with a randomized hasher, so returning
+        // early makes which offender gets named vary between runs on the same
+        // input. Still one pass.
+        let mut fault: Option<(Uuid, SnapshotConsistencyError)> = None;
         for (user_id, idx) in &self.index {
-            let slot =
-                self.nodes
-                    .get(idx.0)
-                    .ok_or(SnapshotConsistencyError::IndexSlotOutOfRange {
-                        user_id: *user_id,
-                        slot: idx.0,
-                        node_count,
-                    })?;
             // Liveness before equality. A tombstone's user_id is Uuid::nil(),
             // so an index entry of nil -> tombstoned slot satisfies the
-            // equality below and the node pass then skips the tombstone. The
+            // equality check and the node pass then skips the tombstone. The
             // entry would survive both passes.
-            if slot.user_id == Uuid::nil() {
-                return Err(SnapshotConsistencyError::IndexSlotTombstoned {
+            let found = match self.nodes.get(idx.0) {
+                None => Some(SnapshotConsistencyError::IndexSlotOutOfRange {
                     user_id: *user_id,
                     slot: idx.0,
-                });
+                    node_count,
+                }),
+                Some(slot) if slot.user_id == Uuid::nil() => {
+                    Some(SnapshotConsistencyError::IndexSlotTombstoned {
+                        user_id: *user_id,
+                        slot: idx.0,
+                    })
+                }
+                Some(slot) if slot.user_id != *user_id => {
+                    Some(SnapshotConsistencyError::IndexSlotMismatch {
+                        user_id: *user_id,
+                        slot: idx.0,
+                        found: slot.user_id,
+                    })
+                }
+                Some(_) => None,
+            };
+            if let Some(err) = found
+                && fault.as_ref().is_none_or(|(held, _)| user_id < held)
+            {
+                fault = Some((*user_id, err));
             }
-            if slot.user_id != *user_id {
-                return Err(SnapshotConsistencyError::IndexSlotMismatch {
-                    user_id: *user_id,
-                    slot: idx.0,
-                    found: slot.user_id,
-                });
-            }
+        }
+        if let Some((_, err)) = fault {
+            return Err(err);
         }
 
         // nodes -> index, and every edge on every live node
@@ -942,6 +956,29 @@ mod tests {
                     field: expected,
                 }),
                 "a tombstone keeping {field} was not rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_offender_every_run() {
+        // The index is a HashMap with a randomized hasher, so a per-run
+        // iteration order would make a two-fault arena report either one. A
+        // rejection an operator cannot reproduce is worse than a slower check.
+        // Fresh arena each iteration, so each gets its own hasher seed.
+        for _ in 0..64 {
+            let mut arena = live_arena();
+            arena.index.insert(test_uuid(3), NodeIndex(98));
+            arena.index.insert(test_uuid(2), NodeIndex(99));
+
+            assert_eq!(
+                arena.validate_restored(),
+                Err(SnapshotConsistencyError::IndexSlotOutOfRange {
+                    user_id: test_uuid(2),
+                    slot: 99,
+                    node_count: 1,
+                }),
+                "the lowest user_id should win regardless of hash order"
             );
         }
     }

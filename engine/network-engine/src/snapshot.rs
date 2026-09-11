@@ -121,6 +121,9 @@ pub enum SnapshotConsistencyError {
     )]
     MemberNotOnBoard { user_id: Uuid, board_id: Uuid },
 
+    #[error("user_streams lists no streams for {user_id}")]
+    UserStreamsEntryEmpty { user_id: Uuid },
+
     #[error("user_streams lists stream {stream_id} for {user_id}; the engine holds no such stream")]
     StreamAbsent { user_id: Uuid, stream_id: u32 },
 

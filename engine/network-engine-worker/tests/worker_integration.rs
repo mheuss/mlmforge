@@ -5998,23 +5998,21 @@ fn restore_under(
     common::send_receive(worker, &req.to_string())
 }
 
-/// Asserts the code AND a fragment of the observation the message must carry.
-///
-/// The code alone is one value shared by every consistency variant, so a
-/// mutation that trips a different guard than the one a test is named for still
-/// reads green. `observation` pins which invariant actually fired.
-fn assert_inconsistent(resp: &str, observation: &str) {
+/// Asserts the code and every fragment the message must carry.
+fn assert_inconsistent(resp: &str, observations: &[&str]) {
     assert!(
         resp.contains(r#""ok":false"#) && resp.contains("INCONSISTENT_SNAPSHOT"),
         "expected INCONSISTENT_SNAPSHOT, got: {}",
         resp
     );
-    assert!(
-        resp.contains(observation),
-        "expected the message to report {:?}, got: {}",
-        observation,
-        resp
-    );
+    for observation in observations {
+        assert!(
+            resp.contains(observation),
+            "expected the message to report {:?}, got: {}",
+            observation,
+            resp
+        );
+    }
 }
 
 #[test]
@@ -6032,7 +6030,7 @@ fn restore_rejects_a_unilevel_index_past_the_end() {
         );
 
     let resp = restore_under(&mut worker, "R1", "unilevel", data);
-    assert_inconsistent(&resp, "the arena holds");
+    assert_inconsistent(&resp, &["the index maps", "the arena holds"]);
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -6066,7 +6064,7 @@ fn restore_rejects_a_unilevel_index_on_a_tombstone() {
         .insert("22222222-2222-2222-2222-222222222222".to_string(), freed);
 
     let resp = restore_under(&mut worker, "R2", "unilevel", data);
-    assert_inconsistent(&resp, "that slot is a tombstone");
+    assert_inconsistent(&resp, &["the index maps", "that slot is a tombstone"]);
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -6088,7 +6086,10 @@ fn restore_rejects_a_binary_child_slot_past_the_end() {
     slots.insert(key, serde_json::json!([99, null]));
 
     let resp = restore_under(&mut worker, "R3", "binary", data);
-    assert_inconsistent(&resp, "the child slot map names node slot");
+    assert_inconsistent(
+        &resp,
+        &["the child slot map names node slot", "the arena holds"],
+    );
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -6107,15 +6108,17 @@ fn restore_rejects_a_matrix_slot_vector_of_the_wrong_width() {
     let mut data = take_snapshot_data(&mut worker, "MatTree");
     let slots = data["slots"].as_object_mut().expect("matrix carries slots");
     let key = slots.keys().next().cloned().expect("one slots entry");
-    let shortened = slots[&key]
+    let vector = slots[&key]
         .as_array()
-        .and_then(|v| v.split_last())
-        .map(|(_, rest)| rest.to_vec())
-        .expect("a non-empty slot vector");
+        .expect("matrix slots entry should be an array");
+    let (_, shortened) = vector
+        .split_last()
+        .expect("slot vector should not be empty");
+    let shortened = shortened.to_vec();
     slots.insert(key, serde_json::Value::Array(shortened));
 
     let resp = restore_under(&mut worker, "R4", "matrix", data);
-    assert_inconsistent(&resp, "child slots; the tree width is");
+    assert_inconsistent(&resp, &["child slots; the tree width is"]);
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -6171,7 +6174,7 @@ fn restore_rejects_a_board_member_on_an_absent_board() {
     );
 
     let resp = restore_under(&mut worker, "R5", "board_plan", data);
-    assert_inconsistent(&resp, "the engine holds no such board");
+    assert_inconsistent(&resp, &["the engine holds no such board"]);
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -6195,7 +6198,13 @@ fn restore_rejects_a_streamline_user_not_in_the_stream_tree() {
         );
 
     let resp = restore_under(&mut worker, "R6", "streamline", data);
-    assert_inconsistent(&resp, "that stream's tree does not hold them");
+    assert_inconsistent(
+        &resp,
+        &[
+            "user_streams lists stream",
+            "that stream's tree does not hold them",
+        ],
+    );
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -6220,10 +6229,8 @@ fn restore_rejects_a_streamline_nested_arena_fault() {
             serde_json::json!(99),
         );
 
-    // "is inconsistent" is the wrapper's own wording. Matching on "stream"
-    // alone would pass for every streamline variant, wrapper or not.
     let resp = restore_under(&mut worker, "R7", "streamline", data);
-    assert_inconsistent(&resp, "stream 1 is inconsistent");
+    assert_inconsistent(&resp, &["stream 1 is inconsistent", "the arena holds"]);
 
     drop(worker.stdin.take());
     worker.wait().unwrap();

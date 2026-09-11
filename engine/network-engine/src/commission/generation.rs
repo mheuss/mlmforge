@@ -1116,6 +1116,47 @@ mod calculate_tests {
         );
     }
 
+    /// Pins the rank check above the per-source checks, per design decision 2.
+    /// This input is bad on both counts: only the check order decides which
+    /// error surfaces. Holds in every profile.
+    #[test]
+    fn generation_unknown_rank_wins_over_invalid_cv() {
+        let tree = build_chain(3);
+        let plan = two_rank_plan();
+        let structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
+
+        let mut snapshots: HashMap<_, _> = HashMap::new();
+        snapshots.insert(uuid(0), director_snapshot());
+        snapshots.insert(
+            uuid(1),
+            DistributorSnapshot {
+                rank: "diamond".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(uuid(2), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: -50.0,
+        }];
+
+        let err = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            CalculationError::UnknownSnapshotRank(uuid(1), "diamond".to_string())
+        );
+    }
+
     /// Pins the rank check ahead of the boundary-rank resolution, which
     /// returns `Ok` with no earnings when the configured boundary rank is not
     /// in the ladder. An `Err` proves the rank check ran first.
@@ -2356,23 +2397,9 @@ mod calculate_tests {
         let structure_config = StructureConfig::Generation(structure);
         let mut plan = build_test_plan(default_eligibility(), structure_config, "Generation");
         plan.ranks = vec![
-            // The volume source carries eligible_snapshot's "associate". Ordinal
-            // 0 is what an unresolved rank already scored in the boundary sets,
-            // so naming it here leaves those sets unchanged.
+            // eligible_snapshot() carries "associate"; the ladder must name it.
             RankDefinition {
                 name: "associate".to_string(),
-                ordinal: 0,
-                qualification: RankQualification {
-                    structures: vec![],
-                    required_products: vec![],
-                    window: None,
-                    tenure: None,
-                },
-                qualified_structures: vec!["Generation".to_string()],
-                demotion_policy: DemotionPolicy::PromotionOnly,
-            },
-            RankDefinition {
-                name: "silver".to_string(),
                 ordinal: 1,
                 qualification: RankQualification {
                     structures: vec![],
@@ -2384,8 +2411,20 @@ mod calculate_tests {
                 demotion_policy: DemotionPolicy::PromotionOnly,
             },
             RankDefinition {
-                name: "diamond".to_string(),
+                name: "silver".to_string(),
                 ordinal: 2,
+                qualification: RankQualification {
+                    structures: vec![],
+                    required_products: vec![],
+                    window: None,
+                    tenure: None,
+                },
+                qualified_structures: vec!["Generation".to_string()],
+                demotion_policy: DemotionPolicy::PromotionOnly,
+            },
+            RankDefinition {
+                name: "diamond".to_string(),
+                ordinal: 3,
                 qualification: RankQualification {
                     structures: vec![],
                     required_products: vec![],

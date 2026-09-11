@@ -765,6 +765,47 @@ mod tests {
         );
     }
 
+    /// Pins the rank check above the per-source checks, per design decision 2.
+    /// This input is bad on both counts: only the check order decides which
+    /// error surfaces. Holds in every profile.
+    #[test]
+    fn matrix_unknown_rank_wins_over_invalid_cv() {
+        let structure = test_matrix_structure(3, 9, 5);
+        let plan = test_plan(structure.clone());
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(0),
+            DistributorSnapshot {
+                rank: "diamond".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(0),
+            cv_amount: -50.0,
+        }];
+
+        let err = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            CalculationError::UnknownSnapshotRank(test_uuid(0), "diamond".to_string())
+        );
+    }
+
     /// Pins the rank check below the topology guard: a mismatched tree must
     /// still win over a bad rank. See HEU-525.
     #[test]

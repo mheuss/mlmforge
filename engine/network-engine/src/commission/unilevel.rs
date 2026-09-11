@@ -1172,8 +1172,8 @@ mod tests {
     /// compiled out and this test would pass on the ordering it exists to
     /// reject, so it is removed rather than left to pass falsely.
     ///
-    /// `unilevel_unknown_rank_wins_over_invalid_cv` pins the check above the walk, in
-    /// every profile. This one pins it above the config guards too.
+    /// `unilevel_unknown_rank_wins_over_invalid_cv` pins the check above the
+    /// walk, in every profile. This one pins it above the config guards too.
     #[test]
     #[cfg(debug_assertions)]
     fn unknown_rank_is_rejected_before_the_broad_pct_guard() {

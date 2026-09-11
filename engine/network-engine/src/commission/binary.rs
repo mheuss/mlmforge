@@ -150,9 +150,10 @@ fn accumulate_leg_volumes(
 ///
 /// # Errors
 ///
-/// Returns `CalculationError` if a snapshot names a rank the plan does not
-/// define, if a volume source is not found in the tree or snapshot data, or if
-/// a volume source has an invalid cv_amount.
+/// Returns `CalculationError` if the cycle-step config is invalid, if a
+/// snapshot names a rank the plan does not define, if a volume source is not
+/// found in the tree or snapshot data, or if a volume source has an invalid
+/// cv_amount.
 pub fn calculate_binary_pairing(
     tree: &BinaryTree,
     plan: &CompensationPlan,
@@ -1858,6 +1859,52 @@ mod tests {
         let tree = three_node_tree();
         let plan = test_plan(default_eligibility());
         let structure = test_binary_structure();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "diamond".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(2),
+            cv_amount: -50.0,
+        }];
+
+        let err = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            None,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            CalculationError::UnknownSnapshotRank(test_uuid(1), "diamond".to_string())
+        );
+    }
+
+    /// Pins the cycle-step rank check above `aggregate_volume`. The pairing
+    /// arm is pinned on both sides by its own two tests; without this the
+    /// cycle-step arm is pinned below `validate` only.
+    #[test]
+    fn cycle_step_unknown_rank_wins_over_invalid_cv() {
+        let steps = vec![CycleStep {
+            threshold: 300.0,
+            amount: 25.0,
+        }];
+        let structure = test_cycle_step_structure(steps, VolumeAfterPayout::FullFlush);
+        let tree = three_node_tree();
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
         snapshots.insert(

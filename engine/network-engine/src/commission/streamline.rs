@@ -16,8 +16,8 @@ use super::{walk, walk_order};
 
 /// Calculate streamline commissions across all active streams.
 ///
-/// Rejects a snapshot naming a rank the plan does not define. Also rejects
-/// volume it cannot pay: a source with a non-finite or negative CV amount, a
+/// Rejects an invalid dynamic-compression config, and a snapshot naming a rank
+/// the plan does not define. Also rejects volume it cannot pay: a source with a non-finite or negative CV amount, a
 /// source held by no stream, or a source with no snapshot. A source held only
 /// by a frozen stream is accepted and earns nothing.
 ///
@@ -706,7 +706,7 @@ mod tests {
             crate::config::StructureConfig::Streamline(structure.clone()),
             "test_streamline",
         );
-        // 1-based; the ordinal-0 fixtures in this file are drift. HEU-723.
+        // 1-based. HEU-723.
         plan.ranks = vec![rank_def("associate", 1), rank_def("bronze", 2)];
 
         // Node 1 asserts a rank the ladder does not hold.
@@ -841,7 +841,14 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(matches!(err, CalculationError::ConfigError(_)));
+        // Pins which of the four guards fired, so the docblock above stays
+        // true if a refactor changes the order.
+        match err {
+            CalculationError::ConfigError(msg) => {
+                assert!(msg.contains("no entry for level 1"), "wrong guard: {msg}")
+            }
+            other => panic!("expected ConfigError, got {other:?}"),
+        }
     }
 
     #[test]

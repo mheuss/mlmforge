@@ -6397,6 +6397,14 @@ fn binary_snapshot_round_trip_survives_a_vacated_slot() {
     );
 
     let data = take_snapshot_data(&mut worker, "BRT");
+    assert!(
+        !data["arena"]["free_list"]
+            .as_array()
+            .expect("binary snapshot should carry arena.free_list")
+            .is_empty(),
+        "the fixture should have vacated a slot: {}",
+        data
+    );
     restore_expecting_success(&mut worker, "BRT2", "binary", data);
 
     let before = query(
@@ -6417,6 +6425,25 @@ fn binary_snapshot_round_trip_survives_a_vacated_slot() {
         before, after,
         "the restored children differ from the original"
     );
+
+    // get_children carries user_id, depth and enrolled_at but not the slot, so
+    // a restore that moved the survivor into the vacated slot would compare
+    // equal. get_position is what exposes the slot index.
+    let pos_before = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"bp1","op":"get_position","params":{{"structure":"BRT","user_id":"{}"}}}}"#,
+            right
+        ),
+    );
+    let pos_after = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"bp2","op":"get_position","params":{{"structure":"BRT2","user_id":"{}"}}}}"#,
+            right
+        ),
+    );
+    assert_eq!(pos_before, pos_after, "the restored slot position differs");
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -6457,29 +6484,53 @@ fn matrix_snapshot_round_trip_survives_a_holding_tank_entry() {
         );
     }
 
-    let data = take_snapshot_data(&mut worker, "MRT");
-    restore_expecting_success(&mut worker, "MRT2", "matrix", data);
-
-    // Guard against a vacuous fixture: a width-2 root holds two, so four
-    // enrollments must have spilled below the root or landed in the tank.
-    let depth = query(
+    // Removing a placed node under holding_tank is the only engine path that
+    // fills the tank. Without it this test compares two empty arrays.
+    let tanked = "bbbbbbbb-0000-0000-0000-000000000004";
+    let resp = common::send_receive(
         &mut worker,
         &format!(
-            r#"{{"id":"d1","op":"get_downline","params":{{"structure":"MRT","user_id":"{}","depth":10}}}}"#,
+            r#"{{"id":"rm","op":"remove_node","params":{{"structure":"MRT","user_id":"{}","pruning_mode":"holding_tank"}}}}"#,
+            tanked
+        ),
+    );
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "remove_node failed: {}",
+        resp
+    );
+
+    // Guards on the states this test is named for, read before any restore.
+    let children = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"g1","op":"get_children","params":{{"structure":"MRT","user_id":"{}"}}}}"#,
             root
         ),
     );
     assert_eq!(
-        depth.as_array().map(|a| a.len()),
-        Some(4),
-        "the fixture should have placed four users under the root: {}",
-        depth
+        children.as_array().map(|a| a.len()),
+        Some(2),
+        "a width-2 root should hold two children, so the rest spilled: {}",
+        children
     );
 
     let before = query(
         &mut worker,
         r#"{"id":"h1","op":"get_holding_tank","params":{"structure":"MRT"}}"#,
     );
+    assert!(
+        !before
+            .as_array()
+            .expect("holding tank is an array")
+            .is_empty(),
+        "the fixture should have put a user in the tank: {}",
+        before
+    );
+
+    let data = take_snapshot_data(&mut worker, "MRT");
+    restore_expecting_success(&mut worker, "MRT2", "matrix", data);
+
     let after = query(
         &mut worker,
         r#"{"id":"h2","op":"get_holding_tank","params":{"structure":"MRT2"}}"#,
@@ -6489,18 +6540,26 @@ fn matrix_snapshot_round_trip_survives_a_holding_tank_entry() {
         "the restored holding tank differs from the original"
     );
 
+    // A spilled user, not the root: the root's slot is trivially fixed, and
+    // the slots map is what the matrix checks actually read.
+    let spilled = "bbbbbbbb-0000-0000-0000-000000000005";
     let pos_before = query(
         &mut worker,
         &format!(
             r#"{{"id":"p1","op":"get_position","params":{{"structure":"MRT","user_id":"{}"}}}}"#,
-            root
+            spilled
         ),
+    );
+    assert!(
+        pos_before["depth"].as_u64().unwrap_or(0) >= 2,
+        "the fixture should have spilled this user below the root: {}",
+        pos_before
     );
     let pos_after = query(
         &mut worker,
         &format!(
             r#"{{"id":"p2","op":"get_position","params":{{"structure":"MRT2","user_id":"{}"}}}}"#,
-            root
+            spilled
         ),
     );
     assert_eq!(pos_before, pos_after, "the restored position differs");
@@ -6550,7 +6609,51 @@ fn board_plan_snapshot_round_trip_survives_a_cycled_board() {
         );
     }
 
+    // Dissolving a board is the engine's producer of a displaced member. The
+    // cycle alone never makes one: re-entry always finds a fresh child board,
+    // so displaced_members stays empty.
+    let boards = query(
+        &mut worker,
+        r#"{"id":"bl0","op":"board_list","params":{"structure":"BPRT"}}"#,
+    );
+    // More than the one board it started with, so a cycle split it. The exact
+    // count depends on which board min_by_key picks among equal created_at
+    // values, so it is not asserted.
+    assert!(
+        boards
+            .as_array()
+            .expect("board_list returns an array")
+            .len()
+            > 1,
+        "the fixture should have cycled and split: {}",
+        boards
+    );
+    let doomed = boards.as_array().expect("board_list returns an array")[0]["id"]
+        .as_str()
+        .expect("a board id")
+        .to_string();
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"bd","op":"board_dissolve","params":{{"structure":"BPRT","board_id":"{}","timestamp":9}}}}"#,
+            doomed
+        ),
+    );
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "board_dissolve failed: {}",
+        resp
+    );
+
     let data = take_snapshot_data(&mut worker, "BPRT");
+    assert!(
+        !data["displaced_members"]
+            .as_array()
+            .expect("board plan snapshot should carry displaced_members")
+            .is_empty(),
+        "the fixture should have displaced a member: {}",
+        data
+    );
     restore_expecting_success(&mut worker, "BPRT2", "board_plan", data);
 
     // board_list sorts on created_at alone, and a cycle creates two boards in
@@ -6573,10 +6676,32 @@ fn board_plan_snapshot_round_trip_survives_a_cycled_board() {
         before, after,
         "the restored board list differs from the original"
     );
+    assert!(
+        !before.is_empty(),
+        "the restored engine should still hold boards"
+    );
+
+    // BoardSummary carries counts, not occupants, so a restore that scrambled
+    // positions while preserving filled_count would compare equal above.
+    // board_get_state is what shows who sits where.
+    let survivor = before[0]["id"].as_str().expect("a board id").to_string();
+    let state_before = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"bs1","op":"board_get_state","params":{{"structure":"BPRT","board_id":"{}"}}}}"#,
+            survivor
+        ),
+    );
+    let state_after = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"bs2","op":"board_get_state","params":{{"structure":"BPRT2","board_id":"{}"}}}}"#,
+            survivor
+        ),
+    );
     assert_eq!(
-        before.len(),
-        3,
-        "the fixture should have cycled into three boards"
+        state_before, state_after,
+        "the restored board occupants differ from the original"
     );
 
     drop(worker.stdin.take());

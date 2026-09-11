@@ -1172,7 +1172,7 @@ mod tests {
     /// compiled out and this test would pass on the ordering it exists to
     /// reject, so it is removed rather than left to pass falsely.
     ///
-    /// `unknown_rank_wins_over_invalid_cv` pins the check above the walk, in
+    /// `unilevel_unknown_rank_wins_over_invalid_cv` pins the check above the walk, in
     /// every profile. This one pins it above the config guards too.
     #[test]
     #[cfg(debug_assertions)]
@@ -1216,9 +1216,7 @@ mod tests {
 
     #[test]
     fn an_empty_upline_rank_is_accepted_and_earns_nothing() {
-        // rate_table has no "" row, so the lookup falls to 0.0 and the node
-        // takes no earning. Whether any caller actually sends an empty rank
-        // is HEU-719.
+        // Whether any caller actually sends an empty rank is HEU-719.
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
@@ -1256,10 +1254,18 @@ mod tests {
         .expect("an empty rank is a valid unranked distributor")
         .earnings;
 
+        // The walk must reach past node 2 rather than stop at it, or the
+        // assertion below would hold for an empty result too.
+        assert_eq!(
+            earnings.len(),
+            1,
+            "expected only node 1 to earn: {earnings:?}"
+        );
+        assert_eq!(earnings[0].earner_id, test_uuid(1));
+        assert!(earnings[0].dollar_amount > 0.0);
         assert!(
             !earnings.iter().any(|e| e.earner_id == test_uuid(2)),
-            "the unranked node took an earning: {:?}",
-            earnings
+            "the unranked node took an earning: {earnings:?}"
         );
     }
 
@@ -1267,7 +1273,7 @@ mod tests {
     /// input is bad on both counts: only the check order decides which error
     /// surfaces. Holds in every profile.
     #[test]
-    fn unknown_rank_wins_over_invalid_cv() {
+    fn unilevel_unknown_rank_wins_over_invalid_cv() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
 

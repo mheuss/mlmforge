@@ -782,6 +782,42 @@ mod tests {
         );
     }
 
+    /// Pins the rank check above the per-source checks, per design decision 2.
+    /// This input is bad on both counts: only the check order decides which
+    /// error surfaces. Unlike the broad_pct pin below, this one holds in
+    /// release.
+    #[test]
+    fn stairstep_unknown_rank_wins_over_invalid_cv() {
+        let tree = build_chain(3);
+        let structure = test_stairstep_structure();
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), snapshot_with_rank("diamond", 150.0));
+        snapshots.insert(uuid(1), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: -50.0,
+        }];
+
+        let err = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            CalculationError::UnknownSnapshotRank(uuid(0), "diamond".to_string())
+        );
+    }
+
     /// Pins the rank check ahead of `validate_broad_pct`, which panics rather
     /// than returning. An `Err` here means the rank check ran first; a panic
     /// means it did not.

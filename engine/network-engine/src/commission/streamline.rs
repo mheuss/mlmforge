@@ -16,9 +16,10 @@ use super::{walk, walk_order};
 
 /// Calculate streamline commissions across all active streams.
 ///
-/// Rejects volume it cannot pay: a source with a non-finite or negative CV
-/// amount, a source held by no stream, or a source with no snapshot. A source
-/// held only by a frozen stream is accepted and earns nothing.
+/// Rejects a snapshot naming a rank the plan does not define. Also rejects
+/// volume it cannot pay: a source with a non-finite or negative CV amount, a
+/// source held by no stream, or a source with no snapshot. A source held only
+/// by a frozen stream is accepted and earns nothing.
 ///
 /// Each unfrozen stream is walked independently. Dynamic compression
 /// thresholds gate per-level qualification by rank ordinal. Monoline
@@ -705,8 +706,7 @@ mod tests {
             crate::config::StructureConfig::Streamline(structure.clone()),
             "test_streamline",
         );
-        // 1-based. The thresholds compare ordinals relatively, so starting at
-        // 1 rather than 0 preserves the gating this test relies on.
+        // 1-based; the ordinal-0 fixtures in this file are drift. HEU-723.
         plan.ranks = vec![rank_def("associate", 1), rank_def("bronze", 2)];
 
         // Node 1 asserts a rank the ladder does not hold.
@@ -745,14 +745,69 @@ mod tests {
         );
     }
 
-    /// Pins the rank check below the dynamic-compression config guards: a
+    /// Pins the rank check above the per-source checks, per design decision 2.
+    /// This input is bad on both counts: only the check order decides which
+    /// error surfaces.
+    #[test]
+    fn streamline_unknown_rank_wins_over_invalid_cv() {
+        let engine = make_engine(5);
+        let structure = make_structure(
+            vec![level(1, "associate", 0.10), level(2, "bronze", 0.05)],
+            5,
+        );
+        let mut plan = test_helpers::build_test_plan(
+            test_helpers::default_eligibility(),
+            crate::config::StructureConfig::Streamline(structure.clone()),
+            "test_streamline",
+        );
+        plan.ranks = vec![rank_def("associate", 1), rank_def("bronze", 2)];
+
+        let mut snapshots = HashMap::new();
+        let ranks = ["diamond", "bronze", "associate", "bronze", "associate"];
+        for (i, rank) in ranks.iter().enumerate() {
+            snapshots.insert(
+                test_uuid((i + 1) as u8),
+                DistributorSnapshot {
+                    rank: rank.to_string(),
+                    personal_volume: 150.0,
+                    status: "active".to_string(),
+                    has_order_in_period: true,
+                },
+            );
+        }
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(5),
+            cv_amount: -50.0,
+        }];
+
+        let err = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            CalculationError::UnknownSnapshotRank(test_uuid(1), "diamond".to_string())
+        );
+    }
+
+    /// Pins the rank check below all four dynamic-compression config guards: a
     /// broken plan still reports before one bad snapshot rank. This input is
     /// bad on both counts.
+    ///
+    /// Declares level 2 and not level 1, which trips the gap guard, the last
+    /// of the four. Tripping the first would leave the test green for a
+    /// placement between any two of them.
     #[test]
     fn streamline_config_error_wins_over_unknown_rank() {
         let engine = make_engine(5);
-        // Empty levels: the config guard rejects this on its own.
-        let structure = make_structure(vec![], 5);
+        let structure = make_structure(vec![level(2, "associate", 0.10)], 5);
         let mut plan = test_helpers::build_test_plan(
             test_helpers::default_eligibility(),
             crate::config::StructureConfig::Streamline(structure.clone()),

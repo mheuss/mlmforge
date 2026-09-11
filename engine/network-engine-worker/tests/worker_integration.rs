@@ -6460,7 +6460,7 @@ fn matrix_snapshot_round_trip_survives_a_holding_tank_entry() {
     let data = take_snapshot_data(&mut worker, "MRT");
     restore_expecting_success(&mut worker, "MRT2", "matrix", data);
 
-    // Guard against a vacuous fixture: a width-2 root holds two, so five
+    // Guard against a vacuous fixture: a width-2 root holds two, so four
     // enrollments must have spilled below the root or landed in the tank.
     let depth = query(
         &mut worker,

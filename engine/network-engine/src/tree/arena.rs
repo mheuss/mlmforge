@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use super::error::TreeError;
 use super::node::{Node, NodeIndex};
+use crate::snapshot::SnapshotConsistencyError;
 use crate::types::TreePosition;
 
 /// Shared arena storage for all tree types.
@@ -28,6 +29,151 @@ impl Arena {
             free_list: Vec::new(),
             root: None,
         }
+    }
+
+    /// Prove every stored `NodeIndex` is in range and points at a live slot.
+    ///
+    /// A restored arena comes from a caller, so nothing has enforced what the
+    /// constructors maintain. `node()` and `node_mut()` index `self.nodes`
+    /// directly, so an out-of-range index panics rather than erroring.
+    ///
+    /// Bounds and liveness only. A cycle in the parent or children edges still
+    /// passes and still makes a traversal loop.
+    pub(crate) fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
+        let node_count = self.nodes.len();
+
+        // index -> nodes
+        for (user_id, idx) in &self.index {
+            let slot =
+                self.nodes
+                    .get(idx.0)
+                    .ok_or(SnapshotConsistencyError::IndexSlotOutOfRange {
+                        user_id: *user_id,
+                        slot: idx.0,
+                        node_count,
+                    })?;
+            // Liveness before equality. A tombstone's user_id is Uuid::nil(),
+            // so an index entry of nil -> tombstoned slot satisfies the
+            // equality below and the node pass then skips the tombstone. The
+            // entry would survive both passes.
+            if slot.user_id == Uuid::nil() {
+                return Err(SnapshotConsistencyError::IndexSlotTombstoned {
+                    user_id: *user_id,
+                    slot: idx.0,
+                });
+            }
+            if slot.user_id != *user_id {
+                return Err(SnapshotConsistencyError::IndexSlotMismatch {
+                    user_id: *user_id,
+                    slot: idx.0,
+                    found: slot.user_id,
+                });
+            }
+        }
+
+        // nodes -> index, and every edge on every live node
+        for (slot, node) in self.nodes.iter().enumerate() {
+            if node.user_id == Uuid::nil() {
+                // A tombstone is cleared to nil with empty fields. Skipping it
+                // outright would let a restored tombstone keep stale edges, and
+                // node()'s guard is a debug_assert that is not present in a
+                // release build, so those edges are reachable.
+                let stale = if node.parent.is_some() {
+                    Some("parent")
+                } else if node.sponsor.is_some() {
+                    Some("sponsor")
+                } else if !node.children.is_empty() {
+                    Some("child")
+                } else if !node.sponsored.is_empty() {
+                    Some("sponsored node")
+                } else {
+                    None
+                };
+                if let Some(field) = stale {
+                    return Err(SnapshotConsistencyError::TombstoneNotCleared { slot, field });
+                }
+                continue;
+            }
+            if self.index.get(&node.user_id) != Some(&NodeIndex(slot)) {
+                return Err(SnapshotConsistencyError::NodeNotIndexed {
+                    slot,
+                    user_id: node.user_id,
+                });
+            }
+            self.check_edge("parent", slot, node.parent)?;
+            self.check_edge("sponsor", slot, node.sponsor)?;
+            for child in &node.children {
+                self.check_edge("children", slot, Some(*child))?;
+            }
+            for sponsored in &node.sponsored {
+                self.check_edge("sponsored", slot, Some(*sponsored))?;
+            }
+        }
+
+        // free_list
+        let mut seen = std::collections::HashSet::new();
+        for idx in &self.free_list {
+            let slot =
+                self.nodes
+                    .get(idx.0)
+                    .ok_or(SnapshotConsistencyError::FreeSlotOutOfRange {
+                        slot: idx.0,
+                        node_count,
+                    })?;
+            if slot.user_id != Uuid::nil() {
+                return Err(SnapshotConsistencyError::FreeSlotNotTombstoned {
+                    slot: idx.0,
+                    found: slot.user_id,
+                });
+            }
+            if !seen.insert(idx.0) {
+                return Err(SnapshotConsistencyError::FreeSlotRepeated { slot: idx.0 });
+            }
+        }
+
+        // root
+        if let Some(root) = self.root {
+            let slot = self
+                .nodes
+                .get(root.0)
+                .ok_or(SnapshotConsistencyError::RootOutOfRange {
+                    slot: root.0,
+                    node_count,
+                })?;
+            if slot.user_id == Uuid::nil() {
+                return Err(SnapshotConsistencyError::RootTombstoned { slot: root.0 });
+            }
+        }
+
+        Ok(())
+    }
+
+    fn check_edge(
+        &self,
+        field: &'static str,
+        slot: usize,
+        target: Option<NodeIndex>,
+    ) -> Result<(), SnapshotConsistencyError> {
+        let Some(target) = target else {
+            return Ok(());
+        };
+        let found = self
+            .nodes
+            .get(target.0)
+            .ok_or(SnapshotConsistencyError::EdgeOutOfRange {
+                field,
+                slot,
+                target: target.0,
+                node_count: self.nodes.len(),
+            })?;
+        if found.user_id == Uuid::nil() {
+            return Err(SnapshotConsistencyError::EdgeTombstoned {
+                field,
+                slot,
+                target: target.0,
+            });
+        }
+        Ok(())
     }
 
     /// Resolves a user ID to a NodeIndex.
@@ -608,5 +754,235 @@ mod tests {
         let upline = arena.walk_sponsor_upline(child, 0);
         assert_eq!(upline.len(), 1);
         assert_eq!(upline[0].user_id, test_uuid(1));
+    }
+
+    fn live_arena() -> Arena {
+        let mut arena = Arena::new();
+        let root = arena.alloc_slot(Node {
+            user_id: test_uuid(1),
+            parent: None,
+            children: vec![],
+            sponsor: None,
+            sponsored: vec![],
+            depth: 0,
+            enrolled_at: 0,
+        });
+        arena.index.insert(test_uuid(1), root);
+        arena.root = Some(root);
+        arena
+    }
+
+    #[test]
+    fn validate_restored_accepts_a_consistent_arena() {
+        assert!(live_arena().validate_restored().is_ok());
+    }
+
+    #[test]
+    fn validate_restored_rejects_an_index_slot_past_the_end() {
+        let mut arena = live_arena();
+        arena.index.insert(test_uuid(2), NodeIndex(99));
+
+        assert_eq!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::IndexSlotOutOfRange {
+                user_id: test_uuid(2),
+                slot: 99,
+                node_count: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_an_index_slot_holding_someone_else() {
+        let mut arena = live_arena();
+        arena.index.insert(test_uuid(2), NodeIndex(0));
+
+        assert!(matches!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::IndexSlotMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_live_node_with_no_index_entry() {
+        let mut arena = live_arena();
+        arena.index.clear();
+
+        assert_eq!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::NodeNotIndexed {
+                slot: 0,
+                user_id: test_uuid(1),
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_parent_edge_past_the_end() {
+        let mut arena = live_arena();
+        arena.nodes[0].parent = Some(NodeIndex(99));
+
+        assert_eq!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::EdgeOutOfRange {
+                field: "parent",
+                slot: 0,
+                target: 99,
+                node_count: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_child_edge_naming_a_tombstone() {
+        let mut arena = live_arena();
+        let dead = arena.alloc_slot(Node {
+            user_id: test_uuid(2),
+            parent: None,
+            children: vec![],
+            sponsor: None,
+            sponsored: vec![],
+            depth: 1,
+            enrolled_at: 0,
+        });
+        arena.tombstone(dead);
+        arena.nodes[0].children = vec![dead];
+
+        assert!(matches!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::EdgeTombstoned {
+                field: "children",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_nil_index_entry_on_a_tombstone() {
+        // Both ids are Uuid::nil(), so an equality-only check passes and the
+        // node pass skips tombstones. Liveness has to be tested first.
+        let mut arena = live_arena();
+        let dead = arena.alloc_slot(Node {
+            user_id: test_uuid(2),
+            parent: None,
+            children: vec![],
+            sponsor: None,
+            sponsored: vec![],
+            depth: 1,
+            enrolled_at: 0,
+        });
+        arena.tombstone(dead);
+        arena.index.insert(Uuid::nil(), dead);
+
+        assert_eq!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::IndexSlotTombstoned {
+                user_id: Uuid::nil(),
+                slot: dead.0,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_checks_every_edge_field() {
+        // The implementation checks parent, sponsor, children and sponsored.
+        // Assert all four rather than two, so a copy-paste omission fails here
+        // rather than in a restored snapshot.
+        for field in ["parent", "sponsor", "children", "sponsored"] {
+            let mut arena = live_arena();
+            match field {
+                "parent" => arena.nodes[0].parent = Some(NodeIndex(99)),
+                "sponsor" => arena.nodes[0].sponsor = Some(NodeIndex(99)),
+                "children" => arena.nodes[0].children = vec![NodeIndex(99)],
+                _ => arena.nodes[0].sponsored = vec![NodeIndex(99)],
+            }
+            assert_eq!(
+                arena.validate_restored(),
+                Err(SnapshotConsistencyError::EdgeOutOfRange {
+                    field,
+                    slot: 0,
+                    target: 99,
+                    node_count: 1,
+                }),
+                "{field} was not checked"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_tombstone_that_kept_its_edges() {
+        let mut arena = live_arena();
+        let dead = arena.alloc_slot(Node {
+            user_id: test_uuid(2),
+            parent: None,
+            children: vec![],
+            sponsor: None,
+            sponsored: vec![],
+            depth: 1,
+            enrolled_at: 0,
+        });
+        arena.tombstone(dead);
+        arena.nodes[dead.0].parent = Some(NodeIndex(0));
+
+        assert_eq!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::TombstoneNotCleared {
+                slot: dead.0,
+                field: "parent",
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_free_slot_that_is_not_a_tombstone() {
+        let mut arena = live_arena();
+        arena.free_list.push(NodeIndex(0));
+
+        assert!(matches!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::FreeSlotNotTombstoned { slot: 0, .. })
+        ));
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_repeated_free_slot() {
+        // alloc_slot pops from free_list, so a repeat hands one slot to two
+        // nodes and the second silently overwrites the first.
+        let mut arena = live_arena();
+        let dead = arena.alloc_slot(Node {
+            user_id: test_uuid(2),
+            parent: None,
+            children: vec![],
+            sponsor: None,
+            sponsored: vec![],
+            depth: 1,
+            enrolled_at: 0,
+        });
+        arena.tombstone(dead);
+        arena.free_list.push(dead);
+
+        assert_eq!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::FreeSlotRepeated { slot: dead.0 })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_root_past_the_end() {
+        let mut arena = live_arena();
+        arena.root = Some(NodeIndex(99));
+
+        assert_eq!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::RootOutOfRange {
+                slot: 99,
+                node_count: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_accepts_an_empty_arena() {
+        assert!(Arena::new().validate_restored().is_ok());
     }
 }

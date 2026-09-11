@@ -924,7 +924,7 @@ func TestEngineClient_BinaryGetPosition(t *testing.T) {
 
 func TestEngineClient_CalculateUnilevel_MockParams(t *testing.T) {
 	mock := &mockTransport{
-		response: json.RawMessage(`{"earnings":[{"earner_id":"00000000-0000-0000-0000-000000000001","source_id":"00000000-0000-0000-0000-000000000002","level":1,"rate":0.05,"cv_amount":100.0,"dollar_amount":2.0}],"walks":[],"plan":{"name":"Test","version":1,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}`),
+		response: json.RawMessage(`{"earnings":[{"earner_id":"00000000-0000-0000-0000-000000000001","source_id":"00000000-0000-0000-0000-000000000002","level":1,"rate":0.05,"cv_amount":100.0,"dollar_amount":2.0}],"walks":[],"plan":{"name":"Test","version":2,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}`),
 	}
 	client := newEngineClientWithTransport(mock)
 
@@ -952,14 +952,15 @@ func TestEngineClient_CalculateUnilevel_MockParams(t *testing.T) {
 	assert.Equal(t, "00000000-0000-0000-0000-000000000001", earnings[0].EarnerID)
 	assert.Equal(t, "00000000-0000-0000-0000-000000000002", earnings[0].SourceID)
 	assert.Equal(t, uint8(1), earnings[0].Level)
-	assert.InDelta(t, 0.05, earnings[0].Rate, 1e-9)
+	require.NotNil(t, earnings[0].Rate, "a rate-produced earning carries a rate")
+	assert.InDelta(t, 0.05, *earnings[0].Rate, 1e-9)
 	assert.InDelta(t, 100.0, earnings[0].CVAmount, 1e-9)
 	assert.InDelta(t, 2.0, earnings[0].DollarAmount, 1e-9)
 }
 
 func TestEngineClient_CalculateUnilevel_EmptyEarnings(t *testing.T) {
 	mock := &mockTransport{
-		response: json.RawMessage(`{"earnings":[],"walks":[],"plan":{"name":"Test","version":1,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}`),
+		response: json.RawMessage(`{"earnings":[],"walks":[],"plan":{"name":"Test","version":2,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}`),
 	}
 	client := newEngineClientWithTransport(mock)
 
@@ -979,7 +980,7 @@ func TestEngineClient_CalculateUnilevel_EmptyEarnings(t *testing.T) {
 
 func TestEngineClient_CalculateGeneration_MockParams(t *testing.T) {
 	mock := &mockTransport{
-		response: json.RawMessage(`{"earnings":[{"earner_id":"00000000-0000-0000-0000-000000000001","source_id":"00000000-0000-0000-0000-000000000002","level":1,"rate":0.10,"cv_amount":100.0,"dollar_amount":10.0}],"walks":[],"plan":{"name":"Test","version":1,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}`),
+		response: json.RawMessage(`{"earnings":[{"earner_id":"00000000-0000-0000-0000-000000000001","source_id":"00000000-0000-0000-0000-000000000002","level":1,"rate":0.10,"cv_amount":100.0,"dollar_amount":10.0}],"walks":[],"plan":{"name":"Test","version":2,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}`),
 	}
 	client := newEngineClientWithTransport(mock)
 
@@ -1007,14 +1008,15 @@ func TestEngineClient_CalculateGeneration_MockParams(t *testing.T) {
 	assert.Equal(t, "00000000-0000-0000-0000-000000000001", earnings[0].EarnerID)
 	assert.Equal(t, "00000000-0000-0000-0000-000000000002", earnings[0].SourceID)
 	assert.Equal(t, uint8(1), earnings[0].Level)
-	assert.InDelta(t, 0.10, earnings[0].Rate, 1e-9)
+	require.NotNil(t, earnings[0].Rate, "a rate-produced earning carries a rate")
+	assert.InDelta(t, 0.10, *earnings[0].Rate, 1e-9)
 	assert.InDelta(t, 100.0, earnings[0].CVAmount, 1e-9)
 	assert.InDelta(t, 10.0, earnings[0].DollarAmount, 1e-9)
 }
 
 func TestEngineClient_CalculateGeneration_EmptyEarnings(t *testing.T) {
 	mock := &mockTransport{
-		response: json.RawMessage(`{"earnings":[],"walks":[],"plan":{"name":"Test","version":1,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}`),
+		response: json.RawMessage(`{"earnings":[],"walks":[],"plan":{"name":"Test","version":2,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}`),
 	}
 	client := newEngineClientWithTransport(mock)
 
@@ -1034,7 +1036,7 @@ func TestEngineClient_CalculateGeneration_EmptyEarnings(t *testing.T) {
 
 func TestEngineClient_CalculateMatrix_MockParams(t *testing.T) {
 	mock := &mockTransport{
-		response: json.RawMessage(`{"earnings":[{"earner_id":"00000000-0000-0000-0000-000000000001","source_id":"00000000-0000-0000-0000-000000000002","level":1,"rate":0.05,"cv_amount":100.0,"dollar_amount":2.0}],"walks":[],"plan":{"name":"Test","version":1,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}`),
+		response: json.RawMessage(`{"earnings":[{"earner_id":"00000000-0000-0000-0000-000000000001","source_id":"00000000-0000-0000-0000-000000000002","level":1,"rate":0.05,"cv_amount":100.0,"dollar_amount":2.0}],"walks":[],"plan":{"name":"Test","version":2,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}`),
 	}
 	client := newEngineClientWithTransport(mock)
 
@@ -1065,7 +1067,7 @@ func TestEngineClient_CalculateMatrix_MockParams(t *testing.T) {
 }
 
 func TestEngineClient_CalculateMatrix_EmptyEarnings(t *testing.T) {
-	mock := &mockTransport{response: json.RawMessage(`{"earnings":[],"walks":[],"plan":{"name":"Test","version":1,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}`)}
+	mock := &mockTransport{response: json.RawMessage(`{"earnings":[],"walks":[],"plan":{"name":"Test","version":2,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}`)}
 	client := newEngineClientWithTransport(mock)
 
 	req := CalculateMatrixRequest{
@@ -1084,7 +1086,7 @@ func TestEngineClient_CalculateMatrix_EmptyEarnings(t *testing.T) {
 
 func TestEngineClient_CalculateStairstep_MockParams(t *testing.T) {
 	mock := &mockTransport{
-		response: json.RawMessage(`{"earnings":[{"earner_id":"00000000-0000-0000-0000-000000000001","source_id":"00000000-0000-0000-0000-000000000003","level":2,"rate":0.05,"cv_amount":100.0,"dollar_amount":2.0}],"walks":[],"plan":{"name":"Test","version":1,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}`),
+		response: json.RawMessage(`{"earnings":[{"earner_id":"00000000-0000-0000-0000-000000000001","source_id":"00000000-0000-0000-0000-000000000003","level":2,"rate":0.05,"cv_amount":100.0,"dollar_amount":2.0}],"walks":[],"plan":{"name":"Test","version":2,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}`),
 	}
 	client := newEngineClientWithTransport(mock)
 
@@ -1115,7 +1117,7 @@ func TestEngineClient_CalculateStairstep_MockParams(t *testing.T) {
 }
 
 func TestEngineClient_CalculateStairstep_EmptyEarnings(t *testing.T) {
-	mock := &mockTransport{response: json.RawMessage(`{"earnings":[],"walks":[],"plan":{"name":"Test","version":1,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}`)}
+	mock := &mockTransport{response: json.RawMessage(`{"earnings":[],"walks":[],"plan":{"name":"Test","version":2,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}`)}
 	client := newEngineClientWithTransport(mock)
 
 	req := CalculateStairstepRequest{
@@ -1138,7 +1140,7 @@ func TestEngineClient_CalculateStairstep_EmptyEarnings(t *testing.T) {
 // volume_to_dollar_multiplier 1.0.
 const testPlanJSON = `{
     "name": "Integration Test Plan",
-    "version": 1,
+    "version": 2,
     "structures": [
         {
             "type": "unilevel",
@@ -1241,7 +1243,7 @@ const testPlanJSON = `{
 // consolidate.
 const streamlinePlanJSON = `{
     "name": "Streamline Test Plan",
-    "version": 1,
+    "version": 2,
     "structures": [
         {
             "type": "streamline",
@@ -1346,7 +1348,8 @@ func TestEngineClient_CalculateUnilevel(t *testing.T) {
 	require.NotNil(t, midEarning, "mid should have an earning")
 	assert.Equal(t, leafID, midEarning.SourceID)
 	assert.Equal(t, uint8(1), midEarning.Level)
-	assert.InDelta(t, 0.05, midEarning.Rate, 1e-9)
+	require.NotNil(t, midEarning.Rate, "a rate-produced earning carries a rate")
+	assert.InDelta(t, 0.05, *midEarning.Rate, 1e-9)
 	assert.InDelta(t, 100.0, midEarning.CVAmount, 1e-9)
 	assert.True(t, math.Abs(midEarning.DollarAmount-2.0) < 1e-9,
 		"mid dollar_amount should be 2.0, got %f", midEarning.DollarAmount)
@@ -1354,7 +1357,8 @@ func TestEngineClient_CalculateUnilevel(t *testing.T) {
 	require.NotNil(t, rootEarning, "root should have an earning")
 	assert.Equal(t, leafID, rootEarning.SourceID)
 	assert.Equal(t, uint8(2), rootEarning.Level)
-	assert.InDelta(t, 0.05, rootEarning.Rate, 1e-9)
+	require.NotNil(t, rootEarning.Rate, "a rate-produced earning carries a rate")
+	assert.InDelta(t, 0.05, *rootEarning.Rate, 1e-9)
 	assert.InDelta(t, 100.0, rootEarning.CVAmount, 1e-9)
 	assert.True(t, math.Abs(rootEarning.DollarAmount-2.0) < 1e-9,
 		"root dollar_amount should be 2.0, got %f", rootEarning.DollarAmount)
@@ -1450,7 +1454,8 @@ func TestEngineClient_CalculateStreamline(t *testing.T) {
 	assert.Equal(t, member1, earning.EarnerID)
 	assert.Equal(t, member2, earning.SourceID)
 	assert.Equal(t, uint8(1), earning.Level)
-	assert.InDelta(t, 0.10, earning.Rate, 1e-9)
+	require.NotNil(t, earning.Rate, "a rate-produced earning carries a rate")
+	assert.InDelta(t, 0.10, *earning.Rate, 1e-9)
 	assert.InDelta(t, 100.0, earning.CVAmount, 1e-9)
 	assert.InDelta(t, 10.0, earning.DollarAmount, 1e-9)
 }
@@ -1462,7 +1467,7 @@ func TestEngineClient_CalculateStreamline(t *testing.T) {
 // change is precisely a wire-shape change, so the gap is worth closing here.
 func TestEngineClient_CalculateStreamline_MockParams(t *testing.T) {
 	mock := &mockTransport{
-		response: json.RawMessage(`{"earnings":[{"earner_id":"00000000-0000-0000-0000-000000000001","source_id":"00000000-0000-0000-0000-000000000002","level":1,"rate":0.10,"cv_amount":100.0,"dollar_amount":10.0}],"walks":[],"plan":{"name":"Test","version":1,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"},"frozen_stream_skips":[]}`),
+		response: json.RawMessage(`{"earnings":[{"earner_id":"00000000-0000-0000-0000-000000000001","source_id":"00000000-0000-0000-0000-000000000002","level":1,"rate":0.10,"cv_amount":100.0,"dollar_amount":10.0}],"walks":[],"plan":{"name":"Test","version":2,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"},"frozen_stream_skips":[]}`),
 	}
 	client := newEngineClientWithTransport(mock)
 
@@ -1511,7 +1516,7 @@ func TestEngineClient_CalculateStreamline_MockParams(t *testing.T) {
 }
 
 func TestCalculateStreamlineDecodesFrozenStreamSkips(t *testing.T) {
-	raw := []byte(`{"earnings":[],"walks":[],"plan":{"name":"p","version":1,"hash":"sha256:x"},"frozen_stream_skips":[{"volume_index":0,"source_id":"00000000-0000-0000-0000-000000000011","cv_amount":100,"stream_id":2}]}`)
+	raw := []byte(`{"earnings":[],"walks":[],"plan":{"name":"p","version":2,"hash":"sha256:x"},"frozen_stream_skips":[{"volume_index":0,"source_id":"00000000-0000-0000-0000-000000000011","cv_amount":100,"stream_id":2}]}`)
 
 	var got StreamlineCalculationResultDTO
 	require.NoError(t, json.Unmarshal(raw, &got))
@@ -1524,7 +1529,7 @@ func TestCalculateStreamlineDecodesFrozenStreamSkips(t *testing.T) {
 }
 
 func TestCalculateStreamlineDecodesEmptySkips(t *testing.T) {
-	raw := []byte(`{"earnings":[],"walks":[],"plan":{"name":"p","version":1,"hash":"sha256:x"},"frozen_stream_skips":[]}`)
+	raw := []byte(`{"earnings":[],"walks":[],"plan":{"name":"p","version":2,"hash":"sha256:x"},"frozen_stream_skips":[]}`)
 
 	var got StreamlineCalculationResultDTO
 	require.NoError(t, json.Unmarshal(raw, &got))
@@ -1540,7 +1545,7 @@ func TestCalculateStreamlineDecodesEmptySkips(t *testing.T) {
 // Reaches the field through the client, so it pins the wiring and not only the
 // decoded shape.
 func TestCalculateStreamlineReturnsStreamlineDTO(t *testing.T) {
-	raw := `{"earnings":[],"walks":[],"plan":{"name":"p","version":1,"hash":"sha256:x"},"frozen_stream_skips":[{"volume_index":0,"source_id":"00000000-0000-0000-0000-000000000011","cv_amount":100,"stream_id":2}]}`
+	raw := `{"earnings":[],"walks":[],"plan":{"name":"p","version":2,"hash":"sha256:x"},"frozen_stream_skips":[{"volume_index":0,"source_id":"00000000-0000-0000-0000-000000000011","cv_amount":100,"stream_id":2}]}`
 	client := newEngineClientWithTransport(&mockTransport{response: json.RawMessage(raw)})
 
 	got, err := client.CalculateStreamline(context.Background(), CalculateStreamlineRequest{})
@@ -1676,7 +1681,7 @@ func TestEngineClient_EvaluateRanks_VariadicSignature_AcceptsWithPersistence(t *
 // empty qualification would yield an empty ranks map.
 const rankIntegrationPlanJSON = `{
     "name": "Rank Integration Test Plan",
-    "version": 1,
+    "version": 2,
     "structures": [
         {
             "type": "unilevel",
@@ -2481,7 +2486,7 @@ func TestEngineClient_AddNodeAt_WireParams(t *testing.T) {
 // observe about a key that never arrives.
 
 func TestEngineClient_CalculateUnilevel_NilCollections(t *testing.T) {
-	mock := &mockTransport{response: json.RawMessage(`{"earnings":[],"walks":[],"plan":{"name":"Test","version":1,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}`)}
+	mock := &mockTransport{response: json.RawMessage(`{"earnings":[],"walks":[],"plan":{"name":"Test","version":2,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}`)}
 	client := newEngineClientWithTransport(mock)
 
 	_, err := client.CalculateUnilevel(context.Background(), CalculateUnilevelRequest{
@@ -2499,7 +2504,7 @@ func TestEngineClient_CalculateUnilevel_NilCollections(t *testing.T) {
 }
 
 func TestEngineClient_CalculateGeneration_NilCollections(t *testing.T) {
-	mock := &mockTransport{response: json.RawMessage(`{"earnings":[],"walks":[],"plan":{"name":"Test","version":1,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}`)}
+	mock := &mockTransport{response: json.RawMessage(`{"earnings":[],"walks":[],"plan":{"name":"Test","version":2,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}`)}
 	client := newEngineClientWithTransport(mock)
 
 	_, err := client.CalculateGeneration(context.Background(), CalculateGenerationRequest{
@@ -2517,7 +2522,7 @@ func TestEngineClient_CalculateGeneration_NilCollections(t *testing.T) {
 }
 
 func TestEngineClient_CalculateMatrix_NilCollections(t *testing.T) {
-	mock := &mockTransport{response: json.RawMessage(`{"earnings":[],"walks":[],"plan":{"name":"Test","version":1,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}`)}
+	mock := &mockTransport{response: json.RawMessage(`{"earnings":[],"walks":[],"plan":{"name":"Test","version":2,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}`)}
 	client := newEngineClientWithTransport(mock)
 
 	_, err := client.CalculateMatrix(context.Background(), CalculateMatrixRequest{
@@ -2535,7 +2540,7 @@ func TestEngineClient_CalculateMatrix_NilCollections(t *testing.T) {
 }
 
 func TestEngineClient_CalculateStairstep_NilCollections(t *testing.T) {
-	mock := &mockTransport{response: json.RawMessage(`{"earnings":[],"walks":[],"plan":{"name":"Test","version":1,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}`)}
+	mock := &mockTransport{response: json.RawMessage(`{"earnings":[],"walks":[],"plan":{"name":"Test","version":2,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}`)}
 	client := newEngineClientWithTransport(mock)
 
 	_, err := client.CalculateStairstep(context.Background(), CalculateStairstepRequest{
@@ -2553,7 +2558,7 @@ func TestEngineClient_CalculateStairstep_NilCollections(t *testing.T) {
 }
 
 func TestEngineClient_CalculateStreamline_NilCollections(t *testing.T) {
-	mock := &mockTransport{response: json.RawMessage(`{"earnings":[],"walks":[],"plan":{"name":"Test","version":1,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}`)}
+	mock := &mockTransport{response: json.RawMessage(`{"earnings":[],"walks":[],"plan":{"name":"Test","version":2,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}`)}
 	client := newEngineClientWithTransport(mock)
 
 	_, err := client.CalculateStreamline(context.Background(), CalculateStreamlineRequest{

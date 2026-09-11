@@ -622,3 +622,15 @@ func TestConvertYAMLToJSONMapAnyAny(t *testing.T) {
 	assert.Equal(t, "numeric key", m["42"])
 	assert.Equal(t, "int64 key", m["99"])
 }
+
+// A bare number carries no unit, and the same digits mean a percentage under
+// one reading and currency under the other. HEU-699.
+func TestSchemaRejectsABareMinOverride(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/stairstep-plan.yaml")
+	require.Empty(t, p.validateSchema(base), "base fixture should validate cleanly")
+	tagged := "min_override:\n              type: currency\n              value: 10.00"
+	bare := replaceInYAML(t, base, tagged, "min_override: 10.00")
+	require.NotEmpty(t, p.validateSchema(bare), "a bare min_override must be rejected")
+}

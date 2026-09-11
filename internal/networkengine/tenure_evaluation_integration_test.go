@@ -26,7 +26,7 @@ import (
 // yield an empty navigator map and the distributor would never be evaluated.
 const tenureRankPlanJSON = `{
     "name": "Tenure Rank Integration Test Plan",
-    "version": 1,
+    "version": 2,
     "structures": [
         {
             "type": "unilevel",

@@ -2,7 +2,7 @@
 # Expected error: 1.5 is greater than the maximum 1.
 
 name: Percentage Out of Range
-version: 1
+version: 2
 
 period:
   length: month

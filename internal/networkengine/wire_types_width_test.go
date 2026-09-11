@@ -45,6 +45,7 @@ func TestWireTypesNarrowMirrors(t *testing.T) {
 	}{
 		{"EvaluatedRankDTO.Ordinal", reflect.TypeFor[EvaluatedRankDTO](), "Ordinal", "uint16"},
 		{"CommissionEarningDTO.Level", reflect.TypeFor[CommissionEarningDTO](), "Level", "uint8"},
+		{"CommissionEarningDTO.Rate", reflect.TypeFor[CommissionEarningDTO](), "Rate", "*float64"},
 		{"CommissionEarningDTO.Walk", reflect.TypeFor[CommissionEarningDTO](), "Walk", "*uint32"},
 		{"WalkDTO.Index", reflect.TypeFor[WalkDTO](), "Index", "uint32"},
 		{"WalkDTO.StreamID", reflect.TypeFor[WalkDTO](), "StreamID", "*uint32"},

@@ -5,7 +5,7 @@
 # distinct override rate.
 
 name: Multi-Tier Stairstep Breakaway
-version: 1
+version: 2
 
 period:
   length: month

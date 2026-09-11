@@ -132,7 +132,7 @@ func TestCommissionCalculationResultDTO(t *testing.T) {
 				{"node_id":"a","outcome":"paid","consumed":true,"earner_rank":"member"}
 			],"stop":"root_reached"}
 		],
-		"plan": {"name":"Test","version":1,
+		"plan": {"name":"Test","version":2,
 		         "hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}
 	}`
 
@@ -160,7 +160,7 @@ func TestCommissionCalculationResultDTO(t *testing.T) {
 	assert.True(t, w.Steps[0].Consumed)
 
 	assert.Equal(t, "Test", got.Plan.Name)
-	assert.Equal(t, uint32(1), got.Plan.Version)
+	assert.Equal(t, uint32(2), got.Plan.Version)
 	assert.True(t, strings.HasPrefix(got.Plan.Hash, "sha256:"))
 }
 

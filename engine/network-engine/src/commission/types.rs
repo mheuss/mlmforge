@@ -40,8 +40,9 @@ pub struct VolumeSource {
 
 /// A single commission earning. One entry per earner per volume source.
 ///
-/// The dollar amount formula:
-/// `cv_amount * broad_commission_percent * volume_to_dollar_multiplier * rate`
+/// `dollar_amount` is authoritative. It is not always derivable from the other
+/// fields, because the factors differ by producing walk, so do not back-compute
+/// it or reverse it into a rate.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CommissionEarning {
     /// The distributor who earned this commission.
@@ -53,8 +54,15 @@ pub struct CommissionEarning {
     /// Level in the (possibly compressed) upline walk. 1-indexed.
     pub level: u8,
 
-    /// Rate table value applied at this level for this rank.
-    pub rate: f64,
+    /// Rate applied at this level for this rank.
+    ///
+    /// Null means no rate was applied. It does not mean the rate was zero, and
+    /// a reader that collapses the two gets a wrong answer for any payout a
+    /// rate did not produce.
+    ///
+    /// Serialized even when null. Omitting the key would make an unrecorded
+    /// rate indistinguishable from a missing field.
+    pub rate: Option<f64>,
 
     /// Input commission volume from the source.
     pub cv_amount: f64,
@@ -482,7 +490,7 @@ mod tests {
             earner_id: uuid_from_index(1),
             source_id: uuid_from_index(2),
             level: 1,
-            rate: 0.05,
+            rate: Some(0.05),
             cv_amount: 100.0,
             dollar_amount: 5.0,
             walk: None,
@@ -503,6 +511,37 @@ mod tests {
         };
         let json = serde_json::to_value(&recorded).expect("serialize earning");
         assert_eq!(json["walk"], 4);
+    }
+
+    #[test]
+    fn earning_rate_serializes_as_null_when_absent_and_a_number_when_set() {
+        // Same rule as walk above. A currency floor applies no rate, so null
+        // is the fact rather than a missing field.
+        let earning = CommissionEarning {
+            earner_id: uuid_from_index(1),
+            source_id: uuid_from_index(2),
+            level: 1,
+            rate: None,
+            cv_amount: 100.0,
+            dollar_amount: 5.0,
+            walk: None,
+        };
+        let json = serde_json::to_value(&earning).expect("serialize earning");
+        assert!(
+            json.get("rate").is_some(),
+            "rate must be present even when null: {json}"
+        );
+        assert!(
+            json["rate"].is_null(),
+            "rate must be null, not omitted: {json}"
+        );
+
+        let rated = CommissionEarning {
+            rate: Some(0.05),
+            ..earning
+        };
+        let json = serde_json::to_value(&rated).expect("serialize earning");
+        assert_eq!(json["rate"], 0.05);
     }
 
     #[test]
@@ -600,12 +639,12 @@ mod tests {
         // `commission_runs` CHECK, and HEU-641 Task 17 tests it end to end.
         let identity = PlanIdentity {
             name: "Integration Test Plan".to_string(),
-            version: 1,
+            version: 2,
             hash: format!("sha256:{}", "a1b2c3d4".repeat(8)),
         };
         let json = serde_json::to_value(&identity).expect("serialize identity");
         assert_eq!(json["name"], "Integration Test Plan");
-        assert_eq!(json["version"], 1);
+        assert_eq!(json["version"], 2);
 
         let hash = json["hash"].as_str().expect("hash is a string");
         let hex = hash
@@ -631,7 +670,7 @@ mod tests {
             walks: Vec::new(),
             plan: PlanIdentity {
                 name: "Test".to_string(),
-                version: 1,
+                version: 2,
                 hash: format!("sha256:{}", "0".repeat(64)),
             },
         };

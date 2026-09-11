@@ -4,7 +4,7 @@
 # pairing config, and binary-specific placement.
 
 name: Classic Binary
-version: 1
+version: 2
 
 period:
   length: week

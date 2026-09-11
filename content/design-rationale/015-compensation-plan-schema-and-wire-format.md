@@ -24,13 +24,13 @@ This eliminates 28 field name mappings that would otherwise live in the Go trans
 
 A single JSON Schema file (`schemas/compensation-plan.schema.json`) validates compensation plan YAML. The schema uses Draft 2020-12 for `if/then/else` support and broad tooling compatibility.
 
-**Monolithic file with `$defs`.** All 63 types live in one file. No multi-file `$ref`. Simpler to distribute, load, and version.
+**Monolithic file with `$defs`.** Every type lives in one file. No multi-file `$ref`. Simpler to distribute, load, and version.
 
 **Structure type discriminator.** `StructureConfig` uses `allOf` with `if/then` blocks keyed on the `type` field. Each structure type selects its required fields and commission shape. The same pattern applies to `BinaryCommission` (keyed on `mode`: pairing vs cycle/step).
 
 **Descriptions on every property.** Each field has a 1-3 sentence description so plan authors get inline help without opening documentation.
 
-**`additionalProperties: false` off by default.** Extra fields are silently accepted almost everywhere. This favors forward compatibility over typo detection. Three board-plan definitions opt in and are closed: `BoardCyclingConfig`, `BoardPlanStructureParams`, and `BoardPlanCommission`. They are the "selectively later" case this decision left room for.
+**`additionalProperties: false` off by default.** Extra fields are silently accepted almost everywhere. This favors forward compatibility over typo detection. A few definitions opt in and are closed: `BoardCyclingConfig`, `BoardPlanStructureParams`, `BoardPlanCommission`, and `MinOverride`. They are the "selectively later" case this decision left room for.
 
 **Nullable fields use `oneOf`.** Fields that accept null in YAML use `"oneOf": [{"$ref": "..."}, {"type": "null"}]`.
 
@@ -57,7 +57,7 @@ The schema and Go have distinct responsibilities. The schema validates structure
 | String patterns | `base_currency`: 3 uppercase letters |
 | Array constraints | `ranks` minItems 1, `structures` minItems 1 |
 | Conditional required fields | `type: matrix` requires `structure` block, `mode: pairing` requires `pairing` block |
-| Const values | `version: 1` |
+| Const values | `version: 2` |
 
 **Go validates:**
 

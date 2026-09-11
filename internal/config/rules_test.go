@@ -1,6 +1,7 @@
 package config
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -200,6 +201,7 @@ func TestBreakawayDifferentialRankRatesMustExist(t *testing.T) {
 						"Silver": 0.05,
 						"Typo":   0.08,
 					},
+					MinOverride: MinOverride{Type: "rate", Value: 0},
 				},
 			},
 		},
@@ -215,6 +217,88 @@ func TestBreakawayDifferentialRankRatesMustExist(t *testing.T) {
 	require.Len(t, errs, 1)
 	assert.Equal(t, "undefined_reference", errs[0].Code)
 	assert.Contains(t, errs[0].Path, "overrides/differential/rank_rates")
+}
+
+// The min_override unit rule (HEU-699). These call validateBusinessRules
+// directly, which is the path a caller takes when it builds a plan
+// programmatically and the schema never runs.
+func TestBreakawayDifferentialMinOverrideUnit(t *testing.T) {
+	cases := []struct {
+		name  string
+		floor MinOverride
+		code  string
+		msg   string
+	}{
+		{"rate above one", MinOverride{Type: "rate", Value: 1.5}, "out_of_range", "must be in [0, 1]"},
+		{"rate below zero", MinOverride{Type: "rate", Value: -0.1}, "out_of_range", "must be in [0, 1]"},
+		{"currency below zero", MinOverride{Type: "currency", Value: -1}, "out_of_range", "must be non-negative"},
+		{"unrecognised unit", MinOverride{Type: "percent", Value: 0.5}, "undefined_reference", `want "rate" or "currency"`},
+		{"empty unit", MinOverride{}, "undefined_reference", `want "rate" or "currency"`},
+		{"NaN rate", MinOverride{Type: "rate", Value: math.NaN()}, "invalid_value", "must be finite"},
+		{"NaN currency", MinOverride{Type: "currency", Value: math.NaN()}, "invalid_value", "must be finite"},
+		{"infinite currency", MinOverride{Type: "currency", Value: math.Inf(1)}, "invalid_value", "must be finite"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			plan := minimalPlan()
+			plan.Structures[0].Name = "Stairs"
+			plan.Structures[0].Type = "stairstep"
+			plan.Structures[0].resolvedCommission = &StairstepCommission{
+				Breakaway: &BreakawayConfig{
+					ThresholdRank: "Silver",
+					Overrides: OverrideStrategy{
+						Type:                overrideStrategySingleWalk,
+						OverrideCalculation: "differential",
+						Differential: &DifferentialConfig{
+							RankRates:   map[string]float64{"Silver": 0.05},
+							MinOverride: tc.floor,
+						},
+					},
+				},
+			}
+			plan.Ranks[0].QualifiedStructures = []string{"Stairs"}
+			plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stairs"}}
+			plan.Ranks[1].QualifiedStructures = []string{"Stairs"}
+			plan.Ranks[1].Qualification.Structures = []StructureQualification{
+				{Structure: "Stairs", PersonalVolume: 100, GroupVolume: 3000},
+			}
+
+			errs := validateBusinessRules(plan)
+			require.Len(t, errs, 1)
+			assert.Equal(t, tc.code, errs[0].Code)
+			assert.Contains(t, errs[0].Path, "overrides/differential/min_override")
+			assert.Contains(t, errs[0].Message, tc.msg)
+		})
+	}
+}
+
+// A currency floor has no upper bound. The rate reading caps at 1, and reusing
+// that cap for currency is the confusion this ticket exists to close.
+func TestBreakawayDifferentialMinOverrideAcceptsLargeCurrency(t *testing.T) {
+	plan := minimalPlan()
+	plan.Structures[0].Name = "Stairs"
+	plan.Structures[0].Type = "stairstep"
+	plan.Structures[0].resolvedCommission = &StairstepCommission{
+		Breakaway: &BreakawayConfig{
+			ThresholdRank: "Silver",
+			Overrides: OverrideStrategy{
+				Type:                overrideStrategySingleWalk,
+				OverrideCalculation: "differential",
+				Differential: &DifferentialConfig{
+					RankRates:   map[string]float64{"Silver": 0.05},
+					MinOverride: MinOverride{Type: "currency", Value: 250},
+				},
+			},
+		},
+	}
+	plan.Ranks[0].QualifiedStructures = []string{"Stairs"}
+	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stairs"}}
+	plan.Ranks[1].QualifiedStructures = []string{"Stairs"}
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{Structure: "Stairs", PersonalVolume: 100, GroupVolume: 3000},
+	}
+
+	require.Empty(t, validateBusinessRules(plan))
 }
 
 // TestBreakawayGenerationMaxGenerationsMustBeAtLeastOne verifies that a

@@ -99,10 +99,14 @@ type CommissionEarningDTO struct {
 	EarnerID string `json:"earner_id"`
 	SourceID string `json:"source_id"`
 	// uint8, not int, to mirror the Rust u8. See TestWireTypesNarrowMirrors.
-	Level        uint8   `json:"level"`
-	Rate         float64 `json:"rate"`
-	CVAmount     float64 `json:"cv_amount"`
-	DollarAmount float64 `json:"dollar_amount"`
+	Level uint8 `json:"level"`
+	// Null means no rate was applied, and it is not the same as a zero rate.
+	// A bare float64 collapses the two: encoding/json leaves the field
+	// untouched on a null and returns no error, so it would arrive as 0.
+	// No omitempty, for the same reason given on Walk below.
+	Rate         *float64 `json:"rate"`
+	CVAmount     float64  `json:"cv_amount"`
+	DollarAmount float64  `json:"dollar_amount"`
 	// Index of the walk that produced this earning, and null when none was
 	// recorded. No omitempty: stairstep Walk 2 earnings are null, and dropping
 	// the key would make that indistinguishable from a missing field.

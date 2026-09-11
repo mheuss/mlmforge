@@ -6,7 +6,7 @@
 # delta. Expected error: window_periods must be >= 1.
 
 name: Windowed Rank Plan
-version: 1
+version: 2
 
 period:
   length: month

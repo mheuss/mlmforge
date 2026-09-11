@@ -2,7 +2,7 @@
 # Expected error: search_depth must be <= 255.
 
 name: Search Depth Exceeds Max
-version: 1
+version: 2
 
 period:
   length: month

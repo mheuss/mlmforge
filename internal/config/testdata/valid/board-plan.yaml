@@ -4,7 +4,7 @@
 # board cycling commission, and companion unilevel validation rule.
 
 name: Sales Board Plan
-version: 1
+version: 2
 
 period:
   length: month

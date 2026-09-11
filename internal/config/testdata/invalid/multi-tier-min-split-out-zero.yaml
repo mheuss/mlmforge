@@ -5,7 +5,7 @@
 # `min_split_out_groups` (pinned by TestSchemaRejectsMultiTierMinSplitOutZero).
 
 name: Bad Multi-Tier Min Split Out
-version: 1
+version: 2
 
 period:
   length: month

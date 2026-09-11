@@ -27,8 +27,8 @@
     },
     "version": {
       "type": "integer",
-      "const": 1,
-      "description": "Schema version. Currently always 1."
+      "const": 2,
+      "description": "Schema version. Moved to 2 by HEU-699, when min_override stopped accepting a bare number. A version 1 document carries nothing in its payload to say which reading of that field it was written against, so it fails on the version rather than being reinterpreted."
     },
     "period": {
       "$ref": "#/$defs/PeriodConfig"
@@ -1351,11 +1351,32 @@
           "description": "Override rate by rank."
         },
         "min_override": {
-          "type": "number",
-          "minimum": 0,
-          "description": "Minimum override amount regardless of differential."
+          "$ref": "#/$defs/MinOverride"
         }
       }
+    },
+    "MinOverride": {
+      "type": "object",
+      "description": "A minimum override floor and the unit it is measured in. A bare number is not valid: the same digits mean a percentage under one reading and currency under the other.",
+      "required": ["type", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "enum": ["rate", "currency"] },
+        "value": { "type": "number", "minimum": 0 }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "type": { "const": "rate" },
+            "value": { "maximum": 1 }
+          }
+        },
+        {
+          "properties": {
+            "type": { "const": "currency" }
+          }
+        }
+      ]
     },
     "FixedOverrideConfig": {
       "type": "object",

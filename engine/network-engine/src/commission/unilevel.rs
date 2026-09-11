@@ -394,13 +394,13 @@ mod tests {
         // mid(2) is associate at level 1: 100 * 0.40 * 1.0 * 0.05 = 2.0
         let mid_earning = result.iter().find(|e| e.earner_id == test_uuid(2)).unwrap();
         assert_eq!(mid_earning.level, 1);
-        assert_eq!(mid_earning.rate, 0.05);
+        assert_eq!(mid_earning.rate, Some(0.05));
         assert!((mid_earning.dollar_amount - 2.0).abs() < f64::EPSILON);
 
         // root(1) is silver at level 2: 100 * 0.40 * 1.0 * 0.06 = 2.4
         let root_earning = result.iter().find(|e| e.earner_id == test_uuid(1)).unwrap();
         assert_eq!(root_earning.level, 2);
-        assert_eq!(root_earning.rate, 0.06);
+        assert_eq!(root_earning.rate, Some(0.06));
         assert!((root_earning.dollar_amount - 2.4).abs() < f64::EPSILON);
     }
 

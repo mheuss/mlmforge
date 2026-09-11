@@ -46,7 +46,7 @@ func minimalPlan() *CompensationPlan {
 	startDate := "2026-01-01"
 	return &CompensationPlan{
 		Name:    "Test Plan",
-		Version: 1,
+		Version: 2,
 		Period: PeriodConfig{
 			Length:        "month",
 			StartDate:     &startDate,

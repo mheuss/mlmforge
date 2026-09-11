@@ -5,7 +5,7 @@
 # empty_generation_consumes_number, and optional level commissions.
 
 name: Generation Override Plan
-version: 1
+version: 2
 
 period:
   length: month

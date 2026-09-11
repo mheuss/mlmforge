@@ -5,7 +5,7 @@
 # periods is the only delta. Expected error: periods must be >= 1.
 
 name: Tenure Rank Plan
-version: 1
+version: 2
 
 period:
   length: month

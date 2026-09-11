@@ -242,7 +242,7 @@ fn emit_generation_earnings(
             earner_id: entry.earner_id,
             source_id: source.source_id,
             level: entry.generation,
-            rate,
+            rate: Some(rate),
             cv_amount: source.cv_amount,
             dollar_amount: source.cv_amount * multiplier * rate,
             walk: Some(collector_id),
@@ -1111,7 +1111,7 @@ mod calculate_tests {
         assert_eq!(result[0].earner_id, uuid(0));
         assert_eq!(result[0].source_id, uuid(2));
         assert_eq!(result[0].level, 1);
-        assert_eq!(result[0].rate, 0.10);
+        assert_eq!(result[0].rate, Some(0.10));
         assert_eq!(result[0].cv_amount, 100.0);
         assert!((result[0].dollar_amount - 10.0).abs() < f64::EPSILON);
     }
@@ -1156,17 +1156,17 @@ mod calculate_tests {
         // Results are sorted by earner_id, so find each by earner.
         let earn_4 = result.iter().find(|e| e.earner_id == uuid(4)).unwrap();
         assert_eq!(earn_4.level, 1);
-        assert_eq!(earn_4.rate, 0.10);
+        assert_eq!(earn_4.rate, Some(0.10));
         assert!((earn_4.dollar_amount - 20.0).abs() < f64::EPSILON);
 
         let earn_2 = result.iter().find(|e| e.earner_id == uuid(2)).unwrap();
         assert_eq!(earn_2.level, 2);
-        assert_eq!(earn_2.rate, 0.06);
+        assert_eq!(earn_2.rate, Some(0.06));
         assert!((earn_2.dollar_amount - 12.0).abs() < f64::EPSILON);
 
         let earn_0 = result.iter().find(|e| e.earner_id == uuid(0)).unwrap();
         assert_eq!(earn_0.level, 3);
-        assert_eq!(earn_0.rate, 0.04);
+        assert_eq!(earn_0.rate, Some(0.04));
         assert!((earn_0.dollar_amount - 8.0).abs() < f64::EPSILON);
     }
 
@@ -1325,11 +1325,11 @@ mod calculate_tests {
         assert_eq!(result.len(), 2);
         let earn_2 = result.iter().find(|e| e.earner_id == uuid(2)).unwrap();
         assert_eq!(earn_2.level, 1);
-        assert_eq!(earn_2.rate, 0.10);
+        assert_eq!(earn_2.rate, Some(0.10));
 
         let earn_0 = result.iter().find(|e| e.earner_id == uuid(0)).unwrap();
         assert_eq!(earn_0.level, 2);
-        assert_eq!(earn_0.rate, 0.06);
+        assert_eq!(earn_0.rate, Some(0.06));
 
         // Node 1 should not appear in results.
         assert!(!result.iter().any(|e| e.earner_id == uuid(1)));
@@ -1433,7 +1433,7 @@ mod calculate_tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].earner_id, uuid(0));
         assert_eq!(result[0].level, 2);
-        assert_eq!(result[0].rate, 0.05);
+        assert_eq!(result[0].rate, Some(0.05));
         assert!((result[0].dollar_amount - 5.0).abs() < f64::EPSILON);
     }
 
@@ -1474,7 +1474,7 @@ mod calculate_tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].earner_id, uuid(0));
         assert_eq!(result[0].level, 1);
-        assert_eq!(result[0].rate, 0.10);
+        assert_eq!(result[0].rate, Some(0.10));
         assert!((result[0].dollar_amount - 10.0).abs() < f64::EPSILON);
     }
 
@@ -1519,7 +1519,7 @@ mod calculate_tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].earner_id, uuid(0));
         assert_eq!(result[0].level, 2);
-        assert_eq!(result[0].rate, 0.05);
+        assert_eq!(result[0].rate, Some(0.05));
         assert!((result[0].dollar_amount - 5.0).abs() < f64::EPSILON);
     }
 
@@ -1670,21 +1670,21 @@ mod calculate_tests {
         // mid: level 1 from walk = 100 * 0.40 * 1.0 * 0.05 = 2.0
         let mid_level = result
             .iter()
-            .find(|e| e.earner_id == uuid(1) && e.rate == 0.05)
+            .find(|e| e.earner_id == uuid(1) && e.rate == Some(0.05))
             .unwrap();
         assert!((mid_level.dollar_amount - 2.0).abs() < f64::EPSILON);
 
         // root: level 2 from walk = 100 * 0.40 * 1.0 * 0.08 = 3.2
         let root_level = result
             .iter()
-            .find(|e| e.earner_id == uuid(0) && e.rate == 0.08)
+            .find(|e| e.earner_id == uuid(0) && e.rate == Some(0.08))
             .unwrap();
         assert!((root_level.dollar_amount - 3.2).abs() < f64::EPSILON);
 
         // root: gen 1 = 100 * 1.0 * 0.10 = 10.0
         let root_gen = result
             .iter()
-            .find(|e| e.earner_id == uuid(0) && e.rate == 0.10)
+            .find(|e| e.earner_id == uuid(0) && e.rate == Some(0.10))
             .unwrap();
         assert!((root_gen.dollar_amount - 10.0).abs() < f64::EPSILON);
     }
@@ -2119,17 +2119,17 @@ mod calculate_tests {
 
         let earn_low = result.iter().find(|e| e.earner_id == uuid(2)).unwrap();
         assert_eq!(earn_low.level, 1);
-        assert_eq!(earn_low.rate, 0.10);
+        assert_eq!(earn_low.rate, Some(0.10));
         assert!((earn_low.dollar_amount - 10.0).abs() < f64::EPSILON);
 
         let earn_mid = result.iter().find(|e| e.earner_id == uuid(1)).unwrap();
         assert_eq!(earn_mid.level, 1);
-        assert_eq!(earn_mid.rate, 0.10);
+        assert_eq!(earn_mid.rate, Some(0.10));
         assert!((earn_mid.dollar_amount - 10.0).abs() < f64::EPSILON);
 
         let earn_root = result.iter().find(|e| e.earner_id == uuid(0)).unwrap();
         assert_eq!(earn_root.level, 1);
-        assert_eq!(earn_root.rate, 0.10);
+        assert_eq!(earn_root.rate, Some(0.10));
         assert!((earn_root.dollar_amount - 10.0).abs() < f64::EPSILON);
     }
 
@@ -2171,17 +2171,17 @@ mod calculate_tests {
         // g2 (Gold): gen 1 — first Gold+ boundary above source
         let earn_g2 = result.iter().find(|e| e.earner_id == uuid(2)).unwrap();
         assert_eq!(earn_g2.level, 1);
-        assert_eq!(earn_g2.rate, 0.10);
+        assert_eq!(earn_g2.rate, Some(0.10));
 
         // g1 (Gold): gen 2 — second Gold+ boundary above source
         let earn_g1 = result.iter().find(|e| e.earner_id == uuid(1)).unwrap();
         assert_eq!(earn_g1.level, 2);
-        assert_eq!(earn_g1.rate, 0.05);
+        assert_eq!(earn_g1.rate, Some(0.05));
 
         // root (Diamond): gen 1 — only Diamond+ boundary
         let earn_root = result.iter().find(|e| e.earner_id == uuid(0)).unwrap();
         assert_eq!(earn_root.level, 1);
-        assert_eq!(earn_root.rate, 0.10);
+        assert_eq!(earn_root.rate, Some(0.10));
 
         // low (Associate): gen 1 — first Associate+ boundary above source
         let earn_low = result.iter().find(|e| e.earner_id == uuid(3)).unwrap();
@@ -2359,11 +2359,11 @@ mod calculate_tests {
         // Diamond walk produces both diamond earners.
         let earn_3 = result.iter().find(|e| e.earner_id == uuid(3)).unwrap();
         assert_eq!(earn_3.level, 1);
-        assert_eq!(earn_3.rate, 0.10);
+        assert_eq!(earn_3.rate, Some(0.10));
 
         let earn_2 = result.iter().find(|e| e.earner_id == uuid(2)).unwrap();
         assert_eq!(earn_2.level, 2);
-        assert_eq!(earn_2.rate, 0.05);
+        assert_eq!(earn_2.rate, Some(0.05));
 
         // Exactly two earnings total: only the diamond walk produces results.
         assert_eq!(result.len(), 2);
@@ -2447,17 +2447,17 @@ mod calculate_tests {
         // Silver earners within the per-rank cap of 2 must earn.
         let earn_7 = result.iter().find(|e| e.earner_id == uuid(7)).unwrap();
         assert_eq!(earn_7.level, 1);
-        assert_eq!(earn_7.rate, 0.10);
+        assert_eq!(earn_7.rate, Some(0.10));
 
         let earn_6 = result.iter().find(|e| e.earner_id == uuid(6)).unwrap();
         assert_eq!(earn_6.level, 2);
-        assert_eq!(earn_6.rate, 0.08);
+        assert_eq!(earn_6.rate, Some(0.08));
 
         // Diamond earner at gen 8 must earn. Under the OLD code the walk
         // stops at depth 4 and this earner never appears.
         let earn_0 = result.iter().find(|e| e.earner_id == uuid(0)).unwrap();
         assert_eq!(earn_0.level, 8);
-        assert_eq!(earn_0.rate, 0.02);
+        assert_eq!(earn_0.rate, Some(0.02));
 
         // Exactly three earnings: silvers 7 and 6, plus diamond 0.
         assert_eq!(result.len(), 3);
@@ -2647,13 +2647,13 @@ mod calculate_tests {
         // Gold node 6 earns gen 1.
         let earn_6 = result.iter().find(|e| e.earner_id == uuid(6)).unwrap();
         assert_eq!(earn_6.level, 1);
-        assert_eq!(earn_6.rate, 0.10);
+        assert_eq!(earn_6.rate, Some(0.10));
         assert!((earn_6.dollar_amount - 10.0).abs() < f64::EPSILON);
 
         // Silver node 5 earns gen 2 (within silver cap of 2).
         let earn_5 = result.iter().find(|e| e.earner_id == uuid(5)).unwrap();
         assert_eq!(earn_5.level, 2);
-        assert_eq!(earn_5.rate, 0.08);
+        assert_eq!(earn_5.rate, Some(0.08));
         assert!((earn_5.dollar_amount - 8.0).abs() < f64::EPSILON);
 
         // Diamond node 0 earns gen 7. Walk reaches the diamond cap of 7,
@@ -2661,7 +2661,7 @@ mod calculate_tests {
         // binding constraint here.
         let earn_0 = result.iter().find(|e| e.earner_id == uuid(0)).unwrap();
         assert_eq!(earn_0.level, 7);
-        assert_eq!(earn_0.rate, 0.02);
+        assert_eq!(earn_0.rate, Some(0.02));
         assert!((earn_0.dollar_amount - 2.0).abs() < f64::EPSILON);
 
         // Exactly three earnings: gold 6, silver 5, diamond 0.
@@ -2750,20 +2750,20 @@ mod calculate_tests {
         // Gold node 6 earns gen 1 in the gold walk.
         let earn_6 = result.iter().find(|e| e.earner_id == uuid(6)).unwrap();
         assert_eq!(earn_6.level, 1);
-        assert_eq!(earn_6.rate, 0.10);
+        assert_eq!(earn_6.rate, Some(0.10));
         assert!((earn_6.dollar_amount - 10.0).abs() < f64::EPSILON);
 
         // Silver node 5 earns gen 2 in the silver walk (gen 2 = silver cap).
         let earn_5 = result.iter().find(|e| e.earner_id == uuid(5)).unwrap();
         assert_eq!(earn_5.level, 2);
-        assert_eq!(earn_5.rate, 0.08);
+        assert_eq!(earn_5.rate, Some(0.08));
         assert!((earn_5.dollar_amount - 8.0).abs() < f64::EPSILON);
 
         // Diamond node 0 earns gen 1 in the diamond walk (only diamond+
         // boundary above the source).
         let earn_0 = result.iter().find(|e| e.earner_id == uuid(0)).unwrap();
         assert_eq!(earn_0.level, 1);
-        assert_eq!(earn_0.rate, 0.10);
+        assert_eq!(earn_0.rate, Some(0.10));
         assert!((earn_0.dollar_amount - 10.0).abs() < f64::EPSILON);
 
         // Exactly three earnings: silver 5, gold 6, diamond 0.

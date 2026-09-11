@@ -4,7 +4,7 @@
 # Expected error: rank_threshold must be a string (not null).
 
 name: Compression Missing Rank Threshold
-version: 1
+version: 2
 
 period:
   length: month

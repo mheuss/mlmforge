@@ -43,7 +43,7 @@ section describes `single_walk`. The `multi_tier` strategy is covered below.
 | **Type** | `single_walk` | Selects the classic rank-walk override described here. |
 | **Override calculation** | `differential` or `fixed_override` | How the override percentage is determined. |
 | **Rank rates** | rank x rate map | Base rate per rank. Used to calculate the differential. |
-| **Min override** | float (default: 0.0) | Floor for the override percentage. Standard: 0 (never negative). |
+| **Min override** | `{type, value}`, required | Floor applied when the rank gap is zero or negative. `type` is `rate` or `currency`. Never negative. |
 
 **Differential mode (standard):** Your rank rate minus their rank rate. Applied to the breakaway group's total volume.
 
@@ -51,7 +51,7 @@ section describes `single_walk`. The `multi_tier` strategy is covered below.
 |----------|---------------|----------------|--------------|
 | You outrank them | 15% | 10% | 5% |
 | Same rank | 12% | 12% | 0% |
-| They outrank you | 10% | 15% | 0% (capped at min_override) |
+| They outrank you | 10% | 15% | 0%, then min_override decides |
 
 Example: You are rank 8 (15%). Your breakaway leader is rank 6 (10%). Their group generated 50,000 GV this period. Your override: (15% - 10%) x 50,000 = $2,500.
 

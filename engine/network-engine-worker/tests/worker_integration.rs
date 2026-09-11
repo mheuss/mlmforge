@@ -5957,3 +5957,298 @@ fn every_structure_type_has_a_dispatchable_commission_op() {
     drop(worker.stdin.take());
     worker.wait().unwrap();
 }
+
+// ---- HEU-706: inconsistent restores ----------------------------------------
+//
+// Each test takes a snapshot from a live engine, mutates exactly one field in
+// the returned JSON, and restores it under a new name. Mutating a real snapshot
+// keeps the shape right by construction, so a failure means the invariant broke
+// rather than that the hand-written JSON was wrong.
+
+/// Takes a snapshot of `structure` and returns its `data` payload.
+fn take_snapshot_data(worker: &mut std::process::Child, structure: &str) -> serde_json::Value {
+    let resp = common::send_receive(
+        worker,
+        &format!(
+            r#"{{"id":"snap","op":"take_snapshot","params":{{"structure":"{}"}}}}"#,
+            structure
+        ),
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(
+        parsed["ok"].as_bool().unwrap_or(false),
+        "take_snapshot failed: {}",
+        resp
+    );
+    parsed["result"]["data"].clone()
+}
+
+/// Restores `data` under a fresh name and returns the raw response.
+fn restore_under(
+    worker: &mut std::process::Child,
+    name: &str,
+    tree_type: &str,
+    data: serde_json::Value,
+) -> String {
+    let req = serde_json::json!({
+        "id": "restore-bad",
+        "op": "restore_snapshot",
+        "params": { "structure": name, "tree_type": tree_type, "data": data }
+    });
+    common::send_receive(worker, &req.to_string())
+}
+
+fn assert_inconsistent(resp: &str) {
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INCONSISTENT_SNAPSHOT"),
+        "expected INCONSISTENT_SNAPSHOT, got: {}",
+        resp
+    );
+}
+
+#[test]
+fn restore_rejects_a_unilevel_index_past_the_end() {
+    let mut worker = common::spawn_worker();
+    build_three_node_chain(&mut worker);
+
+    let mut data = take_snapshot_data(&mut worker, TREE_NAME);
+    data["arena"]["index"]
+        .as_object_mut()
+        .expect("unilevel snapshot should carry arena.index")
+        .insert(
+            "11111111-1111-1111-1111-111111111111".to_string(),
+            serde_json::json!(99),
+        );
+
+    let resp = restore_under(&mut worker, "R1", "unilevel", data);
+    assert_inconsistent(&resp);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_rejects_a_unilevel_index_on_a_tombstone() {
+    // A removal frees a slot. Pointing an index entry at it is in range and
+    // dead, which a bounds-only check would accept.
+    let mut worker = common::spawn_worker();
+    build_three_node_chain(&mut worker);
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"rm","op":"remove_node","params":{{"structure":"{}","user_id":"{}"}}}}"#,
+            TREE_NAME, GRANDCHILD
+        ),
+    );
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "remove_node failed: {}",
+        resp
+    );
+
+    let mut data = take_snapshot_data(&mut worker, TREE_NAME);
+    let freed = data["arena"]["free_list"][0].clone();
+    assert!(
+        !freed.is_null(),
+        "the removal should have left a free slot: {}",
+        data
+    );
+    data["arena"]["index"]
+        .as_object_mut()
+        .unwrap()
+        .insert("22222222-2222-2222-2222-222222222222".to_string(), freed);
+
+    let resp = restore_under(&mut worker, "R2", "unilevel", data);
+    assert_inconsistent(&resp);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_rejects_a_binary_child_slot_past_the_end() {
+    let mut worker = common::spawn_worker();
+    create_binary_tree(&mut worker, "BinTree");
+    let resp = common::send_receive(
+        &mut worker,
+        r#"{"id":"b1","op":"add_root","params":{"structure":"BinTree","user_id":"aaaaaaaa-0000-0000-0000-000000000001","enrolled_at":100}}"#,
+    );
+    assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
+
+    let mut data = take_snapshot_data(&mut worker, "BinTree");
+    let slots = data["slots"].as_object_mut().expect("binary carries slots");
+    let key = slots.keys().next().cloned().expect("one slots entry");
+    slots.insert(key, serde_json::json!([99, null]));
+
+    let resp = restore_under(&mut worker, "R3", "binary", data);
+    assert_inconsistent(&resp);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_rejects_a_matrix_slot_vector_of_the_wrong_width() {
+    let mut worker = common::spawn_worker();
+    create_matrix_tree(&mut worker, "MatTree");
+    let resp = common::send_receive(
+        &mut worker,
+        r#"{"id":"m1","op":"add_root","params":{"structure":"MatTree","user_id":"bbbbbbbb-0000-0000-0000-000000000001","enrolled_at":100}}"#,
+    );
+    assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
+
+    let mut data = take_snapshot_data(&mut worker, "MatTree");
+    let slots = data["slots"].as_object_mut().expect("matrix carries slots");
+    let key = slots.keys().next().cloned().expect("one slots entry");
+    let shortened = slots[&key]
+        .as_array()
+        .map(|v| v[..v.len() - 1].to_vec())
+        .expect("a slot vector");
+    slots.insert(key, serde_json::Value::Array(shortened));
+
+    let resp = restore_under(&mut worker, "R4", "matrix", data);
+    assert_inconsistent(&resp);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_rejects_a_board_member_on_an_absent_board() {
+    let mut worker = common::spawn_worker();
+    let create = serde_json::json!({
+        "id": "bp-create",
+        "op": "create_board_plan",
+        "params": {
+            "structure": "BpSnap", "width": 2, "height": 2,
+            "config": {
+                "cycle_commission": 500.0, "re_entry_enabled": true,
+                "re_entry_position": "bottom", "max_cycles_per_period": 4,
+                "max_cascade_depth": 10, "stall_threshold_periods": 3,
+                "inactive_compression": false
+            },
+            "timestamp": 0
+        }
+    });
+    let resp = common::send_receive(&mut worker, &create.to_string());
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "create_board_plan failed: {}",
+        resp
+    );
+    let add = serde_json::json!({
+        "id": "bp-add", "op": "board_add_member",
+        "params": {
+            "structure": "BpSnap",
+            "user_id": "cccccccc-0000-0000-0000-000000000001",
+            "sponsor_id": "cccccccc-0000-0000-0000-000000000001",
+            "timestamp": 1
+        }
+    });
+    let resp = common::send_receive(&mut worker, &add.to_string());
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "board_add_member failed: {}",
+        resp
+    );
+
+    let mut data = take_snapshot_data(&mut worker, "BpSnap");
+    let members = data["member_boards"]
+        .as_object_mut()
+        .expect("board plan carries member_boards");
+    let key = members.keys().next().cloned().expect("one member");
+    members.insert(
+        key,
+        serde_json::json!("dddddddd-0000-0000-0000-000000000009"),
+    );
+
+    let resp = restore_under(&mut worker, "R5", "board_plan", data);
+    assert_inconsistent(&resp);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_rejects_a_streamline_user_not_in_the_stream_tree() {
+    // The state HEU-706 was filed for: user_streams names a stream whose tree
+    // does not hold the user.
+    let mut worker = common::spawn_worker();
+    create_streamline(&mut worker);
+    sl_add_member(&mut worker, "sl-a", SL_USER1, ROOT, 1001);
+
+    let mut data = take_snapshot_data(&mut worker, SL_STRUCTURE);
+    data["user_streams"]
+        .as_object_mut()
+        .expect("streamline carries user_streams")
+        .insert(
+            "eeeeeeee-0000-0000-0000-000000000001".to_string(),
+            serde_json::json!([1]),
+        );
+
+    let resp = restore_under(&mut worker, "R6", "streamline", data);
+    assert_inconsistent(&resp);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_rejects_a_streamline_nested_arena_fault() {
+    // The fault is inside one Stream's tree, so the Stream wrapper is what
+    // names which stream failed.
+    let mut worker = common::spawn_worker();
+    create_streamline(&mut worker);
+    sl_add_member(&mut worker, "sl-a", SL_USER1, ROOT, 1001);
+
+    let mut data = take_snapshot_data(&mut worker, SL_STRUCTURE);
+    let streams = data["streams"].as_object_mut().expect("streams map");
+    let key = streams.keys().next().cloned().expect("one stream");
+    streams[&key]["tree"]["arena"]["index"]
+        .as_object_mut()
+        .expect("nested arena index")
+        .insert(
+            "ffffffff-0000-0000-0000-000000000001".to_string(),
+            serde_json::json!(99),
+        );
+
+    let resp = restore_under(&mut worker, "R7", "streamline", data);
+    assert_inconsistent(&resp);
+    assert!(
+        resp.contains("stream"),
+        "the message should name which stream failed, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_rejects_undeserializable_data_with_invalid_params() {
+    // Design BR 10: the two codes must be told apart. Without this the suite
+    // proves INCONSISTENT_SNAPSHOT is returned but never that it is returned
+    // for a different reason than INVALID_PARAMS. This passes before the
+    // handler is wired as well as after.
+    let mut worker = common::spawn_worker();
+
+    let resp = restore_under(
+        &mut worker,
+        "R8",
+        "unilevel",
+        serde_json::json!({"not_an_arena": true}),
+    );
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "expected INVALID_PARAMS, got: {}",
+        resp
+    );
+    assert!(
+        !resp.contains("INCONSISTENT_SNAPSHOT"),
+        "a shape that will not deserialize must not report INCONSISTENT_SNAPSHOT, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}

@@ -782,13 +782,23 @@ mod tests {
         );
     }
 
-    /// Pins the rank check ahead of `validate_broad_pct`, whose `debug_assert`
-    /// aborts the call rather than returning. An `Err` here means the rank
-    /// check ran first; a panic means it did not.
+    /// Pins the rank check ahead of `validate_broad_pct`, which panics rather
+    /// than returning. An `Err` here means the rank check ran first; a panic
+    /// means it did not.
+    ///
+    /// Weaker than the unilevel pin of the same shape: here `validate_broad_pct`
+    /// runs after `prep`, so this permits the check to sit below the whole prep
+    /// phase. It does not pin the check to the first statement.
+    ///
+    /// Debug-only on purpose. Without `debug_assertions` the discriminator is
+    /// compiled out and this test would pass on the ordering it exists to
+    /// reject, so it is removed rather than left to pass falsely.
     #[test]
+    #[cfg(debug_assertions)]
     fn stairstep_unknown_rank_is_rejected_before_the_broad_pct_guard() {
         let tree = build_chain(3);
         let mut structure = test_stairstep_structure();
+        // Deliberately out of range. This value is the discriminator, not a typo.
         structure.level_commission.broad_commission_percent = 1.5;
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 

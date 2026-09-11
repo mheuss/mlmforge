@@ -1164,18 +1164,24 @@ mod tests {
         ));
     }
 
-    /// Pins the rank check ahead of `validate_broad_pct`, whose `debug_assert`
-    /// aborts the call rather than returning. An `Err` here means the rank
-    /// check ran first; a panic means it did not.
+    /// Pins the rank check ahead of `validate_broad_pct`, which panics rather
+    /// than returning. An `Err` here means the rank check ran first; a panic
+    /// means it did not.
     ///
-    /// `unknown_rank_wins_over_invalid_cv` only pins the check above the walk.
-    /// This one pins it above the config guards too.
+    /// Debug-only on purpose. Without `debug_assertions` the discriminator is
+    /// compiled out and this test would pass on the ordering it exists to
+    /// reject, so it is removed rather than left to pass falsely.
+    ///
+    /// `unknown_rank_wins_over_invalid_cv` pins the check above the walk, in
+    /// every profile. This one pins it above the config guards too.
     #[test]
+    #[cfg(debug_assertions)]
     fn unknown_rank_is_rejected_before_the_broad_pct_guard() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
 
         let mut structure = test_structure(test_rate_table());
+        // Deliberately out of range. This value is the discriminator, not a typo.
         structure.level_commission.broad_commission_percent = 1.5;
         let plan = test_plan(default_eligibility());
 
@@ -1208,8 +1214,9 @@ mod tests {
         );
     }
 
-    /// Pins the rank check ahead of `validate_cv`. This input is bad on both
-    /// counts: only the check order decides which error surfaces.
+    /// Pins the rank check above the walk, where `validate_cv` runs. This
+    /// input is bad on both counts: only the check order decides which error
+    /// surfaces. Holds in every profile.
     #[test]
     fn unknown_rank_wins_over_invalid_cv() {
         let mut tree = UnilevelTree::new();

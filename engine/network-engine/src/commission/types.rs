@@ -100,6 +100,10 @@ pub enum CalculationError {
     #[error("volume source {0} not found in snapshot data")]
     SourceNotInSnapshot(Uuid),
 
+    /// A snapshot names a rank the loaded plan does not define.
+    #[error("snapshot for {0} names rank {1:?}; the loaded plan's rank ladder does not contain it")]
+    UnknownSnapshotRank(Uuid, String),
+
     /// A volume source has a non-finite or negative cv_amount.
     #[error("volume source {0} has invalid cv_amount: {1}")]
     InvalidCvAmount(Uuid, f64),

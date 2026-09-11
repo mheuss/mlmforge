@@ -178,21 +178,21 @@ impl Arena {
 
     /// Prove every live node has a child-slot entry.
     ///
-    /// `has_entry` answers whether a slot is a key in the caller's map. The
-    /// binary and matrix maps hold different value types and only the key
-    /// matters here.
+    /// Generic over the map's value type: only the key is read here.
     ///
     /// Ascending slot order, so a snapshot with several missing entries names
     /// the same one on every run.
-    pub(crate) fn check_every_live_node_has_a_slot(
+    pub(crate) fn check_every_live_node_has_a_slot<V>(
         &self,
-        has_entry: impl Fn(NodeIndex) -> bool,
+        slots: &HashMap<NodeIndex, V>,
     ) -> Result<(), SnapshotConsistencyError> {
         for (slot, node) in self.nodes.iter().enumerate() {
+            // Skipping tombstones is load-bearing: every tree that has had a
+            // node removed carries one, and they hold no slot entry.
             if node.user_id == Uuid::nil() {
                 continue;
             }
-            if !has_entry(NodeIndex(slot)) {
+            if !slots.contains_key(&NodeIndex(slot)) {
                 return Err(SnapshotConsistencyError::SlotEntryMissing {
                     slot,
                     user_id: node.user_id,

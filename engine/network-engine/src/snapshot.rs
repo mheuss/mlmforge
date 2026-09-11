@@ -82,6 +82,27 @@ pub enum SnapshotConsistencyError {
         width: u8,
     },
 
+    #[error("the tree declares a width of {width}; a matrix width is at least 2")]
+    MatrixWidthTooSmall { width: u8 },
+
+    #[error("the tree declares depth-first spillover; this engine places breadth-first")]
+    MatrixSpilloverUnsupported,
+
+    #[error(
+        "the engine declares a width of {width} and a height of {height}; a board plan width is 2 to 5 and a height is 1 to 4"
+    )]
+    BoardDimensionsOutOfRange { width: u8, height: u8 },
+
+    #[error(
+        "the engine's board size is {found}; a width of {width} and a height of {height} give {expected}"
+    )]
+    BoardTotalPositionsMismatch {
+        found: usize,
+        width: u8,
+        height: u8,
+        expected: usize,
+    },
+
     #[error("the holding tank names {user_id}; that user is also placed at node slot {slot}")]
     HoldingTankUserPlaced { user_id: Uuid, slot: usize },
 

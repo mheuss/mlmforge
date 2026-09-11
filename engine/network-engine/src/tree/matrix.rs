@@ -70,6 +70,15 @@ impl MatrixTree {
     /// Prove a restored tree's stored indexes are in range and live, that every
     /// slot vector is the tree's width, and that no holding-tank user is placed.
     pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
+        // A restore does not run the constructor, so the range it enforces has
+        // to be re-established here. A width below 2 is not inert: add_node
+        // still succeeds and the result is a chain priced as a matrix.
+        if self.width < 2 {
+            return Err(SnapshotConsistencyError::MatrixWidthTooSmall { width: self.width });
+        }
+        if matches!(self.spillover, SpilloverDirection::DepthFirst) {
+            return Err(SnapshotConsistencyError::MatrixSpilloverUnsupported);
+        }
         self.arena.validate_restored()?;
         // Keep the lowest-slot fault rather than returning on the first one
         // found: self.slots is a HashMap with a randomized hasher, so
@@ -906,6 +915,30 @@ mod tests {
                 slot: 99,
                 node_count: 2,
             })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_width_below_two() {
+        // The constructor rejects this; a restore does not run it. A width of
+        // 1 is a chain, and add_node succeeds on it.
+        let (mut tree, _) = matrix_pair();
+        tree.width = 1;
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::MatrixWidthTooSmall { width: 1 })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_depth_first_spillover() {
+        let (mut tree, _) = matrix_pair();
+        tree.spillover = SpilloverDirection::DepthFirst;
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::MatrixSpilloverUnsupported)
         );
     }
 

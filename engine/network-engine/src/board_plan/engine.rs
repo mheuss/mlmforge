@@ -95,6 +95,24 @@ impl BoardPlanEngine {
     /// holds users who are on no board by design. Checking it against `boards`
     /// would reject engines this crate itself produces.
     pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
+        // A restore does not run the constructor. total_positions is a cached
+        // derived value, so comparing the boards against it proves only that
+        // they agree with the cache, not that the cache is right.
+        if !(2..=5).contains(&self.width) || !(1..=4).contains(&self.height) {
+            return Err(SnapshotConsistencyError::BoardDimensionsOutOfRange {
+                width: self.width,
+                height: self.height,
+            });
+        }
+        let expected = board::total_positions(self.width, self.height);
+        if self.total_positions != expected {
+            return Err(SnapshotConsistencyError::BoardTotalPositionsMismatch {
+                found: self.total_positions,
+                width: self.width,
+                height: self.height,
+                expected,
+            });
+        }
         // One pass over every board's positions, then constant-time lookups.
         // A scan per member is quadratic, and a restored engine's position
         // vectors bypass the constructor's size limits.
@@ -707,6 +725,47 @@ mod tests {
             Err(SnapshotConsistencyError::BoardPositionCountMismatch {
                 board_id,
                 found: 2,
+                expected: 7,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_dimensions_outside_the_constructor_range() {
+        let (mut engine, _) = seeded_engine();
+        engine.width = 9;
+        engine.height = 9;
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::BoardDimensionsOutOfRange {
+                width: 9,
+                height: 9,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_cached_board_size_the_geometry_denies() {
+        // The boards agree with the cached value, so the per-board check
+        // passes. Only recomputing from width and height catches it. A board
+        // restored this way cycles early and pays early.
+        let (mut engine, member) = seeded_engine();
+        let board_id = *engine.member_boards.get(&member).unwrap();
+        engine.total_positions = 3;
+        engine
+            .boards
+            .get_mut(&board_id)
+            .unwrap()
+            .positions
+            .truncate(3);
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::BoardTotalPositionsMismatch {
+                found: 3,
+                width: 2,
+                height: 2,
                 expected: 7,
             })
         );

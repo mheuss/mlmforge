@@ -1118,7 +1118,7 @@ mod calculate_tests {
 
     /// Pins the rank check above the per-source checks, per design decision 2.
     /// This input is bad on both counts: only the check order decides which
-    /// error surfaces. Holds in every profile.
+    /// error surfaces.
     #[test]
     fn generation_unknown_rank_wins_over_invalid_cv() {
         let tree = build_chain(3);
@@ -1161,8 +1161,7 @@ mod calculate_tests {
     /// returns `Ok` with no earnings when the configured boundary rank is not
     /// in the ladder. An `Err` proves the rank check ran first.
     ///
-    /// Discriminates on a returned value rather than a `debug_assert`, so
-    /// unlike the unilevel and stairstep pins it holds in every profile.
+    /// Discriminates on a returned value rather than a `debug_assert`.
     ///
     /// It pins the check above the boundary resolution only. Placements
     /// earlier than that, such as below `evaluate_eligibility`, still pass.
@@ -2390,7 +2389,7 @@ mod calculate_tests {
         }
     }
 
-    /// Plan with two ranks for the per-rank-depth test: silver (1), diamond (2).
+    /// Plan for the per-rank-depth tests: associate (1), silver (2), diamond (3).
     fn silver_diamond_plan(
         structure: GenerationStructureConfig,
     ) -> crate::config::CompensationPlan {
@@ -2441,15 +2440,15 @@ mod calculate_tests {
     /// Chain: 0(Silver) -> 1(Silver) -> 2(Diamond) -> 3(Diamond) -> 4(Associate, source).
     /// SameRank mode. max_generations = 10. Per-rank depth: silver = 2, diamond = 5.
     ///
-    /// Silver walk (ordinal 1, walk_max=2):
+    /// Silver walk (ordinal 2, walk_max=2):
     ///   boundary_set = all ranked nodes {0, 1, 2, 3}.
     ///   Walking up from source: 3 (diamond, gen 1) -> 2 (diamond, gen 2) -> STOP.
     ///   Per-rank cap of 2 stops the walk before the actual Silver nodes (1, 0).
-    ///   Filter to ordinal 1: zero earners.
+    ///   Filter to ordinal 2: zero earners.
     ///
-    /// Diamond walk (ordinal 2, walk_max=5):
+    /// Diamond walk (ordinal 3, walk_max=5):
     ///   boundary_set = {2, 3}. Walking up: 3 (gen 1), 2 (gen 2), 1 (skip), 0 (skip).
-    ///   Filter to ordinal 2: node 3 earns gen 1, node 2 earns gen 2.
+    ///   Filter to ordinal 3: node 3 earns gen 1, node 2 earns gen 2.
     ///
     /// With the OLD code (no per-rank), every walk uses max_generations=10 and the
     /// Silver walk would produce gen 3 at node 1 and gen 4 at node 0. The new
@@ -2512,7 +2511,7 @@ mod calculate_tests {
     }
 
     /// Chain: 0(Diamond) -> 1..7(Silver) -> 8(Associate, source).
-    /// ThresholdRank mode. boundary_rank = "silver" (ordinal 1) so all silver
+    /// ThresholdRank mode. boundary_rank = "silver" (ordinal 2) so all silver
     /// and diamond nodes are boundaries. max_generations = 4 (default).
     /// Per-rank depth: silver = 2, diamond = 8.
     ///

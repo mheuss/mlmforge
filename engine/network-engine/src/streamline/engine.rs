@@ -80,18 +80,70 @@ impl StreamlineEngine {
     /// hasher and an operator has to be able to reproduce a rejection.
     pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
         let mut nested: Option<(u32, SnapshotConsistencyError)> = None;
-        for stream in self.streams.values() {
-            if let Err(source) = stream.tree.validate_restored() {
-                let err = SnapshotConsistencyError::Stream {
+        for (key, stream) in &self.streams {
+            // The key and the stream's own id are compared because callers
+            // read one and look up by the other. A mismatch makes every such
+            // lookup miss silently, and a miss here is swallowed rather than
+            // reported.
+            let found = if *key != stream.id {
+                Some(SnapshotConsistencyError::StreamIdMismatch {
+                    key: *key,
+                    stream_id: stream.id,
+                })
+            } else if let Err(source) = stream.tree.validate_restored() {
+                Some(SnapshotConsistencyError::Stream {
                     stream_id: stream.id,
                     source: Box::new(source),
-                };
-                if nested.as_ref().is_none_or(|(held, _)| stream.id < *held) {
-                    nested = Some((stream.id, err));
+                })
+            } else {
+                match stream.bottom {
+                    Some(bottom_id) if !stream.tree.contains(bottom_id) => {
+                        Some(SnapshotConsistencyError::StreamBottomNotInTree {
+                            stream_id: stream.id,
+                            user_id: bottom_id,
+                        })
+                    }
+                    None if !stream.tree.user_ids().is_empty() => {
+                        Some(SnapshotConsistencyError::StreamBottomMissing {
+                            stream_id: stream.id,
+                            node_count: stream.tree.user_ids().len(),
+                        })
+                    }
+                    _ => None,
+                }
+            };
+            if let Some(err) = found {
+                if nested.as_ref().is_none_or(|(held, _)| key < held) {
+                    nested = Some((*key, err));
                 }
             }
         }
         if let Some((_, err)) = nested {
+            return Err(err);
+        }
+
+        // The reverse of the user_streams walk below. A tree member with no
+        // index entry is a membership contradiction in the other direction,
+        // and it reaches the same panic an absent bottom does.
+        let mut unindexed: Option<(u32, SnapshotConsistencyError)> = None;
+        for stream in self.streams.values() {
+            for user_id in stream.tree.user_ids() {
+                let indexed = self
+                    .user_streams
+                    .get(&user_id)
+                    .is_some_and(|ids| ids.contains(&stream.id));
+                if !indexed && unindexed.as_ref().is_none_or(|(held, _)| stream.id < *held) {
+                    unindexed = Some((
+                        stream.id,
+                        SnapshotConsistencyError::TreeUserNotIndexed {
+                            stream_id: stream.id,
+                            user_id,
+                        },
+                    ));
+                }
+            }
+        }
+        if let Some((_, err)) = unindexed {
             return Err(err);
         }
 
@@ -199,9 +251,10 @@ impl StreamlineEngine {
 
     /// Returns true if the user has a position in any stream.
     ///
-    /// Reads the membership index alone, without walking the stream trees. A
-    /// restored engine has had that index checked against the trees before it
-    /// is stored, which is what makes this answer trustworthy.
+    /// Reads the membership index alone, without walking the stream trees. On
+    /// a restored engine that index has been checked in both directions before
+    /// the engine is stored: it cannot name a user the tree does not hold, and
+    /// a tree member missing from it is rejected.
     pub fn contains_member(&self, user_id: Uuid) -> bool {
         self.user_streams.contains_key(&user_id)
     }
@@ -800,6 +853,131 @@ mod tests {
     }
 
     #[test]
+    fn validate_restored_rejects_a_stream_filed_under_the_wrong_key() {
+        // Callers read stream.id and then look it up in the map. A mismatch
+        // makes every such lookup miss, and the misses are swallowed.
+        let mut engine = seeded_streamline();
+        let stream = engine.streams.remove(&1).unwrap();
+        engine.streams.insert(5, stream);
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::StreamIdMismatch {
+                key: 5,
+                stream_id: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_bottom_absent_from_its_tree() {
+        let mut engine = seeded_streamline();
+        engine.streams.get_mut(&1).unwrap().bottom = Some(test_uuid(9));
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::StreamBottomNotInTree {
+                stream_id: 1,
+                user_id: test_uuid(9),
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_missing_bottom_on_a_populated_tree() {
+        let mut engine = seeded_streamline();
+        engine.streams.get_mut(&1).unwrap().bottom = None;
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::StreamBottomMissing {
+                stream_id: 1,
+                node_count: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_tree_member_with_no_index_entry() {
+        // The reverse of the user_streams walk. contains_member reads the
+        // index alone, so an unindexed member is invisible to it.
+        let mut engine = seeded_streamline();
+        engine.user_streams.remove(&test_uuid(1));
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::TreeUserNotIndexed {
+                stream_id: 1,
+                user_id: test_uuid(1),
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_stream_offender_every_run() {
+        for _ in 0..64 {
+            let mut engine = seeded_streamline();
+            let base = engine.streams.get(&1).unwrap();
+            let (owner, created) = (base.owner_id, base.created_at);
+            for key in [8u32, 9u32] {
+                let mut s = StreamlineEngine::new(default_config(), created);
+                let mut stream = s.streams.remove(&1).unwrap();
+                stream.id = key;
+                stream.owner_id = owner;
+                stream.bottom = Some(test_uuid(9));
+                engine.streams.insert(key, stream);
+            }
+
+            assert_eq!(
+                engine.validate_restored(),
+                Err(SnapshotConsistencyError::StreamBottomNotInTree {
+                    stream_id: 8,
+                    user_id: test_uuid(9),
+                }),
+                "the lowest stream key should win regardless of hash order"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_user_stream_offender_every_run() {
+        for _ in 0..64 {
+            let mut engine = seeded_streamline();
+            engine.user_streams.insert(test_uuid(3), vec![77]);
+            engine.user_streams.insert(test_uuid(2), vec![77]);
+
+            assert_eq!(
+                engine.validate_restored(),
+                Err(SnapshotConsistencyError::StreamAbsent {
+                    user_id: test_uuid(2),
+                    stream_id: 77,
+                }),
+                "the lowest user_id should win regardless of hash order"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_owner_offender_every_run() {
+        for _ in 0..64 {
+            let mut engine = seeded_streamline();
+            for n in [3u128, 2u128] {
+                engine.user_streams.insert(test_uuid(n), vec![]);
+                engine.stream_owners.insert(test_uuid(n), vec![77]);
+            }
+
+            assert_eq!(
+                engine.validate_restored(),
+                Err(SnapshotConsistencyError::OwnerStreamAbsent {
+                    user_id: test_uuid(2),
+                    stream_id: 77,
+                }),
+                "the lowest user_id should win regardless of hash order"
+            );
+        }
+    }
+
+    #[test]
     fn validate_restored_rejects_a_user_stream_that_is_absent() {
         let mut engine = seeded_streamline();
         engine.user_streams.insert(test_uuid(2), vec![77]);
@@ -847,6 +1025,8 @@ mod tests {
     #[test]
     fn validate_restored_rejects_an_owner_the_stream_does_not_name() {
         let mut engine = seeded_streamline();
+        // The empty user_streams entry keeps uuid(2) out of the user_streams
+        // walk, so the owner walk is what fires.
         engine.user_streams.insert(test_uuid(2), vec![]);
         engine.stream_owners.insert(test_uuid(2), vec![1]);
 

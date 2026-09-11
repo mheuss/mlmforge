@@ -122,6 +122,20 @@ pub enum SnapshotConsistencyError {
         owner_id: Uuid,
     },
 
+    #[error("the streams map files stream {stream_id} under key {key}")]
+    StreamIdMismatch { key: u32, stream_id: u32 },
+
+    #[error(
+        "stream {stream_id} names {user_id} as its bottom; that stream's tree does not hold them"
+    )]
+    StreamBottomNotInTree { stream_id: u32, user_id: Uuid },
+
+    #[error("stream {stream_id} names no bottom; that stream's tree holds {node_count} users")]
+    StreamBottomMissing { stream_id: u32, node_count: usize },
+
+    #[error("stream {stream_id}'s tree holds {user_id}; user_streams has no entry for that stream")]
+    TreeUserNotIndexed { stream_id: u32, user_id: Uuid },
+
     #[error("stream {stream_id} is inconsistent: {source}")]
     Stream {
         stream_id: u32,

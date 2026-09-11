@@ -54,10 +54,10 @@ impl BinaryTree {
                     .flatten()
                     .find_map(|child| self.arena.check_slot_index(child.0).err())
             });
-            if let Some(err) = found
-                && fault.as_ref().is_none_or(|(held, _)| parent.0 < *held)
-            {
-                fault = Some((parent.0, err));
+            if let Some(err) = found {
+                if fault.as_ref().is_none_or(|(held, _)| parent.0 < *held) {
+                    fault = Some((parent.0, err));
+                }
             }
         }
         if let Some((_, err)) = fault {

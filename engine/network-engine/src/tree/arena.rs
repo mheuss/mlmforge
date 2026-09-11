@@ -75,10 +75,10 @@ impl Arena {
                 }
                 Some(_) => None,
             };
-            if let Some(err) = found
-                && fault.as_ref().is_none_or(|(held, _)| user_id < held)
-            {
-                fault = Some((*user_id, err));
+            if let Some(err) = found {
+                if fault.as_ref().is_none_or(|(held, _)| user_id < held) {
+                    fault = Some((*user_id, err));
+                }
             }
         }
         if let Some((_, err)) = fault {

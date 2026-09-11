@@ -100,24 +100,49 @@ impl BoardPlanEngine {
         // vectors bypass the constructor's size limits.
         let mut placed: HashSet<(Uuid, Uuid)> = HashSet::new();
         for (board_id, board) in &self.boards {
+            // split_board subtracts one from total_positions and indexes
+            // positions by the result, so a board whose vector disagrees is an
+            // out-of-bounds index, and a total_positions of zero wraps instead
+            // of panicking because no profile turns overflow checks on.
+            if board.positions.len() != self.total_positions {
+                return Err(SnapshotConsistencyError::BoardPositionCountMismatch {
+                    board_id: *board_id,
+                    found: board.positions.len(),
+                    expected: self.total_positions,
+                });
+            }
             for occupant in board.positions.iter().flatten() {
                 placed.insert((*board_id, *occupant));
             }
         }
 
+        // Keep the lowest-user_id fault rather than returning on the first one
+        // found: member_boards is a HashMap with a randomized hasher, so
+        // returning early makes which member gets named vary between runs on
+        // the same input. Still one pass.
+        let mut fault: Option<(Uuid, SnapshotConsistencyError)> = None;
         for (user_id, board_id) in &self.member_boards {
-            if !self.boards.contains_key(board_id) {
-                return Err(SnapshotConsistencyError::BoardAbsent {
+            let found = if !self.boards.contains_key(board_id) {
+                Some(SnapshotConsistencyError::BoardAbsent {
                     user_id: *user_id,
                     board_id: *board_id,
-                });
-            }
-            if !placed.contains(&(*board_id, *user_id)) {
-                return Err(SnapshotConsistencyError::MemberNotOnBoard {
+                })
+            } else if !placed.contains(&(*board_id, *user_id)) {
+                Some(SnapshotConsistencyError::MemberNotOnBoard {
                     user_id: *user_id,
                     board_id: *board_id,
-                });
+                })
+            } else {
+                None
+            };
+            if let Some(err) = found {
+                if fault.as_ref().is_none_or(|(held, _)| user_id < held) {
+                    fault = Some((*user_id, err));
+                }
             }
+        }
+        if let Some((_, err)) = fault {
+            return Err(err);
         }
         Ok(())
     }
@@ -653,6 +678,53 @@ mod tests {
         let (engine, _) = seeded_engine();
 
         assert_eq!(engine.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_board_whose_position_count_disagrees() {
+        // The forged shape that reaches split_board's indexing: the board
+        // agrees with member_boards, so the membership checks pass, and only
+        // the vector length is wrong.
+        let (mut engine, member) = seeded_engine();
+        let board_id = *engine.member_boards.get(&member).unwrap();
+        engine
+            .boards
+            .get_mut(&board_id)
+            .unwrap()
+            .positions
+            .truncate(2);
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::BoardPositionCountMismatch {
+                board_id,
+                found: 2,
+                expected: 7,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_member_offender_every_run() {
+        // member_boards is a HashMap with a randomized hasher. Fresh engine
+        // each iteration, so each gets its own seed.
+        for _ in 0..64 {
+            let (mut engine, _) = seeded_engine();
+            let low = Uuid::from_bytes([2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            let high = Uuid::from_bytes([3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            let ghost = Uuid::from_bytes([7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            engine.member_boards.insert(high, ghost);
+            engine.member_boards.insert(low, ghost);
+
+            assert_eq!(
+                engine.validate_restored(),
+                Err(SnapshotConsistencyError::BoardAbsent {
+                    user_id: low,
+                    board_id: ghost,
+                }),
+                "the lowest user_id should win regardless of hash order"
+            );
+        }
     }
 
     #[test]

@@ -90,10 +90,10 @@ impl MatrixTree {
                     .flatten()
                     .find_map(|child| self.arena.check_slot_index(child.0).err())
             });
-            if let Some(err) = found
-                && fault.as_ref().is_none_or(|(held, _)| parent.0 < *held)
-            {
-                fault = Some((parent.0, err));
+            if let Some(err) = found {
+                if fault.as_ref().is_none_or(|(held, _)| parent.0 < *held) {
+                    fault = Some((parent.0, err));
+                }
             }
         }
         if let Some((_, err)) = fault {
@@ -933,6 +933,23 @@ mod tests {
         // length and only the key is wrong.
         let (mut tree, _) = matrix_pair();
         tree.slots.insert(NodeIndex(99), vec![None, None]);
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::ChildSlotOutOfRange {
+                slot: 99,
+                node_count: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_reports_a_bad_key_before_a_bad_width() {
+        // One entry carrying both faults. With the checks reversed the error
+        // would name a slot the arena does not have, which is a message an
+        // operator cannot act on.
+        let (mut tree, _) = matrix_pair();
+        tree.slots.insert(NodeIndex(99), vec![None]);
 
         assert_eq!(
             tree.validate_restored(),

@@ -85,6 +85,13 @@ pub enum SnapshotConsistencyError {
     #[error("the holding tank names {user_id}; that user is also placed at node slot {slot}")]
     HoldingTankUserPlaced { user_id: Uuid, slot: usize },
 
+    #[error("board {board_id} holds {found} positions; the engine's board size is {expected}")]
+    BoardPositionCountMismatch {
+        board_id: Uuid,
+        found: usize,
+        expected: usize,
+    },
+
     #[error("member_boards puts {user_id} on board {board_id}; the engine holds no such board")]
     BoardAbsent { user_id: Uuid, board_id: Uuid },
 

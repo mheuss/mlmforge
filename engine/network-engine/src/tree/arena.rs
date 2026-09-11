@@ -962,8 +962,7 @@ mod tests {
 
     #[test]
     fn validate_restored_rejects_a_root_naming_a_tombstone() {
-        // Distinct from rejects_a_root_past_the_end, which trips the bounds
-        // check. This one is in range and dead.
+        // In range and dead, rather than out of range.
         let mut arena = live_arena();
         let dead = arena.alloc_slot(make_node(test_uuid(2), None, 1));
         arena.tombstone(dead);

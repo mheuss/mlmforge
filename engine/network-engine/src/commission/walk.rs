@@ -5,8 +5,8 @@
 //! calculators. Each calculator remains a standalone public function
 //! that delegates to these shared internals.
 //!
-//! Binary uses pairing mechanics, not level-based walks. It is
-//! not a consumer of this module.
+//! Binary uses pairing mechanics, not level-based walks. It calls
+//! `validate_snapshot_ranks` and nothing else here.
 
 // All items are pub(crate) and consumed by unilevel, matrix, and
 // stairstep calculators.

@@ -1,5 +1,6 @@
 //! Streamline engine — manages all streams for one streamline structure.
 
+use crate::snapshot::SnapshotConsistencyError;
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
@@ -72,6 +73,88 @@ pub struct StreamlineEngine {
 }
 
 impl StreamlineEngine {
+    /// Prove a restored engine's indexes agree with the streams they index.
+    ///
+    /// Each walk keeps the lowest-key fault rather than returning on the first
+    /// one found, because every map here is a `HashMap` with a randomized
+    /// hasher and an operator has to be able to reproduce a rejection.
+    pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
+        let mut nested: Option<(u32, SnapshotConsistencyError)> = None;
+        for stream in self.streams.values() {
+            if let Err(source) = stream.tree.validate_restored() {
+                let err = SnapshotConsistencyError::Stream {
+                    stream_id: stream.id,
+                    source: Box::new(source),
+                };
+                if nested.as_ref().is_none_or(|(held, _)| stream.id < *held) {
+                    nested = Some((stream.id, err));
+                }
+            }
+        }
+        if let Some((_, err)) = nested {
+            return Err(err);
+        }
+
+        let mut fault: Option<(Uuid, SnapshotConsistencyError)> = None;
+        for (user_id, stream_ids) in &self.user_streams {
+            let found = stream_ids
+                .iter()
+                .find_map(|stream_id| match self.streams.get(stream_id) {
+                    None => Some(SnapshotConsistencyError::StreamAbsent {
+                        user_id: *user_id,
+                        stream_id: *stream_id,
+                    }),
+                    Some(stream) if !stream.tree.contains(*user_id) => {
+                        Some(SnapshotConsistencyError::UserNotInStreamTree {
+                            user_id: *user_id,
+                            stream_id: *stream_id,
+                        })
+                    }
+                    Some(_) => None,
+                });
+            if let Some(err) = found {
+                if fault.as_ref().is_none_or(|(held, _)| user_id < held) {
+                    fault = Some((*user_id, err));
+                }
+            }
+        }
+        if let Some((_, err)) = fault {
+            return Err(err);
+        }
+
+        let mut owner_fault: Option<(Uuid, SnapshotConsistencyError)> = None;
+        for (user_id, stream_ids) in &self.stream_owners {
+            let found = stream_ids.iter().find_map(|stream_id| {
+                // OwnerStreamAbsent, not StreamAbsent. StreamAbsent's message
+                // says user_streams named the stream, and here stream_owners
+                // did. A message must not assert what it did not observe.
+                match self.streams.get(stream_id) {
+                    None => Some(SnapshotConsistencyError::OwnerStreamAbsent {
+                        user_id: *user_id,
+                        stream_id: *stream_id,
+                    }),
+                    Some(stream) if stream.owner_id != *user_id => {
+                        Some(SnapshotConsistencyError::StreamOwnerMismatch {
+                            user_id: *user_id,
+                            stream_id: *stream_id,
+                            owner_id: stream.owner_id,
+                        })
+                    }
+                    Some(_) => None,
+                }
+            });
+            if let Some(err) = found {
+                if owner_fault.as_ref().is_none_or(|(held, _)| user_id < held) {
+                    owner_fault = Some((*user_id, err));
+                }
+            }
+        }
+        if let Some((_, err)) = owner_fault {
+            return Err(err);
+        }
+
+        Ok(())
+    }
     /// Creates a new engine with one empty initial stream.
     ///
     /// The initial stream has no owner yet. The first member added
@@ -115,6 +198,10 @@ impl StreamlineEngine {
     }
 
     /// Returns true if the user has a position in any stream.
+    ///
+    /// Reads the membership index alone, without walking the stream trees. A
+    /// restored engine has had that index checked against the trees before it
+    /// is stored, which is what makes this answer trustworthy.
     pub fn contains_member(&self, user_id: Uuid) -> bool {
         self.user_streams.contains_key(&user_id)
     }
@@ -697,6 +784,105 @@ mod tests {
 
     fn test_uuid(n: u128) -> Uuid {
         Uuid::from_u128(n)
+    }
+
+    fn seeded_streamline() -> StreamlineEngine {
+        let mut engine = StreamlineEngine::new(default_config(), 1000);
+        engine
+            .add_member(test_uuid(1), test_uuid(99), 1000, None)
+            .unwrap();
+        engine
+    }
+
+    #[test]
+    fn validate_restored_accepts_a_healthy_engine() {
+        assert_eq!(seeded_streamline().validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_user_stream_that_is_absent() {
+        let mut engine = seeded_streamline();
+        engine.user_streams.insert(test_uuid(2), vec![77]);
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::StreamAbsent {
+                user_id: test_uuid(2),
+                stream_id: 77,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_user_absent_from_the_stream_tree() {
+        // The state HEU-706 was filed for.
+        let mut engine = seeded_streamline();
+        engine.user_streams.insert(test_uuid(2), vec![1]);
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::UserNotInStreamTree {
+                user_id: test_uuid(2),
+                stream_id: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_tells_an_absent_owner_stream_from_an_absent_user_stream() {
+        // The two variants differ only in which map the message names, so
+        // assert the variant rather than that it errored.
+        let mut engine = seeded_streamline();
+        engine.stream_owners.insert(test_uuid(2), vec![77]);
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::OwnerStreamAbsent {
+                user_id: test_uuid(2),
+                stream_id: 77,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_an_owner_the_stream_does_not_name() {
+        let mut engine = seeded_streamline();
+        engine.user_streams.insert(test_uuid(2), vec![]);
+        engine.stream_owners.insert(test_uuid(2), vec![1]);
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::StreamOwnerMismatch {
+                user_id: test_uuid(2),
+                stream_id: 1,
+                owner_id: test_uuid(1),
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_wraps_a_nested_tree_fault_with_its_stream_id() {
+        // UnilevelTree's arena is private to its own module, so the fault is
+        // injected the way a real restore would produce it: through serde.
+        let engine = seeded_streamline();
+        let mut json = serde_json::to_value(&engine).unwrap();
+        json["streams"]["1"]["tree"]["arena"]["index"]
+            .as_object_mut()
+            .unwrap()
+            .insert(test_uuid(5).to_string(), serde_json::json!(99));
+        let tampered: StreamlineEngine = serde_json::from_value(json).unwrap();
+
+        assert_eq!(
+            tampered.validate_restored(),
+            Err(SnapshotConsistencyError::Stream {
+                stream_id: 1,
+                source: Box::new(SnapshotConsistencyError::IndexSlotOutOfRange {
+                    user_id: test_uuid(5),
+                    slot: 99,
+                    node_count: 1,
+                }),
+            })
+        );
     }
 
     #[test]

@@ -98,22 +98,30 @@ impl BoardPlanEngine {
         // One pass over every board's positions, then constant-time lookups.
         // A scan per member is quadratic, and a restored engine's position
         // vectors bypass the constructor's size limits.
+        // A board sized differently from the engine is indexed out of bounds
+        // later. Keep the lowest-id offender: self.boards is a HashMap with a
+        // randomized hasher, and a corrupted payload rarely damages exactly one
+        // board.
         let mut placed: HashSet<(Uuid, Uuid)> = HashSet::new();
+        let mut sizing: Option<(Uuid, SnapshotConsistencyError)> = None;
         for (board_id, board) in &self.boards {
-            // split_board subtracts one from total_positions and indexes
-            // positions by the result, so a board whose vector disagrees is an
-            // out-of-bounds index, and a total_positions of zero wraps instead
-            // of panicking because no profile turns overflow checks on.
             if board.positions.len() != self.total_positions {
-                return Err(SnapshotConsistencyError::BoardPositionCountMismatch {
+                let err = SnapshotConsistencyError::BoardPositionCountMismatch {
                     board_id: *board_id,
                     found: board.positions.len(),
                     expected: self.total_positions,
-                });
+                };
+                if sizing.as_ref().is_none_or(|(held, _)| board_id < held) {
+                    sizing = Some((*board_id, err));
+                }
+                continue;
             }
             for occupant in board.positions.iter().flatten() {
                 placed.insert((*board_id, *occupant));
             }
+        }
+        if let Some((_, err)) = sizing {
+            return Err(err);
         }
 
         // Keep the lowest-user_id fault rather than returning on the first one
@@ -702,6 +710,35 @@ mod tests {
                 expected: 7,
             })
         );
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_board_offender_every_run() {
+        // self.boards is a HashMap too. A corrupted payload rarely damages
+        // exactly one board, so this walk needs the same lowest-key hold as
+        // the member walk below.
+        for _ in 0..64 {
+            let (mut engine, member) = seeded_engine();
+            let seated = *engine.member_boards.get(&member).unwrap();
+            let low = Uuid::from_bytes([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            let high = Uuid::from_bytes([4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            for id in [low, high] {
+                let mut board = engine.boards.get(&seated).unwrap().clone();
+                board.id = id;
+                board.positions.truncate(3);
+                engine.boards.insert(id, board);
+            }
+
+            assert_eq!(
+                engine.validate_restored(),
+                Err(SnapshotConsistencyError::BoardPositionCountMismatch {
+                    board_id: low,
+                    found: 3,
+                    expected: 7,
+                }),
+                "the lowest board id should win regardless of hash order"
+            );
+        }
     }
 
     #[test]

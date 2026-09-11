@@ -545,11 +545,7 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
                 let threshold_idx = level.saturating_sub(1) as usize;
                 if threshold_idx < thresholds.len() {
                     let min_ordinal = thresholds[threshold_idx];
-                    // An unranked node forfeits instead of compressing. Its
-                    // rank is caller-asserted and resolves below every ordinal
-                    // a plan can define, so compressing it would let a caller
-                    // promote the upline a level. HEU-608.
-                    if min_ordinal > 0 && !snapshot.rank.is_empty() {
+                    if min_ordinal > 0 {
                         let dist_ordinal = config
                             .rank_ordinals
                             .get(snapshot.rank.as_str())
@@ -565,10 +561,6 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
                 let should_compress = match config.compression.filter(|c| c.enabled) {
                     Some(compress) => match compress.mode {
                         CompressionMode::SkipInactive => !node_eligible,
-                        // An unranked node forfeits instead of compressing,
-                        // for the reason given at the dynamic-threshold check
-                        // above. HEU-608.
-                        CompressionMode::SkipBelowRank if snapshot.rank.is_empty() => false,
                         CompressionMode::SkipBelowRank => {
                             let dist_ordinal = config
                                 .rank_ordinals

@@ -20,13 +20,13 @@ We considered including derived fields like `is_eligible` or `max_depth` in the 
 
 ### Flat Earnings List as Output
 
-Five of the seven calculators succeed with a `Vec<CommissionEarning>`: unilevel, matrix, stairstep, generation, and streamline. Each entry is self-contained with the earner, the volume source, the level, the rate, and the dollar amount. No pre-grouping. No nesting. No aggregation.
+Five of the seven calculators succeed with a `CommissionCalculationResult`, whose `earnings` field is a `Vec<CommissionEarning>`: unilevel, matrix, stairstep, generation, and streamline. Each entry is self-contained with the earner, the volume source, the level, the rate, and the dollar amount. No pre-grouping. No nesting. No aggregation.
 
 Two do not, because they carry state a flat list cannot hold.
 
 | Calculator | Returns |
 |------------|---------|
-| unilevel, matrix, stairstep, generation, streamline | `Result<Vec<CommissionEarning>, CalculationError>` |
+| unilevel, matrix, stairstep, generation, streamline | `Result<CommissionCalculationResult, CalculationError>`, which is `earnings: Vec<CommissionEarning>` plus `walks` and `plan` |
 | `calculate_binary_pairing` | `Result<BinaryCalculationResult, CalculationError>`, which is `earnings: Vec<BinaryCommissionEarning>` plus `carry_forward` |
 | `calculate_board_commissions` | `BoardCommissionResult`, which is `earnings: Vec<BoardCycleEarning>` plus `updated_cycle_counts`. Not a `Result`, because it cannot fail |
 
@@ -34,7 +34,7 @@ Binary has to return post-payout leg volumes for every distributor, earners and 
 
 An earner can appear more than once for the same volume source. Stairstep pays a level commission and an override on one source, and multi-tier overrides can select the same ancestor for several tiers. `sort_earnings` carries a level tiebreaker for exactly this reason, and says so in its own doc comment. `(earner_id, source_id)` is not an identity.
 
-> **Envelope changing under [029](029-commission-provenance-on-the-wire.md).** Phase B of that arc replaces the bare array with `{earnings, walks, plan}`, and adds a `walk` reference to each earning. It has not landed: the five level-based calculators still succeed with a bare `Vec<CommissionEarning>` today. Everything this section says about the earnings themselves survives the change. The list inside `earnings` stays flat, self-contained, and ungrouped exactly as described here. Only the envelope around it moves.
+> **Envelope landed under [029](029-commission-provenance-on-the-wire.md).** Phase B of that arc replaced the bare array with `{earnings, walks, plan}` and added a `walk` reference to each earning. Checked 2026-09-11: all five level-based calculators return `Result<CommissionCalculationResult, CalculationError>`, and `CommissionEarning` carries `walk: Option<u32>`. Everything this section says about the earnings themselves survived the change. The list inside `earnings` stays flat, self-contained, and ungrouped exactly as described here. Only the envelope around it moved.
 
 Consumers aggregate however they need. A payout system sums by earner. An audit report groups by source. A dashboard shows level breakdowns. None of these consumption patterns should constrain the calculator's output format.
 
@@ -58,7 +58,7 @@ This reinforces the decision to keep calculators as standalone functions. The un
 
 ### No Shared Calculator Abstraction Yet
 
-Each calculator is a standalone public function. No `CommissionCalculator` trait. No shared interface. The unilevel calculator is `calculate_unilevel`. The binary calculator is `calculate_binary_pairing`. Each takes the inputs it needs and returns its own shape, described in the Flat Earnings List section above. The five level-based calculators succeed with a `Vec<CommissionEarning>`, and that payload becomes `CommissionCalculationResult` when 029's phase B lands. The standalone-function decision is unaffected either way.
+Each calculator is a standalone public function. No `CommissionCalculator` trait. No shared interface. The unilevel calculator is `calculate_unilevel`. The binary calculator is `calculate_binary_pairing`. Each takes the inputs it needs and returns its own shape, described in the Flat Earnings List section above. The five level-based calculators succeed with a `CommissionCalculationResult`, which 029's phase B introduced. The standalone-function decision was unaffected by that change.
 
 Binary calculation has fundamentally different inputs. It pairs volume from two legs rather than walking levels. We do not know what a shared interface would look like. Premature abstraction here would constrain future designs.
 
@@ -74,15 +74,15 @@ Compression cannot be applied as a post-processing step. The level assignments d
 
 This means compression behavior is tightly coupled to the walk loop. It has to be applied inline, inside the loop that assigns levels. Since HEU-200 that loop lives in `walk_level_commissions`. See decision [022](022-shared-commission-walk.md).
 
-### Defensive on Missing Data, Strict on Source Data
+### Strict on Caller-Supplied State
 
-Volume sources and their distributors must exist in the tree and snapshot. If they do not, the calculator returns an error. These are the explicit inputs to the calculation. Bad inputs produce meaningless results.
+Volume sources, their distributors, and every upline node the walk reaches must exist in the tree and in the snapshot map. A missing snapshot returns an error. So does a snapshot naming a rank the plan does not define, and a restored engine whose indexes disagree with the structures they index.
 
-Upline nodes missing from snapshots during a walk are treated as ineligible silently. The calculation continues. Missing upline data is a completeness issue, not an integrity issue. Halting an entire commission run because one distributor's snapshot is missing would be disproportionate.
+Volume amounts are validated too: `cv_amount` must be finite and non-negative. NaN, positive infinity, negative infinity, and negative values all produce `InvalidCvAmount` errors. These are input integrity checks, not business rules. A non-finite CV amount is always a bug upstream.
 
-Volume amounts are also validated: `cv_amount` must be finite and non-negative. NaN, positive infinity, negative infinity, and negative values all produce `InvalidCvAmount` errors. These are input integrity checks, not business rules. A non-finite CV amount is always a bug upstream.
+This decision was the reverse until 2026-09-10. Upline nodes missing from snapshots were treated as ineligible with no signal, on the grounds that missing upline data is a completeness issue rather than an integrity issue. That reasoning missed one thing. The snapshot map is a request parameter. Under compression a missing upline is skipped without consuming a level, so omitting one promotes every ancestor above it. Absence chosen by the caller and absence caused by a data gap are indistinguishable at the point of use. The engine cannot be lenient about one without being lenient about both.
 
-This split reflects the difference between "the caller gave us bad input" and "the data has gaps we can safely work around." Strict on the former. Defensive on the latter.
+> **Decided, and three parts of it have not landed.** Checked 2026-09-11. What holds today: volume sources and their distributors must exist in the tree and snapshot, `cv_amount` is validated as described above, and streamline errors on volume it cannot pay rather than dropping it silently, which HEU-611 landed at protocol 3. What does not hold yet: a missing upline snapshot is still skipped silently, and `UplineNotInSnapshot` does not exist in `commission/` (HEU-609, protocol 6). A snapshot rank absent from the plan's ladder still reaches the rate table, where the lookup falls through to `unwrap_or(0.0)` rather than being refused (HEU-608, protocol 5). A restored engine's indexes are still unchecked (HEU-706, protocol 7). The decision above is what the engine is being moved to, not a description of what it does in every case right now.
 
 ## What This Enables
 

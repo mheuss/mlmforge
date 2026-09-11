@@ -123,13 +123,9 @@ impl StreamlineEngine {
             return Err(err);
         }
 
-        // The reverse of the user_streams walk below. A tree member with no
-        // index entry is a membership contradiction in the other direction,
-        // and it reaches the same panic an absent bottom does.
-        // Held on the pair, not the stream alone. This is the only two-level
-        // walk here, and user_ids() comes back in hash order, so a stream
-        // holding two unindexed members would otherwise name whichever was
-        // seen first.
+        // The reverse of the user_streams walk below. Held on the (stream,
+        // user) pair, not the stream alone, since user_ids() returns hash
+        // order.
         let mut unindexed: Option<(u32, Uuid, SnapshotConsistencyError)> = None;
         for stream in self.streams.values() {
             for user_id in stream.tree.user_ids() {

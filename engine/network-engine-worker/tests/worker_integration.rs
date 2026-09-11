@@ -6238,10 +6238,9 @@ fn restore_rejects_a_streamline_nested_arena_fault() {
 
 #[test]
 fn restore_rejects_undeserializable_data_with_invalid_params() {
-    // Design BR 10: the two codes must be told apart. Without this the suite
-    // proves INCONSISTENT_SNAPSHOT is returned but never that it is returned
-    // for a different reason than INVALID_PARAMS. This passes before the
-    // handler is wired as well as after.
+    // The two codes must be told apart. Without this the suite proves
+    // INCONSISTENT_SNAPSHOT is returned but never that it is returned for a
+    // different reason than INVALID_PARAMS.
     let mut worker = common::spawn_worker();
 
     let resp = restore_under(
@@ -6267,10 +6266,10 @@ fn restore_rejects_undeserializable_data_with_invalid_params() {
 
 // ---- HEU-706: snapshots the engine produced still restore -------------------
 //
-// Design BR 11 and design Risk 3. A validator that rejects a snapshot the
-// engine itself produced is worse than the gap it closes, and only a positive
-// test catches that. Each case builds a state a strict validator is most likely
-// to reject, round-trips it, and compares a named query on both copies.
+// A validator that rejects a snapshot the engine itself produced is worse than
+// the gap it closes, and only a positive test catches that. Each case builds a
+// state a strict validator is most likely to reject, round-trips it, and
+// compares a named query on both copies.
 //
 // A failure here means a validator is too strict, not that the test is wrong.
 
@@ -6641,6 +6640,17 @@ fn board_plan_snapshot_round_trip_survives_a_cycled_board() {
     assert!(
         resp.contains(r#""ok":true"#),
         "board_dissolve failed: {}",
+        resp
+    );
+    // Read the displacement off the dissolve's own result, so it is the
+    // dissolve that is shown to cause it.
+    let dissolved: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(
+        !dissolved["result"]["displaced_members"]
+            .as_array()
+            .expect("a dissolve reports displaced_members")
+            .is_empty(),
+        "the dissolve should have displaced someone: {}",
         resp
     );
 

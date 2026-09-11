@@ -33,12 +33,9 @@ impl Arena {
 
     /// Prove every stored `NodeIndex` is in range and points at a live slot.
     ///
-    /// A restored arena comes from a caller, so nothing has enforced what the
-    /// constructors maintain. `node()` and `node_mut()` index `self.nodes`
-    /// directly, so an out-of-range index panics rather than erroring.
-    ///
-    /// Bounds and liveness only. A cycle in the parent or children edges still
-    /// passes and still makes a traversal loop.
+    /// Bounds and liveness only; a cycle in the edges still passes. `node()`
+    /// and `node_mut()` index `self.nodes` directly, so an out-of-range index
+    /// panics rather than erroring.
     pub(crate) fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
         let node_count = self.nodes.len();
 

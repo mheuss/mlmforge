@@ -113,13 +113,8 @@ impl BoardPlanEngine {
                 expected,
             });
         }
-        // One pass over every board's positions, then constant-time lookups.
-        // A scan per member is quadratic, and a restored engine's position
-        // vectors bypass the constructor's size limits.
-        // A board sized differently from the engine is indexed out of bounds
-        // later. Keep the lowest-id offender: self.boards is a HashMap with a
-        // randomized hasher, and a corrupted payload rarely damages exactly one
-        // board.
+        // One HashSet pass avoids a scan per member. Ties break on the lowest
+        // board id, since self.boards iterates in random hash order.
         let mut placed: HashSet<(Uuid, Uuid)> = HashSet::new();
         let mut sizing: Option<(Uuid, SnapshotConsistencyError)> = None;
         for (board_id, board) in &self.boards {

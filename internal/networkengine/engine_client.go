@@ -20,11 +20,15 @@ import (
 // envelope. A nullable field is a change to what a value means, which is the
 // case the exact comparison above exists for.
 //
+// Moved to 5 by HEU-608, which rejects a snapshot naming a rank the loaded
+// plan does not define. A request a caller built for 4 considers valid now
+// comes back as a CALCULATION_ERROR, which is why the number had to move.
+//
 // This is the wire contract, not the stored row shape and not the authoring
 // format. Two other numbers nearby are also called a version: `detailVersion`
 // in commission_detail.go, and the plan schema version in
 // schemas/compensation-plan.schema.json. None is coupled to the others.
-const expectedProtocolVersion = 4
+const expectedProtocolVersion = 5
 
 // maxPingResponseInError bounds how much of an unexpected ping response is
 // quoted back in an error. The response is wire data and is otherwise

@@ -117,9 +117,24 @@ impl CompensationPlan {
     pub fn validate(&mut self) -> Result<(), String> {
         self.volume.validate().map_err(|e| format!("volume: {e}"))?;
         self.caps.validate().map_err(|e| format!("caps: {e}"))?;
+        self.check_rank_ladder_non_empty()?;
         self.check_unique_structure_names()?;
         for structure in &mut self.structures {
             structure.validate()?;
+        }
+        Ok(())
+    }
+
+    /// Reject a plan with no ranks.
+    ///
+    /// Every calculator validates its snapshot ranks against this ladder, so
+    /// an empty one turns each calculation into an error that names the
+    /// snapshot when the plan is what is wrong. The schema already says
+    /// `minItems: 1`; this is the engine saying it too, for a caller that
+    /// skipped the schema.
+    fn check_rank_ladder_non_empty(&self) -> Result<(), String> {
+        if self.ranks.is_empty() {
+            return Err("ranks: the plan defines no ranks".to_string());
         }
         Ok(())
     }
@@ -899,6 +914,17 @@ mod tests {
         let mut plan = build_test_plan(test_eligibility(), named_streamline("seed"), "seed");
         plan.structures = structures;
         plan
+    }
+
+    #[test]
+    fn plan_rejects_an_empty_rank_ladder() {
+        // Every calculator now validates snapshot ranks against this ladder,
+        // so an empty one rejects every calculation instead of loading badly
+        // once. The schema says minItems 1; the engine is its own trust
+        // boundary and has to say so too. HEU-608.
+        let mut plan = plan_with_structures(vec![named_streamline("main")]);
+        plan.ranks = vec![];
+        assert!(plan.validate().is_err());
     }
 
     #[test]

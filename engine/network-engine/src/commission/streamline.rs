@@ -16,9 +16,11 @@ use super::{walk, walk_order};
 
 /// Calculate streamline commissions across all active streams.
 ///
-/// Rejects volume it cannot pay: a source with a non-finite or negative CV
-/// amount, a source held by no stream, or a source with no snapshot. A source
-/// held only by a frozen stream is accepted and earns nothing.
+/// Rejects an invalid dynamic-compression config, and a snapshot naming a rank
+/// the plan does not define. Also rejects volume it cannot pay: a source with
+/// a non-finite or negative CV amount, a source held by no stream, or a source
+/// with no snapshot. A source held only by a frozen stream is accepted and
+/// earns nothing.
 ///
 /// Each unfrozen stream is walked independently. Dynamic compression
 /// thresholds gate per-level qualification by rank ordinal. Monoline
@@ -104,6 +106,8 @@ pub fn calculate_streamline(
             })
         })
         .collect::<Result<_, _>>()?;
+
+    walk::validate_snapshot_ranks(plan, snapshots)?;
 
     let multiplier = structure
         .streamline_commission
@@ -689,6 +693,247 @@ mod tests {
         .earnings;
         // Only 2 levels paid (depth cutoff), not 4.
         assert_eq!(earnings.len(), 2);
+    }
+
+    #[test]
+    fn calculate_streamline_rejects_a_rank_not_in_the_ladder() {
+        let engine = make_engine(5);
+        let structure = make_structure(
+            vec![level(1, "associate", 0.10), level(2, "bronze", 0.05)],
+            5,
+        );
+        let mut plan = test_helpers::build_test_plan(
+            test_helpers::default_eligibility(),
+            crate::config::StructureConfig::Streamline(structure.clone()),
+            "test_streamline",
+        );
+        // Ordinals are 1-based. HEU-723.
+        plan.ranks = vec![rank_def("associate", 1), rank_def("bronze", 2)];
+
+        // Node 1 asserts a rank the ladder does not hold.
+        let mut snapshots = HashMap::new();
+        let ranks = ["diamond", "bronze", "associate", "bronze", "associate"];
+        for (i, rank) in ranks.iter().enumerate() {
+            snapshots.insert(
+                test_uuid((i + 1) as u8),
+                DistributorSnapshot {
+                    rank: rank.to_string(),
+                    personal_volume: 150.0,
+                    status: "active".to_string(),
+                    has_order_in_period: true,
+                },
+            );
+        }
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(5),
+            cv_amount: 100.0,
+        }];
+
+        let err = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            CalculationError::UnknownSnapshotRank(test_uuid(1), "diamond".to_string())
+        );
+    }
+
+    /// Records the boundary of what the ladder check buys: a rank the plan
+    /// defines is accepted even if the distributor has not earned it, so an
+    /// over-claim still clears a level threshold.
+    ///
+    /// This pins the narrow half. Streamline maps every rank to the same
+    /// per-level percents, so here an over-claim moves qualification only. In
+    /// unilevel and matrix the rate row is keyed by the asserted rank, so it
+    /// moves price too, and nothing pins that. HEU-714.
+    ///
+    /// The neighbouring shuffled-table test asserts the same shape for a
+    /// different reason. This one is what fails if the ladder check ever grows
+    /// an entitlement check.
+    #[test]
+    fn an_in_ladder_over_claim_clears_a_level_threshold() {
+        let engine = make_engine(5);
+        let structure = make_structure(
+            vec![
+                level(1, "associate", 0.10),
+                level(2, "bronze", 0.05),
+                level(3, "silver", 0.02),
+            ],
+            5,
+        );
+        let mut plan = test_helpers::build_test_plan(
+            test_helpers::default_eligibility(),
+            crate::config::StructureConfig::Streamline(structure.clone()),
+            "test_streamline",
+        );
+        // Ordinals are 1-based. HEU-723.
+        plan.ranks = vec![
+            rank_def("associate", 1),
+            rank_def("bronze", 2),
+            rank_def("silver", 3),
+        ];
+
+        // Chain 1 -> 2 -> 3 -> 4 -> 5. Volume at 5 walks up 4, 3, 2, 1.
+        // Node 1 asserts silver, which the ladder holds, so the check passes it
+        // through and the level-3 threshold is cleared.
+        let mut snapshots = HashMap::new();
+        let ranks = ["silver", "bronze", "associate", "bronze", "associate"];
+        for (i, rank) in ranks.iter().enumerate() {
+            snapshots.insert(
+                test_uuid((i + 1) as u8),
+                DistributorSnapshot {
+                    rank: rank.to_string(),
+                    personal_volume: 150.0,
+                    status: "active".to_string(),
+                    has_order_in_period: true,
+                },
+            );
+        }
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(5),
+            cv_amount: 100.0,
+        }];
+
+        let earnings = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .expect("an in-ladder rank is accepted")
+        .earnings;
+
+        let top = earnings
+            .iter()
+            .find(|e| e.earner_id == test_uuid(1))
+            .expect("the asserted silver rank did not clear the level-3 threshold");
+        assert_eq!(
+            earnings
+                .iter()
+                .filter(|e| e.earner_id == test_uuid(1))
+                .count(),
+            1
+        );
+        assert_eq!(top.level, 3);
+        assert_eq!(top.rate, Some(0.02));
+        assert_eq!(top.dollar_amount, 2.0);
+    }
+
+    /// Pins the rank check above the per-source checks, per design decision 2.
+    /// This input is bad on both counts: only the check order decides which
+    /// error surfaces.
+    #[test]
+    fn streamline_unknown_rank_wins_over_invalid_cv() {
+        let engine = make_engine(5);
+        let structure = make_structure(
+            vec![level(1, "associate", 0.10), level(2, "bronze", 0.05)],
+            5,
+        );
+        let mut plan = test_helpers::build_test_plan(
+            test_helpers::default_eligibility(),
+            crate::config::StructureConfig::Streamline(structure.clone()),
+            "test_streamline",
+        );
+        plan.ranks = vec![rank_def("associate", 1), rank_def("bronze", 2)];
+
+        let mut snapshots = HashMap::new();
+        let ranks = ["diamond", "bronze", "associate", "bronze", "associate"];
+        for (i, rank) in ranks.iter().enumerate() {
+            snapshots.insert(
+                test_uuid((i + 1) as u8),
+                DistributorSnapshot {
+                    rank: rank.to_string(),
+                    personal_volume: 150.0,
+                    status: "active".to_string(),
+                    has_order_in_period: true,
+                },
+            );
+        }
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(5),
+            cv_amount: -50.0,
+        }];
+
+        let err = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            CalculationError::UnknownSnapshotRank(test_uuid(1), "diamond".to_string())
+        );
+    }
+
+    /// Pins the rank check below all four dynamic-compression config guards: a
+    /// broken plan still reports before one bad snapshot rank. This input is
+    /// bad on both counts.
+    ///
+    /// Declares level 2 and not level 1, which trips the gap guard, the last
+    /// of the four. Tripping the first would leave the test green for a
+    /// placement between any two of them.
+    #[test]
+    fn streamline_config_error_wins_over_unknown_rank() {
+        let engine = make_engine(5);
+        let structure = make_structure(vec![level(2, "associate", 0.10)], 5);
+        let mut plan = test_helpers::build_test_plan(
+            test_helpers::default_eligibility(),
+            crate::config::StructureConfig::Streamline(structure.clone()),
+            "test_streamline",
+        );
+        plan.ranks = vec![rank_def("associate", 1), rank_def("bronze", 2)];
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "diamond".to_string(),
+                personal_volume: 150.0,
+                status: "active".to_string(),
+                has_order_in_period: true,
+            },
+        );
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(5),
+            cv_amount: 100.0,
+        }];
+
+        let err = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap_err();
+
+        // Pins which of the four guards fired, so the docblock above stays
+        // true if a refactor changes the order.
+        match err {
+            CalculationError::ConfigError(msg) => {
+                assert!(msg.contains("no entry for level 1"), "wrong guard: {msg}")
+            }
+            other => panic!("expected ConfigError, got {other:?}"),
+        }
     }
 
     #[test]

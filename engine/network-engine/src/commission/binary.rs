@@ -17,6 +17,7 @@ use super::types::{
     BinaryCalculationResult, BinaryCommissionEarning, CalculationError, DistributorSnapshot,
     LegVolumes, VolumeSource,
 };
+use super::walk;
 
 /// Resolve a position_id to its owner_id.
 ///
@@ -149,8 +150,10 @@ fn accumulate_leg_volumes(
 ///
 /// # Errors
 ///
-/// Returns `CalculationError` if a volume source is not found in the
-/// tree or snapshot data, or has an invalid cv_amount.
+/// Returns `CalculationError` if the cycle-step config is invalid, if a
+/// snapshot names a rank the plan does not define, if a volume source is not
+/// found in the tree or snapshot data, or if a volume source has an invalid
+/// cv_amount.
 pub fn calculate_binary_pairing(
     tree: &BinaryTree,
     plan: &CompensationPlan,
@@ -188,6 +191,11 @@ pub fn calculate_binary_pairing(
             );
         }
     };
+
+    // Below the match on purpose. The Pairing arm's percent assert and the
+    // CycleStep arm's config validation each stay first on their own path,
+    // and the CycleStep arm has already returned by here.
+    walk::validate_snapshot_ranks(plan, snapshots)?;
 
     let multiplier = structure
         .binary_commission
@@ -379,6 +387,8 @@ fn calculate_binary_cycle_step(
     validated_config
         .validate()
         .map_err(CalculationError::ConfigError)?;
+
+    walk::validate_snapshot_ranks(plan, snapshots)?;
 
     // Phase 1: Prep (shared with pairing calculator)
     let volume_totals = aggregate_volume(tree, snapshots, volume, ownership)?;
@@ -1797,6 +1807,238 @@ mod tests {
                 }),
             },
         }
+    }
+
+    #[test]
+    fn calculate_binary_pairing_rejects_a_rank_not_in_the_ladder() {
+        let tree = three_node_tree();
+        let plan = test_plan(default_eligibility());
+        let structure = test_binary_structure();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "diamond".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(2),
+                cv_amount: 500.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(3),
+                cv_amount: 500.0,
+            },
+        ];
+
+        let err = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            None,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            CalculationError::UnknownSnapshotRank(test_uuid(1), "diamond".to_string())
+        );
+    }
+
+    /// Pins the rank check above the per-source checks, per design decision 2.
+    /// This input is bad on both counts: only the check order decides which
+    /// error surfaces.
+    #[test]
+    fn binary_unknown_rank_wins_over_invalid_cv() {
+        let tree = three_node_tree();
+        let plan = test_plan(default_eligibility());
+        let structure = test_binary_structure();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "diamond".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(2),
+            cv_amount: -50.0,
+        }];
+
+        let err = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            None,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            CalculationError::UnknownSnapshotRank(test_uuid(1), "diamond".to_string())
+        );
+    }
+
+    /// Pins the cycle-step rank check above `aggregate_volume`. The pairing
+    /// arm is pinned on both sides by its own two tests; without this the
+    /// cycle-step arm is pinned below `validate` only.
+    #[test]
+    fn cycle_step_unknown_rank_wins_over_invalid_cv() {
+        let steps = vec![CycleStep {
+            threshold: 300.0,
+            amount: 25.0,
+        }];
+        let structure = test_cycle_step_structure(steps, VolumeAfterPayout::FullFlush);
+        let tree = three_node_tree();
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "diamond".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(2),
+            cv_amount: -50.0,
+        }];
+
+        let err = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            None,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            CalculationError::UnknownSnapshotRank(test_uuid(1), "diamond".to_string())
+        );
+    }
+
+    /// Pins the cycle-step rank check below CycleStepConfig::validate. Hoisting
+    /// both call sites into one above the mode match would invert this and no
+    /// other test would notice.
+    #[test]
+    fn cycle_step_config_error_wins_over_unknown_rank() {
+        // Empty steps: validate() rejects this on its own.
+        let structure = test_cycle_step_structure(vec![], VolumeAfterPayout::FullFlush);
+        let tree = three_node_tree();
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "diamond".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(2),
+            cv_amount: 500.0,
+        }];
+
+        let err = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            None,
+        )
+        .unwrap_err();
+
+        // Pins which guard fired, so the docblock above stays true if the
+        // validation order inside CycleStepConfig::validate changes.
+        match err {
+            CalculationError::ConfigError(msg) => {
+                assert!(msg.contains("at least one step"), "wrong guard: {msg}")
+            }
+            other => panic!("expected ConfigError, got {other:?}"),
+        }
+    }
+
+    /// The CycleStep arm returns out of the mode match into its own function,
+    /// so a guard placed below that match reaches the pairing arm only. This
+    /// covers the other arm.
+    #[test]
+    fn pairing_in_cycle_step_mode_rejects_a_rank_not_in_the_ladder() {
+        let steps = vec![CycleStep {
+            threshold: 300.0,
+            amount: 25.0,
+        }];
+        let structure = test_cycle_step_structure(steps, VolumeAfterPayout::FullFlush);
+        let tree = three_node_tree();
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "diamond".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(2),
+                cv_amount: 500.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(3),
+                cv_amount: 500.0,
+            },
+        ];
+
+        let err = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            None,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            CalculationError::UnknownSnapshotRank(test_uuid(1), "diamond".to_string())
+        );
     }
 
     #[test]

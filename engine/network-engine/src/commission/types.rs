@@ -12,7 +12,8 @@ use uuid::Uuid;
 /// and depth decisions from the compensation plan config.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DistributorSnapshot {
-    /// Current rank name. Must match a rank in the plan's rank ladder.
+    /// Current rank name. Either a rank the loaded plan defines, or the
+    /// empty string, which means unranked.
     pub rank: String,
 
     /// Personal volume generated this period.
@@ -99,6 +100,10 @@ pub enum CalculationError {
     /// A volume source references a distributor with no snapshot data.
     #[error("volume source {0} not found in snapshot data")]
     SourceNotInSnapshot(Uuid),
+
+    /// A snapshot names a rank the loaded plan does not define.
+    #[error("snapshot for {0} names rank {1:?}; the loaded plan's rank ladder does not contain it")]
+    UnknownSnapshotRank(Uuid, String),
 
     /// A volume source has a non-finite or negative cv_amount.
     #[error("volume source {0} has invalid cv_amount: {1}")]

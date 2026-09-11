@@ -263,8 +263,9 @@ fn emit_generation_earnings(
 ///
 /// # Errors
 ///
-/// Returns `CalculationError` if a volume source is not found in the
-/// tree or has an invalid CV amount.
+/// Returns `CalculationError` if a snapshot names a rank the plan does not
+/// define, if a volume source is not found in the tree or snapshot data, or if
+/// a volume source has an invalid CV amount.
 pub fn calculate_generation(
     tree: &UnilevelTree,
     plan: &CompensationPlan,
@@ -273,6 +274,7 @@ pub fn calculate_generation(
     volume: &[VolumeSource],
     plan_identity: &PlanIdentity,
 ) -> Result<CommissionCalculationResult, CalculationError> {
+    walk::validate_snapshot_ranks(plan, snapshots)?;
     let gen_config = &structure.generation_commission;
     let rank_ordinals = walk::build_rank_ordinals(plan);
     let eligibility_cache = walk::evaluate_eligibility(snapshots, tree, &plan.eligibility);
@@ -1074,6 +1076,132 @@ mod calculate_tests {
             status: "active".to_string(),
             has_order_in_period: true,
         }
+    }
+
+    #[test]
+    fn calculate_generation_rejects_a_rank_not_in_the_ladder() {
+        let tree = build_chain(3);
+        let plan = two_rank_plan();
+        let structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
+
+        let mut snapshots: HashMap<_, _> = HashMap::new();
+        snapshots.insert(uuid(0), director_snapshot());
+        snapshots.insert(
+            uuid(1),
+            DistributorSnapshot {
+                rank: "diamond".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(uuid(2), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let err = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            CalculationError::UnknownSnapshotRank(uuid(1), "diamond".to_string())
+        );
+    }
+
+    /// Pins the rank check above the per-source checks, per design decision 2.
+    /// This input is bad on both counts: only the check order decides which
+    /// error surfaces.
+    #[test]
+    fn generation_unknown_rank_wins_over_invalid_cv() {
+        let tree = build_chain(3);
+        let plan = two_rank_plan();
+        let structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
+
+        let mut snapshots: HashMap<_, _> = HashMap::new();
+        snapshots.insert(uuid(0), director_snapshot());
+        snapshots.insert(
+            uuid(1),
+            DistributorSnapshot {
+                rank: "diamond".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(uuid(2), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: -50.0,
+        }];
+
+        let err = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            CalculationError::UnknownSnapshotRank(uuid(1), "diamond".to_string())
+        );
+    }
+
+    /// Pins the rank check ahead of the boundary-rank resolution, which
+    /// returns `Ok` with no earnings when the configured boundary rank is not
+    /// in the ladder. An `Err` proves the rank check ran first.
+    ///
+    /// Discriminates on a returned value rather than a `debug_assert`.
+    ///
+    /// It pins the check above the boundary resolution only. Placements
+    /// earlier than that, such as below `evaluate_eligibility`, still pass.
+    #[test]
+    fn generation_unknown_rank_is_rejected_before_the_boundary_resolves() {
+        let tree = build_chain(3);
+        let plan = two_rank_plan();
+        // Boundary rank outside the ladder: on its own this returns Ok.
+        let structure = threshold_structure("nonexistent_rank", 3, BTreeMap::from([(1, 0.10)]));
+
+        let mut snapshots: HashMap<_, _> = HashMap::new();
+        snapshots.insert(uuid(0), director_snapshot());
+        snapshots.insert(
+            uuid(1),
+            DistributorSnapshot {
+                rank: "diamond".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(uuid(2), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let err = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            CalculationError::UnknownSnapshotRank(uuid(1), "diamond".to_string())
+        );
     }
 
     /// Chain: root(Director) -> mid(Associate) -> leaf(volume source).
@@ -2261,15 +2389,18 @@ mod calculate_tests {
         }
     }
 
-    /// Plan with two ranks for the per-rank-depth test: silver (1), diamond (2).
+    /// Plan for the per-rank-depth tests: associate (1), silver (2), diamond (3).
+    /// Three ranks despite the name: associate joins the ladder because the
+    /// volume source carries it.
     fn silver_diamond_plan(
         structure: GenerationStructureConfig,
     ) -> crate::config::CompensationPlan {
         let structure_config = StructureConfig::Generation(structure);
         let mut plan = build_test_plan(default_eligibility(), structure_config, "Generation");
         plan.ranks = vec![
+            // eligible_snapshot() carries "associate"; the ladder must name it.
             RankDefinition {
-                name: "silver".to_string(),
+                name: "associate".to_string(),
                 ordinal: 1,
                 qualification: RankQualification {
                     structures: vec![],
@@ -2281,8 +2412,20 @@ mod calculate_tests {
                 demotion_policy: DemotionPolicy::PromotionOnly,
             },
             RankDefinition {
-                name: "diamond".to_string(),
+                name: "silver".to_string(),
                 ordinal: 2,
+                qualification: RankQualification {
+                    structures: vec![],
+                    required_products: vec![],
+                    window: None,
+                    tenure: None,
+                },
+                qualified_structures: vec!["Generation".to_string()],
+                demotion_policy: DemotionPolicy::PromotionOnly,
+            },
+            RankDefinition {
+                name: "diamond".to_string(),
+                ordinal: 3,
                 qualification: RankQualification {
                     structures: vec![],
                     required_products: vec![],
@@ -2299,15 +2442,19 @@ mod calculate_tests {
     /// Chain: 0(Silver) -> 1(Silver) -> 2(Diamond) -> 3(Diamond) -> 4(Associate, source).
     /// SameRank mode. max_generations = 10. Per-rank depth: silver = 2, diamond = 5.
     ///
-    /// Silver walk (ordinal 1, walk_max=2):
-    ///   boundary_set = all ranked nodes {0, 1, 2, 3}.
+    /// Three walks run, one per rank present in the snapshots: associate,
+    /// silver, diamond. The associate walk produces no earners and is not
+    /// traced below.
+    ///
+    /// Silver walk (ordinal 2, walk_max=2):
+    ///   boundary_set = nodes at ordinal >= 2, which is {0, 1, 2, 3}.
     ///   Walking up from source: 3 (diamond, gen 1) -> 2 (diamond, gen 2) -> STOP.
     ///   Per-rank cap of 2 stops the walk before the actual Silver nodes (1, 0).
-    ///   Filter to ordinal 1: zero earners.
+    ///   Filter to ordinal 2: zero earners.
     ///
-    /// Diamond walk (ordinal 2, walk_max=5):
+    /// Diamond walk (ordinal 3, walk_max=5):
     ///   boundary_set = {2, 3}. Walking up: 3 (gen 1), 2 (gen 2), 1 (skip), 0 (skip).
-    ///   Filter to ordinal 2: node 3 earns gen 1, node 2 earns gen 2.
+    ///   Filter to ordinal 3: node 3 earns gen 1, node 2 earns gen 2.
     ///
     /// With the OLD code (no per-rank), every walk uses max_generations=10 and the
     /// Silver walk would produce gen 3 at node 1 and gen 4 at node 0. The new
@@ -2370,7 +2517,7 @@ mod calculate_tests {
     }
 
     /// Chain: 0(Diamond) -> 1..7(Silver) -> 8(Associate, source).
-    /// ThresholdRank mode. boundary_rank = "silver" (ordinal 1) so all silver
+    /// ThresholdRank mode. boundary_rank = "silver" (ordinal 2) so all silver
     /// and diamond nodes are boundaries. max_generations = 4 (default).
     /// Per-rank depth: silver = 2, diamond = 8.
     ///

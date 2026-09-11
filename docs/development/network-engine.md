@@ -869,3 +869,42 @@ in the repo.
 The objection that out-parameters are less idiomatic than returning a value was
 raised and overruled on that precedent. Recorded so a reviewer can see it was
 decided rather than defaulted into. (HEU-641)
+
+## A `debug_assert` Discriminator Makes A Test Pass In Release
+
+A test that pins the order of two checks needs something that tells the orders
+apart. When the only thing available is a `debug_assert`, the test passes in
+release on the exact ordering it exists to reject.
+
+`walk::validate_broad_pct` is the case that produced this. It asserts and
+otherwise only logs, so it never returns an error. A test asserting that the
+rank check runs before it reads:
+
+- **debug:** rank check first returns `Err`. Moved below, the assert fires and
+  the test fails. It discriminates.
+- **release:** the assert compiles out. Moved below, the rank check still runs
+  and still returns the same `Err`. The test passes on the broken order.
+
+It does not skip and it does not error. It reports green.
+
+Gate the test on the thing it depends on:
+
+```rust
+#[test]
+#[cfg(debug_assertions)]
+fn unknown_rank_is_rejected_before_the_broad_pct_guard() {
+```
+
+That turns a false pass into no test, which is honest. Say in the docblock why
+the gate is there, or the next reader deletes it.
+
+**Prefer a discriminator that survives both profiles.** Anything that returns a
+distinguishable value works: a second `Result`-returning guard, an early `Ok`
+with no earnings, a different error variant. Reach for the `debug_assert` only
+when the function under test has nothing else, and add a release-safe pin
+alongside it rather than instead of it.
+
+**CI does not currently catch this.** `.github/workflows/ci.yml` runs the suite
+in debug, so a debug-only pin is live there. The protection is a convention
+rather than a guard, and the failure is silent if that convention changes.
+(HEU-608)

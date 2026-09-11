@@ -18,8 +18,9 @@ use super::{walk, walk_order};
 ///
 /// # Errors
 ///
-/// Returns `CalculationError` if a volume source is not found in the
-/// tree or snapshot data.
+/// Returns `CalculationError` if a snapshot names a rank the plan does not
+/// define, if a volume source is not found in the tree or snapshot data, or
+/// if a volume source's cv_amount is negative or not finite.
 pub fn calculate_unilevel(
     tree: &UnilevelTree,
     plan: &CompensationPlan,
@@ -28,6 +29,7 @@ pub fn calculate_unilevel(
     volume: &[VolumeSource],
     plan_identity: &PlanIdentity,
 ) -> Result<CommissionCalculationResult, CalculationError> {
+    walk::validate_snapshot_ranks(plan, snapshots)?;
     let rank_ordinals = walk::build_rank_ordinals(plan);
     let eligibility_cache = walk::evaluate_eligibility(snapshots, tree, &plan.eligibility);
 
@@ -413,13 +415,21 @@ mod tests {
             .unwrap();
 
         let structure = test_structure(test_rate_table());
-        let plan = test_plan(default_eligibility());
+        let mut plan = test_plan(default_eligibility());
+        // bronze is in the ladder and deliberately absent from the rate table.
+        // The subject is the rate lookup, not the ladder check. The ordinal is
+        // arbitrary here; nothing in this test reads it.
+        plan.ranks.push(crate::commission::test_helpers::make_rank(
+            "bronze",
+            3,
+            vec!["Test Unilevel".to_string()],
+        ));
 
         let mut snapshots = HashMap::new();
         snapshots.insert(
             test_uuid(1),
             DistributorSnapshot {
-                rank: "bronze".to_string(), // not in rate table
+                rank: "bronze".to_string(), // in the ladder, not in the rate table
                 ..eligible_snapshot()
             },
         );
@@ -442,6 +452,47 @@ mod tests {
         .earnings;
 
         assert!(result.is_empty()); // no rate found, no earning
+    }
+
+    #[test]
+    fn calculate_unilevel_rejects_a_rank_not_in_the_ladder() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+
+        let structure = test_structure(test_rate_table());
+        let plan = test_plan(default_eligibility());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "diamond".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let err = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            CalculationError::UnknownSnapshotRank(test_uuid(1), "diamond".to_string())
+        );
     }
 
     #[test]
@@ -1111,6 +1162,150 @@ mod tests {
             result.unwrap_err(),
             CalculationError::InvalidCvAmount(id, _) if id == test_uuid(99)
         ));
+    }
+
+    /// Pins the rank check ahead of `validate_broad_pct`, which panics rather
+    /// than returning. An `Err` here means the rank check ran first; a panic
+    /// means it did not.
+    ///
+    /// Debug-only on purpose. Without `debug_assertions` the discriminator is
+    /// compiled out and this test would pass on the ordering it exists to
+    /// reject, so it is removed rather than left to pass falsely.
+    ///
+    /// `unilevel_unknown_rank_wins_over_invalid_cv` pins the check above the
+    /// walk, in every profile. This one pins it above the config guards too.
+    #[test]
+    #[cfg(debug_assertions)]
+    fn unknown_rank_is_rejected_before_the_broad_pct_guard() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+
+        let mut structure = test_structure(test_rate_table());
+        // Deliberately out of range. This value is the discriminator, not a typo.
+        structure.level_commission.broad_commission_percent = 1.5;
+        let plan = test_plan(default_eligibility());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "diamond".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(1),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::UnknownSnapshotRank(test_uuid(1), "diamond".to_string())
+        );
+    }
+
+    #[test]
+    fn an_empty_upline_rank_is_accepted_and_earns_nothing() {
+        // Whether any caller actually sends an empty rank is HEU-719.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 0)
+            .unwrap();
+
+        let structure = test_structure(test_rate_table());
+        let plan = test_plan(default_eligibility());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+        snapshots.insert(
+            test_uuid(2),
+            DistributorSnapshot {
+                rank: "".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let earnings = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .expect("an empty rank is a valid unranked distributor")
+        .earnings;
+
+        // The walk must reach past node 2 rather than stop at it, or the
+        // assertion below would hold for an empty result too.
+        assert_eq!(
+            earnings.len(),
+            1,
+            "expected only node 1 to earn: {earnings:?}"
+        );
+        assert_eq!(earnings[0].earner_id, test_uuid(1));
+        assert!(earnings[0].dollar_amount > 0.0);
+        assert!(
+            !earnings.iter().any(|e| e.earner_id == test_uuid(2)),
+            "the unranked node took an earning: {earnings:?}"
+        );
+    }
+
+    /// Pins the rank check above the walk, where `validate_cv` runs. This
+    /// input is bad on both counts: only the check order decides which error
+    /// surfaces. Holds in every profile.
+    #[test]
+    fn unilevel_unknown_rank_wins_over_invalid_cv() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+
+        let structure = test_structure(test_rate_table());
+        let plan = test_plan(default_eligibility());
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "diamond".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(1),
+            cv_amount: -50.0,
+        }];
+
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::UnknownSnapshotRank(test_uuid(1), "diamond".to_string())
+        );
     }
 
     #[test]

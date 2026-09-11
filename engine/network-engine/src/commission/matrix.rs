@@ -22,8 +22,9 @@ use super::{walk, walk_order};
 /// Returns [`CalculationError::TreeConfigMismatch`] when the tree's `width` or
 /// `spillover` disagrees with `structure.matrix_params` — checked before any
 /// other work, so it precedes volume/snapshot validation. Otherwise returns
-/// `CalculationError` if a volume source is not found in the tree or snapshot
-/// data, or has an invalid `cv_amount`.
+/// `CalculationError` if a snapshot names a rank the plan does not define, if
+/// a volume source is not found in the tree or snapshot data, or if a volume
+/// source has an invalid `cv_amount`.
 pub fn calculate_matrix(
     tree: &MatrixTree,
     plan: &CompensationPlan,
@@ -47,6 +48,7 @@ pub fn calculate_matrix(
         });
     }
 
+    walk::validate_snapshot_ranks(plan, snapshots)?;
     let rank_ordinals = walk::build_rank_ordinals(plan);
     let eligibility_cache = walk::evaluate_eligibility(snapshots, tree, &plan.eligibility);
 
@@ -679,7 +681,15 @@ mod tests {
     fn missing_rank_in_rate_table_no_earning() {
         // Distributor has rank "gold" which is not in rate table.
         let structure = test_matrix_structure(3, 9, 5);
-        let plan = test_plan(structure.clone());
+        let mut plan = test_plan(structure.clone());
+        // gold is in the ladder and deliberately absent from the rate table.
+        // The subject is the rate lookup, not the ladder check. The ordinal is
+        // arbitrary here; nothing in this test reads it.
+        plan.ranks.push(crate::commission::test_helpers::make_rank(
+            "gold",
+            3,
+            vec![],
+        ));
 
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
         tree.add_root(test_uuid(0), 0).unwrap();
@@ -713,6 +723,125 @@ mod tests {
         .unwrap()
         .earnings;
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn calculate_matrix_rejects_a_rank_not_in_the_ladder() {
+        let structure = test_matrix_structure(3, 9, 5);
+        let plan = test_plan(structure.clone());
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), 1).unwrap();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(0),
+            DistributorSnapshot {
+                rank: "diamond".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(1),
+            cv_amount: 100.0,
+        }];
+
+        let err = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            CalculationError::UnknownSnapshotRank(test_uuid(0), "diamond".to_string())
+        );
+    }
+
+    /// Pins the rank check above the per-source checks, per design decision 2.
+    /// This input is bad on both counts: only the check order decides which
+    /// error surfaces.
+    #[test]
+    fn matrix_unknown_rank_wins_over_invalid_cv() {
+        let structure = test_matrix_structure(3, 9, 5);
+        let plan = test_plan(structure.clone());
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(0),
+            DistributorSnapshot {
+                rank: "diamond".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(0),
+            cv_amount: -50.0,
+        }];
+
+        let err = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            CalculationError::UnknownSnapshotRank(test_uuid(0), "diamond".to_string())
+        );
+    }
+
+    /// Pins the rank check below the topology guard: a mismatched tree must
+    /// still win over a bad rank. See HEU-525.
+    #[test]
+    fn topology_mismatch_wins_over_unknown_rank() {
+        let structure = test_matrix_structure(3, 9, 5);
+        let plan = test_plan(structure.clone());
+
+        // Width 2 against a structure declaring 3.
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(0),
+            DistributorSnapshot {
+                rank: "diamond".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(0),
+            cv_amount: 100.0,
+        }];
+
+        let err = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, CalculationError::TreeConfigMismatch { .. }));
     }
 
     #[test]

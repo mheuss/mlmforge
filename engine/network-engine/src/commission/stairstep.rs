@@ -640,8 +640,9 @@ fn walk_multi_tier_overrides(
 ///
 /// # Errors
 ///
-/// Returns [`CalculationError`] if a volume source is not found in the
-/// tree or snapshot data, or has a non-finite or negative cv_amount.
+/// Returns [`CalculationError`] if a snapshot names a rank the plan does not
+/// define, if a volume source is not found in the tree or snapshot data, or if
+/// a volume source has a non-finite or negative cv_amount.
 pub fn calculate_stairstep(
     tree: &UnilevelTree,
     plan: &CompensationPlan,
@@ -650,6 +651,7 @@ pub fn calculate_stairstep(
     volume: &[VolumeSource],
     plan_identity: &PlanIdentity,
 ) -> Result<CommissionCalculationResult, CalculationError> {
+    walk::validate_snapshot_ranks(plan, snapshots)?;
     let rank_ordinals = walk::build_rank_ordinals(plan);
     let prep_result = prep(tree, plan, structure, snapshots, &rank_ordinals);
 
@@ -747,6 +749,120 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::commission::test_helpers::uuid_from_index as uuid;
+
+    #[test]
+    fn calculate_stairstep_rejects_a_rank_not_in_the_ladder() {
+        let tree = build_chain(3);
+        let structure = test_stairstep_structure();
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), snapshot_with_rank("diamond", 150.0));
+        snapshots.insert(uuid(1), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let err = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            CalculationError::UnknownSnapshotRank(uuid(0), "diamond".to_string())
+        );
+    }
+
+    /// Pins the rank check above the per-source checks, per design decision 2.
+    /// This input is bad on both counts: only the check order decides which
+    /// error surfaces. Unlike the broad_pct pin below, this one holds in
+    /// release.
+    #[test]
+    fn stairstep_unknown_rank_wins_over_invalid_cv() {
+        let tree = build_chain(3);
+        let structure = test_stairstep_structure();
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), snapshot_with_rank("diamond", 150.0));
+        snapshots.insert(uuid(1), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: -50.0,
+        }];
+
+        let err = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            CalculationError::UnknownSnapshotRank(uuid(0), "diamond".to_string())
+        );
+    }
+
+    /// Pins the rank check ahead of `validate_broad_pct`, which panics rather
+    /// than returning. An `Err` here means the rank check ran first; a panic
+    /// means it did not.
+    ///
+    /// Weaker than the unilevel pin of the same shape: here `validate_broad_pct`
+    /// runs after `prep`, so this permits the check to sit below the whole prep
+    /// phase. It does not pin the check to the first statement.
+    ///
+    /// Debug-only on purpose. Without `debug_assertions` the discriminator is
+    /// compiled out and this test would pass on the ordering it exists to
+    /// reject, so it is removed rather than left to pass falsely.
+    #[test]
+    #[cfg(debug_assertions)]
+    fn stairstep_unknown_rank_is_rejected_before_the_broad_pct_guard() {
+        let tree = build_chain(3);
+        let mut structure = test_stairstep_structure();
+        // Deliberately out of range. This value is the discriminator, not a typo.
+        structure.level_commission.broad_commission_percent = 1.5;
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), snapshot_with_rank("diamond", 150.0));
+        snapshots.insert(uuid(1), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let err = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            CalculationError::UnknownSnapshotRank(uuid(0), "diamond".to_string())
+        );
+    }
 
     fn build_chain(len: usize) -> UnilevelTree {
         let mut tree = UnilevelTree::new();

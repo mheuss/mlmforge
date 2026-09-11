@@ -21,8 +21,8 @@ import (
 // case the exact comparison above exists for.
 //
 // Moved to 5 by HEU-608, which rejects a snapshot naming a rank the loaded
-// plan does not define. Requests that used to succeed now return an error,
-// so a client built for 4 would read a rejection as a new failure mode.
+// plan does not define. A request a caller built for 4 considers valid now
+// comes back as a CALCULATION_ERROR, which is why the number had to move.
 //
 // This is the wire contract, not the stored row shape and not the authoring
 // format. Two other numbers nearby are also called a version: `detailVersion`

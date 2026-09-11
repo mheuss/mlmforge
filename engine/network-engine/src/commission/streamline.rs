@@ -706,7 +706,7 @@ mod tests {
             crate::config::StructureConfig::Streamline(structure.clone()),
             "test_streamline",
         );
-        // 1-based. HEU-723.
+        // Ordinals are 1-based; the 0-based ladders nearby are drift. HEU-723.
         plan.ranks = vec![rank_def("associate", 1), rank_def("bronze", 2)];
 
         // Node 1 asserts a rank the ladder does not hold.
@@ -747,7 +747,16 @@ mod tests {
 
     /// Records the boundary of what the ladder check buys: a rank the plan
     /// defines is accepted even if the distributor has not earned it, so an
-    /// over-claim still clears a level threshold. HEU-714.
+    /// over-claim still clears a level threshold.
+    ///
+    /// This pins the narrow half. Streamline maps every rank to the same
+    /// per-level percents, so here an over-claim moves qualification only. In
+    /// unilevel and matrix the rate row is keyed by the asserted rank, so it
+    /// moves price too, and nothing pins that. HEU-714.
+    ///
+    /// The neighbouring shuffled-table test asserts the same shape for a
+    /// different reason. This one is what fails if the ladder check ever grows
+    /// an entitlement check.
     #[test]
     fn an_in_ladder_over_claim_clears_a_level_threshold() {
         let engine = make_engine(5);
@@ -764,7 +773,7 @@ mod tests {
             crate::config::StructureConfig::Streamline(structure.clone()),
             "test_streamline",
         );
-        // 1-based. HEU-723.
+        // Ordinals are 1-based; the 0-based ladders nearby are drift. HEU-723.
         plan.ranks = vec![
             rank_def("associate", 1),
             rank_def("bronze", 2),
@@ -808,8 +817,16 @@ mod tests {
             .iter()
             .find(|e| e.earner_id == test_uuid(1))
             .expect("the asserted silver rank did not clear the level-3 threshold");
+        assert_eq!(
+            earnings
+                .iter()
+                .filter(|e| e.earner_id == test_uuid(1))
+                .count(),
+            1
+        );
         assert_eq!(top.level, 3);
         assert_eq!(top.rate, Some(0.02));
+        assert_eq!(top.dollar_amount, 2.0);
     }
 
     /// Pins the rank check above the per-source checks, per design decision 2.

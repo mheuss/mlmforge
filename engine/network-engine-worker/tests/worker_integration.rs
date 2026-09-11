@@ -5998,10 +5998,21 @@ fn restore_under(
     common::send_receive(worker, &req.to_string())
 }
 
-fn assert_inconsistent(resp: &str) {
+/// Asserts the code AND a fragment of the observation the message must carry.
+///
+/// The code alone is one value shared by every consistency variant, so a
+/// mutation that trips a different guard than the one a test is named for still
+/// reads green. `observation` pins which invariant actually fired.
+fn assert_inconsistent(resp: &str, observation: &str) {
     assert!(
         resp.contains(r#""ok":false"#) && resp.contains("INCONSISTENT_SNAPSHOT"),
         "expected INCONSISTENT_SNAPSHOT, got: {}",
+        resp
+    );
+    assert!(
+        resp.contains(observation),
+        "expected the message to report {:?}, got: {}",
+        observation,
         resp
     );
 }
@@ -6021,7 +6032,7 @@ fn restore_rejects_a_unilevel_index_past_the_end() {
         );
 
     let resp = restore_under(&mut worker, "R1", "unilevel", data);
-    assert_inconsistent(&resp);
+    assert_inconsistent(&resp, "the arena holds");
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -6048,18 +6059,14 @@ fn restore_rejects_a_unilevel_index_on_a_tombstone() {
 
     let mut data = take_snapshot_data(&mut worker, TREE_NAME);
     let freed = data["arena"]["free_list"][0].clone();
-    assert!(
-        !freed.is_null(),
-        "the removal should have left a free slot: {}",
-        data
-    );
+    assert!(!freed.is_null(), "arena.free_list[0] is null in: {}", data);
     data["arena"]["index"]
         .as_object_mut()
-        .unwrap()
+        .expect("unilevel snapshot should carry arena.index")
         .insert("22222222-2222-2222-2222-222222222222".to_string(), freed);
 
     let resp = restore_under(&mut worker, "R2", "unilevel", data);
-    assert_inconsistent(&resp);
+    assert_inconsistent(&resp, "that slot is a tombstone");
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -6081,7 +6088,7 @@ fn restore_rejects_a_binary_child_slot_past_the_end() {
     slots.insert(key, serde_json::json!([99, null]));
 
     let resp = restore_under(&mut worker, "R3", "binary", data);
-    assert_inconsistent(&resp);
+    assert_inconsistent(&resp, "the child slot map names node slot");
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -6102,12 +6109,13 @@ fn restore_rejects_a_matrix_slot_vector_of_the_wrong_width() {
     let key = slots.keys().next().cloned().expect("one slots entry");
     let shortened = slots[&key]
         .as_array()
-        .map(|v| v[..v.len() - 1].to_vec())
-        .expect("a slot vector");
+        .and_then(|v| v.split_last())
+        .map(|(_, rest)| rest.to_vec())
+        .expect("a non-empty slot vector");
     slots.insert(key, serde_json::Value::Array(shortened));
 
     let resp = restore_under(&mut worker, "R4", "matrix", data);
-    assert_inconsistent(&resp);
+    assert_inconsistent(&resp, "child slots; the tree width is");
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -6163,7 +6171,7 @@ fn restore_rejects_a_board_member_on_an_absent_board() {
     );
 
     let resp = restore_under(&mut worker, "R5", "board_plan", data);
-    assert_inconsistent(&resp);
+    assert_inconsistent(&resp, "the engine holds no such board");
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -6187,7 +6195,7 @@ fn restore_rejects_a_streamline_user_not_in_the_stream_tree() {
         );
 
     let resp = restore_under(&mut worker, "R6", "streamline", data);
-    assert_inconsistent(&resp);
+    assert_inconsistent(&resp, "that stream's tree does not hold them");
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -6212,13 +6220,10 @@ fn restore_rejects_a_streamline_nested_arena_fault() {
             serde_json::json!(99),
         );
 
+    // "is inconsistent" is the wrapper's own wording. Matching on "stream"
+    // alone would pass for every streamline variant, wrapper or not.
     let resp = restore_under(&mut worker, "R7", "streamline", data);
-    assert_inconsistent(&resp);
-    assert!(
-        resp.contains("stream"),
-        "the message should name which stream failed, got: {}",
-        resp
-    );
+    assert_inconsistent(&resp, "stream 1 is inconsistent");
 
     drop(worker.stdin.take());
     worker.wait().unwrap();

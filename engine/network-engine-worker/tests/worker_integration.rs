@@ -6484,8 +6484,8 @@ fn matrix_snapshot_round_trip_survives_a_holding_tank_entry() {
         );
     }
 
-    // Removing a placed node under holding_tank is the only engine path that
-    // fills the tank. Without it this test compares two empty arrays.
+    // Without a removal under holding_tank the tank stays empty and this
+    // test compares two empty arrays.
     let tanked = "bbbbbbbb-0000-0000-0000-000000000004";
     let resp = common::send_receive(
         &mut worker,
@@ -6609,16 +6609,15 @@ fn board_plan_snapshot_round_trip_survives_a_cycled_board() {
         );
     }
 
-    // Dissolving a board is the engine's producer of a displaced member. The
-    // cycle alone never makes one: re-entry always finds a fresh child board,
-    // so displaced_members stays empty.
+    // A dissolve is what leaves a member displaced. The cycling above does
+    // not, which the assertion after the snapshot pins.
     let boards = query(
         &mut worker,
         r#"{"id":"bl0","op":"board_list","params":{"structure":"BPRT"}}"#,
     );
     // More than the one board it started with, so a cycle split it. The exact
-    // count depends on which board min_by_key picks among equal created_at
-    // values, so it is not asserted.
+    // count varies with placement among boards sharing a timestamp, so it is
+    // not asserted.
     assert!(
         boards
             .as_array()
@@ -6681,9 +6680,9 @@ fn board_plan_snapshot_round_trip_survives_a_cycled_board() {
         "the restored engine should still hold boards"
     );
 
-    // BoardSummary carries counts, not occupants, so a restore that scrambled
-    // positions while preserving filled_count would compare equal above.
-    // board_get_state is what shows who sits where.
+    // The listing above carries counts, not occupants, so a restore that
+    // scrambled positions while preserving those counts would compare equal.
+    // This is the query that shows who sits where.
     let survivor = before[0]["id"].as_str().expect("a board id").to_string();
     let state_before = query(
         &mut worker,

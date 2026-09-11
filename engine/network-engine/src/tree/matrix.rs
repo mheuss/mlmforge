@@ -71,8 +71,8 @@ impl MatrixTree {
     /// slot vector is the tree's width, and that no holding-tank user is placed.
     pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
         // A restore does not run the constructor, so the range it enforces has
-        // to be re-established here. A width below 2 is not inert: add_node
-        // still succeeds and the result is a chain priced as a matrix.
+        // to be re-established here. A width below 2 is not inert: placement
+        // still succeeds against it.
         if self.width < 2 {
             return Err(SnapshotConsistencyError::MatrixWidthTooSmall { width: self.width });
         }

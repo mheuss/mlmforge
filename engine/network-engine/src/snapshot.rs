@@ -66,6 +66,11 @@ pub enum SnapshotConsistencyError {
         highest_stream_id: u32,
     },
 
+    #[error(
+        "the engine will allocate stream {next_stream_id} next; allocating it leaves no id for the stream after it"
+    )]
+    StreamIdCursorExhausted { next_stream_id: u32 },
+
     #[error("node slot {slot} holds {user_id} at depth {depth} and names no parent")]
     NodeDepthNotZero {
         slot: usize,

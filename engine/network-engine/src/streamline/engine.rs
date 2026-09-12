@@ -129,6 +129,14 @@ impl StreamlineEngine {
                 });
             }
         }
+        // Past every live key is not enough. create_stream assigns the cursor
+        // and then increments it, so the last id is one the engine can hand
+        // out but not advance beyond.
+        if self.next_stream_id == u32::MAX {
+            return Err(SnapshotConsistencyError::StreamIdCursorExhausted {
+                next_stream_id: self.next_stream_id,
+            });
+        }
 
         // The reverse of the user_streams walk below. Held on the (stream,
         // user) pair, not the stream alone, since user_ids() returns hash
@@ -890,6 +898,45 @@ mod tests {
                 highest_stream_id: 1,
             })
         );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_cursor_with_no_room_to_advance() {
+        // create_stream assigns the cursor and then increments it, so this
+        // value overflows on the next allocation.
+        let mut engine = seeded_streamline();
+        engine.next_stream_id = u32::MAX;
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::StreamIdCursorExhausted {
+                next_stream_id: u32::MAX,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_an_exhausted_cursor_on_an_engine_holding_no_streams() {
+        let mut engine = seeded_streamline();
+        engine.streams.clear();
+        engine.user_streams.clear();
+        engine.stream_owners.clear();
+        engine.next_stream_id = u32::MAX;
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::StreamIdCursorExhausted {
+                next_stream_id: u32::MAX,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_accepts_the_last_cursor_that_can_still_advance() {
+        let mut engine = seeded_streamline();
+        engine.next_stream_id = u32::MAX - 1;
+
+        assert_eq!(engine.validate_restored(), Ok(()));
     }
 
     #[test]

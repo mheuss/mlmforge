@@ -19,8 +19,9 @@ use super::{walk, walk_order};
 /// # Errors
 ///
 /// Returns `CalculationError` if a snapshot names a rank the plan does not
-/// define, if a volume source is not found in the tree or snapshot data, or
-/// if a volume source's cv_amount is negative or not finite.
+/// define, if a volume source is not found in the tree or snapshot data, if an
+/// upline node the walk reaches has no snapshot, or if a volume source's
+/// cv_amount is negative or not finite.
 pub fn calculate_unilevel(
     tree: &UnilevelTree,
     plan: &CompensationPlan,
@@ -2335,11 +2336,11 @@ mod tests {
     #[test]
     fn pass_up_works_with_missing_snapshot_for_sponsor() {
         // Tree: S(1) -> A(2) -> R1(3, t=200)
-        // A has NO snapshot. Pass-up should still build A's skip set from
-        // the tree structure (via user_ids()), so A is skipped for R1's
-        // volume. Without compression, missing snapshot forfeits the level.
-        // But pass-up fires before the snapshot lookup, so A is skipped
-        // entirely without consuming a level. S earns at level 1.
+        // A has NO snapshot. Pass-up builds A's skip set from the tree
+        // structure (via user_ids()), not from the snapshot map, so A is
+        // skipped for R1's volume. That skip fires before the snapshot
+        // lookup, so A never reaches it and consumes no level. S earns at
+        // level 1. Move the lookup above the skip and this call errors.
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap(); // S
         tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 100)

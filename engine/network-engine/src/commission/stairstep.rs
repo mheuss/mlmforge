@@ -641,8 +641,11 @@ fn walk_multi_tier_overrides(
 /// # Errors
 ///
 /// Returns [`CalculationError`] if a snapshot names a rank the plan does not
-/// define, if a volume source is not found in the tree or snapshot data, or if
-/// a volume source has a non-finite or negative cv_amount.
+/// define, if a volume source is not found in the tree or snapshot data, if an
+/// upline node Walk 1 reaches has no snapshot, or if a volume source has a
+/// non-finite or negative cv_amount.
+///
+/// Walk 2 does not make that last check. HEU-727 tracks the asymmetry.
 pub fn calculate_stairstep(
     tree: &UnilevelTree,
     plan: &CompensationPlan,

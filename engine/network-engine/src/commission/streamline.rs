@@ -19,7 +19,8 @@ use super::{walk, walk_order};
 /// Rejects an invalid dynamic-compression config, and a snapshot naming a rank
 /// the plan does not define. Also rejects volume it cannot pay: a source with
 /// a non-finite or negative CV amount, a source held by no stream, or a source
-/// with no snapshot. A source held only by a frozen stream is accepted and
+/// with no snapshot. An upline node the walk reaches with no snapshot is
+/// rejected too. A source held only by a frozen stream is accepted and
 /// earns nothing.
 ///
 /// Each unfrozen stream is walked independently. Dynamic compression

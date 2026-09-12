@@ -207,7 +207,7 @@ pub enum WalkKind {
 /// node list.
 ///
 /// `Forfeited` deliberately does not say why the level was forfeited. One
-/// of its three branches is a per-distributor depth cap, which design 029
+/// of its branches is a per-distributor depth cap, which design 029
 /// names `depth_cap` and forbids shipping as an outcome until HEU-556
 /// settles whether it is independently verifiable. Naming that branch
 /// correctly would break 029; naming it anything else would assert a

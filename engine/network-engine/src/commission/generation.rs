@@ -264,8 +264,13 @@ fn emit_generation_earnings(
 /// # Errors
 ///
 /// Returns `CalculationError` if a snapshot names a rank the plan does not
-/// define, if a volume source is not found in the tree or snapshot data, or if
-/// a volume source has an invalid CV amount.
+/// define, if a volume source is not found in the tree or snapshot data, if an
+/// upline node the level walk reaches has no snapshot, or if a volume source
+/// has an invalid CV amount.
+///
+/// That last check runs only when `level_commissions_enabled` is set, because
+/// only then does this call reach the shared walk. With it unset a missing
+/// upline snapshot is skipped silently. HEU-728 tracks that.
 pub fn calculate_generation(
     tree: &UnilevelTree,
     plan: &CompensationPlan,

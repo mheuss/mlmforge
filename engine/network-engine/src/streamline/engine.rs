@@ -264,7 +264,11 @@ impl StreamlineEngine {
 
     /// Returns true if the user has a position in any stream.
     ///
-    /// Reads the membership index alone, without walking the stream trees.
+    /// Reads the membership index alone, without walking the stream trees. A
+    /// restored engine has had that index checked against the trees in both
+    /// directions before it is stored: an entry naming no stream, a stream that
+    /// is absent, or a stream whose tree does not hold the user are each
+    /// rejected, as is a tree member the index has forgotten.
     pub fn contains_member(&self, user_id: Uuid) -> bool {
         self.user_streams.contains_key(&user_id)
     }

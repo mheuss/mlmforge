@@ -176,10 +176,31 @@ func TestEngineClient_RemoveNode_MockParams(t *testing.T) {
 
 	moved, err := client.RemoveNode(context.Background(), "Test", "00000000-0000-0000-0000-000000000001")
 	require.NoError(t, err)
-	assert.Empty(t, moved)
+	assert.Empty(t, moved, "a response with no responsored key decodes to an empty list")
 
 	assert.Equal(t, "remove_node", mock.lastOp)
 	assert.JSONEq(t, `{"structure":"Test","user_id":"00000000-0000-0000-0000-000000000001"}`, string(mock.lastParams))
+}
+
+// The worker hand-builds these keys rather than deriving them, so nothing but
+// this test ties the Rust strings to the Go struct tags.
+func TestEngineClient_RemoveNode_DecodesResponsored(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{"removed":true,"responsored":[
+			{"user_id":"00000000-0000-0000-0000-000000000003","new_sponsor_id":"00000000-0000-0000-0000-000000000001"},
+			{"user_id":"00000000-0000-0000-0000-000000000004","new_sponsor_id":"00000000-0000-0000-0000-000000000002"}
+		]}`),
+	}
+	client := newEngineClientWithTransport(mock)
+
+	moved, err := client.RemoveNode(context.Background(), "Test", "00000000-0000-0000-0000-000000000009")
+	require.NoError(t, err)
+
+	require.Len(t, moved, 2)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000003", moved[0].UserID)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000001", moved[0].NewSponsorID)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000004", moved[1].UserID)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000002", moved[1].NewSponsorID)
 }
 
 // --- Tree query tests (mock) ---

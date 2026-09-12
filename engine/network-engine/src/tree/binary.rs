@@ -1079,6 +1079,26 @@ mod tests {
     }
 
     #[test]
+    fn removal_reports_the_recruit_it_moved() {
+        let mut tree = BinaryTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0, test_uuid(1), 1)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 1, test_uuid(2), 2)
+            .unwrap();
+
+        let moved = tree.remove_node(test_uuid(2)).unwrap();
+
+        assert_eq!(
+            moved,
+            vec![Responsored {
+                user_id: test_uuid(3),
+                new_sponsor_id: test_uuid(1),
+            }]
+        );
+    }
+
+    #[test]
     fn removing_a_recruiter_promotes_their_recruits_to_the_grandsponsor() {
         let mut tree = BinaryTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();

@@ -2439,6 +2439,61 @@ mod tests {
     }
 
     #[test]
+    fn holding_tank_removal_reports_every_recruit_it_moved() {
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 1).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), 2).unwrap();
+        // Two survivors, sponsored from inside the subtree the tank removes.
+        tree.add_node_at(test_uuid(4), test_uuid(2), test_uuid(1), 1, 3)
+            .unwrap();
+        tree.add_node_at(test_uuid(5), test_uuid(3), test_uuid(4), 0, 4)
+            .unwrap();
+
+        let result = tree
+            .remove_node(test_uuid(2), PruningMode::HoldingTank)
+            .unwrap();
+
+        let mut moved = result.responsored.clone();
+        moved.sort_by_key(|r| r.user_id);
+        assert_eq!(
+            moved,
+            vec![
+                Responsored {
+                    user_id: test_uuid(4),
+                    new_sponsor_id: test_uuid(1),
+                },
+                Responsored {
+                    user_id: test_uuid(5),
+                    new_sponsor_id: test_uuid(1),
+                },
+            ],
+            "the tank is the only path that can move more than one recruit"
+        );
+    }
+
+    #[test]
+    fn promote_earliest_removal_reports_the_recruit_it_moved() {
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 1).unwrap();
+        tree.add_node_at(test_uuid(3), test_uuid(2), test_uuid(1), 1, 2)
+            .unwrap();
+
+        let result = tree
+            .remove_node(test_uuid(2), PruningMode::PromoteEarliest)
+            .unwrap();
+
+        assert_eq!(
+            result.responsored,
+            vec![Responsored {
+                user_id: test_uuid(3),
+                new_sponsor_id: test_uuid(1),
+            }]
+        );
+    }
+
+    #[test]
     fn holding_tank_removal_walks_a_sponsor_chain_inside_the_removed_set() {
         let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
         tree.add_root(test_uuid(1), 0).unwrap();

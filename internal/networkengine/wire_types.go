@@ -197,8 +197,11 @@ type Responsored struct {
 }
 
 // RemovalResult is the wire format for unilevel and binary node removal.
+//
+// It omits `removed`, which the unilevel and binary arms send as a bool and
+// the matrix arm sends as a uuid string. Decoding it into one Go type would
+// reject one of the two, and nothing reads it.
 type RemovalResult struct {
-	Removed     bool          `json:"removed"`
 	Responsored []Responsored `json:"responsored"`
 }
 

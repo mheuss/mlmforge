@@ -852,8 +852,9 @@ mod tests {
     }
 
     #[test]
-    fn compression_missing_snapshot_compressed_out() {
-        // mid(2) has no snapshot. With compression, they're skipped.
+    fn compression_missing_snapshot_errors() {
+        // mid(2) has no snapshot. Compression used to skip it without
+        // consuming a level, which paid the root at level 1.
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
@@ -892,18 +893,18 @@ mod tests {
             &snapshots,
             &volume,
             &crate::test_support::test_plan_identity(),
-        )
-        .unwrap()
-        .earnings;
+        );
 
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].earner_id, test_uuid(1));
-        assert_eq!(result[0].level, 1); // compressed, level preserved
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::UplineNotInSnapshot(test_uuid(2))
+        );
     }
 
     #[test]
-    fn no_compression_missing_snapshot_forfeits_level() {
-        // mid(2) has no snapshot. Without compression, level forfeited.
+    fn no_compression_missing_snapshot_errors() {
+        // mid(2) has no snapshot. Without compression it used to forfeit
+        // level 1, which paid the root at level 2.
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
@@ -937,12 +938,12 @@ mod tests {
             &snapshots,
             &volume,
             &crate::test_support::test_plan_identity(),
-        )
-        .unwrap()
-        .earnings;
+        );
 
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].level, 2); // level 1 forfeited
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::UplineNotInSnapshot(test_uuid(2))
+        );
     }
 
     // --- active leg tier depth limit tests ---

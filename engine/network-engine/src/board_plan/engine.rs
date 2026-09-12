@@ -142,7 +142,7 @@ impl BoardPlanEngine {
         let mut placed: HashSet<(Uuid, Uuid)> = HashSet::new();
         let mut sizing: Option<(Uuid, SnapshotConsistencyError)> = None;
         let mut seats: HashMap<Uuid, Uuid> = HashMap::new();
-        let mut duplicate: Option<(Uuid, SnapshotConsistencyError)> = None;
+        let mut duplicate: Option<Uuid> = None;
         for (board_id, board) in &self.boards {
             if board.positions.len() != self.total_positions {
                 let err = SnapshotConsistencyError::BoardPositionCountMismatch {
@@ -157,32 +157,39 @@ impl BoardPlanEngine {
             }
             for occupant in board.positions.iter().flatten() {
                 placed.insert((*board_id, *occupant));
-                if let Some(held_board) = seats.insert(*occupant, *board_id) {
-                    // Sorted, so the message does not depend on which board
-                    // the hash order reached first.
-                    let (first_board, second_board) = if held_board < *board_id {
-                        (held_board, *board_id)
-                    } else {
-                        (*board_id, held_board)
-                    };
-                    if duplicate.as_ref().is_none_or(|(held, _)| occupant < held) {
-                        duplicate = Some((
-                            *occupant,
-                            SnapshotConsistencyError::MemberOnTwoBoards {
-                                user_id: *occupant,
-                                first_board,
-                                second_board,
-                            },
-                        ));
-                    }
+                if seats.insert(*occupant, *board_id).is_some()
+                    && duplicate.is_none_or(|held| *occupant < held)
+                {
+                    duplicate = Some(*occupant);
                 }
             }
         }
         if let Some((_, err)) = sizing {
             return Err(err);
         }
-        if let Some((_, err)) = duplicate {
-            return Err(err);
+        if let Some(user_id) = duplicate {
+            // The walk above only records that this occupant repeated. Collect
+            // every board holding them, so the message names the two lowest
+            // rather than whichever two hash order reached first. This runs
+            // only on the rejection path.
+            let mut held: Vec<Uuid> = self
+                .boards
+                .iter()
+                .filter(|(_, board)| {
+                    board.positions.iter().flatten().any(|o| *o == user_id)
+                })
+                .map(|(board_id, _)| *board_id)
+                .collect();
+            held.sort_unstable();
+            if let (Some(first_board), Some(second_board)) =
+                (held.first().copied(), held.get(1).copied())
+            {
+                return Err(SnapshotConsistencyError::MemberOnTwoBoards {
+                    user_id,
+                    first_board,
+                    second_board,
+                });
+            }
         }
 
         // Lowest user_id wins, since member_boards also iterates in hash order.
@@ -904,9 +911,17 @@ mod tests {
     #[test]
     fn validate_restored_names_the_same_two_board_offender_every_run() {
         // A fresh engine per iteration, for the reason in the key test above.
+        // Two duplicated occupants, so the lowest-user_id hold has something
+        // to choose between. The higher id sits at the later position, so a
+        // hold that simply overwrote would name it and lose.
         for _ in 0..64 {
             let (mut engine, member) = seeded_engine();
             let first = *engine.member_boards.get(&member).unwrap();
+            let other = Uuid::from_bytes([0xAA, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            assert!(member < other, "the seeded member must be the lower id");
+            engine.boards.get_mut(&first).unwrap().positions[1] = Some(other);
+            engine.member_boards.insert(other, first);
+
             let mut clone = engine.boards.get(&first).unwrap().clone();
             let second = Uuid::from_bytes([4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
             clone.id = second;
@@ -924,7 +939,39 @@ mod tests {
                     first_board: low,
                     second_board: high,
                 }),
-                "the board ids should be sorted regardless of hash order"
+                "the lowest user_id should win, with its board ids sorted"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_pair_when_a_user_holds_three_boards() {
+        // seats overwrote, so the pair named was whichever two boards hash
+        // order reached first. The lowest two must win instead.
+        for _ in 0..64 {
+            let (mut engine, member) = seeded_engine();
+            let seated = *engine.member_boards.get(&member).unwrap();
+            let board = engine.boards.remove(&seated).unwrap();
+            let ids = [
+                Uuid::from_bytes([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]),
+                Uuid::from_bytes([2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]),
+                Uuid::from_bytes([3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]),
+            ];
+            for id in ids {
+                let mut copy = board.clone();
+                copy.id = id;
+                engine.boards.insert(id, copy);
+            }
+            engine.member_boards.insert(member, ids[0]);
+
+            assert_eq!(
+                engine.validate_restored(),
+                Err(SnapshotConsistencyError::MemberOnTwoBoards {
+                    user_id: member,
+                    first_board: ids[0],
+                    second_board: ids[1],
+                }),
+                "the two lowest board ids should win regardless of hash order"
             );
         }
     }

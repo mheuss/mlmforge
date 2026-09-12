@@ -1479,9 +1479,9 @@ mod tests {
 
     #[test]
     fn a_per_distributor_depth_cap_records_a_forfeit() {
-        // Consuming site 2. An active-leg tier caps how deep one distributor
-        // earns. Past that cap the node forfeits rather than skipping, so the
-        // level still advances and a step is owed.
+        // An active-leg tier caps how deep one distributor earns. Past that
+        // cap the node forfeits rather than skipping, so the level still
+        // advances and a step is owed.
         let (tree, snapshots) = eligible_chain(4);
         let elig = CommissionEligibility {
             minimum_pv: 100.0,

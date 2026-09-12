@@ -402,7 +402,7 @@ impl Arena {
     }
 
     /// Finds the nearest sponsor of `idx` that is not in `removed`.
-    pub(crate) fn surviving_sponsor(
+    fn surviving_sponsor(
         &self,
         idx: NodeIndex,
         removed: &[NodeIndex],
@@ -427,7 +427,7 @@ impl Arena {
 
     /// Reports whether every node in `removed` can give up its recruits.
     ///
-    /// Call before any mutation. `reparent_sponsored` assumes it passed.
+    /// Call before any mutation.
     pub(crate) fn check_sponsored_removable(&self, removed: &[NodeIndex]) -> Result<(), TreeError> {
         for &idx in removed {
             let surviving_sponsored = self.surviving_count(idx, removed);
@@ -444,8 +444,15 @@ impl Arena {
     /// Moves the recruits of every node in `removed` onto their nearest
     /// surviving sponsor.
     pub(crate) fn reparent_sponsored(&mut self, removed: &[NodeIndex]) {
-        // Resolve every target before moving anything, so the order these are
-        // visited in cannot change the answer.
+        debug_assert!(
+            {
+                let mut seen = HashSet::new();
+                removed.iter().all(|idx| seen.insert(*idx))
+            },
+            "removed holds a duplicate index, which would move its survivors twice"
+        );
+        // Resolve every target before moving anything, so nothing is half
+        // repaired if the walk finds a chain that does not terminate.
         let plan: Vec<(NodeIndex, Vec<NodeIndex>, Option<NodeIndex>)> = removed
             .iter()
             .map(|&idx| {
@@ -455,9 +462,14 @@ impl Arena {
                     .copied()
                     .filter(|s| !removed.contains(s))
                     .collect();
-                let target = self
-                    .surviving_sponsor(idx, removed)
-                    .expect("cycle rejected by check_sponsored_removable");
+                // Only walk when there is something to move, matching the
+                // set of nodes check_sponsored_removable walked.
+                let target = if survivors.is_empty() {
+                    None
+                } else {
+                    self.surviving_sponsor(idx, removed)
+                        .expect("sponsor chain did not terminate")
+                };
                 (idx, survivors, target)
             })
             .collect();
@@ -1483,6 +1495,7 @@ mod tests {
         let leaf = arena.alloc_slot(make_node(test_uuid(3), Some(orphan), 2));
         arena.nodes[orphan.0].sponsored = vec![leaf];
         arena.nodes[leaf.0].sponsor = Some(orphan);
+        assert!(arena.nodes[orphan.0].sponsor.is_none());
 
         assert_eq!(arena.check_sponsored_removable(&[orphan, leaf]), Ok(()));
     }
@@ -1548,14 +1561,25 @@ mod tests {
     }
 
     #[test]
+    fn a_cycle_with_no_survivors_to_move_does_not_panic_the_repair() {
+        // check_sponsored_removable skips the chain walk for a node with no
+        // surviving recruits, so the repair must skip it too or it panics on
+        // a node the check passed.
+        let mut arena = Arena::new();
+        let a = arena.alloc_slot(make_node(test_uuid(1), None, 0));
+        let b = arena.alloc_slot(make_node(test_uuid(2), Some(a), 1));
+        arena.nodes[a.0].sponsor = Some(b);
+        arena.nodes[b.0].sponsor = Some(a);
+
+        // Both cycle members are in the removed set, so the walk never leaves
+        // it and exhausts the bound. Neither has a surviving recruit, so the
+        // check never walks at all.
+        assert_eq!(arena.check_sponsored_removable(&[a, b]), Ok(()));
+        arena.reparent_sponsored(&[a, b]);
+    }
+
+    #[test]
     fn reparenting_node_by_node_between_tombstones_reaches_the_same_answer() {
-        // Recorded because a review predicted the opposite: that b's walk would
-        // read a's cleared sponsor and strand c. It does not. Repointing a's
-        // recruits runs before a is tombstoned, so b already names a live
-        // sponsor by the time b is processed, and the chain repairs forward.
-        //
-        // This holds only while sponsor and sponsored agree. Nothing validates
-        // that yet (HEU-732).
         let (mut arena, r, a, b, c) = sponsor_chain();
 
         arena.reparent_sponsored(&[a]);

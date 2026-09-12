@@ -896,7 +896,7 @@ mod tests {
             .unwrap();
 
         // Without this the test passes even if the fixture stops building the
-        // edge under test, because validate_restored is happy either way.
+        // edge under test.
         let before = tree.get_sponsor(test_uuid(3)).unwrap().unwrap();
         assert_eq!(before.user_id, test_uuid(2));
 

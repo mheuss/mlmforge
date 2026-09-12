@@ -298,18 +298,6 @@ mod tests {
         plan.ranks = vec![
             crate::config::rank::RankDefinition {
                 name: "associate".to_string(),
-                ordinal: 0,
-                qualification: crate::config::rank::RankQualification {
-                    structures: vec![],
-                    required_products: vec![],
-                    window: None,
-                    tenure: None,
-                },
-                qualified_structures: vec!["test_streamline".to_string()],
-                demotion_policy: crate::config::rank::DemotionPolicy::PromotionOnly,
-            },
-            crate::config::rank::RankDefinition {
-                name: "bronze".to_string(),
                 ordinal: 1,
                 qualification: crate::config::rank::RankQualification {
                     structures: vec![],
@@ -321,8 +309,20 @@ mod tests {
                 demotion_policy: crate::config::rank::DemotionPolicy::PromotionOnly,
             },
             crate::config::rank::RankDefinition {
-                name: "silver".to_string(),
+                name: "bronze".to_string(),
                 ordinal: 2,
+                qualification: crate::config::rank::RankQualification {
+                    structures: vec![],
+                    required_products: vec![],
+                    window: None,
+                    tenure: None,
+                },
+                qualified_structures: vec!["test_streamline".to_string()],
+                demotion_policy: crate::config::rank::DemotionPolicy::PromotionOnly,
+            },
+            crate::config::rank::RankDefinition {
+                name: "silver".to_string(),
+                ordinal: 3,
                 qualification: crate::config::rank::RankQualification {
                     structures: vec![],
                     required_products: vec![],
@@ -418,18 +418,6 @@ mod tests {
         plan.ranks = vec![
             crate::config::rank::RankDefinition {
                 name: "associate".to_string(),
-                ordinal: 0,
-                qualification: crate::config::rank::RankQualification {
-                    structures: vec![],
-                    required_products: vec![],
-                    window: None,
-                    tenure: None,
-                },
-                qualified_structures: vec!["test_streamline".to_string()],
-                demotion_policy: crate::config::rank::DemotionPolicy::PromotionOnly,
-            },
-            crate::config::rank::RankDefinition {
-                name: "bronze".to_string(),
                 ordinal: 1,
                 qualification: crate::config::rank::RankQualification {
                     structures: vec![],
@@ -441,8 +429,20 @@ mod tests {
                 demotion_policy: crate::config::rank::DemotionPolicy::PromotionOnly,
             },
             crate::config::rank::RankDefinition {
-                name: "silver".to_string(),
+                name: "bronze".to_string(),
                 ordinal: 2,
+                qualification: crate::config::rank::RankQualification {
+                    structures: vec![],
+                    required_products: vec![],
+                    window: None,
+                    tenure: None,
+                },
+                qualified_structures: vec!["test_streamline".to_string()],
+                demotion_policy: crate::config::rank::DemotionPolicy::PromotionOnly,
+            },
+            crate::config::rank::RankDefinition {
+                name: "silver".to_string(),
+                ordinal: 3,
                 qualification: crate::config::rank::RankQualification {
                     structures: vec![],
                     required_products: vec![],
@@ -963,9 +963,9 @@ mod tests {
                 "test_streamline",
             );
             plan.ranks = vec![
-                rank_def("associate", 0),
-                rank_def("bronze", 1),
-                rank_def("silver", 2),
+                rank_def("associate", 1),
+                rank_def("bronze", 2),
+                rank_def("silver", 3),
             ];
 
             let mut snapshots = HashMap::new();
@@ -1008,11 +1008,11 @@ mod tests {
         // were accidentally disabled on both runs, which is the failure this
         // test is least able to see.
         //
-        // Walk up from 5: node 4 is bronze (ordinal 1) and level 1 needs
-        // associate (0), so it earns at level 1 and 0.10. Node 3 is associate
-        // (0) and level 2 needs bronze (1), so it is compressed without
+        // Walk up from 5: node 4 is bronze (ordinal 2) and level 1 needs
+        // associate (1), so it earns at level 1 and 0.10. Node 3 is associate
+        // (1) and level 2 needs bronze (2), so it is compressed without
         // consuming the level. Node 2 is bronze and earns at level 2 and 0.05.
-        // Node 1 is silver (2) and level 3 needs silver, so it earns at level 3
+        // Node 1 is silver (3) and level 3 needs silver, so it earns at level 3
         // and 0.02.
         //
         // calculate_streamline ends with walk_order::assemble, which sorts by
@@ -1046,7 +1046,7 @@ mod tests {
             crate::config::StructureConfig::Streamline(structure.clone()),
             "test_streamline",
         );
-        plan.ranks = vec![rank_def("associate", 0), rank_def("apex", 65535)];
+        plan.ranks = vec![rank_def("associate", 1), rank_def("apex", 65535)];
 
         let mut snapshots = HashMap::new();
         for i in 1..=5u8 {

@@ -1254,10 +1254,9 @@ mod tests {
     #[test]
     fn missing_snapshot_ancestor_errors() {
         // Tree: 0 -> 1 -> 2 -> 3, volume from node 3, node 1 has no snapshot.
-        // With no breakaway config the whole chain goes through Walk 1, so
-        // node 1 reaches the shared walk's snapshot lookup. Give this plan a
-        // breakaway and node 1 can end up above the boundary, where Walk 2
-        // still skips it silently — see HEU-727.
+        // Converted rather than completed: the omission is the subject, so
+        // this asserts the error where it used to assert who earned.
+        // Stairstep's second walk is out of scope here — HEU-727.
         let tree = build_chain(4);
         let mut structure = test_stairstep_structure();
         structure.breakaway = None;

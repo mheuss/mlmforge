@@ -141,6 +141,8 @@ impl BoardPlanEngine {
         // random hash order and the offender must not vary between runs.
         let mut placed: HashSet<(Uuid, Uuid)> = HashSet::new();
         let mut sizing: Option<(Uuid, SnapshotConsistencyError)> = None;
+        let mut seats: HashMap<Uuid, Uuid> = HashMap::new();
+        let mut duplicate: Option<(Uuid, SnapshotConsistencyError)> = None;
         for (board_id, board) in &self.boards {
             if board.positions.len() != self.total_positions {
                 let err = SnapshotConsistencyError::BoardPositionCountMismatch {
@@ -155,9 +157,31 @@ impl BoardPlanEngine {
             }
             for occupant in board.positions.iter().flatten() {
                 placed.insert((*board_id, *occupant));
+                if let Some(held_board) = seats.insert(*occupant, *board_id) {
+                    // Sorted, so the message does not depend on which board
+                    // the hash order reached first.
+                    let (first_board, second_board) = if held_board < *board_id {
+                        (held_board, *board_id)
+                    } else {
+                        (*board_id, held_board)
+                    };
+                    if duplicate.as_ref().is_none_or(|(held, _)| occupant < held) {
+                        duplicate = Some((
+                            *occupant,
+                            SnapshotConsistencyError::MemberOnTwoBoards {
+                                user_id: *occupant,
+                                first_board,
+                                second_board,
+                            },
+                        ));
+                    }
+                }
             }
         }
         if let Some((_, err)) = sizing {
+            return Err(err);
+        }
+        if let Some((_, err)) = duplicate {
             return Err(err);
         }
 
@@ -805,6 +829,58 @@ mod tests {
                     board_id: low_board_id,
                 }),
                 "the lowest key should win regardless of hash order"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_user_seated_on_two_boards() {
+        let (mut engine, member) = seeded_engine();
+        let first = *engine.member_boards.get(&member).unwrap();
+        let mut clone = engine.boards.get(&first).unwrap().clone();
+        let second = Uuid::from_bytes([4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+        clone.id = second;
+        engine.boards.insert(second, clone);
+        let (low, high) = if first < second {
+            (first, second)
+        } else {
+            (second, first)
+        };
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::MemberOnTwoBoards {
+                user_id: member,
+                first_board: low,
+                second_board: high,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_two_board_offender_every_run() {
+        // A fresh engine per iteration, for the reason in the key test above.
+        for _ in 0..64 {
+            let (mut engine, member) = seeded_engine();
+            let first = *engine.member_boards.get(&member).unwrap();
+            let mut clone = engine.boards.get(&first).unwrap().clone();
+            let second = Uuid::from_bytes([4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            clone.id = second;
+            engine.boards.insert(second, clone);
+            let (low, high) = if first < second {
+                (first, second)
+            } else {
+                (second, first)
+            };
+
+            assert_eq!(
+                engine.validate_restored(),
+                Err(SnapshotConsistencyError::MemberOnTwoBoards {
+                    user_id: member,
+                    first_board: low,
+                    second_board: high,
+                }),
+                "the board ids should be sorted regardless of hash order"
             );
         }
     }

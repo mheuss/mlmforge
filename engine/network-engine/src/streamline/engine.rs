@@ -284,6 +284,8 @@ impl StreamlineEngine {
     }
 
     /// Returns true if the user has a position in any stream.
+    ///
+    /// Answers from the membership index rather than by walking the trees.
     pub fn contains_member(&self, user_id: Uuid) -> bool {
         self.user_streams.contains_key(&user_id)
     }

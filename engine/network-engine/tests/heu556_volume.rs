@@ -150,6 +150,19 @@ fn deep_sparse_generation_same_rank_volume() {
     let earning_count = result.earnings.len();
     let rss_after_calc = peak_rss_bytes();
 
+    // Which of the twelve instrumented outcomes this fixture actually reached.
+    let mut hist: std::collections::BTreeMap<String, usize> = Default::default();
+    for w in &result.walks {
+        for st in &w.steps {
+            *hist
+                .entry(format!("{:?}", st.outcome))
+                .or_default() += 1;
+        }
+    }
+    for (k, v) in &hist {
+        println!("outcome {k:<28} {v}");
+    }
+
     // The worker's path: a serde_json::Value, then a String, both live.
     let value = serde_json::to_value(&result).expect("to_value");
     let json = serde_json::to_string(&value).expect("to_string");

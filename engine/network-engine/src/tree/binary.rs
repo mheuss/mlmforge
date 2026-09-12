@@ -181,6 +181,8 @@ impl BinaryTree {
             return Err(TreeError::HasChildren(user_id, child_count));
         }
 
+        self.arena.check_sponsored_removable(&[idx])?;
+
         if let Some(parent_idx) = self.arena.node(idx).parent {
             let slots = self
                 .slots
@@ -205,6 +207,7 @@ impl BinaryTree {
             self.arena.root = None;
         }
 
+        self.arena.reparent_sponsored(&[idx]);
         self.slots.remove(&idx);
         self.arena.index.remove(&user_id);
         self.arena.tombstone(idx);
@@ -1068,5 +1071,26 @@ mod tests {
         // Verify sponsor links are preserved.
         let sponsor = restored.get_sponsor(test_uuid(4)).unwrap();
         assert_eq!(sponsor.unwrap().user_id, test_uuid(1));
+    }
+
+    #[test]
+    fn removing_a_recruiter_promotes_their_recruits_to_the_grandsponsor() {
+        let mut tree = BinaryTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0, test_uuid(1), 1)
+            .unwrap();
+        // Placed under 1 so 2 stays a leaf, sponsored by 2 so the edge under
+        // test outlives its target.
+        tree.add_node(test_uuid(3), test_uuid(1), 1, test_uuid(2), 2)
+            .unwrap();
+
+        let before = tree.get_sponsor(test_uuid(3)).unwrap().unwrap();
+        assert_eq!(before.user_id, test_uuid(2));
+
+        tree.remove_node(test_uuid(2)).unwrap();
+
+        assert_eq!(tree.validate_restored(), Ok(()));
+        let sponsor = tree.get_sponsor(test_uuid(3)).unwrap().unwrap();
+        assert_eq!(sponsor.user_id, test_uuid(1));
     }
 }

@@ -848,10 +848,16 @@ branches never advance the counter, so omitting them keeps reconstruction exact.
 ### Why an older document may say four
 
 A fourth branch stood here until HEU-609. A node absent from the snapshot map
-forfeited a level when no compression was configured, and was skipped without
-consuming one when compression was on. It now returns `UplineNotInSnapshot`
-before reaching either, so it consumes nothing and records no step. Anything
-written before that branch merged counts one more than this section does.
+forfeited a level when neither compression nor dynamic thresholds were
+configured, and was skipped without consuming one when either was. It now
+returns `UplineNotInSnapshot` before reaching either, so it consumes nothing and
+records no step. Anything written before that branch merged counts one more than
+this section does.
+
+The condition matters to anyone reconstructing the old behaviour per calculator.
+Streamline never set compression and always set dynamic thresholds, so "when
+compression was on" would send a reader to the wrong branch for the calculator
+most likely to be asked about.
 
 ## Adding A Parameter To A `pub` Function Is A Breaking Change
 

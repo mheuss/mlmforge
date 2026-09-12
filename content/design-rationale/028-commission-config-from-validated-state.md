@@ -36,7 +36,11 @@ The class it removes is config-versus-structure mismatch. It does not cover data
 
 **Per-calculation data is different.** Snapshots and volume change every call and describe a period, not a policy. They belong on the request. Config describes policy and belongs in state.
 
-This rule is about config. It is not a claim that request params cannot move money — they still can, and today nothing validates them. An asserted `snapshot.rank` clears dynamic-compression thresholds (HEU-608); omitting an upline's snapshot promotes every ancestor above it a level (HEU-609); a repeated volume `source_id` pays twice (HEU-610). Only CV *values* are checked, by `validate_cv`. Sourcing config from state closes one door, not the room.
+This rule is about config. It is not a claim that request params cannot move money — they still can, and validating them is a separate arc that is partly done.
+
+Three examples were listed here as current in 2026-09-11. Two have since closed: an asserted `snapshot.rank` absent from the plan's ladder is now rejected (HEU-608, protocol 5), and a node reaching its snapshot lookup with no snapshot now returns `UplineNotInSnapshot` (HEU-609, protocol 6). **A repeated volume `source_id` still pays twice (HEU-610), and that one is open.**
+
+Sourcing config from state closes one door, not the room. Which doors are shut is recorded by protocol version in the hub's Version allocation table rather than described here, because describing it is what made this paragraph false within a day of two merges.
 
 ## Revisit Trigger
 

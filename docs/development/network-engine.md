@@ -450,13 +450,17 @@ Do not `touch` the binary itself. That clears the guard without rebuilding, whic
 The suite spans two toolchains. A single "did it pass" answer needs both. `;` does not give you one:
 
 ```bash
-go test ./... ; cargo test      # reports only cargo's status
-go test ./... && cargo test     # reports the first failure
+go test ./... ; (cd engine && cargo test)     # reports only cargo's status
+go test ./... && (cd engine && cargo test)    # reports the first failure
 ```
+
+Both halves carry their own `cd`, because there is no `Cargo.toml` at the
+repository root and a bare `cargo` command run from there fails before it tests
+anything.
 
 With `;`, a green Rust run masks a failed Go run. The shell then exits 0. This is not hypothetical: a run that reported exit 0 on this branch had 41 failing Go tests in it.
 
-Report a pass as a count per runner, not as one exit status. "1249 Rust across 21 targets, 636 Go across 6 packages" is checkable. "Exit 0" hides how many commands the status covered.
+Report a pass as a count per runner, not as one exit status. Naming both totals and both denominators is checkable. "Exit 0" hides how many commands the status covered.
 
 ## An Absent Worker Binary Fails In CI And Skips Locally
 

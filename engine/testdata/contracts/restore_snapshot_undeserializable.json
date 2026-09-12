@@ -1,0 +1,22 @@
+{
+    "description": "restore_snapshot rejects data that UnilevelTree cannot deserialize with INVALID_PARAMS, not INCONSISTENT_SNAPSHOT. Paired with restore_snapshot_inconsistent.json: a payload that never parses and one that parses and then contradicts itself must not collapse to the same code.",
+    "request": {
+        "id": "rs-undeserializable",
+        "op": "restore_snapshot",
+        "params": {
+            "structure": "Restored",
+            "tree_type": "unilevel",
+            "data": {
+                "not_an_arena": true
+            }
+        }
+    },
+    "expected_response": {
+        "id": "rs-undeserializable",
+        "ok": false,
+        "error": {
+            "code": "INVALID_PARAMS",
+            "message_contains": "failed to deserialize unilevel snapshot"
+        }
+    }
+}

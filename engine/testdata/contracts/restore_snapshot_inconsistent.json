@@ -1,0 +1,40 @@
+{
+    "description": "restore_snapshot rejects a unilevel snapshot whose index names a slot past the end of nodes, with INCONSISTENT_SNAPSHOT. Cross-language lock for the HEU-706 restore trust boundary. Paired with restore_snapshot_undeserializable.json: together they prove the two codes are told apart, not just that one of them fires.",
+    "request": {
+        "id": "rs-inconsistent",
+        "op": "restore_snapshot",
+        "params": {
+            "structure": "Restored",
+            "tree_type": "unilevel",
+            "data": {
+                "arena": {
+                    "nodes": [
+                        {
+                            "user_id": "11111111-1111-1111-1111-111111111111",
+                            "parent": null,
+                            "children": [],
+                            "sponsor": null,
+                            "sponsored": [],
+                            "depth": 0,
+                            "enrolled_at": 100
+                        }
+                    ],
+                    "index": {
+                        "11111111-1111-1111-1111-111111111111": 0,
+                        "22222222-2222-2222-2222-222222222222": 99
+                    },
+                    "free_list": [],
+                    "root": 0
+                }
+            }
+        }
+    },
+    "expected_response": {
+        "id": "rs-inconsistent",
+        "ok": false,
+        "error": {
+            "code": "INCONSISTENT_SNAPSHOT",
+            "message_contains": "to node slot 99; the arena holds"
+        }
+    }
+}

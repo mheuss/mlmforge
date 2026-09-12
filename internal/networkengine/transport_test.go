@@ -41,7 +41,7 @@ func TestStdioTransport_Ping(t *testing.T) {
 	result, err := transport.Call(context.Background(), "ping", json.RawMessage("null"))
 	require.NoError(t, err)
 
-	assert.JSONEq(t, `{"protocol_version":6}`, string(result))
+	assert.JSONEq(t, `{"protocol_version":7}`, string(result))
 }
 
 func TestStdioTransport_UnknownOp(t *testing.T) {
@@ -63,7 +63,7 @@ func TestStdioTransport_MultipleCalls(t *testing.T) {
 		result, err := transport.Call(context.Background(), "ping", json.RawMessage("null"))
 		require.NoError(t, err)
 
-		assert.JSONEq(t, `{"protocol_version":6}`, string(result))
+		assert.JSONEq(t, `{"protocol_version":7}`, string(result))
 	}
 }
 

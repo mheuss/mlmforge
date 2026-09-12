@@ -978,13 +978,18 @@ run-time assertion failures, so building was not enough to find them.
 
 ## `validate_restored` Checks Each Structure Alone, Not That They Agree
 
-The arena walks its two structures against each other in both directions. The
-index is checked against the nodes, and the nodes are checked back against the
-index. An adversarial review threw roughly fifteen forged index shapes at it and
-every one was rejected.
+The arena walks its index and its nodes against each other in both directions.
+The index is checked against the nodes, and the nodes are checked back against
+the index. An adversarial review threw roughly fifteen forged index shapes at
+that pair and every one was rejected.
 
-The four arms above the arena do not do that for their own pair. Each holds a
-second structure beside the arena. Each checks that structure's entries are in
+The arena's other pair is checked one way only. Every free-list entry must name
+a tombstoned slot, and no tombstone has to appear in the free list. A tombstone
+left out is leaked, and `node_count` counts it live. Its reach today is three
+`Debug` impls, which is why it is recorded rather than fixed.
+
+The four arms above the arena check one way only for their own pair. Each holds
+a second structure beside the arena. Each checks that structure's entries are in
 range and live. None checks that the two agree with each other.
 
 So a restored matrix can hold a child in `Node.children` while every parent slot

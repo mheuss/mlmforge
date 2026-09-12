@@ -118,6 +118,25 @@ impl BoardPlanEngine {
                 expected,
             });
         }
+        // Runs before the walk below, which uses the map key as the board's
+        // identity. A fault reported against a key that names no board gives
+        // an operator an id they cannot look up.
+        let mut key_fault: Option<(Uuid, SnapshotConsistencyError)> = None;
+        for (key, board) in &self.boards {
+            if *key != board.id && key_fault.as_ref().is_none_or(|(held, _)| key < held) {
+                key_fault = Some((
+                    *key,
+                    SnapshotConsistencyError::BoardIdMismatch {
+                        key: *key,
+                        board_id: board.id,
+                    },
+                ));
+            }
+        }
+        if let Some((_, err)) = key_fault {
+            return Err(err);
+        }
+
         // Ties break on the lowest board id, since self.boards iterates in
         // random hash order and the offender must not vary between runs.
         let mut placed: HashSet<(Uuid, Uuid)> = HashSet::new();
@@ -739,6 +758,54 @@ mod tests {
                     "{occupant} sits on {board_id} with no member_boards entry pointing back"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_board_filed_under_the_wrong_key() {
+        let (mut engine, member) = seeded_engine();
+        let seated = *engine.member_boards.get(&member).unwrap();
+        let board = engine.boards.remove(&seated).unwrap();
+        let board_id = board.id;
+        let wrong_key = Uuid::from_bytes([7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+        engine.boards.insert(wrong_key, board);
+        engine.member_boards.insert(member, wrong_key);
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::BoardIdMismatch {
+                key: wrong_key,
+                board_id,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_key_offender_every_run() {
+        // A fresh engine per iteration. One HashMap repeats its own iteration
+        // order, so looping over a single engine proves nothing about hash
+        // order and stays green with the lowest-key hold deleted.
+        for _ in 0..64 {
+            let (mut engine, member) = seeded_engine();
+            let seated = *engine.member_boards.get(&member).unwrap();
+            let board = engine.boards.remove(&seated).unwrap();
+            let low_board_id = board.id;
+            let low = Uuid::from_bytes([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            let high = Uuid::from_bytes([2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            let mut second = board.clone();
+            second.id = Uuid::from_bytes([3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            engine.boards.insert(low, board);
+            engine.boards.insert(high, second);
+            engine.member_boards.insert(member, low);
+
+            assert_eq!(
+                engine.validate_restored(),
+                Err(SnapshotConsistencyError::BoardIdMismatch {
+                    key: low,
+                    board_id: low_board_id,
+                }),
+                "the lowest key should win regardless of hash order"
+            );
         }
     }
 

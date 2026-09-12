@@ -144,6 +144,9 @@ pub enum SnapshotConsistencyError {
         expected: usize,
     },
 
+    #[error("the boards map files board {board_id} under key {key}")]
+    BoardIdMismatch { key: Uuid, board_id: Uuid },
+
     #[error("member_boards puts {user_id} on board {board_id}; the engine holds no such board")]
     BoardAbsent { user_id: Uuid, board_id: Uuid },
 

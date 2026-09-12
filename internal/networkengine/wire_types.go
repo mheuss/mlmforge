@@ -314,40 +314,40 @@ type StreamlineAddMemberRequest struct {
 
 // StreamlineAddMemberResultDTO is the result of adding a member.
 type StreamlineAddMemberResultDTO struct {
-	StreamID int `json:"stream_id"`
-	Position int `json:"position"`
+	StreamID uint32 `json:"stream_id"`
+	Position int    `json:"position"`
 }
 
 // StreamlineExpandRequest is the input for expanding a user's streams.
 type StreamlineExpandRequest struct {
 	UserID       string `json:"user_id"`
-	TotalAllowed int    `json:"total_allowed"`
+	TotalAllowed uint32 `json:"total_allowed"`
 	Timestamp    int64  `json:"timestamp"`
 }
 
 // StreamlineExpandResultDTO is the result of stream expansion.
 type StreamlineExpandResultDTO struct {
-	NewStreamIDs []int `json:"new_stream_ids"`
+	NewStreamIDs []uint32 `json:"new_stream_ids"`
 }
 
 // StreamlineUpdateAllowanceRequest is the input for freeze/unfreeze.
 type StreamlineUpdateAllowanceRequest struct {
 	UserID       string `json:"user_id"`
-	TotalAllowed int    `json:"total_allowed"`
+	TotalAllowed uint32 `json:"total_allowed"`
 	Timestamp    int64  `json:"timestamp"`
 }
 
 // StreamlineFreezeResultDTO is the result of updating stream allowance.
 type StreamlineFreezeResultDTO struct {
-	Frozen    []int `json:"frozen"`
-	Unfrozen  []int `json:"unfrozen"`
-	Created   []int `json:"created"`
-	Destroyed []int `json:"destroyed"`
+	Frozen    []uint32 `json:"frozen"`
+	Unfrozen  []uint32 `json:"unfrozen"`
+	Created   []uint32 `json:"created"`
+	Destroyed []uint32 `json:"destroyed"`
 }
 
 // StreamlineRemoveMemberResultDTO is the result of removing a member.
 type StreamlineRemoveMemberResultDTO struct {
-	RemovedFrom []int `json:"removed_from"`
+	RemovedFrom []uint32 `json:"removed_from"`
 }
 
 // StreamlineMemberInfoDTO contains a member's positions across streams.
@@ -357,14 +357,14 @@ type StreamlineMemberInfoDTO struct {
 
 // StreamPositionDTO is a member's position in a single stream.
 type StreamPositionDTO struct {
-	StreamID int  `json:"stream_id"`
-	Position int  `json:"position"`
-	Frozen   bool `json:"frozen"`
+	StreamID uint32 `json:"stream_id"`
+	Position int    `json:"position"`
+	Frozen   bool   `json:"frozen"`
 }
 
 // StreamSummaryDTO summarizes a single stream.
 type StreamSummaryDTO struct {
-	ID          int    `json:"id"`
+	ID          uint32 `json:"id"`
 	OwnerID     string `json:"owner_id"`
 	MemberCount int    `json:"member_count"`
 	Frozen      bool   `json:"frozen"`

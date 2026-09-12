@@ -55,6 +55,17 @@ func TestWireTypesNarrowMirrors(t *testing.T) {
 		{"EnginePosition.Depth", reflect.TypeFor[EnginePosition](), "Depth", "uint32"},
 		{"StreamlineAddMemberRequest.StreamIDOverride", reflect.TypeFor[StreamlineAddMemberRequest](), "StreamIDOverride", "*uint32"},
 		{"EvaluateRanksRequest.History", reflect.TypeFor[EvaluateRanksRequest](), "History", "map[string]map[string]*uint16"},
+		{"StreamlineAddMemberResultDTO.StreamID", reflect.TypeFor[StreamlineAddMemberResultDTO](), "StreamID", "uint32"},
+		{"StreamlineExpandRequest.TotalAllowed", reflect.TypeFor[StreamlineExpandRequest](), "TotalAllowed", "uint32"},
+		{"StreamlineExpandResultDTO.NewStreamIDs", reflect.TypeFor[StreamlineExpandResultDTO](), "NewStreamIDs", "[]uint32"},
+		{"StreamlineUpdateAllowanceRequest.TotalAllowed", reflect.TypeFor[StreamlineUpdateAllowanceRequest](), "TotalAllowed", "uint32"},
+		{"StreamlineFreezeResultDTO.Frozen", reflect.TypeFor[StreamlineFreezeResultDTO](), "Frozen", "[]uint32"},
+		{"StreamlineFreezeResultDTO.Unfrozen", reflect.TypeFor[StreamlineFreezeResultDTO](), "Unfrozen", "[]uint32"},
+		{"StreamlineFreezeResultDTO.Created", reflect.TypeFor[StreamlineFreezeResultDTO](), "Created", "[]uint32"},
+		{"StreamlineFreezeResultDTO.Destroyed", reflect.TypeFor[StreamlineFreezeResultDTO](), "Destroyed", "[]uint32"},
+		{"StreamlineRemoveMemberResultDTO.RemovedFrom", reflect.TypeFor[StreamlineRemoveMemberResultDTO](), "RemovedFrom", "[]uint32"},
+		{"StreamPositionDTO.StreamID", reflect.TypeFor[StreamPositionDTO](), "StreamID", "uint32"},
+		{"StreamSummaryDTO.ID", reflect.TypeFor[StreamSummaryDTO](), "ID", "uint32"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

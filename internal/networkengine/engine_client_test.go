@@ -2297,27 +2297,27 @@ func TestEngineClient_StreamlineLifecycle(t *testing.T) {
 		UserID: user1, SponsorID: "00000000-0000-0000-0000-000000000099", Timestamp: 1001,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, 1, r1.StreamID)
+	assert.Equal(t, uint32(1), r1.StreamID)
 	assert.Equal(t, 0, r1.Position)
 
 	r2, err := client.StreamlineAddMember(ctx, structure, StreamlineAddMemberRequest{
 		UserID: user2, SponsorID: user1, Timestamp: 1002,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, 1, r2.StreamID)
+	assert.Equal(t, uint32(1), r2.StreamID)
 	assert.Equal(t, 1, r2.Position)
 
 	r3, err := client.StreamlineAddMember(ctx, structure, StreamlineAddMemberRequest{
 		UserID: user3, SponsorID: user1, Timestamp: 1003,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, 1, r3.StreamID)
+	assert.Equal(t, uint32(1), r3.StreamID)
 
 	// Verify member info.
 	info, err := client.StreamlineGetMember(ctx, structure, user2)
 	require.NoError(t, err)
 	assert.Len(t, info.Streams, 1)
-	assert.Equal(t, 1, info.Streams[0].StreamID)
+	assert.Equal(t, uint32(1), info.Streams[0].StreamID)
 
 	// List streams.
 	streams, err := client.StreamlineListStreams(ctx, structure)

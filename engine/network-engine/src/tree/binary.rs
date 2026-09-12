@@ -41,8 +41,9 @@ impl BinaryTree {
     /// Prove a restored tree's stored indexes are in range and live, and that
     /// the slot map and the live nodes account for each other.
     ///
-    /// The slot map is not compared against `Node.children`. A slot entry and
-    /// an arena edge can still disagree. HEU-732.
+    /// The root is exempt, so a slot entry naming it is accepted. The slot map
+    /// is not compared against `Node.children` either, so a slot entry and an
+    /// arena edge can still disagree. Both are HEU-732.
     pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
         self.arena.validate_restored()?;
         // Keep the lowest-slot fault rather than returning on the first one
@@ -505,6 +506,9 @@ mod tests {
             "the removal should have left a tombstone to skip"
         );
 
+        // The production entry point, not just the slot walk. Without this
+        // the guards are never run against engine output.
+        assert_eq!(tree.validate_restored(), Ok(()));
         crate::tree::test_helpers::assert_live_nodes_are_slotted_once(&tree.arena, &tree.slots);
     }
 

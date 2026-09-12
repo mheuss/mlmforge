@@ -242,13 +242,11 @@ impl Arena {
         // Naming the parents from the walk would name whichever two hash
         // order reached first, which varies per run once three parents are
         // involved.
-        let mut first_seen: HashMap<NodeIndex, ()> = HashMap::new();
+        let mut first_seen: HashSet<NodeIndex> = HashSet::new();
         let mut repeat: Option<NodeIndex> = None;
         for children in slots.values() {
             for child in children.into_iter().flatten() {
-                if first_seen.insert(*child, ()).is_some()
-                    && repeat.is_none_or(|held| child.0 < held.0)
-                {
+                if !first_seen.insert(*child) && repeat.is_none_or(|held| child.0 < held.0) {
                     repeat = Some(*child);
                 }
             }
@@ -278,10 +276,9 @@ impl Arena {
                         parent,
                     })
                 }
-                _ => Err(SnapshotConsistencyError::LiveNodeNotSlotted {
-                    slot: child.0,
-                    user_id: self.nodes[child.0].user_id,
-                }),
+                // `repeat` is only set from a child found in `slots`, so the
+                // collect above cannot come back empty.
+                (None, _) => unreachable!("a repeated child has at least one parent"),
             };
         }
 
@@ -291,7 +288,7 @@ impl Arena {
             if node.user_id == Uuid::nil() || self.root == Some(NodeIndex(slot)) {
                 continue;
             }
-            if !first_seen.contains_key(&NodeIndex(slot)) {
+            if !first_seen.contains(&NodeIndex(slot)) {
                 return Err(SnapshotConsistencyError::LiveNodeNotSlotted {
                     slot,
                     user_id: node.user_id,

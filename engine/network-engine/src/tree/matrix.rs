@@ -71,8 +71,9 @@ impl MatrixTree {
     /// the slot map, the holding tank and the live nodes account for each
     /// other.
     ///
-    /// The slot map is not compared against `Node.children`. A slot entry and
-    /// an arena edge can still disagree. HEU-732.
+    /// The root is exempt, so a slot entry naming it is accepted. The slot map
+    /// is not compared against `Node.children` either, so a slot entry and an
+    /// arena edge can still disagree. Both are HEU-732.
     pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
         // A restore does not run the constructor, so the range it enforces has
         // to be re-established here. A width below 2 is not inert: placement
@@ -1003,6 +1004,9 @@ mod tests {
             "the removal should have left a tombstone to skip"
         );
 
+        // The production entry point, not just the slot walk. Without this
+        // the guards are never run against engine output.
+        assert_eq!(tree.validate_restored(), Ok(()));
         crate::tree::test_helpers::assert_live_nodes_are_slotted_once(&tree.arena, &tree.slots);
     }
 
@@ -1128,6 +1132,65 @@ mod tests {
                 width: 2,
             })
         );
+    }
+
+    #[test]
+    fn validate_restored_accepts_a_tree_after_promoting_out_an_internal_node() {
+        // Without this, every restore of a matrix that has lost an internal
+        // node is rejected. Promotion repositions survivors, so it touches
+        // more of the slot map than a leaf removal does.
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        for n in 2..=8u8 {
+            tree.add_node(test_uuid(n), test_uuid(1), n as i64).unwrap();
+        }
+        tree.remove_node(test_uuid(2), PruningMode::PromoteEarliest)
+            .unwrap();
+
+        assert_eq!(tree.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_accepts_a_tree_after_a_subtree_goes_to_the_tank() {
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        for n in 2..=8u8 {
+            tree.add_node(test_uuid(n), test_uuid(1), n as i64).unwrap();
+        }
+        tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
+            .unwrap();
+        assert!(
+            !tree.holding_tank.is_empty(),
+            "removing a node with descendants should fill the tank"
+        );
+
+        assert_eq!(tree.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_accepts_a_tree_after_placing_from_the_tank() {
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        for n in 2..=8u8 {
+            tree.add_node(test_uuid(n), test_uuid(1), n as i64).unwrap();
+        }
+        tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
+            .unwrap();
+        // place_from_tank is (user_id, parent_id, position), not a timestamp.
+        let waiting = tree.holding_tank[0].user_id;
+        let (parent, position) = tree
+            .slots
+            .iter()
+            .find_map(|(parent, children)| {
+                children
+                    .iter()
+                    .position(|c| c.is_none())
+                    .map(|pos| (tree.arena.nodes[parent.0].user_id, pos as u8))
+            })
+            .expect("the tree should have an open slot after a removal");
+        tree.place_from_tank(waiting, parent, position).unwrap();
+
+        assert_eq!(tree.validate_restored(), Ok(()));
     }
 
     #[test]

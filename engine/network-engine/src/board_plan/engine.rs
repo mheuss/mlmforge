@@ -770,9 +770,15 @@ mod tests {
         }
         assert!(
             engine.boards.len() > 1,
-            "twelve enrollments did not split a board; the run never cycled"
+            "twelve enrollments left {} board(s); a split was expected",
+            engine.boards.len()
         );
 
+        assert_board_invariants(&engine);
+    }
+
+    /// Asserts the three invariants HEU-750's board criteria depend on.
+    fn assert_board_invariants(engine: &BoardPlanEngine) {
         for (key, board) in &engine.boards {
             assert_eq!(*key, board.id, "map key disagrees with board id");
         }
@@ -793,6 +799,35 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn engine_output_holds_the_three_board_invariants_through_displacement() {
+        // The cycle test above runs with re-entry on, so every cycled member
+        // is re-seated and displaced_members stays empty. That is the path
+        // that hid a double-seating bug from it.
+        let mut engine = BoardPlanEngine::new(2, 1, test_config_no_reentry(), 0).unwrap();
+        let first = Uuid::from_bytes([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+        engine.add_member(first, first, 1).unwrap();
+        assert_board_invariants(&engine);
+        for n in 2..=12u8 {
+            let m = Uuid::from_bytes([n, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            engine.add_member(m, first, n as i64).unwrap();
+            assert_board_invariants(&engine);
+        }
+        assert!(
+            !engine.displaced_members.is_empty(),
+            "re-entry is off, so twelve enrollments should leave someone displaced"
+        );
+
+        let board_id = *engine.boards.keys().next().unwrap();
+        engine.dissolve_board(board_id, 200);
+        assert_board_invariants(&engine);
+
+        let displaced = *engine.displaced_members.first().unwrap();
+        let sponsor = *engine.member_boards.keys().next().unwrap();
+        let _ = engine.add_member(displaced, sponsor, 300);
+        assert_board_invariants(&engine);
     }
 
     #[test]

@@ -645,7 +645,7 @@ fn walk_multi_tier_overrides(
 /// upline node Walk 1 reaches has no snapshot, or if a volume source has a
 /// non-finite or negative cv_amount.
 ///
-/// Walk 2 does not make that last check. HEU-727 tracks the asymmetry.
+/// Walk 2 makes no upline-snapshot check. HEU-727 tracks the asymmetry.
 pub fn calculate_stairstep(
     tree: &UnilevelTree,
     plan: &CompensationPlan,

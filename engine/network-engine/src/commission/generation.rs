@@ -268,9 +268,8 @@ fn emit_generation_earnings(
 /// upline node the level walk reaches has no snapshot, or if a volume source
 /// has an invalid CV amount.
 ///
-/// That last check runs only when `level_commissions_enabled` is set, because
-/// only then does this call reach the shared walk. With it unset a missing
-/// upline snapshot is skipped silently. HEU-728 tracks that.
+/// The upline-snapshot check is reached only when `level_commissions_enabled`
+/// is set. HEU-728 tracks the gap when it is not.
 pub fn calculate_generation(
     tree: &UnilevelTree,
     plan: &CompensationPlan,

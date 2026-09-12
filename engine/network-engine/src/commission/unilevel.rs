@@ -853,8 +853,9 @@ mod tests {
 
     #[test]
     fn compression_missing_snapshot_errors() {
-        // mid(2) has no snapshot. Compression used to skip it without
-        // consuming a level, which paid the root at level 1.
+        // Pins the entry point, not the walk. Swallow the walk's error here,
+        // or default the missing snapshot before calling it, and the walk's
+        // own tests stay green while this one fails.
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
@@ -903,8 +904,6 @@ mod tests {
 
     #[test]
     fn no_compression_missing_snapshot_errors() {
-        // mid(2) has no snapshot. Without compression it used to forfeit
-        // level 1, which paid the root at level 2.
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)

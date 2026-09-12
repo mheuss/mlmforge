@@ -222,6 +222,19 @@ fn deep_sparse_generation_same_rank_interned_paths() {
     }
 
     let distinct_paths = path_ids.len();
+
+    // Per-run tree-fact cost: how many distinct nodes the whole run touches,
+    // against the per-walk figure someone might assume instead.
+    let distinct_nodes: std::collections::HashSet<Uuid> = result
+        .walks
+        .iter()
+        .flat_map(|w| w.steps.iter().map(|s| s.node_id))
+        .collect();
+    println!("distinct nodes, run  {}", distinct_nodes.len());
+    println!(
+        "same, if per walk    {}",
+        result.walks.iter().map(|w| w.steps.len()).sum::<usize>()
+    );
     let reduced = InternedResult {
         earnings: &result.earnings,
         paths: path_ids.iter().map(|p| p.as_slice()).collect(),

@@ -175,9 +175,7 @@ impl BoardPlanEngine {
             let mut held: Vec<Uuid> = self
                 .boards
                 .iter()
-                .filter(|(_, board)| {
-                    board.positions.iter().flatten().any(|o| *o == user_id)
-                })
+                .filter(|(_, board)| board.positions.iter().flatten().any(|o| *o == user_id))
                 .map(|(board_id, _)| *board_id)
                 .collect();
             held.sort_unstable();
@@ -821,7 +819,7 @@ mod tests {
         );
 
         let board_id = *engine.boards.keys().next().unwrap();
-        engine.dissolve_board(board_id, 200);
+        engine.dissolve_board(board_id, 200).unwrap();
         assert_board_invariants(&engine);
 
         let displaced = *engine.displaced_members.first().unwrap();

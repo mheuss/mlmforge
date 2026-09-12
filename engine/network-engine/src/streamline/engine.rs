@@ -1,7 +1,7 @@
 //! Streamline engine — manages all streams for one streamline structure.
 
 use crate::snapshot::SnapshotConsistencyError;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -117,16 +117,36 @@ impl StreamlineEngine {
             return Err(err);
         }
 
+        // Runs after the walk above, which is what establishes that a map key
+        // is the stream's own id. create_stream inserts on the cursor with no
+        // occupancy check, so a cursor at or below a live key replaces that
+        // stream and drops every member in its tree.
+        if let Some(highest) = self.streams.keys().copied().max() {
+            if self.next_stream_id <= highest {
+                return Err(SnapshotConsistencyError::StreamIdCursorNotPastEnd {
+                    next_stream_id: self.next_stream_id,
+                    highest_stream_id: highest,
+                });
+            }
+        }
+
         // The reverse of the user_streams walk below. Held on the (stream,
         // user) pair, not the stream alone, since user_ids() returns hash
         // order.
+        //
+        // The membership pairs are collected into a set first. A Vec::contains
+        // per user costs the length of that user's stream list, which makes the
+        // walk quadratic in the streams one user holds. Design NFR 4 is O(N+E).
+        let mut indexed_pairs: HashSet<(Uuid, u32)> = HashSet::new();
+        for (user_id, ids) in &self.user_streams {
+            for id in ids {
+                indexed_pairs.insert((*user_id, *id));
+            }
+        }
         let mut unindexed: Option<(u32, Uuid, SnapshotConsistencyError)> = None;
         for stream in self.streams.values() {
             for user_id in stream.tree.user_ids() {
-                let indexed = self
-                    .user_streams
-                    .get(&user_id)
-                    .is_some_and(|ids| ids.contains(&stream.id));
+                let indexed = indexed_pairs.contains(&(user_id, stream.id));
                 if !indexed
                     && unindexed.as_ref().is_none_or(|(held_id, held_user, _)| {
                         (stream.id, user_id) < (*held_id, *held_user)
@@ -512,10 +532,13 @@ impl StreamlineEngine {
         // Append to the bottom of the chain.
         let position = match stream.bottom {
             Some(bottom_id) => {
+                // A restored engine can name a bottom or a sponsor this tree
+                // does not hold. Report what add_node observed rather than
+                // asserting a condition this line never checked.
                 stream
                     .tree
                     .add_node(user_id, bottom_id, sponsor_id, timestamp)
-                    .expect("bottom node exists in tree");
+                    .map_err(|e| StreamlineError::TreeError(e.to_string()))?;
                 let parent_depth = stream
                     .tree
                     .get_parent(user_id)
@@ -851,6 +874,74 @@ mod tests {
     #[test]
     fn validate_restored_accepts_a_healthy_engine() {
         assert_eq!(seeded_streamline().validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_cursor_that_would_reallocate_a_live_stream() {
+        // create_stream inserts without an occupancy check, so a cursor at or
+        // below a live key replaces that stream and drops its whole tree.
+        let mut engine = seeded_streamline();
+        engine.next_stream_id = 1;
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::StreamIdCursorNotPastEnd {
+                next_stream_id: 1,
+                highest_stream_id: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_accepts_a_cursor_one_past_the_highest_stream() {
+        let engine = seeded_streamline();
+        assert_eq!(engine.next_stream_id, 2);
+        assert_eq!(engine.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_accepts_a_cursor_on_an_engine_holding_no_streams() {
+        let mut engine = seeded_streamline();
+        engine.streams.clear();
+        engine.user_streams.clear();
+        engine.stream_owners.clear();
+
+        assert_eq!(engine.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn add_member_reports_a_sponsor_the_target_tree_does_not_hold() {
+        // A stream owner sits in the stream they were enrolled in, not the one
+        // they own, so the owner is resolvable engine-wide and absent from this
+        // tree. Reaching add_node with them as sponsor must not panic.
+        let mut engine = seeded_streamline();
+        let outsider = test_uuid(50);
+        let second = engine.create_stream(outsider, 1001);
+        engine
+            .streams
+            .get_mut(&second)
+            .expect("just created")
+            .tree
+            .add_root(test_uuid(60), 1002)
+            .expect("empty tree has no root");
+        engine
+            .streams
+            .get_mut(&second)
+            .expect("just created")
+            .bottom = Some(test_uuid(60));
+        engine
+            .user_streams
+            .entry(test_uuid(60))
+            .or_default()
+            .push(second);
+        engine.user_streams.entry(outsider).or_default().push(1);
+
+        let result = engine.add_member(test_uuid(70), outsider, 1003, None);
+
+        assert!(
+            matches!(result, Err(StreamlineError::TreeError(_))),
+            "expected a coded rejection, got {result:?}"
+        );
     }
 
     #[test]

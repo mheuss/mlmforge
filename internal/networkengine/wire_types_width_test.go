@@ -56,7 +56,7 @@ func TestWireTypesNarrowMirrors(t *testing.T) {
 			f, ok := c.typ.FieldByName(c.field)
 			require.True(t, ok, "%s: field %s not found", c.name, c.field)
 			assert.Equal(t, c.want, f.Type.String(),
-				"%s width drifted — must stay %s to mirror its narrow Rust engine type",
+				"%s must stay %s to mirror its narrow Rust engine type",
 				c.name, c.want)
 		})
 	}

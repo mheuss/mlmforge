@@ -89,8 +89,6 @@ pub struct CommissionEarning {
 /// Errors that halt the entire commission calculation.
 ///
 /// These indicate data integrity problems in the caller's input.
-/// Recoverable issues (missing upline snapshots) are handled
-/// defensively within the calculation.
 #[derive(Debug, PartialEq, Error)]
 pub enum CalculationError {
     /// A volume source references a distributor not in the tree.
@@ -100,6 +98,10 @@ pub enum CalculationError {
     /// A volume source references a distributor with no snapshot data.
     #[error("volume source {0} not found in snapshot data")]
     SourceNotInSnapshot(Uuid),
+
+    /// A node on a walked upline path has no snapshot.
+    #[error("upline node {0} has no snapshot")]
+    UplineNotInSnapshot(Uuid),
 
     /// A snapshot names a rank the loaded plan does not define.
     #[error("snapshot for {0} names rank {1:?}; the loaded plan's rank ladder does not contain it")]
@@ -205,7 +207,7 @@ pub enum WalkKind {
 /// node list.
 ///
 /// `Forfeited` deliberately does not say why the level was forfeited. One
-/// of its three branches is a per-distributor depth cap, which design 029
+/// of its branches is a per-distributor depth cap, which design 029
 /// names `depth_cap` and forbids shipping as an outcome until HEU-556
 /// settles whether it is independently verifiable. Naming that branch
 /// correctly would break 029; naming it anything else would assert a
@@ -707,5 +709,12 @@ mod tests {
             msg.contains("spillover DepthFirst vs expected BreadthFirst"),
             "message must report actual-vs-expected spillover in order: {msg}"
         );
+    }
+
+    #[test]
+    fn upline_not_in_snapshot_names_the_node_and_states_the_observation() {
+        let id = uuid_from_index(2);
+        let err = CalculationError::UplineNotInSnapshot(id);
+        assert_eq!(err.to_string(), format!("upline node {id} has no snapshot"));
     }
 }

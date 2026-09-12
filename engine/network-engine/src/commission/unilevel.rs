@@ -19,8 +19,9 @@ use super::{walk, walk_order};
 /// # Errors
 ///
 /// Returns `CalculationError` if a snapshot names a rank the plan does not
-/// define, if a volume source is not found in the tree or snapshot data, or
-/// if a volume source's cv_amount is negative or not finite.
+/// define, if a volume source is not found in the tree or snapshot data, if an
+/// upline node the walk reaches has no snapshot, or if a volume source's
+/// cv_amount is negative or not finite.
 pub fn calculate_unilevel(
     tree: &UnilevelTree,
     plan: &CompensationPlan,
@@ -852,8 +853,10 @@ mod tests {
     }
 
     #[test]
-    fn compression_missing_snapshot_compressed_out() {
-        // mid(2) has no snapshot. With compression, they're skipped.
+    fn compression_missing_snapshot_errors() {
+        // Pins the entry point, not the walk. Swallow the walk's error here,
+        // or default the missing snapshot before calling it, and the walk's
+        // own tests stay green while this one fails.
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
@@ -892,57 +895,12 @@ mod tests {
             &snapshots,
             &volume,
             &crate::test_support::test_plan_identity(),
-        )
-        .unwrap()
-        .earnings;
-
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].earner_id, test_uuid(1));
-        assert_eq!(result[0].level, 1); // compressed, level preserved
-    }
-
-    #[test]
-    fn no_compression_missing_snapshot_forfeits_level() {
-        // mid(2) has no snapshot. Without compression, level forfeited.
-        let mut tree = UnilevelTree::new();
-        tree.add_root(test_uuid(1), 0).unwrap();
-        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
-            .unwrap();
-        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 0)
-            .unwrap();
-
-        let structure = test_structure(test_rate_table());
-        let plan = test_plan(default_eligibility());
-
-        let mut snapshots = HashMap::new();
-        snapshots.insert(
-            test_uuid(1),
-            DistributorSnapshot {
-                rank: "silver".to_string(),
-                ..eligible_snapshot()
-            },
         );
-        // test_uuid(2) missing
-        snapshots.insert(test_uuid(3), eligible_snapshot());
 
-        let volume = vec![VolumeSource {
-            source_id: test_uuid(3),
-            cv_amount: 100.0,
-        }];
-
-        let result = calculate_unilevel(
-            &tree,
-            &plan,
-            &structure,
-            &snapshots,
-            &volume,
-            &crate::test_support::test_plan_identity(),
-        )
-        .unwrap()
-        .earnings;
-
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].level, 2); // level 1 forfeited
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::UplineNotInSnapshot(test_uuid(2))
+        );
     }
 
     // --- active leg tier depth limit tests ---
@@ -1266,6 +1224,52 @@ mod tests {
         assert!(
             !earnings.iter().any(|e| e.earner_id == test_uuid(2)),
             "the unranked node took an earning: {earnings:?}"
+        );
+    }
+
+    /// Pins the rank check above the walk, where a missing upline snapshot is
+    /// reported. This input is bad on both counts: only the check order decides
+    /// which error surfaces. Holds in every profile.
+    #[test]
+    fn unknown_rank_wins_over_a_missing_upline_snapshot() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 0)
+            .unwrap();
+
+        let structure = test_structure(test_rate_table());
+        let plan = test_plan(default_eligibility());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                rank: "diamond".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        // test_uuid(2) omitted on purpose
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::UnknownSnapshotRank(test_uuid(1), "diamond".to_string())
         );
     }
 
@@ -2332,11 +2336,11 @@ mod tests {
     #[test]
     fn pass_up_works_with_missing_snapshot_for_sponsor() {
         // Tree: S(1) -> A(2) -> R1(3, t=200)
-        // A has NO snapshot. Pass-up should still build A's skip set from
-        // the tree structure (via user_ids()), so A is skipped for R1's
-        // volume. Without compression, missing snapshot forfeits the level.
-        // But pass-up fires before the snapshot lookup, so A is skipped
-        // entirely without consuming a level. S earns at level 1.
+        // A has NO snapshot. Pass-up builds A's skip set from the tree
+        // structure (via user_ids()), not from the snapshot map, so A is
+        // skipped for R1's volume. That skip fires before the snapshot
+        // lookup, so A never reaches it and consumes no level. S earns at
+        // level 1. Move the lookup above the skip and this call errors.
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap(); // S
         tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 100)

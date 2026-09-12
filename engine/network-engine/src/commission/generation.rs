@@ -264,8 +264,18 @@ fn emit_generation_earnings(
 /// # Errors
 ///
 /// Returns `CalculationError` if a snapshot names a rank the plan does not
-/// define, if a volume source is not found in the tree or snapshot data, or if
-/// a volume source has an invalid CV amount.
+/// define, if a volume source is not found in the tree or snapshot data, if an
+/// upline node the level walk reaches has no snapshot, or if a volume source
+/// has an invalid CV amount.
+///
+/// That upline-snapshot check covers only the nodes the level walk itself
+/// reaches. It is not a guarantee about this function. The generation
+/// traversal builds its boundary set from the snapshot map, so an omitted
+/// node is absent from that set and consumes no generation, which promotes
+/// the ancestors above it. That happens whenever the level walk does not
+/// reach the node: with `level_commissions_enabled` unset, with it set but
+/// `level_commission` null, or with the node deeper than the level walk's
+/// own depth. HEU-731 and HEU-728 track it.
 pub fn calculate_generation(
     tree: &UnilevelTree,
     plan: &CompensationPlan,
@@ -1815,6 +1825,55 @@ mod calculate_tests {
             .find(|e| e.earner_id == uuid(0) && e.rate == Some(0.10))
             .unwrap();
         assert!((root_gen.dollar_amount - 10.0).abs() < f64::EPSILON);
+    }
+
+    /// Pins that generation propagates the shared walk's missing-upline error
+    /// rather than absorbing it. Reaching that walk needs
+    /// `level_commissions_enabled: true`; with it false this call succeeds and
+    /// silently skips the node, which HEU-728 tracks. Holds in every profile.
+    #[test]
+    fn missing_upline_snapshot_errors_with_level_commissions_on() {
+        let tree = build_chain(3);
+
+        let level_config = LevelCommissionConfig {
+            broad_commission_percent: 0.40,
+            volume_to_dollar_multiplier: None,
+            max_depth: 3,
+            rate_table: BTreeMap::from([(
+                "associate".to_string(),
+                BTreeMap::from([(1, 0.05), (2, 0.08)]),
+            )]),
+        };
+
+        let mut structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
+        structure.level_commission = Some(level_config);
+        structure.level_commissions_enabled = true;
+
+        let plan = two_rank_plan();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), director_snapshot());
+        // uuid(1) omitted on purpose
+        snapshots.insert(uuid(2), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::UplineNotInSnapshot(uuid(1))
+        );
     }
 
     /// Same tree, but level_commissions_enabled = false.

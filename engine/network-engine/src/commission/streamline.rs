@@ -19,7 +19,8 @@ use super::{walk, walk_order};
 /// Rejects an invalid dynamic-compression config, and a snapshot naming a rank
 /// the plan does not define. Also rejects volume it cannot pay: a source with
 /// a non-finite or negative CV amount, a source held by no stream, or a source
-/// with no snapshot. A source held only by a frozen stream is accepted and
+/// with no snapshot. An upline node the walk reaches with no snapshot is
+/// rejected too. A source held only by a frozen stream is accepted and
 /// earns nothing.
 ///
 /// Each unfrozen stream is walked independently. Dynamic compression
@@ -1316,6 +1317,35 @@ mod tests {
             result.earnings.is_empty(),
             "a frozen stream pays nothing, got: {:?}",
             result.earnings
+        );
+    }
+
+    /// Pins that streamline propagates the shared walk's missing-upline error
+    /// rather than absorbing it. The omitted node is upline of the source, not
+    /// the source itself, so the pre-loop's source check cannot catch it.
+    /// Holds in every profile.
+    #[test]
+    fn missing_upline_snapshot_errors() {
+        let (engine, plan, structure, mut snapshots) = validation_fixture();
+        snapshots.remove(&test_uuid(4));
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(5),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::UplineNotInSnapshot(test_uuid(4))
         );
     }
 

@@ -66,4 +66,4 @@ If a future calculator has a fundamentally different walk mechanic (like binary'
 
 - **Single source for walk logic.** Compression, eligibility, depth limits, and rate lookups are defined once.
 - **New calculators are thin.** A new level-based calculator is ~30 lines of config setup plus any unique post-walk logic.
-- **Consistent behavior.** All level-based calculators handle compression, missing snapshots, and edge cases identically because they use the same code path.
+- **Consistent behavior.** All level-based calculators handle compression, missing snapshots, and edge cases the same way to the extent they share this code path. Sharing the walk does not make them consistent about anything derived from the snapshot map outside it — active-leg counts, group volumes, boundary sets — which HEU-731 tracks.

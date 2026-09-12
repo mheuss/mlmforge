@@ -153,9 +153,11 @@ Commission calculators that use level-based walks (unilevel, matrix, stairstep W
 
 The walk function does not sort its output, and since HEU-641 the five commission calculators do not sort either. All five hand their earnings and walks to `walk_order::assemble`, which orders the walks, remaps each earning's collector id to a final walk index, and only then calls `sort_earnings`. Binary and board plan do not go through it. They return their own result types and never produce a walk. Stairstep still combines Walk 1 and Walk 2 before handing them over.
 
-The walk takes a `&mut Vec<Walk>` collector as its last parameter and pushes one walk record per volume source as it goes. It records one step per node at each of the four sites that consume a level, and a stop on every walk, naming the break site when one fired.
+The walk takes a `&mut Vec<Walk>` collector as its last parameter and pushes one walk record per volume source as it goes. It records one step per node at each of the three sites that consume a level, and a stop on every walk, naming the break site when one fired.
 
-Four consuming sites, five `steps.push` calls. The loop tail is one site with two mutually exclusive branches: a node with a rate is `Paid`, and a node whose rate table has no entry at its level falls back to 0.0 and is `Forfeited`. Both consume the level, so one node yields one step either way. Counting the pushes instead of the sites gives five and is the wrong number, which has now caught two readers.
+Three consuming sites, four `steps.push` calls. The loop tail is one site with two mutually exclusive branches: a node with a rate is `Paid`, and a node whose rate table has no entry at its level falls back to 0.0 and is `Forfeited`. Both consume the level, so one node yields one step either way. Counting the pushes instead of the sites gives four and is the wrong number, which has now caught two readers.
+
+The walk can also fail. A node that reaches its snapshot lookup with no snapshot returns `UplineNotInSnapshot` and no walk is pushed for that source. Walks already pushed for earlier sources stay in the caller's collector, which the caller discards along with the error rather than handing to `walk_order::assemble`.
 
 The `index` on a pushed walk is a collector id, not a position. `walk_order::assemble` replaces it with the real index and remaps the earnings that reference it.
 
@@ -811,26 +813,25 @@ Three lines here were each deletable with the whole suite green until tests were
 written specifically to fail without them. A shutdown path that is only
 exercised by well-behaved workers is not exercised at all.
 
-## The Four Consuming Branches In The Level Walk
+## The Three Consuming Branches In The Level Walk
 
 The Shared Walk Module section above says the walk records a step at each of the
-four sites that consume a level, and why four is not five. This is what those
-four are.
+three sites that consume a level, and why three is not four. This is what those
+three are.
 
-Anchored by content rather than by line number. These have rotted twice.
+Anchored by content rather than by line number. These have rotted three times.
 
 | Branch | Condition |
 | -- | -- |
-| `saturating_add` under the missing-snapshot arm | No snapshot, and no compression configured |
 | `saturating_add` with the `// forfeit level` comment | Node is ineligible and was not compressed |
 | `saturating_add` under the `max_earning_depth` check | Per-distributor depth cap from active leg tiers |
 | the trailing `saturating_add` at the bottom of the node loop, **when `rate == 0.0`** | Eligible, uncompressed, but the rate table has no entry for this rank at this level |
 
-**The fourth is the one that reads as safe, and the ticket, the plan and the
-implementation brief all missed it.** All three counted three. The first three
-`continue`, so they look like the exceptional paths. The fourth is the
-unconditional increment every surviving node reaches, and it forfeits only when
-the rate lookup falls back to `unwrap_or(0.0)`.
+**The third is the one that reads as safe, and the ticket, the plan and the
+implementation brief all missed it.** The others `continue`, so they look like
+the exceptional paths. The third is the unconditional increment every surviving
+node reaches, and it forfeits only when the rate lookup falls back to
+`unwrap_or(0.0)`.
 
 Missing it leaves `steps.len()` short by one for every zero-rate node. That
 compiles, passes every existing fixture, and silently breaks the one property
@@ -843,6 +844,14 @@ list. A test for it needs a plan with that shape or it cannot reach the case.
 **Non-consuming skips record nothing**, correctly. Pass-up and both compression
 branches never advance the counter, so omitting them keeps reconstruction exact.
 (HEU-641)
+
+### Why an older document may say four
+
+A fourth branch stood here until HEU-609. A node absent from the snapshot map
+forfeited a level when no compression was configured, and was skipped without
+consuming one when compression was on. It now returns `UplineNotInSnapshot`
+before reaching either, so it consumes nothing and records no step. Anything
+written before that branch merged counts one more than this section does.
 
 ## Adding A Parameter To A `pub` Function Is A Breaking Change
 

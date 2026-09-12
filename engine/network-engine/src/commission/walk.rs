@@ -511,29 +511,9 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
                 }
             }
 
-            let snapshot = match snapshots.get(&node.user_id) {
-                Some(s) => s,
-                None => {
-                    // Missing snapshot: treat as ineligible.
-                    // With any form of compression (standard or dynamic
-                    // thresholds), skip without consuming a level.
-                    // Without compression, forfeit the level.
-                    if config.dynamic_thresholds.is_some()
-                        || config.compression.is_some_and(|c| c.enabled)
-                    {
-                        continue;
-                    }
-                    // No snapshot, so no rank to record.
-                    steps.push(WalkStep {
-                        node_id: node.user_id,
-                        outcome: StepOutcome::Forfeited,
-                        consumed: true,
-                        earner_rank: None,
-                    });
-                    level = level.saturating_add(1);
-                    continue;
-                }
-            };
+            let snapshot = snapshots
+                .get(&node.user_id)
+                .ok_or(CalculationError::UplineNotInSnapshot(node.user_id))?;
 
             let elig = eligibility_cache.get(&node.user_id);
             let node_eligible = elig.is_some_and(|e| e.eligible);
@@ -1422,11 +1402,49 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_snapshot_without_compression_records_a_forfeit() {
-        // Consuming site 1. An upline node absent from `snapshots` is treated
-        // as ineligible; with no compression configured it forfeits a level
-        // rather than being skipped. Deleting its step leaves the whole suite
-        // green, which is why this test exists.
+    fn a_missing_upline_snapshot_errors_with_compression_on() {
+        // Compression must not rescue a node with no snapshot. Move the
+        // lookup below the compression branch and this node is skipped
+        // instead of reported, so the call returns Ok and this test fails.
+        let (tree, mut snapshots) = eligible_chain(4);
+        snapshots.remove(&test_uuid(2));
+
+        let elig = crate::commission::test_helpers::default_eligibility();
+        let cache = evaluate_eligibility(&snapshots, &tree, &elig);
+        let rank_ordinals = HashMap::from([("associate", 1u16)]);
+        let rate_table = test_rate_table();
+        let compression = CompressionConfig {
+            enabled: true,
+            mode: CompressionMode::SkipInactive,
+            rank_threshold: None,
+        };
+        let mut config = test_walk_config(&rank_ordinals, &rate_table);
+        config.compression = Some(&compression);
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let mut walks = Vec::new();
+        let result = walk_level_commissions(
+            &tree,
+            &config,
+            &cache,
+            &snapshots,
+            &volume,
+            |_| false,
+            &mut walks,
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::UplineNotInSnapshot(test_uuid(2))
+        );
+    }
+
+    #[test]
+    fn a_missing_upline_snapshot_errors_with_compression_off() {
         let (tree, mut snapshots) = eligible_chain(4);
         snapshots.remove(&test_uuid(2));
 
@@ -1436,8 +1454,8 @@ mod tests {
         let rate_table = test_rate_table();
         let config = test_walk_config(&rank_ordinals, &rate_table);
         assert!(
-            config.compression.is_none(),
-            "the forfeit path needs compression off; with it on this node is skipped"
+            config.compression.is_none() && config.dynamic_thresholds.is_none(),
+            "expected config to carry no compression and no dynamic thresholds"
         );
 
         let volume = vec![VolumeSource {
@@ -1446,7 +1464,7 @@ mod tests {
         }];
 
         let mut walks = Vec::new();
-        walk_level_commissions(
+        let result = walk_level_commissions(
             &tree,
             &config,
             &cache,
@@ -1454,27 +1472,19 @@ mod tests {
             &volume,
             |_| false,
             &mut walks,
-        )
-        .unwrap();
+        );
 
-        let step = walks[0]
-            .steps
-            .iter()
-            .find(|s| s.node_id == test_uuid(2))
-            .expect("the node with no snapshot must still record a step");
-        assert_eq!(step.outcome, StepOutcome::Forfeited);
-        assert!(step.consumed);
-        assert!(
-            step.earner_rank.is_none(),
-            "no snapshot means no rank to record"
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::UplineNotInSnapshot(test_uuid(2))
         );
     }
 
     #[test]
     fn a_per_distributor_depth_cap_records_a_forfeit() {
-        // Consuming site 3. An active-leg tier caps how deep one distributor
-        // earns. Past that cap the node forfeits rather than skipping, so the
-        // level still advances and a step is owed.
+        // An active-leg tier caps how deep one distributor earns. Past that
+        // cap the node forfeits rather than skipping, so the level still
+        // advances and a step is owed.
         let (tree, snapshots) = eligible_chain(4);
         let elig = CommissionEligibility {
             minimum_pv: 100.0,

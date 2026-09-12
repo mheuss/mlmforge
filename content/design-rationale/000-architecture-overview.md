@@ -122,7 +122,7 @@ line by whether it carries `"type": "signal"`.
 | Read next | For |
 |-----------|-----|
 | [003](003-network-engine-design.md) | Why Rust, why CV-only volume, why position-indexed trees |
-| [019](019-ndjson-protocol.md) | The envelope, all 43 error codes, panic recovery, cancellation |
+| [019](019-ndjson-protocol.md) | The envelope, all 45 error codes, panic recovery, cancellation |
 | [023](023-snapshot-persistence.md) | How one structure at a time is serialized and restored |
 
 ## A Commission Calculation

@@ -21,6 +21,8 @@ Commission calculators use two different edge types for two different purposes.
 
 The rule: **placement edges determine commission flow. Sponsor edges determine personal qualification.**
 
+This document rules on which edge type feeds which calculation. It does not rule on what happens to a sponsor edge when the sponsor is removed. See [030](030-sponsor-continuity-on-removal.md) for that, including where it diverges from the rule above and why.
+
 This applies to all tree types that track both edge types. In unilevel trees, the two are often identical because there is no forced placement. The distinction still holds. Code should use the semantically correct method even when the results happen to match.
 
 ## Why This Is Easy to Get Wrong

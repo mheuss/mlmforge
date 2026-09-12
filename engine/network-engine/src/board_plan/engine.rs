@@ -962,13 +962,20 @@ mod tests {
     }
 
     #[test]
-    fn re_enrolling_a_displaced_member_leaves_the_engine_restorable() {
+    fn reassigning_a_displaced_member_leaves_the_engine_restorable() {
+        // The supported path. A new enrollment drains the displaced pool
+        // first, so the waiting member is seated by someone else's join.
         let (mut engine, displaced) = engine_with_a_displaced_member();
         assert_eq!(engine.validate_restored(), Ok(()));
         let sponsor = *engine.member_boards.keys().next().unwrap();
+        let newcomer = Uuid::from_bytes([0xF1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
 
-        let _ = engine.add_member(displaced, sponsor, 100);
+        engine.add_member(newcomer, sponsor, 100).unwrap();
 
+        assert!(
+            !engine.displaced_members.contains(&displaced),
+            "the enrollment should have drained {displaced} from the pool"
+        );
         assert_eq!(engine.validate_restored(), Ok(()));
     }
 

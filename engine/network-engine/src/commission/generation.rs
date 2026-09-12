@@ -148,6 +148,14 @@ pub(crate) fn count_generations_upward_instrumented(
         }
 
         if !breakaway_set.contains(&node.user_id) {
+            #[cfg(feature = "spike_heu556_volume")]
+            steps.push(WalkStep {
+                node_id: node.user_id,
+                outcome: StepOutcome::NotBreakaway,
+                consumed: false,
+                earner_rank: None,
+                eligibility_reason: None,
+            });
             continue;
         }
 
@@ -162,6 +170,8 @@ pub(crate) fn count_generations_upward_instrumented(
                 outcome: StepOutcome::Paid,
                 consumed: true,
                 earner_rank: rank,
+                #[cfg(feature = "spike_heu556_volume")]
+                eligibility_reason: None,
             });
             results.push(GenerationEntry {
                 earner_id: node.user_id,
@@ -173,13 +183,31 @@ pub(crate) fn count_generations_upward_instrumented(
             // generation counterpart of the level walk's zero-rate branch, and
             // omitting it leaves steps.len() short of the counter in exactly
             // the same way.
+            #[cfg(not(feature = "spike_heu556_volume"))]
+            let outcome = StepOutcome::Forfeited;
+            #[cfg(feature = "spike_heu556_volume")]
+            let outcome = StepOutcome::ForfeitedBoundaryNotMet;
             steps.push(WalkStep {
                 node_id: node.user_id,
-                outcome: StepOutcome::Forfeited,
+                outcome,
                 consumed: true,
                 earner_rank: rank,
+                #[cfg(feature = "spike_heu556_volume")]
+                eligibility_reason: None,
             });
             current_gen += 1;
+        } else {
+            // Row 9c. Today this branch neither records nor consumes, which
+            // is the counter drift 029's own rule forbids. Recorded here only
+            // so the spike measures the shape 029 requires.
+            #[cfg(feature = "spike_heu556_volume")]
+            steps.push(WalkStep {
+                node_id: node.user_id,
+                outcome: StepOutcome::BoundaryNotMet,
+                consumed: false,
+                earner_rank: rank,
+                eligibility_reason: None,
+            });
         }
         // A node absent from breakaway_set was skipped above without touching
         // the counter, so it records nothing.

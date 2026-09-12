@@ -507,6 +507,14 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
                     .get(&node.user_id)
                     .is_some_and(|set| set.contains(&source.source_id))
                 {
+                    #[cfg(feature = "spike_heu556_volume")]
+                    steps.push(WalkStep {
+                        node_id: node.user_id,
+                        outcome: StepOutcome::PassUp,
+                        consumed: false,
+                        earner_rank: None,
+                        eligibility_reason: None,
+                    });
                     continue;
                 }
             }
@@ -532,6 +540,14 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
                             .copied()
                             .unwrap_or(0);
                         if dist_ordinal < min_ordinal {
+                            #[cfg(feature = "spike_heu556_volume")]
+                            steps.push(WalkStep {
+                                node_id: node.user_id,
+                                outcome: StepOutcome::CompressedBelowDynamicThreshold,
+                                consumed: false,
+                                earner_rank: Some(snapshot.rank.clone()),
+                                eligibility_reason: None,
+                            });
                             continue; // skip without consuming level
                         }
                     }
@@ -557,17 +573,46 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
                 };
 
                 if should_compress {
+                    #[cfg(feature = "spike_heu556_volume")]
+                    {
+                        let mode = config.compression.filter(|c| c.enabled).map(|c| c.mode);
+                        let (outcome, reason, rank) = match mode {
+                            Some(CompressionMode::SkipInactive) => (
+                                StepOutcome::CompressedIneligible,
+                                Some(crate::commission::types::EligibilityReason::NoOrderInPeriod),
+                                None,
+                            ),
+                            _ => (
+                                StepOutcome::CompressedBelowRank,
+                                None,
+                                Some(snapshot.rank.clone()),
+                            ),
+                        };
+                        steps.push(WalkStep {
+                            node_id: node.user_id,
+                            outcome,
+                            consumed: false,
+                            earner_rank: rank,
+                            eligibility_reason: reason,
+                        });
+                    }
                     continue; // skip without consuming level
                 }
             }
 
             // Not compressed. Check if eligible.
             if !node_eligible {
+                #[cfg(not(feature = "spike_heu556_volume"))]
+                let outcome = StepOutcome::Forfeited;
+                #[cfg(feature = "spike_heu556_volume")]
+                let outcome = StepOutcome::ForfeitedIneligible;
                 steps.push(WalkStep {
                     node_id: node.user_id,
-                    outcome: StepOutcome::Forfeited,
+                    outcome,
                     consumed: true,
                     earner_rank: Some(snapshot.rank.clone()),
+                    #[cfg(feature = "spike_heu556_volume")]
+                    eligibility_reason: Some(crate::commission::types::EligibilityReason::NoOrderInPeriod),
                 });
                 level = level.saturating_add(1); // forfeit level
                 continue;
@@ -576,11 +621,17 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
             // Check per-distributor depth limit from active leg tiers
             if let Some(max_personal) = elig.and_then(|e| e.max_earning_depth) {
                 if level > u16::from(max_personal) {
+                    #[cfg(not(feature = "spike_heu556_volume"))]
+                    let outcome = StepOutcome::Forfeited;
+                    #[cfg(feature = "spike_heu556_volume")]
+                    let outcome = StepOutcome::DepthCap;
                     steps.push(WalkStep {
                         node_id: node.user_id,
-                        outcome: StepOutcome::Forfeited,
+                        outcome,
                         consumed: true,
                         earner_rank: Some(snapshot.rank.clone()),
+                        #[cfg(feature = "spike_heu556_volume")]
+                        eligibility_reason: None,
                     });
                     level = level.saturating_add(1);
                     continue;
@@ -601,6 +652,8 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
                     outcome: StepOutcome::Paid,
                     consumed: true,
                     earner_rank: Some(snapshot.rank.clone()),
+                    #[cfg(feature = "spike_heu556_volume")]
+                    eligibility_reason: None,
                 });
                 all_earnings.push(CommissionEarning {
                     earner_id: node.user_id,
@@ -618,11 +671,17 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
                 // so this is a forfeit and not a skip. Omitting this step
                 // leaves steps.len() short of the counter for every zero-rate
                 // node, which compiles and passes every fixture.
+                #[cfg(not(feature = "spike_heu556_volume"))]
+                let outcome = StepOutcome::Forfeited;
+                #[cfg(feature = "spike_heu556_volume")]
+                let outcome = StepOutcome::ForfeitedZeroRate;
                 steps.push(WalkStep {
                     node_id: node.user_id,
-                    outcome: StepOutcome::Forfeited,
+                    outcome,
                     consumed: true,
                     earner_rank: Some(snapshot.rank.clone()),
+                    #[cfg(feature = "spike_heu556_volume")]
+                    eligibility_reason: None,
                 });
             }
 

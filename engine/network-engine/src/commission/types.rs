@@ -200,6 +200,15 @@ pub enum WalkKind {
     Generation,
 }
 
+// HEU-556 volume spike guard. The feature below instruments the walk loops to
+// record non-consuming steps, which triples output size on purpose. It exists
+// to produce one measurement and must never reach a shipped binary.
+#[cfg(all(feature = "spike_heu556_volume", not(debug_assertions)))]
+compile_error!(
+    "spike_heu556_volume is a throwaway measurement feature for HEU-556 and \
+     must never be enabled in a release build"
+);
+
 /// What happened to a node the walk visited.
 ///
 /// Both variants are consumed. Non-consuming skips are not recorded at all, so
@@ -219,6 +228,52 @@ pub enum StepOutcome {
     Paid,
     /// The node consumed a level without earning.
     Forfeited,
+
+    // HEU-556 spike outcomes. Reconstructed from the traversal code, not
+    // transcribed from a spec. Every one below is non-shipping.
+    /// Skipped by the pass-up skip set. Does not consume.
+    #[cfg(feature = "spike_heu556_volume")]
+    PassUp,
+    /// Rank ordinal below the level's dynamic threshold. Does not consume.
+    #[cfg(feature = "spike_heu556_volume")]
+    CompressedBelowDynamicThreshold,
+    /// Compressed by `SkipInactive`, which tests eligibility. Does not consume.
+    #[cfg(feature = "spike_heu556_volume")]
+    CompressedIneligible,
+    /// Compressed by `SkipBelowRank`. Does not consume.
+    #[cfg(feature = "spike_heu556_volume")]
+    CompressedBelowRank,
+    /// Uncompressed and ineligible. Consumes.
+    #[cfg(feature = "spike_heu556_volume")]
+    ForfeitedIneligible,
+    /// Above the node's own `max_earning_depth`. Consumes.
+    #[cfg(feature = "spike_heu556_volume")]
+    DepthCap,
+    /// Rate table returned zero for this rank at this level. Consumes.
+    #[cfg(feature = "spike_heu556_volume")]
+    ForfeitedZeroRate,
+    /// Not in the generation breakaway set. Does not consume.
+    #[cfg(feature = "spike_heu556_volume")]
+    NotBreakaway,
+    /// Breakaway, boundary check failed, flag set. Consumes.
+    #[cfg(feature = "spike_heu556_volume")]
+    ForfeitedBoundaryNotMet,
+    /// Breakaway, boundary check failed, flag unset. Does not consume.
+    #[cfg(feature = "spike_heu556_volume")]
+    BoundaryNotMet,
+}
+
+/// Which eligibility condition rejected a node.
+///
+/// HEU-556 spike only. A `Copy` enum rather than a string so the field costs
+/// no allocation, which is what a real taxonomy would do too.
+#[cfg(feature = "spike_heu556_volume")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EligibilityReason {
+    BelowMinimumPv,
+    NoOrderInPeriod,
+    StatusNotEligible,
 }
 
 /// How a walk ended.
@@ -298,6 +353,16 @@ pub struct WalkStep {
     /// the calculation never used is misleading.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub earner_rank: Option<String>,
+
+    /// Which eligibility condition failed, where one did.
+    ///
+    /// HEU-556 spike only. The values emitted are representative in length,
+    /// not correct: `EligibilityResult` carries no reason, so plumbing the
+    /// real one is taxonomy work. Size can be read off this field. Nothing
+    /// else can.
+    #[cfg(feature = "spike_heu556_volume")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub eligibility_reason: Option<EligibilityReason>,
 }
 
 /// One traversal, and the decisions along it.

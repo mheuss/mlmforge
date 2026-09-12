@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.85.0"
 
+[features]
+# HEU-556 volume spike. Throwaway. Never enable outside a debug build, never
+# merge to main. See the guard in src/commission/types.rs.
+spike_heu556_volume = []
+
 [dependencies]
 uuid = { version = "1", features = ["v4", "serde"] }
 thiserror = "2"

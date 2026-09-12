@@ -100,3 +100,7 @@ A sponsorless node whose recruits sit outside its subtree is refused by both pru
 A holding-tank round trip moves a recruit placed outside the subtree onto a surviving sponsor and does not move it back. The tank entry holds the returning node's own sponsor and nothing about who that node recruited, so re-placing it cannot restore the relationship.
 
 The `remove_node` response names the recruits a removal moved, so a caller can see the move happen. It has no way to learn that re-placing from the tank did not undo it. HEU-776 carries that.
+
+The engine has to answer before the store can be written, so a removal whose reply is lost leaves the engine and the store disagreeing and the retry cannot recover it. That window is a consequence of the ordering this decision requires. HEU-777 carries it.
+
+The soft delete inside that store write is the one statement with no row-count check, where every re-sponsor beside it has one. Left lenient deliberately rather than by oversight. HEU-778 carries it.

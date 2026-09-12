@@ -1053,12 +1053,13 @@ mod tests {
     fn engine_output_slots_every_live_node_exactly_once() {
         let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
         tree.add_root(test_uuid(1), 0).unwrap();
-        // The sponsor here is the root, which this test never removes.
-        // Varying it risks failing for a reason unrelated to slot agreement
-        // (HEU-766).
         for n in 2..=12u8 {
             tree.add_node(test_uuid(n), test_uuid(1), n as i64).unwrap();
         }
+        // Sponsored by the node this test removes, placed outside its subtree
+        // by explicit placement, so a sponsor edge outlives its target.
+        tree.add_node_at(test_uuid(13), test_uuid(12), test_uuid(6), 1, 13)
+            .unwrap();
         tree.remove_node(test_uuid(12), PruningMode::PromoteEarliest)
             .unwrap();
         assert!(

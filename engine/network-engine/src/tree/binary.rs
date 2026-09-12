@@ -587,15 +587,16 @@ mod tests {
     fn engine_output_slots_every_live_node_exactly_once() {
         let mut tree = BinaryTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
-        // The sponsor here is the root, which this test never removes.
-        // Varying it risks failing for a reason unrelated to slot agreement
-        // (HEU-766).
         for n in 2..=12u8 {
             let parent = test_uuid(1 + (n - 2) / 2);
             let position = usize::from((n - 2) % 2);
-            tree.add_node(test_uuid(n), parent, position, test_uuid(1), n as i64)
+            tree.add_node(test_uuid(n), parent, position, parent, n as i64)
                 .unwrap();
         }
+        // Sponsored by the node this test removes, placed where the removal
+        // does not reach, so a sponsor edge outlives its target.
+        tree.add_node(test_uuid(13), test_uuid(7), 0, test_uuid(12), 13)
+            .unwrap();
         tree.remove_node(test_uuid(12)).unwrap();
         assert!(
             tree.arena.nodes.iter().any(|n| n.user_id == Uuid::nil()),

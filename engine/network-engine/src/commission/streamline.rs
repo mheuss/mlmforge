@@ -846,9 +846,8 @@ mod tests {
         assert_eq!(top.dollar_amount, 2.0);
     }
 
-    /// Pins the rank check above the per-source checks, per design decision 2.
-    /// This input is bad on both counts: only the check order decides which
-    /// error surfaces.
+    /// Pins the rank check above the per-source checks. This input is bad on
+    /// both counts, so only the check order decides which error surfaces.
     #[test]
     fn streamline_unknown_rank_wins_over_invalid_cv() {
         let engine = make_engine(5);

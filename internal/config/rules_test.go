@@ -28,9 +28,6 @@ func TestRankDuplicateOrdinalRejected(t *testing.T) {
 
 func TestRankOrdinalZeroRejected(t *testing.T) {
 	plan := minimalPlan()
-	// The first rank is the only one that can carry 0 and reach this check.
-	// A later rank at 0 fails the ascending test first, because prevOrdinal
-	// is only -1 on the first iteration.
 	plan.Ranks[0].Ordinal = 0
 
 	errs := validateBusinessRules(plan)

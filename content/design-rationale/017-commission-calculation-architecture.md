@@ -82,7 +82,11 @@ Volume amounts are validated too: `cv_amount` must be finite and non-negative. N
 
 This decision was the reverse until 2026-09-10. Upline nodes missing from snapshots were treated as ineligible with no signal, on the grounds that missing upline data is a completeness issue rather than an integrity issue. That reasoning missed one thing. The snapshot map is a request parameter. Under compression a missing upline is skipped without consuming a level, so omitting one promotes every ancestor above it. Absence chosen by the caller and absence caused by a data gap are indistinguishable at the point of use. The engine cannot be lenient about one without being lenient about both.
 
-> **Decided, and three parts of it have not landed.** Checked 2026-09-11. What holds today: volume sources and their distributors must exist in the tree and snapshot, `cv_amount` is validated as described above, and streamline errors on volume it cannot pay rather than dropping it silently, which HEU-611 landed at protocol 3. What does not hold yet: a missing upline snapshot is still skipped silently, and `UplineNotInSnapshot` does not exist in `commission/` (HEU-609, protocol 6). A snapshot rank absent from the plan's ladder still reaches the rate table, where the lookup falls through to `unwrap_or(0.0)` rather than being refused (HEU-608, protocol 5). A restored engine's indexes are still unchecked (HEU-706, protocol 7). The decision above is what the engine is being moved to, not a description of what it does in every case right now.
+> **Decided, and not yet fully in force.** The decision above is what the engine is being moved to, not a description of what it does in every case right now.
+>
+> Four tickets implement it and each carries its own protocol version, so **the version the worker reports is what tells you how far it has got.** HEU-611 at 3 and HEU-608 at 5 have landed. HEU-609 at 6 and HEU-706 at 7 have not. Until a ticket lands, the part of this decision it implements is not in force.
+>
+> This note is deliberately a list of tickets rather than a description of current behaviour. The first version described the behaviour, and one third of it was false within eleven hours of being written and stamped as checked. A ticket landing is one word to delete here; a behaviour changing is a paragraph to re-verify.
 
 ## What This Enables
 

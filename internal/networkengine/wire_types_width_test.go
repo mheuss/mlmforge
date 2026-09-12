@@ -16,8 +16,8 @@ import (
 // counterpart. A Go-side search for narrow types cannot find a mirror that has
 // already widened.
 //
-// Rows removed when their DTOs were deleted by HEU-583. Context in commit
-// d737239.
+// Rows removed when their DTOs were deleted by HEU-583. Why that was safe:
+// HEU-606.
 func TestWireTypesNarrowMirrors(t *testing.T) {
 	cases := []struct {
 		name  string

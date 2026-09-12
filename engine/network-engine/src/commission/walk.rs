@@ -85,8 +85,8 @@ pub(crate) struct LevelWalkConfig<'a> {
 
 /// Build rank name -> ordinal map from the plan's rank definitions.
 ///
-/// The keys are exactly the plan's rank names, so a lookup of any rank
-/// `validate_snapshot_ranks` accepted hits.
+/// The keys are exactly the plan's rank names, so every lookup of a
+/// validated snapshot rank hits.
 pub(crate) fn build_rank_ordinals(plan: &CompensationPlan) -> HashMap<&str, u16> {
     plan.ranks
         .iter()

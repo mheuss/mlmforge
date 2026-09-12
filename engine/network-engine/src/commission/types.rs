@@ -15,9 +15,7 @@ pub struct DistributorSnapshot {
     /// Current rank name. Always a rank the loaded plan defines.
     ///
     /// The empty string is rejected, so "exists, but unranked" cannot be
-    /// said. That is deliberate. Whoever needs the concept picks a
-    /// representation on purpose and bumps the protocol, rather than
-    /// arriving at `""` by inheriting a zero value.
+    /// said. Saying it needs a chosen representation and a protocol bump.
     pub rank: String,
 
     /// Personal volume generated this period.
@@ -335,8 +333,7 @@ pub struct Walk {
 
     /// Generation SameRank context. Absent otherwise.
     ///
-    /// When present, always a rank the plan defines. A rank that does not
-    /// resolve to an ordinal never reaches this field.
+    /// When present, always a rank the plan defines.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rank: Option<String>,
 

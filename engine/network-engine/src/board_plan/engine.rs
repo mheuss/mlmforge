@@ -99,15 +99,16 @@ impl BoardPlanEngine {
     /// holds users who are on no board by design. Checking it against `boards`
     /// would reject engines this crate itself produces.
     pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
-        // A restore does not run the constructor. total_positions is a cached
-        // derived value, so comparing the boards against it proves only that
-        // they agree with the cache, not that the cache is right.
+        // A restore does not run the constructor, so the range it enforces has
+        // to be re-established here.
         if !(2..=5).contains(&self.width) || !(1..=4).contains(&self.height) {
             return Err(SnapshotConsistencyError::BoardDimensionsOutOfRange {
                 width: self.width,
                 height: self.height,
             });
         }
+        // Recomputed, not read. total_positions is cached, so comparing the
+        // boards against it would prove only that they agree with the cache.
         let expected = board::total_positions(self.width, self.height);
         if self.total_positions != expected {
             return Err(SnapshotConsistencyError::BoardTotalPositionsMismatch {
@@ -117,8 +118,8 @@ impl BoardPlanEngine {
                 expected,
             });
         }
-        // One HashSet pass avoids a scan per member. Ties break on the lowest
-        // board id, since self.boards iterates in random hash order.
+        // Ties break on the lowest board id, since self.boards iterates in
+        // random hash order and the offender must not vary between runs.
         let mut placed: HashSet<(Uuid, Uuid)> = HashSet::new();
         let mut sizing: Option<(Uuid, SnapshotConsistencyError)> = None;
         for (board_id, board) in &self.boards {
@@ -141,10 +142,7 @@ impl BoardPlanEngine {
             return Err(err);
         }
 
-        // Keep the lowest-user_id fault rather than returning on the first one
-        // found: member_boards is a HashMap with a randomized hasher, so
-        // returning early makes which member gets named vary between runs on
-        // the same input. Still one pass.
+        // Lowest user_id wins, since member_boards also iterates in hash order.
         let mut fault: Option<(Uuid, SnapshotConsistencyError)> = None;
         for (user_id, board_id) in &self.member_boards {
             let found = if !self.boards.contains_key(board_id) {

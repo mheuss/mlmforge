@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -35,7 +36,20 @@ func TestRankOrdinalZeroRejected(t *testing.T) {
 	assert.Equal(t, "value_out_of_range", errs[0].Code)
 	assert.Equal(t, "/ranks/0/ordinal", errs[0].Path)
 	assert.Contains(t, errs[0].Message, "Associate")
+	assert.Contains(t, errs[0].Message, "ordinal 0")
 	assert.Equal(t, SeverityError, errs[0].Severity)
+}
+
+func TestRankNegativeOrdinalRejected(t *testing.T) {
+	for _, ordinal := range []int{-1, -5} {
+		plan := minimalPlan()
+		plan.Ranks[0].Ordinal = ordinal
+
+		errs := validateBusinessRules(plan)
+		require.Len(t, errs, 1)
+		assert.Equal(t, "value_out_of_range", errs[0].Code)
+		assert.Contains(t, errs[0].Message, fmt.Sprintf("ordinal %d", ordinal))
+	}
 }
 
 func TestRankOrdinalZeroAfterFirstFailsBothChecks(t *testing.T) {

@@ -1087,3 +1087,57 @@ step 5.
 Reordering the rest changes which fault a payload reports. All six faults reach
 the wire as `INCONSISTENT_SNAPSHOT`, so no fixture pins a different code. What a
 fixture pins is the message, by substring.
+
+## A Validator And Its Producer Are One Change
+
+`MemberOnTwoBoards` rejects a restored engine that seats one user on two boards.
+It was correct and it could not ship alone.
+
+`add_member` produced that state legitimately. A displaced member is absent from
+`member_boards` by design, so the duplicate check missed them, the displaced pool
+seated them, and the enrolment seated them again. The call returned `Ok`.
+
+Ship the guard alone and a live engine starts writing snapshots it can never
+load back. A silent seating bug becomes an unrecoverable board plan.
+
+So when a guard rejects a state, find out whether anything in the crate produces
+it. If something does, that producer is the other half of the same change, not a
+follow-up ticket. Drive the public API hard enough to find out, because the state
+that matters is the one the engine reaches on its own.
+
+## Three Classes Of Restore Defect
+
+A restored structure can be wrong in three ways, and they need different checks.
+
+| Class | What is wrong | Owned by |
+|---|---|---|
+| Structures disagree | Two structures in one type describe different states | HEU-750 |
+| The graph is wrong | An edge, a root, or a cycle | HEU-732, HEU-744 |
+| A shape is violated | One structure breaks a rule the engine's own mutators keep | HEU-760 |
+
+The third is the one that hides. Nothing disagrees with anything, so a
+structure-to-structure check passes and the payload looks consistent.
+
+HEU-706 closed two instances before anyone named the class. `total_positions` is
+recomputed from width and height rather than trusted, because a cached count is a
+value the engine keeps correct and a caller does not. `next_stream_id` must be
+past the highest live key, for the same reason.
+
+The question to ask of any field on a restorable type: does a mutator maintain a
+property of this that the type system does not? If so, a restore does not run
+that mutator.
+
+## A Test Helper That Does Not Call The Thing Under Test
+
+`assert_board_invariants` checked three properties by hand: map key equals board
+id, no occupant on two boards, every occupant indexed. Three of the six guards in
+`validate_restored` check the same three things.
+
+It never called `validate_restored`.
+
+So the constraint that the validator must accept engine output was asserted by
+nothing, and three of the six guards had never run against a real engine at all.
+The helper looked like coverage and reported on something else.
+
+If a helper exists to prove a function behaves on real data, it has to call that
+function. Restating its checks by hand proves the restatement.

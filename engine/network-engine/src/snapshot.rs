@@ -147,6 +147,9 @@ pub enum SnapshotConsistencyError {
     #[error("the boards map files board {board_id} under key {key}")]
     BoardIdMismatch { key: Uuid, board_id: Uuid },
 
+    #[error("board {board_id} seats {user_id}; member_boards does not put them on that board")]
+    OccupantNotIndexed { user_id: Uuid, board_id: Uuid },
+
     #[error("{user_id} occupies a position on board {first_board} and on board {second_board}")]
     MemberOnTwoBoards {
         user_id: Uuid,

@@ -215,6 +215,27 @@ impl BoardPlanEngine {
         if let Some((_, err)) = fault {
             return Err(err);
         }
+
+        // The reverse of the walk above. add_member treats a seat with no
+        // entry pointing back as a new enrollment and seats them a second
+        // time, so both positions cycle off one enrollment.
+        let mut unindexed: Option<(Uuid, SnapshotConsistencyError)> = None;
+        for (user_id, board_id) in &seats {
+            if self.member_boards.get(user_id) != Some(board_id)
+                && unindexed.as_ref().is_none_or(|(held, _)| user_id < held)
+            {
+                unindexed = Some((
+                    *user_id,
+                    SnapshotConsistencyError::OccupantNotIndexed {
+                        user_id: *user_id,
+                        board_id: *board_id,
+                    },
+                ));
+            }
+        }
+        if let Some((_, err)) = unindexed {
+            return Err(err);
+        }
         Ok(())
     }
 
@@ -1157,6 +1178,68 @@ mod tests {
                 board_id,
             })
         );
+    }
+
+    #[test]
+    fn validate_restored_rejects_an_occupant_the_index_does_not_name() {
+        // add_member treats a seat with no index entry as a new enrollment and
+        // seats them again, so both positions cycle off one enrollment.
+        let (mut engine, member) = seeded_engine();
+        let board_id = *engine.member_boards.get(&member).unwrap();
+        engine.member_boards.remove(&member);
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::OccupantNotIndexed {
+                user_id: member,
+                board_id,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_still_reports_the_forward_direction_first() {
+        // The index names a board the member does not sit on. The forward walk
+        // owns that case, so the reverse walk must not take it over.
+        let (mut engine, member) = seeded_engine();
+        let board_id = *engine.member_boards.get(&member).unwrap();
+        let elsewhere = Uuid::from_bytes([5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+        let mut spare = engine.boards.get(&board_id).unwrap().clone();
+        spare.id = elsewhere;
+        spare.positions.iter_mut().for_each(|p| *p = None);
+        engine.boards.insert(elsewhere, spare);
+        engine.member_boards.insert(member, elsewhere);
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::MemberNotOnBoard {
+                user_id: member,
+                board_id: elsewhere,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_unindexed_occupant_every_run() {
+        // Two unindexed occupants. The higher id sits at the later position,
+        // so a hold that overwrote would name it and lose.
+        for _ in 0..64 {
+            let (mut engine, member) = seeded_engine();
+            let board_id = *engine.member_boards.get(&member).unwrap();
+            let higher = Uuid::from_bytes([0xBB, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            assert!(member < higher, "the seeded member must be the lower id");
+            engine.boards.get_mut(&board_id).unwrap().positions[1] = Some(higher);
+            engine.member_boards.remove(&member);
+
+            assert_eq!(
+                engine.validate_restored(),
+                Err(SnapshotConsistencyError::OccupantNotIndexed {
+                    user_id: member,
+                    board_id,
+                }),
+                "the lowest user_id should win regardless of hash order"
+            );
+        }
     }
 
     #[test]

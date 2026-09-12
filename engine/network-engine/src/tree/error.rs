@@ -56,15 +56,13 @@ pub enum TreeError {
     SubtreeFull(Uuid),
 
     #[error(
-        "cannot remove user {user_id}: it has {sponsored_count} sponsored recruits and no sponsor of its own to promote them to"
+        "cannot remove user {user_id}: no node in its sponsor chain survives this removal; recruits that outlive it: {surviving_sponsored}"
     )]
     SponsorlessWithRecruits {
         user_id: Uuid,
-        sponsored_count: usize,
+        surviving_sponsored: usize,
     },
 
-    #[error(
-        "sponsor chain from user {user_id} did not reach an end within the number of slots in the tree"
-    )]
-    SponsorCycle { user_id: Uuid },
+    #[error("sponsor chain from user {user_id} did not reach an end within {bound} steps")]
+    SponsorCycle { user_id: Uuid, bound: usize },
 }

@@ -423,7 +423,7 @@ mod tests {
     fn a_sponsorless_removal_maps_to_its_own_wire_code() {
         let e = TreeError::SponsorlessWithRecruits {
             user_id: Uuid::nil(),
-            sponsored_count: 2,
+            surviving_sponsored: 2,
         };
 
         let response = tree_error_to_response("req-1", e);
@@ -435,13 +435,58 @@ mod tests {
     }
 
     #[test]
+    fn a_sponsorless_removal_scopes_both_facts_to_this_removal() {
+        let e = TreeError::SponsorlessWithRecruits {
+            user_id: Uuid::nil(),
+            surviving_sponsored: 2,
+        };
+
+        let message = tree_error_to_response("req-1", e)
+            .error
+            .as_ref()
+            .unwrap()
+            .message
+            .clone();
+
+        assert!(
+            message.contains("survives this removal"),
+            "the absent sponsor is absent from this batch, not from the tree: {message}"
+        );
+        assert!(
+            message.contains("outlive it"),
+            "the count is of recruits outliving this batch, not of all recruits: {message}"
+        );
+    }
+
+    #[test]
     fn a_sponsor_cycle_maps_to_its_own_wire_code() {
         let e = TreeError::SponsorCycle {
             user_id: Uuid::nil(),
+            bound: 7,
         };
 
         let response = tree_error_to_response("req-1", e);
 
         assert_eq!(response.error.as_ref().unwrap().code, "SPONSOR_CYCLE");
+    }
+
+    #[test]
+    fn a_sponsor_cycle_reports_the_bound_it_exhausted() {
+        let e = TreeError::SponsorCycle {
+            user_id: Uuid::nil(),
+            bound: 7,
+        };
+
+        let message = tree_error_to_response("req-1", e)
+            .error
+            .as_ref()
+            .unwrap()
+            .message
+            .clone();
+
+        assert!(
+            message.contains('7'),
+            "a reader cannot tell a cycle from a wrong bound unless the bound is printed: {message}"
+        );
     }
 }

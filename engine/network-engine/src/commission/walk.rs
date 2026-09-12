@@ -1403,6 +1403,9 @@ mod tests {
 
     #[test]
     fn a_missing_upline_snapshot_errors_with_compression_on() {
+        // Compression must not rescue a node with no snapshot. Move the
+        // lookup below the compression branch and this node is skipped
+        // instead of reported, so the call returns Ok and this test fails.
         let (tree, mut snapshots) = eligible_chain(4);
         snapshots.remove(&test_uuid(2));
 
@@ -1452,7 +1455,7 @@ mod tests {
         let config = test_walk_config(&rank_ordinals, &rate_table);
         assert!(
             config.compression.is_none() && config.dynamic_thresholds.is_none(),
-            "this test covers the arm the old code reached with no compression configured"
+            "config carries no compression and no dynamic thresholds"
         );
 
         let volume = vec![VolumeSource {

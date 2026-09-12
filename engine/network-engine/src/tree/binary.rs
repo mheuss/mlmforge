@@ -372,6 +372,26 @@ mod tests {
     }
 
     #[test]
+    fn engine_output_slots_every_live_node_exactly_once() {
+        let mut tree = BinaryTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        // add_node is (user_id, parent_id, position, sponsor_id, enrolled_at).
+        for n in 2..=12u8 {
+            let parent = test_uuid(1 + (n - 2) / 2);
+            let position = usize::from((n - 2) % 2);
+            tree.add_node(test_uuid(n), parent, position, test_uuid(1), n as i64)
+                .unwrap();
+        }
+        tree.remove_node(test_uuid(12)).unwrap();
+        assert!(
+            tree.arena.nodes.iter().any(|n| n.user_id == Uuid::nil()),
+            "the removal should have left a tombstone to skip"
+        );
+
+        crate::tree::test_helpers::assert_live_nodes_are_slotted_once(&tree.arena, &tree.slots);
+    }
+
+    #[test]
     fn validate_restored_surfaces_an_arena_fault() {
         // Proves the arena delegation is present.
         let (mut tree, _) = binary_pair();

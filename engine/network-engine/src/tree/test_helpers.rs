@@ -16,3 +16,33 @@ pub fn test_uuid_u16(n: u16) -> Uuid {
         bytes[0], bytes[1], 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF,
     ])
 }
+
+/// Asserts every live non-root node is a slot child exactly once.
+///
+/// Takes the arena and the slot map rather than a tree, because each tree's
+/// fields are private to its own module.
+pub(crate) fn assert_live_nodes_are_slotted_once<C>(
+    arena: &crate::tree::arena::Arena,
+    slots: &std::collections::HashMap<crate::tree::node::NodeIndex, C>,
+) where
+    for<'a> &'a C: IntoIterator<Item = &'a Option<crate::tree::node::NodeIndex>>,
+{
+    use crate::tree::node::NodeIndex;
+    let mut seen: std::collections::HashMap<NodeIndex, usize> = std::collections::HashMap::new();
+    for children in slots.values() {
+        for child in children.into_iter().flatten() {
+            *seen.entry(*child).or_default() += 1;
+        }
+    }
+    for (slot, node) in arena.nodes.iter().enumerate() {
+        if node.user_id == Uuid::nil() || arena.root == Some(NodeIndex(slot)) {
+            continue;
+        }
+        assert_eq!(
+            seen.get(&NodeIndex(slot)).copied().unwrap_or(0),
+            1,
+            "live node {} at slot {slot} should be a slot child exactly once",
+            node.user_id
+        );
+    }
+}

@@ -905,6 +905,25 @@ mod tests {
     }
 
     #[test]
+    fn engine_output_slots_every_live_node_exactly_once() {
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        // Matrix add_node is (user_id, sponsor_id, enrolled_at). It chooses
+        // the slot itself, which is what makes the spill happen.
+        for n in 2..=12u8 {
+            tree.add_node(test_uuid(n), test_uuid(1), n as i64).unwrap();
+        }
+        tree.remove_node(test_uuid(12), PruningMode::PromoteEarliest)
+            .unwrap();
+        assert!(
+            tree.arena.nodes.iter().any(|n| n.user_id == Uuid::nil()),
+            "the removal should have left a tombstone to skip"
+        );
+
+        crate::tree::test_helpers::assert_live_nodes_are_slotted_once(&tree.arena, &tree.slots);
+    }
+
+    #[test]
     fn validate_restored_surfaces_an_arena_fault() {
         // Proves the arena delegation is present.
         let (mut tree, _) = matrix_pair();

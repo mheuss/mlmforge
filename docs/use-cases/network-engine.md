@@ -577,7 +577,7 @@ Do not reach for Go's `omitempty` on a required field to solve this. On its own 
 
 Widening `snapshots: null` to empty does not open a silent-zero path of its own. Every calculator that reaches its walk rejects volume naming a source with no snapshot — `walk::validate_source` for the level-based walks, and `binary.rs` for pairing, which resolves the owner first and reports that UUID instead. Streamline runs the same rejection a second time, over all volume, before any stream is walked, because its per-stream filter would otherwise drop a source no walk reaches.
 
-Since HEU-609 the shared walk also rejects an *upline* node with no snapshot, so an empty map cannot produce a quiet partial payout either. Two paths still absorb it: stairstep's second walk (HEU-727) and `calculate_generation` with level commissions off (HEU-728).
+Since HEU-609 the shared walk also rejects an *upline* node with no snapshot. That closes the walked-node case and nothing wider. **Absence still moves money through quantities derived from the snapshot map**, where no walked node is missing anything: an active-leg count, a group volume, a generation boundary set. `count_active_legs` is the clearest instance — omit a frontline sibling and an ancestor's depth cap changes, costing it an earning, in `calculate_unilevel`. HEU-731 carries the decision and its four known sites; HEU-727 and HEU-728 are two of them.
 
 Still null-intolerant, tracked by HEU-632: `history`'s inner per-period map (a null there has no defined meaning — absent-key and `Some(None)` are the two documented states), `cycle_events[].new_boards`, and `board_compress_inactive`'s `member_ids`.
 

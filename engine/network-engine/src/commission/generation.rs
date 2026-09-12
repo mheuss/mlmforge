@@ -268,8 +268,14 @@ fn emit_generation_earnings(
 /// upline node the level walk reaches has no snapshot, or if a volume source
 /// has an invalid CV amount.
 ///
-/// The upline-snapshot check is reached only when `level_commissions_enabled`
-/// is set. HEU-728 tracks the gap when it is not.
+/// That upline-snapshot check covers only the nodes the level walk itself
+/// reaches. It is not a guarantee about this function. The generation
+/// traversal builds its boundary set from the snapshot map, so an omitted
+/// node is absent from that set and consumes no generation, which promotes
+/// the ancestors above it. That happens whenever the level walk does not
+/// reach the node: with `level_commissions_enabled` unset, with it set but
+/// `level_commission` null, or with the node deeper than the level walk's
+/// own depth. HEU-731 and HEU-728 track it.
 pub fn calculate_generation(
     tree: &UnilevelTree,
     plan: &CompensationPlan,

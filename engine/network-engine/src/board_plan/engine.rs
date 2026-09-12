@@ -97,25 +97,13 @@ impl BoardPlanEngine {
     /// data that keeps removed members so re-entry can still route them, so it
     /// holds users who are on no board by design. Checking it against `boards`
     /// would reject engines this crate itself produces.
-    ///
     pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
-        // Six walks, in an order each one depends on. Reordering any of them
-        // changes which fault is reported, and two of them stop being correct:
-        //
-        //   1. dimensions and the position cache, so later walks compare
-        //      against a board size that was recomputed rather than trusted
-        //   2. map key against Board.id, so every later walk can use the key
-        //      as an identity an operator is able to look up
-        //   3. board sizing, which skips a mis-sized board, so its occupants
-        //      never enter `seats` or `placed`
-        //   4. duplicate occupants, so `seats` holds exactly one board per
-        //      occupant by the time the reverse walk reads it
-        //   5. membership, forward then reverse. The forward walk owns every
-        //      case where the index names a board; the reverse walk is left
-        //      with the one case where it names nothing.
-        //   6. displaced_members, last, so a user the index puts on a board
-        //      that does not exist is reported by the forward walk rather
-        //      than here.
+        // Six walks, each depending on the ones before it having returned.
+        // Two of those dependencies are load-bearing rather than cosmetic: the
+        // key check must precede anything that treats a key as an identity,
+        // and the duplicate check must precede the reverse membership walk,
+        // which reads a map that holds one board per occupant only because the
+        // duplicate check already returned.
         // A restore does not run the constructor, so the range it enforces has
         // to be re-established here.
         if !(2..=5).contains(&self.width) || !(1..=4).contains(&self.height) {
@@ -187,11 +175,9 @@ impl BoardPlanEngine {
             return Err(err);
         }
         if let Some((user_id, seen_on)) = duplicate {
-            // The walk above only records that this occupant repeated, not
-            // where. Collect the boards holding them, so the message names the
-            // two lowest rather than whichever two hash order reached first.
-            // This runs only on the rejection path, and must always return:
-            // falling through here would accept the payload that reached it.
+            // Names the two lowest boards holding this occupant, not
+            // whichever two hash order reached first. Must return; falling
+            // through would accept the payload that reached it.
             let mut held: Vec<Uuid> = self
                 .boards
                 .iter()
@@ -242,9 +228,8 @@ impl BoardPlanEngine {
             return Err(err);
         }
 
-        // The reverse of the walk above. add_member treats a seat with no
-        // entry pointing back as a new enrollment and seats them a second
-        // time, so both positions cycle off one enrollment.
+        // The reverse of the walk above: every seat must have an index entry
+        // pointing back to it.
         let mut unindexed: Option<(Uuid, SnapshotConsistencyError)> = None;
         for (user_id, board_id) in &seats {
             if self.member_boards.get(user_id) != Some(board_id)
@@ -263,15 +248,11 @@ impl BoardPlanEngine {
             return Err(err);
         }
 
-        // displaced_members against the boards and the index. place_displaced
-        // _members drains this Vec and seats each entry without asking whether
-        // they already hold a seat, so a listed user who is also indexed gets
-        // a second one, and a repeat inside the Vec gets two.
+        // A listed user must hold no seat, and the list must have no repeats.
+        // Either one gets that user a second seat on the next enrollment.
         //
-        // Returns on the first fault rather than holding the lowest. This is a
-        // Vec, so its order is part of the payload and the same payload names
-        // the same offender. The lowest-key holds above exist because their
-        // sources are HashMaps.
+        // Returns on the first fault rather than holding the lowest: this is a
+        // Vec, so its fixed order always names the same offender first.
         let mut listed: HashSet<Uuid> = HashSet::new();
         for user_id in &self.displaced_members {
             if !listed.insert(*user_id) {
@@ -345,8 +326,7 @@ impl BoardPlanEngine {
     ) -> Result<AddMemberResult, BoardPlanError> {
         // Validate: member not already on a board, and not waiting for one.
         // A displaced member is absent from member_boards by design, so
-        // checking it alone let place_displaced_members seat them below and
-        // find_placement_board seat them again on a second board.
+        // checking that map alone let them be seated twice.
         if self.member_boards.contains_key(&user_id) || self.displaced_members.contains(&user_id) {
             return Err(BoardPlanError::MemberAlreadyExists(user_id));
         }
@@ -826,9 +806,8 @@ mod tests {
 
     #[test]
     fn engine_output_holds_the_three_board_invariants_through_a_cycle() {
-        // total_positions sums level sizes over 0..=height, so 2x1 is 1 + 2
-        // and the first cycle lands on the third enrollment. A 2-wide board
-        // splits into two, each seeded with one member and needing two more.
+        // Twelve enrollments on a 2x1 board should split it into two, each
+        // seeded with one member and needing two more.
         let mut engine = BoardPlanEngine::new(2, 1, test_config(), 0).unwrap();
         let first = Uuid::from_bytes([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
         engine.add_member(first, first, 1).unwrap();
@@ -871,9 +850,8 @@ mod tests {
 
     #[test]
     fn engine_output_holds_the_three_board_invariants_through_displacement() {
-        // The cycle test above runs with re-entry on, so every cycled member
-        // is re-seated and displaced_members stays empty. That is the path
-        // that hid a double-seating bug from it.
+        // Re-entry is off here, so enrollments leave someone displaced. That
+        // is the path that hid a double-seating bug.
         let mut engine = BoardPlanEngine::new(2, 1, test_config_no_reentry(), 0).unwrap();
         let first = Uuid::from_bytes([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
         engine.add_member(first, first, 1).unwrap();
@@ -965,8 +943,7 @@ mod tests {
     #[test]
     fn add_member_rejects_a_member_awaiting_reassignment() {
         // A displaced member is absent from member_boards by design, so the
-        // duplicate check missed them. place_displaced_members seated them and
-        // find_placement_board seated them again, on a second board.
+        // duplicate check alone missed them, letting them be seated twice.
         let (mut engine, displaced) = engine_with_a_displaced_member();
         let sponsor = *engine.member_boards.keys().next().unwrap();
 
@@ -989,8 +966,8 @@ mod tests {
 
     #[test]
     fn validate_restored_rejects_a_displaced_user_who_is_also_seated() {
-        // place_displaced_members seats this user again and overwrites the
-        // index, leaving the original seat an occupant nothing names.
+        // A displaced user who is also seated is seated again on the next
+        // enrollment, leaving the original seat an occupant nothing names.
         let (mut engine, member) = seeded_engine();
         let board_id = *engine.member_boards.get(&member).unwrap();
         engine.displaced_members.push(member);
@@ -1006,8 +983,7 @@ mod tests {
 
     #[test]
     fn validate_restored_rejects_a_user_displaced_twice() {
-        // The Vec is drained once, so the second entry seats them a second
-        // time on whichever board has an opening.
+        // A repeat must be rejected before it can seat the same user twice.
         let (mut engine, _) = seeded_engine();
         let waiting = Uuid::from_bytes([0xEE, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
         engine.displaced_members.push(waiting);
@@ -1021,8 +997,8 @@ mod tests {
 
     #[test]
     fn validate_restored_accepts_a_displaced_user_who_holds_no_seat() {
-        // The state dissolve_board leaves behind. Rejecting it would reject
-        // engine output.
+        // A displaced user holding no seat is valid engine output. Rejecting
+        // it would reject snapshots this crate produces.
         let (mut engine, _) = seeded_engine();
         let waiting = Uuid::from_bytes([0xEE, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
         engine.displaced_members.push(waiting);
@@ -1049,13 +1025,10 @@ mod tests {
 
     #[test]
     fn validate_restored_does_not_let_a_same_board_repeat_mask_a_two_board_one() {
-        // The lowest offender repeats on one board; a higher one sits on two.
-        // Holding only the lowest user id and then finding one board for them
-        // must not drop the other fault.
-        //
-        // A fresh engine per iteration. self.boards is the map whose order
-        // decides which board seats records last for the two-board occupant,
-        // and one instance repeats its own order on every call.
+        // A repeat on one board and a second occupant on two must both be
+        // caught. Holding only the lowest id must not drop either fault.
+        // Fresh engine per iteration, since self.boards' hash order decides
+        // which board is recorded last.
         for _ in 0..64 {
             let (mut engine, member) = seeded_engine();
             let board_id = *engine.member_boards.get(&member).unwrap();
@@ -1364,8 +1337,8 @@ mod tests {
     #[test]
     fn validate_restored_names_the_same_unindexed_occupant_every_run() {
         // Two unindexed occupants, so the hold has something to choose
-        // between. seats is walked in hash order, which varies per call, so a
-        // hold that overwrote would name the higher id on some of these runs.
+        // between. The walk order varies per call, so a hold that overwrote
+        // would name the higher id on some of these runs.
         for _ in 0..64 {
             let (mut engine, member) = seeded_engine();
             let board_id = *engine.member_boards.get(&member).unwrap();

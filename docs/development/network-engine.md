@@ -988,20 +988,20 @@ a tombstoned slot, and no tombstone has to appear in the free list. A tombstone
 left out is leaked, and `node_count` counts it live. Its reach today is three
 `Debug` impls, which is why it is recorded rather than fixed.
 
-The matrix and binary arms check one way only for their own pair. Each holds a
-second structure beside the arena. Each checks that structure's entries are in
-range and live. Neither checks that the two agree with each other.
+Two of the four arms above the arena still check one way only. Those are matrix
+and binary. Each holds a second structure beside the arena. Each checks that
+structure's entries are in range and live. Neither checks that the two agree
+with each other.
 
 So a restored matrix can hold a child in `Node.children` while every parent slot
-is empty, and that passes validation today.
+is empty. That passes validation today.
 
-The board plan arm was the third, and HEU-750's first slice closed it. Its
-occupants and its membership index are now walked against each other in both
-directions. The streamline arm was never one of them.
+The other two arms are not. Streamline was never one-way. The board plan arm
+was, and HEU-750's first slice closed it. Its boards, its membership index and
+its displaced list are now walked against each other.
 
 **The gap is recorded in the docblock of each arm that has it, and owned by
-HEU-750.** The streamline arm is not one of them. Its pair is checked in both
-directions, which is what HEU-706 did.
+HEU-750.**
 
 Read a `validate_restored` docblock as the boundary of what that arm proves. An
 arm that proves less than its name suggests is the failure this file already
@@ -1057,3 +1057,25 @@ predated. The rebase resolved it with no commit.
 
 When a finding cites a file, check it in the tree the finding came from, and say
 which tree in the answer.
+
+## The Board Plan Validator's Walk Order
+
+`BoardPlanEngine::validate_restored` runs six walks and each depends on the ones
+before it having returned. The comment in the function names the two that are
+load-bearing. The full list is here, because it is a paragraph and a paragraph
+does not belong above a function.
+
+| # | Walk | What it gives the walks after it |
+|---|---|---|
+| 1 | Dimensions and the cached position count | A board size recomputed from width and height rather than trusted |
+| 2 | Map key against `Board.id` | A key later walks can report as an identity an operator can look up |
+| 3 | Board sizing | A mis-sized board is skipped, so its occupants never enter the seat maps |
+| 4 | Duplicate occupants | Exactly one board per occupant in the seat map |
+| 5 | Membership, forward then reverse | The forward walk owns every case where the index names a board, leaving the reverse walk the one case where it names nothing |
+| 6 | `displaced_members` | Runs last, so a user the index puts on a board that does not exist is reported by the forward walk instead |
+
+Two of these change behavior rather than message wording if moved. Walk 2 before
+anything that treats a key as an identity, and walk 4 before walk 5.
+
+Reordering the rest changes which fault a payload reports. That is not cosmetic
+either: the contract fixtures pin specific codes.

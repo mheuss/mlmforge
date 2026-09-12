@@ -1065,17 +1065,25 @@ before it having returned. The comment in the function names the two that are
 load-bearing. The full list is here, because it is a paragraph and a paragraph
 does not belong above a function.
 
-| # | Walk | What it gives the walks after it |
+The six steps, in source order, and what each gives the ones after it.
+
+| Step | Walk | What it gives the steps after it |
 |---|---|---|
 | 1 | Dimensions and the cached position count | A board size recomputed from width and height rather than trusted |
-| 2 | Map key against `Board.id` | A key later walks can report as an identity an operator can look up |
-| 3 | Board sizing | A mis-sized board is skipped, so its occupants never enter the seat maps |
-| 4 | Duplicate occupants | Exactly one board per occupant in the seat map |
-| 5 | Membership, forward then reverse | The forward walk owns every case where the index names a board, leaving the reverse walk the one case where it names nothing |
-| 6 | `displaced_members` | Runs last, so a user the index puts on a board that does not exist is reported by the forward walk instead |
+| 2 | Map key against `Board.id` | A key later steps can report as an identity an operator can look up |
+| 3 | One pass over `boards`, doing sizing and duplicate detection together | A mis-sized board is skipped, so its occupants never reach the seat maps. Then exactly one board per occupant in those maps |
+| 4 | Membership, forward | Every case where the index names a board is already reported |
+| 5 | Membership, reverse | Left with the one case the forward pass does not own: a seat the index names nowhere |
+| 6 | `displaced_members` | Runs last, so a user the index puts on a board that does not exist is reported by step 4 instead |
 
-Two of these change behavior rather than message wording if moved. Walk 2 before
-anything that treats a key as an identity, and walk 4 before walk 5.
+Step 1 is a pair of `if`s. Steps 2 through 6 are one `for` each. Sizing and
+duplicate detection share step 3 because both read the same positions, and the
+two membership passes are separate loops over different maps.
 
-Reordering the rest changes which fault a payload reports. That is not cosmetic
-either: the contract fixtures pin specific codes.
+Two of these change behavior rather than message wording if moved. Step 2 before
+anything that treats a key as an identity, and step 3's duplicate half before
+step 5.
+
+Reordering the rest changes which fault a payload reports. All six faults reach
+the wire as `INCONSISTENT_SNAPSHOT`, so no fixture pins a different code. What a
+fixture pins is the message, by substring.

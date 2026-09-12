@@ -82,6 +82,9 @@ proptest! {
     ) {
         let (engine, added) = build_engine(width, height, member_count, prop_config());
 
+        // The validator must accept anything the engine builds.
+        prop_assert!(engine.validate_restored().is_ok());
+
         // Collect all members visible on boards.
         let on_boards = all_visible_members(&engine);
 
@@ -164,6 +167,9 @@ proptest! {
         member_count in 1usize..30,
     ) {
         let (engine, added) = build_engine(width, height, member_count, prop_config());
+
+        // The validator must accept anything the engine builds.
+        prop_assert!(engine.validate_restored().is_ok());
 
         // Direction 1: member_boards -> board positions.
         for &uid in &added {

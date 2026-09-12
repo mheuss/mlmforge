@@ -826,6 +826,11 @@ mod tests {
 
     /// Asserts the three invariants HEU-750's board criteria depend on.
     fn assert_board_invariants(engine: &BoardPlanEngine) {
+        // The validator itself, not just the three checks spelled out below.
+        // Without this the guards are never run against engine output, which
+        // is the one thing they must never reject.
+        assert_eq!(engine.validate_restored(), Ok(()));
+
         for (key, board) in &engine.boards {
             assert_eq!(*key, board.id, "map key disagrees with board id");
         }

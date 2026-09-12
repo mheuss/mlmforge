@@ -5371,7 +5371,7 @@ fn calculate_matrix_wrong_tree_type_returns_invalid_params() {
 }
 
 #[test]
-fn calculate_matrix_topology_mismatch_returns_invalid_params() {
+fn calculate_matrix_topology_mismatch_returns_calculation_error() {
     let mut worker = common::spawn_worker();
     load_matrix_test_plan(&mut worker);
     // Plan's "Test" matrix is width 3; build the tree 2-wide to force a mismatch.
@@ -5389,8 +5389,8 @@ fn calculate_matrix_topology_mismatch_returns_invalid_params() {
         resp
     );
     assert!(
-        resp.contains("INVALID_PARAMS"),
-        "expected INVALID_PARAMS, got: {}",
+        resp.contains("CALCULATION_ERROR"),
+        "expected CALCULATION_ERROR, got: {}",
         resp
     );
     assert!(

@@ -24,11 +24,15 @@ import (
 // plan does not define. A request a caller built for 4 considers valid now
 // comes back as a CALCULATION_ERROR, which is why the number had to move.
 //
+// Moved to 6 by HEU-609, which rejects a request whose walked upline omits a
+// snapshot. A request a caller built for 5 considers valid now comes back as
+// a CALCULATION_ERROR, which is why the number had to move.
+//
 // This is the wire contract, not the stored row shape and not the authoring
 // format. Two other numbers nearby are also called a version: `detailVersion`
 // in commission_detail.go, and the plan schema version in
 // schemas/compensation-plan.schema.json. None is coupled to the others.
-const expectedProtocolVersion = 5
+const expectedProtocolVersion = 6
 
 // maxPingResponseInError bounds how much of an unexpected ping response is
 // quoted back in an error. The response is wire data and is otherwise

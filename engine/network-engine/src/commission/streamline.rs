@@ -1008,12 +1008,11 @@ mod tests {
         // were accidentally disabled on both runs, which is the failure this
         // test is least able to see.
         //
-        // Walk up from 5: node 4 is bronze (ordinal 2) and level 1 needs
-        // associate (1), so it earns at level 1 and 0.10. Node 3 is associate
-        // (1) and level 2 needs bronze (2), so it is compressed without
-        // consuming the level. Node 2 is bronze and earns at level 2 and 0.05.
-        // Node 1 is silver (3) and level 3 needs silver, so it earns at level 3
-        // and 0.02.
+        // Walk up from 5: node 4 is bronze and level 1 needs associate, so it
+        // earns at level 1 and 0.10. Node 3 is associate and level 2 needs
+        // bronze, so it is compressed without consuming the level. Node 2 is
+        // bronze and earns at level 2 and 0.05. Node 1 is silver and level 3
+        // needs silver, so it earns at level 3 and 0.02.
         //
         // calculate_streamline ends with walk_order::assemble, which sorts by
         // (earner_id, source_id, level, walk). test_uuid puts the index in the

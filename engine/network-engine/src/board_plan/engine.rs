@@ -97,7 +97,24 @@ impl BoardPlanEngine {
     /// data that keeps removed members so re-entry can still route them, so it
     /// holds users who are on no board by design. Checking it against `boards`
     /// would reject engines this crate itself produces.
+    ///
+    /// `displaced_members` is not checked either. It is not covered by the
+    /// criteria this arm was written against.
     pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
+        // Five walks, in an order each one depends on. Reordering any of them
+        // changes which fault is reported, and two of them stop being correct:
+        //
+        //   1. dimensions and the position cache, so later walks compare
+        //      against a board size that was recomputed rather than trusted
+        //   2. map key against Board.id, so every later walk can use the key
+        //      as an identity an operator is able to look up
+        //   3. board sizing, which skips a mis-sized board, so its occupants
+        //      never enter `seats` or `placed`
+        //   4. duplicate occupants, so `seats` holds exactly one board per
+        //      occupant by the time the reverse walk reads it
+        //   5. membership, forward then reverse. The forward walk owns every
+        //      case where the index names a board; the reverse walk is left
+        //      with the one case where it names nothing.
         // A restore does not run the constructor, so the range it enforces has
         // to be re-established here.
         if !(2..=5).contains(&self.width) || !(1..=4).contains(&self.height) {
@@ -292,7 +309,8 @@ impl BoardPlanEngine {
 
     /// Adds a member to a board.
     ///
-    /// Validates the member is not already placed and the sponsor exists.
+    /// Validates the member is neither placed nor awaiting reassignment, and
+    /// that the sponsor exists.
     /// First member is bootstrapped automatically. Displaced members are
     /// placed before the new member. Placement board depends on the
     /// configured `re_entry_position`.

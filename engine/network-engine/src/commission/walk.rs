@@ -85,8 +85,8 @@ pub(crate) struct LevelWalkConfig<'a> {
 
 /// Build rank name -> ordinal map from the plan's rank definitions.
 ///
-/// Used for SkipBelowRank compression comparison and breakaway
-/// threshold detection.
+/// The keys are exactly the plan's rank names, so every lookup of a
+/// validated snapshot rank hits.
 pub(crate) fn build_rank_ordinals(plan: &CompensationPlan) -> HashMap<&str, u16> {
     plan.ranks
         .iter()
@@ -94,9 +94,10 @@ pub(crate) fn build_rank_ordinals(plan: &CompensationPlan) -> HashMap<&str, u16>
         .collect()
 }
 
-/// Reject a snapshot rank that is neither empty nor a rank in the plan's ladder.
+/// Reject a snapshot rank that is not a rank in the plan's ladder.
 ///
-/// An empty rank is how an unranked distributor is represented.
+/// On `Ok`, every rank in `snapshots` names a rank in `plan.ranks`. The empty
+/// string names none, so it is rejected like any other undefined rank.
 pub(crate) fn validate_snapshot_ranks(
     plan: &CompensationPlan,
     snapshots: &HashMap<Uuid, DistributorSnapshot>,
@@ -104,7 +105,7 @@ pub(crate) fn validate_snapshot_ranks(
     let known: HashSet<&str> = plan.ranks.iter().map(|r| r.name.as_str()).collect();
     let offender = snapshots
         .iter()
-        .filter(|(_, s)| !s.rank.is_empty() && !known.contains(s.rank.as_str()))
+        .filter(|(_, s)| !known.contains(s.rank.as_str()))
         .min_by_key(|(id, _)| **id);
     match offender {
         Some((user_id, s)) => Err(CalculationError::UnknownSnapshotRank(
@@ -715,14 +716,43 @@ mod tests {
     }
 
     #[test]
-    fn validate_snapshot_ranks_accepts_an_empty_rank() {
-        // An empty rank is how an unranked distributor reaches a commission
-        // snapshot. HEU-608.
+    fn validate_snapshot_ranks_rejects_an_empty_rank() {
         let plan = test_plan_with_ranks(&[("associate", 1)]);
         let mut snapshots = HashMap::new();
         snapshots.insert(test_uuid(1), snapshot_with_rank(""));
 
-        assert!(validate_snapshot_ranks(&plan, &snapshots).is_ok());
+        assert_eq!(
+            validate_snapshot_ranks(&plan, &snapshots),
+            Err(CalculationError::UnknownSnapshotRank(
+                test_uuid(1),
+                String::new()
+            ))
+        );
+    }
+
+    #[test]
+    fn validate_snapshot_ranks_names_the_lowest_user_id_when_one_offender_is_empty() {
+        // HashMap iteration order varies per run, so without a deterministic
+        // tie-break this would name a different user on different runs.
+        //
+        // The map is rebuilt inside the loop on purpose. Reusing one map
+        // would repeat a single iteration order rather than sample several.
+        let plan = test_plan_with_ranks(&[("associate", 1)]);
+
+        for _ in 0..32 {
+            let mut snapshots = HashMap::new();
+            snapshots.insert(test_uuid(3), snapshot_with_rank("diamond"));
+            snapshots.insert(test_uuid(1), snapshot_with_rank(""));
+            snapshots.insert(test_uuid(2), snapshot_with_rank("associate"));
+
+            assert_eq!(
+                validate_snapshot_ranks(&plan, &snapshots),
+                Err(CalculationError::UnknownSnapshotRank(
+                    test_uuid(1),
+                    String::new()
+                ))
+            );
+        }
     }
 
     #[test]

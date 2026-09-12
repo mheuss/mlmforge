@@ -799,6 +799,85 @@ mod tests {
         assert_eq!(result[0].level, 1); // level preserved
     }
 
+    /// Threshold at the plan's lowest rank, so every rank the ladder admits
+    /// clears it. Only an empty rank could fall below, and it now errors
+    /// instead.
+    #[test]
+    fn an_empty_rank_cannot_buy_the_upline_a_level() {
+        fn earnings_for(
+            mid_rank: &str,
+        ) -> Result<Vec<crate::commission::types::CommissionEarning>, CalculationError> {
+            let mut tree = UnilevelTree::new();
+            tree.add_root(test_uuid(1), 0).unwrap();
+            tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+                .unwrap();
+            tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 0)
+                .unwrap();
+
+            let mut structure = test_structure(test_rate_table());
+            structure.compression = Some(CompressionConfig {
+                enabled: true,
+                mode: CompressionMode::SkipBelowRank,
+                rank_threshold: Some("associate".to_string()),
+            });
+            let plan = test_plan(default_eligibility());
+
+            let mut snapshots = HashMap::new();
+            snapshots.insert(test_uuid(1), eligible_snapshot());
+            snapshots.insert(
+                test_uuid(2),
+                DistributorSnapshot {
+                    rank: mid_rank.to_string(),
+                    ..eligible_snapshot()
+                },
+            );
+            snapshots.insert(test_uuid(3), eligible_snapshot());
+
+            let volume = vec![VolumeSource {
+                source_id: test_uuid(3),
+                cv_amount: 100.0,
+            }];
+
+            calculate_unilevel(
+                &tree,
+                &plan,
+                &structure,
+                &snapshots,
+                &volume,
+                &crate::test_support::test_plan_identity(),
+            )
+            .map(|result| result.earnings)
+        }
+
+        for mid_rank in ["associate", "silver"] {
+            let earnings = earnings_for(mid_rank).expect("a rank in the ladder is accepted");
+
+            let root = earnings
+                .iter()
+                .find(|e| e.earner_id == test_uuid(1))
+                .unwrap_or_else(|| panic!("mid={mid_rank:?} root did not earn: {earnings:?}"));
+            assert_eq!(root.level, 2, "mid={mid_rank:?}");
+            assert_eq!(root.rate, Some(0.06), "mid={mid_rank:?}");
+            assert!(
+                (root.dollar_amount - 2.40).abs() < 1e-9,
+                "mid={mid_rank:?} paid {}",
+                root.dollar_amount
+            );
+
+            // Without this the test passes for a forfeiting walk too, which
+            // keeps the root at level 2 and drops the mid's row.
+            assert!(
+                earnings.iter().any(|e| e.earner_id == test_uuid(2)),
+                "mid={mid_rank:?} mid node earned nothing: {earnings:?}"
+            );
+        }
+
+        assert_eq!(
+            earnings_for("").unwrap_err(),
+            CalculationError::UnknownSnapshotRank(test_uuid(2), String::new())
+        );
+    }
+
     #[test]
     fn no_compression_ineligible_forfeits_level() {
         // Tree: root(1) -> mid(2) -> leaf(3)
@@ -1173,8 +1252,7 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_upline_rank_is_accepted_and_earns_nothing() {
-        // Whether any caller actually sends an empty rank is HEU-719.
+    fn an_empty_upline_rank_is_rejected() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
@@ -1201,29 +1279,18 @@ mod tests {
             cv_amount: 100.0,
         }];
 
-        let earnings = calculate_unilevel(
+        let result = calculate_unilevel(
             &tree,
             &plan,
             &structure,
             &snapshots,
             &volume,
             &crate::test_support::test_plan_identity(),
-        )
-        .expect("an empty rank is a valid unranked distributor")
-        .earnings;
-
-        // The walk must reach past node 2 rather than stop at it, or the
-        // assertion below would hold for an empty result too.
-        assert_eq!(
-            earnings.len(),
-            1,
-            "expected only node 1 to earn: {earnings:?}"
         );
-        assert_eq!(earnings[0].earner_id, test_uuid(1));
-        assert!(earnings[0].dollar_amount > 0.0);
-        assert!(
-            !earnings.iter().any(|e| e.earner_id == test_uuid(2)),
-            "the unranked node took an earning: {earnings:?}"
+
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::UnknownSnapshotRank(test_uuid(2), String::new())
         );
     }
 

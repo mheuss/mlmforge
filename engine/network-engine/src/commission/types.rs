@@ -12,8 +12,10 @@ use uuid::Uuid;
 /// and depth decisions from the compensation plan config.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DistributorSnapshot {
-    /// Current rank name. Either a rank the loaded plan defines, or the
-    /// empty string, which means unranked.
+    /// Current rank name. Always a rank the loaded plan defines.
+    ///
+    /// "Exists, but unranked" therefore cannot be said. Expressing it needs
+    /// a new representation and a protocol bump.
     pub rank: String,
 
     /// Personal volume generated this period.
@@ -330,6 +332,8 @@ pub struct Walk {
     pub stream_id: Option<u32>,
 
     /// Generation SameRank context. Absent otherwise.
+    ///
+    /// When present, always a rank the plan defines.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rank: Option<String>,
 

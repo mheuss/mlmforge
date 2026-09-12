@@ -120,6 +120,8 @@ impl UnilevelTree {
             return Err(TreeError::HasChildren(user_id, child_count));
         }
 
+        self.arena.check_sponsored_removable(&[idx])?;
+
         // Remove from parent's children list
         if let Some(parent_idx) = self.arena.node(idx).parent {
             self.arena
@@ -140,6 +142,7 @@ impl UnilevelTree {
             self.arena.root = None;
         }
 
+        self.arena.reparent_sponsored(&[idx]);
         self.arena.index.remove(&user_id);
         self.arena.tombstone(idx);
         Ok(())
@@ -879,5 +882,36 @@ mod tests {
         // Verify sponsor links are preserved.
         let sponsor = restored.get_sponsor(test_uuid(4)).unwrap();
         assert_eq!(sponsor.unwrap().user_id, test_uuid(2));
+    }
+
+    #[test]
+    fn removing_a_recruiter_promotes_their_recruits_to_the_grandsponsor() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 1)
+            .unwrap();
+        // Placed under 1 so 2 is childless and reaches the tombstone, but
+        // sponsored by 2 so the edge under test outlives its target.
+        tree.add_node(test_uuid(3), test_uuid(1), test_uuid(2), 2)
+            .unwrap();
+
+        // Without this the test passes even if the fixture stops building the
+        // edge under test, because validate_restored is happy either way.
+        let before = tree.get_sponsor(test_uuid(3)).unwrap().unwrap();
+        assert_eq!(before.user_id, test_uuid(2));
+
+        tree.remove_node(test_uuid(2)).unwrap();
+
+        assert_eq!(tree.validate_restored(), Ok(()));
+        let sponsor = tree.get_sponsor(test_uuid(3)).unwrap().unwrap();
+        assert_eq!(sponsor.user_id, test_uuid(1));
+    }
+
+    #[test]
+    fn removing_a_node_with_no_recruits_and_no_sponsor_still_works() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+
+        assert!(tree.remove_node(test_uuid(1)).is_ok());
     }
 }

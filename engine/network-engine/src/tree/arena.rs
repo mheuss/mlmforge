@@ -401,6 +401,88 @@ impl Arena {
         self.free_list.push(idx);
     }
 
+    /// Finds the nearest sponsor of `idx` that is not in `removed`.
+    pub(crate) fn surviving_sponsor(
+        &self,
+        idx: NodeIndex,
+        removed: &[NodeIndex],
+    ) -> Result<Option<NodeIndex>, TreeError> {
+        let bound = self.nodes.len();
+        let mut current = self.nodes[idx.0].sponsor;
+        // Exhausting the slot count means the chain revisited a node. Nothing
+        // rejects a sponsor cycle today.
+        for _ in 0..bound {
+            let Some(candidate) = current else {
+                return Ok(None);
+            };
+            if !removed.contains(&candidate) {
+                return Ok(Some(candidate));
+            }
+            current = self.nodes[candidate.0].sponsor;
+        }
+        Err(TreeError::SponsorCycle {
+            user_id: self.nodes[idx.0].user_id,
+            bound,
+        })
+    }
+
+    /// Reports whether every node in `removed` can give up its recruits.
+    ///
+    /// Call before any mutation. `reparent_sponsored` assumes it passed.
+    pub(crate) fn check_sponsored_removable(&self, removed: &[NodeIndex]) -> Result<(), TreeError> {
+        for &idx in removed {
+            let surviving_sponsored = self.surviving_count(idx, removed);
+            if surviving_sponsored > 0 && self.surviving_sponsor(idx, removed)?.is_none() {
+                return Err(TreeError::SponsorlessWithRecruits {
+                    user_id: self.nodes[idx.0].user_id,
+                    surviving_sponsored,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Moves the recruits of every node in `removed` onto their nearest
+    /// surviving sponsor.
+    pub(crate) fn reparent_sponsored(&mut self, removed: &[NodeIndex]) {
+        // Every target is resolved against the pre-removal graph. Resolving
+        // one node at a time reads a sponsor an earlier iteration cleared.
+        let plan: Vec<(NodeIndex, Vec<NodeIndex>, Option<NodeIndex>)> = removed
+            .iter()
+            .map(|&idx| {
+                let survivors: Vec<NodeIndex> = self.nodes[idx.0]
+                    .sponsored
+                    .iter()
+                    .copied()
+                    .filter(|s| !removed.contains(s))
+                    .collect();
+                let target = self
+                    .surviving_sponsor(idx, removed)
+                    .expect("cycle rejected by check_sponsored_removable");
+                (idx, survivors, target)
+            })
+            .collect();
+
+        for (idx, survivors, target) in plan {
+            for s in survivors {
+                self.nodes[s.0].sponsor = target;
+                if let Some(target_idx) = target {
+                    self.nodes[target_idx.0].sponsored.push(s);
+                }
+            }
+            self.nodes[idx.0].sponsored.clear();
+        }
+    }
+
+    /// Counts the recruits of `idx` that are not themselves in `removed`.
+    fn surviving_count(&self, idx: NodeIndex, removed: &[NodeIndex]) -> usize {
+        self.nodes[idx.0]
+            .sponsored
+            .iter()
+            .filter(|s| !removed.contains(s))
+            .count()
+    }
+
     /// Returns the number of live nodes (total slots minus free slots).
     pub(crate) fn node_count(&self) -> usize {
         self.nodes.len() - self.free_list.len()
@@ -1313,5 +1395,191 @@ mod tests {
         arena.tombstone(dead);
 
         assert!(arena.validate_restored().is_ok());
+    }
+
+    #[test]
+    fn surviving_sponsor_returns_the_sponsor_when_it_is_not_being_removed() {
+        let mut arena = Arena::new();
+        let root = arena.alloc_slot(make_node(test_uuid(1), None, 0));
+        let mid = arena.alloc_slot(make_node(test_uuid(2), Some(root), 1));
+        arena.nodes[mid.0].sponsor = Some(root);
+
+        assert_eq!(arena.surviving_sponsor(mid, &[mid]), Ok(Some(root)));
+    }
+
+    #[test]
+    fn surviving_sponsor_walks_past_a_sponsor_that_is_also_being_removed() {
+        let mut arena = Arena::new();
+        let root = arena.alloc_slot(make_node(test_uuid(1), None, 0));
+        let mid = arena.alloc_slot(make_node(test_uuid(2), Some(root), 1));
+        let leaf = arena.alloc_slot(make_node(test_uuid(3), Some(mid), 2));
+        arena.nodes[mid.0].sponsor = Some(root);
+        arena.nodes[leaf.0].sponsor = Some(mid);
+
+        assert_eq!(arena.surviving_sponsor(leaf, &[leaf, mid]), Ok(Some(root)));
+    }
+
+    #[test]
+    fn surviving_sponsor_returns_none_when_every_sponsor_is_being_removed() {
+        let mut arena = Arena::new();
+        let root = arena.alloc_slot(make_node(test_uuid(1), None, 0));
+        let mid = arena.alloc_slot(make_node(test_uuid(2), Some(root), 1));
+        arena.nodes[mid.0].sponsor = Some(root);
+
+        assert_eq!(arena.surviving_sponsor(mid, &[mid, root]), Ok(None));
+    }
+
+    #[test]
+    fn surviving_sponsor_returns_none_for_a_node_with_no_sponsor() {
+        let mut arena = Arena::new();
+        let root = arena.alloc_slot(make_node(test_uuid(1), None, 0));
+
+        assert_eq!(arena.surviving_sponsor(root, &[root]), Ok(None));
+    }
+
+    #[test]
+    fn check_sponsored_removable_allows_a_node_with_no_recruits() {
+        let mut arena = Arena::new();
+        let root = arena.alloc_slot(make_node(test_uuid(1), None, 0));
+
+        assert_eq!(arena.check_sponsored_removable(&[root]), Ok(()));
+    }
+
+    #[test]
+    fn check_sponsored_removable_allows_recruits_when_a_sponsor_survives() {
+        let mut arena = Arena::new();
+        let root = arena.alloc_slot(make_node(test_uuid(1), None, 0));
+        let mid = arena.alloc_slot(make_node(test_uuid(2), Some(root), 1));
+        let leaf = arena.alloc_slot(make_node(test_uuid(3), Some(mid), 2));
+        arena.nodes[mid.0].sponsor = Some(root);
+        arena.nodes[mid.0].sponsored = vec![leaf];
+        arena.nodes[leaf.0].sponsor = Some(mid);
+
+        assert_eq!(arena.check_sponsored_removable(&[mid]), Ok(()));
+    }
+
+    #[test]
+    fn check_sponsored_removable_refuses_recruits_with_no_surviving_sponsor() {
+        let mut arena = Arena::new();
+        let root = arena.alloc_slot(make_node(test_uuid(1), None, 0));
+        let orphan = arena.alloc_slot(make_node(test_uuid(2), Some(root), 1));
+        let leaf = arena.alloc_slot(make_node(test_uuid(3), Some(orphan), 2));
+        arena.nodes[orphan.0].sponsored = vec![leaf];
+        arena.nodes[leaf.0].sponsor = Some(orphan);
+
+        assert_eq!(
+            arena.check_sponsored_removable(&[orphan]),
+            Err(TreeError::SponsorlessWithRecruits {
+                user_id: test_uuid(2),
+                surviving_sponsored: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn check_sponsored_removable_ignores_recruits_that_are_also_being_removed() {
+        let mut arena = Arena::new();
+        let root = arena.alloc_slot(make_node(test_uuid(1), None, 0));
+        let orphan = arena.alloc_slot(make_node(test_uuid(2), Some(root), 1));
+        let leaf = arena.alloc_slot(make_node(test_uuid(3), Some(orphan), 2));
+        arena.nodes[orphan.0].sponsored = vec![leaf];
+        arena.nodes[leaf.0].sponsor = Some(orphan);
+
+        assert_eq!(arena.check_sponsored_removable(&[orphan, leaf]), Ok(()));
+    }
+
+    #[test]
+    fn reparent_sponsored_moves_recruits_onto_the_surviving_sponsor() {
+        let mut arena = Arena::new();
+        let root = arena.alloc_slot(make_node(test_uuid(1), None, 0));
+        let mid = arena.alloc_slot(make_node(test_uuid(2), Some(root), 1));
+        let leaf = arena.alloc_slot(make_node(test_uuid(3), Some(mid), 2));
+        arena.nodes[root.0].sponsored = vec![mid];
+        arena.nodes[mid.0].sponsor = Some(root);
+        arena.nodes[mid.0].sponsored = vec![leaf];
+        arena.nodes[leaf.0].sponsor = Some(mid);
+
+        arena.reparent_sponsored(&[mid]);
+
+        assert_eq!(arena.nodes[leaf.0].sponsor, Some(root));
+        assert!(arena.nodes[root.0].sponsored.contains(&leaf));
+        assert!(arena.nodes[mid.0].sponsored.is_empty());
+    }
+
+    #[test]
+    fn reparent_sponsored_leaves_a_recruit_that_is_also_being_removed() {
+        let mut arena = Arena::new();
+        let root = arena.alloc_slot(make_node(test_uuid(1), None, 0));
+        let mid = arena.alloc_slot(make_node(test_uuid(2), Some(root), 1));
+        let leaf = arena.alloc_slot(make_node(test_uuid(3), Some(mid), 2));
+        arena.nodes[mid.0].sponsor = Some(root);
+        arena.nodes[mid.0].sponsored = vec![leaf];
+        arena.nodes[leaf.0].sponsor = Some(mid);
+
+        arena.reparent_sponsored(&[mid, leaf]);
+
+        assert!(!arena.nodes[root.0].sponsored.contains(&leaf));
+    }
+
+    /// R sponsors A, A sponsors B, B sponsors C. A and B are both removed and
+    /// C survives.
+    fn sponsor_chain() -> (Arena, NodeIndex, NodeIndex, NodeIndex, NodeIndex) {
+        let mut arena = Arena::new();
+        let r = arena.alloc_slot(make_node(test_uuid(1), None, 0));
+        let a = arena.alloc_slot(make_node(test_uuid(2), Some(r), 1));
+        let b = arena.alloc_slot(make_node(test_uuid(3), Some(a), 2));
+        let c = arena.alloc_slot(make_node(test_uuid(4), Some(b), 3));
+        arena.nodes[a.0].sponsor = Some(r);
+        arena.nodes[b.0].sponsor = Some(a);
+        arena.nodes[c.0].sponsor = Some(b);
+        arena.nodes[r.0].sponsored = vec![a];
+        arena.nodes[a.0].sponsored = vec![b];
+        arena.nodes[b.0].sponsored = vec![c];
+        (arena, r, a, b, c)
+    }
+
+    #[test]
+    fn one_call_over_the_whole_removed_set_walks_past_a_removed_sponsor() {
+        let (mut arena, r, a, b, c) = sponsor_chain();
+
+        arena.reparent_sponsored(&[a, b]);
+
+        assert_eq!(arena.nodes[c.0].sponsor, Some(r));
+        assert!(arena.nodes[r.0].sponsored.contains(&c));
+    }
+
+    #[test]
+    fn reparenting_node_by_node_between_tombstones_reaches_the_same_answer() {
+        // Recorded because a review predicted the opposite: that b's walk would
+        // read a's cleared sponsor and strand c. It does not. Repointing a's
+        // recruits runs before a is tombstoned, so b already names a live
+        // sponsor by the time b is processed, and the chain repairs forward.
+        //
+        // This holds only while sponsor and sponsored agree. Nothing validates
+        // that yet (HEU-732).
+        let (mut arena, r, a, b, c) = sponsor_chain();
+
+        arena.reparent_sponsored(&[a]);
+        arena.tombstone(a);
+        arena.reparent_sponsored(&[b]);
+
+        assert_eq!(arena.nodes[c.0].sponsor, Some(r));
+    }
+
+    #[test]
+    fn surviving_sponsor_reports_a_cycle_rather_than_an_absent_sponsor() {
+        let mut arena = Arena::new();
+        let a = arena.alloc_slot(make_node(test_uuid(1), None, 0));
+        let b = arena.alloc_slot(make_node(test_uuid(2), Some(a), 1));
+        arena.nodes[a.0].sponsor = Some(b);
+        arena.nodes[b.0].sponsor = Some(a);
+
+        assert_eq!(
+            arena.surviving_sponsor(b, &[b, a]),
+            Err(TreeError::SponsorCycle {
+                user_id: test_uuid(2),
+                bound: 2,
+            })
+        );
     }
 }

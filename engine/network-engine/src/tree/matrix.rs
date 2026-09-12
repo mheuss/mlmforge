@@ -392,6 +392,8 @@ impl MatrixTree {
         // Find this node's slot position in parent.
         let parent_slot_pos = self.find_slot_position(parent_idx, idx);
 
+        self.arena.check_sponsored_removable(&[idx])?;
+
         let child_slots = self
             .slots
             .get(&idx)
@@ -494,6 +496,7 @@ impl MatrixTree {
                 .sponsored
                 .retain(|&s| s != idx);
         }
+        self.arena.reparent_sponsored(&[idx]);
         self.slots.remove(&idx);
         self.arena.index.remove(&user_id);
         self.arena.tombstone(idx);
@@ -736,6 +739,7 @@ impl MatrixTree {
                 .sponsored
                 .retain(|&s| s != idx);
         }
+        self.arena.reparent_sponsored(&[idx]);
 
         // Tombstone.
         self.slots.remove(&idx);
@@ -2379,5 +2383,57 @@ mod tests {
         let tank_ids: Vec<Uuid> = tank.iter().map(|e| e.user_id).collect();
         assert!(tank_ids.contains(&test_uuid(2)));
         assert!(tank_ids.contains(&test_uuid(4)));
+    }
+
+    #[test]
+    fn promote_earliest_leaf_removal_promotes_recruits_to_the_grandsponsor() {
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 1).unwrap();
+        // add_node places inside the sponsor's own subtree, so only explicit
+        // placement leaves node 2 childless while it sponsors someone.
+        tree.add_node_at(test_uuid(3), test_uuid(2), test_uuid(1), 1, 2)
+            .unwrap();
+
+        assert!(
+            tree.get_node(test_uuid(2)).unwrap().children.is_empty(),
+            "this test needs node 2 to be a leaf so detach_and_tombstone runs"
+        );
+        let before = tree.get_sponsor(test_uuid(3)).unwrap().unwrap();
+        assert_eq!(before.user_id, test_uuid(2));
+
+        tree.remove_node(test_uuid(2), PruningMode::PromoteEarliest)
+            .unwrap();
+
+        assert_eq!(tree.validate_restored(), Ok(()));
+        let sponsor = tree.get_sponsor(test_uuid(3)).unwrap().unwrap();
+        assert_eq!(sponsor.user_id, test_uuid(1));
+    }
+
+    #[test]
+    fn promote_earliest_with_children_promotes_recruits_to_the_grandsponsor() {
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 1).unwrap();
+        // Inside node 2's subtree, so node 2 has a child and the promote
+        // branch runs instead of the leaf detach.
+        tree.add_node(test_uuid(3), test_uuid(2), 2).unwrap();
+        // Sponsored by 2, placed under the root, so it survives the removal.
+        tree.add_node_at(test_uuid(4), test_uuid(2), test_uuid(1), 1, 3)
+            .unwrap();
+
+        assert!(
+            !tree.get_node(test_uuid(2)).unwrap().children.is_empty(),
+            "this test needs node 2 to have a child so the promote branch runs"
+        );
+        let before = tree.get_sponsor(test_uuid(4)).unwrap().unwrap();
+        assert_eq!(before.user_id, test_uuid(2));
+
+        tree.remove_node(test_uuid(2), PruningMode::PromoteEarliest)
+            .unwrap();
+
+        assert_eq!(tree.validate_restored(), Ok(()));
+        let sponsor = tree.get_sponsor(test_uuid(4)).unwrap().unwrap();
+        assert_eq!(sponsor.user_id, test_uuid(1));
     }
 }

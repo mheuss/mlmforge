@@ -443,6 +443,21 @@ When the guard fires it names the offending file. Rebuild:
 
 Do not `touch` the binary itself. That clears the guard without rebuilding, which is exactly the stale-binary state HEU-615 exists to catch.
 
+`cargo fmt` is the trigger people do not expect. It rewrites `.rs` files, so running it after a build makes the binary stale, and the next `go test ./...` turns every worker-dependent test red at 0.00s. The formatter looks like the culprit and is not. Rebuild and re-run.
+
+## Chain The Two Suites With `&&`, Never `;`
+
+The suite spans two toolchains, so a single "did it pass" answer needs both. `;` does not give you one:
+
+```bash
+go test ./... ; cargo test      # reports only cargo's status
+go test ./... && cargo test     # reports the first failure
+```
+
+With `;` a green Rust run masks a failed Go run and the shell exits 0. This is not hypothetical: a run that reported exit 0 on this branch had 41 failing Go tests in it.
+
+Report a pass as a count per runner, not as one exit status. "1249 Rust across 21 targets, 636 Go across 6 packages" is checkable. "Exit 0" hides how many commands the status covered.
+
 ## An Absent Worker Binary Fails In CI And Skips Locally
 
 `findWorkerBinaryAt` skips when the worker binary is missing, which is what lets

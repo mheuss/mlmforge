@@ -995,23 +995,23 @@ explicitly typed literal such as `map[string]int{...}`.
 HEU-606 narrowed 14 wire DTO fields. Two breaks were compile errors and six were
 run-time assertion failures, so building was not enough to find them.
 
-## `validate_restored` And What Each Arm Still Does Not Check
+## What `validate_restored` Still Does Not Check
 
 All four arms above the arena now check their own structures against each other.
-HEU-750 closed the last of them: the board plan arm in its first slice, matrix
-and binary in its second. Streamline was never one-way.
+HEU-750 closed the last of them. The board plan arm closed in its first slice.
+Matrix and binary closed in its second. Streamline was never one-way.
 
-Two gaps remain, and both are recorded rather than fixed.
+Two gaps remain. Both are recorded rather than fixed.
 
 **The arena's free list is checked one way.** Every free-list entry must name a
-tombstoned slot, and no tombstone has to appear in the free list. A tombstone
-left out is leaked, and `node_count` counts it live. Its reach today is three
-`Debug` impls.
+tombstoned slot. No tombstone has to appear in the free list. A tombstone left
+out is leaked. `node_count` counts it live. Its reach today is three `Debug`
+impls.
 
 **No arm compares its slot map against `Node.children`.** The matrix and binary
-arms prove every live non-root node is a child in exactly one slot entry, which
-is a count. They do not prove the slot that names a node is the same parent the
-node's own edges name. That is HEU-732, along with reciprocal edges and
+arms count: every live non-root node is a child in exactly one slot entry. They
+do not prove the slot that names a node is the same parent the node's own edges
+name. That is HEU-732, along with reciprocal edges and
 acyclicity.
 
 Read a `validate_restored` docblock as the boundary of what that arm proves. An

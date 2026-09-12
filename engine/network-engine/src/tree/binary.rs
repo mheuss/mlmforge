@@ -39,11 +39,7 @@ impl BinaryTree {
     }
 
     /// Prove a restored tree's stored indexes are in range and live, and that
-    /// the slot map and the live nodes account for each other.
-    ///
-    /// The root is exempt, so a slot entry naming it is accepted. The slot map
-    /// is not compared against `Node.children` either, so a slot entry and an
-    /// arena edge can still disagree. Both are HEU-732.
+    /// each live non-root node is a child in exactly one slot entry.
     pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
         self.arena.validate_restored()?;
         // Keep the lowest-slot fault rather than returning on the first one
@@ -415,8 +411,7 @@ mod tests {
 
     #[test]
     fn validate_restored_rejects_a_child_in_two_slots_of_one_parent() {
-        // One parent, two of its own slots. Naming it as two parents would be
-        // a message that states something the walk did not observe.
+        // One parent, two of its own slots.
         let (mut tree, child) = binary_pair();
         let root = tree.arena.root.expect("binary_pair sets a root");
         tree.slots.get_mut(&root).unwrap()[1] = Some(child);
@@ -432,8 +427,7 @@ mod tests {
 
     #[test]
     fn validate_restored_names_the_same_two_parents_when_three_hold_a_child() {
-        // The walk records only the offending child. Naming parents from it
-        // would report whichever two hash order reached first.
+        // Repeats because the parents named must not vary with hash order.
         for _ in 0..64 {
             let (mut tree, child) = binary_pair();
             tree.add_node(test_uuid(3), test_uuid(1), 1, test_uuid(1), 0)
@@ -493,7 +487,6 @@ mod tests {
     fn engine_output_slots_every_live_node_exactly_once() {
         let mut tree = BinaryTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
-        // add_node is (user_id, parent_id, position, sponsor_id, enrolled_at).
         for n in 2..=12u8 {
             let parent = test_uuid(1 + (n - 2) / 2);
             let position = usize::from((n - 2) % 2);

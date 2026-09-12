@@ -18,9 +18,6 @@ pub fn test_uuid_u16(n: u16) -> Uuid {
 }
 
 /// Asserts the production check accepts this arena and slot map.
-///
-/// Delegates rather than restating the walk, so a change in what the check
-/// means cannot leave these callers green.
 pub(crate) fn assert_live_nodes_are_slotted_once<C>(
     arena: &crate::tree::arena::Arena,
     slots: &std::collections::HashMap<crate::tree::node::NodeIndex, C>,

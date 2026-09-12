@@ -67,13 +67,9 @@ impl MatrixTree {
         })
     }
 
-    /// Prove a restored tree's stored values are in range and live, and that
-    /// the slot map, the holding tank and the live nodes account for each
-    /// other.
-    ///
-    /// The root is exempt, so a slot entry naming it is accepted. The slot map
-    /// is not compared against `Node.children` either, so a slot entry and an
-    /// arena edge can still disagree. Both are HEU-732.
+    /// Prove a restored tree's stored values are in range and live, that each
+    /// live non-root node is a child in exactly one slot entry, and that the
+    /// holding tank names no placed or repeated user.
     pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
         // A restore does not run the constructor, so the range it enforces has
         // to be re-established here. A width below 2 is not inert: placement
@@ -992,8 +988,6 @@ mod tests {
     fn engine_output_slots_every_live_node_exactly_once() {
         let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
         tree.add_root(test_uuid(1), 0).unwrap();
-        // Matrix add_node is (user_id, sponsor_id, enrolled_at). It chooses
-        // the slot itself, which is what makes the spill happen.
         for n in 2..=12u8 {
             tree.add_node(test_uuid(n), test_uuid(1), n as i64).unwrap();
         }
@@ -1176,7 +1170,6 @@ mod tests {
         }
         tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
             .unwrap();
-        // place_from_tank is (user_id, parent_id, position), not a timestamp.
         let waiting = tree.holding_tank[0].user_id;
         let (parent, position) = tree
             .slots

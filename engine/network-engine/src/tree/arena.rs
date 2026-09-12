@@ -235,9 +235,6 @@ impl Arena {
     where
         for<'a> &'a C: IntoIterator<Item = &'a Option<NodeIndex>>,
     {
-        // Reads the slot map and node liveness only. Comparing a slot entry
-        // against Node.parent or Node.children is a different check.
-        //
         // The walk records only which child repeated, holding the lowest.
         // Naming the parents from the walk would name whichever two hash
         // order reached first, which varies per run once three parents are
@@ -278,7 +275,12 @@ impl Arena {
                 }
                 // `repeat` is only set from a child found in `slots`, so the
                 // collect above cannot come back empty.
-                (None, _) => unreachable!("a repeated child has at least one parent"),
+                (None, _) => {
+                    unreachable!(
+                        "repeated child {} matched no parent in the slot map",
+                        child.0
+                    )
+                }
             };
         }
 

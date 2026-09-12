@@ -101,7 +101,7 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
             return Response::error(
                 request.id.clone(),
                 "INVALID_PARAMS",
-                format!("{e} (the position counts into the params object)"),
+                format!("{e} (the position counts into the params value)"),
             );
         }
     };

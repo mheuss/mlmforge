@@ -485,7 +485,7 @@ mod tests {
             .clone();
 
         assert!(
-            message.contains('7'),
+            message.contains("within 7 steps"),
             "a reader cannot tell a cycle from a wrong bound unless the bound is printed: {message}"
         );
     }

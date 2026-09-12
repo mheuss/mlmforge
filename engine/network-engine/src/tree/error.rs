@@ -56,7 +56,7 @@ pub enum TreeError {
     SubtreeFull(Uuid),
 
     #[error(
-        "cannot remove user {user_id}: no node in its sponsor chain survives this removal; recruits that outlive it: {surviving_sponsored}"
+        "cannot remove user {user_id}: no node in its sponsor chain survives this removal. Recruits that outlive it: {surviving_sponsored}"
     )]
     SponsorlessWithRecruits {
         user_id: Uuid,

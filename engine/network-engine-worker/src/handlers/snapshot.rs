@@ -80,6 +80,10 @@ pub(crate) fn handle_take_snapshot(state: &WorkerState, request: &Request) -> Re
     }
 }
 
+/// Appended to a snapshot parse failure so the reported position is not read as
+/// an offset into the request line.
+const POSITION_NOTE: &str = "(the position counts into the snapshot payload, not the request line)";
+
 /// Deserializes and replaces a tree or board plan engine from a snapshot.
 ///
 /// Params: structure, tree_type, data.
@@ -94,7 +98,11 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
     let params: Params = match serde_json::from_str(request.params.get()) {
         Ok(p) => p,
         Err(e) => {
-            return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string());
+            return Response::error(
+                request.id.clone(),
+                "INVALID_PARAMS",
+                format!("{e} (the position counts into the params object)"),
+            );
         }
     };
 
@@ -125,10 +133,7 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
                 return Response::error(
                     request.id.clone(),
                     "INVALID_PARAMS",
-                    format!(
-                        "failed to deserialize unilevel snapshot: {} (the position counts into the snapshot payload, not the request line)",
-                        e
-                    ),
+                    format!("failed to deserialize unilevel snapshot: {e} {POSITION_NOTE}"),
                 );
             }
         },
@@ -147,10 +152,7 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
                 return Response::error(
                     request.id.clone(),
                     "INVALID_PARAMS",
-                    format!(
-                        "failed to deserialize binary snapshot: {} (the position counts into the snapshot payload, not the request line)",
-                        e
-                    ),
+                    format!("failed to deserialize binary snapshot: {e} {POSITION_NOTE}"),
                 );
             }
         },
@@ -169,10 +171,7 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
                 return Response::error(
                     request.id.clone(),
                     "INVALID_PARAMS",
-                    format!(
-                        "failed to deserialize matrix snapshot: {} (the position counts into the snapshot payload, not the request line)",
-                        e
-                    ),
+                    format!("failed to deserialize matrix snapshot: {e} {POSITION_NOTE}"),
                 );
             }
         },
@@ -191,10 +190,7 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
                 return Response::error(
                     request.id.clone(),
                     "INVALID_PARAMS",
-                    format!(
-                        "failed to deserialize board plan snapshot: {} (the position counts into the snapshot payload, not the request line)",
-                        e
-                    ),
+                    format!("failed to deserialize board plan snapshot: {e} {POSITION_NOTE}"),
                 );
             }
         },
@@ -213,10 +209,7 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
                 return Response::error(
                     request.id.clone(),
                     "INVALID_PARAMS",
-                    format!(
-                        "failed to deserialize streamline snapshot: {} (the position counts into the snapshot payload, not the request line)",
-                        e
-                    ),
+                    format!("failed to deserialize streamline snapshot: {e} {POSITION_NOTE}"),
                 );
             }
         },

@@ -235,13 +235,21 @@ What that means in practice:
 
 - Two `take_snapshot` calls on the same live structure return identical bytes.
   Same map, untouched, same order.
-- Two structures built by the same sequence of calls return different bytes,
-  in the same process, seconds apart.
-- A structure restored from its own snapshot returns different bytes than the
+- Two structures built by the same sequence of calls are not reproducible
+  against each other, in the same process, seconds apart.
+- A structure restored from its own snapshot is not reproducible against the
   snapshot it came from. Restore builds a new map.
 
-That last one is the case to remember. Round-tripping a snapshot does not
+Not reproducible, rather than guaranteed to differ. A different seed does not
+force a different order, and a map small enough will come out the same by
+chance. One matching pair proves nothing.
+
+The restore case is the one to remember. Round-tripping a snapshot does not
 reproduce it.
+
+This section covers object key order. Array element order is a separate
+question and is not settled here: an array built from a map's iteration order
+has the same problem, and HEU-757 is where that one lives.
 
 Nothing consumes those bytes by comparison today. Anything that wants to start
 -- content-addressing a snapshot, diffing two of them, hashing one for an

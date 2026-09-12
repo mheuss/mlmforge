@@ -1,0 +1,12 @@
+{
+    "description": "restore_snapshot rejects a snapshot payload carrying the same struct field twice. Uses request_raw because a serde_json::Value round-trip collapses duplicate keys, which is the behavior under test. Before HEU-743 the handler routed params through a Value and this restored, keeping the last value. Protocol 8 carries the change. Paired with the undeserializable and inconsistent fixtures: three ways a restore can fail that must not collapse to one code.",
+    "request_raw": "{\"id\":\"rs-duplicate-field\",\"op\":\"restore_snapshot\",\"params\":{\"structure\":\"Restored\",\"tree_type\":\"unilevel\",\"data\":{\"arena\":{\"nodes\":[],\"index\":{},\"free_list\":[],\"root\":null},\"arena\":{\"nodes\":[],\"index\":{},\"free_list\":[],\"root\":null}}}}",
+    "expected_response": {
+        "id": "rs-duplicate-field",
+        "ok": false,
+        "error": {
+            "code": "INVALID_PARAMS",
+            "message_contains": "duplicate field"
+        }
+    }
+}

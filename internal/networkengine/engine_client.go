@@ -31,7 +31,9 @@ import (
 // Moved to 8 by HEU-743. A restore_snapshot request that succeeded under 7 may
 // now fail, which is why the number had to move. Snapshot params stopped going
 // through a serde_json::Value, so a duplicate struct field in the payload is
-// rejected instead of last-wins.
+// rejected instead of last-wins. The set moved both ways: a payload nested past
+// serde_json's recursion limit under a field the tree type does not declare
+// used to fail and now restores.
 //
 // This is the wire contract, not the stored row shape and not the authoring
 // format. Two other numbers nearby are also called a version: `detailVersion`

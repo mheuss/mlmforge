@@ -6833,9 +6833,8 @@ fn restore_snapshot_rejects_a_duplicate_struct_field() {
 /// type ignores, restores.
 ///
 /// Building a `serde_json::Value` for the whole payload used to hit that limit
-/// and fail the request. Capturing the payload as raw bytes skips the value
-/// entirely, and the derived visitor discards an unknown field without
-/// descending into it.
+/// and fail the request. Capturing the payload as raw bytes does not build one,
+/// so the depth a field the type does not declare is nested to stops mattering.
 #[test]
 fn restore_snapshot_accepts_deep_nesting_under_an_ignored_field() {
     let mut worker = common::spawn_worker();

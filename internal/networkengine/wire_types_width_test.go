@@ -66,6 +66,9 @@ func TestWireTypesNarrowMirrors(t *testing.T) {
 		{"StreamlineRemoveMemberResultDTO.RemovedFrom", reflect.TypeFor[StreamlineRemoveMemberResultDTO](), "RemovedFrom", "[]uint32"},
 		{"StreamPositionDTO.StreamID", reflect.TypeFor[StreamPositionDTO](), "StreamID", "uint32"},
 		{"StreamSummaryDTO.ID", reflect.TypeFor[StreamSummaryDTO](), "ID", "uint32"},
+		{"BoardCycleEarningDTO.CycleNumber", reflect.TypeFor[BoardCycleEarningDTO](), "CycleNumber", "uint32"},
+		{"BoardCommissionResultDTO.UpdatedCycleCounts", reflect.TypeFor[BoardCommissionResultDTO](), "UpdatedCycleCounts", "map[string]uint32"},
+		{"CalculateBoardCommissionsRequest.PeriodCycleCounts", reflect.TypeFor[CalculateBoardCommissionsRequest](), "PeriodCycleCounts", "map[string]uint32"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

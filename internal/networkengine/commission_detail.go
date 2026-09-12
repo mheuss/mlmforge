@@ -163,7 +163,7 @@ func ResultFromBoardCycleEarning(e BoardCycleEarningDTO) (CommissionResultInput,
 		V:           detailVersion,
 		Kind:        kindBoardCycle,
 		BoardID:     e.BoardID,
-		CycleNumber: e.CycleNumber,
+		CycleNumber: int(e.CycleNumber),
 		Capped:      e.Capped,
 	})
 }

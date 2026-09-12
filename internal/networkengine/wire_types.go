@@ -276,7 +276,7 @@ type BoardCycleEarningDTO struct {
 	EarnerID     string  `json:"earner_id"`
 	BoardID      string  `json:"board_id"`
 	DollarAmount float64 `json:"dollar_amount"`
-	CycleNumber  int     `json:"cycle_number"`
+	CycleNumber  uint32  `json:"cycle_number"`
 	Capped       bool    `json:"capped"`
 }
 
@@ -284,7 +284,7 @@ type BoardCycleEarningDTO struct {
 // Matches the Rust BoardCommissionResult struct.
 type BoardCommissionResultDTO struct {
 	Earnings           []BoardCycleEarningDTO `json:"earnings"`
-	UpdatedCycleCounts map[string]int         `json:"updated_cycle_counts"`
+	UpdatedCycleCounts map[string]uint32      `json:"updated_cycle_counts"`
 }
 
 // CalculateBoardCommissionsRequest is the input for board cycle commission calculation.
@@ -299,7 +299,7 @@ type CalculateBoardCommissionsRequest struct {
 	// both mean "no counts". The engine has read null fine since HEU-603 — this
 	// tag is about keeping the wire tidy, not about avoiding a rejection.
 	// Mirrors CarryForward above.
-	PeriodCycleCounts map[string]int `json:"period_cycle_counts,omitempty"`
+	PeriodCycleCounts map[string]uint32 `json:"period_cycle_counts,omitempty"`
 }
 
 // --- Streamline wire types ---

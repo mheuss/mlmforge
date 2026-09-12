@@ -2166,7 +2166,7 @@ func TestEngineClient_CalculateBoardCommissions_MockParams(t *testing.T) {
 				ReEntryBoard: nil,
 			},
 		},
-		PeriodCycleCounts: map[string]int{
+		PeriodCycleCounts: map[string]uint32{
 			"00000000-0000-0000-0000-000000000001": 2,
 		},
 	}
@@ -2205,11 +2205,11 @@ func TestEngineClient_CalculateBoardCommissions_MockParams(t *testing.T) {
 	assert.Equal(t, "00000000-0000-0000-0000-000000000001", result.Earnings[0].EarnerID)
 	assert.Equal(t, "board-001", result.Earnings[0].BoardID)
 	assert.InDelta(t, 25.50, result.Earnings[0].DollarAmount, 1e-9)
-	assert.Equal(t, 2, result.Earnings[0].CycleNumber)
+	assert.Equal(t, uint32(2), result.Earnings[0].CycleNumber)
 	assert.False(t, result.Earnings[0].Capped)
 
 	require.Contains(t, result.UpdatedCycleCounts, "00000000-0000-0000-0000-000000000001")
-	assert.Equal(t, 3, result.UpdatedCycleCounts["00000000-0000-0000-0000-000000000001"])
+	assert.Equal(t, uint32(3), result.UpdatedCycleCounts["00000000-0000-0000-0000-000000000001"])
 }
 
 // TestEngineClient_CalculateBoardCommissions_NilCollections pins the wire shape

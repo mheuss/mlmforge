@@ -84,6 +84,9 @@ fn board_plan_error_to_response(
         network_engine::board_plan::BoardPlanError::MemberAlreadyExists(_) => {
             "MEMBER_ALREADY_EXISTS"
         }
+        network_engine::board_plan::BoardPlanError::MemberAwaitingReassignment(_) => {
+            "MEMBER_AWAITING_REASSIGNMENT"
+        }
         network_engine::board_plan::BoardPlanError::SponsorNotFound(_) => "SPONSOR_NOT_FOUND",
         network_engine::board_plan::BoardPlanError::BoardNotFound(_) => "BOARD_NOT_FOUND",
         network_engine::board_plan::BoardPlanError::MemberNotFound(_) => "MEMBER_NOT_FOUND",

@@ -1,0 +1,49 @@
+{
+    "description": "restore_snapshot rejects a board plan snapshot that seats an occupant member_boards does not name, with INCONSISTENT_SNAPSHOT. Cross-language lock for the HEU-750 reverse membership check. Before it, only member_boards was walked, so this payload was accepted, add_member treated the occupant as a new enrollment and seated them a second time, and both positions cycled off one enrollment. The payload spells out the BoardPlanEngine shape by hand, so a new required field on the engine, a board, or the config turns this into a deserialization failure rather than the rejection it tests.",
+    "request": {
+        "id": "rs-board-unindexed",
+        "op": "restore_snapshot",
+        "params": {
+            "structure": "RestoredBoards",
+            "tree_type": "board_plan",
+            "data": {
+                "width": 2,
+                "height": 1,
+                "total_positions": 3,
+                "boards": {
+                    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa": {
+                        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                        "positions": [
+                            "11111111-1111-1111-1111-111111111111",
+                            null,
+                            null
+                        ],
+                        "created_at": 100,
+                        "last_activity_at": 100,
+                        "parent_board_id": null
+                    }
+                },
+                "member_boards": {},
+                "sponsor_map": {},
+                "displaced_members": [],
+                "config": {
+                    "cycle_commission": 500.0,
+                    "re_entry_enabled": true,
+                    "re_entry_position": "bottom",
+                    "max_cycles_per_period": 4,
+                    "max_cascade_depth": 10,
+                    "stall_threshold_periods": 3,
+                    "inactive_compression": false
+                }
+            }
+        }
+    },
+    "expected_response": {
+        "id": "rs-board-unindexed",
+        "ok": false,
+        "error": {
+            "code": "INCONSISTENT_SNAPSHOT",
+            "message_contains": "member_boards does not put them on that board"
+        }
+    }
+}

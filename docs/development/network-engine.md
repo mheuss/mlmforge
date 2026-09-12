@@ -1007,17 +1007,20 @@ a tombstoned slot, and no tombstone has to appear in the free list. A tombstone
 left out is leaked, and `node_count` counts it live. Its reach today is three
 `Debug` impls, which is why it is recorded rather than fixed.
 
-The four arms above the arena check one way only for their own pair. Each holds
-a second structure beside the arena. Each checks that structure's entries are in
-range and live. None checks that the two agree with each other.
+Two of the four arms above the arena still check one way only. Those are matrix
+and binary. Each holds a second structure beside the arena. Each checks that
+structure's entries are in range and live. Neither checks that the two agree
+with each other.
 
 So a restored matrix can hold a child in `Node.children` while every parent slot
-is empty, and a restored board can seat an occupant the membership index does
-not name. Both pass validation today.
+is empty. That passes validation today.
+
+The other two arms are not. Streamline was never one-way. The board plan arm
+was, and HEU-750's first slice closed it. Its boards, its membership index and
+its displaced list are now walked against each other.
 
 **The gap is recorded in the docblock of each arm that has it, and owned by
-HEU-750.** The streamline arm is not one of them. Its pair is checked in both
-directions, which is what HEU-706 did.
+HEU-750.**
 
 Read a `validate_restored` docblock as the boundary of what that arm proves. An
 arm that proves less than its name suggests is the failure this file already
@@ -1073,3 +1076,87 @@ predated. The rebase resolved it with no commit.
 
 When a finding cites a file, check it in the tree the finding came from, and say
 which tree in the answer.
+
+## The Board Plan Validator's Walk Order
+
+`BoardPlanEngine::validate_restored` runs six walks and each depends on the ones
+before it having returned. The comment in the function names the two that are
+load-bearing. The full list is here, because it is a paragraph and a paragraph
+does not belong above a function.
+
+The six steps, in source order, and what each gives the ones after it.
+
+| Step | Walk | What it gives the steps after it |
+|---|---|---|
+| 1 | Dimensions and the cached position count | A board size recomputed from width and height rather than trusted |
+| 2 | Map key against `Board.id` | A key later steps can report as an identity an operator can look up |
+| 3 | One pass over `boards`, doing sizing and duplicate detection together | A mis-sized board is skipped, so its occupants never reach the seat maps. Then exactly one board per occupant in those maps |
+| 4 | Membership, forward | Every case where the index names a board is already reported |
+| 5 | Membership, reverse | Left with the one case the forward pass does not own: a seat the index names nowhere |
+| 6 | `displaced_members` | Runs last, so a user the index puts on a board that does not exist is reported by step 4 instead |
+
+Step 1 is a pair of `if`s. Steps 2 through 6 are one `for` each. Sizing and
+duplicate detection share step 3 because both read the same positions, and the
+two membership passes are separate loops over different maps.
+
+Two of these change behavior rather than message wording if moved. Step 2 before
+anything that treats a key as an identity, and step 3's duplicate half before
+step 5.
+
+Reordering the rest changes which fault a payload reports. All six faults reach
+the wire as `INCONSISTENT_SNAPSHOT`, so no fixture pins a different code. What a
+fixture pins is the message, by substring.
+
+## A Validator And Its Producer Are One Change
+
+`MemberOnTwoBoards` rejects a restored engine that seats one user on two boards.
+It was correct and it could not ship alone.
+
+`add_member` produced that state legitimately. A displaced member is absent from
+`member_boards` by design, so the duplicate check missed them, the displaced pool
+seated them, and the enrolment seated them again. The call returned `Ok`.
+
+Ship the guard alone and a live engine starts writing snapshots it can never
+load back. A silent seating bug becomes an unrecoverable board plan.
+
+So when a guard rejects a state, find out whether anything in the crate produces
+it. If something does, that producer is the other half of the same change, not a
+follow-up ticket. Drive the public API hard enough to find out, because the state
+that matters is the one the engine reaches on its own.
+
+## Three Classes Of Restore Defect
+
+A restored structure can be wrong in three ways, and they need different checks.
+
+| Class | What is wrong | Owned by |
+|---|---|---|
+| Structures disagree | Two structures in one type describe different states | HEU-750 |
+| The graph is wrong | An edge, a root, or a cycle | HEU-732, HEU-744 |
+| A shape is violated | One structure breaks a rule the engine's own mutators keep | HEU-760 |
+
+The third is the one that hides. Nothing disagrees with anything, so a
+structure-to-structure check passes and the payload looks consistent.
+
+HEU-706 closed two instances before anyone named the class. `total_positions` is
+recomputed from width and height rather than trusted, because a cached count is a
+value the engine keeps correct and a caller does not. `next_stream_id` must be
+past the highest live key, for the same reason.
+
+The question to ask of any field on a restorable type: does a mutator maintain a
+property of this that the type system does not? If so, a restore does not run
+that mutator.
+
+## A Test Helper That Does Not Call The Thing Under Test
+
+`assert_board_invariants` checked three properties by hand: map key equals board
+id, no occupant on two boards, every occupant indexed. Three of the six guards in
+`validate_restored` check the same three things.
+
+It never called `validate_restored`.
+
+So the constraint that the validator must accept engine output was asserted by
+nothing, and three of the six guards had never run against a real engine at all.
+The helper looked like coverage and reported on something else.
+
+If a helper exists to prove a function behaves on real data, it has to call that
+function. Restating its checks by hand proves the restatement.

@@ -32,10 +32,6 @@ impl Arena {
     }
 
     /// Prove every stored `NodeIndex` is in range and points at a live slot.
-    ///
-    /// Bounds and liveness only; a cycle in the edges still passes. `node()`
-    /// and `node_mut()` index `self.nodes` directly, so an out-of-range index
-    /// panics rather than erroring.
     pub(crate) fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
         let node_count = self.nodes.len();
 
@@ -174,11 +170,6 @@ impl Arena {
     }
 
     /// Prove every live node has a child-slot entry.
-    ///
-    /// Generic over the map's value type: only the key is read here.
-    ///
-    /// Ascending slot order, so a snapshot with several missing entries names
-    /// the same one on every run.
     pub(crate) fn check_every_live_node_has_a_slot<V>(
         &self,
         slots: &HashMap<NodeIndex, V>,

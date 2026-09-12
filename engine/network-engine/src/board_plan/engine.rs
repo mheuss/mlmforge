@@ -88,7 +88,7 @@ impl BoardPlanEngine {
         })
     }
 
-    /// Prove a restored engine's membership index agrees with its boards.
+    /// Prove a restored engine's stored state is internally consistent.
     ///
     /// `sponsor_map` is deliberately not checked. It is permanent enrollment
     /// data that keeps removed members so re-entry can still route them, so it

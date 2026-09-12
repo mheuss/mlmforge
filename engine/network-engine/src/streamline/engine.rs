@@ -74,17 +74,11 @@ pub struct StreamlineEngine {
 
 impl StreamlineEngine {
     /// Prove a restored engine's indexes agree with the streams they index.
-    ///
-    /// Each walk keeps the lowest-key fault rather than returning on the first
-    /// one found, because every map here is a `HashMap` with a randomized
-    /// hasher and an operator has to be able to reproduce a rejection.
     pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
         let mut nested: Option<(u32, SnapshotConsistencyError)> = None;
         for (key, stream) in &self.streams {
-            // The key and the stream's own id are compared because callers
-            // read one and look up by the other. A mismatch makes every such
-            // lookup miss silently, and a miss here is swallowed rather than
-            // reported.
+            // A mismatch between the map key and the stream's own id makes a
+            // lookup by the other value silently miss.
             let found = if *key != stream.id {
                 Some(SnapshotConsistencyError::StreamIdMismatch {
                     key: *key,
@@ -190,9 +184,8 @@ impl StreamlineEngine {
         let mut owner_fault: Option<(Uuid, SnapshotConsistencyError)> = None;
         for (user_id, stream_ids) in &self.stream_owners {
             let found = stream_ids.iter().find_map(|stream_id| {
-                // OwnerStreamAbsent, not StreamAbsent. StreamAbsent's message
-                // says user_streams named the stream, and here stream_owners
-                // did. A message must not assert what it did not observe.
+                // A distinct variant, so the message names the map that
+                // actually observed the absence.
                 match self.streams.get(stream_id) {
                     None => Some(SnapshotConsistencyError::OwnerStreamAbsent {
                         user_id: *user_id,
@@ -263,12 +256,6 @@ impl StreamlineEngine {
     }
 
     /// Returns true if the user has a position in any stream.
-    ///
-    /// Reads the membership index alone, without walking the stream trees. A
-    /// restored engine has had that index checked against the trees in both
-    /// directions before it is stored: an entry naming no stream, a stream that
-    /// is absent, or a stream whose tree does not hold the user are each
-    /// rejected, as is a tree member the index has forgotten.
     pub fn contains_member(&self, user_id: Uuid) -> bool {
         self.user_streams.contains_key(&user_id)
     }
@@ -868,8 +855,8 @@ mod tests {
 
     #[test]
     fn validate_restored_rejects_a_stream_filed_under_the_wrong_key() {
-        // Callers read stream.id and then look it up in the map. A mismatch
-        // makes every such lookup miss, and the misses are swallowed.
+        // A mismatch between the map key and the stream's own id makes any
+        // lookup by the other value silently miss.
         let mut engine = seeded_streamline();
         let stream = engine.streams.remove(&1).unwrap();
         engine.streams.insert(5, stream);

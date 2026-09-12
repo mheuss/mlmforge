@@ -6540,7 +6540,7 @@ fn matrix_snapshot_round_trip_survives_a_holding_tank_entry() {
     );
 
     // A spilled user, not the root: the root's slot is trivially fixed, and
-    // the slots map is what the matrix checks actually read.
+    // the slots map is what the assertions below read.
     let spilled = "bbbbbbbb-0000-0000-0000-000000000005";
     let pos_before = query(
         &mut worker,
@@ -6665,9 +6665,8 @@ fn board_plan_snapshot_round_trip_survives_a_cycled_board() {
     );
     restore_expecting_success(&mut worker, "BPRT2", "board_plan", data);
 
-    // board_list sorts on created_at alone, and a cycle creates two boards in
-    // the same instant, so their relative order is whatever the map yielded.
-    // Compare the set, not the order.
+    // A cycle creates two boards in the same instant, so their relative
+    // order is not guaranteed. Compare the set, not the order.
     let by_id = |v: serde_json::Value| {
         let mut boards = v.as_array().expect("board_list returns an array").clone();
         boards.sort_by_key(|b| b["id"].as_str().unwrap_or_default().to_string());

@@ -67,8 +67,7 @@ impl MatrixTree {
         })
     }
 
-    /// Prove a restored tree's stored indexes are in range and live, that every
-    /// slot vector is the tree's width, and that no holding-tank user is placed.
+    /// Prove a restored tree's stored state is internally consistent.
     pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
         // A restore does not run the constructor, so the range it enforces has
         // to be re-established here. A width below 2 is not inert: placement

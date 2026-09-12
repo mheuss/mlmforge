@@ -1,7 +1,7 @@
 //! Consistency checks for a deserialized engine.
 //!
-//! `restore_snapshot` accepts an engine built by a caller rather than by this
-//! crate, so nothing has enforced the invariants the constructors maintain.
+//! A restored engine is built by a caller, not by this crate's own
+//! constructors, so nothing here has enforced the invariants they maintain.
 
 use thiserror::Error;
 use uuid::Uuid;

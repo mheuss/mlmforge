@@ -511,11 +511,7 @@ pub(crate) fn handle_get_parent(state: &WorkerState, request: &Request) -> Respo
     };
 
     match nav.get_parent(user_id) {
-        Ok(Some(node)) => Response::success(
-            request.id.clone(),
-            serde_json::to_value(NodeResponse::from_node(node))
-                .expect("serialization of NodeResponse is infallible"),
-        ),
+        Ok(Some(node)) => Response::success(request.id.clone(), NodeResponse::from_node(node)),
         Ok(None) => Response::success(request.id.clone(), serde_json::Value::Null),
         Err(e) => tree_error_to_response(&request.id, e),
     }
@@ -551,11 +547,7 @@ pub(crate) fn handle_get_children(state: &WorkerState, request: &Request) -> Res
         Ok(nodes) => {
             let items: Vec<NodeResponse> =
                 nodes.iter().map(|n| NodeResponse::from_node(n)).collect();
-            Response::success(
-                request.id.clone(),
-                serde_json::to_value(items)
-                    .expect("serialization of Vec<NodeResponse> is infallible"),
-            )
+            Response::success(request.id.clone(), items)
         }
         Err(e) => tree_error_to_response(&request.id, e),
     }
@@ -595,11 +587,7 @@ pub(crate) fn handle_get_upline(state: &WorkerState, request: &Request) -> Respo
         Ok(nodes) => {
             let items: Vec<NodeResponse> =
                 nodes.iter().map(|n| NodeResponse::from_node(n)).collect();
-            Response::success(
-                request.id.clone(),
-                serde_json::to_value(items)
-                    .expect("serialization of Vec<NodeResponse> is infallible"),
-            )
+            Response::success(request.id.clone(), items)
         }
         Err(e) => tree_error_to_response(&request.id, e),
     }
@@ -639,11 +627,7 @@ pub(crate) fn handle_get_downline(state: &WorkerState, request: &Request) -> Res
         Ok(nodes) => {
             let items: Vec<NodeResponse> =
                 nodes.iter().map(|n| NodeResponse::from_node(n)).collect();
-            Response::success(
-                request.id.clone(),
-                serde_json::to_value(items)
-                    .expect("serialization of Vec<NodeResponse> is infallible"),
-            )
+            Response::success(request.id.clone(), items)
         }
         Err(e) => tree_error_to_response(&request.id, e),
     }
@@ -774,11 +758,7 @@ pub(crate) fn handle_get_sponsor(state: &WorkerState, request: &Request) -> Resp
     };
 
     match nav.get_sponsor(user_id) {
-        Ok(Some(node)) => Response::success(
-            request.id.clone(),
-            serde_json::to_value(NodeResponse::from_node(node))
-                .expect("serialization of NodeResponse is infallible"),
-        ),
+        Ok(Some(node)) => Response::success(request.id.clone(), NodeResponse::from_node(node)),
         Ok(None) => Response::success(request.id.clone(), serde_json::Value::Null),
         Err(e) => tree_error_to_response(&request.id, e),
     }
@@ -818,11 +798,7 @@ pub(crate) fn handle_get_sponsor_upline(state: &WorkerState, request: &Request) 
         Ok(nodes) => {
             let items: Vec<NodeResponse> =
                 nodes.iter().map(|n| NodeResponse::from_node(n)).collect();
-            Response::success(
-                request.id.clone(),
-                serde_json::to_value(items)
-                    .expect("serialization of Vec<NodeResponse> is infallible"),
-            )
+            Response::success(request.id.clone(), items)
         }
         Err(e) => tree_error_to_response(&request.id, e),
     }
@@ -858,11 +834,7 @@ pub(crate) fn handle_get_sponsored(state: &WorkerState, request: &Request) -> Re
         Ok(nodes) => {
             let items: Vec<NodeResponse> =
                 nodes.iter().map(|n| NodeResponse::from_node(n)).collect();
-            Response::success(
-                request.id.clone(),
-                serde_json::to_value(items)
-                    .expect("serialization of Vec<NodeResponse> is infallible"),
-            )
+            Response::success(request.id.clone(), items)
         }
         Err(e) => tree_error_to_response(&request.id, e),
     }

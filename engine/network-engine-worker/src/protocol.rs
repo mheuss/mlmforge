@@ -47,17 +47,23 @@ fn default_raw_params() -> Box<serde_json::value::RawValue> {
 pub struct Response {
     pub id: String,
     pub ok: bool,
-    /// Boxed to keep `Response` under clippy's `large-error-threshold`.
-    /// `Response` is the `Err` type of the parse and lookup helpers in
-    /// `handlers/`, and this is the field that carried the weight: held inline,
-    /// a `serde_json::Value` made `Response`'s size depend on a feature flag.
-    /// See `response_stays_small_enough_for_clippy`.
+    /// Already-serialized JSON, so a typed result reaches the wire without a
+    /// `serde_json::Value` tree in between. `Value` is `BTreeMap`-backed, and
+    /// on a large response that tree costs several times what the bytes do.
     ///
-    /// `serde` serializes `Box<T>` as `T`, so the NDJSON shape is unchanged.
+    /// Measured on the HEU-556 deep-sparse fixture, 170.2 MiB of output: peak
+    /// RSS 1833.0 MiB through `Value`, 473.7 MiB here. 3.87x. The remaining
+    /// 154 MiB is the response `String` the caller builds around this field,
+    /// which HEU-754 is about; removing both reaches 319.6 MiB.
+    ///
+    /// Boxed to keep `Response` under clippy's `large-error-threshold`. See
+    /// `response_stays_small_enough_for_clippy`.
+    ///
+    /// This is the response-side twin of `Request.params`, for the same reason.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<Box<serde_json::Value>>,
+    pub result: Option<Box<serde_json::value::RawValue>>,
     /// Also boxed, for headroom. Boxing `result` alone already clears the
-    /// threshold at 88 bytes. Boxing this one too brings `Response` to 48, and
+    /// threshold at 96 bytes. Boxing this one too brings `Response` to 56, and
     /// error responses are the cold path.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<Box<ErrorPayload>>,
@@ -71,11 +77,20 @@ pub struct ErrorPayload {
 }
 
 impl Response {
-    pub fn success(id: String, result: serde_json::Value) -> Self {
+    /// Serializes `result` once, here, rather than building a `Value` first.
+    ///
+    /// Generic over the result rather than making `Response` itself generic:
+    /// a generic envelope would make `size_of::<Response>()` depend on the
+    /// largest result type, which is what `response_stays_small_enough_for_clippy`
+    /// exists to catch.
+    pub fn success<T: Serialize>(id: String, result: T) -> Self {
         Self {
             id,
             ok: true,
-            result: Some(Box::new(result)),
+            result: Some(
+                serde_json::value::to_raw_value(&result)
+                    .expect("response result serialization is infallible"),
+            ),
             error: None,
         }
     }
@@ -102,8 +117,11 @@ mod tests {
     /// overridden here. `Response` is the error type of the parse and lookup
     /// helpers in `handlers/`.
     ///
-    /// It measures 48 bytes, in every build. Before `result` was boxed,
-    /// `Response` held a `serde_json::Value` inline and so changed size with
+    /// It measures 56 bytes, in every build. `Box<RawValue>` is a fat pointer,
+    /// 8 wider than the `Box<Value>` that used to sit there.
+    ///
+    /// Before `result` was boxed, `Response` held a `serde_json::Value` inline
+    /// and so changed size with
     /// `serde_json`'s `preserve_order` feature, which `network-engine` declared
     /// in `[dev-dependencies]` at the time. It came out at 112 bytes or 152
     /// depending on whether that crate's dev targets were in the build graph.
@@ -213,6 +231,64 @@ mod tests {
         assert_eq!(
             json,
             r#"{"id":"req-1","ok":true,"result":{"alpha":2,"zebra":1}}"#
+        );
+    }
+
+    /// A typed result emits its fields in declaration order, not sorted.
+    ///
+    /// Authored out of alphabetical order, the mirror of
+    /// `value_payload_emits_sorted_keys` above. That one holds a `Value` and
+    /// sorts; this one holds a struct and does not. Both orders are correct,
+    /// and ADR-019 puts key order outside the Go contract.
+    ///
+    /// This is the wire-visible half of dropping the `Value` intermediate, so
+    /// it is pinned rather than left to be noticed.
+    #[test]
+    fn typed_payload_emits_declaration_order() {
+        #[derive(Serialize)]
+        struct Payload {
+            zebra: u8,
+            alpha: u8,
+        }
+
+        let resp = Response::success("req-1".into(), Payload { zebra: 1, alpha: 2 });
+        let json = serde_json::to_string(&resp).unwrap();
+        assert_eq!(
+            json,
+            r#"{"id":"req-1","ok":true,"result":{"zebra":1,"alpha":2}}"#
+        );
+    }
+
+    /// `#[serde(flatten)]` survives pre-serialization into a `RawValue`.
+    ///
+    /// The hazard runs the other way -- a `RawValue` *inside* a flattened
+    /// struct does not serialize -- but the two are easy to confuse, and a
+    /// flattened result type reaches `success` here.
+    #[test]
+    fn flattened_payload_serializes_through_the_envelope() {
+        #[derive(Serialize)]
+        struct Inner {
+            total: u8,
+        }
+
+        #[derive(Serialize)]
+        struct Outer {
+            #[serde(flatten)]
+            inner: Inner,
+            extra: Vec<u8>,
+        }
+
+        let resp = Response::success(
+            "req-1".into(),
+            Outer {
+                inner: Inner { total: 7 },
+                extra: vec![1, 2],
+            },
+        );
+        let json = serde_json::to_string(&resp).unwrap();
+        assert_eq!(
+            json,
+            r#"{"id":"req-1","ok":true,"result":{"total":7,"extra":[1,2]}}"#
         );
     }
 

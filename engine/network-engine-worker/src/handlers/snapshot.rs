@@ -8,9 +8,24 @@ use super::common::parse_params;
 use crate::protocol::{Request, Response};
 use crate::state::{TreeInstance, WorkerState};
 
+/// A snapshot payload: the tree's own JSON under a tag naming its type.
+///
+/// `data` is already serialized, so the tree does not become a
+/// `serde_json::Value` on the way out. That also rules out `json!`, which can
+/// only nest a `Value`.
+#[derive(serde::Serialize)]
+struct Snapshot<'a> {
+    tree_type: &'a str,
+    data: Box<serde_json::value::RawValue>,
+}
+
 /// Serializes a tree or board plan engine for snapshot persistence.
 ///
 /// Params: structure.
+///
+/// Serialization failure returns `SERIALIZATION_ERROR` rather than panicking.
+/// The other result sites `expect` instead. Do not make this one consistent
+/// with them without deciding that a snapshot may take the process down.
 pub(crate) fn handle_take_snapshot(state: &WorkerState, request: &Request) -> Response {
     let params = match parse_params(request) {
         Ok(p) => p,
@@ -39,11 +54,11 @@ pub(crate) fn handle_take_snapshot(state: &WorkerState, request: &Request) -> Re
     };
 
     let snapshot = match tree {
-        TreeInstance::Unilevel(t) => serde_json::to_value(t),
-        TreeInstance::Binary(t) => serde_json::to_value(t),
-        TreeInstance::Matrix(t) => serde_json::to_value(t),
-        TreeInstance::BoardPlan(e) => serde_json::to_value(e),
-        TreeInstance::Streamline(e) => serde_json::to_value(e),
+        TreeInstance::Unilevel(t) => serde_json::value::to_raw_value(t),
+        TreeInstance::Binary(t) => serde_json::value::to_raw_value(t),
+        TreeInstance::Matrix(t) => serde_json::value::to_raw_value(t),
+        TreeInstance::BoardPlan(e) => serde_json::value::to_raw_value(e),
+        TreeInstance::Streamline(e) => serde_json::value::to_raw_value(e),
     };
 
     match snapshot {
@@ -55,13 +70,7 @@ pub(crate) fn handle_take_snapshot(state: &WorkerState, request: &Request) -> Re
                 TreeInstance::BoardPlan(_) => "board_plan",
                 TreeInstance::Streamline(_) => "streamline",
             };
-            Response::success(
-                request.id.clone(),
-                serde_json::json!({
-                    "tree_type": tree_type,
-                    "data": data,
-                }),
-            )
+            Response::success(request.id.clone(), Snapshot { tree_type, data })
         }
         Err(e) => Response::error(
             request.id.clone(),

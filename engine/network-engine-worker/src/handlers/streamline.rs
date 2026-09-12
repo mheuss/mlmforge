@@ -181,10 +181,7 @@ pub(crate) fn handle_streamline_add_member(state: &mut WorkerState, request: &Re
     };
 
     match engine.add_member(user_id, sponsor_id, timestamp, stream_id_override) {
-        Ok(result) => Response::success(
-            request.id.clone(),
-            serde_json::to_value(&result).expect("serialization infallible"),
-        ),
+        Ok(result) => Response::success(request.id.clone(), &result),
         Err(e) => streamline_error_to_response(&request.id, e),
     }
 }
@@ -222,10 +219,7 @@ pub(crate) fn handle_streamline_remove_member(
     };
 
     match engine.remove_member(user_id, timestamp) {
-        Ok(result) => Response::success(
-            request.id.clone(),
-            serde_json::to_value(&result).expect("serialization infallible"),
-        ),
+        Ok(result) => Response::success(request.id.clone(), &result),
         Err(e) => streamline_error_to_response(&request.id, e),
     }
 }
@@ -270,10 +264,7 @@ pub(crate) fn handle_streamline_expand_streams(
     };
 
     match engine.expand_streams(user_id, total_allowed, timestamp) {
-        Ok(result) => Response::success(
-            request.id.clone(),
-            serde_json::to_value(&result).expect("serialization infallible"),
-        ),
+        Ok(result) => Response::success(request.id.clone(), &result),
         Err(e) => streamline_error_to_response(&request.id, e),
     }
 }
@@ -318,10 +309,7 @@ pub(crate) fn handle_streamline_update_allowance(
     };
 
     match engine.update_stream_allowance(user_id, total_allowed, timestamp) {
-        Ok(result) => Response::success(
-            request.id.clone(),
-            serde_json::to_value(&result).expect("serialization infallible"),
-        ),
+        Ok(result) => Response::success(request.id.clone(), &result),
         Err(e) => streamline_error_to_response(&request.id, e),
     }
 }
@@ -342,10 +330,7 @@ pub(crate) fn handle_streamline_list_streams(state: &WorkerState, request: &Requ
     };
 
     let summaries = engine.list_streams();
-    Response::success(
-        request.id.clone(),
-        serde_json::to_value(&summaries).expect("serialization infallible"),
-    )
+    Response::success(request.id.clone(), &summaries)
 }
 
 pub(crate) fn handle_streamline_get_member(state: &WorkerState, request: &Request) -> Response {
@@ -368,10 +353,7 @@ pub(crate) fn handle_streamline_get_member(state: &WorkerState, request: &Reques
     };
 
     match engine.get_member_info(user_id) {
-        Ok(info) => Response::success(
-            request.id.clone(),
-            serde_json::to_value(&info).expect("serialization infallible"),
-        ),
+        Ok(info) => Response::success(request.id.clone(), &info),
         Err(e) => streamline_error_to_response(&request.id, e),
     }
 }
@@ -556,10 +538,7 @@ pub(crate) fn handle_calculate_streamline(state: &WorkerState, request: &Request
                 result,
                 frozen_stream_skips,
             };
-            Response::success(
-                request.id.clone(),
-                serde_json::to_value(&body).expect("serialization infallible"),
-            )
+            Response::success(request.id.clone(), &body)
         }
         Err(e) => Response::error(
             request.id.clone(),

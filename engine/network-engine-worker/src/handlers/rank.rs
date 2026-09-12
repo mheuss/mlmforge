@@ -56,10 +56,7 @@ pub(crate) fn handle_evaluate_ranks(state: &WorkerState, request: &Request) -> R
     }
 
     match evaluate_ranks(plan, &navigators, &inputs) {
-        Ok(result) => Response::success(
-            request.id.clone(),
-            serde_json::to_value(&result).expect("EvaluationResult serialization is infallible"),
-        ),
+        Ok(result) => Response::success(request.id.clone(), &result),
         Err(e) => Response::error(request.id.clone(), "EVALUATION_ERROR", e.to_string()),
     }
 }

@@ -183,11 +183,7 @@ pub(crate) fn handle_calculate_unilevel(state: &WorkerState, request: &Request) 
         &params.volume,
         identity,
     ) {
-        Ok(result) => Response::success(
-            request.id.clone(),
-            serde_json::to_value(&result)
-                .expect("serialization of CommissionCalculationResult is infallible"),
-        ),
+        Ok(result) => Response::success(request.id.clone(), &result),
         Err(e) => Response::error(request.id.clone(), "CALCULATION_ERROR", e.to_string()),
     }
 }
@@ -230,11 +226,7 @@ pub(crate) fn handle_calculate_generation(state: &WorkerState, request: &Request
         &params.volume,
         identity,
     ) {
-        Ok(result) => Response::success(
-            request.id.clone(),
-            serde_json::to_value(&result)
-                .expect("serialization of CommissionCalculationResult is infallible"),
-        ),
+        Ok(result) => Response::success(request.id.clone(), &result),
         Err(e) => Response::error(request.id.clone(), "CALCULATION_ERROR", e.to_string()),
     }
 }
@@ -283,11 +275,7 @@ pub(crate) fn handle_calculate_binary_pairing(state: &WorkerState, request: &Req
                     .map(|(k, v)| (k.to_string(), v))
                     .collect(),
             };
-            Response::success(
-                request.id.clone(),
-                serde_json::to_value(&response)
-                    .expect("serialization of BinaryCalculationResponse is infallible"),
-            )
+            Response::success(request.id.clone(), &response)
         }
         Err(e) => Response::error(request.id.clone(), "CALCULATION_ERROR", e.to_string()),
     }
@@ -331,11 +319,7 @@ pub(crate) fn handle_calculate_matrix(state: &WorkerState, request: &Request) ->
         &params.volume,
         identity,
     ) {
-        Ok(result) => Response::success(
-            request.id.clone(),
-            serde_json::to_value(&result)
-                .expect("serialization of CommissionCalculationResult is infallible"),
-        ),
+        Ok(result) => Response::success(request.id.clone(), &result),
         Err(e) => Response::error(request.id.clone(), "CALCULATION_ERROR", e.to_string()),
     }
 }
@@ -379,11 +363,7 @@ pub(crate) fn handle_calculate_stairstep(state: &WorkerState, request: &Request)
         &params.volume,
         identity,
     ) {
-        Ok(result) => Response::success(
-            request.id.clone(),
-            serde_json::to_value(&result)
-                .expect("serialization of CommissionCalculationResult is infallible"),
-        ),
+        Ok(result) => Response::success(request.id.clone(), &result),
         Err(e) => Response::error(request.id.clone(), "CALCULATION_ERROR", e.to_string()),
     }
 }

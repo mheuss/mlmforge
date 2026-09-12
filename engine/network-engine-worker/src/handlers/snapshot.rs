@@ -8,9 +8,22 @@ use super::common::parse_params;
 use crate::protocol::{Request, Response};
 use crate::state::{TreeInstance, WorkerState};
 
+/// A snapshot payload: the tree's own JSON under a tag naming its type.
+///
+/// `data` is already serialized, so the tree does not become a
+/// `serde_json::Value` on the way out. That also rules out `json!`, which can
+/// only nest a `Value`.
+#[derive(serde::Serialize)]
+struct Snapshot<'a> {
+    tree_type: &'a str,
+    data: Box<serde_json::value::RawValue>,
+}
+
 /// Serializes a tree or board plan engine for snapshot persistence.
 ///
 /// Params: structure.
+///
+/// Do not replace the `SERIALIZATION_ERROR` arm with an `expect`.
 pub(crate) fn handle_take_snapshot(state: &WorkerState, request: &Request) -> Response {
     let params = match parse_params(request) {
         Ok(p) => p,
@@ -39,11 +52,11 @@ pub(crate) fn handle_take_snapshot(state: &WorkerState, request: &Request) -> Re
     };
 
     let snapshot = match tree {
-        TreeInstance::Unilevel(t) => serde_json::to_value(t),
-        TreeInstance::Binary(t) => serde_json::to_value(t),
-        TreeInstance::Matrix(t) => serde_json::to_value(t),
-        TreeInstance::BoardPlan(e) => serde_json::to_value(e),
-        TreeInstance::Streamline(e) => serde_json::to_value(e),
+        TreeInstance::Unilevel(t) => serde_json::value::to_raw_value(t),
+        TreeInstance::Binary(t) => serde_json::value::to_raw_value(t),
+        TreeInstance::Matrix(t) => serde_json::value::to_raw_value(t),
+        TreeInstance::BoardPlan(e) => serde_json::value::to_raw_value(e),
+        TreeInstance::Streamline(e) => serde_json::value::to_raw_value(e),
     };
 
     match snapshot {
@@ -55,13 +68,7 @@ pub(crate) fn handle_take_snapshot(state: &WorkerState, request: &Request) -> Re
                 TreeInstance::BoardPlan(_) => "board_plan",
                 TreeInstance::Streamline(_) => "streamline",
             };
-            Response::success(
-                request.id.clone(),
-                serde_json::json!({
-                    "tree_type": tree_type,
-                    "data": data,
-                }),
-            )
+            Response::success(request.id.clone(), Snapshot { tree_type, data })
         }
         Err(e) => Response::error(
             request.id.clone(),
@@ -71,6 +78,10 @@ pub(crate) fn handle_take_snapshot(state: &WorkerState, request: &Request) -> Re
     }
 }
 
+/// Appended to a snapshot parse failure so the reported position is not read as
+/// an offset into the request line.
+const POSITION_NOTE: &str = "(the position counts into the snapshot payload, not the request line)";
+
 /// Deserializes and replaces a tree or board plan engine from a snapshot.
 ///
 /// Params: structure, tree_type, data.
@@ -79,13 +90,17 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
     struct Params {
         structure: String,
         tree_type: String,
-        data: serde_json::Value,
+        data: Box<serde_json::value::RawValue>,
     }
 
     let params: Params = match serde_json::from_str(request.params.get()) {
         Ok(p) => p,
         Err(e) => {
-            return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string());
+            return Response::error(
+                request.id.clone(),
+                "INVALID_PARAMS",
+                format!("{e} (the position counts into the params value)"),
+            );
         }
     };
 
@@ -101,7 +116,7 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
     }
 
     let instance = match params.tree_type.as_str() {
-        "unilevel" => match serde_json::from_value::<UnilevelTree>(params.data) {
+        "unilevel" => match serde_json::from_str::<UnilevelTree>(params.data.get()) {
             Ok(t) => match t.validate_restored() {
                 Ok(()) => TreeInstance::Unilevel(t),
                 Err(err) => {
@@ -116,11 +131,11 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
                 return Response::error(
                     request.id.clone(),
                     "INVALID_PARAMS",
-                    format!("failed to deserialize unilevel snapshot: {}", e),
+                    format!("failed to deserialize unilevel snapshot: {e} {POSITION_NOTE}"),
                 );
             }
         },
-        "binary" => match serde_json::from_value::<BinaryTree>(params.data) {
+        "binary" => match serde_json::from_str::<BinaryTree>(params.data.get()) {
             Ok(t) => match t.validate_restored() {
                 Ok(()) => TreeInstance::Binary(t),
                 Err(err) => {
@@ -135,11 +150,11 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
                 return Response::error(
                     request.id.clone(),
                     "INVALID_PARAMS",
-                    format!("failed to deserialize binary snapshot: {}", e),
+                    format!("failed to deserialize binary snapshot: {e} {POSITION_NOTE}"),
                 );
             }
         },
-        "matrix" => match serde_json::from_value::<MatrixTree>(params.data) {
+        "matrix" => match serde_json::from_str::<MatrixTree>(params.data.get()) {
             Ok(t) => match t.validate_restored() {
                 Ok(()) => TreeInstance::Matrix(t),
                 Err(err) => {
@@ -154,11 +169,11 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
                 return Response::error(
                     request.id.clone(),
                     "INVALID_PARAMS",
-                    format!("failed to deserialize matrix snapshot: {}", e),
+                    format!("failed to deserialize matrix snapshot: {e} {POSITION_NOTE}"),
                 );
             }
         },
-        "board_plan" => match serde_json::from_value::<BoardPlanEngine>(params.data) {
+        "board_plan" => match serde_json::from_str::<BoardPlanEngine>(params.data.get()) {
             Ok(e) => match e.validate_restored() {
                 Ok(()) => TreeInstance::BoardPlan(e),
                 Err(err) => {
@@ -173,11 +188,11 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
                 return Response::error(
                     request.id.clone(),
                     "INVALID_PARAMS",
-                    format!("failed to deserialize board plan snapshot: {}", e),
+                    format!("failed to deserialize board plan snapshot: {e} {POSITION_NOTE}"),
                 );
             }
         },
-        "streamline" => match serde_json::from_value::<StreamlineEngine>(params.data) {
+        "streamline" => match serde_json::from_str::<StreamlineEngine>(params.data.get()) {
             Ok(e) => match e.validate_restored() {
                 Ok(()) => TreeInstance::Streamline(e),
                 Err(err) => {
@@ -192,7 +207,7 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
                 return Response::error(
                     request.id.clone(),
                     "INVALID_PARAMS",
-                    format!("failed to deserialize streamline snapshot: {}", e),
+                    format!("failed to deserialize streamline snapshot: {e} {POSITION_NOTE}"),
                 );
             }
         },

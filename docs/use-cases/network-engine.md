@@ -812,9 +812,50 @@ solves the same problem with a manifest rather than a scan. That is UC-NET-011.
 
 **Usage:**
 ```rust
-let engine: StreamlineEngine = serde_json::from_value(params.data)?;
+let engine: StreamlineEngine = serde_json::from_str(params.data.get())?;
 engine.validate_restored()?;
 state.trees.insert(name, TreeInstance::Streamline(engine));
 ```
 
+`params.data` is a `Box<RawValue>`, not a `Value`. Do not reach for
+`from_value` here. Building the `Value` costs a full tree for a large snapshot. It also collapses
+duplicate keys, which protocol 8 rejects. HEU-743 changed this call.
+
 **Notes:** Read the docblock on the arm you are calling. It states what that arm proves, and the arms differ. Two failures shaped this. A validator that rejects what the crate itself produces is worse than the gap it closes, so a check that looks obviously right is worth testing against real engine output first. And a check that reads as complete while covering one direction is the failure mode HEU-750 exists to close.
+
+---
+
+### UC-NET-022: Move JSON across the seam without building a `Value`
+
+**Added:** 0.x (HEU-743)
+**Files:** `engine/network-engine-worker/src/protocol.rs`, `engine/network-engine-worker/src/handlers/snapshot.rs`
+
+**Problem:** A `serde_json::Value` built on the way to or from the wire is a second copy of the payload, in the shape that costs most. It is `BTreeMap`-backed. Every object key carries tree overhead the typed struct does not. On a 170 MiB response the tree cost 1.5 GiB.
+
+**Solution:** Neither direction goes through `Value`. Outbound, `Response::success` is generic over the result. It serializes the result once into a `Box<RawValue>`. Each handler's own `Serialize` then writes the wire bytes. Inbound, a params field typed `Box<RawValue>` captures the payload's bytes. The handler deserializes straight from them.
+
+**Usage:**
+```rust
+// Outbound: the handler hands over its typed result, nothing else.
+Response::success(request.id.clone(), &result)
+
+// Inbound: capture the bytes, deserialize from them.
+struct Params {
+    data: Box<serde_json::value::RawValue>,
+}
+let tree: UnilevelTree = serde_json::from_str(params.data.get())?;
+```
+
+**When to use this pattern:**
+- A payload crosses the process boundary. Nothing in between needs to inspect it.
+- The payload can be large, or is a whole engine or tree.
+
+**Notes:** Three things to know before reaching for it.
+
+A `RawValue` cannot nest inside a `json!` literal, because `json!` builds a `Value`. Only a `Value` nests in one. Declare a small struct instead.
+
+Never put `#[serde(flatten)]` on a `RawValue` field. It emits serde_json's private marker as an object key rather than the raw JSON. It does that silently rather than erroring. A `RawValue` inside a flattened struct is fine. The field itself is not.
+
+Dropping the `Value` changes behaviour, not just cost. `Value` sorts object keys and collapses duplicate ones. Removing it makes key order follow the struct or the map. It also makes a duplicate struct field an error instead of last-wins. Both are wire-observable. HEU-743 moved the protocol version for the second.
+
+---

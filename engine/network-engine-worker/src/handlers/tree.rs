@@ -13,6 +13,14 @@ use super::common::{
 use crate::protocol::{Request, Response};
 use crate::state::{TreeInstance, WorkerState};
 
+/// One holding-tank entry on the wire.
+#[derive(serde::Serialize)]
+struct HoldingTankItem {
+    user_id: String,
+    sponsor_user_id: Option<String>,
+    enrolled_at: i64,
+}
+
 // --- Tree lifecycle handler ---
 
 pub(crate) fn handle_create_tree(state: &mut WorkerState, request: &Request) -> Response {
@@ -410,18 +418,16 @@ pub(crate) fn handle_get_holding_tank(state: &WorkerState, request: &Request) ->
             };
 
             let entries = t.get_holding_tank(sponsor_id);
-            let items: Vec<serde_json::Value> = entries
+            let items: Vec<HoldingTankItem> = entries
                 .iter()
-                .map(|e| {
-                    serde_json::json!({
-                        "user_id": e.user_id.to_string(),
-                        "sponsor_user_id": e.sponsor_user_id.map(|id| id.to_string()),
-                        "enrolled_at": e.enrolled_at,
-                    })
+                .map(|e| HoldingTankItem {
+                    user_id: e.user_id.to_string(),
+                    sponsor_user_id: e.sponsor_user_id.map(|id| id.to_string()),
+                    enrolled_at: e.enrolled_at,
                 })
                 .collect();
 
-            Response::success(request.id.clone(), serde_json::Value::Array(items))
+            Response::success(request.id.clone(), &items)
         }
         _ => Response::error(
             request.id.clone(),
@@ -511,11 +517,7 @@ pub(crate) fn handle_get_parent(state: &WorkerState, request: &Request) -> Respo
     };
 
     match nav.get_parent(user_id) {
-        Ok(Some(node)) => Response::success(
-            request.id.clone(),
-            serde_json::to_value(NodeResponse::from_node(node))
-                .expect("serialization of NodeResponse is infallible"),
-        ),
+        Ok(Some(node)) => Response::success(request.id.clone(), NodeResponse::from_node(node)),
         Ok(None) => Response::success(request.id.clone(), serde_json::Value::Null),
         Err(e) => tree_error_to_response(&request.id, e),
     }
@@ -551,11 +553,7 @@ pub(crate) fn handle_get_children(state: &WorkerState, request: &Request) -> Res
         Ok(nodes) => {
             let items: Vec<NodeResponse> =
                 nodes.iter().map(|n| NodeResponse::from_node(n)).collect();
-            Response::success(
-                request.id.clone(),
-                serde_json::to_value(items)
-                    .expect("serialization of Vec<NodeResponse> is infallible"),
-            )
+            Response::success(request.id.clone(), &items)
         }
         Err(e) => tree_error_to_response(&request.id, e),
     }
@@ -595,11 +593,7 @@ pub(crate) fn handle_get_upline(state: &WorkerState, request: &Request) -> Respo
         Ok(nodes) => {
             let items: Vec<NodeResponse> =
                 nodes.iter().map(|n| NodeResponse::from_node(n)).collect();
-            Response::success(
-                request.id.clone(),
-                serde_json::to_value(items)
-                    .expect("serialization of Vec<NodeResponse> is infallible"),
-            )
+            Response::success(request.id.clone(), &items)
         }
         Err(e) => tree_error_to_response(&request.id, e),
     }
@@ -639,11 +633,7 @@ pub(crate) fn handle_get_downline(state: &WorkerState, request: &Request) -> Res
         Ok(nodes) => {
             let items: Vec<NodeResponse> =
                 nodes.iter().map(|n| NodeResponse::from_node(n)).collect();
-            Response::success(
-                request.id.clone(),
-                serde_json::to_value(items)
-                    .expect("serialization of Vec<NodeResponse> is infallible"),
-            )
+            Response::success(request.id.clone(), &items)
         }
         Err(e) => tree_error_to_response(&request.id, e),
     }
@@ -774,11 +764,7 @@ pub(crate) fn handle_get_sponsor(state: &WorkerState, request: &Request) -> Resp
     };
 
     match nav.get_sponsor(user_id) {
-        Ok(Some(node)) => Response::success(
-            request.id.clone(),
-            serde_json::to_value(NodeResponse::from_node(node))
-                .expect("serialization of NodeResponse is infallible"),
-        ),
+        Ok(Some(node)) => Response::success(request.id.clone(), NodeResponse::from_node(node)),
         Ok(None) => Response::success(request.id.clone(), serde_json::Value::Null),
         Err(e) => tree_error_to_response(&request.id, e),
     }
@@ -818,11 +804,7 @@ pub(crate) fn handle_get_sponsor_upline(state: &WorkerState, request: &Request) 
         Ok(nodes) => {
             let items: Vec<NodeResponse> =
                 nodes.iter().map(|n| NodeResponse::from_node(n)).collect();
-            Response::success(
-                request.id.clone(),
-                serde_json::to_value(items)
-                    .expect("serialization of Vec<NodeResponse> is infallible"),
-            )
+            Response::success(request.id.clone(), &items)
         }
         Err(e) => tree_error_to_response(&request.id, e),
     }
@@ -858,11 +840,7 @@ pub(crate) fn handle_get_sponsored(state: &WorkerState, request: &Request) -> Re
         Ok(nodes) => {
             let items: Vec<NodeResponse> =
                 nodes.iter().map(|n| NodeResponse::from_node(n)).collect();
-            Response::success(
-                request.id.clone(),
-                serde_json::to_value(items)
-                    .expect("serialization of Vec<NodeResponse> is infallible"),
-            )
+            Response::success(request.id.clone(), &items)
         }
         Err(e) => tree_error_to_response(&request.id, e),
     }

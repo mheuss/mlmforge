@@ -118,11 +118,14 @@ type binaryPairingDetail struct {
 
 // boardCycleDetail is the shape for board_calculate_commissions.
 type boardCycleDetail struct {
-	V           int    `json:"v"`
-	Kind        string `json:"kind"`
-	BoardID     string `json:"board_id"`
-	CycleNumber int    `json:"cycle_number"`
-	Capped      bool   `json:"capped"`
+	V       int    `json:"v"`
+	Kind    string `json:"kind"`
+	BoardID string `json:"board_id"`
+	// Stays int. Narrowing it to match the wire type would change no bytes
+	// and fail no test, but would tie the stored format to a type that can
+	// change.
+	CycleNumber int  `json:"cycle_number"`
+	Capped      bool `json:"capped"`
 }
 
 // ResultFromCommissionEarning maps the shape returned by calculate_unilevel,

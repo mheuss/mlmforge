@@ -327,8 +327,11 @@ impl BoardPlanEngine {
         // Validate: member not already on a board, and not waiting for one.
         // A displaced member is absent from member_boards by design, so
         // checking that map alone let them be seated twice.
-        if self.member_boards.contains_key(&user_id) || self.displaced_members.contains(&user_id) {
+        if self.member_boards.contains_key(&user_id) {
             return Err(BoardPlanError::MemberAlreadyExists(user_id));
+        }
+        if self.displaced_members.contains(&user_id) {
+            return Err(BoardPlanError::MemberAwaitingReassignment(user_id));
         }
 
         // Bootstrap: first member auto-registers the sponsor.
@@ -954,7 +957,7 @@ mod tests {
 
         assert_eq!(
             engine.add_member(displaced, sponsor, 100).unwrap_err(),
-            BoardPlanError::MemberAlreadyExists(displaced)
+            BoardPlanError::MemberAwaitingReassignment(displaced)
         );
     }
 

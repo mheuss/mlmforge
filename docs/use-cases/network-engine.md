@@ -819,7 +819,7 @@ state.trees.insert(name, TreeInstance::Streamline(engine));
 
 `params.data` is a `Box<RawValue>`, not a `Value`. Do not reach for
 `from_value` here. Building the `Value` costs a full tree for a large snapshot. It also collapses
-duplicate keys, which protocol 8 rejects. HEU-743 changed this call.
+duplicate keys, which the protocol rejects. HEU-743 changed this call.
 
 **Notes:** Read the docblock on the arm you are calling. It states what that arm proves, and the arms differ. Two failures shaped this. A validator that rejects what the crate itself produces is worse than the gap it closes, so a check that looks obviously right is worth testing against real engine output first. And a check that reads as complete while covering one direction is the failure mode HEU-750 exists to close.
 

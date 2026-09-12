@@ -1152,3 +1152,30 @@ The helper looked like coverage and reported on something else.
 
 If a helper exists to prove a function behaves on real data, it has to call that
 function. Restating its checks by hand proves the restatement.
+
+## A Protocol Bump Is More Sites Than It Looks, And The Last Bump's Commit Is A Bad Guide To Them
+
+Moving `PROTOCOL_VERSION` means changing every site in one commit. A partial
+move rejects a worker that is otherwise correct, because `engine_client.go`
+compares the version by exact equality.
+
+It was six numeric literals across five files plus two prose blocks when this
+was written. Treat that as a starting point rather than a checklist. The count
+goes stale the first time a site is added or dropped, and it will do so quietly,
+because nothing checks this paragraph against the tree.
+
+The literals live in `network-engine-worker/src/protocol.rs`,
+`network-engine-worker/tests/worker_integration.rs`,
+`engine/testdata/contracts/ping.json`, `internal/networkengine/engine_client.go`,
+and more than once in `internal/networkengine/transport_test.go`. The prose is the
+`Moved to N by ...` block above the Go constant, plus the ticket list in
+`content/design-rationale/017-commission-calculation-architecture.md` when the
+change is one that note tracks.
+
+The other `protocol_version` literals in `transport_test.go` are stub-worker
+payloads that never reach the handshake. They stay.
+
+Deriving the list from the files the previous bump touched gives a wrong answer.
+The version-8 commit also changed `DEVELOPMENT.md` and `019-ndjson-protocol.md`,
+for key-order wording rather than the number. Grep the tree for the outgoing
+number instead.

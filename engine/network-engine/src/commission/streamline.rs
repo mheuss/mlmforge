@@ -1048,9 +1048,8 @@ mod tests {
 
     #[test]
     fn gapped_table_errors_rather_than_paying() {
-        // The apex rank at ordinal 65535 is why no gap sentinel is safe:
-        // u16::MAX is itself a legitimate ordinal. It does not change this
-        // test's outcome, which turns only on the error. See design decision 5.
+        // apex sits at 65535 here. This test turns only on the error, so that
+        // value does not change its outcome.
         let engine = make_engine(5);
         let levels = vec![level(1, "associate", 0.10), level(3, "apex", 0.02)];
         let structure = make_structure(levels, 5);

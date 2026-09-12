@@ -413,6 +413,53 @@ mod tests {
     }
 
     #[test]
+    fn validate_restored_rejects_a_child_in_two_slots_of_one_parent() {
+        // One parent, two of its own slots. Naming it as two parents would be
+        // a message that states something the walk did not observe.
+        let (mut tree, child) = binary_pair();
+        let root = tree.arena.root.expect("binary_pair sets a root");
+        tree.slots.get_mut(&root).unwrap()[1] = Some(child);
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::ChildSlottedTwiceUnderOneParent {
+                slot: child.0,
+                parent: root.0,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_two_parents_when_three_hold_a_child() {
+        // The walk records only the offending child. Naming parents from it
+        // would report whichever two hash order reached first.
+        for _ in 0..64 {
+            let (mut tree, child) = binary_pair();
+            tree.add_node(test_uuid(3), test_uuid(1), 1, test_uuid(1), 0)
+                .unwrap();
+            tree.add_node(test_uuid(4), test_uuid(2), 0, test_uuid(1), 0)
+                .unwrap();
+            let p3 = tree.arena.resolve(test_uuid(3)).unwrap();
+            let p4 = tree.arena.resolve(test_uuid(4)).unwrap();
+            tree.slots.get_mut(&p3).unwrap()[1] = Some(child);
+            tree.slots.get_mut(&p4).unwrap()[0] = Some(child);
+            let root = tree.arena.root.expect("binary_pair sets a root");
+            let mut expected = [root.0, p3.0, p4.0];
+            expected.sort_unstable();
+
+            assert_eq!(
+                tree.validate_restored(),
+                Err(SnapshotConsistencyError::ChildSlotRepeated {
+                    slot: child.0,
+                    first_parent: expected[0],
+                    second_parent: expected[1],
+                }),
+                "the two lowest parents should win regardless of hash order"
+            );
+        }
+    }
+
+    #[test]
     fn validate_restored_names_the_same_unslotted_node_every_run() {
         // The constructor is inside the loop. One tree repeats its own map
         // order, so looping over a single instance proves nothing.

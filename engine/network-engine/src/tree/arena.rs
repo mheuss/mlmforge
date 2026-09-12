@@ -238,38 +238,51 @@ impl Arena {
         // Reads the slot map and node liveness only. Comparing a slot entry
         // against Node.parent or Node.children is a different check.
         //
-        // Lowest child slot wins on a repeat, since slots is a HashMap and the
-        // offender must not vary between runs.
-        let mut first_seen: HashMap<NodeIndex, usize> = HashMap::new();
-        let mut repeat: Option<(usize, SnapshotConsistencyError)> = None;
-        for (parent, children) in slots {
+        // The walk records only which child repeated, holding the lowest.
+        // Naming the parents from the walk would name whichever two hash
+        // order reached first, which varies per run once three parents are
+        // involved.
+        let mut first_seen: HashMap<NodeIndex, ()> = HashMap::new();
+        let mut repeat: Option<NodeIndex> = None;
+        for children in slots.values() {
             for child in children.into_iter().flatten() {
-                match first_seen.get(child) {
-                    None => {
-                        first_seen.insert(*child, parent.0);
-                    }
-                    Some(held) => {
-                        let (first_parent, second_parent) = if *held < parent.0 {
-                            (*held, parent.0)
-                        } else {
-                            (parent.0, *held)
-                        };
-                        if repeat.as_ref().is_none_or(|(slot, _)| child.0 < *slot) {
-                            repeat = Some((
-                                child.0,
-                                SnapshotConsistencyError::ChildSlotRepeated {
-                                    slot: child.0,
-                                    first_parent,
-                                    second_parent,
-                                },
-                            ));
-                        }
-                    }
+                if first_seen.insert(*child, ()).is_some()
+                    && repeat.is_none_or(|held| child.0 < held.0)
+                {
+                    repeat = Some(*child);
                 }
             }
         }
-        if let Some((_, err)) = repeat {
-            return Err(err);
+        if let Some(child) = repeat {
+            // Rejection path only. Collect every parent naming this child so
+            // the message is the same on every run, and always return: falling
+            // through would accept the payload that reached here.
+            let mut parents: Vec<usize> = slots
+                .iter()
+                .filter(|(_, children)| children.into_iter().flatten().any(|c| *c == child))
+                .map(|(parent, _)| parent.0)
+                .collect();
+            parents.sort_unstable();
+            return match (parents.first().copied(), parents.get(1).copied()) {
+                (Some(first_parent), Some(second_parent)) => {
+                    Err(SnapshotConsistencyError::ChildSlotRepeated {
+                        slot: child.0,
+                        first_parent,
+                        second_parent,
+                    })
+                }
+                // One parent names it, so it sits in two of that parent's slots.
+                (Some(parent), None) => {
+                    Err(SnapshotConsistencyError::ChildSlottedTwiceUnderOneParent {
+                        slot: child.0,
+                        parent,
+                    })
+                }
+                _ => Err(SnapshotConsistencyError::LiveNodeNotSlotted {
+                    slot: child.0,
+                    user_id: self.nodes[child.0].user_id,
+                }),
+            };
         }
 
         // self.nodes is a Vec, so this walks in slot order and the first miss

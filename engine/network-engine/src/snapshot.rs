@@ -104,6 +104,9 @@ pub enum SnapshotConsistencyError {
     #[error("node slot {slot} holds {user_id}; no parent's child slots name it")]
     LiveNodeNotSlotted { slot: usize, user_id: Uuid },
 
+    #[error("node slot {parent} names node slot {slot} in more than one child slot")]
+    ChildSlottedTwiceUnderOneParent { slot: usize, parent: usize },
+
     #[error(
         "node slot {slot} is a child of node slot {first_parent} and of node slot {second_parent}"
     )]

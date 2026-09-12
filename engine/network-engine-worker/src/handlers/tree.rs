@@ -547,7 +547,7 @@ pub(crate) fn handle_get_children(state: &WorkerState, request: &Request) -> Res
         Ok(nodes) => {
             let items: Vec<NodeResponse> =
                 nodes.iter().map(|n| NodeResponse::from_node(n)).collect();
-            Response::success(request.id.clone(), items)
+            Response::success(request.id.clone(), &items)
         }
         Err(e) => tree_error_to_response(&request.id, e),
     }
@@ -587,7 +587,7 @@ pub(crate) fn handle_get_upline(state: &WorkerState, request: &Request) -> Respo
         Ok(nodes) => {
             let items: Vec<NodeResponse> =
                 nodes.iter().map(|n| NodeResponse::from_node(n)).collect();
-            Response::success(request.id.clone(), items)
+            Response::success(request.id.clone(), &items)
         }
         Err(e) => tree_error_to_response(&request.id, e),
     }
@@ -627,7 +627,7 @@ pub(crate) fn handle_get_downline(state: &WorkerState, request: &Request) -> Res
         Ok(nodes) => {
             let items: Vec<NodeResponse> =
                 nodes.iter().map(|n| NodeResponse::from_node(n)).collect();
-            Response::success(request.id.clone(), items)
+            Response::success(request.id.clone(), &items)
         }
         Err(e) => tree_error_to_response(&request.id, e),
     }
@@ -798,7 +798,7 @@ pub(crate) fn handle_get_sponsor_upline(state: &WorkerState, request: &Request) 
         Ok(nodes) => {
             let items: Vec<NodeResponse> =
                 nodes.iter().map(|n| NodeResponse::from_node(n)).collect();
-            Response::success(request.id.clone(), items)
+            Response::success(request.id.clone(), &items)
         }
         Err(e) => tree_error_to_response(&request.id, e),
     }
@@ -834,7 +834,7 @@ pub(crate) fn handle_get_sponsored(state: &WorkerState, request: &Request) -> Re
         Ok(nodes) => {
             let items: Vec<NodeResponse> =
                 nodes.iter().map(|n| NodeResponse::from_node(n)).collect();
-            Response::success(request.id.clone(), items)
+            Response::success(request.id.clone(), &items)
         }
         Err(e) => tree_error_to_response(&request.id, e),
     }

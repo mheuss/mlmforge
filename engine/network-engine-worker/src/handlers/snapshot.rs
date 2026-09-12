@@ -24,8 +24,8 @@ struct Snapshot<'a> {
 /// Params: structure.
 ///
 /// Serialization failure returns `SERIALIZATION_ERROR` rather than panicking.
-/// Changing that to `expect` would let one bad snapshot take the whole process
-/// down.
+/// A panic here would still be caught and answered, so this is about the
+/// caller getting a named error instead of `INTERNAL_ERROR`.
 pub(crate) fn handle_take_snapshot(state: &WorkerState, request: &Request) -> Response {
     let params = match parse_params(request) {
         Ok(p) => p,
@@ -88,7 +88,7 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
     struct Params {
         structure: String,
         tree_type: String,
-        data: serde_json::Value,
+        data: Box<serde_json::value::RawValue>,
     }
 
     let params: Params = match serde_json::from_str(request.params.get()) {
@@ -110,7 +110,7 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
     }
 
     let instance = match params.tree_type.as_str() {
-        "unilevel" => match serde_json::from_value::<UnilevelTree>(params.data) {
+        "unilevel" => match serde_json::from_str::<UnilevelTree>(params.data.get()) {
             Ok(t) => match t.validate_restored() {
                 Ok(()) => TreeInstance::Unilevel(t),
                 Err(err) => {
@@ -129,7 +129,7 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
                 );
             }
         },
-        "binary" => match serde_json::from_value::<BinaryTree>(params.data) {
+        "binary" => match serde_json::from_str::<BinaryTree>(params.data.get()) {
             Ok(t) => match t.validate_restored() {
                 Ok(()) => TreeInstance::Binary(t),
                 Err(err) => {
@@ -148,7 +148,7 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
                 );
             }
         },
-        "matrix" => match serde_json::from_value::<MatrixTree>(params.data) {
+        "matrix" => match serde_json::from_str::<MatrixTree>(params.data.get()) {
             Ok(t) => match t.validate_restored() {
                 Ok(()) => TreeInstance::Matrix(t),
                 Err(err) => {
@@ -167,7 +167,7 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
                 );
             }
         },
-        "board_plan" => match serde_json::from_value::<BoardPlanEngine>(params.data) {
+        "board_plan" => match serde_json::from_str::<BoardPlanEngine>(params.data.get()) {
             Ok(e) => match e.validate_restored() {
                 Ok(()) => TreeInstance::BoardPlan(e),
                 Err(err) => {
@@ -186,7 +186,7 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
                 );
             }
         },
-        "streamline" => match serde_json::from_value::<StreamlineEngine>(params.data) {
+        "streamline" => match serde_json::from_str::<StreamlineEngine>(params.data.get()) {
             Ok(e) => match e.validate_restored() {
                 Ok(()) => TreeInstance::Streamline(e),
                 Err(err) => {

@@ -81,8 +81,7 @@ impl Response {
             id,
             ok: true,
             result: Some(
-                serde_json::value::to_raw_value(&result)
-                    .expect("response result serialization is infallible"),
+                serde_json::value::to_raw_value(&result).expect("serializing a response result"),
             ),
             error: None,
         }
@@ -226,15 +225,14 @@ mod tests {
         );
     }
 
-    /// A typed result emits its fields in declaration order, not sorted.
+    /// A typed result emits its struct fields in declaration order, not sorted.
     ///
     /// Authored out of alphabetical order, the mirror of
     /// `value_payload_emits_sorted_keys` above. That one holds a `Value` and
-    /// sorts; this one holds a struct and does not. Both orders are correct,
-    /// and ADR-019 puts key order outside the Go contract.
+    /// sorts; this one holds a struct and does not.
     ///
-    /// This is the wire-visible half of dropping the `Value` intermediate, so
-    /// it is pinned rather than left to be noticed.
+    /// Declaration order covers struct fields only. A map field has no
+    /// declaration order, and emits in whatever order it iterates.
     #[test]
     fn typed_payload_emits_declaration_order() {
         #[derive(Serialize)]
@@ -253,9 +251,9 @@ mod tests {
 
     /// `#[serde(flatten)]` survives pre-serialization into a `RawValue`.
     ///
-    /// The hazard runs the other way -- a `RawValue` *inside* a flattened
-    /// struct does not serialize -- but the two are easy to confuse, and a
-    /// flattened result type reaches `success` here.
+    /// Do not flatten a `Box<RawValue>` field itself. That emits serde_json's
+    /// private marker as an object key instead of the raw JSON, and it does it
+    /// silently rather than erroring.
     #[test]
     fn flattened_payload_serializes_through_the_envelope() {
         #[derive(Serialize)]

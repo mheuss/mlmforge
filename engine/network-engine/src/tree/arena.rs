@@ -409,8 +409,7 @@ impl Arena {
     ) -> Result<Option<NodeIndex>, TreeError> {
         let bound = self.nodes.len();
         let mut current = self.nodes[idx.0].sponsor;
-        // Exhausting the slot count means the chain revisited a node. Nothing
-        // rejects a sponsor cycle today.
+        // A chain longer than the slot count has revisited a node.
         for _ in 0..bound {
             let Some(candidate) = current else {
                 return Ok(None);
@@ -445,8 +444,8 @@ impl Arena {
     /// Moves the recruits of every node in `removed` onto their nearest
     /// surviving sponsor.
     pub(crate) fn reparent_sponsored(&mut self, removed: &[NodeIndex]) {
-        // Every target is resolved against the pre-removal graph. Resolving
-        // one node at a time reads a sponsor an earlier iteration cleared.
+        // Resolve every target before moving anything, so the order these are
+        // visited in cannot change the answer.
         let plan: Vec<(NodeIndex, Vec<NodeIndex>, Option<NodeIndex>)> = removed
             .iter()
             .map(|&idx| {

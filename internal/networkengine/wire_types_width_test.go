@@ -8,34 +8,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestWireTypesNarrowMirrors pins the width of the wire DTO fields that mirror
-// narrow Rust engine types, so a silent widening (e.g. uint8 -> int) is caught
-// here rather than truncating at the Rust FFI boundary. This is the wire-DTO
-// counterpart to the compensation-plan config width contract (HEU-513 MVF-2).
+// TestWireTypesNarrowMirrors pins the width of the wire DTO fields listed
+// below, each mirroring a narrow or nullable Rust engine type. A silent
+// widening is caught here rather than truncating at the Rust boundary.
 //
-// Scope: it guards a SUBSET of the narrow mirrors in wire_types.go — currently
-// one of five. wire_types.go also holds many genuine int/int64 fields (positions,
-// timestamps, counts, IDs) that are NOT width mirrors, so a comprehensive AST
-// drift scan for this surface (like the config-side
-// TestConfigContract_NoUntypedIntFields, which would need an allow-list of those
-// genuine ints) is a tracked follow-up. HEU-606 covers filling in the four
-// missing rows.
+// The list is built by pairing each narrow Rust wire field with its Go
+// counterpart. A Go-side search for narrow types cannot find a mirror that has
+// already widened.
 //
-// Three streamline rows were removed by HEU-583 along with the DTOs they pinned
-// (StreamlineCommissionDTO, StreamlineLevelDTO, StreamConfigDTO). None of the
-// three guarantees was lost — the deleted rows were the weakest of three
-// overlapping guards:
-//
-//   - level is a u8: schemas/compensation-plan.schema.json bounds
-//     dynamic_compression keys to 1-255 via propertyNames.pattern (test:
-//     TestSchemaRejectsStreamlineLevelOverU8), and internal/config/translate.go
-//     rejects out-of-range levels (test: TestSortStreamlineLevelsOutOfRange).
-//   - CommissionableDepth and AdditionalPerRank: both keep a field-level pin in
-//     engine/testdata/config_contract/width_manifest.json, under go_struct
-//     StreamlineCommission and StreamConfig. Each entry declares go_type,
-//     rust_type and over_max: 256, and TestConfigContract_FieldsMatchAndRejectOverMax
-//     asserts the declared type AND that an over-max value is rejected by the real
-//     two-pass decode — strictly more than the reflect-string rows did.
+// Rows removed when their DTOs were deleted by HEU-583. Why that was safe:
+// HEU-606.
 func TestWireTypesNarrowMirrors(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -51,13 +33,31 @@ func TestWireTypesNarrowMirrors(t *testing.T) {
 		{"WalkDTO.StreamID", reflect.TypeFor[WalkDTO](), "StreamID", "*uint32"},
 		{"PlanIdentityDTO.Version", reflect.TypeFor[PlanIdentityDTO](), "Version", "uint32"},
 		{"FrozenStreamSkipDTO.StreamID", reflect.TypeFor[FrozenStreamSkipDTO](), "StreamID", "uint32"},
+		{"EngineNode.Depth", reflect.TypeFor[EngineNode](), "Depth", "uint32"},
+		{"EnginePosition.Depth", reflect.TypeFor[EnginePosition](), "Depth", "uint32"},
+		{"StreamlineAddMemberRequest.StreamIDOverride", reflect.TypeFor[StreamlineAddMemberRequest](), "StreamIDOverride", "*uint32"},
+		{"EvaluateRanksRequest.History", reflect.TypeFor[EvaluateRanksRequest](), "History", "map[string]map[string]*uint16"},
+		{"StreamlineAddMemberResultDTO.StreamID", reflect.TypeFor[StreamlineAddMemberResultDTO](), "StreamID", "uint32"},
+		{"StreamlineExpandRequest.TotalAllowed", reflect.TypeFor[StreamlineExpandRequest](), "TotalAllowed", "uint32"},
+		{"StreamlineExpandResultDTO.NewStreamIDs", reflect.TypeFor[StreamlineExpandResultDTO](), "NewStreamIDs", "[]uint32"},
+		{"StreamlineUpdateAllowanceRequest.TotalAllowed", reflect.TypeFor[StreamlineUpdateAllowanceRequest](), "TotalAllowed", "uint32"},
+		{"StreamlineFreezeResultDTO.Frozen", reflect.TypeFor[StreamlineFreezeResultDTO](), "Frozen", "[]uint32"},
+		{"StreamlineFreezeResultDTO.Unfrozen", reflect.TypeFor[StreamlineFreezeResultDTO](), "Unfrozen", "[]uint32"},
+		{"StreamlineFreezeResultDTO.Created", reflect.TypeFor[StreamlineFreezeResultDTO](), "Created", "[]uint32"},
+		{"StreamlineFreezeResultDTO.Destroyed", reflect.TypeFor[StreamlineFreezeResultDTO](), "Destroyed", "[]uint32"},
+		{"StreamlineRemoveMemberResultDTO.RemovedFrom", reflect.TypeFor[StreamlineRemoveMemberResultDTO](), "RemovedFrom", "[]uint32"},
+		{"StreamPositionDTO.StreamID", reflect.TypeFor[StreamPositionDTO](), "StreamID", "uint32"},
+		{"StreamSummaryDTO.ID", reflect.TypeFor[StreamSummaryDTO](), "ID", "uint32"},
+		{"BoardCycleEarningDTO.CycleNumber", reflect.TypeFor[BoardCycleEarningDTO](), "CycleNumber", "uint32"},
+		{"BoardCommissionResultDTO.UpdatedCycleCounts", reflect.TypeFor[BoardCommissionResultDTO](), "UpdatedCycleCounts", "map[string]uint32"},
+		{"CalculateBoardCommissionsRequest.PeriodCycleCounts", reflect.TypeFor[CalculateBoardCommissionsRequest](), "PeriodCycleCounts", "map[string]uint32"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			f, ok := c.typ.FieldByName(c.field)
 			require.True(t, ok, "%s: field %s not found", c.name, c.field)
 			assert.Equal(t, c.want, f.Type.String(),
-				"%s width drifted — must stay %s to mirror its narrow Rust engine type",
+				"%s must stay %s to mirror its Rust engine type",
 				c.name, c.want)
 		})
 	}

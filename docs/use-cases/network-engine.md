@@ -23,6 +23,7 @@ Use-cases for the Network Engine bounded context.
 - [UC-NET-017: Reading a nil caller collection as empty](#uc-net-017-reading-a-nil-caller-collection-as-empty)
 - [UC-NET-018: Telling an absent JSON key from an explicit null](#uc-net-018-telling-an-absent-json-key-from-an-explicit-null)
 - [UC-NET-019: Walk collection through a caller-owned collector](#uc-net-019-walk-collection-through-a-caller-owned-collector)
+- [UC-NET-020: Rebuilding a narrow-mirror list from the Rust side](#uc-net-020-rebuilding-a-narrow-mirror-list-from-the-rust-side)
 
 ---
 
@@ -687,3 +688,110 @@ A traversal does not always push a walk. `count_generations_upward_instrumented`
 `count_generations_upward_instrumented`, `walk` and `walk_order` are all crate-internal. The `pub` wrapper is the only entry point reachable from outside `network-engine`, so threading a collector is a choice available only to a caller inside the crate.
 
 Call-site detail for the generation calculators lives in UC-NET-003 and UC-NET-004. This entry covers the shape they share.
+
+---
+
+### UC-NET-020: Rebuilding a narrow-mirror list from the Rust side
+
+**Added:** Unreleased (HEU-606)
+**Files:** `internal/networkengine/wire_types_width_test.go`,
+`internal/networkengine/wire_types.go`
+
+**Problem:** `TestWireTypesNarrowMirrors` pins wire DTO widths against a
+hand-written list. The list was built by searching Go for narrowly-typed fields.
+That search finds only fields that are still narrow. A mirror that had already
+widened to `int` was invisible to the method meant to catch it.
+
+The list read as complete while 18 rows were missing. Fourteen of those pinned
+fields the search could not have found. They had already widened. The
+other four were still narrow and had simply never been added. Only the first
+group is evidence about the method.
+
+**Solution:** Build the list from the reference side. Walk the narrow fields of
+the Rust wire types and pair each one with its Go counterpart. Do not walk Go
+and ask which fields look narrow. Fields the pairing shows as
+widened get narrowed first, then pinned.
+
+Rust `usize` is the case to exclude deliberately. Go `int` is the correct mirror
+for it. `position`, `child_count`, `member_count`, `filled_count`,
+`total_positions`, `filled_positions` and `volume_index` are not drift. Sorting
+those out is most of the work. Getting it wrong in the other direction narrows
+a field that was already right.
+
+**Verifying it:** widen each pinned field and confirm that row's subtest fails.
+A row that still passes is pinning nothing. Sweep every row rather than
+sampling. That is what makes the guard's coverage a measurement instead of an
+assumption.
+
+Separate a build failure from a test failure. Both print `FAIL`. A mutation
+that breaks a caller never runs the test at all. Counting it as caught
+overstates what was measured. That case is not a pass and not a defect.
+It means the compiler guards that field too. This mutation cannot reach the
+row.
+
+When a row comes back that way, retry it with a target type that keeps the
+callers compiling instead of `int`. How many rows land there is a property of
+the target you pick, not of the table. Three passes over this same table with
+different targets reported seven, five and four. Do not quote a number for it.
+Read the row names the script prints.
+
+Run from the repo root, on a clean tree. Interrupting the loop leaves the file
+mutated.
+
+```bash
+F=internal/networkengine/wire_types.go
+T=$(mktemp -d)
+
+# Scope the edit to one struct block. A file-wide regex hits the wrong field
+# when two structs share a field name, as EngineNode and EnginePosition both
+# do with Depth.
+cat > "$T/widen.py" <<'PY'
+import re, sys
+p, struct, field, newtype = sys.argv[1:5]
+lines = open(p).read().split('\n')
+s = next(i for i, l in enumerate(lines) if l.startswith(f'type {struct} struct {{'))
+e = next(i for i in range(s + 1, len(lines)) if lines[i] == '}')
+for i in range(s + 1, e):
+    m = re.match(r'^(\t' + re.escape(field) + r'\s+)(\S+)(.*)$', lines[i])
+    if m:
+        lines[i] = m.group(1) + newtype + m.group(3)
+        open(p, 'w').write('\n'.join(lines))
+        sys.exit(0)
+sys.exit(f'{struct}.{field} not found')
+PY
+
+go test ./internal/networkengine/ -run TestWireTypesNarrowMirrors -v > "$T/base.txt" 2>&1 \
+  || { cat "$T/base.txt"; echo "baseline is not green, aborting"; exit 1; }
+awk '/--- PASS: TestWireTypesNarrowMirrors\// {sub(/^.*TestWireTypesNarrowMirrors\//, ""); print $1}' "$T/base.txt" > "$T/rows.txt"
+[ -s "$T/rows.txt" ] || { echo "no rows collected, aborting"; exit 1; }
+echo "sweeping $(wc -l < "$T/rows.txt") rows"
+
+while read -r row; do
+  python3 "$T/widen.py" "$F" "${row%%.*}" "${row#*.}" int || { echo "MUTATE FAILED: $row"; continue; }
+  out=$(go test ./internal/networkengine/ -run "TestWireTypesNarrowMirrors/$row" 2>&1)
+  if   echo "$out" | grep -q 'build failed'; then echo "COMPILER CAUGHT IT, row unproven: $row"
+  elif echo "$out" | grep -q FAIL;           then :   # the row did its job
+  else                                            echo "NOT PINNED: $row"
+  fi
+  git checkout -- "$F"
+done < "$T/rows.txt"
+rm -rf "$T"
+```
+
+A `NOT PINNED` line is a defect. A `COMPILER CAUGHT IT` line is not. It
+means that row is still unmeasured.
+
+The pairing covers DTO struct fields. A narrow Rust wire field whose Go
+counterpart is a function parameter is not reachable this way, and several
+exist. Sweeping the struct file alone reports a list that reads complete and
+is not.
+
+**When to use this pattern:**
+- A hand-maintained list is supposed to enumerate everything of some kind.
+- The method that built it cannot observe the failure it exists to catch.
+
+**Notes:** The search direction is the whole point. A count taken over the wrong
+population looks identical to a complete one. The AST drift scan (HEU-544)
+removes the hand-maintained list and is the longer-term answer. This pattern is
+what to do until then. Use it for any list a scan does not cover. The config side
+solves the same problem with a manifest rather than a scan. That is UC-NET-011.

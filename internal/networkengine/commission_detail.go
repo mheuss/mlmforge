@@ -118,11 +118,12 @@ type binaryPairingDetail struct {
 
 // boardCycleDetail is the shape for board_calculate_commissions.
 type boardCycleDetail struct {
-	V           int    `json:"v"`
-	Kind        string `json:"kind"`
-	BoardID     string `json:"board_id"`
-	CycleNumber int    `json:"cycle_number"`
-	Capped      bool   `json:"capped"`
+	V       int    `json:"v"`
+	Kind    string `json:"kind"`
+	BoardID string `json:"board_id"`
+	// int64, not int: int is 32 bits on some targets and this holds a u32.
+	CycleNumber int64 `json:"cycle_number"`
+	Capped      bool  `json:"capped"`
 }
 
 // ResultFromCommissionEarning maps the shape returned by calculate_unilevel,
@@ -163,7 +164,7 @@ func ResultFromBoardCycleEarning(e BoardCycleEarningDTO) (CommissionResultInput,
 		V:           detailVersion,
 		Kind:        kindBoardCycle,
 		BoardID:     e.BoardID,
-		CycleNumber: e.CycleNumber,
+		CycleNumber: int64(e.CycleNumber),
 		Capped:      e.Capped,
 	})
 }

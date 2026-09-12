@@ -908,3 +908,17 @@ alongside it rather than instead of it.
 in debug, so a debug-only pin is live there. The protection is a convention
 rather than a guard, and the failure is silent if that convention changes.
 (HEU-608)
+
+## Narrowing a struct field breaks assertions at run time, not compile time
+
+`testify`'s `assert.Equal` compares types as well as values. An untyped constant
+lands as `int`, so `assert.Equal(t, 1, x)` fails the moment `x` becomes
+`uint32`. It still compiles, and `go build` and `go vet` both stay clean.
+
+Sweep the package for comparisons against any field you narrow. `assert.Len`
+and `assert.True` are not type-sensitive. Struct literals with untyped constants
+convert at compile time and are fine. What breaks is `assert.Equal` and an
+explicitly typed literal such as `map[string]int{...}`.
+
+HEU-606 narrowed 14 wire DTO fields. Two breaks were compile errors and six were
+run-time assertion failures, so building was not enough to find them.

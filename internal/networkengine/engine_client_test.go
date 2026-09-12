@@ -2166,7 +2166,7 @@ func TestEngineClient_CalculateBoardCommissions_MockParams(t *testing.T) {
 				ReEntryBoard: nil,
 			},
 		},
-		PeriodCycleCounts: map[string]int{
+		PeriodCycleCounts: map[string]uint32{
 			"00000000-0000-0000-0000-000000000001": 2,
 		},
 	}
@@ -2205,11 +2205,11 @@ func TestEngineClient_CalculateBoardCommissions_MockParams(t *testing.T) {
 	assert.Equal(t, "00000000-0000-0000-0000-000000000001", result.Earnings[0].EarnerID)
 	assert.Equal(t, "board-001", result.Earnings[0].BoardID)
 	assert.InDelta(t, 25.50, result.Earnings[0].DollarAmount, 1e-9)
-	assert.Equal(t, 2, result.Earnings[0].CycleNumber)
+	assert.Equal(t, uint32(2), result.Earnings[0].CycleNumber)
 	assert.False(t, result.Earnings[0].Capped)
 
 	require.Contains(t, result.UpdatedCycleCounts, "00000000-0000-0000-0000-000000000001")
-	assert.Equal(t, 3, result.UpdatedCycleCounts["00000000-0000-0000-0000-000000000001"])
+	assert.Equal(t, uint32(3), result.UpdatedCycleCounts["00000000-0000-0000-0000-000000000001"])
 }
 
 // TestEngineClient_CalculateBoardCommissions_NilCollections pins the wire shape
@@ -2297,27 +2297,27 @@ func TestEngineClient_StreamlineLifecycle(t *testing.T) {
 		UserID: user1, SponsorID: "00000000-0000-0000-0000-000000000099", Timestamp: 1001,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, 1, r1.StreamID)
+	assert.Equal(t, uint32(1), r1.StreamID)
 	assert.Equal(t, 0, r1.Position)
 
 	r2, err := client.StreamlineAddMember(ctx, structure, StreamlineAddMemberRequest{
 		UserID: user2, SponsorID: user1, Timestamp: 1002,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, 1, r2.StreamID)
+	assert.Equal(t, uint32(1), r2.StreamID)
 	assert.Equal(t, 1, r2.Position)
 
 	r3, err := client.StreamlineAddMember(ctx, structure, StreamlineAddMemberRequest{
 		UserID: user3, SponsorID: user1, Timestamp: 1003,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, 1, r3.StreamID)
+	assert.Equal(t, uint32(1), r3.StreamID)
 
 	// Verify member info.
 	info, err := client.StreamlineGetMember(ctx, structure, user2)
 	require.NoError(t, err)
 	assert.Len(t, info.Streams, 1)
-	assert.Equal(t, 1, info.Streams[0].StreamID)
+	assert.Equal(t, uint32(1), info.Streams[0].StreamID)
 
 	// List streams.
 	streams, err := client.StreamlineListStreams(ctx, structure)

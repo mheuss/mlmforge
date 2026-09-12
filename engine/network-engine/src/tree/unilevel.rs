@@ -908,6 +908,30 @@ mod tests {
     }
 
     #[test]
+    fn a_reused_slot_does_not_capture_a_survivors_sponsor_edge() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 1)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), test_uuid(2), 2)
+            .unwrap();
+
+        tree.remove_node(test_uuid(2)).unwrap();
+        // alloc_slot pops the free list, so this takes node 2's old slot.
+        tree.add_node(test_uuid(4), test_uuid(1), test_uuid(1), 3)
+            .unwrap();
+
+        assert_eq!(tree.validate_restored(), Ok(()));
+        let sponsor = tree.get_sponsor(test_uuid(3)).unwrap().unwrap();
+        assert_ne!(
+            sponsor.user_id,
+            test_uuid(4),
+            "the survivor must not be sponsored by whoever reused the slot"
+        );
+        assert_eq!(sponsor.user_id, test_uuid(1));
+    }
+
+    #[test]
     fn removing_a_node_with_no_recruits_and_no_sponsor_still_works() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();

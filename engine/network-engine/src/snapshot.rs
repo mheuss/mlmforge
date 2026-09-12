@@ -108,13 +108,21 @@ pub enum SnapshotConsistencyError {
     ChildSlottedTwiceUnderOneParent { slot: usize, parent: usize },
 
     #[error(
-        "node slot {slot} is a child of node slot {first_parent} and of node slot {second_parent}"
+        "node slots {first_parent} and {second_parent} both name node slot {slot} in a child slot; \
+         {parent_count} node slots name it"
     )]
     ChildSlotRepeated {
         slot: usize,
         first_parent: usize,
         second_parent: usize,
+        parent_count: usize,
     },
+
+    #[error("node slot {parent} names the root in one of its child slots")]
+    RootSlottedAsChild { parent: usize },
+
+    #[error("node slot {slot} names itself in one of its own child slots")]
+    NodeSlottedUnderItself { slot: usize },
 
     #[error("node slot {slot} holds {user_id}; the child slot map has no entry for it")]
     SlotEntryMissing { slot: usize, user_id: Uuid },

@@ -39,7 +39,7 @@ impl BinaryTree {
     }
 
     /// Prove a restored tree's stored indexes are in range and live, and that
-    /// each live non-root node is a child in exactly one slot entry.
+    /// each live non-root node is a child in exactly one child slot.
     pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
         self.arena.validate_restored()?;
         // Keep the lowest-slot fault rather than returning on the first one
@@ -448,10 +448,107 @@ mod tests {
                     slot: child.0,
                     first_parent: expected[0],
                     second_parent: expected[1],
+                    parent_count: 3,
                 }),
                 "the two lowest parents should win regardless of hash order"
             );
         }
+    }
+
+    #[test]
+    fn validate_restored_names_the_lower_of_two_repeated_children() {
+        // The constructor is inside the loop. One tree repeats its own map
+        // order, so looping over a single instance proves nothing.
+        for _ in 0..64 {
+            let mut tree = BinaryTree::new();
+            tree.add_root(test_uuid(1), 0).unwrap();
+            for (n, parent, position) in [(2u8, 1u8, 0usize), (3, 1, 1), (4, 2, 0)] {
+                tree.add_node(test_uuid(n), test_uuid(parent), position, test_uuid(1), 0)
+                    .unwrap();
+            }
+            let low = tree.arena.resolve(test_uuid(2)).unwrap();
+            let high = tree.arena.resolve(test_uuid(4)).unwrap();
+            let spare = tree.arena.resolve(test_uuid(3)).unwrap();
+            assert!(low.0 < high.0, "the fixture must repeat the lower slot too");
+
+            tree.slots.get_mut(&spare).unwrap()[0] = Some(low);
+            tree.slots.get_mut(&spare).unwrap()[1] = Some(high);
+
+            assert!(
+                matches!(
+                    tree.validate_restored(),
+                    Err(SnapshotConsistencyError::ChildSlotRepeated { slot, .. }) if slot == low.0
+                ),
+                "the lower repeated child should win regardless of hash order, got {:?}",
+                tree.validate_restored()
+            );
+        }
+    }
+
+    #[test]
+    fn validate_restored_rejects_the_root_in_a_child_slot() {
+        let (mut tree, child) = binary_pair();
+        let root = tree.arena.root.expect("binary_pair sets a root");
+        tree.slots.get_mut(&child).unwrap()[0] = Some(root);
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::RootSlottedAsChild { parent: child.0 })
+        );
+    }
+
+    #[test]
+    fn validate_restored_names_the_lower_parent_when_two_slot_the_root() {
+        // The constructor is inside the loop. One tree repeats its own map
+        // order, so looping over a single instance proves nothing.
+        for _ in 0..64 {
+            let (mut tree, low) = binary_pair();
+            tree.add_node(test_uuid(3), test_uuid(1), 1, test_uuid(1), 0)
+                .unwrap();
+            let high = tree.arena.resolve(test_uuid(3)).unwrap();
+            assert!(low.0 < high.0, "the fixture must put the lower slot first");
+            let root = tree.arena.root.expect("binary_pair sets a root");
+            tree.slots.get_mut(&low).unwrap()[0] = Some(root);
+            tree.slots.get_mut(&high).unwrap()[0] = Some(root);
+
+            assert_eq!(
+                tree.validate_restored(),
+                Err(SnapshotConsistencyError::RootSlottedAsChild { parent: low.0 }),
+                "the lower parent should win regardless of hash order"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_restored_names_the_lower_of_two_self_slotted_nodes() {
+        // The constructor is inside the loop. One tree repeats its own map
+        // order, so looping over a single instance proves nothing.
+        for _ in 0..64 {
+            let (mut tree, low) = binary_pair();
+            tree.add_node(test_uuid(3), test_uuid(1), 1, test_uuid(1), 0)
+                .unwrap();
+            let high = tree.arena.resolve(test_uuid(3)).unwrap();
+            assert!(low.0 < high.0, "the fixture must put the lower slot first");
+            tree.slots.get_mut(&low).unwrap()[0] = Some(low);
+            tree.slots.get_mut(&high).unwrap()[0] = Some(high);
+
+            assert_eq!(
+                tree.validate_restored(),
+                Err(SnapshotConsistencyError::NodeSlottedUnderItself { slot: low.0 }),
+                "the lower self-slotted node should win regardless of hash order"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_node_slotted_under_itself() {
+        let (mut tree, child) = binary_pair();
+        tree.slots.get_mut(&child).unwrap()[0] = Some(child);
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::NodeSlottedUnderItself { slot: child.0 })
+        );
     }
 
     #[test]
@@ -487,6 +584,10 @@ mod tests {
     fn engine_output_slots_every_live_node_exactly_once() {
         let mut tree = BinaryTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
+        // Every node is sponsored by the root, which is never removed. A
+        // sponsor that is itself removed leaves a dangling edge that
+        // validate_restored rejects, so varying this turns the test red on
+        // HEU-766 rather than on the slot agreement it covers.
         for n in 2..=12u8 {
             let parent = test_uuid(1 + (n - 2) / 2);
             let position = usize::from((n - 2) % 2);

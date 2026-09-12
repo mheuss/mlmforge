@@ -1009,10 +1009,18 @@ out is leaked. `node_count` counts it live. Its reach today is three `Debug`
 impls.
 
 **No arm compares its slot map against `Node.children`.** The matrix and binary
-arms count: every live non-root node is a child in exactly one slot entry. They
+arms count: every live non-root node is a child in exactly one child slot. They
 do not prove the slot that names a node is the same parent the node's own edges
-name. That is HEU-732, along with reciprocal edges and
-acyclicity.
+name. That is HEU-732, along with reciprocal edges.
+
+Two cycle shapes are rejected here rather than left to HEU-732, because both are
+decidable from the slot map alone. A child slot naming the root is rejected. A
+child slot naming its own parent is rejected. Both were accepted before, and
+both produced a wrong answer rather than a disagreement: a leg containing its
+own ancestor makes `count_branch` report more nodes than the tree holds.
+
+The cycles that need a traversal are still open. Two nodes naming each other,
+with the root's own slots empty, is accepted. That is HEU-732.
 
 Read a `validate_restored` docblock as the boundary of what that arm proves. An
 arm that proves less than its name suggests is the failure this file already

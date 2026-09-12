@@ -68,7 +68,7 @@ impl MatrixTree {
     }
 
     /// Prove a restored tree's stored values are in range and live, that each
-    /// live non-root node is a child in exactly one slot entry, and that the
+    /// live non-root node is a child in exactly one child slot, and that the
     /// holding tank names no placed or repeated user.
     pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
         // A restore does not run the constructor, so the range it enforces has
@@ -957,6 +957,60 @@ mod tests {
     }
 
     #[test]
+    fn validate_restored_rejects_a_child_in_two_slots_of_one_parent() {
+        // One parent, two of its own slots.
+        let (mut tree, child) = matrix_pair();
+        let root = tree.arena.root.expect("matrix_pair sets a root");
+        tree.slots.get_mut(&root).unwrap()[1] = Some(child);
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::ChildSlottedTwiceUnderOneParent {
+                slot: child.0,
+                parent: root.0,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_the_root_in_a_child_slot() {
+        let (mut tree, child) = matrix_pair();
+        let root = tree.arena.root.expect("matrix_pair sets a root");
+        tree.slots.get_mut(&child).unwrap()[0] = Some(root);
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::RootSlottedAsChild { parent: child.0 })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_node_slotted_under_itself() {
+        let (mut tree, child) = matrix_pair();
+        tree.slots.get_mut(&child).unwrap()[0] = Some(child);
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::NodeSlottedUnderItself { slot: child.0 })
+        );
+    }
+
+    #[test]
+    fn validate_restored_accepts_output_placed_by_add_node_at() {
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 10)
+            .unwrap();
+        tree.add_node_at(test_uuid(3), test_uuid(1), test_uuid(1), 1, 20)
+            .unwrap();
+        tree.add_node_at(test_uuid(4), test_uuid(1), test_uuid(2), 0, 30)
+            .unwrap();
+
+        assert_eq!(tree.validate_restored(), Ok(()));
+        crate::tree::test_helpers::assert_live_nodes_are_slotted_once(&tree.arena, &tree.slots);
+    }
+
+    #[test]
     fn validate_restored_names_the_same_unslotted_node_every_run() {
         // The constructor is inside the loop. One tree repeats its own map
         // order, so looping over a single instance proves nothing.
@@ -988,6 +1042,10 @@ mod tests {
     fn engine_output_slots_every_live_node_exactly_once() {
         let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
         tree.add_root(test_uuid(1), 0).unwrap();
+        // Every node is sponsored by the root, which is never removed. A
+        // sponsor that is itself removed leaves a dangling edge that
+        // validate_restored rejects, so varying this turns the test red on
+        // HEU-766 rather than on the slot agreement it covers.
         for n in 2..=12u8 {
             tree.add_node(test_uuid(n), test_uuid(1), n as i64).unwrap();
         }

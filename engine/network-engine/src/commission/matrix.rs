@@ -645,6 +645,43 @@ mod tests {
         ));
     }
 
+    /// Pins that matrix propagates the shared walk's missing-upline error
+    /// rather than absorbing it. Holds in every profile.
+    #[test]
+    fn missing_upline_snapshot_errors() {
+        let structure = test_matrix_structure(3, 9, 5);
+        let plan = test_plan(structure.clone());
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), 1).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2).unwrap();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(0), eligible_snapshot());
+        // test_uuid(1) omitted on purpose
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::UplineNotInSnapshot(test_uuid(1))
+        );
+    }
+
     #[test]
     fn invalid_cv_amount_returns_error() {
         let structure = test_matrix_structure(3, 9, 5);

@@ -1817,6 +1817,55 @@ mod calculate_tests {
         assert!((root_gen.dollar_amount - 10.0).abs() < f64::EPSILON);
     }
 
+    /// Pins that generation propagates the shared walk's missing-upline error
+    /// rather than absorbing it. Reaching that walk needs
+    /// `level_commissions_enabled: true`; with it false this call succeeds and
+    /// silently skips the node, which HEU-728 tracks. Holds in every profile.
+    #[test]
+    fn missing_upline_snapshot_errors_with_level_commissions_on() {
+        let tree = build_chain(3);
+
+        let level_config = LevelCommissionConfig {
+            broad_commission_percent: 0.40,
+            volume_to_dollar_multiplier: None,
+            max_depth: 3,
+            rate_table: BTreeMap::from([(
+                "associate".to_string(),
+                BTreeMap::from([(1, 0.05), (2, 0.08)]),
+            )]),
+        };
+
+        let mut structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
+        structure.level_commission = Some(level_config);
+        structure.level_commissions_enabled = true;
+
+        let plan = two_rank_plan();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), director_snapshot());
+        // uuid(1) omitted on purpose
+        snapshots.insert(uuid(2), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::UplineNotInSnapshot(uuid(1))
+        );
+    }
+
     /// Same tree, but level_commissions_enabled = false.
     /// Only generation earnings should appear.
     #[test]

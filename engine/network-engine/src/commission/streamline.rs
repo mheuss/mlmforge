@@ -1319,6 +1319,35 @@ mod tests {
         );
     }
 
+    /// Pins that streamline propagates the shared walk's missing-upline error
+    /// rather than absorbing it. The omitted node is upline of the source, not
+    /// the source itself, so the pre-loop's source check cannot catch it.
+    /// Holds in every profile.
+    #[test]
+    fn missing_upline_snapshot_errors() {
+        let (engine, plan, structure, mut snapshots) = validation_fixture();
+        snapshots.remove(&test_uuid(4));
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(5),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::UplineNotInSnapshot(test_uuid(4))
+        );
+    }
+
     /// Pins that faults resolve per source in input order, not per check across
     /// the slice. An earlier source's missing snapshot must beat a later
     /// source's NaN.

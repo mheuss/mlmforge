@@ -853,7 +853,7 @@ mod tests {
     }
 
     #[test]
-    fn compression_missing_snapshot_errors() {
+    fn missing_upline_snapshot_errors() {
         // Pins the entry point, not the walk. Swallow the walk's error here,
         // or default the missing snapshot before calling it, and the walk's
         // own tests stay green while this one fails.

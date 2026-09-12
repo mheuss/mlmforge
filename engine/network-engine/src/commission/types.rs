@@ -712,7 +712,7 @@ mod tests {
     }
 
     #[test]
-    fn upline_not_in_snapshot_names_the_node_and_states_the_observation() {
+    fn upline_not_in_snapshot_message_names_the_node() {
         let id = uuid_from_index(2);
         let err = CalculationError::UplineNotInSnapshot(id);
         assert_eq!(err.to_string(), format!("upline node {id} has no snapshot"));

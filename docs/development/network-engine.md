@@ -995,32 +995,24 @@ explicitly typed literal such as `map[string]int{...}`.
 HEU-606 narrowed 14 wire DTO fields. Two breaks were compile errors and six were
 run-time assertion failures, so building was not enough to find them.
 
-## `validate_restored` Checks Each Structure Alone, Not That They Agree
+## `validate_restored` And What Each Arm Still Does Not Check
 
-The arena walks its index and its nodes against each other in both directions.
-The index is checked against the nodes, and the nodes are checked back against
-the index. An adversarial review threw roughly fifteen forged index shapes at
-that pair and every one was rejected.
+All four arms above the arena now check their own structures against each other.
+HEU-750 closed the last of them: the board plan arm in its first slice, matrix
+and binary in its second. Streamline was never one-way.
 
-The arena's other pair is checked one way only. Every free-list entry must name
-a tombstoned slot, and no tombstone has to appear in the free list. A tombstone
+Two gaps remain, and both are recorded rather than fixed.
+
+**The arena's free list is checked one way.** Every free-list entry must name a
+tombstoned slot, and no tombstone has to appear in the free list. A tombstone
 left out is leaked, and `node_count` counts it live. Its reach today is three
-`Debug` impls, which is why it is recorded rather than fixed.
+`Debug` impls.
 
-Two of the four arms above the arena still check one way only. Those are matrix
-and binary. Each holds a second structure beside the arena. Each checks that
-structure's entries are in range and live. Neither checks that the two agree
-with each other.
-
-So a restored matrix can hold a child in `Node.children` while every parent slot
-is empty. That passes validation today.
-
-The other two arms are not. Streamline was never one-way. The board plan arm
-was, and HEU-750's first slice closed it. Its boards, its membership index and
-its displaced list are now walked against each other.
-
-**The gap is recorded in the docblock of each arm that has it, and owned by
-HEU-750.**
+**No arm compares its slot map against `Node.children`.** The matrix and binary
+arms prove every live non-root node is a child in exactly one slot entry, which
+is a count. They do not prove the slot that names a node is the same parent the
+node's own edges name. That is HEU-732, along with reciprocal edges and
+acyclicity.
 
 Read a `validate_restored` docblock as the boundary of what that arm proves. An
 arm that proves less than its name suggests is the failure this file already

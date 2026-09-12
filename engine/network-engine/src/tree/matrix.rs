@@ -67,10 +67,12 @@ impl MatrixTree {
         })
     }
 
-    /// Prove a restored tree's stored values are in range and live.
+    /// Prove a restored tree's stored values are in range and live, and that
+    /// the slot map, the holding tank and the live nodes account for each
+    /// other.
     ///
-    /// The slot map, the holding tank and the arena edges are each checked
-    /// alone. That they agree with each other is not checked. HEU-750.
+    /// The slot map is not compared against `Node.children`. A slot entry and
+    /// an arena edge can still disagree. HEU-732.
     pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
         // A restore does not run the constructor, so the range it enforces has
         // to be re-established here. A width below 2 is not inert: placement

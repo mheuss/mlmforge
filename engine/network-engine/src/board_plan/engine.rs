@@ -141,7 +141,7 @@ impl BoardPlanEngine {
         let mut placed: HashSet<(Uuid, Uuid)> = HashSet::new();
         let mut sizing: Option<(Uuid, SnapshotConsistencyError)> = None;
         let mut seats: HashMap<Uuid, Uuid> = HashMap::new();
-        let mut duplicate: Option<Uuid> = None;
+        let mut duplicate: Option<(Uuid, Uuid)> = None;
         for (board_id, board) in &self.boards {
             if board.positions.len() != self.total_positions {
                 let err = SnapshotConsistencyError::BoardPositionCountMismatch {
@@ -157,20 +157,23 @@ impl BoardPlanEngine {
             for occupant in board.positions.iter().flatten() {
                 placed.insert((*board_id, *occupant));
                 if seats.insert(*occupant, *board_id).is_some()
-                    && duplicate.is_none_or(|held| *occupant < held)
+                    && duplicate.is_none_or(|(held, _)| *occupant < held)
                 {
-                    duplicate = Some(*occupant);
+                    // The board is carried so the rejection below always has
+                    // one to name, even when every repeat is on this board.
+                    duplicate = Some((*occupant, *board_id));
                 }
             }
         }
         if let Some((_, err)) = sizing {
             return Err(err);
         }
-        if let Some(user_id) = duplicate {
-            // The walk above only records that this occupant repeated. Collect
-            // every board holding them, so the message names the two lowest
-            // rather than whichever two hash order reached first. This runs
-            // only on the rejection path.
+        if let Some((user_id, seen_on)) = duplicate {
+            // The walk above only records that this occupant repeated, not
+            // where. Collect the boards holding them, so the message names the
+            // two lowest rather than whichever two hash order reached first.
+            // This runs only on the rejection path, and must always return:
+            // falling through here would accept the payload that reached it.
             let mut held: Vec<Uuid> = self
                 .boards
                 .iter()
@@ -178,15 +181,21 @@ impl BoardPlanEngine {
                 .map(|(board_id, _)| *board_id)
                 .collect();
             held.sort_unstable();
-            if let (Some(first_board), Some(second_board)) =
-                (held.first().copied(), held.get(1).copied())
-            {
-                return Err(SnapshotConsistencyError::MemberOnTwoBoards {
+            return match (held.first().copied(), held.get(1).copied()) {
+                (Some(first_board), Some(second_board)) => {
+                    Err(SnapshotConsistencyError::MemberOnTwoBoards {
+                        user_id,
+                        first_board,
+                        second_board,
+                    })
+                }
+                // Fewer than two boards hold them, so the repeat the walk saw
+                // is two positions on the board it saw it on.
+                _ => Err(SnapshotConsistencyError::MemberSeatedTwiceOnBoard {
                     user_id,
-                    first_board,
-                    second_board,
-                });
-            }
+                    board_id: seen_on,
+                }),
+            };
         }
 
         // Lowest user_id wins, since member_boards also iterates in hash order.
@@ -935,6 +944,56 @@ mod tests {
         let _ = engine.add_member(displaced, sponsor, 100);
 
         assert_eq!(engine.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_user_seated_twice_on_one_board() {
+        // Two positions, one enrollment: the same harm as two boards, reached
+        // without a second board. The index maps back correctly from both.
+        let (mut engine, member) = seeded_engine();
+        let board_id = *engine.member_boards.get(&member).unwrap();
+        engine.boards.get_mut(&board_id).unwrap().positions[1] = Some(member);
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::MemberSeatedTwiceOnBoard {
+                user_id: member,
+                board_id,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_does_not_let_a_same_board_repeat_mask_a_two_board_one() {
+        // The lowest offender repeats on one board; a higher one sits on two.
+        // Holding only the lowest user id and then finding one board for them
+        // must not drop the other fault.
+        //
+        // A fresh engine per iteration. self.boards is the map whose order
+        // decides which board seats records last for the two-board occupant,
+        // and one instance repeats its own order on every call.
+        for _ in 0..64 {
+            let (mut engine, member) = seeded_engine();
+            let board_id = *engine.member_boards.get(&member).unwrap();
+            engine.boards.get_mut(&board_id).unwrap().positions[1] = Some(member);
+
+            let higher = Uuid::from_bytes([0xCC, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            assert!(member < higher, "the seeded member must be the lower id");
+            engine.boards.get_mut(&board_id).unwrap().positions[2] = Some(higher);
+            engine.member_boards.insert(higher, board_id);
+            let mut spare = engine.boards.get(&board_id).unwrap().clone();
+            let spare_id = Uuid::from_bytes([0xDD, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            spare.id = spare_id;
+            spare.positions.iter_mut().for_each(|p| *p = None);
+            spare.positions[0] = Some(higher);
+            engine.boards.insert(spare_id, spare);
+
+            // Whichever fault is named, the engine must never be accepted.
+            assert!(
+                engine.validate_restored().is_err(),
+                "a double seat and a two-board occupant must not both be dropped"
+            );
+        }
     }
 
     #[test]

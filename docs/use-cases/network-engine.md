@@ -730,9 +730,10 @@ It means the compiler guards that field too. This mutation cannot reach the
 row.
 
 When a row comes back that way, retry it with a target type that keeps the
-callers compiling instead of `int`. On this table a plain `int` widening leaves
-seven rows unproven. Choosing the type per row narrows that to two. Those two
-only compile again after a wider refactor.
+callers compiling instead of `int`. How many rows land there is a property of
+the target you pick, not of the table. Three passes over this same table with
+different targets reported seven, five and four. Do not quote a number for it.
+Read the row names the script prints.
 
 Run from the repo root, on a clean tree. Interrupting the loop leaves the file
 mutated.
@@ -759,8 +760,9 @@ for i in range(s + 1, e):
 sys.exit(f'{struct}.{field} not found')
 PY
 
-go test ./internal/networkengine/ -run TestWireTypesNarrowMirrors -v \
-  | grep -oP '(?<=    --- PASS: TestWireTypesNarrowMirrors/)\S+' > "$T/rows.txt"
+go test ./internal/networkengine/ -run TestWireTypesNarrowMirrors -v > "$T/base.txt" 2>&1 \
+  || { cat "$T/base.txt"; echo "baseline is not green, aborting"; exit 1; }
+grep -oP '(?<=    --- PASS: TestWireTypesNarrowMirrors/)\S+' "$T/base.txt" > "$T/rows.txt"
 [ -s "$T/rows.txt" ] || { echo "no rows collected, aborting"; exit 1; }
 echo "sweeping $(wc -l < "$T/rows.txt") rows"
 
@@ -778,6 +780,11 @@ rm -rf "$T"
 
 A `NOT PINNED` line is a defect. A `COMPILER CAUGHT IT` line is not. It
 means that row is still unmeasured.
+
+The pairing covers DTO struct fields. A narrow Rust wire field whose Go
+counterpart is a function parameter is not reachable this way, and several
+exist. Sweeping the struct file alone reports a list that reads complete and
+is not.
 
 **When to use this pattern:**
 - A hand-maintained list is supposed to enumerate everything of some kind.

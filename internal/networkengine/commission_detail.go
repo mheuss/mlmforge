@@ -121,10 +121,9 @@ type boardCycleDetail struct {
 	V       int    `json:"v"`
 	Kind    string `json:"kind"`
 	BoardID string `json:"board_id"`
-	// Stays int. This is the persisted width, not a wire mirror. Narrowing it
-	// to match one would tie the stored format to a type that can change.
-	CycleNumber int  `json:"cycle_number"`
-	Capped      bool `json:"capped"`
+	// int64, not int: int is 32 bits on some targets and this holds a u32.
+	CycleNumber int64 `json:"cycle_number"`
+	Capped      bool  `json:"capped"`
 }
 
 // ResultFromCommissionEarning maps the shape returned by calculate_unilevel,
@@ -165,7 +164,7 @@ func ResultFromBoardCycleEarning(e BoardCycleEarningDTO) (CommissionResultInput,
 		V:           detailVersion,
 		Kind:        kindBoardCycle,
 		BoardID:     e.BoardID,
-		CycleNumber: int(e.CycleNumber),
+		CycleNumber: int64(e.CycleNumber),
 		Capped:      e.Capped,
 	})
 }

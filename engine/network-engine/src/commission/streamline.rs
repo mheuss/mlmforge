@@ -489,7 +489,22 @@ mod tests {
 
         // Walk upline from 5: 4 (bronze, qualifies L1), 3 (associate, skipped L2),
         // 2 (bronze, qualifies L2), 1 (silver, qualifies L3).
-        assert_eq!(earnings.len(), 3);
+        //
+        // Assert the shape, not the count. Ungated, the walk pays 4, 3 and 2 —
+        // also three earnings, so a length check passes either way and never
+        // sees the compression this test is named for.
+        let shape: Vec<(Uuid, u8, Option<f64>)> = earnings
+            .iter()
+            .map(|e| (e.earner_id, e.level, e.rate))
+            .collect();
+        assert_eq!(
+            shape,
+            vec![
+                (test_uuid(1), 3, Some(0.03)),
+                (test_uuid(2), 2, Some(0.04)),
+                (test_uuid(4), 1, Some(0.05)),
+            ]
+        );
     }
 
     #[test]

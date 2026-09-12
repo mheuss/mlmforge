@@ -153,6 +153,12 @@ pub enum SnapshotConsistencyError {
     #[error("board {board_id} seats {user_id} in more than one position")]
     MemberSeatedTwiceOnBoard { user_id: Uuid, board_id: Uuid },
 
+    #[error("displaced_members lists {user_id}; member_boards puts them on board {board_id}")]
+    MemberDisplacedAndSeated { user_id: Uuid, board_id: Uuid },
+
+    #[error("displaced_members lists {user_id} more than once")]
+    MemberDisplacedTwice { user_id: Uuid },
+
     #[error("{user_id} occupies a position on board {first_board} and on board {second_board}")]
     MemberOnTwoBoards {
         user_id: Uuid,

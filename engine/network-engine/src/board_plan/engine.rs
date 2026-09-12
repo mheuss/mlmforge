@@ -98,10 +98,8 @@ impl BoardPlanEngine {
     /// holds users who are on no board by design. Checking it against `boards`
     /// would reject engines this crate itself produces.
     ///
-    /// `displaced_members` is not checked either. It is not covered by the
-    /// criteria this arm was written against.
     pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
-        // Five walks, in an order each one depends on. Reordering any of them
+        // Six walks, in an order each one depends on. Reordering any of them
         // changes which fault is reported, and two of them stop being correct:
         //
         //   1. dimensions and the position cache, so later walks compare
@@ -115,6 +113,9 @@ impl BoardPlanEngine {
         //   5. membership, forward then reverse. The forward walk owns every
         //      case where the index names a board; the reverse walk is left
         //      with the one case where it names nothing.
+        //   6. displaced_members, last, so a user the index puts on a board
+        //      that does not exist is reported by the forward walk rather
+        //      than here.
         // A restore does not run the constructor, so the range it enforces has
         // to be re-established here.
         if !(2..=5).contains(&self.width) || !(1..=4).contains(&self.height) {
@@ -260,6 +261,28 @@ impl BoardPlanEngine {
         }
         if let Some((_, err)) = unindexed {
             return Err(err);
+        }
+
+        // displaced_members against the boards and the index. place_displaced
+        // _members drains this Vec and seats each entry without asking whether
+        // they already hold a seat, so a listed user who is also indexed gets
+        // a second one, and a repeat inside the Vec gets two.
+        //
+        // Returns on the first fault rather than holding the lowest. This is a
+        // Vec, so its order is part of the payload and the same payload names
+        // the same offender. The lowest-key holds above exist because their
+        // sources are HashMaps.
+        let mut listed: HashSet<Uuid> = HashSet::new();
+        for user_id in &self.displaced_members {
+            if !listed.insert(*user_id) {
+                return Err(SnapshotConsistencyError::MemberDisplacedTwice { user_id: *user_id });
+            }
+            if let Some(board_id) = self.member_boards.get(user_id) {
+                return Err(SnapshotConsistencyError::MemberDisplacedAndSeated {
+                    user_id: *user_id,
+                    board_id: *board_id,
+                });
+            }
         }
         Ok(())
     }
@@ -960,6 +983,49 @@ mod tests {
         let sponsor = *engine.member_boards.keys().next().unwrap();
 
         let _ = engine.add_member(displaced, sponsor, 100);
+
+        assert_eq!(engine.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_displaced_user_who_is_also_seated() {
+        // place_displaced_members seats this user again and overwrites the
+        // index, leaving the original seat an occupant nothing names.
+        let (mut engine, member) = seeded_engine();
+        let board_id = *engine.member_boards.get(&member).unwrap();
+        engine.displaced_members.push(member);
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::MemberDisplacedAndSeated {
+                user_id: member,
+                board_id,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_user_displaced_twice() {
+        // The Vec is drained once, so the second entry seats them a second
+        // time on whichever board has an opening.
+        let (mut engine, _) = seeded_engine();
+        let waiting = Uuid::from_bytes([0xEE, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+        engine.displaced_members.push(waiting);
+        engine.displaced_members.push(waiting);
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::MemberDisplacedTwice { user_id: waiting })
+        );
+    }
+
+    #[test]
+    fn validate_restored_accepts_a_displaced_user_who_holds_no_seat() {
+        // The state dissolve_board leaves behind. Rejecting it would reject
+        // engine output.
+        let (mut engine, _) = seeded_engine();
+        let waiting = Uuid::from_bytes([0xEE, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+        engine.displaced_members.push(waiting);
 
         assert_eq!(engine.validate_restored(), Ok(()));
     }

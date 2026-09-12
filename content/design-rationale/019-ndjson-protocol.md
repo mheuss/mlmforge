@@ -205,9 +205,8 @@ The commission ops are `calculate_unilevel`, `calculate_binary_pairing`, `calcul
 
 ### JSON Object Key Order Is Not Part Of The Contract
 
-Object key order in worker responses is deterministic and identical in every
-build configuration. It is **not** an interoperability guarantee, and the Go
-side must not depend on it.
+Object key order in worker responses is not stable. It is not an
+interoperability guarantee. The Go side must not depend on it.
 
 Go decodes with `encoding/json` struct tags, which ignore order. A reorder on
 the Rust side is a heads-up that something changed, not a compatibility break.
@@ -217,12 +216,42 @@ For the record, since the mechanism is easy to re-derive wrongly:
 
 | What | Order emitted |
 |---|---|
-| `serde_json::Value` payloads (the `result` body) | Sorted, because `Value` is backed by a `BTreeMap` |
+| Struct fields in a result payload | Declaration order |
+| `HashMap` fields in a result payload | Unspecified, and it varies per map instance |
+| A `serde_json::Value` payload | Sorted, because `Value` is backed by a `BTreeMap` |
 | The response envelope (`id`, `ok`, `result`, `error`) | Struct declaration order, which is *not* alphabetical |
 
-So "the worker sorts its keys" is true of payloads and false of the envelope.
-Writing the guarantee down as "sorted" would have been wrong at the top level of
-every response.
+So "the worker sorts its keys" is false. It was true of payloads until HEU-743,
+which stopped routing results through `Value` on the way to the wire. Sorting
+was a side effect of that hop, not a decision. The hop cost several times what
+the bytes did.
+
+The `HashMap` row is the one that surprises. Its size is easy to get wrong. Rust's default hasher takes a fresh key for every map it builds, not one
+per process. So the variable is the map instance, not the run.
+
+What that means in practice:
+
+- Two `take_snapshot` calls on the same live structure return identical bytes.
+  Same map, untouched, same order.
+- Two structures built by the same sequence of calls are not reproducible
+  against each other, in the same process, seconds apart.
+- A structure restored from its own snapshot is not reproducible against the
+  snapshot it came from. Restore builds a new map.
+
+Not reproducible, rather than guaranteed to differ. A different seed does not
+force a different order. A map small enough will come out the same by chance. One matching pair proves nothing.
+
+The restore case is the one to remember. Round-tripping a snapshot does not
+reproduce it.
+
+This section covers object key order. Array element order is a separate
+question. It is not settled here. An array built from a map's iteration order
+has the same problem. HEU-757 is where that one lives.
+
+Nothing consumes those bytes by comparison today. Content-addressing a
+snapshot, diffing two of them, and hashing one for an integrity check all need
+a stable order established first. That order belongs in the engine's own types,
+not on the wire.
 
 This was worth stating because it was briefly untrue. Until HEU-648, a
 `serde_json/preserve_order` dev-feature reached the worker through Cargo feature

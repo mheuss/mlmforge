@@ -84,6 +84,9 @@ fn board_plan_error_to_response(
         network_engine::board_plan::BoardPlanError::MemberAlreadyExists(_) => {
             "MEMBER_ALREADY_EXISTS"
         }
+        network_engine::board_plan::BoardPlanError::MemberAwaitingReassignment(_) => {
+            "MEMBER_AWAITING_REASSIGNMENT"
+        }
         network_engine::board_plan::BoardPlanError::SponsorNotFound(_) => "SPONSOR_NOT_FOUND",
         network_engine::board_plan::BoardPlanError::BoardNotFound(_) => "BOARD_NOT_FOUND",
         network_engine::board_plan::BoardPlanError::MemberNotFound(_) => "MEMBER_NOT_FOUND",
@@ -175,10 +178,7 @@ pub(crate) fn handle_board_add_member(state: &mut WorkerState, request: &Request
     };
 
     match engine.add_member(user_id, sponsor_id, timestamp) {
-        Ok(result) => Response::success(
-            request.id.clone(),
-            serde_json::to_value(&result).expect("serialization of AddMemberResult is infallible"),
-        ),
+        Ok(result) => Response::success(request.id.clone(), &result),
         Err(e) => board_plan_error_to_response(&request.id, e),
     }
 }
@@ -216,11 +216,7 @@ pub(crate) fn handle_board_remove_member(state: &mut WorkerState, request: &Requ
     };
 
     match engine.remove_member(user_id, timestamp) {
-        Ok(result) => Response::success(
-            request.id.clone(),
-            serde_json::to_value(&result)
-                .expect("serialization of RemoveMemberResult is infallible"),
-        ),
+        Ok(result) => Response::success(request.id.clone(), &result),
         Err(e) => board_plan_error_to_response(&request.id, e),
     }
 }
@@ -282,11 +278,7 @@ pub(crate) fn handle_board_compress_inactive(
     };
 
     match engine.compress_inactive(member_ids, timestamp) {
-        Ok(result) => Response::success(
-            request.id.clone(),
-            serde_json::to_value(&result)
-                .expect("serialization of CompressionResult is infallible"),
-        ),
+        Ok(result) => Response::success(request.id.clone(), &result),
         Err(e) => board_plan_error_to_response(&request.id, e),
     }
 }
@@ -326,10 +318,7 @@ pub(crate) fn handle_board_detect_stalled(state: &WorkerState, request: &Request
     };
 
     let stalled = engine.detect_stalled_boards(cutoff_timestamp);
-    Response::success(
-        request.id.clone(),
-        serde_json::to_value(&stalled).expect("serialization of Vec<StalledBoard> is infallible"),
-    )
+    Response::success(request.id.clone(), &stalled)
 }
 
 /// Dissolves a board, moving its members to the displaced pool.
@@ -365,11 +354,7 @@ pub(crate) fn handle_board_dissolve(state: &mut WorkerState, request: &Request) 
     };
 
     match engine.dissolve_board(board_id, timestamp) {
-        Ok(result) => Response::success(
-            request.id.clone(),
-            serde_json::to_value(&result)
-                .expect("serialization of DissolutionResult is infallible"),
-        ),
+        Ok(result) => Response::success(request.id.clone(), &result),
         Err(e) => board_plan_error_to_response(&request.id, e),
     }
 }
@@ -403,10 +388,7 @@ pub(crate) fn handle_board_get_state(state: &WorkerState, request: &Request) -> 
     };
 
     match engine.get_board(board_id) {
-        Some(board) => Response::success(
-            request.id.clone(),
-            serde_json::to_value(board).expect("serialization of Board is infallible"),
-        ),
+        Some(board) => Response::success(request.id.clone(), board),
         None => Response::error(
             request.id.clone(),
             "BOARD_NOT_FOUND",
@@ -477,10 +459,7 @@ pub(crate) fn handle_board_list(state: &WorkerState, request: &Request) -> Respo
     };
 
     let boards = engine.list_boards();
-    Response::success(
-        request.id.clone(),
-        serde_json::to_value(&boards).expect("serialization of Vec<BoardSummary> is infallible"),
-    )
+    Response::success(request.id.clone(), &boards)
 }
 
 /// Calculates board cycle commissions for a set of cycle events.
@@ -549,9 +528,5 @@ pub(crate) fn handle_board_calculate_commissions(
         &structure.board_cycling,
     );
 
-    Response::success(
-        request.id.clone(),
-        serde_json::to_value(&result)
-            .expect("serialization of BoardCommissionResult is infallible"),
-    )
+    Response::success(request.id.clone(), &result)
 }

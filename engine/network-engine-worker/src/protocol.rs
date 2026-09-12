@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// This moves on any change to wire semantics, not only on shape changes. Two
 /// workers can share a schema and still disagree about what a field means.
-pub const PROTOCOL_VERSION: u32 = 7;
+pub const PROTOCOL_VERSION: u32 = 8;
 
 /// An NDJSON request from the Go platform layer.
 #[derive(Debug, Deserialize)]
@@ -47,18 +47,16 @@ fn default_raw_params() -> Box<serde_json::value::RawValue> {
 pub struct Response {
     pub id: String,
     pub ok: bool,
-    /// Boxed to keep `Response` under clippy's `large-error-threshold`.
-    /// `Response` is the `Err` type of the parse and lookup helpers in
-    /// `handlers/`, and this is the field that carried the weight: held inline,
-    /// a `serde_json::Value` made `Response`'s size depend on a feature flag.
-    /// See `response_stays_small_enough_for_clippy`.
+    /// Already-serialized JSON, so a typed result reaches the wire without a
+    /// `serde_json::Value` tree in between.
     ///
-    /// `serde` serializes `Box<T>` as `T`, so the NDJSON shape is unchanged.
+    /// Boxed to keep `Response` under clippy's `large-error-threshold`. See
+    /// `response_stays_small_enough_for_clippy`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<Box<serde_json::Value>>,
-    /// Also boxed, for headroom. Boxing `result` alone already clears the
-    /// threshold at 88 bytes. Boxing this one too brings `Response` to 48, and
-    /// error responses are the cold path.
+    pub result: Option<Box<serde_json::value::RawValue>>,
+    /// Also boxed, for headroom. Boxing `result` alone already cleared the
+    /// bound, and error responses are the cold path, so boxing this one too
+    /// was cheap.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<Box<ErrorPayload>>,
 }
@@ -71,11 +69,14 @@ pub struct ErrorPayload {
 }
 
 impl Response {
-    pub fn success(id: String, result: serde_json::Value) -> Self {
+    /// Serializes `result` into raw JSON and stores it on the response.
+    pub fn success<T: Serialize>(id: String, result: T) -> Self {
         Self {
             id,
             ok: true,
-            result: Some(Box::new(result)),
+            result: Some(
+                serde_json::value::to_raw_value(&result).expect("serializing a response result"),
+            ),
             error: None,
         }
     }
@@ -102,8 +103,10 @@ mod tests {
     /// overridden here. `Response` is the error type of the parse and lookup
     /// helpers in `handlers/`.
     ///
-    /// It measures 48 bytes, in every build. Before `result` was boxed,
-    /// `Response` held a `serde_json::Value` inline and so changed size with
+    /// It stays under the bound in every build.
+    ///
+    /// Before `result` was boxed, `Response` held a `serde_json::Value` inline
+    /// and so changed size with
     /// `serde_json`'s `preserve_order` feature, which `network-engine` declared
     /// in `[dev-dependencies]` at the time. It came out at 112 bytes or 152
     /// depending on whether that crate's dev targets were in the build graph.
@@ -213,6 +216,95 @@ mod tests {
         assert_eq!(
             json,
             r#"{"id":"req-1","ok":true,"result":{"alpha":2,"zebra":1}}"#
+        );
+    }
+
+    /// A typed result emits its struct fields in declaration order, not sorted.
+    ///
+    /// Authored out of alphabetical order, the mirror of
+    /// `value_payload_emits_sorted_keys` above. That one holds a `Value` and
+    /// sorts; this one holds a struct and does not.
+    ///
+    /// Declaration order covers struct fields only. A map field has no
+    /// declaration order, and emits in whatever order it iterates.
+    #[test]
+    fn typed_payload_emits_declaration_order() {
+        #[derive(Serialize)]
+        struct Payload {
+            zebra: u8,
+            alpha: u8,
+        }
+
+        let resp = Response::success("req-1".into(), Payload { zebra: 1, alpha: 2 });
+        let json = serde_json::to_string(&resp).unwrap();
+        assert_eq!(
+            json,
+            r#"{"id":"req-1","ok":true,"result":{"zebra":1,"alpha":2}}"#
+        );
+    }
+
+    /// `#[serde(flatten)]` survives pre-serialization into a `RawValue`.
+    ///
+    /// Do not flatten a `Box<RawValue>` field itself. That emits serde_json's
+    /// private marker as an object key instead of the raw JSON, and it does it
+    /// silently rather than erroring.
+    #[test]
+    fn flattened_payload_serializes_through_the_envelope() {
+        #[derive(Serialize)]
+        struct Inner {
+            total: u8,
+        }
+
+        #[derive(Serialize)]
+        struct Outer {
+            #[serde(flatten)]
+            inner: Inner,
+            extra: Vec<u8>,
+        }
+
+        let resp = Response::success(
+            "req-1".into(),
+            Outer {
+                inner: Inner { total: 7 },
+                extra: vec![1, 2],
+            },
+        );
+        let json = serde_json::to_string(&resp).unwrap();
+        assert_eq!(
+            json,
+            r#"{"id":"req-1","ok":true,"result":{"total":7,"extra":[1,2]}}"#
+        );
+    }
+
+    /// Flattening a `Box<RawValue>` emits serde_json's private marker as a key.
+    ///
+    /// Pinned because the failure is silent. It produces wrong bytes rather
+    /// than an error, so nothing else would catch someone adding `flatten` to
+    /// a raw field.
+    #[test]
+    fn flattening_a_raw_value_emits_the_private_marker() {
+        #[derive(Serialize)]
+        struct Outer {
+            #[serde(flatten)]
+            raw: Box<serde_json::value::RawValue>,
+            tail: u8,
+        }
+
+        let resp = Response::success(
+            "req-1".into(),
+            Outer {
+                raw: serde_json::value::to_raw_value(&serde_json::json!({"a": 1})).unwrap(),
+                tail: 7,
+            },
+        );
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(
+            json.contains("$serde_json::private::RawValue"),
+            "expected the private marker to leak, got: {json}"
+        );
+        assert!(
+            !json.contains(r#""a":1"#),
+            "expected the raw JSON not to be spliced in, got: {json}"
         );
     }
 

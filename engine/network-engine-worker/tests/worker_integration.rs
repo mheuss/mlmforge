@@ -63,7 +63,7 @@ fn ping_returns_protocol_version() {
 
     let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
     assert_eq!(parsed["id"], "1");
-    assert_eq!(parsed["result"]["protocol_version"], 7);
+    assert_eq!(parsed["result"]["protocol_version"], 8);
 
     drop(child.stdin.take());
     child.wait().unwrap();
@@ -6780,6 +6780,71 @@ fn streamline_snapshot_round_trip_survives_a_frozen_stream() {
         ),
     );
     assert_eq!(m_before, m_after, "the restored member differs");
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// A duplicate struct field in a snapshot payload is rejected.
+#[test]
+fn restore_snapshot_rejects_a_duplicate_struct_field() {
+    let mut worker = common::spawn_worker();
+    build_three_node_chain(&mut worker);
+
+    let data = take_snapshot_data(&mut worker, TREE_NAME).to_string();
+    let fields = data
+        .strip_prefix('{')
+        .and_then(|d| d.strip_suffix('}'))
+        .expect("snapshot data is a JSON object");
+    let duplicated = format!("{{{fields},{fields}}}");
+
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"dup","op":"restore_snapshot","params":{{"structure":"Restored","tree_type":"unilevel","data":{duplicated}}}}}"#
+        ),
+    );
+
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "expected INVALID_PARAMS, got: {resp}"
+    );
+    assert!(
+        resp.contains("duplicate field"),
+        "expected the message to name the duplicate field, got: {resp}"
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Nesting deeper than serde_json's recursion limit, under a field the tree
+/// type ignores, restores.
+#[test]
+fn restore_snapshot_accepts_deep_nesting_under_an_ignored_field() {
+    let mut worker = common::spawn_worker();
+    build_three_node_chain(&mut worker);
+
+    let data = take_snapshot_data(&mut worker, TREE_NAME).to_string();
+    let fields = data
+        .strip_prefix('{')
+        .and_then(|d| d.strip_suffix('}'))
+        .expect("snapshot data is a JSON object");
+    // Deep enough to exceed the parser's nesting limit.
+    let junk = format!("{}{}", "[".repeat(300), "]".repeat(300));
+    let padded = format!(r#"{{{fields},"junk":{junk}}}"#);
+
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"deep","op":"restore_snapshot","params":{{"structure":"Restored","tree_type":"unilevel","data":{padded}}}}}"#
+        ),
+    );
+
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "expected the restore to succeed, got: {resp}"
+    );
 
     drop(worker.stdin.take());
     worker.wait().unwrap();

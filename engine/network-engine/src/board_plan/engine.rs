@@ -88,17 +88,22 @@ impl BoardPlanEngine {
         })
     }
 
-    /// Prove a restored engine's stored values are in range and its membership
-    /// index names seats that hold the member.
+    /// Prove a restored engine's stored values are in range and its boards
+    /// agree with its membership index.
     ///
-    /// Membership is checked from the index outward only. That every occupant
-    /// of a board has an entry pointing back is not checked. HEU-750.
+    /// Membership is checked in both directions.
     ///
     /// `sponsor_map` is deliberately not checked. It is permanent enrollment
     /// data that keeps removed members so re-entry can still route them, so it
     /// holds users who are on no board by design. Checking it against `boards`
     /// would reject engines this crate itself produces.
     pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
+        // Six walks, each depending on the ones before it having returned.
+        // Two of those dependencies are load-bearing rather than cosmetic: the
+        // key check must precede anything that treats a key as an identity,
+        // and the duplicate check must precede the reverse membership walk,
+        // which reads a map that holds one board per occupant only because the
+        // duplicate check already returned.
         // A restore does not run the constructor, so the range it enforces has
         // to be re-established here.
         if !(2..=5).contains(&self.width) || !(1..=4).contains(&self.height) {
@@ -118,10 +123,31 @@ impl BoardPlanEngine {
                 expected,
             });
         }
+        // Runs before the walk below, which uses the map key as the board's
+        // identity. A fault reported against a key that names no board gives
+        // an operator an id they cannot look up.
+        let mut key_fault: Option<(Uuid, SnapshotConsistencyError)> = None;
+        for (key, board) in &self.boards {
+            if *key != board.id && key_fault.as_ref().is_none_or(|(held, _)| key < held) {
+                key_fault = Some((
+                    *key,
+                    SnapshotConsistencyError::BoardIdMismatch {
+                        key: *key,
+                        board_id: board.id,
+                    },
+                ));
+            }
+        }
+        if let Some((_, err)) = key_fault {
+            return Err(err);
+        }
+
         // Ties break on the lowest board id, since self.boards iterates in
         // random hash order and the offender must not vary between runs.
         let mut placed: HashSet<(Uuid, Uuid)> = HashSet::new();
         let mut sizing: Option<(Uuid, SnapshotConsistencyError)> = None;
+        let mut seats: HashMap<Uuid, Uuid> = HashMap::new();
+        let mut duplicate: Option<(Uuid, Uuid)> = None;
         for (board_id, board) in &self.boards {
             if board.positions.len() != self.total_positions {
                 let err = SnapshotConsistencyError::BoardPositionCountMismatch {
@@ -136,10 +162,44 @@ impl BoardPlanEngine {
             }
             for occupant in board.positions.iter().flatten() {
                 placed.insert((*board_id, *occupant));
+                if seats.insert(*occupant, *board_id).is_some()
+                    && duplicate.is_none_or(|(held, _)| *occupant < held)
+                {
+                    // The board is carried so the rejection below always has
+                    // one to name, even when every repeat is on this board.
+                    duplicate = Some((*occupant, *board_id));
+                }
             }
         }
         if let Some((_, err)) = sizing {
             return Err(err);
+        }
+        if let Some((user_id, seen_on)) = duplicate {
+            // Names the two lowest boards holding this occupant, not
+            // whichever two hash order reached first. Must return; falling
+            // through would accept the payload that reached it.
+            let mut held: Vec<Uuid> = self
+                .boards
+                .iter()
+                .filter(|(_, board)| board.positions.iter().flatten().any(|o| *o == user_id))
+                .map(|(board_id, _)| *board_id)
+                .collect();
+            held.sort_unstable();
+            return match (held.first().copied(), held.get(1).copied()) {
+                (Some(first_board), Some(second_board)) => {
+                    Err(SnapshotConsistencyError::MemberOnTwoBoards {
+                        user_id,
+                        first_board,
+                        second_board,
+                    })
+                }
+                // Fewer than two boards hold them, so the repeat the walk saw
+                // is two positions on the board it saw it on.
+                _ => Err(SnapshotConsistencyError::MemberSeatedTwiceOnBoard {
+                    user_id,
+                    board_id: seen_on,
+                }),
+            };
         }
 
         // Lowest user_id wins, since member_boards also iterates in hash order.
@@ -166,6 +226,44 @@ impl BoardPlanEngine {
         }
         if let Some((_, err)) = fault {
             return Err(err);
+        }
+
+        // The reverse of the walk above: every seat must have an index entry
+        // pointing back to it.
+        let mut unindexed: Option<(Uuid, SnapshotConsistencyError)> = None;
+        for (user_id, board_id) in &seats {
+            if self.member_boards.get(user_id) != Some(board_id)
+                && unindexed.as_ref().is_none_or(|(held, _)| user_id < held)
+            {
+                unindexed = Some((
+                    *user_id,
+                    SnapshotConsistencyError::OccupantNotIndexed {
+                        user_id: *user_id,
+                        board_id: *board_id,
+                    },
+                ));
+            }
+        }
+        if let Some((_, err)) = unindexed {
+            return Err(err);
+        }
+
+        // A listed user must hold no seat, and the list must have no repeats.
+        // Either one gets that user a second seat on the next enrollment.
+        //
+        // Returns on the first fault rather than holding the lowest: this is a
+        // Vec, so its fixed order always names the same offender first.
+        let mut listed: HashSet<Uuid> = HashSet::new();
+        for user_id in &self.displaced_members {
+            if !listed.insert(*user_id) {
+                return Err(SnapshotConsistencyError::MemberDisplacedTwice { user_id: *user_id });
+            }
+            if let Some(board_id) = self.member_boards.get(user_id) {
+                return Err(SnapshotConsistencyError::MemberDisplacedAndSeated {
+                    user_id: *user_id,
+                    board_id: *board_id,
+                });
+            }
         }
         Ok(())
     }
@@ -215,7 +313,8 @@ impl BoardPlanEngine {
 
     /// Adds a member to a board.
     ///
-    /// Validates the member is not already placed and the sponsor exists.
+    /// Validates the member is neither placed nor awaiting reassignment, and
+    /// that the sponsor exists.
     /// First member is bootstrapped automatically. Displaced members are
     /// placed before the new member. Placement board depends on the
     /// configured `re_entry_position`.
@@ -225,9 +324,14 @@ impl BoardPlanEngine {
         sponsor_id: Uuid,
         timestamp: i64,
     ) -> Result<AddMemberResult, BoardPlanError> {
-        // Validate: member not already on a board.
+        // Validate: member not already on a board, and not waiting for one.
+        // A displaced member is absent from member_boards by design, so
+        // checking that map alone let them be seated twice.
         if self.member_boards.contains_key(&user_id) {
             return Err(BoardPlanError::MemberAlreadyExists(user_id));
+        }
+        if self.displaced_members.contains(&user_id) {
+            return Err(BoardPlanError::MemberAwaitingReassignment(user_id));
         }
 
         // Bootstrap: first member auto-registers the sponsor.
@@ -704,6 +808,359 @@ mod tests {
     }
 
     #[test]
+    fn engine_output_holds_the_three_board_invariants_through_a_cycle() {
+        // Twelve enrollments on a 2x1 board should split it into two, each
+        // seeded with one member and needing two more.
+        let mut engine = BoardPlanEngine::new(2, 1, test_config(), 0).unwrap();
+        let first = Uuid::from_bytes([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+        engine.add_member(first, first, 1).unwrap();
+        for n in 2..=12u8 {
+            let m = Uuid::from_bytes([n, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            engine.add_member(m, first, n as i64).unwrap();
+        }
+        assert!(
+            engine.boards.len() > 1,
+            "twelve enrollments left {} board(s); a split was expected",
+            engine.boards.len()
+        );
+
+        assert_board_invariants(&engine);
+    }
+
+    /// Asserts the three invariants HEU-750's board criteria depend on.
+    fn assert_board_invariants(engine: &BoardPlanEngine) {
+        // The validator itself, not just the three checks spelled out below.
+        // Without this the guards are never run against engine output, which
+        // is the one thing they must never reject.
+        assert_eq!(engine.validate_restored(), Ok(()));
+
+        for (key, board) in &engine.boards {
+            assert_eq!(*key, board.id, "map key disagrees with board id");
+        }
+
+        let mut seen: HashSet<Uuid> = HashSet::new();
+        for board in engine.boards.values() {
+            for occupant in board.positions.iter().flatten() {
+                assert!(seen.insert(*occupant), "{occupant} occupies two boards");
+            }
+        }
+
+        for (board_id, board) in &engine.boards {
+            for occupant in board.positions.iter().flatten() {
+                assert_eq!(
+                    engine.member_boards.get(occupant),
+                    Some(board_id),
+                    "{occupant} sits on {board_id} with no member_boards entry pointing back"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn engine_output_holds_the_three_board_invariants_through_displacement() {
+        // Re-entry is off here, so enrollments leave someone displaced. That
+        // is the path that hid a double-seating bug.
+        let mut engine = BoardPlanEngine::new(2, 1, test_config_no_reentry(), 0).unwrap();
+        let first = Uuid::from_bytes([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+        engine.add_member(first, first, 1).unwrap();
+        assert_board_invariants(&engine);
+        for n in 2..=12u8 {
+            let m = Uuid::from_bytes([n, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            engine.add_member(m, first, n as i64).unwrap();
+            assert_board_invariants(&engine);
+        }
+        assert!(
+            !engine.displaced_members.is_empty(),
+            "re-entry is off, so twelve enrollments should leave someone displaced"
+        );
+
+        let board_id = *engine.boards.keys().next().unwrap();
+        engine.dissolve_board(board_id, 200).unwrap();
+        assert_board_invariants(&engine);
+
+        let displaced = *engine.displaced_members.first().unwrap();
+        let sponsor = *engine.member_boards.keys().next().unwrap();
+        let _ = engine.add_member(displaced, sponsor, 300);
+        assert_board_invariants(&engine);
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_board_filed_under_the_wrong_key() {
+        let (mut engine, member) = seeded_engine();
+        let seated = *engine.member_boards.get(&member).unwrap();
+        let board = engine.boards.remove(&seated).unwrap();
+        let board_id = board.id;
+        let wrong_key = Uuid::from_bytes([7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+        engine.boards.insert(wrong_key, board);
+        engine.member_boards.insert(member, wrong_key);
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::BoardIdMismatch {
+                key: wrong_key,
+                board_id,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_key_offender_every_run() {
+        // A fresh engine per iteration. One HashMap repeats its own iteration
+        // order, so looping over a single engine proves nothing about hash
+        // order and stays green with the lowest-key hold deleted.
+        for _ in 0..64 {
+            let (mut engine, member) = seeded_engine();
+            let seated = *engine.member_boards.get(&member).unwrap();
+            let board = engine.boards.remove(&seated).unwrap();
+            let low_board_id = board.id;
+            let low = Uuid::from_bytes([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            let high = Uuid::from_bytes([2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            let mut second = board.clone();
+            second.id = Uuid::from_bytes([3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            engine.boards.insert(low, board);
+            engine.boards.insert(high, second);
+            engine.member_boards.insert(member, low);
+
+            assert_eq!(
+                engine.validate_restored(),
+                Err(SnapshotConsistencyError::BoardIdMismatch {
+                    key: low,
+                    board_id: low_board_id,
+                }),
+                "the lowest key should win regardless of hash order"
+            );
+        }
+    }
+
+    /// Enrolls until one member is left awaiting reassignment.
+    fn engine_with_a_displaced_member() -> (BoardPlanEngine, Uuid) {
+        let mut engine = BoardPlanEngine::new(2, 1, test_config_no_reentry(), 0).unwrap();
+        let first = Uuid::from_bytes([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+        engine.add_member(first, first, 1).unwrap();
+        for n in 2..=8u8 {
+            let m = Uuid::from_bytes([n, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            engine.add_member(m, first, n as i64).unwrap();
+        }
+        let displaced = *engine
+            .displaced_members
+            .first()
+            .expect("eight enrollments with re-entry off leave a displaced member");
+        (engine, displaced)
+    }
+
+    #[test]
+    fn add_member_rejects_a_member_awaiting_reassignment() {
+        // A displaced member is absent from member_boards by design, so the
+        // duplicate check alone missed them, letting them be seated twice.
+        let (mut engine, displaced) = engine_with_a_displaced_member();
+        let sponsor = *engine.member_boards.keys().next().unwrap();
+
+        assert_eq!(
+            engine.add_member(displaced, sponsor, 100).unwrap_err(),
+            BoardPlanError::MemberAwaitingReassignment(displaced)
+        );
+    }
+
+    #[test]
+    fn reassigning_a_displaced_member_leaves_the_engine_restorable() {
+        // The supported path. A new enrollment drains the displaced pool
+        // first, so the waiting member is seated by someone else's join.
+        let (mut engine, displaced) = engine_with_a_displaced_member();
+        assert_eq!(engine.validate_restored(), Ok(()));
+        let sponsor = *engine.member_boards.keys().next().unwrap();
+        let newcomer = Uuid::from_bytes([0xF1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+
+        engine.add_member(newcomer, sponsor, 100).unwrap();
+
+        assert!(
+            !engine.displaced_members.contains(&displaced),
+            "the enrollment should have drained {displaced} from the pool"
+        );
+        assert_eq!(engine.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_displaced_user_who_is_also_seated() {
+        // A displaced user who is also seated is seated again on the next
+        // enrollment, leaving the original seat an occupant nothing names.
+        let (mut engine, member) = seeded_engine();
+        let board_id = *engine.member_boards.get(&member).unwrap();
+        engine.displaced_members.push(member);
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::MemberDisplacedAndSeated {
+                user_id: member,
+                board_id,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_user_displaced_twice() {
+        // A repeat must be rejected before it can seat the same user twice.
+        let (mut engine, _) = seeded_engine();
+        let waiting = Uuid::from_bytes([0xEE, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+        engine.displaced_members.push(waiting);
+        engine.displaced_members.push(waiting);
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::MemberDisplacedTwice { user_id: waiting })
+        );
+    }
+
+    #[test]
+    fn validate_restored_accepts_a_displaced_user_who_holds_no_seat() {
+        // A displaced user holding no seat is valid engine output. Rejecting
+        // it would reject snapshots this crate produces.
+        let (mut engine, _) = seeded_engine();
+        let waiting = Uuid::from_bytes([0xEE, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+        engine.displaced_members.push(waiting);
+
+        assert_eq!(engine.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_user_seated_twice_on_one_board() {
+        // Two positions, one enrollment: the same harm as two boards, reached
+        // without a second board. The index maps back correctly from both.
+        let (mut engine, member) = seeded_engine();
+        let board_id = *engine.member_boards.get(&member).unwrap();
+        engine.boards.get_mut(&board_id).unwrap().positions[1] = Some(member);
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::MemberSeatedTwiceOnBoard {
+                user_id: member,
+                board_id,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_does_not_let_a_same_board_repeat_mask_a_two_board_one() {
+        // A repeat on one board and a second occupant on two must both be
+        // caught. Holding only the lowest id must not drop either fault.
+        // Fresh engine per iteration, since self.boards' hash order decides
+        // which board is recorded last.
+        for _ in 0..64 {
+            let (mut engine, member) = seeded_engine();
+            let board_id = *engine.member_boards.get(&member).unwrap();
+            engine.boards.get_mut(&board_id).unwrap().positions[1] = Some(member);
+
+            let higher = Uuid::from_bytes([0xCC, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            assert!(member < higher, "the seeded member must be the lower id");
+            engine.boards.get_mut(&board_id).unwrap().positions[2] = Some(higher);
+            engine.member_boards.insert(higher, board_id);
+            let mut spare = engine.boards.get(&board_id).unwrap().clone();
+            let spare_id = Uuid::from_bytes([0xDD, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            spare.id = spare_id;
+            spare.positions.iter_mut().for_each(|p| *p = None);
+            spare.positions[0] = Some(higher);
+            engine.boards.insert(spare_id, spare);
+
+            // Whichever fault is named, the engine must never be accepted.
+            assert!(
+                engine.validate_restored().is_err(),
+                "a double seat and a two-board occupant must not both be dropped"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_user_seated_on_two_boards() {
+        let (mut engine, member) = seeded_engine();
+        let first = *engine.member_boards.get(&member).unwrap();
+        let mut clone = engine.boards.get(&first).unwrap().clone();
+        let second = Uuid::from_bytes([4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+        clone.id = second;
+        engine.boards.insert(second, clone);
+        let (low, high) = if first < second {
+            (first, second)
+        } else {
+            (second, first)
+        };
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::MemberOnTwoBoards {
+                user_id: member,
+                first_board: low,
+                second_board: high,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_two_board_offender_every_run() {
+        // A fresh engine per iteration, for the reason in the key test above.
+        // Two duplicated occupants, so the lowest-user_id hold has something
+        // to choose between. The higher id sits at the later position, so a
+        // hold that simply overwrote would name it and lose.
+        for _ in 0..64 {
+            let (mut engine, member) = seeded_engine();
+            let first = *engine.member_boards.get(&member).unwrap();
+            let other = Uuid::from_bytes([0xAA, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            assert!(member < other, "the seeded member must be the lower id");
+            engine.boards.get_mut(&first).unwrap().positions[1] = Some(other);
+            engine.member_boards.insert(other, first);
+
+            let mut clone = engine.boards.get(&first).unwrap().clone();
+            let second = Uuid::from_bytes([4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            clone.id = second;
+            engine.boards.insert(second, clone);
+            let (low, high) = if first < second {
+                (first, second)
+            } else {
+                (second, first)
+            };
+
+            assert_eq!(
+                engine.validate_restored(),
+                Err(SnapshotConsistencyError::MemberOnTwoBoards {
+                    user_id: member,
+                    first_board: low,
+                    second_board: high,
+                }),
+                "the lowest user_id should win, with its board ids sorted"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_pair_when_a_user_holds_three_boards() {
+        // seats overwrote, so the pair named was whichever two boards hash
+        // order reached first. The lowest two must win instead.
+        for _ in 0..64 {
+            let (mut engine, member) = seeded_engine();
+            let seated = *engine.member_boards.get(&member).unwrap();
+            let board = engine.boards.remove(&seated).unwrap();
+            let ids = [
+                Uuid::from_bytes([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]),
+                Uuid::from_bytes([2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]),
+                Uuid::from_bytes([3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]),
+            ];
+            for id in ids {
+                let mut copy = board.clone();
+                copy.id = id;
+                engine.boards.insert(id, copy);
+            }
+            engine.member_boards.insert(member, ids[0]);
+
+            assert_eq!(
+                engine.validate_restored(),
+                Err(SnapshotConsistencyError::MemberOnTwoBoards {
+                    user_id: member,
+                    first_board: ids[0],
+                    second_board: ids[1],
+                }),
+                "the two lowest board ids should win regardless of hash order"
+            );
+        }
+    }
+
+    #[test]
     fn validate_restored_rejects_a_board_whose_position_count_disagrees() {
         // The forged shape that reaches split_board's indexing: the board
         // agrees with member_boards, so the membership checks pass, and only
@@ -851,6 +1308,69 @@ mod tests {
                 board_id,
             })
         );
+    }
+
+    #[test]
+    fn validate_restored_rejects_an_occupant_the_index_does_not_name() {
+        // add_member treats a seat with no index entry as a new enrollment and
+        // seats them again, so both positions cycle off one enrollment.
+        let (mut engine, member) = seeded_engine();
+        let board_id = *engine.member_boards.get(&member).unwrap();
+        engine.member_boards.remove(&member);
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::OccupantNotIndexed {
+                user_id: member,
+                board_id,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_still_reports_the_forward_direction_first() {
+        // The index names a board the member does not sit on. The forward walk
+        // owns that case, so the reverse walk must not take it over.
+        let (mut engine, member) = seeded_engine();
+        let board_id = *engine.member_boards.get(&member).unwrap();
+        let elsewhere = Uuid::from_bytes([5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+        let mut spare = engine.boards.get(&board_id).unwrap().clone();
+        spare.id = elsewhere;
+        spare.positions.iter_mut().for_each(|p| *p = None);
+        engine.boards.insert(elsewhere, spare);
+        engine.member_boards.insert(member, elsewhere);
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::MemberNotOnBoard {
+                user_id: member,
+                board_id: elsewhere,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_unindexed_occupant_every_run() {
+        // Two unindexed occupants, so the hold has something to choose
+        // between. The walk order varies per call, so a hold that overwrote
+        // would name the higher id on some of these runs.
+        for _ in 0..64 {
+            let (mut engine, member) = seeded_engine();
+            let board_id = *engine.member_boards.get(&member).unwrap();
+            let higher = Uuid::from_bytes([0xBB, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            assert!(member < higher, "the seeded member must be the lower id");
+            engine.boards.get_mut(&board_id).unwrap().positions[1] = Some(higher);
+            engine.member_boards.remove(&member);
+
+            assert_eq!(
+                engine.validate_restored(),
+                Err(SnapshotConsistencyError::OccupantNotIndexed {
+                    user_id: member,
+                    board_id,
+                }),
+                "the lowest user_id should win regardless of hash order"
+            );
+        }
     }
 
     #[test]

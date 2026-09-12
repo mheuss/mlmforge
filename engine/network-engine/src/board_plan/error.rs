@@ -10,6 +10,9 @@ pub enum BoardPlanError {
     #[error("member already exists: {0}")]
     MemberAlreadyExists(Uuid),
 
+    #[error("member is awaiting reassignment: {0}")]
+    MemberAwaitingReassignment(Uuid),
+
     #[error("sponsor not found: {0}")]
     SponsorNotFound(Uuid),
 

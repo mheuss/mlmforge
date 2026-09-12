@@ -1,0 +1,7 @@
+jobs:
+  go:
+    steps:
+      # go-version: "9.9.9"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.1"  # pinned

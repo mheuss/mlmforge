@@ -272,6 +272,16 @@ and paste from the repo root as written.
 | All tests | `go test ./... && (cd engine && cargo test)` |
 | All format | `gofmt -w . && (cd engine && cargo fmt)` |
 | All lint | `golangci-lint run && (cd engine && cargo clippy --all-targets --workspace -- -D warnings)` |
+| Check Go version pins | `scripts/check-go-pins.sh` |
+| Test the pin check | `scripts/check-go-pins-test.sh` |
+
+**Match your local `golangci-lint` to the version `ci.yml` pins.**
+
+v2.11.4 exits non-zero without linting anything against a go1.27 standard
+library, reporting that the Go it was built with is lower than the targeted
+version. Versions between that and the pin are untested. CI installs its own
+copy, so a stale local binary fails only for you. `golangci-lint version`
+prints the Go it was built with.
 
 ---
 

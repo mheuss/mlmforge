@@ -29,9 +29,15 @@ jobs:
           # rather than silently inheriting one.
           persist-credentials: false
 
+      - name: Pin check behaves
+        run: scripts/check-go-pins-test.sh
+
+      - name: Go version pins agree
+        run: scripts/check-go-pins.sh
+
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25.13"
+          go-version: "1.27.1"
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -94,11 +100,11 @@ jobs:
       - name: Lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.11.4
+          version: v2.13.2
 
       - name: Vulnerability check
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
           # Exclude internal/testutil from scan — test-only infrastructure
           # that pulls in docker/docker via testcontainers-go. These vulns
           # are in the Docker daemon, not the client, and the package never

@@ -1,0 +1,3 @@
+module example
+
+toolchain go1.27.1

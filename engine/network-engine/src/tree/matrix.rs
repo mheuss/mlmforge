@@ -7,6 +7,7 @@ use super::arena::Arena;
 use super::error::TreeError;
 use super::node::{Node, NodeIndex};
 use crate::config::matrix::SpilloverDirection;
+use crate::snapshot::SnapshotConsistencyError;
 use crate::types::TreePosition;
 
 /// Entry in the holding tank for nodes removed via HoldingTank pruning
@@ -64,6 +65,63 @@ impl MatrixTree {
             slots: HashMap::new(),
             holding_tank: Vec::new(),
         })
+    }
+
+    /// Prove a restored tree's stored values are in range and live.
+    ///
+    /// The slot map, the holding tank and the arena edges are each checked
+    /// alone. That they agree with each other is not checked. HEU-750.
+    pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
+        // A restore does not run the constructor, so the range it enforces has
+        // to be re-established here. A width below 2 is not inert: placement
+        // still succeeds against it.
+        if self.width < 2 {
+            return Err(SnapshotConsistencyError::MatrixWidthTooSmall { width: self.width });
+        }
+        if matches!(self.spillover, SpilloverDirection::DepthFirst) {
+            return Err(SnapshotConsistencyError::MatrixSpilloverUnsupported);
+        }
+        self.arena.validate_restored()?;
+        // Keep the lowest-slot fault rather than returning on the first one
+        // found: self.slots is a HashMap with a randomized hasher, so
+        // returning early makes which entry gets named vary between runs on
+        // the same input. Still one pass.
+        let mut fault: Option<(usize, SnapshotConsistencyError)> = None;
+        for (parent, children) in &self.slots {
+            let found = self.arena.check_slot_index(parent.0).err().or_else(|| {
+                if children.len() != usize::from(self.width) {
+                    return Some(SnapshotConsistencyError::ChildSlotWidthMismatch {
+                        slot: parent.0,
+                        found: children.len(),
+                        width: self.width,
+                    });
+                }
+                children
+                    .iter()
+                    .flatten()
+                    .find_map(|child| self.arena.check_slot_index(child.0).err())
+            });
+            if let Some(err) = found {
+                if fault.as_ref().is_none_or(|(held, _)| parent.0 < *held) {
+                    fault = Some((parent.0, err));
+                }
+            }
+        }
+        if let Some((_, err)) = fault {
+            return Err(err);
+        }
+        for entry in &self.holding_tank {
+            if let Some(idx) = self.arena.index.get(&entry.user_id) {
+                return Err(SnapshotConsistencyError::HoldingTankUserPlaced {
+                    user_id: entry.user_id,
+                    slot: idx.0,
+                });
+            }
+        }
+        // A live node the map has forgotten panics on the next query rather
+        // than returning a wrong answer.
+        self.arena.check_every_live_node_has_a_slot(&self.slots)?;
+        Ok(())
     }
 
     /// The fixed number of child slots per node. Immutable after construction.
@@ -830,6 +888,177 @@ mod tests {
     use super::*;
     use crate::config::matrix::SpilloverDirection;
     use crate::tree::test_helpers::test_uuid;
+
+    fn matrix_pair() -> (MatrixTree, NodeIndex) {
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0).unwrap();
+        let child = tree.arena.resolve(test_uuid(2)).unwrap();
+        (tree, child)
+    }
+
+    #[test]
+    fn validate_restored_accepts_a_healthy_tree() {
+        let (tree, _) = matrix_pair();
+
+        assert_eq!(tree.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_surfaces_an_arena_fault() {
+        // Proves the arena delegation is present.
+        let (mut tree, _) = matrix_pair();
+        tree.arena.index.insert(test_uuid(3), NodeIndex(99));
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::IndexSlotOutOfRange {
+                user_id: test_uuid(3),
+                slot: 99,
+                node_count: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_width_below_two() {
+        // The constructor rejects this; a restore does not run it. A width of
+        // 1 is a chain, and add_node succeeds on it.
+        let (mut tree, _) = matrix_pair();
+        tree.width = 1;
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::MatrixWidthTooSmall { width: 1 })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_depth_first_spillover() {
+        let (mut tree, _) = matrix_pair();
+        tree.spillover = SpilloverDirection::DepthFirst;
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::MatrixSpilloverUnsupported)
+        );
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_slots_offender_every_run() {
+        for _ in 0..64 {
+            let (mut tree, _) = matrix_pair();
+            tree.slots.insert(NodeIndex(98), vec![None, None]);
+            tree.slots.insert(NodeIndex(99), vec![None, None]);
+
+            assert_eq!(
+                tree.validate_restored(),
+                Err(SnapshotConsistencyError::ChildSlotOutOfRange {
+                    slot: 98,
+                    node_count: 2,
+                }),
+                "the lowest slot should win regardless of hash order"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_slots_key_past_the_end() {
+        // The key is checked before the width, so the vector here is a valid
+        // length and only the key is wrong.
+        let (mut tree, _) = matrix_pair();
+        tree.slots.insert(NodeIndex(99), vec![None, None]);
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::ChildSlotOutOfRange {
+                slot: 99,
+                node_count: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_reports_a_bad_key_before_a_bad_width() {
+        // One entry carrying both faults. With the checks reversed the error
+        // would name a slot the arena does not have, which is a message an
+        // operator cannot act on.
+        let (mut tree, _) = matrix_pair();
+        tree.slots.insert(NodeIndex(99), vec![None]);
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::ChildSlotOutOfRange {
+                slot: 99,
+                node_count: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_child_value_past_the_end() {
+        let (mut tree, _) = matrix_pair();
+        let root = tree.arena.resolve(test_uuid(1)).unwrap();
+        tree.slots.insert(root, vec![Some(NodeIndex(99)), None]);
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::ChildSlotOutOfRange {
+                slot: 99,
+                node_count: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_slot_vector_shorter_than_width() {
+        // get_branch(position) indexes this vector, so a short one is a
+        // second panic path.
+        let (mut tree, _) = matrix_pair();
+        let root = tree.arena.resolve(test_uuid(1)).unwrap();
+        tree.slots.insert(root, vec![None]);
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::ChildSlotWidthMismatch {
+                slot: root.0,
+                found: 1,
+                width: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_holding_tank_user_who_is_also_placed() {
+        let (mut tree, child) = matrix_pair();
+        tree.holding_tank.push(HoldingTankEntry {
+            user_id: test_uuid(2),
+            sponsor_user_id: None,
+            enrolled_at: 0,
+        });
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::HoldingTankUserPlaced {
+                user_id: test_uuid(2),
+                slot: child.0,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_live_node_with_no_slots_entry() {
+        let (mut tree, child) = matrix_pair();
+        tree.slots.remove(&child);
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::SlotEntryMissing {
+                slot: child.0,
+                user_id: test_uuid(2),
+            })
+        );
+    }
 
     #[test]
     fn new_with_valid_width() {

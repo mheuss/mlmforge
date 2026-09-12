@@ -60,11 +60,12 @@ let ctx = walk::build_pass_up_context(tree, &pass_up_config, &participant_ids);
 ```rust
 // Serialize full engine state
 let snapshot = serde_json::to_string(&board_plan_engine)?;
-// Deserialize on recovery
+// Deserialize on recovery, then prove the result before storing it
 let engine: BoardPlanEngine = serde_json::from_str(&snapshot)?;
+engine.validate_restored()?;
 ```
 
-**Notes:** Adding a non-serializable type (function pointers, file handles, runtime-only state) to any tree-layer struct breaks snapshot persistence. This is a breaking change. See design-rationale 023.
+**Notes:** Adding a non-serializable type (function pointers, file handles, runtime-only state) to any tree-layer struct breaks snapshot persistence. This is a breaking change. See design-rationale 023. Deserializing is half the recovery flow; UC-NET-021 covers the other half.
 
 ---
 
@@ -797,3 +798,23 @@ population looks identical to a complete one. The AST drift scan (HEU-544)
 removes the hand-maintained list and is the longer-term answer. This pattern is
 what to do until then. Use it for any list a scan does not cover. The config side
 solves the same problem with a manifest rather than a scan. That is UC-NET-011.
+
+---
+
+### UC-NET-021: Validate a restored structure before storing it
+
+**Added:** 0.x (HEU-706)
+**Files:** `engine/network-engine/src/snapshot.rs`, `engine/network-engine-worker/src/handlers/snapshot.rs`
+
+**Problem:** A restore request carries a whole engine built by the caller. Deserializing proves the shape parses. It proves nothing about whether the stored indexes point at anything real.
+
+**Solution:** Each restorable type exposes `validate_restored()`, returning `SnapshotConsistencyError`. The handler calls it between deserializing and storing, and reports a failure as `INCONSISTENT_SNAPSHOT`. A payload that never deserializes still reports `INVALID_PARAMS`, so a caller can tell a malformed message from a self-contradicting one.
+
+**Usage:**
+```rust
+let engine: StreamlineEngine = serde_json::from_value(params.data)?;
+engine.validate_restored()?;
+state.trees.insert(name, TreeInstance::Streamline(engine));
+```
+
+**Notes:** Read the docblock on the arm you are calling. It states what that arm proves, and the arms differ. Two failures shaped this. A validator that rejects what the crate itself produces is worse than the gap it closes, so a check that looks obviously right is worth testing against real engine output first. And a check that reads as complete while covering one direction is the failure mode HEU-750 exists to close.

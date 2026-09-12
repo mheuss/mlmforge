@@ -102,7 +102,16 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
 
     let instance = match params.tree_type.as_str() {
         "unilevel" => match serde_json::from_value::<UnilevelTree>(params.data) {
-            Ok(t) => TreeInstance::Unilevel(t),
+            Ok(t) => match t.validate_restored() {
+                Ok(()) => TreeInstance::Unilevel(t),
+                Err(err) => {
+                    return Response::error(
+                        request.id.clone(),
+                        "INCONSISTENT_SNAPSHOT",
+                        err.to_string(),
+                    );
+                }
+            },
             Err(e) => {
                 return Response::error(
                     request.id.clone(),
@@ -112,7 +121,16 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
             }
         },
         "binary" => match serde_json::from_value::<BinaryTree>(params.data) {
-            Ok(t) => TreeInstance::Binary(t),
+            Ok(t) => match t.validate_restored() {
+                Ok(()) => TreeInstance::Binary(t),
+                Err(err) => {
+                    return Response::error(
+                        request.id.clone(),
+                        "INCONSISTENT_SNAPSHOT",
+                        err.to_string(),
+                    );
+                }
+            },
             Err(e) => {
                 return Response::error(
                     request.id.clone(),
@@ -122,7 +140,16 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
             }
         },
         "matrix" => match serde_json::from_value::<MatrixTree>(params.data) {
-            Ok(t) => TreeInstance::Matrix(t),
+            Ok(t) => match t.validate_restored() {
+                Ok(()) => TreeInstance::Matrix(t),
+                Err(err) => {
+                    return Response::error(
+                        request.id.clone(),
+                        "INCONSISTENT_SNAPSHOT",
+                        err.to_string(),
+                    );
+                }
+            },
             Err(e) => {
                 return Response::error(
                     request.id.clone(),
@@ -132,7 +159,16 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
             }
         },
         "board_plan" => match serde_json::from_value::<BoardPlanEngine>(params.data) {
-            Ok(e) => TreeInstance::BoardPlan(e),
+            Ok(e) => match e.validate_restored() {
+                Ok(()) => TreeInstance::BoardPlan(e),
+                Err(err) => {
+                    return Response::error(
+                        request.id.clone(),
+                        "INCONSISTENT_SNAPSHOT",
+                        err.to_string(),
+                    );
+                }
+            },
             Err(e) => {
                 return Response::error(
                     request.id.clone(),
@@ -142,7 +178,16 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
             }
         },
         "streamline" => match serde_json::from_value::<StreamlineEngine>(params.data) {
-            Ok(e) => TreeInstance::Streamline(e),
+            Ok(e) => match e.validate_restored() {
+                Ok(()) => TreeInstance::Streamline(e),
+                Err(err) => {
+                    return Response::error(
+                        request.id.clone(),
+                        "INCONSISTENT_SNAPSHOT",
+                        err.to_string(),
+                    );
+                }
+            },
             Err(e) => {
                 return Response::error(
                     request.id.clone(),

@@ -1,6 +1,7 @@
 //! Streamline engine — manages all streams for one streamline structure.
 
-use std::collections::HashMap;
+use crate::snapshot::SnapshotConsistencyError;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -72,6 +73,174 @@ pub struct StreamlineEngine {
 }
 
 impl StreamlineEngine {
+    /// Prove a restored engine's indexes agree with the streams they index.
+    pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
+        let mut nested: Option<(u32, SnapshotConsistencyError)> = None;
+        for (key, stream) in &self.streams {
+            // A mismatch between the map key and the stream's own id makes a
+            // lookup by the other value silently miss.
+            let found = if *key != stream.id {
+                Some(SnapshotConsistencyError::StreamIdMismatch {
+                    key: *key,
+                    stream_id: stream.id,
+                })
+            } else if let Err(source) = stream.tree.validate_restored() {
+                Some(SnapshotConsistencyError::Stream {
+                    stream_id: stream.id,
+                    source: Box::new(source),
+                })
+            } else {
+                match stream.bottom {
+                    Some(bottom_id) if !stream.tree.contains(bottom_id) => {
+                        Some(SnapshotConsistencyError::StreamBottomNotInTree {
+                            stream_id: stream.id,
+                            user_id: bottom_id,
+                        })
+                    }
+                    None if !stream.tree.user_ids().is_empty() => {
+                        let node_count = stream.tree.user_ids().len();
+                        Some(SnapshotConsistencyError::StreamBottomMissing {
+                            stream_id: stream.id,
+                            node_count,
+                        })
+                    }
+                    _ => None,
+                }
+            };
+            if let Some(err) = found {
+                if nested.as_ref().is_none_or(|(held, _)| key < held) {
+                    nested = Some((*key, err));
+                }
+            }
+        }
+        if let Some((_, err)) = nested {
+            return Err(err);
+        }
+
+        // Runs after the walk above, which is what establishes that a map key
+        // is the stream's own id. create_stream inserts on the cursor with no
+        // occupancy check, so a cursor at or below a live key replaces that
+        // stream and drops every member in its tree.
+        if let Some(highest) = self.streams.keys().copied().max() {
+            if self.next_stream_id <= highest {
+                return Err(SnapshotConsistencyError::StreamIdCursorNotPastEnd {
+                    next_stream_id: self.next_stream_id,
+                    highest_stream_id: highest,
+                });
+            }
+        }
+        // Past every live key is not enough. create_stream assigns the cursor
+        // and then increments it, so the last id is one the engine can hand
+        // out but not advance beyond.
+        if self.next_stream_id == u32::MAX {
+            return Err(SnapshotConsistencyError::StreamIdCursorExhausted {
+                next_stream_id: self.next_stream_id,
+            });
+        }
+
+        // The reverse of the user_streams walk below. Held on the (stream,
+        // user) pair, not the stream alone, since user_ids() returns hash
+        // order.
+        //
+        // The membership pairs are collected into a set first. A Vec::contains
+        // per user costs the length of that user's stream list, which makes the
+        // walk quadratic in the streams one user holds. Design NFR 4 is O(N+E).
+        let mut indexed_pairs: HashSet<(Uuid, u32)> = HashSet::new();
+        for (user_id, ids) in &self.user_streams {
+            for id in ids {
+                indexed_pairs.insert((*user_id, *id));
+            }
+        }
+        let mut unindexed: Option<(u32, Uuid, SnapshotConsistencyError)> = None;
+        for stream in self.streams.values() {
+            for user_id in stream.tree.user_ids() {
+                let indexed = indexed_pairs.contains(&(user_id, stream.id));
+                if !indexed
+                    && unindexed.as_ref().is_none_or(|(held_id, held_user, _)| {
+                        (stream.id, user_id) < (*held_id, *held_user)
+                    })
+                {
+                    unindexed = Some((
+                        stream.id,
+                        user_id,
+                        SnapshotConsistencyError::TreeUserNotIndexed {
+                            stream_id: stream.id,
+                            user_id,
+                        },
+                    ));
+                }
+            }
+        }
+        if let Some((_, _, err)) = unindexed {
+            return Err(err);
+        }
+
+        let mut fault: Option<(Uuid, SnapshotConsistencyError)> = None;
+        for (user_id, stream_ids) in &self.user_streams {
+            // An entry listing no streams is itself a contradiction:
+            // membership means at least one. It also slips past the walk
+            // below, whose find_map over an empty slice yields nothing.
+            let found = if stream_ids.is_empty() {
+                Some(SnapshotConsistencyError::UserStreamsEntryEmpty { user_id: *user_id })
+            } else {
+                stream_ids
+                    .iter()
+                    .find_map(|stream_id| match self.streams.get(stream_id) {
+                        None => Some(SnapshotConsistencyError::StreamAbsent {
+                            user_id: *user_id,
+                            stream_id: *stream_id,
+                        }),
+                        Some(stream) if !stream.tree.contains(*user_id) => {
+                            Some(SnapshotConsistencyError::UserNotInStreamTree {
+                                user_id: *user_id,
+                                stream_id: *stream_id,
+                            })
+                        }
+                        Some(_) => None,
+                    })
+            };
+            if let Some(err) = found {
+                if fault.as_ref().is_none_or(|(held, _)| user_id < held) {
+                    fault = Some((*user_id, err));
+                }
+            }
+        }
+        if let Some((_, err)) = fault {
+            return Err(err);
+        }
+
+        let mut owner_fault: Option<(Uuid, SnapshotConsistencyError)> = None;
+        for (user_id, stream_ids) in &self.stream_owners {
+            let found = stream_ids.iter().find_map(|stream_id| {
+                // A distinct variant, so the message names the map that
+                // actually observed the absence.
+                match self.streams.get(stream_id) {
+                    None => Some(SnapshotConsistencyError::OwnerStreamAbsent {
+                        user_id: *user_id,
+                        stream_id: *stream_id,
+                    }),
+                    Some(stream) if stream.owner_id != *user_id => {
+                        Some(SnapshotConsistencyError::StreamOwnerMismatch {
+                            user_id: *user_id,
+                            stream_id: *stream_id,
+                            owner_id: stream.owner_id,
+                        })
+                    }
+                    Some(_) => None,
+                }
+            });
+            if let Some(err) = found {
+                if owner_fault.as_ref().is_none_or(|(held, _)| user_id < held) {
+                    owner_fault = Some((*user_id, err));
+                }
+            }
+        }
+        if let Some((_, err)) = owner_fault {
+            return Err(err);
+        }
+
+        Ok(())
+    }
     /// Creates a new engine with one empty initial stream.
     ///
     /// The initial stream has no owner yet. The first member added
@@ -371,10 +540,13 @@ impl StreamlineEngine {
         // Append to the bottom of the chain.
         let position = match stream.bottom {
             Some(bottom_id) => {
+                // A restored engine can name a bottom or a sponsor this tree
+                // does not hold. Report what add_node observed rather than
+                // asserting a condition this line never checked.
                 stream
                     .tree
                     .add_node(user_id, bottom_id, sponsor_id, timestamp)
-                    .expect("bottom node exists in tree");
+                    .map_err(|e| StreamlineError::TreeError(e.to_string()))?;
                 let parent_depth = stream
                     .tree
                     .get_parent(user_id)
@@ -697,6 +869,379 @@ mod tests {
 
     fn test_uuid(n: u128) -> Uuid {
         Uuid::from_u128(n)
+    }
+
+    fn seeded_streamline() -> StreamlineEngine {
+        let mut engine = StreamlineEngine::new(default_config(), 1000);
+        engine
+            .add_member(test_uuid(1), test_uuid(99), 1000, None)
+            .unwrap();
+        engine
+    }
+
+    #[test]
+    fn validate_restored_accepts_a_healthy_engine() {
+        assert_eq!(seeded_streamline().validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_cursor_that_would_reallocate_a_live_stream() {
+        // create_stream inserts without an occupancy check, so a cursor at or
+        // below a live key replaces that stream and drops its whole tree.
+        let mut engine = seeded_streamline();
+        engine.next_stream_id = 1;
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::StreamIdCursorNotPastEnd {
+                next_stream_id: 1,
+                highest_stream_id: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_cursor_with_no_room_to_advance() {
+        // create_stream assigns the cursor and then increments it, so this
+        // value overflows on the next allocation.
+        let mut engine = seeded_streamline();
+        engine.next_stream_id = u32::MAX;
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::StreamIdCursorExhausted {
+                next_stream_id: u32::MAX,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_an_exhausted_cursor_on_an_engine_holding_no_streams() {
+        let mut engine = seeded_streamline();
+        engine.streams.clear();
+        engine.user_streams.clear();
+        engine.stream_owners.clear();
+        engine.next_stream_id = u32::MAX;
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::StreamIdCursorExhausted {
+                next_stream_id: u32::MAX,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_accepts_the_last_cursor_that_can_still_advance() {
+        let mut engine = seeded_streamline();
+        engine.next_stream_id = u32::MAX - 1;
+
+        assert_eq!(engine.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_accepts_a_cursor_one_past_the_highest_stream() {
+        let engine = seeded_streamline();
+        assert_eq!(engine.next_stream_id, 2);
+        assert_eq!(engine.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_accepts_a_cursor_on_an_engine_holding_no_streams() {
+        let mut engine = seeded_streamline();
+        engine.streams.clear();
+        engine.user_streams.clear();
+        engine.stream_owners.clear();
+
+        assert_eq!(engine.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn add_member_reports_a_sponsor_the_target_tree_does_not_hold() {
+        // A stream owner sits in the stream they were enrolled in, not the one
+        // they own, so the owner is resolvable engine-wide and absent from this
+        // tree. Reaching add_node with them as sponsor must not panic.
+        let mut engine = seeded_streamline();
+        let outsider = test_uuid(50);
+        let second = engine.create_stream(outsider, 1001);
+        engine
+            .streams
+            .get_mut(&second)
+            .expect("just created")
+            .tree
+            .add_root(test_uuid(60), 1002)
+            .expect("empty tree has no root");
+        engine
+            .streams
+            .get_mut(&second)
+            .expect("just created")
+            .bottom = Some(test_uuid(60));
+        engine
+            .user_streams
+            .entry(test_uuid(60))
+            .or_default()
+            .push(second);
+        engine.user_streams.entry(outsider).or_default().push(1);
+
+        let result = engine.add_member(test_uuid(70), outsider, 1003, None);
+
+        assert!(
+            matches!(result, Err(StreamlineError::TreeError(_))),
+            "expected a coded rejection, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_stream_filed_under_the_wrong_key() {
+        // A mismatch between the map key and the stream's own id makes any
+        // lookup by the other value silently miss.
+        let mut engine = seeded_streamline();
+        let stream = engine.streams.remove(&1).unwrap();
+        engine.streams.insert(5, stream);
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::StreamIdMismatch {
+                key: 5,
+                stream_id: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_bottom_absent_from_its_tree() {
+        let mut engine = seeded_streamline();
+        engine.streams.get_mut(&1).unwrap().bottom = Some(test_uuid(9));
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::StreamBottomNotInTree {
+                stream_id: 1,
+                user_id: test_uuid(9),
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_missing_bottom_on_a_populated_tree() {
+        let mut engine = seeded_streamline();
+        engine.streams.get_mut(&1).unwrap().bottom = None;
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::StreamBottomMissing {
+                stream_id: 1,
+                node_count: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_tree_member_with_no_index_entry() {
+        // The reverse of the user_streams walk. contains_member reads the
+        // index alone, so an unindexed member is invisible to it.
+        let mut engine = seeded_streamline();
+        engine.user_streams.remove(&test_uuid(1));
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::TreeUserNotIndexed {
+                stream_id: 1,
+                user_id: test_uuid(1),
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_stream_offender_every_run() {
+        for _ in 0..64 {
+            let mut engine = seeded_streamline();
+            let base = engine.streams.get(&1).unwrap();
+            let (owner, created) = (base.owner_id, base.created_at);
+            for key in [8u32, 9u32] {
+                let mut s = StreamlineEngine::new(default_config(), created);
+                let mut stream = s.streams.remove(&1).unwrap();
+                stream.id = key;
+                stream.owner_id = owner;
+                stream.bottom = Some(test_uuid(9));
+                engine.streams.insert(key, stream);
+            }
+
+            assert_eq!(
+                engine.validate_restored(),
+                Err(SnapshotConsistencyError::StreamBottomNotInTree {
+                    stream_id: 8,
+                    user_id: test_uuid(9),
+                }),
+                "the lowest stream key should win regardless of hash order"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_user_stream_offender_every_run() {
+        for _ in 0..64 {
+            let mut engine = seeded_streamline();
+            engine.user_streams.insert(test_uuid(3), vec![77]);
+            engine.user_streams.insert(test_uuid(2), vec![77]);
+
+            assert_eq!(
+                engine.validate_restored(),
+                Err(SnapshotConsistencyError::StreamAbsent {
+                    user_id: test_uuid(2),
+                    stream_id: 77,
+                }),
+                "the lowest user_id should win regardless of hash order"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_owner_offender_every_run() {
+        for _ in 0..64 {
+            let mut engine = seeded_streamline();
+            for n in [3u128, 2u128] {
+                engine.stream_owners.insert(test_uuid(n), vec![77]);
+            }
+
+            assert_eq!(
+                engine.validate_restored(),
+                Err(SnapshotConsistencyError::OwnerStreamAbsent {
+                    user_id: test_uuid(2),
+                    stream_id: 77,
+                }),
+                "the lowest user_id should win regardless of hash order"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_restored_rejects_an_empty_user_streams_entry() {
+        // contains_member reads the index alone, so an empty entry made it
+        // answer true for a user no tree holds, and add_member then refused
+        // that user permanently.
+        let mut engine = seeded_streamline();
+        engine.user_streams.insert(test_uuid(5), vec![]);
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::UserStreamsEntryEmpty {
+                user_id: test_uuid(5),
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_unindexed_member_every_run() {
+        // Two unindexed members in ONE stream. The hold keys on the pair, so
+        // the tree's hash order cannot decide which is named.
+        for _ in 0..64 {
+            let mut engine = StreamlineEngine::new(default_config(), 1000);
+            engine
+                .add_member(test_uuid(1), test_uuid(99), 1000, None)
+                .unwrap();
+            engine
+                .add_member(test_uuid(2), test_uuid(1), 1001, None)
+                .unwrap();
+            engine.user_streams.remove(&test_uuid(1));
+            engine.user_streams.remove(&test_uuid(2));
+
+            assert_eq!(
+                engine.validate_restored(),
+                Err(SnapshotConsistencyError::TreeUserNotIndexed {
+                    stream_id: 1,
+                    user_id: test_uuid(1),
+                }),
+                "the lowest (stream, user) pair should win regardless of hash order"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_user_stream_that_is_absent() {
+        let mut engine = seeded_streamline();
+        engine.user_streams.insert(test_uuid(2), vec![77]);
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::StreamAbsent {
+                user_id: test_uuid(2),
+                stream_id: 77,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_user_absent_from_the_stream_tree() {
+        // The state HEU-706 was filed for.
+        let mut engine = seeded_streamline();
+        engine.user_streams.insert(test_uuid(2), vec![1]);
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::UserNotInStreamTree {
+                user_id: test_uuid(2),
+                stream_id: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_tells_an_absent_owner_stream_from_an_absent_user_stream() {
+        // The two variants differ only in which map the message names, so
+        // assert the variant rather than that it errored.
+        let mut engine = seeded_streamline();
+        engine.stream_owners.insert(test_uuid(2), vec![77]);
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::OwnerStreamAbsent {
+                user_id: test_uuid(2),
+                stream_id: 77,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_an_owner_the_stream_does_not_name() {
+        let mut engine = seeded_streamline();
+        // uuid(2) is left out of user_streams entirely, so the owner walk is
+        // what fires.
+        engine.stream_owners.insert(test_uuid(2), vec![1]);
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::StreamOwnerMismatch {
+                user_id: test_uuid(2),
+                stream_id: 1,
+                owner_id: test_uuid(1),
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_wraps_a_nested_tree_fault_with_its_stream_id() {
+        // Injected through serde, the way a real restore produces it, rather
+        // than by reaching into state this module cannot touch.
+        let engine = seeded_streamline();
+        let mut json = serde_json::to_value(&engine).unwrap();
+        json["streams"]["1"]["tree"]["arena"]["index"]
+            .as_object_mut()
+            .unwrap()
+            .insert(test_uuid(5).to_string(), serde_json::json!(99));
+        let tampered: StreamlineEngine = serde_json::from_value(json).unwrap();
+
+        assert_eq!(
+            tampered.validate_restored(),
+            Err(SnapshotConsistencyError::Stream {
+                stream_id: 1,
+                source: Box::new(SnapshotConsistencyError::IndexSlotOutOfRange {
+                    user_id: test_uuid(5),
+                    slot: 99,
+                    node_count: 1,
+                }),
+            })
+        );
     }
 
     #[test]

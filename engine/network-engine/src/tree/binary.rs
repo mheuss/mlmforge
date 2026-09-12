@@ -6,6 +6,7 @@ use uuid::Uuid;
 use super::arena::Arena;
 use super::error::TreeError;
 use super::node::{Node, NodeIndex};
+use crate::snapshot::SnapshotConsistencyError;
 use crate::types::TreePosition;
 
 /// Arena-backed binary tree.
@@ -35,6 +36,40 @@ impl BinaryTree {
             arena: Arena::new(),
             slots: HashMap::new(),
         }
+    }
+
+    /// Prove a restored tree's stored indexes are in range and live, and that
+    /// every live node has a child slot entry.
+    ///
+    /// The slot map and the arena edges are each checked alone. That the two
+    /// agree is not checked. HEU-750.
+    pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
+        self.arena.validate_restored()?;
+        // Keep the lowest-slot fault rather than returning on the first one
+        // found: self.slots is a HashMap with a randomized hasher, so
+        // returning early makes which entry gets named vary between runs on
+        // the same input. Still one pass.
+        let mut fault: Option<(usize, SnapshotConsistencyError)> = None;
+        for (parent, children) in &self.slots {
+            let found = self.arena.check_slot_index(parent.0).err().or_else(|| {
+                children
+                    .iter()
+                    .flatten()
+                    .find_map(|child| self.arena.check_slot_index(child.0).err())
+            });
+            if let Some(err) = found {
+                if fault.as_ref().is_none_or(|(held, _)| parent.0 < *held) {
+                    fault = Some((parent.0, err));
+                }
+            }
+        }
+        if let Some((_, err)) = fault {
+            return Err(err);
+        }
+        // A live node with no entry passes every check above and then panics
+        // on the next query rather than returning a wrong answer.
+        self.arena.check_every_live_node_has_a_slot(&self.slots)?;
+        Ok(())
     }
 
     pub fn add_root(&mut self, user_id: Uuid, enrolled_at: i64) -> Result<NodeIndex, TreeError> {
@@ -319,6 +354,136 @@ impl std::fmt::Debug for BinaryTree {
 mod tests {
     use super::*;
     use crate::tree::test_helpers::test_uuid;
+
+    fn binary_pair() -> (BinaryTree, NodeIndex) {
+        let mut tree = BinaryTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0, test_uuid(1), 0)
+            .unwrap();
+        let child = tree.arena.resolve(test_uuid(2)).unwrap();
+        (tree, child)
+    }
+
+    #[test]
+    fn validate_restored_accepts_a_healthy_tree() {
+        let (tree, _) = binary_pair();
+
+        assert_eq!(tree.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_surfaces_an_arena_fault() {
+        // Proves the arena delegation is present.
+        let (mut tree, _) = binary_pair();
+        tree.arena.index.insert(test_uuid(3), NodeIndex(99));
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::IndexSlotOutOfRange {
+                user_id: test_uuid(3),
+                slot: 99,
+                node_count: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_slots_offender_every_run() {
+        // self.slots is a HashMap with a randomized hasher. Fresh tree each
+        // iteration, so each gets its own seed.
+        for _ in 0..64 {
+            let (mut tree, _) = binary_pair();
+            tree.slots.insert(NodeIndex(98), [None, None]);
+            tree.slots.insert(NodeIndex(99), [None, None]);
+
+            assert_eq!(
+                tree.validate_restored(),
+                Err(SnapshotConsistencyError::ChildSlotOutOfRange {
+                    slot: 98,
+                    node_count: 2,
+                }),
+                "the lowest slot should win regardless of hash order"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_restored_accepts_a_tree_after_a_removal() {
+        // A removal leaves a tombstone with no slots entry. The completeness
+        // sweep must skip it, or every restore of a tree that has ever lost a
+        // node is rejected. That is a false rejection of a valid snapshot.
+        let (mut tree, _) = binary_pair();
+        tree.remove_node(test_uuid(2)).unwrap();
+
+        assert_eq!(tree.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_slots_key_past_the_end() {
+        let (mut tree, _) = binary_pair();
+        tree.slots.insert(NodeIndex(99), [None, None]);
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::ChildSlotOutOfRange {
+                slot: 99,
+                node_count: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_child_value_past_the_end() {
+        let (mut tree, _) = binary_pair();
+        let root = tree.arena.resolve(test_uuid(1)).unwrap();
+        tree.slots.insert(root, [Some(NodeIndex(99)), None]);
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::ChildSlotOutOfRange {
+                slot: 99,
+                node_count: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_child_value_naming_a_tombstone() {
+        // The arena has to be internally consistent, or its own edge check
+        // fires first and this guard is never reached. So the root drops its
+        // children edge and the index entry goes, leaving only the slots map
+        // naming the dead slot. That is a forgeable restore payload.
+        let (mut tree, child) = binary_pair();
+        let root = tree.arena.resolve(test_uuid(1)).unwrap();
+        tree.arena.index.remove(&test_uuid(2));
+        tree.arena.nodes[root.0].children.clear();
+        tree.arena.nodes[root.0].sponsored.clear();
+        tree.arena.tombstone(child);
+        tree.slots.remove(&child);
+        tree.slots.insert(root, [Some(child), None]);
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::ChildSlotTombstoned { slot: child.0 })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_live_node_with_no_slots_entry() {
+        // A bounds-only check misses this one, and it ends in a panic rather
+        // than a wrong answer: this file's expect() calls assume the entry is
+        // present.
+        let (mut tree, child) = binary_pair();
+        tree.slots.remove(&child);
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::SlotEntryMissing {
+                slot: child.0,
+                user_id: test_uuid(2),
+            })
+        );
+    }
 
     #[test]
     fn add_root_to_empty_tree() {

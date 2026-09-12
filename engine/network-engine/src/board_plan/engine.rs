@@ -1,11 +1,12 @@
 //! Board plan engine — manages all boards for one board plan structure.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::config::board_plan::{BoardPlanConfig, ReEntryPosition};
+use crate::snapshot::SnapshotConsistencyError;
 
 use super::board::{self, Board};
 use super::error::BoardPlanError;
@@ -85,6 +86,88 @@ impl BoardPlanEngine {
             displaced_members: Vec::new(),
             config,
         })
+    }
+
+    /// Prove a restored engine's stored values are in range and its membership
+    /// index names seats that hold the member.
+    ///
+    /// Membership is checked from the index outward only. That every occupant
+    /// of a board has an entry pointing back is not checked. HEU-750.
+    ///
+    /// `sponsor_map` is deliberately not checked. It is permanent enrollment
+    /// data that keeps removed members so re-entry can still route them, so it
+    /// holds users who are on no board by design. Checking it against `boards`
+    /// would reject engines this crate itself produces.
+    pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
+        // A restore does not run the constructor, so the range it enforces has
+        // to be re-established here.
+        if !(2..=5).contains(&self.width) || !(1..=4).contains(&self.height) {
+            return Err(SnapshotConsistencyError::BoardDimensionsOutOfRange {
+                width: self.width,
+                height: self.height,
+            });
+        }
+        // Recomputed, not read. total_positions is cached, so comparing the
+        // boards against it would prove only that they agree with the cache.
+        let expected = board::total_positions(self.width, self.height);
+        if self.total_positions != expected {
+            return Err(SnapshotConsistencyError::BoardTotalPositionsMismatch {
+                found: self.total_positions,
+                width: self.width,
+                height: self.height,
+                expected,
+            });
+        }
+        // Ties break on the lowest board id, since self.boards iterates in
+        // random hash order and the offender must not vary between runs.
+        let mut placed: HashSet<(Uuid, Uuid)> = HashSet::new();
+        let mut sizing: Option<(Uuid, SnapshotConsistencyError)> = None;
+        for (board_id, board) in &self.boards {
+            if board.positions.len() != self.total_positions {
+                let err = SnapshotConsistencyError::BoardPositionCountMismatch {
+                    board_id: *board_id,
+                    found: board.positions.len(),
+                    expected: self.total_positions,
+                };
+                if sizing.as_ref().is_none_or(|(held, _)| board_id < held) {
+                    sizing = Some((*board_id, err));
+                }
+                continue;
+            }
+            for occupant in board.positions.iter().flatten() {
+                placed.insert((*board_id, *occupant));
+            }
+        }
+        if let Some((_, err)) = sizing {
+            return Err(err);
+        }
+
+        // Lowest user_id wins, since member_boards also iterates in hash order.
+        let mut fault: Option<(Uuid, SnapshotConsistencyError)> = None;
+        for (user_id, board_id) in &self.member_boards {
+            let found = if !self.boards.contains_key(board_id) {
+                Some(SnapshotConsistencyError::BoardAbsent {
+                    user_id: *user_id,
+                    board_id: *board_id,
+                })
+            } else if !placed.contains(&(*board_id, *user_id)) {
+                Some(SnapshotConsistencyError::MemberNotOnBoard {
+                    user_id: *user_id,
+                    board_id: *board_id,
+                })
+            } else {
+                None
+            };
+            if let Some(err) = found {
+                if fault.as_ref().is_none_or(|(held, _)| user_id < held) {
+                    fault = Some((*user_id, err));
+                }
+            }
+        }
+        if let Some((_, err)) = fault {
+            return Err(err);
+        }
+        Ok(())
     }
 
     /// Returns the (width, height) dimensions.
@@ -605,6 +688,212 @@ impl BoardPlanEngine {
 mod tests {
     use super::*;
     use crate::config::board_plan::ReEntryPosition;
+
+    fn seeded_engine() -> (BoardPlanEngine, Uuid) {
+        let mut engine = BoardPlanEngine::new(2, 2, test_config(), 0).unwrap();
+        let member = Uuid::from_bytes([9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+        engine.add_member(member, member, 0).unwrap();
+        (engine, member)
+    }
+
+    #[test]
+    fn validate_restored_accepts_a_healthy_engine() {
+        let (engine, _) = seeded_engine();
+
+        assert_eq!(engine.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_board_whose_position_count_disagrees() {
+        // The forged shape that reaches split_board's indexing: the board
+        // agrees with member_boards, so the membership checks pass, and only
+        // the vector length is wrong.
+        let (mut engine, member) = seeded_engine();
+        let board_id = *engine.member_boards.get(&member).unwrap();
+        engine
+            .boards
+            .get_mut(&board_id)
+            .unwrap()
+            .positions
+            .truncate(2);
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::BoardPositionCountMismatch {
+                board_id,
+                found: 2,
+                expected: 7,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_dimensions_outside_the_constructor_range() {
+        let (mut engine, _) = seeded_engine();
+        engine.width = 9;
+        engine.height = 9;
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::BoardDimensionsOutOfRange {
+                width: 9,
+                height: 9,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_cached_board_size_the_geometry_denies() {
+        // The boards agree with the cached value, so the per-board check
+        // passes. Only recomputing from width and height catches it. A board
+        // restored this way cycles early and pays early.
+        let (mut engine, member) = seeded_engine();
+        let board_id = *engine.member_boards.get(&member).unwrap();
+        engine.total_positions = 3;
+        engine
+            .boards
+            .get_mut(&board_id)
+            .unwrap()
+            .positions
+            .truncate(3);
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::BoardTotalPositionsMismatch {
+                found: 3,
+                width: 2,
+                height: 2,
+                expected: 7,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_board_offender_every_run() {
+        // self.boards is a HashMap too. A corrupted payload rarely damages
+        // exactly one board, so this walk needs the same lowest-key hold as
+        // the member walk below.
+        for _ in 0..64 {
+            let (mut engine, member) = seeded_engine();
+            let seated = *engine.member_boards.get(&member).unwrap();
+            let low = Uuid::from_bytes([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            let high = Uuid::from_bytes([4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            for id in [low, high] {
+                let mut board = engine.boards.get(&seated).unwrap().clone();
+                board.id = id;
+                board.positions.truncate(3);
+                engine.boards.insert(id, board);
+            }
+
+            assert_eq!(
+                engine.validate_restored(),
+                Err(SnapshotConsistencyError::BoardPositionCountMismatch {
+                    board_id: low,
+                    found: 3,
+                    expected: 7,
+                }),
+                "the lowest board id should win regardless of hash order"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_member_offender_every_run() {
+        // member_boards is a HashMap with a randomized hasher. Fresh engine
+        // each iteration, so each gets its own seed.
+        for _ in 0..64 {
+            let (mut engine, _) = seeded_engine();
+            let low = Uuid::from_bytes([2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            let high = Uuid::from_bytes([3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            let ghost = Uuid::from_bytes([7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            engine.member_boards.insert(high, ghost);
+            engine.member_boards.insert(low, ghost);
+
+            assert_eq!(
+                engine.validate_restored(),
+                Err(SnapshotConsistencyError::BoardAbsent {
+                    user_id: low,
+                    board_id: ghost,
+                }),
+                "the lowest user_id should win regardless of hash order"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_member_board_that_is_absent() {
+        let (mut engine, member) = seeded_engine();
+        let ghost = Uuid::from_bytes([7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+        engine.member_boards.insert(member, ghost);
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::BoardAbsent {
+                user_id: member,
+                board_id: ghost,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_member_the_board_does_not_hold() {
+        let (mut engine, member) = seeded_engine();
+        let board_id = *engine.member_boards.get(&member).unwrap();
+        let board = engine.boards.get_mut(&board_id).unwrap();
+        for position in board.positions.iter_mut() {
+            *position = None;
+        }
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::MemberNotOnBoard {
+                user_id: member,
+                board_id,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_member_placed_on_a_different_board() {
+        // The membership key is (board, user), not user alone. A member who
+        // sits on some board but not the one member_boards names is still a
+        // contradiction, and a user-only check would accept it.
+        let (mut engine, member) = seeded_engine();
+        let their_board = *engine.member_boards.get(&member).unwrap();
+        let other_id = Uuid::from_bytes([6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+        let mut other = engine.boards.get(&their_board).unwrap().clone();
+        other.id = other_id;
+        engine.boards.insert(other_id, other);
+        for position in engine
+            .boards
+            .get_mut(&their_board)
+            .unwrap()
+            .positions
+            .iter_mut()
+        {
+            *position = None;
+        }
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::MemberNotOnBoard {
+                user_id: member,
+                board_id: their_board,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_accepts_a_sponsor_map_entry_for_an_unplaced_user() {
+        // sponsor_map keeps removed members for re-entry routing, so an entry
+        // naming nobody on any board is correct state, not a fault. A check
+        // over sponsor_map would reject engines this crate itself produces.
+        let (mut engine, member) = seeded_engine();
+        let departed = Uuid::from_bytes([8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+        engine.sponsor_map.insert(departed, member);
+
+        assert_eq!(engine.validate_restored(), Ok(()));
+    }
 
     /// Creates a standard BoardPlanConfig for testing.
     fn test_config() -> BoardPlanConfig {

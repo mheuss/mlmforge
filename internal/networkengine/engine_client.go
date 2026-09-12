@@ -16,23 +16,23 @@ import (
 // Changing this number without changing the shared ping contract fixture, or
 // the reverse, rejects a worker that is otherwise correct.
 //
-// Moved to 4 by HEU-699, which made `rate` nullable in the commission result
-// envelope. A nullable field is a change to what a value means, which is the
-// case the exact comparison above exists for.
+// Moved to 4 by HEU-699. A change to what a value means is the case the exact
+// comparison above exists for.
 //
-// Moved to 5 by HEU-608, which rejects a snapshot naming a rank the loaded
-// plan does not define. A request a caller built for 4 considers valid now
-// comes back as a CALCULATION_ERROR, which is why the number had to move.
+// Moved to 5 by HEU-608. A request that succeeded under 4 may now fail, which
+// is why the number had to move.
 //
-// Moved to 6 by HEU-609, which rejects a request whose walked upline omits a
-// snapshot. A request a caller built for 5 considers valid now comes back as
-// a CALCULATION_ERROR, which is why the number had to move.
+// Moved to 6 by HEU-609. A request that succeeded under 5 may now fail, which
+// is why the number had to move.
+//
+// Moved to 7 by HEU-706. A restore_snapshot request that succeeded under 6 may
+// now fail, which is why the number had to move.
 //
 // This is the wire contract, not the stored row shape and not the authoring
 // format. Two other numbers nearby are also called a version: `detailVersion`
 // in commission_detail.go, and the plan schema version in
 // schemas/compensation-plan.schema.json. None is coupled to the others.
-const expectedProtocolVersion = 6
+const expectedProtocolVersion = 7
 
 // maxPingResponseInError bounds how much of an unexpected ping response is
 // quoted back in an error. The response is wire data and is otherwise

@@ -107,6 +107,44 @@ The general shape: asserting a result is non-empty proves something ran, not tha
 
 Deleting the guard and re-running is cheap and it is the only way to know. Do it for any test whose name makes a claim about what did not happen.
 
+### One test can be the only thing holding several guards
+
+Deleting a guard tells you whether *a* test catches it. It does not tell you
+*which*. The answer is sometimes "one test carries four checks."
+
+`Arena::validate_restored` checks four edge fields. Two have a dedicated test
+naming them. The `sponsor` and `sponsored` checks are killed only by
+`validate_restored_checks_every_edge_field`, the loop that walks all four. Two
+plausible-looking single-field tests in its place would have left both
+unprotected. Every remaining test would still pass.
+
+So when a guard dies, note how many tests died with it. A guard killed by
+exactly one test whose name does not mention it is a guard with no owner.
+
+### A guard on the wrong property reports coverage it does not have
+
+Worse than no guard, because it reads as proof.
+
+A round-trip test named for a matrix holding-tank entry asserted four users
+placed under the root. That is true whether or not the tank holds anything. It
+proves the fixture built, not that the state the test is named for was reached.
+The tank was empty on both sides of the round trip. The comparison was one
+empty array against another. It passed regardless.
+
+Point the guard at the state in the test's name, not at a side effect of
+building the fixture.
+
+### An acceptance test can go vacuous where a rejection test cannot
+
+A rejection test that stops reaching its state starts failing, because the
+absence of the error is the failure. An acceptance test that stops reaching its
+state keeps passing, because two empty things match.
+
+That asymmetry means a green rejection test is evidence about itself. A green
+acceptance test is not. Ask of every acceptance test: if the fixture stopped
+producing the state in this test's name, would it still pass? If yes, the test
+needs a guard on that state, checked before the thing under test runs.
+
 ### Property-based tests (proptest)
 
 Every tree type must have these six property tests:
@@ -937,3 +975,82 @@ explicitly typed literal such as `map[string]int{...}`.
 
 HEU-606 narrowed 14 wire DTO fields. Two breaks were compile errors and six were
 run-time assertion failures, so building was not enough to find them.
+
+## `validate_restored` Checks Each Structure Alone, Not That They Agree
+
+The arena walks its index and its nodes against each other in both directions.
+The index is checked against the nodes, and the nodes are checked back against
+the index. An adversarial review threw roughly fifteen forged index shapes at
+that pair and every one was rejected.
+
+The arena's other pair is checked one way only. Every free-list entry must name
+a tombstoned slot, and no tombstone has to appear in the free list. A tombstone
+left out is leaked, and `node_count` counts it live. Its reach today is three
+`Debug` impls, which is why it is recorded rather than fixed.
+
+The four arms above the arena check one way only for their own pair. Each holds
+a second structure beside the arena. Each checks that structure's entries are in
+range and live. None checks that the two agree with each other.
+
+So a restored matrix can hold a child in `Node.children` while every parent slot
+is empty, and a restored board can seat an occupant the membership index does
+not name. Both pass validation today.
+
+**The gap is recorded in the docblock of each arm that has it, and owned by
+HEU-750.** The streamline arm is not one of them. Its pair is checked in both
+directions, which is what HEU-706 did.
+
+Read a `validate_restored` docblock as the boundary of what that arm proves. An
+arm that proves less than its name suggests is the failure this file already
+describes one section up: a guard on the wrong property reports coverage it does
+not have, and reads as proof.
+
+## A Counting Method That Tracks The Truth Loosely Is Worse Than One Obviously Wrong
+
+`grep -c '#\[error("'` over `snapshot.rs` was used to count error variants. It
+returned 25 when the answer was 34, because nine variants wrap the message onto
+the next line and the pattern requires the quote on the same line as the
+attribute.
+
+The number was then handed to a reviewer as part of its brief.
+
+After three variants were added, the same grep returns 26 against a true 37. It
+moved in the right direction and stayed wrong. A method that drifts with the
+truth reads as working, which is what makes it harder to catch than one that
+returns something absurd.
+
+Count enum variants by pairing each attribute to the identifier that follows it,
+or by counting the identifiers directly. Confirm only one enum in the file
+carries the attribute, or you are counting two things and reporting one.
+
+## The MSRV Is Not Enforced, And Knowing That Does Not Protect You
+
+`rust-version = "1.85.0"` is declared in both engine crates. CI installs
+`dtolnay/rust-toolchain@stable`. Nothing compiles the workspace against the
+declared version, so a syntax feature newer than 1.85 reaches a commit and
+passes every gate. `clippy::incompatible_msrv` covers std APIs, not syntax.
+
+Let-chains, `if let Some(x) = y && cond`, are the ones that keep landing. They
+need 1.88.
+
+Awareness is not the mitigation. The ticket documenting this gap was written,
+and the same fault was reproduced in a new guard about two hours later on the
+same branch, caught by reading rather than by any gate. Write the nested `if`.
+HEU-745 holds the fix.
+
+## A Reviewer Pointed At A Worktree Reports On The Worktree
+
+A long-lived branch drifts behind its base. A file the branch never touches can
+be corrected upstream while the branch keeps the old copy.
+
+A reviewer reading that branch quotes the old copy accurately and reports a real
+defect. Someone checking from the main checkout quotes the corrected copy,
+accurately, and concludes the reviewer misread. Both are right about their own
+tree and the disagreement is about which tree, not about the sentence.
+
+This cost a round trip on HEU-706. The finding was a version banner that was
+stale on the branch and already fixed on `main` by two commits the branch's base
+predated. The rebase resolved it with no commit.
+
+When a finding cites a file, check it in the tree the finding came from, and say
+which tree in the answer.

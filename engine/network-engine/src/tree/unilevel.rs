@@ -4,6 +4,7 @@ use uuid::Uuid;
 use super::arena::Arena;
 use super::error::TreeError;
 use super::node::{Node, NodeIndex};
+use crate::snapshot::SnapshotConsistencyError;
 use crate::types::TreePosition;
 
 /// Arena-backed unilevel tree.
@@ -27,6 +28,11 @@ impl UnilevelTree {
         Self {
             arena: Arena::new(),
         }
+    }
+
+    /// Prove a restored tree's stored indexes are in range and live.
+    pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
+        self.arena.validate_restored()
     }
 
     pub fn add_root(&mut self, user_id: Uuid, enrolled_at: i64) -> Result<NodeIndex, TreeError> {
@@ -192,6 +198,28 @@ impl std::fmt::Debug for UnilevelTree {
 mod tests {
     use super::*;
     use crate::tree::test_helpers::{test_uuid, test_uuid_u16};
+
+    #[test]
+    fn validate_restored_accepts_a_healthy_tree() {
+        // Paired with the fault test below. Without this, a body hard-coded to
+        // Err would pass that one.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+
+        assert_eq!(tree.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_surfaces_an_arena_fault() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.arena.index.insert(test_uuid(2), NodeIndex(99));
+
+        assert!(matches!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::IndexSlotOutOfRange { .. })
+        ));
+    }
 
     #[test]
     fn add_root_to_empty_tree() {

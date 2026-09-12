@@ -63,7 +63,7 @@ fn ping_returns_protocol_version() {
 
     let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
     assert_eq!(parsed["id"], "1");
-    assert_eq!(parsed["result"]["protocol_version"], 6);
+    assert_eq!(parsed["result"]["protocol_version"], 7);
 
     drop(child.stdin.take());
     child.wait().unwrap();
@@ -5954,6 +5954,833 @@ fn every_structure_type_has_a_dispatchable_commission_op() {
             resp
         );
     }
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+// ---- HEU-706: inconsistent restores ----------------------------------------
+//
+// Each test takes a snapshot from a live engine, mutates exactly one field in
+// the returned JSON, and restores it under a new name. Mutating a real snapshot
+// keeps the shape right by construction, so a failure means the invariant broke
+// rather than that the hand-written JSON was wrong.
+
+/// Takes a snapshot of `structure` and returns its `data` payload.
+fn take_snapshot_data(worker: &mut std::process::Child, structure: &str) -> serde_json::Value {
+    let resp = common::send_receive(
+        worker,
+        &format!(
+            r#"{{"id":"snap","op":"take_snapshot","params":{{"structure":"{}"}}}}"#,
+            structure
+        ),
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(
+        parsed["ok"].as_bool().unwrap_or(false),
+        "take_snapshot failed: {}",
+        resp
+    );
+    parsed["result"]["data"].clone()
+}
+
+/// Restores `data` under a fresh name and returns the raw response.
+fn restore_under(
+    worker: &mut std::process::Child,
+    name: &str,
+    tree_type: &str,
+    data: serde_json::Value,
+) -> String {
+    let req = serde_json::json!({
+        "id": "restore-bad",
+        "op": "restore_snapshot",
+        "params": { "structure": name, "tree_type": tree_type, "data": data }
+    });
+    common::send_receive(worker, &req.to_string())
+}
+
+/// Asserts the code and every fragment the message must carry.
+fn assert_inconsistent(resp: &str, observations: &[&str]) {
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INCONSISTENT_SNAPSHOT"),
+        "expected INCONSISTENT_SNAPSHOT, got: {}",
+        resp
+    );
+    for observation in observations {
+        assert!(
+            resp.contains(observation),
+            "expected the message to report {:?}, got: {}",
+            observation,
+            resp
+        );
+    }
+}
+
+#[test]
+fn restore_rejects_a_unilevel_index_past_the_end() {
+    let mut worker = common::spawn_worker();
+    build_three_node_chain(&mut worker);
+
+    let mut data = take_snapshot_data(&mut worker, TREE_NAME);
+    data["arena"]["index"]
+        .as_object_mut()
+        .expect("unilevel snapshot should carry arena.index")
+        .insert(
+            "11111111-1111-1111-1111-111111111111".to_string(),
+            serde_json::json!(99),
+        );
+
+    let resp = restore_under(&mut worker, "R1", "unilevel", data);
+    assert_inconsistent(&resp, &["the index maps", "the arena holds"]);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_rejects_a_unilevel_index_on_a_tombstone() {
+    // A removal frees a slot. Pointing an index entry at it is in range and
+    // dead, which a bounds-only check would accept.
+    let mut worker = common::spawn_worker();
+    build_three_node_chain(&mut worker);
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"rm","op":"remove_node","params":{{"structure":"{}","user_id":"{}"}}}}"#,
+            TREE_NAME, GRANDCHILD
+        ),
+    );
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "remove_node failed: {}",
+        resp
+    );
+
+    let mut data = take_snapshot_data(&mut worker, TREE_NAME);
+    let freed = data["arena"]["free_list"][0].clone();
+    assert!(!freed.is_null(), "arena.free_list[0] is null in: {}", data);
+    data["arena"]["index"]
+        .as_object_mut()
+        .expect("unilevel snapshot should carry arena.index")
+        .insert("22222222-2222-2222-2222-222222222222".to_string(), freed);
+
+    let resp = restore_under(&mut worker, "R2", "unilevel", data);
+    assert_inconsistent(&resp, &["the index maps", "that slot is a tombstone"]);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_rejects_a_binary_child_slot_past_the_end() {
+    let mut worker = common::spawn_worker();
+    create_binary_tree(&mut worker, "BinTree");
+    let resp = common::send_receive(
+        &mut worker,
+        r#"{"id":"b1","op":"add_root","params":{"structure":"BinTree","user_id":"aaaaaaaa-0000-0000-0000-000000000001","enrolled_at":100}}"#,
+    );
+    assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
+
+    let mut data = take_snapshot_data(&mut worker, "BinTree");
+    let slots = data["slots"].as_object_mut().expect("binary carries slots");
+    let key = slots.keys().next().cloned().expect("one slots entry");
+    slots.insert(key, serde_json::json!([99, null]));
+
+    let resp = restore_under(&mut worker, "R3", "binary", data);
+    assert_inconsistent(
+        &resp,
+        &["the child slot map names node slot", "the arena holds"],
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_rejects_a_matrix_slot_vector_of_the_wrong_width() {
+    let mut worker = common::spawn_worker();
+    create_matrix_tree(&mut worker, "MatTree");
+    let resp = common::send_receive(
+        &mut worker,
+        r#"{"id":"m1","op":"add_root","params":{"structure":"MatTree","user_id":"bbbbbbbb-0000-0000-0000-000000000001","enrolled_at":100}}"#,
+    );
+    assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
+
+    let mut data = take_snapshot_data(&mut worker, "MatTree");
+    let slots = data["slots"].as_object_mut().expect("matrix carries slots");
+    let key = slots.keys().next().cloned().expect("one slots entry");
+    let vector = slots[&key]
+        .as_array()
+        .expect("matrix slots entry should be an array");
+    let (_, shortened) = vector
+        .split_last()
+        .expect("slot vector should not be empty");
+    let shortened = shortened.to_vec();
+    slots.insert(key, serde_json::Value::Array(shortened));
+
+    let resp = restore_under(&mut worker, "R4", "matrix", data);
+    assert_inconsistent(&resp, &["child slots; the tree width is"]);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_rejects_a_board_member_on_an_absent_board() {
+    let mut worker = common::spawn_worker();
+    let create = serde_json::json!({
+        "id": "bp-create",
+        "op": "create_board_plan",
+        "params": {
+            "structure": "BpSnap", "width": 2, "height": 2,
+            "config": {
+                "cycle_commission": 500.0, "re_entry_enabled": true,
+                "re_entry_position": "bottom", "max_cycles_per_period": 4,
+                "max_cascade_depth": 10, "stall_threshold_periods": 3,
+                "inactive_compression": false
+            },
+            "timestamp": 0
+        }
+    });
+    let resp = common::send_receive(&mut worker, &create.to_string());
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "create_board_plan failed: {}",
+        resp
+    );
+    let add = serde_json::json!({
+        "id": "bp-add", "op": "board_add_member",
+        "params": {
+            "structure": "BpSnap",
+            "user_id": "cccccccc-0000-0000-0000-000000000001",
+            "sponsor_id": "cccccccc-0000-0000-0000-000000000001",
+            "timestamp": 1
+        }
+    });
+    let resp = common::send_receive(&mut worker, &add.to_string());
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "board_add_member failed: {}",
+        resp
+    );
+
+    let mut data = take_snapshot_data(&mut worker, "BpSnap");
+    let members = data["member_boards"]
+        .as_object_mut()
+        .expect("board plan carries member_boards");
+    let key = members.keys().next().cloned().expect("one member");
+    members.insert(
+        key,
+        serde_json::json!("dddddddd-0000-0000-0000-000000000009"),
+    );
+
+    let resp = restore_under(&mut worker, "R5", "board_plan", data);
+    assert_inconsistent(&resp, &["the engine holds no such board"]);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_rejects_a_streamline_user_not_in_the_stream_tree() {
+    // The state HEU-706 was filed for: user_streams names a stream whose tree
+    // does not hold the user.
+    let mut worker = common::spawn_worker();
+    create_streamline(&mut worker);
+    sl_add_member(&mut worker, "sl-a", SL_USER1, ROOT, 1001);
+
+    let mut data = take_snapshot_data(&mut worker, SL_STRUCTURE);
+    data["user_streams"]
+        .as_object_mut()
+        .expect("streamline carries user_streams")
+        .insert(
+            "eeeeeeee-0000-0000-0000-000000000001".to_string(),
+            serde_json::json!([1]),
+        );
+
+    let resp = restore_under(&mut worker, "R6", "streamline", data);
+    assert_inconsistent(
+        &resp,
+        &[
+            "user_streams lists stream",
+            "that stream's tree does not hold them",
+        ],
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_rejects_a_streamline_nested_arena_fault() {
+    // The fault is inside one Stream's tree, so the Stream wrapper is what
+    // names which stream failed.
+    let mut worker = common::spawn_worker();
+    create_streamline(&mut worker);
+    sl_add_member(&mut worker, "sl-a", SL_USER1, ROOT, 1001);
+
+    let mut data = take_snapshot_data(&mut worker, SL_STRUCTURE);
+    let streams = data["streams"].as_object_mut().expect("streams map");
+    let key = streams.keys().next().cloned().expect("one stream");
+    streams[&key]["tree"]["arena"]["index"]
+        .as_object_mut()
+        .expect("nested arena index")
+        .insert(
+            "ffffffff-0000-0000-0000-000000000001".to_string(),
+            serde_json::json!(99),
+        );
+
+    let resp = restore_under(&mut worker, "R7", "streamline", data);
+    assert_inconsistent(&resp, &["stream 1 is inconsistent", "the arena holds"]);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_rejects_undeserializable_data_with_invalid_params() {
+    // The two codes must be told apart. Without this the suite proves
+    // INCONSISTENT_SNAPSHOT is returned but never that it is returned for a
+    // different reason than INVALID_PARAMS.
+    let mut worker = common::spawn_worker();
+
+    let resp = restore_under(
+        &mut worker,
+        "R8",
+        "unilevel",
+        serde_json::json!({"not_an_arena": true}),
+    );
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PARAMS"),
+        "expected INVALID_PARAMS, got: {}",
+        resp
+    );
+    assert!(
+        !resp.contains("INCONSISTENT_SNAPSHOT"),
+        "a shape that will not deserialize must not report INCONSISTENT_SNAPSHOT, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+// ---- HEU-706: snapshots the engine produced still restore -------------------
+//
+// A validator that rejects a snapshot the engine itself produced is worse than
+// the gap it closes, and only a positive test catches that. Each case builds a
+// state a strict validator is most likely to reject, round-trips it, and
+// compares a named query on both copies.
+//
+// A failure here means a validator is too strict, not that the test is wrong.
+
+/// Restores `data` under `name` and asserts the restore was accepted.
+fn restore_expecting_success(
+    worker: &mut std::process::Child,
+    name: &str,
+    tree_type: &str,
+    data: serde_json::Value,
+) {
+    let resp = restore_under(worker, name, tree_type, data);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "a snapshot the engine produced was rejected on restore: {}",
+        resp
+    );
+}
+
+fn query(worker: &mut std::process::Child, request: &str) -> serde_json::Value {
+    let resp = common::send_receive(worker, request);
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(
+        parsed["ok"].as_bool().unwrap_or(false),
+        "query failed: {}",
+        resp
+    );
+    parsed["result"].clone()
+}
+
+#[test]
+fn unilevel_snapshot_round_trip_survives_a_tombstone() {
+    // A removal leaves a tombstoned slot and a non-empty free list, which is
+    // the arena state the liveness checks are most likely to over-reject.
+    let mut worker = common::spawn_worker();
+    build_three_node_chain(&mut worker);
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"rm","op":"remove_node","params":{{"structure":"{}","user_id":"{}"}}}}"#,
+            TREE_NAME, GRANDCHILD
+        ),
+    );
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "remove_node failed: {}",
+        resp
+    );
+
+    let data = take_snapshot_data(&mut worker, TREE_NAME);
+    assert!(
+        !data["arena"]["free_list"].as_array().unwrap().is_empty(),
+        "the fixture should carry a free slot: {}",
+        data
+    );
+    restore_expecting_success(&mut worker, "URT", "unilevel", data);
+
+    let before = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"q1","op":"get_downline","params":{{"structure":"{}","user_id":"{}","depth":10}}}}"#,
+            TREE_NAME, ROOT
+        ),
+    );
+    let after = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"q2","op":"get_downline","params":{{"structure":"URT","user_id":"{}","depth":10}}}}"#,
+            ROOT
+        ),
+    );
+    assert_eq!(
+        before, after,
+        "the restored downline differs from the original"
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn binary_snapshot_round_trip_survives_a_vacated_slot() {
+    let mut worker = common::spawn_worker();
+    create_binary_tree(&mut worker, "BRT");
+    let root = "aaaaaaaa-0000-0000-0000-000000000001";
+    let left = "aaaaaaaa-0000-0000-0000-000000000002";
+    let right = "aaaaaaaa-0000-0000-0000-000000000003";
+    for (id, req) in [
+        (
+            "r",
+            format!(
+                r#"{{"id":"r","op":"add_root","params":{{"structure":"BRT","user_id":"{}","enrolled_at":100}}}}"#,
+                root
+            ),
+        ),
+        (
+            "l",
+            format!(
+                r#"{{"id":"l","op":"add_node","params":{{"structure":"BRT","user_id":"{}","parent_id":"{}","position":0,"sponsor_id":"{}","enrolled_at":200}}}}"#,
+                left, root, root
+            ),
+        ),
+        (
+            "rr",
+            format!(
+                r#"{{"id":"rr","op":"add_node","params":{{"structure":"BRT","user_id":"{}","parent_id":"{}","position":1,"sponsor_id":"{}","enrolled_at":300}}}}"#,
+                right, root, root
+            ),
+        ),
+    ] {
+        let resp = common::send_receive(&mut worker, &req);
+        assert!(resp.contains(r#""ok":true"#), "{} failed: {}", id, resp);
+    }
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"rm","op":"remove_node","params":{{"structure":"BRT","user_id":"{}"}}}}"#,
+            left
+        ),
+    );
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "remove_node failed: {}",
+        resp
+    );
+
+    let data = take_snapshot_data(&mut worker, "BRT");
+    assert!(
+        !data["arena"]["free_list"]
+            .as_array()
+            .expect("binary snapshot should carry arena.free_list")
+            .is_empty(),
+        "the fixture should have vacated a slot: {}",
+        data
+    );
+    restore_expecting_success(&mut worker, "BRT2", "binary", data);
+
+    let before = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"c1","op":"get_children","params":{{"structure":"BRT","user_id":"{}"}}}}"#,
+            root
+        ),
+    );
+    let after = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"c2","op":"get_children","params":{{"structure":"BRT2","user_id":"{}"}}}}"#,
+            root
+        ),
+    );
+    assert_eq!(
+        before, after,
+        "the restored children differ from the original"
+    );
+
+    // get_children carries user_id, depth and enrolled_at but not the slot, so
+    // a restore that moved the survivor into the vacated slot would compare
+    // equal. get_position is what exposes the slot index.
+    let pos_before = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"bp1","op":"get_position","params":{{"structure":"BRT","user_id":"{}"}}}}"#,
+            right
+        ),
+    );
+    let pos_after = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"bp2","op":"get_position","params":{{"structure":"BRT2","user_id":"{}"}}}}"#,
+            right
+        ),
+    );
+    assert_eq!(pos_before, pos_after, "the restored slot position differs");
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn matrix_snapshot_round_trip_survives_a_holding_tank_entry() {
+    // A width-2 matrix fills fast, so the third enrollment under the root
+    // spills or lands in the tank. Both are states the matrix checks touch.
+    let mut worker = common::spawn_worker();
+    create_matrix_tree_with_width(&mut worker, "MRT", 2);
+    let root = "bbbbbbbb-0000-0000-0000-000000000001";
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"r","op":"add_root","params":{{"structure":"MRT","user_id":"{}","enrolled_at":100}}}}"#,
+            root
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
+    for n in 2..=5u8 {
+        let user = format!("bbbbbbbb-0000-0000-0000-00000000000{}", n);
+        let resp = common::send_receive(
+            &mut worker,
+            &format!(
+                r#"{{"id":"a{}","op":"add_node","params":{{"structure":"MRT","user_id":"{}","sponsor_id":"{}","enrolled_at":{}}}}}"#,
+                n,
+                user,
+                root,
+                100 + n as i64
+            ),
+        );
+        assert!(
+            resp.contains(r#""ok":true"#),
+            "add_node {} failed: {}",
+            n,
+            resp
+        );
+    }
+
+    // Without a removal under holding_tank the tank stays empty and this
+    // test compares two empty arrays.
+    let tanked = "bbbbbbbb-0000-0000-0000-000000000004";
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"rm","op":"remove_node","params":{{"structure":"MRT","user_id":"{}","pruning_mode":"holding_tank"}}}}"#,
+            tanked
+        ),
+    );
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "remove_node failed: {}",
+        resp
+    );
+
+    // Guards on the states this test is named for, read before any restore.
+    let children = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"g1","op":"get_children","params":{{"structure":"MRT","user_id":"{}"}}}}"#,
+            root
+        ),
+    );
+    assert_eq!(
+        children.as_array().map(|a| a.len()),
+        Some(2),
+        "a width-2 root should hold two children, so the rest spilled: {}",
+        children
+    );
+
+    let before = query(
+        &mut worker,
+        r#"{"id":"h1","op":"get_holding_tank","params":{"structure":"MRT"}}"#,
+    );
+    assert!(
+        !before
+            .as_array()
+            .expect("holding tank is an array")
+            .is_empty(),
+        "the fixture should have put a user in the tank: {}",
+        before
+    );
+
+    let data = take_snapshot_data(&mut worker, "MRT");
+    restore_expecting_success(&mut worker, "MRT2", "matrix", data);
+
+    let after = query(
+        &mut worker,
+        r#"{"id":"h2","op":"get_holding_tank","params":{"structure":"MRT2"}}"#,
+    );
+    assert_eq!(
+        before, after,
+        "the restored holding tank differs from the original"
+    );
+
+    // A spilled user, not the root: the root's slot is trivially fixed, and
+    // the slots map is what the assertions below read.
+    let spilled = "bbbbbbbb-0000-0000-0000-000000000005";
+    let pos_before = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"p1","op":"get_position","params":{{"structure":"MRT","user_id":"{}"}}}}"#,
+            spilled
+        ),
+    );
+    assert!(
+        pos_before["depth"].as_u64().unwrap_or(0) >= 2,
+        "the fixture should have spilled this user below the root: {}",
+        pos_before
+    );
+    let pos_after = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"p2","op":"get_position","params":{{"structure":"MRT2","user_id":"{}"}}}}"#,
+            spilled
+        ),
+    );
+    assert_eq!(pos_before, pos_after, "the restored position differs");
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn board_plan_snapshot_round_trip_survives_a_cycled_board() {
+    // A 2x1 board holds three positions, so a fourth member cycles it and
+    // leaves the displaced/re-entry state a strict validator might reject.
+    let mut worker = common::spawn_worker();
+    let create = serde_json::json!({
+        "id": "bp-create", "op": "create_board_plan",
+        "params": {
+            "structure": "BPRT", "width": 2, "height": 1,
+            "config": {
+                "cycle_commission": 500.0, "re_entry_enabled": true,
+                "re_entry_position": "bottom", "max_cycles_per_period": 4,
+                "max_cascade_depth": 10, "stall_threshold_periods": 3,
+                "inactive_compression": false
+            },
+            "timestamp": 0
+        }
+    });
+    let resp = common::send_receive(&mut worker, &create.to_string());
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "create_board_plan failed: {}",
+        resp
+    );
+
+    let first = "cccccccc-0000-0000-0000-000000000001";
+    for n in 1..=4u8 {
+        let user = format!("cccccccc-0000-0000-0000-00000000000{}", n);
+        let add = serde_json::json!({
+            "id": format!("bp-add-{}", n), "op": "board_add_member",
+            "params": { "structure": "BPRT", "user_id": user, "sponsor_id": first, "timestamp": n as i64 }
+        });
+        let resp = common::send_receive(&mut worker, &add.to_string());
+        assert!(
+            resp.contains(r#""ok":true"#),
+            "board_add_member {} failed: {}",
+            n,
+            resp
+        );
+    }
+
+    // A dissolve is what leaves a member displaced. The cycling above does
+    // not, which the assertion after the snapshot pins.
+    let boards = query(
+        &mut worker,
+        r#"{"id":"bl0","op":"board_list","params":{"structure":"BPRT"}}"#,
+    );
+    // More than the one board it started with, so a cycle split it. The exact
+    // count varies with placement among boards sharing a timestamp, so it is
+    // not asserted.
+    assert!(
+        boards
+            .as_array()
+            .expect("board_list returns an array")
+            .len()
+            > 1,
+        "the fixture should have cycled and split: {}",
+        boards
+    );
+    let doomed = boards.as_array().expect("board_list returns an array")[0]["id"]
+        .as_str()
+        .expect("a board id")
+        .to_string();
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"bd","op":"board_dissolve","params":{{"structure":"BPRT","board_id":"{}","timestamp":9}}}}"#,
+            doomed
+        ),
+    );
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "board_dissolve failed: {}",
+        resp
+    );
+    // Read the displacement off the dissolve's own result, so it is the
+    // dissolve that is shown to cause it.
+    let dissolved: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(
+        !dissolved["result"]["displaced_members"]
+            .as_array()
+            .expect("a dissolve reports displaced_members")
+            .is_empty(),
+        "the dissolve should have displaced someone: {}",
+        resp
+    );
+
+    let data = take_snapshot_data(&mut worker, "BPRT");
+    assert!(
+        !data["displaced_members"]
+            .as_array()
+            .expect("board plan snapshot should carry displaced_members")
+            .is_empty(),
+        "the fixture should have displaced a member: {}",
+        data
+    );
+    restore_expecting_success(&mut worker, "BPRT2", "board_plan", data);
+
+    // A cycle creates two boards in the same instant, so their relative
+    // order is not guaranteed. Compare the set, not the order.
+    let by_id = |v: serde_json::Value| {
+        let mut boards = v.as_array().expect("board_list returns an array").clone();
+        boards.sort_by_key(|b| b["id"].as_str().unwrap_or_default().to_string());
+        boards
+    };
+    let before = by_id(query(
+        &mut worker,
+        r#"{"id":"bl1","op":"board_list","params":{"structure":"BPRT"}}"#,
+    ));
+    let after = by_id(query(
+        &mut worker,
+        r#"{"id":"bl2","op":"board_list","params":{"structure":"BPRT2"}}"#,
+    ));
+    assert_eq!(
+        before, after,
+        "the restored board list differs from the original"
+    );
+    assert!(
+        !before.is_empty(),
+        "the restored engine should still hold boards"
+    );
+
+    // The listing above carries counts, not occupants, so a restore that
+    // scrambled positions while preserving those counts would compare equal.
+    // This is the query that shows who sits where.
+    let survivor = before[0]["id"].as_str().expect("a board id").to_string();
+    let state_before = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"bs1","op":"board_get_state","params":{{"structure":"BPRT","board_id":"{}"}}}}"#,
+            survivor
+        ),
+    );
+    let state_after = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"bs2","op":"board_get_state","params":{{"structure":"BPRT2","board_id":"{}"}}}}"#,
+            survivor
+        ),
+    );
+    assert_eq!(
+        state_before, state_after,
+        "the restored board occupants differ from the original"
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn streamline_snapshot_round_trip_survives_a_frozen_stream() {
+    let mut worker = common::spawn_worker();
+    create_streamline(&mut worker);
+    sl_add_member(&mut worker, "sl-1", SL_USER1, ROOT, 1001);
+    sl_add_member(&mut worker, "sl-2", SL_USER2, SL_USER1, 1002);
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"sl-exp","op":"streamline_expand_streams","params":{{"structure":"{}","user_id":"{}","total_allowed":2,"timestamp":2000}}}}"#,
+            SL_STRUCTURE, SL_USER1
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "expand failed: {}", resp);
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"sl-fr","op":"streamline_update_allowance","params":{{"structure":"{}","user_id":"{}","total_allowed":1,"timestamp":2001}}}}"#,
+            SL_STRUCTURE, SL_USER1
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "freeze failed: {}", resp);
+
+    let data = take_snapshot_data(&mut worker, SL_STRUCTURE);
+    restore_expecting_success(&mut worker, "SLRT", "streamline", data);
+
+    let before = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"l1","op":"streamline_list_streams","params":{{"structure":"{}"}}}}"#,
+            SL_STRUCTURE
+        ),
+    );
+    // Guard against a vacuous fixture: without a frozen stream this test
+    // round-trips the same shape the simple case already covers.
+    assert!(
+        before.to_string().contains(r#""frozen":true"#),
+        "the fixture should have frozen a stream: {}",
+        before
+    );
+    let after = query(
+        &mut worker,
+        r#"{"id":"l2","op":"streamline_list_streams","params":{"structure":"SLRT"}}"#,
+    );
+    assert_eq!(
+        before, after,
+        "the restored stream list differs from the original"
+    );
+
+    let m_before = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"m1","op":"streamline_get_member","params":{{"structure":"{}","user_id":"{}"}}}}"#,
+            SL_STRUCTURE, SL_USER2
+        ),
+    );
+    let m_after = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"m2","op":"streamline_get_member","params":{{"structure":"SLRT","user_id":"{}"}}}}"#,
+            SL_USER2
+        ),
+    );
+    assert_eq!(m_before, m_after, "the restored member differs");
+
     drop(worker.stdin.take());
     worker.wait().unwrap();
 }

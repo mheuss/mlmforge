@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -115,6 +115,20 @@ impl MatrixTree {
                 return Err(SnapshotConsistencyError::HoldingTankUserPlaced {
                     user_id: entry.user_id,
                     slot: idx.0,
+                });
+            }
+        }
+        // Runs after the walk above, so a user who is both placed and repeated
+        // is reported as placed, which is the more specific fault.
+        //
+        // Returns on the first repeat rather than holding the lowest. The tank
+        // is a Vec, so its order is part of the payload and the same payload
+        // names the same offender.
+        let mut listed: HashSet<Uuid> = HashSet::new();
+        for entry in &self.holding_tank {
+            if !listed.insert(entry.user_id) {
+                return Err(SnapshotConsistencyError::HoldingTankUserRepeated {
+                    user_id: entry.user_id,
                 });
             }
         }
@@ -1110,6 +1124,61 @@ mod tests {
                 slot: root.0,
                 found: 1,
                 width: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_holding_tank_user_listed_twice() {
+        let (mut tree, _) = matrix_pair();
+        let waiting = HoldingTankEntry {
+            user_id: test_uuid(9),
+            sponsor_user_id: None,
+            enrolled_at: 0,
+        };
+        tree.holding_tank.push(waiting.clone());
+        tree.holding_tank.push(waiting);
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::HoldingTankUserRepeated {
+                user_id: test_uuid(9),
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_accepts_a_holding_tank_of_distinct_users() {
+        let (mut tree, _) = matrix_pair();
+        for n in [9u8, 10] {
+            tree.holding_tank.push(HoldingTankEntry {
+                user_id: test_uuid(n),
+                sponsor_user_id: None,
+                enrolled_at: 0,
+            });
+        }
+
+        assert_eq!(tree.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_reports_a_placed_tank_user_before_a_repeat() {
+        // Placed is the more specific fault. A user who is both placed and
+        // repeated must not be reported as merely repeated.
+        let (mut tree, child) = matrix_pair();
+        for _ in 0..2 {
+            tree.holding_tank.push(HoldingTankEntry {
+                user_id: test_uuid(2),
+                sponsor_user_id: None,
+                enrolled_at: 0,
+            });
+        }
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::HoldingTankUserPlaced {
+                user_id: test_uuid(2),
+                slot: child.0,
             })
         );
     }

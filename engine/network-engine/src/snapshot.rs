@@ -149,6 +149,9 @@ pub enum SnapshotConsistencyError {
         expected: usize,
     },
 
+    #[error("the holding tank lists {user_id} more than once")]
+    HoldingTankUserRepeated { user_id: Uuid },
+
     #[error("the holding tank names {user_id}; that user is also placed at node slot {slot}")]
     HoldingTankUserPlaced { user_id: Uuid, slot: usize },
 

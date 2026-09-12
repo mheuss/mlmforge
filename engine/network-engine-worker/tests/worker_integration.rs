@@ -196,6 +196,68 @@ fn remove_node_success() {
     );
     assert!(resp.contains(r#""ok":true"#));
     assert!(resp.contains(r#""removed":true"#));
+    assert!(
+        resp.contains(r#""responsored":[]"#),
+        "a removal that moves nobody still reports the key: {resp}"
+    );
+
+    drop(child.stdin.take());
+    child.wait().unwrap();
+}
+
+/// The worker hand-builds these key names, so this is what ties them to the
+/// Go struct tags that decode them.
+#[test]
+fn remove_node_emits_the_responsored_keys_on_the_wire() {
+    let mut child = common::spawn_worker();
+    const TREE_NAME: &str = "T";
+    const ROOT: &str = "00000000-0000-0000-0000-000000000001";
+    const RECRUITER: &str = "00000000-0000-0000-0000-000000000002";
+    const RECRUIT: &str = "00000000-0000-0000-0000-000000000003";
+
+    common::send_receive(
+        &mut child,
+        &format!(
+            r#"{{"id":"1","op":"create_tree","params":{{"structure":"{TREE_NAME}","tree_type":"unilevel"}}}}"#
+        ),
+    );
+    common::send_receive(
+        &mut child,
+        &format!(
+            r#"{{"id":"2","op":"add_root","params":{{"structure":"{TREE_NAME}","user_id":"{ROOT}","enrolled_at":1}}}}"#
+        ),
+    );
+    common::send_receive(
+        &mut child,
+        &format!(
+            r#"{{"id":"3","op":"add_node","params":{{"structure":"{TREE_NAME}","user_id":"{RECRUITER}","parent_id":"{ROOT}","sponsor_id":"{ROOT}","enrolled_at":2}}}}"#
+        ),
+    );
+    // Placed under the root so the recruiter stays a removable leaf, sponsored
+    // by the recruiter so the removal has someone to move.
+    common::send_receive(
+        &mut child,
+        &format!(
+            r#"{{"id":"4","op":"add_node","params":{{"structure":"{TREE_NAME}","user_id":"{RECRUIT}","parent_id":"{ROOT}","sponsor_id":"{RECRUITER}","enrolled_at":3}}}}"#
+        ),
+    );
+
+    let resp = common::send_receive(
+        &mut child,
+        &format!(
+            r#"{{"id":"5","op":"remove_node","params":{{"structure":"{TREE_NAME}","user_id":"{RECRUITER}"}}}}"#
+        ),
+    );
+
+    assert!(resp.contains(r#""ok":true"#), "{resp}");
+    assert!(
+        resp.contains(&format!(r#""user_id":"{RECRUIT}""#)),
+        "the moved recruit must be named under user_id: {resp}"
+    );
+    assert!(
+        resp.contains(&format!(r#""new_sponsor_id":"{ROOT}""#)),
+        "the new sponsor must be named under new_sponsor_id: {resp}"
+    );
 
     drop(child.stdin.take());
     child.wait().unwrap();

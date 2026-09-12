@@ -201,7 +201,7 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 	}
 
 	if err := c.store.DeleteNodeAndResponsor(ctx, payload.TreeID, payload.UserID, moved); err != nil {
-		return fmt.Errorf("soft-delete node: %w", err)
+		return fmt.Errorf("remove node and re-sponsor recruits: %w", err)
 	}
 	return nil
 }

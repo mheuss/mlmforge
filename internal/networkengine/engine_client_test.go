@@ -182,8 +182,8 @@ func TestEngineClient_RemoveNode_MockParams(t *testing.T) {
 	assert.JSONEq(t, `{"structure":"Test","user_id":"00000000-0000-0000-0000-000000000001"}`, string(mock.lastParams))
 }
 
-// The worker hand-builds these keys rather than deriving them, so nothing but
-// this test ties the Rust strings to the Go struct tags.
+// Pins the Go struct tags to the key names. The worker side is pinned by
+// remove_node_emits_the_responsored_keys_on_the_wire.
 func TestEngineClient_RemoveNode_DecodesResponsored(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`{"removed":true,"responsored":[

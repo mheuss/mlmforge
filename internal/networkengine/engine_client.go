@@ -36,6 +36,12 @@ import (
 // the empty string succeeded under 8 and now fails, which is why the number had
 // to move.
 //
+// Moved to 10 by HEU-766. A remove_node response gained a field naming the
+// recruits the removal re-sponsored. An added field is normally free, because a
+// client that ignores one is still correct. This one is the exception: a client
+// that ignores it writes a store that disagrees with the engine about who
+// sponsors whom, and nothing reconciles them afterwards.
+//
 // This is the wire contract, not the stored row shape and not the authoring
 // format. Two other numbers nearby are also called a version: `detailVersion`
 // in commission_detail.go, and the plan schema version in

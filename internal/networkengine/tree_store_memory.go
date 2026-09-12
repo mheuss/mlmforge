@@ -88,7 +88,7 @@ func (s *MemoryTreeStore) DeleteNodeAndResponsor(
 		}
 		if found < 0 {
 			return fmt.Errorf(
-				"re-sponsoring %s in tree %s updated 0 active rows, expected 1",
+				"re-sponsoring %s in tree %s found no active row to update",
 				m.UserID, treeID)
 		}
 		targets = append(targets, found)

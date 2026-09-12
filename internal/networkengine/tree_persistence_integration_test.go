@@ -740,8 +740,21 @@ func TestTreePersistence_RemovedSponsorStillReloads(t *testing.T) {
 	assert.Equal(t, rootID, *after.SponsorID,
 		"the store must record the sponsor the engine moved the recruit to")
 
-	rows, err := treeStore.GetByTree(ctx, treeID)
+	// A real restart, not just the preflight. LoadTree runs validateNodes,
+	// then orderForReplay, then the replay itself, and this defect can fail
+	// at any of the three.
+	require.NoError(t, engine.Stop())
+	freshEngine, err := NewEngineClient(ctx, findWorkerBinary(t))
 	require.NoError(t, err)
-	assert.NoError(t, validateNodes(treeID, treeTypeUnilevel, loadTreeConfig{}, rows),
-		"a tree that has lost a recruiter must still pass the reload preflight")
+	defer func() { _ = freshEngine.Stop() }()
+
+	loader := NewTreeLoader(treeStore, freshEngine)
+	require.NoError(t, loader.LoadTree(ctx, treeID, "unilevel"),
+		"a tree that has lost a recruiter must still rebuild from the store")
+
+	reloaded, err := freshEngine.GetSponsor(ctx, treeID, recruitID)
+	require.NoError(t, err)
+	require.NotNil(t, reloaded)
+	assert.Equal(t, rootID, reloaded.UserID,
+		"the rebuilt engine must agree with the store about who sponsors the recruit")
 }

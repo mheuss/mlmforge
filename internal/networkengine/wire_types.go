@@ -401,7 +401,6 @@ type EvaluateRanksRequest struct {
 	HistoryWindow []string `json:"history_window,omitempty"`
 	// History maps distributor UUID strings to per-period rank ordinals.
 	// A nil *uint16 value marshals to JSON null, representing "Unranked" (evaluated, did not qualify).
-	// A plain uint16 would collapse Unranked to 0, which is a valid ordinal — keep the pointer.
 	History map[string]map[string]*uint16 `json:"history,omitempty"`
 }
 

@@ -88,7 +88,7 @@
   ],
   "allow_list": [
     { "go_struct": "CompensationPlan", "go_field": "Version", "reason": "schema const 1; Rust u32; wide by design, not a narrow mirror" },
-    { "go_struct": "RankDefinition", "go_field": "Ordinal", "reason": "small ordering int; Rust u32; not a narrow byte-width mirror" },
+    { "go_struct": "RankDefinition", "go_field": "Ordinal", "reason": "small ordering int; Rust u16; schema floors at 1 and sets no ceiling, so the u16 max is unguarded (HEU-753)" },
     { "go_struct": "VelocityQualification", "go_field": "TimeframeDays", "reason": "optional day count (*int); Rust i64; not a narrow byte-width mirror" }
   ]
 }

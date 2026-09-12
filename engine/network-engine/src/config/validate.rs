@@ -118,6 +118,7 @@ impl CompensationPlan {
         self.volume.validate().map_err(|e| format!("volume: {e}"))?;
         self.caps.validate().map_err(|e| format!("caps: {e}"))?;
         self.check_rank_ladder_non_empty()?;
+        self.check_rank_name_and_ordinal_floor()?;
         self.check_unique_structure_names()?;
         for structure in &mut self.structures {
             structure.validate()?;
@@ -135,6 +136,22 @@ impl CompensationPlan {
     fn check_rank_ladder_non_empty(&self) -> Result<(), String> {
         if self.ranks.is_empty() {
             return Err("ranks: the plan defines no ranks".to_string());
+        }
+        Ok(())
+    }
+
+    /// Reject an empty rank name or an ordinal below 1.
+    fn check_rank_name_and_ordinal_floor(&self) -> Result<(), String> {
+        for (idx, rank) in self.ranks.iter().enumerate() {
+            if rank.name.is_empty() {
+                return Err(format!("ranks: rank at index {idx} has an empty name"));
+            }
+            if rank.ordinal == 0 {
+                return Err(format!(
+                    "ranks: rank at index {idx} ('{}') has ordinal 0; ordinals start at 1",
+                    rank.name
+                ));
+            }
         }
         Ok(())
     }
@@ -925,6 +942,38 @@ mod tests {
         let mut plan = plan_with_structures(vec![named_streamline("main")]);
         plan.ranks = vec![];
         assert!(plan.validate().is_err());
+    }
+
+    /// A two-rank ladder whose second entry is the one a test breaks.
+    ///
+    /// The offender is second so an assertion on the reported index fails if
+    /// the index is hardcoded or off by one.
+    fn plan_with_two_ranks() -> CompensationPlan {
+        let mut plan = plan_with_structures(vec![named_streamline("main")]);
+        let mut gold = plan.ranks[0].clone();
+        gold.name = "gold".to_string();
+        gold.ordinal = 2;
+        plan.ranks.push(gold);
+        plan
+    }
+
+    #[test]
+    fn plan_rejects_a_rank_with_ordinal_zero() {
+        let mut plan = plan_with_two_ranks();
+        plan.ranks[1].ordinal = 0;
+        let err = plan.validate().unwrap_err();
+        assert!(err.contains("index 1"), "unexpected error: {err}");
+        assert!(err.contains("'gold'"), "unexpected error: {err}");
+        assert!(err.contains("ordinal 0"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn plan_rejects_a_rank_with_an_empty_name() {
+        let mut plan = plan_with_two_ranks();
+        plan.ranks[1].name.clear();
+        let err = plan.validate().unwrap_err();
+        assert!(err.contains("index 1"), "unexpected error: {err}");
+        assert!(err.contains("empty name"), "unexpected error: {err}");
     }
 
     #[test]

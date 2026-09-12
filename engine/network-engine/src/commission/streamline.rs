@@ -93,8 +93,8 @@ pub fn calculate_streamline(
     }
 
     // A gap means no threshold was declared for that level. There is no safe
-    // default: 0 pays everyone, and any sentinel is a real ordinal, because
-    // rank ordinals span the whole u16 range (config/rank.rs:29). Refuse.
+    // default here: 0 pays everyone, and every other value gates somebody.
+    // Refuse.
     let thresholds: Vec<u16> = slots
         .into_iter()
         .enumerate()
@@ -298,18 +298,6 @@ mod tests {
         plan.ranks = vec![
             crate::config::rank::RankDefinition {
                 name: "associate".to_string(),
-                ordinal: 0,
-                qualification: crate::config::rank::RankQualification {
-                    structures: vec![],
-                    required_products: vec![],
-                    window: None,
-                    tenure: None,
-                },
-                qualified_structures: vec!["test_streamline".to_string()],
-                demotion_policy: crate::config::rank::DemotionPolicy::PromotionOnly,
-            },
-            crate::config::rank::RankDefinition {
-                name: "bronze".to_string(),
                 ordinal: 1,
                 qualification: crate::config::rank::RankQualification {
                     structures: vec![],
@@ -321,8 +309,20 @@ mod tests {
                 demotion_policy: crate::config::rank::DemotionPolicy::PromotionOnly,
             },
             crate::config::rank::RankDefinition {
-                name: "silver".to_string(),
+                name: "bronze".to_string(),
                 ordinal: 2,
+                qualification: crate::config::rank::RankQualification {
+                    structures: vec![],
+                    required_products: vec![],
+                    window: None,
+                    tenure: None,
+                },
+                qualified_structures: vec!["test_streamline".to_string()],
+                demotion_policy: crate::config::rank::DemotionPolicy::PromotionOnly,
+            },
+            crate::config::rank::RankDefinition {
+                name: "silver".to_string(),
+                ordinal: 3,
                 qualification: crate::config::rank::RankQualification {
                     structures: vec![],
                     required_products: vec![],
@@ -418,18 +418,6 @@ mod tests {
         plan.ranks = vec![
             crate::config::rank::RankDefinition {
                 name: "associate".to_string(),
-                ordinal: 0,
-                qualification: crate::config::rank::RankQualification {
-                    structures: vec![],
-                    required_products: vec![],
-                    window: None,
-                    tenure: None,
-                },
-                qualified_structures: vec!["test_streamline".to_string()],
-                demotion_policy: crate::config::rank::DemotionPolicy::PromotionOnly,
-            },
-            crate::config::rank::RankDefinition {
-                name: "bronze".to_string(),
                 ordinal: 1,
                 qualification: crate::config::rank::RankQualification {
                     structures: vec![],
@@ -441,8 +429,20 @@ mod tests {
                 demotion_policy: crate::config::rank::DemotionPolicy::PromotionOnly,
             },
             crate::config::rank::RankDefinition {
-                name: "silver".to_string(),
+                name: "bronze".to_string(),
                 ordinal: 2,
+                qualification: crate::config::rank::RankQualification {
+                    structures: vec![],
+                    required_products: vec![],
+                    window: None,
+                    tenure: None,
+                },
+                qualified_structures: vec!["test_streamline".to_string()],
+                demotion_policy: crate::config::rank::DemotionPolicy::PromotionOnly,
+            },
+            crate::config::rank::RankDefinition {
+                name: "silver".to_string(),
+                ordinal: 3,
                 qualification: crate::config::rank::RankQualification {
                     structures: vec![],
                     required_products: vec![],
@@ -489,7 +489,22 @@ mod tests {
 
         // Walk upline from 5: 4 (bronze, qualifies L1), 3 (associate, skipped L2),
         // 2 (bronze, qualifies L2), 1 (silver, qualifies L3).
-        assert_eq!(earnings.len(), 3);
+        //
+        // Assert the shape, not the count. Ungated, the walk pays 4, 3 and 2 —
+        // also three earnings, so a length check passes either way and never
+        // sees the compression this test is named for.
+        let shape: Vec<(Uuid, u8, Option<f64>)> = earnings
+            .iter()
+            .map(|e| (e.earner_id, e.level, e.rate))
+            .collect();
+        assert_eq!(
+            shape,
+            vec![
+                (test_uuid(1), 3, Some(0.03)),
+                (test_uuid(2), 2, Some(0.04)),
+                (test_uuid(4), 1, Some(0.05)),
+            ]
+        );
     }
 
     #[test]
@@ -553,7 +568,7 @@ mod tests {
     #[test]
     fn monoline_no_rank_gating() {
         let engine = make_engine(3);
-        // All min_rank = "associate" (ordinal 0 = no gating).
+        // All min_rank = "associate", so no level gates anyone out.
         let levels = vec![
             StreamlineLevel {
                 level: 1,
@@ -831,9 +846,8 @@ mod tests {
         assert_eq!(top.dollar_amount, 2.0);
     }
 
-    /// Pins the rank check above the per-source checks, per design decision 2.
-    /// This input is bad on both counts: only the check order decides which
-    /// error surfaces.
+    /// Pins the rank check above the per-source checks. This input is bad on
+    /// both counts, so only the check order decides which error surfaces.
     #[test]
     fn streamline_unknown_rank_wins_over_invalid_cv() {
         let engine = make_engine(5);
@@ -963,9 +977,9 @@ mod tests {
                 "test_streamline",
             );
             plan.ranks = vec![
-                rank_def("associate", 0),
-                rank_def("bronze", 1),
-                rank_def("silver", 2),
+                rank_def("associate", 1),
+                rank_def("bronze", 2),
+                rank_def("silver", 3),
             ];
 
             let mut snapshots = HashMap::new();
@@ -1008,12 +1022,11 @@ mod tests {
         // were accidentally disabled on both runs, which is the failure this
         // test is least able to see.
         //
-        // Walk up from 5: node 4 is bronze (ordinal 1) and level 1 needs
-        // associate (0), so it earns at level 1 and 0.10. Node 3 is associate
-        // (0) and level 2 needs bronze (1), so it is compressed without
-        // consuming the level. Node 2 is bronze and earns at level 2 and 0.05.
-        // Node 1 is silver (2) and level 3 needs silver, so it earns at level 3
-        // and 0.02.
+        // Walk up from 5: node 4 is bronze and level 1 needs associate, so it
+        // earns at level 1 and 0.10. Node 3 is associate and level 2 needs
+        // bronze, so it is compressed without consuming the level. Node 2 is
+        // bronze and earns at level 2 and 0.05. Node 1 is silver and level 3
+        // needs silver, so it earns at level 3 and 0.02.
         //
         // calculate_streamline ends with walk_order::assemble, which sorts by
         // (earner_id, source_id, level, walk). test_uuid puts the index in the
@@ -1034,9 +1047,8 @@ mod tests {
 
     #[test]
     fn gapped_table_errors_rather_than_paying() {
-        // The apex rank at ordinal 65535 is why no gap sentinel is safe:
-        // u16::MAX is itself a legitimate ordinal. It does not change this
-        // test's outcome, which turns only on the error. See design decision 5.
+        // apex sits at 65535 here. This test turns only on the error, so that
+        // value does not change its outcome.
         let engine = make_engine(5);
         let levels = vec![level(1, "associate", 0.10), level(3, "apex", 0.02)];
         let structure = make_structure(levels, 5);
@@ -1046,7 +1058,7 @@ mod tests {
             crate::config::StructureConfig::Streamline(structure.clone()),
             "test_streamline",
         );
-        plan.ranks = vec![rank_def("associate", 0), rank_def("apex", 65535)];
+        plan.ranks = vec![rank_def("associate", 1), rank_def("apex", 65535)];
 
         let mut snapshots = HashMap::new();
         for i in 1..=5u8 {

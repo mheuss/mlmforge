@@ -20,6 +20,14 @@ Recent precedents:
 - `GenerationCommissionConfig.MaxGenerations`: `int` → `uint8` (HEU-425)
 - `BreakawayGenerationConfig.MaxGenerations`: `int` → `uint8` (HEU-425)
 
+This file covers the compensation-plan config. The Go and Rust wire DTOs are a
+second surface with the same rule and a different guard: `TestWireTypesNarrowMirrors`
+pins them by reflection rather than from a manifest.
+
+HEU-606 found 14 fields that had already widened on that surface. A Go-side
+search for narrowly-typed fields cannot find those, because they no longer look
+narrow. UC-NET-020 records the method that can.
+
 ## Map types: declare the value type explicitly
 
 For maps that round-trip to Rust `BTreeMap<K, V>`:

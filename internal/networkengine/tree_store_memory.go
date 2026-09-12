@@ -69,6 +69,42 @@ func (s *MemoryTreeStore) DeleteNode(_ context.Context, treeID, userID string) e
 	return nil
 }
 
+func (s *MemoryTreeStore) DeleteNodeAndResponsor(
+	ctx context.Context,
+	treeID, userID string,
+	moved []Responsored,
+) error {
+	// Mirrors the Postgres transaction by staging: nothing is written until
+	// every re-sponsor target has been found.
+	now := time.Now()
+	targets := make([]int, 0, len(moved))
+	for _, m := range moved {
+		found := -1
+		for i := range s.nodes {
+			if s.nodes[i].TreeID == treeID && s.nodes[i].UserID == m.UserID && s.nodes[i].RemovedAt == nil {
+				found = i
+				break
+			}
+		}
+		if found < 0 {
+			return fmt.Errorf(
+				"re-sponsoring %s in tree %s updated 0 active rows, expected 1",
+				m.UserID, treeID)
+		}
+		targets = append(targets, found)
+	}
+
+	if err := s.DeleteNode(ctx, treeID, userID); err != nil {
+		return err
+	}
+	for i, m := range moved {
+		sponsor := m.NewSponsorID
+		s.nodes[targets[i]].SponsorID = &sponsor
+		s.nodes[targets[i]].UpdatedAt = now
+	}
+	return nil
+}
+
 func (s *MemoryTreeStore) GetNode(_ context.Context, treeID, userID string) (*TreeNodeRow, error) {
 	for i := range s.nodes {
 		if s.nodes[i].TreeID == treeID && s.nodes[i].UserID == userID && s.nodes[i].RemovedAt == nil {

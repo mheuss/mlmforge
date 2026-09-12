@@ -682,3 +682,66 @@ func TestTreePersistence_RejectedTreeLeavesEngineLoadable(t *testing.T) {
 	assert.Equal(t, u1, *got.ParentUserID)
 	assert.Equal(t, 0, got.Position)
 }
+
+// A recruit whose recruiter is removed keeps a stored sponsor_id naming that
+// recruiter. The bulk load filters removed rows out, so the sponsor it names is
+// absent and the preflight rejects the whole tree on the next startup.
+func TestTreePersistence_RemovedSponsorStillReloads(t *testing.T) {
+	eventStore, treeStore, engine, _ := newIntegrationDeps(t)
+	ctx := context.Background()
+
+	treeID := testTreeUUID(1)
+	rootID := testUserUUID(1)
+	recruiterID := testUserUUID(2)
+	recruitID := testUserUUID(3)
+	stream := TreeStreamName(treeID)
+
+	require.NoError(t, engine.CreateTree(ctx, treeID, "unilevel"))
+	consumer := NewTreeEventConsumer(treeStore, engine)
+
+	rootEvent := appendTreeEvent(t, eventStore, stream, 0, EventTypeRootAdded, RootAddedPayload{
+		TreeID: treeID, UserID: rootID, SponsorID: rootID,
+		EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	})
+	require.NoError(t, consumer.HandleEvent(ctx, rootEvent))
+
+	recruiterEvent := appendTreeEvent(t, eventStore, stream, 1, EventTypeNodePlaced, NodePlacedPayload{
+		TreeID: treeID, UserID: recruiterID, ParentID: rootID, SponsorID: rootID,
+		TreeType:   treeTypeUnilevel,
+		EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
+	})
+	require.NoError(t, consumer.HandleEvent(ctx, recruiterEvent))
+
+	// Placed under the root so the recruiter stays childless and removable,
+	// sponsored by the recruiter so the stored edge outlives its target.
+	recruitEvent := appendTreeEvent(t, eventStore, stream, 2, EventTypeNodePlaced, NodePlacedPayload{
+		TreeID: treeID, UserID: recruitID, ParentID: rootID, SponsorID: recruiterID,
+		TreeType:   treeTypeUnilevel,
+		EnrolledAt: time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC),
+	})
+	require.NoError(t, consumer.HandleEvent(ctx, recruitEvent))
+
+	stored, err := treeStore.GetNode(ctx, treeID, recruitID)
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	require.NotNil(t, stored.SponsorID)
+	require.Equal(t, recruiterID, *stored.SponsorID,
+		"the stored edge under test must exist before the removal")
+
+	removeEvent := appendTreeEvent(t, eventStore, stream, 3, EventTypeNodeRemoved, NodeRemovedPayload{
+		TreeID: treeID, UserID: recruiterID, RemovedAt: time.Now(),
+	})
+	require.NoError(t, consumer.HandleEvent(ctx, removeEvent))
+
+	after, err := treeStore.GetNode(ctx, treeID, recruitID)
+	require.NoError(t, err)
+	require.NotNil(t, after)
+	require.NotNil(t, after.SponsorID)
+	assert.Equal(t, rootID, *after.SponsorID,
+		"the store must record the sponsor the engine moved the recruit to")
+
+	rows, err := treeStore.GetByTree(ctx, treeID)
+	require.NoError(t, err)
+	assert.NoError(t, validateNodes(treeID, treeTypeUnilevel, loadTreeConfig{}, rows),
+		"a tree that has lost a recruiter must still pass the reload preflight")
+}

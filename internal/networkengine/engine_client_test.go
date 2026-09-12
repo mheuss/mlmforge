@@ -174,8 +174,9 @@ func TestEngineClient_RemoveNode_MockParams(t *testing.T) {
 	}
 	client := newEngineClientWithTransport(mock)
 
-	err := client.RemoveNode(context.Background(), "Test", "00000000-0000-0000-0000-000000000001")
+	moved, err := client.RemoveNode(context.Background(), "Test", "00000000-0000-0000-0000-000000000001")
 	require.NoError(t, err)
+	assert.Empty(t, moved)
 
 	assert.Equal(t, "remove_node", mock.lastOp)
 	assert.JSONEq(t, `{"structure":"Test","user_id":"00000000-0000-0000-0000-000000000001"}`, string(mock.lastParams))
@@ -828,7 +829,7 @@ func TestEngineClient_TreeQueries(t *testing.T) {
 	})
 
 	t.Run("RemoveNode_andVerify", func(t *testing.T) {
-		err := client.RemoveNode(ctx, structureName, grandchildID)
+		_, err := client.RemoveNode(ctx, structureName, grandchildID)
 		require.NoError(t, err)
 
 		children, err := client.GetChildren(ctx, structureName, childID)

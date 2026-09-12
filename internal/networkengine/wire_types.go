@@ -182,10 +182,24 @@ type BinaryCalculationResultDTO struct {
 // MatrixRemovalResult is the wire format for matrix node removal results.
 // Matches the Rust RemovalResult struct serialized in handle_remove_node.
 type MatrixRemovalResult struct {
-	Removed      string   `json:"removed"`
-	Promoted     *string  `json:"promoted"`
-	Repositioned []string `json:"repositioned"`
-	MovedToTank  []string `json:"moved_to_tank"`
+	Removed      string        `json:"removed"`
+	Promoted     *string       `json:"promoted"`
+	Repositioned []string      `json:"repositioned"`
+	MovedToTank  []string      `json:"moved_to_tank"`
+	Responsored  []Responsored `json:"responsored"`
+}
+
+// Responsored is one recruit a removal moved, and who it moved them to.
+// Mirrors the Rust Responsored struct.
+type Responsored struct {
+	UserID       string `json:"user_id"`
+	NewSponsorID string `json:"new_sponsor_id"`
+}
+
+// RemovalResult is the wire format for unilevel and binary node removal.
+type RemovalResult struct {
+	Removed     bool          `json:"removed"`
+	Responsored []Responsored `json:"responsored"`
 }
 
 // HoldingTankEntryDTO is the wire format for a matrix holding tank entry.

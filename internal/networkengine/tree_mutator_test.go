@@ -111,9 +111,9 @@ func (s *stubMutator) totalCalls() int {
 		len(s.nodes) + len(s.nodesAt) + len(s.removed)
 }
 
-func (s *stubMutator) RemoveNode(_ context.Context, _, userID string) error {
+func (s *stubMutator) RemoveNode(_ context.Context, _, userID string) ([]Responsored, error) {
 	s.removed = append(s.removed, userID)
-	return s.failWith
+	return nil, s.failWith
 }
 
 // TestTreeMutator_ConsumerAcceptsInterface verifies that TreeEventConsumer

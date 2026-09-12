@@ -347,12 +347,15 @@ func (c *EngineClient) AddNode(ctx context.Context, structure, userID, parentID,
 
 // RemoveNode removes a leaf node from the tree. The Rust engine
 // rejects removal of nodes that have children.
-func (c *EngineClient) RemoveNode(ctx context.Context, structure, userID string) error {
-	_, err := c.call(ctx, "remove_node", map[string]any{
+func (c *EngineClient) RemoveNode(ctx context.Context, structure, userID string) ([]Responsored, error) {
+	r, err := callInto[RemovalResult](c, ctx, "remove_node", map[string]any{
 		"structure": structure,
 		"user_id":   userID,
 	})
-	return err
+	if err != nil {
+		return nil, err
+	}
+	return r.Responsored, nil
 }
 
 // AddMatrixNode adds a node to a matrix tree using automatic spillover placement.

@@ -49,6 +49,46 @@ func (s *PostgresTreeStore) DeleteNode(ctx context.Context, treeID, userID strin
 	return err
 }
 
+func (s *PostgresTreeStore) DeleteNodeAndResponsor(
+	ctx context.Context,
+	treeID, userID string,
+	moved []Responsored,
+) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx,
+		`UPDATE tree_nodes SET removed_at = now(), updated_at = now()
+		 WHERE tree_id = $1 AND user_id = $2 AND removed_at IS NULL`,
+		treeID, userID,
+	); err != nil {
+		return err
+	}
+
+	for _, m := range moved {
+		// removed_at IS NULL: a user removed and re-placed has a historical
+		// row too, and the partial unique index is what keeps them apart.
+		tag, err := tx.Exec(ctx,
+			`UPDATE tree_nodes SET sponsor_id = $1, updated_at = now()
+			 WHERE tree_id = $2 AND user_id = $3 AND removed_at IS NULL`,
+			m.NewSponsorID, treeID, m.UserID,
+		)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() != 1 {
+			return fmt.Errorf(
+				"re-sponsoring %s in tree %s updated %d active rows, expected 1",
+				m.UserID, treeID, tag.RowsAffected())
+		}
+	}
+
+	return tx.Commit(ctx)
+}
+
 func (s *PostgresTreeStore) GetNode(ctx context.Context, treeID, userID string) (*TreeNodeRow, error) {
 	row := s.pool.QueryRow(ctx, getNodeSQL, treeID, userID)
 	return scanTreeNode(row)

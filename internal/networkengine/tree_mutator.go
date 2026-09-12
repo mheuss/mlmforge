@@ -15,7 +15,10 @@ type TreeMutator interface {
 	// need it on reload. Their AddNode re-derives placement by spillover and
 	// ignores the stored parent and position.
 	AddNodeAt(ctx context.Context, structure, userID, parentID, sponsorID string, position int, enrolledAt int64) error
-	RemoveNode(ctx context.Context, structure, userID string) error
+	// RemoveNode removes a node and returns the recruits whose sponsor the
+	// removal moved. The caller must persist them or the store and the
+	// engine disagree about who sponsors whom.
+	RemoveNode(ctx context.Context, structure, userID string) ([]Responsored, error)
 }
 
 // Compile-time check: EngineClient must satisfy TreeMutator.

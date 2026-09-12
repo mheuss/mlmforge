@@ -189,13 +189,19 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 		return fmt.Errorf("unmarshal node_removed payload: %w", err)
 	}
 
-	if err := c.store.DeleteNode(ctx, payload.TreeID, payload.UserID); err != nil {
-		return fmt.Errorf("soft-delete node: %w", err)
+	var moved []Responsored
+	if err := c.withRetry(ctx, "remove_node", payload.TreeID, payload.UserID, func() error {
+		m, err := c.engine.RemoveNode(ctx, payload.TreeID, payload.UserID)
+		moved = m
+		return err
+	}); err != nil {
+		return err
 	}
 
-	return c.withRetry(ctx, "remove_node", payload.TreeID, payload.UserID, func() error {
-		return c.engine.RemoveNode(ctx, payload.TreeID, payload.UserID)
-	})
+	if err := c.store.DeleteNodeAndResponsor(ctx, payload.TreeID, payload.UserID, moved); err != nil {
+		return fmt.Errorf("soft-delete node: %w", err)
+	}
+	return nil
 }
 
 // withRetry executes fn with retries. Respects context cancellation between

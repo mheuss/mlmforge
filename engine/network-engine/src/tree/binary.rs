@@ -39,10 +39,7 @@ impl BinaryTree {
     }
 
     /// Prove a restored tree's stored indexes are in range and live, and that
-    /// every live node has a child slot entry.
-    ///
-    /// The slot map and the arena edges are each checked alone. That the two
-    /// agree is not checked. HEU-750.
+    /// each live non-root node is a child in exactly one child slot.
     pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
         self.arena.validate_restored()?;
         // Keep the lowest-slot fault rather than returning on the first one
@@ -69,6 +66,8 @@ impl BinaryTree {
         // A live node with no entry passes every check above and then panics
         // on the next query rather than returning a wrong answer.
         self.arena.check_every_live_node_has_a_slot(&self.slots)?;
+        self.arena
+            .check_every_live_node_is_slotted_once(&self.slots)?;
         Ok(())
     }
 
@@ -369,6 +368,241 @@ mod tests {
         let (tree, _) = binary_pair();
 
         assert_eq!(tree.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_live_node_no_parent_slots() {
+        let (mut tree, child) = binary_pair();
+        for children in tree.slots.values_mut() {
+            for slot in children.iter_mut() {
+                if *slot == Some(child) {
+                    *slot = None;
+                }
+            }
+        }
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::LiveNodeNotSlotted {
+                slot: child.0,
+                user_id: test_uuid(2),
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_child_in_two_parent_slots() {
+        let (mut tree, child) = binary_pair();
+        tree.add_node(test_uuid(3), test_uuid(1), 1, test_uuid(1), 0)
+            .unwrap();
+        let other_parent = tree.arena.resolve(test_uuid(3)).unwrap();
+        tree.slots.get_mut(&other_parent).unwrap()[0] = Some(child);
+
+        assert!(
+            matches!(
+                tree.validate_restored(),
+                Err(SnapshotConsistencyError::ChildSlotRepeated { slot, .. }) if slot == child.0
+            ),
+            "expected ChildSlotRepeated naming slot {}, got {:?}",
+            child.0,
+            tree.validate_restored()
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_child_in_two_slots_of_one_parent() {
+        // One parent, two of its own slots.
+        let (mut tree, child) = binary_pair();
+        let root = tree.arena.root.expect("binary_pair sets a root");
+        tree.slots.get_mut(&root).unwrap()[1] = Some(child);
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::ChildSlottedTwiceUnderOneParent {
+                slot: child.0,
+                parent: root.0,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_two_parents_when_three_hold_a_child() {
+        // Repeats because the parents named must not vary with hash order.
+        for _ in 0..64 {
+            let (mut tree, child) = binary_pair();
+            tree.add_node(test_uuid(3), test_uuid(1), 1, test_uuid(1), 0)
+                .unwrap();
+            tree.add_node(test_uuid(4), test_uuid(2), 0, test_uuid(1), 0)
+                .unwrap();
+            let p3 = tree.arena.resolve(test_uuid(3)).unwrap();
+            let p4 = tree.arena.resolve(test_uuid(4)).unwrap();
+            tree.slots.get_mut(&p3).unwrap()[1] = Some(child);
+            tree.slots.get_mut(&p4).unwrap()[0] = Some(child);
+            let root = tree.arena.root.expect("binary_pair sets a root");
+            let mut expected = [root.0, p3.0, p4.0];
+            expected.sort_unstable();
+
+            assert_eq!(
+                tree.validate_restored(),
+                Err(SnapshotConsistencyError::ChildSlotRepeated {
+                    slot: child.0,
+                    first_parent: expected[0],
+                    second_parent: expected[1],
+                    parent_count: 3,
+                }),
+                "the two lowest parents should win regardless of hash order"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_restored_names_the_lower_of_two_repeated_children() {
+        // The constructor is inside the loop. One tree repeats its own map
+        // order, so looping over a single instance proves nothing.
+        for _ in 0..64 {
+            let mut tree = BinaryTree::new();
+            tree.add_root(test_uuid(1), 0).unwrap();
+            for (n, parent, position) in [(2u8, 1u8, 0usize), (3, 1, 1), (4, 2, 0)] {
+                tree.add_node(test_uuid(n), test_uuid(parent), position, test_uuid(1), 0)
+                    .unwrap();
+            }
+            let low = tree.arena.resolve(test_uuid(2)).unwrap();
+            let high = tree.arena.resolve(test_uuid(4)).unwrap();
+            let spare = tree.arena.resolve(test_uuid(3)).unwrap();
+            assert!(low.0 < high.0, "the fixture must repeat the lower slot too");
+
+            tree.slots.get_mut(&spare).unwrap()[0] = Some(low);
+            tree.slots.get_mut(&spare).unwrap()[1] = Some(high);
+
+            assert!(
+                matches!(
+                    tree.validate_restored(),
+                    Err(SnapshotConsistencyError::ChildSlotRepeated { slot, .. }) if slot == low.0
+                ),
+                "the lower repeated child should win regardless of hash order, got {:?}",
+                tree.validate_restored()
+            );
+        }
+    }
+
+    #[test]
+    fn validate_restored_rejects_the_root_in_a_child_slot() {
+        let (mut tree, child) = binary_pair();
+        let root = tree.arena.root.expect("binary_pair sets a root");
+        tree.slots.get_mut(&child).unwrap()[0] = Some(root);
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::RootSlottedAsChild { parent: child.0 })
+        );
+    }
+
+    #[test]
+    fn validate_restored_names_the_lower_parent_when_two_slot_the_root() {
+        // The constructor is inside the loop. One tree repeats its own map
+        // order, so looping over a single instance proves nothing.
+        for _ in 0..64 {
+            let (mut tree, low) = binary_pair();
+            tree.add_node(test_uuid(3), test_uuid(1), 1, test_uuid(1), 0)
+                .unwrap();
+            let high = tree.arena.resolve(test_uuid(3)).unwrap();
+            assert!(low.0 < high.0, "the fixture must put the lower slot first");
+            let root = tree.arena.root.expect("binary_pair sets a root");
+            tree.slots.get_mut(&low).unwrap()[0] = Some(root);
+            tree.slots.get_mut(&high).unwrap()[0] = Some(root);
+
+            assert_eq!(
+                tree.validate_restored(),
+                Err(SnapshotConsistencyError::RootSlottedAsChild { parent: low.0 }),
+                "the lower parent should win regardless of hash order"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_restored_names_the_lower_of_two_self_slotted_nodes() {
+        // The constructor is inside the loop. One tree repeats its own map
+        // order, so looping over a single instance proves nothing.
+        for _ in 0..64 {
+            let (mut tree, low) = binary_pair();
+            tree.add_node(test_uuid(3), test_uuid(1), 1, test_uuid(1), 0)
+                .unwrap();
+            let high = tree.arena.resolve(test_uuid(3)).unwrap();
+            assert!(low.0 < high.0, "the fixture must put the lower slot first");
+            tree.slots.get_mut(&low).unwrap()[0] = Some(low);
+            tree.slots.get_mut(&high).unwrap()[0] = Some(high);
+
+            assert_eq!(
+                tree.validate_restored(),
+                Err(SnapshotConsistencyError::NodeSlottedUnderItself { slot: low.0 }),
+                "the lower self-slotted node should win regardless of hash order"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_node_slotted_under_itself() {
+        let (mut tree, child) = binary_pair();
+        tree.slots.get_mut(&child).unwrap()[0] = Some(child);
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::NodeSlottedUnderItself { slot: child.0 })
+        );
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_unslotted_node_every_run() {
+        // The constructor is inside the loop. One tree repeats its own map
+        // order, so looping over a single instance proves nothing.
+        for _ in 0..64 {
+            let (mut tree, low) = binary_pair();
+            tree.add_node(test_uuid(3), test_uuid(1), 1, test_uuid(1), 0)
+                .unwrap();
+            let high = tree.arena.resolve(test_uuid(3)).unwrap();
+            assert!(low.0 < high.0, "the fixture must put the lower slot first");
+            for children in tree.slots.values_mut() {
+                for slot in children.iter_mut() {
+                    if *slot == Some(low) || *slot == Some(high) {
+                        *slot = None;
+                    }
+                }
+            }
+
+            assert_eq!(
+                tree.validate_restored(),
+                Err(SnapshotConsistencyError::LiveNodeNotSlotted {
+                    slot: low.0,
+                    user_id: test_uuid(2),
+                }),
+                "the lowest slot should win regardless of hash order"
+            );
+        }
+    }
+
+    #[test]
+    fn engine_output_slots_every_live_node_exactly_once() {
+        let mut tree = BinaryTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        // The sponsor here is the root, which this test never removes.
+        // Varying it risks failing for a reason unrelated to slot agreement
+        // (HEU-766).
+        for n in 2..=12u8 {
+            let parent = test_uuid(1 + (n - 2) / 2);
+            let position = usize::from((n - 2) % 2);
+            tree.add_node(test_uuid(n), parent, position, test_uuid(1), n as i64)
+                .unwrap();
+        }
+        tree.remove_node(test_uuid(12)).unwrap();
+        assert!(
+            tree.arena.nodes.iter().any(|n| n.user_id == Uuid::nil()),
+            "the removal should have left a tombstone to skip"
+        );
+
+        // The production entry point, not just the slot walk. Without this
+        // the guards are never run against engine output.
+        assert_eq!(tree.validate_restored(), Ok(()));
+        crate::tree::test_helpers::assert_live_nodes_are_slotted_once(&tree.arena, &tree.slots);
     }
 
     #[test]

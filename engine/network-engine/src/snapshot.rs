@@ -101,6 +101,29 @@ pub enum SnapshotConsistencyError {
     #[error("the child slot map names node slot {slot}; that slot is a tombstone")]
     ChildSlotTombstoned { slot: usize },
 
+    #[error("node slot {slot} holds {user_id}; no parent's child slots name it")]
+    LiveNodeNotSlotted { slot: usize, user_id: Uuid },
+
+    #[error("node slot {parent} names node slot {slot} in more than one child slot")]
+    ChildSlottedTwiceUnderOneParent { slot: usize, parent: usize },
+
+    #[error(
+        "node slots {first_parent} and {second_parent} both name node slot {slot} in a child slot; \
+         {parent_count} node slots name it"
+    )]
+    ChildSlotRepeated {
+        slot: usize,
+        first_parent: usize,
+        second_parent: usize,
+        parent_count: usize,
+    },
+
+    #[error("node slot {parent} names the root in one of its child slots")]
+    RootSlottedAsChild { parent: usize },
+
+    #[error("node slot {slot} names itself in one of its own child slots")]
+    NodeSlottedUnderItself { slot: usize },
+
     #[error("node slot {slot} holds {user_id}; the child slot map has no entry for it")]
     SlotEntryMissing { slot: usize, user_id: Uuid },
 
@@ -133,6 +156,9 @@ pub enum SnapshotConsistencyError {
         height: u8,
         expected: usize,
     },
+
+    #[error("the holding tank lists {user_id} more than once")]
+    HoldingTankUserRepeated { user_id: Uuid },
 
     #[error("the holding tank names {user_id}; that user is also placed at node slot {slot}")]
     HoldingTankUserPlaced { user_id: Uuid, slot: usize },

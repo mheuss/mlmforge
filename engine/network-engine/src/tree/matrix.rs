@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -67,10 +67,9 @@ impl MatrixTree {
         })
     }
 
-    /// Prove a restored tree's stored values are in range and live.
-    ///
-    /// The slot map, the holding tank and the arena edges are each checked
-    /// alone. That they agree with each other is not checked. HEU-750.
+    /// Prove a restored tree's stored values are in range and live, that each
+    /// live non-root node is a child in exactly one child slot, and that the
+    /// holding tank names no placed or repeated user.
     pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
         // A restore does not run the constructor, so the range it enforces has
         // to be re-established here. A width below 2 is not inert: placement
@@ -118,9 +117,25 @@ impl MatrixTree {
                 });
             }
         }
+        // Runs after the walk above, so a user who is both placed and repeated
+        // is reported as placed, which is the more specific fault.
+        //
+        // Returns on the first repeat rather than holding the lowest. This
+        // order is part of the payload, so the same input names the same
+        // offender.
+        let mut listed: HashSet<Uuid> = HashSet::new();
+        for entry in &self.holding_tank {
+            if !listed.insert(entry.user_id) {
+                return Err(SnapshotConsistencyError::HoldingTankUserRepeated {
+                    user_id: entry.user_id,
+                });
+            }
+        }
         // A live node the map has forgotten panics on the next query rather
         // than returning a wrong answer.
         self.arena.check_every_live_node_has_a_slot(&self.slots)?;
+        self.arena
+            .check_every_live_node_is_slotted_once(&self.slots)?;
         Ok(())
     }
 
@@ -905,6 +920,148 @@ mod tests {
     }
 
     #[test]
+    fn validate_restored_rejects_a_live_node_no_parent_slots() {
+        let (mut tree, child) = matrix_pair();
+        for children in tree.slots.values_mut() {
+            for slot in children.iter_mut() {
+                if *slot == Some(child) {
+                    *slot = None;
+                }
+            }
+        }
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::LiveNodeNotSlotted {
+                slot: child.0,
+                user_id: test_uuid(2),
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_child_in_two_parent_slots() {
+        let (mut tree, child) = matrix_pair();
+        tree.add_node(test_uuid(3), test_uuid(1), 0).unwrap();
+        let other_parent = tree.arena.resolve(test_uuid(3)).unwrap();
+        tree.slots.get_mut(&other_parent).unwrap()[0] = Some(child);
+
+        assert!(
+            matches!(
+                tree.validate_restored(),
+                Err(SnapshotConsistencyError::ChildSlotRepeated { slot, .. }) if slot == child.0
+            ),
+            "expected ChildSlotRepeated naming slot {}",
+            child.0
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_child_in_two_slots_of_one_parent() {
+        // One parent, two of its own slots.
+        let (mut tree, child) = matrix_pair();
+        let root = tree.arena.root.expect("matrix_pair sets a root");
+        tree.slots.get_mut(&root).unwrap()[1] = Some(child);
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::ChildSlottedTwiceUnderOneParent {
+                slot: child.0,
+                parent: root.0,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_the_root_in_a_child_slot() {
+        let (mut tree, child) = matrix_pair();
+        let root = tree.arena.root.expect("matrix_pair sets a root");
+        tree.slots.get_mut(&child).unwrap()[0] = Some(root);
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::RootSlottedAsChild { parent: child.0 })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_node_slotted_under_itself() {
+        let (mut tree, child) = matrix_pair();
+        tree.slots.get_mut(&child).unwrap()[0] = Some(child);
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::NodeSlottedUnderItself { slot: child.0 })
+        );
+    }
+
+    #[test]
+    fn validate_restored_accepts_output_placed_by_add_node_at() {
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 10)
+            .unwrap();
+        tree.add_node_at(test_uuid(3), test_uuid(1), test_uuid(1), 1, 20)
+            .unwrap();
+        tree.add_node_at(test_uuid(4), test_uuid(1), test_uuid(2), 0, 30)
+            .unwrap();
+
+        assert_eq!(tree.validate_restored(), Ok(()));
+        crate::tree::test_helpers::assert_live_nodes_are_slotted_once(&tree.arena, &tree.slots);
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_unslotted_node_every_run() {
+        // The constructor is inside the loop. One tree repeats its own map
+        // order, so looping over a single instance proves nothing.
+        for _ in 0..64 {
+            let (mut tree, low) = matrix_pair();
+            tree.add_node(test_uuid(3), test_uuid(1), 0).unwrap();
+            let high = tree.arena.resolve(test_uuid(3)).unwrap();
+            assert!(low.0 < high.0, "the fixture must put the lower slot first");
+            for children in tree.slots.values_mut() {
+                for slot in children.iter_mut() {
+                    if *slot == Some(low) || *slot == Some(high) {
+                        *slot = None;
+                    }
+                }
+            }
+
+            assert_eq!(
+                tree.validate_restored(),
+                Err(SnapshotConsistencyError::LiveNodeNotSlotted {
+                    slot: low.0,
+                    user_id: test_uuid(2),
+                }),
+                "the lowest slot should win regardless of hash order"
+            );
+        }
+    }
+
+    #[test]
+    fn engine_output_slots_every_live_node_exactly_once() {
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        // The sponsor here is the root, which this test never removes.
+        // Varying it risks failing for a reason unrelated to slot agreement
+        // (HEU-766).
+        for n in 2..=12u8 {
+            tree.add_node(test_uuid(n), test_uuid(1), n as i64).unwrap();
+        }
+        tree.remove_node(test_uuid(12), PruningMode::PromoteEarliest)
+            .unwrap();
+        assert!(
+            tree.arena.nodes.iter().any(|n| n.user_id == Uuid::nil()),
+            "the removal should have left a tombstone to skip"
+        );
+
+        // The production entry point, not just the slot walk. Without this
+        // the guards are never run against engine output.
+        assert_eq!(tree.validate_restored(), Ok(()));
+        crate::tree::test_helpers::assert_live_nodes_are_slotted_once(&tree.arena, &tree.slots);
+    }
+
+    #[test]
     fn validate_restored_surfaces_an_arena_fault() {
         // Proves the arena delegation is present.
         let (mut tree, _) = matrix_pair();
@@ -1024,6 +1181,116 @@ mod tests {
                 slot: root.0,
                 found: 1,
                 width: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_accepts_a_tree_after_promoting_out_an_internal_node() {
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        for n in 2..=8u8 {
+            tree.add_node(test_uuid(n), test_uuid(1), n as i64).unwrap();
+        }
+        tree.remove_node(test_uuid(2), PruningMode::PromoteEarliest)
+            .unwrap();
+
+        assert_eq!(tree.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_accepts_a_tree_after_a_subtree_goes_to_the_tank() {
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        for n in 2..=8u8 {
+            tree.add_node(test_uuid(n), test_uuid(1), n as i64).unwrap();
+        }
+        tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
+            .unwrap();
+        assert!(
+            !tree.holding_tank.is_empty(),
+            "removing a node with descendants should fill the tank"
+        );
+
+        assert_eq!(tree.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_accepts_a_tree_after_placing_from_the_tank() {
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        for n in 2..=8u8 {
+            tree.add_node(test_uuid(n), test_uuid(1), n as i64).unwrap();
+        }
+        tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
+            .unwrap();
+        let waiting = tree.holding_tank[0].user_id;
+        let (parent, position) = tree
+            .slots
+            .iter()
+            .find_map(|(parent, children)| {
+                children
+                    .iter()
+                    .position(|c| c.is_none())
+                    .map(|pos| (tree.arena.nodes[parent.0].user_id, pos as u8))
+            })
+            .expect("the tree should have an open slot after a removal");
+        tree.place_from_tank(waiting, parent, position).unwrap();
+
+        assert_eq!(tree.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_holding_tank_user_listed_twice() {
+        let (mut tree, _) = matrix_pair();
+        let waiting = HoldingTankEntry {
+            user_id: test_uuid(9),
+            sponsor_user_id: None,
+            enrolled_at: 0,
+        };
+        tree.holding_tank.push(waiting.clone());
+        tree.holding_tank.push(waiting);
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::HoldingTankUserRepeated {
+                user_id: test_uuid(9),
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_accepts_a_holding_tank_of_distinct_users() {
+        let (mut tree, _) = matrix_pair();
+        for n in [9u8, 10] {
+            tree.holding_tank.push(HoldingTankEntry {
+                user_id: test_uuid(n),
+                sponsor_user_id: None,
+                enrolled_at: 0,
+            });
+        }
+
+        assert_eq!(tree.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_reports_a_placed_tank_user_before_a_repeat() {
+        // Placed is the more specific fault. A user who is both placed and
+        // repeated must not be reported as merely repeated.
+        let (mut tree, child) = matrix_pair();
+        for _ in 0..2 {
+            tree.holding_tank.push(HoldingTankEntry {
+                user_id: test_uuid(2),
+                sponsor_user_id: None,
+                enrolled_at: 0,
+            });
+        }
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::HoldingTankUserPlaced {
+                user_id: test_uuid(2),
+                slot: child.0,
             })
         );
     }

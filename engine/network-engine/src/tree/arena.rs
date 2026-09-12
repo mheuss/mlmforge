@@ -227,6 +227,91 @@ impl Arena {
         Ok(())
     }
 
+    /// Prove every live non-root node is a child in exactly one child slot.
+    pub(crate) fn check_every_live_node_is_slotted_once<C>(
+        &self,
+        slots: &HashMap<NodeIndex, C>,
+    ) -> Result<(), SnapshotConsistencyError>
+    where
+        for<'a> &'a C: IntoIterator<Item = &'a Option<NodeIndex>>,
+    {
+        // Records every parent slot naming each child, duplicates included, so
+        // the parents of a repeat come from this walk rather than a re-scan.
+        // A re-scan needs an arm for "no parent", which cannot happen and so
+        // cannot be tested.
+        let mut parents_of: HashMap<NodeIndex, (usize, Vec<usize>)> = HashMap::new();
+        // Each fault holds its lowest candidate. `slots` is a HashMap with a
+        // randomized hasher, so returning on the first one found would name a
+        // different offender between runs on one input.
+        let mut root_as_child: Option<usize> = None;
+        let mut self_as_child: Option<usize> = None;
+        for (parent, children) in slots {
+            for child in children.into_iter().flatten() {
+                if self.root == Some(*child) && root_as_child.is_none_or(|held| parent.0 < held) {
+                    root_as_child = Some(parent.0);
+                }
+                if *child == *parent && self_as_child.is_none_or(|held| parent.0 < held) {
+                    self_as_child = Some(parent.0);
+                }
+                parents_of
+                    .entry(*child)
+                    .and_modify(|(_, rest)| rest.push(parent.0))
+                    .or_insert((parent.0, Vec::new()));
+            }
+        }
+
+        if let Some(parent) = root_as_child {
+            return Err(SnapshotConsistencyError::RootSlottedAsChild { parent });
+        }
+        if let Some(slot) = self_as_child {
+            return Err(SnapshotConsistencyError::NodeSlottedUnderItself { slot });
+        }
+
+        let repeat = parents_of
+            .iter()
+            .filter(|(_, (_, rest))| !rest.is_empty())
+            .map(|(child, _)| *child)
+            .min_by_key(|child| child.0);
+        if let Some(child) = repeat {
+            let (first, rest) = &parents_of[&child];
+            let mut distinct: Vec<usize> = std::iter::once(*first)
+                .chain(rest.iter().copied())
+                .collect();
+            distinct.sort_unstable();
+            distinct.dedup();
+            // Built from `once(first)`, and dedup never empties a non-empty
+            // vec, so index 0 holds.
+            let first_parent = distinct[0];
+            return match distinct.get(1).copied() {
+                Some(second_parent) => Err(SnapshotConsistencyError::ChildSlotRepeated {
+                    slot: child.0,
+                    first_parent,
+                    second_parent,
+                    parent_count: distinct.len(),
+                }),
+                None => Err(SnapshotConsistencyError::ChildSlottedTwiceUnderOneParent {
+                    slot: child.0,
+                    parent: first_parent,
+                }),
+            };
+        }
+
+        // This loop's order decides which miss gets reported, so keep it in
+        // slot order rather than reordering or filtering first.
+        for (slot, node) in self.nodes.iter().enumerate() {
+            if node.user_id == Uuid::nil() || self.root == Some(NodeIndex(slot)) {
+                continue;
+            }
+            if !parents_of.contains_key(&NodeIndex(slot)) {
+                return Err(SnapshotConsistencyError::LiveNodeNotSlotted {
+                    slot,
+                    user_id: node.user_id,
+                });
+            }
+        }
+        Ok(())
+    }
+
     fn check_edge(
         &self,
         field: &'static str,

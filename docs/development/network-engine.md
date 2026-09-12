@@ -274,9 +274,9 @@ A possible follow-up is to register every loaded structure in the navigator map,
 
 `engine/network-engine-worker/tests/contract_tests.rs` and `internal/networkengine/contract_test.go` round-trip fixture setup steps through `serde_json::Value` / `map[string]any`, which sorts object keys. Go's `json.Marshal` always sorts, and the Rust side sorts too since `serde_json::Value` is a `BTreeMap`.
 
-**Use `setup_raw` when the fixture needs to control its own bytes.** Malformed JSON, duplicate keys, or a specific key order the assertion depends on — none of those survive a round-trip through a map. `setup_raw` lines are sent verbatim as NDJSON. `setup` and `setup_raw` are mutually exclusive per fixture, and the harness asserts it.
+Use `setup_raw` when the fixture needs to control its own bytes. Malformed JSON, duplicate keys, or a specific key order the assertion depends on — none of those survive a round-trip through a map. `setup_raw` lines are sent verbatim as NDJSON. `setup` and `setup_raw` are mutually exclusive per fixture, and the harness asserts it.
 
-**It is no longer required just because a fixture loads a plan.** That rule existed because sorting puts `config` before `type` in an adjacently-tagged `StructureConfig`, which made serde buffer the content, which stripped the string-to-`u8` coercion that `rate_table: BTreeMap<u8, f64>` needs. Loading a plan through `setup` failed outright. HEU-648 fixed that with `deserialize_with` helpers in `engine/network-engine/src/serde_helpers.rs`, so either key order parses now.
+It is no longer required just because a fixture loads a plan. That rule existed because sorting puts `config` before `type` in an adjacently-tagged `StructureConfig`, which made serde buffer the content, which stripped the string-to-`u8` coercion that `rate_table: BTreeMap<u8, f64>` needs. Loading a plan through `setup` failed outright. HEU-648 fixed that with `deserialize_with` helpers in `engine/network-engine/src/serde_helpers.rs`, so either key order parses now.
 
 Existing plan fixtures still use `setup_raw`. Leave them: changing a fixture's encoding path changes the bytes the worker sees, which is not a change worth making without a reason.
 
@@ -305,7 +305,7 @@ That line is indented two spaces, so `grep '^contract: '` matches nothing and ex
 
 HEU-583's plan specified the filtered form on three steps, including the two that changed the money path and the wire contract. Following it literally would have recorded "Expected: PASS" against a run that asserted nothing.
 
-**The trap is not specific to contract tests.** Any name filter that matches nothing prints `filtered out` and exits 0. HEU-611 hit it in `worker_integration`: `cargo test -p network-engine-worker --test worker_integration streamline` never ran `repeated_source_yields_distinguishable_skip_records`, because that name contains no "streamline". The plan prescribed that filter for three steps and the test was RED at the time, so the step would have reported a pass over a test that had never executed.
+The trap is not specific to contract tests. Any name filter that matches nothing prints `filtered out` and exits 0. HEU-611 hit it in `worker_integration`: `cargo test -p network-engine-worker --test worker_integration streamline` never ran `repeated_source_yields_distinguishable_skip_records`, because that name contains no "streamline". The plan prescribed that filter for three steps and the test was RED at the time, so the step would have reported a pass over a test that had never executed.
 
 A filter selects on the *test function's* name, and a suite's tests are not all named after the thing they test. Read the `N passed` count against the number of tests you expect, or run unfiltered. `0 passed` is the loud case; the quiet one is a filter that catches most of a group and drops one.
 
@@ -652,7 +652,7 @@ copy that had grown in `handlers/board_plan.rs`. Note it widens null to
 `T::default()` for any `T: Default` — on a collection that reads as "empty", but
 on a numeric field it would silently produce `0`.
 
-**One narrowing rode along with HEU-626.** The serde work only widens what the
+One narrowing rode along with HEU-626. The serde work only widens what the
 worker accepts. `calculate_generation` is the exception: it now *rejects*
 requests it used to answer with `Ok([])`.
 
@@ -683,7 +683,7 @@ per surviving source per stream, but only after a filter has already dropped the
 sources its own pre-loop exists to catch. HEU-611 added that pre-loop, described
 below.
 
-**A second narrowing rode along with HEU-611.** `calculate_streamline` now
+A second narrowing rode along with HEU-611. `calculate_streamline` now
 rejects requests it used to answer with `Ok([])`, for the same reason generation
 did.
 
@@ -709,7 +709,7 @@ did.
 Same blast radius as the generation narrowing: nothing calls `CalculateStreamline`
 outside tests today.
 
-**Still null-intolerant, tracked by HEU-632.** These are nested or query-op
+Still null-intolerant, tracked by HEU-632. These are nested or query-op
 collections the ticket deliberately stopped short of:
 
 - `history`'s inner per-period map. `{"<uuid>": null}` has no defined meaning —
@@ -924,7 +924,7 @@ several reviews before anyone checked it.
 The provenance work threads a `&mut Vec<Walk>` collector into both instrumented
 traversals rather than changing their return types. One stated reason was that an
 out-parameter avoids breaking `count_generations_upward`'s public signature.
-**That is false.** Adding a parameter breaks a `pub` item exactly as changing the
+That is false. Adding a parameter breaks a `pub` item exactly as changing the
 return type does. Every caller has to change either way.
 
 What actually preserves the public signature is the split: `count_generations_upward`
@@ -970,13 +970,13 @@ fn unknown_rank_is_rejected_before_the_broad_pct_guard() {
 That turns a false pass into no test, which is honest. Say in the docblock why
 the gate is there, or the next reader deletes it.
 
-**Prefer a discriminator that survives both profiles.** Anything that returns a
+Prefer a discriminator that survives both profiles. Anything that returns a
 distinguishable value works: a second `Result`-returning guard, an early `Ok`
 with no earnings, a different error variant. Reach for the `debug_assert` only
 when the function under test has nothing else, and add a release-safe pin
 alongside it rather than instead of it.
 
-**CI does not currently catch this.** `.github/workflows/ci.yml` runs the suite
+CI does not currently catch this. `.github/workflows/ci.yml` runs the suite
 in debug, so a debug-only pin is live there. The protection is a convention
 rather than a guard, and the failure is silent if that convention changes.
 (HEU-608)
@@ -995,32 +995,32 @@ explicitly typed literal such as `map[string]int{...}`.
 HEU-606 narrowed 14 wire DTO fields. Two breaks were compile errors and six were
 run-time assertion failures, so building was not enough to find them.
 
-## `validate_restored` Checks Each Structure Alone, Not That They Agree
+## What `validate_restored` Still Does Not Check
 
-The arena walks its index and its nodes against each other in both directions.
-The index is checked against the nodes, and the nodes are checked back against
-the index. An adversarial review threw roughly fifteen forged index shapes at
-that pair and every one was rejected.
+All four arms above the arena now check their own structures against each other.
+HEU-750 closed the last of them. The board plan arm closed in its first slice.
+Matrix and binary closed in its second. Streamline was never one-way.
 
-The arena's other pair is checked one way only. Every free-list entry must name
-a tombstoned slot, and no tombstone has to appear in the free list. A tombstone
-left out is leaked, and `node_count` counts it live. Its reach today is three
-`Debug` impls, which is why it is recorded rather than fixed.
+Two gaps remain. Both are recorded rather than fixed.
 
-Two of the four arms above the arena still check one way only. Those are matrix
-and binary. Each holds a second structure beside the arena. Each checks that
-structure's entries are in range and live. Neither checks that the two agree
-with each other.
+The arena's free list is checked one way. Every free-list entry must name a
+tombstoned slot. No tombstone has to appear in the free list. A tombstone left
+out is leaked. `node_count` counts it live. Its reach today is three `Debug`
+impls.
 
-So a restored matrix can hold a child in `Node.children` while every parent slot
-is empty. That passes validation today.
+No arm compares its slot map against `Node.children`. The matrix and binary
+arms count: every live non-root node is a child in exactly one child slot. They
+do not prove the slot that names a node is the same parent the node's own edges
+name. That is HEU-732, along with reciprocal edges.
 
-The other two arms are not. Streamline was never one-way. The board plan arm
-was, and HEU-750's first slice closed it. Its boards, its membership index and
-its displaced list are now walked against each other.
+Two cycle shapes are rejected here rather than left to HEU-732. Both are
+decidable from the slot map alone. A child slot naming the root is rejected. A
+child slot naming its own parent is rejected. Both were accepted before. Both
+produced a wrong answer rather than a disagreement. A leg containing its own
+ancestor makes `count_branch` report more nodes than the tree holds.
 
-**The gap is recorded in the docblock of each arm that has it, and owned by
-HEU-750.**
+The cycles that need a traversal are still open. Two nodes naming each other,
+with the root's own slots empty, is accepted. That is HEU-732.
 
 Read a `validate_restored` docblock as the boundary of what that arm proves. An
 arm that proves less than its name suggests is the failure this file already

@@ -116,6 +116,43 @@ impl Arena {
             }
         }
 
+        // depth
+        //
+        // Runs after the edge pass, which is what establishes that a parent
+        // index is in range and live. A downline walk subtracts a start depth
+        // from a node's own, so a child shallower than its parent underflows.
+        for (slot, node) in self.nodes.iter().enumerate() {
+            if node.user_id == Uuid::nil() {
+                continue;
+            }
+            match node.parent {
+                None => {
+                    if node.depth != 0 {
+                        return Err(SnapshotConsistencyError::NodeDepthNotZero {
+                            slot,
+                            user_id: node.user_id,
+                            depth: node.depth,
+                        });
+                    }
+                }
+                Some(parent) => {
+                    // checked_add, not +1: slot order can reach a child before
+                    // the parent whose own depth this pass would reject, and a
+                    // forged parent at u32::MAX would overflow here first.
+                    let parent_depth = self.nodes[parent.0].depth;
+                    if Some(node.depth) != parent_depth.checked_add(1) {
+                        return Err(SnapshotConsistencyError::NodeDepthMismatch {
+                            slot,
+                            user_id: node.user_id,
+                            depth: node.depth,
+                            parent_slot: parent.0,
+                            parent_depth,
+                        });
+                    }
+                }
+            }
+        }
+
         // free_list
         let mut seen = HashSet::new();
         for idx in &self.free_list {
@@ -1094,5 +1131,102 @@ mod tests {
     #[test]
     fn validate_restored_accepts_an_empty_arena() {
         assert!(Arena::new().validate_restored().is_ok());
+    }
+
+    fn arena_with_a_child(child_depth: u32) -> Arena {
+        let mut arena = live_arena();
+        let root = arena.root.expect("live_arena sets a root");
+        let child = arena.alloc_slot(make_node(test_uuid(2), Some(root), child_depth));
+        arena.index.insert(test_uuid(2), child);
+        arena.nodes[root.0].children.push(child);
+        arena
+    }
+
+    #[test]
+    fn validate_restored_accepts_a_child_one_below_its_parent() {
+        assert!(arena_with_a_child(1).validate_restored().is_ok());
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_child_shallower_than_its_parent() {
+        // The subtraction in a downline walk underflows on this shape.
+        let mut arena = arena_with_a_child(1);
+        let mid = NodeIndex(1);
+        let leaf = arena.alloc_slot(make_node(test_uuid(3), Some(mid), 0));
+        arena.index.insert(test_uuid(3), leaf);
+        arena.nodes[mid.0].children.push(leaf);
+
+        assert_eq!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::NodeDepthMismatch {
+                slot: 2,
+                user_id: test_uuid(3),
+                depth: 0,
+                parent_slot: 1,
+                parent_depth: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_child_deeper_than_one_below_its_parent() {
+        assert_eq!(
+            arena_with_a_child(2).validate_restored(),
+            Err(SnapshotConsistencyError::NodeDepthMismatch {
+                slot: 1,
+                user_id: test_uuid(2),
+                depth: 2,
+                parent_slot: 0,
+                parent_depth: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_parentless_node_below_the_surface() {
+        // Adding a child to this one overflows depth + 1.
+        let mut arena = live_arena();
+        arena.nodes[0].depth = u32::MAX;
+
+        assert_eq!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::NodeDepthNotZero {
+                slot: 0,
+                user_id: test_uuid(1),
+                depth: u32::MAX,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_depth_offender_every_run() {
+        let mut arena = arena_with_a_child(1);
+        let root = arena.root.expect("live_arena sets a root");
+        let second = arena.alloc_slot(make_node(test_uuid(3), Some(root), 9));
+        arena.index.insert(test_uuid(3), second);
+        arena.nodes[root.0].children.push(second);
+        arena.nodes[1].depth = 9;
+
+        for _ in 0..8 {
+            assert_eq!(
+                arena.validate_restored(),
+                Err(SnapshotConsistencyError::NodeDepthMismatch {
+                    slot: 1,
+                    user_id: test_uuid(2),
+                    depth: 9,
+                    parent_slot: 0,
+                    parent_depth: 0,
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn validate_restored_ignores_the_depth_on_a_tombstone() {
+        let mut arena = arena_with_a_child(1);
+        let dead = arena.alloc_slot(make_node(test_uuid(4), None, 42));
+        arena.tombstone(dead);
+
+        assert!(arena.validate_restored().is_ok());
     }
 }

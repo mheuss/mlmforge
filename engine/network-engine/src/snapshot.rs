@@ -58,6 +58,32 @@ pub enum SnapshotConsistencyError {
     #[error("node slot {slot} is a tombstone and still holds a {field}")]
     TombstoneNotCleared { slot: usize, field: &'static str },
 
+    #[error(
+        "the engine will allocate stream {next_stream_id} next; it already holds stream {highest_stream_id}"
+    )]
+    StreamIdCursorNotPastEnd {
+        next_stream_id: u32,
+        highest_stream_id: u32,
+    },
+
+    #[error("node slot {slot} holds {user_id} at depth {depth} and names no parent")]
+    NodeDepthNotZero {
+        slot: usize,
+        user_id: Uuid,
+        depth: u32,
+    },
+
+    #[error(
+        "node slot {slot} holds {user_id} at depth {depth}; its parent at node slot {parent_slot} is at depth {parent_depth}"
+    )]
+    NodeDepthMismatch {
+        slot: usize,
+        user_id: Uuid,
+        depth: u32,
+        parent_slot: usize,
+        parent_depth: u32,
+    },
+
     #[error("root names node slot {slot}; the arena holds {node_count} slots")]
     RootOutOfRange { slot: usize, node_count: usize },
 

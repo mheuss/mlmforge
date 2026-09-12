@@ -205,9 +205,9 @@ The commission ops are `calculate_unilevel`, `calculate_binary_pairing`, `calcul
 
 ### JSON Object Key Order Is Not Part Of The Contract
 
-Object key order in worker responses is deterministic and identical in every
-build configuration. It is **not** an interoperability guarantee, and the Go
-side must not depend on it.
+Object key order in worker responses is **not** stable, **not** an
+interoperability guarantee, and the Go side must not depend on it. Two calls on
+identical state can return different bytes.
 
 Go decodes with `encoding/json` struct tags, which ignore order. A reorder on
 the Rust side is a heads-up that something changed, not a compatibility break.
@@ -217,12 +217,22 @@ For the record, since the mechanism is easy to re-derive wrongly:
 
 | What | Order emitted |
 |---|---|
-| `serde_json::Value` payloads (the `result` body) | Sorted, because `Value` is backed by a `BTreeMap` |
+| Struct fields in a result payload | Declaration order |
+| `HashMap` fields in a result payload | Unspecified, and it varies per process |
+| A `serde_json::Value` payload | Sorted, because `Value` is backed by a `BTreeMap` |
 | The response envelope (`id`, `ok`, `result`, `error`) | Struct declaration order, which is *not* alphabetical |
 
-So "the worker sorts its keys" is true of payloads and false of the envelope.
-Writing the guarantee down as "sorted" would have been wrong at the top level of
-every response.
+So "the worker sorts its keys" is false. It was true of payloads until HEU-743,
+which stopped routing results through `Value` on the way to the wire. Sorting
+was a side effect of that hop, not a decision, and the hop cost several times
+what the bytes did.
+
+The `HashMap` row is the one that surprises. Rust's default hasher is seeded per
+process, so `take_snapshot` on identical state returns different bytes on
+different runs. Nothing consumes those bytes by comparison today. Anything that
+wants to start -- content-addressing a snapshot, diffing two of them, hashing one
+for an integrity check -- needs a stable order established first, and the place to
+do that is the engine's own types, not the wire.
 
 This was worth stating because it was briefly untrue. Until HEU-648, a
 `serde_json/preserve_order` dev-feature reached the worker through Cargo feature

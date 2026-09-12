@@ -88,11 +88,10 @@ impl BoardPlanEngine {
         })
     }
 
-    /// Prove a restored engine's stored values are in range and its membership
-    /// index names seats that hold the member.
+    /// Prove a restored engine's stored values are in range and its boards
+    /// agree with its membership index.
     ///
-    /// Membership is checked from the index outward only. That every occupant
-    /// of a board has an entry pointing back is not checked. HEU-750.
+    /// Membership is checked in both directions.
     ///
     /// `sponsor_map` is deliberately not checked. It is permanent enrollment
     /// data that keeps removed members so re-entry can still route them, so it
@@ -1221,8 +1220,9 @@ mod tests {
 
     #[test]
     fn validate_restored_names_the_same_unindexed_occupant_every_run() {
-        // Two unindexed occupants. The higher id sits at the later position,
-        // so a hold that overwrote would name it and lose.
+        // Two unindexed occupants, so the hold has something to choose
+        // between. seats is walked in hash order, which varies per call, so a
+        // hold that overwrote would name the higher id on some of these runs.
         for _ in 0..64 {
             let (mut engine, member) = seeded_engine();
             let board_id = *engine.member_boards.get(&member).unwrap();

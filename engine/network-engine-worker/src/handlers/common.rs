@@ -98,6 +98,8 @@ pub(crate) fn tree_error_to_response(request_id: &str, e: TreeError) -> Response
         TreeError::UserNotInHoldingTank(_) => "USER_NOT_IN_HOLDING_TANK",
         TreeError::UnsupportedSpillover => "UNSUPPORTED_SPILLOVER",
         TreeError::SubtreeFull(_) => "SUBTREE_FULL",
+        TreeError::SponsorlessWithRecruits { .. } => "SPONSORLESS_WITH_RECRUITS",
+        TreeError::SponsorCycle { .. } => "SPONSOR_CYCLE",
     };
     Response::error(request_id.to_string(), code, e.to_string())
 }
@@ -410,5 +412,36 @@ pub(crate) fn parse_u32_param(
             })?;
             Ok(Some(n))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_sponsorless_removal_maps_to_its_own_wire_code() {
+        let e = TreeError::SponsorlessWithRecruits {
+            user_id: Uuid::nil(),
+            sponsored_count: 2,
+        };
+
+        let response = tree_error_to_response("req-1", e);
+
+        assert_eq!(
+            response.error.as_ref().unwrap().code,
+            "SPONSORLESS_WITH_RECRUITS"
+        );
+    }
+
+    #[test]
+    fn a_sponsor_cycle_maps_to_its_own_wire_code() {
+        let e = TreeError::SponsorCycle {
+            user_id: Uuid::nil(),
+        };
+
+        let response = tree_error_to_response("req-1", e);
+
+        assert_eq!(response.error.as_ref().unwrap().code, "SPONSOR_CYCLE");
     }
 }

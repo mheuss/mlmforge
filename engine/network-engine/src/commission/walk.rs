@@ -732,21 +732,27 @@ mod tests {
 
     #[test]
     fn validate_snapshot_ranks_names_the_lowest_user_id_when_one_offender_is_empty() {
-        // HashMap iteration order varies per run. Without min_by_key this test
+        // HashMap iteration order varies per run. Without min_by_key this
         // names a different user on different runs of the same input.
+        //
+        // The map is rebuilt inside the loop on purpose. Reusing one map
+        // would repeat a single iteration order rather than sample several.
         let plan = test_plan_with_ranks(&[("associate", 1)]);
-        let mut snapshots = HashMap::new();
-        snapshots.insert(test_uuid(3), snapshot_with_rank("diamond"));
-        snapshots.insert(test_uuid(1), snapshot_with_rank(""));
-        snapshots.insert(test_uuid(2), snapshot_with_rank("associate"));
 
-        assert_eq!(
-            validate_snapshot_ranks(&plan, &snapshots),
-            Err(CalculationError::UnknownSnapshotRank(
-                test_uuid(1),
-                String::new()
-            ))
-        );
+        for _ in 0..32 {
+            let mut snapshots = HashMap::new();
+            snapshots.insert(test_uuid(3), snapshot_with_rank("diamond"));
+            snapshots.insert(test_uuid(1), snapshot_with_rank(""));
+            snapshots.insert(test_uuid(2), snapshot_with_rank("associate"));
+
+            assert_eq!(
+                validate_snapshot_ranks(&plan, &snapshots),
+                Err(CalculationError::UnknownSnapshotRank(
+                    test_uuid(1),
+                    String::new()
+                ))
+            );
+        }
     }
 
     #[test]

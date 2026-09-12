@@ -804,9 +804,9 @@ mod tests {
     /// instead.
     #[test]
     fn an_empty_rank_cannot_buy_the_upline_a_level() {
-        fn root_earning(
+        fn earnings_for(
             mid_rank: &str,
-        ) -> Result<crate::commission::types::CommissionEarning, CalculationError> {
+        ) -> Result<Vec<crate::commission::types::CommissionEarning>, CalculationError> {
             let mut tree = UnilevelTree::new();
             tree.add_root(test_uuid(1), 0).unwrap();
             tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
@@ -846,28 +846,34 @@ mod tests {
                 &volume,
                 &crate::test_support::test_plan_identity(),
             )
-            .map(|result| {
-                result
-                    .earnings
-                    .into_iter()
-                    .find(|e| e.earner_id == test_uuid(1))
-                    .expect("the root earns in every accepted case")
-            })
+            .map(|result| result.earnings)
         }
 
         for mid_rank in ["associate", "silver"] {
-            let earning = root_earning(mid_rank).expect("a rank in the ladder is accepted");
-            assert_eq!(earning.level, 2, "mid={mid_rank:?}");
-            assert_eq!(earning.rate, Some(0.06), "mid={mid_rank:?}");
+            let earnings = earnings_for(mid_rank).expect("a rank in the ladder is accepted");
+
+            let root = earnings
+                .iter()
+                .find(|e| e.earner_id == test_uuid(1))
+                .unwrap_or_else(|| panic!("mid={mid_rank:?} root did not earn: {earnings:?}"));
+            assert_eq!(root.level, 2, "mid={mid_rank:?}");
+            assert_eq!(root.rate, Some(0.06), "mid={mid_rank:?}");
             assert!(
-                (earning.dollar_amount - 2.40).abs() < 1e-9,
+                (root.dollar_amount - 2.40).abs() < 1e-9,
                 "mid={mid_rank:?} paid {}",
-                earning.dollar_amount
+                root.dollar_amount
+            );
+
+            // Without this the test passes for a forfeiting walk too, which
+            // keeps the root at level 2 and drops the mid's row.
+            assert!(
+                earnings.iter().any(|e| e.earner_id == test_uuid(2)),
+                "mid={mid_rank:?} mid node earned nothing: {earnings:?}"
             );
         }
 
         assert_eq!(
-            root_earning("").unwrap_err(),
+            earnings_for("").unwrap_err(),
             CalculationError::UnknownSnapshotRank(test_uuid(2), String::new())
         );
     }

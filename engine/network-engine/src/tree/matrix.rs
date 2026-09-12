@@ -544,6 +544,11 @@ impl MatrixTree {
         let mut removed_set: Vec<NodeIndex> = vec![idx];
         removed_set.extend(&descendants);
 
+        // descendants is a walk over children, so a node sponsored by anyone
+        // in this set but placed outside it is not here and survives.
+        self.arena.check_sponsored_removable(&removed_set)?;
+        self.arena.reparent_sponsored(&removed_set);
+
         // Pass 1: Build holding tank entries while all nodes are still live.
         // Sponsor user_ids must be resolved before any tombstoning.
         let mut tank_entries: Vec<(NodeIndex, HoldingTankEntry)> = Vec::new();
@@ -2383,6 +2388,72 @@ mod tests {
         let tank_ids: Vec<Uuid> = tank.iter().map(|e| e.user_id).collect();
         assert!(tank_ids.contains(&test_uuid(2)));
         assert!(tank_ids.contains(&test_uuid(4)));
+    }
+
+    #[test]
+    fn holding_tank_removal_promotes_a_recruit_placed_outside_the_subtree() {
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 1).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 2).unwrap();
+        // Sponsored by 2, placed under 3. The tank collects its removed set by
+        // walking children, so this one is never reached.
+        tree.add_node_at(test_uuid(4), test_uuid(2), test_uuid(3), 0, 3)
+            .unwrap();
+
+        let under_2: Vec<_> = tree
+            .get_downline(test_uuid(2), 0)
+            .unwrap()
+            .iter()
+            .map(|n| n.user_id)
+            .collect();
+        assert!(
+            !under_2.contains(&test_uuid(4)),
+            "this test needs node 4 sponsored by 2 and placed outside its subtree"
+        );
+        let before = tree.get_sponsor(test_uuid(4)).unwrap().unwrap();
+        assert_eq!(before.user_id, test_uuid(2));
+
+        tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
+            .unwrap();
+
+        assert_eq!(tree.validate_restored(), Ok(()));
+        let sponsor = tree.get_sponsor(test_uuid(4)).unwrap().unwrap();
+        assert_eq!(sponsor.user_id, test_uuid(1));
+    }
+
+    #[test]
+    fn removing_a_sponsorless_node_with_recruits_is_refused() {
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 1).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), 2).unwrap();
+
+        // 3 sits in the tank while its sponsor leaves, so it comes back with
+        // no sponsor at all despite not being the root.
+        tree.remove_node(test_uuid(3), PruningMode::HoldingTank)
+            .unwrap();
+        tree.remove_node(test_uuid(2), PruningMode::PromoteEarliest)
+            .unwrap();
+        tree.place_from_tank(test_uuid(3), test_uuid(1), 1).unwrap();
+        assert!(
+            tree.get_sponsor(test_uuid(3)).unwrap().is_none(),
+            "this test needs node 3 back in the tree carrying no sponsor"
+        );
+
+        tree.add_node(test_uuid(4), test_uuid(3), 4).unwrap();
+
+        let err = tree
+            .remove_node(test_uuid(3), PruningMode::PromoteEarliest)
+            .unwrap_err();
+
+        assert_eq!(
+            err,
+            TreeError::SponsorlessWithRecruits {
+                user_id: test_uuid(3),
+                surviving_sponsored: 1,
+            }
+        );
     }
 
     #[test]

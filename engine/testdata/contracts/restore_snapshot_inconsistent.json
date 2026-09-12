@@ -1,5 +1,5 @@
 {
-    "description": "restore_snapshot rejects a unilevel snapshot whose index names a slot past the end of nodes, with INCONSISTENT_SNAPSHOT. Cross-language lock for the HEU-706 restore trust boundary. Paired with restore_snapshot_undeserializable.json: together they prove the two codes are told apart, not just that one of them fires.",
+    "description": "restore_snapshot rejects a unilevel snapshot whose index names a slot past the end of nodes, with INCONSISTENT_SNAPSHOT. Cross-language lock for the HEU-706 restore trust boundary. Paired with the undeserializable restore fixture in this directory: together they prove the two codes are told apart, not just that one of them fires. The payload spells out the Arena shape by hand, so a new required field on Arena or Node turns this into a deserialization failure rather than the rejection it tests.",
     "request": {
         "id": "rs-inconsistent",
         "op": "restore_snapshot",

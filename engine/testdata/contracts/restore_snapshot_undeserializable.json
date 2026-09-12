@@ -1,5 +1,5 @@
 {
-    "description": "restore_snapshot rejects data that UnilevelTree cannot deserialize with INVALID_PARAMS, not INCONSISTENT_SNAPSHOT. Paired with restore_snapshot_inconsistent.json: a payload that never parses and one that parses and then contradicts itself must not collapse to the same code.",
+    "description": "restore_snapshot rejects data that UnilevelTree cannot deserialize with INVALID_PARAMS, not INCONSISTENT_SNAPSHOT. Paired with the inconsistent restore fixture in this directory: a payload that never parses and one that parses and then contradicts itself must not collapse to the same code.",
     "request": {
         "id": "rs-undeserializable",
         "op": "restore_snapshot",

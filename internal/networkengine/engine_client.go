@@ -28,11 +28,16 @@ import (
 // Moved to 7 by HEU-706. A restore_snapshot request that succeeded under 6 may
 // now fail, which is why the number had to move.
 //
+// Moved to 8 by HEU-743. A restore_snapshot request that succeeded under 7 may
+// now fail, which is why the number had to move. Snapshot params stopped going
+// through a serde_json::Value, so a duplicate struct field in the payload is
+// rejected instead of last-wins.
+//
 // This is the wire contract, not the stored row shape and not the authoring
 // format. Two other numbers nearby are also called a version: `detailVersion`
 // in commission_detail.go, and the plan schema version in
 // schemas/compensation-plan.schema.json. None is coupled to the others.
-const expectedProtocolVersion = 7
+const expectedProtocolVersion = 8
 
 // maxPingResponseInError bounds how much of an unexpected ping response is
 // quoted back in an error. The response is wire data and is otherwise

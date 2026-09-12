@@ -218,7 +218,7 @@ For the record, since the mechanism is easy to re-derive wrongly:
 | What | Order emitted |
 |---|---|
 | Struct fields in a result payload | Declaration order |
-| `HashMap` fields in a result payload | Unspecified, and it varies per process |
+| `HashMap` fields in a result payload | Unspecified, and it varies per map instance |
 | A `serde_json::Value` payload | Sorted, because `Value` is backed by a `BTreeMap` |
 | The response envelope (`id`, `ok`, `result`, `error`) | Struct declaration order, which is *not* alphabetical |
 
@@ -227,12 +227,26 @@ which stopped routing results through `Value` on the way to the wire. Sorting
 was a side effect of that hop, not a decision, and the hop cost several times
 what the bytes did.
 
-The `HashMap` row is the one that surprises. Rust's default hasher is seeded per
-process, so `take_snapshot` on identical state returns different bytes on
-different runs. Nothing consumes those bytes by comparison today. Anything that
-wants to start -- content-addressing a snapshot, diffing two of them, hashing one
-for an integrity check -- needs a stable order established first, and the place to
-do that is the engine's own types, not the wire.
+The `HashMap` row is the one that surprises, and the size of it is easy to get
+wrong. Rust's default hasher takes a fresh key for every map it builds, not one
+per process. So the variable is the map instance, not the run.
+
+What that means in practice:
+
+- Two `take_snapshot` calls on the same live structure return identical bytes.
+  Same map, untouched, same order.
+- Two structures built by the same sequence of calls return different bytes,
+  in the same process, seconds apart.
+- A structure restored from its own snapshot returns different bytes than the
+  snapshot it came from. Restore builds a new map.
+
+That last one is the case to remember. Round-tripping a snapshot does not
+reproduce it.
+
+Nothing consumes those bytes by comparison today. Anything that wants to start
+-- content-addressing a snapshot, diffing two of them, hashing one for an
+integrity check -- needs a stable order established first, and the place to do
+that is the engine's own types, not the wire.
 
 This was worth stating because it was briefly untrue. Until HEU-648, a
 `serde_json/preserve_order` dev-feature reached the worker through Cargo feature

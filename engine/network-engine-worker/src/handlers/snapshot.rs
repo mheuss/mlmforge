@@ -23,9 +23,9 @@ struct Snapshot<'a> {
 ///
 /// Params: structure.
 ///
-/// Serialization failure returns `SERIALIZATION_ERROR` rather than panicking.
-/// A panic here would still be caught and answered, so this is about the
-/// caller getting a named error instead of `INTERNAL_ERROR`.
+/// Serialization failure returns `SERIALIZATION_ERROR` rather than panicking,
+/// so the caller is told what failed instead of getting a generic internal
+/// error. Keep the arm.
 pub(crate) fn handle_take_snapshot(state: &WorkerState, request: &Request) -> Response {
     let params = match parse_params(request) {
         Ok(p) => p,
@@ -125,7 +125,10 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
                 return Response::error(
                     request.id.clone(),
                     "INVALID_PARAMS",
-                    format!("failed to deserialize unilevel snapshot: {}", e),
+                    format!(
+                        "failed to deserialize unilevel snapshot: {} (the position counts into the snapshot payload, not the request line)",
+                        e
+                    ),
                 );
             }
         },
@@ -144,7 +147,10 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
                 return Response::error(
                     request.id.clone(),
                     "INVALID_PARAMS",
-                    format!("failed to deserialize binary snapshot: {}", e),
+                    format!(
+                        "failed to deserialize binary snapshot: {} (the position counts into the snapshot payload, not the request line)",
+                        e
+                    ),
                 );
             }
         },
@@ -163,7 +169,10 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
                 return Response::error(
                     request.id.clone(),
                     "INVALID_PARAMS",
-                    format!("failed to deserialize matrix snapshot: {}", e),
+                    format!(
+                        "failed to deserialize matrix snapshot: {} (the position counts into the snapshot payload, not the request line)",
+                        e
+                    ),
                 );
             }
         },
@@ -182,7 +191,10 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
                 return Response::error(
                     request.id.clone(),
                     "INVALID_PARAMS",
-                    format!("failed to deserialize board plan snapshot: {}", e),
+                    format!(
+                        "failed to deserialize board plan snapshot: {} (the position counts into the snapshot payload, not the request line)",
+                        e
+                    ),
                 );
             }
         },
@@ -201,7 +213,10 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
                 return Response::error(
                     request.id.clone(),
                     "INVALID_PARAMS",
-                    format!("failed to deserialize streamline snapshot: {}", e),
+                    format!(
+                        "failed to deserialize streamline snapshot: {} (the position counts into the snapshot payload, not the request line)",
+                        e
+                    ),
                 );
             }
         },

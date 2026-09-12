@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// This moves on any change to wire semantics, not only on shape changes. Two
 /// workers can share a schema and still disagree about what a field means.
-pub const PROTOCOL_VERSION: u32 = 7;
+pub const PROTOCOL_VERSION: u32 = 8;
 
 /// An NDJSON request from the Go platform layer.
 #[derive(Debug, Deserialize)]
@@ -279,6 +279,38 @@ mod tests {
         assert_eq!(
             json,
             r#"{"id":"req-1","ok":true,"result":{"total":7,"extra":[1,2]}}"#
+        );
+    }
+
+    /// Flattening a `Box<RawValue>` emits serde_json's private marker as a key.
+    ///
+    /// Pinned because the failure is silent. It produces wrong bytes rather
+    /// than an error, so nothing else would catch someone adding `flatten` to
+    /// a raw field.
+    #[test]
+    fn flattening_a_raw_value_emits_the_private_marker() {
+        #[derive(Serialize)]
+        struct Outer {
+            #[serde(flatten)]
+            raw: Box<serde_json::value::RawValue>,
+            tail: u8,
+        }
+
+        let resp = Response::success(
+            "req-1".into(),
+            Outer {
+                raw: serde_json::value::to_raw_value(&serde_json::json!({"a": 1})).unwrap(),
+                tail: 7,
+            },
+        );
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(
+            json.contains("$serde_json::private::RawValue"),
+            "expected the private marker to leak, got: {json}"
+        );
+        assert!(
+            !json.contains(r#""a":1"#),
+            "expected the raw JSON not to be spliced in, got: {json}"
         );
     }
 

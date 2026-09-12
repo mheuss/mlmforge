@@ -13,6 +13,14 @@ use super::common::{
 use crate::protocol::{Request, Response};
 use crate::state::{TreeInstance, WorkerState};
 
+/// One holding-tank entry on the wire.
+#[derive(serde::Serialize)]
+struct HoldingTankItem {
+    user_id: String,
+    sponsor_user_id: Option<String>,
+    enrolled_at: i64,
+}
+
 // --- Tree lifecycle handler ---
 
 pub(crate) fn handle_create_tree(state: &mut WorkerState, request: &Request) -> Response {
@@ -410,18 +418,16 @@ pub(crate) fn handle_get_holding_tank(state: &WorkerState, request: &Request) ->
             };
 
             let entries = t.get_holding_tank(sponsor_id);
-            let items: Vec<serde_json::Value> = entries
+            let items: Vec<HoldingTankItem> = entries
                 .iter()
-                .map(|e| {
-                    serde_json::json!({
-                        "user_id": e.user_id.to_string(),
-                        "sponsor_user_id": e.sponsor_user_id.map(|id| id.to_string()),
-                        "enrolled_at": e.enrolled_at,
-                    })
+                .map(|e| HoldingTankItem {
+                    user_id: e.user_id.to_string(),
+                    sponsor_user_id: e.sponsor_user_id.map(|id| id.to_string()),
+                    enrolled_at: e.enrolled_at,
                 })
                 .collect();
 
-            Response::success(request.id.clone(), serde_json::Value::Array(items))
+            Response::success(request.id.clone(), &items)
         }
         _ => Response::error(
             request.id.clone(),

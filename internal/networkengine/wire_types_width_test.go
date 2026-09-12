@@ -8,15 +8,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestWireTypesNarrowMirrors pins the width of every wire DTO field that
-// mirrors a narrow Rust engine type. A silent widening is caught here rather
-// than truncating at the Rust boundary.
+// TestWireTypesNarrowMirrors pins the width of the wire DTO fields listed
+// below, each mirroring a narrow or nullable Rust engine type. A silent
+// widening is caught here rather than truncating at the Rust boundary.
 //
 // The list is built by pairing each narrow Rust wire field with its Go
 // counterpart. A Go-side search for narrow types cannot find a mirror that has
 // already widened.
 //
-// Rows removed when their DTOs were deleted: see HEU-583.
+// Rows removed when their DTOs were deleted by HEU-583. Why each guarantee
+// survived: see commit d737239.
 func TestWireTypesNarrowMirrors(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -56,7 +57,7 @@ func TestWireTypesNarrowMirrors(t *testing.T) {
 			f, ok := c.typ.FieldByName(c.field)
 			require.True(t, ok, "%s: field %s not found", c.name, c.field)
 			assert.Equal(t, c.want, f.Type.String(),
-				"%s must stay %s to mirror its narrow Rust engine type",
+				"%s must stay %s to mirror its Rust engine type",
 				c.name, c.want)
 		})
 	}

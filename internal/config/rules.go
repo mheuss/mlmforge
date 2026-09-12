@@ -229,11 +229,19 @@ func rankOrdinalMap(plan *CompensationPlan) map[string]int {
 
 // --- Duplicate name rules ---
 
-// validateRankNames checks for duplicate rank names.
+// validateRankNames checks that rank names are non-empty and unique.
 func validateRankNames(plan *CompensationPlan) []ValidationError {
 	var errs []ValidationError
 	seen := make(map[string]bool)
-	for _, r := range plan.Ranks {
+	for i, r := range plan.Ranks {
+		if r.Name == "" {
+			errs = append(errs, ValidationError{
+				Path:     fmt.Sprintf("/ranks/%d/name", i),
+				Code:     "missing_required_field",
+				Message:  "rank name must not be empty",
+				Severity: SeverityError,
+			})
+		}
 		if seen[r.Name] {
 			errs = append(errs, ValidationError{
 				Path:     "/ranks",
@@ -277,6 +285,14 @@ func validateRanks(plan *CompensationPlan, structs map[string]bool) []Validation
 	seen := make(map[int]string, len(plan.Ranks))
 	prevOrdinal := -1
 	for i, r := range plan.Ranks {
+		if r.Ordinal < 1 {
+			errs = append(errs, ValidationError{
+				Path:     fmt.Sprintf("/ranks/%d/ordinal", i),
+				Code:     "value_out_of_range",
+				Message:  fmt.Sprintf("rank %q has ordinal %d; ordinals start at 1", r.Name, r.Ordinal),
+				Severity: SeverityError,
+			})
+		}
 		if existing, dup := seen[r.Ordinal]; dup {
 			errs = append(errs, ValidationError{
 				Path:     fmt.Sprintf("/ranks/%d/ordinal", i),

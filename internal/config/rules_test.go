@@ -26,6 +26,43 @@ func TestRankDuplicateOrdinalRejected(t *testing.T) {
 	assert.Equal(t, SeverityError, errs[0].Severity)
 }
 
+func TestRankOrdinalZeroRejected(t *testing.T) {
+	plan := minimalPlan()
+	// The first rank is the only one that can carry 0 and reach this check.
+	// A later rank at 0 fails the ascending test first, because prevOrdinal
+	// is only -1 on the first iteration.
+	plan.Ranks[0].Ordinal = 0
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "value_out_of_range", errs[0].Code)
+	assert.Equal(t, "/ranks/0/ordinal", errs[0].Path)
+	assert.Contains(t, errs[0].Message, "Associate")
+	assert.Equal(t, SeverityError, errs[0].Severity)
+}
+
+func TestRankOrdinalZeroAfterFirstFailsBothChecks(t *testing.T) {
+	plan := minimalPlan()
+	plan.Ranks[1].Ordinal = 0
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 2)
+	codes := []string{errs[0].Code, errs[1].Code}
+	assert.Contains(t, codes, "value_out_of_range")
+	assert.Contains(t, codes, "ordering_violation")
+}
+
+func TestRankEmptyNameRejected(t *testing.T) {
+	plan := minimalPlan()
+	plan.Ranks[1].Name = ""
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "missing_required_field", errs[0].Code)
+	assert.Equal(t, "/ranks/1/name", errs[0].Path)
+	assert.Equal(t, SeverityError, errs[0].Severity)
+}
+
 func TestRankQualifiedStructuresMustExist(t *testing.T) {
 	plan := minimalPlan()
 	// Reference a structure that does not exist in plan.Structures.

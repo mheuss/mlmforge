@@ -268,8 +268,11 @@ impl BoardPlanEngine {
         sponsor_id: Uuid,
         timestamp: i64,
     ) -> Result<AddMemberResult, BoardPlanError> {
-        // Validate: member not already on a board.
-        if self.member_boards.contains_key(&user_id) {
+        // Validate: member not already on a board, and not waiting for one.
+        // A displaced member is absent from member_boards by design, so
+        // checking it alone let place_displaced_members seat them below and
+        // find_placement_board seat them again on a second board.
+        if self.member_boards.contains_key(&user_id) || self.displaced_members.contains(&user_id) {
             return Err(BoardPlanError::MemberAlreadyExists(user_id));
         }
 
@@ -831,6 +834,47 @@ mod tests {
                 "the lowest key should win regardless of hash order"
             );
         }
+    }
+
+    /// Enrolls until one member is left awaiting reassignment.
+    fn engine_with_a_displaced_member() -> (BoardPlanEngine, Uuid) {
+        let mut engine = BoardPlanEngine::new(2, 1, test_config_no_reentry(), 0).unwrap();
+        let first = Uuid::from_bytes([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+        engine.add_member(first, first, 1).unwrap();
+        for n in 2..=8u8 {
+            let m = Uuid::from_bytes([n, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            engine.add_member(m, first, n as i64).unwrap();
+        }
+        let displaced = *engine
+            .displaced_members
+            .first()
+            .expect("eight enrollments with re-entry off leave a displaced member");
+        (engine, displaced)
+    }
+
+    #[test]
+    fn add_member_rejects_a_member_awaiting_reassignment() {
+        // A displaced member is absent from member_boards by design, so the
+        // duplicate check missed them. place_displaced_members seated them and
+        // find_placement_board seated them again, on a second board.
+        let (mut engine, displaced) = engine_with_a_displaced_member();
+        let sponsor = *engine.member_boards.keys().next().unwrap();
+
+        assert_eq!(
+            engine.add_member(displaced, sponsor, 100).unwrap_err(),
+            BoardPlanError::MemberAlreadyExists(displaced)
+        );
+    }
+
+    #[test]
+    fn re_enrolling_a_displaced_member_leaves_the_engine_restorable() {
+        let (mut engine, displaced) = engine_with_a_displaced_member();
+        assert_eq!(engine.validate_restored(), Ok(()));
+        let sponsor = *engine.member_boards.keys().next().unwrap();
+
+        let _ = engine.add_member(displaced, sponsor, 100);
+
+        assert_eq!(engine.validate_restored(), Ok(()));
     }
 
     #[test]

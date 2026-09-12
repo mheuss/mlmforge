@@ -704,6 +704,45 @@ mod tests {
     }
 
     #[test]
+    fn engine_output_holds_the_three_board_invariants_through_a_cycle() {
+        // total_positions sums level sizes over 0..=height, so 2x1 is 1 + 2
+        // and the first cycle lands on the third enrollment. A 2-wide board
+        // splits into two, each seeded with one member and needing two more.
+        let mut engine = BoardPlanEngine::new(2, 1, test_config(), 0).unwrap();
+        let first = Uuid::from_bytes([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+        engine.add_member(first, first, 1).unwrap();
+        for n in 2..=12u8 {
+            let m = Uuid::from_bytes([n, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+            engine.add_member(m, first, n as i64).unwrap();
+        }
+        assert!(
+            engine.boards.len() > 1,
+            "twelve enrollments did not split a board; the run never cycled"
+        );
+
+        for (key, board) in &engine.boards {
+            assert_eq!(*key, board.id, "map key disagrees with board id");
+        }
+
+        let mut seen: HashSet<Uuid> = HashSet::new();
+        for board in engine.boards.values() {
+            for occupant in board.positions.iter().flatten() {
+                assert!(seen.insert(*occupant), "{occupant} occupies two boards");
+            }
+        }
+
+        for (board_id, board) in &engine.boards {
+            for occupant in board.positions.iter().flatten() {
+                assert_eq!(
+                    engine.member_boards.get(occupant),
+                    Some(board_id),
+                    "{occupant} sits on {board_id} with no member_boards entry pointing back"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn validate_restored_rejects_a_board_whose_position_count_disagrees() {
         // The forged shape that reaches split_board's indexing: the board
         // agrees with member_boards, so the membership checks pass, and only

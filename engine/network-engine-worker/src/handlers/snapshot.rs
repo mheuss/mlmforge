@@ -24,8 +24,8 @@ struct Snapshot<'a> {
 /// Params: structure.
 ///
 /// Serialization failure returns `SERIALIZATION_ERROR` rather than panicking.
-/// The other result sites `expect` instead. Do not make this one consistent
-/// with them without deciding that a snapshot may take the process down.
+/// Changing that to `expect` would let one bad snapshot take the whole process
+/// down.
 pub(crate) fn handle_take_snapshot(state: &WorkerState, request: &Request) -> Response {
     let params = match parse_params(request) {
         Ok(p) => p,

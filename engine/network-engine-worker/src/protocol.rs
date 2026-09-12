@@ -48,23 +48,16 @@ pub struct Response {
     pub id: String,
     pub ok: bool,
     /// Already-serialized JSON, so a typed result reaches the wire without a
-    /// `serde_json::Value` tree in between. `Value` is `BTreeMap`-backed, and
-    /// on a large response that tree costs several times what the bytes do.
-    ///
-    /// Measured on the HEU-556 deep-sparse fixture, 170.2 MiB of output: peak
-    /// RSS 1833.0 MiB through `Value`, 473.7 MiB here. 3.87x. The remaining
-    /// 154 MiB is the response `String` the caller builds around this field,
-    /// which HEU-754 is about; removing both reaches 319.6 MiB.
+    /// `serde_json::Value` tree in between, which costs several times what the
+    /// bytes do on a large response.
     ///
     /// Boxed to keep `Response` under clippy's `large-error-threshold`. See
     /// `response_stays_small_enough_for_clippy`.
-    ///
-    /// This is the response-side twin of `Request.params`, for the same reason.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<Box<serde_json::value::RawValue>>,
-    /// Also boxed, for headroom. Boxing `result` alone already clears the
-    /// threshold at 96 bytes. Boxing this one too brings `Response` to 56, and
-    /// error responses are the cold path.
+    /// Also boxed, for headroom. Boxing `result` alone already cleared the
+    /// bound, and error responses are the cold path, so boxing this one too
+    /// was cheap.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<Box<ErrorPayload>>,
 }
@@ -117,8 +110,7 @@ mod tests {
     /// overridden here. `Response` is the error type of the parse and lookup
     /// helpers in `handlers/`.
     ///
-    /// It measures 56 bytes, in every build. `Box<RawValue>` is a fat pointer,
-    /// 8 wider than the `Box<Value>` that used to sit there.
+    /// It stays under the bound in every build.
     ///
     /// Before `result` was boxed, `Response` held a `serde_json::Value` inline
     /// and so changed size with

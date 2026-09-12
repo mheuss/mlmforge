@@ -732,8 +732,8 @@ mod tests {
 
     #[test]
     fn validate_snapshot_ranks_names_the_lowest_user_id_when_one_offender_is_empty() {
-        // HashMap iteration order varies per run. Without min_by_key this
-        // names a different user on different runs of the same input.
+        // HashMap iteration order varies per run, so without a deterministic
+        // tie-break this would name a different user on different runs.
         //
         // The map is rebuilt inside the loop on purpose. Reusing one map
         // would repeat a single iteration order rather than sample several.

@@ -14,8 +14,8 @@ use uuid::Uuid;
 pub struct DistributorSnapshot {
     /// Current rank name. Always a rank the loaded plan defines.
     ///
-    /// The empty string is rejected, so "exists, but unranked" cannot be
-    /// said. Saying it needs a chosen representation and a protocol bump.
+    /// "Exists, but unranked" therefore cannot be said. Expressing it needs
+    /// a new representation and a protocol bump.
     pub rank: String,
 
     /// Personal volume generated this period.

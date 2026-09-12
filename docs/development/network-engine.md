@@ -107,6 +107,44 @@ The general shape: asserting a result is non-empty proves something ran, not tha
 
 Deleting the guard and re-running is cheap and it is the only way to know. Do it for any test whose name makes a claim about what did not happen.
 
+### One test can be the only thing holding several guards
+
+Deleting a guard tells you whether *a* test catches it. It does not tell you
+*which*, and the answer is sometimes "one test carries four checks."
+
+`Arena::validate_restored` checks four edge fields. Two have a dedicated test
+naming them. The `sponsor` and `sponsored` checks are killed only by
+`validate_restored_checks_every_edge_field`, the loop that walks all four. Two
+plausible-looking single-field tests in its place would have left both
+unprotected, and every remaining test would still pass.
+
+So when a guard dies, note how many tests died with it. A guard killed by
+exactly one test whose name does not mention it is a guard with no owner.
+
+### A guard on the wrong property reports coverage it does not have
+
+Worse than no guard, because it reads as proof.
+
+A round-trip test named for a matrix holding-tank entry asserted four users
+placed under the root. That is true whether or not the tank holds anything: it
+proves the fixture built, not that the state the test is named for was reached.
+The tank was empty on both sides of the round trip, so the comparison was one
+empty array against another and passed regardless.
+
+Point the guard at the state in the test's name, not at a side effect of
+building the fixture.
+
+### An acceptance test can go vacuous where a rejection test cannot
+
+A rejection test that stops reaching its state starts failing, because the
+absence of the error is the failure. An acceptance test that stops reaching its
+state keeps passing, because two empty things match.
+
+That asymmetry means a green rejection test is evidence about itself and a green
+acceptance test is not. Ask of every acceptance test: if the fixture stopped
+producing the state in this test's name, would it still pass? If yes, the test
+needs a guard on that state, checked before the thing under test runs.
+
 ### Property-based tests (proptest)
 
 Every tree type must have these six property tests:

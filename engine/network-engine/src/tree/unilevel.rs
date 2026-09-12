@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use super::arena::Arena;
 use super::error::TreeError;
-use super::node::{Node, NodeIndex};
+use super::node::{Node, NodeIndex, Responsored};
 use crate::snapshot::SnapshotConsistencyError;
 use crate::types::TreePosition;
 
@@ -112,7 +112,7 @@ impl UnilevelTree {
     ///
     /// The removed slot is added to the free list for reuse by the
     /// next `add_root` or `add_node` call.
-    pub fn remove_node(&mut self, user_id: Uuid) -> Result<(), TreeError> {
+    pub fn remove_node(&mut self, user_id: Uuid) -> Result<Vec<Responsored>, TreeError> {
         let idx = self.arena.resolve(user_id)?;
         let child_count = self.arena.node(idx).children.len();
 
@@ -142,10 +142,10 @@ impl UnilevelTree {
             self.arena.root = None;
         }
 
-        self.arena.reparent_sponsored(&[idx]);
+        let moved = self.arena.reparent_sponsored(&[idx]);
         self.arena.index.remove(&user_id);
         self.arena.tombstone(idx);
-        Ok(())
+        Ok(moved)
     }
 
     /// Computes a full position snapshot for a user.
@@ -905,6 +905,38 @@ mod tests {
         assert_eq!(tree.validate_restored(), Ok(()));
         let sponsor = tree.get_sponsor(test_uuid(3)).unwrap().unwrap();
         assert_eq!(sponsor.user_id, test_uuid(1));
+    }
+
+    #[test]
+    fn removal_reports_the_users_it_re_sponsored() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 1)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), test_uuid(2), 2)
+            .unwrap();
+
+        let moved = tree.remove_node(test_uuid(2)).unwrap();
+
+        assert_eq!(
+            moved,
+            vec![Responsored {
+                user_id: test_uuid(3),
+                new_sponsor_id: test_uuid(1),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_removal_that_moves_nobody_reports_an_empty_list() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 1)
+            .unwrap();
+
+        let moved = tree.remove_node(test_uuid(2)).unwrap();
+
+        assert!(moved.is_empty());
     }
 
     #[test]

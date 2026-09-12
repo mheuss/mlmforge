@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use super::arena::Arena;
 use super::error::TreeError;
-use super::node::{Node, NodeIndex};
+use super::node::{Node, NodeIndex, Responsored};
 use crate::config::matrix::SpilloverDirection;
 use crate::snapshot::SnapshotConsistencyError;
 use crate::types::TreePosition;
@@ -26,6 +26,7 @@ pub struct RemovalResult {
     pub promoted: Option<Uuid>,
     pub repositioned: Vec<Uuid>,
     pub moved_to_tank: Vec<Uuid>,
+    pub responsored: Vec<Responsored>,
 }
 
 /// Pruning mode for matrix node removal.
@@ -403,12 +404,13 @@ impl MatrixTree {
 
         // Leaf node: simple removal.
         if occupied_children.is_empty() {
-            self.detach_and_tombstone(idx, user_id, parent_idx, parent_slot_pos);
+            let responsored = self.detach_and_tombstone(idx, user_id, parent_idx, parent_slot_pos);
             return Ok(RemovalResult {
                 removed: user_id,
                 promoted: None,
                 repositioned: Vec::new(),
                 moved_to_tank: Vec::new(),
+                responsored,
             });
         }
 
@@ -496,7 +498,7 @@ impl MatrixTree {
                 .sponsored
                 .retain(|&s| s != idx);
         }
-        self.arena.reparent_sponsored(&[idx]);
+        let responsored = self.arena.reparent_sponsored(&[idx]);
         self.slots.remove(&idx);
         self.arena.index.remove(&user_id);
         self.arena.tombstone(idx);
@@ -509,6 +511,7 @@ impl MatrixTree {
             promoted: Some(promoted_user_id),
             repositioned: repositioned_ids,
             moved_to_tank: Vec::new(),
+            responsored,
         })
     }
 
@@ -549,7 +552,7 @@ impl MatrixTree {
         removed_set.extend(&descendants);
 
         self.arena.check_sponsored_removable(&removed_set)?;
-        self.arena.reparent_sponsored(&removed_set);
+        let responsored = self.arena.reparent_sponsored(&removed_set);
 
         // Pass 1: Build holding tank entries while all nodes are still live.
         // Sponsor user_ids must be resolved before any tombstoning.
@@ -628,6 +631,7 @@ impl MatrixTree {
             promoted: None,
             repositioned: Vec::new(),
             moved_to_tank,
+            responsored,
         })
     }
 
@@ -730,7 +734,7 @@ impl MatrixTree {
         user_id: Uuid,
         parent_idx: NodeIndex,
         parent_slot_pos: usize,
-    ) {
+    ) -> Vec<Responsored> {
         // Clear parent slot.
         let parent_slots = self
             .slots
@@ -746,12 +750,13 @@ impl MatrixTree {
                 .sponsored
                 .retain(|&s| s != idx);
         }
-        self.arena.reparent_sponsored(&[idx]);
+        let moved = self.arena.reparent_sponsored(&[idx]);
 
         // Tombstone.
         self.slots.remove(&idx);
         self.arena.index.remove(&user_id);
         self.arena.tombstone(idx);
+        moved
     }
 
     /// Recalculates depth for a node and all its descendants via BFS.

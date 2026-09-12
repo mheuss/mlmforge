@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::error::TreeError;
-use super::node::{Node, NodeIndex};
+use super::node::{Node, NodeIndex, Responsored};
 use crate::snapshot::SnapshotConsistencyError;
 use crate::types::TreePosition;
 
@@ -442,8 +442,8 @@ impl Arena {
     }
 
     /// Moves the recruits of every node in `removed` onto their nearest
-    /// surviving sponsor.
-    pub(crate) fn reparent_sponsored(&mut self, removed: &[NodeIndex]) {
+    /// surviving sponsor, and reports who moved.
+    pub(crate) fn reparent_sponsored(&mut self, removed: &[NodeIndex]) -> Vec<Responsored> {
         debug_assert!(
             {
                 let mut seen = HashSet::new();
@@ -475,15 +475,21 @@ impl Arena {
             })
             .collect();
 
+        let mut moved = Vec::new();
         for (idx, survivors, target) in plan {
             for s in survivors {
                 self.nodes[s.0].sponsor = target;
                 if let Some(target_idx) = target {
                     self.nodes[target_idx.0].sponsored.push(s);
+                    moved.push(Responsored {
+                        user_id: self.nodes[s.0].user_id,
+                        new_sponsor_id: self.nodes[target_idx.0].user_id,
+                    });
                 }
             }
             self.nodes[idx.0].sponsored.clear();
         }
+        moved
     }
 
     /// Counts the recruits of `idx` that are not themselves in `removed`.

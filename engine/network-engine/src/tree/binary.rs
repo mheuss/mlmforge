@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use super::arena::Arena;
 use super::error::TreeError;
-use super::node::{Node, NodeIndex};
+use super::node::{Node, NodeIndex, Responsored};
 use crate::snapshot::SnapshotConsistencyError;
 use crate::types::TreePosition;
 
@@ -173,7 +173,7 @@ impl BinaryTree {
     ///
     /// The removed slot is added to the free list for reuse by the
     /// next `add_root` or `add_node` call.
-    pub fn remove_node(&mut self, user_id: Uuid) -> Result<(), TreeError> {
+    pub fn remove_node(&mut self, user_id: Uuid) -> Result<Vec<Responsored>, TreeError> {
         let idx = self.arena.resolve(user_id)?;
         let child_count = self.arena.node(idx).children.len();
 
@@ -207,11 +207,11 @@ impl BinaryTree {
             self.arena.root = None;
         }
 
-        self.arena.reparent_sponsored(&[idx]);
+        let moved = self.arena.reparent_sponsored(&[idx]);
         self.slots.remove(&idx);
         self.arena.index.remove(&user_id);
         self.arena.tombstone(idx);
-        Ok(())
+        Ok(moved)
     }
 
     /// Rebuilds a node's children Vec from its binary slots.

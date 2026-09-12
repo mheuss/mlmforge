@@ -999,3 +999,53 @@ Read a `validate_restored` docblock as the boundary of what that arm proves. An
 arm that proves less than its name suggests is the failure this file already
 describes one section up: a guard on the wrong property reports coverage it does
 not have, and reads as proof.
+
+## A Counting Method That Tracks The Truth Loosely Is Worse Than One Obviously Wrong
+
+`grep -c '#\[error("'` over `snapshot.rs` was used to count error variants. It
+returned 25 when the answer was 34, because nine variants wrap the message onto
+the next line and the pattern requires the quote on the same line as the
+attribute.
+
+The number was then handed to a reviewer as part of its brief.
+
+After three variants were added, the same grep returns 26 against a true 37. It
+moved in the right direction and stayed wrong. A method that drifts with the
+truth reads as working, which is what makes it harder to catch than one that
+returns something absurd.
+
+Count enum variants by pairing each attribute to the identifier that follows it,
+or by counting the identifiers directly. Confirm only one enum in the file
+carries the attribute, or you are counting two things and reporting one.
+
+## The MSRV Is Not Enforced, And Knowing That Does Not Protect You
+
+`rust-version = "1.85.0"` is declared in both engine crates. CI installs
+`dtolnay/rust-toolchain@stable`. Nothing compiles the workspace against the
+declared version, so a syntax feature newer than 1.85 reaches a commit and
+passes every gate. `clippy::incompatible_msrv` covers std APIs, not syntax.
+
+Let-chains, `if let Some(x) = y && cond`, are the ones that keep landing. They
+need 1.88.
+
+Awareness is not the mitigation. The ticket documenting this gap was written,
+and the same fault was reproduced in a new guard about two hours later on the
+same branch, caught by reading rather than by any gate. Write the nested `if`.
+HEU-745 holds the fix.
+
+## A Reviewer Pointed At A Worktree Reports On The Worktree
+
+A long-lived branch drifts behind its base. A file the branch never touches can
+be corrected upstream while the branch keeps the old copy.
+
+A reviewer reading that branch quotes the old copy accurately and reports a real
+defect. Someone checking from the main checkout quotes the corrected copy,
+accurately, and concludes the reviewer misread. Both are right about their own
+tree and the disagreement is about which tree, not about the sentence.
+
+This cost a round trip on HEU-706. The finding was a version banner that was
+stale on the branch and already fixed on `main` by two commits the branch's base
+predated. The rebase resolved it with no commit.
+
+When a finding cites a file, check it in the tree the finding came from, and say
+which tree in the answer.

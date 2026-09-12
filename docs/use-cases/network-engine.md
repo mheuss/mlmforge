@@ -762,7 +762,7 @@ PY
 
 go test ./internal/networkengine/ -run TestWireTypesNarrowMirrors -v > "$T/base.txt" 2>&1 \
   || { cat "$T/base.txt"; echo "baseline is not green, aborting"; exit 1; }
-grep -oP '(?<=    --- PASS: TestWireTypesNarrowMirrors/)\S+' "$T/base.txt" > "$T/rows.txt"
+awk '/--- PASS: TestWireTypesNarrowMirrors\// {sub(/^.*TestWireTypesNarrowMirrors\//, ""); print $1}' "$T/base.txt" > "$T/rows.txt"
 [ -s "$T/rows.txt" ] || { echo "no rows collected, aborting"; exit 1; }
 echo "sweeping $(wc -l < "$T/rows.txt") rows"
 

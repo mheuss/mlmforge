@@ -975,3 +975,27 @@ explicitly typed literal such as `map[string]int{...}`.
 
 HEU-606 narrowed 14 wire DTO fields. Two breaks were compile errors and six were
 run-time assertion failures, so building was not enough to find them.
+
+## `validate_restored` Checks Each Structure Alone, Not That They Agree
+
+The arena walks its two structures against each other in both directions. The
+index is checked against the nodes, and the nodes are checked back against the
+index. An adversarial review threw roughly fifteen forged index shapes at it and
+every one was rejected.
+
+The four arms above the arena do not do that for their own pair. Each holds a
+second structure beside the arena. Each checks that structure's entries are in
+range and live. None checks that the two agree with each other.
+
+So a restored matrix can hold a child in `Node.children` while every parent slot
+is empty, and a restored board can seat an occupant the membership index does
+not name. Both pass validation today.
+
+**The gap is recorded in the docblock of each arm that has it, and owned by
+HEU-750.** The streamline arm is not one of them. Its pair is checked in both
+directions, which is what HEU-706 did.
+
+Read a `validate_restored` docblock as the boundary of what that arm proves. An
+arm that proves less than its name suggests is the failure this file already
+describes one section up: a guard on the wrong property reports coverage it does
+not have, and reads as proof.

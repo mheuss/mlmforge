@@ -88,7 +88,11 @@ impl BoardPlanEngine {
         })
     }
 
-    /// Prove a restored engine's stored state is internally consistent.
+    /// Prove a restored engine's stored values are in range and its membership
+    /// index names seats that hold the member.
+    ///
+    /// Membership is checked from the index outward only. That every occupant
+    /// of a board has an entry pointing back is not checked. HEU-750.
     ///
     /// `sponsor_map` is deliberately not checked. It is permanent enrollment
     /// data that keeps removed members so re-entry can still route them, so it

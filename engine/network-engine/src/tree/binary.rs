@@ -40,6 +40,9 @@ impl BinaryTree {
 
     /// Prove a restored tree's stored indexes are in range and live, and that
     /// every live node has a child slot entry.
+    ///
+    /// The slot map and the arena edges are each checked alone. That the two
+    /// agree is not checked. HEU-750.
     pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
         self.arena.validate_restored()?;
         // Keep the lowest-slot fault rather than returning on the first one

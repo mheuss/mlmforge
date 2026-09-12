@@ -1056,10 +1056,15 @@ mod tests {
         for n in 2..=12u8 {
             tree.add_node(test_uuid(n), test_uuid(1), n as i64).unwrap();
         }
-        // Sponsored by the node this test removes, placed outside its subtree
-        // by explicit placement, so a sponsor edge outlives its target.
+        // Sponsored by the node this test removes, so a sponsor edge outlives
+        // its target.
         tree.add_node_at(test_uuid(13), test_uuid(12), test_uuid(6), 1, 13)
             .unwrap();
+        assert!(
+            tree.get_node(test_uuid(12)).unwrap().children.is_empty(),
+            "12 must be childless, or the removal reaches its own sponsee"
+        );
+
         tree.remove_node(test_uuid(12), PruningMode::PromoteEarliest)
             .unwrap();
         assert!(
@@ -1069,7 +1074,11 @@ mod tests {
 
         // The production entry point, not just the slot walk. Without this
         // the guards are never run against engine output.
-        assert_eq!(tree.validate_restored(), Ok(()));
+        assert_eq!(
+            tree.validate_restored(),
+            Ok(()),
+            "a sponsor edge outliving its target must not survive the removal"
+        );
         crate::tree::test_helpers::assert_live_nodes_are_slotted_once(&tree.arena, &tree.slots);
     }
 

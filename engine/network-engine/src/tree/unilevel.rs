@@ -916,10 +916,17 @@ mod tests {
         tree.add_node(test_uuid(3), test_uuid(1), test_uuid(2), 2)
             .unwrap();
 
+        let before = tree.get_sponsor(test_uuid(3)).unwrap().unwrap();
+        assert_eq!(before.user_id, test_uuid(2));
+
         tree.remove_node(test_uuid(2)).unwrap();
-        // alloc_slot pops the free list, so this takes node 2's old slot.
         tree.add_node(test_uuid(4), test_uuid(1), test_uuid(1), 3)
             .unwrap();
+        assert_eq!(
+            tree.arena.nodes.len(),
+            3,
+            "4 must land in the slot 2 vacated, or this tests nothing about reuse"
+        );
 
         assert_eq!(tree.validate_restored(), Ok(()));
         let sponsor = tree.get_sponsor(test_uuid(3)).unwrap().unwrap();

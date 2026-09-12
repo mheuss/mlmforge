@@ -605,7 +605,11 @@ mod tests {
 
         // The production entry point, not just the slot walk. Without this
         // the guards are never run against engine output.
-        assert_eq!(tree.validate_restored(), Ok(()));
+        assert_eq!(
+            tree.validate_restored(),
+            Ok(()),
+            "a sponsor edge outliving its target must not survive the removal"
+        );
         crate::tree::test_helpers::assert_live_nodes_are_slotted_once(&tree.arena, &tree.slots);
     }
 

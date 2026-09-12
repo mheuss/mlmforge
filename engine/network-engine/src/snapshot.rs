@@ -101,6 +101,18 @@ pub enum SnapshotConsistencyError {
     #[error("the child slot map names node slot {slot}; that slot is a tombstone")]
     ChildSlotTombstoned { slot: usize },
 
+    #[error("node slot {slot} holds {user_id}; no parent's child slots name it")]
+    LiveNodeNotSlotted { slot: usize, user_id: Uuid },
+
+    #[error(
+        "node slot {slot} is a child of node slot {first_parent} and of node slot {second_parent}"
+    )]
+    ChildSlotRepeated {
+        slot: usize,
+        first_parent: usize,
+        second_parent: usize,
+    },
+
     #[error("node slot {slot} holds {user_id}; the child slot map has no entry for it")]
     SlotEntryMissing { slot: usize, user_id: Uuid },
 

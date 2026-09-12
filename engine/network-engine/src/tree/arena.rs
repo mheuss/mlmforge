@@ -227,6 +227,67 @@ impl Arena {
         Ok(())
     }
 
+    /// Prove every live non-root node is a child in exactly one slot entry.
+    pub(crate) fn check_every_live_node_is_slotted_once<C>(
+        &self,
+        slots: &HashMap<NodeIndex, C>,
+    ) -> Result<(), SnapshotConsistencyError>
+    where
+        for<'a> &'a C: IntoIterator<Item = &'a Option<NodeIndex>>,
+    {
+        // Reads the slot map and node liveness only. Comparing a slot entry
+        // against Node.parent or Node.children is a different check.
+        //
+        // Lowest child slot wins on a repeat, since slots is a HashMap and the
+        // offender must not vary between runs.
+        let mut first_seen: HashMap<NodeIndex, usize> = HashMap::new();
+        let mut repeat: Option<(usize, SnapshotConsistencyError)> = None;
+        for (parent, children) in slots {
+            for child in children.into_iter().flatten() {
+                match first_seen.get(child) {
+                    None => {
+                        first_seen.insert(*child, parent.0);
+                    }
+                    Some(held) => {
+                        let (first_parent, second_parent) = if *held < parent.0 {
+                            (*held, parent.0)
+                        } else {
+                            (parent.0, *held)
+                        };
+                        if repeat.as_ref().is_none_or(|(slot, _)| child.0 < *slot) {
+                            repeat = Some((
+                                child.0,
+                                SnapshotConsistencyError::ChildSlotRepeated {
+                                    slot: child.0,
+                                    first_parent,
+                                    second_parent,
+                                },
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        if let Some((_, err)) = repeat {
+            return Err(err);
+        }
+
+        // self.nodes is a Vec, so this walks in slot order and the first miss
+        // is the same one on every run.
+        for (slot, node) in self.nodes.iter().enumerate() {
+            if node.user_id == Uuid::nil() || self.root == Some(NodeIndex(slot)) {
+                continue;
+            }
+            if !first_seen.contains_key(&NodeIndex(slot)) {
+                return Err(SnapshotConsistencyError::LiveNodeNotSlotted {
+                    slot,
+                    user_id: node.user_id,
+                });
+            }
+        }
+        Ok(())
+    }
+
     fn check_edge(
         &self,
         field: &'static str,

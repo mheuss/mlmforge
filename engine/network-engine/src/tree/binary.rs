@@ -69,6 +69,8 @@ impl BinaryTree {
         // A live node with no entry passes every check above and then panics
         // on the next query rather than returning a wrong answer.
         self.arena.check_every_live_node_has_a_slot(&self.slots)?;
+        self.arena
+            .check_every_live_node_is_slotted_once(&self.slots)?;
         Ok(())
     }
 
@@ -369,6 +371,74 @@ mod tests {
         let (tree, _) = binary_pair();
 
         assert_eq!(tree.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_live_node_no_parent_slots() {
+        let (mut tree, child) = binary_pair();
+        for children in tree.slots.values_mut() {
+            for slot in children.iter_mut() {
+                if *slot == Some(child) {
+                    *slot = None;
+                }
+            }
+        }
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::LiveNodeNotSlotted {
+                slot: child.0,
+                user_id: test_uuid(2),
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_child_in_two_parent_slots() {
+        let (mut tree, child) = binary_pair();
+        tree.add_node(test_uuid(3), test_uuid(1), 1, test_uuid(1), 0)
+            .unwrap();
+        let other_parent = tree.arena.resolve(test_uuid(3)).unwrap();
+        tree.slots.get_mut(&other_parent).unwrap()[0] = Some(child);
+
+        assert!(
+            matches!(
+                tree.validate_restored(),
+                Err(SnapshotConsistencyError::ChildSlotRepeated { slot, .. }) if slot == child.0
+            ),
+            "expected ChildSlotRepeated naming slot {}, got {:?}",
+            child.0,
+            tree.validate_restored()
+        );
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_unslotted_node_every_run() {
+        // The constructor is inside the loop. One tree repeats its own map
+        // order, so looping over a single instance proves nothing.
+        for _ in 0..64 {
+            let (mut tree, low) = binary_pair();
+            tree.add_node(test_uuid(3), test_uuid(1), 1, test_uuid(1), 0)
+                .unwrap();
+            let high = tree.arena.resolve(test_uuid(3)).unwrap();
+            assert!(low.0 < high.0, "the fixture must put the lower slot first");
+            for children in tree.slots.values_mut() {
+                for slot in children.iter_mut() {
+                    if *slot == Some(low) || *slot == Some(high) {
+                        *slot = None;
+                    }
+                }
+            }
+
+            assert_eq!(
+                tree.validate_restored(),
+                Err(SnapshotConsistencyError::LiveNodeNotSlotted {
+                    slot: low.0,
+                    user_id: test_uuid(2),
+                }),
+                "the lowest slot should win regardless of hash order"
+            );
+        }
     }
 
     #[test]

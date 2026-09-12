@@ -699,40 +699,40 @@ Call-site detail for the generation calculators lives in UC-NET-003 and UC-NET-0
 
 **Problem:** `TestWireTypesNarrowMirrors` pins wire DTO widths against a
 hand-written list. The list was built by searching Go for narrowly-typed fields.
-That search finds only fields that are still narrow, so a mirror that had
-already widened to `int` was invisible to the method meant to catch it.
+That search finds only fields that are still narrow. A mirror that had already
+widened to `int` was invisible to the method meant to catch it.
 
 The list read as complete while 18 rows were missing. Fourteen of those pinned
-fields the search could not have found, because they had already widened. The
+fields the search could not have found. They had already widened. The
 other four were still narrow and had simply never been added. Only the first
 group is evidence about the method.
 
 **Solution:** Build the list from the reference side. Walk the narrow fields of
-the Rust wire types and pair each one with its Go counterpart, rather than
-walking Go and asking which fields look narrow. Fields the pairing shows as
+the Rust wire types and pair each one with its Go counterpart. Do not walk Go
+and ask which fields look narrow. Fields the pairing shows as
 widened get narrowed first, then pinned.
 
 Rust `usize` is the case to exclude deliberately. Go `int` is the correct mirror
-for it, so `position`, `child_count`, `member_count`, `filled_count`,
+for it. `position`, `child_count`, `member_count`, `filled_count`,
 `total_positions`, `filled_positions` and `volume_index` are not drift. Sorting
-those out is most of the work, and getting it wrong in the other direction
-narrows a field that was already right.
+those out is most of the work. Getting it wrong in the other direction narrows
+a field that was already right.
 
 **Verifying it:** widen each pinned field and confirm that row's subtest fails.
 A row that still passes is pinning nothing. Sweep every row rather than
-sampling, which is what makes the guard's coverage a measurement instead of an
+sampling. That is what makes the guard's coverage a measurement instead of an
 assumption.
 
-Separate a build failure from a test failure. Both print `FAIL`, and a
-mutation that breaks a caller never runs the test at all, so counting it as
-caught overstates what was measured. That case is not a pass and not a defect.
-It means the compiler guards that field too, and this mutation cannot reach the
+Separate a build failure from a test failure. Both print `FAIL`. A mutation
+that breaks a caller never runs the test at all. Counting it as caught
+overstates what was measured. That case is not a pass and not a defect.
+It means the compiler guards that field too. This mutation cannot reach the
 row.
 
 When a row comes back that way, retry it with a target type that keeps the
 callers compiling instead of `int`. On this table a plain `int` widening leaves
-seven rows unproven. Choosing the type per row narrows that to two, and those
-two only compile again after a wider refactor.
+seven rows unproven. Choosing the type per row narrows that to two. Those two
+only compile again after a wider refactor.
 
 Run from the repo root, on a clean tree. Interrupting the loop leaves the file
 mutated.
@@ -776,7 +776,7 @@ done < "$T/rows.txt"
 rm -rf "$T"
 ```
 
-A `NOT PINNED` line is a defect. A `COMPILER CAUGHT IT` line is not, but it
+A `NOT PINNED` line is a defect. A `COMPILER CAUGHT IT` line is not. It
 means that row is still unmeasured.
 
 **When to use this pattern:**
@@ -786,6 +786,5 @@ means that row is still unmeasured.
 **Notes:** The search direction is the whole point. A count taken over the wrong
 population looks identical to a complete one. The AST drift scan (HEU-544)
 removes the hand-maintained list and is the longer-term answer. This pattern is
-what to do until then, and for any list a scan does not cover. The config side
-solves the same problem with a manifest rather than a scan, and that is
-UC-NET-011.
+what to do until then. Use it for any list a scan does not cover. The config side
+solves the same problem with a manifest rather than a scan. That is UC-NET-011.

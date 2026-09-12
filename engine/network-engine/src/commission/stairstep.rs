@@ -1252,12 +1252,12 @@ mod tests {
     }
 
     #[test]
-    fn missing_snapshot_ancestor_does_not_block_walk() {
-        // Tree: 0 -> 1 -> 2 -> 3
-        // No breakaway config. Node 1 has no snapshot.
-        // Walk from node 3: node 2 earns at level 1, node 1 is skipped
-        // (no snapshot = ineligible), node 0 earns at level 3.
-        // The walk must not treat node 1 as a group boundary.
+    fn missing_snapshot_ancestor_errors() {
+        // Tree: 0 -> 1 -> 2 -> 3, volume from node 3, node 1 has no snapshot.
+        // With no breakaway config the whole chain goes through Walk 1, so
+        // node 1 reaches the shared walk's snapshot lookup. Give this plan a
+        // breakaway and node 1 can end up above the boundary, where Walk 2
+        // still skips it silently — see HEU-727.
         let tree = build_chain(4);
         let mut structure = test_stairstep_structure();
         structure.breakaway = None;
@@ -1281,17 +1281,12 @@ mod tests {
             &snapshots,
             &volume,
             &crate::test_support::test_plan_identity(),
-        )
-        .unwrap()
-        .earnings;
-
-        // Node 0 should still earn despite node 1 missing a snapshot.
-        let earner_ids: Vec<Uuid> = result.iter().map(|e| e.earner_id).collect();
-        assert!(
-            earner_ids.contains(&uuid(0)),
-            "node 0 should earn — missing snapshot on node 1 must not block the walk"
         );
-        assert!(earner_ids.contains(&uuid(2)));
+
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::UplineNotInSnapshot(uuid(1))
+        );
     }
 
     #[test]

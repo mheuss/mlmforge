@@ -451,8 +451,9 @@ impl Arena {
             },
             "removed holds a duplicate index, which would move its survivors twice"
         );
-        // Resolve every target before moving anything, so nothing is half
-        // repaired if the walk finds a chain that does not terminate.
+        // Resolve every target before moving anything. The apply loop writes
+        // the sponsor field this walk reads, so folding the two together
+        // would change the answer for later entries.
         let plan: Vec<(NodeIndex, Vec<NodeIndex>, Option<NodeIndex>)> = removed
             .iter()
             .map(|&idx| {
@@ -1562,9 +1563,6 @@ mod tests {
 
     #[test]
     fn a_cycle_with_no_survivors_to_move_does_not_panic_the_repair() {
-        // check_sponsored_removable skips the chain walk for a node with no
-        // surviving recruits, so the repair must skip it too or it panics on
-        // a node the check passed.
         let mut arena = Arena::new();
         let a = arena.alloc_slot(make_node(test_uuid(1), None, 0));
         let b = arena.alloc_slot(make_node(test_uuid(2), Some(a), 1));

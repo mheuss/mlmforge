@@ -52,6 +52,18 @@ func TestRankNegativeOrdinalRejected(t *testing.T) {
 	}
 }
 
+func TestAscendingNegativeOrdinalsAreNotAnOrderingViolation(t *testing.T) {
+	plan := minimalPlan()
+	plan.Ranks[0].Ordinal = -5
+	plan.Ranks[1].Ordinal = -1
+
+	errs := validateBusinessRules(plan)
+	require.Len(t, errs, 2)
+	for _, e := range errs {
+		assert.Equal(t, "value_out_of_range", e.Code)
+	}
+}
+
 func TestRankOrdinalZeroAfterFirstFailsBothChecks(t *testing.T) {
 	plan := minimalPlan()
 	plan.Ranks[1].Ordinal = 0

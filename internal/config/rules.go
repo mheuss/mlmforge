@@ -286,7 +286,8 @@ func validateRanks(plan *CompensationPlan, structs map[string]bool) []Validation
 
 	// Ordinals must be strictly ascending with no duplicates.
 	seen := make(map[int]string, len(plan.Ranks))
-	prevOrdinal := -1
+	prevOrdinal := 0
+	hasPrev := false
 	for i, r := range plan.Ranks {
 		if r.Ordinal < 1 {
 			errs = append(errs, ValidationError{
@@ -303,7 +304,7 @@ func validateRanks(plan *CompensationPlan, structs map[string]bool) []Validation
 				Message:  fmt.Sprintf("rank %q has duplicate ordinal %d (same as %q)", r.Name, r.Ordinal, existing),
 				Severity: SeverityError,
 			})
-		} else if i > 0 && r.Ordinal <= prevOrdinal {
+		} else if hasPrev && r.Ordinal <= prevOrdinal {
 			errs = append(errs, ValidationError{
 				Path:     fmt.Sprintf("/ranks/%d/ordinal", i),
 				Code:     "ordering_violation",
@@ -312,9 +313,8 @@ func validateRanks(plan *CompensationPlan, structs map[string]bool) []Validation
 			})
 		}
 		seen[r.Ordinal] = r.Name
-		if r.Ordinal > prevOrdinal {
-			prevOrdinal = r.Ordinal
-		}
+		prevOrdinal = r.Ordinal
+		hasPrev = true
 
 		// qualified_structures must reference defined structures.
 		for j, qs := range r.QualifiedStructures {

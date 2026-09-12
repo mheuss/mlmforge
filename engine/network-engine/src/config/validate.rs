@@ -140,8 +140,7 @@ impl CompensationPlan {
         Ok(())
     }
 
-    /// Reject an empty rank name or an ordinal below 1. Uniqueness of either
-    /// is not checked here.
+    /// Reject an empty rank name or an ordinal below 1.
     fn check_rank_name_and_ordinal_floor(&self) -> Result<(), String> {
         for (idx, rank) in self.ranks.iter().enumerate() {
             if rank.name.is_empty() {

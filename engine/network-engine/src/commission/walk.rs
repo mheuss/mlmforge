@@ -1455,7 +1455,7 @@ mod tests {
         let config = test_walk_config(&rank_ordinals, &rate_table);
         assert!(
             config.compression.is_none() && config.dynamic_thresholds.is_none(),
-            "config carries no compression and no dynamic thresholds"
+            "expected config to carry no compression and no dynamic thresholds"
         );
 
         let volume = vec![VolumeSource {

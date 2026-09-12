@@ -18,9 +18,6 @@ pub fn test_uuid_u16(n: u16) -> Uuid {
 }
 
 /// Asserts every live non-root node is a slot child exactly once.
-///
-/// Counts independently instead of calling the production check, so a defect
-/// in that check cannot pass both it and this.
 pub(crate) fn assert_live_nodes_are_slotted_once<C>(
     arena: &crate::tree::arena::Arena,
     slots: &std::collections::HashMap<crate::tree::node::NodeIndex, C>,

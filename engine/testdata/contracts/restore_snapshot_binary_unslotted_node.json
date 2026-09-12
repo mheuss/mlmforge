@@ -1,5 +1,5 @@
 {
-    "description": "restore_snapshot rejects a binary snapshot holding a live node that no parent's child slots name, with INCONSISTENT_SNAPSHOT. Cross-language lock for the HEU-750 slice 2 slot agreement check. Before it, check_every_live_node_has_a_slot proved each live node was a slot key and nothing proved it was a slot value, so this payload was accepted and get_branch then disagreed with get_children about the same tree. The payload spells out the Arena and slot shapes by hand, so a new required field on Arena, Node or BinaryTree turns this into a deserialization failure rather than the rejection it tests.",
+    "description": "restore_snapshot rejects a binary snapshot holding a live node that no parent's child slots name, with INCONSISTENT_SNAPSHOT. Cross-language lock for the HEU-750 slice 2 slot agreement check. Before it, check_every_live_node_has_a_slot proved each live node was a slot key. Nothing proved it was a slot value. This payload was accepted. get_branch then disagreed with get_children about the same tree. The payload spells out the Arena and slot shapes by hand. A new required field on Arena, Node or BinaryTree turns this into a deserialization failure rather than the rejection it tests.",
     "request": {
         "id": "rs-binary-unslotted",
         "op": "restore_snapshot",

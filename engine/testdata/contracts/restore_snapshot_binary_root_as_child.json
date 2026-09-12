@@ -1,5 +1,5 @@
 {
-    "description": "restore_snapshot rejects a binary snapshot whose child slot map names the root as a child, with INCONSISTENT_SNAPSHOT. Cross-language lock for the HEU-750 slice 2 root check. Before it, the completeness walk skipped the root as a key and nothing rejected the root as a value, so this payload was accepted and count_branch then reported two nodes in the child's own leg of a two-node tree. The payload spells out the Arena and slot shapes by hand, so a new required field on Arena, Node or BinaryTree turns this into a deserialization failure rather than the rejection it tests.",
+    "description": "restore_snapshot rejects a binary snapshot whose child slot map names the root as a child, with INCONSISTENT_SNAPSHOT. Cross-language lock for the HEU-750 slice 2 root check. Before it, the completeness walk skipped the root as a key. Nothing rejected the root as a value. This payload was accepted. count_branch then reported two nodes in the child's own leg of a two-node tree. The payload spells out the Arena and slot shapes by hand. A new required field on Arena, Node or BinaryTree turns this into a deserialization failure rather than the rejection it tests.",
     "request": {
         "id": "rs-binary-root-as-child",
         "op": "restore_snapshot",

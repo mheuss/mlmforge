@@ -584,10 +584,9 @@ mod tests {
     fn engine_output_slots_every_live_node_exactly_once() {
         let mut tree = BinaryTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
-        // Every node is sponsored by the root, which is never removed. A
-        // sponsor that is itself removed leaves a dangling edge that
-        // validate_restored rejects, so varying this turns the test red on
-        // HEU-766 rather than on the slot agreement it covers.
+        // The sponsor here is the root, which this test never removes.
+        // Varying it risks failing for a reason unrelated to slot agreement
+        // (HEU-766).
         for n in 2..=12u8 {
             let parent = test_uuid(1 + (n - 2) / 2);
             let position = usize::from((n - 2) % 2);

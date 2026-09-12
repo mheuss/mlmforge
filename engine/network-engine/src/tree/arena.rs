@@ -296,8 +296,8 @@ impl Arena {
             };
         }
 
-        // self.nodes is a Vec, so this walks in slot order and the first miss
-        // is the same one on every run.
+        // This loop's order decides which miss gets reported, so keep it in
+        // slot order rather than reordering or filtering first.
         for (slot, node) in self.nodes.iter().enumerate() {
             if node.user_id == Uuid::nil() || self.root == Some(NodeIndex(slot)) {
                 continue;

@@ -120,9 +120,9 @@ impl MatrixTree {
         // Runs after the walk above, so a user who is both placed and repeated
         // is reported as placed, which is the more specific fault.
         //
-        // Returns on the first repeat rather than holding the lowest. The tank
-        // is a Vec, so its order is part of the payload and the same payload
-        // names the same offender.
+        // Returns on the first repeat rather than holding the lowest. This
+        // order is part of the payload, so the same input names the same
+        // offender.
         let mut listed: HashSet<Uuid> = HashSet::new();
         for entry in &self.holding_tank {
             if !listed.insert(entry.user_id) {
@@ -1042,10 +1042,9 @@ mod tests {
     fn engine_output_slots_every_live_node_exactly_once() {
         let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
         tree.add_root(test_uuid(1), 0).unwrap();
-        // Every node is sponsored by the root, which is never removed. A
-        // sponsor that is itself removed leaves a dangling edge that
-        // validate_restored rejects, so varying this turns the test red on
-        // HEU-766 rather than on the slot agreement it covers.
+        // The sponsor here is the root, which this test never removes.
+        // Varying it risks failing for a reason unrelated to slot agreement
+        // (HEU-766).
         for n in 2..=12u8 {
             tree.add_node(test_uuid(n), test_uuid(1), n as i64).unwrap();
         }
@@ -1188,9 +1187,6 @@ mod tests {
 
     #[test]
     fn validate_restored_accepts_a_tree_after_promoting_out_an_internal_node() {
-        // Without this, every restore of a matrix that has lost an internal
-        // node is rejected. Promotion repositions survivors, so it touches
-        // more of the slot map than a leaf removal does.
         let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
         tree.add_root(test_uuid(1), 0).unwrap();
         for n in 2..=8u8 {

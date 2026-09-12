@@ -84,7 +84,7 @@ This decision was the reverse until 2026-09-10. Upline nodes missing from snapsh
 
 > **Decided, and not yet fully in force.** The decision above is what the engine is being moved to, not a description of what it does in every case right now.
 >
-> Four tickets implement it and each carries its own protocol version, so **the version the worker reports is what tells you how far it has got.** HEU-611 at 3 and HEU-608 at 5 have landed. HEU-609 at 6 and HEU-706 at 7 have not. Until a ticket lands, the part of this decision it implements is not in force.
+> Four tickets implement it and each carries its own protocol version, so **the version the worker reports is what tells you how far it has got.** HEU-611 at 3, HEU-608 at 5 and HEU-609 at 6 have landed. HEU-706 at 7 has not. Until a ticket lands, the part of this decision it implements is not in force.
 >
 > This note is deliberately a list of tickets rather than a description of current behaviour. The first version described the behaviour, and one third of it was false within eleven hours of being written and stamped as checked. A ticket landing is one word to delete here; a behaviour changing is a paragraph to re-verify.
 

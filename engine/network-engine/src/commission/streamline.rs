@@ -93,8 +93,8 @@ pub fn calculate_streamline(
     }
 
     // A gap means no threshold was declared for that level. There is no safe
-    // default: 0 pays everyone, and any sentinel is a real ordinal, because
-    // rank ordinals span the whole u16 range (config/rank.rs:29). Refuse.
+    // default here: 0 pays everyone, and every other value gates somebody.
+    // Refuse.
     let thresholds: Vec<u16> = slots
         .into_iter()
         .enumerate()
@@ -568,7 +568,7 @@ mod tests {
     #[test]
     fn monoline_no_rank_gating() {
         let engine = make_engine(3);
-        // All min_rank = "associate" (ordinal 0 = no gating).
+        // All min_rank = "associate", so no level gates anyone out.
         let levels = vec![
             StreamlineLevel {
                 level: 1,

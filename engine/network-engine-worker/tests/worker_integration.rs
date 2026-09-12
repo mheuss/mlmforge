@@ -6785,18 +6785,7 @@ fn streamline_snapshot_round_trip_survives_a_frozen_stream() {
     worker.wait().unwrap();
 }
 
-// ---- HEU-743: what restore_snapshot accepts ---------------------------------
-//
-// Snapshot params stopped going through a `serde_json::Value` on the way in.
-// That moved the accepted payload set in both directions. Both tests below
-// fail against the `Value` path, which is the point of having them: the change
-// is deliberate and protocol 8 carries it.
-
 /// A duplicate struct field in a snapshot payload is rejected.
-///
-/// A `serde_json::Value` collapses duplicate keys while parsing and keeps the
-/// last one, so this used to restore. Raw bytes reach the derived visitor with
-/// both keys present, and it calls that a duplicate field.
 #[test]
 fn restore_snapshot_rejects_a_duplicate_struct_field() {
     let mut worker = common::spawn_worker();
@@ -6831,10 +6820,6 @@ fn restore_snapshot_rejects_a_duplicate_struct_field() {
 
 /// Nesting deeper than serde_json's recursion limit, under a field the tree
 /// type ignores, restores.
-///
-/// Building a `serde_json::Value` for the whole payload used to hit that limit
-/// and fail the request. Capturing the payload as raw bytes does not build one,
-/// so the depth a field the type does not declare is nested to stops mattering.
 #[test]
 fn restore_snapshot_accepts_deep_nesting_under_an_ignored_field() {
     let mut worker = common::spawn_worker();
@@ -6845,7 +6830,7 @@ fn restore_snapshot_accepts_deep_nesting_under_an_ignored_field() {
         .strip_prefix('{')
         .and_then(|d| d.strip_suffix('}'))
         .expect("snapshot data is a JSON object");
-    // 300 is comfortably past serde_json's 128-frame limit.
+    // Deep enough to exceed the parser's nesting limit.
     let junk = format!("{}{}", "[".repeat(300), "]".repeat(300));
     let padded = format!(r#"{{{fields},"junk":{junk}}}"#);
 

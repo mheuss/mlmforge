@@ -205,9 +205,8 @@ The commission ops are `calculate_unilevel`, `calculate_binary_pairing`, `calcul
 
 ### JSON Object Key Order Is Not Part Of The Contract
 
-Object key order in worker responses is **not** stable, **not** an
-interoperability guarantee, and the Go side must not depend on it. Two calls on
-identical state can return different bytes.
+Object key order in worker responses is not stable. It is not an
+interoperability guarantee. The Go side must not depend on it.
 
 Go decodes with `encoding/json` struct tags, which ignore order. A reorder on
 the Rust side is a heads-up that something changed, not a compatibility break.
@@ -224,11 +223,10 @@ For the record, since the mechanism is easy to re-derive wrongly:
 
 So "the worker sorts its keys" is false. It was true of payloads until HEU-743,
 which stopped routing results through `Value` on the way to the wire. Sorting
-was a side effect of that hop, not a decision, and the hop cost several times
-what the bytes did.
+was a side effect of that hop, not a decision. The hop cost several times what
+the bytes did.
 
-The `HashMap` row is the one that surprises, and the size of it is easy to get
-wrong. Rust's default hasher takes a fresh key for every map it builds, not one
+The `HashMap` row is the one that surprises. Its size is easy to get wrong. Rust's default hasher takes a fresh key for every map it builds, not one
 per process. So the variable is the map instance, not the run.
 
 What that means in practice:
@@ -241,20 +239,19 @@ What that means in practice:
   snapshot it came from. Restore builds a new map.
 
 Not reproducible, rather than guaranteed to differ. A different seed does not
-force a different order, and a map small enough will come out the same by
-chance. One matching pair proves nothing.
+force a different order. A map small enough will come out the same by chance. One matching pair proves nothing.
 
 The restore case is the one to remember. Round-tripping a snapshot does not
 reproduce it.
 
 This section covers object key order. Array element order is a separate
-question and is not settled here: an array built from a map's iteration order
-has the same problem, and HEU-757 is where that one lives.
+question. It is not settled here. An array built from a map's iteration order
+has the same problem. HEU-757 is where that one lives.
 
-Nothing consumes those bytes by comparison today. Anything that wants to start
--- content-addressing a snapshot, diffing two of them, hashing one for an
-integrity check -- needs a stable order established first, and the place to do
-that is the engine's own types, not the wire.
+Nothing consumes those bytes by comparison today. Content-addressing a
+snapshot, diffing two of them, and hashing one for an integrity check all need
+a stable order established first. That order belongs in the engine's own types,
+not on the wire.
 
 This was worth stating because it was briefly untrue. Until HEU-648, a
 `serde_json/preserve_order` dev-feature reached the worker through Cargo feature

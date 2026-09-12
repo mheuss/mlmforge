@@ -48,8 +48,7 @@ pub struct Response {
     pub id: String,
     pub ok: bool,
     /// Already-serialized JSON, so a typed result reaches the wire without a
-    /// `serde_json::Value` tree in between, which costs several times what the
-    /// bytes do on a large response.
+    /// `serde_json::Value` tree in between.
     ///
     /// Boxed to keep `Response` under clippy's `large-error-threshold`. See
     /// `response_stays_small_enough_for_clippy`.
@@ -70,12 +69,7 @@ pub struct ErrorPayload {
 }
 
 impl Response {
-    /// Serializes `result` once, here, rather than building a `Value` first.
-    ///
-    /// Generic over the result rather than making `Response` itself generic:
-    /// a generic envelope would make `size_of::<Response>()` depend on the
-    /// largest result type, which is what `response_stays_small_enough_for_clippy`
-    /// exists to catch.
+    /// Serializes `result` into raw JSON and stores it on the response.
     pub fn success<T: Serialize>(id: String, result: T) -> Self {
         Self {
             id,

@@ -23,9 +23,7 @@ struct Snapshot<'a> {
 ///
 /// Params: structure.
 ///
-/// Serialization failure returns `SERIALIZATION_ERROR` rather than panicking,
-/// so the caller is told what failed instead of getting a generic internal
-/// error. Keep the arm.
+/// Do not replace the `SERIALIZATION_ERROR` arm with an `expect`.
 pub(crate) fn handle_take_snapshot(state: &WorkerState, request: &Request) -> Response {
     let params = match parse_params(request) {
         Ok(p) => p,

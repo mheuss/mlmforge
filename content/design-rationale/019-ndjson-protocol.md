@@ -64,7 +64,7 @@ The Rust `Request` struct deserializes `params` as `Box<serde_json::value::RawVa
 
 ### Error Code Taxonomy
 
-The worker returns an error code in the `error.code` field. There are 42 of
+The worker returns an error code in the `error.code` field. There are 43 of
 them, grouped below by the area that raises them. Codes are shared across areas
 where the condition is the same, so each one is listed once.
 
@@ -129,6 +129,7 @@ which maps every `TreeError` variant, plus a few handler-level checks.
 | `CALCULATION_ERROR` | Commission calculation failed (bad input data) |
 | `EVALUATION_ERROR` | Rank evaluation failed, including non-convergence |
 | `SERIALIZATION_ERROR` | Snapshot could not be serialized |
+| `INCONSISTENT_SNAPSHOT` | Snapshot data deserialized and then disagreed with itself |
 
 **Protocol.**
 

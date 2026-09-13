@@ -96,6 +96,118 @@ The deploying client picks one.
 requirements in this document follow from it. The sentence itself is not
 testable, so nothing should be assessed against it.
 
+## Terminology
+
+Every definition below that restates a PCI DSS term is quoted verbatim from the
+PCI SSC Glossary, retrieved 2026-09-13. Two terms are not, and both are called
+out, because the glossary defines them in a different sense than this document
+uses.
+
+### Quoted from the PCI SSC Glossary
+
+#### Primary account number (PAN)
+
+"Unique payment card number (credit, debit, or prepaid cards, etc.) that
+identifies the issuer and the cardholder account."
+
+#### Cardholder data (CHD)
+
+"At a minimum, cardholder data consists of the full PAN. Cardholder data may
+also appear in the form of the full PAN plus any of the following: cardholder
+name, expiration date and/or service code."
+
+#### Sensitive authentication data (SAD)
+
+"Security-related information used to authenticate cardholders and/or authorize
+payment card transactions. This information includes, but is not limited to,
+card verification codes, full track data (from magnetic stripe or equivalent on
+a chip), PINs, and PIN blocks."
+
+#### Truncation
+
+"Method of rendering a full PAN unreadable by removing a segment of PAN data.
+Truncation relates to protection of PAN when electronically stored, processed,
+or transmitted."
+
+#### Masking
+
+"Method of concealing a segment of PAN when displayed or printed. Masking is
+used when there is no business need to view the entire PAN. Masking relates to
+protection of PAN when displayed on screens, paper receipts, printouts, etc."
+
+Masking and truncation are not interchangeable. PCI SSC FAQ 1146, July 2025,
+states the difference: "Masking refers to concealing certain digits during
+display or printing, even when the entire PAN is stored on a system. This
+process differs from truncation, in which the truncated digits are removed and
+cannot be retrieved within the system."
+
+#### Service provider
+
+"Business entity that is not a payment brand, directly involved in the
+processing, storage, or transmission of cardholder data (CHD) and/or sensitive
+authentication data (SAD) on behalf of another entity. This includes payment
+gateways, payment service providers (PSPs), and independent sales organizations
+(ISOs). This also includes companies that provide services that control or could
+impact the security of CHD and/or SAD. Examples include managed service
+providers that provide managed firewalls, IDS, and other services as well as
+hosting providers and other entities."
+
+#### Merchant
+
+"For the purposes of the PCI DSS, a merchant is defined as any entity that
+accepts payment cards bearing the logos of any PCI SSC Participating Payment
+Brand as payment for goods and/or services."
+
+### Two terms the glossary defines in a different sense
+
+The PCI SSC Glossary contains entries for both words below. Neither entry is the
+sense this document uses, and quoting either one here would define the wrong
+thing.
+
+#### Authorization, in the payment sense
+
+The glossary's "Authorization" entry covers access control: "the granting of
+access or other rights to a user, program, or process." This document never uses
+that sense. Throughout this document, authorization means the issuer approving a
+card transaction. PCI SSC FAQ 1533, July 2021, uses it that way and describes
+what happens: card verification codes "are validated by the issuer during
+authorization to give them confidence that the card they issued is being used
+for the transaction."
+
+The distinction is load-bearing. The storage prohibition in this document turns
+on what may be retained *after* authorization, and the access-control sense has
+no "after".
+
+#### Token, in the payment sense
+
+The glossary's "Token" entry covers authentication: "a value provided by
+hardware or software that works with an authentication server or VPN to perform
+dynamic or multi-factor authentication." This document never uses that sense.
+
+In this document, a token is a value issued by a payment provider that stands in
+for a PAN, that MLMForge stores and presents to that provider to charge, and
+that cannot be reversed to a PAN by anyone holding it alone. The PCI SSC
+Glossary has no entry for tokenization in this sense, so this definition is this
+document's own and is not quoted from any standard.
+
+### Terms with no PCI DSS definition
+
+Neither term below appears in the PCI SSC Glossary. Both are defined here for
+this document's use only.
+
+#### Merchant of record
+
+The entity that accepts the payment card as payment for goods or services, and
+that therefore carries the merchant obligations described above. In every
+MLMForge deployment that entity is the deploying company.
+
+#### Payment provider
+
+This document's umbrella term for whichever external party a deploying client
+selects to tokenize cards and process transactions. It covers payment gateways,
+payment service providers and full processors without distinguishing between
+them, because the requirements in this document bind all three identically.
+
 ---
 
 Tracked internally in

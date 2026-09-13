@@ -22,15 +22,49 @@ for f in "$wf" "$mod" "$mise"; do
   fi
 done
 
-# Anchored so a commented-out or inline mention does not match. \047 is an
-# apostrophe, so the value is read whether it is bare, single- or double-quoted.
-ci_go=$(awk '/^[[:space:]]*go-version:/ {
-  sub(/^[^:]*:[[:space:]]*/, "")
-  sub(/[[:space:]]*#.*$/, "")
-  gsub(/["\047[:space:]]/, "")
-  print
-}' "$wf")
-ci_go_lines=$(grep -cE '^[[:space:]]*go-version:' "$wf" || true)
+# Tracks the step and the with block a key sits in, so go-version is only read
+# where it selects a toolchain. A bare key match would accept a strategy.matrix
+# go-version, and a step-wide match would accept one under env, neither of which
+# setup-go reads. A with block written inline is not read here, which fails the
+# empty case rather than passing it. Anchored so a
+# commented-out or inline mention does not match. \047 is an apostrophe, so the
+# value is read whether it is bare, single- or double-quoted.
+setup_go_pins() {
+  awk '
+    function indent(s,   i) { i = match(s, /[^[:space:]]/); return i ? i - 1 : -1 }
+    function flush() {
+      if (in_step && has_setup && got) print val
+      in_step = 0; has_setup = 0; got = 0; val = ""; in_with = 0
+    }
+    /^[[:space:]]*$/ { next }
+    /^[[:space:]]*#/ { next }
+    {
+      here = indent($0)
+      if ($0 ~ /^[[:space:]]*-[[:space:]]*(uses|name|run|id):/) {
+        flush()
+        in_step = 1
+        step_indent = here
+      } else if (in_step && here <= step_indent) {
+        flush()
+      }
+      if (!in_step) next
+      if (in_with && here <= with_indent) in_with = 0
+      if ($0 ~ /uses:[[:space:]]*actions\/setup-go/) has_setup = 1
+      if ($0 ~ /^[[:space:]]*with:[[:space:]]*$/) { in_with = 1; with_indent = here; next }
+      if (in_with && $0 ~ /^[[:space:]]*go-version:/) {
+        val = $0
+        sub(/^[^:]*:[[:space:]]*/, "", val)
+        sub(/[[:space:]]*#.*$/, "", val)
+        gsub(/["\047[:space:]]/, "", val)
+        got = 1
+      }
+    }
+    END { flush() }' "$1"
+}
+
+ci_go=$(setup_go_pins "$wf")
+ci_go_lines=$(setup_go_pins "$wf" | grep -c '' || true)
+wf_go_version_lines=$(grep -cE '^[[:space:]]*go-version:' "$wf" || true)
 
 mod_toolchain_raw=$(awk '/^toolchain /{print $2}' "$mod")
 mod_toolchain=${mod_toolchain_raw#go}
@@ -69,7 +103,11 @@ if [ "$ci_go_lines" -gt 1 ]; then
 fi
 
 if [ "$ci_go_lines" -eq 0 ]; then
-  echo "no go-version line in \"$wf\"" >&2
+  if [ "$wf_go_version_lines" -gt 0 ]; then
+    echo "\"$wf\" go-version keys found: $wf_go_version_lines; under with: in an actions/setup-go step: 0" >&2
+  else
+    echo "no go-version line in \"$wf\"" >&2
+  fi
   exit 1
 fi
 

@@ -64,6 +64,11 @@ expect 1 "no go-version line"            "no go-version line"           wf-no-pi
 expect 1 "has 2 go-version lines"        "two go-version lines"         wf-two-pins.yml  mod-ok
 expect 1 "has an empty value"            "empty go-version value"       wf-empty.yml     mod-ok
 expect 1 "go-version is \"1.27\""        "partial version is drift"     wf-partial.yml   mod-ok
+expect 1 "under with: in an actions/setup-go step: 0" "go-version outside a setup-go step" wf-foreign-pin.yml mod-ok
+expect 1 "under with: in an actions/setup-go step: 0" "go-version under env in a setup-go step" wf-env-pin.yml mod-ok
+
+expect 0 "go-version 1.27.1" "setup-go written as a named step"   wf-named-step.yml          mod-ok
+expect 0 "go-version 1.27.1" "a foreign go-version is not the pin" wf-foreign-and-real-pin.yml mod-ok
 
 expect 0 "tools.go 1.27.1"               "mise inline comments"         wf-ok.yml mod-ok mise-commented.toml
 expect 0 "tools.go 1.27.1"               "mise header comment, quoted and indented key" wf-ok.yml mod-ok mise-header-comment.toml

@@ -205,8 +205,7 @@ fn remove_node_success() {
     child.wait().unwrap();
 }
 
-/// The worker hand-builds these key names, so this is what ties them to the
-/// Go struct tags that decode them.
+/// Pins the exact key names the response JSON must carry.
 #[test]
 fn remove_node_emits_the_responsored_keys_on_the_wire() {
     let mut child = common::spawn_worker();

@@ -683,9 +683,8 @@ func TestTreePersistence_RejectedTreeLeavesEngineLoadable(t *testing.T) {
 	assert.Equal(t, 0, got.Position)
 }
 
-// A recruit whose recruiter is removed keeps a stored sponsor_id naming that
-// recruiter. The bulk load filters removed rows out, so the sponsor it names is
-// absent and the preflight rejects the whole tree on the next startup.
+// A recruit whose recruiter is removed must not keep a sponsor_id naming an
+// absent user after the tree reloads.
 func TestTreePersistence_RemovedSponsorStillReloads(t *testing.T) {
 	eventStore, treeStore, engine, _ := newIntegrationDeps(t)
 	ctx := context.Background()
@@ -740,9 +739,8 @@ func TestTreePersistence_RemovedSponsorStillReloads(t *testing.T) {
 	assert.Equal(t, rootID, *after.SponsorID,
 		"the store must record the sponsor the engine moved the recruit to")
 
-	// A real restart, not just the preflight. LoadTree runs validateNodes,
-	// then orderForReplay, then the replay itself, and this defect can fail
-	// at any of the three.
+	// A real restart, not just the preflight, so any stage of reload can
+	// catch this.
 	require.NoError(t, engine.Stop())
 	freshEngine, err := NewEngineClient(ctx, findWorkerBinary(t))
 	require.NoError(t, err)

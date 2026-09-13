@@ -463,8 +463,7 @@ impl Arena {
                     .copied()
                     .filter(|s| !removed.contains(s))
                     .collect();
-                // Only walk when there is something to move, matching the
-                // set of nodes check_sponsored_removable walked.
+                // Skip the sponsor walk when there is nothing to move.
                 let target = if survivors.is_empty() {
                     None
                 } else {

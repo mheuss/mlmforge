@@ -316,7 +316,7 @@ Full document: [`content/design-rationale/020-tree-topology-separation.md`](cont
 **Consequences:**
 - The EventStore owns durability. The adjacency table and engine are rebuildable.
 - Store projection happens before engine projection. If the engine fails, the table is consistent and the event exists for replay.
-- **`node_removed` runs the other way, since HEU-766.** A removal repairs the sponsor edges pointing at the dying node, and only the engine knows which recruits it moved. So the engine is called first and both store writes commit together afterwards. The ordering above inverts and the property it protects improves: a failed engine call now leaves the table untouched rather than half-updated. See [030](content/design-rationale/030-sponsor-continuity-on-removal.md).
+- `node_removed` runs the other way, since HEU-766. A removal repairs the sponsor edges pointing at the dying node, and only the engine knows which recruits it moved. So the engine is called first and both store writes commit together afterwards. The ordering above inverts and the property it protects improves: a failed engine call now leaves the table untouched rather than half-updated. See [030](content/design-rationale/030-sponsor-continuity-on-removal.md).
 - On startup, the engine is rebuilt from the adjacency table via depth-ordered bulk load, not by replaying the full event stream.
 - The synchronous consumer is the initial implementation. If projection latency becomes a concern, the consumer can be made asynchronous without changing the event schema.
 

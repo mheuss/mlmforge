@@ -33,10 +33,6 @@ func NewTreeEventConsumer(store TreeStore, engine TreeMutator) *TreeEventConsume
 }
 
 // HandleEvent processes a single tree event.
-//
-// Placements project to the store first, then the engine, which retries. A
-// removal runs the other way: the engine is what computes which recruits its
-// sponsor repair moved, so the store cannot be written until it has answered.
 func (c *TreeEventConsumer) HandleEvent(ctx context.Context, event platform.Event) error {
 	switch event.Type {
 	case EventTypeRootAdded:

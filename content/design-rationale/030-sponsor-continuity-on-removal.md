@@ -1,6 +1,6 @@
 # 030: Sponsor Continuity on Removal
 
-> **Status: describes the branch that introduces it.** Not `main`. Everything
+> Status: describes the branch that introduces it. Not `main`. Everything
 > below is implemented on that branch: the repair, the refusal, the two error
 > codes, the `remove_node` response field, the Go projection change and the
 > protocol move. Read a present-tense claim here as a claim about that branch
@@ -31,7 +31,7 @@ A removal repairs the sponsor edges pointing at it, at removal time.
 
 The third row is the one that is easy to get wrong. A sponsorless node with nothing pointing at it dangles nothing, so refusing it would break removals that are correct today.
 
-"Nearest surviving sponsor" is one step in four of the five repair sites, which is the grandsponsor. Only the matrix holding tank removes a whole subtree at once, and there a node's sponsor can be dying in the same call, so the walk continues upward until it reaches someone who is not.
+"Nearest surviving sponsor" is one step in four of the five repair sites, which is the grandsponsor. Only the matrix holding tank removes a whole subtree at once. There, a node's sponsor can be dying in the same call. So the walk continues upward until it reaches someone who is not.
 
 Five repair sites cover six tombstone sites. The holding tank tombstones in two places and takes one repair over its whole removed set.
 
@@ -41,7 +41,7 @@ A validator cannot be the fix. Once a freed slot is reused the stale index names
 
 ### The engine is not the only holder of a sponsor edge
 
-`tree_nodes.sponsor_id` holds one too. The Go store soft-deletes the removed row and touches no other row, and the startup bulk load selects only rows where `removed_at` is null. So a repair that lives only in the engine leaves the store naming a user the load will not return, and the tree stops rebuilding after a restart.
+`tree_nodes.sponsor_id` holds one too. The Go store soft-deletes the removed row and touches no other row. The startup bulk load selects only rows where `removed_at` is null. So a repair that lives only in the engine leaves the store naming a user the load will not return, and the tree stops rebuilding after a restart.
 
 Repairing one holder and not the other is worse than repairing neither, because the two then disagree and nothing reconciles them.
 
@@ -55,7 +55,7 @@ That inversion is deliberate and is not a concession. A reader meeting it will a
 
 ## What We Considered
 
-Clear the edge to `None`. Smaller in the arena and larger everywhere else. It makes an unreachable error path in `StreamlineEngine::remove_member` reachable, and it widens what a null sponsor means on the wire: today it means the node is the root, and it would also mean the sponsor left. A caller reading null as "this is the root" would be silently wrong on any tree that has had a removal. That costs a protocol move.
+Clear the edge to `None`. Smaller in the arena and larger everywhere else. It makes an unreachable error path in `StreamlineEngine::remove_member` reachable. It also widens what a null sponsor means on the wire. Today it means the node is the root. It would also mean the sponsor left. A caller reading null as "this is the root" would be silently wrong on any tree that has had a removal. That costs a protocol move.
 
 Keep the edge and mark it. The only option that loses nothing: the sponsor tree would record that the recruiter left without crediting anyone else. It is a schema change on `Node`, which is why it was not taken.
 
@@ -101,6 +101,6 @@ A holding-tank round trip moves a recruit placed outside the subtree onto a surv
 
 The `remove_node` response names the recruits a removal moved, so a caller can see the move happen. It has no way to learn that re-placing from the tank did not undo it. HEU-776 carries that.
 
-The engine has to answer before the store can be written, so a removal whose reply is lost leaves the engine and the store disagreeing and the retry cannot recover it. That window is a consequence of the ordering this decision requires. HEU-777 carries it.
+The engine has to answer before the store can be written. A removal whose reply is lost leaves the engine and the store disagreeing. The retry cannot recover it. That window is a consequence of the ordering this decision requires. HEU-777 carries it.
 
 The soft delete inside that store write is the one statement with no row-count check, where every re-sponsor beside it has one. Left lenient deliberately rather than by oversight. HEU-778 carries it.

@@ -316,7 +316,7 @@ pub(crate) fn handle_add_node_at(state: &mut WorkerState, request: &Request) -> 
     }
 }
 
-/// Uuids go out as strings, matching every other id on this response.
+/// Builds the wire JSON for a list of responsored moves.
 fn responsored_json(moved: &[Responsored]) -> Vec<serde_json::Value> {
     moved
         .iter()

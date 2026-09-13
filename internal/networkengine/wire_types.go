@@ -190,7 +190,6 @@ type MatrixRemovalResult struct {
 }
 
 // Responsored is one recruit a removal moved, and who it moved them to.
-// Mirrors the Rust Responsored struct.
 type Responsored struct {
 	UserID       string `json:"user_id"`
 	NewSponsorID string `json:"new_sponsor_id"`

@@ -516,11 +516,7 @@ impl MatrixTree {
     }
 
     /// HoldingTank removal: moves the node and its entire subtree
-    /// to the holding tank for manual re-placement.
-    ///
-    /// Placement is reversible through the tank. Sponsorship of a recruit
-    /// placed outside the subtree is not: that recruit is moved to a
-    /// surviving sponsor here, and nothing moves it back.
+    /// to the holding tank.
     fn remove_to_holding_tank(
         &mut self,
         idx: NodeIndex,
@@ -2468,7 +2464,7 @@ mod tests {
                     new_sponsor_id: test_uuid(1),
                 },
             ],
-            "the tank is the only path that can move more than one recruit"
+            "holding tank removal must report every recruit the subtree lost"
         );
     }
 

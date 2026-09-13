@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Asserts what check-go-pins.sh reports, not only that it failed. Every failure
-# path exits 1, so a test reading the exit code alone cannot tell which guard
-# fired and will stay green when one is deleted.
+# Asserts what the pin check reports, not only that it failed, so a deleted
+# guard cannot hide behind a shared exit code.
 set -uo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)

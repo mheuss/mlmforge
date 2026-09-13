@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
-# Fails when the Go version pins disagree. A CI Go newer than go.mod's
-# toolchain directive raises no error, so the two drift apart green.
-#
-# Paths are arguments so the checks can be run against fixtures. Defaults are
-# anchored to the repo rather than the working directory, so it runs from
-# anywhere.
+# Fails when the CI, go.mod and mise.toml Go version pins disagree. Paths are
+# arguments so the checks can be run against fixtures. Defaults are anchored to
+# the repo rather than the working directory, so it runs from anywhere.
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)

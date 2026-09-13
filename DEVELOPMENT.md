@@ -383,6 +383,7 @@ Full document: [`content/design-rationale/020-tree-topology-separation.md`](cont
 - A tool installed with `go install` and no `GOBIN` lands in the active toolchain's bin directory, which sits ahead of mise's shims on `PATH`, and shadows the mise-managed copy silently. Set `GOBIN` explicitly.
 - The scan has one definition, so changing its scope is a tracked, reviewable diff. `.claude/sop.md` points at the script rather than restating it, because that file is gitignored and reaches no other clone.
 - The scan's package exclusion matches a whole import path. A substring match would also drop a package whose path merely contains the excluded one. No package here does, so the hazard is invisible without a test that builds one.
+- `internal/testutil` is the one package excluded from the scan. It uses `testcontainers-go` to start throwaway Postgres containers, which pulls in the Docker client library and with it a set of unpatched Moby advisories. Those are daemon-side, the package is test-only, and it ships in no binary. The exclusion is what makes the accepted findings in `docs/security/audit-ignore.md` stay accepted, so removing it needs a mechanism that can carry them instead.
 
 ---
 

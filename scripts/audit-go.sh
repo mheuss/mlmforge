@@ -1,14 +1,7 @@
 #!/usr/bin/env bash
-# One definition of the Go vulnerability scan, so CI and the local audit
-# command cannot drift in what they cover.
-#
-# --list prints the packages that would be scanned and exits. The scan needs a
-# network and a real module graph, so it cannot be run against fixtures. Which
-# packages it covers can, and that is the half with a silent failure: a pattern
-# that excludes too much reports clean over less code than you think.
-#
-# The module root is an argument so the package selection can be exercised
-# against a fixture module rather than this repo.
+# Runs the Go vulnerability scan. --list prints the packages it would scan and
+# exits, without needing a network or a real module graph. The module root is
+# an argument so that listing can be run against a fixture.
 set -euo pipefail
 
 list_only=false
@@ -58,10 +51,8 @@ if [ -z "$all" ]; then
   exit 1
 fi
 
-# Exclude internal/testutil from scan — test-only infrastructure
-# that pulls in docker/docker via testcontainers-go. These vulns
-# are in the Docker daemon, not the client, and the package never
-# ships in any binary.
+# internal/testutil is test-only and never ships in a binary. ADR-025 carries
+# what it pulls in and why those advisories are accepted.
 #
 # Matched whole-line against the full import path. A substring match would also
 # drop a package whose name merely contains this one.

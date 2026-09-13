@@ -1,12 +1,7 @@
 #!/usr/bin/env bash
-# Asserts which packages audit-go.sh would scan, and that it refuses rather
-# than scanning a short list. The scan itself needs a network and a real module
-# graph and is not covered here. Package selection is the half that fails
-# silently: over-exclude and the scan reports clean over less code than anyone
-# thinks.
-#
-# The hazard cases run against fixture modules in a temp directory, so nothing
-# here writes into the repo.
+# Asserts which packages the audit script would scan, and that it refuses
+# rather than scanning a short list. Hazard cases run against fixture modules
+# in a temp directory, so nothing here writes into the repo.
 set -uo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -28,9 +23,9 @@ record() {
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-# A fixture module holding the package that makes the substring hazard visible.
-# No package in the real repo contains internal/testutil as a substring, so
-# against the repo alone a substring exclusion looks identical to a correct one.
+# A fixture module holding a package whose path contains the excluded one as a
+# substring. Without such a package a substring exclusion looks identical to a
+# whole-line one.
 fixture=$work/fixture
 mkdir -p "$fixture"
 printf 'module example.com/fixture\n\ngo 1.21\n' > "$fixture/go.mod"
@@ -43,6 +38,13 @@ done
 empty=$work/empty
 mkdir -p "$empty"
 printf 'module example.com/empty\n\ngo 1.21\n' > "$empty/go.mod"
+
+# A module whose only package is the excluded one, so filtering empties the
+# list. This reaches a different refusal from the empty module above.
+only=$work/only
+mkdir -p "$only/internal/testutil"
+printf 'module example.com/only\n\ngo 1.21\n' > "$only/go.mod"
+printf 'package testutil\n' > "$only/internal/testutil/doc.go"
 
 # A go that prints some packages, writes to stderr, and exits non-zero. This is
 # the shape that silently shrinks a scan when a list's exit status goes unread.
@@ -104,13 +106,13 @@ else
   record no "the scan excludes internal/testutil and nothing else" "dropped: ${dropped:-<nothing>}"
 fi
 
-# comm -23 above reports lines only in "all", so it cannot see a line that is
-# only in "listed". This reads the other direction. It is what checks that
-# --list prints import paths and nothing else, which is the assertion that
-# fails if toolchain chatter ever reaches stdout.
+# Lines only in "listed". This is what checks that --list prints import paths
+# and nothing else, and it fails if chatter ever reaches stdout.
 extra=$(comm -13 <(printf '%s\n' "$all" | sort) <(printf '%s\n' "$listed" | sort))
 
-if [ -z "$extra" ]; then
+if [ "$list_rc" != 0 ]; then
+  record no "--list prints nothing but import paths" "--list rc=$list_rc, so there was no output to check"
+elif [ -z "$extra" ]; then
   record yes "--list prints nothing but import paths" ""
 else
   record no "--list prints nothing but import paths" "not in go list: $extra"
@@ -160,6 +162,14 @@ if [ "$rc" = 1 ] && [[ $out == *"produced no packages"* ]]; then
   record yes "refuses a module with no packages" ""
 else
   record no "refuses a module with no packages" "rc=$rc: $out"
+fi
+
+out=$("$audit" --list "$only" 2>&1)
+rc=$?
+if [ "$rc" = 1 ] && [[ $out == *"no packages left after excluding"* ]]; then
+  record yes "refuses a module whose only package is excluded" ""
+else
+  record no "refuses a module whose only package is excluded" "rc=$rc: $out"
 fi
 
 out=$("$audit" --list "$fixture" extra 2>&1)

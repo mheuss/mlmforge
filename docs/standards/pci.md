@@ -228,6 +228,93 @@ processor differ in ways that can affect a deploying client's own assessment.
 Where a requirement in this document binds all of them alike, that requirement
 says so.
 
+## What MLMForge requires of any payment provider
+
+The deploying client selects the payment provider. This section states what that
+provider must satisfy. It does not describe a provider, and it does not describe
+an integration topology, because neither has been chosen.
+
+### The requirements
+
+Any payment provider a client brings must satisfy all five.
+
+1. A PAN is tokenized before it reaches any MLMForge server. This holds whatever
+   renders the card entry fields.
+2. MLMForge receives a token and never a PAN. The field that carries it is
+   `PaymentMethodInput.GatewayToken`.
+3. The token is what MLMForge stores, and the token is what MLMForge presents to
+   charge. Recurring charges reuse the stored token rather than re-collecting a
+   card.
+4. The token is useless to anyone who holds it without the provider. A token
+   that can be reversed to a PAN outside the provider is not a token for the
+   purpose of this document.
+5. The provider abstraction stays inside `internal/financial`. No consumer of
+   that package learns which provider a deployment uses.
+
+Requirement 1 is the boundary the rest of this document rests on. If a PAN
+reaches an MLMForge server, every prohibition below is already too late.
+
+Requirement 4 is the one most easily assumed rather than checked. A token is not
+irreversible because it is called a token. Some tokenization solutions are
+format-preserving and combine truncation with a reversible transformation of the
+remaining digits. PCI SSC FAQ 1117, September 2021, lists the factors that keep
+such a value in scope. The first is this: "The tokenization or encryption of the
+PAN segment can be reversed in the environment in which the segment resides."
+
+### Acceptance, for the deploying client
+
+A client's compliance team can tick these against a candidate provider. Every
+one of them is a question the provider can answer.
+
+- [ ] A PAN is tokenized before it reaches any MLMForge server, under the
+      topology this deployment uses.
+- [ ] The provider issues a token that MLMForge can store and present to charge.
+- [ ] The token is not reversible to a PAN by anyone holding it without the
+      provider.
+- [ ] The token supports the charges this deployment makes, including recurring
+      charges, without re-collecting a card.
+- [ ] Nothing in the integration requires a consumer of `internal/financial` to
+      know which provider is in use.
+
+### What these requirements deliberately do not settle
+
+They do not settle where tokenization happens. A provider may render the card
+entry fields in an iframe it hosts, redirect the cardholder to a page it hosts,
+or supply client code that posts the card directly to it.
+
+Those three differ, and the difference is not cosmetic. It affects the deploying
+client's own assessment obligations. The client chooses the provider, so the
+client chooses among them. No choice has been made here, and a reader should not
+infer one.
+
+The requirements above hold identically under all three. That is why they are
+written as requirements rather than as a description.
+
+### Cardholder data flow
+
+The boundary in step 3 is the one that matters. Everything above it is the
+provider's. Everything below it is MLMForge's.
+
+1. The cardholder enters card details. Which surface collects them depends on
+   the topology the client selected.
+2. Those details go to the payment provider.
+3. **The card details do not transit an MLMForge server.** This is the boundary.
+4. The provider returns a token.
+5. The token reaches MLMForge as `PaymentMethodInput.GatewayToken`, through
+   `WalletManager.Add`.
+6. MLMForge stores the token together with non-sensitive descriptive fields. A
+   stored `PaymentMethod` carries an instrument type, a truncated value, a card
+   expiry where the instrument is a card, and a user-facing label. What may be
+   stored is settled below.
+7. To charge, MLMForge names a saved payment method. `ChargeRequest` carries
+   `PaymentMethodID`, which references the stored method rather than any card
+   value.
+8. MLMForge receives a `ChargeResult` carrying a transaction identifier, a
+   status, and a provider reference. It carries no card value.
+
+Steps 1 through 4 are the provider's. Steps 5 through 8 are MLMForge's. A PAN
+appears only in steps 1 and 2, and only inside the provider's boundary.
+
 ---
 
 Tracked internally in

@@ -1,10 +1,10 @@
 # 030: Sponsor Continuity on Removal
 
-> **Status: describes the branch that introduces it.** Not `main`. The repair,
-> the refusal and the two error codes are implemented. The `remove_node`
-> response field, the Go projection change and the protocol move land on the
-> same branch and are not on `main` at the time this was written. Read a
-> present-tense claim here as a claim about that branch.
+> **Status: describes the branch that introduces it.** Not `main`. Everything
+> below is implemented on that branch: the repair, the refusal, the two error
+> codes, the `remove_node` response field, the Go projection change and the
+> protocol move. Read a present-tense claim here as a claim about that branch
+> until it merges.
 
 ## The Problem
 

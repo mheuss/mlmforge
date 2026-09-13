@@ -60,9 +60,12 @@ exit 0
 SHIM
 chmod +x "$shim/go"
 
+# stderr goes to a caller-named file, so a later call cannot overwrite the text
+# an earlier failure message is about to read.
 run() {
-  local out rc
-  out=$("$@" 2>"$work/stderr")
+  local errfile=$1 out rc
+  shift
+  out=$("$@" 2>"$errfile")
   rc=$?
   printf '%s\n' "$out"
   return $rc
@@ -70,9 +73,9 @@ run() {
 
 # Real repo: stdout only, so toolchain chatter on stderr cannot be read as an
 # import path.
-listed=$(run "$audit" --list)
+listed=$(run "$work/repo.err" "$audit" --list)
 list_rc=$?
-listed_stderr=$(cat "$work/stderr")
+listed_stderr=$(cat "$work/repo.err")
 
 if [ "$list_rc" = 0 ]; then
   record yes "--list exits 0" ""
@@ -101,6 +104,18 @@ else
   record no "the scan excludes internal/testutil and nothing else" "dropped: ${dropped:-<nothing>}"
 fi
 
+# comm -23 above reports lines only in "all", so it cannot see a line that is
+# only in "listed". This reads the other direction. It is what checks that
+# --list prints import paths and nothing else, which is the assertion that
+# fails if toolchain chatter ever reaches stdout.
+extra=$(comm -13 <(printf '%s\n' "$all" | sort) <(printf '%s\n' "$listed" | sort))
+
+if [ -z "$extra" ]; then
+  record yes "--list prints nothing but import paths" ""
+else
+  record no "--list prints nothing but import paths" "not in go list: $extra"
+fi
+
 if printf '%s\n' "$listed" | grep -qxF "$module/internal/testutil"; then
   record no "internal/testutil is excluded" "it appears in the list"
 else
@@ -108,9 +123,9 @@ else
 fi
 
 # The substring hazard, against the fixture.
-fixture_listed=$(run "$audit" --list "$fixture")
+fixture_listed=$(run "$work/fixture.err" "$audit" --list "$fixture")
 fixture_rc=$?
-fixture_stderr=$(cat "$work/stderr")
+fixture_stderr=$(cat "$work/fixture.err")
 
 if [ "$fixture_rc" != 0 ]; then
   record no "a package named after the excluded one survives" "rc=$fixture_rc: $fixture_stderr"
@@ -132,7 +147,7 @@ fi
 # A go list that fails partway must be refused, not scanned.
 out=$(PATH="$shim:$PATH" "$audit" --list "$fixture" 2>&1)
 rc=$?
-if [ "$rc" = 1 ] && [[ $out == *"exited non-zero"* ]]; then
+if [ "$rc" = 1 ] && [[ $out == *"go list ./... exited non-zero"* ]]; then
   record yes "refuses a go list that fails partway" ""
 else
   record no "refuses a go list that fails partway" "rc=$rc: $out"
@@ -141,7 +156,7 @@ fi
 # go list exits 0 with no output when nothing matches.
 out=$("$audit" --list "$empty" 2>&1)
 rc=$?
-if [ "$rc" = 1 ] && [[ $out == *"no packages"* ]]; then
+if [ "$rc" = 1 ] && [[ $out == *"produced no packages"* ]]; then
   record yes "refuses a module with no packages" ""
 else
   record no "refuses a module with no packages" "rc=$rc: $out"

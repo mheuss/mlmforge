@@ -170,16 +170,41 @@ func TestEngineClient_AddNode_WithPosition(t *testing.T) {
 
 func TestEngineClient_RemoveNode_MockParams(t *testing.T) {
 	mock := &mockTransport{
-		response: json.RawMessage(`{"removed":true}`),
+		response: json.RawMessage(`{"removed":true,"responsored":[]}`),
 	}
 	client := newEngineClientWithTransport(mock)
 
 	moved, err := client.RemoveNode(context.Background(), "Test", "00000000-0000-0000-0000-000000000001")
 	require.NoError(t, err)
-	assert.Empty(t, moved, "a response with no responsored key decodes to an empty list")
+	assert.Empty(t, moved, "an empty responsored list is a removal that moved nobody")
 
 	assert.Equal(t, "remove_node", mock.lastOp)
 	assert.JSONEq(t, `{"structure":"Test","user_id":"00000000-0000-0000-0000-000000000001"}`, string(mock.lastParams))
+}
+
+func TestEngineClient_RemoveNode_RejectsMissingResponsored(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{"removed":true}`),
+	}
+	client := newEngineClientWithTransport(mock)
+
+	_, err := client.RemoveNode(context.Background(), "Test", "00000000-0000-0000-0000-000000000001")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "responsored")
+}
+
+func TestEngineClient_RemoveMatrixNode_RejectsMissingResponsored(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{"removed":"00000000-0000-0000-0000-000000000001","promoted":null,"repositioned":[],"moved_to_tank":[]}`),
+	}
+	client := newEngineClientWithTransport(mock)
+
+	_, err := client.RemoveMatrixNode(context.Background(), "Test",
+		"00000000-0000-0000-0000-000000000001", "promote_earliest")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "responsored")
 }
 
 // Pins the Go struct tags to the key names that decode the wire response.

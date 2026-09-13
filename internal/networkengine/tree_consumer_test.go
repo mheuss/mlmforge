@@ -129,6 +129,7 @@ func TestTreeConsumer_HandleNodePlaced(t *testing.T) {
 func TestTreeConsumer_HandleNodeRemoved(t *testing.T) {
 	store := NewMemoryTreeStore()
 	transport := newRecordingTransport()
+	transport.response = json.RawMessage(`{"removed":true,"responsored":[]}`)
 	engine := newEngineClientWithTransport(transport)
 	consumer := NewTreeEventConsumer(store, engine)
 

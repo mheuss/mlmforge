@@ -47,6 +47,8 @@ Repairing one holder and not the other is worse than repairing neither, because 
 
 **The engine must therefore report which recruits it moved, and the projection must write them.** That is what the `remove_node` response field and the accompanying protocol move are for. Both land with this decision on the same branch.
 
+The client requires that field on decode rather than letting it default. Absence and emptiness are different claims. An empty list says the engine looked and moved nobody, which a caller can act on. A missing key says nothing at all. Defaulting turns silence into the one answer that needs no work, so a worker that dropped the field would read as a worker that had nothing to move.
+
 The ordering that requires is not the one ADR-021 states. ADR-021 puts store projection before engine projection so a failed engine call leaves the table consistent. The moved-recruit list only exists after the engine has run, so both store writes move after the engine call and commit together. The stated ordering inverts and the property it protects improves: a failed engine call now leaves the table untouched rather than half-updated.
 
 That inversion is deliberate and is not a concession. A reader meeting it will assume something was given up, and nothing was.

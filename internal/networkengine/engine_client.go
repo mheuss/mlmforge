@@ -361,7 +361,10 @@ func (c *EngineClient) RemoveNode(ctx context.Context, structure, userID string)
 	if err != nil {
 		return nil, err
 	}
-	return r.Responsored, nil
+	if r.Responsored == nil {
+		return nil, fmt.Errorf("remove_node: response has no \"responsored\" key")
+	}
+	return *r.Responsored, nil
 }
 
 // AddMatrixNode adds a node to a matrix tree using automatic spillover placement.
@@ -407,6 +410,9 @@ func (c *EngineClient) RemoveMatrixNode(ctx context.Context, structure, userID, 
 	})
 	if err != nil {
 		return nil, err
+	}
+	if r.Responsored == nil {
+		return nil, fmt.Errorf("remove_node: response has no \"responsored\" key")
 	}
 	return &r, nil
 }

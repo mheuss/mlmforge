@@ -202,8 +202,7 @@ They can be used for card-on-file and recurring payments." That is the use this
 platform has.
 
 What a token must additionally satisfy to be acceptable here is a requirement
-rather than a definition, and it is stated with the other provider requirements
-above.
+rather than a definition. This section does not state it.
 
 ### Terms with no PCI DSS definition
 

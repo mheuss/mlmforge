@@ -67,7 +67,11 @@ Decision 021 says sponsor edges determine personal qualification, and that spons
 
 Promotion credits a grandsponsor with a leg they did not personally recruit, on the input to a payout gate. That is in tension with 021's rule and it was named before the choice was made, not discovered afterward. The mechanical cost of the alternatives decided it.
 
-A reader who finds the contradiction should find it here rather than concluding it was missed.
+It reaches a second payout input, and this one is sharper. `build_pass_up_context` sorts a sponsor's recruits by `enrolled_at` and takes the first N as the recruits whose commissions pass up. A promoted recruit arrives carrying its original `enrolled_at`, so an early enrollee can sort ahead of the grandsponsor's own recruits and displace one of them out of that set.
+
+`count_active_legs` changes a qualification count. Pass-up changes which downline's commissions a sponsor forfeits.
+
+A reader who finds either contradiction should find it here rather than concluding it was missed.
 
 ## Three Components, Three Answers
 
@@ -103,4 +107,6 @@ The `remove_node` response names the recruits a removal moved, so a caller can s
 
 The engine has to answer before the store can be written. A removal whose reply is lost leaves the engine and the store disagreeing. The retry cannot recover it. That window is a consequence of the ordering this decision requires. HEU-777 carries it.
 
-The soft delete inside that store write is the one statement with no row-count check, where every re-sponsor beside it has one. Left lenient deliberately rather than by oversight. HEU-778 carries it.
+The soft delete inside that store write is the one statement with no row-count check, where every re-sponsor beside it has one. Left lenient deliberately rather than by oversight. So a removal whose node has no active row still commits the sponsor updates beside it, against the all-or-nothing the method's own docblock states. HEU-778 carries it.
+
+The three matrix repair sites have no path to the store. Matrix removal never reaches the engine through the consumer, so nothing carries their moved recruits to `tree_nodes`. The engine half is done and the store half is not, which is the shape the rule two sections up warns about. Whoever wires matrix removal up has to wire both. HEU-582 carries the missing dispatch.

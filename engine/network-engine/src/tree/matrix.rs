@@ -1994,15 +1994,23 @@ mod tests {
         tree.remove_node(test_uuid(2), PruningMode::PromoteEarliest)
             .unwrap();
 
-        // node3 and node4's sponsors should still be node2's idx, but
-        // since node2 is removed, what matters is the sponsor is preserved
-        // in the node data (it's an idx that now points to a tombstone).
-        // The important check: root's sponsored list no longer contains node2.
         let root_sponsored = tree.get_sponsored(test_uuid(1)).unwrap();
         assert!(
             !root_sponsored.iter().any(|n| n.user_id == test_uuid(2)),
             "removed node should be cleared from sponsor's sponsored list"
         );
+
+        // Both directions, so a repair that moved one and not the other fails.
+        for n in [3u8, 4] {
+            let sponsor = tree.get_sponsor(test_uuid(n)).unwrap().unwrap();
+            assert_eq!(sponsor.user_id, test_uuid(1));
+        }
+        for n in [3u8, 4] {
+            assert!(
+                root_sponsored.iter().any(|s| s.user_id == test_uuid(n)),
+                "the promoted recruit must appear in its new sponsor's list"
+            );
+        }
     }
 
     #[test]

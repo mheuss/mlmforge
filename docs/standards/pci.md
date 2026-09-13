@@ -5,14 +5,17 @@ Draft, written 2026-09-13. No compliance review has assessed this document. Read
 
 ## Scope
 
-MLMForge does not accept payment cards as payment for goods or services. The
-deploying company does.
+MLMForge does not accept payment cards as payment for goods or services. It
+contains no code that does, and this document requires that it never gains any.
+The deploying company accepts the payment.
 
-- The deploying company is the merchant of record. MLMForge is not, in any
-  deployment.
 - The deploying company brings its own payment provider.
 - The deploying company determines its own Self-Assessment Questionnaire, with
   the entity that receives it.
+- Which party is the merchant of record follows from the contracts between the
+  deploying company and its acquirer. This document does not settle that, and
+  software cannot settle it. What this document states is that MLMForge is built
+  so as not to be that party.
 
 This document states what the platform does with cardholder and bank data, and
 what it requires of any payment provider a client brings. It is written to
@@ -21,11 +24,13 @@ assessment.
 
 ## Status of this document
 
-- This standard records decisions that already exist. It does not make them and
-  it does not ratify them.
-- No compliance review has assessed any decision recorded here.
-- Nothing here classifies MLMForge under PCI DSS. A classification is a
-  determination, and nobody has made one.
+- This standard states requirements on MLMForge's own behaviour. Those are
+  decisions MLMForge is entitled to make about its own code, and some of them
+  are made here for the first time.
+- It records rather than ratifies any determination that belongs to someone
+  else. A PCI DSS classification, an SAQ type, and an assessor's conclusion are
+  not this document's to make, and it does not make them.
+- No compliance review has assessed anything written here.
 
 **A security compliance team must ratify this document before any payment
 processing implementation begins.**
@@ -35,14 +40,35 @@ processing implementation begins.**
 ### No payment processing exists yet, and how to recheck that
 
 On 2026-09-13, at this commit, nothing in the platform charges a payment. Three
-checks support that statement for the Go code. Recheck them rather than trusting
-the date.
+checks support that statement for the Go code. Run them rather than trusting the
+date. Each prints the number of files searched beside its result, because a zero
+with no denominator is not evidence.
 
-- `internal/financial` declares three interfaces, `PaymentProcessor`,
-  `WalletManager` and `InvoiceProvider`. No Go file implements any of them.
-- No Go code outside `internal/financial` references those three interfaces.
-  Design documentation does reference them.
-- Nothing under `cmd/` or `internal/` imports `net/http`.
+`internal/financial` declares three interfaces, `PaymentProcessor`,
+`WalletManager` and `InvoiceProvider`. Only that file names them, and no Go file
+implements any of them.
+
+```bash
+find cmd internal -name '*.go' -print0 | xargs -0 -n1 echo | wc -l
+find cmd internal -name '*.go' -print0 \
+  | xargs -0 grep -l 'PaymentProcessor\|WalletManager\|InvoiceProvider'
+```
+
+Expected: a file count, then `internal/financial/interfaces.go` and nothing
+else. On 2026-09-13 the count was 116. Design documentation under `content/`
+does reference the three names, which is why the search is scoped to Go files.
+
+Nothing under `cmd/` or `internal/` imports `net/http`.
+
+```bash
+find cmd internal -name '*.go' -print0 | xargs -0 grep -l '"net/http"' | wc -l
+```
+
+Expected: 0.
+
+Use `find -print0` piped to `xargs -0` rather than a bare recursive grep. A
+recursive grep may be shell-aliased or gitignore-aware, in which case an empty
+result means the files were never read rather than that nothing matched.
 
 These three checks cover the Go code only. The Rust engine under `engine/` and
 the database migrations are outside their scope and need checking separately.
@@ -81,13 +107,20 @@ follow those either.
 
 ### The product owner's direction
 
-These are the product owner's words:
+The product owner gave this direction in conversation during this ticket's plan
+review, in September 2026. It is not recorded in any durable artifact. The
+wording below reached this document by way of the implementation plan, and
+whether it is word-for-word what the owner wrote cannot be established from
+anything this repository holds.
+
+It is reproduced as a quotation because that is how it was handed over. Read it
+as the substance of the direction, not as a transcript.
 
 > "We'd want to tokenize credit cards and use that token for recurring payments,
 > or use a third party payment processor like stripe, PayPal, etc. Basically the
 > risk shouldn't live with us on this."
 
-Two things about that quote.
+Two things about it.
 
 Stripe and PayPal name a category, not a selection. No provider has been chosen.
 The deploying client picks one.
@@ -291,18 +324,21 @@ provider not to send it. The other means it does not matter if they do.
 
 A client's compliance team can tick these for a given deployment. This document
 states the rules. It cannot tell anyone whether a particular provider and
-deployment meet them. That is what these two boxes ask.
+deployment meet them. That is what these three boxes ask.
 
 - [ ] Under the arrangement this deployment actually uses, no PAN reaches an
       MLMForge server.
 - [ ] The provider has stated, in a document the client holds, that its tokens
       cannot be reversed to a PAN outside the provider's environment.
-- [ ] The provider has stated, in a document the client holds, that no field it
-      populates in an API response carries a PAN or sensitive authentication
-      data.
 - [ ] No component the client places between the cardholder and the provider
       tokenizes a PAN. Any such component sits in the client's own compliance
       scope and this document does not cover it.
+
+There is deliberately no box asking a provider to warrant that no field it
+populates carries a PAN. Requirement 5 asks the provider not to send one, and
+the commitment above means it does not matter if one arrives, because MLMForge
+discards that free text rather than storing it. A control MLMForge owns is
+worth more here than an attestation from a provider nobody has chosen.
 
 ### What these requirements deliberately do not settle
 

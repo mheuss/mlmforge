@@ -28,11 +28,10 @@ when payment work lands, and unblocking that work is why this standard exists.
 
 ## Provenance
 
-The owner confirmed the service provider position on 2026-09-12. The integration
-model recorded here was chosen earlier, during the inception-era bounded-context
-analysis of the legacy osMLM system. It was then written into Go doc comments
-inside `internal/financial` rather than into a standard. HEU-618 raised that gap
-and holds the references to that analysis.
+The integration model this document states was chosen during the inception-era
+bounded-context analysis of the legacy osMLM system. It was then written into Go
+doc comments inside `internal/financial` rather than into a standard. HEU-618
+raised that gap and holds the references to that analysis.
 
 Paths into other repositories are deliberately absent from this document.
 Nothing in this repository can keep such a path true. A client's assessor reading
@@ -49,10 +48,10 @@ These are the owner's words:
 
 Two things about that quote.
 
-**Stripe and PayPal name a category, not a selection.** No provider has been
-chosen. The deploying client picks one.
+Stripe and PayPal name a category, not a selection. No provider has been chosen.
+The deploying client picks one.
 
-**"The risk shouldn't live with us" is the principle, not a control.** The
+"The risk shouldn't live with us" is the principle, not a control. The
 requirements in this document follow from it. The sentence itself is not
 testable, and nothing should be assessed against it.
 

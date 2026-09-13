@@ -274,6 +274,10 @@ and paste from the repo root as written.
 | All lint | `golangci-lint run && (cd engine && cargo clippy --all-targets --workspace -- -D warnings)` |
 | Check Go version pins | `scripts/check-go-pins.sh` |
 | Test the pin check | `scripts/check-go-pins-test.sh` |
+| Audit (Go) | `scripts/audit-go.sh` |
+| Audit (Rust) | `cargo audit --file engine/Cargo.lock` |
+| Show what the audit scans | `scripts/audit-go.sh --list` |
+| Test the audit scope | `scripts/audit-go-test.sh` |
 
 **A fresh clone runs `mise trust .` once.**
 

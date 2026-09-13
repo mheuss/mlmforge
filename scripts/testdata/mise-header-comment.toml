@@ -1,0 +1,5 @@
+[tools] # the Go on PATH
+  "go" = "1.27.1"
+
+[env] # what Go resolves once it runs
+GOTOOLCHAIN = "go1.27.1"

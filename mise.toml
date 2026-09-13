@@ -1,0 +1,5 @@
+[tools]
+go = "1.27.1"
+
+[env]
+GOTOOLCHAIN = "go1.27.1"

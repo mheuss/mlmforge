@@ -23,8 +23,8 @@ record() {
 
 # Asserts the exit code and that the output contains a phrase naming the guard.
 expect() {
-  local want_rc=$1 want_msg=$2 name=$3 wf=$4 mod=$5 out rc
-  out=$("$check" "$data/$wf" "$data/$mod" 2>&1)
+  local want_rc=$1 want_msg=$2 name=$3 wf=$4 mod=$5 mise=${6:-mise-ok.toml} out rc
+  out=$("$check" "$data/$wf" "$data/$mod" "$data/$mise" 2>&1)
   rc=$?
   if [ "$rc" != "$want_rc" ]; then
     record no "$name" "wanted rc=$want_rc, got rc=$rc: $out"
@@ -66,8 +66,20 @@ expect 1 "has 2 go-version lines"        "two go-version lines"         wf-two-p
 expect 1 "has an empty value"            "empty go-version value"       wf-empty.yml     mod-ok
 expect 1 "go-version is \"1.27\""        "partial version is drift"     wf-partial.yml   mod-ok
 
-expect_raw 1 "cannot read"  "unreadable path"     "$data/wf-ok.yml" "$data/nonexistent"
-expect_raw 1 "usage:"       "too many arguments"  "$data/wf-ok.yml" "$data/mod-ok" junk
+expect 0 "tools.go 1.27.1"               "mise inline comments"         wf-ok.yml mod-ok mise-commented.toml
+expect 0 "tools.go 1.27.1"               "mise header comment, quoted and indented key" wf-ok.yml mod-ok mise-header-comment.toml
+
+expect 1 "tools.go is \"1.27.9\""        "mise tools.go drifted"        wf-ok.yml mod-ok mise-tools-drift.toml
+expect 1 "env.GOTOOLCHAIN is \"go1.27.9\"" "mise GOTOOLCHAIN drifted"   wf-ok.yml mod-ok mise-env-drift.toml
+expect 1 "no GOTOOLCHAIN under [env]"    "mise env section missing"     wf-ok.yml mod-ok mise-no-env.toml
+expect 1 "no go under [tools]"           "mise tools section missing"   wf-ok.yml mod-ok mise-no-tools.toml
+expect 1 "no go under [tools]"           "mise keys in the wrong table" wf-ok.yml mod-ok mise-wrong-table.toml
+expect 1 "no go under [tools]"           "mise file with no tables"     wf-ok.yml mod-ok mise-no-tables.toml
+expect 1 "has 2 tools.go"                "mise duplicate tools.go"      wf-ok.yml mod-ok mise-two-tools.toml
+expect 1 "and 2 env.GOTOOLCHAIN"         "mise duplicate GOTOOLCHAIN"   wf-ok.yml mod-ok mise-two-env.toml
+
+expect_raw 1 "cannot read"  "unreadable path"     "$data/wf-ok.yml" "$data/nonexistent" "$data/mise-ok.toml"
+expect_raw 1 "usage:"       "too many arguments"  "$data/wf-ok.yml" "$data/mod-ok" "$data/mise-ok.toml" junk
 
 # The defaults are anchored to the script, not the caller's directory. Running
 # from the repo root would pass either way, so this runs from somewhere else.

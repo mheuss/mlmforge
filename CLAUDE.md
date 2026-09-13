@@ -275,6 +275,12 @@ and paste from the repo root as written.
 | Check Go version pins | `scripts/check-go-pins.sh` |
 | Test the pin check | `scripts/check-go-pins-test.sh` |
 
+**A fresh clone runs `mise trust .` once.**
+
+`mise.toml` pins the Go toolchain and `GOTOOLCHAIN` for this repo. Until the
+directory is trusted the file is inert, so the repo looks pinned and your shell
+is not. `mise env | grep GOTOOLCHAIN` tells you whether it took.
+
 **Match your local `golangci-lint` to the version `ci.yml` pins.**
 
 v2.11.4 exits non-zero without linting anything against a go1.27 standard

@@ -98,10 +98,11 @@ testable, so nothing should be assessed against it.
 
 ## Terminology
 
-Every definition below that restates a PCI DSS term is quoted verbatim from the
-PCI SSC Glossary, retrieved 2026-09-13. Two terms are not, and both are called
-out, because the glossary defines them in a different sense than this document
-uses.
+Definitions that restate a PCI DSS term are quoted verbatim, from the PCI SSC
+Glossary retrieved 2026-09-13 or from a numbered PCI SSC FAQ article. Four terms
+are not defined from the Glossary. Two of those are called out because the
+Glossary does hold an entry for the word, in a different sense from the one this
+document uses. The other two have no Glossary entry at all.
 
 ### Quoted from the PCI SSC Glossary
 
@@ -158,7 +159,7 @@ hosting providers and other entities."
 accepts payment cards bearing the logos of any PCI SSC Participating Payment
 Brand as payment for goods and/or services."
 
-### Two terms the glossary defines in a different sense
+### Terms the Glossary defines in a different sense
 
 The PCI SSC Glossary contains entries for both words below. Neither entry is the
 sense this document uses, and quoting either one here would define the wrong
@@ -174,9 +175,9 @@ what happens: card verification codes "are validated by the issuer during
 authorization to give them confidence that the card they issued is being used
 for the transaction."
 
-The distinction is load-bearing. The storage prohibition in this document turns
-on what may be retained *after* authorization, and the access-control sense has
-no "after".
+The distinction is load-bearing. The storage rules in this document depend on
+the payment sense, because they turn on what may be retained after
+authorization. The access-control sense has no "after".
 
 #### Token, in the payment sense
 
@@ -184,29 +185,49 @@ The glossary's "Token" entry covers authentication: "a value provided by
 hardware or software that works with an authentication server or VPN to perform
 dynamic or multi-factor authentication." This document never uses that sense.
 
-In this document, a token is a value issued by a payment provider that stands in
-for a PAN, that MLMForge stores and presents to that provider to charge, and
-that cannot be reversed to a PAN by anyone holding it alone. The PCI SSC
-Glossary has no entry for tokenization in this sense, so this definition is this
-document's own and is not quoted from any standard.
+The PCI SSC does define the sense this document uses, outside the Glossary. It
+distinguishes three kinds of token, and only one of them is the kind MLMForge
+handles. FAQ 1384, April 2016: "Acquiring tokens are created by the acquirer,
+merchant, or a merchant's service provider after the cardholder presents their
+PAN and/or other payment credentials."
+
+The same article separates that from an EMVCo Payment Token: "Payment tokens are
+created by TSPs that are registered with EMVCo." A Payment Token is a defined
+term belonging to a different scheme. This document does not use it, and the
+capitalised form should not be read into any sentence here.
+
+Wherever this document says token, it means an acquiring token. The same article
+states what one is for: "Acquiring Tokens cannot be used for new authorizations.
+They can be used for card-on-file and recurring payments." That is the use this
+platform has.
+
+What a token must additionally satisfy to be acceptable here is a requirement
+rather than a definition, and it is stated with the other provider requirements
+above.
 
 ### Terms with no PCI DSS definition
 
-Neither term below appears in the PCI SSC Glossary. Both are defined here for
-this document's use only.
+Neither term below appears in the PCI SSC Glossary, which is the only PCI SSC
+source searched for them. Both are defined here for this document's use only.
 
 #### Merchant of record
 
-The entity that accepts the payment card as payment for goods or services, and
-that therefore carries the merchant obligations described above. In every
-MLMForge deployment that entity is the deploying company.
+The entity that accepts the payment card as payment for goods or services.
+
+Whether a given party meets the PCI DSS definition of a merchant in a given
+deployment is that party's determination to make with its acquirer. This
+document does not make it for anyone.
 
 #### Payment provider
 
 This document's umbrella term for whichever external party a deploying client
-selects to tokenize cards and process transactions. It covers payment gateways,
-payment service providers and full processors without distinguishing between
-them, because the requirements in this document bind all three identically.
+selects to tokenize cards and process transactions.
+
+The term is deliberately broad and it is not a claim that the kinds it covers
+are equivalent. A payment gateway, a payment service provider and a full
+processor differ in ways that can affect a deploying client's own assessment.
+Where a requirement in this document binds all of them alike, that requirement
+says so.
 
 ---
 

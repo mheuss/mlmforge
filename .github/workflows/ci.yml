@@ -29,9 +29,15 @@ jobs:
           # rather than silently inheriting one.
           persist-credentials: false
 
+      - name: Pin check behaves
+        run: scripts/check-go-pins-test.sh
+
+      - name: Go version pins agree
+        run: scripts/check-go-pins.sh
+
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25.13"
+          go-version: "1.27.1"
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -94,16 +100,28 @@ jobs:
       - name: Lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.11.4
+          version: v2.13.2
+
+      - name: Audit scan covers what it should
+        run: scripts/audit-go-test.sh
 
       - name: Vulnerability check
+        env:
+          GOVULNCHECK_VERSION: v1.8.0
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
-          # Exclude internal/testutil from scan — test-only infrastructure
-          # that pulls in docker/docker via testcontainers-go. These vulns
-          # are in the Docker daemon, not the client, and the package never
-          # ships in any binary.
-          go list ./... | grep -v internal/testutil | xargs govulncheck
+          # GOBIN explicitly, because a go install without one lands in the
+          # active toolchain's bin directory, which another entry on PATH can
+          # shadow.
+          export GOBIN="$RUNNER_TEMP/gobin"
+          mkdir -p "$GOBIN"
+          go install "golang.org/x/vuln/cmd/govulncheck@$GOVULNCHECK_VERSION"
+          # The scan is only as pinned as the binary that runs it, and a bare
+          # govulncheck off PATH is not necessarily the one just installed.
+          # -x so a prerelease suffix cannot satisfy the match, -F because the
+          # pin contains dots, which are any-char unescaped.
+          "$GOBIN/govulncheck" -version
+          "$GOBIN/govulncheck" -version | grep -qxF "Scanner: govulncheck@$GOVULNCHECK_VERSION"
+          PATH="$GOBIN:$PATH" scripts/audit-go.sh
 
   rust:
     name: Rust

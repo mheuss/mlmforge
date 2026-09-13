@@ -264,24 +264,23 @@ PAN segment can be reversed in the environment in which the segment resides."
 
 ### Acceptance, for the deploying client
 
-A client's compliance team can tick these against a candidate provider. Every
-one of them is a question the provider can answer.
+A client's compliance team can tick these for a given deployment. Both are
+answerable, and neither is answered by this document.
 
-- [ ] A PAN is tokenized before it reaches any MLMForge server, under the
-      topology this deployment uses.
-- [ ] The provider issues a token that MLMForge can store and present to charge.
+- [ ] Under the topology this deployment actually uses, no card detail reaches
+      an MLMForge server.
 - [ ] The token is not reversible to a PAN by anyone holding it without the
       provider.
-- [ ] The token supports the charges this deployment makes, including recurring
-      charges, without re-collecting a card.
-- [ ] Nothing in the integration requires a consumer of `internal/financial` to
-      know which provider is in use.
 
 ### What these requirements deliberately do not settle
 
-They do not settle where tokenization happens. A provider may render the card
+They do not settle which surface collects the card. A provider may render the
 entry fields in an iframe it hosts, redirect the cardholder to a page it hosts,
-or supply client code that posts the card directly to it.
+or supply client code that runs in a page MLMForge serves and posts the card
+directly to the provider.
+
+Tokenization itself always happens on the provider's systems. What varies is
+what the cardholder is looking at when they type.
 
 Those three differ, and the difference is not cosmetic. It affects the deploying
 client's own assessment obligations. The client chooses the provider, so the
@@ -293,12 +292,15 @@ written as requirements rather than as a description.
 
 ### Cardholder data flow
 
-The boundary in step 3 is the one that matters. Everything above it is the
-provider's. Everything below it is MLMForge's.
+The boundary in step 3 is the one that matters, and it is a boundary between
+servers rather than between organisations. Under some topologies the surface
+that collects the card is served by MLMForge. What must never happen is that the
+card details reach an MLMForge server.
 
 1. The cardholder enters card details. Which surface collects them depends on
    the topology the client selected.
-2. Those details go to the payment provider.
+2. Those details go to the payment provider, which is where tokenization
+   happens. It happens on the provider's systems under every topology.
 3. **The card details do not transit an MLMForge server.** This is the boundary.
 4. The provider returns a token.
 5. The token reaches MLMForge as `PaymentMethodInput.GatewayToken`, through
@@ -312,8 +314,9 @@ provider's. Everything below it is MLMForge's.
 8. MLMForge receives a `ChargeResult` carrying a transaction identifier, a
    status, and a provider reference. It carries no card value.
 
-Steps 1 through 4 are the provider's. Steps 5 through 8 are MLMForge's. A PAN
-appears only in steps 1 and 2, and only inside the provider's boundary.
+A PAN appears only in steps 1 and 2. No MLMForge server handles it in either of
+them, under any of the three topologies. From step 5 onward MLMForge holds a
+token and never anything a PAN can be recovered from.
 
 ---
 

@@ -228,12 +228,12 @@ processor differ in ways that can affect a deploying client's own assessment.
 Where a requirement in this document binds all of them alike, that requirement
 says so.
 
-## What MLMForge requires of any payment provider
+## The provider boundary
 
 The deploying client selects the payment provider. This section states what that
 provider must satisfy, and what MLMForge commits to in return. It does not
-describe a provider, and it does not describe an integration topology, because
-neither has been chosen.
+describe a provider, and it does not describe an integration arrangement,
+because neither has been chosen.
 
 No code implements any of this yet. See "No payment processing exists yet" above
 before reading the Go symbol names below as descriptions of running code.
@@ -263,22 +263,29 @@ a value in scope for PCI DSS. Among them: "The tokenization or encryption of the
 PAN segment can be reversed in the environment in which the segment resides."
 
 Requirement 5 exists because a provider writes that field, not MLMForge. A
-decline reason is free text returned by the provider and stored or logged by the
-platform. Nothing in MLMForge can stop a provider putting a card number in one.
+decline reason is free text chosen by the provider. MLMForge cannot stop a
+provider putting a card number into one.
+
+MLMForge can stop the consequence, and it does. See the commitment on decline
+reasons below. The requirement and the commitment are both needed. One asks the
+provider not to send it. The other means it does not matter if they do.
 
 ### What MLMForge commits to
 
 - MLMForge accepts a token and never a PAN. `PaymentMethodInput.GatewayToken` is
   the field that carries it in.
 - MLMForge presents the token to charge, for card-on-file and recurring charges.
-- MLMForge stores no PAN and no sensitive authentication data.
+- MLMForge stores no PAN and no sensitive authentication data of its own.
+- MLMForge does not persist or log a provider decline reason verbatim. It
+  records the status and the provider reference, which are machine-generated,
+  and discards the free text. This is what makes requirement 5 a control rather
+  than a hope.
 - The provider abstraction stays inside `internal/financial`. No consumer of
   that package learns which provider a deployment uses. This is a portability
   commitment rather than a data protection control, and it is recorded here
   because it was previously asserted only in a Go doc comment.
-- No middleware placed in front of MLMForge may tokenize. If a client wants to
-  put something between the cardholder and the provider, that component is
-  inside the client's own compliance scope and this document does not cover it.
+- MLMForge does not tokenize. It has no code that turns a PAN into a token and
+  this document forbids adding any.
 
 ### Acceptance, for the deploying client
 
@@ -286,10 +293,16 @@ A client's compliance team can tick these for a given deployment. This document
 states the rules. It cannot tell anyone whether a particular provider and
 deployment meet them. That is what these two boxes ask.
 
-- [ ] Under the topology this deployment actually uses, no PAN reaches an
+- [ ] Under the arrangement this deployment actually uses, no PAN reaches an
       MLMForge server.
 - [ ] The provider has stated, in a document the client holds, that its tokens
       cannot be reversed to a PAN outside the provider's environment.
+- [ ] The provider has stated, in a document the client holds, that no field it
+      populates in an API response carries a PAN or sensitive authentication
+      data.
+- [ ] No component the client places between the cardholder and the provider
+      tokenizes a PAN. Any such component sits in the client's own compliance
+      scope and this document does not cover it.
 
 ### What these requirements deliberately do not settle
 
@@ -312,6 +325,12 @@ should not infer one.
 The requirements above hold identically under all three. That is why they are
 written as requirements rather than as a description.
 
+They also do not settle where MLMForge holds the token at rest. `PaymentMethod`,
+the stored type, currently declares no token field, so no persistence model has
+been chosen. Nothing in this document depends on which one is. The boundary, the
+prohibitions and the irreversibility requirement all hold wherever the token
+sits, because what sits there is a token.
+
 ### Cardholder data flow
 
 The boundary is between servers, not between organizations. Under provider
@@ -325,18 +344,18 @@ boundary still holds.
 4. The provider returns a token.
 5. The token reaches MLMForge as `PaymentMethodInput.GatewayToken`, through
    `WalletManager.Add`.
-6. MLMForge holds the token so it can charge later. Where it holds it is not yet
-   settled. `PaymentMethod`, the stored type, currently declares no token field,
-   so the persistence model is an open question this document does not answer.
-7. A stored `PaymentMethod` carries an instrument type, a truncated value, a
-   card expiry where the instrument is a card, and a user-facing label.
+6. MLMForge holds the token so it can charge later.
+7. A stored `PaymentMethod` carries these card-derived fields: an instrument
+   type, a truncated value, a card expiry where the instrument is a card, and a
+   user-facing label.
 8. To charge, MLMForge names a saved payment method. `ChargeRequest` carries
    `PaymentMethodID`, which references the stored method. That is the internal
-   call. What the adapter then sends the provider is the token.
+   call. What MLMForge then sends the provider is the token.
 9. MLMForge receives a `ChargeResult`. It carries a transaction identifier, a
    status, a provider reference, and a decline reason. The first three are
-   generated by the provider and carry no card value. The fourth is free text
-   and is covered by requirement 5.
+   machine-generated identifiers and carry no PAN or sensitive authentication
+   data. The fourth is free text, is covered by requirement 5, and is not
+   persisted verbatim.
 
 A PAN appears only in steps 1 and 2. No MLMForge server handles it in either of
 them, under any of the three arrangements.

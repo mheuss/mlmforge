@@ -194,7 +194,7 @@ PAN and/or other payment credentials."
 The same article separates that from an EMVCo Payment Token: "Payment tokens are
 created by TSPs that are registered with EMVCo." A Payment Token is a defined
 term belonging to a different scheme. This document does not use it, and the
-capitalised form should not be read into any sentence here.
+capitalized form should not be read into any sentence here.
 
 Wherever this document says token, it means an acquiring token. The same article
 states what one is for: "Acquiring Tokens cannot be used for new authorizations.
@@ -236,7 +236,7 @@ an integration topology, because neither has been chosen.
 
 ### The requirements
 
-Any payment provider a client brings must satisfy all five.
+Any payment provider a client brings must satisfy all six.
 
 1. A PAN is tokenized before it reaches any MLMForge server. This holds whatever
    renders the card entry fields.
@@ -250,6 +250,8 @@ Any payment provider a client brings must satisfy all five.
    purpose of this document.
 5. The provider abstraction stays inside `internal/financial`. No consumer of
    that package learns which provider a deployment uses.
+6. Tokenization happens on the provider's systems. MLMForge does not tokenize,
+   and neither does any middleware a client places in front of it.
 
 Requirement 1 is the boundary the rest of this document rests on. If a PAN
 reaches an MLMForge server, no control applied after that point can put it back
@@ -264,8 +266,9 @@ PAN segment can be reversed in the environment in which the segment resides."
 
 ### Acceptance, for the deploying client
 
-A client's compliance team can tick these for a given deployment. Both are
-answerable, and neither is answered by this document.
+A client's compliance team can tick these for a given deployment. This document
+states the rules. It cannot tell anyone whether a particular provider and
+deployment meet them, which is what these two ask.
 
 - [ ] Under the topology this deployment actually uses, no card detail reaches
       an MLMForge server.
@@ -293,7 +296,7 @@ written as requirements rather than as a description.
 ### Cardholder data flow
 
 The boundary in step 3 is the one that matters, and it is a boundary between
-servers rather than between organisations. Under some topologies the surface
+servers rather than between organizations. Under some topologies the surface
 that collects the card is served by MLMForge. What must never happen is that the
 card details reach an MLMForge server.
 

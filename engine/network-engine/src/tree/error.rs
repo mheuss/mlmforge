@@ -54,4 +54,15 @@ pub enum TreeError {
 
     #[error("no open position in subtree under sponsor {0}")]
     SubtreeFull(Uuid),
+
+    #[error(
+        "cannot remove user {user_id}: no node in its sponsor chain survives this removal. Recruits that outlive it: {surviving_sponsored}"
+    )]
+    SponsorlessWithRecruits {
+        user_id: Uuid,
+        surviving_sponsored: usize,
+    },
+
+    #[error("sponsor chain from user {user_id} did not reach an end within {bound} steps")]
+    SponsorCycle { user_id: Uuid, bound: usize },
 }

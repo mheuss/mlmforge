@@ -64,7 +64,7 @@ The Rust `Request` struct deserializes `params` as `Box<serde_json::value::RawVa
 
 ### Error Code Taxonomy
 
-The worker returns an error code in the `error.code` field. There are 43 of
+The worker returns an error code in the `error.code` field. There are 46 of
 them, grouped below by the area that raises them. Codes are shared across areas
 where the condition is the same, so each one is listed once.
 
@@ -88,6 +88,8 @@ which maps every `TreeError` variant, plus a few handler-level checks.
 | `USER_NOT_IN_HOLDING_TANK` | `place_from_tank` named a user who is not in the tank |
 | `UNSUPPORTED_SPILLOVER` | The requested spillover strategy is not implemented for this tree type |
 | `SUBTREE_FULL` | Spillover found no open slot in the target subtree |
+| `SPONSORLESS_WITH_RECRUITS` | Cannot remove a node whose recruits outlive it when no sponsor of its own does. See [030](030-sponsor-continuity-on-removal.md) |
+| `SPONSOR_CYCLE` | A sponsor chain did not reach an end within the number of slots in the tree |
 
 **Plan loading.** Raised by `handle_load_plan` and by the commission handlers'
 `require_plan` gate. See [028](028-commission-config-from-validated-state.md).
@@ -108,6 +110,7 @@ which maps every `TreeError` variant, plus a few handler-level checks.
 | `MEMBER_NOT_DISPLACED` | Operation requires a displaced member and this one is not displaced |
 | `NO_BOARDS_AVAILABLE` | No board has an open slot for placement |
 | `INVALID_DIMENSIONS` | Board width or height is outside the allowed bounds |
+| `MEMBER_AWAITING_REASSIGNMENT` | Member is held for reassignment and cannot be placed |
 
 **Streamline.** Mapped from `StreamlineError` in `handlers/streamline.rs`.
 

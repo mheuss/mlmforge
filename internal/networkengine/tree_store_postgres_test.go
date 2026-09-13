@@ -69,6 +69,54 @@ func TestPostgresTreeStore_InsertAndGetNode(t *testing.T) {
 	assert.False(t, got.CreatedAt.IsZero())
 }
 
+func TestPostgresTreeStore_DeleteNodeAndResponsorMovesTheSponsor(t *testing.T) {
+	store := newTestPostgresTreeStore(t)
+	ctx := context.Background()
+
+	tree1 := testTreeUUID(1)
+	root := testUserUUID(1)
+	recruiter := testUserUUID(2)
+	recruit := testUserUUID(3)
+	require.NoError(t, store.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree1, root, 0, nil, nil, nil)))
+	require.NoError(t, store.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), tree1, recruiter, 1, &root, &root, nil)))
+	require.NoError(t, store.InsertNode(ctx, makeUUIDNode(testNodeUUID(3), tree1, recruit, 1, &root, &recruiter, nil)))
+
+	err := store.DeleteNodeAndResponsor(ctx, tree1, recruiter,
+		[]Responsored{{UserID: recruit, NewSponsorID: root}})
+	require.NoError(t, err)
+
+	gone, err := store.GetNode(ctx, tree1, recruiter)
+	require.NoError(t, err)
+	assert.Nil(t, gone, "the removed node should no longer be active")
+
+	moved, err := store.GetNode(ctx, tree1, recruit)
+	require.NoError(t, err)
+	require.NotNil(t, moved)
+	require.NotNil(t, moved.SponsorID)
+	assert.Equal(t, root, *moved.SponsorID)
+}
+
+func TestPostgresTreeStore_DeleteNodeAndResponsorRollsBackOnAMissingRow(t *testing.T) {
+	store := newTestPostgresTreeStore(t)
+	ctx := context.Background()
+
+	tree1 := testTreeUUID(1)
+	root := testUserUUID(1)
+	recruiter := testUserUUID(2)
+	require.NoError(t, store.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree1, root, 0, nil, nil, nil)))
+	require.NoError(t, store.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), tree1, recruiter, 1, &root, &root, nil)))
+
+	// testUserUUID(99) has no row, so the sponsor update matches nothing.
+	err := store.DeleteNodeAndResponsor(ctx, tree1, recruiter,
+		[]Responsored{{UserID: testUserUUID(99), NewSponsorID: root}})
+	require.Error(t, err)
+
+	// The soft delete must not survive a failed sponsor update.
+	still, err := store.GetNode(ctx, tree1, recruiter)
+	require.NoError(t, err)
+	assert.NotNil(t, still, "a failed re-sponsor must roll the soft delete back")
+}
+
 func TestPostgresTreeStore_GetNodeNotFound(t *testing.T) {
 	store := newTestPostgresTreeStore(t)
 	ctx := context.Background()

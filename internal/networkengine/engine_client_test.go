@@ -170,15 +170,61 @@ func TestEngineClient_AddNode_WithPosition(t *testing.T) {
 
 func TestEngineClient_RemoveNode_MockParams(t *testing.T) {
 	mock := &mockTransport{
+		response: json.RawMessage(`{"removed":true,"responsored":[]}`),
+	}
+	client := newEngineClientWithTransport(mock)
+
+	moved, err := client.RemoveNode(context.Background(), "Test", "00000000-0000-0000-0000-000000000001")
+	require.NoError(t, err)
+	assert.Empty(t, moved, "an empty responsored list is a removal that moved nobody")
+
+	assert.Equal(t, "remove_node", mock.lastOp)
+	assert.JSONEq(t, `{"structure":"Test","user_id":"00000000-0000-0000-0000-000000000001"}`, string(mock.lastParams))
+}
+
+func TestEngineClient_RemoveNode_RejectsMissingResponsored(t *testing.T) {
+	mock := &mockTransport{
 		response: json.RawMessage(`{"removed":true}`),
 	}
 	client := newEngineClientWithTransport(mock)
 
-	err := client.RemoveNode(context.Background(), "Test", "00000000-0000-0000-0000-000000000001")
+	_, err := client.RemoveNode(context.Background(), "Test", "00000000-0000-0000-0000-000000000001")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "responsored")
+}
+
+func TestEngineClient_RemoveMatrixNode_RejectsMissingResponsored(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{"removed":"00000000-0000-0000-0000-000000000001","promoted":null,"repositioned":[],"moved_to_tank":[]}`),
+	}
+	client := newEngineClientWithTransport(mock)
+
+	_, err := client.RemoveMatrixNode(context.Background(), "Test",
+		"00000000-0000-0000-0000-000000000001", "promote_earliest")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "responsored")
+}
+
+// Pins the Go struct tags to the key names that decode the wire response.
+func TestEngineClient_RemoveNode_DecodesResponsored(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{"removed":true,"responsored":[
+			{"user_id":"00000000-0000-0000-0000-000000000003","new_sponsor_id":"00000000-0000-0000-0000-000000000001"},
+			{"user_id":"00000000-0000-0000-0000-000000000004","new_sponsor_id":"00000000-0000-0000-0000-000000000002"}
+		]}`),
+	}
+	client := newEngineClientWithTransport(mock)
+
+	moved, err := client.RemoveNode(context.Background(), "Test", "00000000-0000-0000-0000-000000000009")
 	require.NoError(t, err)
 
-	assert.Equal(t, "remove_node", mock.lastOp)
-	assert.JSONEq(t, `{"structure":"Test","user_id":"00000000-0000-0000-0000-000000000001"}`, string(mock.lastParams))
+	require.Len(t, moved, 2)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000003", moved[0].UserID)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000001", moved[0].NewSponsorID)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000004", moved[1].UserID)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000002", moved[1].NewSponsorID)
 }
 
 // --- Tree query tests (mock) ---
@@ -828,7 +874,7 @@ func TestEngineClient_TreeQueries(t *testing.T) {
 	})
 
 	t.Run("RemoveNode_andVerify", func(t *testing.T) {
-		err := client.RemoveNode(ctx, structureName, grandchildID)
+		_, err := client.RemoveNode(ctx, structureName, grandchildID)
 		require.NoError(t, err)
 
 		children, err := client.GetChildren(ctx, structureName, childID)

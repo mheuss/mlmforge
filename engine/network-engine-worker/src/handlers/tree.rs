@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use network_engine::config::matrix::SpilloverDirection;
 use network_engine::tree::binary::BinaryTree;
 use network_engine::tree::matrix::MatrixTree;
+use network_engine::tree::node::Responsored;
 use network_engine::tree::unilevel::UnilevelTree;
 use uuid::Uuid;
 
@@ -315,6 +316,19 @@ pub(crate) fn handle_add_node_at(state: &mut WorkerState, request: &Request) -> 
     }
 }
 
+/// Builds the wire JSON for a list of responsored moves.
+fn responsored_json(moved: &[Responsored]) -> Vec<serde_json::Value> {
+    moved
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "user_id": r.user_id.to_string(),
+                "new_sponsor_id": r.new_sponsor_id.to_string(),
+            })
+        })
+        .collect()
+}
+
 pub(crate) fn handle_remove_node(state: &mut WorkerState, request: &Request) -> Response {
     let params = match parse_params(request) {
         Ok(p) => p,
@@ -336,11 +350,23 @@ pub(crate) fn handle_remove_node(state: &mut WorkerState, request: &Request) -> 
 
     match tree {
         TreeInstance::Unilevel(t) => match t.remove_node(user_id) {
-            Ok(()) => Response::success(request.id.clone(), serde_json::json!({"removed": true})),
+            Ok(responsored) => Response::success(
+                request.id.clone(),
+                serde_json::json!({
+                    "removed": true,
+                    "responsored": responsored_json(&responsored),
+                }),
+            ),
             Err(e) => tree_error_to_response(&request.id, e),
         },
         TreeInstance::Binary(t) => match t.remove_node(user_id) {
-            Ok(()) => Response::success(request.id.clone(), serde_json::json!({"removed": true})),
+            Ok(responsored) => Response::success(
+                request.id.clone(),
+                serde_json::json!({
+                    "removed": true,
+                    "responsored": responsored_json(&responsored),
+                }),
+            ),
             Err(e) => tree_error_to_response(&request.id, e),
         },
         TreeInstance::Matrix(t) => {
@@ -362,6 +388,7 @@ pub(crate) fn handle_remove_node(state: &mut WorkerState, request: &Request) -> 
                             "promoted": promoted,
                             "repositioned": repositioned,
                             "moved_to_tank": moved_to_tank,
+                            "responsored": responsored_json(&result.responsored),
                         }),
                     )
                 }

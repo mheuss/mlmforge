@@ -32,9 +32,7 @@ func NewTreeEventConsumer(store TreeStore, engine TreeMutator) *TreeEventConsume
 	}
 }
 
-// HandleEvent processes a single tree event. The store projection happens
-// first. If it fails, the error is returned immediately (the event exists
-// in the EventStore for replay). The engine projection retries on failure.
+// HandleEvent processes a single tree event.
 func (c *TreeEventConsumer) HandleEvent(ctx context.Context, event platform.Event) error {
 	switch event.Type {
 	case EventTypeRootAdded:
@@ -189,13 +187,19 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 		return fmt.Errorf("unmarshal node_removed payload: %w", err)
 	}
 
-	if err := c.store.DeleteNode(ctx, payload.TreeID, payload.UserID); err != nil {
-		return fmt.Errorf("soft-delete node: %w", err)
+	var moved []Responsored
+	if err := c.withRetry(ctx, "remove_node", payload.TreeID, payload.UserID, func() error {
+		m, err := c.engine.RemoveNode(ctx, payload.TreeID, payload.UserID)
+		moved = m
+		return err
+	}); err != nil {
+		return err
 	}
 
-	return c.withRetry(ctx, "remove_node", payload.TreeID, payload.UserID, func() error {
-		return c.engine.RemoveNode(ctx, payload.TreeID, payload.UserID)
-	})
+	if err := c.store.DeleteNodeAndResponsor(ctx, payload.TreeID, payload.UserID, moved); err != nil {
+		return fmt.Errorf("remove node and re-sponsor recruits: %w", err)
+	}
+	return nil
 }
 
 // withRetry executes fn with retries. Respects context cancellation between

@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use super::arena::Arena;
 use super::error::TreeError;
-use super::node::{Node, NodeIndex};
+use super::node::{Node, NodeIndex, Responsored};
 use crate::snapshot::SnapshotConsistencyError;
 use crate::types::TreePosition;
 
@@ -112,13 +112,15 @@ impl UnilevelTree {
     ///
     /// The removed slot is added to the free list for reuse by the
     /// next `add_root` or `add_node` call.
-    pub fn remove_node(&mut self, user_id: Uuid) -> Result<(), TreeError> {
+    pub fn remove_node(&mut self, user_id: Uuid) -> Result<Vec<Responsored>, TreeError> {
         let idx = self.arena.resolve(user_id)?;
         let child_count = self.arena.node(idx).children.len();
 
         if child_count > 0 {
             return Err(TreeError::HasChildren(user_id, child_count));
         }
+
+        self.arena.check_sponsored_removable(&[idx])?;
 
         // Remove from parent's children list
         if let Some(parent_idx) = self.arena.node(idx).parent {
@@ -140,9 +142,10 @@ impl UnilevelTree {
             self.arena.root = None;
         }
 
+        let moved = self.arena.reparent_sponsored(&[idx]);
         self.arena.index.remove(&user_id);
         self.arena.tombstone(idx);
-        Ok(())
+        Ok(moved)
     }
 
     /// Computes a full position snapshot for a user.
@@ -879,5 +882,99 @@ mod tests {
         // Verify sponsor links are preserved.
         let sponsor = restored.get_sponsor(test_uuid(4)).unwrap();
         assert_eq!(sponsor.unwrap().user_id, test_uuid(2));
+    }
+
+    #[test]
+    fn removing_a_recruiter_promotes_their_recruits_to_the_grandsponsor() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 1)
+            .unwrap();
+        // Placed under 1 so 2 is childless and reaches the tombstone, but
+        // sponsored by 2 so the edge under test outlives its target.
+        tree.add_node(test_uuid(3), test_uuid(1), test_uuid(2), 2)
+            .unwrap();
+
+        // Without this the test passes even if the fixture stops building the
+        // edge under test.
+        let before = tree.get_sponsor(test_uuid(3)).unwrap().unwrap();
+        assert_eq!(before.user_id, test_uuid(2));
+
+        tree.remove_node(test_uuid(2)).unwrap();
+
+        assert_eq!(tree.validate_restored(), Ok(()));
+        let sponsor = tree.get_sponsor(test_uuid(3)).unwrap().unwrap();
+        assert_eq!(sponsor.user_id, test_uuid(1));
+    }
+
+    #[test]
+    fn removal_reports_the_users_it_re_sponsored() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 1)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), test_uuid(2), 2)
+            .unwrap();
+
+        let moved = tree.remove_node(test_uuid(2)).unwrap();
+
+        assert_eq!(
+            moved,
+            vec![Responsored {
+                user_id: test_uuid(3),
+                new_sponsor_id: test_uuid(1),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_removal_that_moves_nobody_reports_an_empty_list() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 1)
+            .unwrap();
+
+        let moved = tree.remove_node(test_uuid(2)).unwrap();
+
+        assert!(moved.is_empty());
+    }
+
+    #[test]
+    fn a_reused_slot_does_not_capture_a_survivors_sponsor_edge() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 1)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), test_uuid(2), 2)
+            .unwrap();
+
+        let before = tree.get_sponsor(test_uuid(3)).unwrap().unwrap();
+        assert_eq!(before.user_id, test_uuid(2));
+
+        tree.remove_node(test_uuid(2)).unwrap();
+        tree.add_node(test_uuid(4), test_uuid(1), test_uuid(1), 3)
+            .unwrap();
+        assert_eq!(
+            tree.arena.nodes.len(),
+            3,
+            "4 must land in the slot 2 vacated, or this tests nothing about reuse"
+        );
+
+        assert_eq!(tree.validate_restored(), Ok(()));
+        let sponsor = tree.get_sponsor(test_uuid(3)).unwrap().unwrap();
+        assert_ne!(
+            sponsor.user_id,
+            test_uuid(4),
+            "the survivor must not be sponsored by whoever reused the slot"
+        );
+        assert_eq!(sponsor.user_id, test_uuid(1));
+    }
+
+    #[test]
+    fn removing_a_node_with_no_recruits_and_no_sponsor_still_works() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+
+        assert!(tree.remove_node(test_uuid(1)).is_ok());
     }
 }

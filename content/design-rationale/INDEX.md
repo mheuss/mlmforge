@@ -101,6 +101,7 @@ Treat a blank Status as "nobody has found a problem here yet."
 | [027](027-provenance-as-primary-data.md) | **Provenance as Primary Data** | Partial | Why commission provenance is stored as primary data rather than a rebuildable event projection, and where the four kinds of commission data each live |
 | [028](028-commission-config-from-validated-state.md) | **Commission Config From Validated State** | | Why commission handlers read the plan and structure config from `WorkerState` instead of request params, so the `load_plan` validation gate cannot be bypassed |
 | [029](029-commission-provenance-on-the-wire.md) | **Commission Provenance on the Wire** | Partial | Why provenance is emitted per walk rather than per earning, why the walk index is the correlation key rather than `(earner_id, source_id)`, and why the outcome taxonomy is still provisional |
+| [030](030-sponsor-continuity-on-removal.md) | **Sponsor Continuity on Removal** | | What happens to a sponsor edge when the sponsor is removed, why the repair runs at removal rather than at restore, why this diverges from 021 on purpose, and why three components answer it three different ways |
 
 ## Reading Order
 

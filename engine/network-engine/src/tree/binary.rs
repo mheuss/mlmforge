@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use super::arena::Arena;
 use super::error::TreeError;
-use super::node::{Node, NodeIndex};
+use super::node::{Node, NodeIndex, Responsored};
 use crate::snapshot::SnapshotConsistencyError;
 use crate::types::TreePosition;
 
@@ -173,13 +173,15 @@ impl BinaryTree {
     ///
     /// The removed slot is added to the free list for reuse by the
     /// next `add_root` or `add_node` call.
-    pub fn remove_node(&mut self, user_id: Uuid) -> Result<(), TreeError> {
+    pub fn remove_node(&mut self, user_id: Uuid) -> Result<Vec<Responsored>, TreeError> {
         let idx = self.arena.resolve(user_id)?;
         let child_count = self.arena.node(idx).children.len();
 
         if child_count > 0 {
             return Err(TreeError::HasChildren(user_id, child_count));
         }
+
+        self.arena.check_sponsored_removable(&[idx])?;
 
         if let Some(parent_idx) = self.arena.node(idx).parent {
             let slots = self
@@ -205,10 +207,11 @@ impl BinaryTree {
             self.arena.root = None;
         }
 
+        let moved = self.arena.reparent_sponsored(&[idx]);
         self.slots.remove(&idx);
         self.arena.index.remove(&user_id);
         self.arena.tombstone(idx);
-        Ok(())
+        Ok(moved)
     }
 
     /// Rebuilds a node's children Vec from its binary slots.
@@ -584,15 +587,16 @@ mod tests {
     fn engine_output_slots_every_live_node_exactly_once() {
         let mut tree = BinaryTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
-        // The sponsor here is the root, which this test never removes.
-        // Varying it risks failing for a reason unrelated to slot agreement
-        // (HEU-766).
         for n in 2..=12u8 {
             let parent = test_uuid(1 + (n - 2) / 2);
             let position = usize::from((n - 2) % 2);
-            tree.add_node(test_uuid(n), parent, position, test_uuid(1), n as i64)
+            tree.add_node(test_uuid(n), parent, position, parent, n as i64)
                 .unwrap();
         }
+        // Sponsored by the node this test removes, placed where the removal
+        // does not reach, so a sponsor edge outlives its target.
+        tree.add_node(test_uuid(13), test_uuid(7), 0, test_uuid(12), 13)
+            .unwrap();
         tree.remove_node(test_uuid(12)).unwrap();
         assert!(
             tree.arena.nodes.iter().any(|n| n.user_id == Uuid::nil()),
@@ -601,7 +605,11 @@ mod tests {
 
         // The production entry point, not just the slot walk. Without this
         // the guards are never run against engine output.
-        assert_eq!(tree.validate_restored(), Ok(()));
+        assert_eq!(
+            tree.validate_restored(),
+            Ok(()),
+            "a sponsor edge outliving its target must not survive the removal"
+        );
         crate::tree::test_helpers::assert_live_nodes_are_slotted_once(&tree.arena, &tree.slots);
     }
 
@@ -1068,5 +1076,46 @@ mod tests {
         // Verify sponsor links are preserved.
         let sponsor = restored.get_sponsor(test_uuid(4)).unwrap();
         assert_eq!(sponsor.unwrap().user_id, test_uuid(1));
+    }
+
+    #[test]
+    fn removal_reports_the_recruit_it_moved() {
+        let mut tree = BinaryTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0, test_uuid(1), 1)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 1, test_uuid(2), 2)
+            .unwrap();
+
+        let moved = tree.remove_node(test_uuid(2)).unwrap();
+
+        assert_eq!(
+            moved,
+            vec![Responsored {
+                user_id: test_uuid(3),
+                new_sponsor_id: test_uuid(1),
+            }]
+        );
+    }
+
+    #[test]
+    fn removing_a_recruiter_promotes_their_recruits_to_the_grandsponsor() {
+        let mut tree = BinaryTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0, test_uuid(1), 1)
+            .unwrap();
+        // Placed under 1 so 2 stays a leaf, sponsored by 2 so the edge under
+        // test outlives its target.
+        tree.add_node(test_uuid(3), test_uuid(1), 1, test_uuid(2), 2)
+            .unwrap();
+
+        let before = tree.get_sponsor(test_uuid(3)).unwrap().unwrap();
+        assert_eq!(before.user_id, test_uuid(2));
+
+        tree.remove_node(test_uuid(2)).unwrap();
+
+        assert_eq!(tree.validate_restored(), Ok(()));
+        let sponsor = tree.get_sponsor(test_uuid(3)).unwrap().unwrap();
+        assert_eq!(sponsor.user_id, test_uuid(1));
     }
 }

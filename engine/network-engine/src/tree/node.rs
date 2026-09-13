@@ -8,6 +8,13 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NodeIndex(pub(crate) usize);
 
+/// A recruit whose sponsor a removal moved, and who it moved them to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Responsored {
+    pub user_id: Uuid,
+    pub new_sponsor_id: Uuid,
+}
+
 /// A node in the tree arena.
 ///
 /// Stores two sets of relationships as arena indices:

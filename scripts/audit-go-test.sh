@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Asserts which packages audit-go.sh would scan. The scan itself needs a
-# network and a real module graph and is not covered here. Package selection is
-# the half that fails silently: over-exclude and the scan reports clean over
-# less code than anyone thinks.
+# Asserts which packages audit-go.sh would scan, and that it refuses rather
+# than scanning a short list. The scan itself needs a network and a real module
+# graph and is not covered here. Package selection is the half that fails
+# silently: over-exclude and the scan reports clean over less code than anyone
+# thinks.
 #
-# The hazard cases run against a fixture module in a temp directory, so nothing
+# The hazard cases run against fixture modules in a temp directory, so nothing
 # here writes into the repo.
 set -uo pipefail
 
@@ -24,25 +25,54 @@ record() {
   fi
 }
 
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
 # A fixture module holding the package that makes the substring hazard visible.
 # No package in the real repo contains internal/testutil as a substring, so
 # against the repo alone a substring exclusion looks identical to a correct one.
-fixture=$(mktemp -d)
-trap 'rm -rf "$fixture"' EXIT
-
-printf 'module example.com/fixture\n\ngo 1.27.0\n' > "$fixture/go.mod"
+fixture=$work/fixture
+mkdir -p "$fixture"
+printf 'module example.com/fixture\n\ngo 1.21\n' > "$fixture/go.mod"
 for pkg in cmd/app internal/testutil internal/testutil_helpers internal/store; do
   mkdir -p "$fixture/$pkg"
   printf 'package %s\n' "${pkg##*/}" > "$fixture/$pkg/doc.go"
 done
 
+# A module with a go.mod and no packages at all.
+empty=$work/empty
+mkdir -p "$empty"
+printf 'module example.com/empty\n\ngo 1.21\n' > "$empty/go.mod"
+
+# A go that prints some packages, writes to stderr, and exits non-zero. This is
+# the shape that silently shrinks a scan when a list's exit status goes unread.
+shim=$work/shim
+mkdir -p "$shim"
+cat > "$shim/go" <<'SHIM'
+#!/usr/bin/env bash
+if [ "$1" = list ] && [ "$2" = -m ]; then echo "example.com/partial"; exit 0; fi
+if [ "$1" = list ]; then
+  echo "example.com/partial/cmd/app"
+  echo "go: some package failed to load" >&2
+  exit 1
+fi
+exit 0
+SHIM
+chmod +x "$shim/go"
+
+run() {
+  local out rc
+  out=$("$@" 2>"$work/stderr")
+  rc=$?
+  printf '%s\n' "$out"
+  return $rc
+}
+
 # Real repo: stdout only, so toolchain chatter on stderr cannot be read as an
 # import path.
-listed_err=$(mktemp)
-listed=$("$audit" --list 2>"$listed_err")
+listed=$(run "$audit" --list)
 list_rc=$?
-listed_stderr=$(cat "$listed_err")
-rm -f "$listed_err"
+listed_stderr=$(cat "$work/stderr")
 
 if [ "$list_rc" = 0 ]; then
   record yes "--list exits 0" ""
@@ -77,34 +107,44 @@ else
   record yes "internal/testutil is excluded" ""
 fi
 
-# Every listed package must be a real package in the module.
-missing=""
-while IFS= read -r pkg; do
-  [ -n "$pkg" ] || continue
-  printf '%s\n' "$all" | grep -qxF "$pkg" || missing="$missing $pkg"
-done <<< "$listed"
-if [ -z "$missing" ]; then
-  record yes "every listed package exists in the module" ""
-else
-  record no "every listed package exists in the module" "not in go list:$missing"
-fi
-
-# The substring hazard, against the fixture. A package whose import path merely
-# contains the excluded one must survive.
-fixture_listed=$("$audit" --list "$fixture" 2>/dev/null)
+# The substring hazard, against the fixture.
+fixture_listed=$(run "$audit" --list "$fixture")
 fixture_rc=$?
+fixture_stderr=$(cat "$work/stderr")
+
 if [ "$fixture_rc" != 0 ]; then
-  record no "a package named after the excluded one survives" "--list rc=$fixture_rc"
-elif printf '%s\n' "$fixture_listed" | grep -qxF "example.com/fixture/internal/testutil_helpers"; then
-  record yes "a package named after the excluded one survives" ""
+  record no "a package named after the excluded one survives" "rc=$fixture_rc: $fixture_stderr"
+  record no "the fixture's testutil is excluded" "rc=$fixture_rc: $fixture_stderr"
 else
-  record no "a package named after the excluded one survives" "testutil_helpers was dropped from the scan"
+  if printf '%s\n' "$fixture_listed" | grep -qxF "example.com/fixture/internal/testutil_helpers"; then
+    record yes "a package named after the excluded one survives" ""
+  else
+    record no "a package named after the excluded one survives" "testutil_helpers was dropped"
+  fi
+
+  if printf '%s\n' "$fixture_listed" | grep -qxF "example.com/fixture/internal/testutil"; then
+    record no "the fixture's testutil is excluded" "it appears in the list"
+  else
+    record yes "the fixture's testutil is excluded" ""
+  fi
 fi
 
-if printf '%s\n' "$fixture_listed" | grep -qxF "example.com/fixture/internal/testutil"; then
-  record no "the fixture's testutil is excluded" "it appears in the list"
+# A go list that fails partway must be refused, not scanned.
+out=$(PATH="$shim:$PATH" "$audit" --list "$fixture" 2>&1)
+rc=$?
+if [ "$rc" = 1 ] && [[ $out == *"exited non-zero"* ]]; then
+  record yes "refuses a go list that fails partway" ""
 else
-  record yes "the fixture's testutil is excluded" ""
+  record no "refuses a go list that fails partway" "rc=$rc: $out"
+fi
+
+# go list exits 0 with no output when nothing matches.
+out=$("$audit" --list "$empty" 2>&1)
+rc=$?
+if [ "$rc" = 1 ] && [[ $out == *"no packages"* ]]; then
+  record yes "refuses a module with no packages" ""
+else
+  record no "refuses a module with no packages" "rc=$rc: $out"
 fi
 
 out=$("$audit" --list "$fixture" extra 2>&1)
@@ -115,7 +155,15 @@ else
   record no "rejects extra arguments" "rc=$rc: $out"
 fi
 
-out=$("$audit" --list "$fixture/nonexistent" 2>&1)
+out=$("$audit" --bogus 2>&1)
+rc=$?
+if [ "$rc" = 1 ] && [[ $out == *"unknown flag"* ]]; then
+  record yes "rejects an unknown flag" ""
+else
+  record no "rejects an unknown flag" "rc=$rc: $out"
+fi
+
+out=$("$audit" --list "$work/nonexistent" 2>&1)
 rc=$?
 if [ "$rc" = 1 ] && [[ $out == *"no readable go.mod"* ]]; then
   record yes "rejects a root with no go.mod" ""

@@ -22,6 +22,13 @@ if [ "$#" -gt 1 ]; then
   exit 1
 fi
 
+case "${1:-}" in
+  -*)
+    echo "unknown flag \"$1\"; usage: ${0##*/} [--list] [module-root]" >&2
+    exit 1
+    ;;
+esac
+
 root=${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
 
 if [ ! -r "$root/go.mod" ]; then
@@ -40,6 +47,14 @@ fi
 # the scan silently.
 if ! all=$(cd "$root" && go list ./...); then
   echo "go list ./... exited non-zero in \"$root\"" >&2
+  exit 1
+fi
+
+# go list exits 0 with empty output when nothing matches, warning only on
+# stderr. Checked before filtering, because printf on an empty string emits a
+# blank line and an array holding one empty string is not an empty array.
+if [ -z "$all" ]; then
+  echo "go list ./... produced no packages in \"$root\"" >&2
   exit 1
 fi
 

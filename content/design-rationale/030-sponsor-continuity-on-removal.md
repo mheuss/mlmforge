@@ -109,6 +109,14 @@ The `remove_node` response names the recruits a removal moved, so a caller can s
 
 The engine has to answer before the store can be written. A removal whose reply is lost leaves the engine and the store disagreeing. The retry cannot recover it. That window is a consequence of the ordering this decision requires. HEU-777 carries it.
 
+Two concurrent removals in one tree can leave the store wrong with no error anywhere. The engine handles one request at a time and ends up correct. The store writes happen afterwards in Go and are ordered by nothing, so they can land in the opposite order and the later write can carry the earlier answer.
+
+Take root, then A, then B, with C recruited by B. Removing A and B at once has the engine move C to A and then to root, ending correct. If A's store write lands after B's, the store says C is sponsored by A. Both writes did what they were told and neither failed. The disagreement surfaces at the next restart, when the bulk load rebuilds the tree from the store.
+
+This is a different failure class from the lost reply above, and the two should not be read as one problem. That one fails loudly, through a retry that exhausts or a transaction that rolls back. This one produces no signal at all. A loud failure gets fixed. A silent one gets inherited.
+
+It is reachable only if events for one tree can be handled at the same time. Nothing decides that yet, because `HandleEvent` has no caller outside tests. The ordering this decision requires is what makes the guarantee necessary, so the guarantee is what HEU-784 asks for rather than a reversal.
+
 The soft delete inside that store write is the one statement with no row-count check, where every re-sponsor beside it has one. Left lenient deliberately rather than by oversight. So a removal whose node has no active row still commits the sponsor updates beside it, against the all-or-nothing the method's own docblock states. HEU-778 carries it.
 
 The three matrix repair sites have no path to the store. Matrix removal never reaches the engine through the consumer, so nothing carries their moved recruits to `tree_nodes`. The engine half is done and the store half is not, which is the shape the rule two sections up warns about. Whoever wires matrix removal up has to wire both. HEU-582 carries the missing dispatch.

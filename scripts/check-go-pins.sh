@@ -22,13 +22,10 @@ for f in "$wf" "$mod" "$mise"; do
   fi
 done
 
-# Tracks the step and the with block a key sits in, so go-version is only read
-# where it selects a toolchain. A bare key match would accept a strategy.matrix
-# go-version, and a step-wide match would accept one under env, neither of which
-# setup-go reads. A with block written inline is not read here, which fails the
-# empty case rather than passing it. Anchored so a
-# commented-out or inline mention does not match. \047 is an apostrophe, so the
-# value is read whether it is bare, single- or double-quoted.
+# go-version counts only under an actions/setup-go step's with, never a matrix
+# or env entry and never a commented-out line. An inline with mapping is not
+# read, so it fails the empty case rather than passing it. \047 is an
+# apostrophe, so the value is read bare, single- or double-quoted.
 setup_go_pins() {
   awk '
     function indent(s,   i) { i = match(s, /[^[:space:]]/); return i ? i - 1 : -1 }

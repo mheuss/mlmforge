@@ -34,7 +34,6 @@ for pkg in cmd/app internal/testutil internal/testutil_helpers internal/store; d
   printf 'package %s\n' "${pkg##*/}" > "$fixture/$pkg/doc.go"
 done
 
-# A module with a go.mod and no packages at all.
 empty=$work/empty
 mkdir -p "$empty"
 printf 'module example.com/empty\n\ngo 1.21\n' > "$empty/go.mod"

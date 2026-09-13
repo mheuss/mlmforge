@@ -282,16 +282,16 @@ and paste from the repo root as written.
 **A fresh clone runs `mise trust .` once.**
 
 `mise.toml` pins the Go toolchain and `GOTOOLCHAIN` for this repo. Until the
-directory is trusted the file is inert, so the repo looks pinned and your shell
-is not. `mise env | grep GOTOOLCHAIN` tells you whether it took.
+directory is trusted the file is inert. The repo looks pinned and your shell is
+not. `mise env | grep GOTOOLCHAIN` tells you whether it took.
 
 **Match your local `golangci-lint` to the version `ci.yml` pins.**
 
 v2.11.4 exits non-zero without linting anything against a go1.27 standard
-library, reporting that the Go it was built with is lower than the targeted
+library. It reports that the Go it was built with is lower than the targeted
 version. Versions between that and the pin are untested. CI installs its own
-copy, so a stale local binary fails only for you. `golangci-lint version`
-prints the Go it was built with.
+copy. A stale local binary fails only for you. `golangci-lint version` prints
+the Go it was built with.
 
 ---
 

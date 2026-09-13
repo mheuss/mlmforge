@@ -111,7 +111,7 @@ jobs:
         run: |
           # GOBIN explicitly, because a go install without one lands in the
           # active toolchain's bin directory, which another entry on PATH can
-          # shadow. ADR-025 records the same hazard for local installs.
+          # shadow.
           export GOBIN="$RUNNER_TEMP/gobin"
           mkdir -p "$GOBIN"
           go install "golang.org/x/vuln/cmd/govulncheck@$GOVULNCHECK_VERSION"

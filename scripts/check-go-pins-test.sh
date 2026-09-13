@@ -66,7 +66,10 @@ expect 1 "has an empty value"            "empty go-version value"       wf-empty
 expect 1 "go-version is \"1.27\""        "partial version is drift"     wf-partial.yml   mod-ok
 expect 1 "under with: in an actions/setup-go step: 0" "go-version outside a setup-go step" wf-foreign-pin.yml mod-ok
 expect 1 "under with: in an actions/setup-go step: 0" "go-version under env in a setup-go step" wf-env-pin.yml mod-ok
-expect 1 "has 2 actions/setup-go steps"       "a second setup-go step the parser cannot see" wf-two-setup-go.yml mod-ok
+expect 1 "uncommented lines naming actions/setup-go" "a second setup-go step the parser cannot see" wf-two-setup-go.yml mod-ok
+expect 1 "uncommented lines naming actions/setup-go" "a second setup-go step with a quoted uses" wf-two-setup-go-quoted.yml mod-ok
+expect 1 "uncommented lines naming actions/setup-go" "a second setup-go step in flow style"    wf-two-setup-go-flow.yml mod-ok
+expect 0 "go-version 1.27.1" "a commented-out setup-go step is harmless" wf-commented-step.yml mod-ok
 
 expect 0 "go-version 1.27.1" "setup-go written as a named step"   wf-named-step.yml          mod-ok
 expect 0 "go-version 1.27.1" "a foreign go-version is not the pin" wf-foreign-and-real-pin.yml mod-ok
@@ -82,6 +85,9 @@ expect 1 "no go under [tools]"           "mise keys in the wrong table" wf-ok.ym
 expect 1 "no go under [tools]"           "mise file with no tables"     wf-ok.yml mod-ok mise-no-tables.toml
 expect 1 "has 2 tools.go"                "mise duplicate tools.go"      wf-ok.yml mod-ok mise-two-tools.toml
 expect 1 "and 2 env.GOTOOLCHAIN"         "mise duplicate GOTOOLCHAIN"   wf-ok.yml mod-ok mise-two-env.toml
+
+expect_raw 1 "overrides" "a mise local override beside the read file"      "$data/wf-ok.yml" "$data/mod-ok" "$data/miselocal/mise.toml"
+expect_raw 1 "overrides" "a dotted mise local override beside the read file" "$data/wf-ok.yml" "$data/mod-ok" "$data/misedotlocal/mise.toml"
 
 expect_raw 1 "cannot read"  "unreadable path"     "$data/wf-ok.yml" "$data/nonexistent" "$data/mise-ok.toml"
 expect_raw 1 "usage:"       "too many arguments"  "$data/wf-ok.yml" "$data/mod-ok" "$data/mise-ok.toml" junk

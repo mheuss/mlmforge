@@ -124,6 +124,7 @@ osMLM/
 # S.O.P. scratch — review diffs and prompts built during finish-branch
 .sop-tmp/
 
-# mise merges this over the tracked mise.toml, so a committed one would be a
-# second, invisible pin. scripts/check-go-pins.sh reads mise.toml only.
-mise.local.toml
+# mise merges either spelling over the tracked mise.toml, so a committed one
+# would be a second pin. Anchored, so a fixture of the same name is trackable.
+/mise.local.toml
+/.mise.local.toml

@@ -65,7 +65,11 @@ wf_go_version_lines=$(grep -cE '^[[:space:]]*go-version:' "$wf" || true)
 # Counted from the raw file rather than from setup_go_pins. A step whose first
 # key is not uses, name, run or id is invisible to that parser, and a bare dash
 # has no key at all, so a second pin could go uncompared and still report one.
-wf_setup_go_steps=$(grep -cE 'uses:[[:space:]]*actions/setup-go' "$wf" || true)
+# The quote is optional here and not in the parser, because this count is only
+# useful if it is broader than what it backstops. Full-line comments are dropped
+# first, so commenting a step out stays harmless.
+wf_setup_go_lines=$(grep -v '^[[:space:]]*#' "$wf" \
+  | grep -cE 'uses:[[:space:]]*["'\''"]?actions/setup-go' || true)
 
 mod_toolchain_raw=$(awk '/^toolchain /{print $2}' "$mod")
 mod_toolchain=${mod_toolchain_raw#go}
@@ -92,6 +96,17 @@ mise_count() {
     END { print n + 0 }' "$3"
 }
 
+# mise merges a local config over this one and the merged value is what runs,
+# so agreement reported from this file alone would be wrong. Both spellings
+# override; refusing is what every other guard here does.
+mise_dir=$(cd "$(dirname "$mise")" && pwd)
+for local_mise in "$mise_dir/mise.local.toml" "$mise_dir/.mise.local.toml"; do
+  if [ -e "$local_mise" ]; then
+    echo "\"$local_mise\" exists and overrides \"$mise\"; this check reads one" >&2
+    exit 1
+  fi
+done
+
 mise_go=$(mise_read "[tools]" go "$mise")
 mise_gotoolchain_raw=$(mise_read "[env]" GOTOOLCHAIN "$mise")
 mise_gotoolchain=${mise_gotoolchain_raw#go}
@@ -103,8 +118,8 @@ if [ "$ci_go_lines" -gt 1 ]; then
   exit 1
 fi
 
-if [ "$wf_setup_go_steps" -gt 1 ]; then
-  echo "\"$wf\" has $wf_setup_go_steps actions/setup-go steps; this check reads one" >&2
+if [ "$wf_setup_go_lines" -gt 1 ]; then
+  echo "\"$wf\" has $wf_setup_go_lines uncommented lines naming actions/setup-go; this check reads one" >&2
   exit 1
 fi
 

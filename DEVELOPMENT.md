@@ -367,6 +367,25 @@ Full document: [`content/design-rationale/020-tree-topology-separation.md`](cont
 
 ---
 
+### ADR-025: Go Toolchain and Scanner Pinning
+
+**Status:** Accepted
+
+**Context:** Four Go version numbers disagreed. `go.mod` declared `go 1.25.0` with `toolchain go1.25.11`, CI pinned 1.25.13, and developer machines ran whatever mise last installed. A local `govulncheck` reported nine findings where CI reported zero. Five were standard-library advisories that existed only on the local toolchain, and four of those traced into production code, so they read as the serious half of the report. A local `go mod tidy` once rewrote `go.mod` into a tree CI refused to build. Commit `782490c` raised CI's pin alone and left the toolchain directive behind, and CI stayed green, because a CI Go newer than the directive raises no error.
+
+**Decision:** Pin the Go toolchain in a tracked `mise.toml` setting both `[tools] go` and `[env] GOTOOLCHAIN`. Keep `go.mod`'s two directives and every Go tool version in `.github/workflows/ci.yml` on the same line, and move them in one commit. Give the vulnerability scan one tracked definition in `scripts/audit-go.sh` that CI and the local audit command both invoke. Assert the pins agree in CI with `scripts/check-go-pins.sh`, and test both scripts against fixtures.
+
+**Consequences:**
+- The two `go.mod` directives do different jobs. `toolchain` raises a too-old local Go to exactly its version, downloading it if needed. Neither directive can hold a newer local Go down. The directive covers machines behind the pin and `mise.toml` covers machines ahead of it, so both are load-bearing for opposite populations.
+- A fresh clone needs `mise trust .` once. Until then the file is inert, so the repo looks pinned and the shell is not.
+- A shell opened before a version change keeps the old toolchain on `PATH`. `mise current` reports the config, not the shell. Check `go version` in the shell that will run the gate.
+- Raising the toolchain breaks prebuilt Go analysis tools built against an older Go. golangci-lint panics or refuses to load its config. A prebuilt govulncheck exits 1 with no findings printed, which reads as a clean scan. Raise every pinned tool in the same commit, and rebuild local prebuilt ones.
+- A tool installed with `go install` and no `GOBIN` lands in the active toolchain's bin directory, which sits ahead of mise's shims on `PATH`, and shadows the mise-managed copy silently. Set `GOBIN` explicitly.
+- The scan has one definition, so changing its scope is a tracked, reviewable diff. `.claude/sop.md` points at the script rather than restating it, because that file is gitignored and reaches no other clone.
+- The scan's package exclusion matches a whole import path. A substring match would also drop a package whose path merely contains the excluded one. No package here does, so the hazard is invisible without a test that builds one.
+
+---
+
 ## Context-Specific Development Guides
 
 For implementation patterns specific to a bounded context, see the relevant guide:

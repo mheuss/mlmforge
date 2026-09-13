@@ -252,7 +252,8 @@ Any payment provider a client brings must satisfy all five.
    that package learns which provider a deployment uses.
 
 Requirement 1 is the boundary the rest of this document rests on. If a PAN
-reaches an MLMForge server, every prohibition below is already too late.
+reaches an MLMForge server, no control applied after that point can put it back
+outside.
 
 Requirement 4 is the one most easily assumed rather than checked. A token is not
 irreversible because it is called a token. Some tokenization solutions are
@@ -302,10 +303,9 @@ provider's. Everything below it is MLMForge's.
 4. The provider returns a token.
 5. The token reaches MLMForge as `PaymentMethodInput.GatewayToken`, through
    `WalletManager.Add`.
-6. MLMForge stores the token together with non-sensitive descriptive fields. A
-   stored `PaymentMethod` carries an instrument type, a truncated value, a card
-   expiry where the instrument is a card, and a user-facing label. What may be
-   stored is settled below.
+6. MLMForge stores the token together with descriptive fields. A stored
+   `PaymentMethod` carries an instrument type, a truncated value, a card expiry
+   where the instrument is a card, and a user-facing label.
 7. To charge, MLMForge names a saved payment method. `ChargeRequest` carries
    `PaymentMethodID`, which references the stored method rather than any card
    value.

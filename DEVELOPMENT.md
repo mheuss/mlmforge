@@ -377,14 +377,14 @@ Full document: [`content/design-rationale/020-tree-topology-separation.md`](cont
 
 **Consequences:**
 - The two `go.mod` directives do different jobs. `toolchain` raises a too-old local Go to exactly its version, downloading it if needed. Neither directive can hold a newer local Go down. The directive covers machines behind the pin. `mise.toml` covers machines ahead of it. Both are load-bearing for opposite populations.
-- A fresh clone needs `mise trust .` once. Until then the file is inert. The repo looks pinned and the shell is not.
+- A fresh clone needs `mise trust .` once. `mise.toml` sets `[env] GOTOOLCHAIN`, so mise refuses it until trusted rather than reading it. The repo looks pinned and the shell is not.
 - mise merges a local config over `mise.toml`, and the merged value is what runs. Both `mise.local.toml` and `.mise.local.toml` do it. Either one present beside the tracked file is refused by the pin check, because agreement read from the tracked file alone would be wrong. Both spellings are gitignored at the repo root.
 - A shell opened before a version change keeps the old toolchain on `PATH`. `mise current` reports the config, not the shell. Check `go version` in the shell that will run the gate.
 - Raising the toolchain breaks prebuilt Go analysis tools built against an older Go. golangci-lint panics or refuses to load its config. A prebuilt govulncheck exits 1 with no findings printed. That looks like a scan with no results, not a failure. Raise every pinned tool in the same commit. Rebuild local prebuilt ones.
 - A tool installed with `go install` and no `GOBIN` lands in the active toolchain's bin directory. That directory sits ahead of mise's shims on `PATH`. The tool shadows the mise-managed copy silently. Set `GOBIN` explicitly.
 - The scan has one definition, so changing its scope is a tracked, reviewable diff. `.claude/sop.md` points at the script rather than restating it, because that file is gitignored and reaches no other clone.
 - The scan's package exclusion matches a whole import path. A substring match would also drop a package whose path merely contains the excluded one. No package here does, so the hazard is invisible without a test that builds one.
-- `internal/testutil` is the one package excluded from the scan. It uses `testcontainers-go` to start throwaway Postgres containers. That pulls in the Docker client library and with it a set of unpatched Moby advisories. Those advisories are daemon-side. The package is test-only. It ships in no binary. The exclusion is what keeps those advisories out of the scan. Removing it needs somewhere else to carry a finding that is accepted rather than fixed.
+- `internal/testutil` is the one package excluded from the scan. It uses `testcontainers-go` to start throwaway Postgres containers. That pulls in the Docker client library and with it a set of unpatched Moby advisories. Those advisories are daemon-side. The package is test-only. Every importer is a test file, so it reaches test binaries and no production binary. The exclusion is what keeps those advisories out of the scan. Removing it needs somewhere else to carry a finding that is accepted rather than fixed.
 
 ---
 

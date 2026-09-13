@@ -1187,3 +1187,46 @@ Deriving the list from the files the previous bump touched gives a wrong answer.
 The version-8 commit also changed `DEVELOPMENT.md` and `019-ndjson-protocol.md`,
 for key-order wording rather than the number. Grep the tree for the outgoing
 number instead.
+
+### The field that justified the bump has to be required on decode
+
+A bump is a claim that the wire means something new. If the new field decodes to
+a usable zero value when it is missing, nothing enforces the claim, and a worker
+that dropped the field looks like a worker with nothing to say.
+
+`encoding/json` leaves a `[]T` field nil both for an absent key and for an empty
+list. Those are different claims. An empty list says the worker looked and found
+nothing, which a caller can act on. A missing key says nothing at all. Decode
+such a field into a `*[]T` and reject nil, so silence fails loudly instead of
+becoming the one answer that requires no work.
+
+This is the same technique the `ping` handshake uses on `protocol_version`, and
+it is worth reaching for on any field whose presence is the point.
+
+## A Canned Mock Response Answers Every Op, Including The One You Just Changed
+
+`recordingTransport` in `tree_consumer_test.go` holds a single `response` field
+and returns it for every operation. It is `{"ok":true}` unless a test sets it.
+
+That makes a consumer test read as coverage of whatever the engine call returns,
+when it is really coverage of one fixed payload. A response field added to one
+operation is absent from every one of those tests and nothing says so. The
+removal test decoded a reply with no `responsored` key and passed, until strict
+decode turned the silence into a failure.
+
+When you add a field to one operation's response, set the response on the tests
+that exercise that operation. A green suite is not evidence that they carry it.
+
+## A Matrix Fixture Cannot Put A Recruit Outside Its Sponsor's Subtree With `add_node`
+
+`add_node` picks the slot by spillover search starting at the sponsor's own
+index, so the new node always lands below the sponsor. No argument changes that.
+
+A test that needs a recruit whose placement sits outside the sponsor's subtree
+has to build it with `add_node_at`, which takes the parent and slot explicitly.
+The case matters because it is the one where a holding-tank removal takes the
+recruit but not the sponsor, which is what makes the multi-step sponsor walk
+load-bearing.
+
+Fixtures written on `add_node` for this case are not merely awkward. They cannot
+express the state, and they look like they do.

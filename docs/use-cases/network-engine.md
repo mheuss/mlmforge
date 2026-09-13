@@ -24,6 +24,10 @@ Use-cases for the Network Engine bounded context.
 - [UC-NET-018: Telling an absent JSON key from an explicit null](#uc-net-018-telling-an-absent-json-key-from-an-explicit-null)
 - [UC-NET-019: Walk collection through a caller-owned collector](#uc-net-019-walk-collection-through-a-caller-owned-collector)
 - [UC-NET-020: Rebuilding a narrow-mirror list from the Rust side](#uc-net-020-rebuilding-a-narrow-mirror-list-from-the-rust-side)
+- [UC-NET-021: Validate a restored structure before storing it](#uc-net-021-validate-a-restored-structure-before-storing-it)
+- [UC-NET-022: Move JSON across the seam without building a `Value`](#uc-net-022-move-json-across-the-seam-without-building-a-value)
+- [UC-NET-023: Repair inbound edges before tombstoning a node](#uc-net-023-repair-inbound-edges-before-tombstoning-a-node)
+- [UC-NET-024: Adding a response field a caller must not ignore](#uc-net-024-adding-a-response-field-a-caller-must-not-ignore)
 
 ---
 
@@ -857,5 +861,81 @@ A `RawValue` cannot nest inside a `json!` literal, because `json!` builds a `Val
 Never put `#[serde(flatten)]` on a `RawValue` field. It emits serde_json's private marker as an object key rather than the raw JSON. It does that silently rather than erroring. A `RawValue` inside a flattened struct is fine. The field itself is not.
 
 Dropping the `Value` changes behaviour, not just cost. `Value` sorts object keys and collapses duplicate ones. Removing it makes key order follow the struct or the map. It also makes a duplicate struct field an error instead of last-wins. Both are wire-observable. HEU-743 moved the protocol version for the second.
+
+---
+
+### UC-NET-023: Repair inbound edges before tombstoning a node
+
+**Added:** Unreleased (HEU-766)
+**Files:** `engine/network-engine/src/tree/arena.rs` (`surviving_sponsor`, `surviving_recruits`, `check_sponsored_removable`, `reparent_sponsored`), `engine/network-engine/src/tree/node.rs` (`Responsored`), `engine/network-engine/src/tree/error.rs` (`SponsorlessWithRecruits`, `SponsorCycle`), `engine/network-engine/src/tree/unilevel.rs`, `engine/network-engine/src/tree/binary.rs`, `engine/network-engine/src/tree/matrix.rs`
+
+**Problem:** A tombstone clears a slot. Every edge pointing *out* of the dying node goes with it, and those are easy to see because they are fields on the node being removed. Edges pointing *in* are not, because they live on other nodes. Each removal path dropped the dying node from its own sponsor's list and walked nothing else, so every recruit it had kept an index into a slot about to be cleared.
+
+The reason a later validator cannot fix it: the arena's free list hands a cleared slot to the next arrival. Once that happens the stale index names a live node, and no property distinguishes it from an edge someone meant. The information needed to repair it exists only at removal.
+
+**Solution:** Two phases over the whole removed set, both before any mutation.
+
+`check_sponsored_removable` runs first and can refuse. For each dying node it collects the recruits that outlive the removal, then walks up the sponsor chain past anyone else dying in the same call. No survivor in that chain means the recruits would be orphaned, so the removal is refused rather than half-applied.
+
+`reparent_sponsored` then builds the full plan of `(node, recruits, new sponsor)` and applies it. Planning before mutating is what makes the walk safe: a chain read while the same chain is being rewritten gives a different answer depending on visit order.
+
+Two guards the walk needs and does not get for free:
+
+- The upward walk is bounded by the arena's slot count. A chain longer than that has revisited a node, which is a cycle, and it reports `SponsorCycle` rather than looping.
+- A target that is itself one of the recruits being moved would end up sponsoring itself. Checked in the precondition, because the resulting tree passes `validate_restored` and looks fine.
+
+**Usage:**
+
+```rust
+// Whole-subtree removal: one check and one repair over the entire set,
+// before any node is tombstoned.
+let mut removed_set: Vec<NodeIndex> = vec![idx];
+removed_set.extend(&descendants);
+
+self.arena.check_sponsored_removable(&removed_set)?;
+let responsored = self.arena.reparent_sponsored(&removed_set);
+```
+
+**Notes:** The refusal is the part to get right. A node with no surviving sponsor and *no* recruits must still be removable, or correct removals start failing. Only the combination of surviving recruits and no surviving sponsor is refused.
+
+The engine is not the only holder of these edges. `tree_nodes.sponsor_id` holds them too, which is why the repair has to be reported rather than performed silently. See UC-NET-024 and design rationale 030.
+
+---
+
+### UC-NET-024: Adding a response field a caller must not ignore
+
+**Added:** Unreleased (HEU-766)
+**Files:** `engine/network-engine-worker/src/protocol.rs` (`PROTOCOL_VERSION`), `engine/network-engine-worker/src/handlers/tree.rs` (`responsored_json`), `internal/networkengine/wire_types.go` (`RemovalResult`, `MatrixRemovalResult`, `Responsored`), `internal/networkengine/engine_client.go` (`expectedProtocolVersion`, `RemoveNode`, `RemoveMatrixNode`)
+
+**Problem:** Adding a field to a response is normally free. A client that ignores it is still correct, so the protocol version does not have to move.
+
+That reasoning fails when the field carries work the caller has to do. `remove_node` gained the list of recruits whose sponsor it changed. The Go projection holds the same edges in `tree_nodes.sponsor_id`, and nothing reconciles the two afterwards. A client that ignores the field writes a store that disagrees with the engine about who sponsors whom, and the disagreement surfaces at the next restart as a tree that will not rebuild.
+
+Repairing one holder and not the other is worse than repairing neither.
+
+**Solution:** Move the version, and make the field required on decode.
+
+The version move alone only rejects a client built before the field existed. It says nothing about a client built after it and wired up wrong. The decode requirement is what closes that.
+
+Decode into a pointer and reject nil:
+
+```go
+type RemovalResult struct {
+    // A pointer, so an absent key is distinguishable from an empty list.
+    Responsored *[]Responsored `json:"responsored"`
+}
+
+if r.Responsored == nil {
+    return nil, fmt.Errorf("remove_node: response has no \"responsored\" key")
+}
+```
+
+A plain `[]Responsored` cannot express the difference. `encoding/json` leaves it nil for a missing key and for `[]` alike, so the response that forgot the field and the response that had nothing to report arrive identical.
+
+**When to use this pattern:** any added response field where ignoring it leaves two systems holding the same fact. Apply it at every decode site for that field, not just the one the feature goes through. `remove_node` has two, and a rule enforced at one of them is not enforced.
+
+**Notes:** This is the mirror of UC-NET-016, which covers removing a *request* field without a red interval. The technique is the one UC-NET-018 uses on `protocol_version`, reached for a different reason: there it separates two failure causes so the message can name the fix, here it separates silence from an answer.
+
+Absence and emptiness are different claims. An empty list says the engine looked and moved nobody, which a caller can act on. A missing key says nothing at all. Letting it default turns silence into the one answer that requires no work.
 
 ---

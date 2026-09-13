@@ -378,6 +378,7 @@ Full document: [`content/design-rationale/020-tree-topology-separation.md`](cont
 **Consequences:**
 - The two `go.mod` directives do different jobs. `toolchain` raises a too-old local Go to exactly its version, downloading it if needed. Neither directive can hold a newer local Go down. The directive covers machines behind the pin. `mise.toml` covers machines ahead of it. Both are load-bearing for opposite populations.
 - A fresh clone needs `mise trust .` once. Until then the file is inert. The repo looks pinned and the shell is not.
+- `mise.local.toml` is gitignored. mise merges it over `mise.toml`, and `scripts/check-go-pins.sh` reads only `mise.toml`, so a local override would change the toolchain while the check still reported agreement.
 - A shell opened before a version change keeps the old toolchain on `PATH`. `mise current` reports the config, not the shell. Check `go version` in the shell that will run the gate.
 - Raising the toolchain breaks prebuilt Go analysis tools built against an older Go. golangci-lint panics or refuses to load its config. A prebuilt govulncheck exits 1 with no findings printed. That looks like a scan with no results, not a failure. Raise every pinned tool in the same commit. Rebuild local prebuilt ones.
 - A tool installed with `go install` and no `GOBIN` lands in the active toolchain's bin directory. That directory sits ahead of mise's shims on `PATH`. The tool shadows the mise-managed copy silently. Set `GOBIN` explicitly.

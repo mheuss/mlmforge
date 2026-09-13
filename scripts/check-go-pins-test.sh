@@ -66,6 +66,7 @@ expect 1 "has an empty value"            "empty go-version value"       wf-empty
 expect 1 "go-version is \"1.27\""        "partial version is drift"     wf-partial.yml   mod-ok
 expect 1 "under with: in an actions/setup-go step: 0" "go-version outside a setup-go step" wf-foreign-pin.yml mod-ok
 expect 1 "under with: in an actions/setup-go step: 0" "go-version under env in a setup-go step" wf-env-pin.yml mod-ok
+expect 1 "has 2 actions/setup-go steps"       "a second setup-go step the parser cannot see" wf-two-setup-go.yml mod-ok
 
 expect 0 "go-version 1.27.1" "setup-go written as a named step"   wf-named-step.yml          mod-ok
 expect 0 "go-version 1.27.1" "a foreign go-version is not the pin" wf-foreign-and-real-pin.yml mod-ok

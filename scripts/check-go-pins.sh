@@ -62,6 +62,10 @@ setup_go_pins() {
 ci_go=$(setup_go_pins "$wf")
 ci_go_lines=$(setup_go_pins "$wf" | grep -c '' || true)
 wf_go_version_lines=$(grep -cE '^[[:space:]]*go-version:' "$wf" || true)
+# Counted from the raw file rather than from setup_go_pins. A step whose first
+# key is not uses, name, run or id is invisible to that parser, and a bare dash
+# has no key at all, so a second pin could go uncompared and still report one.
+wf_setup_go_steps=$(grep -cE 'uses:[[:space:]]*actions/setup-go' "$wf" || true)
 
 mod_toolchain_raw=$(awk '/^toolchain /{print $2}' "$mod")
 mod_toolchain=${mod_toolchain_raw#go}
@@ -96,6 +100,11 @@ mise_env_lines=$(mise_count "[env]" GOTOOLCHAIN "$mise")
 
 if [ "$ci_go_lines" -gt 1 ]; then
   echo "\"$wf\" has $ci_go_lines go-version lines; this check reads one" >&2
+  exit 1
+fi
+
+if [ "$wf_setup_go_steps" -gt 1 ]; then
+  echo "\"$wf\" has $wf_setup_go_steps actions/setup-go steps; this check reads one" >&2
   exit 1
 fi
 

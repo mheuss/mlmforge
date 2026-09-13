@@ -56,10 +56,16 @@ fi
 #
 # Matched whole-line against the full import path. A substring match would also
 # drop a package whose name merely contains this one.
-mapfile -t packages < <(printf '%s\n' "$all" | grep -vxF "$module/internal/testutil" || true)
+listed_count=$(printf '%s\n' "$all" | grep -c .)
+filtered=$(printf '%s\n' "$all" | grep -vxF "$module/internal/testutil") || grep_rc=$?
+if [ "${grep_rc:-0}" -gt 1 ]; then
+  echo "grep exited $grep_rc while filtering $listed_count listed packages in \"$root\"" >&2
+  exit 1
+fi
+mapfile -t packages < <(printf '%s' "${filtered:+$filtered$'\n'}")
 
 if [ "${#packages[@]}" -eq 0 ]; then
-  echo "no packages left after excluding \"$module/internal/testutil\" from $(printf '%s\n' "$all" | grep -c .) listed" >&2
+  echo "no packages left after excluding \"$module/internal/testutil\" from $listed_count listed" >&2
   exit 1
 fi
 

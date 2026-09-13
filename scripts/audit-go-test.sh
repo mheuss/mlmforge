@@ -61,6 +61,48 @@ exit 0
 SHIM
 chmod +x "$shim/go"
 
+# A go whose module query fails. The partway shim above answers list -m before
+# it fails, so without this the module-query branch is never reached.
+modshim=$work/modshim
+mkdir -p "$modshim"
+cat > "$modshim/go" <<'SHIM'
+#!/usr/bin/env bash
+if [ "$1" = list ] && [ "$2" = -m ]; then
+  echo "go: cannot determine module path" >&2
+  exit 1
+fi
+exit 0
+SHIM
+chmod +x "$modshim/go"
+
+# A grep that emits part of its output and exits 2. Exit 1 means no match and is
+# ordinary; anything above it is an error the filter must not absorb.
+grepshim=$work/grepshim
+mkdir -p "$grepshim"
+cat > "$grepshim/grep" <<'SHIM'
+#!/usr/bin/env bash
+for arg in "$@"; do
+  if [ "$arg" = -vxF ]; then
+    echo "example.com/fixture/cmd/app"
+    echo "grep: input error" >&2
+    exit 2
+  fi
+done
+exec /usr/bin/grep "$@"
+SHIM
+chmod +x "$grepshim/grep"
+
+# A govulncheck that records the arguments it was handed. The scan path is the
+# one line --list never executes, so nothing else asserts what it passes.
+vulnshim=$work/vulnshim
+mkdir -p "$vulnshim"
+cat > "$vulnshim/govulncheck" <<'SHIM'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "$VULNSHIM_ARGS"
+exit 0
+SHIM
+chmod +x "$vulnshim/govulncheck"
+
 # stderr goes to a caller-named file, so a later call cannot overwrite the text
 # an earlier failure message is about to read.
 run() {
@@ -193,6 +235,39 @@ if [ "$rc" = 1 ] && [[ $out == *"no readable go.mod"* ]]; then
   record yes "rejects a root with no go.mod" ""
 else
   record no "rejects a root with no go.mod" "rc=$rc: $out"
+fi
+
+# A module query that fails must be refused before any package list is read.
+out=$(PATH="$modshim:$PATH" "$audit" --list "$fixture" 2>&1)
+rc=$?
+if [ "$rc" = 1 ] && [[ $out == *"go list -m exited non-zero"* ]]; then
+  record yes "refuses a failing module query" ""
+else
+  record no "refuses a failing module query" "rc=$rc: $out"
+fi
+
+# A grep error must be refused rather than read as a shorter package list.
+out=$(PATH="$grepshim:$PATH" "$audit" --list "$fixture" 2>&1)
+rc=$?
+if [ "$rc" = 1 ] && [[ $out == *"grep exited 2"* ]]; then
+  record yes "refuses a grep that errors partway" ""
+else
+  record no "refuses a grep that errors partway" "rc=$rc: $out"
+fi
+
+# The scan path hands govulncheck the same list --list prints. Without this the
+# scan could be changed to ./... and every other assertion would still pass.
+VULNSHIM_ARGS=$work/vulnshim.args
+export VULNSHIM_ARGS
+scan_out=$(PATH="$vulnshim:$PATH" "$audit" "$fixture" 2>&1)
+scan_rc=$?
+scanned=$(cat "$work/vulnshim.args" 2>/dev/null)
+if [ "$scan_rc" != 0 ]; then
+  record no "the scan receives the listed packages" "rc=$scan_rc: $scan_out"
+elif [ "$scanned" = "$fixture_listed" ]; then
+  record yes "the scan receives the listed packages" ""
+else
+  record no "the scan receives the listed packages" "scanned: ${scanned:-<nothing>}"
 fi
 
 echo "$pass passed, $fail failed, of $((pass + fail))"

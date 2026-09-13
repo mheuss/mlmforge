@@ -106,9 +106,22 @@ jobs:
         run: scripts/audit-go-test.sh
 
       - name: Vulnerability check
+        env:
+          GOVULNCHECK_VERSION: v1.8.0
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
-          scripts/audit-go.sh
+          # GOBIN explicitly, because a go install without one lands in the
+          # active toolchain's bin directory, which another entry on PATH can
+          # shadow. ADR-025 records the same hazard for local installs.
+          export GOBIN="$RUNNER_TEMP/gobin"
+          mkdir -p "$GOBIN"
+          go install "golang.org/x/vuln/cmd/govulncheck@$GOVULNCHECK_VERSION"
+          # The scan is only as pinned as the binary that runs it, and a bare
+          # govulncheck off PATH is not necessarily the one just installed.
+          # -x so a prerelease suffix cannot satisfy the match, -F because the
+          # pin contains dots, which are any-char unescaped.
+          "$GOBIN/govulncheck" -version
+          "$GOBIN/govulncheck" -version | grep -qxF "Scanner: govulncheck@$GOVULNCHECK_VERSION"
+          PATH="$GOBIN:$PATH" scripts/audit-go.sh
 
   rust:
     name: Rust

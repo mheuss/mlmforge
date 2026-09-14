@@ -5,11 +5,11 @@
 > [Numbering](INDEX.md#numbering).
 >
 > **Partial status.** The result shape, the walk index as correlation key, plan
-> identity on the response, and the rank rule are decided. **The outcome
-> taxonomy is provisional.** Always-on, fully-stated provenance does not fit a
-> single NDJSON response at scale, and a spike is settling whether the engine
-> should emit classifications or just the traversed upline. See "The volume
-> problem" below.
+> identity on the response, and the rank rule are decided. The outcome taxonomy
+> was provisional and HEU-556 has now settled it: neither always-on
+> classifications nor a bare upline sequence fits, and the record emits interned
+> paths instead. See "The volume problem" below. **The step-level outcome names
+> are still unimplemented, so they remain free to change until phase C ships.**
 
 ## The Problem
 
@@ -177,16 +177,39 @@ tree along the path. Everything else the engine could say about a node is
 recomputable from the upline, the snapshots, and the plan.
 
 The node list is not enough for these two, though. Sponsored-child counts and
-enrollment order are not recoverable from an ordered list of ancestor IDs. So
-either the engine states these outcomes and the reader trusts them, or the
-inputs behind them get recorded somewhere. HEU-556 settles which, and no phase
-ships a `depth_cap` or `pass_up` outcome as independently verifiable until it
-does.
+enrollment order are not recoverable from an ordered list of ancestor IDs, and
+the reason is sharper than "not in the snapshot": a walk records ancestors by
+parent edge, and both of these read a node's children by sponsor edge.
+`get_upline` follows parent, `get_sponsored` reads the node's own sponsored
+list, and `add_node` takes the two separately. No amount of recorded path
+closes it.
+
+HEU-556 settled this. The engine states both outcomes, and the run records the
+tree facts behind them once per run and per node: each visited node's sponsored
+child ids in enrollment order, plus their enrollment timestamps where pass-up is
+configured. Both are then recomputable by joining against the run's snapshot
+set. This is the same assembled-not-duplicated move this document already makes
+for snapshot facts, applied to a second kind of run-invariant fact, and it costs
+200 entries against 1,820,000 step visits on the worst case measured.
+
+**That makes both decisions reproducible, not verifiable.** The stored lists are
+what the engine says it read. Nothing proves it read the tree as it stood at
+calculation time, because the tree carries no snapshot identity. So a
+`depth_cap` or `pass_up` record supports the claim "the engine decided this from
+these inputs" and not the claim "these inputs were correct." Independent
+verification waits on tree identity, which is separate work.
 
 ## The volume problem
 
-The taxonomy below assumes the engine states its classifications and that the
-result fits one response. The second assumption does not hold.
+This section assumed the engine states its classifications and that the result
+fits one response. The second assumption did not hold.
+
+A note on the first. This document names five outcome values in passing,
+`compressed_ineligible`, `depth_cap`, `pass_up`, `boundary_reached` and
+`compressed_inactive` as a rejected name, and never sets out a taxonomy. HEU-556
+reconstructed twelve from the traversal code to have something to measure. Every
+size figure below is therefore a floor: a fuller taxonomy is only larger, and
+both floors already exceed the ceiling.
 
 Generation SameRank runs one traversal per distinct rank per volume source, and
 both mechanics walk to root regardless of `max_depth` because non-consuming
@@ -196,16 +219,66 @@ well past any reasonable single-response budget before earnings are counted.
 The worker also materializes a `serde_json::Value` and then a `String`, so peak
 memory is worse than the wire size.
 
-This is arithmetic, not a measurement risk, and it is why the taxonomy is
-provisional. The open question is whether the engine emits classifications at
-all. If the traversed upline is sufficient, and the reasoning above suggests it
-nearly is, the record collapses to an ordered node sequence and the classifier
-moves to whoever reads it.
+The arithmetic held. HEU-556 measured it on 2026-09-12 against the deep-sparse
+case, 100k nodes at depth 200 with 1,000 sources and 10 distinct ranks:
+1,820,000 step objects, 170.2 MiB on the wire, 2.66x the hard ceiling.
 
-The counter-argument is that a derived classification can drift from the engine
-that produced it. A reader recomputing compression from a plan hash and a
-snapshot set is reimplementing `walk.rs`, and a reimplementation that disagrees
-is worse than no record. That tension is what the spike resolves.
+### The upline option was measured, and it fails too
+
+An earlier version of this section said that if the traversed upline is
+sufficient the volume problem largely dissolves, and that the reasoning above
+suggested it nearly was.
+
+**That is false, and it was measured rather than reasoned about.** The same run
+reduced to a bare ordered node sequence is 73.9 MiB. Still 1.15x the 64 MiB hard
+ceiling and 4.62x the 16 MiB warn ceiling. Dropping every classification buys
+2.3x and does not clear the bar.
+
+Recorded as a falsified claim rather than a superseded one, because the
+reasoning that produced it is still in this document and still reads as
+persuasive. It was wrong about the size, not about the semantics.
+
+### Why both options failed, and what replaced them
+
+Both are per-step shapes, so both scale with visited nodes and differ only in
+the constant. The measured run traversed 1,820,000 nodes across **2 distinct
+paths**, because every source hung off one spine and each walk recorded the same
+sequence again.
+
+That is the duplication this document already rejected one level down. Per-earning
+paths were rejected here because the shared prefix repeats on every earning
+above; the fix was to go per walk so a node appears once. The same duplication
+reappeared across walks.
+
+So the record emits **interned paths**. A response carries a `paths` array, each
+walk names a `(path, offset, length)` slice rather than repeating nodes, stated
+decisions are kept only for consuming steps, and non-consuming skips are derived
+by the reader from the path plus the snapshot set plus the plan. Measured at
+9.4 MiB, 0.15x the hard ceiling.
+
+This was not on either option list. The Revisit Trigger below offered a
+truncation cap or moving off the single-response path; HEU-556 offered those two
+plus the upline sequence. Interning is a fourth answer the spike produced rather
+than one it selected.
+
+The counter-argument against deriving still stands and is now narrower. A reader
+recomputing compression is reimplementing `walk.rs`, and a reimplementation that
+disagrees is worse than no record. Under this shape the reader derives only
+non-consuming skips, so a disagreement can be wrong about why a node was passed
+over and never about who was paid what. Every decision that moved money is
+stated by the engine.
+
+### The memory half is a separate defect
+
+Peak RSS on the worker's own path was 1,832.7 MiB, 28.6x the ceiling, against
+151.2 MiB for the typed result before serialization. `Response.result` is a
+`serde_json::Value` and `main.rs` calls `to_string` on it, so a `BTreeMap`-backed
+tree and its output `String` are both live. Serializing the typed result directly
+costs 319.9 MiB instead.
+
+That is HEU-743 and it is independent of provenance. Every large response pays
+it. Removing it does not resolve this section's problem on its own: the interned
+shape still needs it to bring peak memory under the hard ceiling.
 
 ### The engine must say which plan it used
 
@@ -311,15 +384,12 @@ HEU-46 the cost of changing it is a data migration.
 
 Four things would reopen this.
 
-**Provenance does not fit a single NDJSON response.** Both mechanics walk to
-root and non-consuming steps do not advance the counter, so one walk can span
-the full tree depth regardless of `max_depth`. A deep tree with sparse
-qualifying boundaries is the worst case, and generation SameRank multiplies
-walk count by the number of distinct ranks on top of it. Measurement gates the
-phase that lands it. If the ceiling is exceeded, the answer is capping recorded
-steps with an explicit truncation marker or moving provenance off the
-single-response path. It is not going back to per-earning paths, which are
-strictly larger.
+**Provenance does not fit a single NDJSON response. This one fired.** Measured
+2026-09-12 by HEU-556 and resolved by interned paths, which was not among the
+answers this trigger anticipated. See "The volume problem" above. The trigger is
+kept because its reasoning about why the worst case is a deep tree with sparse
+boundaries held exactly, and because a future shape change has to clear the same
+ceiling. What it got wrong was the answer, not the diagnosis.
 
 **HEU-46 stores provenance per earning.** Normalizing the wire only pays off at
 rest if storage is normalized too. Writing each earning's walk slice into its
@@ -352,6 +422,21 @@ and after HEU-46 that is a migration rather than a rename.
   the old value, the same way the `kind` strings in `commission_detail.go` do.
 - Counter reconstruction is a count of consumed steps. Any new skip or forfeit
   path must record a step, or the count silently drifts.
+- **This document already breaks that rule once.** A generation breakaway that
+  fails the boundary check with `empty_generation_consumes_number` unset neither
+  records nor consumes. The behavior is described above as "may or may not
+  consume a generation depending on config" and was never given an outcome.
+  Phase C must give it one.
+- Walks reference interned paths rather than repeating node sequences. A shape
+  that inlines a per-walk node list reintroduces the duplication measured at
+  170.2 MiB against a 64 MiB ceiling.
+- Stated decisions cover consuming steps. Non-consuming skips are derived by the
+  reader, except `pass_up`, which names the recruit that caused it.
+- The storage half persists the run's per-node sponsored-child facts alongside
+  the snapshot set, where the plan enables active leg tiers or pass-up.
+- `depth_cap` and `pass_up` records are reproducible, not verifiable. Do not
+  describe them as independently verifiable until the tree carries a snapshot
+  identity.
 - The storage half must persist the run's snapshot set. Steps name nodes, and
   verifying a decision needs the values it was made from.
 - Binary and board earnings carry no rank, deliberately. Anyone adding one must

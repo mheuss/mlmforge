@@ -184,6 +184,37 @@ func TestTreeConsumer_HandleNodeRemoved(t *testing.T) {
 	assert.Equal(t, "remove_node", transport.calls[0].op)
 }
 
+func TestTreeConsumer_NodeRemovedRejectsWrongStream(t *testing.T) {
+	store := NewMemoryTreeStore()
+	transport := newRecordingTransport()
+	transport.response = json.RawMessage(`{"removed":true,"responsored":[]}`)
+	engine := newEngineClientWithTransport(transport)
+	consumer := NewTreeEventConsumer(store, engine)
+
+	node := makeNode("tree1", "user-leaf", 1, ptr("user-root"), ptr("user-root"), nil)
+	require.NoError(t, store.InsertNode(context.Background(), node))
+
+	payload := NodeRemovedPayload{
+		TreeID:    "tree1",
+		UserID:    "user-leaf",
+		RemovedAt: time.Now(),
+	}
+	event := makeEvent(EventTypeNodeRemoved, payload)
+	event.Stream = "tree-other"
+
+	err := consumer.HandleEvent(context.Background(), event)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `arrived on stream "tree-other"`)
+	assert.Contains(t, err.Error(), payload.UserID, "error names the node")
+	assert.Contains(t, err.Error(), "in tree "+payload.TreeID, "error names the tree")
+
+	assert.Empty(t, transport.calls, "no engine call for a rejected event")
+
+	got, storeErr := store.GetNode(context.Background(), "tree1", "user-leaf")
+	require.NoError(t, storeErr)
+	assert.NotNil(t, got, "the existing row must survive a rejected removal")
+}
+
 func TestTreeConsumer_NodePlacedMissingParent(t *testing.T) {
 	store := NewMemoryTreeStore()
 	transport := newRecordingTransport()

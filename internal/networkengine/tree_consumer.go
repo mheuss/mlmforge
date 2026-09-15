@@ -46,15 +46,24 @@ func (c *TreeEventConsumer) HandleEvent(ctx context.Context, event platform.Even
 	}
 }
 
+// checkStream rejects an event whose stream does not name the tree its payload
+// claims.
+func checkStream(event platform.Event, eventName, treeID, userID string) error {
+	if want := TreeStreamName(treeID); event.Stream != want {
+		return fmt.Errorf("%s for %s in tree %s arrived on stream %q, want %q",
+			eventName, userID, treeID, event.Stream, want)
+	}
+	return nil
+}
+
 func (c *TreeEventConsumer) handleRootAdded(ctx context.Context, event platform.Event) error {
 	var payload RootAddedPayload
 	if err := json.Unmarshal(event.Payload, &payload); err != nil {
 		return fmt.Errorf("unmarshal root_added payload: %w", err)
 	}
 
-	if want := TreeStreamName(payload.TreeID); event.Stream != want {
-		return fmt.Errorf("root_added for %s in tree %s arrived on stream %q, want %q",
-			payload.UserID, payload.TreeID, event.Stream, want)
+	if err := checkStream(event, "root_added", payload.TreeID, payload.UserID); err != nil {
+		return err
 	}
 
 	node := TreeNodeRow{
@@ -90,9 +99,8 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform
 	// rules LoadTree's validation would then refuse the whole tree at the
 	// next reload. (The unilevel rule is gate-only: the loader tolerates
 	// legacy unilevel positions — HEU-563.)
-	if want := TreeStreamName(payload.TreeID); event.Stream != want {
-		return fmt.Errorf("node_placed for %s in tree %s arrived on stream %q, want %q",
-			payload.UserID, payload.TreeID, event.Stream, want)
+	if err := checkStream(event, "node_placed", payload.TreeID, payload.UserID); err != nil {
+		return err
 	}
 	if !supportedTreeTypes[payload.TreeType] {
 		return fmt.Errorf("node_placed for %s in tree %s has unsupported tree_type %q",
@@ -190,6 +198,10 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 	var payload NodeRemovedPayload
 	if err := json.Unmarshal(event.Payload, &payload); err != nil {
 		return fmt.Errorf("unmarshal node_removed payload: %w", err)
+	}
+
+	if err := checkStream(event, "node_removed", payload.TreeID, payload.UserID); err != nil {
+		return err
 	}
 
 	var moved []Responsored

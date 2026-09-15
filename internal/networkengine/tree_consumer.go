@@ -46,8 +46,7 @@ func (c *TreeEventConsumer) HandleEvent(ctx context.Context, event platform.Even
 	}
 }
 
-// checkStream rejects an event whose stream does not name the tree its payload
-// claims.
+// checkStream rejects an event that did not arrive on treeID's stream.
 func checkStream(event platform.Event, eventName, treeID, userID string) error {
 	if want := TreeStreamName(treeID); event.Stream != want {
 		return fmt.Errorf("%s for %s in tree %s arrived on stream %q, want %q",

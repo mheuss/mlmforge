@@ -108,9 +108,9 @@ func TestTreeConsumer_RootAddedRejectsWrongStream(t *testing.T) {
 
 	err := consumer.HandleEvent(context.Background(), event)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), `arrived on stream "tree-other"`)
-	assert.Contains(t, err.Error(), payload.UserID, "error names the node")
-	assert.Contains(t, err.Error(), "in tree "+payload.TreeID, "error names the tree")
+	assert.EqualError(t, err,
+		`root_added for user-root in tree tree1 arrived on stream "tree-other", want "tree-tree1"`,
+		"the message names the event type, the node, the tree, and both streams")
 
 	rows, storeErr := store.GetByTree(context.Background(), "tree1")
 	require.NoError(t, storeErr)
@@ -204,9 +204,9 @@ func TestTreeConsumer_NodeRemovedRejectsWrongStream(t *testing.T) {
 
 	err := consumer.HandleEvent(context.Background(), event)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), `arrived on stream "tree-other"`)
-	assert.Contains(t, err.Error(), payload.UserID, "error names the node")
-	assert.Contains(t, err.Error(), "in tree "+payload.TreeID, "error names the tree")
+	assert.EqualError(t, err,
+		`node_removed for user-leaf in tree tree1 arrived on stream "tree-other", want "tree-tree1"`,
+		"the message names the event type, the node, the tree, and both streams")
 
 	assert.Empty(t, transport.calls, "no engine call for a rejected event")
 
@@ -272,7 +272,7 @@ func TestTreeConsumer_NodePlacedGateRejections(t *testing.T) {
 		{name: "binary position 2", mutate: func(p *NodePlacedPayload) { p.TreeType = treeTypeBinary; p.Position = &two }, wantErr: "needs position 0 or 1"},
 		{name: "unilevel negative position", mutate: func(p *NodePlacedPayload) { p.TreeType = treeTypeUnilevel; p.Position = &neg }, wantErr: "negative position -1"},
 		{name: "unilevel non-nil position", mutate: func(p *NodePlacedPayload) { p.TreeType = treeTypeUnilevel; p.Position = &two }, wantErr: "unilevel trees have no slots"},
-		{name: "stream mismatch", mutate: func(p *NodePlacedPayload) {}, stream: "tree-other", wantErr: `arrived on stream "tree-other"`},
+		{name: "stream mismatch", mutate: func(p *NodePlacedPayload) {}, stream: "tree-other", wantErr: `node_placed for user-child in tree tree1 arrived on stream "tree-other", want "tree-tree1"`},
 	}
 
 	for _, tc := range cases {

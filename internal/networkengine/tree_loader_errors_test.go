@@ -10,9 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// failingTreeStore returns a fixed error from the depth-ordered read.
-// rejectingTreeStore fails the test when read; this one lets the read happen
-// and fails it.
+// failingTreeStore returns a fixed error from the depth-ordered read instead of
+// failing the test when it is read.
 type failingTreeStore struct {
 	TreeStore
 	err error
@@ -23,8 +22,7 @@ func (s *failingTreeStore) GetByTreeDepthOrdered(_ context.Context, _ string) ([
 }
 
 // failAtCallMutator succeeds for the first succeedFor engine calls and fails
-// every call after that. stubMutator.failWith fails the first call, which
-// cannot reach AddRoot or a mid-replay placement.
+// every call after that, so a fixture can stop the load on a chosen call.
 type failAtCallMutator struct {
 	succeedFor int
 	err        error
@@ -72,8 +70,7 @@ func loadWithMutator(t *testing.T, treeType string, nodes []TreeNodeRow, m TreeM
 	return NewTreeLoader(store, m).LoadTree(ctx, "t", treeType, opts...)
 }
 
-// spacedNodes gives each node a distinct enrolment time, so replay order is
-// fixed by the fixture rather than by how the store broke a tie.
+// spacedNodes gives each node a distinct enrolment time.
 func spacedNodes(nodes []TreeNodeRow) []TreeNodeRow {
 	for i := range nodes {
 		nodes[i].EnrolledAt = nodes[i].EnrolledAt.Add(time.Duration(i) * time.Minute)
@@ -100,8 +97,8 @@ func matrixFixture() []TreeNodeRow {
 	return spacedNodes(nodes)
 }
 
-func matrixOpts3() []LoadTreeOption {
-	return []LoadTreeOption{WithMatrixParams(3, "breadth_first")}
+func matrixOpts(width int) []LoadTreeOption {
+	return []LoadTreeOption{WithMatrixParams(width, "breadth_first")}
 }
 
 // TestTreeLoader_GoldenMessages_ThroughLoadTree records the exact text of every
@@ -179,10 +176,10 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 		{
 			name:     "two roots",
 			treeType: treeTypeUnilevel,
-			nodes: []TreeNodeRow{
+			nodes: spacedNodes([]TreeNodeRow{
 				makeNode("t", "u0", 0, nil, nil, nil),
 				makeNode("t", "u9", 0, nil, nil, nil),
-			},
+			}),
 			engineFailsAfter: -1,
 			want:             "tree t has more than one depth-0 root (u0 and u9)",
 		},
@@ -286,7 +283,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 		{
 			name:     "matrix nil position",
 			treeType: treeTypeMatrix,
-			opts:     matrixOpts3(),
+			opts:     matrixOpts(3),
 			nodes: []TreeNodeRow{
 				makeNode("t", "u0", 0, nil, nil, nil),
 				makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), nil),
@@ -297,7 +294,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 		{
 			name:     "matrix position outside width",
 			treeType: treeTypeMatrix,
-			opts:     matrixOpts3(),
+			opts:     matrixOpts(3),
 			nodes: []TreeNodeRow{
 				makeNode("t", "u0", 0, nil, nil, nil),
 				makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), intPtr(3)),
@@ -308,12 +305,12 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 		{
 			name:     "matrix duplicate slot",
 			treeType: treeTypeMatrix,
-			opts:     matrixOpts3(),
-			nodes: []TreeNodeRow{
+			opts:     matrixOpts(3),
+			nodes: spacedNodes([]TreeNodeRow{
 				makeNode("t", "u0", 0, nil, nil, nil),
 				makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), intPtr(1)),
 				makeNode("t", "u2", 1, ptr("u0"), ptr("u0"), intPtr(1)),
-			},
+			}),
 			direct:           true,
 			engineFailsAfter: -1,
 			want:             "matrix nodes u1 and u2 in tree t both claim parent u0 position 1",
@@ -343,7 +340,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 		{
 			name:             "CreateMatrixTree fails",
 			treeType:         treeTypeMatrix,
-			opts:             matrixOpts3(),
+			opts:             matrixOpts(3),
 			nodes:            matrixFixture(),
 			engineFailsAfter: 0,
 			want:             "create tree t: engine error [BOOM]: worker said no",
@@ -365,7 +362,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 		{
 			name:             "AddNodeAt fails",
 			treeType:         treeTypeMatrix,
-			opts:             matrixOpts3(),
+			opts:             matrixOpts(3),
 			nodes:            matrixFixture(),
 			engineFailsAfter: 3,
 			want:             "add node u2 (2 of 3, tree t left partly built): engine error [BOOM]: worker said no",
@@ -377,18 +374,21 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			var err error
 			var m *failAtCallMutator
 
+			require.False(t, tt.direct && tt.engineFailsAfter >= 0,
+				"a row cannot both seed past InsertNode and drive an engine failure")
+
 			switch {
 			case tt.store != nil:
 				err = NewTreeLoader(tt.store, &stubMutator{}).LoadTree(
 					context.Background(), "t", tt.treeType, tt.opts...)
+			case tt.direct:
+				_, err = loadWithStubDirect(t, tt.treeType, tt.nodes, tt.opts...)
 			case tt.engineFailsAfter >= 0:
 				m = &failAtCallMutator{
 					succeedFor: tt.engineFailsAfter,
 					err:        &EngineError{Code: "BOOM", Message: "worker said no"},
 				}
 				err = loadWithMutator(t, tt.treeType, tt.nodes, m, tt.opts...)
-			case tt.direct:
-				_, err = loadWithStubDirect(t, tt.treeType, tt.nodes, tt.opts...)
 			default:
 				_, err = loadWithStub(t, tt.treeType, tt.nodes, tt.opts...)
 			}
@@ -398,7 +398,8 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 
 			if m != nil {
 				assert.Equal(t, tt.engineFailsAfter+1, m.calls,
-					"the fixture must stop on the intended engine call, not an earlier or later one")
+					"LoadTree must return on engine call %d and make no call after it",
+					tt.engineFailsAfter+1)
 			}
 		})
 	}

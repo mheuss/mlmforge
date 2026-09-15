@@ -110,7 +110,7 @@ func TestTreeConsumer_RootAddedRejectsWrongStream(t *testing.T) {
 	require.Error(t, err)
 	assert.EqualError(t, err,
 		`root_added for user-root in tree tree1 arrived on stream "tree-other", want "tree-tree1"`,
-		"the message names the event type, the node, the tree, and both streams")
+		"the message names the event, the node, the tree, and both streams")
 
 	rows, storeErr := store.GetByTree(context.Background(), "tree1")
 	require.NoError(t, storeErr)
@@ -151,6 +151,35 @@ func TestTreeConsumer_HandleNodePlaced(t *testing.T) {
 	// Verify engine call (add_node).
 	require.Len(t, transport.calls, 1)
 	assert.Equal(t, "add_node", transport.calls[0].op)
+}
+
+func TestTreeConsumer_NodePlacedRejectsWrongStream(t *testing.T) {
+	store := NewMemoryTreeStore()
+	transport := newRecordingTransport()
+	engine := newEngineClientWithTransport(transport)
+	consumer := NewTreeEventConsumer(store, engine)
+
+	parent := makeNode("tree1", "user-root", 0, nil, nil, nil)
+	require.NoError(t, store.InsertNode(context.Background(), parent))
+
+	payload := NodePlacedPayload{
+		TreeID:     "tree1",
+		UserID:     "user-child",
+		ParentID:   "user-root",
+		SponsorID:  "user-root",
+		TreeType:   treeTypeUnilevel,
+		EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
+	}
+	event := makeEvent(EventTypeNodePlaced, payload)
+	event.Stream = "tree-other"
+
+	err := consumer.HandleEvent(context.Background(), event)
+	require.Error(t, err)
+	assert.EqualError(t, err,
+		`node_placed for user-child in tree tree1 arrived on stream "tree-other", want "tree-tree1"`,
+		"the message names the event, the node, the tree, and both streams")
+
+	assert.Empty(t, transport.calls, "no engine call for a rejected event")
 }
 
 func TestTreeConsumer_HandleNodeRemoved(t *testing.T) {
@@ -206,7 +235,7 @@ func TestTreeConsumer_NodeRemovedRejectsWrongStream(t *testing.T) {
 	require.Error(t, err)
 	assert.EqualError(t, err,
 		`node_removed for user-leaf in tree tree1 arrived on stream "tree-other", want "tree-tree1"`,
-		"the message names the event type, the node, the tree, and both streams")
+		"the message names the event, the node, the tree, and both streams")
 
 	assert.Empty(t, transport.calls, "no engine call for a rejected event")
 
@@ -272,7 +301,7 @@ func TestTreeConsumer_NodePlacedGateRejections(t *testing.T) {
 		{name: "binary position 2", mutate: func(p *NodePlacedPayload) { p.TreeType = treeTypeBinary; p.Position = &two }, wantErr: "needs position 0 or 1"},
 		{name: "unilevel negative position", mutate: func(p *NodePlacedPayload) { p.TreeType = treeTypeUnilevel; p.Position = &neg }, wantErr: "negative position -1"},
 		{name: "unilevel non-nil position", mutate: func(p *NodePlacedPayload) { p.TreeType = treeTypeUnilevel; p.Position = &two }, wantErr: "unilevel trees have no slots"},
-		{name: "stream mismatch", mutate: func(p *NodePlacedPayload) {}, stream: "tree-other", wantErr: `node_placed for user-child in tree tree1 arrived on stream "tree-other", want "tree-tree1"`},
+		{name: "stream mismatch", mutate: func(p *NodePlacedPayload) {}, stream: "tree-other", wantErr: `arrived on stream "tree-other"`},
 	}
 
 	for _, tc := range cases {

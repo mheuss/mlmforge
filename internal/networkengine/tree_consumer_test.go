@@ -91,6 +91,33 @@ func TestTreeConsumer_HandleRootAdded(t *testing.T) {
 	assert.Equal(t, "add_root", transport.calls[0].op)
 }
 
+func TestTreeConsumer_RootAddedRejectsWrongStream(t *testing.T) {
+	store := NewMemoryTreeStore()
+	transport := newRecordingTransport()
+	engine := newEngineClientWithTransport(transport)
+	consumer := NewTreeEventConsumer(store, engine)
+
+	payload := RootAddedPayload{
+		TreeID:     "tree1",
+		UserID:     "user-root",
+		SponsorID:  "user-root",
+		EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	}
+	event := makeEvent(EventTypeRootAdded, payload)
+	event.Stream = "tree-other"
+
+	err := consumer.HandleEvent(context.Background(), event)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `arrived on stream "tree-other"`)
+	assert.Contains(t, err.Error(), payload.UserID, "error names the node")
+	assert.Contains(t, err.Error(), "in tree "+payload.TreeID, "error names the tree")
+
+	rows, storeErr := store.GetByTree(context.Background(), "tree1")
+	require.NoError(t, storeErr)
+	assert.Empty(t, rows, "no store projection for a rejected event")
+	assert.Empty(t, transport.calls, "no engine call for a rejected event")
+}
+
 func TestTreeConsumer_HandleNodePlaced(t *testing.T) {
 	store := NewMemoryTreeStore()
 	transport := newRecordingTransport()

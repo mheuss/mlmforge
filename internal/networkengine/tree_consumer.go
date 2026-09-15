@@ -52,6 +52,11 @@ func (c *TreeEventConsumer) handleRootAdded(ctx context.Context, event platform.
 		return fmt.Errorf("unmarshal root_added payload: %w", err)
 	}
 
+	if want := TreeStreamName(payload.TreeID); event.Stream != want {
+		return fmt.Errorf("root_added for %s in tree %s arrived on stream %q, want %q",
+			payload.UserID, payload.TreeID, event.Stream, want)
+	}
+
 	node := TreeNodeRow{
 		ID:         event.ID,
 		TreeID:     payload.TreeID,

@@ -2,6 +2,8 @@ package networkengine
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -81,5 +83,26 @@ func TestTreeNodesActiveSlotIndex(t *testing.T) {
 	// every parent's unpositioned children collide with each other.
 	if !strings.Contains(def, "position\" IS NOT NULL") {
 		t.Errorf("index must exclude rows with no position, got: %s", def)
+	}
+}
+
+// The Go constants are a copy of strings the Rust worker owns. Restating them
+// in a Go test only catches a Go-side edit, so this reads the worker's mapping
+// and fails if a variant is renamed or dropped there.
+func TestEngineCodeConstantsMatchTheWorkerSource(t *testing.T) {
+	path := filepath.Join("..", "..", "engine", "network-engine-worker", "src", "handlers", "common.rs")
+	src, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read the worker's error mapping: %v", err)
+	}
+
+	for _, code := range []string{
+		engineCodeUserAlreadyExists,
+		engineCodeRootAlreadyExists,
+		engineCodeUserNotFound,
+	} {
+		if !strings.Contains(string(src), `=> "`+code+`"`) {
+			t.Errorf("the worker no longer maps any variant to %q; reconcile would stop firing on it", code)
+		}
 	}
 }

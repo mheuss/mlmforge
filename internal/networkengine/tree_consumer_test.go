@@ -923,10 +923,10 @@ func TestIsEngineCode(t *testing.T) {
 			want: false,
 		},
 		{
-			// withRetry wraps every engine failure before any caller sees it,
-			// so this is the shape reconcile actually receives. A type
-			// assertion in place of errors.As passes every other row here and
-			// fails this one.
+			// The transport returns a bare EngineError and nothing between it
+			// and reconcile wraps it, so the first row is the live shape. This
+			// row exists so a caller need not know that. A type assertion in
+			// place of errors.As passes every other row and fails this one.
 			name: "wrapped EngineError with the code",
 			err:  fmt.Errorf("engine add_node failed after 2 retries: %w", &EngineError{Code: engineCodeUserAlreadyExists}),
 			code: engineCodeUserAlreadyExists,
@@ -974,16 +974,6 @@ func TestIsEngineCode(t *testing.T) {
 	}
 }
 
-// The three codes are a contract with the Rust worker, which maps its
-// TreeError variants to these strings. A typo here is invisible: reconcile
-// simply never fires, and the consumer reports the engine failure it was
-// meant to resolve.
-func TestEngineCodeConstantsMatchTheWorker(t *testing.T) {
-	assert.Equal(t, "USER_ALREADY_EXISTS", engineCodeUserAlreadyExists)
-	assert.Equal(t, "ROOT_ALREADY_EXISTS", engineCodeRootAlreadyExists)
-	assert.Equal(t, "USER_NOT_FOUND", engineCodeUserNotFound)
-}
-
 const (
 	// Hex letters, not just digits. strings.ToUpper on an all-digit uuid is
 	// a no-op, so the case-difference row would compare a string with itself.
@@ -991,6 +981,7 @@ const (
 	posParent  = "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb"
 	posSponsor = "cccccccc-3333-4333-8333-cccccccccccc"
 	posOther   = "dddddddd-4444-4444-8444-dddddddddddd"
+	posTree    = "eeeeeeee-5555-4555-8555-eeeeeeeeeeee"
 )
 
 var posEnrolled = time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
@@ -1013,7 +1004,7 @@ func enginePos(mutate func(*EnginePosition)) *EnginePosition {
 
 func payloadFor(treeType string, position *int) NodePlacedPayload {
 	return NodePlacedPayload{
-		TreeID:     posOther,
+		TreeID:     posTree,
 		UserID:     posUser,
 		ParentID:   posParent,
 		SponsorID:  posSponsor,
@@ -1041,6 +1032,55 @@ func TestPositionMatchesPayload(t *testing.T) {
 			payload: payloadFor(treeTypeUnilevel, nil),
 			depth:   2,
 			want:    true,
+		},
+		{
+			// Skipping position must not mean skipping the rest. Returning
+			// true for unilevel straight after the nil guard passes every
+			// other row in this table.
+			name:    "unilevel with a different parent does not match",
+			pos:     enginePos(func(p *EnginePosition) { p.ParentUserID = ptr(posOther) }),
+			payload: payloadFor(treeTypeUnilevel, nil),
+			depth:   2,
+			want:    false,
+		},
+		{
+			name:    "unilevel with a different enrolled_at does not match",
+			pos:     enginePos(func(p *EnginePosition) { p.EnrolledAt = posEnrolled.Unix() + 1 }),
+			payload: payloadFor(treeTypeUnilevel, nil),
+			depth:   2,
+			want:    false,
+		},
+		{
+			name:    "unilevel with a different depth does not match",
+			pos:     enginePos(nil),
+			payload: payloadFor(treeTypeUnilevel, nil),
+			depth:   9,
+			want:    false,
+		},
+		{
+			// The position rule names unilevel rather than naming binary and
+			// matrix, so a fourth tree type is compared rather than skipped.
+			// It then fails for want of a position, which is the same
+			// fail-closed stance handleNodePlaced's default branch takes.
+			name:    "an unknown tree type is compared, not skipped",
+			pos:     enginePos(nil),
+			payload: payloadFor("board", nil),
+			depth:   2,
+			want:    false,
+		},
+		{
+			// The engine only ever receives EnrolledAt.Unix(), so a second is
+			// the finest resolution it holds. Comparing more precisely would
+			// make every redelivery diverge.
+			name: "sub-second precision is below what the engine holds",
+			pos:  enginePos(nil),
+			payload: func() NodePlacedPayload {
+				p := payloadFor(treeTypeBinary, intPtr(1))
+				p.EnrolledAt = posEnrolled.Add(500 * time.Millisecond)
+				return p
+			}(),
+			depth: 2,
+			want:  true,
 		},
 		{
 			name:    "binary matches",

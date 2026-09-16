@@ -91,7 +91,9 @@ type TreeLoadIncompleteError struct {
 	// Confirmed is how many non-root placements the engine acknowledged.
 	Confirmed int
 	// Attempted is the one-based index of the placement that did not report
-	// success. That placement may still have taken effect.
+	// success. That placement may still have taken effect, unless Err is nil,
+	// which means the load stopped before the call was sent and no request was
+	// made for it.
 	Attempted int
 	// Total is how many non-root placements the load set out to make.
 	Total int

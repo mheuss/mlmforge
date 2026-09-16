@@ -110,7 +110,8 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 			root.UserID)
 	}
 
-	// The index names the node that failed, so "3 of 5" means two landed.
+	// Counts non-root placements. The index names the one that failed, so
+	// "3 of 4" means two of four were acknowledged.
 	total := len(ordered) - 1
 	for i, node := range ordered[1:] {
 		// validateNodes already proved these non-nil for every non-root, and

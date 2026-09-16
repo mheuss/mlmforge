@@ -728,19 +728,39 @@ func TestTreeLoader_PostCreateExitsCarryTheirCounts(t *testing.T) {
 		wantAttempted int
 		wantTotal     int
 	}{
+		// The three counts are deliberately zero on these rows, not omitted.
+		// Nothing has been placed, and Total is only populated at the nodes
+		// stage.
 		{
-			name:       "create fails before anything is attempted",
-			treeType:   treeTypeUnilevel,
-			nodes:      unilevelFixture(),
-			succeedFor: 0,
-			wantStage:  TreeLoadStageCreate,
+			name:          "create fails before anything is attempted",
+			treeType:      treeTypeUnilevel,
+			nodes:         unilevelFixture(),
+			succeedFor:    0,
+			wantStage:     TreeLoadStageCreate,
+			wantConfirmed: 0,
+			wantAttempted: 0,
+			wantTotal:     0,
 		},
 		{
-			name:       "root fails before any non-root placement",
-			treeType:   treeTypeUnilevel,
-			nodes:      unilevelFixture(),
-			succeedFor: 1,
-			wantStage:  TreeLoadStageRoot,
+			name:          "matrix create fails before anything is attempted",
+			treeType:      treeTypeMatrix,
+			opts:          matrixOpts(3),
+			nodes:         matrixFixture(),
+			succeedFor:    0,
+			wantStage:     TreeLoadStageCreate,
+			wantConfirmed: 0,
+			wantAttempted: 0,
+			wantTotal:     0,
+		},
+		{
+			name:          "root fails before any non-root placement",
+			treeType:      treeTypeUnilevel,
+			nodes:         unilevelFixture(),
+			succeedFor:    1,
+			wantStage:     TreeLoadStageRoot,
+			wantConfirmed: 0,
+			wantAttempted: 0,
+			wantTotal:     0,
 		},
 		{
 			// Create, root, then two placements are acknowledged. The third
@@ -794,13 +814,15 @@ func TestTreeLoader_ConfirmedTrailsTheMessageIndex(t *testing.T) {
 
 	// succeedFor 2 is create plus root, so the first placement fails.
 	for attempt := 1; attempt <= 4; attempt++ {
-		m := &failAtCallMutator{succeedFor: 1 + attempt, err: engineErr}
-		err := loadWithMutator(t, treeTypeUnilevel, unilevelFixture(), m)
+		t.Run(fmt.Sprintf("placement %d of 4", attempt), func(t *testing.T) {
+			m := &failAtCallMutator{succeedFor: 1 + attempt, err: engineErr}
+			err := loadWithMutator(t, treeTypeUnilevel, unilevelFixture(), m)
 
-		var incomplete *TreeLoadIncompleteError
-		require.ErrorAs(t, err, &incomplete)
-		assert.Equal(t, attempt, incomplete.Attempted)
-		assert.Equal(t, attempt-1, incomplete.Confirmed)
-		assert.Contains(t, err.Error(), fmt.Sprintf("(%d of 4,", attempt))
+			var incomplete *TreeLoadIncompleteError
+			require.ErrorAs(t, err, &incomplete)
+			assert.Equal(t, attempt, incomplete.Attempted)
+			assert.Equal(t, attempt-1, incomplete.Confirmed)
+			assert.Contains(t, err.Error(), fmt.Sprintf("(%d of 4,", attempt))
+		})
 	}
 }

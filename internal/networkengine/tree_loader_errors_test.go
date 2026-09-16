@@ -28,36 +28,44 @@ type failAtCallMutator struct {
 	succeedFor int
 	err        error
 	calls      int
+	// failedOp is the method whose call returned err. Two exits share a
+	// message and a stage, so without it a row cannot show which one ran.
+	failedOp string
 }
 
 var _ TreeMutator = (*failAtCallMutator)(nil)
 
-func (m *failAtCallMutator) next() error {
+func (m *failAtCallMutator) next(op string) error {
 	m.calls++
 	if m.calls > m.succeedFor {
+		m.failedOp = op
 		return m.err
 	}
 	return nil
 }
 
-func (m *failAtCallMutator) CreateTree(context.Context, string, string) error { return m.next() }
-
-func (m *failAtCallMutator) CreateMatrixTree(context.Context, string, int, string) error {
-	return m.next()
+func (m *failAtCallMutator) CreateTree(context.Context, string, string) error {
+	return m.next("CreateTree")
 }
 
-func (m *failAtCallMutator) AddRoot(context.Context, string, string, int64) error { return m.next() }
+func (m *failAtCallMutator) CreateMatrixTree(context.Context, string, int, string) error {
+	return m.next("CreateMatrixTree")
+}
+
+func (m *failAtCallMutator) AddRoot(context.Context, string, string, int64) error {
+	return m.next("AddRoot")
+}
 
 func (m *failAtCallMutator) AddNode(context.Context, string, string, string, string, int64, ...AddNodeOption) error {
-	return m.next()
+	return m.next("AddNode")
 }
 
 func (m *failAtCallMutator) AddNodeAt(context.Context, string, string, string, string, int, int64) error {
-	return m.next()
+	return m.next("AddNodeAt")
 }
 
 func (m *failAtCallMutator) RemoveNode(context.Context, string, string) ([]Responsored, error) {
-	return nil, m.next()
+	return nil, m.next("RemoveNode")
 }
 
 // loadWithMutator seeds an in-memory store and runs a load against a
@@ -133,6 +141,8 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 		wantKind    TreeLoadRejectionKind
 		wantStage   TreeLoadStage
 		wantNodeIDs []string
+		// wantFailedOp is the engine method the row's name claims drove it.
+		wantFailedOp string
 		// wantErrIs is the cause this exit must keep reachable, for a row whose
 		// cause is neither the engine's error nor absent. Rendering a cause into
 		// the message is not enough, so a row that names none must wrap none.
@@ -383,6 +393,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 		// LoadTree, after the first engine call
 		{
 			name:             "CreateTree fails",
+			wantFailedOp:     "CreateTree",
 			wantStage:        TreeLoadStageCreate,
 			treeType:         treeTypeUnilevel,
 			nodes:            unilevelFixture(),
@@ -391,6 +402,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 		},
 		{
 			name:             "CreateMatrixTree fails",
+			wantFailedOp:     "CreateMatrixTree",
 			wantStage:        TreeLoadStageCreate,
 			treeType:         treeTypeMatrix,
 			opts:             matrixOpts(3),
@@ -400,6 +412,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 		},
 		{
 			name:             "AddRoot fails",
+			wantFailedOp:     "AddRoot",
 			wantStage:        TreeLoadStageRoot,
 			wantNodeIDs:      []string{"u0"},
 			treeType:         treeTypeUnilevel,
@@ -409,6 +422,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 		},
 		{
 			name:             "AddNode fails",
+			wantFailedOp:     "AddNode",
 			wantStage:        TreeLoadStageNodes,
 			wantNodeIDs:      []string{"u3"},
 			treeType:         treeTypeUnilevel,
@@ -418,6 +432,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 		},
 		{
 			name:             "AddNodeAt fails",
+			wantFailedOp:     "AddNodeAt",
 			wantStage:        TreeLoadStageNodes,
 			wantNodeIDs:      []string{"u2"},
 			treeType:         treeTypeMatrix,
@@ -498,6 +513,8 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			}
 
 			if m != nil {
+				assert.Equal(t, tt.wantFailedOp, m.failedOp,
+					"the row must be driven by the method its name claims")
 				assert.Equal(t, tt.engineFailsAfter+1, m.calls,
 					"LoadTree must return on engine call %d and make no call after it",
 					tt.engineFailsAfter+1)

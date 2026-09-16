@@ -763,7 +763,9 @@ Unilevel carries no position; it appends to the parent's child list. A unilevel 
 
 The worker has **no operation to remove a structure** (HEU-557). A load that fails partway leaves the tree stuck until the process restarts. So `LoadTree` proves a load is sound before the first engine call, and its replay failures return `TreeLoadIncompleteError`, which carries the stage the load reached and how many placements the engine acknowledged.
 
-`Confirmed` counts acknowledgements, not what landed. The call that failed may also have taken effect, with the reply lost rather than the work undone, so the true state of the structure is at least `Confirmed` placements and possibly one more. Nothing closes that gap while HEU-557 stands, because a structure that cannot be dropped cannot be rebuilt from a known state. HEU-777 and HEU-784 are the same failure mode on the removal path rather than the replay path, so neither closes this one.
+`Confirmed` counts acknowledgements, not what landed. At `TreeLoadStageNodes` the call that failed may also have taken effect, with the reply lost rather than the work undone, so the structure holds at least `Confirmed` placements and possibly one more. That carve-out does not apply when `Err` is nil, which means the load stopped before the call was sent. At the create and root stages all three counters are zero and the operation in doubt is not a placement at all.
+
+The loader cannot tell which happened. It holds a `TreeMutator`, and that interface carries only mutations, so nothing on this path can read back whether the placement landed. HEU-557 would supply a remedy rather than an answer: being able to drop the structure lets a caller start over without knowing. HEU-777 and HEU-784 are the same lost-reply shape on the removal path rather than the replay path.
 
 Preflight runs in two phases with different inputs. `validateTreeConfig` checks the tree type, and for a matrix the width and spillover. It reads no rows, so it runs before the store query. A misconfigured load costs no query. `validateNodes` runs after the query and proves the node set is structurally consistent.
 

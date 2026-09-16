@@ -441,12 +441,12 @@ for _, tree := range trees {
 
 	switch {
 	case err == nil:
-		// loaded
+		// Loaded, or there were no rows and no structure was created.
 
 	case errors.As(err, &rejected):
 		// The engine was never called, so other trees are unaffected.
 		if rejected.Kind == networkengine.TreeLoadDataInvalid {
-			log.Warn("skipping tree with unusable data",
+			slog.Warn("skipping tree with unusable data",
 				"tree", rejected.TreeID, "nodes", rejected.NodeIDs, "err", err)
 			continue
 		}
@@ -455,8 +455,10 @@ for _, tree := range trees {
 		return err
 
 	case errors.As(err, &incomplete):
-		// The structure may be partly built and nothing can drop it.
-		return err
+		// The structure may be partly built and nothing can drop it. Stage and
+		// Confirmed are what an operator reads to size the damage.
+		return fmt.Errorf("restart required, %s stopped at %s with %d of %d placements acknowledged: %w",
+			incomplete.TreeID, incomplete.Stage, incomplete.Confirmed, incomplete.Total, err)
 
 	default:
 		return err

@@ -497,7 +497,8 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 
 		err := s.InsertNode(ctx,
 			makeUUIDNode(testNodeUUID(1), testTreeUUID(2), testUserUUID(2), 0, nil, nil, nil))
-		require.Error(t, err, "the primary key is not partial, so a different tree and user does not excuse it")
+		assert.ErrorIs(t, err, ErrNodeAlreadyProjected,
+			"the primary key is not partial, so a different tree and user does not excuse it")
 	})
 
 	// The primary key is not partial, so soft-deleting the row does not free
@@ -529,7 +530,8 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
 
 		err := s.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), tree, user, 0, nil, nil, nil))
-		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrActiveUserConflict)
+		assert.NotErrorIs(t, err, ErrSlotConflict, "these two send the consumer different places")
 	})
 
 	t.Run("InsertNode rejects a second active claim on one slot", func(t *testing.T) {
@@ -545,7 +547,8 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 
 		err := s.InsertNode(ctx,
 			makeUUIDNode(testNodeUUID(3), tree, testUserUUID(3), 1, ptr(rootUser), ptr(rootUser), intPtr(0)))
-		require.Error(t, err, "one active claim per tree, parent and position")
+		assert.ErrorIs(t, err, ErrSlotConflict, "one active claim per tree, parent and position")
+		assert.NotErrorIs(t, err, ErrActiveUserConflict, "these two send the consumer different places")
 	})
 
 	// The discriminator HEU-576 is built on. A redelivered event carries the

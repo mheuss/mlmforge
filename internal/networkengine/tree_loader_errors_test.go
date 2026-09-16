@@ -126,7 +126,9 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 		want             string
 		// wantKind and wantStage name the type this exit returns once it is
 		// converted. A row with neither set asserts the exit is still untyped,
-		// so converting an exit without updating its row fails here.
+		// so converting an exit without updating its row fails here. The empty
+		// value is reserved as that sentinel and cannot name a real kind or
+		// stage.
 		wantKind    TreeLoadRejectionKind
 		wantStage   TreeLoadStage
 		wantNodeIDs []string
@@ -387,6 +389,8 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 
 			require.False(t, tt.direct && tt.engineFailsAfter >= 0,
 				"a row cannot both seed past InsertNode and drive an engine failure")
+			require.False(t, tt.wantKind != "" && tt.wantStage != "",
+				"a row carries a kind or a stage, not both")
 
 			switch {
 			case tt.store != nil:
@@ -445,6 +449,19 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 // nil-position guards inside LoadTree's replay loop. validateNodes proves both
 // conditions impossible before the loop runs, so no fixture produces them.
 func TestTreeLoader_GoldenMessages_DirectCalls(t *testing.T) {
+	// assertStillUntyped is the same guard the table above puts in its default
+	// branch. These three exits convert in later tasks, and without it a
+	// conversion here leaves every assertion in this test satisfied.
+	assertStillUntyped := func(t *testing.T, err error) {
+		t.Helper()
+		var rejected *TreeLoadRejectedError
+		var incomplete *TreeLoadIncompleteError
+		assert.False(t, errors.As(err, &rejected),
+			"this exit is typed now; assert its kind instead of this guard")
+		assert.False(t, errors.As(err, &incomplete),
+			"this exit is typed now; assert its stage instead of this guard")
+	}
+
 	t.Run("tree type with no slot rule", func(t *testing.T) {
 		nodes := []TreeNodeRow{makeNode("t", "u0", 0, nil, nil, nil)}
 
@@ -454,6 +471,7 @@ func TestTreeLoader_GoldenMessages_DirectCalls(t *testing.T) {
 		assert.Equal(t,
 			`tree t has type "streamline" with no slot rule (add one to validateNodes)`,
 			err.Error())
+		assertStillUntyped(t, err)
 	})
 
 	// Fixture copied from TestOrderForReplay_StalledWalkNamesWhereItStopped.
@@ -471,6 +489,7 @@ func TestTreeLoader_GoldenMessages_DirectCalls(t *testing.T) {
 		assert.Equal(t,
 			"tree t: 3 of 4 nodes cannot be replayed (the replay order stops at z, reached from a, whose parent or sponsor cannot be resolved)",
 			err.Error())
+		assertStillUntyped(t, err)
 	})
 
 	// Fixture copied from TestOrderForReplay_DuplicateUserIDsDoNotPanic.
@@ -487,6 +506,7 @@ func TestTreeLoader_GoldenMessages_DirectCalls(t *testing.T) {
 		assert.Equal(t,
 			"tree t: replay produced 2 of 3 nodes with no unreplayable node (duplicate user IDs?)",
 			err.Error())
+		assertStillUntyped(t, err)
 	})
 }
 

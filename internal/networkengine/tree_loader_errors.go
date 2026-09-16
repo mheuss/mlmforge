@@ -19,7 +19,7 @@ const (
 // TreeLoadRejectedError reports a load that failed before any engine call, so
 // the engine is unchanged and the load can be retried.
 //
-// Typed rather than a bare fmt.Errorf, matching ProtocolVersionMismatchError.
+// Typed rather than a bare fmt.Errorf.
 // A caller has to tell this apart from TreeLoadIncompleteError with errors.As,
 // because the two need opposite handling: this one leaves the engine usable,
 // the other may not.
@@ -40,7 +40,7 @@ func (e *TreeLoadRejectedError) Unwrap() error { return e.Err }
 // TreeLoadStage names how far a load reached before it failed.
 //
 // Every stage means an operation was attempted and did not report success.
-// None of them means the operation did not take effect. See section 4.
+// None of them means the operation did not take effect.
 type TreeLoadStage string
 
 const (
@@ -60,8 +60,8 @@ const (
 // to drop it (HEU-557), so a process restart is the only remedy.
 //
 // Confirmed and Total count non-root placements. Attempted is the one-based
-// index the message carries, so Confirmed is always Attempted minus one. Both
-// are 0 outside TreeLoadStageNodes.
+// index the message carries, so within TreeLoadStageNodes Confirmed is
+// Attempted minus one. All three are 0 at the other stages.
 type TreeLoadIncompleteError struct {
 	TreeID string
 	// NodeIDs holds every user the message names, in the order the message

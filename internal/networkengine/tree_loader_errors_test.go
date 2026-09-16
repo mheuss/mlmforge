@@ -192,6 +192,8 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			direct:           true,
 			engineFailsAfter: -1,
 			want:             "tree t has duplicate user u0 (data corruption?)",
+			wantKind:         TreeLoadDataInvalid,
+			wantNodeIDs:      []string{"u0"},
 		},
 		{
 			name:     "two roots",
@@ -202,6 +204,8 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			}),
 			engineFailsAfter: -1,
 			want:             "tree t has more than one depth-0 root (u0 and u9)",
+			wantKind:         TreeLoadDataInvalid,
+			wantNodeIDs:      []string{"u0", "u9"},
 		},
 		{
 			name:     "no root",
@@ -211,6 +215,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			},
 			engineFailsAfter: -1,
 			want:             "tree t has no depth-0 root node (data corruption?)",
+			wantKind:         TreeLoadDataInvalid,
 		},
 		{
 			name:     "root carries a parent",
@@ -220,6 +225,8 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			},
 			engineFailsAfter: -1,
 			want:             "root u0 in tree t has parent ghost (the engine root has no parent)",
+			wantKind:         TreeLoadDataInvalid,
+			wantNodeIDs:      []string{"u0", "ghost"},
 		},
 		{
 			name:     "root carries a position",
@@ -229,10 +236,14 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			},
 			engineFailsAfter: -1,
 			want:             "root u0 in tree t has position 0 (the engine root occupies no slot)",
+			wantKind:         TreeLoadDataInvalid,
+			wantNodeIDs:      []string{"u0"},
 		},
 		{
-			name:     "nil parent",
-			treeType: treeTypeUnilevel,
+			name:        "nil parent",
+			wantKind:    TreeLoadDataInvalid,
+			wantNodeIDs: []string{"u1"},
+			treeType:    treeTypeUnilevel,
 			nodes: []TreeNodeRow{
 				makeNode("t", "u0", 0, nil, nil, nil),
 				makeNode("t", "u1", 1, nil, ptr("u0"), nil),
@@ -241,8 +252,10 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			want:             "node u1 in tree t has nil parent or sponsor (data corruption?)",
 		},
 		{
-			name:     "nil sponsor",
-			treeType: treeTypeUnilevel,
+			name:        "nil sponsor",
+			wantKind:    TreeLoadDataInvalid,
+			wantNodeIDs: []string{"u1"},
+			treeType:    treeTypeUnilevel,
 			nodes: []TreeNodeRow{
 				makeNode("t", "u0", 0, nil, nil, nil),
 				makeNode("t", "u1", 1, ptr("u0"), nil, nil),
@@ -259,6 +272,8 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			},
 			engineFailsAfter: -1,
 			want:             "node u1 in tree t is its own parent",
+			wantKind:         TreeLoadDataInvalid,
+			wantNodeIDs:      []string{"u1"},
 		},
 		{
 			name:     "self sponsor",
@@ -269,6 +284,8 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			},
 			engineFailsAfter: -1,
 			want:             "node u1 in tree t is its own sponsor",
+			wantKind:         TreeLoadDataInvalid,
+			wantNodeIDs:      []string{"u1"},
 		},
 		{
 			name:     "parent not in tree",
@@ -279,6 +296,8 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			},
 			engineFailsAfter: -1,
 			want:             "node u1 in tree t references parent ghost that is not in the tree",
+			wantKind:         TreeLoadDataInvalid,
+			wantNodeIDs:      []string{"u1", "ghost"},
 		},
 		{
 			name:     "sponsor not in tree",
@@ -289,6 +308,8 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			},
 			engineFailsAfter: -1,
 			want:             "node u1 in tree t references sponsor ghost that is not in the tree",
+			wantKind:         TreeLoadDataInvalid,
+			wantNodeIDs:      []string{"u1", "ghost"},
 		},
 		{
 			name:     "depth mismatch",
@@ -299,6 +320,8 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			},
 			engineFailsAfter: -1,
 			want:             "node u1 in tree t has depth 3 but parent u0 has depth 0",
+			wantKind:         TreeLoadDataInvalid,
+			wantNodeIDs:      []string{"u1", "u0"},
 		},
 		{
 			name:     "matrix nil position",
@@ -310,6 +333,8 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			},
 			engineFailsAfter: -1,
 			want:             "matrix node u1 in tree t has nil position (the adjacency row is incomplete)",
+			wantKind:         TreeLoadDataInvalid,
+			wantNodeIDs:      []string{"u1"},
 		},
 		{
 			name:     "matrix position outside width",
@@ -321,6 +346,8 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			},
 			engineFailsAfter: -1,
 			want:             "matrix node u1 in tree t has position 3 outside the range 0..2",
+			wantKind:         TreeLoadDataInvalid,
+			wantNodeIDs:      []string{"u1"},
 		},
 		{
 			name:     "matrix duplicate slot",
@@ -334,6 +361,8 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			direct:           true,
 			engineFailsAfter: -1,
 			want:             "matrix nodes u1 and u2 in tree t both claim parent u0 position 1",
+			wantKind:         TreeLoadDataInvalid,
+			wantNodeIDs:      []string{"u1", "u2", "u0"},
 		},
 
 		// cycleError, the reachable branch
@@ -497,7 +526,13 @@ func TestTreeLoader_GoldenMessages_DirectCalls(t *testing.T) {
 		assert.Equal(t,
 			`tree t has type "streamline" with no slot rule (add one to validateNodes)`,
 			err.Error())
-		assertStillUntyped(t, err)
+
+		var rejected *TreeLoadRejectedError
+		require.ErrorAs(t, err, &rejected)
+		assert.Equal(t, TreeLoadConfigInvalid, rejected.Kind,
+			"a missing slot rule tells a developer to write code, not an operator to fix data")
+		assert.Empty(t, rejected.NodeIDs)
+		assert.NoError(t, errors.Unwrap(err))
 	})
 
 	t.Run("walk stalls without closing a loop", func(t *testing.T) {

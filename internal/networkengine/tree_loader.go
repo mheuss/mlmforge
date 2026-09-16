@@ -543,8 +543,9 @@ func cycleError(treeID string, nodes []TreeNodeRow, ordered []*TreeNodeRow, byID
 	// below indexes stuck[0], and a panic here takes down startup rather than
 	// failing one tree.
 	if len(stuck) == 0 {
-		return fmt.Errorf("tree %s: replay produced %d of %d nodes with no unreplayable node (duplicate user IDs?)",
-			treeID, len(ordered), len(nodes))
+		return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,
+			fmt.Sprintf("tree %s: replay produced %d of %d nodes with no unreplayable node (duplicate user IDs?)",
+				treeID, len(ordered), len(nodes)))
 	}
 
 	// unmet returns a dependency of id that was never emitted, or "" if there
@@ -571,9 +572,11 @@ func cycleError(treeID string, nodes []TreeNodeRow, ordered []*TreeNodeRow, byID
 	for cur := stuck[0]; cur != ""; cur = unmet(cur) {
 		if idx, ok := seenAt[cur]; ok {
 			cycle := append(append([]string{}, path[idx:]...), cur)
-			return fmt.Errorf(
-				"tree %s: %d of %d nodes cannot be replayed because their parent/sponsor references form a cycle: %s",
-				treeID, len(stuck), len(nodes), strings.Join(cycle, " -> "))
+			return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,
+				fmt.Sprintf(
+					"tree %s: %d of %d nodes cannot be replayed because their parent/sponsor references form a cycle: %s",
+					treeID, len(stuck), len(nodes), strings.Join(cycle, " -> ")),
+				cycle...)
 		}
 		seenAt[cur] = len(path)
 		path = append(path, cur)
@@ -599,10 +602,17 @@ func cycleError(treeID string, nodes []TreeNodeRow, ordered []*TreeNodeRow, byID
 		stopped = path[len(path)-1]
 	}
 	via := ""
+	var named []string
+	if stopped != "" {
+		named = append(named, stopped)
+	}
 	if len(path) >= 2 {
 		via = fmt.Sprintf(", reached from %s", path[len(path)-2])
+		named = append(named, path[len(path)-2])
 	}
-	return fmt.Errorf(
-		"tree %s: %d of %d nodes cannot be replayed (the replay order stops at %s%s, whose parent or sponsor cannot be resolved)",
-		treeID, len(stuck), len(nodes), stopped, via)
+	return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,
+		fmt.Sprintf(
+			"tree %s: %d of %d nodes cannot be replayed (the replay order stops at %s%s, whose parent or sponsor cannot be resolved)",
+			treeID, len(stuck), len(nodes), stopped, via),
+		named...)
 }

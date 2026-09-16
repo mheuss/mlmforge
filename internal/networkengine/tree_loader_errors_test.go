@@ -376,6 +376,8 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			},
 			engineFailsAfter: -1,
 			want:             "tree t: 2 of 3 nodes cannot be replayed because their parent/sponsor references form a cycle: u1 -> u2 -> u1",
+			wantKind:         TreeLoadDataInvalid,
+			wantNodeIDs:      []string{"u1", "u2", "u1"},
 		},
 
 		// LoadTree, after the first engine call
@@ -504,19 +506,6 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 // nil-position guards inside the replay loop. Validation rejects both
 // conditions before the loop runs, so no fixture produces them.
 func TestTreeLoader_GoldenMessages_DirectCalls(t *testing.T) {
-	// assertStillUntyped is the same guard the table above puts in its default
-	// branch. These three exits convert in later tasks, and without it a
-	// conversion here leaves every assertion in this test satisfied.
-	assertStillUntyped := func(t *testing.T, err error) {
-		t.Helper()
-		var rejected *TreeLoadRejectedError
-		var incomplete *TreeLoadIncompleteError
-		assert.False(t, errors.As(err, &rejected),
-			"this exit is typed now; assert its kind instead of this guard")
-		assert.False(t, errors.As(err, &incomplete),
-			"this exit is typed now; assert its stage instead of this guard")
-	}
-
 	t.Run("tree type with no slot rule", func(t *testing.T) {
 		nodes := []TreeNodeRow{makeNode("t", "u0", 0, nil, nil, nil)}
 
@@ -549,7 +538,13 @@ func TestTreeLoader_GoldenMessages_DirectCalls(t *testing.T) {
 		assert.Equal(t,
 			"tree t: 3 of 4 nodes cannot be replayed (the replay order stops at z, reached from a, whose parent or sponsor cannot be resolved)",
 			err.Error())
-		assertStillUntyped(t, err)
+
+		var rejected *TreeLoadRejectedError
+		require.ErrorAs(t, err, &rejected)
+		assert.Equal(t, TreeLoadDataInvalid, rejected.Kind)
+		assert.Equal(t, []string{"z", "a"}, rejected.NodeIDs,
+			"the node the walk stopped at, then whoever reached it")
+		assert.NoError(t, errors.Unwrap(err))
 	})
 
 	t.Run("every node emitted but the counts disagree", func(t *testing.T) {
@@ -565,7 +560,12 @@ func TestTreeLoader_GoldenMessages_DirectCalls(t *testing.T) {
 		assert.Equal(t,
 			"tree t: replay produced 2 of 3 nodes with no unreplayable node (duplicate user IDs?)",
 			err.Error())
-		assertStillUntyped(t, err)
+
+		var rejected *TreeLoadRejectedError
+		require.ErrorAs(t, err, &rejected)
+		assert.Equal(t, TreeLoadDataInvalid, rejected.Kind)
+		assert.Empty(t, rejected.NodeIDs, "this message names no user")
+		assert.NoError(t, errors.Unwrap(err))
 	})
 }
 

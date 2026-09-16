@@ -3,6 +3,7 @@ package networkengine
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -107,7 +108,7 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		rootUser := testUserUUID(1)
 		keptUser := testUserUUID(2)
 		removedUser := testUserUUID(3)
-		otherParentUser := testUserUUID(4)
+		grandchildUser := testUserUUID(4)
 
 		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
 		require.NoError(t, s.InsertNode(ctx,
@@ -116,7 +117,7 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 			makeUUIDNode(testNodeUUID(3), tree, removedUser, 1, ptr(rootUser), ptr(rootUser), intPtr(1))))
 		// A grandchild, to prove GetChildren is one level and not a subtree walk.
 		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(4), tree, otherParentUser, 2, ptr(keptUser), ptr(keptUser), intPtr(0))))
+			makeUUIDNode(testNodeUUID(4), tree, grandchildUser, 2, ptr(keptUser), ptr(keptUser), intPtr(0))))
 
 		require.NoError(t, s.DeleteNode(ctx, tree, removedUser))
 
@@ -223,19 +224,34 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		tree := testTreeUUID(1)
 		rootUser := testUserUUID(1)
 		removedUser := testUserUUID(2)
+		validUser := testUserUUID(3)
 		absentUser := testUserUUID(99)
 
 		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
 		require.NoError(t, s.InsertNode(ctx,
 			makeUUIDNode(testNodeUUID(2), tree, removedUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(3), tree, validUser, 2, ptr(removedUser), ptr(removedUser), intPtr(0))))
 
-		err := s.DeleteNodeAndResponsor(ctx, tree, removedUser,
-			[]Responsored{{UserID: absentUser, NewSponsorID: rootUser}})
+		// The valid recruit goes first so the batch has a sponsor write to
+		// undo. With only the absent one, an implementation that wrote each
+		// sponsor inline before the delete would pass having written nothing.
+		err := s.DeleteNodeAndResponsor(ctx, tree, removedUser, []Responsored{
+			{UserID: validUser, NewSponsorID: rootUser},
+			{UserID: absentUser, NewSponsorID: rootUser},
+		})
 		require.Error(t, err, "re-sponsoring a user with no active row must fail")
 
 		stillThere, err := s.GetNode(ctx, tree, removedUser)
 		require.NoError(t, err)
 		assert.NotNil(t, stillThere, "the soft delete must roll back with the sponsor updates")
+
+		untouched, err := s.GetNode(ctx, tree, validUser)
+		require.NoError(t, err)
+		require.NotNil(t, untouched)
+		require.NotNil(t, untouched.SponsorID)
+		assert.Equal(t, removedUser, *untouched.SponsorID,
+			"the valid recruit's sponsor write must roll back too")
 	})
 
 	t.Run("BulkInsert inserts every row", func(t *testing.T) {
@@ -281,5 +297,176 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		got, err := s.GetByTree(ctx, tree)
 		require.NoError(t, err)
 		assert.Empty(t, nodeUserIDs(got), "a failed batch leaves no rows behind")
+	})
+
+	// GetByTreeDepthOrdered is the only TreeStore method with a stated
+	// ordering promise and the only read method TreeLoader.LoadTree calls at
+	// startup. The suite asserts the sequence positionally because here the
+	// order is the contract.
+	t.Run("GetByTreeDepthOrdered sorts by depth then enrolled_at", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		rootUser := testUserUUID(1)
+		earlyUser := testUserUUID(2)
+		lateUser := testUserUUID(3)
+		deepUser := testUserUUID(4)
+
+		root := makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)
+		early := makeUUIDNode(testNodeUUID(2), tree, earlyUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))
+		late := makeUUIDNode(testNodeUUID(3), tree, lateUser, 1, ptr(rootUser), ptr(rootUser), intPtr(1))
+		deep := makeUUIDNode(testNodeUUID(4), tree, deepUser, 2, ptr(earlyUser), ptr(earlyUser), intPtr(0))
+
+		root.EnrolledAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		early.EnrolledAt = time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+		late.EnrolledAt = time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+		deep.EnrolledAt = time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+
+		// Inserted deepest first and with the same-depth pair reversed, so
+		// insertion order cannot produce the expected sequence by accident.
+		require.NoError(t, s.InsertNode(ctx, deep))
+		require.NoError(t, s.InsertNode(ctx, late))
+		require.NoError(t, s.InsertNode(ctx, early))
+		require.NoError(t, s.InsertNode(ctx, root))
+
+		got, err := s.GetByTreeDepthOrdered(ctx, tree)
+		require.NoError(t, err)
+		assert.Equal(t, []string{rootUser, earlyUser, lateUser, deepUser}, nodeUserIDs(got),
+			"depth ascending, then enrolled_at ascending within a depth")
+	})
+
+	// EnrolledAt is caller-supplied, unlike CreatedAt and UpdatedAt, and it is
+	// the tiebreak key above. Compared with Equal rather than assert.Equal
+	// because Postgres returns TIMESTAMPTZ in the session zone while the
+	// memory store returns the value as given. Same instant, different
+	// representation, so assert.Equal fails on Postgres alone. HEU-795.
+	t.Run("InsertNode round-trips EnrolledAt", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		user := testUserUUID(1)
+		node := makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)
+		node.EnrolledAt = time.Date(2026, 5, 17, 13, 45, 6, 0, time.UTC)
+
+		require.NoError(t, s.InsertNode(ctx, node))
+
+		got, err := s.GetNode(ctx, tree, user)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.True(t, node.EnrolledAt.Equal(got.EnrolledAt),
+			"EnrolledAt round-trips as the same instant, got %v want %v", got.EnrolledAt, node.EnrolledAt)
+	})
+
+	t.Run("GetChildren does not cross tree boundaries", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		treeA := testTreeUUID(1)
+		treeB := testTreeUUID(2)
+		sharedUser := testUserUUID(1)
+		kidA := testUserUUID(2)
+		kidB := testUserUUID(3)
+
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), treeA, sharedUser, 0, nil, nil, nil)))
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), treeB, sharedUser, 0, nil, nil, nil)))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(3), treeA, kidA, 1, ptr(sharedUser), ptr(sharedUser), intPtr(0))))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(4), treeB, kidB, 1, ptr(sharedUser), ptr(sharedUser), intPtr(0))))
+
+		children, err := s.GetChildren(ctx, treeA, sharedUser)
+		require.NoError(t, err)
+		assert.ElementsMatch(t, []string{kidA}, nodeUserIDs(children),
+			"the same user parents a child in both trees; only this tree's child comes back")
+	})
+
+	t.Run("DeleteNode does not cross tree boundaries", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		treeA := testTreeUUID(1)
+		treeB := testTreeUUID(2)
+		sharedUser := testUserUUID(1)
+
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), treeA, sharedUser, 0, nil, nil, nil)))
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), treeB, sharedUser, 0, nil, nil, nil)))
+
+		require.NoError(t, s.DeleteNode(ctx, treeA, sharedUser))
+
+		survivor, err := s.GetNode(ctx, treeB, sharedUser)
+		require.NoError(t, err)
+		assert.NotNil(t, survivor, "removing the user from one tree leaves the other tree's row alone")
+	})
+
+	// The three constraints from migrations 000002 and 000004. UC-NET-014
+	// rests on the double rejecting the same writes Postgres rejects.
+	t.Run("InsertNode rejects a duplicate row id", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(1), testTreeUUID(1), testUserUUID(1), 0, nil, nil, nil)))
+
+		err := s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(1), testTreeUUID(2), testUserUUID(2), 0, nil, nil, nil))
+		require.Error(t, err, "the primary key is not partial, so a different tree and user does not excuse it")
+	})
+
+	t.Run("InsertNode rejects a second active row for one user in a tree", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		user := testUserUUID(1)
+
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
+
+		err := s.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), tree, user, 0, nil, nil, nil))
+		require.Error(t, err)
+	})
+
+	t.Run("InsertNode rejects a second active claim on one slot", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		rootUser := testUserUUID(1)
+
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(2), tree, testUserUUID(2), 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
+
+		err := s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(3), tree, testUserUUID(3), 1, ptr(rootUser), ptr(rootUser), intPtr(0)))
+		require.Error(t, err, "one active claim per tree, parent and position")
+	})
+
+	// The discriminator HEU-576 is built on. A redelivered event carries the
+	// row id it already wrote, so it violates the primary key and the user
+	// index against the same row, and only the primary key means "already
+	// projected". Both stores must name that one.
+	//
+	// Which conflict index wins when two are violated against different rows
+	// is deliberately not asserted. The stores disagree there and Postgres's
+	// own answer follows relation OID order, which an index rebuild changes
+	// with nothing to catch it. HEU-794.
+	t.Run("a redelivered row is refused by the primary key, not the user index", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		user := testUserUUID(1)
+		node := makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)
+
+		require.NoError(t, s.InsertNode(ctx, node))
+
+		err := s.InsertNode(ctx, node)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "tree_nodes_pkey",
+			"the primary key is the branch that means already projected")
+		assert.NotContains(t, err.Error(), "idx_tree_nodes_tree_user",
+			"naming the user index here would classify a redelivery as a conflict")
 	})
 }

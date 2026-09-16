@@ -83,16 +83,19 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 
 	if treeType == treeTypeMatrix {
 		if err := l.engine.CreateMatrixTree(ctx, treeID, cfg.matrixWidth, cfg.matrixSpillover); err != nil {
-			return fmt.Errorf("create tree %s: %w", treeID, err)
+			return newTreeLoadIncomplete(TreeLoadStageCreate, treeID, err, 0, 0,
+				fmt.Sprintf("create tree %s: %s", treeID, err))
 		}
 	} else if err := l.engine.CreateTree(ctx, treeID, treeType); err != nil {
-		return fmt.Errorf("create tree %s: %w", treeID, err)
+		return newTreeLoadIncomplete(TreeLoadStageCreate, treeID, err, 0, 0,
+			fmt.Sprintf("create tree %s: %s", treeID, err))
 	}
 
 	// Every failure from here on says what survived it. The structure now
 	// exists and the worker has no operation to drop it (HEU-557), so a retry
 	// reports TREE_EXISTS and the only real remedy is a process restart. How
-	// much landed is the operator's sole input to that call. Validation
+	// much the engine acknowledged is the operator's sole input to that call,
+	// and the call that failed may also have taken effect. Validation
 	// pre-empts every logical error the engine can raise below, so what
 	// actually reaches these paths is transport failure: a worker crash, an
 	// IPC timeout, a cancelled context.
@@ -102,7 +105,9 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 	// is the only node with zero dependencies.
 	root := ordered[0]
 	if err := l.engine.AddRoot(ctx, treeID, root.UserID, root.EnrolledAt.Unix()); err != nil {
-		return fmt.Errorf("add root %s (tree %s created but left empty): %w", root.UserID, treeID, err)
+		return newTreeLoadIncomplete(TreeLoadStageRoot, treeID, err, 0, 0,
+			fmt.Sprintf("add root %s (tree %s created but left empty): %s", root.UserID, treeID, err),
+			root.UserID)
 	}
 
 	// The index names the node that failed, so "3 of 5" means two landed.
@@ -113,8 +118,10 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 		// startup, where a nil deref panics the process instead of failing one
 		// tree, and the invariant now spans two functions.
 		if node.ParentID == nil || node.SponsorID == nil {
-			return fmt.Errorf("node %s in tree %s has nil parent or sponsor (data corruption; %d of %d, tree left partly built)",
-				node.UserID, treeID, i+1, total)
+			return newTreeLoadIncomplete(TreeLoadStageNodes, treeID, nil, i+1, total,
+				fmt.Sprintf("node %s in tree %s has nil parent or sponsor (data corruption; %d of %d, tree left partly built)",
+					node.UserID, treeID, i+1, total),
+				node.UserID)
 		}
 		parentID, sponsorID := *node.ParentID, *node.SponsorID
 
@@ -123,13 +130,17 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 			// rejects a nil position on every non-root matrix node. Kept for
 			// the same reason too — a nil deref here panics startup.
 			if node.Position == nil {
-				return fmt.Errorf("matrix node %s in tree %s has nil position (the adjacency row is incomplete; %d of %d, tree left partly built)",
-					node.UserID, treeID, i+1, total)
+				return newTreeLoadIncomplete(TreeLoadStageNodes, treeID, nil, i+1, total,
+					fmt.Sprintf("matrix node %s in tree %s has nil position (the adjacency row is incomplete; %d of %d, tree left partly built)",
+						node.UserID, treeID, i+1, total),
+					node.UserID)
 			}
 			if err := l.engine.AddNodeAt(ctx, treeID, node.UserID, parentID, sponsorID,
 				*node.Position, node.EnrolledAt.Unix()); err != nil {
-				return fmt.Errorf("add node %s (%d of %d, tree %s left partly built): %w",
-					node.UserID, i+1, total, treeID, err)
+				return newTreeLoadIncomplete(TreeLoadStageNodes, treeID, err, i+1, total,
+					fmt.Sprintf("add node %s (%d of %d, tree %s left partly built): %s",
+						node.UserID, i+1, total, treeID, err),
+					node.UserID)
 			}
 			continue
 		}
@@ -140,8 +151,10 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 		}
 		if err := l.engine.AddNode(ctx, treeID, node.UserID, parentID, sponsorID,
 			node.EnrolledAt.Unix(), addOpts...); err != nil {
-			return fmt.Errorf("add node %s (%d of %d, tree %s left partly built): %w",
-				node.UserID, i+1, total, treeID, err)
+			return newTreeLoadIncomplete(TreeLoadStageNodes, treeID, err, i+1, total,
+				fmt.Sprintf("add node %s (%d of %d, tree %s left partly built): %s",
+					node.UserID, i+1, total, treeID, err),
+				node.UserID)
 		}
 	}
 	return nil

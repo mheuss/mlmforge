@@ -383,6 +383,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 		// LoadTree, after the first engine call
 		{
 			name:             "CreateTree fails",
+			wantStage:        TreeLoadStageCreate,
 			treeType:         treeTypeUnilevel,
 			nodes:            unilevelFixture(),
 			engineFailsAfter: 0,
@@ -390,6 +391,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 		},
 		{
 			name:             "CreateMatrixTree fails",
+			wantStage:        TreeLoadStageCreate,
 			treeType:         treeTypeMatrix,
 			opts:             matrixOpts(3),
 			nodes:            matrixFixture(),
@@ -398,6 +400,8 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 		},
 		{
 			name:             "AddRoot fails",
+			wantStage:        TreeLoadStageRoot,
+			wantNodeIDs:      []string{"u0"},
 			treeType:         treeTypeUnilevel,
 			nodes:            unilevelFixture(),
 			engineFailsAfter: 1,
@@ -405,6 +409,8 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 		},
 		{
 			name:             "AddNode fails",
+			wantStage:        TreeLoadStageNodes,
+			wantNodeIDs:      []string{"u3"},
 			treeType:         treeTypeUnilevel,
 			nodes:            unilevelFixture(),
 			engineFailsAfter: 4,
@@ -412,6 +418,8 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 		},
 		{
 			name:             "AddNodeAt fails",
+			wantStage:        TreeLoadStageNodes,
+			wantNodeIDs:      []string{"u2"},
 			treeType:         treeTypeMatrix,
 			opts:             matrixOpts(3),
 			nodes:            matrixFixture(),
@@ -697,5 +705,102 @@ func TestTreeLoadErrors_NoConstantCollidesWithTheSentinel(t *testing.T) {
 		TreeLoadStageCreate, TreeLoadStageRoot, TreeLoadStageNodes,
 	} {
 		assert.NotEmpty(t, stage, "an empty stage collides with the golden table's sentinel")
+	}
+}
+
+// The golden table pins messages, kinds, stages and node lists, but has no
+// column for the acknowledgement counts. This is where those are checked.
+//
+// An *EngineError rather than errors.New, because BR-7 asks that errors.As
+// reach an *EngineError through the incomplete type, and a bare error would
+// satisfy the assertion without exercising that.
+func TestTreeLoader_PostCreateExitsCarryTheirCounts(t *testing.T) {
+	engineErr := &EngineError{Code: "BOOM", Message: "worker said no"}
+
+	tests := []struct {
+		name          string
+		treeType      string
+		opts          []LoadTreeOption
+		nodes         []TreeNodeRow
+		succeedFor    int
+		wantStage     TreeLoadStage
+		wantConfirmed int
+		wantAttempted int
+		wantTotal     int
+	}{
+		{
+			name:       "create fails before anything is attempted",
+			treeType:   treeTypeUnilevel,
+			nodes:      unilevelFixture(),
+			succeedFor: 0,
+			wantStage:  TreeLoadStageCreate,
+		},
+		{
+			name:       "root fails before any non-root placement",
+			treeType:   treeTypeUnilevel,
+			nodes:      unilevelFixture(),
+			succeedFor: 1,
+			wantStage:  TreeLoadStageRoot,
+		},
+		{
+			// Create, root, then two placements are acknowledged. The third
+			// does not come back, so two are confirmed and the message says
+			// "3 of 4".
+			name:          "third placement fails with two acknowledged",
+			treeType:      treeTypeUnilevel,
+			nodes:         unilevelFixture(),
+			succeedFor:    4,
+			wantStage:     TreeLoadStageNodes,
+			wantConfirmed: 2,
+			wantAttempted: 3,
+			wantTotal:     4,
+		},
+		{
+			name:          "matrix second placement fails with one acknowledged",
+			treeType:      treeTypeMatrix,
+			opts:          matrixOpts(3),
+			nodes:         matrixFixture(),
+			succeedFor:    3,
+			wantStage:     TreeLoadStageNodes,
+			wantConfirmed: 1,
+			wantAttempted: 2,
+			wantTotal:     3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := &failAtCallMutator{succeedFor: tt.succeedFor, err: engineErr}
+			err := loadWithMutator(t, tt.treeType, tt.nodes, m, tt.opts...)
+
+			var incomplete *TreeLoadIncompleteError
+			require.ErrorAs(t, err, &incomplete)
+			assert.Equal(t, tt.wantStage, incomplete.Stage)
+			assert.Equal(t, tt.wantConfirmed, incomplete.Confirmed)
+			assert.Equal(t, tt.wantAttempted, incomplete.Attempted)
+			assert.Equal(t, tt.wantTotal, incomplete.Total)
+
+			var target *EngineError
+			assert.True(t, errors.As(err, &target),
+				"the engine's own error must stay reachable through the typed error")
+		})
+	}
+}
+
+// Confirmed is derived rather than passed, so this pins the derivation against
+// the index the message prints for every placement of a four-node replay.
+func TestTreeLoader_ConfirmedTrailsTheMessageIndex(t *testing.T) {
+	engineErr := &EngineError{Code: "BOOM", Message: "worker said no"}
+
+	// succeedFor 2 is create plus root, so the first placement fails.
+	for attempt := 1; attempt <= 4; attempt++ {
+		m := &failAtCallMutator{succeedFor: 1 + attempt, err: engineErr}
+		err := loadWithMutator(t, treeTypeUnilevel, unilevelFixture(), m)
+
+		var incomplete *TreeLoadIncompleteError
+		require.ErrorAs(t, err, &incomplete)
+		assert.Equal(t, attempt, incomplete.Attempted)
+		assert.Equal(t, attempt-1, incomplete.Confirmed)
+		assert.Contains(t, err.Error(), fmt.Sprintf("(%d of 4,", attempt))
 	}
 }

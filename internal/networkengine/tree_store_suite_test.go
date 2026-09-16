@@ -181,6 +181,10 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		byTree, err := s.GetByTree(ctx, tree)
 		require.NoError(t, err)
 		assert.ElementsMatch(t, []string{rootUser}, nodeUserIDs(byTree), "GetByTree")
+
+		ordered, err := s.GetByTreeDepthOrdered(ctx, tree)
+		require.NoError(t, err)
+		assert.ElementsMatch(t, []string{rootUser}, nodeUserIDs(ordered), "GetByTreeDepthOrdered")
 	})
 
 	t.Run("DeleteNodeAndResponsor repoints the moved recruits", func(t *testing.T) {
@@ -195,6 +199,13 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
 		require.NoError(t, s.InsertNode(ctx,
 			makeUUIDNode(testNodeUUID(2), tree, removedUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
+		// The same user id in another tree, inserted before this tree's row. A
+		// lookup that ignores the tree scans linearly and reaches this one
+		// first, so inserting it after would let a tree-blind scan pass.
+		otherTree := testTreeUUID(2)
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(4), otherTree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(5), otherTree, movedUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
 		require.NoError(t, s.InsertNode(ctx,
 			makeUUIDNode(testNodeUUID(3), tree, movedUser, 2, ptr(removedUser), ptr(removedUser), intPtr(0))))
 
@@ -210,6 +221,13 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		require.NotNil(t, moved, "the recruit stays active")
 		require.NotNil(t, moved.SponsorID)
 		assert.Equal(t, rootUser, *moved.SponsorID, "the recruit is re-sponsored to the new sponsor")
+
+		elsewhere, err := s.GetNode(ctx, otherTree, movedUser)
+		require.NoError(t, err)
+		require.NotNil(t, elsewhere)
+		require.NotNil(t, elsewhere.SponsorID)
+		assert.Equal(t, rootUser, *elsewhere.SponsorID, "the other tree's row keeps its own sponsor")
+		assert.Equal(t, 1, elsewhere.Depth, "and is the other tree's row, not this tree's")
 	})
 
 	// Both writes or neither. The store's own doc comment says a soft delete
@@ -321,7 +339,10 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		root.EnrolledAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 		early.EnrolledAt = time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
 		late.EnrolledAt = time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
-		deep.EnrolledAt = time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+		// Earlier than early's, so a store sorting by enrolled_at alone puts
+		// deep second and diverges from the expected sequence. Without this the
+		// fixture pins the tiebreak and says nothing about depth.
+		deep.EnrolledAt = time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
 
 		// Inserted deepest first and with the same-depth pair reversed, so
 		// insertion order cannot produce the expected sequence by accident.
@@ -329,6 +350,13 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		require.NoError(t, s.InsertNode(ctx, late))
 		require.NoError(t, s.InsertNode(ctx, early))
 		require.NoError(t, s.InsertNode(ctx, root))
+
+		// Another tree, at a depth that would sort into the middle. This is the
+		// read TreeLoader.LoadTree uses, so a tree-scope leak here loads another
+		// tenant's nodes at startup.
+		other := makeUUIDNode(testNodeUUID(5), testTreeUUID(2), testUserUUID(5), 1, nil, nil, nil)
+		other.EnrolledAt = time.Date(2026, 2, 15, 0, 0, 0, 0, time.UTC)
+		require.NoError(t, s.InsertNode(ctx, other))
 
 		got, err := s.GetByTreeDepthOrdered(ctx, tree)
 		require.NoError(t, err)
@@ -393,11 +421,18 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), treeA, sharedUser, 0, nil, nil, nil)))
 		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), treeB, sharedUser, 0, nil, nil, nil)))
 
-		require.NoError(t, s.DeleteNode(ctx, treeA, sharedUser))
+		// Deleting from treeB, the row inserted second. A linear scan that
+		// ignores the tree lands on treeA's row instead, so deleting from treeA
+		// would pass with the tree filter dropped.
+		require.NoError(t, s.DeleteNode(ctx, treeB, sharedUser))
 
-		survivor, err := s.GetNode(ctx, treeB, sharedUser)
+		survivor, err := s.GetNode(ctx, treeA, sharedUser)
 		require.NoError(t, err)
-		assert.NotNil(t, survivor, "removing the user from one tree leaves the other tree's row alone")
+		assert.NotNil(t, survivor, "the other tree's row is untouched")
+
+		removed, err := s.GetNode(ctx, treeB, sharedUser)
+		require.NoError(t, err)
+		assert.Nil(t, removed, "the named tree's row is gone")
 	})
 
 	// The three constraints from migrations 000002 and 000004. UC-NET-014
@@ -412,6 +447,26 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		err := s.InsertNode(ctx,
 			makeUUIDNode(testNodeUUID(1), testTreeUUID(2), testUserUUID(2), 0, nil, nil, nil))
 		require.Error(t, err, "the primary key is not partial, so a different tree and user does not excuse it")
+	})
+
+	// The primary key is not partial, so soft-deleting the row does not free
+	// its id. A redelivered event whose row was since removed must still be
+	// refused, or redelivery inserts a second row in memory and is rejected in
+	// Postgres.
+	t.Run("InsertNode rejects a duplicate row id after a soft delete", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		user := testUserUUID(1)
+		node := makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)
+
+		require.NoError(t, s.InsertNode(ctx, node))
+		require.NoError(t, s.DeleteNode(ctx, tree, user))
+
+		err := s.InsertNode(ctx, node)
+		require.Error(t, err, "a removed row still holds its id")
+		assert.Contains(t, err.Error(), "tree_nodes_pkey")
 	})
 
 	t.Run("InsertNode rejects a second active row for one user in a tree", func(t *testing.T) {
@@ -468,5 +523,9 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 			"the primary key is the branch that means already projected")
 		assert.NotContains(t, err.Error(), "idx_tree_nodes_tree_user",
 			"naming the user index here would classify a redelivery as a conflict")
+		// Message text, not the form a consumer reads. The house pattern is
+		// errors.As on pgconn.PgError.ConstraintName, and the memory store
+		// returns a bare fmt.Errorf that errors.As cannot reach through. Task 5
+		// adds the sentinels and Task 10 pins them here.
 	})
 }

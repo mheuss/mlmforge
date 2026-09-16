@@ -441,13 +441,12 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 }
 
 // TestTreeLoader_GoldenMessages_DirectCalls covers the three exits no fixture
-// reaches through LoadTree. validateTreeConfig rejects an unsupported type
-// before the slot-rule arm runs, and cycleError's two degenerate branches need
-// a precondition validateNodes refuses.
+// reaches through a full load. Each sits behind a check that runs earlier, so
+// the only way to observe its message is to call the function that produces it.
 //
 // Two exits have no golden test at all: the nil-parent-or-sponsor and
-// nil-position guards inside LoadTree's replay loop. validateNodes proves both
-// conditions impossible before the loop runs, so no fixture produces them.
+// nil-position guards inside the replay loop. Validation rejects both
+// conditions before the loop runs, so no fixture produces them.
 func TestTreeLoader_GoldenMessages_DirectCalls(t *testing.T) {
 	// assertStillUntyped is the same guard the table above puts in its default
 	// branch. These three exits convert in later tasks, and without it a
@@ -474,7 +473,6 @@ func TestTreeLoader_GoldenMessages_DirectCalls(t *testing.T) {
 		assertStillUntyped(t, err)
 	})
 
-	// Fixture copied from TestOrderForReplay_StalledWalkNamesWhereItStopped.
 	t.Run("walk stalls without closing a loop", func(t *testing.T) {
 		nodes := []TreeNodeRow{
 			makeNode("t", "u0", 0, nil, ptr("u0"), nil),
@@ -492,7 +490,6 @@ func TestTreeLoader_GoldenMessages_DirectCalls(t *testing.T) {
 		assertStillUntyped(t, err)
 	})
 
-	// Fixture copied from TestOrderForReplay_DuplicateUserIDsDoNotPanic.
 	t.Run("every node emitted but the counts disagree", func(t *testing.T) {
 		nodes := []TreeNodeRow{
 			makeNode("t", "u0", 0, nil, ptr("u0"), nil),

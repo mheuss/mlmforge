@@ -2,6 +2,7 @@ package networkengine
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -9,9 +10,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// stubMutator is a minimal TreeMutator that records what was called.
+// stubMutator is a minimal TreeEngine that records what was called.
 // It is not *EngineClient, verifying the interface indirection works.
 type stubMutator struct {
+	position      *EnginePosition
 	created       []string
 	matrixCreated []matrixCreate
 	roots         []string
@@ -22,8 +24,19 @@ type stubMutator struct {
 	failWith      error
 }
 
-// Compile-time check: stubMutator must satisfy TreeMutator.
-var _ TreeMutator = (*stubMutator)(nil)
+// Compile-time check: stubMutator must satisfy TreeEngine, which embeds
+// TreeMutator.
+var _ TreeEngine = (*stubMutator)(nil)
+
+// GetPosition answers from the configured position, or reports that the test
+// did not set one. Returning a zero value instead would let a reconcile test
+// pass while comparing against a position the engine never held.
+func (s *stubMutator) GetPosition(_ context.Context, _, userID string) (*EnginePosition, error) {
+	if s.position != nil {
+		return s.position, nil
+	}
+	return nil, fmt.Errorf("stubMutator has no position for %s", userID)
+}
 
 // matrixCreate records the params of a CreateMatrixTree call so tests can
 // assert that width and spillover were threaded through, not dropped.

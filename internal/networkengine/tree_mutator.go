@@ -22,3 +22,22 @@ type TreeMutator interface {
 
 // Compile-time check: EngineClient must satisfy TreeMutator.
 var _ TreeMutator = (*EngineClient)(nil)
+
+// TreeInspector is the query interface the consumer uses to compare an
+// already-applied mutation against the event that produced it.
+type TreeInspector interface {
+	GetPosition(ctx context.Context, structure, userID string) (*EnginePosition, error)
+}
+
+// TreeEngine is the engine dependency of TreeEventConsumer.
+//
+// One interface rather than a mutator and an inspector passed separately. Two
+// arguments compile while naming two different worker processes, and reconcile
+// would then inspect an engine that never received the mutation it is
+// reconciling. One argument makes that unrepresentable.
+type TreeEngine interface {
+	TreeMutator
+	TreeInspector
+}
+
+var _ TreeEngine = (*EngineClient)(nil)

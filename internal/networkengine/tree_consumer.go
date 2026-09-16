@@ -16,14 +16,14 @@ import (
 // after appending the event to the EventStore.
 type TreeEventConsumer struct {
 	store      TreeStore
-	engine     TreeMutator
+	engine     TreeEngine
 	maxRetries int
 	retryDelay time.Duration
 }
 
 // NewTreeEventConsumer creates a consumer that projects events into
 // the given store and engine. Default retry count is 2.
-func NewTreeEventConsumer(store TreeStore, engine TreeMutator) *TreeEventConsumer {
+func NewTreeEventConsumer(store TreeStore, engine TreeEngine) *TreeEventConsumer {
 	return &TreeEventConsumer{
 		store:      store,
 		engine:     engine,

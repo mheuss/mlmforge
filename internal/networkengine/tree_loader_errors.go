@@ -1,5 +1,7 @@
 package networkengine
 
+import "slices"
+
 // TreeLoadRejectionKind names why a load was refused before the engine was
 // called.
 type TreeLoadRejectionKind string
@@ -23,12 +25,18 @@ const (
 // A caller has to tell this apart from TreeLoadIncompleteError with errors.As,
 // because the two need opposite handling: this one leaves the engine usable,
 // the other may not.
+//
+// The message is stored rather than rendered from the fields, unlike the other
+// typed errors in this package. Each exit's wording is a settled decision, and
+// rendering here would move the choice of wording into this type.
 type TreeLoadRejectedError struct {
 	TreeID string
 	// NodeIDs holds every user the message names, in the order the message
 	// names them. Empty when the message names none.
 	NodeIDs []string
-	Kind    TreeLoadRejectionKind
+	// Kind is what a caller switches on to decide whether to skip this tree,
+	// abort the run, or treat the failure as infrastructure.
+	Kind TreeLoadRejectionKind
 	// Err is the store's error for TreeLoadStoreReadFailed, nil otherwise.
 	Err error
 	msg string
@@ -62,18 +70,25 @@ const (
 // Confirmed and Total count non-root placements. Attempted is the one-based
 // index the message carries, so within TreeLoadStageNodes Confirmed is
 // Attempted minus one. All three are 0 at the other stages.
+//
+// The message is stored rather than rendered from the fields, unlike the other
+// typed errors in this package. Each exit's wording is a settled decision, and
+// rendering here would move the choice of wording into this type.
 type TreeLoadIncompleteError struct {
 	TreeID string
 	// NodeIDs holds every user the message names, in the order the message
 	// names them. Empty at TreeLoadStageCreate.
 	NodeIDs []string
-	Stage   TreeLoadStage
+	// Stage names how far the load reached. It is for the operator reading the
+	// log, not for selecting a recovery action.
+	Stage TreeLoadStage
 	// Confirmed is how many non-root placements the engine acknowledged.
 	Confirmed int
 	// Attempted is the one-based index of the placement that did not report
 	// success. That placement may still have taken effect.
 	Attempted int
-	Total     int
+	// Total is how many non-root placements the load set out to make.
+	Total int
 	// Err is the TreeMutator operation's error, or nil when a nil guard fired
 	// instead. It may be a transport or context error rather than an
 	// *EngineError.
@@ -84,13 +99,11 @@ type TreeLoadIncompleteError struct {
 func (e *TreeLoadIncompleteError) Error() string { return e.msg }
 func (e *TreeLoadIncompleteError) Unwrap() error { return e.Err }
 
-// newTreeLoadRejected builds the error every pre-engine exit returns. The
-// message is passed in rather than derived, because the wording of each exit
-// is a settled decision and this change does not reopen it.
+// newTreeLoadRejected builds the error every pre-engine exit returns.
 func newTreeLoadRejected(kind TreeLoadRejectionKind, treeID string, err error, msg string, nodeIDs ...string) *TreeLoadRejectedError {
 	return &TreeLoadRejectedError{
 		TreeID:  treeID,
-		NodeIDs: nodeIDs,
+		NodeIDs: slices.Clone(nodeIDs),
 		Kind:    kind,
 		Err:     err,
 		msg:     msg,
@@ -98,15 +111,16 @@ func newTreeLoadRejected(kind TreeLoadRejectionKind, treeID string, err error, m
 }
 
 // newTreeLoadIncomplete builds the error every post-engine exit returns.
-// confirmed is how many non-root placements the engine acknowledged, attempted
-// is the one-based index the message carries, and total is the non-root count.
-// All three are 0 outside TreeLoadStageNodes.
-func newTreeLoadIncomplete(stage TreeLoadStage, treeID string, err error, confirmed, attempted, total int, msg string, nodeIDs ...string) *TreeLoadIncompleteError {
+// attempted is the one-based index the message carries and total is the
+// non-root count. Both are 0 outside TreeLoadStageNodes. Confirmed is derived
+// here rather than passed, so the count an operator reads cannot disagree with
+// the index the message names.
+func newTreeLoadIncomplete(stage TreeLoadStage, treeID string, err error, attempted, total int, msg string, nodeIDs ...string) *TreeLoadIncompleteError {
 	return &TreeLoadIncompleteError{
 		TreeID:    treeID,
-		NodeIDs:   nodeIDs,
+		NodeIDs:   slices.Clone(nodeIDs),
 		Stage:     stage,
-		Confirmed: confirmed,
+		Confirmed: max(attempted-1, 0),
 		Attempted: attempted,
 		Total:     total,
 		Err:       err,

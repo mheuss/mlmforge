@@ -3,6 +3,7 @@ package networkengine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -481,7 +482,7 @@ func TestTreeLoadRejectedError_CarriesEveryNamedNode(t *testing.T) {
 
 func TestTreeLoadIncompleteError_CarriesProgress(t *testing.T) {
 	engineErr := &EngineError{Code: "BOOM", Message: "worker said no"}
-	err := newTreeLoadIncomplete(TreeLoadStageNodes, "t", engineErr, 2, 3, 5,
+	err := newTreeLoadIncomplete(TreeLoadStageNodes, "t", engineErr, 3, 5,
 		"add node u3 (3 of 5, tree t left partly built): engine error [BOOM]: worker said no",
 		"u3")
 
@@ -498,9 +499,10 @@ func TestTreeLoadIncompleteError_CarriesProgress(t *testing.T) {
 // This asserts the constructor, not the guards. Feeding a literal message in
 // and reading the same literal back cannot catch a typo at the return site, so
 // it is named for what it does. The two replay-loop guards have no message
-// test; Task 1 Step 4 records why.
+// test because validateNodes proves both conditions impossible before the
+// replay loop runs, so no fixture reaches them.
 func TestTreeLoadIncompleteError_ConstructorStoresWhatItIsGiven(t *testing.T) {
-	nilRefs := newTreeLoadIncomplete(TreeLoadStageNodes, "t", nil, 2, 3, 5,
+	nilRefs := newTreeLoadIncomplete(TreeLoadStageNodes, "t", nil, 3, 5,
 		"node u3 in tree t has nil parent or sponsor (data corruption; 3 of 5, tree left partly built)",
 		"u3")
 	assert.Equal(t,
@@ -514,4 +516,61 @@ func TestTreeLoadIncompleteError_ConstructorStoresWhatItIsGiven(t *testing.T) {
 	assert.Equal(t, []string{"u3"}, nilRefs.NodeIDs)
 	assert.Equal(t, "t", nilRefs.TreeID)
 	assert.NoError(t, errors.Unwrap(nilRefs), "a guard wraps nothing")
+}
+
+func TestTreeLoadErrors_DoNotMatchEachOther(t *testing.T) {
+	rejected := newTreeLoadRejected(TreeLoadConfigInvalid, "t", nil,
+		"tree t has type unilevel with no slot rule (add one to validateNodes)")
+	incomplete := newTreeLoadIncomplete(TreeLoadStageCreate, "t", nil, 0, 0,
+		"create tree t: engine error [BOOM]: worker said no")
+
+	var asIncomplete *TreeLoadIncompleteError
+	assert.False(t, errors.As(rejected, &asIncomplete),
+		"a rejection must not satisfy the incomplete type")
+
+	var asRejected *TreeLoadRejectedError
+	assert.False(t, errors.As(incomplete, &asRejected),
+		"an incomplete load must not satisfy the rejection type")
+}
+
+func TestTreeLoadErrors_StayReachableThroughAnOuterWrap(t *testing.T) {
+	rejected := newTreeLoadRejected(TreeLoadConfigInvalid, "t", nil,
+		"tree t has an unsupported spillover")
+	incomplete := newTreeLoadIncomplete(TreeLoadStageRoot, "t", nil, 0, 0,
+		"add root u0 (tree t left partly built): engine error [BOOM]: worker said no",
+		"u0")
+
+	var asRejected *TreeLoadRejectedError
+	require.True(t, errors.As(fmt.Errorf("start engine: %w", rejected), &asRejected))
+	assert.Equal(t, TreeLoadConfigInvalid, asRejected.Kind)
+
+	var asIncomplete *TreeLoadIncompleteError
+	require.True(t, errors.As(fmt.Errorf("start engine: %w", incomplete), &asIncomplete))
+	assert.Equal(t, TreeLoadStageRoot, asIncomplete.Stage)
+	assert.Equal(t, []string{"u0"}, asIncomplete.NodeIDs)
+}
+
+func TestTreeLoadIncompleteError_CountsAreZeroBeforeTheNodesStage(t *testing.T) {
+	create := newTreeLoadIncomplete(TreeLoadStageCreate, "t", nil, 0, 0,
+		"create tree t: engine error [BOOM]: worker said no")
+
+	assert.Equal(t, TreeLoadStageCreate, create.Stage)
+	assert.Equal(t, 0, create.Confirmed, "a derived Confirmed must not go negative")
+	assert.Equal(t, 0, create.Attempted)
+	assert.Equal(t, 0, create.Total)
+	assert.Empty(t, create.NodeIDs)
+}
+
+func TestTreeLoadErrors_DoNotAliasTheCallersSlice(t *testing.T) {
+	ids := []string{"u0", "u9"}
+
+	rejected := newTreeLoadRejected(TreeLoadDataInvalid, "t", nil,
+		"tree t has more than one depth-0 root (u0 and u9)", ids...)
+	incomplete := newTreeLoadIncomplete(TreeLoadStageNodes, "t", nil, 3, 5,
+		"add node u0 (3 of 5, tree t left partly built): engine error", ids...)
+
+	ids[0] = "mutated"
+
+	assert.Equal(t, []string{"u0", "u9"}, rejected.NodeIDs)
+	assert.Equal(t, []string{"u0", "u9"}, incomplete.NodeIDs)
 }

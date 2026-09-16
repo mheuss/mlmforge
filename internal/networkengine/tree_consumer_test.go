@@ -716,7 +716,7 @@ func TestWithRetry_DoesNotReconcileOnFirstSuccess(t *testing.T) {
 	c := newRetryTestConsumer()
 	reconcileCalls := 0
 
-	err := c.withRetry(context.Background(), "add_node", "t", "u",
+	err := c.withRetry(context.Background(), "add_node", "tree-42", "user-99",
 		func() error { return nil },
 		func(context.Context, error) (reconcileOutcome, error) {
 			reconcileCalls++
@@ -731,7 +731,7 @@ func TestWithRetry_ConvergedStopsAndSucceeds(t *testing.T) {
 	c := newRetryTestConsumer()
 	attempts := 0
 
-	err := c.withRetry(context.Background(), "add_node", "t", "u",
+	err := c.withRetry(context.Background(), "add_node", "tree-42", "user-99",
 		func() error { attempts++; return errors.New("USER_ALREADY_EXISTS") },
 		func(context.Context, error) (reconcileOutcome, error) {
 			return reconcileConverged, nil
@@ -746,7 +746,7 @@ func TestWithRetry_DivergedReturnsTheReconcileError(t *testing.T) {
 	attempts := 0
 	divergence := errors.New("engine holds a different parent")
 
-	err := c.withRetry(context.Background(), "add_node", "t", "u",
+	err := c.withRetry(context.Background(), "add_node", "tree-42", "user-99",
 		func() error { attempts++; return errors.New("USER_ALREADY_EXISTS") },
 		func(context.Context, error) (reconcileOutcome, error) {
 			return reconcileDiverged, divergence
@@ -761,17 +761,19 @@ func TestWithRetry_DivergedReturnsTheReconcileError(t *testing.T) {
 // means the store and the engine disagree.
 func TestWithRetry_DivergedWithoutAnErrorStillFails(t *testing.T) {
 	c := newRetryTestConsumer()
+	attempts := 0
 
-	err := c.withRetry(context.Background(), "add_node", "t", "u",
-		func() error { return errors.New("USER_ALREADY_EXISTS") },
+	err := c.withRetry(context.Background(), "add_node", "tree-42", "user-99",
+		func() error { attempts++; return errors.New("USER_ALREADY_EXISTS") },
 		func(context.Context, error) (reconcileOutcome, error) {
 			return reconcileDiverged, nil
 		})
 
+	assert.Equal(t, 1, attempts, "divergence is not retryable, synthesised error or not")
 	require.Error(t, err, "diverged must never read as success")
 	assert.Contains(t, err.Error(), "add_node")
-	assert.Contains(t, err.Error(), "t")
-	assert.Contains(t, err.Error(), "u")
+	assert.Contains(t, err.Error(), "tree-42")
+	assert.Contains(t, err.Error(), "user-99")
 }
 
 func TestWithRetry_NotApplicableRetriesAndReportsTheEngineError(t *testing.T) {
@@ -779,7 +781,7 @@ func TestWithRetry_NotApplicableRetriesAndReportsTheEngineError(t *testing.T) {
 	attempts := 0
 	engineErr := errors.New("PIPE_DESYNC")
 
-	err := c.withRetry(context.Background(), "add_node", "t", "u",
+	err := c.withRetry(context.Background(), "add_node", "tree-42", "user-99",
 		func() error { attempts++; return engineErr },
 		func(context.Context, error) (reconcileOutcome, error) {
 			return reconcileNotApplicable, nil
@@ -799,7 +801,7 @@ func TestWithRetry_InconclusiveRetriesAndReportsTheEngineError(t *testing.T) {
 	engineErr := errors.New("USER_ALREADY_EXISTS")
 	inspectErr := errors.New("get_position timed out")
 
-	err := c.withRetry(context.Background(), "add_node", "t", "u",
+	err := c.withRetry(context.Background(), "add_node", "tree-42", "user-99",
 		func() error { attempts++; return engineErr },
 		func(context.Context, error) (reconcileOutcome, error) {
 			return reconcileInconclusive, inspectErr
@@ -815,7 +817,7 @@ func TestWithRetry_ReconcileSeesTheEngineError(t *testing.T) {
 	engineErr := errors.New("USER_ALREADY_EXISTS")
 	var seen error
 
-	_ = c.withRetry(context.Background(), "add_node", "t", "u",
+	_ = c.withRetry(context.Background(), "add_node", "tree-42", "user-99",
 		func() error { return engineErr },
 		func(_ context.Context, err error) (reconcileOutcome, error) {
 			seen = err
@@ -830,9 +832,72 @@ func TestWithRetry_NilReconcileKeepsTheOldBehavior(t *testing.T) {
 	attempts := 0
 	engineErr := errors.New("boom")
 
-	err := c.withRetry(context.Background(), "add_node", "t", "u",
+	err := c.withRetry(context.Background(), "add_node", "tree-42", "user-99",
 		func() error { attempts++; return engineErr }, nil)
 
 	require.ErrorIs(t, err, engineErr)
 	assert.Equal(t, c.maxRetries+1, attempts)
+}
+
+// The property Tasks 15 to 17 rest on. Gating the reconcile call to the first
+// attempt leaves every other test in this file green, so nothing else observes
+// that it runs again.
+func TestWithRetry_ReconcileRunsOnEveryFailedAttempt(t *testing.T) {
+	c := newRetryTestConsumer()
+	reconcileCalls := 0
+
+	err := c.withRetry(context.Background(), "add_node", "tree-42", "user-99",
+		func() error { return errors.New("PIPE_DESYNC") },
+		func(context.Context, error) (reconcileOutcome, error) {
+			reconcileCalls++
+			return reconcileNotApplicable, nil
+		})
+
+	require.Error(t, err)
+	assert.Equal(t, c.maxRetries+1, reconcileCalls, "every failed attempt is inspected, not just the first")
+}
+
+// The lost-reply case the ticket exists for. Attempt 0 fails in transit and
+// reconcile cannot speak to it; attempt 1 reports USER_ALREADY_EXISTS because
+// attempt 0 actually landed, and reconcile converges.
+func TestWithRetry_ConvergesOnALaterAttempt(t *testing.T) {
+	c := newRetryTestConsumer()
+	attempts := 0
+
+	err := c.withRetry(context.Background(), "add_node", "tree-42", "user-99",
+		func() error {
+			attempts++
+			if attempts == 1 {
+				return errors.New("PIPE_DESYNC")
+			}
+			return errors.New("USER_ALREADY_EXISTS")
+		},
+		func(_ context.Context, err error) (reconcileOutcome, error) {
+			if err.Error() == "USER_ALREADY_EXISTS" {
+				return reconcileConverged, nil
+			}
+			return reconcileNotApplicable, nil
+		})
+
+	require.NoError(t, err, "the mutation landed; the reply was lost")
+	assert.Equal(t, 2, attempts)
+}
+
+// A cancelled context cannot carry an inspection RPC, and consulting reconcile
+// anyway fills the ERROR log on every clean shutdown.
+func TestWithRetry_DoesNotReconcileOnACancelledContext(t *testing.T) {
+	c := newRetryTestConsumer()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	reconcileCalls := 0
+
+	err := c.withRetry(ctx, "add_node", "tree-42", "user-99",
+		func() error { return errors.New("PIPE_DESYNC") },
+		func(context.Context, error) (reconcileOutcome, error) {
+			reconcileCalls++
+			return reconcileNotApplicable, nil
+		})
+
+	require.Error(t, err)
+	assert.Equal(t, 0, reconcileCalls, "nothing is inspected once the context is done")
 }

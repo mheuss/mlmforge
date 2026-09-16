@@ -240,7 +240,13 @@ const (
 // notification path until HEU-296).
 //
 // reconcile may be nil. When set, it is consulted on each failed attempt and
-// decides whether the failure is really a failure.
+// decides whether the failure is really a failure. It is not consulted once
+// the context is done.
+//
+// A converged outcome returns nil without fn having succeeded, so anything
+// the closure was meant to assign is still unset. A non-nil error alongside
+// converged or notApplicable is logged and discarded; only diverged and
+// inconclusive read it.
 func (c *TreeEventConsumer) withRetry(
 	ctx context.Context, op, treeID, userID string,
 	fn func() error,
@@ -251,24 +257,40 @@ func (c *TreeEventConsumer) withRetry(
 		if err := fn(); err != nil {
 			lastErr = err
 
-			if reconcile != nil {
+			// Inspecting through a cancelled context cannot answer, and the
+			// failure would be logged as an inspection fault on every clean
+			// shutdown. The select below reports the cancellation instead.
+			if reconcile != nil && ctx.Err() == nil {
 				outcome, rerr := reconcile(ctx, err)
 				switch outcome {
 				case reconcileConverged:
+					if rerr != nil {
+						log.Printf("INFO tree consumer: reconcile converged with a non-nil error, discarding it op=%s tree_id=%s user_id=%s err=%v",
+							op, treeID, userID, rerr)
+					}
 					return nil
+				case reconcileNotApplicable:
+					if rerr != nil {
+						log.Printf("INFO tree consumer: reconcile not applicable with a non-nil error, discarding it op=%s tree_id=%s user_id=%s err=%v",
+							op, treeID, userID, rerr)
+					}
 				case reconcileDiverged:
 					// A caller returning diverged with no error would
 					// otherwise report the one outcome that means the store
-					// and the engine disagree as success.
+					// and the engine disagree as success. The engine error is
+					// the only concrete evidence there is, so it is carried.
 					if rerr == nil {
 						rerr = fmt.Errorf(
-							"engine %s diverged from the event, tree_id=%s user_id=%s",
-							op, treeID, userID)
+							"engine %s: reconcile reported divergence and returned no error, tree_id=%s user_id=%s, engine error: %w",
+							op, treeID, userID, err)
 					}
 					return rerr
 				case reconcileInconclusive:
 					log.Printf("ERROR tree consumer: reconcile inspection failed op=%s tree_id=%s user_id=%s err=%v",
 						op, treeID, userID, rerr)
+				default:
+					log.Printf("ERROR tree consumer: reconcile returned an unrecognised outcome %d, retrying op=%s tree_id=%s user_id=%s",
+						outcome, op, treeID, userID)
 				}
 			}
 

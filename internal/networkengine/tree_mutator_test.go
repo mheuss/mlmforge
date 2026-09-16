@@ -32,7 +32,7 @@ var _ TreeEngine = (*stubMutator)(nil)
 // did not set one. Returning a zero value instead would let a reconcile test
 // pass while comparing against a position the engine never held.
 func (s *stubMutator) GetPosition(_ context.Context, _, userID string) (*EnginePosition, error) {
-	if s.position != nil {
+	if s.position != nil && s.position.UserID == userID {
 		return s.position, nil
 	}
 	return nil, fmt.Errorf("stubMutator has no position for %s", userID)
@@ -130,7 +130,7 @@ func (s *stubMutator) RemoveNode(_ context.Context, _, userID string) ([]Respons
 }
 
 // TestTreeMutator_ConsumerAcceptsInterface verifies that TreeEventConsumer
-// accepts any TreeMutator, not just *EngineClient.
+// accepts any TreeEngine, not just *EngineClient.
 func TestTreeMutator_ConsumerAcceptsInterface(t *testing.T) {
 	store := NewMemoryTreeStore()
 	mutator := &stubMutator{}

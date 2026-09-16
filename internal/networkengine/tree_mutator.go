@@ -31,10 +31,9 @@ type TreeInspector interface {
 
 // TreeEngine is the engine dependency of TreeEventConsumer.
 //
-// One interface rather than a mutator and an inspector passed separately. Two
-// arguments compile while naming two different worker processes, and reconcile
-// would then inspect an engine that never received the mutation it is
-// reconciling. One argument makes that unrepresentable.
+// One interface rather than a mutator and an inspector passed separately, so
+// the mutation and the inspection that checks it cannot be given different
+// engines. Two parameters would type-check when they disagree.
 type TreeEngine interface {
 	TreeMutator
 	TreeInspector

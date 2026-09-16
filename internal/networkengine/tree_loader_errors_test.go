@@ -458,3 +458,60 @@ func TestTreeLoader_GoldenMessages_DirectCalls(t *testing.T) {
 			err.Error())
 	})
 }
+
+func TestTreeLoadRejectedError_CarriesFieldsAndMessage(t *testing.T) {
+	storeErr := errors.New("connection refused")
+	err := newTreeLoadRejected(TreeLoadStoreReadFailed, "t", storeErr,
+		"load tree t: connection refused")
+
+	assert.Equal(t, "load tree t: connection refused", err.Error())
+	assert.Equal(t, TreeLoadStoreReadFailed, err.Kind)
+	assert.Equal(t, "t", err.TreeID)
+	assert.Empty(t, err.NodeIDs)
+	assert.True(t, errors.Is(err, storeErr), "store error stays reachable")
+}
+
+func TestTreeLoadRejectedError_CarriesEveryNamedNode(t *testing.T) {
+	err := newTreeLoadRejected(TreeLoadDataInvalid, "t", nil,
+		"tree t has more than one depth-0 root (u0 and u9)", "u0", "u9")
+
+	assert.Equal(t, []string{"u0", "u9"}, err.NodeIDs)
+	assert.NoError(t, errors.Unwrap(err))
+}
+
+func TestTreeLoadIncompleteError_CarriesProgress(t *testing.T) {
+	engineErr := &EngineError{Code: "BOOM", Message: "worker said no"}
+	err := newTreeLoadIncomplete(TreeLoadStageNodes, "t", engineErr, 2, 3, 5,
+		"add node u3 (3 of 5, tree t left partly built): engine error [BOOM]: worker said no",
+		"u3")
+
+	assert.Equal(t, TreeLoadStageNodes, err.Stage)
+	assert.Equal(t, 2, err.Confirmed)
+	assert.Equal(t, 3, err.Attempted)
+	assert.Equal(t, 5, err.Total)
+	assert.Equal(t, err.Attempted-1, err.Confirmed, "Confirmed trails the message index by one")
+
+	var target *EngineError
+	assert.True(t, errors.As(err, &target), "engine error stays reachable")
+}
+
+// This asserts the constructor, not the guards. Feeding a literal message in
+// and reading the same literal back cannot catch a typo at the return site, so
+// it is named for what it does. The two replay-loop guards have no message
+// test; Task 1 Step 4 records why.
+func TestTreeLoadIncompleteError_ConstructorStoresWhatItIsGiven(t *testing.T) {
+	nilRefs := newTreeLoadIncomplete(TreeLoadStageNodes, "t", nil, 2, 3, 5,
+		"node u3 in tree t has nil parent or sponsor (data corruption; 3 of 5, tree left partly built)",
+		"u3")
+	assert.Equal(t,
+		"node u3 in tree t has nil parent or sponsor (data corruption; 3 of 5, tree left partly built)",
+		nilRefs.Error())
+
+	assert.Equal(t, TreeLoadStageNodes, nilRefs.Stage)
+	assert.Equal(t, 2, nilRefs.Confirmed)
+	assert.Equal(t, 3, nilRefs.Attempted)
+	assert.Equal(t, 5, nilRefs.Total)
+	assert.Equal(t, []string{"u3"}, nilRefs.NodeIDs)
+	assert.Equal(t, "t", nilRefs.TreeID)
+	assert.NoError(t, errors.Unwrap(nilRefs), "a guard wraps nothing")
+}

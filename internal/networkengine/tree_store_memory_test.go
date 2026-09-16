@@ -144,7 +144,7 @@ func TestMemoryTreeStore_DuplicateActiveSlotRejected(t *testing.T) {
 	require.NoError(t, store.InsertNode(ctx, makeNode("tree-1", "u2", 1, ptr("u1"), ptr("u1"), intPtr(0))))
 
 	err := store.InsertNode(ctx, makeNode("tree-1", "u3", 1, ptr("u1"), ptr("u1"), intPtr(0)))
-	assert.ErrorIs(t, err, ErrSlotConflict)
+	require.ErrorIs(t, err, ErrSlotConflict)
 	assert.Contains(t, err.Error(), "held by u2", "error names the incumbent")
 
 	// Same position under a different parent stays legal.

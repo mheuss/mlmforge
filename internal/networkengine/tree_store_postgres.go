@@ -26,15 +26,15 @@ const insertNodeSQL = `INSERT INTO tree_nodes (id, tree_id, user_id, parent_id, 
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		 ON CONFLICT (id) DO NOTHING`
 
-// Partial unique indexes from migrations 000002 and 000004. pgx reports the
-// index name in ConstraintName.
+// The two partial unique indexes on tree_nodes. pgx reports the index name in
+// ConstraintName, which is what tells them apart.
 const (
 	activeUserIndex = "idx_tree_nodes_tree_user"
 	activeSlotIndex = "idx_tree_nodes_tree_parent_position_active"
 )
 
-// conflictError maps a unique violation to the sentinel naming the index that
-// fired. It returns nil when err is not one.
+// conflictError maps a pg error naming one of the two indexes to its sentinel,
+// and returns nil for anything else so the raw error surfaces.
 //
 // Matching on ConstraintName rather than SQLSTATE: 23505 covers every unique
 // violation on the table and cannot tell the two indexes apart.
@@ -72,12 +72,13 @@ func (s *PostgresTreeStore) InsertNode(ctx context.Context, node TreeNodeRow) er
 	)
 	if err != nil {
 		if c := conflictError(err); c != nil {
-			return c
+			return fmt.Errorf("%w: tree=%s user=%s id=%s", c, node.TreeID, node.UserID, node.ID)
 		}
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return ErrNodeAlreadyProjected
+		return fmt.Errorf("%w: tree=%s user=%s id=%s",
+			ErrNodeAlreadyProjected, node.TreeID, node.UserID, node.ID)
 	}
 	return nil
 }

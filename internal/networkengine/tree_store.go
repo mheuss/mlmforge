@@ -81,7 +81,8 @@ type TreeStore interface {
 // because the caller branches on which one and needs nothing else from them.
 var (
 	// ErrNodeAlreadyProjected reports an insert that matched an existing row
-	// on the event id. The store side of this event is already done.
+	// on the event id. Whether that row is the one this event wrote, and
+	// whether it is still active, are not known here.
 	ErrNodeAlreadyProjected = errors.New("insert affected no rows; a row with this event id exists")
 
 	// ErrActiveUserConflict reports a different event already placing this

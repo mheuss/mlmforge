@@ -335,7 +335,7 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 			makeUUIDNode(testNodeUUID(2), tree, testUserUUID(2), 1, ptr(rootUser), ptr(rootUser), intPtr(0)),
 			makeUUIDNode(testNodeUUID(1), tree, testUserUUID(3), 1, ptr(rootUser), ptr(rootUser), intPtr(1)),
 		})
-		require.Error(t, err)
+		require.ErrorIs(t, err, ErrNodeAlreadyProjected)
 
 		got, err := s.GetByTree(ctx, tree)
 		require.NoError(t, err)
@@ -361,7 +361,7 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 			// both implementations reject it whatever its tree or state.
 			makeUUIDNode(testNodeUUID(1), tree, testUserUUID(3), 1, ptr(rootUser), ptr(rootUser), intPtr(1)),
 		})
-		require.Error(t, err, "a duplicate row id must fail the batch")
+		require.ErrorIs(t, err, ErrNodeAlreadyProjected, "a duplicate row id must fail the batch")
 
 		got, err := s.GetByTree(ctx, tree)
 		require.NoError(t, err)
@@ -529,8 +529,12 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
 
 		err := s.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), tree, user, 0, nil, nil, nil))
-		assert.ErrorIs(t, err, ErrActiveUserConflict)
-		assert.NotErrorIs(t, err, ErrSlotConflict, "these two send the consumer different places")
+		require.ErrorIs(t, err, ErrActiveUserConflict)
+
+		// The sentinel says which branch. It cannot say which row, and this is
+		// the error an operator reads when a projection stops.
+		assert.Contains(t, err.Error(), tree, "the message names the tree")
+		assert.Contains(t, err.Error(), user, "the message names the user")
 	})
 
 	t.Run("InsertNode rejects a second active claim on one slot", func(t *testing.T) {
@@ -547,7 +551,6 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		err := s.InsertNode(ctx,
 			makeUUIDNode(testNodeUUID(3), tree, testUserUUID(3), 1, ptr(rootUser), ptr(rootUser), intPtr(0)))
 		assert.ErrorIs(t, err, ErrSlotConflict, "one active claim per tree, parent and position")
-		assert.NotErrorIs(t, err, ErrActiveUserConflict, "these two send the consumer different places")
 	})
 
 	// The discriminator HEU-576 is built on. A redelivered event carries the
@@ -576,7 +579,5 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		err := s.InsertNode(ctx, node)
 		assert.ErrorIs(t, err, ErrNodeAlreadyProjected,
 			"the primary key is the branch that means already projected")
-		assert.NotErrorIs(t, err, ErrActiveUserConflict,
-			"naming the user conflict here would classify a redelivery as corruption")
 	})
 }

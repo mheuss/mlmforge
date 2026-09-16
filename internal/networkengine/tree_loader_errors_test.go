@@ -60,7 +60,8 @@ func (m *failAtCallMutator) RemoveNode(context.Context, string, string) ([]Respo
 	return nil, m.next()
 }
 
-// loadWithMutator is loadWithStub with a caller-supplied mutator.
+// loadWithMutator seeds an in-memory store and runs a load against a
+// caller-supplied mutator.
 func loadWithMutator(t *testing.T, treeType string, nodes []TreeNodeRow, m TreeMutator, opts ...LoadTreeOption) error {
 	t.Helper()
 	store := NewMemoryTreeStore()
@@ -389,6 +390,8 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 
 			require.False(t, tt.direct && tt.engineFailsAfter >= 0,
 				"a row cannot both seed past InsertNode and drive an engine failure")
+			require.False(t, tt.store != nil && (tt.direct || tt.engineFailsAfter >= 0),
+				"a row bringing its own store cannot also seed past InsertNode or drive an engine failure")
 			require.False(t, tt.wantKind != "" && tt.wantStage != "",
 				"a row carries a kind or a stage, not both")
 
@@ -396,6 +399,8 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			case tt.store != nil:
 				err = NewTreeLoader(tt.store, &stubMutator{}).LoadTree(
 					context.Background(), "t", tt.treeType, tt.opts...)
+				assert.ErrorIs(t, err, storeErr,
+					"the store's error must stay reachable, not just rendered")
 			case tt.direct:
 				_, err = loadWithStubDirect(t, tt.treeType, tt.nodes, tt.opts...)
 			case tt.engineFailsAfter >= 0:

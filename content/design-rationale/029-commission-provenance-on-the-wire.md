@@ -258,10 +258,11 @@ above; the fix was to go per walk so a node appears once. The same duplication
 reappeared across walks.
 
 So the record emits **interned paths**. A response carries a `paths` array, each
-walk names a `(path, offset, length)` slice rather than repeating nodes, and
-stated decisions are kept for consuming steps. What becomes of non-consuming
-skips is a Phase C question, set out under "What This Means" below rather than
-answered here. Measured at 9.4 MiB, 0.15x the hard ceiling.
+walk names a `(path, offset, length)` slice rather than repeating nodes, stated
+decisions are kept for consuming steps and for `pass_up`, and other non-consuming
+skips are derived by the reader from the path plus the snapshot set plus the
+plan. None of it is built; see "What This Means" below. Measured at 9.4 MiB,
+0.15x the hard ceiling.
 
 This was not on either option list. The Revisit Trigger below offered a
 truncation cap or moving off the single-response path; HEU-556 offered those two
@@ -270,10 +271,10 @@ than one it selected.
 
 The counter-argument against deriving still stands and is now narrower. A reader
 recomputing compression is reimplementing `walk.rs`, and a reimplementation that
-disagrees is worse than no record. Under this shape the reader derives only
-non-consuming skips, so a disagreement can be wrong about why a node was passed
-over and never about who was paid what. Every decision that moved money is
-stated by the engine.
+disagrees is worse than no record. Under this shape the reader derives the
+non-consuming skips other than `pass_up`, so a disagreement can be wrong about
+why a node was passed over and never about who was paid what. Every decision
+that moved money is stated by the engine.
 
 ### The memory half is a separate defect
 
@@ -427,25 +428,27 @@ and after HEU-46 that is a migration rather than a rename.
   persists them today, so the provisional names cost nothing to change until
   HEU-46 lands. After that, changing one orphans every row carrying the old
   value, the same way the `kind` strings in `commission_detail.go` do.
-- Counter reconstruction is a count of consumed steps. Any new skip or forfeit
-  path must record a step, or the count silently drifts.
+- Counter reconstruction is a count of consumed steps. Any new consuming skip or
+  forfeit path must record a step, or the count silently drifts. Non-consuming
+  paths are covered by the two bullets below, which say the opposite.
 - **This document already breaks that rule once.** A generation breakaway that
   fails the boundary check with `empty_generation_consumes_number` unset neither
   records nor consumes. The behavior is described above as "may or may not
   consume a generation depending on config" and was never given an outcome.
   Phase C must give it one.
-- Walks reference interned paths rather than repeating node sequences. A shape
-  that inlines a per-walk node list reintroduces the duplication measured at
-  170.2 MiB against a 64 MiB ceiling.
+- Walks are to reference interned paths rather than repeating node sequences.
+  Not built: `Walk` carries `steps` and the result carries no `paths` array. A
+  shape that inlines a per-walk node list reintroduces the duplication measured
+  at 170.2 MiB against a 64 MiB ceiling.
 - Stated decisions cover consuming steps, which is everything the engine records
   today. `StepOutcome` carries two variants and both consume, so no non-consuming
   skip is emitted at all.
-- Phase C owns what happens to non-consuming skips, and the answer is not uniform
-  across them. Compression and a dynamic threshold are derivable by a reader from
-  the path, the snapshot set and the plan. `pass_up` is not: it derives from
-  sponsor relationships and enrollment order, and neither is in
-  `DistributorSnapshot`. A shape that derives every skip loses `pass_up`. One that
-  states every skip pays for outcomes a reader could have computed.
+- HEU-556 settled which non-consuming skips get stated, and the answer is not
+  uniform across them. `pass_up` is stated and names the recruit that caused it,
+  because it derives from sponsor relationships and enrollment order and neither
+  is in `DistributorSnapshot`. Compression and a dynamic threshold are derived by
+  the reader from the path, the snapshot set and the plan. Phase C builds this
+  split. It does not reopen it.
 - **Do not emit a non-consuming step before Phase C.** Recording one requires
   `consumed: false`, and that breaks `steps.len()` for every reader written
   against current behavior.

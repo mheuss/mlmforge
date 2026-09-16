@@ -448,8 +448,7 @@ func TestPostgresTreeStore_InsertNode_SkippedInsertLeavesTheStoredRowAlone(t *te
 
 // BulkInsert maps index conflicts to the same sentinels InsertNode uses. The
 // skipped-row branch covers a duplicate event id; this covers the other two
-// arms, which a batch reaches by claiming a slot or a user that is already
-// taken. TreeLoader.LoadTree is the caller, so the batch is a whole tree.
+// arms, which a batch reaches by claiming a slot or a user already taken.
 func TestPostgresTreeStore_BulkInsert_SlotConflictIsTyped(t *testing.T) {
 	store := newTestPostgresTreeStore(t)
 	ctx := context.Background()

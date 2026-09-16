@@ -369,9 +369,8 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 	})
 
 	// GetByTreeDepthOrdered is the only TreeStore method with a stated
-	// ordering promise and the only read method TreeLoader.LoadTree calls at
-	// startup. The suite asserts the sequence positionally because here the
-	// order is the contract.
+	// ordering promise, so the suite asserts the sequence positionally. Here
+	// the order is the contract rather than an artifact of the query.
 	t.Run("GetByTreeDepthOrdered sorts by depth then enrolled_at", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
@@ -402,9 +401,9 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		require.NoError(t, s.InsertNode(ctx, early))
 		require.NoError(t, s.InsertNode(ctx, root))
 
-		// Another tree, at a depth that would sort into the middle. This is the
-		// read TreeLoader.LoadTree uses, so a tree-scope leak here loads another
-		// tenant's nodes at startup.
+		// Another tree, at a depth that would sort into the middle. A
+		// tree-scope leak here returns another tenant's nodes inside an
+		// ordered read, where the caller has no reason to re-filter.
 		other := makeUUIDNode(testNodeUUID(5), testTreeUUID(2), testUserUUID(5), 1, nil, nil, nil)
 		other.EnrolledAt = time.Date(2026, 2, 15, 0, 0, 0, 0, time.UTC)
 		require.NoError(t, s.InsertNode(ctx, other))

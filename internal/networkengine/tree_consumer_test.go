@@ -1026,7 +1026,7 @@ func payloadFor(treeType string, position *int) NodePlacedPayload {
 	}
 }
 
-func TestPositionMatchesPayload(t *testing.T) {
+func TestPositionMatchesProjection(t *testing.T) {
 	tests := []struct {
 		name    string
 		pos     *EnginePosition

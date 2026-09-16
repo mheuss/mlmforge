@@ -292,6 +292,57 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		assert.ElementsMatch(t, []string{rootUser, childA, childB}, nodeUserIDs(got))
 	})
 
+	// Every other BulkInsert case starts from an empty store, where preserving
+	// what was already there is vacuous. This one starts from a populated one,
+	// which is how the loader actually uses it.
+	t.Run("BulkInsert preserves rows already in the store", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		rootUser := testUserUUID(1)
+		childA := testUserUUID(2)
+		childB := testUserUUID(3)
+
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+
+		require.NoError(t, s.BulkInsert(ctx, []TreeNodeRow{
+			makeUUIDNode(testNodeUUID(2), tree, childA, 1, ptr(rootUser), ptr(rootUser), intPtr(0)),
+			makeUUIDNode(testNodeUUID(3), tree, childB, 1, ptr(rootUser), ptr(rootUser), intPtr(1)),
+		}))
+
+		got, err := s.GetByTree(ctx, tree)
+		require.NoError(t, err)
+		assert.ElementsMatch(t, []string{rootUser, childA, childB}, nodeUserIDs(got),
+			"the batch adds to the store rather than replacing it")
+
+		root, err := s.GetNode(ctx, tree, rootUser)
+		require.NoError(t, err)
+		require.NotNil(t, root, "the pre-existing row survives the batch")
+		assert.Equal(t, testNodeUUID(1), root.ID, "and survives intact, not as a blank row")
+	})
+
+	t.Run("a failed BulkInsert leaves rows already in the store alone", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		rootUser := testUserUUID(1)
+
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+
+		err := s.BulkInsert(ctx, []TreeNodeRow{
+			makeUUIDNode(testNodeUUID(2), tree, testUserUUID(2), 1, ptr(rootUser), ptr(rootUser), intPtr(0)),
+			makeUUIDNode(testNodeUUID(1), tree, testUserUUID(3), 1, ptr(rootUser), ptr(rootUser), intPtr(1)),
+		})
+		require.Error(t, err)
+
+		got, err := s.GetByTree(ctx, tree)
+		require.NoError(t, err)
+		assert.ElementsMatch(t, []string{rootUser}, nodeUserIDs(got),
+			"the rollback restores what was there, and no more")
+	})
+
 	// The known divergence. Postgres runs the batch in one transaction;
 	// MemoryTreeStore loops InsertNode and keeps what it already appended.
 	// Task 4 makes the memory store stage, and this passes on both.

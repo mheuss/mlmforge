@@ -597,6 +597,8 @@ func cycleError(treeID string, nodes []TreeNodeRow, ordered []*TreeNodeRow, byID
 	// where byID's surviving copy resolves both refs and the unmet edge belongs
 	// to the shadowed row the message cannot name. Only duplicate rows reach
 	// that, and validateNodes rejects them.
+	// Indexing guard, not output shaping. A bare path[len(path)-1] would panic
+	// and take down startup rather than failing one tree.
 	stopped := ""
 	if len(path) > 0 {
 		stopped = path[len(path)-1]

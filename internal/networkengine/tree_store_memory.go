@@ -27,7 +27,7 @@ func (s *MemoryTreeStore) InsertNode(_ context.Context, node TreeNodeRow) error 
 	// distinguishable against this double too.
 	for _, n := range s.nodes {
 		if n.ID == node.ID {
-			return fmt.Errorf("duplicate node id %s (tree_nodes_pkey mirror)", node.ID)
+			return fmt.Errorf("%w: id=%s", ErrNodeAlreadyProjected, node.ID)
 		}
 	}
 	// Enforce same uniqueness as the Postgres partial unique indexes
@@ -38,7 +38,7 @@ func (s *MemoryTreeStore) InsertNode(_ context.Context, node TreeNodeRow) error 
 				continue
 			}
 			if n.UserID == node.UserID {
-				return fmt.Errorf("duplicate active node: tree=%s user=%s", node.TreeID, node.UserID)
+				return fmt.Errorf("%w: tree=%s user=%s", ErrActiveUserConflict, node.TreeID, node.UserID)
 			}
 			// Mirror idx_tree_nodes_tree_parent_position_active (migration
 			// 000004): one active claim per (tree, parent, position). Rows
@@ -48,8 +48,8 @@ func (s *MemoryTreeStore) InsertNode(_ context.Context, node TreeNodeRow) error 
 			if node.ParentID != nil && node.Position != nil &&
 				n.ParentID != nil && n.Position != nil &&
 				*n.ParentID == *node.ParentID && *n.Position == *node.Position {
-				return fmt.Errorf("duplicate active slot: tree=%s parent=%s position=%d (held by %s)",
-					node.TreeID, *node.ParentID, *node.Position, n.UserID)
+				return fmt.Errorf("%w: tree=%s parent=%s position=%d (held by %s)",
+					ErrSlotConflict, node.TreeID, *node.ParentID, *node.Position, n.UserID)
 			}
 		}
 	}

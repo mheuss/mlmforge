@@ -516,8 +516,7 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		require.NoError(t, s.DeleteNode(ctx, tree, user))
 
 		err := s.InsertNode(ctx, node)
-		require.Error(t, err, "a removed row still holds its id")
-		assert.Contains(t, err.Error(), "tree_nodes_pkey")
+		assert.ErrorIs(t, err, ErrNodeAlreadyProjected, "a removed row still holds its id")
 	})
 
 	t.Run("InsertNode rejects a second active row for one user in a tree", func(t *testing.T) {
@@ -554,10 +553,14 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 	// index against the same row, and only the primary key means "already
 	// projected". Both stores must name that one.
 	//
-	// Which conflict index wins when two are violated against different rows
-	// is deliberately not asserted. The stores disagree there and Postgres's
-	// own answer follows relation OID order, which an index rebuild changes
-	// with nothing to catch it. HEU-794.
+	// Asserted through errors.Is, which is the form a consumer branches on.
+	// Both stores answer with the sentinel now: Postgres from the skipped
+	// ON CONFLICT row, the memory double from its primary-key mirror.
+	//
+	// Which conflict wins when two are violated against different rows is
+	// deliberately not asserted. The stores disagree there and Postgres's own
+	// answer follows relation OID order, which an index rebuild changes with
+	// nothing to catch it. HEU-794.
 	t.Run("a redelivered row is refused by the primary key, not the user index", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
@@ -569,14 +572,9 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		require.NoError(t, s.InsertNode(ctx, node))
 
 		err := s.InsertNode(ctx, node)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "tree_nodes_pkey",
+		assert.ErrorIs(t, err, ErrNodeAlreadyProjected,
 			"the primary key is the branch that means already projected")
-		assert.NotContains(t, err.Error(), "idx_tree_nodes_tree_user",
-			"naming the user index here would classify a redelivery as a conflict")
-		// Message text, not the form a consumer reads. The house pattern is
-		// errors.As on pgconn.PgError.ConstraintName, and the memory store
-		// returns a bare fmt.Errorf that errors.As cannot reach through. Task 5
-		// adds the sentinels and Task 10 pins them here.
+		assert.NotErrorIs(t, err, ErrActiveUserConflict,
+			"naming the user conflict here would classify a redelivery as corruption")
 	})
 }

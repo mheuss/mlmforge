@@ -171,11 +171,20 @@ func (s *PostgresTreeStore) BulkInsert(ctx context.Context, nodes []TreeNodeRow)
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	for _, node := range nodes {
-		_, err := tx.Exec(ctx, insertNodeSQL,
+		tag, err := tx.Exec(ctx, insertNodeSQL,
 			node.ID, node.TreeID, node.UserID, node.ParentID, node.SponsorID, node.Position, node.Depth, node.EnrolledAt,
 		)
 		if err != nil {
+			if c := conflictError(err); c != nil {
+				return fmt.Errorf("bulk insert node %s: %w", node.UserID, c)
+			}
 			return fmt.Errorf("bulk insert node %s: %w", node.UserID, err)
+		}
+		// InsertNode reads a skipped row as convergence. A bulk load cannot:
+		// the rows are a whole tree, and one already present means the batch
+		// is built from the wrong picture. The deferred rollback discards it.
+		if tag.RowsAffected() == 0 {
+			return fmt.Errorf("bulk insert node %s: %w", node.UserID, ErrNodeAlreadyProjected)
 		}
 	}
 

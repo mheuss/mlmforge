@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -17,8 +18,40 @@ type PostgresTreeStore struct {
 	pool *pgxpool.Pool
 }
 
+// ON CONFLICT targets the primary key, which carries the event ID. A
+// redelivered event is skipped and reports zero rows instead of raising, while
+// the two partial unique indexes still raise. Changing the arbiter changes
+// which conflict is silent.
 const insertNodeSQL = `INSERT INTO tree_nodes (id, tree_id, user_id, parent_id, sponsor_id, position, depth, enrolled_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		 ON CONFLICT (id) DO NOTHING`
+
+// Partial unique indexes from migrations 000002 and 000004. pgx reports the
+// index name in ConstraintName.
+const (
+	activeUserIndex = "idx_tree_nodes_tree_user"
+	activeSlotIndex = "idx_tree_nodes_tree_parent_position_active"
+)
+
+// conflictError maps a unique violation to the sentinel naming the index that
+// fired. It returns nil when err is not one.
+//
+// Matching on ConstraintName rather than SQLSTATE: 23505 covers every unique
+// violation on the table and cannot tell the two indexes apart.
+func conflictError(err error) error {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return nil
+	}
+	switch pgErr.ConstraintName {
+	case activeUserIndex:
+		return ErrActiveUserConflict
+	case activeSlotIndex:
+		return ErrSlotConflict
+	default:
+		return nil
+	}
+}
 
 // treeNodeSelectColumns is the SELECT column list for tree_nodes queries.
 // Order must match the scanTreeNode/scanTreeNodes Scan call.
@@ -34,10 +67,19 @@ func NewPostgresTreeStore(pool *pgxpool.Pool) *PostgresTreeStore {
 }
 
 func (s *PostgresTreeStore) InsertNode(ctx context.Context, node TreeNodeRow) error {
-	_, err := s.pool.Exec(ctx, insertNodeSQL,
+	tag, err := s.pool.Exec(ctx, insertNodeSQL,
 		node.ID, node.TreeID, node.UserID, node.ParentID, node.SponsorID, node.Position, node.Depth, node.EnrolledAt,
 	)
-	return err
+	if err != nil {
+		if c := conflictError(err); c != nil {
+			return c
+		}
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNodeAlreadyProjected
+	}
+	return nil
 }
 
 func (s *PostgresTreeStore) DeleteNode(ctx context.Context, treeID, userID string) error {

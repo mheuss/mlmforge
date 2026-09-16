@@ -541,8 +541,7 @@ func TestTreePersistence_SlotConflictFailsCleanAndTreeReloads(t *testing.T) {
 		Position: &pos, TreeType: treeTypeMatrix, EnrolledAt: base.Add(2 * time.Hour),
 	})
 	err := consumer.HandleEvent(ctx, conflict)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "idx_tree_nodes_tree_parent_position_active")
+	assert.ErrorIs(t, err, ErrSlotConflict)
 
 	rows, err := treeStore.GetByTree(ctx, treeID)
 	require.NoError(t, err)
@@ -608,14 +607,15 @@ func TestTreePersistence_DuplicateDeliveryPinsNonIdempotence(t *testing.T) {
 	// exact event was already stored" (the engine may not have applied it);
 	// idx_tree_nodes_tree_user means "a different event claims the same
 	// user", which is real corruption.
-	// (Pkey-first depends on migration 000002 declaring the PK inline in
-	// CREATE TABLE, ahead of both named unique indexes — Postgres checks
-	// indexes in OID order, which tracks creation order in a fresh
-	// database. A redelivery would violate the slot index too; the pkey
-	// simply fires first.)
+	// The insert now names the primary key as its ON CONFLICT arbiter, so a
+	// redelivery is skipped rather than raising, and the store reports the
+	// skip. The slot index is never reached.
+	//
+	// The consumer still surfaces that as an error. Task 18 is where a
+	// skipped row stops being a failure, and this test's name stops being
+	// true at that point.
 	err := consumer.HandleEvent(ctx, okEvent)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "tree_nodes_pkey")
+	assert.ErrorIs(t, err, ErrNodeAlreadyProjected)
 
 	rows, err := treeStore.GetByTree(ctx, treeID)
 	require.NoError(t, err)

@@ -138,8 +138,7 @@ func TestPostgresTreeStore_DuplicateActiveSlotRejected(t *testing.T) {
 
 	err := store.InsertNode(ctx,
 		makeUUIDNode(testNodeUUID(3), treeID, testUserUUID(3), 1, ptr(testUserUUID(1)), ptr(testUserUUID(1)), intPtr(0)))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "idx_tree_nodes_tree_parent_position_active")
+	assert.ErrorIs(t, err, ErrSlotConflict)
 
 	// Soft-delete frees the slot for a live replacement (ADR-023).
 	require.NoError(t, store.DeleteNode(ctx, treeID, testUserUUID(2)))
@@ -365,4 +364,84 @@ func TestPostgresTreeStore_Suite(t *testing.T) {
 	runTreeStoreSuite(t, func(t *testing.T) TreeStore {
 		return newTestPostgresTreeStore(t)
 	})
+}
+
+// ON CONFLICT (id) targets the primary key, which carries the event ID, so a
+// redelivered event is skipped rather than raising. The two partial unique
+// indexes still raise, and each maps to its own sentinel.
+func TestPostgresTreeStore_InsertNode_SameEventIDIsAlreadyProjected(t *testing.T) {
+	store := newTestPostgresTreeStore(t)
+	ctx := context.Background()
+
+	node := makeUUIDNode(testNodeUUID(1), testTreeUUID(1), testUserUUID(1), 0, nil, nil, nil)
+	require.NoError(t, store.InsertNode(ctx, node))
+
+	err := store.InsertNode(ctx, node)
+	assert.ErrorIs(t, err, ErrNodeAlreadyProjected)
+}
+
+func TestPostgresTreeStore_InsertNode_DifferentEventSameUserConflicts(t *testing.T) {
+	store := newTestPostgresTreeStore(t)
+	ctx := context.Background()
+
+	first := makeUUIDNode(testNodeUUID(1), testTreeUUID(1), testUserUUID(1), 0, nil, nil, nil)
+	require.NoError(t, store.InsertNode(ctx, first))
+
+	second := makeUUIDNode(testNodeUUID(2), testTreeUUID(1), testUserUUID(1), 0, nil, nil, nil)
+	err := store.InsertNode(ctx, second)
+	assert.ErrorIs(t, err, ErrActiveUserConflict)
+}
+
+func TestPostgresTreeStore_InsertNode_DifferentEventSameSlotConflicts(t *testing.T) {
+	store := newTestPostgresTreeStore(t)
+	ctx := context.Background()
+
+	parent := testUserUUID(1)
+	require.NoError(t, store.InsertNode(ctx,
+		makeUUIDNode(testNodeUUID(1), testTreeUUID(1), parent, 0, nil, nil, nil)))
+	require.NoError(t, store.InsertNode(ctx,
+		makeUUIDNode(testNodeUUID(2), testTreeUUID(1), testUserUUID(2), 1, ptr(parent), ptr(parent), intPtr(0))))
+
+	second := makeUUIDNode(testNodeUUID(3), testTreeUUID(1), testUserUUID(3), 1, ptr(parent), ptr(parent), intPtr(0))
+	err := store.InsertNode(ctx, second)
+	assert.ErrorIs(t, err, ErrSlotConflict)
+}
+
+// A redelivered row whose id matches a soft-deleted row is still a skipped
+// insert, because the primary key is not partial. Telling that apart from a
+// live redelivery needs the stored row, which is Task 9's read and the
+// consumer's decision, not this method's.
+func TestPostgresTreeStore_InsertNode_SameEventIDAfterSoftDeleteIsAlreadyProjected(t *testing.T) {
+	store := newTestPostgresTreeStore(t)
+	ctx := context.Background()
+
+	node := makeUUIDNode(testNodeUUID(1), testTreeUUID(1), testUserUUID(1), 0, nil, nil, nil)
+	require.NoError(t, store.InsertNode(ctx, node))
+	require.NoError(t, store.DeleteNode(ctx, testTreeUUID(1), testUserUUID(1)))
+
+	err := store.InsertNode(ctx, node)
+	assert.ErrorIs(t, err, ErrNodeAlreadyProjected)
+}
+
+// A skipped insert must not be reported as a write. The row the caller handed
+// over is not the row in the table, and a caller that treats the skip as
+// success would carry on with stale values.
+func TestPostgresTreeStore_InsertNode_SkippedInsertLeavesTheStoredRowAlone(t *testing.T) {
+	store := newTestPostgresTreeStore(t)
+	ctx := context.Background()
+
+	tree := testTreeUUID(1)
+	user := testUserUUID(1)
+	original := makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)
+	require.NoError(t, store.InsertNode(ctx, original))
+
+	// Same event id, different depth. The insert is skipped, so the stored
+	// depth must still be the original's.
+	redelivered := makeUUIDNode(testNodeUUID(1), tree, user, 7, nil, nil, nil)
+	require.ErrorIs(t, store.InsertNode(ctx, redelivered), ErrNodeAlreadyProjected)
+
+	got, err := store.GetNode(ctx, tree, user)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, 0, got.Depth, "DO NOTHING skips the insert rather than updating the row")
 }

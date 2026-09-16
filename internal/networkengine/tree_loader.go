@@ -65,7 +65,8 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 
 	nodes, err := l.store.GetByTreeDepthOrdered(ctx, treeID)
 	if err != nil {
-		return fmt.Errorf("load tree %s: %w", treeID, err)
+		return newTreeLoadRejected(TreeLoadStoreReadFailed, treeID, err,
+			fmt.Sprintf("load tree %s: %s", treeID, err))
 	}
 	if len(nodes) == 0 {
 		return nil

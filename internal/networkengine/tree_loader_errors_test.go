@@ -177,6 +177,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			engineFailsAfter: -1,
 			want:             "load tree t: connection refused",
 			wantErrIs:        storeErr,
+			wantKind:         TreeLoadStoreReadFailed,
 		},
 
 		// validateNodes
@@ -391,6 +392,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var err error
 			var m *failAtCallMutator
+			var storeRowMutator *stubMutator
 
 			require.False(t, tt.direct && tt.engineFailsAfter >= 0,
 				"a row cannot both seed past InsertNode and drive an engine failure")
@@ -401,7 +403,8 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 
 			switch {
 			case tt.store != nil:
-				err = NewTreeLoader(tt.store, &stubMutator{}).LoadTree(
+				storeRowMutator = &stubMutator{}
+				err = NewTreeLoader(tt.store, storeRowMutator).LoadTree(
 					context.Background(), "t", tt.treeType, tt.opts...)
 			case tt.direct:
 				_, err = loadWithStubDirect(t, tt.treeType, tt.nodes, tt.opts...)
@@ -441,6 +444,11 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 					"this exit is typed now; give the row a wantKind")
 				assert.False(t, errors.As(err, &incomplete),
 					"this exit is typed now; give the row a wantStage")
+			}
+
+			if storeRowMutator != nil {
+				assert.Zero(t, storeRowMutator.totalCalls(),
+					"the read runs before the engine, so a failed read reaches it not at all")
 			}
 
 			if m != nil {

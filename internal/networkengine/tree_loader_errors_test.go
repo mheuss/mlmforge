@@ -573,3 +573,30 @@ func TestTreeLoadErrors_DoNotAliasTheCallersSlice(t *testing.T) {
 	assert.Equal(t, []string{"u0", "u9"}, rejected.NodeIDs)
 	assert.Equal(t, []string{"u0", "u9"}, incomplete.NodeIDs)
 }
+
+func TestTreeLoader_ConfigExitsAreRejectedConfigInvalid(t *testing.T) {
+	tests := []struct {
+		name     string
+		treeType string
+		opts     []LoadTreeOption
+	}{
+		{"unsupported tree type", "streamline", nil},
+		{"matrix without params", "matrix", nil},
+		{"matrix width below range", "matrix", []LoadTreeOption{WithMatrixParams(1, "breadth_first")}},
+		{"unsupported spillover", "matrix", []LoadTreeOption{WithMatrixParams(3, "sideways")}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mutator := &stubMutator{}
+			err := NewTreeLoader(NewMemoryTreeStore(), mutator).LoadTree(
+				context.Background(), "t", tt.treeType, tt.opts...)
+
+			var rejected *TreeLoadRejectedError
+			require.ErrorAs(t, err, &rejected)
+			assert.Equal(t, TreeLoadConfigInvalid, rejected.Kind)
+			assert.Equal(t, "t", rejected.TreeID)
+			assert.Zero(t, mutator.totalCalls(), "config failure makes no engine calls")
+		})
+	}
+}

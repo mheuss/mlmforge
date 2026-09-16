@@ -184,7 +184,8 @@ type slotKey struct {
 // empty tree reports the same configuration errors a populated one does.
 func validateTreeConfig(treeID, treeType string, cfg loadTreeConfig) error {
 	if !supportedTreeTypes[treeType] {
-		return fmt.Errorf("tree %s has unsupported type %q", treeID, treeType)
+		return newTreeLoadRejected(TreeLoadConfigInvalid, treeID, nil,
+			fmt.Sprintf("tree %s has unsupported type %q", treeID, treeType))
 	}
 	if treeType != treeTypeMatrix {
 		return nil
@@ -192,15 +193,18 @@ func validateTreeConfig(treeID, treeType string, cfg loadTreeConfig) error {
 	// The adjacency store keeps per-node data, not the structure's width and
 	// spillover, so a matrix load cannot recreate the tree without them.
 	if !cfg.matrixParamsSet {
-		return fmt.Errorf("tree %s requires width and spillover (use WithMatrixParams)", treeID)
+		return newTreeLoadRejected(TreeLoadConfigInvalid, treeID, nil,
+			fmt.Sprintf("tree %s requires width and spillover (use WithMatrixParams)", treeID))
 	}
 	// MatrixTree::new rejects width < 2, and width is a u8 on the wire.
 	if cfg.matrixWidth < 2 || cfg.matrixWidth > math.MaxUint8 {
-		return fmt.Errorf("tree %s has matrix width %d outside the supported range 2..%d",
-			treeID, cfg.matrixWidth, math.MaxUint8)
+		return newTreeLoadRejected(TreeLoadConfigInvalid, treeID, nil,
+			fmt.Sprintf("tree %s has matrix width %d outside the supported range 2..%d",
+				treeID, cfg.matrixWidth, math.MaxUint8))
 	}
 	if !supportedSpillover[cfg.matrixSpillover] {
-		return fmt.Errorf("tree %s has unsupported spillover %q", treeID, cfg.matrixSpillover)
+		return newTreeLoadRejected(TreeLoadConfigInvalid, treeID, nil,
+			fmt.Sprintf("tree %s has unsupported spillover %q", treeID, cfg.matrixSpillover))
 	}
 	return nil
 }

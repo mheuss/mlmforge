@@ -9,6 +9,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/mlmforge/mlmforge/internal/platform"
 )
 
@@ -234,6 +235,61 @@ const (
 func isEngineCode(err error, code string) bool {
 	var e *EngineError
 	return errors.As(err, &e) && e.Code == code
+}
+
+// positionMatchesPayload reports whether the engine's view of a placed node
+// agrees with the event that placed it.
+//
+// False means "not confirmed equal", which covers a real disagreement and an
+// identifier neither side can parse. The caller treats both the same way.
+func positionMatchesPayload(pos *EnginePosition, p NodePlacedPayload, depth int) bool {
+	if pos == nil {
+		return false
+	}
+	if !sameUUID(pos.UserID, p.UserID) {
+		return false
+	}
+	if !samePtrUUID(pos.ParentUserID, &p.ParentID) {
+		return false
+	}
+	if !samePtrUUID(pos.SponsorUserID, &p.SponsorID) {
+		return false
+	}
+	if int(pos.Depth) != depth {
+		return false
+	}
+	if pos.EnrolledAt != p.EnrolledAt.Unix() {
+		return false
+	}
+	// EnginePosition.Position is an int and always carries a value. Unilevel
+	// events must omit position, so comparing it would never match.
+	if p.TreeType != treeTypeUnilevel {
+		if p.Position == nil || pos.Position != *p.Position {
+			return false
+		}
+	}
+	return true
+}
+
+// sameUUID compares two identifiers by value rather than by spelling, so case
+// and any other valid textual variation do not read as a disagreement.
+func sameUUID(a, b string) bool {
+	ua, err := uuid.Parse(a)
+	if err != nil {
+		return false
+	}
+	ub, err := uuid.Parse(b)
+	if err != nil {
+		return false
+	}
+	return ua == ub
+}
+
+func samePtrUUID(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return sameUUID(*a, *b)
 }
 
 // reconcileOutcome is what an inspection concluded about a mutation the

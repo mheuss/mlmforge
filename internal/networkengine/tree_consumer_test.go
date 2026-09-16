@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -981,4 +982,192 @@ func TestEngineCodeConstantsMatchTheWorker(t *testing.T) {
 	assert.Equal(t, "USER_ALREADY_EXISTS", engineCodeUserAlreadyExists)
 	assert.Equal(t, "ROOT_ALREADY_EXISTS", engineCodeRootAlreadyExists)
 	assert.Equal(t, "USER_NOT_FOUND", engineCodeUserNotFound)
+}
+
+const (
+	posUser    = "11111111-1111-1111-1111-111111111111"
+	posParent  = "22222222-2222-2222-2222-222222222222"
+	posSponsor = "33333333-3333-3333-3333-333333333333"
+	posOther   = "44444444-4444-4444-4444-444444444444"
+)
+
+var posEnrolled = time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+
+// enginePos builds the engine's view of a placed node, matching payloadFor.
+func enginePos(mutate func(*EnginePosition)) *EnginePosition {
+	p := &EnginePosition{
+		UserID:        posUser,
+		ParentUserID:  ptr(posParent),
+		SponsorUserID: ptr(posSponsor),
+		Position:      1,
+		Depth:         2,
+		EnrolledAt:    posEnrolled.Unix(),
+	}
+	if mutate != nil {
+		mutate(p)
+	}
+	return p
+}
+
+func payloadFor(treeType string, position *int) NodePlacedPayload {
+	return NodePlacedPayload{
+		TreeID:     posOther,
+		UserID:     posUser,
+		ParentID:   posParent,
+		SponsorID:  posSponsor,
+		Position:   position,
+		TreeType:   treeType,
+		EnrolledAt: posEnrolled,
+	}
+}
+
+func TestPositionMatchesPayload(t *testing.T) {
+	tests := []struct {
+		name    string
+		pos     *EnginePosition
+		payload NodePlacedPayload
+		depth   int
+		want    bool
+	}{
+		{
+			// Unilevel events carry no position and the gate in
+			// handleNodePlaced refuses one, so the engine's Position, which is
+			// an int and always holds a value, has nothing to be compared
+			// against. Comparing it would fail every unilevel redelivery.
+			name:    "unilevel matches without comparing position",
+			pos:     enginePos(func(p *EnginePosition) { p.Position = 7 }),
+			payload: payloadFor(treeTypeUnilevel, nil),
+			depth:   2,
+			want:    true,
+		},
+		{
+			name:    "binary matches",
+			pos:     enginePos(nil),
+			payload: payloadFor(treeTypeBinary, intPtr(1)),
+			depth:   2,
+			want:    true,
+		},
+		{
+			name:    "matrix matches",
+			pos:     enginePos(func(p *EnginePosition) { p.Position = 5 }),
+			payload: payloadFor(treeTypeMatrix, intPtr(5)),
+			depth:   2,
+			want:    true,
+		},
+		{
+			name:    "the same uuid spelled in a different case matches",
+			pos:     enginePos(func(p *EnginePosition) { p.UserID = strings.ToUpper(posUser) }),
+			payload: payloadFor(treeTypeBinary, intPtr(1)),
+			depth:   2,
+			want:    true,
+		},
+		{
+			name:    "a different user does not match",
+			pos:     enginePos(func(p *EnginePosition) { p.UserID = posOther }),
+			payload: payloadFor(treeTypeBinary, intPtr(1)),
+			depth:   2,
+			want:    false,
+		},
+		{
+			name:    "a different parent does not match",
+			pos:     enginePos(func(p *EnginePosition) { p.ParentUserID = ptr(posOther) }),
+			payload: payloadFor(treeTypeBinary, intPtr(1)),
+			depth:   2,
+			want:    false,
+		},
+		{
+			name:    "a different sponsor does not match",
+			pos:     enginePos(func(p *EnginePosition) { p.SponsorUserID = ptr(posOther) }),
+			payload: payloadFor(treeTypeBinary, intPtr(1)),
+			depth:   2,
+			want:    false,
+		},
+		{
+			name:    "a different depth does not match",
+			pos:     enginePos(nil),
+			payload: payloadFor(treeTypeBinary, intPtr(1)),
+			depth:   3,
+			want:    false,
+		},
+		{
+			name:    "a different enrolled_at does not match",
+			pos:     enginePos(func(p *EnginePosition) { p.EnrolledAt = posEnrolled.Unix() + 1 }),
+			payload: payloadFor(treeTypeBinary, intPtr(1)),
+			depth:   2,
+			want:    false,
+		},
+		{
+			name:    "a different position does not match for binary",
+			pos:     enginePos(func(p *EnginePosition) { p.Position = 0 }),
+			payload: payloadFor(treeTypeBinary, intPtr(1)),
+			depth:   2,
+			want:    false,
+		},
+		{
+			name:    "a different position does not match for matrix",
+			pos:     enginePos(func(p *EnginePosition) { p.Position = 4 }),
+			payload: payloadFor(treeTypeMatrix, intPtr(5)),
+			depth:   2,
+			want:    false,
+		},
+		{
+			// The engine holding a root where the event names a parent is a
+			// real divergence, not a missing field.
+			name:    "the engine holding no parent does not match",
+			pos:     enginePos(func(p *EnginePosition) { p.ParentUserID = nil }),
+			payload: payloadFor(treeTypeBinary, intPtr(1)),
+			depth:   2,
+			want:    false,
+		},
+		{
+			name:    "the engine holding no sponsor does not match",
+			pos:     enginePos(func(p *EnginePosition) { p.SponsorUserID = nil }),
+			payload: payloadFor(treeTypeBinary, intPtr(1)),
+			depth:   2,
+			want:    false,
+		},
+		{
+			name:    "no position at all does not match",
+			pos:     nil,
+			payload: payloadFor(treeTypeBinary, intPtr(1)),
+			depth:   2,
+			want:    false,
+		},
+		{
+			// A binary payload reaching here with no position cannot be
+			// confirmed. The comparison must report that rather than
+			// dereferencing the nil.
+			name:    "a binary payload with no position does not match",
+			pos:     enginePos(nil),
+			payload: payloadFor(treeTypeBinary, nil),
+			depth:   2,
+			want:    false,
+		},
+		{
+			// Identifiers are compared as parsed UUIDs, so anything that is
+			// not one cannot be confirmed equal to anything.
+			name:    "an unparseable id from the engine does not match",
+			pos:     enginePos(func(p *EnginePosition) { p.UserID = "not-a-uuid" }),
+			payload: payloadFor(treeTypeBinary, intPtr(1)),
+			depth:   2,
+			want:    false,
+		},
+		{
+			name: "an unparseable id in the payload does not match",
+			pos:  enginePos(nil),
+			payload: func() NodePlacedPayload {
+				p := payloadFor(treeTypeBinary, intPtr(1))
+				p.UserID = "not-a-uuid"
+				return p
+			}(),
+			depth: 2,
+			want:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, positionMatchesPayload(tt.pos, tt.payload, tt.depth))
+		})
+	}
 }

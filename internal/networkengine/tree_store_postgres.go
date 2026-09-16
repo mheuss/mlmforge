@@ -62,6 +62,14 @@ const getChildrenSQL = `SELECT ` + treeNodeSelectColumns + ` FROM tree_nodes WHE
 const getByTreeSQL = `SELECT ` + treeNodeSelectColumns + ` FROM tree_nodes WHERE tree_id = $1 AND removed_at IS NULL`
 const getByTreeDepthOrderedSQL = getByTreeSQL + ` ORDER BY depth ASC, enrolled_at ASC`
 
+// DESC NULLS FIRST is one key doing both jobs: the active row sorts ahead of
+// every tombstone, and the newest tombstone sorts ahead of older ones. Two
+// keys on the same column cannot do this, because the second can only break
+// ties the first already resolved.
+const getNodeIncludingRemovedSQL = `SELECT ` + treeNodeSelectColumns +
+	` FROM tree_nodes WHERE tree_id = $1 AND user_id = $2
+	  ORDER BY removed_at DESC NULLS FIRST LIMIT 1`
+
 func NewPostgresTreeStore(pool *pgxpool.Pool) *PostgresTreeStore {
 	return &PostgresTreeStore{pool: pool}
 }
@@ -134,6 +142,11 @@ func (s *PostgresTreeStore) DeleteNodeAndResponsor(
 
 func (s *PostgresTreeStore) GetNode(ctx context.Context, treeID, userID string) (*TreeNodeRow, error) {
 	row := s.pool.QueryRow(ctx, getNodeSQL, treeID, userID)
+	return scanTreeNode(row)
+}
+
+func (s *PostgresTreeStore) GetNodeIncludingRemoved(ctx context.Context, treeID, userID string) (*TreeNodeRow, error) {
+	row := s.pool.QueryRow(ctx, getNodeIncludingRemovedSQL, treeID, userID)
 	return scanTreeNode(row)
 }
 

@@ -343,6 +343,84 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 			"the rollback restores what was there, and no more")
 	})
 
+	t.Run("GetNodeIncludingRemoved returns nil for an absent user", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(1), testTreeUUID(1), testUserUUID(1), 0, nil, nil, nil)))
+
+		got, err := s.GetNodeIncludingRemoved(ctx, testTreeUUID(1), testUserUUID(99))
+		require.NoError(t, err)
+		assert.Nil(t, got)
+	})
+
+	t.Run("GetNodeIncludingRemoved returns the active row", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree, user := testTreeUUID(1), testUserUUID(1)
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
+
+		got, err := s.GetNodeIncludingRemoved(ctx, tree, user)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, testNodeUUID(1), got.ID)
+		assert.Nil(t, got.RemovedAt)
+	})
+
+	t.Run("GetNodeIncludingRemoved returns the tombstone after a delete", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree, user := testTreeUUID(1), testUserUUID(1)
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
+		require.NoError(t, s.DeleteNode(ctx, tree, user))
+
+		got, err := s.GetNodeIncludingRemoved(ctx, tree, user)
+		require.NoError(t, err)
+		require.NotNil(t, got, "GetNode cannot see this; that is the point of the method")
+		assert.Equal(t, testNodeUUID(1), got.ID)
+		assert.NotNil(t, got.RemovedAt)
+	})
+
+	t.Run("GetNodeIncludingRemoved prefers the active row over a tombstone", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree, user := testTreeUUID(1), testUserUUID(1)
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
+		require.NoError(t, s.DeleteNode(ctx, tree, user))
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), tree, user, 0, nil, nil, nil)))
+
+		got, err := s.GetNodeIncludingRemoved(ctx, tree, user)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Nil(t, got.RemovedAt, "the live placement wins over its own history")
+		assert.Equal(t, testNodeUUID(2), got.ID)
+	})
+
+	// Two tombstones and no active row. With one tombstone every ordering
+	// agrees, so nothing until here can tell an ascending sort from a
+	// descending one. The consumer asks this to decide whether the event it is
+	// holding is the one that was removed, so the answer has to be the latest
+	// removal rather than the first.
+	t.Run("GetNodeIncludingRemoved returns the newest tombstone", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree, user := testTreeUUID(1), testUserUUID(1)
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
+		require.NoError(t, s.DeleteNode(ctx, tree, user))
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), tree, user, 0, nil, nil, nil)))
+		require.NoError(t, s.DeleteNode(ctx, tree, user))
+
+		got, err := s.GetNodeIncludingRemoved(ctx, tree, user)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, testNodeUUID(2), got.ID, "the most recent removal, not the first")
+	})
+
 	// The known divergence. Postgres runs the batch in one transaction;
 	// MemoryTreeStore loops InsertNode and keeps what it already appended.
 	// Task 4 makes the memory store stage, and this passes on both.

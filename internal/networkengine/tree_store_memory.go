@@ -115,6 +115,23 @@ func (s *MemoryTreeStore) GetNode(_ context.Context, treeID, userID string) (*Tr
 	return nil, nil
 }
 
+func (s *MemoryTreeStore) GetNodeIncludingRemoved(_ context.Context, treeID, userID string) (*TreeNodeRow, error) {
+	var best *TreeNodeRow
+	for i := range s.nodes {
+		if s.nodes[i].TreeID != treeID || s.nodes[i].UserID != userID {
+			continue
+		}
+		n := s.nodes[i]
+		if n.RemovedAt == nil {
+			return &n, nil
+		}
+		if best == nil || best.RemovedAt.Before(*n.RemovedAt) {
+			best = &n
+		}
+	}
+	return best, nil
+}
+
 func (s *MemoryTreeStore) GetChildren(_ context.Context, treeID, parentUserID string) ([]TreeNodeRow, error) {
 	var result []TreeNodeRow
 	for _, n := range s.nodes {

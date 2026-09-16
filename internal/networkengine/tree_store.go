@@ -44,6 +44,11 @@ type TreeStore interface {
 	// GetNode returns a single active node by tree and user ID.
 	GetNode(ctx context.Context, treeID, userID string) (*TreeNodeRow, error)
 
+	// GetNodeIncludingRemoved returns a node by tree and user ID whether or
+	// not it is soft-deleted. An active row wins over any tombstone, and the
+	// newest tombstone wins over older ones.
+	GetNodeIncludingRemoved(ctx context.Context, treeID, userID string) (*TreeNodeRow, error)
+
 	// GetChildren returns active children of a parent node.
 	GetChildren(ctx context.Context, treeID, parentUserID string) ([]TreeNodeRow, error)
 

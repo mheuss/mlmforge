@@ -230,20 +230,36 @@ const (
 
 // isEngineCode reports whether err carries the given worker error code.
 //
-// errors.As rather than a type assertion: withRetry wraps every engine failure
-// before a caller sees it, so the EngineError is never the outermost error.
+// errors.As rather than a type assertion, so a caller does not depend on how
+// deeply the transport's error is wrapped.
 func isEngineCode(err error, code string) bool {
 	var e *EngineError
 	return errors.As(err, &e) && e.Code == code
 }
 
-// positionMatchesPayload reports whether the engine's view of a placed node
-// agrees with the event that placed it.
+// positionMatchesProjection reports whether the engine's view of a placed node
+// agrees with what was projected for it.
+//
+// Two sources, because they answer different questions. The event is
+// authoritative for what was asked: user, parent, position and enrolment. The
+// stored row is authoritative for what is current: sponsor and depth.
+//
+// Sponsor comes from the row because it is the one compared field a later
+// event can change. Removing a user re-sponsors everyone they recruited, in
+// the engine and the store together, while the event that placed the node
+// still names the original sponsor. Comparing against the event would report
+// divergence for a node the engine placed exactly as asked.
+//
+// Depth comes from the row because the event does not carry one. It is
+// derived from the parent row when the placement is projected.
 //
 // False means "not confirmed equal", which covers a real disagreement and an
-// identifier neither side can parse. The caller treats both the same way.
-func positionMatchesPayload(pos *EnginePosition, p NodePlacedPayload, depth int) bool {
-	if pos == nil {
+// identifier either side fails to parse. The caller treats both the same way,
+// which is safe only because no unparseable identifier reaches here: the
+// engine emits canonical uuids, and every payload identifier is rejected
+// upstream by the worker or by the parent lookup before this is called.
+func positionMatchesProjection(pos *EnginePosition, p NodePlacedPayload, stored *TreeNodeRow) bool {
+	if pos == nil || stored == nil {
 		return false
 	}
 	if !sameUUID(pos.UserID, p.UserID) {
@@ -252,10 +268,10 @@ func positionMatchesPayload(pos *EnginePosition, p NodePlacedPayload, depth int)
 	if !samePtrUUID(pos.ParentUserID, &p.ParentID) {
 		return false
 	}
-	if !samePtrUUID(pos.SponsorUserID, &p.SponsorID) {
+	if !samePtrUUID(pos.SponsorUserID, stored.SponsorID) {
 		return false
 	}
-	if int(pos.Depth) != depth {
+	if int(pos.Depth) != stored.Depth {
 		return false
 	}
 	if pos.EnrolledAt != p.EnrolledAt.Unix() {
@@ -272,7 +288,8 @@ func positionMatchesPayload(pos *EnginePosition, p NodePlacedPayload, depth int)
 }
 
 // sameUUID compares two identifiers by value rather than by spelling, so case
-// and any other valid textual variation do not read as a disagreement.
+// and any other valid textual variation do not read as a disagreement. An
+// identifier that does not parse cannot be confirmed equal to anything.
 func sameUUID(a, b string) bool {
 	ua, err := uuid.Parse(a)
 	if err != nil {

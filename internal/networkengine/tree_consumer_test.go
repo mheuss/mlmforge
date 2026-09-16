@@ -1002,6 +1002,18 @@ func enginePos(mutate func(*EnginePosition)) *EnginePosition {
 	return p
 }
 
+// storedRow is the projected row the engine's view is compared against. Only
+// the fields that comparison reads are set.
+func storedRow(depth int, sponsor *string) *TreeNodeRow {
+	return &TreeNodeRow{
+		TreeID:    posTree,
+		UserID:    posUser,
+		ParentID:  ptr(posParent),
+		SponsorID: sponsor,
+		Depth:     depth,
+	}
+}
+
 func payloadFor(treeType string, position *int) NodePlacedPayload {
 	return NodePlacedPayload{
 		TreeID:     posTree,
@@ -1019,7 +1031,7 @@ func TestPositionMatchesPayload(t *testing.T) {
 		name    string
 		pos     *EnginePosition
 		payload NodePlacedPayload
-		depth   int
+		stored  *TreeNodeRow
 		want    bool
 	}{
 		{
@@ -1030,7 +1042,7 @@ func TestPositionMatchesPayload(t *testing.T) {
 			name:    "unilevel matches without comparing position",
 			pos:     enginePos(func(p *EnginePosition) { p.Position = 7 }),
 			payload: payloadFor(treeTypeUnilevel, nil),
-			depth:   2,
+			stored:  storedRow(2, ptr(posSponsor)),
 			want:    true,
 		},
 		{
@@ -1040,21 +1052,21 @@ func TestPositionMatchesPayload(t *testing.T) {
 			name:    "unilevel with a different parent does not match",
 			pos:     enginePos(func(p *EnginePosition) { p.ParentUserID = ptr(posOther) }),
 			payload: payloadFor(treeTypeUnilevel, nil),
-			depth:   2,
+			stored:  storedRow(2, ptr(posSponsor)),
 			want:    false,
 		},
 		{
 			name:    "unilevel with a different enrolled_at does not match",
 			pos:     enginePos(func(p *EnginePosition) { p.EnrolledAt = posEnrolled.Unix() + 1 }),
 			payload: payloadFor(treeTypeUnilevel, nil),
-			depth:   2,
+			stored:  storedRow(2, ptr(posSponsor)),
 			want:    false,
 		},
 		{
 			name:    "unilevel with a different depth does not match",
 			pos:     enginePos(nil),
 			payload: payloadFor(treeTypeUnilevel, nil),
-			depth:   9,
+			stored:  storedRow(9, ptr(posSponsor)),
 			want:    false,
 		},
 		{
@@ -1065,7 +1077,7 @@ func TestPositionMatchesPayload(t *testing.T) {
 			name:    "an unknown tree type is compared, not skipped",
 			pos:     enginePos(nil),
 			payload: payloadFor("board", nil),
-			depth:   2,
+			stored:  storedRow(2, ptr(posSponsor)),
 			want:    false,
 		},
 		{
@@ -1079,77 +1091,111 @@ func TestPositionMatchesPayload(t *testing.T) {
 				p.EnrolledAt = posEnrolled.Add(500 * time.Millisecond)
 				return p
 			}(),
-			depth: 2,
-			want:  true,
+			stored: storedRow(2, ptr(posSponsor)),
+			want:   true,
 		},
 		{
 			name:    "binary matches",
 			pos:     enginePos(nil),
 			payload: payloadFor(treeTypeBinary, intPtr(1)),
-			depth:   2,
+			stored:  storedRow(2, ptr(posSponsor)),
 			want:    true,
 		},
 		{
 			name:    "matrix matches",
 			pos:     enginePos(func(p *EnginePosition) { p.Position = 5 }),
 			payload: payloadFor(treeTypeMatrix, intPtr(5)),
-			depth:   2,
+			stored:  storedRow(2, ptr(posSponsor)),
 			want:    true,
 		},
 		{
 			name:    "the same uuid spelled in a different case matches",
 			pos:     enginePos(func(p *EnginePosition) { p.UserID = strings.ToUpper(posUser) }),
 			payload: payloadFor(treeTypeBinary, intPtr(1)),
-			depth:   2,
+			stored:  storedRow(2, ptr(posSponsor)),
 			want:    true,
 		},
 		{
 			name:    "a different user does not match",
 			pos:     enginePos(func(p *EnginePosition) { p.UserID = posOther }),
 			payload: payloadFor(treeTypeBinary, intPtr(1)),
-			depth:   2,
+			stored:  storedRow(2, ptr(posSponsor)),
 			want:    false,
 		},
 		{
 			name:    "a different parent does not match",
 			pos:     enginePos(func(p *EnginePosition) { p.ParentUserID = ptr(posOther) }),
 			payload: payloadFor(treeTypeBinary, intPtr(1)),
-			depth:   2,
+			stored:  storedRow(2, ptr(posSponsor)),
 			want:    false,
 		},
 		{
-			name:    "a different sponsor does not match",
+			name:    "a sponsor the row does not name does not match",
 			pos:     enginePos(func(p *EnginePosition) { p.SponsorUserID = ptr(posOther) }),
 			payload: payloadFor(treeTypeBinary, intPtr(1)),
-			depth:   2,
+			stored:  storedRow(2, ptr(posSponsor)),
 			want:    false,
 		},
 		{
 			name:    "a different depth does not match",
 			pos:     enginePos(nil),
 			payload: payloadFor(treeTypeBinary, intPtr(1)),
-			depth:   3,
+			stored:  storedRow(3, ptr(posSponsor)),
 			want:    false,
 		},
 		{
 			name:    "a different enrolled_at does not match",
 			pos:     enginePos(func(p *EnginePosition) { p.EnrolledAt = posEnrolled.Unix() + 1 }),
 			payload: payloadFor(treeTypeBinary, intPtr(1)),
-			depth:   2,
+			stored:  storedRow(2, ptr(posSponsor)),
 			want:    false,
 		},
 		{
 			name:    "a different position does not match for binary",
 			pos:     enginePos(func(p *EnginePosition) { p.Position = 0 }),
 			payload: payloadFor(treeTypeBinary, intPtr(1)),
-			depth:   2,
+			stored:  storedRow(2, ptr(posSponsor)),
 			want:    false,
 		},
 		{
 			name:    "a different position does not match for matrix",
 			pos:     enginePos(func(p *EnginePosition) { p.Position = 4 }),
 			payload: payloadFor(treeTypeMatrix, intPtr(5)),
-			depth:   2,
+			stored:  storedRow(2, ptr(posSponsor)),
+			want:    false,
+		},
+		{
+			// Option 2 in the review: sponsor is read from the row, not the
+			// event. Removing a sponsor re-sponsors their recruits in both the
+			// engine and the store, and the placing event still names the
+			// original. Comparing against the event would call this diverged.
+			name:    "a re-sponsored node still matches its row",
+			pos:     enginePos(func(p *EnginePosition) { p.SponsorUserID = ptr(posOther) }),
+			payload: payloadFor(treeTypeBinary, intPtr(1)),
+			stored:  storedRow(2, ptr(posOther)),
+			want:    true,
+		},
+		{
+			name:    "no stored row does not match",
+			pos:     enginePos(nil),
+			payload: payloadFor(treeTypeBinary, intPtr(1)),
+			stored:  nil,
+			want:    false,
+		},
+		{
+			// Both sides absent agree. This is the only call site that can
+			// reach samePtrUUID's nil-nil branch.
+			name:    "a sponsor absent from both the engine and the row matches",
+			pos:     enginePos(func(p *EnginePosition) { p.SponsorUserID = nil }),
+			payload: payloadFor(treeTypeBinary, intPtr(1)),
+			stored:  storedRow(2, nil),
+			want:    true,
+		},
+		{
+			name:    "a sponsor the engine holds but the row does not does not match",
+			pos:     enginePos(nil),
+			payload: payloadFor(treeTypeBinary, intPtr(1)),
+			stored:  storedRow(2, nil),
 			want:    false,
 		},
 		{
@@ -1158,21 +1204,21 @@ func TestPositionMatchesPayload(t *testing.T) {
 			name:    "the engine holding no parent does not match",
 			pos:     enginePos(func(p *EnginePosition) { p.ParentUserID = nil }),
 			payload: payloadFor(treeTypeBinary, intPtr(1)),
-			depth:   2,
+			stored:  storedRow(2, ptr(posSponsor)),
 			want:    false,
 		},
 		{
 			name:    "the engine holding no sponsor does not match",
 			pos:     enginePos(func(p *EnginePosition) { p.SponsorUserID = nil }),
 			payload: payloadFor(treeTypeBinary, intPtr(1)),
-			depth:   2,
+			stored:  storedRow(2, ptr(posSponsor)),
 			want:    false,
 		},
 		{
 			name:    "no position at all does not match",
 			pos:     nil,
 			payload: payloadFor(treeTypeBinary, intPtr(1)),
-			depth:   2,
+			stored:  storedRow(2, ptr(posSponsor)),
 			want:    false,
 		},
 		{
@@ -1182,7 +1228,7 @@ func TestPositionMatchesPayload(t *testing.T) {
 			name:    "a binary payload with no position does not match",
 			pos:     enginePos(nil),
 			payload: payloadFor(treeTypeBinary, nil),
-			depth:   2,
+			stored:  storedRow(2, ptr(posSponsor)),
 			want:    false,
 		},
 		{
@@ -1191,7 +1237,7 @@ func TestPositionMatchesPayload(t *testing.T) {
 			name:    "an unparseable id from the engine does not match",
 			pos:     enginePos(func(p *EnginePosition) { p.UserID = "not-a-uuid" }),
 			payload: payloadFor(treeTypeBinary, intPtr(1)),
-			depth:   2,
+			stored:  storedRow(2, ptr(posSponsor)),
 			want:    false,
 		},
 		{
@@ -1202,14 +1248,14 @@ func TestPositionMatchesPayload(t *testing.T) {
 				p.UserID = "not-a-uuid"
 				return p
 			}(),
-			depth: 2,
-			want:  false,
+			stored: storedRow(2, ptr(posSponsor)),
+			want:   false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, positionMatchesPayload(tt.pos, tt.payload, tt.depth))
+			assert.Equal(t, tt.want, positionMatchesProjection(tt.pos, tt.payload, tt.stored))
 		})
 	}
 }

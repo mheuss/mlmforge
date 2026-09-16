@@ -631,6 +631,27 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		assert.ErrorIs(t, err, ErrSlotConflict, "one active claim per tree, parent and position")
 	})
 
+	// A refused insert must not be a disguised update. On Postgres that is the
+	// difference between DO NOTHING and DO UPDATE; in the double it is whether
+	// the duplicate check runs before the append. Both stores keep the row the
+	// first event wrote, so the caller cannot use a redelivery to rewrite it.
+	t.Run("a refused insert leaves the stored row alone", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		user := testUserUUID(1)
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
+
+		redelivered := makeUUIDNode(testNodeUUID(1), tree, user, 7, nil, nil, nil)
+		require.ErrorIs(t, s.InsertNode(ctx, redelivered), ErrNodeAlreadyProjected)
+
+		got, err := s.GetNode(ctx, tree, user)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, 0, got.Depth, "the stored depth is the first event's, not the redelivery's")
+	})
+
 	// The discriminator HEU-576 is built on. A redelivered event carries the
 	// row id it already wrote, so it violates the primary key and the user
 	// index against the same row, and only the primary key means "already

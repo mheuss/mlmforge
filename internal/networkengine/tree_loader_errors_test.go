@@ -136,6 +136,9 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 		// wantErrIs is the cause this exit must keep reachable. Rendering it
 		// into the message is not enough.
 		wantErrIs error
+		// wantNoCause says this exit wraps nothing. A converted row sets it or
+		// sets wantErrIs, so dropping a cause during conversion fails here.
+		wantNoCause bool
 	}{
 		// validateTreeConfig
 		{
@@ -144,6 +147,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			engineFailsAfter: -1,
 			want:             `tree t has unsupported type "streamline"`,
 			wantKind:         TreeLoadConfigInvalid,
+			wantNoCause:      true,
 		},
 		{
 			name:             "matrix without params",
@@ -151,6 +155,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			engineFailsAfter: -1,
 			want:             "tree t requires width and spillover (use WithMatrixParams)",
 			wantKind:         TreeLoadConfigInvalid,
+			wantNoCause:      true,
 		},
 		{
 			name:             "matrix width below range",
@@ -159,6 +164,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			engineFailsAfter: -1,
 			want:             "tree t has matrix width 1 outside the supported range 2..255",
 			wantKind:         TreeLoadConfigInvalid,
+			wantNoCause:      true,
 		},
 		{
 			name:             "unsupported spillover",
@@ -167,6 +173,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			engineFailsAfter: -1,
 			want:             `tree t has unsupported spillover "sideways"`,
 			wantKind:         TreeLoadConfigInvalid,
+			wantNoCause:      true,
 		},
 
 		// the store read
@@ -398,6 +405,10 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 				"a row cannot both seed past InsertNode and drive an engine failure")
 			require.False(t, tt.store != nil && (tt.direct || tt.engineFailsAfter >= 0),
 				"a row bringing its own store cannot also seed past InsertNode or drive an engine failure")
+			if tt.wantKind != "" || tt.wantStage != "" {
+				require.True(t, (tt.wantErrIs != nil) != tt.wantNoCause,
+					"a converted row sets exactly one of wantErrIs and wantNoCause")
+			}
 			require.False(t, tt.wantKind != "" && tt.wantStage != "",
 				"a row carries a kind or a stage, not both")
 
@@ -421,9 +432,12 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			require.Error(t, err)
 			assert.Equal(t, tt.want, err.Error())
 
-			if tt.wantErrIs != nil {
+			switch {
+			case tt.wantErrIs != nil:
 				assert.ErrorIs(t, err, tt.wantErrIs,
 					"the cause must stay reachable, not just rendered")
+			case tt.wantNoCause:
+				assert.NoError(t, errors.Unwrap(err), "this exit wraps nothing")
 			}
 
 			var rejected *TreeLoadRejectedError
@@ -448,7 +462,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 
 			if storeRowMutator != nil {
 				assert.Zero(t, storeRowMutator.totalCalls(),
-					"a row whose store fails must reach the engine not at all")
+					"a row bringing its own store must make no engine call")
 			}
 
 			if m != nil {

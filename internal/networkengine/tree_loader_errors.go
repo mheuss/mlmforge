@@ -52,8 +52,9 @@ func (e *TreeLoadRejectedError) Unwrap() error { return e.Err }
 
 // TreeLoadStage names how far a load reached before it failed.
 //
-// Every stage means an operation was attempted and did not report success.
-// None of them means the operation did not take effect.
+// Every stage means the load reached that point and did not complete it. None
+// of them means an operation did not take effect. Whether a call was sent at
+// all is what Err distinguishes.
 type TreeLoadStage string
 
 const (
@@ -64,7 +65,7 @@ const (
 	// attempted and did not report success.
 	TreeLoadStageRoot TreeLoadStage = "root"
 	// TreeLoadStageNodes means the structure was created, the root was
-	// acknowledged, and a later placement did not report success.
+	// acknowledged, and a later placement did not complete.
 	TreeLoadStageNodes TreeLoadStage = "nodes"
 )
 
@@ -91,9 +92,9 @@ type TreeLoadIncompleteError struct {
 	// Confirmed is how many non-root placements the engine acknowledged.
 	Confirmed int
 	// Attempted is the one-based index of the placement that did not report
-	// success. That placement may still have taken effect, unless Err is nil,
-	// which means the load stopped before the call was sent and no request was
-	// made for it.
+	// success. When it is non-zero that placement may still have taken effect,
+	// unless Err is nil, which means the load stopped before the call was sent
+	// and no request was made for it.
 	Attempted int
 	// Total is how many non-root placements the load set out to make.
 	Total int

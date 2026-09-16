@@ -453,6 +453,8 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 				"a row cannot both seed past InsertNode and drive an engine failure")
 			require.False(t, tt.store != nil && (tt.direct || tt.engineFailsAfter >= 0),
 				"a row bringing its own store cannot also seed past InsertNode or drive an engine failure")
+			require.False(t, tt.wantFailedOp != "" && tt.engineFailsAfter < 0,
+				"a row naming an engine method must drive an engine failure")
 			require.False(t, tt.wantKind != "" && tt.wantStage != "",
 				"a row carries a kind or a stage, not both")
 
@@ -740,6 +742,7 @@ func TestTreeLoader_PostCreateExitsCarryTheirCounts(t *testing.T) {
 		opts          []LoadTreeOption
 		nodes         []TreeNodeRow
 		succeedFor    int
+		wantFailedOp  string
 		wantStage     TreeLoadStage
 		wantConfirmed int
 		wantAttempted int
@@ -750,6 +753,7 @@ func TestTreeLoader_PostCreateExitsCarryTheirCounts(t *testing.T) {
 		// stage.
 		{
 			name:          "create fails before anything is attempted",
+			wantFailedOp:  "CreateTree",
 			treeType:      treeTypeUnilevel,
 			nodes:         unilevelFixture(),
 			succeedFor:    0,
@@ -760,6 +764,7 @@ func TestTreeLoader_PostCreateExitsCarryTheirCounts(t *testing.T) {
 		},
 		{
 			name:          "matrix create fails before anything is attempted",
+			wantFailedOp:  "CreateMatrixTree",
 			treeType:      treeTypeMatrix,
 			opts:          matrixOpts(3),
 			nodes:         matrixFixture(),
@@ -771,6 +776,7 @@ func TestTreeLoader_PostCreateExitsCarryTheirCounts(t *testing.T) {
 		},
 		{
 			name:          "root fails before any non-root placement",
+			wantFailedOp:  "AddRoot",
 			treeType:      treeTypeUnilevel,
 			nodes:         unilevelFixture(),
 			succeedFor:    1,
@@ -784,6 +790,7 @@ func TestTreeLoader_PostCreateExitsCarryTheirCounts(t *testing.T) {
 			// does not come back, so two are confirmed and the message says
 			// "3 of 4".
 			name:          "third placement fails with two acknowledged",
+			wantFailedOp:  "AddNode",
 			treeType:      treeTypeUnilevel,
 			nodes:         unilevelFixture(),
 			succeedFor:    4,
@@ -794,6 +801,7 @@ func TestTreeLoader_PostCreateExitsCarryTheirCounts(t *testing.T) {
 		},
 		{
 			name:          "matrix second placement fails with one acknowledged",
+			wantFailedOp:  "AddNodeAt",
 			treeType:      treeTypeMatrix,
 			opts:          matrixOpts(3),
 			nodes:         matrixFixture(),
@@ -812,6 +820,8 @@ func TestTreeLoader_PostCreateExitsCarryTheirCounts(t *testing.T) {
 
 			var incomplete *TreeLoadIncompleteError
 			require.ErrorAs(t, err, &incomplete)
+			assert.Equal(t, tt.wantFailedOp, m.failedOp,
+				"the row must be driven by the method its name claims")
 			assert.Equal(t, tt.wantStage, incomplete.Stage)
 			assert.Equal(t, tt.wantConfirmed, incomplete.Confirmed)
 			assert.Equal(t, tt.wantAttempted, incomplete.Attempted)

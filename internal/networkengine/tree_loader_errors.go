@@ -33,6 +33,11 @@ type TreeLoadRejectedError struct {
 	TreeID string
 	// NodeIDs holds every user the message names, in the order the message
 	// names them. Empty when the message names none.
+	//
+	// The order reproduces the message and means nothing else. It does not rank
+	// blame, and where two users are named it does not say which came first. An
+	// entry may name a user with no row in this tree, because the message names
+	// references as well as rows, and the same user may appear twice.
 	NodeIDs []string
 	// Kind is what a caller switches on to decide whether to skip this tree,
 	// abort the run, or treat the failure as infrastructure.
@@ -77,7 +82,8 @@ const (
 type TreeLoadIncompleteError struct {
 	TreeID string
 	// NodeIDs holds every user the message names, in the order the message
-	// names them. Empty at TreeLoadStageCreate.
+	// names them, on the same terms as TreeLoadRejectedError's. Empty at
+	// TreeLoadStageCreate.
 	NodeIDs []string
 	// Stage names how far the load reached. It is for the operator reading the
 	// log, not for selecting a recovery action.

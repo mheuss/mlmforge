@@ -5,11 +5,15 @@
 > [Numbering](INDEX.md#numbering).
 >
 > **Partial status.** The result shape, the walk index as correlation key, plan
-> identity on the response, and the rank rule are decided. The outcome taxonomy
-> was provisional and HEU-556 has now settled it: neither always-on
-> classifications nor a bare upline sequence fits, and the record emits interned
-> paths instead. See "The volume problem" below. **The step-level outcome names
-> are still unimplemented, so they remain free to change until phase C ships.**
+> identity on the response, and the rank rule are decided. HEU-556 settled what
+> crosses the wire: neither always-on classifications nor a bare upline sequence
+> fits, and the record emits interned paths instead. See "The volume problem"
+> below.
+>
+> The outcome taxonomy is still provisional. This document never set one out, and
+> HEU-556 reconstructed twelve values from the traversal code to have something to
+> measure rather than to settle the names. The step-level names are unimplemented
+> and remain free to change until Phase C ships.
 
 ## The Problem
 
@@ -184,13 +188,16 @@ parent edge, and both of these read a node's children by sponsor edge.
 list, and `add_node` takes the two separately. No amount of recorded path
 closes it.
 
-HEU-556 settled this. The engine states both outcomes, and the run records the
+HEU-556 settled this. The record is to state both outcomes, and to store the
 tree facts behind them once per run and per node: each visited node's sponsored
 child ids in enrollment order, plus their enrollment timestamps where pass-up is
 configured. Both are then recomputable by joining against the run's snapshot
-set. This is the same assembled-not-duplicated move this document already makes
-for snapshot facts, applied to a second kind of run-invariant fact, and it costs
-200 entries against 1,820,000 step visits on the worst case measured.
+set. Neither half is built. `Forfeited` does not name its depth-cap branch
+today, and a pass-up skip emits no step at all.
+
+This is the same assembled-not-duplicated move this document already makes for
+snapshot facts, applied to a second kind of run-invariant fact, and it costs 200
+entries against 1,820,000 step visits on the worst case measured.
 
 **That makes both decisions reproducible, not verifiable.** The stored lists are
 what the engine says it read. Nothing proves it read the tree as it stood at
@@ -251,10 +258,10 @@ above; the fix was to go per walk so a node appears once. The same duplication
 reappeared across walks.
 
 So the record emits **interned paths**. A response carries a `paths` array, each
-walk names a `(path, offset, length)` slice rather than repeating nodes, stated
-decisions are kept only for consuming steps, and non-consuming skips are derived
-by the reader from the path plus the snapshot set plus the plan. Measured at
-9.4 MiB, 0.15x the hard ceiling.
+walk names a `(path, offset, length)` slice rather than repeating nodes, and
+stated decisions are kept for consuming steps. What becomes of non-consuming
+skips is a Phase C question, set out under "What This Means" below rather than
+answered here. Measured at 9.4 MiB, 0.15x the hard ceiling.
 
 This was not on either option list. The Revisit Trigger below offered a
 truncation cap or moving off the single-response path; HEU-556 offered those two
@@ -417,9 +424,9 @@ and after HEU-46 that is a migration rather than a rename.
 - Stairstep Walk 2 earnings carry a null walk. That is a recorded gap, not an
   oversight, and it is not evidence that no traversal occurred.
 - The `outcome`, `stop`, and mode strings are persisted by HEU-46. Nothing
-  persists them today, so the provisional names cost nothing to change while
-  HEU-556 is open. Once HEU-46 lands, changing one orphans every row carrying
-  the old value, the same way the `kind` strings in `commission_detail.go` do.
+  persists them today, so the provisional names cost nothing to change until
+  HEU-46 lands. After that, changing one orphans every row carrying the old
+  value, the same way the `kind` strings in `commission_detail.go` do.
 - Counter reconstruction is a count of consumed steps. Any new skip or forfeit
   path must record a step, or the count silently drifts.
 - **This document already breaks that rule once.** A generation breakaway that
@@ -430,8 +437,18 @@ and after HEU-46 that is a migration rather than a rename.
 - Walks reference interned paths rather than repeating node sequences. A shape
   that inlines a per-walk node list reintroduces the duplication measured at
   170.2 MiB against a 64 MiB ceiling.
-- Stated decisions cover consuming steps. Non-consuming skips are derived by the
-  reader, except `pass_up`, which names the recruit that caused it.
+- Stated decisions cover consuming steps, which is everything the engine records
+  today. `StepOutcome` carries two variants and both consume, so no non-consuming
+  skip is emitted at all.
+- Phase C owns what happens to non-consuming skips, and the answer is not uniform
+  across them. Compression and a dynamic threshold are derivable by a reader from
+  the path, the snapshot set and the plan. `pass_up` is not: it derives from
+  sponsor relationships and enrollment order, and neither is in
+  `DistributorSnapshot`. A shape that derives every skip loses `pass_up`. One that
+  states every skip pays for outcomes a reader could have computed.
+- **Do not emit a non-consuming step before Phase C.** Recording one requires
+  `consumed: false`, and that breaks `steps.len()` for every reader written
+  against current behavior.
 - The storage half persists the run's per-node sponsored-child facts alongside
   the snapshot set, where the plan enables active leg tiers or pass-up.
 - `depth_cap` and `pass_up` records are reproducible, not verifiable. Do not

@@ -448,7 +448,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 
 			if storeRowMutator != nil {
 				assert.Zero(t, storeRowMutator.totalCalls(),
-					"the read runs before the engine, so a failed read reaches it not at all")
+					"a row whose store fails must reach the engine not at all")
 			}
 
 			if m != nil {

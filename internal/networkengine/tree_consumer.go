@@ -3,6 +3,7 @@ package networkengine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -216,6 +217,23 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 		return fmt.Errorf("remove node and re-sponsor recruits: %w", err)
 	}
 	return nil
+}
+
+// Worker error codes. The Rust worker maps its TreeError variants to these
+// strings, so they are a contract with it rather than values chosen here.
+const (
+	engineCodeUserAlreadyExists = "USER_ALREADY_EXISTS"
+	engineCodeRootAlreadyExists = "ROOT_ALREADY_EXISTS"
+	engineCodeUserNotFound      = "USER_NOT_FOUND"
+)
+
+// isEngineCode reports whether err carries the given worker error code.
+//
+// errors.As rather than a type assertion: withRetry wraps every engine failure
+// before a caller sees it, so the EngineError is never the outermost error.
+func isEngineCode(err error, code string) bool {
+	var e *EngineError
+	return errors.As(err, &e) && e.Code == code
 }
 
 // reconcileOutcome is what an inspection concluded about a mutation the

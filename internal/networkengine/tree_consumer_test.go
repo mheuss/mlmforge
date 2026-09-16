@@ -901,3 +901,84 @@ func TestWithRetry_DoesNotReconcileOnACancelledContext(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, 0, reconcileCalls, "nothing is inspected once the context is done")
 }
+
+func TestIsEngineCode(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		code string
+		want bool
+	}{
+		{
+			name: "bare EngineError with the code",
+			err:  &EngineError{Code: engineCodeUserNotFound, Message: "no such user"},
+			code: engineCodeUserNotFound,
+			want: true,
+		},
+		{
+			name: "bare EngineError with a different code",
+			err:  &EngineError{Code: engineCodeUserAlreadyExists, Message: "taken"},
+			code: engineCodeUserNotFound,
+			want: false,
+		},
+		{
+			// withRetry wraps every engine failure before any caller sees it,
+			// so this is the shape reconcile actually receives. A type
+			// assertion in place of errors.As passes every other row here and
+			// fails this one.
+			name: "wrapped EngineError with the code",
+			err:  fmt.Errorf("engine add_node failed after 2 retries: %w", &EngineError{Code: engineCodeUserAlreadyExists}),
+			code: engineCodeUserAlreadyExists,
+			want: true,
+		},
+		{
+			name: "twice-wrapped EngineError with the code",
+			err: fmt.Errorf("handle node_placed: %w",
+				fmt.Errorf("engine add_node failed: %w", &EngineError{Code: engineCodeRootAlreadyExists})),
+			code: engineCodeRootAlreadyExists,
+			want: true,
+		},
+		{
+			name: "wrapped EngineError with a different code",
+			err:  fmt.Errorf("engine add_node failed: %w", &EngineError{Code: engineCodeUserAlreadyExists}),
+			code: engineCodeUserNotFound,
+			want: false,
+		},
+		{
+			// The message carries the code text, so a Contains-style check
+			// would say true here.
+			name: "plain error whose text names the code",
+			err:  errors.New("engine error [USER_NOT_FOUND]: no such user"),
+			code: engineCodeUserNotFound,
+			want: false,
+		},
+		{
+			name: "nil error",
+			err:  nil,
+			code: engineCodeUserNotFound,
+			want: false,
+		},
+		{
+			name: "empty code matches nothing",
+			err:  &EngineError{Code: engineCodeUserNotFound},
+			code: "",
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isEngineCode(tt.err, tt.code))
+		})
+	}
+}
+
+// The three codes are a contract with the Rust worker, which maps its
+// TreeError variants to these strings. A typo here is invisible: reconcile
+// simply never fires, and the consumer reports the engine failure it was
+// meant to resolve.
+func TestEngineCodeConstantsMatchTheWorker(t *testing.T) {
+	assert.Equal(t, "USER_ALREADY_EXISTS", engineCodeUserAlreadyExists)
+	assert.Equal(t, "ROOT_ALREADY_EXISTS", engineCodeRootAlreadyExists)
+	assert.Equal(t, "USER_NOT_FOUND", engineCodeUserNotFound)
+}

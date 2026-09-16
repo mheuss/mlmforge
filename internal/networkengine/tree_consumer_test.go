@@ -985,10 +985,12 @@ func TestEngineCodeConstantsMatchTheWorker(t *testing.T) {
 }
 
 const (
-	posUser    = "11111111-1111-1111-1111-111111111111"
-	posParent  = "22222222-2222-2222-2222-222222222222"
-	posSponsor = "33333333-3333-3333-3333-333333333333"
-	posOther   = "44444444-4444-4444-4444-444444444444"
+	// Hex letters, not just digits. strings.ToUpper on an all-digit uuid is
+	// a no-op, so the case-difference row would compare a string with itself.
+	posUser    = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
+	posParent  = "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb"
+	posSponsor = "cccccccc-3333-4333-8333-cccccccccccc"
+	posOther   = "dddddddd-4444-4444-8444-dddddddddddd"
 )
 
 var posEnrolled = time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)

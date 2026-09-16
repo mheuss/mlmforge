@@ -124,6 +124,12 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 		// "fail the first call".
 		engineFailsAfter int
 		want             string
+		// wantKind and wantStage name the type this exit returns once it is
+		// converted. A row with neither set asserts the exit is still untyped,
+		// so converting an exit without updating its row fails here.
+		wantKind    TreeLoadRejectionKind
+		wantStage   TreeLoadStage
+		wantNodeIDs []string
 	}{
 		// validateTreeConfig
 		{
@@ -131,12 +137,14 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			treeType:         "streamline",
 			engineFailsAfter: -1,
 			want:             `tree t has unsupported type "streamline"`,
+			wantKind:         TreeLoadConfigInvalid,
 		},
 		{
 			name:             "matrix without params",
 			treeType:         treeTypeMatrix,
 			engineFailsAfter: -1,
 			want:             "tree t requires width and spillover (use WithMatrixParams)",
+			wantKind:         TreeLoadConfigInvalid,
 		},
 		{
 			name:             "matrix width below range",
@@ -144,6 +152,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			opts:             []LoadTreeOption{WithMatrixParams(1, "breadth_first")},
 			engineFailsAfter: -1,
 			want:             "tree t has matrix width 1 outside the supported range 2..255",
+			wantKind:         TreeLoadConfigInvalid,
 		},
 		{
 			name:             "unsupported spillover",
@@ -151,6 +160,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			opts:             []LoadTreeOption{WithMatrixParams(3, "sideways")},
 			engineFailsAfter: -1,
 			want:             `tree t has unsupported spillover "sideways"`,
+			wantKind:         TreeLoadConfigInvalid,
 		},
 
 		// the store read
@@ -397,6 +407,26 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			require.Error(t, err)
 			assert.Equal(t, tt.want, err.Error())
 
+			var rejected *TreeLoadRejectedError
+			var incomplete *TreeLoadIncompleteError
+			switch {
+			case tt.wantKind != "":
+				require.ErrorAs(t, err, &rejected)
+				assert.Equal(t, tt.wantKind, rejected.Kind)
+				assert.Equal(t, "t", rejected.TreeID)
+				assert.Equal(t, tt.wantNodeIDs, rejected.NodeIDs)
+			case tt.wantStage != "":
+				require.ErrorAs(t, err, &incomplete)
+				assert.Equal(t, tt.wantStage, incomplete.Stage)
+				assert.Equal(t, "t", incomplete.TreeID)
+				assert.Equal(t, tt.wantNodeIDs, incomplete.NodeIDs)
+			default:
+				assert.False(t, errors.As(err, &rejected),
+					"this exit is typed now; give the row a wantKind")
+				assert.False(t, errors.As(err, &incomplete),
+					"this exit is typed now; give the row a wantStage")
+			}
+
 			if m != nil {
 				assert.Equal(t, tt.engineFailsAfter+1, m.calls,
 					"LoadTree must return on engine call %d and make no call after it",
@@ -572,31 +602,4 @@ func TestTreeLoadErrors_DoNotAliasTheCallersSlice(t *testing.T) {
 
 	assert.Equal(t, []string{"u0", "u9"}, rejected.NodeIDs)
 	assert.Equal(t, []string{"u0", "u9"}, incomplete.NodeIDs)
-}
-
-func TestTreeLoader_ConfigExitsAreRejectedConfigInvalid(t *testing.T) {
-	tests := []struct {
-		name     string
-		treeType string
-		opts     []LoadTreeOption
-	}{
-		{"unsupported tree type", "streamline", nil},
-		{"matrix without params", "matrix", nil},
-		{"matrix width below range", "matrix", []LoadTreeOption{WithMatrixParams(1, "breadth_first")}},
-		{"unsupported spillover", "matrix", []LoadTreeOption{WithMatrixParams(3, "sideways")}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mutator := &stubMutator{}
-			err := NewTreeLoader(NewMemoryTreeStore(), mutator).LoadTree(
-				context.Background(), "t", tt.treeType, tt.opts...)
-
-			var rejected *TreeLoadRejectedError
-			require.ErrorAs(t, err, &rejected)
-			assert.Equal(t, TreeLoadConfigInvalid, rejected.Kind)
-			assert.Equal(t, "t", rejected.TreeID)
-			assert.Zero(t, mutator.totalCalls(), "config failure makes no engine calls")
-		})
-	}
 }

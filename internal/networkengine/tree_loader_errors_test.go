@@ -490,7 +490,6 @@ func TestTreeLoadIncompleteError_CarriesProgress(t *testing.T) {
 	assert.Equal(t, 2, err.Confirmed)
 	assert.Equal(t, 3, err.Attempted)
 	assert.Equal(t, 5, err.Total)
-	assert.Equal(t, err.Attempted-1, err.Confirmed, "Confirmed trails the message index by one")
 
 	var target *EngineError
 	assert.True(t, errors.As(err, &target), "engine error stays reachable")
@@ -499,8 +498,8 @@ func TestTreeLoadIncompleteError_CarriesProgress(t *testing.T) {
 // This asserts the constructor, not the guards. Feeding a literal message in
 // and reading the same literal back cannot catch a typo at the return site, so
 // it is named for what it does. The two replay-loop guards have no message
-// test because validateNodes proves both conditions impossible before the
-// replay loop runs, so no fixture reaches them.
+// test because both conditions are rejected during validation, so no fixture
+// reaches them.
 func TestTreeLoadIncompleteError_ConstructorStoresWhatItIsGiven(t *testing.T) {
 	nilRefs := newTreeLoadIncomplete(TreeLoadStageNodes, "t", nil, 3, 5,
 		"node u3 in tree t has nil parent or sponsor (data corruption; 3 of 5, tree left partly built)",

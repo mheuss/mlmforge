@@ -26,9 +26,9 @@ const (
 // because the two need opposite handling: this one leaves the engine usable,
 // the other may not.
 //
-// The message is stored rather than rendered from the fields, unlike the other
-// typed errors in this package. Each exit's wording is a settled decision, and
-// rendering here would move the choice of wording into this type.
+// The message is stored rather than rendered from the fields. Each exit's
+// wording is a settled decision, and rendering here would move the choice of
+// wording into this type.
 type TreeLoadRejectedError struct {
 	TreeID string
 	// NodeIDs holds every user the message names, in the order the message
@@ -71,9 +71,9 @@ const (
 // index the message carries, so within TreeLoadStageNodes Confirmed is
 // Attempted minus one. All three are 0 at the other stages.
 //
-// The message is stored rather than rendered from the fields, unlike the other
-// typed errors in this package. Each exit's wording is a settled decision, and
-// rendering here would move the choice of wording into this type.
+// The message is stored rather than rendered from the fields. Each exit's
+// wording is a settled decision, and rendering here would move the choice of
+// wording into this type.
 type TreeLoadIncompleteError struct {
 	TreeID string
 	// NodeIDs holds every user the message names, in the order the message

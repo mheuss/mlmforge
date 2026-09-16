@@ -82,7 +82,7 @@ func (c *TreeEventConsumer) handleRootAdded(ctx context.Context, event platform.
 
 	return c.withRetry(ctx, "add_root", payload.TreeID, payload.UserID, func() error {
 		return c.engine.AddRoot(ctx, payload.TreeID, payload.UserID, payload.EnrolledAt.Unix())
-	})
+	}, nil)
 }
 
 func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform.Event) error {
@@ -181,7 +181,7 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform
 		return c.withRetry(ctx, "add_node_at", payload.TreeID, payload.UserID, func() error {
 			return c.engine.AddNodeAt(ctx, payload.TreeID, payload.UserID,
 				payload.ParentID, payload.SponsorID, *payload.Position, payload.EnrolledAt.Unix())
-		})
+		}, nil)
 	}
 	return c.withRetry(ctx, "add_node", payload.TreeID, payload.UserID, func() error {
 		var opts []AddNodeOption
@@ -190,7 +190,7 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform
 		}
 		return c.engine.AddNode(ctx, payload.TreeID, payload.UserID,
 			payload.ParentID, payload.SponsorID, payload.EnrolledAt.Unix(), opts...)
-	})
+	}, nil)
 }
 
 func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platform.Event) error {
@@ -208,7 +208,7 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 		m, err := c.engine.RemoveNode(ctx, payload.TreeID, payload.UserID)
 		moved = m
 		return err
-	}); err != nil {
+	}, nil); err != nil {
 		return err
 	}
 
@@ -218,14 +218,60 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 	return nil
 }
 
+// reconcileOutcome is what an inspection concluded about a mutation the
+// engine refused.
+type reconcileOutcome int
+
+const (
+	// reconcileNotApplicable: the error is not one reconcile can speak to.
+	reconcileNotApplicable reconcileOutcome = iota
+	// reconcileConverged: the engine already holds what this event asked for.
+	reconcileConverged
+	// reconcileDiverged: the engine holds something else. Not retryable.
+	reconcileDiverged
+	// reconcileInconclusive: the inspection itself failed, so nothing was
+	// learned. Kept apart from diverged so a timed-out query is retried
+	// rather than reported as the engine disagreeing.
+	reconcileInconclusive
+)
+
 // withRetry executes fn with retries. Respects context cancellation between
 // attempts. Logs at ERROR level when all retries are exhausted (interim
 // notification path until HEU-296).
-func (c *TreeEventConsumer) withRetry(ctx context.Context, op, treeID, userID string, fn func() error) error {
+//
+// reconcile may be nil. When set, it is consulted on each failed attempt and
+// decides whether the failure is really a failure.
+func (c *TreeEventConsumer) withRetry(
+	ctx context.Context, op, treeID, userID string,
+	fn func() error,
+	reconcile func(ctx context.Context, err error) (reconcileOutcome, error),
+) error {
 	var lastErr error
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
 		if err := fn(); err != nil {
 			lastErr = err
+
+			if reconcile != nil {
+				outcome, rerr := reconcile(ctx, err)
+				switch outcome {
+				case reconcileConverged:
+					return nil
+				case reconcileDiverged:
+					// A caller returning diverged with no error would
+					// otherwise report the one outcome that means the store
+					// and the engine disagree as success.
+					if rerr == nil {
+						rerr = fmt.Errorf(
+							"engine %s diverged from the event, tree_id=%s user_id=%s",
+							op, treeID, userID)
+					}
+					return rerr
+				case reconcileInconclusive:
+					log.Printf("ERROR tree consumer: reconcile inspection failed op=%s tree_id=%s user_id=%s err=%v",
+						op, treeID, userID, rerr)
+				}
+			}
+
 			if attempt < c.maxRetries {
 				select {
 				case <-ctx.Done():

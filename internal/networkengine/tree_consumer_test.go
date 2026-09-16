@@ -3,6 +3,7 @@ package networkengine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"testing"
@@ -701,4 +702,137 @@ func TestTreeConsumer_NilPayload(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unmarshal root_added payload")
 	assert.Empty(t, transport.calls, "engine should not be called on nil payload")
+}
+
+// newRetryTestConsumer builds a consumer with no retry delay, so the retry
+// tests do not spend maxRetries * retryDelay sleeping.
+func newRetryTestConsumer() *TreeEventConsumer {
+	c := NewTreeEventConsumer(NewMemoryTreeStore(), &stubMutator{})
+	c.retryDelay = 0
+	return c
+}
+
+func TestWithRetry_DoesNotReconcileOnFirstSuccess(t *testing.T) {
+	c := newRetryTestConsumer()
+	reconcileCalls := 0
+
+	err := c.withRetry(context.Background(), "add_node", "t", "u",
+		func() error { return nil },
+		func(context.Context, error) (reconcileOutcome, error) {
+			reconcileCalls++
+			return reconcileNotApplicable, nil
+		})
+
+	require.NoError(t, err)
+	assert.Equal(t, 0, reconcileCalls, "reconcile must not run when fn succeeds")
+}
+
+func TestWithRetry_ConvergedStopsAndSucceeds(t *testing.T) {
+	c := newRetryTestConsumer()
+	attempts := 0
+
+	err := c.withRetry(context.Background(), "add_node", "t", "u",
+		func() error { attempts++; return errors.New("USER_ALREADY_EXISTS") },
+		func(context.Context, error) (reconcileOutcome, error) {
+			return reconcileConverged, nil
+		})
+
+	require.NoError(t, err, "a mutation the engine already applied is not a failure")
+	assert.Equal(t, 1, attempts, "converged must not retry")
+}
+
+func TestWithRetry_DivergedReturnsTheReconcileError(t *testing.T) {
+	c := newRetryTestConsumer()
+	attempts := 0
+	divergence := errors.New("engine holds a different parent")
+
+	err := c.withRetry(context.Background(), "add_node", "t", "u",
+		func() error { attempts++; return errors.New("USER_ALREADY_EXISTS") },
+		func(context.Context, error) (reconcileOutcome, error) {
+			return reconcileDiverged, divergence
+		})
+
+	require.ErrorIs(t, err, divergence)
+	assert.Equal(t, 1, attempts, "divergence is not retryable")
+}
+
+// A handler returning diverged with no error would otherwise make withRetry
+// return nil, so the consumer would report success for the one outcome that
+// means the store and the engine disagree.
+func TestWithRetry_DivergedWithoutAnErrorStillFails(t *testing.T) {
+	c := newRetryTestConsumer()
+
+	err := c.withRetry(context.Background(), "add_node", "t", "u",
+		func() error { return errors.New("USER_ALREADY_EXISTS") },
+		func(context.Context, error) (reconcileOutcome, error) {
+			return reconcileDiverged, nil
+		})
+
+	require.Error(t, err, "diverged must never read as success")
+	assert.Contains(t, err.Error(), "add_node")
+	assert.Contains(t, err.Error(), "t")
+	assert.Contains(t, err.Error(), "u")
+}
+
+func TestWithRetry_NotApplicableRetriesAndReportsTheEngineError(t *testing.T) {
+	c := newRetryTestConsumer()
+	attempts := 0
+	engineErr := errors.New("PIPE_DESYNC")
+
+	err := c.withRetry(context.Background(), "add_node", "t", "u",
+		func() error { attempts++; return engineErr },
+		func(context.Context, error) (reconcileOutcome, error) {
+			return reconcileNotApplicable, nil
+		})
+
+	require.ErrorIs(t, err, engineErr)
+	assert.Equal(t, c.maxRetries+1, attempts)
+}
+
+// The inconclusive case is why there are four outcomes rather than three. An
+// inspection that could not answer must not be read as divergence, and the
+// error the caller sees has to name the mutation that failed rather than the
+// inspection that could not check it.
+func TestWithRetry_InconclusiveRetriesAndReportsTheEngineError(t *testing.T) {
+	c := newRetryTestConsumer()
+	attempts := 0
+	engineErr := errors.New("USER_ALREADY_EXISTS")
+	inspectErr := errors.New("get_position timed out")
+
+	err := c.withRetry(context.Background(), "add_node", "t", "u",
+		func() error { attempts++; return engineErr },
+		func(context.Context, error) (reconcileOutcome, error) {
+			return reconcileInconclusive, inspectErr
+		})
+
+	assert.Equal(t, c.maxRetries+1, attempts, "an inconclusive inspection retries")
+	require.ErrorIs(t, err, engineErr, "the caller is told what failed to apply")
+	assert.NotErrorIs(t, err, inspectErr, "not what failed to inspect")
+}
+
+func TestWithRetry_ReconcileSeesTheEngineError(t *testing.T) {
+	c := newRetryTestConsumer()
+	engineErr := errors.New("USER_ALREADY_EXISTS")
+	var seen error
+
+	_ = c.withRetry(context.Background(), "add_node", "t", "u",
+		func() error { return engineErr },
+		func(_ context.Context, err error) (reconcileOutcome, error) {
+			seen = err
+			return reconcileDiverged, errors.New("x")
+		})
+
+	assert.ErrorIs(t, seen, engineErr, "reconcile decides from the error fn returned")
+}
+
+func TestWithRetry_NilReconcileKeepsTheOldBehavior(t *testing.T) {
+	c := newRetryTestConsumer()
+	attempts := 0
+	engineErr := errors.New("boom")
+
+	err := c.withRetry(context.Background(), "add_node", "t", "u",
+		func() error { attempts++; return engineErr }, nil)
+
+	require.ErrorIs(t, err, engineErr)
+	assert.Equal(t, c.maxRetries+1, attempts)
 }

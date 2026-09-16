@@ -623,3 +623,20 @@ func TestTreeLoadErrors_DoNotAliasTheCallersSlice(t *testing.T) {
 	assert.Equal(t, []string{"u0", "u9"}, rejected.NodeIDs)
 	assert.Equal(t, []string{"u0", "u9"}, incomplete.NodeIDs)
 }
+
+// The golden table above reads an empty kind or stage as "this exit is not
+// converted yet". A constant declared empty would make a converted exit read as
+// unconverted, and the table would go green on it. The two lists are maintained
+// by hand, so a new constant has to be added here to be covered.
+func TestTreeLoadErrors_NoConstantCollidesWithTheSentinel(t *testing.T) {
+	for _, k := range []TreeLoadRejectionKind{
+		TreeLoadDataInvalid, TreeLoadConfigInvalid, TreeLoadStoreReadFailed,
+	} {
+		assert.NotEmpty(t, k, "an empty kind collides with the golden table's sentinel")
+	}
+	for _, stage := range []TreeLoadStage{
+		TreeLoadStageCreate, TreeLoadStageRoot, TreeLoadStageNodes,
+	} {
+		assert.NotEmpty(t, stage, "an empty stage collides with the golden table's sentinel")
+	}
+}

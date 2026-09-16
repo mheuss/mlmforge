@@ -254,3 +254,9 @@ func TestMemoryTreeStore_DeleteNodeAndResponsor(t *testing.T) {
 		assert.NotNil(t, still, "a failed re-sponsor must not leave the node deleted")
 	})
 }
+
+func TestMemoryTreeStore_Suite(t *testing.T) {
+	runTreeStoreSuite(t, func(t *testing.T) TreeStore {
+		return NewMemoryTreeStore()
+	})
+}

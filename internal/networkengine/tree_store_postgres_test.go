@@ -360,3 +360,9 @@ func TestPostgresTreeStore_TimestampsPopulated(t *testing.T) {
 	assert.True(t, got.CreatedAt.After(before), "created_at should be set by database")
 	assert.True(t, got.UpdatedAt.After(before), "updated_at should be set by database")
 }
+
+func TestPostgresTreeStore_Suite(t *testing.T) {
+	runTreeStoreSuite(t, func(t *testing.T) TreeStore {
+		return newTestPostgresTreeStore(t)
+	})
+}

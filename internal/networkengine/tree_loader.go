@@ -602,10 +602,7 @@ func cycleError(treeID string, nodes []TreeNodeRow, ordered []*TreeNodeRow, byID
 		stopped = path[len(path)-1]
 	}
 	via := ""
-	var named []string
-	if stopped != "" {
-		named = append(named, stopped)
-	}
+	named := []string{stopped}
 	if len(path) >= 2 {
 		via = fmt.Sprintf(", reached from %s", path[len(path)-2])
 		named = append(named, path[len(path)-2])

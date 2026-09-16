@@ -116,8 +116,8 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 		opts     []LoadTreeOption
 		store    TreeStore
 		nodes    []TreeNodeRow
-		// direct seeds MemoryTreeStore's slice instead of calling InsertNode,
-		// for fixtures the store's index mirrors refuse.
+		// direct seeds the store's rows in one go instead of inserting them one
+		// by one, for fixtures an insert would reject before the load runs.
 		direct bool
 		// engineFailsAfter is how many engine calls to allow before failing.
 		// Negative means the mutator never fails, which is what every preflight
@@ -133,6 +133,9 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 		wantKind    TreeLoadRejectionKind
 		wantStage   TreeLoadStage
 		wantNodeIDs []string
+		// wantErrIs is the cause this exit must keep reachable. Rendering it
+		// into the message is not enough.
+		wantErrIs error
 	}{
 		// validateTreeConfig
 		{
@@ -173,6 +176,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			store:            &failingTreeStore{TreeStore: NewMemoryTreeStore(), err: storeErr},
 			engineFailsAfter: -1,
 			want:             "load tree t: connection refused",
+			wantErrIs:        storeErr,
 		},
 
 		// validateNodes
@@ -399,8 +403,6 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			case tt.store != nil:
 				err = NewTreeLoader(tt.store, &stubMutator{}).LoadTree(
 					context.Background(), "t", tt.treeType, tt.opts...)
-				assert.ErrorIs(t, err, storeErr,
-					"the store's error must stay reachable, not just rendered")
 			case tt.direct:
 				_, err = loadWithStubDirect(t, tt.treeType, tt.nodes, tt.opts...)
 			case tt.engineFailsAfter >= 0:
@@ -415,6 +417,11 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 
 			require.Error(t, err)
 			assert.Equal(t, tt.want, err.Error())
+
+			if tt.wantErrIs != nil {
+				assert.ErrorIs(t, err, tt.wantErrIs,
+					"the cause must stay reachable, not just rendered")
+			}
 
 			var rejected *TreeLoadRejectedError
 			var incomplete *TreeLoadIncompleteError

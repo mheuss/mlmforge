@@ -70,8 +70,7 @@ type TreeStore interface {
 	//
 	// Rows tying on depth and enrolment time have no defined order. There is no
 	// further tiebreak here and none in the SQL, so the message names whichever
-	// the sort happened to put first. A backfill that stamps one timestamp
-	// across a tree produces exactly that tie.
+	// the sort happened to put first.
 	//
 	// idx_tree_nodes_depth(tree_id, depth) backs the leading key, so the cost
 	// is a sort within each depth group.

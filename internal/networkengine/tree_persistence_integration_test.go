@@ -890,9 +890,6 @@ func TestTreePersistence_RedeliveryAfterPartialProjection(t *testing.T) {
 }
 
 // A placement redelivered after its node was removed must not resurrect it.
-// The tombstone keeps the event id, so the insert is skipped and the engine no
-// longer holds the user, which is the pair that would otherwise let the add
-// succeed.
 func TestTreePersistence_ReplayedPlacementRefused(t *testing.T) {
 	eventStore, treeStore, engine, pool := newIntegrationDeps(t)
 	ctx := context.Background()
@@ -902,8 +899,8 @@ func TestTreePersistence_ReplayedPlacementRefused(t *testing.T) {
 	stream := TreeStreamName(treeID)
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	// Unilevel rather than matrix: a matrix removal cannot reach the engine
-	// at all, HEU-582.
+	// Unilevel rather than matrix: a matrix removal fails before the engine
+	// call, HEU-582.
 	require.NoError(t, engine.CreateTree(ctx, treeID, treeTypeUnilevel))
 	consumer := NewTreeEventConsumer(treeStore, engine)
 
@@ -930,15 +927,15 @@ func TestTreePersistence_ReplayedPlacementRefused(t *testing.T) {
 
 	active, err := treeStore.GetNode(ctx, treeID, u2)
 	require.NoError(t, err)
-	assert.Nil(t, active, "the refusal left no active row")
+	assert.Nil(t, active, "GetNode returned an active row for the user: %+v", active)
 
 	_, perr := engine.GetPosition(ctx, treeID, u2)
 	require.True(t, isEngineCode(perr, engineCodeUserNotFound),
 		"the code lives in a field, not in the message text: %v", perr)
 
-	var rows int
+	var tombstones int
 	require.NoError(t, pool.QueryRow(ctx,
-		"SELECT count(*) FROM tree_nodes WHERE tree_id = $1 AND user_id = $2",
-		treeID, u2).Scan(&rows))
-	assert.Equal(t, 1, rows, "the refusal wrote no second row for the user")
+		"SELECT count(*) FROM tree_nodes WHERE tree_id = $1 AND user_id = $2 AND removed_at IS NOT NULL",
+		treeID, u2).Scan(&tombstones))
+	assert.Equal(t, 1, tombstones, "tree_nodes holds %d removed rows for the user in this tree", tombstones)
 }

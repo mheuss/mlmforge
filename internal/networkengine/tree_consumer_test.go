@@ -1540,14 +1540,24 @@ func TestHandleRootAdded_ReconcileSkipsOtherEngineErrors(t *testing.T) {
 	assert.NotNil(t, activeRow(t, store, posUser), "and no compensation either")
 }
 
-// deleteRecordingStore records which users the compensation deleted, so a test can
-// assert the blast radius rather than only that this event's row is gone.
+// deleteRecordingStore records which users the compensation deleted, so a test
+// can assert the blast radius rather than only that this event's row is gone.
+//
+// It refuses a cancelled context, which MemoryTreeStore does not (HEU-798) and
+// PostgresTreeStore does, because a pool honours it. Without that the memory
+// double cannot tell a compensation shielded from cancellation from one that
+// is not.
 type deleteRecordingStore struct {
 	*MemoryTreeStore
-	deleted []string
+	deleted  []string
+	attempts []string
 }
 
 func (c *deleteRecordingStore) DeleteNode(ctx context.Context, treeID, userID string) error {
+	c.attempts = append(c.attempts, userID)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	c.deleted = append(c.deleted, userID)
 	return c.MemoryTreeStore.DeleteNode(ctx, treeID, userID)
 }
@@ -1637,6 +1647,7 @@ func TestHandleRootAdded_CompensationSurvivesCancellation(t *testing.T) {
 	err := c.HandleEvent(ctx, makeEvent(EventTypeRootAdded, rootPayload()))
 
 	require.Error(t, err)
-	assert.Equal(t, []string{posUser}, store.deleted, "the compensation still ran")
-	assert.Nil(t, activeRow(t, store.MemoryTreeStore, posUser), "and still landed")
+	assert.Equal(t, []string{posUser}, store.attempts, "the compensation was attempted")
+	assert.Equal(t, []string{posUser}, store.deleted, "and was not refused by the cancelled context")
+	assert.Nil(t, activeRow(t, store.MemoryTreeStore, posUser), "so the row is gone")
 }

@@ -79,6 +79,26 @@ Prefixes group by subject, not by file. `ErrWorker*` is the subprocess: did it
 exit, was it reaped. `ErrProtocolVersion*` is the handshake: what does it claim
 to speak.
 
+### A stack overflow is not a panic, and recover cannot catch it
+
+An `Error()` method that renders its own cause can recurse without bound if the
+cause chain has a cycle. That ends in `fatal error: stack overflow`, which is a
+runtime fatal error rather than a panic.
+
+**`recover` does not catch it.** A caller that wraps the call in
+`defer recover()` still loses the process.
+
+Reached on HEU-797 by assigning a typed error to its own `Err` field, and by
+pointing two typed errors at each other. Both were built by keyed composite
+literal from outside the package, which is the shape a test double takes.
+
+So a renderer that walks a cause must either bound the walk or refuse to call
+through a cause it could re-enter. Containing the panic is not enough, because
+this failure is not a panic.
+
+`errors.Is` has the same unbounded property on a cyclic chain and hangs rather
+than crashing. Guarding only the renderer leaves that open.
+
 ## Tombstone Deletion
 
 Removed nodes are tombstoned: cleared to `Uuid::nil()` with empty fields, then added to the free list. The slot is reused by the next `add_root` or `add_node`.
@@ -144,6 +164,23 @@ That asymmetry means a green rejection test is evidence about itself. A green
 acceptance test is not. Ask of every acceptance test: if the fixture stopped
 producing the state in this test's name, would it still pass? If yes, the test
 needs a guard on that state, checked before the thing under test runs.
+
+### The assertion can be wrong rather than the code
+
+Two shapes of this cost time on HEU-797. Both produce a failing test against
+correct behaviour, which sends the reader to debug the wrong thing.
+
+**`require.NotNil` and `assert.NotNil` reflect.** They report a typed nil as
+nil. A nil pointer inside a non-nil `error` interface is not nil at the language
+level, and that gap is often the property under test. testify reads it as nil
+and fails. A nil slice behaves the same way.
+
+**`errors.Is` can never match a target that is not comparable.** It skips the
+equality path for a slice or map target, so the call returns false however the
+chain is built. `errors.As` works on those types and is the one to reach for.
+
+Before changing code to satisfy an assertion, check that the assertion measures
+what its name says.
 
 ### Property-based tests (proptest)
 

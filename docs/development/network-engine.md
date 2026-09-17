@@ -785,14 +785,14 @@ Four limits remain:
 
 - The consumer trusts the `tree_type` label. No registry exists to verify it against.
 - The gate rejects matrix positions above the u8 ceiling (255), which no width can accept. The real bound is the tree's width, which nothing persists. A position in the width..255 band is therefore stored, refused loudly by the engine, and then makes the next reload preflight reject the whole tree. HEU-554 decides the direction for both gaps. The fix ships under it.
-- Redelivering an event whose projection is still current completes it rather than failing (HEU-576). One that is no longer current, because the node was since removed or a later event re-placed the user, is refused rather than reapplied. The refusal holds however old the redelivery is. The scope is the event in flight, which is a constraint on HEU-301. A removal redelivered after its user was placed again is a separate gap (HEU-789).
+- Redelivery is bounded (HEU-576). One that is no longer current, because the node was since removed or a later event re-placed the user, is refused rather than reapplied. The scope is the event in flight, which is a constraint on HEU-301. Within that scope a redelivery whose projection is still current completes, and one that is no longer current is refused however old it is. A removal redelivered after its user was placed again is a separate gap (HEU-789). A removal whose store write never landed still fails on redelivery (HEU-777).
 - The agreement claim covers placement only. A matrix `node_removed` still diverges, because the consumer sends no pruning mode and the worker refuses the removal after the soft-delete lands (HEU-582).
 
 Matrix startup reload is no longer blocked by this defect.
 
-### Postgres index order is a redelivery discriminator
+### The event id is the redelivery discriminator
 
-`tree_nodes.id` is the event ID, and the primary key is declared inline in `CREATE TABLE`, so it carries the lowest OID and Postgres checks it before either named partial index. The failure mode therefore identifies the cause. A `tree_nodes_pkey` violation means this exact event was already stored. It does not prove the engine applied it. The store insert lands before the engine call, so a delivery that failed at the engine leaves the row behind (HEU-576). An `idx_tree_nodes_tree_user` violation means a different event claims the same active user, which is real corruption. HEU-576's idempotent redelivery leans on this distinction. `MemoryTreeStore.InsertNode` mirrors the same check order, so the discriminator holds against the test double too. `TestTreePersistence_DuplicateDeliveryPinsNonIdempotence` pins today's behavior and flips to clean success when HEU-576 lands.
+`tree_nodes.id` is the event ID. The insert names the primary key as its `ON CONFLICT` arbiter and does nothing on a match, so an already-stored event is reported as a skipped row rather than raising. A skip does not prove the engine applied the event. The store insert lands before the engine call, so a delivery that failed at the engine leaves the row behind. Since HEU-576 the handler reads the row back and continues to the engine only when it is this event's own and still active, refusing every other state. A conflict against a different event's row is a separate signal and raises. Which constraint gets named when several are violated at once is not settled, and the two stores are not pinned to agree on it (HEU-794).
 
 ## Worker Shutdown
 

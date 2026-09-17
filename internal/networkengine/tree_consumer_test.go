@@ -1976,3 +1976,72 @@ func TestHandleNodePlaced_SkippedInsertReportsAFailedRead(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNodeAlreadyProjected, "and it still carries the insert that was skipped")
 	assert.Empty(t, tr.mutationOps, "the engine is not called on an unanswered read")
 }
+
+// The assembled refusal message is pinned as it reads today, which is wrong on
+// three of these four cases: it opens by claiming a soft-deleted row with this
+// event's id and then reports something else. HEU-804 owns the wording and it
+// is unruled, so this pins the string rather than endorsing it. Rewording the
+// message is meant to fail here, so that the change is a decision rather than
+// a side effect.
+//
+// The event id is fixed rather than taken from makeEvent, whose counter moves
+// with test selection, and RemovedAt is fixed so the rendered timestamp does
+// not move between runs. Both are pinned at the fixture so the assertion can
+// be on the whole string.
+func TestCheckReplayedInsert_MessageText(t *testing.T) {
+	const evID = "ffffffff-ffff-4fff-8fff-ffffffffffff"
+	early := posEnrolled.Add(time.Hour)
+	late := posEnrolled.Add(2 * time.Hour)
+	skipped := "(insert affected no rows; a row with this event id exists: id=" + evID + ")"
+
+	cases := []struct {
+		name  string
+		seed  func(*testing.T, *MemoryTreeStore)
+		reads string
+	}{
+		{
+			name:  "no row for this tree and user",
+			seed:  func(t *testing.T, s *MemoryTreeStore) { seedRow(t, s, evID, posOther, nil) },
+			reads: "no row",
+		},
+		{
+			name:  "this event's own tombstone",
+			seed:  func(t *testing.T, s *MemoryTreeStore) { seedRow(t, s, evID, posUser, &early) },
+			reads: "a row carrying event " + evID + ", removed at 2026-03-04T06:06:07Z",
+		},
+		{
+			name: "a later event holds an active row",
+			seed: func(t *testing.T, s *MemoryTreeStore) {
+				seedRow(t, s, evID, posUser, &early)
+				seedRow(t, s, supersedingEventID, posUser, nil)
+			},
+			reads: "an active row carrying event " + supersedingEventID,
+		},
+		{
+			name: "a later event's tombstone",
+			seed: func(t *testing.T, s *MemoryTreeStore) {
+				seedRow(t, s, evID, posUser, &early)
+				seedRow(t, s, supersedingEventID, posUser, &late)
+			},
+			reads: "a row carrying event " + supersedingEventID + ", removed at 2026-03-04T07:06:07Z",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tr := &reconcileTransport{}
+			c, store := newReconcileConsumer(t, tr)
+			tc.seed(t, store)
+			ev := makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1)))
+			ev.ID = evID
+
+			err := c.HandleEvent(context.Background(), ev)
+
+			require.Error(t, err)
+			assert.Equal(t,
+				"a row with this event id exists and is soft-deleted: the read for "+
+					posUser+" in tree tree1 returned "+tc.reads+" "+skipped,
+				err.Error())
+		})
+	}
+}

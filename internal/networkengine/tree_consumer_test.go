@@ -1429,3 +1429,103 @@ func TestHandleNodePlaced_ReconcileCoversTheMatrixPath(t *testing.T) {
 	assert.Equal(t, []string{"add_node_at"}, tr.mutationOps)
 	assert.Equal(t, 1, tr.positionOps)
 }
+
+func rootPayload() RootAddedPayload {
+	return RootAddedPayload{
+		TreeID:     "tree1",
+		UserID:     posUser,
+		SponsorID:  posUser,
+		EnrolledAt: posEnrolled,
+	}
+}
+
+func newRootConsumer(tr *reconcileTransport) (*TreeEventConsumer, *MemoryTreeStore) {
+	store := NewMemoryTreeStore()
+	c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
+	c.retryDelay = 0
+	return c, store
+}
+
+func activeRow(t *testing.T, store *MemoryTreeStore, userID string) *TreeNodeRow {
+	t.Helper()
+	row, err := store.GetNode(context.Background(), "tree1", userID)
+	require.NoError(t, err)
+	return row
+}
+
+// The root landed and the reply was lost.
+func TestHandleRootAdded_ReconcileConverges(t *testing.T) {
+	tr := &reconcileTransport{
+		mutationErr: &EngineError{Code: engineCodeRootAlreadyExists},
+		position:    &EnginePosition{UserID: posUser, Depth: 0, EnrolledAt: posEnrolled.Unix()},
+	}
+	c, store := newRootConsumer(tr)
+
+	err := c.HandleEvent(context.Background(), makeEvent(EventTypeRootAdded, rootPayload()))
+
+	require.NoError(t, err)
+	assert.NotNil(t, activeRow(t, store, posUser), "the row this event wrote stays")
+}
+
+// The engine holds this user, but not as the root. The row this call inserted
+// claims depth 0, and leaving it there gives the tree two depth-0 rows.
+func TestHandleRootAdded_ReconcileCompensatesWhenTheUserIsNotTheRoot(t *testing.T) {
+	tr := &reconcileTransport{
+		mutationErr: &EngineError{Code: engineCodeUserAlreadyExists},
+		position:    &EnginePosition{UserID: posUser, Depth: 3, EnrolledAt: posEnrolled.Unix()},
+	}
+	c, store := newRootConsumer(tr)
+
+	err := c.HandleEvent(context.Background(), makeEvent(EventTypeRootAdded, rootPayload()))
+
+	require.Error(t, err)
+	assert.Nil(t, activeRow(t, store, posUser), "the row this call inserted is undone")
+}
+
+// The tree already has a root and it is someone else, so the engine does not
+// hold this user at all. get_position answers USER_NOT_FOUND, which is a
+// definite answer rather than a failed inspection.
+func TestHandleRootAdded_ReconcileCompensatesWhenAnotherUserIsRoot(t *testing.T) {
+	tr := &reconcileTransport{
+		mutationErr: &EngineError{Code: engineCodeRootAlreadyExists},
+		position:    &EnginePosition{UserID: posOther, Depth: 0, EnrolledAt: posEnrolled.Unix()},
+	}
+	c, store := newRootConsumer(tr)
+
+	err := c.HandleEvent(context.Background(), makeEvent(EventTypeRootAdded, rootPayload()))
+
+	require.Error(t, err)
+	assert.Nil(t, activeRow(t, store, posUser),
+		"two active depth-0 rows would wedge every later startup load")
+	assert.Len(t, tr.mutationOps, 1, "a second root is not retryable")
+}
+
+// A transient inspection failure must not destroy a root. The row survives and
+// the call retries.
+func TestHandleRootAdded_ReconcileKeepsTheRowWhenInspectionFails(t *testing.T) {
+	tr := &reconcileTransport{
+		mutationErr: &EngineError{Code: engineCodeRootAlreadyExists},
+		positionErr: errors.New("get_position timed out"),
+	}
+	c, store := newRootConsumer(tr)
+
+	err := c.HandleEvent(context.Background(), makeEvent(EventTypeRootAdded, rootPayload()))
+
+	require.Error(t, err)
+	assert.NotNil(t, activeRow(t, store, posUser), "a timeout is not evidence the root is wrong")
+	assert.Len(t, tr.mutationOps, c.maxRetries+1)
+}
+
+func TestHandleRootAdded_ReconcileSkipsOtherEngineErrors(t *testing.T) {
+	tr := &reconcileTransport{
+		mutationErr: &EngineError{Code: "TREE_NOT_FOUND"},
+		position:    &EnginePosition{UserID: posUser, Depth: 0},
+	}
+	c, store := newRootConsumer(tr)
+
+	err := c.HandleEvent(context.Background(), makeEvent(EventTypeRootAdded, rootPayload()))
+
+	require.Error(t, err)
+	assert.Equal(t, 0, tr.positionOps, "no inspection for an error reconcile cannot speak to")
+	assert.NotNil(t, activeRow(t, store, posUser), "and no compensation either")
+}

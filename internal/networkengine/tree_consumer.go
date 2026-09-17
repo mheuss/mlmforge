@@ -82,9 +82,46 @@ func (c *TreeEventConsumer) handleRootAdded(ctx context.Context, event platform.
 		return fmt.Errorf("store root node: %w", err)
 	}
 
+	reconcile := func(ctx context.Context, err error) (reconcileOutcome, error) {
+		if !isEngineCode(err, engineCodeUserAlreadyExists) &&
+			!isEngineCode(err, engineCodeRootAlreadyExists) {
+			return reconcileNotApplicable, nil
+		}
+		pos, perr := c.engine.GetPosition(ctx, payload.TreeID, payload.UserID)
+
+		if perr == nil && pos != nil && pos.Depth == 0 && sameUUID(pos.UserID, payload.UserID) {
+			return reconcileConverged, nil
+		}
+
+		// USER_NOT_FOUND is an answer, not a failed inspection: the engine
+		// does not hold this user, so the root is someone else. Every other
+		// inspection failure learned nothing, and deleting on one would
+		// destroy a root over a timeout.
+		if perr != nil && !isEngineCode(perr, engineCodeUserNotFound) {
+			return reconcileInconclusive, perr
+		}
+
+		// Either the engine does not hold this user, or it holds them
+		// somewhere other than depth 0. Both leave the depth-0 row this call
+		// inserted unsupported, and a second active depth-0 row makes
+		// validateNodes refuse the whole tree at every later startup.
+		held := fmt.Sprintf("does not hold %s", payload.UserID)
+		if perr == nil && pos != nil {
+			held = fmt.Sprintf("holds %s at depth %d", payload.UserID, pos.Depth)
+		}
+		if derr := c.store.DeleteNode(ctx, payload.TreeID, payload.UserID); derr != nil {
+			return reconcileDiverged, fmt.Errorf(
+				"engine refused add_root in tree %s and %s, and removing the row this event inserted failed: %w",
+				payload.TreeID, held, derr)
+		}
+		return reconcileDiverged, fmt.Errorf(
+			"engine refused add_root in tree %s and %s; the depth-0 row this event inserted was removed",
+			payload.TreeID, held)
+	}
+
 	return c.withRetry(ctx, "add_root", payload.TreeID, payload.UserID, func() error {
 		return c.engine.AddRoot(ctx, payload.TreeID, payload.UserID, payload.EnrolledAt.Unix())
-	}, nil)
+	}, reconcile)
 }
 
 func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform.Event) error {

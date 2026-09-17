@@ -10,29 +10,122 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestTreeLoadRejectedError_ExternalLiteralRendersNonEmpty(t *testing.T) {
+// nilRenderer is never called. It exists so a test can put a nil pointer of a
+// concrete error type into a non-nil error interface.
+type nilRenderer struct{}
+
+func (n *nilRenderer) Error() string { return "this method must not be reached" }
+
+func TestTreeLoadRejectedError_ExternalLiteralRendersEveryField(t *testing.T) {
 	err := &networkengine.TreeLoadRejectedError{
-		TreeID: "t1",
-		Kind:   networkengine.TreeLoadDataInvalid,
+		TreeID:  "t1",
+		Kind:    networkengine.TreeLoadStoreReadFailed,
+		NodeIDs: []string{"u1", "u2"},
+		Err:     errors.New("connection refused"),
 	}
 
-	require.NotEmpty(t, err.Error())
-	assert.Contains(t, err.Error(), "t1")
-	assert.Contains(t, err.Error(), string(networkengine.TreeLoadDataInvalid))
+	assert.Equal(t,
+		"tree load rejected: tree t1: kind store_read_failed: nodes u1, u2: connection refused",
+		err.Error())
 }
 
-func TestTreeLoadIncompleteError_ExternalLiteralRendersNonEmpty(t *testing.T) {
+func TestTreeLoadIncompleteError_ExternalLiteralRendersEveryField(t *testing.T) {
 	err := &networkengine.TreeLoadIncompleteError{
 		TreeID:    "t2",
 		Stage:     networkengine.TreeLoadStageNodes,
 		Confirmed: 2,
 		Attempted: 3,
 		Total:     4,
+		NodeIDs:   []string{"u9"},
 	}
 
-	require.NotEmpty(t, err.Error())
-	assert.Contains(t, err.Error(), "t2")
-	assert.Contains(t, err.Error(), string(networkengine.TreeLoadStageNodes))
+	assert.Equal(t,
+		"tree load incomplete: tree t2: stage nodes: placement 3 of 4, 2 acknowledged: nodes u9",
+		err.Error())
+}
+
+// The stage value and the node list both print the word "nodes". This asserts
+// the stage keeps its own name so one message cannot use the word twice
+// meaning two things.
+func TestTreeLoadIncompleteError_StageIsNamedApartFromTheNodeList(t *testing.T) {
+	err := &networkengine.TreeLoadIncompleteError{
+		TreeID:  "t2",
+		Stage:   networkengine.TreeLoadStageNodes,
+		NodeIDs: []string{"u9"},
+	}
+
+	assert.Equal(t, "tree load incomplete: tree t2: stage nodes: nodes u9", err.Error())
+}
+
+func TestTreeLoadErrors_UnsetFieldsAreOmitted(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "rejected, nothing set",
+			err:  &networkengine.TreeLoadRejectedError{},
+			want: "tree load rejected",
+		},
+		{
+			name: "incomplete, nothing set",
+			err:  &networkengine.TreeLoadIncompleteError{},
+			want: "tree load incomplete",
+		},
+		{
+			name: "rejected, tree only",
+			err:  &networkengine.TreeLoadRejectedError{TreeID: "t3"},
+			want: "tree load rejected: tree t3",
+		},
+		{
+			name: "rejected, kind only",
+			err:  &networkengine.TreeLoadRejectedError{Kind: networkengine.TreeLoadConfigInvalid},
+			want: "tree load rejected: kind config_invalid",
+		},
+		{
+			name: "incomplete, stage only",
+			err:  &networkengine.TreeLoadIncompleteError{TreeID: "t6", Stage: networkengine.TreeLoadStageRoot},
+			want: "tree load incomplete: tree t6: stage root",
+		},
+		{
+			name: "incomplete, acknowledged count with no placement index",
+			err:  &networkengine.TreeLoadIncompleteError{TreeID: "t2", Confirmed: 7},
+			want: "tree load incomplete: tree t2: 7 acknowledged",
+		},
+		{
+			name: "rejected, node ids that print as nothing",
+			err:  &networkengine.TreeLoadRejectedError{TreeID: "t1", NodeIDs: []string{"", ""}},
+			want: "tree load rejected: tree t1",
+		},
+		{
+			name: "rejected, one empty node id among real ones",
+			err:  &networkengine.TreeLoadRejectedError{TreeID: "t1", NodeIDs: []string{"", "u2"}},
+			want: "tree load rejected: tree t1: nodes u2",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.err.Error())
+		})
+	}
+}
+
+// A nil pointer inside a non-nil error interface passes an != nil check. The
+// renderer must not call through it.
+func TestTreeLoadErrors_TypedNilCauseDoesNotPanic(t *testing.T) {
+	var typed *nilRenderer
+	var cause error = typed
+	// A language-level check, not require.NotNil, which reflects and reports
+	// this value as nil. The gap between the two is the defect being guarded.
+	require.True(t, cause != nil)
+
+	rejected := &networkengine.TreeLoadRejectedError{TreeID: "t4", Kind: networkengine.TreeLoadDataInvalid, Err: cause}
+	incomplete := &networkengine.TreeLoadIncompleteError{TreeID: "t5", Stage: networkengine.TreeLoadStageCreate, Err: cause}
+
+	assert.Equal(t, "tree load rejected: tree t4: kind data_invalid", rejected.Error())
+	assert.Equal(t, "tree load incomplete: tree t5: stage create", incomplete.Error())
 }
 
 func TestTreeLoadErrors_WrappedExternalLiteralCarriesText(t *testing.T) {
@@ -40,22 +133,31 @@ func TestTreeLoadErrors_WrappedExternalLiteralCarriesText(t *testing.T) {
 
 	wrapped := fmt.Errorf("load failed: %w", rejected)
 
-	assert.NotEqual(t, "load failed: ", wrapped.Error())
-	assert.Contains(t, wrapped.Error(), "t3")
+	assert.Equal(t, "load failed: tree load rejected: tree t3: kind config_invalid", wrapped.Error())
 }
 
-func TestTreeLoadErrors_ZeroValueRendersNonEmpty(t *testing.T) {
-	rejected := &networkengine.TreeLoadRejectedError{}
-	incomplete := &networkengine.TreeLoadIncompleteError{}
-
-	assert.NotEmpty(t, rejected.Error())
-	assert.NotEmpty(t, incomplete.Error())
-}
-
-func TestTreeLoadErrors_ExternalLiteralStillUnwraps(t *testing.T) {
+func TestTreeLoadErrors_ExternalLiteralStillMatches(t *testing.T) {
 	cause := errors.New("connection refused")
 	rejected := &networkengine.TreeLoadRejectedError{TreeID: "t4", Kind: networkengine.TreeLoadStoreReadFailed, Err: cause}
 
-	assert.ErrorIs(t, rejected, cause)
-	assert.Contains(t, rejected.Error(), "connection refused")
+	wrapped := fmt.Errorf("load failed: %w", rejected)
+
+	assert.ErrorIs(t, wrapped, cause)
+
+	var got *networkengine.TreeLoadRejectedError
+	require.ErrorAs(t, wrapped, &got)
+	assert.Equal(t, networkengine.TreeLoadStoreReadFailed, got.Kind)
+}
+
+func TestTreeLoadIncompleteError_ExternalLiteralIsMatchableByType(t *testing.T) {
+	incomplete := &networkengine.TreeLoadIncompleteError{TreeID: "t2", Stage: networkengine.TreeLoadStageNodes}
+
+	wrapped := fmt.Errorf("restart required: %w", incomplete)
+
+	var got *networkengine.TreeLoadIncompleteError
+	require.ErrorAs(t, wrapped, &got)
+	assert.Equal(t, networkengine.TreeLoadStageNodes, got.Stage)
+
+	var wrong *networkengine.TreeLoadRejectedError
+	assert.False(t, errors.As(wrapped, &wrong))
 }

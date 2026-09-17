@@ -380,8 +380,8 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 		return err
 	}
 
-	// moved holds whatever the failed call returned, which is nothing. Writing
-	// the store with it would soft-delete the node and re-sponsor no one.
+	// The flag is set only where no active row was read, so there is nothing
+	// here to write.
 	if alreadyProjected {
 		return nil
 	}

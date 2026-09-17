@@ -2,6 +2,8 @@
 
 Implementation patterns and conventions for the Rust network engine. Read this before working on any tree type or engine component.
 
+This file uses American spelling. Six British spellings were corrected out of it in one day. The sentence you are reading contained the sixth, written while stating the rule.
+
 ## Arena Storage Pattern
 
 All tree types use the same storage approach:
@@ -99,6 +101,25 @@ this failure is not a panic.
 `errors.Is` has the same unbounded property on a cyclic chain and hangs rather
 than crashing. Guarding only the renderer leaves that open.
 
+**A guard inside `Error()` reaches its own package's types and stops there.** A
+cause of any other type has to be called, so a caller whose own `Error()`
+renders the value holding it still recurses. `Error() string` takes no parameter
+to carry a depth, the recursion leaves through a foreign method and comes back,
+Go exposes no goroutine identity to key a re-entry set on, and a flag on the
+receiver races two goroutines rendering one value. The standard library does not
+defend against this either.
+
+**A subprocess test can cover that limit, and one does.** A fatal stack overflow
+cannot be recovered in-process, but a child process can be made to die of one
+and the parent can assert the exit status and the message.
+`debug.SetMaxStack(1 << 20)` keeps it under a second. That is how Go's own
+runtime crash tests work.
+
+`errors.Is` is not a precedent here, though it is easy to reach for as one. It
+walks `Unwrap` and never calls `Error`, so a cycle closed through `Error` alone
+returns at once rather than recursing. The cyclic-chain case above is a
+different input.
+
 ## Tombstone Deletion
 
 Removed nodes are tombstoned: cleared to `Uuid::nil()` with empty fields, then added to the free list. The slot is reused by the next `add_root` or `add_node`.
@@ -168,7 +189,7 @@ needs a guard on that state, checked before the thing under test runs.
 ### The assertion can be wrong rather than the code
 
 Two shapes of this cost time on HEU-797. Both produce a failing test against
-correct behaviour, which sends the reader to debug the wrong thing.
+correct behavior, which sends the reader to debug the wrong thing.
 
 **`require.NotNil` and `assert.NotNil` reflect.** They report a typed nil as
 nil. A nil pointer inside a non-nil `error` interface is not nil at the language
@@ -258,7 +279,7 @@ stays `u8`, so nothing changes on the wire.
 Same shape to watch for elsewhere: `GenerationCommissionConfig.max_generations`
 and `MatrixStructureConfig.height` are unbounded `u8` config fields.
 `count_generations_upward` happens to be safe because it checks before
-incrementing, but the pattern is worth recognising. When a loop counter is
+incrementing, but the pattern is worth recognizing. When a loop counter is
 compared against a config bound, the counter needs headroom above the bound's
 maximum or the comparison is unreachable there. (HEU-612)
 
@@ -952,7 +973,7 @@ returns `UplineNotInSnapshot` before reaching either, so it consumes nothing and
 records no step. Anything written before that branch merged counts one more than
 this section does.
 
-The condition matters to anyone reconstructing the old behaviour per calculator.
+The condition matters to anyone reconstructing the old behavior per calculator.
 Streamline never set compression and always set dynamic thresholds, so "when
 compression was on" would send a reader to the wrong branch for the calculator
 most likely to be asked about.

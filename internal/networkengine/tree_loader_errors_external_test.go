@@ -22,6 +22,11 @@ type panickingCause struct{}
 
 func (panickingCause) Error() string { panic("cause blew up") }
 
+// textCause renders whatever it is given, including nothing visible.
+type textCause struct{ text string }
+
+func (c textCause) Error() string { return c.text }
+
 // sliceRenderer is nil-able but perfectly callable when nil. An earlier guard
 // treated it the same as a nil pointer and dropped its text.
 type sliceRenderer []string
@@ -146,6 +151,28 @@ func TestTreeLoadErrors_AFailingCauseIsContained(t *testing.T) {
 			name: "a nil pointer cause, whose Error dereferences it",
 			err:  &networkengine.TreeLoadRejectedError{TreeID: "t4", Kind: networkengine.TreeLoadDataInvalid, Err: nilPtr},
 			want: "tree load rejected: tree t4: kind data_invalid: cause could not be rendered",
+		},
+		{
+			name: "a cause that renders the empty string",
+			err:  &networkengine.TreeLoadRejectedError{TreeID: "t6", Kind: networkengine.TreeLoadDataInvalid, Err: textCause{""}},
+			want: "tree load rejected: tree t6: kind data_invalid: cause rendered no text",
+		},
+		{
+			name: "a cause that renders only a space",
+			err:  &networkengine.TreeLoadRejectedError{TreeID: "t6", Kind: networkengine.TreeLoadDataInvalid, Err: textCause{" "}},
+			want: "tree load rejected: tree t6: kind data_invalid: cause rendered no text",
+		},
+		{
+			// errors.Join separates with a newline, so two causes that render
+			// nothing reach this naturally rather than adversarially.
+			name: "two joined causes that render nothing",
+			err:  &networkengine.TreeLoadRejectedError{TreeID: "t6", Err: errors.Join(textCause{""}, textCause{""})},
+			want: "tree load rejected: tree t6: cause rendered no text",
+		},
+		{
+			name: "a cause whose text has its own surrounding space",
+			err:  &networkengine.TreeLoadRejectedError{TreeID: "t6", Err: textCause{"  boom  "}},
+			want: "tree load rejected: tree t6:   boom  ",
 		},
 		{
 			name: "a cause whose Error panics outright",

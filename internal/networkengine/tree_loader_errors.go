@@ -216,18 +216,32 @@ func namedNodes(nodeIDs []string) string {
 // causeText renders a cause, reporting false when there is none.
 //
 // The cause on a value this path exists for came from a caller who did not use
-// the constructors, so nothing constrains what its Error method does. Two
+// the constructors, so nothing constrains what its Error method does. Three
 // shapes are handled here rather than allowed out of a method callers treat as
-// total.
+// total: a cause that panics, a cause that renders nothing, and a cause that is
+// one of this package's own types carrying no message.
 //
-// A cause that is one of this package's own types carrying no message is named
-// rather than called. Calling it would re-enter this path and recurse until the
-// stack is exhausted, and a stack overflow is a runtime fatal error that
-// recover cannot contain.
+// That third one is named rather than called, because calling it would re-enter
+// this path and recurse until the stack is exhausted. A stack overflow is a
+// runtime fatal error that recover cannot contain.
 //
-// Any other panic from the cause's own Error method is contained. A cause that
-// cannot be rendered is still reported as present, because Unwrap returns it
-// and a message that omits it would disagree with what errors.Is finds.
+// **The cycle guard reaches this package's own types and stops there.** A cause
+// of any other type is called, so a caller whose own Error method renders the
+// value holding it still recurses without bound. That cannot be guarded from
+// inside this method: Error takes no parameter to carry a depth, the recursion
+// leaves through a foreign method and returns, Go exposes no goroutine identity
+// to key a re-entry set on, and a flag on the receiver would race two
+// goroutines rendering one value.
+//
+// errors.Is is not a precedent for this input. It walks Unwrap and never calls
+// Error, so on a cycle built this way it returns at once rather than recursing.
+// It does hang on a cyclic Unwrap chain, which is a different input.
+//
+// TestLoadTree_ExternalCycleStillOverflows pins where the guard ends, by
+// crashing a subprocess on purpose.
+//
+// A cause that cannot be rendered is still reported as present, because Unwrap
+// returns it and a message that omitted it would disagree with errors.Is.
 func causeText(err error) (text string, ok bool) {
 	if err == nil {
 		return "", false
@@ -247,5 +261,9 @@ func causeText(err error) (text string, ok bool) {
 			return incompleteFallbackLabel, true
 		}
 	}
-	return err.Error(), true
+	text = err.Error()
+	if strings.TrimSpace(text) == "" {
+		return "cause rendered no text", true
+	}
+	return text, true
 }

@@ -3,6 +3,9 @@ package networkengine_test
 import (
 	"context"
 	"errors"
+	"os"
+	"os/exec"
+	"runtime/debug"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +18,8 @@ import (
 // The labels treeLoadFallback puts in front of a message it built itself. A
 // message the loader produced must not start with either.
 var fallbackLabels = []string{"tree load rejected", "tree load incomplete"}
+
+var _ networkengine.TreeMutator = failingMutator{}
 
 // failingMutator fails one named engine call and lets the rest succeed, so a
 // test can choose which post-create exit the loader reaches.
@@ -155,4 +160,36 @@ func TestFallbackLabels_AreWhatTheFallbackActuallyEmits(t *testing.T) {
 
 	assert.True(t, strings.HasPrefix(rejected, fallbackLabels[0]), "got %q", rejected)
 	assert.True(t, strings.HasPrefix(incomplete, fallbackLabels[1]), "got %q", incomplete)
+}
+
+// parentRenderer renders the value that holds it. Two of these form a cycle
+// that runs entirely through Error, which no guard inside Error can see.
+type parentRenderer struct{ parent error }
+
+func (p *parentRenderer) Error() string { return p.parent.Error() }
+
+// The cycle guard reaches this package's own types and stops there. A cause of
+// any other type is called, so a cycle closed through a caller's own Error
+// method still recurses. This pins where that boundary is.
+//
+// The child process is expected to die. A fatal stack overflow cannot be
+// recovered in-process, so asserting it needs a subprocess. SetMaxStack keeps
+// the crash under a second.
+func TestLoadTree_ExternalCycleStillOverflows(t *testing.T) {
+	if os.Getenv("HEU797_CYCLE_CHILD") == "1" {
+		debug.SetMaxStack(1 << 20)
+		outer := &networkengine.TreeLoadRejectedError{TreeID: "x", Kind: networkengine.TreeLoadDataInvalid}
+		holder := &parentRenderer{}
+		outer.Err = holder
+		holder.parent = outer
+		_ = outer.Error()
+		return
+	}
+
+	child := exec.Command(os.Args[0], "-test.run=^TestLoadTree_ExternalCycleStillOverflows$")
+	child.Env = append(os.Environ(), "HEU797_CYCLE_CHILD=1")
+	out, err := child.CombinedOutput()
+
+	require.Error(t, err, "the child was expected to crash, and did not")
+	assert.Contains(t, string(out), "fatal error: stack overflow")
 }

@@ -60,7 +60,7 @@ type TreeStore interface {
 	// the same set unordered and would replay identically.
 	//
 	// What the sort buys is preflight errors that are stable for rows differing
-	// on enrolment time, which is a different thing from replay order.
+	// on enrollment time, which is a different thing from replay order.
 	// validateNodes runs before orderForReplay and returns on the first fault it
 	// meets. On data with several faults the message therefore depends on row
 	// order: which pair "more than one depth-0 root (%s and %s)" names, and
@@ -68,7 +68,7 @@ type TreeStore interface {
 	// failing startup load fail the same way every time, which is what an
 	// operator needs to act on.
 	//
-	// Rows tying on depth and enrolment time have no defined order. The message
+	// Rows tying on depth and enrollment time have no defined order. The message
 	// names whichever the sort happened to put first.
 	//
 	// idx_tree_nodes_depth(tree_id, depth) backs the leading key, so the cost

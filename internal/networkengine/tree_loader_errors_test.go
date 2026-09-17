@@ -80,7 +80,7 @@ func loadWithMutator(t *testing.T, treeType string, nodes []TreeNodeRow, m TreeM
 	return NewTreeLoader(store, m).LoadTree(ctx, "t", treeType, opts...)
 }
 
-// spacedNodes gives each node a distinct enrolment time.
+// spacedNodes gives each node a distinct enrollment time.
 func spacedNodes(nodes []TreeNodeRow) []TreeNodeRow {
 	for i := range nodes {
 		nodes[i].EnrolledAt = nodes[i].EnrolledAt.Add(time.Duration(i) * time.Minute)

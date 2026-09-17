@@ -611,14 +611,16 @@ func cycleError(treeID string, nodes []TreeNodeRow, ordered []*TreeNodeRow, byID
 	// where byID's surviving copy resolves both refs and the unmet edge belongs
 	// to the shadowed row the message cannot name. Only duplicate rows reach
 	// that, and validateNodes rejects them.
-	// Indexing guard, not output shaping. A bare path[len(path)-1] would panic
-	// and take down startup rather than failing one tree.
+	// An empty walk names nobody, so it carries nobody. A bare
+	// path[len(path)-1] would also panic and take down startup rather than
+	// failing one tree.
 	stopped := ""
+	var named []string
 	if len(path) > 0 {
 		stopped = path[len(path)-1]
+		named = append(named, stopped)
 	}
 	via := ""
-	named := []string{stopped}
 	if len(path) >= 2 {
 		via = fmt.Sprintf(", reached from %s", path[len(path)-2])
 		named = append(named, path[len(path)-2])

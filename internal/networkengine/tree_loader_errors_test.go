@@ -846,3 +846,20 @@ func TestTreeLoader_ConfirmedTrailsTheMessageIndex(t *testing.T) {
 		})
 	}
 }
+
+// A row with an empty user ID sorts ahead of every other stuck node, and the
+// walk stops before it starts. The message then names nobody, so NodeIDs must
+// name nobody either.
+func TestCycleError_EmptyUserIDNamesNoNode(t *testing.T) {
+	nodes := []TreeNodeRow{
+		makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+		makeNode("t", "", 1, ptr("ghost"), ptr("ghost"), nil),
+	}
+
+	_, err := orderForReplay("t", nodes)
+
+	var rejected *TreeLoadRejectedError
+	require.ErrorAs(t, err, &rejected)
+	assert.Empty(t, rejected.NodeIDs,
+		"a message naming no user must carry no user")
+}

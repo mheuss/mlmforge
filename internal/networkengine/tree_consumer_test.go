@@ -1822,6 +1822,7 @@ func TestHandleNodePlaced_ReplayedAfterRemoval(t *testing.T) {
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrReplayedPlacement)
+	assert.Contains(t, err.Error(), "removed at", "the read returned a tombstone, not an absent or active row")
 	assert.Empty(t, tr.mutationOps, "a replayed placement never reaches the engine")
 }
 
@@ -1901,6 +1902,7 @@ func TestHandleRootAdded_ReplayedAfterRemoval(t *testing.T) {
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrReplayedPlacement)
+	assert.Contains(t, err.Error(), "removed at", "the read returned a tombstone, not an absent or active row")
 	assert.Empty(t, tr.mutationOps, "a replayed root never reaches the engine")
 }
 

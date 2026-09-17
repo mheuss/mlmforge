@@ -237,8 +237,7 @@ func namedNodes(nodeIDs []string) string {
 // Error, so on a cycle built this way it returns at once rather than recursing.
 // It does hang on a cyclic Unwrap chain, which is a different input.
 //
-// TestLoadTree_ExternalCycleStillOverflows pins where the guard ends, by
-// crashing a subprocess on purpose.
+// A subprocess test pins where the guard ends, by crashing on purpose.
 //
 // A cause that cannot be rendered is still reported as present, because Unwrap
 // returns it and a message that omitted it would disagree with errors.Is.

@@ -20,11 +20,11 @@ func NewMemoryTreeStore() *MemoryTreeStore {
 }
 
 func (s *MemoryTreeStore) InsertNode(_ context.Context, node TreeNodeRow) error {
-	// tree_nodes_pkey mirror: the row id is the event ID and the primary
-	// key is not partial, so a duplicate id is rejected whatever its tree
-	// or removed state. Checked first, matching Postgres index order —
-	// HEU-576's idempotency discriminator depends on pkey-vs-index being
-	// distinguishable against this double too.
+	// Primary-key mirror: the row id is the event ID, so a duplicate id is
+	// rejected whatever its tree or removed state. Checked in its own pass
+	// before the partial-index mirrors below, so a caller can tell an id
+	// collision from the others. Which one wins when several are violated at
+	// once is unsettled, HEU-794.
 	for _, n := range s.nodes {
 		if n.ID == node.ID {
 			return fmt.Errorf("%w: id=%s", ErrNodeAlreadyProjected, node.ID)

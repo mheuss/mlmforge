@@ -102,7 +102,7 @@ func TestEngineCodeConstantsMatchTheWorkerSource(t *testing.T) {
 		engineCodeUserNotFound,
 	} {
 		if !strings.Contains(string(src), `=> "`+code+`"`) {
-			t.Errorf("the worker no longer maps any variant to %q; reconcile would stop firing on it", code)
+			t.Errorf("the mapping arm %q was not found in %s", `=> "`+code+`"`, path)
 		}
 	}
 }

@@ -166,8 +166,8 @@ func (c *TreeEventConsumer) handleRootAdded(ctx context.Context, event platform.
 				"engine refused add_root in tree %s, %s, and deleting the row this event inserted failed: %w",
 				payload.TreeID, held, derr)
 		}
-		// Neither store reports rows affected, so the delete returning no
-		// error is all that was observed here.
+		// A nil error is all this line observed. It does not say a row was
+		// deleted.
 		return reconcileDiverged, fmt.Errorf(
 			"engine refused add_root in tree %s, %s; the delete compensating this event's row returned no error",
 			payload.TreeID, held)
@@ -350,9 +350,8 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 			return reconcileNotApplicable, nil
 		}
 		// This branch turns on one thing: whether an active row is still
-		// there. The tombstone-aware read is what the design names, and it
-		// leaves the removed row in reach if a later task needs to tell this
-		// event's removal from someone else's.
+		// there. The read below also keeps a removed row in reach, which a
+		// discriminator would need. HEU-811.
 		existing, gerr := c.store.GetNodeIncludingRemoved(ctx, payload.TreeID, payload.UserID)
 		if gerr != nil {
 			return reconcileInconclusive, gerr
@@ -487,10 +486,8 @@ func samePtrUUID(a, b *string) bool {
 }
 
 // storeWriteTimeout bounds a store write detached from the caller's context.
-// WithoutCancel strips the deadline along with the cancellation, and nothing
-// else bounds a query here: no statement_timeout is set on the database and
-// the pool is built from a bare DSN. Five seconds matches the shutdown flush
-// in cmd/mlmforge.
+// WithoutCancel strips the deadline along with the cancellation, so without
+// this the write has no bound at all.
 const storeWriteTimeout = 5 * time.Second
 
 // detachedWrite returns a context a store write can finish on after the caller

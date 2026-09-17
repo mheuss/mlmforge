@@ -86,7 +86,8 @@ type TreeStore interface {
 	BulkInsert(ctx context.Context, nodes []TreeNodeRow) error
 }
 
-// The conditions an insert can be refused for. Sentinels rather than structs
+// The conditions an insert can be refused for, and one the consumer raises
+// after reading the row an insert reported. Sentinels rather than structs
 // because the caller branches on which one and needs nothing else from them.
 var (
 	// ErrNodeAlreadyProjected reports an insert that matched an existing row

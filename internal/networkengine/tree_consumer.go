@@ -174,6 +174,41 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform
 		return fmt.Errorf("store placed node: %w", err)
 	}
 
+	// One closure for both engine calls below. USER_ALREADY_EXISTS after a
+	// store insert that reported the row already present is the lost-reply
+	// case: the mutation landed and the reply did not.
+	reconcile := func(ctx context.Context, err error) (reconcileOutcome, error) {
+		if !isEngineCode(err, engineCodeUserAlreadyExists) {
+			return reconcileNotApplicable, nil
+		}
+		// The row is read rather than reused from the insert above, because a
+		// redelivery leaves the original row in place and a later removal may
+		// have re-sponsored it since.
+		stored, serr := c.store.GetNode(ctx, payload.TreeID, payload.UserID)
+		if serr != nil {
+			return reconcileInconclusive, fmt.Errorf("read the projected row: %w", serr)
+		}
+		// Not reachable yet: a redelivery is refused by the store insert above
+		// before any engine call. Task 18 is what lets a skipped row through
+		// to here. Without this branch the comparison would report a position
+		// mismatch when the observation is that there is no row at all.
+		if stored == nil {
+			return reconcileDiverged, fmt.Errorf(
+				"engine holds %s in tree %s and the store has no active row for them; event %s",
+				payload.UserID, payload.TreeID, event.ID)
+		}
+		pos, perr := c.engine.GetPosition(ctx, payload.TreeID, payload.UserID)
+		if perr != nil {
+			return reconcileInconclusive, perr
+		}
+		if !positionMatchesProjection(pos, payload, stored) {
+			return reconcileDiverged, fmt.Errorf(
+				"engine holds %s in tree %s at a position the projected row does not match; event %s",
+				payload.UserID, payload.TreeID, event.ID)
+		}
+		return reconcileConverged, nil
+	}
+
 	// Matrix placements go through add_node_at so the engine applies exactly
 	// the parent and position the event recorded. Matrix add_node would
 	// re-derive placement by spillover and diverge from the row just written.
@@ -183,7 +218,7 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform
 		return c.withRetry(ctx, "add_node_at", payload.TreeID, payload.UserID, func() error {
 			return c.engine.AddNodeAt(ctx, payload.TreeID, payload.UserID,
 				payload.ParentID, payload.SponsorID, *payload.Position, payload.EnrolledAt.Unix())
-		}, nil)
+		}, reconcile)
 	}
 	return c.withRetry(ctx, "add_node", payload.TreeID, payload.UserID, func() error {
 		var opts []AddNodeOption
@@ -192,7 +227,7 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform
 		}
 		return c.engine.AddNode(ctx, payload.TreeID, payload.UserID,
 			payload.ParentID, payload.SponsorID, payload.EnrolledAt.Unix(), opts...)
-	}, nil)
+	}, reconcile)
 }
 
 func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platform.Event) error {

@@ -1259,3 +1259,159 @@ func TestPositionMatchesProjection(t *testing.T) {
 		})
 	}
 }
+
+// reconcileTransport fails the mutation with a chosen engine code and answers
+// get_position separately, which is the pairing every reconcile path needs.
+type reconcileTransport struct {
+	mutationErr error
+	position    *EnginePosition
+	positionErr error
+	mutationOps []string
+	positionOps int
+}
+
+func (r *reconcileTransport) Call(_ context.Context, op string, _ json.RawMessage) (json.RawMessage, error) {
+	if op == "get_position" {
+		r.positionOps++
+		if r.positionErr != nil {
+			return nil, r.positionErr
+		}
+		return json.Marshal(r.position)
+	}
+	r.mutationOps = append(r.mutationOps, op)
+	if r.mutationErr != nil {
+		return nil, r.mutationErr
+	}
+	return json.RawMessage(`{"ok":true}`), nil
+}
+
+func (r *reconcileTransport) Close() error { return nil }
+
+// seedParent puts the parent node_placed needs in the store, at depth 0, so
+// the placed child derives depth 1.
+func seedParent(t *testing.T, store *MemoryTreeStore) {
+	t.Helper()
+	require.NoError(t, store.InsertNode(context.Background(), TreeNodeRow{
+		ID:         "cafe0000-0000-4000-8000-000000000001",
+		TreeID:     "tree1",
+		UserID:     posParent,
+		Depth:      0,
+		EnrolledAt: posEnrolled,
+	}))
+}
+
+func placedPayload(treeType string, position *int) NodePlacedPayload {
+	return NodePlacedPayload{
+		TreeID:     "tree1",
+		UserID:     posUser,
+		ParentID:   posParent,
+		SponsorID:  posSponsor,
+		Position:   position,
+		TreeType:   treeType,
+		EnrolledAt: posEnrolled,
+	}
+}
+
+// enginePlaced is the engine's view agreeing with placedPayload as projected.
+func enginePlaced(mutate func(*EnginePosition)) *EnginePosition {
+	p := &EnginePosition{
+		UserID:        posUser,
+		ParentUserID:  ptr(posParent),
+		SponsorUserID: ptr(posSponsor),
+		Position:      1,
+		Depth:         1,
+		EnrolledAt:    posEnrolled.Unix(),
+	}
+	if mutate != nil {
+		mutate(p)
+	}
+	return p
+}
+
+func newReconcileConsumer(t *testing.T, tr *reconcileTransport) (*TreeEventConsumer, *MemoryTreeStore) {
+	t.Helper()
+	store := NewMemoryTreeStore()
+	seedParent(t, store)
+	c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
+	c.retryDelay = 0
+	return c, store
+}
+
+// The case the ticket exists for: the mutation landed and the reply was lost,
+// so the redelivery is told the user already exists.
+func TestHandleNodePlaced_ReconcileConverges(t *testing.T) {
+	tr := &reconcileTransport{
+		mutationErr: &EngineError{Code: engineCodeUserAlreadyExists, Message: "taken"},
+		position:    enginePlaced(nil),
+	}
+	c, _ := newReconcileConsumer(t, tr)
+
+	err := c.HandleEvent(context.Background(), makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1))))
+
+	require.NoError(t, err, "the engine already holds exactly what was projected")
+	assert.Len(t, tr.mutationOps, 1, "converged does not retry")
+}
+
+func TestHandleNodePlaced_ReconcileDivergesOnADifferentPlacement(t *testing.T) {
+	tr := &reconcileTransport{
+		mutationErr: &EngineError{Code: engineCodeUserAlreadyExists},
+		position:    enginePlaced(func(p *EnginePosition) { p.ParentUserID = ptr(posOther) }),
+	}
+	c, _ := newReconcileConsumer(t, tr)
+
+	err := c.HandleEvent(context.Background(), makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1))))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), posUser, "the error names the user")
+	assert.Contains(t, err.Error(), "tree1", "and the tree")
+	assert.Len(t, tr.mutationOps, 1, "divergence is not retryable")
+}
+
+// An inspection that could not answer is not divergence. It retries, and the
+// caller is told what failed to apply rather than what failed to inspect.
+func TestHandleNodePlaced_ReconcileInconclusiveRetries(t *testing.T) {
+	tr := &reconcileTransport{
+		mutationErr: &EngineError{Code: engineCodeUserAlreadyExists},
+		positionErr: errors.New("get_position timed out"),
+	}
+	c, _ := newReconcileConsumer(t, tr)
+
+	err := c.HandleEvent(context.Background(), makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1))))
+
+	require.Error(t, err)
+	assert.Len(t, tr.mutationOps, c.maxRetries+1, "an inconclusive inspection retries")
+	assert.Contains(t, err.Error(), engineCodeUserAlreadyExists, "the mutation that failed")
+	assert.NotContains(t, err.Error(), "timed out", "not the inspection that could not check it")
+}
+
+// Any other engine failure is not reconcile's business, and inspecting it
+// would cost a round trip on every transport hiccup.
+func TestHandleNodePlaced_ReconcileSkipsOtherEngineErrors(t *testing.T) {
+	tr := &reconcileTransport{
+		mutationErr: &EngineError{Code: "PARENT_NOT_FOUND"},
+		position:    enginePlaced(nil),
+	}
+	c, _ := newReconcileConsumer(t, tr)
+
+	err := c.HandleEvent(context.Background(), makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1))))
+
+	require.Error(t, err)
+	assert.Len(t, tr.mutationOps, c.maxRetries+1)
+	assert.Equal(t, 0, tr.positionOps, "no inspection for an error reconcile cannot speak to")
+}
+
+// Matrix placements go through add_node_at, a separate withRetry call. The
+// closure has to reach both or half the handler is unreconciled.
+func TestHandleNodePlaced_ReconcileCoversTheMatrixPath(t *testing.T) {
+	tr := &reconcileTransport{
+		mutationErr: &EngineError{Code: engineCodeUserAlreadyExists},
+		position:    enginePlaced(func(p *EnginePosition) { p.Position = 2 }),
+	}
+	c, _ := newReconcileConsumer(t, tr)
+
+	err := c.HandleEvent(context.Background(), makeEvent(EventTypeNodePlaced, placedPayload(treeTypeMatrix, intPtr(2))))
+
+	require.NoError(t, err, "the matrix path reconciles too")
+	assert.Equal(t, []string{"add_node_at"}, tr.mutationOps)
+	assert.Equal(t, 1, tr.positionOps)
+}

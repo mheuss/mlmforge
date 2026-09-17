@@ -1264,11 +1264,13 @@ func TestPositionMatchesProjection(t *testing.T) {
 // get_position separately, which is the pairing every reconcile path needs.
 type reconcileTransport struct {
 	mutationErr   error
+	mutationErrs  []error
 	position      *EnginePosition
 	positionErr   error
 	mutationOps   []string
 	positionOps   int
 	positionAsked []string
+	onPosition    func()
 }
 
 func (r *reconcileTransport) Call(_ context.Context, op string, params json.RawMessage) (json.RawMessage, error) {
@@ -1284,6 +1286,9 @@ func (r *reconcileTransport) Call(_ context.Context, op string, params json.RawM
 			return nil, err
 		}
 		r.positionAsked = append(r.positionAsked, q.UserID)
+		if r.onPosition != nil {
+			r.onPosition()
+		}
 		if r.positionErr != nil {
 			return nil, r.positionErr
 		}
@@ -1293,7 +1298,11 @@ func (r *reconcileTransport) Call(_ context.Context, op string, params json.RawM
 		return json.Marshal(r.position)
 	}
 	r.mutationOps = append(r.mutationOps, op)
-	if r.mutationErr != nil {
+	if n := len(r.mutationOps) - 1; n < len(r.mutationErrs) {
+		if e := r.mutationErrs[n]; e != nil {
+			return nil, e
+		}
+	} else if r.mutationErr != nil {
 		return nil, r.mutationErr
 	}
 	return json.RawMessage(`{"ok":true}`), nil
@@ -1464,6 +1473,7 @@ func TestHandleRootAdded_ReconcileConverges(t *testing.T) {
 	err := c.HandleEvent(context.Background(), makeEvent(EventTypeRootAdded, rootPayload()))
 
 	require.NoError(t, err)
+	assert.Len(t, tr.mutationOps, 1, "converged does not retry")
 	assert.NotNil(t, activeRow(t, store, posUser), "the row this event wrote stays")
 }
 
@@ -1528,4 +1538,105 @@ func TestHandleRootAdded_ReconcileSkipsOtherEngineErrors(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, 0, tr.positionOps, "no inspection for an error reconcile cannot speak to")
 	assert.NotNil(t, activeRow(t, store, posUser), "and no compensation either")
+}
+
+// deleteRecordingStore records which users the compensation deleted, so a test can
+// assert the blast radius rather than only that this event's row is gone.
+type deleteRecordingStore struct {
+	*MemoryTreeStore
+	deleted []string
+}
+
+func (c *deleteRecordingStore) DeleteNode(ctx context.Context, treeID, userID string) error {
+	c.deleted = append(c.deleted, userID)
+	return c.MemoryTreeStore.DeleteNode(ctx, treeID, userID)
+}
+
+// The design requires the root's enrolment to match, not just the depth. A
+// root re-baselined to a later event's enrolled_at moves every tenure window
+// computed from it.
+func TestHandleRootAdded_ReconcileDivergesOnADifferentEnrolledAt(t *testing.T) {
+	tr := &reconcileTransport{
+		mutationErr: &EngineError{Code: engineCodeRootAlreadyExists},
+		position: &EnginePosition{
+			UserID: posUser, Depth: 0,
+			EnrolledAt: posEnrolled.Add(72 * time.Hour).Unix(),
+		},
+	}
+	c, store := newRootConsumer(tr)
+
+	err := c.HandleEvent(context.Background(), makeEvent(EventTypeRootAdded, rootPayload()))
+
+	require.Error(t, err, "the engine's root enrolled at a different time is not this event's root")
+	assert.Nil(t, activeRow(t, store, posUser))
+}
+
+// The compensation names a user. A delete that ignored it would undo whichever
+// row it reached first, and every other test here runs against a store holding
+// only this event's row.
+func TestHandleRootAdded_CompensationTouchesOnlyThisEventsRow(t *testing.T) {
+	tr := &reconcileTransport{
+		mutationErr: &EngineError{Code: engineCodeRootAlreadyExists},
+		position:    &EnginePosition{UserID: posOther, Depth: 0, EnrolledAt: posEnrolled.Unix()},
+	}
+	store := &deleteRecordingStore{MemoryTreeStore: NewMemoryTreeStore()}
+	ctx := context.Background()
+	// The root that is really there, which this event must not disturb.
+	require.NoError(t, store.InsertNode(ctx, TreeNodeRow{
+		ID: "cafe0000-0000-4000-8000-00000000beef", TreeID: "tree1",
+		UserID: posOther, Depth: 0, EnrolledAt: posEnrolled,
+	}))
+	c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
+	c.retryDelay = 0
+
+	err := c.HandleEvent(ctx, makeEvent(EventTypeRootAdded, rootPayload()))
+
+	require.Error(t, err)
+	assert.Equal(t, []string{posUser}, store.deleted, "only this event's user is compensated")
+
+	theirs, gerr := store.GetNode(ctx, "tree1", posOther)
+	require.NoError(t, gerr)
+	assert.NotNil(t, theirs, "the root that was already there survives")
+}
+
+// Attempt 0 returns a code reconcile ignores, attempt 1 the one it acts on.
+// Compensation must still run exactly once.
+func TestHandleRootAdded_CompensatesOnceAcrossAttempts(t *testing.T) {
+	tr := &reconcileTransport{
+		mutationErrs: []error{
+			&EngineError{Code: "TRANSPORT_HICCUP"},
+			&EngineError{Code: engineCodeRootAlreadyExists},
+		},
+		position: &EnginePosition{UserID: posOther, Depth: 0, EnrolledAt: posEnrolled.Unix()},
+	}
+	store := &deleteRecordingStore{MemoryTreeStore: NewMemoryTreeStore()}
+	c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
+	c.retryDelay = 0
+
+	err := c.HandleEvent(context.Background(), makeEvent(EventTypeRootAdded, rootPayload()))
+
+	require.Error(t, err)
+	assert.Len(t, tr.mutationOps, 2, "the first failure retried, the second diverged")
+	assert.Len(t, store.deleted, 1, "compensation runs once, not once per attempt")
+}
+
+// A compensating action has to outlive the failure that triggered it. On the
+// caller's context a shutdown mid-reconcile leaves two active depth-0 rows,
+// and nothing later repairs them.
+func TestHandleRootAdded_CompensationSurvivesCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	tr := &reconcileTransport{
+		mutationErr: &EngineError{Code: engineCodeRootAlreadyExists},
+		position:    &EnginePosition{UserID: posOther, Depth: 0, EnrolledAt: posEnrolled.Unix()},
+		onPosition:  cancel,
+	}
+	store := &deleteRecordingStore{MemoryTreeStore: NewMemoryTreeStore()}
+	c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
+	c.retryDelay = 0
+
+	err := c.HandleEvent(ctx, makeEvent(EventTypeRootAdded, rootPayload()))
+
+	require.Error(t, err)
+	assert.Equal(t, []string{posUser}, store.deleted, "the compensation still ran")
+	assert.Nil(t, activeRow(t, store.MemoryTreeStore, posUser), "and still landed")
 }

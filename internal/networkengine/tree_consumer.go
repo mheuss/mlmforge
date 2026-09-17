@@ -89,7 +89,9 @@ func (c *TreeEventConsumer) handleRootAdded(ctx context.Context, event platform.
 		}
 		pos, perr := c.engine.GetPosition(ctx, payload.TreeID, payload.UserID)
 
-		if perr == nil && pos != nil && pos.Depth == 0 && sameUUID(pos.UserID, payload.UserID) {
+		if perr == nil && pos != nil && pos.Depth == 0 &&
+			sameUUID(pos.UserID, payload.UserID) &&
+			pos.EnrolledAt == payload.EnrolledAt.Unix() {
 			return reconcileConverged, nil
 		}
 
@@ -105,17 +107,23 @@ func (c *TreeEventConsumer) handleRootAdded(ctx context.Context, event platform.
 		// somewhere other than depth 0. Both leave the depth-0 row this call
 		// inserted unsupported, and a second active depth-0 row makes
 		// validateNodes refuse the whole tree at every later startup.
-		held := fmt.Sprintf("does not hold %s", payload.UserID)
+		held := fmt.Sprintf("get_position reported USER_NOT_FOUND for %s", payload.UserID)
 		if perr == nil && pos != nil {
-			held = fmt.Sprintf("holds %s at depth %d", payload.UserID, pos.Depth)
+			held = fmt.Sprintf("get_position put %s at depth %d enrolled %d, against %d in this event",
+				payload.UserID, pos.Depth, pos.EnrolledAt, payload.EnrolledAt.Unix())
 		}
-		if derr := c.store.DeleteNode(ctx, payload.TreeID, payload.UserID); derr != nil {
+		// Not the caller's context. A cancellation between the inspection and
+		// this delete would leave two active depth-0 rows, which is the state
+		// this compensation exists to prevent, and no later run repairs it.
+		if derr := c.store.DeleteNode(context.WithoutCancel(ctx), payload.TreeID, payload.UserID); derr != nil {
 			return reconcileDiverged, fmt.Errorf(
-				"engine refused add_root in tree %s and %s, and removing the row this event inserted failed: %w",
+				"engine refused add_root in tree %s, %s, and deleting the row this event inserted failed: %w",
 				payload.TreeID, held, derr)
 		}
+		// Neither store reports rows affected, so the delete returning no
+		// error is all that was observed here.
 		return reconcileDiverged, fmt.Errorf(
-			"engine refused add_root in tree %s and %s; the depth-0 row this event inserted was removed",
+			"engine refused add_root in tree %s, %s; the delete compensating this event's row returned no error",
 			payload.TreeID, held)
 	}
 
@@ -225,10 +233,8 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform
 		if serr != nil {
 			return reconcileInconclusive, fmt.Errorf("read the projected row: %w", serr)
 		}
-		// Not reachable yet: a redelivery is refused by the store insert above
-		// before any engine call. Task 18 is what lets a skipped row through
-		// to here. Without this branch the comparison would report a position
-		// mismatch when the observation is that there is no row at all.
+		// No active row to compare against, so report that rather than a
+		// position mismatch.
 		if stored == nil {
 			return reconcileDiverged, fmt.Errorf(
 				"engine holds %s in tree %s and the store has no active row for them; event %s",
@@ -317,10 +323,10 @@ func isEngineCode(err error, code string) bool {
 // stored row is authoritative for what is current: sponsor and depth.
 //
 // Sponsor comes from the row because it is the one compared field a later
-// event can change. Removing a user re-sponsors everyone they recruited, in
-// the engine and the store together, while the event that placed the node
-// still names the original sponsor. Comparing against the event would report
-// divergence for a node the engine placed exactly as asked.
+// event can change. Removing a user re-sponsors everyone they recruited, and
+// the event that placed the node still names the original sponsor. Comparing
+// against the event would report divergence for a node the engine placed
+// exactly as asked.
 //
 // Depth comes from the row because the event does not carry one. It is
 // derived from the parent row when the placement is projected.

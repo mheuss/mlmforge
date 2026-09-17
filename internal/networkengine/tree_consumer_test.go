@@ -1272,6 +1272,7 @@ type reconcileTransport struct {
 	positionOps      int
 	positionAsked    []string
 	onPosition       func()
+	onMutation       func()
 }
 
 func (r *reconcileTransport) Call(_ context.Context, op string, params json.RawMessage) (json.RawMessage, error) {
@@ -1299,6 +1300,9 @@ func (r *reconcileTransport) Call(_ context.Context, op string, params json.RawM
 		return json.Marshal(r.position)
 	}
 	r.mutationOps = append(r.mutationOps, op)
+	if r.onMutation != nil {
+		r.onMutation()
+	}
 	if n := len(r.mutationOps) - 1; n < len(r.mutationErrs) {
 		if e := r.mutationErrs[n]; e != nil {
 			return nil, e
@@ -1757,5 +1761,27 @@ func TestHandleNodeRemoved_SucceedsAndWritesTheStore(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{posUser}, store.responsors, "the store write still runs")
+	assert.Nil(t, activeRow(t, store.MemoryTreeStore, posUser))
+}
+
+// The engine has already applied the removal and its reply carried the only
+// copy of moved, so giving up on the store write is not a clean abort. It is
+// the divergence HEU-777 owns, and a shutdown landing in this window must not
+// be what causes it.
+func TestHandleNodeRemoved_StoreWriteSurvivesCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	tr := &reconcileTransport{
+		mutationResponse: json.RawMessage(`{"responsored":[]}`),
+		onMutation:       cancel,
+	}
+	store := &deleteRecordingStore{MemoryTreeStore: NewMemoryTreeStore()}
+	c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
+	c.retryDelay = 0
+	seedRemovable(t, store)
+
+	err := c.HandleEvent(ctx, makeEvent(EventTypeNodeRemoved, removedPayload()))
+
+	require.NoError(t, err, "the removal completes even though the caller gave up")
+	assert.Equal(t, []string{posUser}, store.wroteResponsors, "the store write landed")
 	assert.Nil(t, activeRow(t, store.MemoryTreeStore, posUser))
 }

@@ -115,7 +115,9 @@ func (c *TreeEventConsumer) handleRootAdded(ctx context.Context, event platform.
 		// Not the caller's context. A cancellation between the inspection and
 		// this delete would leave two active depth-0 rows, which is the state
 		// this compensation exists to prevent, and no later run repairs it.
-		if derr := c.store.DeleteNode(context.WithoutCancel(ctx), payload.TreeID, payload.UserID); derr != nil {
+		writeCtx, cancelWrite := detachedWrite(ctx)
+		defer cancelWrite()
+		if derr := c.store.DeleteNode(writeCtx, payload.TreeID, payload.UserID); derr != nil {
 			return reconcileDiverged, fmt.Errorf(
 				"engine refused add_root in tree %s, %s, and deleting the row this event inserted failed: %w",
 				payload.TreeID, held, derr)
@@ -335,7 +337,12 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 		return nil
 	}
 
-	if err := c.store.DeleteNodeAndResponsor(ctx, payload.TreeID, payload.UserID, moved); err != nil {
+	// RemoveNode's reply carried the only copy of moved and the engine has
+	// already applied the removal, so giving up here is not a clean abort. It
+	// is the divergence HEU-777 owns, reachable by a shutdown in this window.
+	writeCtx, cancelWrite := detachedWrite(ctx)
+	defer cancelWrite()
+	if err := c.store.DeleteNodeAndResponsor(writeCtx, payload.TreeID, payload.UserID, moved); err != nil {
 		return fmt.Errorf("remove node and re-sponsor recruits: %w", err)
 	}
 	return nil
@@ -428,6 +435,24 @@ func samePtrUUID(a, b *string) bool {
 		return a == nil && b == nil
 	}
 	return sameUUID(*a, *b)
+}
+
+// storeWriteTimeout bounds a store write detached from the caller's context.
+// WithoutCancel strips the deadline along with the cancellation, and nothing
+// else bounds a query here: no statement_timeout is set on the database and
+// the pool is built from a bare DSN. Five seconds matches the shutdown flush
+// in cmd/mlmforge.
+const storeWriteTimeout = 5 * time.Second
+
+// detachedWrite returns a context a store write can finish on after the caller
+// has given up, still bounded so it cannot hang.
+//
+// Two reasons to detach. The write is the second half of an operation whose
+// first half already committed, so abandoning it leaves a divergence no later
+// run repairs. And a cancelled context makes pgx destroy the connection
+// instead of returning it to the pool, so cancellation load leaks capacity.
+func detachedWrite(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), storeWriteTimeout)
 }
 
 // reconcileOutcome is what an inspection concluded about a mutation the

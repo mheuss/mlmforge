@@ -284,12 +284,47 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 	}
 
 	var moved []Responsored
+
+	// withRetry returning nil cannot say whether this call removed the node or
+	// found it already gone, and the two need different work afterwards. The
+	// flag carries that out, the way moved already does.
+	alreadyProjected := false
+
 	if err := c.withRetry(ctx, "remove_node", payload.TreeID, payload.UserID, func() error {
 		m, err := c.engine.RemoveNode(ctx, payload.TreeID, payload.UserID)
 		moved = m
 		return err
-	}, nil); err != nil {
+	}, func(ctx context.Context, err error) (reconcileOutcome, error) {
+		if !isEngineCode(err, engineCodeUserNotFound) {
+			return reconcileNotApplicable, nil
+		}
+		// The active row is the question, so the read has to see tombstones
+		// too. GetNode cannot tell a completed removal from a user who was
+		// never there.
+		existing, gerr := c.store.GetNodeIncludingRemoved(ctx, payload.TreeID, payload.UserID)
+		if gerr != nil {
+			return reconcileInconclusive, gerr
+		}
+		if existing != nil && existing.RemovedAt == nil {
+			// The engine applied the removal and the store write did not
+			// land. RemoveNode's reply carried the only copy of the moved
+			// list, so nothing here can rebuild it. HEU-777 owns the repair.
+			return reconcileDiverged, &RemovalNotProjectedError{
+				TreeID:  payload.TreeID,
+				UserID:  payload.UserID,
+				EventID: event.ID,
+			}
+		}
+		alreadyProjected = true
+		return reconcileConverged, nil
+	}); err != nil {
 		return err
+	}
+
+	// moved holds whatever the failed call returned, which is nothing. Writing
+	// the store with it would soft-delete the node and re-sponsor no one.
+	if alreadyProjected {
+		return nil
 	}
 
 	if err := c.store.DeleteNodeAndResponsor(ctx, payload.TreeID, payload.UserID, moved); err != nil {

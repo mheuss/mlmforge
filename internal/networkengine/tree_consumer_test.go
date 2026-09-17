@@ -1263,14 +1263,15 @@ func TestPositionMatchesProjection(t *testing.T) {
 // reconcileTransport fails the mutation with a chosen engine code and answers
 // get_position separately, which is the pairing every reconcile path needs.
 type reconcileTransport struct {
-	mutationErr   error
-	mutationErrs  []error
-	position      *EnginePosition
-	positionErr   error
-	mutationOps   []string
-	positionOps   int
-	positionAsked []string
-	onPosition    func()
+	mutationErr      error
+	mutationErrs     []error
+	mutationResponse json.RawMessage
+	position         *EnginePosition
+	positionErr      error
+	mutationOps      []string
+	positionOps      int
+	positionAsked    []string
+	onPosition       func()
 }
 
 func (r *reconcileTransport) Call(_ context.Context, op string, params json.RawMessage) (json.RawMessage, error) {
@@ -1304,6 +1305,9 @@ func (r *reconcileTransport) Call(_ context.Context, op string, params json.RawM
 		}
 	} else if r.mutationErr != nil {
 		return nil, r.mutationErr
+	}
+	if r.mutationResponse != nil {
+		return r.mutationResponse, nil
 	}
 	return json.RawMessage(`{"ok":true}`), nil
 }
@@ -1549,8 +1553,16 @@ func TestHandleRootAdded_ReconcileSkipsOtherEngineErrors(t *testing.T) {
 // is not.
 type deleteRecordingStore struct {
 	*MemoryTreeStore
-	deleted  []string
-	attempts []string
+	deleted    []string
+	attempts   []string
+	responsors []string
+}
+
+func (c *deleteRecordingStore) DeleteNodeAndResponsor(
+	ctx context.Context, treeID, userID string, moved []Responsored,
+) error {
+	c.responsors = append(c.responsors, userID)
+	return c.MemoryTreeStore.DeleteNodeAndResponsor(ctx, treeID, userID, moved)
 }
 
 func (c *deleteRecordingStore) DeleteNode(ctx context.Context, treeID, userID string) error {
@@ -1650,4 +1662,95 @@ func TestHandleRootAdded_CompensationSurvivesCancellation(t *testing.T) {
 	assert.Equal(t, []string{posUser}, store.attempts, "the compensation was attempted")
 	assert.Equal(t, []string{posUser}, store.deleted, "and was not refused by the cancelled context")
 	assert.Nil(t, activeRow(t, store.MemoryTreeStore, posUser), "so the row is gone")
+}
+
+func removedPayload() NodeRemovedPayload {
+	return NodeRemovedPayload{TreeID: "tree1", UserID: posUser, RemovedAt: posEnrolled}
+}
+
+// seedRemovable puts an active row in the store for the user the event removes.
+func seedRemovable(t *testing.T, store *deleteRecordingStore) {
+	t.Helper()
+	require.NoError(t, store.InsertNode(context.Background(), TreeNodeRow{
+		ID: "cafe0000-0000-4000-8000-0000000000aa", TreeID: "tree1",
+		UserID: posUser, Depth: 1, ParentID: ptr(posParent), EnrolledAt: posEnrolled,
+	}))
+}
+
+func newRemovalConsumer(tr *reconcileTransport) (*TreeEventConsumer, *deleteRecordingStore) {
+	store := &deleteRecordingStore{MemoryTreeStore: NewMemoryTreeStore()}
+	c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
+	c.retryDelay = 0
+	return c, store
+}
+
+// The removal ran to completion and the event came back. The engine no longer
+// holds the user and the store's row is already a tombstone.
+func TestHandleNodeRemoved_ReconcileConvergesOnAProjectedRemoval(t *testing.T) {
+	tr := &reconcileTransport{mutationErr: &EngineError{Code: engineCodeUserNotFound}}
+	c, store := newRemovalConsumer(tr)
+	ctx := context.Background()
+	seedRemovable(t, store)
+	require.NoError(t, store.DeleteNode(ctx, "tree1", posUser))
+	store.deleted = nil
+
+	err := c.HandleEvent(ctx, makeEvent(EventTypeNodeRemoved, removedPayload()))
+
+	require.NoError(t, err, "the whole event was already projected")
+	assert.Empty(t, store.responsors, "the store write must not run a second time")
+	assert.Len(t, tr.mutationOps, 1, "converged does not retry")
+}
+
+// The engine applied the removal and the store write never landed. The moved
+// list is gone with the reply, so this cannot be repaired here.
+func TestHandleNodeRemoved_ReconcileFailsWhenAnActiveRowRemains(t *testing.T) {
+	tr := &reconcileTransport{mutationErr: &EngineError{Code: engineCodeUserNotFound}}
+	c, store := newRemovalConsumer(tr)
+	seedRemovable(t, store)
+
+	err := c.HandleEvent(context.Background(), makeEvent(EventTypeNodeRemoved, removedPayload()))
+
+	var target *RemovalNotProjectedError
+	require.ErrorAs(t, err, &target)
+	assert.Equal(t, posUser, target.UserID)
+	assert.Equal(t, "tree1", target.TreeID)
+	assert.NotEmpty(t, target.EventID, "the error carries the event that could not be completed")
+	assert.Empty(t, store.responsors, "an unrepairable removal writes nothing")
+}
+
+// Neither side holds the user. There is nothing to remove and nothing to
+// disagree about.
+func TestHandleNodeRemoved_ReconcileConvergesWhenNoRowExists(t *testing.T) {
+	tr := &reconcileTransport{mutationErr: &EngineError{Code: engineCodeUserNotFound}}
+	c, store := newRemovalConsumer(tr)
+
+	err := c.HandleEvent(context.Background(), makeEvent(EventTypeNodeRemoved, removedPayload()))
+
+	require.NoError(t, err)
+	assert.Empty(t, store.responsors)
+}
+
+func TestHandleNodeRemoved_ReconcileSkipsOtherEngineErrors(t *testing.T) {
+	tr := &reconcileTransport{mutationErr: &EngineError{Code: "HAS_CHILDREN"}}
+	c, store := newRemovalConsumer(tr)
+	seedRemovable(t, store)
+
+	err := c.HandleEvent(context.Background(), makeEvent(EventTypeNodeRemoved, removedPayload()))
+
+	require.Error(t, err)
+	assert.Len(t, tr.mutationOps, c.maxRetries+1, "an error reconcile cannot speak to still retries")
+	assert.Empty(t, store.responsors)
+}
+
+// The ordinary path is unchanged: the engine removes, then the store writes.
+func TestHandleNodeRemoved_SucceedsAndWritesTheStore(t *testing.T) {
+	tr := &reconcileTransport{mutationResponse: json.RawMessage(`{"responsored":[]}`)}
+	c, store := newRemovalConsumer(tr)
+	seedRemovable(t, store)
+
+	err := c.HandleEvent(context.Background(), makeEvent(EventTypeNodeRemoved, removedPayload()))
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{posUser}, store.responsors, "the store write still runs")
+	assert.Nil(t, activeRow(t, store.MemoryTreeStore, posUser))
 }

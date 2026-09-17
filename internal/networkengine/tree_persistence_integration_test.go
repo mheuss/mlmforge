@@ -736,3 +736,58 @@ func TestTreePersistence_RemovedSponsorStillReloads(t *testing.T) {
 	assert.Equal(t, rootID, reloaded.UserID,
 		"the rebuilt engine must agree with the store about who sponsors the recruit")
 }
+
+// A redelivered placement whose user has since been removed and placed again
+// violates the primary key against one row and the active-user index against
+// another. Which of the two Postgres reports is not pinned anywhere (HEU-794),
+// so this asserts the outcome both answers must produce rather than the error
+// identity one of them produces.
+func TestTreePersistence_SupersededRedeliveryIsRefused(t *testing.T) {
+	eventStore, treeStore, engine, _ := newIntegrationDeps(t)
+	ctx := context.Background()
+
+	treeID := testTreeUUID(1)
+	u1, u2 := testUserUUID(1), testUserUUID(2)
+	stream := TreeStreamName(treeID)
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	require.NoError(t, engine.CreateMatrixTree(ctx, treeID, 3, "breadth_first"))
+	consumer := NewTreeEventConsumer(treeStore, engine)
+
+	rootEvent := appendTreeEvent(t, eventStore, stream, 0, EventTypeRootAdded, RootAddedPayload{
+		TreeID: treeID, UserID: u1, SponsorID: u1, EnrolledAt: base,
+	})
+	require.NoError(t, consumer.HandleEvent(ctx, rootEvent))
+
+	pos := 0
+	okEvent := appendTreeEvent(t, eventStore, stream, 1, EventTypeNodePlaced, NodePlacedPayload{
+		TreeID: treeID, UserID: u2, ParentID: u1, SponsorID: u1,
+		Position: &pos, TreeType: treeTypeMatrix, EnrolledAt: base.Add(time.Hour),
+	})
+	require.NoError(t, consumer.HandleEvent(ctx, okEvent))
+
+	require.NoError(t, treeStore.DeleteNode(ctx, treeID, u2))
+	require.NoError(t, treeStore.InsertNode(ctx, TreeNodeRow{
+		ID:         testUserUUID(9),
+		TreeID:     treeID,
+		UserID:     u2,
+		ParentID:   &u1,
+		SponsorID:  &u1,
+		Position:   &pos,
+		Depth:      1,
+		EnrolledAt: base.Add(2 * time.Hour),
+	}))
+
+	before, err := treeStore.GetByTree(ctx, treeID)
+	require.NoError(t, err)
+
+	assert.Error(t, consumer.HandleEvent(ctx, okEvent), "a superseded redelivery is refused")
+
+	after, err := treeStore.GetByTree(ctx, treeID)
+	require.NoError(t, err)
+	assert.Len(t, after, len(before), "the refusal wrote no row")
+
+	downline, err := engine.GetDownline(ctx, treeID, u1, 0)
+	require.NoError(t, err)
+	assert.Len(t, downline, 1, "the refusal added no engine node")
+}

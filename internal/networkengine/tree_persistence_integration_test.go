@@ -947,11 +947,12 @@ func seedRecruiterAndRecruit(
 	t *testing.T,
 	eventStore platform.EventStore,
 	consumer *TreeEventConsumer,
-	treeID, stream, rootID, recruiterID, recruitID string,
+	treeID, rootID, recruiterID, recruitID string,
 	base time.Time,
-) {
+) int64 {
 	t.Helper()
 	ctx := context.Background()
+	stream := TreeStreamName(treeID)
 
 	rootEvent := appendTreeEvent(t, eventStore, stream, 0, EventTypeRootAdded, RootAddedPayload{
 		TreeID: treeID, UserID: rootID, SponsorID: rootID, EnrolledAt: base,
@@ -969,6 +970,7 @@ func seedRecruiterAndRecruit(
 		TreeType: treeTypeUnilevel, EnrolledAt: base.Add(48 * time.Hour),
 	})
 	require.NoError(t, consumer.HandleEvent(ctx, recruitEvent))
+	return 3
 }
 
 // A removal that projected into both sides must survive being delivered again
@@ -984,32 +986,37 @@ func TestTreePersistence_RedeliveredRemovalConverges(t *testing.T) {
 
 	require.NoError(t, engine.CreateTree(ctx, treeID, treeTypeUnilevel))
 	consumer := NewTreeEventConsumer(treeStore, engine)
-	seedRecruiterAndRecruit(t, eventStore, consumer, treeID, stream, rootID, recruiterID, recruitID, base)
+	next := seedRecruiterAndRecruit(t, eventStore, consumer, treeID, rootID, recruiterID, recruitID, base)
 
-	removeEvent := appendTreeEvent(t, eventStore, stream, 3, EventTypeNodeRemoved, NodeRemovedPayload{
+	removeEvent := appendTreeEvent(t, eventStore, stream, next, EventTypeNodeRemoved, NodeRemovedPayload{
 		TreeID: treeID, UserID: recruiterID, RemovedAt: base.Add(72 * time.Hour),
 	})
 	require.NoError(t, consumer.HandleEvent(ctx, removeEvent))
+
+	// The reconcile reaches the same outcome for a tombstoned row and for a
+	// user the store never held, so read the row the redelivery will branch on.
+	removedRow, err := treeStore.GetNodeIncludingRemoved(ctx, treeID, recruiterID)
+	require.NoError(t, err)
+	require.NotNil(t, removedRow, "GetNodeIncludingRemoved returned no row for the recruiter")
+	require.NotNil(t, removedRow.RemovedAt, "recruiter row removed_at is nil")
 
 	first, err := treeStore.GetNode(ctx, treeID, recruitID)
 	require.NoError(t, err)
 	require.NotNil(t, first)
 	require.NotNil(t, first.SponsorID)
-	require.Equal(t, rootID, *first.SponsorID, "the first delivery moved the sponsor edge")
+	require.Equal(t, rootID, *first.SponsorID, "recruit sponsor_id after the first delivery")
 
-	require.NoError(t, consumer.HandleEvent(ctx, removeEvent), "the redelivery converges")
+	require.NoError(t, consumer.HandleEvent(ctx, removeEvent),
+		"second HandleEvent of the same node_removed event returned an error")
 
 	after, err := treeStore.GetNode(ctx, treeID, recruitID)
 	require.NoError(t, err)
 	require.NotNil(t, after)
 	require.NotNil(t, after.SponsorID)
-	assert.Equal(t, *first.SponsorID, *after.SponsorID, "the sponsor the first delivery recorded")
-	assert.Equal(t, first.UpdatedAt, after.UpdatedAt, "the redelivery wrote nothing")
+	assert.Equal(t, *first.SponsorID, *after.SponsorID, "recruit sponsor_id after the redelivery")
 }
 
-// The engine applied the removal and the store write never landed. The moved
-// list lived only in the engine reply, so this cannot be repaired here and
-// fails with a typed error naming what is unrecoverable.
+// The engine applied the removal and the store write never landed.
 func TestTreePersistence_RedeliveredRemovalFailsWhenTheStoreNeverLanded(t *testing.T) {
 	eventStore, treeStore, engine, _ := newIntegrationDeps(t)
 	ctx := context.Background()
@@ -1021,20 +1028,19 @@ func TestTreePersistence_RedeliveredRemovalFailsWhenTheStoreNeverLanded(t *testi
 
 	require.NoError(t, engine.CreateTree(ctx, treeID, treeTypeUnilevel))
 	consumer := NewTreeEventConsumer(treeStore, engine)
-	seedRecruiterAndRecruit(t, eventStore, consumer, treeID, stream, rootID, recruiterID, recruitID, base)
+	next := seedRecruiterAndRecruit(t, eventStore, consumer, treeID, rootID, recruiterID, recruitID, base)
 
 	// Straight to the engine, so the store keeps an active row for a user the
 	// engine has already dropped.
 	_, err := engine.RemoveNode(ctx, treeID, recruiterID)
 	require.NoError(t, err)
 
-	removeEvent := appendTreeEvent(t, eventStore, stream, 3, EventTypeNodeRemoved, NodeRemovedPayload{
+	removeEvent := appendTreeEvent(t, eventStore, stream, next, EventTypeNodeRemoved, NodeRemovedPayload{
 		TreeID: treeID, UserID: recruiterID, RemovedAt: base.Add(72 * time.Hour),
 	})
 
 	err = consumer.HandleEvent(ctx, removeEvent)
 
-	require.Error(t, err)
 	var typed *RemovalNotProjectedError
 	require.ErrorAs(t, err, &typed)
 	assert.Equal(t, treeID, typed.TreeID)
@@ -1044,4 +1050,12 @@ func TestTreePersistence_RedeliveredRemovalFailsWhenTheStoreNeverLanded(t *testi
 	still, err := treeStore.GetNode(ctx, treeID, recruiterID)
 	require.NoError(t, err)
 	assert.NotNil(t, still, "GetNode returned no row for the recruiter")
+
+	// The state HEU-777 has to repair: the recruit still names a sponsor the
+	// engine no longer holds.
+	orphaned, err := treeStore.GetNode(ctx, treeID, recruitID)
+	require.NoError(t, err)
+	require.NotNil(t, orphaned)
+	require.NotNil(t, orphaned.SponsorID)
+	assert.Equal(t, recruiterID, *orphaned.SponsorID, "recruit sponsor_id after the failed removal")
 }

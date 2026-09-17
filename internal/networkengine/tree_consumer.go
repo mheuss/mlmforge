@@ -57,6 +57,34 @@ func checkStream(event platform.Event, eventName, treeID, userID string) error {
 	return nil
 }
 
+// refuseReplayedInsert reports whether a skipped insert may continue to the
+// engine call.
+func (c *TreeEventConsumer) refuseReplayedInsert(ctx context.Context, eventID, treeID, userID string) error {
+	existing, gerr := c.store.GetNodeIncludingRemoved(ctx, treeID, userID)
+	if gerr != nil {
+		return fmt.Errorf("read existing row for %s in tree %s: %w", userID, treeID, gerr)
+	}
+	// Only this event's own active row continues. Under anything else the
+	// engine call would add a user this event holds no active row for.
+	if existing != nil && existing.ID == eventID && existing.RemovedAt == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: insert for %s in tree %s reported event %s already present, and the read for that tree and user returned %s",
+		ErrReplayedPlacement, userID, treeID, eventID, describeExistingRow(existing))
+}
+
+// describeExistingRow renders what a tombstone-aware read returned.
+func describeExistingRow(row *TreeNodeRow) string {
+	if row == nil {
+		return "no row"
+	}
+	if row.RemovedAt == nil {
+		return fmt.Sprintf("an active row carrying event %s", row.ID)
+	}
+	return fmt.Sprintf("a row carrying event %s, removed at %s",
+		row.ID, row.RemovedAt.UTC().Format(time.RFC3339))
+}
+
 func (c *TreeEventConsumer) handleRootAdded(ctx context.Context, event platform.Event) error {
 	var payload RootAddedPayload
 	if err := json.Unmarshal(event.Payload, &payload); err != nil {
@@ -79,7 +107,12 @@ func (c *TreeEventConsumer) handleRootAdded(ctx context.Context, event platform.
 	}
 
 	if err := c.store.InsertNode(ctx, node); err != nil {
-		return fmt.Errorf("store root node: %w", err)
+		if !errors.Is(err, ErrNodeAlreadyProjected) {
+			return fmt.Errorf("store root node: %w", err)
+		}
+		if rerr := c.refuseReplayedInsert(ctx, event.ID, payload.TreeID, payload.UserID); rerr != nil {
+			return rerr
+		}
 	}
 
 	reconcile := func(ctx context.Context, err error) (reconcileOutcome, error) {
@@ -218,7 +251,12 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform
 	}
 
 	if err := c.store.InsertNode(ctx, node); err != nil {
-		return fmt.Errorf("store placed node: %w", err)
+		if !errors.Is(err, ErrNodeAlreadyProjected) {
+			return fmt.Errorf("store placed node: %w", err)
+		}
+		if rerr := c.refuseReplayedInsert(ctx, event.ID, payload.TreeID, payload.UserID); rerr != nil {
+			return rerr
+		}
 	}
 
 	// One closure for both engine calls below. USER_ALREADY_EXISTS after a

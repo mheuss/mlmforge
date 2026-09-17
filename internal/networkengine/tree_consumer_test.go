@@ -1785,3 +1785,133 @@ func TestHandleNodeRemoved_StoreWriteSurvivesCancellation(t *testing.T) {
 	assert.Equal(t, []string{posUser}, store.wroteResponsors, "the store write landed")
 	assert.Nil(t, activeRow(t, store.MemoryTreeStore, posUser))
 }
+
+// The skipped-insert guard. InsertNode reports a collision on the event ID
+// alone, while the read that follows is keyed on tree and user, so the two
+// can name different rows. The guard reaches the engine only when the row it
+// read is this event's own active row.
+
+const supersedingEventID = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+
+// seedRow writes a row straight into the store, tombstone included, so a test
+// can drive a state the handlers cannot reach on their own.
+func seedRow(t *testing.T, store *MemoryTreeStore, id, userID string, removedAt *time.Time) {
+	t.Helper()
+	require.NoError(t, store.InsertNode(context.Background(), TreeNodeRow{
+		ID:         id,
+		TreeID:     "tree1",
+		UserID:     userID,
+		ParentID:   ptr(posParent),
+		SponsorID:  ptr(posSponsor),
+		Depth:      1,
+		EnrolledAt: posEnrolled,
+		RemovedAt:  removedAt,
+	}))
+}
+
+// Exactly one tombstone, so the read cannot return someone else's row and
+// pass this test for the wrong reason.
+func TestHandleNodePlaced_ReplayedAfterRemoval(t *testing.T) {
+	tr := &reconcileTransport{}
+	c, store := newReconcileConsumer(t, tr)
+	ev := makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1)))
+	removed := posEnrolled.Add(time.Hour)
+	seedRow(t, store, ev.ID, posUser, &removed)
+
+	err := c.HandleEvent(context.Background(), ev)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrReplayedPlacement)
+	assert.Empty(t, tr.mutationOps, "a replayed placement never reaches the engine")
+}
+
+func TestHandleNodePlaced_SkippedInsertOfThisEventsActiveRowReachesTheEngine(t *testing.T) {
+	tr := &reconcileTransport{}
+	c, store := newReconcileConsumer(t, tr)
+	ev := makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1)))
+	seedRow(t, store, ev.ID, posUser, nil)
+
+	err := c.HandleEvent(context.Background(), ev)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"add_node"}, tr.mutationOps, "the lost-reply case still reaches the engine")
+}
+
+// The colliding event ID belongs to another user, so the read for this tree
+// and user finds nothing at all.
+func TestHandleNodePlaced_SkippedInsertWithNoRowForThisUser(t *testing.T) {
+	tr := &reconcileTransport{}
+	c, store := newReconcileConsumer(t, tr)
+	ev := makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1)))
+	seedRow(t, store, ev.ID, posOther, nil)
+
+	err := c.HandleEvent(context.Background(), ev)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrReplayedPlacement)
+	assert.Contains(t, err.Error(), "no row", "the message reports what the read returned")
+	assert.Empty(t, tr.mutationOps, "the engine is not called")
+}
+
+// A later event placed this user again, so the read returns that row rather
+// than the tombstone the insert collided with.
+func TestHandleNodePlaced_SupersededByALaterPlacement(t *testing.T) {
+	tr := &reconcileTransport{}
+	c, store := newReconcileConsumer(t, tr)
+	ev := makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1)))
+	removed := posEnrolled.Add(time.Hour)
+	seedRow(t, store, ev.ID, posUser, &removed)
+	seedRow(t, store, supersedingEventID, posUser, nil)
+
+	err := c.HandleEvent(context.Background(), ev)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrReplayedPlacement)
+	assert.Contains(t, err.Error(), supersedingEventID, "the message names the row the read returned")
+	assert.Empty(t, tr.mutationOps, "a superseded placement never reaches the engine")
+}
+
+// Both rows are tombstones, so the read returns the more recent one and this
+// event's own tombstone is invisible.
+func TestHandleNodePlaced_SupersededAndRemovedAgain(t *testing.T) {
+	tr := &reconcileTransport{}
+	c, store := newReconcileConsumer(t, tr)
+	ev := makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1)))
+	early := posEnrolled.Add(time.Hour)
+	late := posEnrolled.Add(2 * time.Hour)
+	seedRow(t, store, ev.ID, posUser, &early)
+	seedRow(t, store, supersedingEventID, posUser, &late)
+
+	err := c.HandleEvent(context.Background(), ev)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrReplayedPlacement)
+	assert.Contains(t, err.Error(), supersedingEventID, "the message names the row the read returned")
+	assert.Empty(t, tr.mutationOps, "the engine is not called")
+}
+
+func TestHandleRootAdded_ReplayedAfterRemoval(t *testing.T) {
+	tr := &reconcileTransport{}
+	c, store := newRootConsumer(tr)
+	ev := makeEvent(EventTypeRootAdded, rootPayload())
+	removed := posEnrolled.Add(time.Hour)
+	seedRow(t, store, ev.ID, posUser, &removed)
+
+	err := c.HandleEvent(context.Background(), ev)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrReplayedPlacement)
+	assert.Empty(t, tr.mutationOps, "a replayed root never reaches the engine")
+}
+
+func TestHandleRootAdded_SkippedInsertOfThisEventsActiveRowReachesTheEngine(t *testing.T) {
+	tr := &reconcileTransport{}
+	c, store := newRootConsumer(tr)
+	ev := makeEvent(EventTypeRootAdded, rootPayload())
+	seedRow(t, store, ev.ID, posUser, nil)
+
+	err := c.HandleEvent(context.Background(), ev)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"add_root"}, tr.mutationOps, "the lost-reply case still reaches the engine")
+}

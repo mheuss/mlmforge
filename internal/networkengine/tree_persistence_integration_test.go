@@ -571,12 +571,9 @@ func TestTreePersistence_SlotConflictFailsCleanAndTreeReloads(t *testing.T) {
 	assert.Equal(t, 0, got.Position)
 }
 
-// TestTreePersistence_DuplicateDeliveryPinsNonIdempotence documents, on
-// purpose, that redelivering an already-projected event FAILS today: the
-// row's id is the event ID, so the insert dies on tree_nodes_pkey and the
-// engine is never reached. HEU-576 owns making redelivery converge; when
-// it lands, this test's expectation flips from error to clean success.
-func TestTreePersistence_DuplicateDeliveryPinsNonIdempotence(t *testing.T) {
+// TestTreePersistence_DuplicateDeliveryConverges pins that redelivering an
+// already-projected event succeeds against the real worker and Postgres.
+func TestTreePersistence_DuplicateDeliveryConverges(t *testing.T) {
 	eventStore, treeStore, engine, _ := newIntegrationDeps(t)
 	ctx := context.Background()
 
@@ -600,32 +597,18 @@ func TestTreePersistence_DuplicateDeliveryPinsNonIdempotence(t *testing.T) {
 	})
 	require.NoError(t, consumer.HandleEvent(ctx, okEvent))
 
-	// Redeliver the exact same event. The row's id IS the event ID, so an
-	// identical redelivery dies on the primary key — before the
-	// (tree_id, user_id) index is ever consulted. That distinction is the
-	// discriminator HEU-576's idempotency needs: pkey collision means "this
-	// exact event was already stored" (the engine may not have applied it);
-	// idx_tree_nodes_tree_user means "a different event claims the same
-	// user", which is real corruption.
-	// The insert now names the primary key as its ON CONFLICT arbiter, so a
-	// redelivery is skipped rather than raising, and the store reports the
-	// skip. The slot index is never reached.
-	//
-	// The consumer still surfaces that as an error. Task 18 is where a
-	// skipped row stops being a failure, and this test's name stops being
-	// true at that point.
-	err := consumer.HandleEvent(ctx, okEvent)
-	assert.ErrorIs(t, err, ErrNodeAlreadyProjected)
+	// Redeliver the exact same event. The insert is skipped, the row it
+	// collided with is this event's own and still active, so the engine call
+	// runs again and reconcile finds the placement it already holds.
+	require.NoError(t, consumer.HandleEvent(ctx, okEvent))
 
 	rows, err := treeStore.GetByTree(ctx, treeID)
 	require.NoError(t, err)
 	assert.Len(t, rows, 2, "redelivery left no duplicate row")
 
-	// The engine never saw the redelivery either: u1's downline is still
-	// just u2.
 	downline, err := engine.GetDownline(ctx, treeID, u1, 0)
 	require.NoError(t, err)
-	assert.Len(t, downline, 1, "engine untouched by the redelivery")
+	assert.Len(t, downline, 1, "redelivery added no second engine node")
 }
 
 // TestTreePersistence_RejectedTreeLeavesEngineLoadable proves the operational

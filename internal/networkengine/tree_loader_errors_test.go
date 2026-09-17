@@ -860,6 +860,10 @@ func TestCycleError_EmptyUserIDNamesNoNode(t *testing.T) {
 
 	var rejected *TreeLoadRejectedError
 	require.ErrorAs(t, err, &rejected)
+	assert.Equal(t,
+		"tree t: 1 of 2 nodes cannot be replayed (the replay order stops at , whose parent or sponsor cannot be resolved)",
+		err.Error(),
+		"pins which exit this covers; the no-unreplayable-node exit also returns empty NodeIDs")
 	assert.Empty(t, rejected.NodeIDs,
 		"a message naming no user must carry no user")
 }

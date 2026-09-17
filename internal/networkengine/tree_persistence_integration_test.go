@@ -939,3 +939,109 @@ func TestTreePersistence_ReplayedPlacementRefused(t *testing.T) {
 		treeID, u2).Scan(&tombstones))
 	assert.Equal(t, 1, tombstones, "tree_nodes holds %d removed rows for the user in this tree", tombstones)
 }
+
+// seedRecruiterAndRecruit builds root, a childless recruiter under it, and a
+// recruit placed under the root but sponsored by the recruiter, so removing
+// the recruiter moves a sponsor edge.
+func seedRecruiterAndRecruit(
+	t *testing.T,
+	eventStore platform.EventStore,
+	consumer *TreeEventConsumer,
+	treeID, stream, rootID, recruiterID, recruitID string,
+	base time.Time,
+) {
+	t.Helper()
+	ctx := context.Background()
+
+	rootEvent := appendTreeEvent(t, eventStore, stream, 0, EventTypeRootAdded, RootAddedPayload{
+		TreeID: treeID, UserID: rootID, SponsorID: rootID, EnrolledAt: base,
+	})
+	require.NoError(t, consumer.HandleEvent(ctx, rootEvent))
+
+	recruiterEvent := appendTreeEvent(t, eventStore, stream, 1, EventTypeNodePlaced, NodePlacedPayload{
+		TreeID: treeID, UserID: recruiterID, ParentID: rootID, SponsorID: rootID,
+		TreeType: treeTypeUnilevel, EnrolledAt: base.Add(24 * time.Hour),
+	})
+	require.NoError(t, consumer.HandleEvent(ctx, recruiterEvent))
+
+	recruitEvent := appendTreeEvent(t, eventStore, stream, 2, EventTypeNodePlaced, NodePlacedPayload{
+		TreeID: treeID, UserID: recruitID, ParentID: rootID, SponsorID: recruiterID,
+		TreeType: treeTypeUnilevel, EnrolledAt: base.Add(48 * time.Hour),
+	})
+	require.NoError(t, consumer.HandleEvent(ctx, recruitEvent))
+}
+
+// A removal that projected into both sides must survive being delivered again
+// without moving the sponsor edge a second time.
+func TestTreePersistence_RedeliveredRemovalConverges(t *testing.T) {
+	eventStore, treeStore, engine, _ := newIntegrationDeps(t)
+	ctx := context.Background()
+
+	treeID := testTreeUUID(1)
+	rootID, recruiterID, recruitID := testUserUUID(1), testUserUUID(2), testUserUUID(3)
+	stream := TreeStreamName(treeID)
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	require.NoError(t, engine.CreateTree(ctx, treeID, treeTypeUnilevel))
+	consumer := NewTreeEventConsumer(treeStore, engine)
+	seedRecruiterAndRecruit(t, eventStore, consumer, treeID, stream, rootID, recruiterID, recruitID, base)
+
+	removeEvent := appendTreeEvent(t, eventStore, stream, 3, EventTypeNodeRemoved, NodeRemovedPayload{
+		TreeID: treeID, UserID: recruiterID, RemovedAt: base.Add(72 * time.Hour),
+	})
+	require.NoError(t, consumer.HandleEvent(ctx, removeEvent))
+
+	first, err := treeStore.GetNode(ctx, treeID, recruitID)
+	require.NoError(t, err)
+	require.NotNil(t, first)
+	require.NotNil(t, first.SponsorID)
+	require.Equal(t, rootID, *first.SponsorID, "the first delivery moved the sponsor edge")
+
+	require.NoError(t, consumer.HandleEvent(ctx, removeEvent), "the redelivery converges")
+
+	after, err := treeStore.GetNode(ctx, treeID, recruitID)
+	require.NoError(t, err)
+	require.NotNil(t, after)
+	require.NotNil(t, after.SponsorID)
+	assert.Equal(t, *first.SponsorID, *after.SponsorID, "the sponsor the first delivery recorded")
+	assert.Equal(t, first.UpdatedAt, after.UpdatedAt, "the redelivery wrote nothing")
+}
+
+// The engine applied the removal and the store write never landed. The moved
+// list lived only in the engine reply, so this cannot be repaired here and
+// fails with a typed error naming what is unrecoverable.
+func TestTreePersistence_RedeliveredRemovalFailsWhenTheStoreNeverLanded(t *testing.T) {
+	eventStore, treeStore, engine, _ := newIntegrationDeps(t)
+	ctx := context.Background()
+
+	treeID := testTreeUUID(1)
+	rootID, recruiterID, recruitID := testUserUUID(1), testUserUUID(2), testUserUUID(3)
+	stream := TreeStreamName(treeID)
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	require.NoError(t, engine.CreateTree(ctx, treeID, treeTypeUnilevel))
+	consumer := NewTreeEventConsumer(treeStore, engine)
+	seedRecruiterAndRecruit(t, eventStore, consumer, treeID, stream, rootID, recruiterID, recruitID, base)
+
+	// Straight to the engine, so the store keeps an active row for a user the
+	// engine has already dropped.
+	_, err := engine.RemoveNode(ctx, treeID, recruiterID)
+	require.NoError(t, err)
+
+	removeEvent := appendTreeEvent(t, eventStore, stream, 3, EventTypeNodeRemoved, NodeRemovedPayload{
+		TreeID: treeID, UserID: recruiterID, RemovedAt: base.Add(72 * time.Hour),
+	})
+
+	err = consumer.HandleEvent(ctx, removeEvent)
+
+	require.Error(t, err)
+	var typed *RemovalNotProjectedError
+	require.ErrorAs(t, err, &typed)
+	assert.Equal(t, treeID, typed.TreeID)
+	assert.Equal(t, recruiterID, typed.UserID)
+	assert.Equal(t, removeEvent.ID, typed.EventID)
+
+	still, err := treeStore.GetNode(ctx, treeID, recruiterID)
+	require.NoError(t, err)
+	assert.NotNil(t, still, "GetNode returned no row for the recruiter")
+}

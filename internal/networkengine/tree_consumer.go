@@ -298,9 +298,10 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 		if !isEngineCode(err, engineCodeUserNotFound) {
 			return reconcileNotApplicable, nil
 		}
-		// The active row is the question, so the read has to see tombstones
-		// too. GetNode cannot tell a completed removal from a user who was
-		// never there.
+		// This branch turns on one thing: whether an active row is still
+		// there. The tombstone-aware read is what the design names, and it
+		// leaves the removed row in reach if a later task needs to tell this
+		// event's removal from someone else's.
 		existing, gerr := c.store.GetNodeIncludingRemoved(ctx, payload.TreeID, payload.UserID)
 		if gerr != nil {
 			return reconcileInconclusive, gerr

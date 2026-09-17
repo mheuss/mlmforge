@@ -888,3 +888,57 @@ func TestTreePersistence_RedeliveryAfterPartialProjection(t *testing.T) {
 	assert.Equal(t, u1, *got.ParentUserID, "the engine holds the event's parent")
 	assert.Equal(t, pos, got.Position, "and the event's position")
 }
+
+// A placement redelivered after its node was removed must not resurrect it.
+// The tombstone keeps the event id, so the insert is skipped and the engine no
+// longer holds the user, which is the pair that would otherwise let the add
+// succeed.
+func TestTreePersistence_ReplayedPlacementRefused(t *testing.T) {
+	eventStore, treeStore, engine, pool := newIntegrationDeps(t)
+	ctx := context.Background()
+
+	treeID := testTreeUUID(1)
+	u1, u2 := testUserUUID(1), testUserUUID(2)
+	stream := TreeStreamName(treeID)
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// Unilevel rather than matrix: a matrix removal cannot reach the engine
+	// at all, HEU-582.
+	require.NoError(t, engine.CreateTree(ctx, treeID, treeTypeUnilevel))
+	consumer := NewTreeEventConsumer(treeStore, engine)
+
+	rootEvent := appendTreeEvent(t, eventStore, stream, 0, EventTypeRootAdded, RootAddedPayload{
+		TreeID: treeID, UserID: u1, SponsorID: u1, EnrolledAt: base,
+	})
+	require.NoError(t, consumer.HandleEvent(ctx, rootEvent))
+
+	placed := appendTreeEvent(t, eventStore, stream, 1, EventTypeNodePlaced, NodePlacedPayload{
+		TreeID: treeID, UserID: u2, ParentID: u1, SponsorID: u1,
+		TreeType: treeTypeUnilevel, EnrolledAt: base.Add(time.Hour),
+	})
+	require.NoError(t, consumer.HandleEvent(ctx, placed))
+
+	removed := appendTreeEvent(t, eventStore, stream, 2, EventTypeNodeRemoved, NodeRemovedPayload{
+		TreeID: treeID, UserID: u2, RemovedAt: base.Add(2 * time.Hour),
+	})
+	require.NoError(t, consumer.HandleEvent(ctx, removed))
+
+	err := consumer.HandleEvent(ctx, placed)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrReplayedPlacement, "the replayed placement is refused")
+
+	active, err := treeStore.GetNode(ctx, treeID, u2)
+	require.NoError(t, err)
+	assert.Nil(t, active, "the refusal left no active row")
+
+	_, perr := engine.GetPosition(ctx, treeID, u2)
+	require.True(t, isEngineCode(perr, engineCodeUserNotFound),
+		"the code lives in a field, not in the message text: %v", perr)
+
+	var rows int
+	require.NoError(t, pool.QueryRow(ctx,
+		"SELECT count(*) FROM tree_nodes WHERE tree_id = $1 AND user_id = $2",
+		treeID, u2).Scan(&rows))
+	assert.Equal(t, 1, rows, "the refusal wrote no second row for the user")
+}

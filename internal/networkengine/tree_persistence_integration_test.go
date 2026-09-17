@@ -551,7 +551,7 @@ func TestTreePersistence_SlotConflictFailsCleanAndTreeReloads(t *testing.T) {
 	// first (store-before-engine, ADR-021). Checked before the restart,
 	// which would otherwise erase the evidence.
 	_, posErr := engine.GetPosition(ctx, treeID, u3)
-	assert.True(t, isEngineCode(posErr, engineCodeUserNotFound),
+	require.True(t, isEngineCode(posErr, engineCodeUserNotFound),
 		"the code lives in a field, not in the message text: %v", posErr)
 
 	// The store stayed clean, so a fresh engine reloads it. This is the

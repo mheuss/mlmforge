@@ -1553,15 +1553,20 @@ func TestHandleRootAdded_ReconcileSkipsOtherEngineErrors(t *testing.T) {
 // is not.
 type deleteRecordingStore struct {
 	*MemoryTreeStore
-	deleted    []string
-	attempts   []string
-	responsors []string
+	deleted         []string
+	attempts        []string
+	responsors      []string
+	wroteResponsors []string
 }
 
 func (c *deleteRecordingStore) DeleteNodeAndResponsor(
 	ctx context.Context, treeID, userID string, moved []Responsored,
 ) error {
 	c.responsors = append(c.responsors, userID)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c.wroteResponsors = append(c.wroteResponsors, userID)
 	return c.MemoryTreeStore.DeleteNodeAndResponsor(ctx, treeID, userID, moved)
 }
 

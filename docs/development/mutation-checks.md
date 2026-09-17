@@ -11,7 +11,7 @@ The technique is not the hard part. Running it honestly is.
 
 Every one of these produces zero failing tests. So does a suite that genuinely
 catches nothing. Reading "0 failures" and concluding "the mutation survived" is
-wrong in three of the five cases.
+wrong in four of the five cases, and right only in the last.
 
 **Run this checklist against the harness, not from memory.** Three of the four
 were introduced while fixing the previous one, which is why this is a procedure
@@ -22,7 +22,7 @@ rather than four things to watch out for.
 Deleting a branch often leaves a variable unused, which Go rejects. `go test`
 then emits no test lines at all, and a grep for `--- FAIL` returns zero.
 
-Gate every run on the build:
+Gate every run on the build, inside the harness function:
 
 ```bash
 mise exec -- go build ./... || { echo BUILD_FAILED; return; }
@@ -36,7 +36,7 @@ used.
 Rename a function and forget the test, and `-run TestTheNewName` selects
 nothing. No tests run, no failures print, every mutation reads as surviving.
 
-Count what ran and refuse a result without it:
+Count what ran, in the same function, and refuse a result without it:
 
 ```bash
 ran=$(echo "$out" | grep -cE '^=== RUN')

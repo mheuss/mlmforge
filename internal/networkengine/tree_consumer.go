@@ -307,14 +307,21 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 			return reconcileInconclusive, gerr
 		}
 		if existing != nil && existing.RemovedAt == nil {
-			// The engine applied the removal and the store write did not
-			// land. RemoveNode's reply carried the only copy of the moved
-			// list, so nothing here can rebuild it. HEU-777 owns the repair.
+			// The engine applied the removal and no store write has landed.
+			// This handler is engine-first, so that covers a redelivery and
+			// equally a first delivery whose reply was lost on an earlier
+			// attempt: either way RemoveNode's reply carried the only copy of
+			// the moved list and nothing here can rebuild it. HEU-777 owns
+			// the repair.
 			return reconcileDiverged, &RemovalNotProjectedError{
 				TreeID:  payload.TreeID,
 				UserID:  payload.UserID,
 				EventID: event.ID,
 			}
+		}
+		if existing == nil {
+			log.Printf("WARN tree consumer: node_removed for a user the store never held tree_id=%s user_id=%s event_id=%s",
+				payload.TreeID, payload.UserID, event.ID)
 		}
 		alreadyProjected = true
 		return reconcileConverged, nil

@@ -73,6 +73,18 @@ measurement describes a tree you did not intend.
 **Commit the change under test before mutating it.** Then `checkout` restores
 the thing being measured rather than deleting it.
 
+Knowing the rule is not enough. This one was written from four occurrences and
+then happened a fifth time, in the session that wrote it, because an anchor
+failed partway through a loop and the loop's `checkout` ran anyway. Make the
+harness refuse instead:
+
+```bash
+[ -n "$(/usr/bin/git status --short -- "$FILE")" ] && { echo "UNCOMMITTED WORK IN $FILE"; return; }
+```
+
+Run it before the first mutation, not before each one: by the time a mutation
+is applied the file is dirty by design.
+
 ## A surviving mutation is not always a defect
 
 Sometimes the code is equivalent under the mutation and no test can tell them

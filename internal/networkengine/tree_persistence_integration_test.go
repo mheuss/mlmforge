@@ -927,7 +927,7 @@ func TestTreePersistence_ReplayedPlacementRefused(t *testing.T) {
 
 	active, err := treeStore.GetNode(ctx, treeID, u2)
 	require.NoError(t, err)
-	assert.Nil(t, active, "GetNode returned an active row for the user: %+v", active)
+	assert.Nil(t, active, "GetNode returned a row for the user: %+v", active)
 
 	_, perr := engine.GetPosition(ctx, treeID, u2)
 	require.True(t, isEngineCode(perr, engineCodeUserNotFound),

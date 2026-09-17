@@ -3,6 +3,7 @@ package networkengine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"testing"
@@ -738,10 +739,10 @@ func TestTreePersistence_RemovedSponsorStillReloads(t *testing.T) {
 }
 
 // A redelivered placement whose user has since been removed and placed again
-// violates the primary key against one row and the active-user index against
-// another. Which of the two Postgres reports is not pinned anywhere (HEU-794),
-// so this asserts the outcome both answers must produce rather than the error
-// identity one of them produces.
+// violates the primary key and both active unique indexes, against different
+// rows. Which one Postgres reports is not pinned anywhere (HEU-794), so this
+// asserts the outcome every answer must produce rather than the error identity
+// one of them produces.
 func TestTreePersistence_SupersededRedeliveryIsRefused(t *testing.T) {
 	eventStore, treeStore, engine, _ := newIntegrationDeps(t)
 	ctx := context.Background()
@@ -781,7 +782,13 @@ func TestTreePersistence_SupersededRedeliveryIsRefused(t *testing.T) {
 	before, err := treeStore.GetByTree(ctx, treeID)
 	require.NoError(t, err)
 
-	assert.Error(t, consumer.HandleEvent(ctx, okEvent), "a superseded redelivery is refused")
+	rerr := consumer.HandleEvent(ctx, okEvent)
+	require.Error(t, rerr, "a superseded redelivery is refused")
+	assert.True(t,
+		errors.Is(rerr, ErrReplayedPlacement) ||
+			errors.Is(rerr, ErrActiveUserConflict) ||
+			errors.Is(rerr, ErrSlotConflict),
+		"refused for a conflict rather than for some other reason: %v", rerr)
 
 	after, err := treeStore.GetByTree(ctx, treeID)
 	require.NoError(t, err)

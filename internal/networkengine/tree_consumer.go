@@ -66,7 +66,7 @@ func (c *TreeEventConsumer) checkReplayedInsert(
 ) error {
 	existing, gerr := c.store.GetNodeIncludingRemoved(ctx, treeID, userID)
 	if gerr != nil {
-		return fmt.Errorf("read existing row for %s in tree %s: %w", userID, treeID, gerr)
+		return fmt.Errorf("read existing row for %s in tree %s: %w (%w)", userID, treeID, gerr, insertErr)
 	}
 	// Only this event's own active row continues. Under anything else the
 	// engine call would add a user this event holds no active row for.
@@ -150,12 +150,10 @@ func (c *TreeEventConsumer) handleRootAdded(ctx context.Context, event platform.
 			held = fmt.Sprintf("get_position put %s at depth %d enrolled %d, against %d in this event",
 				payload.UserID, pos.Depth, pos.EnrolledAt, payload.EnrolledAt.Unix())
 		}
-		// The delete below undoes this call's own insert. A replayed event
-		// reaches here over a row written before this delivery, and removing
-		// it would take away a depth-0 row nothing here wrote.
+		// The delete below undoes this call's own insert.
 		if !inserted {
 			return reconcileDiverged, fmt.Errorf(
-				"engine refused add_root in tree %s, %s; the stored row predates this delivery and was left alone",
+				"engine refused add_root in tree %s, %s; this delivery's insert was skipped, so the stored row was left alone",
 				payload.TreeID, held)
 		}
 		// Not the caller's context. A cancellation between the inspection and

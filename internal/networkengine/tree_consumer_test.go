@@ -1973,5 +1973,6 @@ func TestHandleNodePlaced_SkippedInsertReportsAFailedRead(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "read timed out", "the read failure reaches the caller")
 	assert.NotErrorIs(t, err, ErrReplayedPlacement, "a failed read is not a refusal")
+	assert.ErrorIs(t, err, ErrNodeAlreadyProjected, "and it still carries the insert that was skipped")
 	assert.Empty(t, tr.mutationOps, "the engine is not called on an unanswered read")
 }

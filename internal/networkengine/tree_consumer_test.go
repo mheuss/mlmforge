@@ -1263,18 +1263,32 @@ func TestPositionMatchesProjection(t *testing.T) {
 // reconcileTransport fails the mutation with a chosen engine code and answers
 // get_position separately, which is the pairing every reconcile path needs.
 type reconcileTransport struct {
-	mutationErr error
-	position    *EnginePosition
-	positionErr error
-	mutationOps []string
-	positionOps int
+	mutationErr   error
+	position      *EnginePosition
+	positionErr   error
+	mutationOps   []string
+	positionOps   int
+	positionAsked []string
 }
 
-func (r *reconcileTransport) Call(_ context.Context, op string, _ json.RawMessage) (json.RawMessage, error) {
+func (r *reconcileTransport) Call(_ context.Context, op string, params json.RawMessage) (json.RawMessage, error) {
 	if op == "get_position" {
 		r.positionOps++
+		// Answer only for the user actually asked about. A transport that
+		// returns the same position whoever is named lets the consumer
+		// inspect the wrong user with every test still green.
+		var q struct {
+			UserID string `json:"user_id"`
+		}
+		if err := json.Unmarshal(params, &q); err != nil {
+			return nil, err
+		}
+		r.positionAsked = append(r.positionAsked, q.UserID)
 		if r.positionErr != nil {
 			return nil, r.positionErr
+		}
+		if r.position == nil || r.position.UserID != q.UserID {
+			return nil, &EngineError{Code: engineCodeUserNotFound, Message: q.UserID}
 		}
 		return json.Marshal(r.position)
 	}

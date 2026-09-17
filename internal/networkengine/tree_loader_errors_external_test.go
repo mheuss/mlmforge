@@ -10,11 +10,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// nilRenderer is never called. It exists so a test can put a nil pointer of a
-// concrete error type into a non-nil error interface.
-type nilRenderer struct{}
+// derefRenderer reads a field, so calling it on a nil pointer panics. A
+// receiver that ignores its pointer would let the test below pass without ever
+// meeting the failure it is named for.
+type derefRenderer struct{ text string }
 
-func (n *nilRenderer) Error() string { return "this method must not be reached" }
+func (d *derefRenderer) Error() string { return d.text }
+
+// panickingCause stands for any cause whose own Error method fails.
+type panickingCause struct{}
+
+func (panickingCause) Error() string { panic("cause blew up") }
+
+// sliceRenderer is nil-able but perfectly callable when nil. An earlier guard
+// treated it the same as a nil pointer and dropped its text.
+type sliceRenderer []string
+
+func (s sliceRenderer) Error() string { return "slice cause text" }
 
 func TestTreeLoadRejectedError_ExternalLiteralRendersEveryField(t *testing.T) {
 	err := &networkengine.TreeLoadRejectedError{
@@ -37,10 +49,11 @@ func TestTreeLoadIncompleteError_ExternalLiteralRendersEveryField(t *testing.T) 
 		Attempted: 3,
 		Total:     4,
 		NodeIDs:   []string{"u9"},
+		Err:       errors.New("worker said no"),
 	}
 
 	assert.Equal(t,
-		"tree load incomplete: tree t2: stage nodes: placement 3 of 4, 2 acknowledged: nodes u9",
+		"tree load incomplete: tree t2: stage nodes: placement 3 of 4, 2 acknowledged: nodes u9: worker said no",
 		err.Error())
 }
 
@@ -89,6 +102,13 @@ func TestTreeLoadErrors_UnsetFieldsAreOmitted(t *testing.T) {
 			want: "tree load incomplete: tree t6: stage root",
 		},
 		{
+			name: "incomplete, first placement with nothing acknowledged",
+			err: &networkengine.TreeLoadIncompleteError{
+				TreeID: "t2", Stage: networkengine.TreeLoadStageNodes, Attempted: 1, Total: 4,
+			},
+			want: "tree load incomplete: tree t2: stage nodes: placement 1 of 4, 0 acknowledged",
+		},
+		{
 			name: "incomplete, acknowledged count with no placement index",
 			err:  &networkengine.TreeLoadIncompleteError{TreeID: "t2", Confirmed: 7},
 			want: "tree load incomplete: tree t2: 7 acknowledged",
@@ -96,12 +116,12 @@ func TestTreeLoadErrors_UnsetFieldsAreOmitted(t *testing.T) {
 		{
 			name: "rejected, node ids that print as nothing",
 			err:  &networkengine.TreeLoadRejectedError{TreeID: "t1", NodeIDs: []string{"", ""}},
-			want: "tree load rejected: tree t1",
+			want: `tree load rejected: tree t1: nodes "", ""`,
 		},
 		{
 			name: "rejected, one empty node id among real ones",
 			err:  &networkengine.TreeLoadRejectedError{TreeID: "t1", NodeIDs: []string{"", "u2"}},
-			want: "tree load rejected: tree t1: nodes u2",
+			want: `tree load rejected: tree t1: nodes "", u2`,
 		},
 	}
 
@@ -112,20 +132,65 @@ func TestTreeLoadErrors_UnsetFieldsAreOmitted(t *testing.T) {
 	}
 }
 
-// A nil pointer inside a non-nil error interface passes an != nil check. The
-// renderer must not call through it.
-func TestTreeLoadErrors_TypedNilCauseDoesNotPanic(t *testing.T) {
-	var typed *nilRenderer
-	// cause is not nil as the language sees it, so an != nil guard lets it
-	// through. staticcheck says the comparison is always true, which is the
-	// property being relied on, so asserting it would be asserting nothing.
-	var cause error = typed
+// A cause whose Error method fails must not take the render with it. Both
+// shapes below crashed an earlier version of this renderer.
+func TestTreeLoadErrors_AFailingCauseIsContained(t *testing.T) {
+	var nilPtr *derefRenderer
 
-	rejected := &networkengine.TreeLoadRejectedError{TreeID: "t4", Kind: networkengine.TreeLoadDataInvalid, Err: cause}
-	incomplete := &networkengine.TreeLoadIncompleteError{TreeID: "t5", Stage: networkengine.TreeLoadStageCreate, Err: cause}
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "a nil pointer cause, whose Error dereferences it",
+			err:  &networkengine.TreeLoadRejectedError{TreeID: "t4", Kind: networkengine.TreeLoadDataInvalid, Err: nilPtr},
+			want: "tree load rejected: tree t4: kind data_invalid: cause could not be rendered",
+		},
+		{
+			name: "a cause whose Error panics outright",
+			err:  &networkengine.TreeLoadIncompleteError{TreeID: "t5", Stage: networkengine.TreeLoadStageCreate, Err: panickingCause{}},
+			want: "tree load incomplete: tree t5: stage create: cause could not be rendered",
+		},
+	}
 
-	assert.Equal(t, "tree load rejected: tree t4: kind data_invalid", rejected.Error())
-	assert.Equal(t, "tree load incomplete: tree t5: stage create", incomplete.Error())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NotPanics(t, func() { _ = tt.err.Error() })
+			assert.Equal(t, tt.want, tt.err.Error())
+		})
+	}
+}
+
+// A cause that is one of these types with no message would re-enter the
+// renderer. That recursion ends in a stack overflow, which is a runtime fatal
+// error rather than a panic, so no caller can recover from it.
+func TestTreeLoadErrors_ACyclicCauseDoesNotRecurse(t *testing.T) {
+	self := &networkengine.TreeLoadRejectedError{TreeID: "t1", Kind: networkengine.TreeLoadDataInvalid}
+	self.Err = self
+
+	first := &networkengine.TreeLoadRejectedError{TreeID: "a", Kind: networkengine.TreeLoadDataInvalid}
+	second := &networkengine.TreeLoadIncompleteError{TreeID: "b", Stage: networkengine.TreeLoadStageNodes}
+	first.Err = second
+	second.Err = first
+
+	assert.Equal(t, "tree load rejected: tree t1: kind data_invalid: tree load rejected", self.Error())
+	assert.Equal(t, "tree load rejected: tree a: kind data_invalid: tree load incomplete", first.Error())
+}
+
+// A cause is named whenever one is present, because Unwrap returns it either
+// way. Dropping it would make the message disagree with errors.Is.
+func TestTreeLoadErrors_ANilValuedCauseStillRenders(t *testing.T) {
+	var nilSlice sliceRenderer
+
+	err := &networkengine.TreeLoadRejectedError{TreeID: "t", Err: nilSlice}
+
+	assert.Equal(t, "tree load rejected: tree t: slice cause text", err.Error())
+	// errors.As, not errors.Is: a slice type is not comparable, so errors.Is
+	// skips the equality path and can never match this target. assert.NotNil
+	// reflects and reads a nil slice as nil, so it cannot say this either.
+	var got sliceRenderer
+	assert.True(t, errors.As(err, &got))
 }
 
 func TestTreeLoadErrors_WrappedExternalLiteralCarriesText(t *testing.T) {

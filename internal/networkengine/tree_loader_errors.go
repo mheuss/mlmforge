@@ -2,9 +2,15 @@ package networkengine
 
 import (
 	"fmt"
-	"reflect"
 	"slices"
 	"strings"
+)
+
+// The leading segment of a message this package renders from a value it did
+// not construct. A message the loader produced never begins with one.
+const (
+	rejectedFallbackLabel   = "tree load rejected"
+	incompleteFallbackLabel = "tree load incomplete"
 )
 
 // TreeLoadRejectionKind names why a load was refused before the engine was
@@ -53,7 +59,7 @@ func (e *TreeLoadRejectedError) Error() string {
 	if e.msg != "" {
 		return e.msg
 	}
-	return treeLoadFallback("tree load rejected", e.TreeID, namedSegment("kind", string(e.Kind)), e.NodeIDs, e.Err, nil)
+	return treeLoadFallback(rejectedFallbackLabel, e.TreeID, namedSegment("kind", string(e.Kind)), e.NodeIDs, e.Err, nil)
 }
 func (e *TreeLoadRejectedError) Unwrap() error { return e.Err }
 
@@ -116,17 +122,18 @@ func (e *TreeLoadIncompleteError) Error() string {
 		return e.msg
 	}
 	var seen []string
-	if e.Attempted != 0 || e.Total != 0 {
+	named := e.Attempted != 0 || e.Total != 0
+	if named {
 		seen = append(seen, fmt.Sprintf("placement %d of %d", e.Attempted, e.Total))
 	}
-	if e.Confirmed != 0 {
+	if named || e.Confirmed != 0 {
 		seen = append(seen, fmt.Sprintf("%d acknowledged", e.Confirmed))
 	}
 	var counts []string
 	if len(seen) > 0 {
 		counts = append(counts, strings.Join(seen, ", "))
 	}
-	return treeLoadFallback("tree load incomplete", e.TreeID, namedSegment("stage", string(e.Stage)), e.NodeIDs, e.Err, counts)
+	return treeLoadFallback(incompleteFallbackLabel, e.TreeID, namedSegment("stage", string(e.Stage)), e.NodeIDs, e.Err, counts)
 }
 func (e *TreeLoadIncompleteError) Unwrap() error { return e.Err }
 
@@ -171,8 +178,8 @@ func treeLoadFallback(label, treeID, kindOrStage string, nodeIDs []string, err e
 		parts = append(parts, kindOrStage)
 	}
 	parts = append(parts, counts...)
-	if named := namedNodes(nodeIDs); named != "" {
-		parts = append(parts, named)
+	if list := namedNodes(nodeIDs); list != "" {
+		parts = append(parts, list)
 	}
 	if text, ok := causeText(err); ok {
 		parts = append(parts, text)
@@ -189,35 +196,55 @@ func namedSegment(name, value string) string {
 	return name + " " + value
 }
 
-// namedNodes renders the node list, dropping entries that would print as
-// nothing. It returns empty when no entry survives.
+// namedNodes renders the node list. An entry that would print as nothing is
+// shown as an empty pair of quotes, so the count a reader sees matches the
+// count the field holds.
 func namedNodes(nodeIDs []string) string {
-	kept := make([]string, 0, len(nodeIDs))
-	for _, id := range nodeIDs {
-		if id != "" {
-			kept = append(kept, id)
-		}
-	}
-	if len(kept) == 0 {
+	if len(nodeIDs) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("nodes %s", strings.Join(kept, ", "))
+	shown := make([]string, len(nodeIDs))
+	for i, id := range nodeIDs {
+		shown[i] = id
+		if id == "" {
+			shown[i] = `""`
+		}
+	}
+	return fmt.Sprintf("nodes %s", strings.Join(shown, ", "))
 }
 
-// causeText renders a cause, reporting false when there is none to render.
+// causeText renders a cause, reporting false when there is none.
 //
-// A nil pointer stored in a non-nil interface passes an != nil check and
-// panics on the method call. Rendering an error is the wrong place to panic,
-// and the values this path exists for are built by callers who did not use the
-// constructors.
-func causeText(err error) (string, bool) {
+// The cause on a value this path exists for came from a caller who did not use
+// the constructors, so nothing constrains what its Error method does. Two
+// shapes are handled here rather than allowed out of a method callers treat as
+// total.
+//
+// A cause that is one of this package's own types carrying no message is named
+// rather than called. Calling it would re-enter this path and recurse until the
+// stack is exhausted, and a stack overflow is a runtime fatal error that
+// recover cannot contain.
+//
+// Any other panic from the cause's own Error method is contained. A cause that
+// cannot be rendered is still reported as present, because Unwrap returns it
+// and a message that omits it would disagree with what errors.Is finds.
+func causeText(err error) (text string, ok bool) {
 	if err == nil {
 		return "", false
 	}
-	switch v := reflect.ValueOf(err); v.Kind() {
-	case reflect.Pointer, reflect.Interface, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan:
-		if v.IsNil() {
-			return "", false
+	defer func() {
+		if r := recover(); r != nil {
+			text, ok = "cause could not be rendered", true
+		}
+	}()
+	switch cause := err.(type) {
+	case *TreeLoadRejectedError:
+		if cause.msg == "" {
+			return rejectedFallbackLabel, true
+		}
+	case *TreeLoadIncompleteError:
+		if cause.msg == "" {
+			return incompleteFallbackLabel, true
 		}
 	}
 	return err.Error(), true

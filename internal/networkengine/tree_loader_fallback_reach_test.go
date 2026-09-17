@@ -16,37 +16,54 @@ import (
 // message the loader produced must not start with either.
 var fallbackLabels = []string{"tree load rejected", "tree load incomplete"}
 
-// failingMutator fails the first engine call it is asked to make. The loader
-// needs a TreeMutator to reach its post-create exits.
-type failingMutator struct{}
+// failingMutator fails one named engine call and lets the rest succeed, so a
+// test can choose which post-create exit the loader reaches.
+type failingMutator struct{ failOn string }
 
-func (failingMutator) CreateTree(context.Context, string, string) error {
-	return errors.New("worker said no")
+func (m failingMutator) fail(call string) error {
+	if m.failOn == call {
+		return errors.New("worker said no")
+	}
+	return nil
 }
-func (failingMutator) CreateMatrixTree(context.Context, string, int, string) error {
-	return errors.New("worker said no")
+
+func (m failingMutator) CreateTree(context.Context, string, string) error {
+	return m.fail("CreateTree")
 }
-func (failingMutator) AddRoot(context.Context, string, string, int64) error {
-	return errors.New("worker said no")
+func (m failingMutator) CreateMatrixTree(context.Context, string, int, string) error {
+	return m.fail("CreateMatrixTree")
 }
-func (failingMutator) AddNode(context.Context, string, string, string, string, int64, ...networkengine.AddNodeOption) error {
-	return errors.New("worker said no")
+func (m failingMutator) AddRoot(context.Context, string, string, int64) error {
+	return m.fail("AddRoot")
 }
-func (failingMutator) AddNodeAt(context.Context, string, string, string, string, int, int64) error {
-	return errors.New("worker said no")
+func (m failingMutator) AddNode(context.Context, string, string, string, string, int64, ...networkengine.AddNodeOption) error {
+	return m.fail("AddNode")
 }
-func (failingMutator) RemoveNode(context.Context, string, string) ([]networkengine.Responsored, error) {
-	return nil, errors.New("worker said no")
+func (m failingMutator) AddNodeAt(context.Context, string, string, string, string, int, int64) error {
+	return m.fail("AddNodeAt")
+}
+func (m failingMutator) RemoveNode(context.Context, string, string) ([]networkengine.Responsored, error) {
+	return nil, m.fail("RemoveNode")
 }
 
 // The fallback is safe only because every value this package constructs sets
-// its message. This drives real failures through LoadTree and asserts none of
-// them renders a fallback label.
-func TestLoadTree_RealFailuresNeverRenderTheFallback(t *testing.T) {
+// its message. This drives a failure at each stage LoadTree can fail at, and
+// asserts none of them renders a fallback label. The table names the stage each
+// case reaches, so a reader can see the coverage rather than infer it from the
+// test name.
+func TestLoadTree_FailuresAtEveryStageNeverRenderTheFallback(t *testing.T) {
 	root := func(treeID, userID string) networkengine.TreeNodeRow {
 		return networkengine.TreeNodeRow{
 			ID: userID, TreeID: treeID, UserID: userID, Depth: 0,
 			EnrolledAt: time.Unix(1, 0),
+		}
+	}
+
+	child := func(treeID, userID, parentID string) networkengine.TreeNodeRow {
+		return networkengine.TreeNodeRow{
+			ID: userID, TreeID: treeID, UserID: userID, Depth: 1,
+			ParentID: &parentID, SponsorID: &parentID,
+			EnrolledAt: time.Unix(2, 0),
 		}
 	}
 
@@ -56,25 +73,47 @@ func TestLoadTree_RealFailuresNeverRenderTheFallback(t *testing.T) {
 		rows     []networkengine.TreeNodeRow
 		engine   networkengine.TreeMutator
 		opts     []networkengine.LoadTreeOption
+		// Exactly one of these is set. Asserting it stops a case passing
+		// because the loader failed earlier than the case name claims.
+		wantKind  networkengine.TreeLoadRejectionKind
+		wantStage networkengine.TreeLoadStage
 	}{
 		{
 			name:     "unsupported tree type, rejected before the store read",
 			treeType: "unsupported-type",
+			wantKind: networkengine.TreeLoadConfigInvalid,
 		},
 		{
 			name:     "matrix without params, rejected before the store read",
 			treeType: "matrix",
+			wantKind: networkengine.TreeLoadConfigInvalid,
 		},
 		{
 			name:     "two roots, rejected by node validation",
 			treeType: "unilevel",
 			rows:     []networkengine.TreeNodeRow{root("t", "u0"), root("t", "u1")},
+			wantKind: networkengine.TreeLoadDataInvalid,
 		},
 		{
-			name:     "create fails, incomplete at the create stage",
-			treeType: "unilevel",
-			rows:     []networkengine.TreeNodeRow{root("t", "u0")},
-			engine:   failingMutator{},
+			name:      "create fails, incomplete at the create stage",
+			treeType:  "unilevel",
+			rows:      []networkengine.TreeNodeRow{root("t", "u0")},
+			engine:    failingMutator{failOn: "CreateTree"},
+			wantStage: networkengine.TreeLoadStageCreate,
+		},
+		{
+			name:      "root placement fails, incomplete at the root stage",
+			treeType:  "unilevel",
+			rows:      []networkengine.TreeNodeRow{root("t", "u0")},
+			engine:    failingMutator{failOn: "AddRoot"},
+			wantStage: networkengine.TreeLoadStageRoot,
+		},
+		{
+			name:      "a later placement fails, incomplete at the nodes stage",
+			treeType:  "unilevel",
+			rows:      []networkengine.TreeNodeRow{root("t", "u0"), child("t", "u1", "u0")},
+			engine:    failingMutator{failOn: "AddNode"},
+			wantStage: networkengine.TreeLoadStageNodes,
 		},
 	}
 
@@ -89,6 +128,17 @@ func TestLoadTree_RealFailuresNeverRenderTheFallback(t *testing.T) {
 				LoadTree(t.Context(), "t", tt.treeType, tt.opts...)
 
 			require.Error(t, err)
+
+			if tt.wantKind != "" {
+				var rejected *networkengine.TreeLoadRejectedError
+				require.ErrorAs(t, err, &rejected)
+				require.Equal(t, tt.wantKind, rejected.Kind, "case did not reach the exit it names")
+			} else {
+				var incomplete *networkengine.TreeLoadIncompleteError
+				require.ErrorAs(t, err, &incomplete)
+				require.Equal(t, tt.wantStage, incomplete.Stage, "case did not reach the stage it names")
+			}
+
 			for _, label := range fallbackLabels {
 				assert.False(t, strings.HasPrefix(err.Error(), label),
 					"message built by the loader carries the fallback label %q: %s", label, err)

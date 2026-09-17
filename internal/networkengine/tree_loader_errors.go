@@ -2,6 +2,7 @@ package networkengine
 
 import (
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 )
@@ -52,7 +53,7 @@ func (e *TreeLoadRejectedError) Error() string {
 	if e.msg != "" {
 		return e.msg
 	}
-	return renderFallback("tree load rejected", e.TreeID, labelled("kind", string(e.Kind)), e.NodeIDs, e.Err, nil)
+	return treeLoadFallback("tree load rejected", e.TreeID, namedSegment("kind", string(e.Kind)), e.NodeIDs, e.Err, nil)
 }
 func (e *TreeLoadRejectedError) Unwrap() error { return e.Err }
 
@@ -114,12 +115,18 @@ func (e *TreeLoadIncompleteError) Error() string {
 	if e.msg != "" {
 		return e.msg
 	}
-	var counts []string
+	var seen []string
 	if e.Attempted != 0 || e.Total != 0 {
-		counts = append(counts, fmt.Sprintf("placement %d of %d, %d acknowledged",
-			e.Attempted, e.Total, e.Confirmed))
+		seen = append(seen, fmt.Sprintf("placement %d of %d", e.Attempted, e.Total))
 	}
-	return renderFallback("tree load incomplete", e.TreeID, labelled("stage", string(e.Stage)), e.NodeIDs, e.Err, counts)
+	if e.Confirmed != 0 {
+		seen = append(seen, fmt.Sprintf("%d acknowledged", e.Confirmed))
+	}
+	var counts []string
+	if len(seen) > 0 {
+		counts = append(counts, strings.Join(seen, ", "))
+	}
+	return treeLoadFallback("tree load incomplete", e.TreeID, namedSegment("stage", string(e.Stage)), e.NodeIDs, e.Err, counts)
 }
 func (e *TreeLoadIncompleteError) Unwrap() error { return e.Err }
 
@@ -152,10 +159,10 @@ func newTreeLoadIncomplete(stage TreeLoadStage, treeID string, err error, attemp
 	}
 }
 
-// renderFallback builds a message for a value this package did not construct.
-// Each part is omitted when its field is unset, so a zero value still renders
-// the leading label rather than a run of separators.
-func renderFallback(label, treeID, kindOrStage string, nodeIDs []string, err error, counts []string) string {
+// treeLoadFallback builds a message for a value this package did not
+// construct. Each segment is omitted when its field is unset, so a zero value
+// still renders the leading label rather than a run of separators.
+func treeLoadFallback(label, treeID, kindOrStage string, nodeIDs []string, err error, counts []string) string {
 	parts := []string{label}
 	if treeID != "" {
 		parts = append(parts, fmt.Sprintf("tree %s", treeID))
@@ -164,21 +171,54 @@ func renderFallback(label, treeID, kindOrStage string, nodeIDs []string, err err
 		parts = append(parts, kindOrStage)
 	}
 	parts = append(parts, counts...)
-	if len(nodeIDs) > 0 {
-		parts = append(parts, fmt.Sprintf("nodes %s", strings.Join(nodeIDs, ", ")))
+	if named := namedNodes(nodeIDs); named != "" {
+		parts = append(parts, named)
 	}
-	if err != nil {
-		parts = append(parts, err.Error())
+	if text, ok := causeText(err); ok {
+		parts = append(parts, text)
 	}
 	return strings.Join(parts, ": ")
 }
 
-// labelled prefixes a value with what it names, and returns empty for an unset
-// value so the caller omits the segment. The stage value "nodes" would
-// otherwise read as the node list, which uses the same word.
-func labelled(label, value string) string {
+// namedSegment prefixes a value with what it names, and returns empty for an
+// unset value so the caller omits the segment.
+func namedSegment(name, value string) string {
 	if value == "" {
 		return ""
 	}
-	return label + " " + value
+	return name + " " + value
+}
+
+// namedNodes renders the node list, dropping entries that would print as
+// nothing. It returns empty when no entry survives.
+func namedNodes(nodeIDs []string) string {
+	kept := make([]string, 0, len(nodeIDs))
+	for _, id := range nodeIDs {
+		if id != "" {
+			kept = append(kept, id)
+		}
+	}
+	if len(kept) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("nodes %s", strings.Join(kept, ", "))
+}
+
+// causeText renders a cause, reporting false when there is none to render.
+//
+// A nil pointer stored in a non-nil interface passes an != nil check and
+// panics on the method call. Rendering an error is the wrong place to panic,
+// and the values this path exists for are built by callers who did not use the
+// constructors.
+func causeText(err error) (string, bool) {
+	if err == nil {
+		return "", false
+	}
+	switch v := reflect.ValueOf(err); v.Kind() {
+	case reflect.Pointer, reflect.Interface, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan:
+		if v.IsNil() {
+			return "", false
+		}
+	}
+	return err.Error(), true
 }

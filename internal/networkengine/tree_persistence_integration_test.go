@@ -597,9 +597,6 @@ func TestTreePersistence_DuplicateDeliveryConverges(t *testing.T) {
 	})
 	require.NoError(t, consumer.HandleEvent(ctx, okEvent))
 
-	// Redeliver the exact same event. The insert is skipped, the row it
-	// collided with is this event's own and still active, so the engine call
-	// runs again and reconcile finds the placement it already holds.
 	require.NoError(t, consumer.HandleEvent(ctx, okEvent))
 
 	rows, err := treeStore.GetByTree(ctx, treeID)

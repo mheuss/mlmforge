@@ -1786,15 +1786,11 @@ func TestHandleNodeRemoved_StoreWriteSurvivesCancellation(t *testing.T) {
 	assert.Nil(t, activeRow(t, store.MemoryTreeStore, posUser))
 }
 
-// The skipped-insert guard. InsertNode reports a collision on the event ID
-// alone, while the read that follows is keyed on tree and user, so the two
-// can name different rows. The guard reaches the engine only when the row it
-// read is this event's own active row.
+// The skipped-insert guard.
 
 const supersedingEventID = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
 
-// seedRow writes a row straight into the store, tombstone included, so a test
-// can drive a state the handlers cannot reach on their own.
+// seedRow writes a placed row straight into the store, tombstone included.
 func seedRow(t *testing.T, store *MemoryTreeStore, id, userID string, removedAt *time.Time) {
 	t.Helper()
 	require.NoError(t, store.InsertNode(context.Background(), TreeNodeRow{
@@ -1807,6 +1803,32 @@ func seedRow(t *testing.T, store *MemoryTreeStore, id, userID string, removedAt 
 		EnrolledAt: posEnrolled,
 		RemovedAt:  removedAt,
 	}))
+}
+
+// seedRootRow writes a depth-0 row with no parent, the shape handleRootAdded
+// stores.
+func seedRootRow(t *testing.T, store *MemoryTreeStore, id, userID string, removedAt *time.Time) {
+	t.Helper()
+	require.NoError(t, store.InsertNode(context.Background(), TreeNodeRow{
+		ID:         id,
+		TreeID:     "tree1",
+		UserID:     userID,
+		SponsorID:  ptr(posSponsor),
+		Depth:      0,
+		EnrolledAt: posEnrolled,
+		RemovedAt:  removedAt,
+	}))
+}
+
+// readFailingStore fails the tombstone-aware read and leaves every other
+// method to the embedded store.
+type readFailingStore struct {
+	*MemoryTreeStore
+	err error
+}
+
+func (s *readFailingStore) GetNodeIncludingRemoved(_ context.Context, _, _ string) (*TreeNodeRow, error) {
+	return nil, s.err
 }
 
 // Exactly one tombstone, so the read cannot return someone else's row and
@@ -1896,7 +1918,7 @@ func TestHandleRootAdded_ReplayedAfterRemoval(t *testing.T) {
 	c, store := newRootConsumer(tr)
 	ev := makeEvent(EventTypeRootAdded, rootPayload())
 	removed := posEnrolled.Add(time.Hour)
-	seedRow(t, store, ev.ID, posUser, &removed)
+	seedRootRow(t, store, ev.ID, posUser, &removed)
 
 	err := c.HandleEvent(context.Background(), ev)
 
@@ -1910,10 +1932,46 @@ func TestHandleRootAdded_SkippedInsertOfThisEventsActiveRowReachesTheEngine(t *t
 	tr := &reconcileTransport{}
 	c, store := newRootConsumer(tr)
 	ev := makeEvent(EventTypeRootAdded, rootPayload())
-	seedRow(t, store, ev.ID, posUser, nil)
+	seedRootRow(t, store, ev.ID, posUser, nil)
 
 	err := c.HandleEvent(context.Background(), ev)
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"add_root"}, tr.mutationOps, "the lost-reply case still reaches the engine")
+}
+
+// A redelivered root whose row is already stored must not lose that row when
+// the engine disagrees. The row is durable and depth 0, and a tree with no
+// active depth-0 row stops loading.
+func TestHandleRootAdded_ReplayKeepsTheStoredRowWhenTheEngineDisagrees(t *testing.T) {
+	tr := &reconcileTransport{
+		mutationErr: &EngineError{Code: engineCodeRootAlreadyExists},
+		position:    &EnginePosition{UserID: posUser, Depth: 0, EnrolledAt: posEnrolled.Unix() + 1},
+	}
+	c, store := newRootConsumer(tr)
+	ev := makeEvent(EventTypeRootAdded, rootPayload())
+	seedRootRow(t, store, ev.ID, posUser, nil)
+
+	err := c.HandleEvent(context.Background(), ev)
+
+	require.Error(t, err, "a disagreeing engine is still a divergence")
+	assert.NotNil(t, activeRow(t, store, posUser), "the stored row survives a replay this call did not insert")
+}
+
+func TestHandleNodePlaced_SkippedInsertReportsAFailedRead(t *testing.T) {
+	tr := &reconcileTransport{}
+	backing := NewMemoryTreeStore()
+	seedParent(t, backing)
+	store := &readFailingStore{MemoryTreeStore: backing, err: errors.New("read timed out")}
+	c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
+	c.retryDelay = 0
+	ev := makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1)))
+	seedRow(t, backing, ev.ID, posUser, nil)
+
+	err := c.HandleEvent(context.Background(), ev)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "read timed out", "the read failure reaches the caller")
+	assert.NotErrorIs(t, err, ErrReplayedPlacement, "a failed read is not a refusal")
+	assert.Empty(t, tr.mutationOps, "the engine is not called on an unanswered read")
 }

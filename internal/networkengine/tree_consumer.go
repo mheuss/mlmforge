@@ -57,9 +57,13 @@ func checkStream(event platform.Event, eventName, treeID, userID string) error {
 	return nil
 }
 
-// refuseReplayedInsert reports whether a skipped insert may continue to the
-// engine call.
-func (c *TreeEventConsumer) refuseReplayedInsert(ctx context.Context, eventID, treeID, userID string) error {
+// checkReplayedInsert decides whether an add whose insert was skipped may
+// continue to its engine call.
+func (c *TreeEventConsumer) checkReplayedInsert(
+	ctx context.Context,
+	eventID, treeID, userID string,
+	insertErr error,
+) error {
 	existing, gerr := c.store.GetNodeIncludingRemoved(ctx, treeID, userID)
 	if gerr != nil {
 		return fmt.Errorf("read existing row for %s in tree %s: %w", userID, treeID, gerr)
@@ -69,8 +73,8 @@ func (c *TreeEventConsumer) refuseReplayedInsert(ctx context.Context, eventID, t
 	if existing != nil && existing.ID == eventID && existing.RemovedAt == nil {
 		return nil
 	}
-	return fmt.Errorf("%w: insert for %s in tree %s reported event %s already present, and the read for that tree and user returned %s",
-		ErrReplayedPlacement, userID, treeID, eventID, describeExistingRow(existing))
+	return fmt.Errorf("%w: the read for %s in tree %s returned %s (%w)",
+		ErrReplayedPlacement, userID, treeID, describeExistingRow(existing), insertErr)
 }
 
 // describeExistingRow renders what a tombstone-aware read returned.
@@ -82,7 +86,7 @@ func describeExistingRow(row *TreeNodeRow) string {
 		return fmt.Sprintf("an active row carrying event %s", row.ID)
 	}
 	return fmt.Sprintf("a row carrying event %s, removed at %s",
-		row.ID, row.RemovedAt.UTC().Format(time.RFC3339))
+		row.ID, row.RemovedAt.UTC().Format(time.RFC3339Nano))
 }
 
 func (c *TreeEventConsumer) handleRootAdded(ctx context.Context, event platform.Event) error {
@@ -106,13 +110,15 @@ func (c *TreeEventConsumer) handleRootAdded(ctx context.Context, event platform.
 		UpdatedAt:  time.Now(),
 	}
 
+	inserted := true
 	if err := c.store.InsertNode(ctx, node); err != nil {
 		if !errors.Is(err, ErrNodeAlreadyProjected) {
 			return fmt.Errorf("store root node: %w", err)
 		}
-		if rerr := c.refuseReplayedInsert(ctx, event.ID, payload.TreeID, payload.UserID); rerr != nil {
+		if rerr := c.checkReplayedInsert(ctx, event.ID, payload.TreeID, payload.UserID, err); rerr != nil {
 			return rerr
 		}
+		inserted = false
 	}
 
 	reconcile := func(ctx context.Context, err error) (reconcileOutcome, error) {
@@ -137,13 +143,20 @@ func (c *TreeEventConsumer) handleRootAdded(ctx context.Context, event platform.
 		}
 
 		// Either the engine does not hold this user, or it holds them
-		// somewhere other than depth 0. Both leave the depth-0 row this call
-		// inserted unsupported, and a second active depth-0 row makes
-		// validateNodes refuse the whole tree at every later startup.
+		// somewhere other than depth 0. Both leave the depth-0 row
+		// unsupported.
 		held := fmt.Sprintf("get_position reported USER_NOT_FOUND for %s", payload.UserID)
 		if perr == nil && pos != nil {
 			held = fmt.Sprintf("get_position put %s at depth %d enrolled %d, against %d in this event",
 				payload.UserID, pos.Depth, pos.EnrolledAt, payload.EnrolledAt.Unix())
+		}
+		// The delete below undoes this call's own insert. A replayed event
+		// reaches here over a row written before this delivery, and removing
+		// it would take away a depth-0 row nothing here wrote.
+		if !inserted {
+			return reconcileDiverged, fmt.Errorf(
+				"engine refused add_root in tree %s, %s; the stored row predates this delivery and was left alone",
+				payload.TreeID, held)
 		}
 		// Not the caller's context. A cancellation between the inspection and
 		// this delete would leave two active depth-0 rows, which is the state
@@ -254,7 +267,7 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform
 		if !errors.Is(err, ErrNodeAlreadyProjected) {
 			return fmt.Errorf("store placed node: %w", err)
 		}
-		if rerr := c.refuseReplayedInsert(ctx, event.ID, payload.TreeID, payload.UserID); rerr != nil {
+		if rerr := c.checkReplayedInsert(ctx, event.ID, payload.TreeID, payload.UserID, err); rerr != nil {
 			return rerr
 		}
 	}

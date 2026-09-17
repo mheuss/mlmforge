@@ -802,9 +802,7 @@ func TestTreePersistence_SupersededRedeliveryIsRefused(t *testing.T) {
 // gatedTransport refuses one op while gated and forwards everything else to
 // the worker underneath.
 //
-// The two fields are atomic because the embedded transport locks for the whole
-// of its own Call, so plain fields here would make the wrapper less safe than
-// what it wraps.
+// Call may run on a goroutine that did not set the gate.
 type gatedTransport struct {
 	EngineTransport
 	op     string
@@ -882,7 +880,7 @@ func TestTreePersistence_RedeliveryAfterPartialProjection(t *testing.T) {
 	reread, err := treeStore.GetNode(ctx, treeID, u2)
 	require.NoError(t, err)
 	require.NotNil(t, reread)
-	assert.Equal(t, placed.ID, reread.ID, "the active row is still the one this event wrote")
+	assert.Equal(t, placed.ID, reread.ID, "the active row carries this event's id")
 
 	got, err := engine.GetPosition(ctx, treeID, u2)
 	require.NoError(t, err)

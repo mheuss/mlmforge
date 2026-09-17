@@ -419,7 +419,7 @@ go test ./internal/config/ && (cd engine && cargo test --test config_width_contr
 ### UC-NET-012: Preflight validation before an irreversible mutation
 
 **Added:** Unreleased (HEU-534, refined HEU-566)
-**Files:** `internal/networkengine/tree_loader.go`
+**Files:** `internal/networkengine/tree_loader.go`, `internal/networkengine/tree_loader_errors.go`
 
 **Problem:** `LoadTree` replays a persisted tree into the Rust worker one node at a time, but the worker has no operation to remove a structure — so a replay that fails partway leaves a half-built tree that cannot be dropped or retried until the process restarts.
 

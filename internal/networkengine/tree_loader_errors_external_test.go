@@ -116,10 +116,10 @@ func TestTreeLoadErrors_UnsetFieldsAreOmitted(t *testing.T) {
 // renderer must not call through it.
 func TestTreeLoadErrors_TypedNilCauseDoesNotPanic(t *testing.T) {
 	var typed *nilRenderer
+	// cause is not nil as the language sees it, so an != nil guard lets it
+	// through. staticcheck says the comparison is always true, which is the
+	// property being relied on, so asserting it would be asserting nothing.
 	var cause error = typed
-	// A language-level check, not require.NotNil, which reflects and reports
-	// this value as nil. The gap between the two is the defect being guarded.
-	require.True(t, cause != nil)
 
 	rejected := &networkengine.TreeLoadRejectedError{TreeID: "t4", Kind: networkengine.TreeLoadDataInvalid, Err: cause}
 	incomplete := &networkengine.TreeLoadIncompleteError{TreeID: "t5", Stage: networkengine.TreeLoadStageCreate, Err: cause}

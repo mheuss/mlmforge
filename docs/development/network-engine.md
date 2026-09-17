@@ -785,14 +785,14 @@ Four limits remain:
 
 - The consumer trusts the `tree_type` label. No registry exists to verify it against.
 - The gate rejects matrix positions above the u8 ceiling (255), which no width can accept. The real bound is the tree's width, which nothing persists. A position in the width..255 band is therefore stored, refused loudly by the engine, and then makes the next reload preflight reject the whole tree. HEU-554 decides the direction for both gaps. The fix ships under it.
-- Redelivery is bounded (HEU-576). One that is no longer current, because the node was since removed or a later event re-placed the user, is refused rather than reapplied. The scope is the event in flight, which is a constraint on HEU-301. Within that scope a redelivery whose projection is still current completes, and one that is no longer current is refused however old it is. A removal redelivered after its user was placed again is a separate gap (HEU-789). A removal whose store write never landed still fails on redelivery (HEU-777).
+- Redelivery is bounded (HEU-576). The scope is the event in flight. That scope is a constraint on HEU-301. Within it, a redelivery whose projection is still current completes. One that is no longer current is refused rather than reapplied, however old it is. A redelivery stops being current when the node was since removed, or when a later event re-placed the user. Two gaps sit outside this. A removal redelivered after its user was placed again is one (HEU-789). A removal whose store write never landed still fails on redelivery (HEU-777).
 - The agreement claim covers placement only. A matrix `node_removed` still diverges, because the consumer sends no pruning mode and the worker refuses the removal after the soft-delete lands (HEU-582).
 
 Matrix startup reload is no longer blocked by this defect.
 
 ### The event id is the redelivery discriminator
 
-`tree_nodes.id` is the event ID. The insert names the primary key as its `ON CONFLICT` arbiter and does nothing on a match, so an already-stored event is reported as a skipped row rather than raising. A skip does not prove the engine applied the event. The store insert lands before the engine call, so a delivery that failed at the engine leaves the row behind. Since HEU-576 the handler reads the row back and continues to the engine only when it is this event's own and still active, refusing every other state. A conflict against a different event's row is a separate signal and raises. Which constraint gets named when several are violated at once is not settled, and the two stores are not pinned to agree on it (HEU-794).
+`tree_nodes.id` is the event ID. The insert names the primary key as its `ON CONFLICT` arbiter and does nothing on a match. An already-stored event is then reported as a skipped row rather than raising. A skip does not prove the engine applied the event. The store insert lands before the engine call. A delivery that failed at the engine leaves the row behind. Since HEU-576 the handler reads the row back. It continues to the engine only when the row is this event's own and still active. It refuses every other state. A conflict against a different event's row is a separate signal and raises. Which constraint gets named when several are violated at once is not settled. The two stores are not pinned to agree on it (HEU-794).
 
 ## Worker Shutdown
 

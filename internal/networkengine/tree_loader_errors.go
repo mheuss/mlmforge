@@ -108,7 +108,19 @@ type TreeLoadIncompleteError struct {
 	msg string
 }
 
-func (e *TreeLoadIncompleteError) Error() string { return e.msg }
+// Error returns the stored message. A value built outside this package has
+// none, so it renders from the exported fields instead.
+func (e *TreeLoadIncompleteError) Error() string {
+	if e.msg != "" {
+		return e.msg
+	}
+	var counts []string
+	if e.Attempted != 0 || e.Total != 0 {
+		counts = append(counts, fmt.Sprintf("placement %d of %d, %d acknowledged",
+			e.Attempted, e.Total, e.Confirmed))
+	}
+	return renderFallback("tree load incomplete", e.TreeID, labelled("stage", string(e.Stage)), e.NodeIDs, e.Err, counts)
+}
 func (e *TreeLoadIncompleteError) Unwrap() error { return e.Err }
 
 // newTreeLoadRejected builds a TreeLoadRejectedError.

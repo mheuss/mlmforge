@@ -319,6 +319,7 @@ Full document: [`content/design-rationale/020-tree-topology-separation.md`](cont
 - `node_removed` runs the other way, since HEU-766. A removal repairs the sponsor edges pointing at the dying node, and only the engine knows which recruits it moved. So the engine is called first and both store writes commit together afterwards. The ordering above inverts and the property it protects improves: a failed engine call now leaves the table untouched rather than half-updated. See [030](content/design-rationale/030-sponsor-continuity-on-removal.md).
 - On startup, the engine is rebuilt from the adjacency table via depth-ordered bulk load, not by replaying the full event stream.
 - The synchronous consumer is the initial implementation. If projection latency becomes a concern, the consumer can be made asynchronous without changing the event schema.
+- Projection is idempotent for the event currently in flight, since HEU-576. Redelivering an event whose projection is still current completes it rather than failing. A redelivery that is no longer current is refused rather than reapplied: a placement whose node has since been removed, or whose user a later event has re-placed, does not resurrect it. Arbitrary historical replay is not covered; see HEU-789.
 
 ### ADR-022: Migration Framework
 

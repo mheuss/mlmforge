@@ -798,3 +798,82 @@ func TestTreePersistence_SupersededRedeliveryIsRefused(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, downline, 1, "the refusal added no engine node")
 }
+
+// gatedTransport refuses one op while gated and forwards everything else to
+// the worker underneath.
+type gatedTransport struct {
+	EngineTransport
+	op     string
+	gated  bool
+	forced int
+}
+
+func (t *gatedTransport) Call(ctx context.Context, op string, params json.RawMessage) (json.RawMessage, error) {
+	if t.gated && op == t.op {
+		t.forced++
+		return nil, fmt.Errorf("simulated worker failure on %s", op)
+	}
+	return t.EngineTransport.Call(ctx, op, params)
+}
+
+// newGatedEngine spawns a real worker behind a gate on one op.
+func newGatedEngine(t *testing.T, op string) (*EngineClient, *gatedTransport) {
+	t.Helper()
+	stdio, err := NewStdioTransport(findWorkerBinary(t))
+	require.NoError(t, err)
+	gate := &gatedTransport{EngineTransport: stdio, op: op, gated: true}
+	engine, err := newCheckedClient(context.Background(), gate)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = engine.Stop() })
+	return engine, gate
+}
+
+// Task 19. The store write lands and the engine call does not, which is the
+// partial projection this ticket exists for. The redelivery must finish the
+// engine side without writing a second row.
+func TestTreePersistence_RedeliveryAfterPartialProjection(t *testing.T) {
+	eventStore, treeStore, _, _ := newIntegrationDeps(t)
+	ctx := context.Background()
+	engine, gate := newGatedEngine(t, "add_node_at")
+
+	treeID := testTreeUUID(1)
+	u1, u2 := testUserUUID(1), testUserUUID(2)
+	stream := TreeStreamName(treeID)
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	require.NoError(t, engine.CreateMatrixTree(ctx, treeID, 3, "breadth_first"))
+	consumer := NewTreeEventConsumer(treeStore, engine)
+
+	rootEvent := appendTreeEvent(t, eventStore, stream, 0, EventTypeRootAdded, RootAddedPayload{
+		TreeID: treeID, UserID: u1, SponsorID: u1, EnrolledAt: base,
+	})
+	require.NoError(t, consumer.HandleEvent(ctx, rootEvent))
+
+	pos := 0
+	placed := appendTreeEvent(t, eventStore, stream, 1, EventTypeNodePlaced, NodePlacedPayload{
+		TreeID: treeID, UserID: u2, ParentID: u1, SponsorID: u1,
+		Position: &pos, TreeType: treeTypeMatrix, EnrolledAt: base.Add(time.Hour),
+	})
+
+	require.Error(t, consumer.HandleEvent(ctx, placed), "the gated engine call fails")
+	require.Positive(t, gate.forced, "the gate refused the mutation rather than the worker accepting it")
+
+	stored, err := treeStore.GetNode(ctx, treeID, u2)
+	require.NoError(t, err)
+	require.NotNil(t, stored, "the store write landed before the engine call")
+	_, perr := engine.GetPosition(ctx, treeID, u2)
+	require.Error(t, perr, "and the engine does not hold the user yet")
+
+	gate.gated = false
+	require.NoError(t, consumer.HandleEvent(ctx, placed), "the redelivery converges")
+
+	rows, err := treeStore.GetByTree(ctx, treeID)
+	require.NoError(t, err)
+	assert.Len(t, rows, 2, "the redelivery wrote no second row")
+
+	got, err := engine.GetPosition(ctx, treeID, u2)
+	require.NoError(t, err)
+	require.NotNil(t, got.ParentUserID)
+	assert.Equal(t, u1, *got.ParentUserID, "the engine holds the event's parent")
+	assert.Equal(t, pos, got.Position, "and the event's position")
+}

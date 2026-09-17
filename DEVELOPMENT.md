@@ -431,6 +431,7 @@ Non-obvious behaviors, workarounds, known quirks.
 
 - The Rust subprocess boundary uses NDJSON over stdin/stdout. All requests and responses are serialized as JSON. Use the StdioTransport wrapper for all engine communication.
 - Event store compact mode purges raw events after the retention window. If you need historical data, ensure full mode is enabled before the window closes.
+- Swapping `%w` for `%s` when a message moves into a typed error is safe only while no reachable cause implements `fmt.Formatter`. The two verbs render differently for one that does, because `%w` rewrites the verb to `v` before the formatter is consulted. A future wrapper that introduces one breaks the loader's golden message test with a text change that looks unrelated to the wrapper that caused it.
 - Commission calculations use f64 (IEEE 754 double precision) for all monetary values in the Rust engine. Final rounding to cents occurs in the Go application layer before payout. This is a deliberate trade-off: f64 arithmetic is fast and sufficient for commission calculations where sub-cent precision is not required. If precision issues surface in production, the engine can adopt a fixed-point decimal type without changing the wire protocol (the JSON format already uses numbers, not strings).
 
 ### External Integrations

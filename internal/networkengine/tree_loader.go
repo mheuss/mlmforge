@@ -65,7 +65,8 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 
 	nodes, err := l.store.GetByTreeDepthOrdered(ctx, treeID)
 	if err != nil {
-		return fmt.Errorf("load tree %s: %w", treeID, err)
+		return newTreeLoadRejected(TreeLoadStoreReadFailed, treeID, err,
+			fmt.Sprintf("load tree %s: %s", treeID, err))
 	}
 	if len(nodes) == 0 {
 		return nil
@@ -82,16 +83,19 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 
 	if treeType == treeTypeMatrix {
 		if err := l.engine.CreateMatrixTree(ctx, treeID, cfg.matrixWidth, cfg.matrixSpillover); err != nil {
-			return fmt.Errorf("create tree %s: %w", treeID, err)
+			return newTreeLoadIncomplete(TreeLoadStageCreate, treeID, err, 0, 0,
+				fmt.Sprintf("create tree %s: %s", treeID, err))
 		}
 	} else if err := l.engine.CreateTree(ctx, treeID, treeType); err != nil {
-		return fmt.Errorf("create tree %s: %w", treeID, err)
+		return newTreeLoadIncomplete(TreeLoadStageCreate, treeID, err, 0, 0,
+			fmt.Sprintf("create tree %s: %s", treeID, err))
 	}
 
 	// Every failure from here on says what survived it. The structure now
 	// exists and the worker has no operation to drop it (HEU-557), so a retry
 	// reports TREE_EXISTS and the only real remedy is a process restart. How
-	// much landed is the operator's sole input to that call. Validation
+	// much the engine acknowledged is the operator's sole input to that call,
+	// and the call that failed may also have taken effect. Validation
 	// pre-empts every logical error the engine can raise below, so what
 	// actually reaches these paths is transport failure: a worker crash, an
 	// IPC timeout, a cancelled context.
@@ -101,10 +105,13 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 	// is the only node with zero dependencies.
 	root := ordered[0]
 	if err := l.engine.AddRoot(ctx, treeID, root.UserID, root.EnrolledAt.Unix()); err != nil {
-		return fmt.Errorf("add root %s (tree %s created but left empty): %w", root.UserID, treeID, err)
+		return newTreeLoadIncomplete(TreeLoadStageRoot, treeID, err, 0, 0,
+			fmt.Sprintf("add root %s (tree %s created but left empty): %s", root.UserID, treeID, err),
+			root.UserID)
 	}
 
-	// The index names the node that failed, so "3 of 5" means two landed.
+	// Counts non-root placements. The index names the one that failed, so
+	// "3 of 4" means two of four were acknowledged.
 	total := len(ordered) - 1
 	for i, node := range ordered[1:] {
 		// validateNodes already proved these non-nil for every non-root, and
@@ -112,8 +119,10 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 		// startup, where a nil deref panics the process instead of failing one
 		// tree, and the invariant now spans two functions.
 		if node.ParentID == nil || node.SponsorID == nil {
-			return fmt.Errorf("node %s in tree %s has nil parent or sponsor (data corruption; %d of %d, tree left partly built)",
-				node.UserID, treeID, i+1, total)
+			return newTreeLoadIncomplete(TreeLoadStageNodes, treeID, nil, i+1, total,
+				fmt.Sprintf("node %s in tree %s has nil parent or sponsor (data corruption; %d of %d, tree left partly built)",
+					node.UserID, treeID, i+1, total),
+				node.UserID)
 		}
 		parentID, sponsorID := *node.ParentID, *node.SponsorID
 
@@ -122,13 +131,17 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 			// rejects a nil position on every non-root matrix node. Kept for
 			// the same reason too — a nil deref here panics startup.
 			if node.Position == nil {
-				return fmt.Errorf("matrix node %s in tree %s has nil position (the adjacency row is incomplete; %d of %d, tree left partly built)",
-					node.UserID, treeID, i+1, total)
+				return newTreeLoadIncomplete(TreeLoadStageNodes, treeID, nil, i+1, total,
+					fmt.Sprintf("matrix node %s in tree %s has nil position (the adjacency row is incomplete; %d of %d, tree left partly built)",
+						node.UserID, treeID, i+1, total),
+					node.UserID)
 			}
 			if err := l.engine.AddNodeAt(ctx, treeID, node.UserID, parentID, sponsorID,
 				*node.Position, node.EnrolledAt.Unix()); err != nil {
-				return fmt.Errorf("add node %s (%d of %d, tree %s left partly built): %w",
-					node.UserID, i+1, total, treeID, err)
+				return newTreeLoadIncomplete(TreeLoadStageNodes, treeID, err, i+1, total,
+					fmt.Sprintf("add node %s (%d of %d, tree %s left partly built): %s",
+						node.UserID, i+1, total, treeID, err),
+					node.UserID)
 			}
 			continue
 		}
@@ -139,8 +152,10 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 		}
 		if err := l.engine.AddNode(ctx, treeID, node.UserID, parentID, sponsorID,
 			node.EnrolledAt.Unix(), addOpts...); err != nil {
-			return fmt.Errorf("add node %s (%d of %d, tree %s left partly built): %w",
-				node.UserID, i+1, total, treeID, err)
+			return newTreeLoadIncomplete(TreeLoadStageNodes, treeID, err, i+1, total,
+				fmt.Sprintf("add node %s (%d of %d, tree %s left partly built): %s",
+					node.UserID, i+1, total, treeID, err),
+				node.UserID)
 		}
 	}
 	return nil
@@ -184,7 +199,8 @@ type slotKey struct {
 // empty tree reports the same configuration errors a populated one does.
 func validateTreeConfig(treeID, treeType string, cfg loadTreeConfig) error {
 	if !supportedTreeTypes[treeType] {
-		return fmt.Errorf("tree %s has unsupported type %q", treeID, treeType)
+		return newTreeLoadRejected(TreeLoadConfigInvalid, treeID, nil,
+			fmt.Sprintf("tree %s has unsupported type %q", treeID, treeType))
 	}
 	if treeType != treeTypeMatrix {
 		return nil
@@ -192,15 +208,18 @@ func validateTreeConfig(treeID, treeType string, cfg loadTreeConfig) error {
 	// The adjacency store keeps per-node data, not the structure's width and
 	// spillover, so a matrix load cannot recreate the tree without them.
 	if !cfg.matrixParamsSet {
-		return fmt.Errorf("tree %s requires width and spillover (use WithMatrixParams)", treeID)
+		return newTreeLoadRejected(TreeLoadConfigInvalid, treeID, nil,
+			fmt.Sprintf("tree %s requires width and spillover (use WithMatrixParams)", treeID))
 	}
 	// MatrixTree::new rejects width < 2, and width is a u8 on the wire.
 	if cfg.matrixWidth < 2 || cfg.matrixWidth > math.MaxUint8 {
-		return fmt.Errorf("tree %s has matrix width %d outside the supported range 2..%d",
-			treeID, cfg.matrixWidth, math.MaxUint8)
+		return newTreeLoadRejected(TreeLoadConfigInvalid, treeID, nil,
+			fmt.Sprintf("tree %s has matrix width %d outside the supported range 2..%d",
+				treeID, cfg.matrixWidth, math.MaxUint8))
 	}
 	if !supportedSpillover[cfg.matrixSpillover] {
-		return fmt.Errorf("tree %s has unsupported spillover %q", treeID, cfg.matrixSpillover)
+		return newTreeLoadRejected(TreeLoadConfigInvalid, treeID, nil,
+			fmt.Sprintf("tree %s has unsupported spillover %q", treeID, cfg.matrixSpillover))
 	}
 	return nil
 }
@@ -231,19 +250,24 @@ func validateNodes(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNode
 	for i := range nodes {
 		n := &nodes[i]
 		if _, dup := byID[n.UserID]; dup {
-			return fmt.Errorf("tree %s has duplicate user %s (data corruption?)", treeID, n.UserID)
+			return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,
+				fmt.Sprintf("tree %s has duplicate user %s (data corruption?)", treeID, n.UserID),
+				n.UserID)
 		}
 		byID[n.UserID] = n
 		if n.Depth == 0 {
 			if root != nil {
-				return fmt.Errorf("tree %s has more than one depth-0 root (%s and %s)",
-					treeID, root.UserID, n.UserID)
+				return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,
+					fmt.Sprintf("tree %s has more than one depth-0 root (%s and %s)",
+						treeID, root.UserID, n.UserID),
+					root.UserID, n.UserID)
 			}
 			root = n
 		}
 	}
 	if root == nil {
-		return fmt.Errorf("tree %s has no depth-0 root node (data corruption?)", treeID)
+		return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,
+			fmt.Sprintf("tree %s has no depth-0 root node (data corruption?)", treeID))
 	}
 
 	// Root invariants. AddRoot takes neither a parent nor a position, so a row
@@ -252,12 +276,16 @@ func validateNodes(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNode
 	// engine root carries sponsor: None, so whatever a root row stores is
 	// projection metadata that reload drops. See docs/development/network-engine.md.
 	if root.ParentID != nil {
-		return fmt.Errorf("root %s in tree %s has parent %s (the engine root has no parent)",
-			root.UserID, treeID, *root.ParentID)
+		return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,
+			fmt.Sprintf("root %s in tree %s has parent %s (the engine root has no parent)",
+				root.UserID, treeID, *root.ParentID),
+			root.UserID, *root.ParentID)
 	}
 	if root.Position != nil {
-		return fmt.Errorf("root %s in tree %s has position %d (the engine root occupies no slot)",
-			root.UserID, treeID, *root.Position)
+		return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,
+			fmt.Sprintf("root %s in tree %s has position %d (the engine root occupies no slot)",
+				root.UserID, treeID, *root.Position),
+			root.UserID)
 	}
 
 	// Slot rule per tree type, derived once. Every supported type is named
@@ -277,8 +305,9 @@ func validateNodes(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNode
 	case treeTypeMatrix:
 		limit = cfg.matrixWidth
 	default:
-		return fmt.Errorf("tree %s has type %q with no slot rule (add one to validateNodes)",
-			treeID, treeType)
+		return newTreeLoadRejected(TreeLoadConfigInvalid, treeID, nil,
+			fmt.Sprintf("tree %s has type %q with no slot rule (add one to validateNodes)",
+				treeID, treeType))
 	}
 
 	// Only sized when it will be used. A size hint allocates buckets eagerly,
@@ -297,31 +326,43 @@ func validateNodes(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNode
 			continue
 		}
 		if n.ParentID == nil || n.SponsorID == nil {
-			return fmt.Errorf("node %s in tree %s has nil parent or sponsor (data corruption?)",
-				n.UserID, treeID)
+			return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,
+				fmt.Sprintf("node %s in tree %s has nil parent or sponsor (data corruption?)",
+					n.UserID, treeID),
+				n.UserID)
 		}
 		// Only the root may reference itself. A non-root self-sponsor resolves
 		// against byID and would pass an existence check, then fail in the
 		// engine: the same call that creates the node resolves its sponsor, so
 		// the sponsor does not exist yet.
 		if *n.ParentID == n.UserID {
-			return fmt.Errorf("node %s in tree %s is its own parent", n.UserID, treeID)
+			return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,
+				fmt.Sprintf("node %s in tree %s is its own parent", n.UserID, treeID),
+				n.UserID)
 		}
 		if *n.SponsorID == n.UserID {
-			return fmt.Errorf("node %s in tree %s is its own sponsor", n.UserID, treeID)
+			return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,
+				fmt.Sprintf("node %s in tree %s is its own sponsor", n.UserID, treeID),
+				n.UserID)
 		}
 		parent, ok := byID[*n.ParentID]
 		if !ok {
-			return fmt.Errorf("node %s in tree %s references parent %s that is not in the tree",
-				n.UserID, treeID, *n.ParentID)
+			return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,
+				fmt.Sprintf("node %s in tree %s references parent %s that is not in the tree",
+					n.UserID, treeID, *n.ParentID),
+				n.UserID, *n.ParentID)
 		}
 		if _, ok := byID[*n.SponsorID]; !ok {
-			return fmt.Errorf("node %s in tree %s references sponsor %s that is not in the tree",
-				n.UserID, treeID, *n.SponsorID)
+			return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,
+				fmt.Sprintf("node %s in tree %s references sponsor %s that is not in the tree",
+					n.UserID, treeID, *n.SponsorID),
+				n.UserID, *n.SponsorID)
 		}
 		if n.Depth != parent.Depth+1 {
-			return fmt.Errorf("node %s in tree %s has depth %d but parent %s has depth %d",
-				n.UserID, treeID, n.Depth, parent.UserID, parent.Depth)
+			return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,
+				fmt.Sprintf("node %s in tree %s has depth %d but parent %s has depth %d",
+					n.UserID, treeID, n.Depth, parent.UserID, parent.Depth),
+				n.UserID, parent.UserID)
 		}
 
 		// A unilevel row that carries a position is not rejected — see HEU-563.
@@ -330,18 +371,24 @@ func validateNodes(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNode
 		}
 
 		if n.Position == nil {
-			return fmt.Errorf("%s node %s in tree %s has nil position (the adjacency row is incomplete)",
-				treeType, n.UserID, treeID)
+			return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,
+				fmt.Sprintf("%s node %s in tree %s has nil position (the adjacency row is incomplete)",
+					treeType, n.UserID, treeID),
+				n.UserID)
 		}
 		pos := *n.Position
 		if pos < 0 || pos >= limit {
-			return fmt.Errorf("%s node %s in tree %s has position %d outside the range 0..%d",
-				treeType, n.UserID, treeID, pos, limit-1)
+			return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,
+				fmt.Sprintf("%s node %s in tree %s has position %d outside the range 0..%d",
+					treeType, n.UserID, treeID, pos, limit-1),
+				n.UserID)
 		}
 		key := slotKey{parentID: *n.ParentID, position: pos}
 		if other, taken := occupied[key]; taken {
-			return fmt.Errorf("%s nodes %s and %s in tree %s both claim parent %s position %d",
-				treeType, other, n.UserID, treeID, *n.ParentID, pos)
+			return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,
+				fmt.Sprintf("%s nodes %s and %s in tree %s both claim parent %s position %d",
+					treeType, other, n.UserID, treeID, *n.ParentID, pos),
+				other, n.UserID, *n.ParentID)
 		}
 		occupied[key] = n.UserID
 	}
@@ -510,8 +557,9 @@ func cycleError(treeID string, nodes []TreeNodeRow, ordered []*TreeNodeRow, byID
 	// below indexes stuck[0], and a panic here takes down startup rather than
 	// failing one tree.
 	if len(stuck) == 0 {
-		return fmt.Errorf("tree %s: replay produced %d of %d nodes with no unreplayable node (duplicate user IDs?)",
-			treeID, len(ordered), len(nodes))
+		return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,
+			fmt.Sprintf("tree %s: replay produced %d of %d nodes with no unreplayable node (duplicate user IDs?)",
+				treeID, len(ordered), len(nodes)))
 	}
 
 	// unmet returns a dependency of id that was never emitted, or "" if there
@@ -538,9 +586,11 @@ func cycleError(treeID string, nodes []TreeNodeRow, ordered []*TreeNodeRow, byID
 	for cur := stuck[0]; cur != ""; cur = unmet(cur) {
 		if idx, ok := seenAt[cur]; ok {
 			cycle := append(append([]string{}, path[idx:]...), cur)
-			return fmt.Errorf(
-				"tree %s: %d of %d nodes cannot be replayed because their parent/sponsor references form a cycle: %s",
-				treeID, len(stuck), len(nodes), strings.Join(cycle, " -> "))
+			return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,
+				fmt.Sprintf(
+					"tree %s: %d of %d nodes cannot be replayed because their parent/sponsor references form a cycle: %s",
+					treeID, len(stuck), len(nodes), strings.Join(cycle, " -> ")),
+				cycle...)
 		}
 		seenAt[cur] = len(path)
 		path = append(path, cur)
@@ -561,15 +611,23 @@ func cycleError(treeID string, nodes []TreeNodeRow, ordered []*TreeNodeRow, byID
 	// where byID's surviving copy resolves both refs and the unmet edge belongs
 	// to the shadowed row the message cannot name. Only duplicate rows reach
 	// that, and validateNodes rejects them.
+	// An empty walk names nobody, so it carries nobody. A bare
+	// path[len(path)-1] would also panic and take down startup rather than
+	// failing one tree.
 	stopped := ""
+	var named []string
 	if len(path) > 0 {
 		stopped = path[len(path)-1]
+		named = append(named, stopped)
 	}
 	via := ""
 	if len(path) >= 2 {
 		via = fmt.Sprintf(", reached from %s", path[len(path)-2])
+		named = append(named, path[len(path)-2])
 	}
-	return fmt.Errorf(
-		"tree %s: %d of %d nodes cannot be replayed (the replay order stops at %s%s, whose parent or sponsor cannot be resolved)",
-		treeID, len(stuck), len(nodes), stopped, via)
+	return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,
+		fmt.Sprintf(
+			"tree %s: %d of %d nodes cannot be replayed (the replay order stops at %s%s, whose parent or sponsor cannot be resolved)",
+			treeID, len(stuck), len(nodes), stopped, via),
+		named...)
 }

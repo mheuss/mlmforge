@@ -1,6 +1,10 @@
 package networkengine
 
-import "slices"
+import (
+	"fmt"
+	"slices"
+	"strings"
+)
 
 // TreeLoadRejectionKind names why a load was refused before the engine was
 // called.
@@ -42,7 +46,14 @@ type TreeLoadRejectedError struct {
 	msg string
 }
 
-func (e *TreeLoadRejectedError) Error() string { return e.msg }
+// Error returns the stored message. A value built outside this package has
+// none, so it renders from the exported fields instead.
+func (e *TreeLoadRejectedError) Error() string {
+	if e.msg != "" {
+		return e.msg
+	}
+	return renderFallback("tree load rejected", e.TreeID, labelled("kind", string(e.Kind)), e.NodeIDs, e.Err, nil)
+}
 func (e *TreeLoadRejectedError) Unwrap() error { return e.Err }
 
 // TreeLoadStage names how far a load reached before it failed.
@@ -127,4 +138,35 @@ func newTreeLoadIncomplete(stage TreeLoadStage, treeID string, err error, attemp
 		Err:       err,
 		msg:       msg,
 	}
+}
+
+// renderFallback builds a message for a value this package did not construct.
+// Each part is omitted when its field is unset, so a zero value still renders
+// the leading label rather than a run of separators.
+func renderFallback(label, treeID, kindOrStage string, nodeIDs []string, err error, counts []string) string {
+	parts := []string{label}
+	if treeID != "" {
+		parts = append(parts, fmt.Sprintf("tree %s", treeID))
+	}
+	if kindOrStage != "" {
+		parts = append(parts, kindOrStage)
+	}
+	parts = append(parts, counts...)
+	if len(nodeIDs) > 0 {
+		parts = append(parts, fmt.Sprintf("nodes %s", strings.Join(nodeIDs, ", ")))
+	}
+	if err != nil {
+		parts = append(parts, err.Error())
+	}
+	return strings.Join(parts, ": ")
+}
+
+// labelled prefixes a value with what it names, and returns empty for an unset
+// value so the caller omits the segment. The stage value "nodes" would
+// otherwise read as the node list, which uses the same word.
+func labelled(label, value string) string {
+	if value == "" {
+		return ""
+	}
+	return label + " " + value
 }

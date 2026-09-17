@@ -993,8 +993,8 @@ func TestTreePersistence_RedeliveredRemovalConverges(t *testing.T) {
 	})
 	require.NoError(t, consumer.HandleEvent(ctx, removeEvent))
 
-	// The reconcile reaches the same outcome for a tombstoned row and for a
-	// user the store never held, so read the row the redelivery will branch on.
+	// Without this, a converged redelivery and a recruiter the store never
+	// held are indistinguishable from here.
 	removedRow, err := treeStore.GetNodeIncludingRemoved(ctx, treeID, recruiterID)
 	require.NoError(t, err)
 	require.NotNil(t, removedRow, "GetNodeIncludingRemoved returned no row for the recruiter")

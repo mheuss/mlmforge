@@ -423,13 +423,13 @@ go test ./internal/config/ && (cd engine && cargo test --test config_width_contr
 
 **Problem:** `LoadTree` replays a persisted tree into the Rust worker one node at a time, but the worker has no operation to remove a structure — so a replay that fails partway leaves a half-built tree that cannot be dropped or retried until the process restarts.
 
-**Solution:** Prove the input is reconstructable *before* the first call to the external system, in two phases split by what they read. `validateTreeConfig` checks configuration — tree type, matrix width and spillover — and reads no rows, so it runs before the store query and a misconfigured load costs no query. `validateNodes` then checks the node set — duplicate IDs, exactly one depth-0 root, root parent and position, self-references, reference existence, depth consistency, slot occupancy — and `orderForReplay` proves a workable order exists. Only then does the first mutation happen. Replay failures also report how far they got, as a typed error carrying the stage the load reached and how many placements the engine acknowledged. Every exit after the create says what survived it, not just the replay loop: a failed `AddRoot` says root placement was attempted and did not report success, since the worker has no operation to drop the structure (HEU-557) and only a process restart clears it.
+**Solution:** Prove the input is reconstructable *before* the first call to the external system, in two phases split by what they read. `validateTreeConfig` checks configuration — tree type, matrix width and spillover — and reads no rows, so it runs before the store query and a misconfigured load costs no query. `validateNodes` then checks the node set — duplicate IDs, exactly one depth-0 root, root parent and position, self-references, reference existence, depth consistency, slot occupancy — and `orderForReplay` proves a workable order exists. Only then does the first mutation happen. Replay failures also report how far they got, as a typed error carrying the stage the load reached and how many placements the engine acknowledged. Every exit after the create says what survived it, not just the replay loop: a failed `AddRoot` says root placement was attempted and did not report success. The worker has no operation to drop the structure (HEU-557). Only a process restart clears it.
 
 **Usage:**
 ```go
 loader := networkengine.NewTreeLoader(store, engine)
 
-// Validation runs before any mutation, so a rejected load leaves nothing to
+// Validation runs before any mutation. A rejected load leaves nothing to
 // clean up. Once the tree exists, the error carries the stage the load reached
 // and how many placements the engine acknowledged.
 for _, tree := range trees {
@@ -441,21 +441,21 @@ for _, tree := range trees {
 
 	switch {
 	case err == nil:
-		// Loaded, or there were no rows and no structure was created.
+		// Loaded, or there were no rows to load.
 
 	case errors.As(err, &rejected):
-		// The engine was never called, so other trees are unaffected.
+		// The engine was never called. Other trees are unaffected.
 		if rejected.Kind == networkengine.TreeLoadDataInvalid {
 			slog.Warn("skipping tree with unusable data",
 				"tree", rejected.TreeID, "nodes", rejected.NodeIDs, "err", err)
 			continue
 		}
-		// A bad config is a wiring bug and a failed read is infrastructure.
+		// A bad config is a wiring bug. A failed read is infrastructure.
 		// Neither is a reason to keep booting.
 		return err
 
 	case errors.As(err, &incomplete):
-		// The structure may be partly built and nothing can drop it. Stage and
+		// The structure may be partly built. Nothing can drop it. Stage and
 		// Confirmed are what an operator reads to size the damage.
 		return fmt.Errorf("restart required, %s stopped at %s with %d of %d placements acknowledged: %w",
 			incomplete.TreeID, incomplete.Stage, incomplete.Confirmed, incomplete.Total, err)

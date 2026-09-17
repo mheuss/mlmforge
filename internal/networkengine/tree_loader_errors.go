@@ -25,10 +25,6 @@ const (
 // A caller has to tell this apart from TreeLoadIncompleteError with errors.As,
 // because the two need opposite handling: this one leaves the engine usable,
 // the other may not.
-//
-// The message is stored rather than rendered from the fields. Each exit's
-// wording is a settled decision, and rendering here would move the choice of
-// wording into this type.
 type TreeLoadRejectedError struct {
 	TreeID string
 	// NodeIDs holds every user the message names, in the order the message
@@ -39,8 +35,7 @@ type TreeLoadRejectedError struct {
 	// entry may name a user with no row in this tree, because the message names
 	// references as well as rows, and the same user may appear twice.
 	NodeIDs []string
-	// Kind is what a caller switches on to decide whether to skip this tree,
-	// abort the run, or treat the failure as infrastructure.
+	// Kind categorises why the load was refused.
 	Kind TreeLoadRejectionKind
 	// Err is the store's error for TreeLoadStoreReadFailed, nil otherwise.
 	Err error
@@ -76,15 +71,12 @@ const (
 // Confirmed and Total count non-root placements. Attempted is the one-based
 // index the message carries, so within TreeLoadStageNodes Confirmed is
 // Attempted minus one. All three are 0 at the other stages.
-//
-// The message is stored rather than rendered from the fields. Each exit's
-// wording is a settled decision, and rendering here would move the choice of
-// wording into this type.
 type TreeLoadIncompleteError struct {
 	TreeID string
 	// NodeIDs holds every user the message names, in the order the message
-	// names them, on the same terms as TreeLoadRejectedError's. Empty at
-	// TreeLoadStageCreate.
+	// names them. The order reproduces the message and means nothing else. An
+	// entry may name a user with no row in this tree, and the same user may
+	// appear twice. Empty at TreeLoadStageCreate.
 	NodeIDs []string
 	// Stage names how far the load reached. It is for the operator reading the
 	// log, not for selecting a recovery action.
@@ -108,7 +100,7 @@ type TreeLoadIncompleteError struct {
 func (e *TreeLoadIncompleteError) Error() string { return e.msg }
 func (e *TreeLoadIncompleteError) Unwrap() error { return e.Err }
 
-// newTreeLoadRejected builds the error every pre-engine exit returns.
+// newTreeLoadRejected builds a TreeLoadRejectedError.
 func newTreeLoadRejected(kind TreeLoadRejectionKind, treeID string, err error, msg string, nodeIDs ...string) *TreeLoadRejectedError {
 	return &TreeLoadRejectedError{
 		TreeID:  treeID,
@@ -119,7 +111,7 @@ func newTreeLoadRejected(kind TreeLoadRejectionKind, treeID string, err error, m
 	}
 }
 
-// newTreeLoadIncomplete builds the error every post-engine exit returns.
+// newTreeLoadIncomplete builds a TreeLoadIncompleteError.
 // attempted is the one-based index the message carries and total is the
 // non-root count. Both are 0 outside TreeLoadStageNodes. Confirmed is derived
 // here rather than passed, so the count an operator reads cannot disagree with

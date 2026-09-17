@@ -113,8 +113,7 @@ func matrixOpts(width int) []LoadTreeOption {
 
 // TestTreeLoader_GoldenMessages_ThroughLoadTree records the exact text of every
 // exit a fixture can drive through LoadTree, using assert.Equal rather than
-// assert.Contains. The existing loader tests assert substrings, which would
-// accept a changed prefix or suffix.
+// assert.Contains.
 func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 	storeErr := errors.New("connection refused")
 
@@ -525,13 +524,9 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 	}
 }
 
-// TestTreeLoader_GoldenMessages_DirectCalls covers the three exits no fixture
-// reaches through a full load. Each sits behind a check that runs earlier, so
-// the only way to observe its message is to call the function that produces it.
-//
-// Two exits have no golden test at all: the nil-parent-or-sponsor and
-// nil-position guards inside the replay loop. Validation rejects both
-// conditions before the loop runs, so no fixture produces them.
+// TestTreeLoader_GoldenMessages_DirectCalls covers the exits no fixture reaches
+// through a full load. Each sits behind a check that runs earlier, so the only
+// way to observe its message is to call the function that produces it.
 func TestTreeLoader_GoldenMessages_DirectCalls(t *testing.T) {
 	t.Run("tree type with no slot rule", func(t *testing.T) {
 		nodes := []TreeNodeRow{makeNode("t", "u0", 0, nil, nil, nil)}
@@ -633,9 +628,7 @@ func TestTreeLoadIncompleteError_CarriesProgress(t *testing.T) {
 
 // This asserts the constructor, not the guards. Feeding a literal message in
 // and reading the same literal back cannot catch a typo at the return site, so
-// it is named for what it does. The two replay-loop guards have no message
-// test because both conditions are rejected during validation, so no fixture
-// reaches them.
+// it is named for what it does.
 func TestTreeLoadIncompleteError_ConstructorStoresWhatItIsGiven(t *testing.T) {
 	nilRefs := newTreeLoadIncomplete(TreeLoadStageNodes, "t", nil, 3, 5,
 		"node u3 in tree t has nil parent or sponsor (data corruption; 3 of 5, tree left partly built)",
@@ -730,9 +723,9 @@ func TestTreeLoadErrors_NoConstantCollidesWithTheSentinel(t *testing.T) {
 // The golden table pins messages, kinds, stages and node lists, but has no
 // column for the acknowledgement counts. This is where those are checked.
 //
-// An *EngineError rather than errors.New, because BR-7 asks that errors.As
-// reach an *EngineError through the incomplete type, and a bare error would
-// satisfy the assertion without exercising that.
+// An *EngineError rather than errors.New, so the assertion below exercises
+// errors.As reaching an *EngineError through the incomplete type rather than
+// passing on any error.
 func TestTreeLoader_PostCreateExitsCarryTheirCounts(t *testing.T) {
 	engineErr := &EngineError{Code: "BOOM", Message: "worker said no"}
 

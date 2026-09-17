@@ -68,9 +68,8 @@ type TreeStore interface {
 	// failing startup load fail the same way every time, which is what an
 	// operator needs to act on.
 	//
-	// Rows tying on depth and enrolment time have no defined order. There is no
-	// further tiebreak here and none in the SQL, so the message names whichever
-	// the sort happened to put first.
+	// Rows tying on depth and enrolment time have no defined order. The message
+	// names whichever the sort happened to put first.
 	//
 	// idx_tree_nodes_depth(tree_id, depth) backs the leading key, so the cost
 	// is a sort within each depth group.

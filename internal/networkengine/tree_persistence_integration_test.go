@@ -801,19 +801,23 @@ func TestTreePersistence_SupersededRedeliveryIsRefused(t *testing.T) {
 
 // gatedTransport refuses one op while gated and forwards everything else to
 // the worker underneath.
+//
+// The two fields are atomic because the embedded transport locks for the whole
+// of its own Call, so plain fields here would make the wrapper less safe than
+// what it wraps.
 type gatedTransport struct {
 	EngineTransport
 	op     string
-	gated  bool
-	forced int
+	gated  atomic.Bool
+	forced atomic.Int64
 }
 
-func (t *gatedTransport) Call(ctx context.Context, op string, params json.RawMessage) (json.RawMessage, error) {
-	if t.gated && op == t.op {
-		t.forced++
+func (g *gatedTransport) Call(ctx context.Context, op string, params json.RawMessage) (json.RawMessage, error) {
+	if g.gated.Load() && op == g.op {
+		g.forced.Add(1)
 		return nil, fmt.Errorf("simulated worker failure on %s", op)
 	}
-	return t.EngineTransport.Call(ctx, op, params)
+	return g.EngineTransport.Call(ctx, op, params)
 }
 
 // newGatedEngine spawns a real worker behind a gate on one op.
@@ -821,16 +825,16 @@ func newGatedEngine(t *testing.T, op string) (*EngineClient, *gatedTransport) {
 	t.Helper()
 	stdio, err := NewStdioTransport(findWorkerBinary(t))
 	require.NoError(t, err)
-	gate := &gatedTransport{EngineTransport: stdio, op: op, gated: true}
+	gate := &gatedTransport{EngineTransport: stdio, op: op}
+	gate.gated.Store(true)
 	engine, err := newCheckedClient(context.Background(), gate)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Stop() })
 	return engine, gate
 }
 
-// Task 19. The store write lands and the engine call does not, which is the
-// partial projection this ticket exists for. The redelivery must finish the
-// engine side without writing a second row.
+// The store write lands and the engine call does not. The redelivery must
+// finish the engine side without writing a second row.
 func TestTreePersistence_RedeliveryAfterPartialProjection(t *testing.T) {
 	eventStore, treeStore, _, _ := newIntegrationDeps(t)
 	ctx := context.Background()
@@ -849,27 +853,36 @@ func TestTreePersistence_RedeliveryAfterPartialProjection(t *testing.T) {
 	})
 	require.NoError(t, consumer.HandleEvent(ctx, rootEvent))
 
-	pos := 0
+	// Slot 1 rather than 0: EnginePosition.Position's zero value is 0, so the
+	// closing assertion cannot fail on a consumer that drops the event's
+	// position.
+	pos := 1
 	placed := appendTreeEvent(t, eventStore, stream, 1, EventTypeNodePlaced, NodePlacedPayload{
 		TreeID: treeID, UserID: u2, ParentID: u1, SponsorID: u1,
 		Position: &pos, TreeType: treeTypeMatrix, EnrolledAt: base.Add(time.Hour),
 	})
 
 	require.Error(t, consumer.HandleEvent(ctx, placed), "the gated engine call fails")
-	require.Positive(t, gate.forced, "the gate refused the mutation rather than the worker accepting it")
+	require.Positive(t, gate.forced.Load(), "the gate returned at least one refusal for add_node_at")
 
 	stored, err := treeStore.GetNode(ctx, treeID, u2)
 	require.NoError(t, err)
-	require.NotNil(t, stored, "the store write landed before the engine call")
+	require.NotNil(t, stored, "a row for the user exists after the failed delivery")
 	_, perr := engine.GetPosition(ctx, treeID, u2)
-	require.Error(t, perr, "and the engine does not hold the user yet")
+	require.True(t, isEngineCode(perr, engineCodeUserNotFound),
+		"the code lives in a field, not in the message text: %v", perr)
 
-	gate.gated = false
+	gate.gated.Store(false)
 	require.NoError(t, consumer.HandleEvent(ctx, placed), "the redelivery converges")
 
 	rows, err := treeStore.GetByTree(ctx, treeID)
 	require.NoError(t, err)
 	assert.Len(t, rows, 2, "the redelivery wrote no second row")
+
+	reread, err := treeStore.GetNode(ctx, treeID, u2)
+	require.NoError(t, err)
+	require.NotNil(t, reread)
+	assert.Equal(t, placed.ID, reread.ID, "the active row is still the one this event wrote")
 
 	got, err := engine.GetPosition(ctx, treeID, u2)
 	require.NoError(t, err)

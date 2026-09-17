@@ -171,3 +171,43 @@ a value the real one cannot write.
 ```go
 if !utf8.ValidString(s) || strings.ContainsRune(s, 0) { ... }
 ```
+
+## A NOT NULL column does not make a branch unreachable
+
+Every store interface here has two implementations. Postgres carries the
+constraint. The in-memory one does not.
+
+HEU-562 deleted a guard on an empty `user_id` in the tree loader, reasoning that
+the column is `UUID NOT NULL` so no row can hold one. That reasoning checked one
+implementation. The in-memory store has no such constraint, `validateNodes`
+never checks for it, and HEU-565 already records an empty user ID reaching the
+engine on the success path. The guard went back in, with a test that failed
+before the fix.
+
+**A column definition is evidence about one implementation, not about the
+program.**
+
+Before removing a guard on the strength of a constraint, check the other store,
+the validation layer, and any path that builds the struct directly.
+
+This is the same seam as "TEXT cannot store a NUL byte" above, approached from
+the other side. That entry is about writing a value Postgres will reject. This
+one is about trusting Postgres to have rejected it already.
+
+## The test count in networkengine depends on the machine
+
+Seventeen sites in `internal/networkengine` skip when no Postgres container is
+running. Sixteen are tests and one is a benchmark. They cover the store pairs,
+commission schema and amounts, qualification history, and tree persistence.
+
+Without the container the package passes with all of them skipped. With it the
+package passes with none skipped. Both print `ok`.
+
+**Report the package as ok with zero failures, and say how many skipped.**
+
+A bare pass count is true on both machines and means something different on
+each. The skip count is what tells a reader which run they are looking at.
+
+```
+go test ./internal/networkengine/ -v -count=1 2>&1 | grep -cE '^ *--- SKIP'
+```

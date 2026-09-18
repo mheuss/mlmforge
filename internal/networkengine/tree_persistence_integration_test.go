@@ -769,7 +769,7 @@ func TestTreePersistence_SupersededRedeliveryIsRefused(t *testing.T) {
 
 	require.NoError(t, treeStore.DeleteNode(ctx, treeID, u2))
 	require.NoError(t, treeStore.InsertNode(ctx, TreeNodeRow{
-		ID:         testUserUUID(9),
+		ID:         testNodeUUID(9),
 		TreeID:     treeID,
 		UserID:     u2,
 		ParentID:   &u1,

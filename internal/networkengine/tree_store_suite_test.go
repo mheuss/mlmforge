@@ -25,7 +25,8 @@ func nodeUserIDs(nodes []TreeNodeRow) []string {
 // fresh, empty store on each call.
 //
 // Nothing here asserts on CreatedAt or UpdatedAt. The two implementations
-// already disagree about both, and HEU-403 owns that.
+// already disagree about both, which is HEU-817. HEU-403 is the adjacent
+// question of whether the struct should carry fields the insert drops.
 func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 	t.Helper()
 

@@ -51,4 +51,13 @@ pin_raw=${pin_raw#"${pin_raw%%[![:space:]]*}"}
 pin_raw=${pin_raw%"${pin_raw##*[![:space:]]}"}
 pin=${pin_raw#[vV]}
 
+# Anchored against the whole string. grep matches per line, so a two-line pin
+# file would satisfy it on line one.
+if ! [[ $pin =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "pin \"$pin_raw\" is not a complete version; not linting" >&2
+  echo "  pinned     $pin_raw   ($version_file)" >&2
+  echo "  a pin must be MAJOR.MINOR.PATCH, with or without a leading v" >&2
+  exit 1
+fi
+
 exit 0

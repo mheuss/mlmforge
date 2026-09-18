@@ -49,5 +49,25 @@ expect 1 "Is a directory" "a directory as the pin file keeps cat's reason" \
 expect 1 "needs a file path" "option with no operand" \
   --check-only --version-file
 
+expect 1 "is not a complete version" "partial pin" \
+  --check-only --version-file "$data/lintver-partial"
+expect 1 "is not a complete version" "latest pin" \
+  --check-only --version-file "$data/lintver-latest"
+expect 1 "is not a complete version" "empty pin file" \
+  --check-only --version-file "$data/lintver-empty"
+expect 1 "is not a complete version" "two-line pin file" \
+  --check-only --version-file "$data/lintver-twolines"
+expect 0 "" "bare pin without a leading v" \
+  --check-only --version-file "$data/lintver-bare"
+expect 0 "" "leading blank lines are trimmed like the action trims them" \
+  --check-only --version-file "$data/lintver-leading"
+a=$("$check" --check-only --version-file "$data/lintver-ok" 2>&1); arc=$?
+b=$("$check" --check-only --version-file "$data/lintver-bare" 2>&1); brc=$?
+if [ "$arc" = "$brc" ] && [ "$a" = "$b" ]; then
+  record yes "a leading v changes nothing" ""
+else
+  record no "a leading v changes nothing" "rc $arc/$brc, out \"$a\" vs \"$b\""
+fi
+
 echo "$pass passed, $fail failed, of $((pass + fail))"
 [ "$fail" = 0 ]

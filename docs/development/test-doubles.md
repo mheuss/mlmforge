@@ -43,12 +43,19 @@ behaviour under test even where the embedded type omits it:
 
 ```go
 func (c *deleteRecordingStore) DeleteNode(ctx context.Context, treeID, userID string) error {
+    c.attempts = append(c.attempts, userID)
     if err := ctx.Err(); err != nil {
         return err
     }
-    ...
+    c.deleted = append(c.deleted, userID)
+    return c.MemoryTreeStore.DeleteNode(ctx, treeID, userID)
 }
 ```
+
+Record the attempt above the shield, and the result below it. That order is
+load-bearing. A double that records only after the shield reports a refused
+call and a call that never happened as the same empty slice, and telling those
+two apart is usually the reason the double exists.
 
 Before embedding, ask what the embedded type does not do that production does.
 Where the answer is filed as a ticket rather than fixed, the double is where it

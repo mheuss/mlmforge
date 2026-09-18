@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -17,8 +18,40 @@ type PostgresTreeStore struct {
 	pool *pgxpool.Pool
 }
 
+// ON CONFLICT targets the primary key, which carries the event ID. A
+// redelivered event is skipped and reports zero rows instead of raising, while
+// the two partial unique indexes still raise. Changing the arbiter changes
+// which conflict is silent.
 const insertNodeSQL = `INSERT INTO tree_nodes (id, tree_id, user_id, parent_id, sponsor_id, position, depth, enrolled_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		 ON CONFLICT (id) DO NOTHING`
+
+// The two partial unique indexes on tree_nodes. pgx reports the index name in
+// ConstraintName, which is what tells them apart.
+const (
+	activeUserIndex = "idx_tree_nodes_tree_user"
+	activeSlotIndex = "idx_tree_nodes_tree_parent_position_active"
+)
+
+// conflictError maps a pg error naming one of the two indexes to its sentinel,
+// and returns nil for anything else so the raw error surfaces.
+//
+// Matching on ConstraintName rather than SQLSTATE: 23505 covers every unique
+// violation on the table and cannot tell the two indexes apart.
+func conflictError(err error) error {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return nil
+	}
+	switch pgErr.ConstraintName {
+	case activeUserIndex:
+		return ErrActiveUserConflict
+	case activeSlotIndex:
+		return ErrSlotConflict
+	default:
+		return nil
+	}
+}
 
 // treeNodeSelectColumns is the SELECT column list for tree_nodes queries.
 // Order must match the scanTreeNode/scanTreeNodes Scan call.
@@ -29,15 +62,33 @@ const getChildrenSQL = `SELECT ` + treeNodeSelectColumns + ` FROM tree_nodes WHE
 const getByTreeSQL = `SELECT ` + treeNodeSelectColumns + ` FROM tree_nodes WHERE tree_id = $1 AND removed_at IS NULL`
 const getByTreeDepthOrderedSQL = getByTreeSQL + ` ORDER BY depth ASC, enrolled_at ASC`
 
+// DESC NULLS FIRST is one key doing both jobs: the active row sorts ahead of
+// every tombstone, and the newest tombstone sorts ahead of older ones. Two
+// keys on the same column cannot do this, because the second can only break
+// ties the first already resolved.
+const getNodeIncludingRemovedSQL = `SELECT ` + treeNodeSelectColumns +
+	` FROM tree_nodes WHERE tree_id = $1 AND user_id = $2
+	  ORDER BY removed_at DESC NULLS FIRST LIMIT 1`
+
 func NewPostgresTreeStore(pool *pgxpool.Pool) *PostgresTreeStore {
 	return &PostgresTreeStore{pool: pool}
 }
 
 func (s *PostgresTreeStore) InsertNode(ctx context.Context, node TreeNodeRow) error {
-	_, err := s.pool.Exec(ctx, insertNodeSQL,
+	tag, err := s.pool.Exec(ctx, insertNodeSQL,
 		node.ID, node.TreeID, node.UserID, node.ParentID, node.SponsorID, node.Position, node.Depth, node.EnrolledAt,
 	)
-	return err
+	if err != nil {
+		if c := conflictError(err); c != nil {
+			return fmt.Errorf("%w: tree=%s user=%s id=%s", c, node.TreeID, node.UserID, node.ID)
+		}
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("%w: tree=%s user=%s id=%s",
+			ErrNodeAlreadyProjected, node.TreeID, node.UserID, node.ID)
+	}
+	return nil
 }
 
 func (s *PostgresTreeStore) DeleteNode(ctx context.Context, treeID, userID string) error {
@@ -94,6 +145,11 @@ func (s *PostgresTreeStore) GetNode(ctx context.Context, treeID, userID string) 
 	return scanTreeNode(row)
 }
 
+func (s *PostgresTreeStore) GetNodeIncludingRemoved(ctx context.Context, treeID, userID string) (*TreeNodeRow, error) {
+	row := s.pool.QueryRow(ctx, getNodeIncludingRemovedSQL, treeID, userID)
+	return scanTreeNode(row)
+}
+
 func (s *PostgresTreeStore) GetChildren(ctx context.Context, treeID, parentUserID string) ([]TreeNodeRow, error) {
 	rows, err := s.pool.Query(ctx, getChildrenSQL, treeID, parentUserID)
 	if err != nil {
@@ -129,11 +185,20 @@ func (s *PostgresTreeStore) BulkInsert(ctx context.Context, nodes []TreeNodeRow)
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	for _, node := range nodes {
-		_, err := tx.Exec(ctx, insertNodeSQL,
+		tag, err := tx.Exec(ctx, insertNodeSQL,
 			node.ID, node.TreeID, node.UserID, node.ParentID, node.SponsorID, node.Position, node.Depth, node.EnrolledAt,
 		)
 		if err != nil {
+			if c := conflictError(err); c != nil {
+				return fmt.Errorf("bulk insert node %s: %w", node.UserID, c)
+			}
 			return fmt.Errorf("bulk insert node %s: %w", node.UserID, err)
+		}
+		// InsertNode reads a skipped row as convergence. A bulk load cannot:
+		// the rows are a whole tree, and one already present means the batch
+		// is built from the wrong picture. The deferred rollback discards it.
+		if tag.RowsAffected() == 0 {
+			return fmt.Errorf("bulk insert node %s: %w", node.UserID, ErrNodeAlreadyProjected)
 		}
 	}
 

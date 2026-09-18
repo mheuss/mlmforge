@@ -2,6 +2,8 @@ package networkengine
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 )
 
@@ -42,6 +44,11 @@ type TreeStore interface {
 	// GetNode returns a single active node by tree and user ID.
 	GetNode(ctx context.Context, treeID, userID string) (*TreeNodeRow, error)
 
+	// GetNodeIncludingRemoved returns a node by tree and user ID whether or
+	// not it is soft-deleted. An active row wins over any tombstone, and the
+	// newest tombstone wins over older ones.
+	GetNodeIncludingRemoved(ctx context.Context, treeID, userID string) (*TreeNodeRow, error)
+
 	// GetChildren returns active children of a parent node.
 	GetChildren(ctx context.Context, treeID, parentUserID string) ([]TreeNodeRow, error)
 
@@ -77,4 +84,40 @@ type TreeStore interface {
 
 	// BulkInsert adds multiple nodes in a single transaction.
 	BulkInsert(ctx context.Context, nodes []TreeNodeRow) error
+}
+
+// The conditions an insert can be refused for, and one the consumer raises
+// after reading the row an insert reported. Sentinels rather than structs
+// because the caller branches on which one and needs nothing else from them.
+var (
+	// ErrNodeAlreadyProjected reports an insert that matched an existing row
+	// on the event id. Whether that row is the one this event wrote, and
+	// whether it is still active, are not known here.
+	ErrNodeAlreadyProjected = errors.New("insert affected no rows; a row with this event id exists")
+
+	// ErrActiveUserConflict reports a different event already placing this
+	// user in this tree.
+	ErrActiveUserConflict = errors.New("an active row already places this user in this tree")
+
+	// ErrSlotConflict reports a different event already holding this parent
+	// and position.
+	ErrSlotConflict = errors.New("an active row already holds this parent and position")
+
+	// ErrReplayedPlacement reports an insert matching a row that has since
+	// been soft-deleted. The placement is not current and must not be resumed.
+	ErrReplayedPlacement = errors.New("a row with this event id exists and is soft-deleted")
+)
+
+// RemovalNotProjectedError reports a removal the engine applied whose store
+// write did not land.
+type RemovalNotProjectedError struct {
+	TreeID  string
+	UserID  string
+	EventID string
+}
+
+func (e *RemovalNotProjectedError) Error() string {
+	return fmt.Sprintf(
+		"engine reports %s absent from tree %s, and an active row remains; event %s",
+		e.UserID, e.TreeID, e.EventID)
 }

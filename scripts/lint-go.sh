@@ -36,17 +36,19 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-# Reading is the check. A readable directory passes -r and then fails the read,
-# which exits 0 when the status is not tested.
-if ! pin_body=$(cat "$version_file" 2>/dev/null); then
+# A directory can be opened and not read, so the read's own status is the check.
+# cat's stderr is left alone because it names which of the two happened.
+if ! pin_body=$(cat "$version_file"); then
   echo "cannot read \"$version_file\"; not linting" >&2
-  echo "  pinned     not obtained (read failed)" >&2
+  echo "  pinned     not obtained (cat exited non-zero)" >&2
   exit 1
 fi
 
-# Surrounding whitespace only. Deleting all of it would accept "2.13. 2", which
-# the action reads as a different string than this script would.
-pin_raw=$(printf '%s' "$pin_body" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+# Trims the whole value rather than each line, so a leading newline goes too.
+# Interior whitespace stays: collapsing it accepts a pin that is not the pin.
+pin_raw=$pin_body
+pin_raw=${pin_raw#"${pin_raw%%[![:space:]]*}"}
+pin_raw=${pin_raw%"${pin_raw##*[![:space:]]}"}
 pin=${pin_raw#[vV]}
 
 exit 0

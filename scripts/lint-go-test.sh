@@ -40,8 +40,10 @@ expect 1 "cannot read" "unreadable pin file" \
 expect 1 "not obtained" "unreadable pin file marks pinned as not obtained" \
   --check-only --version-file "$data/nonexistent"
 
-expect 1 "read failed" "a directory as the pin file" \
-  --check-only --version-file /tmp
+expect 1 "Is a directory" "a directory as the pin file keeps cat's reason" \
+  --check-only --version-file "$data"
+expect 0 "" "leading blank lines are trimmed like the action trims them" \
+  --check-only --version-file "$data/lintver-leading" 
 expect 1 "needs a file path" "option with no operand" \
   --check-only --version-file
 

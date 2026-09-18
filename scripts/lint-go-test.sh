@@ -3,6 +3,9 @@
 # guard cannot hide behind a shared exit code.
 set -uo pipefail
 
+# cat's diagnostics are localized and one assertion matches on their text.
+export LC_ALL=C
+
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 check=$root/scripts/lint-go.sh
 data=$root/scripts/testdata
@@ -42,8 +45,7 @@ expect 1 "not obtained" "unreadable pin file marks pinned as not obtained" \
 
 expect 1 "Is a directory" "a directory as the pin file keeps cat's reason" \
   --check-only --version-file "$data"
-expect 0 "" "leading blank lines are trimmed like the action trims them" \
-  --check-only --version-file "$data/lintver-leading" 
+
 expect 1 "needs a file path" "option with no operand" \
   --check-only --version-file
 

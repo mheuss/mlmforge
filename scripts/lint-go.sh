@@ -44,7 +44,7 @@ if ! pin_body=$(cat "$version_file"); then
   exit 1
 fi
 
-# Trims the whole value rather than each line, so a leading newline goes too.
+# Trims the whole value, so a leading newline goes too.
 # Interior whitespace stays: collapsing it accepts a pin that is not the pin.
 pin_raw=$pin_body
 pin_raw=${pin_raw#"${pin_raw%%[![:space:]]*}"}

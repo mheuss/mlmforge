@@ -40,5 +40,10 @@ expect 1 "cannot read" "unreadable pin file" \
 expect 1 "not obtained" "unreadable pin file marks pinned as not obtained" \
   --check-only --version-file "$data/nonexistent"
 
+expect 1 "read failed" "a directory as the pin file" \
+  --check-only --version-file /tmp
+expect 1 "needs a file path" "option with no operand" \
+  --check-only --version-file
+
 echo "$pass passed, $fail failed, of $((pass + fail))"
 [ "$fail" = 0 ]

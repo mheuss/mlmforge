@@ -421,9 +421,6 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		assert.Equal(t, testNodeUUID(2), got.ID, "the most recent removal, not the first")
 	})
 
-	// The known divergence. Postgres runs the batch in one transaction;
-	// MemoryTreeStore loops InsertNode and keeps what it already appended.
-	// Task 4 makes the memory store stage, and this passes on both.
 	t.Run("BulkInsert writes nothing when one row in the batch is bad", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()

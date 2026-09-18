@@ -993,11 +993,13 @@ err := c.withRetry(ctx, op, treeID, userID, func() error {
     if gerr != nil {
         return reconcileInconclusive, gerr
     }
-    if row == nil {
-        alreadyProjected = true
-        return reconcileConverged, nil
+    // Only an active row is divergence. A tombstone and an absent row both
+    // mean the store agrees the user is gone.
+    if row != nil && row.RemovedAt == nil {
+        return reconcileDiverged, fmt.Errorf("the store holds an active row the engine refused")
     }
-    return reconcileDiverged, fmt.Errorf("the store holds a row the engine refused")
+    alreadyProjected = true
+    return reconcileConverged, nil
 })
 if err != nil {
     return err

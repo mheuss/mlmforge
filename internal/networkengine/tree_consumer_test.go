@@ -840,9 +840,8 @@ func TestWithRetry_NilReconcileKeepsTheOldBehavior(t *testing.T) {
 	assert.Equal(t, c.maxRetries+1, attempts)
 }
 
-// The property Tasks 15 to 17 rest on. Gating the reconcile call to the first
-// attempt leaves every other test in this file green, so nothing else observes
-// that it runs again.
+// Gating the reconcile call to the first attempt leaves every other test in
+// this file green, so nothing else observes that it runs on later ones.
 func TestWithRetry_ReconcileRunsOnEveryFailedAttempt(t *testing.T) {
 	c := newRetryTestConsumer()
 	reconcileCalls := 0
@@ -1165,10 +1164,10 @@ func TestPositionMatchesProjection(t *testing.T) {
 			want:    false,
 		},
 		{
-			// Option 2 in the review: sponsor is read from the row, not the
-			// event. Removing a sponsor re-sponsors their recruits in both the
-			// engine and the store, and the placing event still names the
-			// original. Comparing against the event would call this diverged.
+			// Sponsor is read from the row, not the event. Removing a
+			// sponsor re-sponsors their recruits in both the engine and the
+			// store, and the placing event still names the original.
+			// Comparing against the event would call this diverged.
 			name:    "a re-sponsored node still matches its row",
 			pos:     enginePos(func(p *EnginePosition) { p.SponsorUserID = ptr(posOther) }),
 			payload: payloadFor(treeTypeBinary, intPtr(1)),

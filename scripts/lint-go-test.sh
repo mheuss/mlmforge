@@ -57,10 +57,18 @@ expect 1 "is not a complete version" "empty pin file" \
   --check-only --version-file "$data/lintver-empty"
 expect 1 "is not a complete version" "two-line pin file" \
   --check-only --version-file "$data/lintver-twolines"
+# Pins the escaping in the regex. Dropping the backslashes leaves every other
+# case green while the guard starts accepting a three-line pin.
+expect 1 "is not a complete version" "non-dot separators" \
+  --check-only --version-file "$data/lintver-separators"
 expect 0 "" "bare pin without a leading v" \
   --check-only --version-file "$data/lintver-bare"
 expect 0 "" "leading blank lines are trimmed like the action trims them" \
   --check-only --version-file "$data/lintver-leading"
+# The only assertion that uses the script's own default paths. Without it a
+# wrong filename or a wrong number of .. leaves the suite green and breaks
+# every real invocation.
+expect 0 "" "the default pin file is the tracked one" --check-only
 a=$("$check" --check-only --version-file "$data/lintver-ok" 2>&1); arc=$?
 b=$("$check" --check-only --version-file "$data/lintver-bare" 2>&1); brc=$?
 if [ "$arc" = "$brc" ] && [ "$a" = "$b" ]; then

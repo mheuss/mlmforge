@@ -123,7 +123,71 @@ expect_with "$drift_dir" 1 "pinned     v2.13.2" "the mismatch names the pin" \
   --check-only --version-file "$data/lintver-ok"
 expect_with "$(stub_dir badrc "$ok_line" 3)" 1 "version command exited 3" "version command fails" \
   --check-only --version-file "$data/lintver-ok"
-expect_with "$(stub_dir garbage 'not a version line')" 1 "does not parse" "version output does not parse" \
+expect_with "$(stub_dir garbage 'not a version line')" 1 "has 0 version lines" "version output has no version line" \
+  --check-only --version-file "$data/lintver-ok"
+
+# A stale binary whose stderr names the pinned version. Before the parse was
+# anchored and stdout-only, this passed at rc=0 against a 2.11.4 binary.
+noisy=$work/noisy
+mkdir -p "$noisy"
+cat > "$noisy/golangci-lint" <<'NOISY'
+#!/usr/bin/env bash
+printf '%s\n' 'warn: plugin has version 2.13.2 built with go1.27.0 (cached)' >&2
+printf '%s\n' 'golangci-lint has version 2.11.4 built with go1.26.1 from x on y'
+NOISY
+chmod +x "$noisy/golangci-lint"
+expect_with "$noisy" 1 "installed  2.11.4" "a log line naming the pin does not satisfy the check" \
+  --check-only --version-file "$data/lintver-ok"
+
+# Two version lines on stdout. Taking the first would report a version the
+# binary may not be.
+twolines=$work/twoversions
+mkdir -p "$twolines"
+cat > "$twolines/golangci-lint" <<'TWOV'
+#!/usr/bin/env bash
+printf '%s\n' 'golangci-lint has version 9.9.9 built with go1.20.0 from x on y'
+printf '%s\n' 'golangci-lint has version 2.13.2 built with go1.27.0 from x on y'
+TWOV
+chmod +x "$twolines/golangci-lint"
+expect_with "$twolines" 1 "has 2 version lines" "two version lines are refused" \
+  --check-only --version-file "$data/lintver-ok"
+
+# Pins the ^ anchor alone. The decoy is on stdout, so separating stderr does
+# not help; only the anchor rejects it.
+indented=$work/indented
+mkdir -p "$indented"
+cat > "$indented/golangci-lint" <<'IND'
+#!/usr/bin/env bash
+printf '%s\n' '  golangci-lint has version 9.9.9 built with go1.20.0 (from a plugin)'
+printf '%s\n' 'golangci-lint has version 2.13.2 built with go1.27.0 from x on y'
+IND
+chmod +x "$indented/golangci-lint"
+expect_with "$indented" 0 "" "an indented decoy line is not a version line" \
+  --check-only --version-file "$data/lintver-ok"
+
+# Pins the stderr separation alone. The decoy is anchored and well formed, so
+# the anchor does not help; only reading stdout alone rejects it.
+errdecoy=$work/errdecoy
+mkdir -p "$errdecoy"
+cat > "$errdecoy/golangci-lint" <<'ERRD'
+#!/usr/bin/env bash
+printf '%s\n' 'golangci-lint has version 9.9.9 built with go1.20.0 from x on y' >&2
+printf '%s\n' 'golangci-lint has version 2.13.2 built with go1.27.0 from x on y'
+ERRD
+chmod +x "$errdecoy/golangci-lint"
+expect_with "$errdecoy" 0 "" "a version line on stderr is not the binary's version" \
+  --check-only --version-file "$data/lintver-ok"
+
+# Pins the widened built-with capture. go[0-9.]+ would truncate rc1 away and
+# report a value the binary did not print.
+rcver=$work/rcver
+mkdir -p "$rcver"
+cat > "$rcver/golangci-lint" <<'RCV'
+#!/usr/bin/env bash
+printf '%s\n' 'golangci-lint has version 2.11.4 built with go1.28rc1 from x on y'
+RCV
+chmod +x "$rcver/golangci-lint"
+expect_with "$rcver" 1 "built with go1.28rc1" "a prerelease toolchain is reported whole" \
   --check-only --version-file "$data/lintver-ok"
 
 # An empty directory as the whole PATH, so command -v resolves nothing.

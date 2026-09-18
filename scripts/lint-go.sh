@@ -61,18 +61,6 @@ if ! [[ $pin =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   exit 1
 fi
 
-if [ ! -r "$go_mod" ]; then
-  echo "cannot read \"$go_mod\"; not linting" >&2
-  echo "  go directive  not obtained (open failed)" >&2
-  exit 1
-fi
-
-directive=$(awk '/^go /{print $2; exit}' "$go_mod")
-if [ -z "$directive" ]; then
-  echo "no go directive in \"$go_mod\"; not linting" >&2
-  exit 1
-fi
-
 if ! resolved=$(command -v golangci-lint); then
   echo "no golangci-lint on PATH; not linting" >&2
   echo "  pinned     v$pin   ($version_file)" >&2
@@ -81,38 +69,55 @@ if ! resolved=$(command -v golangci-lint); then
   exit 1
 fi
 
+# stderr goes to its own file. Merging it lets a log line mentioning the
+# pinned version satisfy the comparison against a binary that does not.
+version_err=$(mktemp)
+trap 'rm -f "$version_err"' EXIT
 version_rc=0
-version_out=$("$resolved" version 2>&1) || version_rc=$?
+version_out=$("$resolved" version 2>"$version_err") || version_rc=$?
 if [ "$version_rc" != 0 ]; then
   echo "golangci-lint version command exited $version_rc; not linting" >&2
   echo "  pinned     v$pin   ($version_file)" >&2
   echo "  installed  not obtained (\"$resolved version\" exited $version_rc)" >&2
+  echo "  built with not obtained" >&2
+  echo "  stderr     $(printf '%q' "$(cat "$version_err")")" >&2
   exit 1
 fi
 
-# One match against the whole string. sed -n p prints every matching line, so
-# two matches would make these values multi-line.
-version_re='has version ([^ ]+) built with (go[0-9.]+)'
-if [[ $version_out =~ $version_re ]]; then
-  installed=${BASH_REMATCH[1]}
-  built_with=${BASH_REMATCH[2]}
-else
-  installed=
-  built_with=
-fi
+# Anchored to the start of a line, and counted. An unanchored search over the
+# whole output takes the leftmost match anywhere in it.
+installed=
+built_with=
+version_matches=0
+while IFS= read -r version_line; do
+  if [[ $version_line =~ ^golangci-lint\ has\ version\ ([^[:space:]]+)\ built\ with\ (go[^[:space:]]+) ]]; then
+    version_matches=$((version_matches + 1))
+    installed=${BASH_REMATCH[1]}
+    built_with=${BASH_REMATCH[2]}
+  fi
+done <<< "$version_out"
 
-if [ -z "$installed" ] || [ -z "$built_with" ]; then
-  echo "golangci-lint version output does not parse; not linting" >&2
+if [ "$version_matches" != 1 ]; then
+  echo "golangci-lint version output has $version_matches version lines; not linting" >&2
   echo "  pinned     v$pin   ($version_file)" >&2
+  echo "  installed  not obtained ($version_matches lines matched, one expected)" >&2
+  echo "  built with not obtained" >&2
   echo "  output     $(printf '%q' "$version_out")" >&2
   exit 1
+fi
+
+# Read only here, where it is used, so an unreadable go.mod cannot preempt the
+# version mismatch a developer is actually hitting.
+directive_note="go directive not obtained"
+if directive=$(awk '/^go /{print $2; exit}' "$go_mod" 2>/dev/null) && [ -n "$directive" ]; then
+  directive_note="$go_mod go directive is $directive"
 fi
 
 if [ "${installed#[vV]}" != "$pin" ]; then
   echo "golangci-lint does not match the pin; not linting" >&2
   echo "  pinned     v$pin   ($version_file)" >&2
-  echo "  installed  $installed    ($resolved)" >&2
-  echo "  built with $built_with  ($go_mod go directive is $directive)" >&2
+  echo "  installed  $(printf '%q' "$installed")    ($resolved)" >&2
+  echo "  built with $(printf '%q' "$built_with")  ($directive_note)" >&2
   echo >&2
   echo "  install the pinned version:" >&2
   echo "    go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v$pin" >&2

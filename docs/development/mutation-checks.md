@@ -104,6 +104,34 @@ fail because of the data they run on:
 Mutate the fixture too: make the value a row varies identical to the baseline
 and check that the row goes red.
 
+## A red says the test failed, not which line failed it
+
+`require` and `assert` differ in one way that decides what a mutation pass
+established. In testify v1.11.1 a `require` helper calls its `assert` twin and
+then calls `t.FailNow()` when that returns false, which stops the test
+function. An `assert` helper returns a bool and execution continues.
+
+So a failing `require` above the assertion you are probing means your
+assertion never ran. The suite still goes red, and the red is easy to credit to
+the wrong line.
+
+Two findings look identical from the outside, and they need different fixes:
+
+- The assertion cannot fail. It ran, and it passes whatever the code does.
+  Delete it or make it specific.
+- The assertion was never reached. A `require` above it aborted first. The
+  assertion may be fine. The test is shorter than it looks.
+
+**Say which of the two a mutation pass established, never just "cannot fail."**
+
+The cheap way to tell them apart is to make the assertion fail on purpose and
+check that its own message is the one that prints. If a different message
+prints, you have found the second case.
+
+This is not in the numbered list above, because it does not look like a clean
+pass. It looks like a catch, which is worse: a clean pass invites suspicion and
+a red does not.
+
 ## A double inherits the gaps of what it embeds
 
 See [test-doubles.md](test-doubles.md).

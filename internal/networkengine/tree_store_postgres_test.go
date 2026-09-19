@@ -230,6 +230,22 @@ func TestPostgresTreeStore_ConcurrentRootsLeaveOne(t *testing.T) {
 	assert.Equal(t, 1, roots, "and the tree holds exactly one active root")
 }
 
+func TestPostgresTreeStore_BulkInsertRejectsTwoRoots(t *testing.T) {
+	store := newTestPostgresTreeStore(t)
+	ctx := context.Background()
+	treeID := testTreeUUID(1)
+
+	err := store.BulkInsert(ctx, []TreeNodeRow{
+		makeUUIDNode(testNodeUUID(1), treeID, testUserUUID(1), 0, nil, nil, nil),
+		makeUUIDNode(testNodeUUID(2), treeID, testUserUUID(2), 0, nil, nil, nil),
+	})
+	require.ErrorIs(t, err, ErrRootConflict)
+
+	rows, gerr := store.GetByTree(ctx, treeID)
+	require.NoError(t, gerr)
+	assert.Empty(t, rows, "the transaction rolled the whole batch back")
+}
+
 func TestPostgresTreeStore_DeleteNode(t *testing.T) {
 	store := newTestPostgresTreeStore(t)
 	ctx := context.Background()

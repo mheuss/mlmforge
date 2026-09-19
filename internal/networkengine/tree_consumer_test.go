@@ -1604,12 +1604,31 @@ func TestHandleRootAdded_ReconcileDivergesOnADifferentEnrolledAt(t *testing.T) {
 // The compensation names a user. A delete that ignored it would undo whichever
 // row it reached first, and every other test here runs against a store holding
 // only this event's row.
+// preIndexStore accepts a second active depth-0 row. It stands in for a
+// database written before migration 000006, so a test can reach code that only
+// runs once such a row exists. Everything else, including the delete recording,
+// comes from the embedded store.
+//
+// It does not model a cancelled context: MemoryTreeStore ignores the one it is
+// given, and nothing below InsertNode here changes that.
+type preIndexStore struct {
+	*deleteRecordingStore
+}
+
+func (s preIndexStore) InsertNode(ctx context.Context, node TreeNodeRow) error {
+	err := s.deleteRecordingStore.InsertNode(ctx, node)
+	if errors.Is(err, ErrRootConflict) {
+		return s.deleteRecordingStore.MemoryTreeStore.appendUnchecked(node)
+	}
+	return err
+}
+
 func TestHandleRootAdded_CompensationTouchesOnlyThisEventsRow(t *testing.T) {
 	tr := &reconcileTransport{
 		mutationErr: &EngineError{Code: engineCodeRootAlreadyExists},
 		position:    &EnginePosition{UserID: posOther, Depth: 0, EnrolledAt: posEnrolled.Unix()},
 	}
-	store := &deleteRecordingStore{MemoryTreeStore: NewMemoryTreeStore()}
+	store := preIndexStore{deleteRecordingStore: &deleteRecordingStore{MemoryTreeStore: NewMemoryTreeStore()}}
 	ctx := context.Background()
 	// The root that is really there, which this event must not disturb.
 	require.NoError(t, store.InsertNode(ctx, TreeNodeRow{

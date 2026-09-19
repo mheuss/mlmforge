@@ -57,6 +57,13 @@ func (s *MemoryTreeStore) InsertNode(_ context.Context, node TreeNodeRow) error 
 	return nil
 }
 
+// appendUnchecked stores a row without any of InsertNode's checks, for a test
+// that needs a row the constraints refuse.
+func (s *MemoryTreeStore) appendUnchecked(node TreeNodeRow) error {
+	s.nodes = append(s.nodes, node)
+	return nil
+}
+
 func (s *MemoryTreeStore) DeleteNode(_ context.Context, treeID, userID string) error {
 	now := time.Now()
 	for i := range s.nodes {

@@ -7,7 +7,9 @@ set -uo pipefail
 export LC_ALL=C
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-check=$root/scripts/lint-go.sh
+# Overridable so a mutation harness can point the suite at a copy instead of
+# editing the tracked script in place.
+check=${LINT_GO_SCRIPT:-$root/scripts/lint-go.sh}
 data=$root/scripts/testdata
 
 pass=0
@@ -308,80 +310,41 @@ expect_silent "$bw_dir" "a directive too long to compare skips the comparison" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-huge"
 
 wf_args=(--check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok")
+
 expect_with "$bw_dir" 1 "sets both version and version-file" "workflow sets both inputs" \
   "${wf_args[@]}" --workflow "$data/wf-lint-both.yml"
 expect_silent "$bw_dir" "workflow sets version-file alone" \
   "${wf_args[@]}" --workflow "$data/wf-lint-file-only.yml"
+# Without this the refusal is indistinguishable from one that fires on version
+# alone, which is every workflow written before the pin file existed.
 expect_silent "$bw_dir" "workflow sets version alone" \
   "${wf_args[@]}" --workflow "$data/wf-lint-version-only.yml"
-# Two steps, one key each. Counting across the file rather than within a step
-# refuses this, and the message would name a step that does not exist.
-expect_silent "$bw_dir" "two steps with one input each are not both" \
-  "${wf_args[@]}" --workflow "$data/wf-lint-two-steps.yml"
-# Commenting a key out is how someone switches the pin over, so it has to be
-# read as absent rather than as present.
+# Commenting a key out is how someone moves the pin over, so it has to read as
+# absent rather than as present.
 expect_silent "$bw_dir" "a commented-out version is not set" \
   "${wf_args[@]}" --workflow "$data/wf-lint-both-commented.yml"
-# Another action's step carries both key names. Only this action's step counts.
-expect_silent "$bw_dir" "another action setting both inputs is not this one" \
-  "${wf_args[@]}" --workflow "$data/wf-lint-other-action.yml"
-# The same, with a later item so the close rule decides it rather than the END
-# clause. Both rules carry their own check that the item was this action's.
-expect_silent "$bw_dir" "another action's item is closed without refusing" \
-  "${wf_args[@]}" --workflow "$data/wf-lint-other-action-first.yml"
-# Tabs are not legal YAML indentation, so this is malformed input rather than a
-# shape to support. It is here because scanning for the first non-space alone
-# reports every tab-indented line at indent 0, which ends the item at its first
-# nested list and hides both keys.
-expect_with "$bw_dir" 1 "sets both version and version-file" "a tab-indented step is still one item" \
-  "${wf_args[@]}" --workflow "$data/wf-lint-tab-indent.yml"
-# A list written at its parent key's indent opens an item that no deeper step
-# marker can close, so without a rule for a dedenting mapping key the whole
-# document becomes one item and every step merges into it.
-expect_silent "$bw_dir" "a shallow list does not swallow the steps below it" \
-  "${wf_args[@]}" --workflow "$data/wf-lint-shallow-list.yml"
-# Each of the three flags has to clear when an item reopens. Deleting any one
-# carries it into the next item, and the fixture that catches one carries the
-# other two past it.
-expect_silent "$bw_dir" "the action flag does not carry into the next item" \
-  "${wf_args[@]}" --workflow "$data/wf-lint-target-carry.yml"
-expect_silent "$bw_dir" "the version flag does not carry into the next item" \
-  "${wf_args[@]}" --workflow "$data/wf-lint-version-carry.yml"
-# A list item may be a lone dash with its mapping on the lines below.
-expect_with "$bw_dir" 1 "sets both version and version-file" "a bare dash opens an item" \
-  "${wf_args[@]}" --workflow "$data/wf-lint-bare-dash.yml"
-# A blank line has no indentation to compare, so it must not end the item.
-expect_with "$bw_dir" 1 "sets both version and version-file" "a blank line does not end the item" \
-  "${wf_args[@]}" --workflow "$data/wf-lint-blank-lines.yml"
-# A commented-out uses: still contains the action name, and the name match is
-# not anchored, so the step would be entered from a line that is not there.
-expect_silent "$bw_dir" "a commented-out uses is not this action's step" \
-  "${wf_args[@]}" --workflow "$data/wf-lint-commented-uses.yml"
-# The step has to end at the next list item. Without that, a later step's key
-# counts toward this one and the refusal names a step that sets one input.
-expect_silent "$bw_dir" "a key in the next step does not count toward this one" \
-  "${wf_args[@]}" --workflow "$data/wf-lint-key-after-step.yml"
-# A list nested under one of the step's own keys is indented deeper than the
-# step. Ending the step there hides both keys being set on it.
-expect_with "$bw_dir" 1 "sets both version and version-file" "a nested list does not end the step" \
-  "${wf_args[@]}" --workflow "$data/wf-lint-nested-list.yml"
-# A mapping's keys come in any order, and the action's own key is one of them.
-# Anchoring on uses: drops every key written above it.
-expect_with "$bw_dir" 1 "sets both version and version-file" "keys before uses are still this step's" \
-  "${wf_args[@]}" --workflow "$data/wf-lint-keys-before-uses.yml"
-# The compact form puts the list marker and uses: on one line, so the rule that
-# closes the previous item has to run before the one that opens this one.
-expect_with "$bw_dir" 1 "sets both version and version-file" "a compact uses closes the item before it" \
-  "${wf_args[@]}" --workflow "$data/wf-lint-compact-uses.yml"
 # Quoting a key is valid YAML and leaves the name unchanged.
 expect_with "$bw_dir" 1 "sets both version and version-file" "quoted key names are the same keys" \
   "${wf_args[@]}" --workflow "$data/wf-lint-quoted-keys.yml"
-# A directory can be opened and not read. The pin file refuses on this and the
-# workflow read did not, so it skipped the guard and leaked grep's diagnostic.
-expect 1 "Is a directory" "a directory as the workflow keeps cat's reason" \
-  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok" --workflow "$data"
+
+# The two cases below are the cost of reading the whole file. Both refuse, and
+# in neither does one step set both keys. They are here so the limitation is a
+# tested behaviour rather than a sentence in a comment.
+expect_with "$bw_dir" 1 "does not tell one step from another" "two steps with one key each still refuse" \
+  "${wf_args[@]}" --workflow "$data/wf-lint-two-steps.yml"
+expect_with "$bw_dir" 1 "does not tell one step from another" "another action's keys still refuse" \
+  "${wf_args[@]}" --workflow "$data/wf-lint-other-action.yml"
+
+# setup-go's keys contain the two names as substrings. Without the ^ anchors
+# every workflow that sets up Go reads as setting both inputs.
+expect_silent "$bw_dir" "go-version keys are not these keys" \
+  "${wf_args[@]}" --workflow "$data/wf-lint-go-version-keys.yml"
 expect_silent "$bw_dir" "a missing workflow skips the check" \
   "${wf_args[@]}" --workflow "$data/wf-lint-nonexistent.yml"
+# A directory can be opened and not read. Skipping it would leave the guard
+# silent on a typo'd path.
+expect 1 "Is a directory" "a directory as the workflow keeps cat's reason" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok" --workflow "$data"
 
 echo "$pass passed, $fail failed, of $((pass + fail))"
 [ "$fail" = 0 ]

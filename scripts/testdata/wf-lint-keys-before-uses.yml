@@ -1,8 +1,0 @@
-jobs:
-  go:
-    steps:
-      - name: Install golangci-lint
-        with:
-          version: v2.13.2
-          version-file: .golangci-lint-version
-        uses: golangci/golangci-lint-action@v9

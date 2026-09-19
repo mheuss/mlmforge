@@ -1,8 +1,0 @@
-jobs:
-  go:
-    steps:
-      - name: Lint, disabled for now
-        # uses: golangci/golangci-lint-action@v9
-        with:
-          version: v2.13.2
-          version-file: .golangci-lint-version

@@ -1604,6 +1604,27 @@ func TestHandleRootAdded_ReconcileDivergesOnADifferentEnrolledAt(t *testing.T) {
 // The compensation names a user. A delete that ignored it would undo whichever
 // row it reached first, and every other test here runs against a store holding
 // only this event's row.
+// The defect's own scenario, after migration 000006. The insert is refused, so
+// no engine call exists to be cancelled and there is nothing to compensate.
+func TestHandleRootAdded_SecondRootRefusedBeforeTheEngine(t *testing.T) {
+	tr := &reconcileTransport{}
+	store := &deleteRecordingStore{MemoryTreeStore: NewMemoryTreeStore()}
+	ctx := context.Background()
+	require.NoError(t, store.InsertNode(ctx, TreeNodeRow{
+		ID: "cafe0000-0000-4000-8000-00000000beef", TreeID: "tree1",
+		UserID: posOther, Depth: 0, EnrolledAt: posEnrolled,
+	}))
+	c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
+	c.retryDelay = 0
+
+	err := c.HandleEvent(ctx, makeEvent(EventTypeRootAdded, rootPayload()))
+
+	require.ErrorIs(t, err, ErrRootConflict)
+	assert.Empty(t, tr.mutationOps, "no engine call was made")
+	assert.Empty(t, store.attempts, "nothing to compensate")
+	assert.Nil(t, activeRow(t, store.MemoryTreeStore, posUser), "no row was written")
+}
+
 // preIndexStore accepts a second active depth-0 row. It stands in for a
 // database written before migration 000006, so a test can reach code that only
 // runs once such a row exists. Everything else, including the delete recording,

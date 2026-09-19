@@ -40,6 +40,14 @@ func (s *MemoryTreeStore) InsertNode(_ context.Context, node TreeNodeRow) error 
 			if n.UserID == node.UserID {
 				return fmt.Errorf("%w: tree=%s user=%s", ErrActiveUserConflict, node.TreeID, node.UserID)
 			}
+			// Mirror idx_tree_nodes_tree_root_active (migration 000006): one
+			// active depth-0 row per tree. After the user check, because a row
+			// violating both rules is reported by whichever index Postgres
+			// checks first and the order is not ours to set (HEU-794).
+			if node.Depth == 0 && n.Depth == 0 {
+				return fmt.Errorf("%w: tree=%s rooted by %s",
+					ErrRootConflict, node.TreeID, n.UserID)
+			}
 			// Mirror idx_tree_nodes_tree_parent_position_active (migration
 			// 000004): one active claim per (tree, parent, position). Rows
 			// without a position are outside the index (WHERE position IS

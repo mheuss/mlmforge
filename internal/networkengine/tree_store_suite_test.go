@@ -634,6 +634,25 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		assert.ErrorIs(t, err, ErrSlotConflict, "one active claim per tree, parent and position")
 	})
 
+	t.Run("InsertNode rejects a second active root in a tree", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, testUserUUID(1), 0, nil, nil, nil)))
+
+		// Two different users, so this row violates the root index alone.
+		// A same-user row would violate the active-user index too, and
+		// Postgres picks which of two violated indexes it reports.
+		err := s.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), tree, testUserUUID(2), 0, nil, nil, nil))
+		require.ErrorIs(t, err, ErrRootConflict)
+
+		// A removed root does not block its replacement (ADR-023).
+		require.NoError(t, s.DeleteNode(ctx, tree, testUserUUID(1)))
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(3), tree, testUserUUID(3), 0, nil, nil, nil)))
+	})
+
 	// A refused insert must not be a disguised update. On Postgres that is the
 	// difference between DO NOTHING and DO UPDATE; in the double it is whether
 	// the duplicate check runs before the append. Both stores keep the row the

@@ -132,4 +132,15 @@ M not-applied  "control: matches nothing"               's|NOT_PRESENT_ANYWHERE|
 M equivalent   "control: comment text only"             's|# Trims the whole value|# trims the whole value|'
 
 echo "$pass passed, $fail failed, of $((pass + fail))"
+
+# A non-zero exit that names nothing turns a second occurrence into another
+# opaque one. Anything that fails here has already printed its own FAIL line;
+# this says what the run was measuring against and what else held the machine.
+if [ "$fail" != 0 ]; then
+  echo "--- context for the failures above ---" >&2
+  echo "baseline: $baseline" >&2
+  echo "wrapper:  $(cd "$(dirname "$src")" && /usr/bin/git log -1 --format=%h -- "$(basename "$src")" 2>/dev/null || echo unknown)" >&2
+  echo "tree:     $(cd "$root" && /usr/bin/git status --porcelain -- scripts/ | tr '\n' ' ')" >&2
+  echo "load:     $(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)" >&2
+fi
 [ "$fail" = 0 ]

@@ -1723,7 +1723,7 @@ type preIndexStore struct {
 func (s preIndexStore) InsertNode(ctx context.Context, node TreeNodeRow) error {
 	err := s.deleteRecordingStore.InsertNode(ctx, node)
 	if errors.Is(err, ErrRootConflict) {
-		return s.deleteRecordingStore.MemoryTreeStore.appendUnchecked(node)
+		return s.appendUnchecked(node)
 	}
 	return err
 }

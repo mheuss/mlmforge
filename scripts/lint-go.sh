@@ -40,12 +40,18 @@ done
 # file. The pin file would then be decorative while CI installed something else.
 # Full-line comments are dropped first, so commenting a key out reads as absent.
 # Counted within one step: two steps carrying one key each are not this defect,
-# and the refusal below names a single step.
+# and the refusal below names a single step. The step ends at a list item
+# indented no deeper than it, because a list nested under one of its own keys is
+# still inside it.
 if [ -r "$workflow" ]; then
   both_inputs=$(grep -v '^[[:space:]]*#' "$workflow" \
     | awk '
-      /uses:[[:space:]]*["'"'"']?golangci\/golangci-lint-action/ { in_step = 1; v = 0; f = 0; next }
-      in_step && /^[[:space:]]*-[[:space:]]/ { if (v && f) both = 1; in_step = 0 }
+      /uses:[[:space:]]*["'"'"']?golangci\/golangci-lint-action/ {
+        in_step = 1; v = 0; f = 0; ind = match($0, /[^ ]/) - 1; next
+      }
+      in_step && /^[[:space:]]*-[[:space:]]/ && match($0, /[^ ]/) - 1 <= ind {
+        if (v && f) both = 1; in_step = 0
+      }
       in_step && /^[[:space:]]*version:/ { v = 1 }
       in_step && /^[[:space:]]*version-file:/ { f = 1 }
       END { if (in_step && v && f) both = 1; print both + 0 }')

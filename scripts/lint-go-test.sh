@@ -333,6 +333,10 @@ expect_silent "$bw_dir" "a commented-out uses is not this action's step" \
 # counts toward this one and the refusal names a step that sets one input.
 expect_silent "$bw_dir" "a key in the next step does not count toward this one" \
   $(wf) --workflow "$data/wf-lint-key-after-step.yml"
+# A list nested under one of the step's own keys is indented deeper than the
+# step. Ending the step there hides both keys being set on it.
+expect_with "$bw_dir" 1 "sets both version and version-file" "a nested list does not end the step" \
+  $(wf) --workflow "$data/wf-lint-nested-list.yml"
 expect_silent "$bw_dir" "a missing workflow skips the check" \
   $(wf) --workflow "$data/wf-lint-nonexistent.yml"
 

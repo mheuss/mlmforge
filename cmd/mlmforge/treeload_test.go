@@ -188,6 +188,9 @@ func TestRunTreeLoad_DoesNotRetryAPermanentFailure(t *testing.T) {
 	require.Equal(t, 1, loader.attempts)
 }
 
+// zeroDelayCeiling bounds what a run with the delay set to zero may take.
+const zeroDelayCeiling = 100 * time.Millisecond
+
 // noRetryDelay drops the backoff so the suite does not sleep through it.
 func noRetryDelay(t *testing.T) {
 	t.Helper()
@@ -206,8 +209,7 @@ func TestRunTreeLoad_BoundsRetriesOnARetryableFailure(t *testing.T) {
 	require.Equal(t, maxLoadAttempts, loader.attempts)
 }
 
-// The pause is skipped after the final attempt, so three attempts sleep twice.
-func TestRunTreeLoad_SleepsBetweenAttemptsButNotAfterTheLast(t *testing.T) {
+func TestRunTreeLoad_HonoursTheConfiguredRetryDelay(t *testing.T) {
 	noRetryDelay(t)
 	loader := &stubLoader{err: retryable()}
 	start := time.Now()
@@ -215,12 +217,9 @@ func TestRunTreeLoad_SleepsBetweenAttemptsButNotAfterTheLast(t *testing.T) {
 	_ = runTreeLoad(t.Context(), &bytes.Buffer{}, loader, "t", "unilevel", nil)
 
 	require.Equal(t, maxLoadAttempts, loader.attempts)
-	require.Less(t, time.Since(start), loadRetryDelayCeiling,
-		"the loop slept despite a zero delay")
+	require.Less(t, time.Since(start), zeroDelayCeiling,
+		"a full retry run took longer than a zero delay should allow")
 }
-
-// loadRetryDelayCeiling bounds what a zero-delay run may take.
-const loadRetryDelayCeiling = 100 * time.Millisecond
 
 // A context cancelled between attempts stops the loop where it is, rather than
 // sleeping out the backoff it was already told to abandon.
@@ -263,6 +262,24 @@ func TestRunTreeLoad_ReportsAnIncompleteLoadWithItsCounts(t *testing.T) {
 
 	require.Equal(t,
 		"load stopped at the root stage; the engine acknowledged 0 of 47 placements\n",
+		out.String())
+}
+
+// A chain holding both types is reported as the incomplete one. Reporting it
+// as a rejection would tell an operator the engine is unchanged when a
+// structure may be stranded.
+func TestRunTreeLoad_ReportsAChainHoldingBothAsIncomplete(t *testing.T) {
+	loader := &stubLoader{err: &networkengine.TreeLoadIncompleteError{
+		Stage: networkengine.TreeLoadStageNodes,
+		Total: 4,
+		Err:   retryable(),
+	}}
+	var out bytes.Buffer
+
+	_ = runTreeLoad(t.Context(), &out, loader, "t", "unilevel", nil)
+
+	require.Equal(t,
+		"load stopped at the nodes stage; the engine acknowledged 0 of 4 placements\n",
 		out.String())
 }
 

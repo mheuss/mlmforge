@@ -14,7 +14,7 @@ import (
 // maxLoadAttempts bounds the retry loop.
 const maxLoadAttempts = 3
 
-// loadRetryDelay is the pause between attempts. A var so a test can lower it.
+// loadRetryDelay is the pause between attempts.
 var loadRetryDelay = 250 * time.Millisecond
 
 // treeLoader is the surface runTreeLoad drives.
@@ -51,7 +51,7 @@ func runTreeLoad(ctx context.Context, out io.Writer, loader treeLoader, treeID, 
 	for attempt := 1; attempt <= maxLoadAttempts; attempt++ {
 		err = loader.LoadTree(ctx, treeID, treeType, opts...)
 		if err == nil {
-			fmt.Fprintf(out, "loaded tree %s\n", treeID) //nolint:errcheck // a CLI writing to stdout
+			_, _ = fmt.Fprintf(out, "loaded tree %s\n", treeID)
 			return nil
 		}
 		if !treeLoadRetryable(err) {
@@ -80,14 +80,14 @@ func reportLoadFailure(out io.Writer, err error) {
 	// both must not be reported as leaving the engine unchanged.
 	var incomplete *networkengine.TreeLoadIncompleteError
 	if errors.As(err, &incomplete) {
-		fmt.Fprintf(out, "load stopped at the %s stage; the engine acknowledged %d of %d placements\n", //nolint:errcheck // a CLI writing to stdout
+		_, _ = fmt.Fprintf(out, "load stopped at the %s stage; the engine acknowledged %d of %d placements\n",
 			incomplete.Stage, incomplete.Confirmed, incomplete.Total)
 		return
 	}
 	var rejected *networkengine.TreeLoadRejectedError
 	if errors.As(err, &rejected) {
-		fmt.Fprintf(out, "load refused before any engine call (%s); the engine is unchanged\n", rejected.Kind) //nolint:errcheck // a CLI writing to stdout
+		_, _ = fmt.Fprintf(out, "load refused before any engine call (%s); the engine is unchanged\n", rejected.Kind)
 		return
 	}
-	fmt.Fprintf(out, "load failed: %s\n", err) //nolint:errcheck // a CLI writing to stdout
+	_, _ = fmt.Fprintf(out, "load failed: %s\n", err)
 }

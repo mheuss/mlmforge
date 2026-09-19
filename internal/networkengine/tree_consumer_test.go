@@ -1670,7 +1670,11 @@ func TestHandleRootAdded_CancelledInsertReportsTheRow(t *testing.T) {
 	}
 	store := &ctxReadingStore{deleteRecordingStore: &deleteRecordingStore{MemoryTreeStore: NewMemoryTreeStore()}}
 	c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
-	c.retryDelay = 0
+	// Not zero. withRetry selects on ctx.Done() against time.After(retryDelay),
+	// and with a zero delay both are ready at once, so Go picks between them at
+	// random and the cancellation is reported only about half the time. Nothing
+	// waits for this value, because ctx is already done when the select runs.
+	c.retryDelay = time.Minute
 
 	// Held rather than inlined, so the assertion can name the event id the
 	// row carries.

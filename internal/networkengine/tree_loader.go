@@ -81,9 +81,8 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 		return err
 	}
 
-	// Counts non-root placements. The index names the one that failed, so
-	// "3 of 4" means two of four were acknowledged. Read here so a root
-	// failure can report the size it stranded.
+	// Counts non-root placements. Read before the first engine call so every
+	// exit after it can carry the count.
 	total := len(ordered) - 1
 
 	if treeType == treeTypeMatrix {

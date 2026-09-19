@@ -8,16 +8,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A root placement that fails strands a structure holding every node the load
-// read. The counts are what a caller reports to whoever decides on a restart.
+// A root placement that fails leaves a structure holding none of the nodes the
+// load read. The counts are what a caller reports to whoever decides on a
+// restart, so this drives the exit from outside the package and reads them.
 func TestLoadTree_RootStageReportsTheStrandedSize(t *testing.T) {
-	store := networkengine.NewMemoryTreeStore()
-	rows := []networkengine.TreeNodeRow{
-		{ID: "u0", TreeID: "t", UserID: "u0", Depth: 0, EnrolledAt: time.Unix(1, 0)},
-		{ID: "u1", TreeID: "t", UserID: "u1", Depth: 1, ParentID: ptr("u0"), SponsorID: ptr("u0"), EnrolledAt: time.Unix(2, 0)},
-		{ID: "u2", TreeID: "t", UserID: "u2", Depth: 1, ParentID: ptr("u0"), SponsorID: ptr("u0"), EnrolledAt: time.Unix(3, 0)},
+	root := func(userID string) networkengine.TreeNodeRow {
+		return networkengine.TreeNodeRow{
+			ID: userID, TreeID: "t", UserID: userID, Depth: 0,
+			EnrolledAt: time.Unix(1, 0),
+		}
 	}
-	for _, r := range rows {
+	child := func(userID, parentID string, enrolled int64) networkengine.TreeNodeRow {
+		return networkengine.TreeNodeRow{
+			ID: userID, TreeID: "t", UserID: userID, Depth: 1,
+			ParentID: &parentID, SponsorID: &parentID,
+			EnrolledAt: time.Unix(enrolled, 0),
+		}
+	}
+
+	store := networkengine.NewMemoryTreeStore()
+	for _, r := range []networkengine.TreeNodeRow{
+		root("u0"), child("u1", "u0", 2), child("u2", "u0", 3),
+	} {
 		require.NoError(t, store.InsertNode(t.Context(), r))
 	}
 
@@ -27,14 +39,14 @@ func TestLoadTree_RootStageReportsTheStrandedSize(t *testing.T) {
 	var incomplete *networkengine.TreeLoadIncompleteError
 	require.ErrorAs(t, err, &incomplete)
 	require.Equal(t, networkengine.TreeLoadStageRoot, incomplete.Stage)
-	require.Equal(t, 2, incomplete.Total, "Total is the non-root count the load set out to place")
+	require.Equal(t, 2, incomplete.Total, "two non-root rows were read")
 	require.Equal(t, 0, incomplete.Attempted, "no placement was attempted")
 	require.Equal(t, 0, incomplete.Confirmed, "no placement was acknowledged")
 }
 
-// The fallback renders only for a value this package did not construct. With
-// Total set and Attempted zero it emits a placement index of zero. Pinned
-// rather than changed.
+// Pins what a keyed literal renders at the root stage now that Total is
+// non-zero there. The placement index of zero is odd and deliberate: the
+// alternative was a stage-aware branch in the renderer, which was rejected.
 func TestTreeLoadIncomplete_RootStageFallbackString(t *testing.T) {
 	e := &networkengine.TreeLoadIncompleteError{
 		TreeID: "t7",
@@ -46,5 +58,3 @@ func TestTreeLoadIncomplete_RootStageFallbackString(t *testing.T) {
 		"tree load incomplete: tree t7: stage root: placement 0 of 47, 0 acknowledged",
 		e.Error())
 }
-
-func ptr(s string) *string { return &s }

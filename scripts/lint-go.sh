@@ -39,25 +39,26 @@ done
 
 # Reads over the whole file: matching per step needs a YAML parser, at the
 # cost that two steps each setting one key look like one setting both.
-if [ -e "$workflow" ]; then
-  # cat's stderr is left alone because it names which of the two happened.
-  if ! workflow_body=$(cat "$workflow"); then
-    echo "cannot read \"$workflow\"; not linting" >&2
-    exit 1
-  fi
-  # A commented key needs no stripping: the anchored patterns below cannot match
-  # a line whose first non-space character is a #.
-  #
-  # Here-strings rather than pipes. grep -q exits at its first match, and under
-  # pipefail a writer killed by SIGPIPE makes the pipeline 141, which reads as
-  # no match. A workflow larger than a pipe buffer would pass silently.
-  if grep -qE '^[[:space:]]*["'"'"']?version-file["'"'"']?[[:space:]]*:' <<< "$workflow_body" \
-    && grep -qE '^[[:space:]]*["'"'"']?version["'"'"']?[[:space:]]*:' <<< "$workflow_body"; then
-    echo "\"$workflow\" sets both version and version-file; not linting" >&2
-    echo "  this matches key-shaped lines anywhere in the file, not keys on a step" >&2
-    echo "  where one golangci-lint-action step carries both, the action uses version" >&2
-    exit 1
-  fi
+# cat's stderr is left alone because it names which of the reasons happened.
+# A path that does not resolve is a condition this cannot evaluate, so it
+# refuses rather than linting.
+if ! workflow_body=$(cat "$workflow"); then
+  echo "cannot read \"$workflow\"; not linting" >&2
+  echo "  the workflow is where a second pin would appear, so it is not optional" >&2
+  exit 1
+fi
+# A commented key needs no stripping: the anchored patterns below cannot match
+# a line whose first non-space character is a #.
+#
+# Here-strings rather than pipes. grep -q exits at its first match, and under
+# pipefail a writer killed by SIGPIPE makes the pipeline 141, which reads as
+# no match. A workflow larger than a pipe buffer would pass silently.
+if grep -qE '^[[:space:]]*["'"'"']?version-file["'"'"']?[[:space:]]*:' <<< "$workflow_body" \
+  && grep -qE '^[[:space:]]*["'"'"']?version["'"'"']?[[:space:]]*:' <<< "$workflow_body"; then
+  echo "\"$workflow\" sets both version and version-file; not linting" >&2
+  echo "  this matches key-shaped lines anywhere in the file, not keys on a step" >&2
+  echo "  where one golangci-lint-action step carries both, the action uses version" >&2
+  exit 1
 fi
 
 # A directory can be opened and not read, so the read's own status is the check.
@@ -95,7 +96,13 @@ fi
 
 # stderr goes to its own file. Merging it lets a log line mentioning the
 # pinned version satisfy the comparison against a binary that does not.
-version_err=$(mktemp)
+if ! version_err=$(mktemp); then
+  echo "cannot create a temp file for the version command's stderr; not linting" >&2
+  echo "  pinned     v$pin   ($version_file)" >&2
+  echo "  installed  not obtained (mktemp failed; the binary was not run)" >&2
+  echo "  built with not obtained" >&2
+  exit 1
+fi
 trap 'rm -f "$version_err"' EXIT
 version_rc=0
 version_out=$("$resolved" version 2>"$version_err") || version_rc=$?
@@ -130,11 +137,20 @@ if [ "$version_matches" != 1 ]; then
   exit 1
 fi
 
-# Read only here, where it is used, so an unreadable go.mod cannot preempt the
-# version mismatch a developer is actually hitting.
+# Read after the version comparison so an unreadable go.mod cannot preempt the
+# version mismatch a developer is actually hitting. It still refuses, because a
+# directive it cannot obtain is a comparison it cannot make.
 directive_note="go directive not obtained"
+directive_err=$(awk '/^go /{print $2; exit}' "$go_mod" 2>&1 >/dev/null)
 if directive=$(awk '/^go /{print $2; exit}' "$go_mod" 2>/dev/null) && [ -n "$directive" ]; then
   directive_note="$go_mod go directive is $directive"
+else
+  echo "cannot read a go directive from \"$go_mod\"; not linting" >&2
+  echo "  pinned     v$pin   ($version_file)" >&2
+  echo "  installed  $(printf '%q' "$installed")    ($resolved)" >&2
+  echo "  built with $(printf '%q' "$built_with")  (go directive not obtained)" >&2
+  [ -n "$directive_err" ] && echo "  awk        $(printf '%q' "$directive_err")" >&2
+  exit 1
 fi
 
 if [ "${installed#[vV]}" != "$pin" ]; then
@@ -161,9 +177,17 @@ d_minor=${d_minor%%[![:digit:]]*}
 # bash line number and lint anyway. An absent directive is that same case: it
 # leaves both of its components empty. Bounded, because a digit string longer
 # than the arithmetic accepts is the same failure as a non-digit one.
-if [[ $bw_major =~ ^[0-9]{1,9}$ ]] && [[ $bw_minor =~ ^[0-9]{1,9}$ ]] \
-  && [[ $d_major =~ ^[0-9]{1,9}$ ]] && [[ $d_minor =~ ^[0-9]{1,9}$ ]] \
-  && { [ "$bw_major" -lt "$d_major" ] \
+if ! [[ $bw_major =~ ^[0-9]{1,9}$ ]] || ! [[ $bw_minor =~ ^[0-9]{1,9}$ ]] \
+  || ! [[ $d_major =~ ^[0-9]{1,9}$ ]] || ! [[ $d_minor =~ ^[0-9]{1,9}$ ]]; then
+  echo "cannot compare the built-with Go line against the go directive; not linting" >&2
+  echo "  pinned     v$pin   ($version_file)" >&2
+  echo "  installed  $(printf '%q' "$installed")    ($resolved)" >&2
+  echo "  built with $(printf '%q' "$built_with")  ($directive_note)" >&2
+  echo "  neither value yielded a major and a minor that compare as numbers" >&2
+  exit 1
+fi
+
+if { [ "$bw_major" -lt "$d_major" ] \
     || { [ "$bw_major" -eq "$d_major" ] && [ "$bw_minor" -lt "$d_minor" ]; }; }; then
   echo "golangci-lint was built with an older Go line than this module targets; not linting" >&2
   echo "  pinned     v$pin   ($version_file)" >&2

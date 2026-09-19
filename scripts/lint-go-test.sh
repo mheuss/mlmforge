@@ -231,10 +231,10 @@ expect_with "$bw_dir" 1 "go directive is 1.28.0" "a commented go line is not the
 expect_with "$bw_dir" 1 "go directive is 1.28.0)" "only the first go line is the directive" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-twogo"
 # No directive at all, at an exit code the passing cases also return.
-expect_silent "$bw_dir" "a go.mod with no directive skips the comparison" \
+expect_with "$bw_dir" 1 "cannot read a go directive from" "a go.mod with no directive refuses" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-nodirective"
 # A go.mod path that does not exist, on a run that is meant to lint.
-expect_silent "$bw_dir" "a missing go.mod skips the comparison" \
+expect_with "$bw_dir" 1 "cannot read a go directive from" "a missing go.mod refuses" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-nonexistent"
 
 # A prerelease built-with whose version matches the pin.
@@ -258,7 +258,7 @@ expect_with "$bw_dir" 1 "older Go line than this module targets" "a prerelease d
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-rc"
 # Both components are unparsable here, so this pins the combination rather than
 # either test. The two cases below isolate them one at a time.
-expect_silent "$bw_dir" "an unparsable directive skips the comparison" \
+expect_with "$bw_dir" 1 "cannot compare the built-with Go line" "an unparsable directive refuses" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-unparsable"
 
 # A prerelease on the binary's side, below the directive.
@@ -268,18 +268,18 @@ expect_with "$(stub_dir bwrcbehind "$bw_rc_behind")" 1 "older Go line than this 
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
 
 # One unparsable component each, with the other three parsable.
-expect_silent "$(stub_dir bwmajorbad 'golangci-lint has version 2.13.2 built with gox.27 from x on y')" \
-  "an unparsable built-with major skips the comparison" \
+expect_with "$(stub_dir bwmajorbad 'golangci-lint has version 2.13.2 built with gox.27 from x on y')" \
+  1 "cannot compare the built-with Go line" "an unparsable built-with major refuses" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
-expect_silent "$(stub_dir bwminorbad 'golangci-lint has version 2.13.2 built with go1.rc from x on y')" \
-  "an unparsable built-with minor skips the comparison" \
+expect_with "$(stub_dir bwminorbad 'golangci-lint has version 2.13.2 built with go1.rc from x on y')" \
+  1 "cannot compare the built-with Go line" "an unparsable built-with minor refuses" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
-expect_silent "$bw_dir" "an unparsable directive major skips the comparison" \
+expect_with "$bw_dir" 1 "cannot compare the built-with Go line" "an unparsable directive major refuses" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-major-unparsable"
-expect_silent "$bw_dir" "an unparsable directive minor skips the comparison" \
+expect_with "$bw_dir" 1 "cannot compare the built-with Go line" "an unparsable directive minor refuses" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-minor-unparsable"
 # All digits, and longer than any number the arithmetic accepts.
-expect_silent "$bw_dir" "a directive too long to compare skips the comparison" \
+expect_with "$bw_dir" 1 "cannot compare the built-with Go line" "a directive too long to compare refuses" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-huge"
 
 wf_args=(--check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok")
@@ -320,7 +320,7 @@ expect_with "$bw_dir" 1 "key-shaped lines anywhere in the file" "another action'
 # go-version and go-version-file contain both names as substrings.
 expect_silent "$bw_dir" "go-version keys are not these keys" \
   "${wf_args[@]}" --workflow "$data/wf-lint-go-version-keys.yml"
-expect_silent "$bw_dir" "a missing workflow skips the check" \
+expect_with "$bw_dir" 1 "cannot read" "a missing workflow refuses" \
   "${wf_args[@]}" --workflow "$data/wf-lint-nonexistent.yml"
 # A directory can be opened and not read. Skipping it would leave the guard
 # silent on a typo'd path.

@@ -13,6 +13,7 @@
 - start: not yet implemented (no HTTP server; engine runs as subprocess via Go test harness)
 - test (Go): `go test ./...`
 - test (Rust): `cargo test`
+- lint (Go): `scripts/lint-go.sh`
 
 ## codegraphcontext
 - note: mixed-language root indexing is unreliable. Prefer language-specific subtrees over the repository root.

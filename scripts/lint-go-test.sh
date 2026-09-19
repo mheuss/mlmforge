@@ -210,5 +210,53 @@ expect_with "$(stub_dir vprefixed "$v_line")" 0 "" "a binary reporting a leading
 expect_with "$(stub_dir drift2 "$old_line")" 1 "go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2" \
   "the mismatch names the install command" --check-only --version-file "$data/lintver-ok"
 
+# Four of the go.mod mutations leave the exit code at 0 and change only what
+# lands on stderr, so these cases compare the whole output rather than the code.
+expect_silent() {
+  local dir=$1 name=$2 out rc
+  shift 2
+  out=$(PATH="$dir:$PATH" "$check" "$@" 2>&1)
+  rc=$?
+  if [ "$rc" = 0 ] && [ -z "$out" ]; then
+    record yes "$name" ""
+  else
+    record no "$name" "rc=$rc, out \"$out\""
+  fi
+}
+
+bw_dir=$(stub_dir bw "$ok_line")
+expect_silent "$bw_dir" "built-with go line meets the directive" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
+expect_with "$bw_dir" 1 "built with go1.27.0" "built-with go line below the directive" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ahead"
+# Major and minor only. A full-string or patch-aware comparison refuses this,
+# because the binary's patch is below the directive's while the line matches.
+expect_silent "$bw_dir" "a directive patch above the binary's is not a mismatch" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-patch-ahead"
+
+# Pins the ^ anchor in the awk program. Without it the first line holding
+# "go " is a comment, whose second field is the word go, and the comparison
+# then errors instead of refusing.
+expect_with "$bw_dir" 1 "go directive is 1.28.0" "a commented go line is not the directive" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-comment"
+# Pins the exit in the awk program. Both directives are behind the binary, so
+# dropping it still refuses and only the reported value changes.
+expect_with "$bw_dir" 1 "go directive is 1.28.0)" "only the first go line is the directive" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-twogo"
+# Pins the guard on an obtained directive. Without it the comparison runs on an
+# empty value and bash reports it, at the same exit code.
+expect_silent "$bw_dir" "a go.mod with no directive skips the comparison" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-nodirective"
+# Pins awk's stderr redirect. Without it the missing file is reported on a run
+# that is meant to lint.
+expect_silent "$bw_dir" "an unreadable go.mod skips the comparison" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-nonexistent"
+
+# A prerelease built-with whose version matches the pin. Comparing the minor
+# component whole errors on rc1 and lints anyway.
+rc_match='golangci-lint has version 2.13.2 built with go1.28rc1 from x on y'
+expect_silent "$(stub_dir bwrc "$rc_match")" "a prerelease built-with above the directive is not a mismatch" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
+
 echo "$pass passed, $fail failed, of $((pass + fail))"
 [ "$fail" = 0 ]

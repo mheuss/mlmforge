@@ -1,0 +1,5 @@
+module example.com/fixture
+
+// go 1.99.0 was the old directive
+
+go 1.28.0

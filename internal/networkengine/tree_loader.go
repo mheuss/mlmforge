@@ -81,8 +81,7 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 		return err
 	}
 
-	// Counts non-root placements. Read before the first engine call so every
-	// exit after it can carry the count.
+	// Counts non-root placements. Read before the first engine call.
 	total := len(ordered) - 1
 
 	if treeType == treeTypeMatrix {

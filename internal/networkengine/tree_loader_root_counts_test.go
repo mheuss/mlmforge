@@ -8,10 +8,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A root placement that fails leaves a structure holding none of the nodes the
-// load read. The counts are what a caller reports to whoever decides on a
-// restart, so this drives the exit from outside the package and reads them.
-func TestLoadTree_RootStageReportsTheStrandedSize(t *testing.T) {
+// Drives a root-stage failure from outside the package and reads the three
+// counts a caller reports.
+func TestLoadTree_RootStageReportsTheNonRootCount(t *testing.T) {
 	root := func(userID string) networkengine.TreeNodeRow {
 		return networkengine.TreeNodeRow{
 			ID: userID, TreeID: "t", UserID: userID, Depth: 0,
@@ -44,9 +43,8 @@ func TestLoadTree_RootStageReportsTheStrandedSize(t *testing.T) {
 	require.Equal(t, 0, incomplete.Confirmed, "no placement was acknowledged")
 }
 
-// Pins what a keyed literal renders at the root stage now that Total is
-// non-zero there. The placement index of zero is odd and deliberate: the
-// alternative was a stage-aware branch in the renderer, which was rejected.
+// Pins what a keyed literal renders at the root stage. The placement index of
+// zero is deliberate, so do not correct it into something that reads better.
 func TestTreeLoadIncomplete_RootStageFallbackString(t *testing.T) {
 	e := &networkengine.TreeLoadIncompleteError{
 		TreeID: "t7",

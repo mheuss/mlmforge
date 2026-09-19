@@ -30,6 +30,13 @@ case "$baseline" in
   *", 0 failed"*) ;;
   *) echo "baseline is not green, refusing to measure: $baseline" >&2; exit 1 ;;
 esac
+# Every row has to run this many cases. A mutation that truncates the run and
+# goes red otherwise reads the same as one the whole suite caught.
+baseline_ran=${baseline##*of }
+if ! [[ $baseline_ran =~ ^[0-9]+$ ]]; then
+  echo "baseline reports no denominator, refusing to measure: $baseline" >&2
+  exit 1
+fi
 
 pass=0
 fail=0
@@ -40,8 +47,12 @@ fail=0
 # want is caught, when the suite must go red, or equivalent, when no input can
 # distinguish the mutation and the suite must stay green.
 M() {
-  local want=$1 label=$2 expr=$3 out ran got sed_rc
-  cp "$src" "$copy"
+  local want=$1 label=$2 expr=$3 out ran got sed_rc detail
+  if ! cp "$src" "$copy"; then
+    printf 'FAIL  %-44s could not restore the copy\n' "$label"
+    fail=$((fail + 1))
+    return
+  fi
   sed -i "$expr" "$copy"
   sed_rc=$?
   if [ "$sed_rc" != 0 ]; then
@@ -53,8 +64,10 @@ M() {
   else
     out=$(LINT_GO_SCRIPT=$copy bash "$suite" 2>&1 | tail -1)
     ran=${out##*of }
-    if [ -z "$ran" ] || [ "$ran" -lt 2 ] 2>/dev/null; then
-      got="no-count ($out)"
+    # Checked as a number first. Output with no "of N" in it leaves ran holding
+    # the whole line, and a numeric test on that errors rather than failing.
+    if ! [[ $ran =~ ^[0-9]+$ ]] || [ "$ran" != "$baseline_ran" ]; then
+      got="wrong-count ($out)"
     else
       case "$out" in
         *", 0 failed"*) got=equivalent ;;
@@ -62,12 +75,13 @@ M() {
       esac
     fi
   fi
+  detail=$got
   case "$got" in not-applied*) got=not-applied ;; esac
   if [ "$got" = "$want" ]; then
     pass=$((pass + 1))
   else
     fail=$((fail + 1))
-    printf 'FAIL  %-44s wanted %s, got %s\n' "$label" "$want" "$got"
+    printf 'FAIL  %-44s wanted %s, got %s\n' "$label" "$want" "$detail"
   fi
 }
 
@@ -92,15 +106,21 @@ M caught "built-with headline deleted"   '/older Go line than this module target
 # --- the workflow guard ---
 M caught "version-file pattern broken"   's@version-file\[@versionXfile[@'
 M caught "version pattern broken"        's@?version\[@?versionX[@'
-M caught "both tests joined with or"     's@&& printf@|| printf@'
+M caught "both tests joined with or"    's@&& grep -qE@|| grep -qE@' 
 M caught "key anchors dropped"           's@\^\[\[:space:\]\]\*\[@[[:space:]]*[@g'
 M caught "workflow exists guard->true"   's|\[ -e "$workflow" \]|true|'
 M caught "workflow read status ignored"  's|if ! workflow_body=$(cat "$workflow"); then|workflow_body=$(cat "$workflow" 2>/dev/null); if false; then|'
 M caught "both-inputs headline deleted"  '/sets both version and version-file; not linting/d'
-M caught "scope caveat line deleted"     '/does not tell one step from another/d'
+M caught "scope caveat line deleted"     '/key-shaped lines anywhere in the file/d'
+M caught "which-input-wins line deleted" '/the action uses version" >&2/d' 
+M caught "here-strings back to pipes"   's@grep -qE \(.*\) <<< "\$workflow_body"@printf "%s\\n" "$workflow_body" | grep -qE \1@' 
+M caught "space before colon dropped"   's@\[\[:space:\]\]\*:@:@g' 
 
 # --- controls ---
 M not-applied "control: matches nothing" 's|NOT_PRESENT_ANYWHERE|x|'
+# Proves a mutated copy can come back green at all. Without it nothing shows the
+# suite is discriminating rather than merely sensitive to any edit.
+M equivalent  "control: comment text only" 's|# Trims the whole value|# trims the whole value|'
 
 echo "$pass passed, $fail failed, of $((pass + fail))"
 [ "$fail" = 0 ]

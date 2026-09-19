@@ -326,13 +326,27 @@ expect_silent "$bw_dir" "a commented-out version is not set" \
 # Quoting a key is valid YAML and leaves the name unchanged.
 expect_with "$bw_dir" 1 "sets both version and version-file" "quoted key names are the same keys" \
   "${wf_args[@]}" --workflow "$data/wf-lint-quoted-keys.yml"
+# YAML allows space before the colon and the key is the same key.
+expect_with "$bw_dir" 1 "sets both version and version-file" "a space before the colon is the same key" \
+  "${wf_args[@]}" --workflow "$data/wf-lint-spaced-colon.yml"
+# grep -q stops at its first match. Piping into it kills the writer with
+# SIGPIPE, and under pipefail that reads as no match, so a workflow past the
+# pipe buffer passed a guard that has to refuse it.
+big=$work/wf-lint-big.yml
+cat "$data/wf-lint-both.yml" > "$big"
+for i in $(seq 1 4000); do echo "          # padding $i"; done >> "$big"
+expect_with "$bw_dir" 1 "sets both version and version-file" "a workflow past the pipe buffer still refuses" \
+  "${wf_args[@]}" --workflow "$big"
+# The third line is the only one naming what the action does with the keys.
+expect_with "$bw_dir" 1 "the action uses version" "the refusal says which input wins" \
+  "${wf_args[@]}" --workflow "$data/wf-lint-both.yml"
 
 # The two cases below are the cost of reading the whole file. Both refuse, and
 # in neither does one step set both keys. They are here so the limitation is a
 # tested behaviour rather than a sentence in a comment.
-expect_with "$bw_dir" 1 "does not tell one step from another" "two steps with one key each still refuse" \
+expect_with "$bw_dir" 1 "key-shaped lines anywhere in the file" "two steps with one key each still refuse" \
   "${wf_args[@]}" --workflow "$data/wf-lint-two-steps.yml"
-expect_with "$bw_dir" 1 "does not tell one step from another" "another action's keys still refuse" \
+expect_with "$bw_dir" 1 "key-shaped lines anywhere in the file" "another action's keys still refuse" \
   "${wf_args[@]}" --workflow "$data/wf-lint-other-action.yml"
 
 # setup-go's keys contain the two names as substrings. Without the ^ anchors

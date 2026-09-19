@@ -51,10 +51,14 @@ if [ -e "$workflow" ]; then
   fi
   # A commented key needs no stripping: the anchored patterns below cannot match
   # a line whose first non-space character is a #.
-  if printf '%s\n' "$workflow_body" | grep -qE '^[[:space:]]*["'"'"']?version-file["'"'"']?:' \
-    && printf '%s\n' "$workflow_body" | grep -qE '^[[:space:]]*["'"'"']?version["'"'"']?:'; then
+  #
+  # Here-strings rather than pipes. grep -q exits at its first match, and under
+  # pipefail a writer killed by SIGPIPE makes the pipeline 141, which reads as
+  # no match. A workflow larger than a pipe buffer would pass silently.
+  if grep -qE '^[[:space:]]*["'"'"']?version-file["'"'"']?[[:space:]]*:' <<< "$workflow_body" \
+    && grep -qE '^[[:space:]]*["'"'"']?version["'"'"']?[[:space:]]*:' <<< "$workflow_body"; then
     echo "\"$workflow\" sets both version and version-file; not linting" >&2
-    echo "  this reads the whole file and does not tell one step from another" >&2
+    echo "  this matches key-shaped lines anywhere in the file, not keys on a step" >&2
     echo "  where one golangci-lint-action step carries both, the action uses version" >&2
     exit 1
   fi

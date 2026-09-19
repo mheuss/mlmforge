@@ -32,8 +32,8 @@ type safeToRetryErr struct{ error }
 func (safeToRetryErr) SafeToRetry() bool { return true }
 
 // cancelledButSafeErr is safe to retry and also carries a cancellation. pgx
-// produces this shape when a dial is abandoned: the query never went out, so
-// it is safe, but the caller asked to stop.
+// reports that pair when it finds the context already done just before sending
+// a query on a live connection.
 type cancelledButSafeErr struct{}
 
 func (cancelledButSafeErr) Error() string     { return "dial cancelled" }

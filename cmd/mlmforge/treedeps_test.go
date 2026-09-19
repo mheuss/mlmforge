@@ -42,8 +42,6 @@ func TestReleaseDeps_StopsTheEngineAndClosesThePool(t *testing.T) {
 	require.Equal(t, 1, pool.closes, "close was not called exactly once")
 }
 
-// The pool is closed whether or not the worker stops, so a wedged worker
-// cannot also strand the connections.
 func TestReleaseDeps_ClosesThePoolWhenTheEngineWillNotStop(t *testing.T) {
 	stopErr := errors.New("worker wedged")
 	engine, pool := &fakeEngine{err: stopErr}, &fakePool{}

@@ -20,11 +20,10 @@ type treeDeps struct {
 // must carry a non-nil release.
 type depsOpener func(ctx context.Context, dbURL, workerPath string) (*treeDeps, error)
 
-// poolCloser is narrowed to the one method a release needs.
+// poolCloser is narrowed to the one method releaseDeps calls.
 type poolCloser interface{ Close() }
 
-// reachablePool is narrowed to the two methods startEngine calls, so a test
-// can observe the release without building a pool.
+// reachablePool is narrowed to the two methods startEngine calls.
 type reachablePool interface {
 	poolCloser
 	Ping(ctx context.Context) error

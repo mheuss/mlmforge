@@ -53,8 +53,11 @@ fi
 # Here-strings rather than pipes. grep -q exits at its first match, and under
 # pipefail a writer killed by SIGPIPE makes the pipeline 141, which reads as
 # no match. A workflow larger than a pipe buffer would pass silently.
-if grep -qE '^[[:space:]]*["'"'"']?version-file["'"'"']?[[:space:]]*:' <<< "$workflow_body" \
-  && grep -qE '^[[:space:]]*["'"'"']?version["'"'"']?[[:space:]]*:' <<< "$workflow_body"; then
+# A key opens a line, or follows { or , in a flow mapping. Anchoring on the
+# line start alone misses `with: {version: x, version-file: y}`, which is legal
+# and sets both on one step.
+if grep -qE '(^|[{,])[[:space:]]*["'"'"']?version-file["'"'"']?[[:space:]]*:' <<< "$workflow_body" \
+  && grep -qE '(^|[{,])[[:space:]]*["'"'"']?version["'"'"']?[[:space:]]*:' <<< "$workflow_body"; then
   echo "\"$workflow\" sets both version and version-file; not linting" >&2
   echo "  this matches key-shaped lines anywhere in the file, not keys on a step" >&2
   echo "  where one golangci-lint-action step carries both, the action uses version" >&2

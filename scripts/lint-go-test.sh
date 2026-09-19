@@ -317,6 +317,12 @@ expect_with "$bw_dir" 1 "key-shaped lines anywhere in the file" "two steps with 
 expect_with "$bw_dir" 1 "key-shaped lines anywhere in the file" "another action's keys still refuse" \
   "${wf_args[@]}" --workflow "$data/wf-lint-other-action.yml"
 
+# A flow mapping puts both keys on one line, after { and after a comma.
+expect_with "$bw_dir" 1 "sets both version and version-file" "a flow mapping sets both keys" \
+  "${wf_args[@]}" --workflow "$data/wf-lint-flow-mapping.yml"
+# The same shape with setup-go's key names, which must not refuse.
+expect_silent "$bw_dir" "flow-style go-version keys are not these keys" \
+  "${wf_args[@]}" --workflow "$data/wf-lint-flow-go-version.yml"
 # go-version and go-version-file contain both names as substrings.
 expect_silent "$bw_dir" "go-version keys are not these keys" \
   "${wf_args[@]}" --workflow "$data/wf-lint-go-version-keys.yml"

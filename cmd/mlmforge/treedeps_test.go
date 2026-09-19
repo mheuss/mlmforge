@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"path/filepath"
 	"testing"
 
@@ -31,7 +32,7 @@ func TestWithTreeDeps_ReleasesWhenTheOperationFails(t *testing.T) {
 		func(context.Context, *treeDeps) error { return boom })
 
 	require.ErrorIs(t, err, boom)
-	require.Equal(t, 1, rec.releases, "the engine must be stopped on the error path")
+	require.Equal(t, 1, rec.releases, "release was not called exactly once")
 }
 
 func TestWithTreeDeps_ReleasesWhenTheOperationSucceeds(t *testing.T) {
@@ -52,7 +53,7 @@ func TestWithTreeDeps_ReleasesWhenTheOperationPanics(t *testing.T) {
 			func(context.Context, *treeDeps) error { panic("worker wedged") })
 	})
 
-	require.Equal(t, 1, rec.releases, "a panic must not leak the worker")
+	require.Equal(t, 1, rec.releases, "release was not called exactly once")
 }
 
 func TestWithTreeDeps_ReportsAReleaseFailureWhenTheOperationSucceeded(t *testing.T) {
@@ -74,7 +75,7 @@ func TestWithTreeDeps_ReportsBothWhenReleaseAlsoFails(t *testing.T) {
 		func(context.Context, *treeDeps) error { return boom })
 
 	require.ErrorIs(t, err, boom, "the operation failure must survive")
-	require.ErrorIs(t, err, stopErr, "a leaked worker must not be hidden by it")
+	require.ErrorIs(t, err, stopErr, "the release error is absent from the chain")
 }
 
 func TestWithTreeDeps_ReturnsTheOpenErrorAndRunsNothing(t *testing.T) {
@@ -90,6 +91,25 @@ func TestWithTreeDeps_ReturnsTheOpenErrorAndRunsNothing(t *testing.T) {
 	require.False(t, ran)
 }
 
+// countingCloser stands in for the pool. It counts rather than flags, so a
+// second close is distinguishable from the one the code owes.
+type countingCloser struct{ closes int }
+
+func (c *countingCloser) Close() { c.closes++ }
+
+func TestStartEngine_ClosesThePoolWhenTheWorkerWillNotStart(t *testing.T) {
+	pool := &countingCloser{}
+	missing := filepath.Join(t.TempDir(), "network-engine-worker")
+
+	engine, err := startEngine(t.Context(), missing, pool)
+
+	require.Error(t, err)
+	require.Nil(t, engine)
+	require.Equal(t, 1, pool.closes, "close was not called exactly once")
+	require.ErrorIs(t, err, fs.ErrNotExist, "the cause must survive the wrapper")
+	require.Contains(t, err.Error(), missing, "the message must name the worker it tried")
+}
+
 // pgxpool.New does not connect, so a syntactically valid URL reaches the
 // engine start without a database. That is what makes this path testable
 // without a container.
@@ -100,6 +120,7 @@ func TestOpenTreeDeps_ReportsAWorkerThatWillNotStart(t *testing.T) {
 
 	require.Error(t, err)
 	require.Nil(t, deps)
+	require.ErrorIs(t, err, fs.ErrNotExist, "the cause must survive the wrapper")
 	require.Contains(t, err.Error(), missing, "the message must name the worker it tried")
 }
 

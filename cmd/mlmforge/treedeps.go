@@ -16,8 +16,23 @@ type treeDeps struct {
 	release func() error
 }
 
-// depsOpener builds the dependencies for one invocation.
+// depsOpener builds the dependencies for one invocation. A non-nil treeDeps
+// must carry a non-nil release.
 type depsOpener func(ctx context.Context, dbURL, workerPath string) (*treeDeps, error)
+
+// poolCloser is narrowed to the one method startEngine calls, so a test can
+// observe the release without building a pool.
+type poolCloser interface{ Close() }
+
+// startEngine starts the worker, releasing pool if it cannot start.
+func startEngine(ctx context.Context, workerPath string, pool poolCloser) (*networkengine.EngineClient, error) {
+	engine, err := networkengine.NewEngineClient(ctx, workerPath)
+	if err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("start worker at %s: %w", workerPath, err)
+	}
+	return engine, nil
+}
 
 // treeRunner is one tree operation.
 type treeRunner func(ctx context.Context, deps *treeDeps) error
@@ -28,10 +43,9 @@ func openTreeDeps(ctx context.Context, dbURL, workerPath string) (*treeDeps, err
 	if err != nil {
 		return nil, fmt.Errorf("open database pool: %w", err)
 	}
-	engine, err := networkengine.NewEngineClient(ctx, workerPath)
+	engine, err := startEngine(ctx, workerPath, pool)
 	if err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("start worker at %s: %w", workerPath, err)
+		return nil, err
 	}
 	return &treeDeps{
 		store:  networkengine.NewPostgresTreeStore(pool),

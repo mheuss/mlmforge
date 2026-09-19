@@ -54,8 +54,8 @@ if [ -e "$workflow" ]; then
   if printf '%s\n' "$workflow_body" | grep -qE '^[[:space:]]*["'"'"']?version-file["'"'"']?:' \
     && printf '%s\n' "$workflow_body" | grep -qE '^[[:space:]]*["'"'"']?version["'"'"']?:'; then
     echo "\"$workflow\" sets both version and version-file; not linting" >&2
-    echo "  the action uses version and ignores version-file, so the pin file would not be the pin" >&2
     echo "  this reads the whole file and does not tell one step from another" >&2
+    echo "  where one golangci-lint-action step carries both, the action uses version" >&2
     exit 1
   fi
 fi

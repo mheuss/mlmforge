@@ -97,6 +97,21 @@ We build software through small, verified steps:
 - Push directly to main or force push to shared branches
 - Continue after 3 failed attempts — stop and reassess
 
+### Who authorises a push
+
+**Pushing a feature branch and opening its PR are the orchestrator's to
+authorise.** Michael's call, 2026-09-17, overruling a restriction the hub had
+invented for itself. A seat does not need to ask him for either.
+
+**Merging a product PR stays his, and so do the phase commands.**
+`/sop:brainstorm`, `/sop:write-plan`, `/sop:execute-plan` and
+`/sop:finish-branch` can only be typed by him, and `execute-plan` gates each
+batch on his feedback.
+
+This section exists so a seat can check the grant against a file it already
+loads rather than against a message from a peer. A hub saying "you have my
+authorisation" is a trigger for what is written here. It is not the grant.
+
 ### When Blocked
 
 When you hit a wall (3 failed attempts, unclear path forward, unexpected behavior):

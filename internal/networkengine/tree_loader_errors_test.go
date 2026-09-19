@@ -123,8 +123,8 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 		opts     []LoadTreeOption
 		store    TreeStore
 		nodes    []TreeNodeRow
-		// direct seeds the store's rows in one go instead of inserting them one
-		// by one, for fixtures an insert would reject before the load runs.
+		// direct seeds the store's rows in one go instead of inserting them
+		// one by one.
 		direct bool
 		// engineFailsAfter is how many engine calls to allow before failing.
 		// Negative means the mutator never fails, which is what every preflight
@@ -211,6 +211,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 				makeNode("t", "u0", 0, nil, nil, nil),
 				makeNode("t", "u9", 0, nil, nil, nil),
 			}),
+			direct:           true,
 			engineFailsAfter: -1,
 			want:             "tree t has more than one depth-0 root (u0 and u9)",
 			wantKind:         TreeLoadDataInvalid,

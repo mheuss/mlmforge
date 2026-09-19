@@ -5,7 +5,8 @@ set -uo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
-usage="usage: ${0##*/} [--check-only] [--version-file FILE] [--go-mod FILE] [--workflow FILE] [-- golangci-lint arguments...]"
+usage="usage: ${0##*/} [--check-only] [--version-file FILE] [--go-mod FILE] [--workflow FILE] [--] [golangci-lint arguments...]
+  a path operand needs no --, a golangci-lint flag does"
 
 check_only=false
 version_file=$root/.golangci-lint-version

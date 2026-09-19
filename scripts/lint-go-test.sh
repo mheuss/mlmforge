@@ -411,14 +411,16 @@ rc=$?
 left=$(ls -A "$tmphome" | wc -l)
 # Emptiness means nothing unless the lint ran, so the run is asserted first.
 if [ "$rc" != 0 ] || [ ! -s "$args_file" ]; then
-  record no "linting leaves no temp file behind" "the lint did not run: rc=$rc"
+  record no "linting leaves no temp file behind" \
+    "rc=$rc, args file $([ -s "$args_file" ] && echo non-empty || echo 'empty or absent')"
 elif [ "$left" = 0 ]; then
   record yes "linting leaves no temp file behind" ""
 else
   record no "linting leaves no temp file behind" "$left left in TMPDIR: $(ls -A "$tmphome" | tr '\n' ' ')"
 fi
 
-# Every path that does not lint relies on the EXIT trap alone.
+# Below the mktemp, a path that does not lint relies on the EXIT trap alone.
+# The refusals above it create no temp file and rely on nothing.
 checkonly_home=$work/tmphome-checkonly
 mkdir -p "$checkonly_home"
 TMPDIR=$checkonly_home PATH="$runner:$PATH" "$check" --check-only "${lint_args[@]}" >/dev/null 2>&1

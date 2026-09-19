@@ -85,6 +85,33 @@ harness refuse instead:
 Run it before the first mutation, not before each one: by the time a mutation
 is applied the file is dirty by design.
 
+## After a fix, re-run the whole set
+
+A fix can make a mutation survive in code it never touched. Re-running the rows
+the fix was aimed at will not find it.
+
+The mechanism is that a repair and the mutation that proved it live at different
+points on the same path. Add a guard upstream and it absorbs the input that made
+the downstream repair observable. The repaired line still works, no test fails,
+and nothing now distinguishes it from the broken version.
+
+Worked case. A comparison truncated a prerelease version so `1.26rc1` compared
+as `26`. Deleting that truncation failed a test, so it was pinned. A later fix
+added a check that every component parses as a number, which the untruncated
+value fails, so it skips the comparison instead of reaching it. Both versions of
+the line now produce the same silent result. The truncation went from caught to
+surviving without being edited, and only a full re-run showed it.
+
+The same trigger has a second effect, on the harness rather than the code.
+Reformatting the code under mutation leaves expressions matching text that has
+moved. Those rows report as not applied, which is the right answer, but only if
+the harness separates that from a mutation that ran. Re-read the not-applied
+rows after every edit to the code under mutation: a stale expression and a
+genuinely unreachable one look identical.
+
+**Re-run every row after every fix.** The cost is one suite run per mutation and
+the alternative is a guard that reads as pinned and is not.
+
 ## A surviving mutation is not always a defect
 
 Sometimes the code is equivalent under the mutation and no test can tell them

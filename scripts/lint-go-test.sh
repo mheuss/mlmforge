@@ -360,5 +360,92 @@ expect_silent "$bw_dir" "a missing workflow skips the check" \
 expect 1 "Is a directory" "a directory as the workflow keeps cat's reason" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok" --workflow "$data"
 
+args_file=$work/args
+runner=$(stub_dir runner "$ok_line")
+lint_args=(--version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok" --workflow "$data/wf-lint-file-only.yml")
+
+STUB_ARGS=$args_file PATH="$runner:$PATH" "$check" "${lint_args[@]}" \
+  -- --timeout 9m ./internal/... >/dev/null 2>&1
+rc=$?
+got=$(tr '\n' ' ' < "$args_file" 2>/dev/null)
+if [ "$rc" = 0 ] && [ "$got" = "run --timeout 9m ./internal/... " ]; then
+  record yes "arguments reach golangci-lint run unchanged" ""
+else
+  record no "arguments reach golangci-lint run unchanged" "rc=$rc, args=\"$got\""
+fi
+
+calls=$work/calls
+: > "$calls"
+STUB_CALLS=$calls STUB_ARGS=$args_file PATH="$runner:$PATH" "$check" "${lint_args[@]}" >/dev/null 2>&1
+n=$(grep -c x "$calls")
+if [ "$n" = 1 ]; then
+  record yes "the lint is invoked exactly once" ""
+else
+  record no "the lint is invoked exactly once" "stub ran $n times"
+fi
+
+STUB_RUN_RC=7 STUB_ARGS=$args_file PATH="$runner:$PATH" "$check" "${lint_args[@]}" >/dev/null 2>&1
+rc=$?
+if [ "$rc" = 7 ]; then
+  record yes "the lint exit status propagates" ""
+else
+  record no "the lint exit status propagates" "wanted rc=7, got rc=$rc"
+fi
+
+rm -f "$args_file"
+STUB_ARGS=$args_file PATH="$runner:$PATH" "$check" --check-only "${lint_args[@]}" >/dev/null 2>&1
+if [ ! -e "$args_file" ]; then
+  record yes "check-only does not invoke the lint" ""
+else
+  record no "check-only does not invoke the lint" "stub was called with: $(cat "$args_file")"
+fi
+
+# exec replaces the shell, so an EXIT trap never runs. The version output is
+# held in a temp file, and without a cleanup before the exec every real lint
+# run leaves one behind.
+tmphome=$work/tmphome
+mkdir -p "$tmphome"
+TMPDIR=$tmphome STUB_ARGS=$args_file PATH="$runner:$PATH" "$check" "${lint_args[@]}" >/dev/null 2>&1
+left=$(ls -A "$tmphome" | wc -l)
+if [ "$left" = 0 ]; then
+  record yes "linting leaves no temp file behind" ""
+else
+  record no "linting leaves no temp file behind" "$left left in TMPDIR: $(ls -A "$tmphome" | tr '\n' ' ')"
+fi
+
+# The wrapper has to run the binary it checked, not whatever the name resolves
+# to afterwards. Two directories on PATH: the stub is in the later one, and
+# answering "version" plants a different binary in the earlier one. A bare name
+# would then exec the plant; the recorded path still reaches the stub.
+early=$work/early
+late=$work/late
+mkdir -p "$early" "$late"
+cat > "$late/golangci-lint" <<PLANT
+#!/usr/bin/env bash
+if [ "\$1" = version ]; then
+  cat > "$early/golangci-lint" <<'PLANTED'
+#!/usr/bin/env bash
+echo planted > "\${STUB_ARGS:-/dev/null}"
+exit 0
+PLANTED
+  chmod +x "$early/golangci-lint"
+  printf '%s\n' '$ok_line'
+  exit 0
+fi
+printf '%s\n' "\$@" > "\${STUB_ARGS:-/dev/null}"
+exit 0
+PLANT
+chmod +x "$late/golangci-lint"
+rm -f "$args_file"
+PATH="$early:$late:$PATH" STUB_ARGS=$args_file "$check" "${lint_args[@]}" >/dev/null 2>&1
+planted=$(cat "$args_file" 2>/dev/null)
+if [ "$planted" != planted ] && [ -n "$planted" ]; then
+  record yes "the lint runs the binary the check resolved" ""
+else
+  record no "the lint runs the binary the check resolved" "ran the plant instead: \"$planted\""
+fi
+
+expect 1 "unknown option" "unrecognised option" --check-only --nonsense
+
 echo "$pass passed, $fail failed, of $((pass + fail))"
 [ "$fail" = 0 ]

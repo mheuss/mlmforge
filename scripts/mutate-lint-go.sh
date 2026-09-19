@@ -116,6 +116,13 @@ M caught       "which-input-wins line deleted"          '/the action uses versio
 M caught       "here-strings back to pipes"             's@grep -qE \(.*\) <<< "\$workflow_body"@printf "%s\\n" "$workflow_body" | grep -qE \1@'
 M caught       "space before colon dropped"             's@\[\[:space:\]\]\*:@:@g'
 
+# --- the lint invocation ---
+M caught       "check-only early exit dropped"          's|\[ "$check_only" = true \]|false|'
+M caught       "run subcommand dropped"                 's|exec "$resolved" run|exec "$resolved"|'
+M caught       "arguments not forwarded"                's|exec "$resolved" run "$@"|exec "$resolved" run|'
+M caught       "resolved path replaced by bare name"    's|exec "$resolved" run|exec golangci-lint run|'
+M caught       "temp file cleanup before exec dropped"  's|^rm -f "$version_err"$||'
+
 # --- controls ---
 M not-applied  "control: matches nothing"               's|NOT_PRESENT_ANYWHERE|x|'
 # Proves a mutated copy can come back green at all. Without it nothing shows the

@@ -179,4 +179,12 @@ if [[ $bw_major =~ ^[0-9]{1,9}$ ]] && [[ $bw_minor =~ ^[0-9]{1,9}$ ]] \
   exit 1
 fi
 
-exit 0
+if [ "$check_only" = true ]; then
+  exit 0
+fi
+
+# exec replaces this shell, so the EXIT trap never runs. Clean up here instead.
+rm -f "$version_err"
+trap - EXIT
+
+exec "$resolved" run "$@"

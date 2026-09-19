@@ -81,6 +81,11 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 		return err
 	}
 
+	// Counts non-root placements. The index names the one that failed, so
+	// "3 of 4" means two of four were acknowledged. Read here so a root
+	// failure can report the size it stranded.
+	total := len(ordered) - 1
+
 	if treeType == treeTypeMatrix {
 		if err := l.engine.CreateMatrixTree(ctx, treeID, cfg.matrixWidth, cfg.matrixSpillover); err != nil {
 			return newTreeLoadIncomplete(TreeLoadStageCreate, treeID, err, 0, 0,
@@ -105,14 +110,11 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 	// is the only node with zero dependencies.
 	root := ordered[0]
 	if err := l.engine.AddRoot(ctx, treeID, root.UserID, root.EnrolledAt.Unix()); err != nil {
-		return newTreeLoadIncomplete(TreeLoadStageRoot, treeID, err, 0, 0,
+		return newTreeLoadIncomplete(TreeLoadStageRoot, treeID, err, 0, total,
 			fmt.Sprintf("add root %s (tree %s created but left empty): %s", root.UserID, treeID, err),
 			root.UserID)
 	}
 
-	// Counts non-root placements. The index names the one that failed, so
-	// "3 of 4" means two of four were acknowledged.
-	total := len(ordered) - 1
 	for i, node := range ordered[1:] {
 		// validateNodes already proved these non-nil for every non-root, and
 		// ordered[1:] excludes the root. Kept as guards anyway: this runs at

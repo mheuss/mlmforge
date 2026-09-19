@@ -118,10 +118,12 @@ M caught       "space before colon dropped"             's@\[\[:space:\]\]\*:@:@
 
 # --- the lint invocation ---
 M caught       "check-only early exit dropped"          's|\[ "$check_only" = true \]|false|'
+M caught       "the lint never runs"                    's|\[ "$check_only" = true \]|true|'
 M caught       "run subcommand dropped"                 's|exec "$resolved" run|exec "$resolved"|'
 M caught       "arguments not forwarded"                's|exec "$resolved" run "$@"|exec "$resolved" run|'
 M caught       "resolved path replaced by bare name"    's|exec "$resolved" run|exec golangci-lint run|'
 M caught       "temp file cleanup before exec dropped"  's|^rm -f "$version_err"$||'
+M caught       "EXIT trap on the refusal paths dropped"  's|^trap .rm -f "$version_err". EXIT$||'
 
 # --- controls ---
 M not-applied  "control: matches nothing"               's|NOT_PRESENT_ANYWHERE|x|'

@@ -5,7 +5,7 @@ set -uo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
-usage="usage: ${0##*/} [--check-only] [--version-file FILE] [--go-mod FILE] [--workflow FILE] [--] [golangci-lint arguments...]"
+usage="usage: ${0##*/} [--check-only] [--version-file FILE] [--go-mod FILE] [--workflow FILE] [-- golangci-lint arguments...]"
 
 check_only=false
 version_file=$root/.golangci-lint-version
@@ -185,6 +185,5 @@ fi
 
 # exec replaces this shell, so the EXIT trap never runs. Clean up here instead.
 rm -f "$version_err"
-trap - EXIT
 
 exec "$resolved" run "$@"

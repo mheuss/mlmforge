@@ -405,12 +405,29 @@ fi
 # run leaves one behind.
 tmphome=$work/tmphome
 mkdir -p "$tmphome"
+rm -f "$args_file"
 TMPDIR=$tmphome STUB_ARGS=$args_file PATH="$runner:$PATH" "$check" "${lint_args[@]}" >/dev/null 2>&1
+rc=$?
 left=$(ls -A "$tmphome" | wc -l)
-if [ "$left" = 0 ]; then
+# Emptiness means nothing unless the lint ran, so the run is asserted first.
+if [ "$rc" != 0 ] || [ ! -s "$args_file" ]; then
+  record no "linting leaves no temp file behind" "the lint did not run: rc=$rc"
+elif [ "$left" = 0 ]; then
   record yes "linting leaves no temp file behind" ""
 else
   record no "linting leaves no temp file behind" "$left left in TMPDIR: $(ls -A "$tmphome" | tr '\n' ' ')"
+fi
+
+# Every path that does not lint relies on the EXIT trap alone.
+checkonly_home=$work/tmphome-checkonly
+mkdir -p "$checkonly_home"
+TMPDIR=$checkonly_home PATH="$runner:$PATH" "$check" --check-only "${lint_args[@]}" >/dev/null 2>&1
+rc=$?
+left=$(ls -A "$checkonly_home" | wc -l)
+if [ "$rc" = 0 ] && [ "$left" = 0 ]; then
+  record yes "check-only leaves no temp file behind" ""
+else
+  record no "check-only leaves no temp file behind" "rc=$rc, $left left in TMPDIR"
 fi
 
 # The wrapper has to run the binary it checked, not whatever the name resolves
@@ -438,11 +455,11 @@ PLANT
 chmod +x "$late/golangci-lint"
 rm -f "$args_file"
 PATH="$early:$late:$PATH" STUB_ARGS=$args_file "$check" "${lint_args[@]}" >/dev/null 2>&1
-planted=$(cat "$args_file" 2>/dev/null)
-if [ "$planted" != planted ] && [ -n "$planted" ]; then
+ran_args=$(cat "$args_file" 2>/dev/null)
+if [ "$ran_args" = run ]; then
   record yes "the lint runs the binary the check resolved" ""
 else
-  record no "the lint runs the binary the check resolved" "ran the plant instead: \"$planted\""
+  record no "the lint runs the binary the check resolved" "args file held \"$ran_args\", wanted \"run\""
 fi
 
 expect 1 "unknown option" "unrecognised option" --check-only --nonsense

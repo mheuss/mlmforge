@@ -31,7 +31,7 @@ func TestRemovalNotProjectedErrorSurvivesWrapping(t *testing.T) {
 	}
 }
 
-// The four sentinels are the branches the consumer picks between. Two holding
+// The five sentinels are the branches the consumer picks between. Two holding
 // the same text would read as one condition in a log and tell an operator the
 // wrong thing about which write was refused.
 func TestTreeStoreSentinelsAreDistinct(t *testing.T) {
@@ -40,6 +40,7 @@ func TestTreeStoreSentinelsAreDistinct(t *testing.T) {
 		"ErrActiveUserConflict":   ErrActiveUserConflict,
 		"ErrSlotConflict":         ErrSlotConflict,
 		"ErrReplayedPlacement":    ErrReplayedPlacement,
+		"ErrRootConflict":         ErrRootConflict,
 	}
 
 	seen := make(map[string]string, len(sentinels))

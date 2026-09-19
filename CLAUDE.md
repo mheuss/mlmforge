@@ -290,7 +290,7 @@ and paste from the repo root as written.
 | Check Go version pins | `scripts/check-go-pins.sh` |
 | Test the pin check | `scripts/check-go-pins-test.sh` |
 | Test the lint check | `scripts/lint-go-test.sh` |
-| Check the lint suite can fail | `scripts/mutate-lint-go.sh` |
+| Test that lint can fail | `scripts/mutate-lint-go.sh` |
 | Check the lint config is valid | `scripts/lint-go.sh --check-only && golangci-lint config verify` |
 | Audit (Go) | `scripts/audit-go.sh` |
 | Audit (Rust) | `cargo audit --file engine/Cargo.lock` |
@@ -303,13 +303,13 @@ and paste from the repo root as written.
 directory is trusted the file is inert. The repo looks pinned and your shell is
 not. `mise env | grep GOTOOLCHAIN` tells you whether it took.
 
-**`scripts/lint-go.sh` refuses to lint when your `golangci-lint` is not the pinned version.**
+**Your `golangci-lint` must be the version `.golangci-lint-version` pins.**
 
-The pin is `.golangci-lint-version`. The refusal prints the pinned version, the
-version you have, the path it resolved, and the command that installs the right
-one. CI installs from the same file.
+`scripts/lint-go.sh` refuses to lint when it is not. The refusal prints the
+pinned version, the version you have, the path it resolved, and the command that
+installs the right one. CI installs from the same file.
 
-Its checks read the repo root while the lint runs where you are. From a
+Its checks read the repo root. The lint runs from where you are. From a
 subdirectory it compares against the root `go.mod` and lints that subtree.
 
 It also refuses when the binary was built with an older Go line than `go.mod`

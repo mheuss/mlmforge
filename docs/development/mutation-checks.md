@@ -9,28 +9,28 @@ The technique is not the hard part. Running it honestly is.
 
 ## Prove the unmutated copy passes first
 
-The four cases below ask whether the mutated run was sound: did it compile, did
-the filter match a test, did the anchor land, did a checkout eat uncommitted
-work. None of them asks whether the *unmutated* run is sound.
+The four cases below ask whether the mutated run was sound. Did it compile? Did
+the filter match a test? Did the anchor land? Did a checkout eat uncommitted
+work? None of them asks whether the *unmutated* run is sound.
 
 If the harness cannot reproduce a clean pass on an untouched copy, every row
 after that is measuring the harness. Run the suite against an unmodified copy
-before any mutation, and refuse to report anything unless it comes back green
-with a count.
+before any mutation. Refuse to report anything unless it comes back green with
+a count.
 
 ```bash
 baseline=$(run_suite_against "$unmutated_copy")
 case "$baseline" in *", 0 failed"*) ;; *) echo "baseline not green"; exit 1 ;; esac
 ```
 
-Keep the baseline's own denominator and hold every later row to it. A mutation
-that truncates the run and goes red otherwise reads exactly like one the whole
-suite caught.
+Keep the baseline's own denominator. Hold every later row to it. A mutation that
+truncates the run and goes red otherwise reads exactly like one the whole suite
+caught.
 
-This is not hypothetical. A harness that ran the copy from a directory where the
-code under test could not resolve its own default paths reported every row as
-caught, scored a perfect run, and was testing nothing. The failing case was the
-same one every time and had nothing to do with any mutation.
+This is not hypothetical. A harness ran the copy from a directory where the code
+under test could not resolve its own default paths. It reported every row as
+caught. It scored a perfect run. It was testing nothing. The failing case was
+the same one every time. It had nothing to do with any mutation.
 
 ## The harness lies in four ways, and all four look like a clean pass
 
@@ -116,26 +116,26 @@ A fix can make a mutation survive in code it never touched. Re-running the rows
 the fix was aimed at will not find it.
 
 The mechanism is that a repair and the mutation that proved it live at different
-points on the same path. Add a guard upstream and it absorbs the input that made
-the downstream repair observable. The repaired line still works, no test fails,
-and nothing now distinguishes it from the broken version.
+points on the same path. Add a guard upstream. It absorbs the input that made
+the downstream repair observable. The repaired line still works. No test fails.
+Nothing now distinguishes it from the broken version.
 
-Worked case. A comparison truncated a prerelease version so `1.26rc1` compared
-as `26`. Deleting that truncation failed a test, so it was pinned. A later fix
-added a check that every component parses as a number, which the untruncated
-value fails, so it skips the comparison instead of reaching it. Both versions of
-the line now produce the same silent result. The truncation went from caught to
-surviving without being edited, and only a full re-run showed it.
+Worked case. A comparison truncated a prerelease version. `1.26rc1` compared as
+`26`. Deleting that truncation failed a test. That failure got it pinned. A
+later fix added a check that every component parses as a number. The untruncated
+value fails that check. So it skips the comparison instead of reaching it. Both
+versions of the line now produce the same silent result. The truncation went
+from caught to surviving without being edited. Only a full re-run showed it.
 
 The same trigger has a second effect, on the harness rather than the code.
 Reformatting the code under mutation leaves expressions matching text that has
-moved. Those rows report as not applied, which is the right answer, but only if
-the harness separates that from a mutation that ran. Re-read the not-applied
+moved. Those rows report as not applied. That is the right answer only if the harness
+separates a stale match from a mutation that ran. Re-read the not-applied
 rows after every edit to the code under mutation: a stale expression and a
 genuinely unreachable one look identical.
 
-**Re-run every row after every fix.** The cost is one suite run per mutation and
-the alternative is a guard that reads as pinned and is not.
+**Re-run every row after every fix.** The cost is one suite run per mutation.
+The alternative is a guard that reads as pinned and is not.
 
 ## A surviving mutation is not always a defect
 

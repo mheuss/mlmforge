@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -87,6 +88,19 @@ func TestWithTreeDeps_ReturnsTheOpenErrorAndRunsNothing(t *testing.T) {
 
 	require.ErrorIs(t, err, openErr)
 	require.False(t, ran)
+}
+
+// pgxpool.New does not connect, so a syntactically valid URL reaches the
+// engine start without a database. That is what makes this path testable
+// without a container.
+func TestOpenTreeDeps_ReportsAWorkerThatWillNotStart(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "network-engine-worker")
+
+	deps, err := openTreeDeps(t.Context(), "postgres://user@localhost:1/db", missing)
+
+	require.Error(t, err)
+	require.Nil(t, deps)
+	require.Contains(t, err.Error(), missing, "the message must name the worker it tried")
 }
 
 func TestWithTreeDeps_PassesTheResolvedArgumentsToTheOpener(t *testing.T) {

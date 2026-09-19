@@ -31,6 +31,15 @@ type safeToRetryErr struct{ error }
 
 func (safeToRetryErr) SafeToRetry() bool { return true }
 
+// cancelledButSafeErr is safe to retry and also carries a cancellation. pgx
+// produces this shape when a dial is abandoned: the query never went out, so
+// it is safe, but the caller asked to stop.
+type cancelledButSafeErr struct{}
+
+func (cancelledButSafeErr) Error() string     { return "dial cancelled" }
+func (cancelledButSafeErr) SafeToRetry() bool { return true }
+func (cancelledButSafeErr) Unwrap() error     { return context.Canceled }
+
 // retryable is the one shape the allowlist admits.
 func retryable() error {
 	return &networkengine.TreeLoadRejectedError{
@@ -113,6 +122,16 @@ func TestTreeLoadRetryable(t *testing.T) {
 			err: &networkengine.TreeLoadIncompleteError{
 				Stage: networkengine.TreeLoadStageRoot,
 				Err:   context.Canceled,
+			},
+			want: false,
+		},
+		{
+			// The cancellation check has to run before the allowlist, because
+			// this shape passes the allowlist.
+			name: "a cancellation that is also safe to retry is not retryable",
+			err: &networkengine.TreeLoadRejectedError{
+				Kind: networkengine.TreeLoadStoreReadFailed,
+				Err:  cancelledButSafeErr{},
 			},
 			want: false,
 		},

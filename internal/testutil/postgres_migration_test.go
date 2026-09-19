@@ -128,3 +128,56 @@ func TestMigrations_SlotUniqueDownUp(t *testing.T) {
 	// stay missing for every test that follows.
 	require.NoError(t, m.Up(), "restore the shared container to head")
 }
+
+// TestMigrations_RootUniqueDownUp proves migration 000006's down file works,
+// not just that it contains words: migrate down to version 5, confirm the
+// index is gone, migrate back up to 6, confirm it returns. Mirrors
+// TestMigrations_SlotUniqueDownUp, which does the same for 000004.
+func TestMigrations_RootUniqueDownUp(t *testing.T) {
+	if migrationContainer == nil {
+		t.Skip("Postgres container not available")
+	}
+
+	// Relative to this package's directory — Go sets a test's cwd to the
+	// package dir. testutil.findMigrationsDir resolves the same path via
+	// runtime.Caller but is unexported.
+	absPath, err := filepath.Abs("../../migrations")
+	require.NoError(t, err)
+	// The postgres database and file source drivers are registered by
+	// internal/testutil's blank imports, which this package already pulls in.
+	m, err := migrate.New(fmt.Sprintf("file://%s", absPath), migrationContainer.DSN)
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = m.Close() })
+
+	indexExists := func() bool {
+		pool, err := pgxpool.New(context.Background(), migrationContainer.DSN)
+		require.NoError(t, err)
+		defer pool.Close()
+		var exists bool
+		require.NoError(t, pool.QueryRow(context.Background(),
+			`SELECT EXISTS (SELECT 1 FROM pg_indexes
+			                WHERE indexname = 'idx_tree_nodes_tree_root_active')`,
+		).Scan(&exists))
+		return exists
+	}
+
+	require.True(t, indexExists(), "index present after full migrate up")
+	// Self-heal the shared container on any failure from here down,
+	// including a Migrate(5) that dies after dropping the index. Cleanups
+	// are LIFO, so this restore fires before m.Close. On a dirty version Up
+	// returns ErrDirty, which is safely discarded.
+	t.Cleanup(func() { _ = m.Up() })
+	// Pinned to versions 5 and 6, not Steps(-1): a relative step would roll
+	// back whichever migration is newest and fail confusingly. This test is
+	// about 000006's down file specifically.
+	require.NoError(t, m.Migrate(5), "migrate down to version 5 (drops 000006)")
+	require.False(t, indexExists(), "down file actually drops the index")
+	require.NoError(t, m.Migrate(6), "migrate back up to version 6")
+	require.True(t, indexExists(), "up file restores the index")
+	// 000006 is head, so the Migrate(6) above already restored the container.
+	// Up has nothing left to apply and says so. The 000004 test needs its own
+	// explicit trip back because that migration sits below head.
+	if err := m.Up(); err != nil {
+		require.ErrorIs(t, err, migrate.ErrNoChange, "restore the shared container to head")
+	}
+}

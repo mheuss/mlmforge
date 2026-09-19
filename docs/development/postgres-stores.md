@@ -218,9 +218,13 @@ any stat error other than "not found".
 gates were open.**
 
 A bare pass count is true on every machine and means something different on
-each. A bare skip count is now ambiguous too: the two gates overlap, so 17 could
-be the container alone and 46 the worker alone. Naming the gates is what tells a
-reader which run they are looking at.
+each. A bare skip count is now ambiguous too, because the two gates cover
+overlapping sets and the same total can come from either. Naming the gates is
+what tells a reader which run they are looking at.
+
+Say which unit the number is in. Verbose output prints a line per level, so a
+parent and its subtests each contribute and a count of skip lines is not a count
+of tests.
 
 ```
 go test ./internal/networkengine/ -v -count=1 2>&1 | grep -cE '^ *--- SKIP'

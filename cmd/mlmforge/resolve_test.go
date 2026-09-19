@@ -58,9 +58,6 @@ func TestResolveWorkerPath_ReadsTheEnvVarWhenTheFlagIsEmpty(t *testing.T) {
 	require.Equal(t, present, got)
 }
 
-// A missing env-var path must name the env var as its source, not the flag.
-// Reporting the wrong source sends the reader to a shell where unsetting the
-// flag does nothing.
 func TestResolveWorkerPath_NamesTheEnvVarWhenThatIsWhereThePathCameFrom(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "network-engine-worker")
 	t.Setenv(workerPathEnv, missing)
@@ -71,6 +68,21 @@ func TestResolveWorkerPath_NamesTheEnvVarWhenThatIsWhereThePathCameFrom(t *testi
 	require.Contains(t, err.Error(), missing)
 	require.Contains(t, err.Error(), workerPathEnv)
 	require.NotContains(t, err.Error(), "--worker")
+}
+
+func TestResolveWorkerPath_ResolvesARelativePath(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "network-engine-worker"), []byte("#!/bin/sh\n"), 0o755))
+	t.Chdir(dir)
+	t.Setenv(workerPathEnv, "")
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+
+	got, err := resolveWorkerPath("./network-engine-worker")
+
+	require.NoError(t, err)
+	require.True(t, filepath.IsAbs(got), "got %q", got)
+	require.Equal(t, filepath.Join(cwd, "network-engine-worker"), got)
 }
 
 func TestResolveWorkerPath_FlagWinsOverTheEnvVar(t *testing.T) {

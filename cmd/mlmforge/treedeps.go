@@ -37,8 +37,6 @@ func openTreeDeps(ctx context.Context, dbURL, workerPath string) (*treeDeps, err
 		store:  networkengine.NewPostgresTreeStore(pool),
 		engine: engine,
 		release: func() error {
-			// Stop before closing the pool. A closed pool under a live worker
-			// would strand whatever it sends next.
 			stopErr := engine.Stop()
 			pool.Close()
 			if stopErr != nil {

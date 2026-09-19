@@ -144,8 +144,7 @@ func TestMemoryTreeStore_DuplicateActiveSlotRejected(t *testing.T) {
 	require.NoError(t, store.InsertNode(ctx, makeNode("tree-1", "u2", 1, ptr("u1"), ptr("u1"), intPtr(0))))
 
 	err := store.InsertNode(ctx, makeNode("tree-1", "u3", 1, ptr("u1"), ptr("u1"), intPtr(0)))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "duplicate active slot")
+	require.ErrorIs(t, err, ErrSlotConflict)
 	assert.Contains(t, err.Error(), "held by u2", "error names the incumbent")
 
 	// Same position under a different parent stays legal.
@@ -174,8 +173,7 @@ func TestMemoryTreeStore_DuplicateIDRejected(t *testing.T) {
 	dup := makeNode("tree-2", "u2", 0, nil, nil, nil)
 	dup.ID = row.ID
 	err := store.InsertNode(ctx, dup)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "tree_nodes_pkey")
+	assert.ErrorIs(t, err, ErrNodeAlreadyProjected)
 }
 
 func TestMemoryTreeStore_DeletedNodeExcludedFromActive(t *testing.T) {
@@ -252,5 +250,11 @@ func TestMemoryTreeStore_DeleteNodeAndResponsor(t *testing.T) {
 		still, err := store.GetNode(ctx, "tree-1", recruiter)
 		require.NoError(t, err)
 		assert.NotNil(t, still, "a failed re-sponsor must not leave the node deleted")
+	})
+}
+
+func TestMemoryTreeStore_Suite(t *testing.T) {
+	runTreeStoreSuite(t, func(t *testing.T) TreeStore {
+		return NewMemoryTreeStore()
 	})
 }

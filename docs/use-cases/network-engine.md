@@ -28,6 +28,7 @@ Use-cases for the Network Engine bounded context.
 - [UC-NET-022: Move JSON across the seam without building a `Value`](#uc-net-022-move-json-across-the-seam-without-building-a-value)
 - [UC-NET-023: Repair inbound edges before tombstoning a node](#uc-net-023-repair-inbound-edges-before-tombstoning-a-node)
 - [UC-NET-024: Adding a response field a caller must not ignore](#uc-net-024-adding-a-response-field-a-caller-must-not-ignore)
+- [UC-NET-025: Four-outcome reconcile on a refused mutation](#uc-net-025-four-outcome-reconcile-on-a-refused-mutation)
 
 ---
 
@@ -466,7 +467,7 @@ for _, tree := range trees {
 }
 ```
 
-**Notes:** The pattern generalises to any external system with no undo: a worker without a delete op, an API without a rollback, a third party that charges on first call. Two things make it worth the duplication of engine rules in Go. First, the validation must mirror what the remote actually enforces, so it is only as good as that audit — `TestTreePersistence_RejectedTreeLeavesEngineLoadable` proves the guarantee against the real worker rather than a stub, and asserts a *corrected retry succeeds*, which is the part no fake can demonstrate. Second, the mirroring drifts silently if the remote adds a rule; the Rust side keeps its own runtime checks, so preflight is a second line of defence rather than a replacement. Deliberately not covered: divergence between what the store recorded and what the remote actually did — both can be internally consistent, so no read-side validation can detect it. HEU-553 closed the write-side contract for placement; removal still diverges (HEU-582), and the type-label trust boundary (HEU-554) and redelivery idempotency (HEU-576) remain open. Related: UC-NET-013, which supplies the ordering half.
+**Notes:** The pattern generalises to any external system with no undo: a worker without a delete op, an API without a rollback, a third party that charges on first call. Two things make it worth the duplication of engine rules in Go. First, the validation must mirror what the remote actually enforces, so it is only as good as that audit — `TestTreePersistence_RejectedTreeLeavesEngineLoadable` proves the guarantee against the real worker rather than a stub, and asserts a *corrected retry succeeds*, which is the part no fake can demonstrate. Second, the mirroring drifts silently if the remote adds a rule; the Rust side keeps its own runtime checks, so preflight is a second line of defence rather than a replacement. Deliberately not covered: divergence between what the store recorded and what the remote actually did — both can be internally consistent, so no read-side validation can detect it. HEU-553 closed the write-side contract for placement; removal still diverges (HEU-582), and the type-label trust boundary (HEU-554) remains open. Related: UC-NET-013, which supplies the ordering half.
 
 One ordering trap the split exists to avoid: an empty-input short circuit placed above the configuration checks hides configuration errors for as long as the input stays empty. HEU-566 found `LoadTree(ctx, id, "matrix")` with no `WithMatrixParams`, and `LoadTree(ctx, id, "streamline")` with an unsupported type, both returning nil on a zero-row tree. Configuration describes the structure, not its contents, so its validity never depends on row count. Put the config phase above both the query and the empty check.
 
@@ -496,14 +497,14 @@ for _, node := range ordered[1:] {
 ---
 ### UC-NET-014: Pre-projection event gate with database backstop
 
-**Added:** Unreleased (HEU-553)
-**Files:** `internal/networkengine/tree_consumer.go`, `migrations/000004_add_tree_nodes_slot_unique.up.sql`
+**Added:** Unreleased (HEU-553), redelivery discriminator moved to the store layer in HEU-576
+**Files:** `internal/networkengine/tree_consumer.go`, `internal/networkengine/tree_store.go` (`ErrNodeAlreadyProjected`, `ErrActiveUserConflict`, `ErrSlotConflict`), `internal/networkengine/tree_store_postgres.go` (`InsertNode`, `BulkInsert`), `internal/networkengine/tree_store_memory.go` (`InsertNode`), `migrations/000004_add_tree_nodes_slot_unique.up.sql`
 
 **Problem:** A projection consumer writes one event into two targets, the adjacency store and then the engine. An event that cannot be applied faithfully must not land in either. A stored row the engine never honored is silent divergence, and some malformed rows make reload preflight refuse the whole tree. Per-event validation cannot see races between events, and redelivering an already-stored event must stay distinguishable from corruption.
 
-**Solution:** Three layers. A gate at the top of the handler rejects everything checkable from the payload alone (stream identity, known `tree_type`, per-type position rules) before either projection, so a rejected event leaves no trace outside the EventStore. A partial unique index (`idx_tree_nodes_tree_parent_position_active`, migration 000004) arbitrates what the gate cannot see: two events claiming one slot resolve at the insert, loudly, with the store still reloadable. Postgres index order then gives redelivery a discriminator for free: `tree_nodes_pkey` (the row id is the event ID) fires for an already-stored event, the user index for a conflicting one. The layers do not make the two projections atomic. The store insert lands before the engine call, so an engine failure after a successful insert leaves a stored row the engine never applied (HEU-576).
+**Solution:** Three layers. A gate at the top of the handler rejects everything checkable from the payload alone (stream identity, known `tree_type`, per-type position rules) before either projection, so a rejected event leaves no trace outside the EventStore. A partial unique index (`idx_tree_nodes_tree_parent_position_active`, migration 000004) arbitrates what the gate cannot see: two events claiming one slot resolve at the insert, loudly, with the store still reloadable. The insert names the primary key as its `ON CONFLICT` arbiter and does nothing on a match. A row already carrying this event's id is skipped and reported rather than raising. A row conflicting only on one of the partial unique indexes raises. `BulkInsert` shares that statement inside one transaction. A raised primary-key violation there would abort the batch before the store could report the skip. The batch is still discarded on any conflict it does report. The layers do not make the two projections atomic. The store insert still lands before the engine call. An engine failure leaves a stored row whose engine side is unconfirmed. Since HEU-576 a redelivery of that event completes the engine side rather than failing at the insert.
 
-**Notes:** Distinct from UC-NET-012, which preflights an irreversible bulk replay. Here each event is individually recoverable, so the gate stays thin (payload-checkable rules only) and the database owns cross-event races. The gate cannot check the matrix width bound because nothing persists width (HEU-554). The u8 ceiling is gated; the width..255 band is the documented residual. Redelivery is not yet idempotent (HEU-576). `MemoryTreeStore` mirrors all three constraints in the same check order, so the discriminator is unit-testable against the double.
+**Notes:** Distinct from UC-NET-012, which preflights an irreversible bulk replay. Here each event is individually recoverable, so the gate stays thin (payload-checkable rules only) and the database owns cross-event races. The gate cannot check the matrix width bound because nothing persists width (HEU-554). The u8 ceiling is gated; the width..255 band is the documented residual. Redelivering a placement whose projection is still current completes it (HEU-576), however old it is. It stops being current once its node was removed, or once a later event re-placed the user, and is then refused rather than reapplied. It is also refused when its parent's row was since removed (HEU-813). That scope is the event in flight. It is a constraint on HEU-301. A redelivered removal converges when it fully projected and nothing has changed the user's placement since. Its remaining cases are open and tracked separately. `MemoryTreeStore` mirrors all three constraints and checks the row id in its own pass. That makes the discriminator unit-testable against the double. The two stores do not agree on which constraint they name when several are violated at once (HEU-794).
 
 ---
 
@@ -536,7 +537,7 @@ newID, _ := store.ReplaceRun(ctx, runID, newPlanHash)
 - Results that must be superseded without being destroyed.
 - A re-run whose partial output must never be visible.
 
-**Notes:** One active run per period comes from a partial unique index on `(period_id) WHERE status <> 'voided'`. The same-period rule for `superseded_by` is a composite foreign key against `UNIQUE (id, period_id)` — it does not need a trigger. Voiding preserves `completed_at` and `carry_forward`, which is why the completion CHECK is one-directional: a biconditional would make complete → voided impossible without erasing the audit fact the row exists to hold. Audit timestamps use `clock_timestamp()`, not `now()`, which is stamped at BEGIN and can predate a lock wait. Both implementations run one shared behavioral suite; see `docs/development/postgres-stores.md` for the Go/Postgres seams that suite exists to catch. The store has no production caller until HEU-592. HEU-595 adds `ListRuns` for walking the supersede chain, and HEU-596 owns the read-path paging contract.
+**Notes:** One active run per period comes from a partial unique index on `(period_id) WHERE status <> 'voided'`. The same-period rule for `superseded_by` is a composite foreign key against `UNIQUE (id, period_id)` — it does not need a trigger. Voiding preserves `completed_at` and `carry_forward`, which is why the completion CHECK is one-directional: a biconditional would make complete → voided impossible without erasing the audit fact the row exists to hold. Audit timestamps use `clock_timestamp()`, not `now()`, which is stamped at BEGIN and can predate a lock wait. Both implementations run one shared behavioral suite; see `docs/development/postgres-stores.md` for the Go/Postgres seams that suite exists to catch. HEU-576 built a second one, `runTreeStoreSuite` in `internal/networkengine/tree_store_suite_test.go`. The shared-suite pattern is deliberately left inside this entry until a third paired store appears, and gets an entry of its own then. Do not re-propose it at the second. The store has no production caller until HEU-592. HEU-595 adds `ListRuns` for walking the supersede chain, and HEU-596 owns the read-path paging contract.
 
 ---
 
@@ -964,5 +965,52 @@ A plain `[]Responsored` cannot express the difference. `encoding/json` leaves it
 **Notes:** This is the mirror of UC-NET-016, which covers removing a *request* field without a red interval. The technique is the one UC-NET-018 uses on `protocol_version`, reached for a different reason: there it separates two failure causes so the message can name the fix, here it separates silence from an answer.
 
 Absence and emptiness are different claims. An empty list says the engine looked and moved nobody, which a caller can act on. A missing key says nothing at all. Letting it default turns silence into the one answer that requires no work.
+
+---
+
+### UC-NET-025: Four-outcome reconcile on a refused mutation
+
+**Added:** Unreleased (HEU-576)
+**Files:** `internal/networkengine/tree_consumer.go` (`withRetry`, `reconcileOutcome`, `reconcileNotApplicable`, `reconcileConverged`, `reconcileDiverged`, `reconcileInconclusive`)
+
+**Problem:** A projection consumer retries a refused engine call. Some refusals mean the engine already holds what the event asked for, so retrying them burns the budget and then reports a failure where the two systems actually agree.
+
+**Solution:** `withRetry` takes an optional `reconcile` closure and consults it on every failed attempt, before it sleeps. The closure inspects the engine and the store and returns one of four `reconcileOutcome` values. `reconcileConverged` returns nil immediately, `reconcileDiverged` returns an error and stops retrying, and `reconcileNotApplicable` and `reconcileInconclusive` both fall through to the next attempt. The closure is not consulted once the context is done, so a clean shutdown reports the cancellation rather than an inspection fault.
+
+**Usage:**
+```go
+// A converged outcome returns nil without fn having succeeded, so anything
+// fn assigns is still unset. Carry that fact out on a flag.
+alreadyProjected := false
+
+err := c.withRetry(ctx, op, treeID, userID, func() error {
+    return engineCall()
+}, func(ctx context.Context, err error) (reconcileOutcome, error) {
+    if !isEngineCode(err, wantCode) {
+        return reconcileNotApplicable, nil
+    }
+    row, gerr := c.store.GetNodeIncludingRemoved(ctx, treeID, userID)
+    if gerr != nil {
+        return reconcileInconclusive, gerr
+    }
+    // Only an active row is divergence. A tombstone and an absent row both
+    // mean the store agrees the user is gone.
+    if row != nil && row.RemovedAt == nil {
+        return reconcileDiverged, fmt.Errorf("the store holds an active row the engine refused")
+    }
+    alreadyProjected = true
+    return reconcileConverged, nil
+})
+if err != nil {
+    return err
+}
+if alreadyProjected {
+    return nil
+}
+```
+
+**When to use this pattern:** any retry loop over a remote mutation where the remote can refuse a call because it already did the work. Reach for it once "this failed" and "this was already done" arrive as the same error.
+
+**Notes:** Four outcomes rather than two, because each pair splits on a different question. `notApplicable` and `inconclusive` both retry, but the first says the error is not one reconcile can speak to and the second says the inspection itself failed. Keeping `inconclusive` apart from `diverged` is what stops a timed-out query being reported as the engine disagreeing. `diverged` returning a nil error is backfilled with the engine error at the call site, because reporting the one outcome that means the two systems disagree as success is the worst answer the loop can give. The three handlers in `tree_consumer.go` are the worked examples, and `handleNodeRemoved` is the one that needs the flag, since its engine reply carries the only copy of the moved list. Related: UC-NET-014, which owns the gate and the database backstop this sits behind. Open cases are HEU-810, HEU-811 and HEU-813.
 
 ---

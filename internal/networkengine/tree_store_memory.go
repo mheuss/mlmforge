@@ -20,14 +20,14 @@ func NewMemoryTreeStore() *MemoryTreeStore {
 }
 
 func (s *MemoryTreeStore) InsertNode(_ context.Context, node TreeNodeRow) error {
-	// tree_nodes_pkey mirror: the row id is the event ID and the primary
-	// key is not partial, so a duplicate id is rejected whatever its tree
-	// or removed state. Checked first, matching Postgres index order —
-	// HEU-576's idempotency discriminator depends on pkey-vs-index being
-	// distinguishable against this double too.
+	// Primary-key mirror: the row id is the event ID, so a duplicate id is
+	// rejected whatever its tree or removed state. Checked in its own pass
+	// before the partial-index mirrors below, so a caller can tell an id
+	// collision from the others. Which one wins when several are violated at
+	// once is unsettled, HEU-794.
 	for _, n := range s.nodes {
 		if n.ID == node.ID {
-			return fmt.Errorf("duplicate node id %s (tree_nodes_pkey mirror)", node.ID)
+			return fmt.Errorf("%w: id=%s", ErrNodeAlreadyProjected, node.ID)
 		}
 	}
 	// Enforce same uniqueness as the Postgres partial unique indexes
@@ -38,7 +38,7 @@ func (s *MemoryTreeStore) InsertNode(_ context.Context, node TreeNodeRow) error 
 				continue
 			}
 			if n.UserID == node.UserID {
-				return fmt.Errorf("duplicate active node: tree=%s user=%s", node.TreeID, node.UserID)
+				return fmt.Errorf("%w: tree=%s user=%s", ErrActiveUserConflict, node.TreeID, node.UserID)
 			}
 			// Mirror idx_tree_nodes_tree_parent_position_active (migration
 			// 000004): one active claim per (tree, parent, position). Rows
@@ -48,8 +48,8 @@ func (s *MemoryTreeStore) InsertNode(_ context.Context, node TreeNodeRow) error 
 			if node.ParentID != nil && node.Position != nil &&
 				n.ParentID != nil && n.Position != nil &&
 				*n.ParentID == *node.ParentID && *n.Position == *node.Position {
-				return fmt.Errorf("duplicate active slot: tree=%s parent=%s position=%d (held by %s)",
-					node.TreeID, *node.ParentID, *node.Position, n.UserID)
+				return fmt.Errorf("%w: tree=%s parent=%s position=%d (held by %s)",
+					ErrSlotConflict, node.TreeID, *node.ParentID, *node.Position, n.UserID)
 			}
 		}
 	}
@@ -115,6 +115,23 @@ func (s *MemoryTreeStore) GetNode(_ context.Context, treeID, userID string) (*Tr
 	return nil, nil
 }
 
+func (s *MemoryTreeStore) GetNodeIncludingRemoved(_ context.Context, treeID, userID string) (*TreeNodeRow, error) {
+	var best *TreeNodeRow
+	for i := range s.nodes {
+		if s.nodes[i].TreeID != treeID || s.nodes[i].UserID != userID {
+			continue
+		}
+		n := s.nodes[i]
+		if n.RemovedAt == nil {
+			return &n, nil
+		}
+		if best == nil || best.RemovedAt.Before(*n.RemovedAt) {
+			best = &n
+		}
+	}
+	return best, nil
+}
+
 func (s *MemoryTreeStore) GetChildren(_ context.Context, treeID, parentUserID string) ([]TreeNodeRow, error) {
 	var result []TreeNodeRow
 	for _, n := range s.nodes {
@@ -152,8 +169,17 @@ func (s *MemoryTreeStore) GetByTreeDepthOrdered(_ context.Context, treeID string
 }
 
 func (s *MemoryTreeStore) BulkInsert(ctx context.Context, nodes []TreeNodeRow) error {
+	// InsertNode validates against s.nodes, so pointing it at a copy is what
+	// makes the batch all-or-none: a conflict anywhere, including between two
+	// rows of this batch, leaves the original slice untouched.
+	staged := make([]TreeNodeRow, len(s.nodes), len(s.nodes)+len(nodes))
+	copy(staged, s.nodes)
+
+	original := s.nodes
+	s.nodes = staged
 	for _, n := range nodes {
 		if err := s.InsertNode(ctx, n); err != nil {
+			s.nodes = original
 			return err
 		}
 	}

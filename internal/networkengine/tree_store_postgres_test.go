@@ -138,8 +138,7 @@ func TestPostgresTreeStore_DuplicateActiveSlotRejected(t *testing.T) {
 
 	err := store.InsertNode(ctx,
 		makeUUIDNode(testNodeUUID(3), treeID, testUserUUID(3), 1, ptr(testUserUUID(1)), ptr(testUserUUID(1)), intPtr(0)))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "idx_tree_nodes_tree_parent_position_active")
+	assert.ErrorIs(t, err, ErrSlotConflict)
 
 	// Soft-delete frees the slot for a live replacement (ADR-023).
 	require.NoError(t, store.DeleteNode(ctx, treeID, testUserUUID(2)))
@@ -359,4 +358,49 @@ func TestPostgresTreeStore_TimestampsPopulated(t *testing.T) {
 	require.NotNil(t, got)
 	assert.True(t, got.CreatedAt.After(before), "created_at should be set by database")
 	assert.True(t, got.UpdatedAt.After(before), "updated_at should be set by database")
+}
+
+func TestPostgresTreeStore_Suite(t *testing.T) {
+	runTreeStoreSuite(t, func(t *testing.T) TreeStore {
+		return newTestPostgresTreeStore(t)
+	})
+}
+
+// BulkInsert maps index conflicts to the same sentinels InsertNode uses. The
+// skipped-row branch covers a duplicate event id; this covers the other two
+// arms, which a batch reaches by claiming a slot or a user already taken.
+func TestPostgresTreeStore_BulkInsert_SlotConflictIsTyped(t *testing.T) {
+	store := newTestPostgresTreeStore(t)
+	ctx := context.Background()
+
+	tree := testTreeUUID(1)
+	parent := testUserUUID(1)
+	require.NoError(t, store.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, parent, 0, nil, nil, nil)))
+	require.NoError(t, store.InsertNode(ctx,
+		makeUUIDNode(testNodeUUID(2), tree, testUserUUID(2), 1, ptr(parent), ptr(parent), intPtr(0))))
+
+	err := store.BulkInsert(ctx, []TreeNodeRow{
+		makeUUIDNode(testNodeUUID(3), tree, testUserUUID(3), 1, ptr(parent), ptr(parent), intPtr(1)),
+		makeUUIDNode(testNodeUUID(4), tree, testUserUUID(4), 1, ptr(parent), ptr(parent), intPtr(0)),
+	})
+	assert.ErrorIs(t, err, ErrSlotConflict)
+
+	var count int
+	require.NoError(t, store.pool.QueryRow(ctx,
+		`SELECT count(*) FROM tree_nodes WHERE user_id = $1`, testUserUUID(3)).Scan(&count))
+	assert.Equal(t, 0, count, "the row ahead of the conflict rolls back with it")
+}
+
+func TestPostgresTreeStore_BulkInsert_UserConflictIsTyped(t *testing.T) {
+	store := newTestPostgresTreeStore(t)
+	ctx := context.Background()
+
+	tree := testTreeUUID(1)
+	user := testUserUUID(1)
+	require.NoError(t, store.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
+
+	err := store.BulkInsert(ctx, []TreeNodeRow{
+		makeUUIDNode(testNodeUUID(2), tree, user, 0, nil, nil, nil),
+	})
+	assert.ErrorIs(t, err, ErrActiveUserConflict)
 }

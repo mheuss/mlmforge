@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/mlmforge/mlmforge/internal/networkengine"
@@ -31,20 +32,18 @@ type safeToRetryErr struct{ error }
 
 func (safeToRetryErr) SafeToRetry() bool { return true }
 
-// cancelledButSafeErr is safe to retry and also carries a cancellation. pgx
-// reports that pair when it finds the context already done just before sending
-// a query on a live connection.
+// cancelledButSafeErr is safe to retry and also carries a cancellation.
 type cancelledButSafeErr struct{}
 
-func (cancelledButSafeErr) Error() string     { return "dial cancelled" }
+func (cancelledButSafeErr) Error() string     { return "context already done" }
 func (cancelledButSafeErr) SafeToRetry() bool { return true }
 func (cancelledButSafeErr) Unwrap() error     { return context.Canceled }
 
-// retryable is the one shape the allowlist admits.
+// retryable is a shape the allowlist admits.
 func retryable() error {
 	return &networkengine.TreeLoadRejectedError{
 		Kind: networkengine.TreeLoadStoreReadFailed,
-		Err:  safeToRetryErr{errors.New("connection refused")},
+		Err:  safeToRetryErr{errors.New("wrote no bytes")},
 	}
 }
 
@@ -60,7 +59,7 @@ func TestTreeLoadRetryable(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "a connection failure the query never left is retryable",
+			name: "a write that put no bytes on the wire is retryable",
 			err:  retryable(),
 			want: true,
 		},
@@ -113,7 +112,7 @@ func TestTreeLoadRetryable(t *testing.T) {
 			name: "an incomplete load is never retryable",
 			err: &networkengine.TreeLoadIncompleteError{
 				Stage: networkengine.TreeLoadStageNodes,
-				Err:   safeToRetryErr{errors.New("connection refused")},
+				Err:   safeToRetryErr{errors.New("wrote no bytes")},
 			},
 			want: false,
 		},
@@ -132,6 +131,24 @@ func TestTreeLoadRetryable(t *testing.T) {
 			err: &networkengine.TreeLoadRejectedError{
 				Kind: networkengine.TreeLoadStoreReadFailed,
 				Err:  cancelledButSafeErr{},
+			},
+			want: false,
+		},
+		{
+			// Retrying this is the outcome the whole policy exists to
+			// prevent: the worker may hold a structure nothing can drop.
+			name: "an incomplete load wrapping a retryable rejection is not retryable",
+			err: &networkengine.TreeLoadIncompleteError{
+				Stage: networkengine.TreeLoadStageNodes,
+				Err:   retryable(),
+			},
+			want: false,
+		},
+		{
+			name: "invalid data carrying a retryable cause is not retryable",
+			err: &networkengine.TreeLoadRejectedError{
+				Kind: networkengine.TreeLoadDataInvalid,
+				Err:  safeToRetryErr{errors.New("wrote no bytes")},
 			},
 			want: false,
 		},
@@ -171,7 +188,16 @@ func TestRunTreeLoad_DoesNotRetryAPermanentFailure(t *testing.T) {
 	require.Equal(t, 1, loader.attempts)
 }
 
+// noRetryDelay drops the backoff so the suite does not sleep through it.
+func noRetryDelay(t *testing.T) {
+	t.Helper()
+	original := loadRetryDelay
+	loadRetryDelay = 0
+	t.Cleanup(func() { loadRetryDelay = original })
+}
+
 func TestRunTreeLoad_BoundsRetriesOnARetryableFailure(t *testing.T) {
+	noRetryDelay(t)
 	loader := &stubLoader{err: retryable()}
 
 	err := runTreeLoad(t.Context(), &bytes.Buffer{}, loader, "t", "unilevel", nil)
@@ -180,16 +206,37 @@ func TestRunTreeLoad_BoundsRetriesOnARetryableFailure(t *testing.T) {
 	require.Equal(t, maxLoadAttempts, loader.attempts)
 }
 
+// The pause is skipped after the final attempt, so three attempts sleep twice.
+func TestRunTreeLoad_SleepsBetweenAttemptsButNotAfterTheLast(t *testing.T) {
+	noRetryDelay(t)
+	loader := &stubLoader{err: retryable()}
+	start := time.Now()
+
+	_ = runTreeLoad(t.Context(), &bytes.Buffer{}, loader, "t", "unilevel", nil)
+
+	require.Equal(t, maxLoadAttempts, loader.attempts)
+	require.Less(t, time.Since(start), loadRetryDelayCeiling,
+		"the loop slept despite a zero delay")
+}
+
+// loadRetryDelayCeiling bounds what a zero-delay run may take.
+const loadRetryDelayCeiling = 100 * time.Millisecond
+
 // A context cancelled between attempts stops the loop where it is, rather than
 // sleeping out the backoff it was already told to abandon.
 func TestRunTreeLoad_StopsWhenTheContextIsCancelledBetweenAttempts(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	loader := &stubLoader{err: retryable(), onCall: func(int) { cancel() }}
 
-	err := runTreeLoad(ctx, &bytes.Buffer{}, loader, "t", "unilevel", nil)
+	var out bytes.Buffer
+	err := runTreeLoad(ctx, &out, loader, "t", "unilevel", nil)
 
-	require.ErrorIs(t, err, context.Canceled)
+	require.ErrorIs(t, err, context.Canceled, "the cancellation must reach the caller")
+	require.ErrorIs(t, err, loader.err, "the load failure must not be dropped")
 	require.Equal(t, 1, loader.attempts)
+	require.Equal(t,
+		"load refused before any engine call (store_read_failed); the engine is unchanged\n",
+		out.String())
 }
 
 func TestRunTreeLoad_ReportsARejectionAsLeavingTheEngineUnchanged(t *testing.T) {

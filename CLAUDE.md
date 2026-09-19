@@ -97,7 +97,7 @@ We build software through small, verified steps:
 - Push directly to main or force push to shared branches
 - Continue after 3 failed attempts — stop and reassess
 
-### Who authorises a push
+### Who authorizes a push
 
 **Pushing a feature branch and opening its PR are the orchestrator's to
 authorise.** Michael's call, 2026-09-17, overruling a restriction the hub had

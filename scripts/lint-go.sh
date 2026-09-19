@@ -38,7 +38,6 @@ done
 
 # The action prefers version over version-file and logs that it ignored the
 # file. The pin file would then be decorative while CI installed something else.
-# Full-line comments are dropped first, so commenting a key out reads as absent.
 #
 # Read over the whole file. Deciding which step a key belongs to needs a YAML
 # parser, and four line-oriented attempts each failed on a construct the next
@@ -50,9 +49,10 @@ if [ -e "$workflow" ]; then
     echo "cannot read \"$workflow\"; not linting" >&2
     exit 1
   fi
-  workflow_keys=$(printf '%s\n' "$workflow_body" | grep -v '^[[:space:]]*#')
-  if printf '%s\n' "$workflow_keys" | grep -qE '^[[:space:]]*["'"'"']?version-file["'"'"']?:' \
-    && printf '%s\n' "$workflow_keys" | grep -qE '^[[:space:]]*["'"'"']?version["'"'"']?:'; then
+  # A commented key needs no stripping: the anchored patterns below cannot match
+  # a line whose first non-space character is a #.
+  if printf '%s\n' "$workflow_body" | grep -qE '^[[:space:]]*["'"'"']?version-file["'"'"']?:' \
+    && printf '%s\n' "$workflow_body" | grep -qE '^[[:space:]]*["'"'"']?version["'"'"']?:'; then
     echo "\"$workflow\" sets both version and version-file; not linting" >&2
     echo "  the action uses version and ignores version-file, so the pin file would not be the pin" >&2
     echo "  this reads the whole file and does not tell one step from another" >&2

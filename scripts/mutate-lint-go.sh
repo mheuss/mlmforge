@@ -12,7 +12,24 @@ suite=$root/scripts/lint-go-test.sh
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-copy=$work/lint-go.sh
+
+# The wrapper derives its default paths from its own location, so the copy sits
+# under a scripts/ directory whose parent carries the files those defaults name.
+# Without this every row fails the default-paths case and reads as caught.
+mkdir -p "$work/scripts" "$work/.github"
+ln -s "$root/.golangci-lint-version" "$work/.golangci-lint-version"
+ln -s "$root/go.mod" "$work/go.mod"
+ln -s "$root/.github/workflows" "$work/.github/workflows"
+copy=$work/scripts/lint-go.sh
+
+# An unmutated copy has to be green, or every row below is measuring the
+# harness rather than the mutation.
+cp "$src" "$copy"
+baseline=$(LINT_GO_SCRIPT=$copy bash "$suite" 2>&1 | tail -1)
+case "$baseline" in
+  *", 0 failed"*) ;;
+  *) echo "baseline is not green, refusing to measure: $baseline" >&2; exit 1 ;;
+esac
 
 pass=0
 fail=0
@@ -73,7 +90,6 @@ M caught "major -eq -> true"             's|\[ "$bw_major" -eq "$d_major" \]|tru
 M caught "built-with headline deleted"   '/older Go line than this module targets/d'
 
 # --- the workflow guard ---
-M caught "comment strip dropped"         's|grep -v .\^\[\[:space:\]\]\*#.|cat|'
 M caught "version-file pattern broken"   's@version-file\[@versionXfile[@'
 M caught "version pattern broken"        's@?version\[@?versionX[@'
 M caught "both tests joined with or"     's@&& printf@|| printf@'

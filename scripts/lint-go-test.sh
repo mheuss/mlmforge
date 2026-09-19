@@ -319,8 +319,8 @@ expect_silent "$bw_dir" "workflow sets version-file alone" \
 # alone, which is every workflow written before the pin file existed.
 expect_silent "$bw_dir" "workflow sets version alone" \
   "${wf_args[@]}" --workflow "$data/wf-lint-version-only.yml"
-# Commenting a key out is how someone moves the pin over, so it has to read as
-# absent rather than as present.
+# Commenting a key out is how someone moves the pin over. The anchor is what
+# makes it read as absent: a # is not a quote and not whitespace.
 expect_silent "$bw_dir" "a commented-out version is not set" \
   "${wf_args[@]}" --workflow "$data/wf-lint-both-commented.yml"
 # Quoting a key is valid YAML and leaves the name unchanged.

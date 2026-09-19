@@ -188,9 +188,6 @@ func TestRunTreeLoad_DoesNotRetryAPermanentFailure(t *testing.T) {
 	require.Equal(t, 1, loader.attempts)
 }
 
-// zeroDelayCeiling bounds what a run with the delay set to zero may take.
-const zeroDelayCeiling = 100 * time.Millisecond
-
 // noRetryDelay drops the backoff so the suite does not sleep through it.
 func noRetryDelay(t *testing.T) {
 	t.Helper()
@@ -209,7 +206,10 @@ func TestRunTreeLoad_BoundsRetriesOnARetryableFailure(t *testing.T) {
 	require.Equal(t, maxLoadAttempts, loader.attempts)
 }
 
-func TestRunTreeLoad_HonoursTheConfiguredRetryDelay(t *testing.T) {
+// zeroDelayCeiling bounds what a run with the delay set to zero may take.
+const zeroDelayCeiling = 100 * time.Millisecond
+
+func TestRunTreeLoad_DoesNotSleepWhenTheDelayIsZero(t *testing.T) {
 	noRetryDelay(t)
 	loader := &stubLoader{err: retryable()}
 	start := time.Now()
@@ -265,9 +265,7 @@ func TestRunTreeLoad_ReportsAnIncompleteLoadWithItsCounts(t *testing.T) {
 		out.String())
 }
 
-// A chain holding both types is reported as the incomplete one. Reporting it
-// as a rejection would tell an operator the engine is unchanged when a
-// structure may be stranded.
+// Reporting this as a rejection would understate what the engine may hold.
 func TestRunTreeLoad_ReportsAChainHoldingBothAsIncomplete(t *testing.T) {
 	loader := &stubLoader{err: &networkengine.TreeLoadIncompleteError{
 		Stage: networkengine.TreeLoadStageNodes,

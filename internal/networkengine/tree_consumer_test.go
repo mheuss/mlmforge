@@ -1627,6 +1627,21 @@ func TestHandleRootAdded_UncancelledPathsDoNotReadBack(t *testing.T) {
 		require.NoError(t, c.HandleEvent(context.Background(), makeEvent(EventTypeRootAdded, rootPayload())))
 	})
 
+	t.Run("the engine fails without a cancellation", func(t *testing.T) {
+		// inserted is true and withRetry returns, so the two earlier exits are
+		// passed. Only the cancellation check stands between here and the read.
+		store := readTrippingStore{MemoryTreeStore: NewMemoryTreeStore(), t: t}
+		tr := &reconcileTransport{mutationErr: &EngineError{Code: "TRANSPORT_HICCUP"}}
+		c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
+		c.retryDelay = 0
+
+		err := c.HandleEvent(context.Background(), makeEvent(EventTypeRootAdded, rootPayload()))
+
+		require.Error(t, err)
+		assert.NotErrorIs(t, err, context.Canceled)
+		assert.NotErrorIs(t, err, context.DeadlineExceeded)
+	})
+
 	t.Run("the insert is refused by the root index", func(t *testing.T) {
 		store := readTrippingStore{MemoryTreeStore: NewMemoryTreeStore(), t: t}
 		ctx := context.Background()
@@ -1681,6 +1696,30 @@ func TestHandleRootAdded_CancelledInsertReportsTheRow(t *testing.T) {
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled, "the cancellation is still the cause")
+	assert.Contains(t, err.Error(), "an active row carrying event", "the message says what the read returned")
+	assert.Contains(t, err.Error(), event.ID, "and which row it was")
+	assert.Equal(t, []string{posUser}, store.reads, "the read was attempted")
+}
+
+// The deadline twin of the cancellation case. withRetry wraps whatever ctx.Err()
+// returns, so an expired deadline reaches the same tail and must report the same
+// way. Without this case the tail can be narrowed to context.Canceled alone and
+// the suite stays green.
+func TestHandleRootAdded_ExpiredDeadlineReportsTheRow(t *testing.T) {
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	tr := &reconcileTransport{mutationErr: &EngineError{Code: engineCodeRootAlreadyExists}}
+	store := &ctxReadingStore{deleteRecordingStore: &deleteRecordingStore{MemoryTreeStore: NewMemoryTreeStore()}}
+	c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
+	// Not zero: at zero the select races its own timer. See the cancellation case.
+	c.retryDelay = time.Minute
+
+	event := makeEvent(EventTypeRootAdded, rootPayload())
+	err := c.HandleEvent(ctx, event)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.DeadlineExceeded, "the deadline is still the cause")
 	assert.Contains(t, err.Error(), "an active row carrying event", "the message says what the read returned")
 	assert.Contains(t, err.Error(), event.ID, "and which row it was")
 	assert.Equal(t, []string{posUser}, store.reads, "the read was attempted")

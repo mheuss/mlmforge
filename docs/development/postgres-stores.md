@@ -200,7 +200,7 @@ Seventeen sites in `internal/networkengine` skip when no Postgres container is
 running. Sixteen are tests and one is a benchmark. They cover the store pairs,
 commission schema and amounts, qualification history, and tree persistence.
 
-Without the container the package passes with all of them skipped. It prints
+Without the container the package passes with all of them skipped, and prints
 `ok` either way.
 
 The container is not the only gate. The Rust worker binary at
@@ -209,13 +209,18 @@ persistence integration tests are among the sites that gate on it. A run with
 the container up and the worker unbuilt still skips and still prints `ok`. Build
 it with `cargo build --workspace` in `engine/`.
 
-That gate is local only. With `CI` set it fails instead of skipping (HEU-660),
-so a green CI run says nothing about whether your own run covered those tests.
+A missing binary skips only outside CI. With `CI` set it fails instead
+(HEU-660), so a green CI run says nothing about whether your own run covered
+those tests. A binary older than its sources fails either way (HEU-615), as does
+any stat error other than "not found".
 
-**Report the package as ok with zero failures, and say how many skipped.**
+**Report the package as ok with zero failures, how many skipped, and which
+gates were open.**
 
-A bare pass count is true on both machines and means something different on
-each. The skip count is what tells a reader which run they are looking at.
+A bare pass count is true on every machine and means something different on
+each. A bare skip count is now ambiguous too: the two gates overlap, so 17 could
+be the container alone and 46 the worker alone. Naming the gates is what tells a
+reader which run they are looking at.
 
 ```
 go test ./internal/networkengine/ -v -count=1 2>&1 | grep -cE '^ *--- SKIP'

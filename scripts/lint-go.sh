@@ -36,6 +36,26 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+# The action prefers version over version-file and logs that it ignored the
+# file. The pin file would then be decorative while CI installed something else.
+# Full-line comments are dropped first, so commenting a key out reads as absent.
+# Counted within one step: two steps carrying one key each are not this defect,
+# and the refusal below names a single step.
+if [ -r "$workflow" ]; then
+  both_inputs=$(grep -v '^[[:space:]]*#' "$workflow" \
+    | awk '
+      /uses:[[:space:]]*["'"'"']?golangci\/golangci-lint-action/ { in_step = 1; v = 0; f = 0; next }
+      in_step && /^[[:space:]]*-[[:space:]]/ { if (v && f) both = 1; in_step = 0 }
+      in_step && /^[[:space:]]*version:/ { v = 1 }
+      in_step && /^[[:space:]]*version-file:/ { f = 1 }
+      END { if (in_step && v && f) both = 1; print both + 0 }')
+  if [ "$both_inputs" = 1 ]; then
+    echo "\"$workflow\" sets both version and version-file on one golangci-lint-action step; not linting" >&2
+    echo "  the action uses version and ignores version-file, so \"$version_file\" would not be the pin" >&2
+    exit 1
+  fi
+fi
+
 # A directory can be opened and not read, so the read's own status is the check.
 # cat's stderr is left alone because it names which of the two happened.
 if ! pin_body=$(cat "$version_file"); then

@@ -307,5 +307,34 @@ expect_silent "$bw_dir" "an unparsable directive minor skips the comparison" \
 expect_silent "$bw_dir" "a directive too long to compare skips the comparison" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-huge"
 
+wf() { printf '%s' "--check-only --version-file $data/lintver-ok --go-mod $data/lintmod-ok"; }
+expect_with "$bw_dir" 1 "sets both version and version-file" "workflow sets both inputs" \
+  $(wf) --workflow "$data/wf-lint-both.yml"
+expect_silent "$bw_dir" "workflow sets version-file alone" \
+  $(wf) --workflow "$data/wf-lint-file-only.yml"
+expect_silent "$bw_dir" "workflow sets version alone" \
+  $(wf) --workflow "$data/wf-lint-version-only.yml"
+# Two steps, one key each. Counting across the file rather than within a step
+# refuses this, and the message would name a step that does not exist.
+expect_silent "$bw_dir" "two steps with one input each are not both" \
+  $(wf) --workflow "$data/wf-lint-two-steps.yml"
+# Commenting a key out is how someone switches the pin over, so it has to be
+# read as absent rather than as present.
+expect_silent "$bw_dir" "a commented-out version is not set" \
+  $(wf) --workflow "$data/wf-lint-both-commented.yml"
+# Another action's step carries both key names. Only this action's step counts.
+expect_silent "$bw_dir" "another action setting both inputs is not this one" \
+  $(wf) --workflow "$data/wf-lint-other-action.yml"
+# A commented-out uses: still contains the action name, and the name match is
+# not anchored, so the step would be entered from a line that is not there.
+expect_silent "$bw_dir" "a commented-out uses is not this action's step" \
+  $(wf) --workflow "$data/wf-lint-commented-uses.yml"
+# The step has to end at the next list item. Without that, a later step's key
+# counts toward this one and the refusal names a step that sets one input.
+expect_silent "$bw_dir" "a key in the next step does not count toward this one" \
+  $(wf) --workflow "$data/wf-lint-key-after-step.yml"
+expect_silent "$bw_dir" "a missing workflow skips the check" \
+  $(wf) --workflow "$data/wf-lint-nonexistent.yml"
+
 echo "$pass passed, $fail failed, of $((pass + fail))"
 [ "$fail" = 0 ]

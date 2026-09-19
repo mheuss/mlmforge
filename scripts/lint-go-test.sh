@@ -249,9 +249,18 @@ major_ahead='golangci-lint has version 2.13.2 built with go2.0.0 from x on y'
 expect_silent "$(stub_dir bwmajor "$major_ahead")" "a binary a major ahead is not a mismatch" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ahead"
 
-# No directive, plus a version mismatch so the note is printed at all.
-expect_with "$drift_dir" 1 "go directive not obtained" "an absent directive is reported as absent" \
+# A mismatch is observed before the go.mod is read, so an unreadable go.mod
+# cannot suppress it. The message says the directive was not reached rather
+# than reporting it as absent, which it has not established.
+expect_with "$drift_dir" 1 "go directive not read yet" "a mismatch outranks an unread directive" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-nodirective"
+expect_with "$drift_dir" 1 "go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2" \
+  "a mismatch prints the install command even with no directive" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-nodirective"
+# Go writes rcN and betaN. Any other trailing text is not a suffix to discard.
+expect_with "$(stub_dir bwgarbage 'golangci-lint has version 2.13.2 built with go1.27garbage from x on y')" \
+  1 "cannot compare the built-with Go line" "an unrecognised built-with suffix refuses" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
 
 # A prerelease on the directive's side. Go writes that form.
 expect_with "$bw_dir" 1 "older Go line than this module targets" "a prerelease directive above the binary refuses" \

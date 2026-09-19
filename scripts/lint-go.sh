@@ -5,6 +5,15 @@ set -uo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
+# Returns the leading digits when what follows them is a Go prerelease suffix,
+# and the value unchanged otherwise, so the caller's number test still refuses.
+strip_known_suffix() {
+  case "$1" in
+    *[0-9]rc[0-9]*|*[0-9]beta[0-9]*) printf '%s' "${1%%[![:digit:]]*}" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
 usage="usage: ${0##*/} [--check-only] [--version-file FILE] [--go-mod FILE] [--workflow FILE] [--] [golangci-lint arguments...]
   a path operand needs no --, a golangci-lint flag does"
 
@@ -140,9 +149,20 @@ if [ "$version_matches" != 1 ]; then
   exit 1
 fi
 
-# Read after the version comparison so an unreadable go.mod cannot preempt the
-# version mismatch a developer is actually hitting. It still refuses, because a
-# directive it cannot obtain is a comparison it cannot make.
+if [ "${installed#[vV]}" != "$pin" ]; then
+  echo "golangci-lint does not match the pin; not linting" >&2
+  echo "  pinned     v$pin   ($version_file)" >&2
+  echo "  installed  $(printf '%q' "$installed")    ($resolved)" >&2
+  echo "  built with $(printf '%q' "$built_with")  (go directive not read yet)" >&2
+  echo >&2
+  echo "  install the pinned version:" >&2
+  echo "    go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v$pin" >&2
+  exit 1
+fi
+
+# Read below the version comparison, so a go.mod this cannot read never
+# suppresses a mismatch already observed and already actionable. It still
+# refuses, because a directive it cannot obtain is a comparison it cannot make.
 directive_note="go directive not obtained"
 directive_err=$(awk '/^go /{print $2; exit}' "$go_mod" 2>&1 >/dev/null)
 if directive=$(awk '/^go /{print $2; exit}' "$go_mod" 2>/dev/null) && [ -n "$directive" ]; then
@@ -156,25 +176,17 @@ else
   exit 1
 fi
 
-if [ "${installed#[vV]}" != "$pin" ]; then
-  echo "golangci-lint does not match the pin; not linting" >&2
-  echo "  pinned     v$pin   ($version_file)" >&2
-  echo "  installed  $(printf '%q' "$installed")    ($resolved)" >&2
-  echo "  built with $(printf '%q' "$built_with")  ($directive_note)" >&2
-  echo >&2
-  echo "  install the pinned version:" >&2
-  echo "    go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v$pin" >&2
-  exit 1
-fi
 
 # Major and minor only. The panic this guards against names a language version,
 # which carries no patch component.
 bw=${built_with#go}
 bw_major=${bw%%.*}; bw_rest=${bw#*.}; bw_minor=${bw_rest%%.*}
 d_major=${directive%%.*}; d_rest=${directive#*.}; d_minor=${d_rest%%.*}
-# A prerelease minor reads as 28rc1 on either side, which is not an integer.
-bw_minor=${bw_minor%%[![:digit:]]*}
-d_minor=${d_minor%%[![:digit:]]*}
+# Go writes a prerelease as rcN or betaN. Anything else trailing the digits is
+# not a suffix this recognises, and dropping it would turn an unparsable value
+# into a number.
+bw_minor=$(strip_known_suffix "$bw_minor")
+d_minor=$(strip_known_suffix "$d_minor")
 
 # Skipped unless all four parse, because the arithmetic would otherwise report a
 # bash line number and lint anyway. An absent directive is that same case: it

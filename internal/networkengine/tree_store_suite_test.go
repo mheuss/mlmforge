@@ -561,7 +561,7 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		assert.Nil(t, removed, "the named tree's row is gone")
 	})
 
-	// The three constraints from migrations 000002 and 000004. UC-NET-014
+	// The four constraints from migrations 000002, 000004 and 000006. UC-NET-014
 	// rests on the double rejecting the same writes Postgres rejects.
 	t.Run("InsertNode rejects a duplicate row id", func(t *testing.T) {
 		s := newStore(t)

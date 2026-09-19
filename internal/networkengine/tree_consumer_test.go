@@ -1641,9 +1641,9 @@ func TestHandleRootAdded_UncancelledPathsDoNotReadBack(t *testing.T) {
 	})
 }
 
-// ctxReadingStore models what PostgresTreeStore does and MemoryTreeStore does
-// not: a read on a cancelled context fails. Without it, a test asserting the
-// detached read works passes against an implementation that never detaches.
+// ctxReadingStore fails a read on a cancelled context, and records every read
+// attempt above that check so a refused read and a read that never happened are
+// distinguishable.
 type ctxReadingStore struct {
 	*deleteRecordingStore
 	reads []string
@@ -1670,10 +1670,8 @@ func TestHandleRootAdded_CancelledInsertReportsTheRow(t *testing.T) {
 	}
 	store := &ctxReadingStore{deleteRecordingStore: &deleteRecordingStore{MemoryTreeStore: NewMemoryTreeStore()}}
 	c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
-	// Not zero. withRetry selects on ctx.Done() against time.After(retryDelay),
-	// and with a zero delay both are ready at once, so Go picks between them at
-	// random and the cancellation is reported only about half the time. Nothing
-	// waits for this value, because ctx is already done when the select runs.
+	// Not zero: at zero this test reports the cancellation only about half the
+	// time. Nothing waits for the value, because ctx is already done.
 	c.retryDelay = time.Minute
 
 	// Held rather than inlined, so the assertion can name the event id the

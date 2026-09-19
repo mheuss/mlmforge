@@ -521,9 +521,7 @@ func detachedWrite(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(ctx), storeWriteTimeout)
 }
 
-// detachedRead is detachedWrite for a read whose caller's context is already
-// cancelled. Same bounds, separate name, because detachedWrite's comment is
-// about a write that must not be abandoned partway.
+// detachedRead bounds a read whose caller's context is already cancelled.
 func detachedRead(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(ctx), storeWriteTimeout)
 }

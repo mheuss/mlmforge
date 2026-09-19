@@ -97,10 +97,17 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Lint
+      - name: Install golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.13.2
+          version-file: .golangci-lint-version
+          install-only: true
+
+      - name: Lint wrapper behaves
+        run: scripts/lint-go-test.sh
+
+      - name: Lint
+        run: scripts/lint-go.sh
 
       - name: Audit scan covers what it should
         run: scripts/audit-go-test.sh

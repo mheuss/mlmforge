@@ -258,5 +258,14 @@ rc_match='golangci-lint has version 2.13.2 built with go1.28rc1 from x on y'
 expect_silent "$(stub_dir bwrc "$rc_match")" "a prerelease built-with above the directive is not a mismatch" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
 
+# The two cases that vary the major. Without them every fixture holds major 1
+# on both sides, so the major comparison and its equality test are unpinned:
+# reversing the first or removing the second changes no result.
+expect_with "$bw_dir" 1 "go directive is 2.0.0" "a directive a major ahead refuses" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-major-ahead"
+major_ahead='golangci-lint has version 2.13.2 built with go2.0.0 from x on y'
+expect_silent "$(stub_dir bwmajor "$major_ahead")" "a binary a major ahead is not a mismatch" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ahead"
+
 echo "$pass passed, $fail failed, of $((pass + fail))"
 [ "$fail" = 0 ]

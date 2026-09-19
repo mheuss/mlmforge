@@ -124,28 +124,30 @@ if [ "${installed#[vV]}" != "$pin" ]; then
   exit 1
 fi
 
-# Skipped when the directive was not obtained, so an unreadable go.mod cannot
-# stop a lint the version check already cleared.
-if [ -n "$directive" ]; then
-  # Major and minor only. The panic this guards against names a language
-  # version, which carries no patch component.
-  bw=${built_with#go}
-  bw_major=${bw%%.*}; bw_rest=${bw#*.}; bw_minor=${bw_rest%%.*}
-  # A prerelease minor reads as 28rc1, which is not an integer.
-  bw_minor=${bw_minor%%[![:digit:]]*}
-  d_major=${directive%%.*}; d_rest=${directive#*.}; d_minor=${d_rest%%.*}
+# Major and minor only. The panic this guards against names a language version,
+# which carries no patch component.
+bw=${built_with#go}
+bw_major=${bw%%.*}; bw_rest=${bw#*.}; bw_minor=${bw_rest%%.*}
+d_major=${directive%%.*}; d_rest=${directive#*.}; d_minor=${d_rest%%.*}
+# A prerelease minor reads as 28rc1 on either side, which is not an integer.
+bw_minor=${bw_minor%%[![:digit:]]*}
+d_minor=${d_minor%%[![:digit:]]*}
 
-  if [ "$bw_major" -lt "$d_major" ] \
-    || { [ "$bw_major" -eq "$d_major" ] && [ "$bw_minor" -lt "$d_minor" ]; }; then
-    echo "golangci-lint was built with an older Go line than this module targets; not linting" >&2
-    echo "  pinned     v$pin   ($version_file)" >&2
-    echo "  installed  $(printf '%q' "$installed")    ($resolved)" >&2
-    echo "  built with $(printf '%q' "$built_with")  ($directive_note)" >&2
-    echo >&2
-    echo "  rebuild it against the current toolchain:" >&2
-    echo "    go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v$pin" >&2
-    exit 1
-  fi
+# Skipped unless all four parse, because the arithmetic would otherwise report a
+# bash line number and lint anyway. An absent directive is that same case: it
+# leaves both of its components empty.
+if [[ $bw_major =~ ^[0-9]+$ ]] && [[ $bw_minor =~ ^[0-9]+$ ]] \
+  && [[ $d_major =~ ^[0-9]+$ ]] && [[ $d_minor =~ ^[0-9]+$ ]] \
+  && { [ "$bw_major" -lt "$d_major" ] \
+    || { [ "$bw_major" -eq "$d_major" ] && [ "$bw_minor" -lt "$d_minor" ]; }; }; then
+  echo "golangci-lint was built with an older Go line than this module targets; not linting" >&2
+  echo "  pinned     v$pin   ($version_file)" >&2
+  echo "  installed  $(printf '%q' "$installed")    ($resolved)" >&2
+  echo "  built with $(printf '%q' "$built_with")  ($directive_note)" >&2
+  echo >&2
+  echo "  rebuild it against the current toolchain:" >&2
+  echo "    go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v$pin" >&2
+  exit 1
 fi
 
 exit 0

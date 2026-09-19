@@ -210,8 +210,8 @@ expect_with "$(stub_dir vprefixed "$v_line")" 0 "" "a binary reporting a leading
 expect_with "$(stub_dir drift2 "$old_line")" 1 "go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2" \
   "the mismatch names the install command" --check-only --version-file "$data/lintver-ok"
 
-# Three of the go.mod mutations leave the exit code at 0 and change only what
-# lands on stderr, so those cases compare the whole output rather than the code.
+# These cases compare the whole output, because some mutations here change only
+# what lands on stderr and leave the exit code alone.
 expect_silent() {
   local dir=$1 name=$2 out rc
   shift 2
@@ -227,7 +227,7 @@ expect_silent() {
 bw_dir=$(stub_dir bw "$ok_line")
 expect_silent "$bw_dir" "built-with go line meets the directive" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
-expect_with "$bw_dir" 1 "built with go1.27.0" "built-with go line below the directive" \
+expect_with "$bw_dir" 1 "older Go line than this module targets" "built-with go line below the directive" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ahead"
 # Major and minor only. A full-string or patch-aware comparison refuses this,
 # because the binary's patch is below the directive's while the line matches.
@@ -249,7 +249,7 @@ expect_silent "$bw_dir" "a go.mod with no directive skips the comparison" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-nodirective"
 # Pins awk's stderr redirect. Without it the missing file is reported on a run
 # that is meant to lint.
-expect_silent "$bw_dir" "an unreadable go.mod skips the comparison" \
+expect_silent "$bw_dir" "a missing go.mod skips the comparison" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-nonexistent"
 
 # A prerelease built-with whose version matches the pin. Comparing the minor
@@ -272,6 +272,36 @@ expect_silent "$(stub_dir bwmajor "$major_ahead")" "a binary a major ahead is no
 # read, as an empty value in a sentence that says it has one.
 expect_with "$drift_dir" 1 "go directive not obtained" "an absent directive is reported as absent" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-nodirective"
+
+# The directive carries a prerelease too, and Go writes that form. Truncating
+# only the binary's side leaves this refusal unreachable.
+expect_with "$bw_dir" 1 "older Go line than this module targets" "a prerelease directive above the binary refuses" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-rc"
+# A component that is not a number after truncation skips the comparison
+# instead of reaching the arithmetic.
+expect_silent "$bw_dir" "an unparsable directive skips the comparison" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-unparsable"
+
+# The binary's own prerelease minor has to survive truncation into a number.
+# Without it this refusal is skipped as unparsable instead.
+bw_rc_behind='golangci-lint has version 2.13.2 built with go1.26rc1 from x on y'
+expect_with "$(stub_dir bwrcbehind "$bw_rc_behind")" 1 "older Go line than this module targets" \
+  "a prerelease binary below the directive refuses" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
+
+# Four values are tested for being numbers and each test is the only one that
+# can refuse its own input, so each needs an input where the other three pass.
+# Without one, a test can be deleted and every case stays green.
+expect_silent "$(stub_dir bwmajorbad 'golangci-lint has version 2.13.2 built with gox.27 from x on y')" \
+  "an unparsable built-with major skips the comparison" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
+expect_silent "$(stub_dir bwminorbad 'golangci-lint has version 2.13.2 built with go1.rc from x on y')" \
+  "an unparsable built-with minor skips the comparison" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
+expect_silent "$bw_dir" "an unparsable directive major skips the comparison" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-major-unparsable"
+expect_silent "$bw_dir" "an unparsable directive minor skips the comparison" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-minor-unparsable"
 
 echo "$pass passed, $fail failed, of $((pass + fail))"
 [ "$fail" = 0 ]

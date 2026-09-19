@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -91,14 +92,34 @@ func TestWithTreeDeps_ReturnsTheOpenErrorAndRunsNothing(t *testing.T) {
 	require.False(t, ran)
 }
 
-// countingCloser stands in for the pool. It counts rather than flags, so a
-// second close is distinguishable from the one the code owes.
-type countingCloser struct{ closes int }
+// fakePool stands in for the pool. It counts closes rather than flagging
+// them, so a second close is distinguishable from the one the code owes.
+type fakePool struct {
+	closes  int
+	pingErr error
+}
 
-func (c *countingCloser) Close() { c.closes++ }
+func (f *fakePool) Ping(context.Context) error { return f.pingErr }
+func (f *fakePool) Close()                     { f.closes++ }
+
+func TestStartEngine_ClosesThePoolWhenTheDatabaseIsUnreachable(t *testing.T) {
+	unreachable := errors.New("connection refused")
+	pool := &fakePool{pingErr: unreachable}
+	// A path that would start, so a pass cannot come from the worker failing.
+	worker := filepath.Join(t.TempDir(), "network-engine-worker")
+	require.NoError(t, os.WriteFile(worker, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+
+	engine, err := startEngine(t.Context(), worker, pool)
+
+	require.Error(t, err)
+	require.Nil(t, engine)
+	require.Equal(t, 1, pool.closes, "close was not called exactly once")
+	require.ErrorIs(t, err, unreachable, "the cause must survive the wrapper")
+	require.NotContains(t, err.Error(), worker, "the worker was never reached")
+}
 
 func TestStartEngine_ClosesThePoolWhenTheWorkerWillNotStart(t *testing.T) {
-	pool := &countingCloser{}
+	pool := &fakePool{}
 	missing := filepath.Join(t.TempDir(), "network-engine-worker")
 
 	engine, err := startEngine(t.Context(), missing, pool)
@@ -110,18 +131,17 @@ func TestStartEngine_ClosesThePoolWhenTheWorkerWillNotStart(t *testing.T) {
 	require.Contains(t, err.Error(), missing, "the message must name the worker it tried")
 }
 
-// pgxpool.New does not connect, so a syntactically valid URL reaches the
-// engine start without a database. That is what makes this path testable
-// without a container.
-func TestOpenTreeDeps_ReportsAWorkerThatWillNotStart(t *testing.T) {
-	missing := filepath.Join(t.TempDir(), "network-engine-worker")
+// pgxpool.New does not connect, so an unreachable URL gets a pool and fails at
+// the ping. That is what makes this path testable without a container.
+func TestOpenTreeDeps_ReportsAnUnreachableDatabase(t *testing.T) {
+	worker := filepath.Join(t.TempDir(), "network-engine-worker")
 
-	deps, err := openTreeDeps(t.Context(), "postgres://user@localhost:1/db", missing)
+	deps, err := openTreeDeps(t.Context(), "postgres://user@localhost:1/db", worker)
 
 	require.Error(t, err)
 	require.Nil(t, deps)
-	require.ErrorIs(t, err, fs.ErrNotExist, "the cause must survive the wrapper")
-	require.Contains(t, err.Error(), missing, "the message must name the worker it tried")
+	require.Contains(t, err.Error(), "reach database")
+	require.NotContains(t, err.Error(), worker, "no worker is started for an unreachable database")
 }
 
 func TestWithTreeDeps_PassesTheResolvedArgumentsToTheOpener(t *testing.T) {

@@ -20,12 +20,23 @@ type treeDeps struct {
 // must carry a non-nil release.
 type depsOpener func(ctx context.Context, dbURL, workerPath string) (*treeDeps, error)
 
-// poolCloser is narrowed to the one method startEngine calls, so a test can
-// observe the release without building a pool.
-type poolCloser interface{ Close() }
+// reachablePool is narrowed to the two methods startEngine calls, so a test
+// can observe the release without building a pool.
+type reachablePool interface {
+	Ping(ctx context.Context) error
+	Close()
+}
 
-// startEngine starts the worker, releasing pool if it cannot start.
-func startEngine(ctx context.Context, workerPath string, pool poolCloser) (*networkengine.EngineClient, error) {
+// startEngine reaches the database and then starts the worker, releasing pool
+// if either fails.
+//
+// The database is checked first because it is the cheaper of the two to reach
+// and the only one that costs a subprocess to find out about.
+func startEngine(ctx context.Context, workerPath string, pool reachablePool) (*networkengine.EngineClient, error) {
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("reach database: %w", err)
+	}
 	engine, err := networkengine.NewEngineClient(ctx, workerPath)
 	if err != nil {
 		pool.Close()

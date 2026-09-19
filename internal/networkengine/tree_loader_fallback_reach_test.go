@@ -52,9 +52,13 @@ func (m failingMutator) RemoveNode(context.Context, string, string) ([]networken
 	return nil, m.fail("RemoveNode")
 }
 
-// twoRootStore serves a fixed row set from GetByTreeDepthOrdered, the one store
-// method LoadTree reads. It answers for the tree it was built for and fails for
-// any other, so a caller reading the wrong tree cannot pass.
+var _ networkengine.TreeStore = twoRootStore{}
+
+// twoRootStore serves a fixed row set from GetByTreeDepthOrdered. It answers for
+// the tree it was built for and fails for any other. Rows come back in the order
+// given rather than depth-ordered, so a case using it must not depend on order.
+// The embedded interface is left nil: any other method panics rather than being
+// answered by an empty store.
 type twoRootStore struct {
 	networkengine.TreeStore
 	treeID string
@@ -116,6 +120,7 @@ func TestLoadTree_FailuresAtEveryStageNeverRenderTheFallback(t *testing.T) {
 			name:     "two roots, rejected by node validation",
 			treeType: "unilevel",
 			rows:     []networkengine.TreeNodeRow{root("t", "u0"), root("t", "u1")},
+			// see HEU-810
 			direct:   true,
 			wantKind: networkengine.TreeLoadDataInvalid,
 		},
@@ -144,17 +149,15 @@ func TestLoadTree_FailuresAtEveryStageNeverRenderTheFallback(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var store networkengine.TreeStore = networkengine.NewMemoryTreeStore()
+			var store networkengine.TreeStore
 			if tt.direct {
-				store = twoRootStore{
-					TreeStore: networkengine.NewMemoryTreeStore(),
-					treeID:    "t",
-					rows:      tt.rows,
-				}
+				store = twoRootStore{treeID: "t", rows: tt.rows}
 			} else {
+				seeded := networkengine.NewMemoryTreeStore()
 				for _, r := range tt.rows {
-					require.NoError(t, store.InsertNode(t.Context(), r))
+					require.NoError(t, seeded.InsertNode(t.Context(), r))
 				}
+				store = seeded
 			}
 
 			err := networkengine.NewTreeLoader(store, tt.engine).

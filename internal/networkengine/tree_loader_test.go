@@ -483,6 +483,7 @@ func TestTreeLoader_ValidationFailures_Structural(t *testing.T) {
 				makeNode("t", "u0", 0, nil, ptr("u0"), nil),
 				makeNode("t", "u1", 0, nil, ptr("u1"), nil),
 			},
+			// see HEU-810
 			direct:  true,
 			wantErr: "more than one depth-0 root",
 		},

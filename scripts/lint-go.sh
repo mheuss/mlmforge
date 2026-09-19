@@ -135,9 +135,10 @@ d_minor=${d_minor%%[![:digit:]]*}
 
 # Skipped unless all four parse, because the arithmetic would otherwise report a
 # bash line number and lint anyway. An absent directive is that same case: it
-# leaves both of its components empty.
-if [[ $bw_major =~ ^[0-9]+$ ]] && [[ $bw_minor =~ ^[0-9]+$ ]] \
-  && [[ $d_major =~ ^[0-9]+$ ]] && [[ $d_minor =~ ^[0-9]+$ ]] \
+# leaves both of its components empty. Bounded, because a digit string longer
+# than the arithmetic accepts is the same failure as a non-digit one.
+if [[ $bw_major =~ ^[0-9]{1,9}$ ]] && [[ $bw_minor =~ ^[0-9]{1,9}$ ]] \
+  && [[ $d_major =~ ^[0-9]{1,9}$ ]] && [[ $d_minor =~ ^[0-9]{1,9}$ ]] \
   && { [ "$bw_major" -lt "$d_major" ] \
     || { [ "$bw_major" -eq "$d_major" ] && [ "$bw_minor" -lt "$d_minor" ]; }; }; then
   echo "golangci-lint was built with an older Go line than this module targets; not linting" >&2

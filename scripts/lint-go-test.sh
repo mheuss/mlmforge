@@ -277,8 +277,8 @@ expect_with "$drift_dir" 1 "go directive not obtained" "an absent directive is r
 # only the binary's side leaves this refusal unreachable.
 expect_with "$bw_dir" 1 "older Go line than this module targets" "a prerelease directive above the binary refuses" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-rc"
-# A component that is not a number after truncation skips the comparison
-# instead of reaching the arithmetic.
+# Both components are unparsable here, so this pins the combination rather than
+# either test. The two cases below isolate them one at a time.
 expect_silent "$bw_dir" "an unparsable directive skips the comparison" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-unparsable"
 
@@ -289,9 +289,9 @@ expect_with "$(stub_dir bwrcbehind "$bw_rc_behind")" 1 "older Go line than this 
   "a prerelease binary below the directive refuses" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
 
-# Four values are tested for being numbers and each test is the only one that
-# can refuse its own input, so each needs an input where the other three pass.
-# Without one, a test can be deleted and every case stays green.
+# Each parse test is the only one that can refuse its own input, so each needs
+# an input where the others pass. Without one, a test can be deleted and every
+# case stays green.
 expect_silent "$(stub_dir bwmajorbad 'golangci-lint has version 2.13.2 built with gox.27 from x on y')" \
   "an unparsable built-with major skips the comparison" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
@@ -302,6 +302,10 @@ expect_silent "$bw_dir" "an unparsable directive major skips the comparison" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-major-unparsable"
 expect_silent "$bw_dir" "an unparsable directive minor skips the comparison" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-minor-unparsable"
+# All digits and still not a number the arithmetic accepts, which is the same
+# failure an unparsable value causes.
+expect_silent "$bw_dir" "a directive too long to compare skips the comparison" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-huge"
 
 echo "$pass passed, $fail failed, of $((pass + fail))"
 [ "$fail" = 0 ]

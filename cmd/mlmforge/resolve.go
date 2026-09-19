@@ -22,9 +22,6 @@ func resolveDBURL(flagValue string) (string, error) {
 }
 
 // resolveWorkerPath returns an absolute path to the worker binary.
-//
-// Every failure names the path and the source it was read from. Reporting the
-// path alone sends a reader hunting for which of the two set it.
 func resolveWorkerPath(flagValue string) (string, error) {
 	path, source := flagValue, "--worker"
 	if path == "" {

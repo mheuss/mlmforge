@@ -139,8 +139,8 @@ echo "$pass passed, $fail failed, of $((pass + fail))"
 if [ "$fail" != 0 ]; then
   echo "--- context for the failures above ---" >&2
   echo "baseline: $baseline" >&2
-  echo "wrapper:  $(cd "$(dirname "$src")" && /usr/bin/git log -1 --format=%h -- "$(basename "$src")" 2>/dev/null || echo unknown)" >&2
-  echo "tree:     $(cd "$root" && /usr/bin/git status --porcelain -- scripts/ | tr '\n' ' ')" >&2
-  echo "load:     $(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)" >&2
+  echo "wrapper:  $(cd "$(dirname "$src")" && git log -1 --format=%h -- "$(basename "$src")" 2>/dev/null || echo "not obtained")" >&2
+  echo "tree:     $(cd "$root" && git status --porcelain -- scripts/ 2>/dev/null | tr '\n' ' ' || echo "not obtained")" >&2
+  echo "load:     $(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null || echo "not obtained")" >&2
 fi
 [ "$fail" = 0 ]

@@ -290,8 +290,8 @@ and paste from the repo root as written.
 | Check Go version pins | `scripts/check-go-pins.sh` |
 | Test the pin check | `scripts/check-go-pins-test.sh` |
 | Test the lint check | `scripts/lint-go-test.sh` |
-| Check the lint check's tests can fail | `scripts/mutate-lint-go.sh` |
-| Check the lint config is valid | `golangci-lint config verify` |
+| Check the lint suite can fail | `scripts/mutate-lint-go.sh` |
+| Check the lint config is valid | `scripts/lint-go.sh --check-only && golangci-lint config verify` |
 | Audit (Go) | `scripts/audit-go.sh` |
 | Audit (Rust) | `cargo audit --file engine/Cargo.lock` |
 | Show what the audit scans | `scripts/audit-go.sh --list` |
@@ -309,8 +309,12 @@ The pin is `.golangci-lint-version`. The refusal prints the pinned version, the
 version you have, the path it resolved, and the command that installs the right
 one. CI installs from the same file.
 
+Its checks read the repo root while the lint runs where you are. From a
+subdirectory it compares against the root `go.mod` and lints that subtree.
+
 It also refuses when the binary was built with an older Go line than `go.mod`
-targets, because that combination exits non-zero without linting anything.
+targets. v2.11.4 against a go1.27 standard library was observed exiting non-zero
+without linting anything.
 
 ---
 

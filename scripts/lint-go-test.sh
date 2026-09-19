@@ -464,6 +464,18 @@ else
   record no "the lint runs the binary the check resolved" "args file held \"$ran_args\", wanted \"run\""
 fi
 
+# The tracked workflow has to install from the tracked pin. Nothing else checks
+# what version-file points at: the guard only refuses when both key names are
+# present, and it never reads the value. Without this, pointing CI at another
+# file leaves every suite green and the documentation quietly wrong.
+real_wf=$root/.github/workflows/ci.yml
+if grep -qE '^[[:space:]]*version-file:[[:space:]]*\.golangci-lint-version[[:space:]]*$' "$real_wf"; then
+  record yes "CI installs from the tracked pin file" ""
+else
+  record no "CI installs from the tracked pin file" \
+    "version-file line was: $(grep -E '^[[:space:]]*version-file:' "$real_wf" | tr -d '\n')"
+fi
+
 expect 1 "unknown option" "unrecognised option" --check-only --nonsense
 
 echo "$pass passed, $fail failed, of $((pass + fail))"

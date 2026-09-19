@@ -106,6 +106,11 @@ jobs:
       - name: Lint wrapper behaves
         run: scripts/lint-go-test.sh
 
+      # run does not validate the config. A misspelled key is accepted, the
+      # linter set silently falls back, and the run reports no issues.
+      - name: Lint config is valid
+        run: golangci-lint config verify
+
       - name: Lint
         run: scripts/lint-go.sh
 

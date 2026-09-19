@@ -7,6 +7,31 @@ red.
 
 The technique is not the hard part. Running it honestly is.
 
+## Prove the unmutated copy passes first
+
+The four cases below ask whether the mutated run was sound: did it compile, did
+the filter match a test, did the anchor land, did a checkout eat uncommitted
+work. None of them asks whether the *unmutated* run is sound.
+
+If the harness cannot reproduce a clean pass on an untouched copy, every row
+after that is measuring the harness. Run the suite against an unmodified copy
+before any mutation, and refuse to report anything unless it comes back green
+with a count.
+
+```bash
+baseline=$(run_suite_against "$unmutated_copy")
+case "$baseline" in *", 0 failed"*) ;; *) echo "baseline not green"; exit 1 ;; esac
+```
+
+Keep the baseline's own denominator and hold every later row to it. A mutation
+that truncates the run and goes red otherwise reads exactly like one the whole
+suite caught.
+
+This is not hypothetical. A harness that ran the copy from a directory where the
+code under test could not resolve its own default paths reported every row as
+caught, scored a perfect run, and was testing nothing. The failing case was the
+same one every time and had nothing to do with any mutation.
+
 ## The harness lies in four ways, and all four look like a clean pass
 
 Every one of these produces zero failing tests. So does a suite that genuinely

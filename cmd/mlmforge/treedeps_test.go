@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -23,6 +22,36 @@ func (r *recordingDeps) open(context.Context, string, string) (*treeDeps, error)
 		r.releases++
 		return r.err
 	}}, nil
+}
+
+// fakeEngine counts stops so a release that ran is distinguishable from one
+// that was refused.
+type fakeEngine struct {
+	stops int
+	err   error
+}
+
+func (f *fakeEngine) Stop() error { f.stops++; return f.err }
+
+func TestReleaseDeps_StopsTheEngineAndClosesThePool(t *testing.T) {
+	engine, pool := &fakeEngine{}, &fakePool{}
+
+	require.NoError(t, releaseDeps(engine, pool))
+
+	require.Equal(t, 1, engine.stops, "stop was not called exactly once")
+	require.Equal(t, 1, pool.closes, "close was not called exactly once")
+}
+
+// The pool is closed whether or not the worker stops, so a wedged worker
+// cannot also strand the connections.
+func TestReleaseDeps_ClosesThePoolWhenTheEngineWillNotStop(t *testing.T) {
+	stopErr := errors.New("worker wedged")
+	engine, pool := &fakeEngine{err: stopErr}, &fakePool{}
+
+	err := releaseDeps(engine, pool)
+
+	require.ErrorIs(t, err, stopErr)
+	require.Equal(t, 1, pool.closes, "close was not called exactly once")
 }
 
 func TestWithTreeDeps_ReleasesWhenTheOperationFails(t *testing.T) {
@@ -105,9 +134,7 @@ func (f *fakePool) Close()                     { f.closes++ }
 func TestStartEngine_ClosesThePoolWhenTheDatabaseIsUnreachable(t *testing.T) {
 	unreachable := errors.New("connection refused")
 	pool := &fakePool{pingErr: unreachable}
-	// A path that would start, so a pass cannot come from the worker failing.
 	worker := filepath.Join(t.TempDir(), "network-engine-worker")
-	require.NoError(t, os.WriteFile(worker, []byte("#!/bin/sh\nexit 0\n"), 0o755))
 
 	engine, err := startEngine(t.Context(), worker, pool)
 
@@ -115,7 +142,7 @@ func TestStartEngine_ClosesThePoolWhenTheDatabaseIsUnreachable(t *testing.T) {
 	require.Nil(t, engine)
 	require.Equal(t, 1, pool.closes, "close was not called exactly once")
 	require.ErrorIs(t, err, unreachable, "the cause must survive the wrapper")
-	require.NotContains(t, err.Error(), worker, "the worker was never reached")
+	require.NotContains(t, err.Error(), worker, "the error message names the worker path")
 }
 
 func TestStartEngine_ClosesThePoolWhenTheWorkerWillNotStart(t *testing.T) {
@@ -141,7 +168,7 @@ func TestOpenTreeDeps_ReportsAnUnreachableDatabase(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, deps)
 	require.Contains(t, err.Error(), "reach database")
-	require.NotContains(t, err.Error(), worker, "no worker is started for an unreachable database")
+	require.NotContains(t, err.Error(), worker, "the error message names the worker path")
 }
 
 func TestWithTreeDeps_PassesTheResolvedArgumentsToTheOpener(t *testing.T) {

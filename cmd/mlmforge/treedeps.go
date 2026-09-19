@@ -20,18 +20,31 @@ type treeDeps struct {
 // must carry a non-nil release.
 type depsOpener func(ctx context.Context, dbURL, workerPath string) (*treeDeps, error)
 
+// poolCloser is narrowed to the one method a release needs.
+type poolCloser interface{ Close() }
+
 // reachablePool is narrowed to the two methods startEngine calls, so a test
 // can observe the release without building a pool.
 type reachablePool interface {
+	poolCloser
 	Ping(ctx context.Context) error
-	Close()
+}
+
+// engineStopper is narrowed to the one method releaseDeps calls.
+type engineStopper interface{ Stop() error }
+
+// releaseDeps stops the engine and closes the pool.
+func releaseDeps(engine engineStopper, pool poolCloser) error {
+	stopErr := engine.Stop()
+	pool.Close()
+	if stopErr != nil {
+		return fmt.Errorf("stop worker: %w", stopErr)
+	}
+	return nil
 }
 
 // startEngine reaches the database and then starts the worker, releasing pool
 // if either fails.
-//
-// The database is checked first because it is the cheaper of the two to reach
-// and the only one that costs a subprocess to find out about.
 func startEngine(ctx context.Context, workerPath string, pool reachablePool) (*networkengine.EngineClient, error) {
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
@@ -59,16 +72,9 @@ func openTreeDeps(ctx context.Context, dbURL, workerPath string) (*treeDeps, err
 		return nil, err
 	}
 	return &treeDeps{
-		store:  networkengine.NewPostgresTreeStore(pool),
-		engine: engine,
-		release: func() error {
-			stopErr := engine.Stop()
-			pool.Close()
-			if stopErr != nil {
-				return fmt.Errorf("stop worker: %w", stopErr)
-			}
-			return nil
-		},
+		store:   networkengine.NewPostgresTreeStore(pool),
+		engine:  engine,
+		release: func() error { return releaseDeps(engine, pool) },
 	}, nil
 }
 

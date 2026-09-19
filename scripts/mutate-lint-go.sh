@@ -13,9 +13,8 @@ suite=$root/scripts/lint-go-test.sh
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-# The wrapper derives its default paths from its own location, so the copy sits
-# under a scripts/ directory whose parent carries the files those defaults name.
-# Without this every row fails the default-paths case and reads as caught.
+# Without this, every row below fails the default-paths case and reads as
+# caught.
 mkdir -p "$work/scripts" "$work/.github"
 ln -s "$root/.golangci-lint-version" "$work/.golangci-lint-version"
 ln -s "$root/go.mod" "$work/go.mod"
@@ -41,8 +40,8 @@ fi
 pass=0
 fail=0
 
-# The tracked script is never edited. The suite reads the copy through
-# LINT_GO_SCRIPT, so an interrupted run cannot leave a mutated wrapper behind.
+# The tracked script is never edited; only the copy is mutated, so an
+# interrupted run cannot leave the tracked wrapper changed.
 #
 # want is caught, when the suite must go red, or equivalent, when no input can
 # distinguish the mutation and the suite must stay green.

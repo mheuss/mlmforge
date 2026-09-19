@@ -37,13 +37,8 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-# The action prefers version over version-file and logs that it ignored the
-# file. The pin file would then be decorative while CI installed something else.
-#
-# Read over the whole file. Deciding which step a key belongs to needs a YAML
-# parser, and four line-oriented attempts each failed on a construct the next
-# one did not handle. The cost is that two actions setting one key each look
-# like one setting both; the message says so rather than naming a step.
+# Reads over the whole file: matching per step needs a YAML parser, at the
+# cost that two steps each setting one key look like one setting both.
 if [ -e "$workflow" ]; then
   # cat's stderr is left alone because it names which of the two happened.
   if ! workflow_body=$(cat "$workflow"); then

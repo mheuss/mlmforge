@@ -39,25 +39,31 @@ done
 # The action prefers version over version-file and logs that it ignored the
 # file. The pin file would then be decorative while CI installed something else.
 # Full-line comments are dropped first, so commenting a key out reads as absent.
-# Counted within one step: two steps carrying one key each are not this defect,
-# and the refusal below names a single step. The step ends at a list item
-# indented no deeper than it, because a list nested under one of its own keys is
-# still inside it.
-if [ -r "$workflow" ]; then
-  both_inputs=$(grep -v '^[[:space:]]*#' "$workflow" \
+#
+# Tracked per list item rather than from the uses: line, because a mapping's
+# keys may come in any order and the action's own key is one of them. An item
+# ends at a list item indented no deeper than it, so a list nested under one of
+# its keys is still inside it.
+if [ -e "$workflow" ]; then
+  # cat's stderr is left alone because it names which of the two happened.
+  if ! workflow_body=$(cat "$workflow"); then
+    echo "cannot read \"$workflow\"; not linting" >&2
+    exit 1
+  fi
+  both_inputs=$(printf '%s\n' "$workflow_body" | grep -v '^[[:space:]]*#' \
     | awk '
-      /uses:[[:space:]]*["'"'"']?golangci\/golangci-lint-action/ {
-        in_step = 1; v = 0; f = 0; ind = match($0, /[^ ]/) - 1; next
+      /^[[:space:]]*-([[:space:]]|$)/ {
+        ind = match($0, /[^ \t]/) - 1
+        if (open && ind <= item_ind) { if (target && v && f) both = 1; open = 0 }
+        if (!open) { open = 1; item_ind = ind; target = 0; v = 0; f = 0 }
       }
-      in_step && /^[[:space:]]*-[[:space:]]/ && match($0, /[^ ]/) - 1 <= ind {
-        if (v && f) both = 1; in_step = 0
-      }
-      in_step && /^[[:space:]]*version:/ { v = 1 }
-      in_step && /^[[:space:]]*version-file:/ { f = 1 }
-      END { if (in_step && v && f) both = 1; print both + 0 }')
+      /uses:[[:space:]]*["'"'"']?golangci\/golangci-lint-action/ { target = 1 }
+      open && /^[[:space:]]*["'"'"']?version["'"'"']?:/ { v = 1 }
+      open && /^[[:space:]]*["'"'"']?version-file["'"'"']?:/ { f = 1 }
+      END { if (open && target && v && f) both = 1; print both + 0 }')
   if [ "$both_inputs" = 1 ]; then
     echo "\"$workflow\" sets both version and version-file on one golangci-lint-action step; not linting" >&2
-    echo "  the action uses version and ignores version-file, so \"$version_file\" would not be the pin" >&2
+    echo "  the action uses version and ignores the version-file input on that step" >&2
     exit 1
   fi
 fi

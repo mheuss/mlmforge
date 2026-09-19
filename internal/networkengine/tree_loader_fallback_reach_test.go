@@ -3,6 +3,7 @@ package networkengine_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"runtime/debug"
@@ -51,6 +52,22 @@ func (m failingMutator) RemoveNode(context.Context, string, string) ([]networken
 	return nil, m.fail("RemoveNode")
 }
 
+// twoRootStore serves a fixed row set from GetByTreeDepthOrdered, the one store
+// method LoadTree reads. It answers for the tree it was built for and fails for
+// any other, so a caller reading the wrong tree cannot pass.
+type twoRootStore struct {
+	networkengine.TreeStore
+	treeID string
+	rows   []networkengine.TreeNodeRow
+}
+
+func (s twoRootStore) GetByTreeDepthOrdered(_ context.Context, treeID string) ([]networkengine.TreeNodeRow, error) {
+	if treeID != s.treeID {
+		return nil, fmt.Errorf("twoRootStore holds tree %s, asked for %s", s.treeID, treeID)
+	}
+	return s.rows, nil
+}
+
 // The fallback is safe only because every value this package constructs sets
 // its message. This drives a failure at each stage LoadTree can fail at, and
 // asserts none of them renders a fallback label. The table names the stage each
@@ -82,6 +99,8 @@ func TestLoadTree_FailuresAtEveryStageNeverRenderTheFallback(t *testing.T) {
 		// because the loader failed earlier than the case name claims.
 		wantKind  networkengine.TreeLoadRejectionKind
 		wantStage networkengine.TreeLoadStage
+		// direct hands the rows to the loader without inserting them.
+		direct bool
 	}{
 		{
 			name:     "unsupported tree type, rejected before the store read",
@@ -97,6 +116,7 @@ func TestLoadTree_FailuresAtEveryStageNeverRenderTheFallback(t *testing.T) {
 			name:     "two roots, rejected by node validation",
 			treeType: "unilevel",
 			rows:     []networkengine.TreeNodeRow{root("t", "u0"), root("t", "u1")},
+			direct:   true,
 			wantKind: networkengine.TreeLoadDataInvalid,
 		},
 		{
@@ -124,9 +144,17 @@ func TestLoadTree_FailuresAtEveryStageNeverRenderTheFallback(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			store := networkengine.NewMemoryTreeStore()
-			for _, r := range tt.rows {
-				require.NoError(t, store.InsertNode(t.Context(), r))
+			var store networkengine.TreeStore = networkengine.NewMemoryTreeStore()
+			if tt.direct {
+				store = twoRootStore{
+					TreeStore: networkengine.NewMemoryTreeStore(),
+					treeID:    "t",
+					rows:      tt.rows,
+				}
+			} else {
+				for _, r := range tt.rows {
+					require.NoError(t, store.InsertNode(t.Context(), r))
+				}
 			}
 
 			err := networkengine.NewTreeLoader(store, tt.engine).

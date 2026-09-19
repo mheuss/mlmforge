@@ -600,11 +600,16 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		ctx := context.Background()
 
 		tree := testTreeUUID(1)
-		user := testUserUUID(1)
+		rootUser := testUserUUID(1)
+		user := testUserUUID(2)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
+		// Depth 1 is deliberate; see HEU-810.
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(2), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
 
-		err := s.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), tree, user, 0, nil, nil, nil))
+		err := s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(3), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(1)))
 		require.ErrorIs(t, err, ErrActiveUserConflict)
 
 		// The sentinel says which branch. It cannot say which row, and this is

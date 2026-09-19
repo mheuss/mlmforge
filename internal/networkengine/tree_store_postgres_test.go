@@ -148,11 +148,12 @@ func TestPostgresTreeStore_DuplicateActiveSlotRejected(t *testing.T) {
 	// Two active rows with positions but NULL parents do not conflict:
 	// the index treats NULLs as distinct. This pins the real database's
 	// behavior so the MemoryTreeStore mirror has a reference to drift from.
+	// Depth 1 is deliberate; see HEU-810.
 	treeID2 := testTreeUUID(2)
 	require.NoError(t, store.InsertNode(ctx,
-		makeUUIDNode(testNodeUUID(5), treeID2, testUserUUID(5), 0, nil, ptr(testUserUUID(5)), intPtr(0))))
+		makeUUIDNode(testNodeUUID(5), treeID2, testUserUUID(5), 1, nil, ptr(testUserUUID(5)), intPtr(0))))
 	require.NoError(t, store.InsertNode(ctx,
-		makeUUIDNode(testNodeUUID(6), treeID2, testUserUUID(6), 0, nil, ptr(testUserUUID(6)), intPtr(0))))
+		makeUUIDNode(testNodeUUID(6), treeID2, testUserUUID(6), 1, nil, ptr(testUserUUID(6)), intPtr(0))))
 }
 
 func TestPostgresTreeStore_DeleteNode(t *testing.T) {

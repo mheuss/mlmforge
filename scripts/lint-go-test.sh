@@ -267,5 +267,11 @@ major_ahead='golangci-lint has version 2.13.2 built with go2.0.0 from x on y'
 expect_silent "$(stub_dir bwmajor "$major_ahead")" "a binary a major ahead is not a mismatch" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ahead"
 
+# The note is only ever printed by a refusal, so reaching it needs a version
+# mismatch as well. Without its own guard the note names a directive it did not
+# read, as an empty value in a sentence that says it has one.
+expect_with "$drift_dir" 1 "go directive not obtained" "an absent directive is reported as absent" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-nodirective"
+
 echo "$pass passed, $fail failed, of $((pass + fail))"
 [ "$fail" = 0 ]

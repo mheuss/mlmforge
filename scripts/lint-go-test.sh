@@ -325,6 +325,16 @@ expect_silent "$bw_dir" "a commented-out version is not set" \
 # Another action's step carries both key names. Only this action's step counts.
 expect_silent "$bw_dir" "another action setting both inputs is not this one" \
   "${wf_args[@]}" --workflow "$data/wf-lint-other-action.yml"
+# The same, with a later item so the close rule decides it rather than the END
+# clause. Both rules carry their own check that the item was this action's.
+expect_silent "$bw_dir" "another action's item is closed without refusing" \
+  "${wf_args[@]}" --workflow "$data/wf-lint-other-action-first.yml"
+# Tabs are not legal YAML indentation, so this is malformed input rather than a
+# shape to support. It is here because scanning for the first non-space alone
+# reports every tab-indented line at indent 0, which ends the item at its first
+# nested list and hides both keys.
+expect_with "$bw_dir" 1 "sets both version and version-file" "a tab-indented step is still one item" \
+  "${wf_args[@]}" --workflow "$data/wf-lint-tab-indent.yml"
 # A commented-out uses: still contains the action name, and the name match is
 # not anchored, so the step would be entered from a line that is not there.
 expect_silent "$bw_dir" "a commented-out uses is not this action's step" \

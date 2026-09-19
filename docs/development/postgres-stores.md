@@ -200,8 +200,17 @@ Seventeen sites in `internal/networkengine` skip when no Postgres container is
 running. Sixteen are tests and one is a benchmark. They cover the store pairs,
 commission schema and amounts, qualification history, and tree persistence.
 
-Without the container the package passes with all of them skipped. With it the
-package passes with none skipped. Both print `ok`.
+Without the container the package passes with all of them skipped. It prints
+`ok` either way.
+
+The container is not the only gate. The Rust worker binary at
+`engine/target/debug/network-engine-worker` is a second one, and the tree
+persistence integration tests are among the sites that gate on it. A run with
+the container up and the worker unbuilt still skips and still prints `ok`. Build
+it with `cargo build --workspace` in `engine/`.
+
+That gate is local only. With `CI` set it fails instead of skipping (HEU-660),
+so a green CI run says nothing about whether your own run covered those tests.
 
 **Report the package as ok with zero failures, and say how many skipped.**
 

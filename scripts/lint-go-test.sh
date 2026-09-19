@@ -210,8 +210,8 @@ expect_with "$(stub_dir vprefixed "$v_line")" 0 "" "a binary reporting a leading
 expect_with "$(stub_dir drift2 "$old_line")" 1 "go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2" \
   "the mismatch names the install command" --check-only --version-file "$data/lintver-ok"
 
-# Four of the go.mod mutations leave the exit code at 0 and change only what
-# lands on stderr, so these cases compare the whole output rather than the code.
+# Three of the go.mod mutations leave the exit code at 0 and change only what
+# lands on stderr, so those cases compare the whole output rather than the code.
 expect_silent() {
   local dir=$1 name=$2 out rc
   shift 2

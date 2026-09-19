@@ -1604,6 +1604,86 @@ func TestHandleRootAdded_ReconcileDivergesOnADifferentEnrolledAt(t *testing.T) {
 // The compensation names a user. A delete that ignored it would undo whichever
 // row it reached first, and every other test here runs against a store holding
 // only this event's row.
+// readTrippingStore fails the test if GetNodeIncludingRemoved is called. The
+// success and insert-conflict paths must gain no query, and a passing test that
+// never asserts the absence would not notice one appearing.
+type readTrippingStore struct {
+	*MemoryTreeStore
+	t *testing.T
+}
+
+func (s readTrippingStore) GetNodeIncludingRemoved(context.Context, string, string) (*TreeNodeRow, error) {
+	s.t.Helper()
+	s.t.Fatal("the cancellation read ran on a path that should not reach it")
+	return nil, nil
+}
+
+func TestHandleRootAdded_UncancelledPathsDoNotReadBack(t *testing.T) {
+	t.Run("the insert succeeds and the engine accepts", func(t *testing.T) {
+		store := readTrippingStore{MemoryTreeStore: NewMemoryTreeStore(), t: t}
+		c := NewTreeEventConsumer(store, newEngineClientWithTransport(&reconcileTransport{}))
+		c.retryDelay = 0
+
+		require.NoError(t, c.HandleEvent(context.Background(), makeEvent(EventTypeRootAdded, rootPayload())))
+	})
+
+	t.Run("the insert is refused by the root index", func(t *testing.T) {
+		store := readTrippingStore{MemoryTreeStore: NewMemoryTreeStore(), t: t}
+		ctx := context.Background()
+		require.NoError(t, store.InsertNode(ctx, TreeNodeRow{
+			ID: "cafe0000-0000-4000-8000-00000000beef", TreeID: "tree1",
+			UserID: posOther, Depth: 0, EnrolledAt: posEnrolled,
+		}))
+		c := NewTreeEventConsumer(store, newEngineClientWithTransport(&reconcileTransport{}))
+		c.retryDelay = 0
+
+		require.ErrorIs(t, c.HandleEvent(ctx, makeEvent(EventTypeRootAdded, rootPayload())), ErrRootConflict)
+	})
+}
+
+// ctxReadingStore models what PostgresTreeStore does and MemoryTreeStore does
+// not: a read on a cancelled context fails. Without it, a test asserting the
+// detached read works passes against an implementation that never detaches.
+type ctxReadingStore struct {
+	*deleteRecordingStore
+	reads []string
+}
+
+func (s *ctxReadingStore) GetNodeIncludingRemoved(ctx context.Context, treeID, userID string) (*TreeNodeRow, error) {
+	s.reads = append(s.reads, userID)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return s.deleteRecordingStore.GetNodeIncludingRemoved(ctx, treeID, userID)
+}
+
+// A cancellation arriving before reconcile is entered leaves the row this
+// delivery inserted. The error names the cancellation. It must also name what
+// the store was observed to hold, and must claim nothing about the engine.
+func TestHandleRootAdded_CancelledInsertReportsTheRow(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tr := &reconcileTransport{
+		mutationErr: &EngineError{Code: engineCodeRootAlreadyExists},
+		onMutation:  cancel,
+	}
+	store := &ctxReadingStore{deleteRecordingStore: &deleteRecordingStore{MemoryTreeStore: NewMemoryTreeStore()}}
+	c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
+	c.retryDelay = 0
+
+	// Held rather than inlined, so the assertion can name the event id the
+	// row carries.
+	event := makeEvent(EventTypeRootAdded, rootPayload())
+	err := c.HandleEvent(ctx, event)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled, "the cancellation is still the cause")
+	assert.Contains(t, err.Error(), "an active row carrying event", "the message says what the read returned")
+	assert.Contains(t, err.Error(), event.ID, "and which row it was")
+	assert.Equal(t, []string{posUser}, store.reads, "the read was attempted")
+}
+
 // The defect's own scenario, after migration 000006. The insert is refused, so
 // no engine call exists to be cancelled and there is nothing to compensate.
 func TestHandleRootAdded_SecondRootRefusedBeforeTheEngine(t *testing.T) {

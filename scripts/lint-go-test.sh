@@ -335,6 +335,24 @@ expect_silent "$bw_dir" "another action's item is closed without refusing" \
 # nested list and hides both keys.
 expect_with "$bw_dir" 1 "sets both version and version-file" "a tab-indented step is still one item" \
   "${wf_args[@]}" --workflow "$data/wf-lint-tab-indent.yml"
+# A list written at its parent key's indent opens an item that no deeper step
+# marker can close, so without a rule for a dedenting mapping key the whole
+# document becomes one item and every step merges into it.
+expect_silent "$bw_dir" "a shallow list does not swallow the steps below it" \
+  "${wf_args[@]}" --workflow "$data/wf-lint-shallow-list.yml"
+# Each of the three flags has to clear when an item reopens. Deleting any one
+# carries it into the next item, and the fixture that catches one carries the
+# other two past it.
+expect_silent "$bw_dir" "the action flag does not carry into the next item" \
+  "${wf_args[@]}" --workflow "$data/wf-lint-target-carry.yml"
+expect_silent "$bw_dir" "the version flag does not carry into the next item" \
+  "${wf_args[@]}" --workflow "$data/wf-lint-version-carry.yml"
+# A list item may be a lone dash with its mapping on the lines below.
+expect_with "$bw_dir" 1 "sets both version and version-file" "a bare dash opens an item" \
+  "${wf_args[@]}" --workflow "$data/wf-lint-bare-dash.yml"
+# A blank line has no indentation to compare, so it must not end the item.
+expect_with "$bw_dir" 1 "sets both version and version-file" "a blank line does not end the item" \
+  "${wf_args[@]}" --workflow "$data/wf-lint-blank-lines.yml"
 # A commented-out uses: still contains the action name, and the name match is
 # not anchored, so the step would be entered from a line that is not there.
 expect_silent "$bw_dir" "a commented-out uses is not this action's step" \
@@ -352,9 +370,7 @@ expect_with "$bw_dir" 1 "sets both version and version-file" "a nested list does
 expect_with "$bw_dir" 1 "sets both version and version-file" "keys before uses are still this step's" \
   "${wf_args[@]}" --workflow "$data/wf-lint-keys-before-uses.yml"
 # The compact form puts the list marker and uses: on one line, so the rule that
-# closes the previous item has to run before the one that opens this one. It
-# also puts the item marker at the same indent as uses:, which is the only
-# shape that tells the boundary's <= from a <.
+# closes the previous item has to run before the one that opens this one.
 expect_with "$bw_dir" 1 "sets both version and version-file" "a compact uses closes the item before it" \
   "${wf_args[@]}" --workflow "$data/wf-lint-compact-uses.yml"
 # Quoting a key is valid YAML and leaves the name unchanged.

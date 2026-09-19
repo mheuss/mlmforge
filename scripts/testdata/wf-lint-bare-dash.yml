@@ -1,0 +1,8 @@
+jobs:
+  go:
+    steps:
+      -
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.13.2
+          version-file: .golangci-lint-version

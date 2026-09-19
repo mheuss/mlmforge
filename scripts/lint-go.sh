@@ -52,12 +52,19 @@ if [ -e "$workflow" ]; then
   fi
   both_inputs=$(printf '%s\n' "$workflow_body" | grep -v '^[[:space:]]*#' \
     | awk '
+      # A blank line carries no indentation, so it ends nothing.
+      /^[[:space:]]*$/ { next }
       /^[[:space:]]*-([[:space:]]|$)/ {
         ind = match($0, /[^ \t]/) - 1
         if (open && ind <= item_ind) { if (target && v && f) both = 1; open = 0 }
         if (!open) { open = 1; item_ind = ind; target = 0; v = 0; f = 0 }
       }
-      /uses:[[:space:]]*["'"'"']?golangci\/golangci-lint-action/ { target = 1 }
+      # A mapping key at or left of the marker ends the item too. Without this
+      # an item opened by a shallow marker runs to the end of the document.
+      open && !/^[[:space:]]*-([[:space:]]|$)/ && match($0, /[^ \t]/) - 1 <= item_ind {
+        if (target && v && f) both = 1; open = 0
+      }
+      open && /uses:[[:space:]]*["'"'"']?golangci\/golangci-lint-action/ { target = 1 }
       open && /^[[:space:]]*["'"'"']?version["'"'"']?:/ { v = 1 }
       open && /^[[:space:]]*["'"'"']?version-file["'"'"']?:/ { f = 1 }
       END { if (open && target && v && f) both = 1; print both + 0 }')

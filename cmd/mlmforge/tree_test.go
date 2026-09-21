@@ -5,8 +5,10 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -163,9 +165,7 @@ func (f *failingLoader) LoadTree(context.Context, string, string, ...networkengi
 	return f.err
 }
 
-// The failure reaches the operator exactly once, through cobra, and brings no
-// usage dump with it. Silencing errors as well as usage is what made every
-// failure before the loader silent.
+// The failure reaches the operator exactly once, and brings no usage dump.
 func TestTreeLoadCmd_ReportsAFailureOnceWithoutUsage(t *testing.T) {
 	cmd := newTreeCmdWith(
 		func(context.Context, string, string) (*treeDeps, error) {
@@ -187,9 +187,9 @@ func TestTreeLoadCmd_ReportsAFailureOnceWithoutUsage(t *testing.T) {
 	require.NotContains(t, out.String(), "Usage:")
 }
 
-// The test above drives the group, which passes with SilenceUsage on the group
-// as well as on load. This drives the root command, the entry point a real
-// invocation uses and the only one where those two differ.
+// Driving the root command is what distinguishes SilenceUsage on load from
+// SilenceUsage on the group. A test that drives the group alone passes either
+// way.
 func TestRootCmd_SilenceUsageIsSetWhereARealInvocationReadsIt(t *testing.T) {
 	// newRootCmd wires the real opener, so the failure has to land before it.
 	// An unresolvable --db-url would dial whatever the host resolves to.
@@ -211,40 +211,40 @@ func TestRootCmd_SilenceUsageIsSetWhereARealInvocationReadsIt(t *testing.T) {
 	require.NotContains(t, out.String(), "Usage:")
 }
 
-// ctxRecordingLoader cancels the command's parent context and reports whether
-// the context it was handed saw it.
-type ctxRecordingLoader struct {
-	cancelParent func()
-	sawDone      bool
-}
+// sigLoader raises SIGINT at this process and reports whether the context it
+// was handed saw the cancellation.
+type sigLoader struct{ sawDone bool }
 
-func (c *ctxRecordingLoader) LoadTree(ctx context.Context, _, _ string, _ ...networkengine.LoadTreeOption) error {
-	c.cancelParent()
+func (l *sigLoader) LoadTree(ctx context.Context, _, _ string, _ ...networkengine.LoadTreeOption) error {
+	if err := syscall.Kill(syscall.Getpid(), syscall.SIGINT); err != nil {
+		return err
+	}
 	select {
 	case <-ctx.Done():
-		c.sawDone = true
-	case <-time.After(time.Second):
+		l.sawDone = true
+	case <-time.After(2 * time.Second):
 	}
 	return ctx.Err()
 }
 
-// The command derives its own signal-aware context inside RunE. This proves
-// the derived one still carries its parent's cancellation through to the
-// loader. SIGINT delivery itself is not covered here: registering a handler in
-// the test process would make a removal of the wiring kill the test binary
-// rather than fail a case.
-func TestTreeLoadCmd_CancellationReachesTheLoader(t *testing.T) {
-	parent, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	rec := &ctxRecordingLoader{cancelParent: cancel}
+// The keep-alive takes SIGINT off its default disposition for this process, so
+// a missing registration fails this case instead of killing the test binary.
+// Registrations multiplex, so it does not mask the one under test.
+//
+// This covers one half, that the load is cancelled. It does not cover that
+// migrate is left alone, which needs a subprocess.
+func TestTreeLoadCmd_SIGINTCancelsTheLoad(t *testing.T) {
+	keepAlive := make(chan os.Signal, 1)
+	signal.Notify(keepAlive, os.Interrupt)
+	defer signal.Stop(keepAlive)
 
+	loader := &sigLoader{}
 	cmd := newTreeCmdWith(
 		func(context.Context, string, string) (*treeDeps, error) {
 			return &treeDeps{release: func() error { return nil }}, nil
 		},
-		func(*treeDeps) treeLoader { return rec },
+		func(*treeDeps) treeLoader { return loader },
 	)
-	cmd.SetContext(parent)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetArgs([]string{
@@ -253,7 +253,7 @@ func TestTreeLoadCmd_CancellationReachesTheLoader(t *testing.T) {
 	})
 
 	require.Error(t, cmd.Execute())
-	require.True(t, rec.sawDone, "the loader's context must see the parent cancellation")
+	require.True(t, loader.sawDone, "SIGINT must reach the loader's context")
 }
 
 // workerStub writes an executable file so resolveWorkerPath succeeds without a

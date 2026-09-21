@@ -35,7 +35,6 @@ func newTreeCmdWith(open depsOpener, loader loaderFor) *cobra.Command {
 		Use:   "tree",
 		Short: "Tree persistence commands",
 		Long:  "Commands that reach the tree persistence layer.",
-		Args:  cobra.NoArgs,
 	}
 
 	dbURL := treeCmd.PersistentFlags().String("db-url", "", "PostgreSQL connection URL (or set DATABASE_URL env var)")
@@ -79,9 +78,8 @@ func newTreeLoadCmd(resolve flagResolver, open depsOpener, loader loaderFor) *co
 			if err != nil {
 				return err
 			}
-			// Established here rather than on the root command. Registering a
-			// handler at the root disables the default SIGINT kill for every
-			// command, including ones that never read the context.
+			// Established here rather than on the root command, which would
+			// disable the default SIGINT kill for every command in the binary.
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 			opts := loadTreeOptions(treeType, width, spillover)

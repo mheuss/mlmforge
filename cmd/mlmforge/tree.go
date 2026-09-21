@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/mlmforge/mlmforge/internal/networkengine"
 	"github.com/spf13/cobra"
@@ -68,17 +71,21 @@ func newTreeLoadCmd(resolve flagResolver, open depsOpener, loader loaderFor) *co
 		Long: "Opens a database pool, starts the engine worker, replays one stored tree, and exits. " +
 			"The worker is started and stopped per invocation.",
 		Args: cobra.NoArgs,
-		// Moving these to the tree group leaves a real invocation dumping
-		// usage after the operator message.
-		SilenceErrors: true,
-		SilenceUsage:  true,
+		// Moving this to the tree group leaves a real invocation dumping
+		// usage after the error line.
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			url, workerPath, err := resolve()
 			if err != nil {
 				return err
 			}
+			// Established here rather than on the root command. Registering a
+			// handler at the root disables the default SIGINT kill for every
+			// command, including ones that never read the context.
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
 			opts := loadTreeOptions(treeType, width, spillover)
-			return withTreeDeps(cmd.Context(), open, url, workerPath,
+			return withTreeDeps(ctx, open, url, workerPath,
 				func(ctx context.Context, deps *treeDeps) error {
 					return runTreeLoad(ctx, cmd.OutOrStdout(), loader(deps), treeID, treeType, opts)
 				})

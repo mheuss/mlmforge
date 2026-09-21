@@ -163,9 +163,9 @@ func (f *failingLoader) LoadTree(context.Context, string, string, ...networkengi
 	return f.err
 }
 
-// The flags sit on load rather than on the group because ExecuteC reads only
-// the leaf and the command it was called on, never the ancestors between them.
-// On the group this assertion still passes and production still dumps usage.
+// The failure reaches the operator exactly once, through cobra, and brings no
+// usage dump with it. Silencing errors as well as usage is what made every
+// failure before the loader silent.
 func TestTreeLoadCmd_ReportsAFailureOnceWithoutUsage(t *testing.T) {
 	cmd := newTreeCmdWith(
 		func(context.Context, string, string) (*treeDeps, error) {
@@ -183,15 +183,14 @@ func TestTreeLoadCmd_ReportsAFailureOnceWithoutUsage(t *testing.T) {
 
 	require.Error(t, cmd.Execute())
 	require.Equal(t, 1, strings.Count(out.String(), "load failed: boom"))
+	require.Contains(t, out.String(), "Error:")
 	require.NotContains(t, out.String(), "Usage:")
-	require.NotContains(t, out.String(), "Error:")
 }
 
-// The test above passes with the flags on the group too, so it cannot tell the
-// working placement from the broken one. This drives the root command, which
-// is the entry point a real invocation uses and the only one where the
-// difference shows.
-func TestRootCmd_TreeLoadFailureDoesNotDumpUsage(t *testing.T) {
+// The test above drives the group, which passes with SilenceUsage on the group
+// as well as on load. This drives the root command, the entry point a real
+// invocation uses and the only one where those two differ.
+func TestRootCmd_SilenceUsageIsSetWhereARealInvocationReadsIt(t *testing.T) {
 	// newRootCmd wires the real opener, so the failure has to land before it.
 	// An unresolvable --db-url would dial whatever the host resolves to.
 	t.Setenv("DATABASE_URL", "")
@@ -208,8 +207,53 @@ func TestRootCmd_TreeLoadFailureDoesNotDumpUsage(t *testing.T) {
 	err := root.Execute()
 
 	require.ErrorContains(t, err, "--db-url flag or DATABASE_URL env var is required")
+	require.Contains(t, out.String(), "--db-url flag or DATABASE_URL env var is required")
 	require.NotContains(t, out.String(), "Usage:")
-	require.NotContains(t, out.String(), "Error:")
+}
+
+// ctxRecordingLoader cancels the command's parent context and reports whether
+// the context it was handed saw it.
+type ctxRecordingLoader struct {
+	cancelParent func()
+	sawDone      bool
+}
+
+func (c *ctxRecordingLoader) LoadTree(ctx context.Context, _, _ string, _ ...networkengine.LoadTreeOption) error {
+	c.cancelParent()
+	select {
+	case <-ctx.Done():
+		c.sawDone = true
+	case <-time.After(time.Second):
+	}
+	return ctx.Err()
+}
+
+// The command derives its own signal-aware context inside RunE. This proves
+// the derived one still carries its parent's cancellation through to the
+// loader. SIGINT delivery itself is not covered here: registering a handler in
+// the test process would make a removal of the wiring kill the test binary
+// rather than fail a case.
+func TestTreeLoadCmd_CancellationReachesTheLoader(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rec := &ctxRecordingLoader{cancelParent: cancel}
+
+	cmd := newTreeCmdWith(
+		func(context.Context, string, string) (*treeDeps, error) {
+			return &treeDeps{release: func() error { return nil }}, nil
+		},
+		func(*treeDeps) treeLoader { return rec },
+	)
+	cmd.SetContext(parent)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{
+		"load", "--db-url", "postgres://x", "--worker", workerStub(t),
+		"--tree-id", "t9", "--tree-type", "unilevel",
+	})
+
+	require.Error(t, cmd.Execute())
+	require.True(t, rec.sawDone, "the loader's context must see the parent cancellation")
 }
 
 // workerStub writes an executable file so resolveWorkerPath succeeds without a

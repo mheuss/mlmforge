@@ -233,9 +233,8 @@ func TestRunTreeLoad_StopsWhenTheContextIsCancelledBetweenAttempts(t *testing.T)
 	require.ErrorIs(t, err, context.Canceled, "the cancellation must reach the caller")
 	require.ErrorIs(t, err, loader.err, "the load failure must not be dropped")
 	require.Equal(t, 1, loader.attempts)
-	require.Equal(t,
-		"load refused before any engine call (store_read_failed); the engine is unchanged\n",
-		out.String())
+	require.EqualError(t, err, "load refused before any engine call (store_read_failed); the engine is unchanged")
+	require.Empty(t, out.String())
 }
 
 func TestRunTreeLoad_ReportsARejectionAsLeavingTheEngineUnchanged(t *testing.T) {
@@ -244,11 +243,10 @@ func TestRunTreeLoad_ReportsARejectionAsLeavingTheEngineUnchanged(t *testing.T) 
 	}}
 	var out bytes.Buffer
 
-	_ = runTreeLoad(t.Context(), &out, loader, "t", "unilevel", nil)
+	err := runTreeLoad(t.Context(), &out, loader, "t", "unilevel", nil)
 
-	require.Equal(t,
-		"load refused before any engine call (data_invalid); the engine is unchanged\n",
-		out.String())
+	require.EqualError(t, err, "load refused before any engine call (data_invalid); the engine is unchanged")
+	require.Empty(t, out.String())
 }
 
 func TestRunTreeLoad_ReportsAnIncompleteLoadWithItsCounts(t *testing.T) {
@@ -258,11 +256,10 @@ func TestRunTreeLoad_ReportsAnIncompleteLoadWithItsCounts(t *testing.T) {
 	}}
 	var out bytes.Buffer
 
-	_ = runTreeLoad(t.Context(), &out, loader, "t", "unilevel", nil)
+	err := runTreeLoad(t.Context(), &out, loader, "t", "unilevel", nil)
 
-	require.Equal(t,
-		"load stopped at the root stage; the engine acknowledged 0 of 47 placements\n",
-		out.String())
+	require.EqualError(t, err, "load stopped at the root stage; the engine acknowledged 0 of 47 placements")
+	require.Empty(t, out.String())
 }
 
 // Reporting this as a rejection would understate what the engine may hold.
@@ -274,20 +271,20 @@ func TestRunTreeLoad_ReportsAChainHoldingBothAsIncomplete(t *testing.T) {
 	}}
 	var out bytes.Buffer
 
-	_ = runTreeLoad(t.Context(), &out, loader, "t", "unilevel", nil)
+	err := runTreeLoad(t.Context(), &out, loader, "t", "unilevel", nil)
 
-	require.Equal(t,
-		"load stopped at the nodes stage; the engine acknowledged 0 of 4 placements\n",
-		out.String())
+	require.EqualError(t, err, "load stopped at the nodes stage; the engine acknowledged 0 of 4 placements")
+	require.Empty(t, out.String())
 }
 
 func TestRunTreeLoad_ReportsAnUntypedFailure(t *testing.T) {
 	loader := &stubLoader{err: errors.New("something else")}
 	var out bytes.Buffer
 
-	_ = runTreeLoad(t.Context(), &out, loader, "t", "unilevel", nil)
+	err := runTreeLoad(t.Context(), &out, loader, "t", "unilevel", nil)
 
-	require.Equal(t, "load failed: something else\n", out.String())
+	require.EqualError(t, err, "load failed: something else")
+	require.Empty(t, out.String())
 }
 
 func TestRunTreeLoad_ReportsSuccess(t *testing.T) {

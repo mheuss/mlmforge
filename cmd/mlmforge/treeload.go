@@ -63,31 +63,41 @@ func runTreeLoad(ctx context.Context, out io.Writer, loader treeLoader, treeID, 
 				// The load error goes out too. A bare cancellation tells the
 				// operator nothing about what was failing.
 				err = errors.Join(err, ctx.Err())
-				reportLoadFailure(out, err)
-				return err
+				return newTreeLoadFailure(err)
 			case <-time.After(loadRetryDelay):
 			}
 		}
 	}
-	reportLoadFailure(out, err)
-	return err
+	return newTreeLoadFailure(err)
 }
 
-// reportLoadFailure states what the load left behind. The two typed errors are
-// told apart with errors.As, never by matching on the message.
-func reportLoadFailure(out io.Writer, err error) {
+// treeLoadFailure carries the operator message while keeping the cause
+// reachable through errors.Is and errors.As.
+type treeLoadFailure struct {
+	msg string
+	err error
+}
+
+func newTreeLoadFailure(err error) *treeLoadFailure {
+	return &treeLoadFailure{msg: treeLoadFailureMessage(err), err: err}
+}
+
+func (e *treeLoadFailure) Error() string { return e.msg }
+func (e *treeLoadFailure) Unwrap() error { return e.err }
+
+// treeLoadFailureMessage states what the load left behind. The two typed errors
+// are told apart with errors.As, never by matching on the message.
+func treeLoadFailureMessage(err error) string {
 	// Incomplete is checked first, matching treeLoadRetryable. A chain holding
 	// both must not be reported as leaving the engine unchanged.
 	var incomplete *networkengine.TreeLoadIncompleteError
 	if errors.As(err, &incomplete) {
-		_, _ = fmt.Fprintf(out, "load stopped at the %s stage; the engine acknowledged %d of %d placements\n",
+		return fmt.Sprintf("load stopped at the %s stage; the engine acknowledged %d of %d placements",
 			incomplete.Stage, incomplete.Confirmed, incomplete.Total)
-		return
 	}
 	var rejected *networkengine.TreeLoadRejectedError
 	if errors.As(err, &rejected) {
-		_, _ = fmt.Fprintf(out, "load refused before any engine call (%s); the engine is unchanged\n", rejected.Kind)
-		return
+		return fmt.Sprintf("load refused before any engine call (%s); the engine is unchanged", rejected.Kind)
 	}
-	_, _ = fmt.Fprintf(out, "load failed: %s\n", err)
+	return fmt.Sprintf("load failed: %s", err)
 }

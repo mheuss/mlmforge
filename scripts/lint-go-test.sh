@@ -7,8 +7,6 @@ set -uo pipefail
 export LC_ALL=C
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-# Overridable so a mutation harness can point the suite at a copy instead of
-# editing the tracked script in place.
 check=${LINT_GO_SCRIPT:-$root/scripts/lint-go.sh}
 data=$root/scripts/testdata
 
@@ -94,7 +92,7 @@ expect 1 "is not a complete version" "empty pin file" \
   --check-only --version-file "$data/lintver-empty"
 expect 1 "is not a complete version" "two-line pin file" \
   --check-only --version-file "$data/lintver-twolines"
-# A three-line pin. No other case rejects one.
+# A three-line pin.
 expect 1 "is not a complete version" "non-dot separators" \
   --check-only --version-file "$data/lintver-separators"
 expect 0 "" "bare pin without a leading v" \
@@ -194,7 +192,7 @@ if [ "$rc" = 1 ] && [[ $out == *"not obtained"* ]] && [[ $out == *"v2.13.2"* ]];
 else
   record no "no binary on PATH" "rc=$rc: $out"
 fi
-# Real golangci-lint prints no leading v, so no other case carries one.
+# Real golangci-lint prints no leading v.
 v_line='golangci-lint has version v2.13.2 built with go1.27.0 from abc1234 on 2026-08-27T23:01:12Z'
 expect_with "$(stub_dir vprefixed "$v_line")" 0 "" "a binary reporting a leading v still matches" \
   --check-only --version-file "$data/lintver-ok"
@@ -224,7 +222,7 @@ expect_with "$bw_dir" 1 "older Go line than this module targets" "built-with go 
 expect_silent "$bw_dir" "a directive patch above the binary's is not a mismatch" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-patch-ahead"
 
-# A commented go line above the directive. No other fixture has one.
+# A commented go line above the directive.
 expect_with "$bw_dir" 1 "go directive is 1.28.0" "a commented go line is not the directive" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-comment"
 # Two go lines, both behind the binary, so only the reported value differs.
@@ -242,16 +240,12 @@ rc_match='golangci-lint has version 2.13.2 built with go1.28rc1 from x on y'
 expect_silent "$(stub_dir bwrc "$rc_match")" "a prerelease built-with above the directive is not a mismatch" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
 
-# The only two cases where the majors differ.
 expect_with "$bw_dir" 1 "go directive is 2.0.0" "a directive a major ahead refuses" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-major-ahead"
 major_ahead='golangci-lint has version 2.13.2 built with go2.0.0 from x on y'
 expect_silent "$(stub_dir bwmajor "$major_ahead")" "a binary a major ahead is not a mismatch" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ahead"
 
-# A mismatch is observed before the go.mod is read, so an unreadable go.mod
-# cannot suppress it. The message says the directive was not reached rather
-# than reporting it as absent, which it has not established.
 expect_with "$drift_dir" 1 "go directive not read yet" "a mismatch outranks an unread directive" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-nodirective"
 expect_with "$drift_dir" 1 "go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2" \
@@ -265,8 +259,8 @@ expect_with "$(stub_dir bwgarbage 'golangci-lint has version 2.13.2 built with g
 # A prerelease on the directive's side. Go writes that form.
 expect_with "$bw_dir" 1 "older Go line than this module targets" "a prerelease directive above the binary refuses" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-rc"
-# Both components are unparsable here, so this pins the combination rather than
-# either test. The two cases below isolate them one at a time.
+# Both components are unparsable here. This pins the combination rather than
+# either half alone.
 expect_with "$bw_dir" 1 "cannot compare the built-with Go line" "an unparsable directive refuses" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-unparsable"
 
@@ -287,7 +281,6 @@ expect_with "$bw_dir" 1 "cannot compare the built-with Go line" "an unparsable d
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-major-unparsable"
 expect_with "$bw_dir" 1 "cannot compare the built-with Go line" "an unparsable directive minor refuses" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-minor-unparsable"
-# All digits, and longer than any number the arithmetic accepts.
 expect_with "$bw_dir" 1 "cannot compare the built-with Go line" "a directive too long to compare refuses" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-huge"
 
@@ -309,7 +302,7 @@ expect_with "$bw_dir" 1 "sets both version and version-file" "quoted key names a
 # YAML allows space before the colon and the key is the same key.
 expect_with "$bw_dir" 1 "sets both version and version-file" "a space before the colon is the same key" \
   "${wf_args[@]}" --workflow "$data/wf-lint-spaced-colon.yml"
-# A workflow larger than a pipe buffer. No other fixture is.
+# A workflow larger than a pipe buffer.
 big=$work/wf-lint-big.yml
 cat "$data/wf-lint-both.yml" > "$big"
 for i in $(seq 1 4000); do echo "          # padding $i"; done >> "$big"
@@ -326,9 +319,7 @@ expect_with "$bw_dir" 1 "key-shaped lines anywhere in the file" "two steps with 
 expect_with "$bw_dir" 1 "key-shaped lines anywhere in the file" "another action's keys still refuse" \
   "${wf_args[@]}" --workflow "$data/wf-lint-other-action.yml"
 
-# The guard compares key spellings byte for byte, so a key written with a YAML
-# escape is a different string to it. This fixture spells version as
-# "ver\u0073ion" and is not seen.
+# The fixture spells the key with a YAML escape rather than as version.
 expect_silent "$bw_dir" "an escaped key spelling is not seen" \
   "${wf_args[@]}" --workflow "$data/wf-lint-escaped-key.yml"
 

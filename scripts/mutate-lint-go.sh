@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Checks that scripts/lint-go-test.sh can fail. Each row breaks one guard in a
+# Checks that the lint test suite can fail. Each row breaks one guard in a
 # copy of the wrapper and asserts whether the suite notices.
 #
 # Every row declares the outcome it expects, so a row whose expression stops

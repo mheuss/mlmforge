@@ -88,9 +88,8 @@ func requireWorkerNotStale(t *testing.T, binPath string, built time.Time) {
 }
 
 // isWorkerInput reports whether a change to path can change the worker binary.
-// Sources are the obvious half. A manifest or the lockfile changes what gets
-// compiled in without any .rs file being touched.
 func isWorkerInput(path string) bool {
+	// Narrowing this to .rs makes the check green over a dependency bump.
 	switch filepath.Base(path) {
 	case "Cargo.toml", "Cargo.lock":
 		return true

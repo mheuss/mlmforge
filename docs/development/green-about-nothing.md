@@ -7,17 +7,17 @@ of it.
 This is not the same as a test that cannot fail. That one is empty. These
 checks work, on the things they reach.
 
-## Three from one branch, one day
+## From one branch, one day
 
 HEU-788, 2026-09-21.
 
-- **The text pass could not see `docs/plans`.** The skill builds its scope from
-  the diff plus untracked files. That directory is gitignored, so it is
-  neither. Run to the letter, the pass would have read none of the plan
-  amendments or the handoff and returned a verdict.
-- **The worker staleness check watched only `.rs` files.** `Cargo.toml` and
-  `Cargo.lock` change what gets compiled without any source file being touched.
-  `cargo update` changed the binary and the check reported fresh.
+- **The text pass could not see the plan directory.** That directory is
+  gitignored. The skill builds its scope from the diff plus untracked files, so
+  it is neither. Run to the letter, the pass would have read none of the plan
+  amendments or the handoff, and returned a verdict.
+- **The worker staleness check watched only Rust sources.** A manifest or a
+  lockfile changes what gets compiled without any source file being touched. A
+  dependency bump changed the binary and the check reported fresh.
 - **A test asserted a distinction it could not make.** It named two failures
   that had rendered identically and claimed to tell them apart. Its doubles
   were keyed literals with no message, so both rendered the same fallback. It

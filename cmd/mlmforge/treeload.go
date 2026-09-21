@@ -115,10 +115,10 @@ func treeLoadFailureMessage(err error) string {
 	return fmt.Sprintf("load failed: %s", err)
 }
 
-// interrupted names a cancellation that errors.As would otherwise drop. It
-// pulls one member out of a join, so a cancellation joined beside a typed
-// error never reaches the rendered line.
+// interrupted names a cancellation that errors.As would otherwise drop.
 func interrupted(err error) string {
+	// errors.As pulls one member out of a join, so a cancellation joined
+	// beside a typed error is invisible to the branches above.
 	switch {
 	case errors.Is(err, context.Canceled):
 		return " (the run was cancelled)"

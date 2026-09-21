@@ -77,11 +77,8 @@ func openTreeDeps(ctx context.Context, dbURL, workerPath string) (*treeDeps, err
 	}, nil
 }
 
-// withTreeDeps runs one operation and releases the dependencies afterwards.
-//
-// A release failure is reported to warn and does not change the error. The
-// exit code describes the operation the caller asked for, and a load that
-// completed must not send an operator back to re-run it.
+// withTreeDeps runs one operation and releases the dependencies afterwards. A
+// release failure is written to warn and does not change the returned error.
 func withTreeDeps(ctx context.Context, warn io.Writer, open depsOpener, dbURL, workerPath string, run treeRunner) (err error) {
 	deps, err := open(ctx, dbURL, workerPath)
 	if err != nil {

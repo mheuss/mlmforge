@@ -110,8 +110,7 @@ func TestResolveWorkerPath_ErrorsWhenNeitherIsSet(t *testing.T) {
 }
 
 // A path that exists but cannot be run is a worker-path failure, so it has to
-// name the path and the source the way an absent one does. Without this the
-// case surfaces later, out of the engine start, which does not know the source.
+// name the path and the source the way an absent one does.
 func TestResolveWorkerPath_RejectsAPathItCannotRun(t *testing.T) {
 	dir := t.TempDir()
 	notExecutable := filepath.Join(dir, "network-engine-worker")

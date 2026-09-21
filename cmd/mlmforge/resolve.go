@@ -38,8 +38,7 @@ func resolveWorkerPath(flagValue string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("worker binary not found at %s, read from %s: %w", abs, source, err)
 	}
-	// Checked here so the failure names the path and the source. Left to the
-	// exec, it surfaces from the engine start, which knows neither.
+	// Checked here so the failure names the path and the source.
 	if info.IsDir() {
 		return "", fmt.Errorf("worker path %s, read from %s, is a directory", abs, source)
 	}

@@ -86,10 +86,6 @@ func TestWithTreeDeps_ReleasesWhenTheOperationPanics(t *testing.T) {
 	require.Equal(t, 1, rec.releases, "release was not called exactly once")
 }
 
-// Reversed 2026-09-21. This case previously asserted that a release failure
-// became the command's error. It exits 0 now: the run is what the operator
-// asked for, and reporting a failure over a run that completed invites them to
-// do it again.
 func TestWithTreeDeps_SucceedsWhenOnlyTheReleaseFailed(t *testing.T) {
 	stopErr := errors.New("stop failed")
 	rec := &recordingDeps{err: stopErr}
@@ -102,8 +98,6 @@ func TestWithTreeDeps_SucceedsWhenOnlyTheReleaseFailed(t *testing.T) {
 	require.Contains(t, warn.String(), "stop failed", "the release failure must still be visible")
 }
 
-// Reversed 2026-09-21 alongside the case above, which previously joined the
-// release error into the returned chain.
 func TestWithTreeDeps_ReturnsTheRunErrorAndWarnsAboutRelease(t *testing.T) {
 	boom := errors.New("operation failed")
 	stopErr := errors.New("stop failed")

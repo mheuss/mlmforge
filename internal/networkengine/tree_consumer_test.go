@@ -1563,14 +1563,14 @@ type deleteRecordingStore struct {
 }
 
 func (c *deleteRecordingStore) DeleteNodeAndResponsor(
-	ctx context.Context, treeID, userID string, moved []Responsored,
+	ctx context.Context, treeID, userID, removalEventID string, moved []Responsored,
 ) error {
 	c.responsors = append(c.responsors, userID)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	c.wroteResponsors = append(c.wroteResponsors, userID)
-	return c.MemoryTreeStore.DeleteNodeAndResponsor(ctx, treeID, userID, moved)
+	return c.MemoryTreeStore.DeleteNodeAndResponsor(ctx, treeID, userID, removalEventID, moved)
 }
 
 func (c *deleteRecordingStore) DeleteNode(ctx context.Context, treeID, userID string) error {

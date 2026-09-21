@@ -203,6 +203,79 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		assert.ElementsMatch(t, []string{rootUser}, nodeUserIDs(ordered), "GetByTreeDepthOrdered")
 	})
 
+	t.Run("DeleteNodeAndResponsor stamps the removing event on the row", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		rootUser := testUserUUID(1)
+		removedUser := testUserUUID(2)
+		removalEvent := testNodeUUID(9)
+
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(2), tree, removedUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
+
+		require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, removedUser, removalEvent, nil))
+
+		got, err := s.GetNodeIncludingRemoved(ctx, tree, removedUser)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		require.NotNil(t, got.RemovedByEventID, "the soft delete writes the removing event id")
+		assert.Equal(t, removalEvent, *got.RemovedByEventID)
+	})
+
+	t.Run("DeleteNodeAndResponsor refuses when no active row matches", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		rootUser := testUserUUID(1)
+		goneUser := testUserUUID(2)
+
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(2), tree, goneUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
+		require.NoError(t, s.DeleteNode(ctx, tree, goneUser))
+
+		err := s.DeleteNodeAndResponsor(ctx, tree, goneUser, testNodeUUID(9), nil)
+		require.Error(t, err, "a soft delete matching no active row is not a success")
+
+		tomb, gerr := s.GetNodeIncludingRemoved(ctx, tree, goneUser)
+		require.NoError(t, gerr)
+		require.NotNil(t, tomb)
+		assert.Nil(t, tomb.RemovedByEventID, "the existing tombstone is left alone")
+	})
+
+	// An older tombstone for the same user, plus a later active placement.
+	// An implementation that stamps whichever removed row it finds passes the
+	// first case above and fails this one.
+	t.Run("DeleteNodeAndResponsor stamps the active row, not an older tombstone", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		rootUser := testUserUUID(1)
+		user := testUserUUID(2)
+		removalEvent := testNodeUUID(9)
+
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(2), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
+		require.NoError(t, s.DeleteNode(ctx, tree, user))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(3), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(1))))
+
+		require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, user, removalEvent, nil))
+
+		got, err := s.GetNodeIncludingRemoved(ctx, tree, user)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, testNodeUUID(3), got.ID, "the later placement is the one removed")
+		require.NotNil(t, got.RemovedByEventID)
+		assert.Equal(t, removalEvent, *got.RemovedByEventID)
+	})
+
 	t.Run("DeleteNodeAndResponsor repoints the moved recruits", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
@@ -225,7 +298,7 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		require.NoError(t, s.InsertNode(ctx,
 			makeUUIDNode(testNodeUUID(3), tree, movedUser, 2, ptr(removedUser), ptr(removedUser), intPtr(0))))
 
-		require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, removedUser,
+		require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, removedUser, testNodeUUID(9),
 			[]Responsored{{UserID: movedUser, NewSponsorID: rootUser}}))
 
 		gone, err := s.GetNode(ctx, tree, removedUser)
@@ -270,7 +343,7 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		// The valid recruit goes first so the batch has a sponsor write to
 		// undo. With only the absent one, an implementation that wrote each
 		// sponsor inline before the delete would pass having written nothing.
-		err := s.DeleteNodeAndResponsor(ctx, tree, removedUser, []Responsored{
+		err := s.DeleteNodeAndResponsor(ctx, tree, removedUser, testNodeUUID(9), []Responsored{
 			{UserID: validUser, NewSponsorID: rootUser},
 			{UserID: absentUser, NewSponsorID: rootUser},
 		})

@@ -41,7 +41,7 @@ type TreeStore interface {
 	// Both writes or neither. A soft delete that lands without the sponsor
 	// updates leaves the store naming a user the active-row query will not
 	// return, and the tree stops reloading.
-	DeleteNodeAndResponsor(ctx context.Context, treeID, userID string, moved []Responsored) error
+	DeleteNodeAndResponsor(ctx context.Context, treeID, userID, removalEventID string, moved []Responsored) error
 
 	// GetNode returns a single active node by tree and user ID.
 	GetNode(ctx context.Context, treeID, userID string) (*TreeNodeRow, error)

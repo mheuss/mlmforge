@@ -410,7 +410,7 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 	// is the divergence HEU-777 owns, reachable by a shutdown in this window.
 	writeCtx, cancelWrite := detachedWrite(ctx)
 	defer cancelWrite()
-	if err := c.store.DeleteNodeAndResponsor(writeCtx, payload.TreeID, payload.UserID, moved); err != nil {
+	if err := c.store.DeleteNodeAndResponsor(writeCtx, payload.TreeID, payload.UserID, event.ID, moved); err != nil {
 		return fmt.Errorf("remove node and re-sponsor recruits: %w", err)
 	}
 	return nil

@@ -85,7 +85,7 @@ func (s *MemoryTreeStore) DeleteNode(_ context.Context, treeID, userID string) e
 
 func (s *MemoryTreeStore) DeleteNodeAndResponsor(
 	ctx context.Context,
-	treeID, userID string,
+	treeID, userID, removalEventID string,
 	moved []Responsored,
 ) error {
 	// Mirrors the Postgres transaction by staging: nothing is written until
@@ -108,9 +108,27 @@ func (s *MemoryTreeStore) DeleteNodeAndResponsor(
 		targets = append(targets, found)
 	}
 
+	// Captured before anything is written. DeleteNode returns nil whether it
+	// removed a row or found none, and names no row, so after it runs there is
+	// no way to tell which one it touched. Searching for a removed row instead
+	// can find an earlier placement's tombstone.
+	removing := -1
+	for i := range s.nodes {
+		if s.nodes[i].TreeID == treeID && s.nodes[i].UserID == userID && s.nodes[i].RemovedAt == nil {
+			removing = i
+			break
+		}
+	}
+	if removing < 0 {
+		return fmt.Errorf(
+			"removing %s from tree %s found no active row", userID, treeID)
+	}
+
 	if err := s.DeleteNode(ctx, treeID, userID); err != nil {
 		return err
 	}
+	event := removalEventID
+	s.nodes[removing].RemovedByEventID = &event
 	for i, m := range moved {
 		sponsor := m.NewSponsorID
 		s.nodes[targets[i]].SponsorID = &sponsor

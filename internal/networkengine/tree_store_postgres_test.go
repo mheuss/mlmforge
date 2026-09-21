@@ -82,7 +82,7 @@ func TestPostgresTreeStore_DeleteNodeAndResponsorMovesTheSponsor(t *testing.T) {
 	require.NoError(t, store.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), tree1, recruiter, 1, &root, &root, nil)))
 	require.NoError(t, store.InsertNode(ctx, makeUUIDNode(testNodeUUID(3), tree1, recruit, 1, &root, &recruiter, nil)))
 
-	err := store.DeleteNodeAndResponsor(ctx, tree1, recruiter,
+	err := store.DeleteNodeAndResponsor(ctx, tree1, recruiter, testNodeUUID(9),
 		[]Responsored{{UserID: recruit, NewSponsorID: root}})
 	require.NoError(t, err)
 
@@ -108,7 +108,7 @@ func TestPostgresTreeStore_DeleteNodeAndResponsorRollsBackOnAMissingRow(t *testi
 	require.NoError(t, store.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), tree1, recruiter, 1, &root, &root, nil)))
 
 	// testUserUUID(99) has no row, so the sponsor update matches nothing.
-	err := store.DeleteNodeAndResponsor(ctx, tree1, recruiter,
+	err := store.DeleteNodeAndResponsor(ctx, tree1, recruiter, testNodeUUID(9),
 		[]Responsored{{UserID: testUserUUID(99), NewSponsorID: root}})
 	require.Error(t, err)
 

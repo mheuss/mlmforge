@@ -105,7 +105,7 @@ func (s *PostgresTreeStore) DeleteNode(ctx context.Context, treeID, userID strin
 
 func (s *PostgresTreeStore) DeleteNodeAndResponsor(
 	ctx context.Context,
-	treeID, userID string,
+	treeID, userID, removalEventID string,
 	moved []Responsored,
 ) error {
 	tx, err := s.pool.Begin(ctx)
@@ -114,12 +114,21 @@ func (s *PostgresTreeStore) DeleteNodeAndResponsor(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if _, err := tx.Exec(ctx,
-		`UPDATE tree_nodes SET removed_at = now(), updated_at = now()
+	// The stamp rides the soft delete's own statement, so it lands with the
+	// tombstone or not at all. removed_at IS NULL can only match the row that
+	// was active, so it cannot reach an earlier placement's tombstone.
+	tag, err := tx.Exec(ctx,
+		`UPDATE tree_nodes SET removed_at = now(), updated_at = now(), removed_by_event_id = $3
 		 WHERE tree_id = $1 AND user_id = $2 AND removed_at IS NULL`,
-		treeID, userID,
-	); err != nil {
+		treeID, userID, removalEventID,
+	)
+	if err != nil {
 		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf(
+			"removing %s from tree %s updated %d active rows, expected 1",
+			userID, treeID, tag.RowsAffected())
 	}
 
 	for _, m := range moved {

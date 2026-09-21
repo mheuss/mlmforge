@@ -9,18 +9,17 @@ import (
 
 // TreeNodeRow represents a row in the tree_nodes adjacency table.
 type TreeNodeRow struct {
-	ID         string
-	TreeID     string
-	UserID     string
-	ParentID   *string
-	SponsorID  *string
-	Position   *int
-	Depth      int
-	EnrolledAt time.Time
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-	RemovedAt  *time.Time
-	// Written by the soft delete. Null while the row is active.
+	ID               string
+	TreeID           string
+	UserID           string
+	ParentID         *string
+	SponsorID        *string
+	Position         *int
+	Depth            int
+	EnrolledAt       time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	RemovedAt        *time.Time
 	RemovedByEventID *string
 }
 

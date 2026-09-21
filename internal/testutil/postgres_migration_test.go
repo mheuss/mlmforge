@@ -189,29 +189,33 @@ func TestMigrations_RemovedByEventDownUp(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = m.Close() })
 
-	columnExists := func() bool {
+	// Proves migration 000007's files work, not just that they contain words.
+	nullableUUIDColumnExists := func() bool {
 		pool, err := pgxpool.New(context.Background(), migrationContainer.DSN)
 		require.NoError(t, err)
 		defer pool.Close()
 		var exists bool
 		require.NoError(t, pool.QueryRow(context.Background(),
 			`SELECT EXISTS (SELECT 1 FROM information_schema.columns
-			                WHERE table_name = 'tree_nodes'
-			                  AND column_name = 'removed_by_event_id')`,
+			                WHERE table_schema = 'public'
+			                  AND table_name = 'tree_nodes'
+			                  AND column_name = 'removed_by_event_id'
+			                  AND data_type = 'uuid'
+			                  AND is_nullable = 'YES')`,
 		).Scan(&exists))
 		return exists
 	}
 
-	require.True(t, columnExists(), "column present after full migrate up")
+	require.True(t, nullableUUIDColumnExists(), "nullable uuid column present after full migrate up")
 	// Best-effort restore of the shared container on any failure from here
 	// down. Cleanups are LIFO, so this fires before m.Close.
 	t.Cleanup(func() { _ = m.Up() })
 	// Pinned versions, not Steps(-1): a relative step would roll back
 	// whichever migration is newest and fail confusingly.
 	require.NoError(t, m.Migrate(6), "migrate down to version 6 (drops 000007)")
-	require.False(t, columnExists(), "down file actually drops the column")
+	require.False(t, nullableUUIDColumnExists(), "down file actually drops the column")
 	require.NoError(t, m.Migrate(7), "migrate back up to version 7")
-	require.True(t, columnExists(), "up file restores the column")
+	require.True(t, nullableUUIDColumnExists(), "up file restores it as a nullable uuid")
 	// Restore head. Up reports ErrNoChange when the steps above already
 	// reached it, which is not a failure.
 	if err := m.Up(); err != nil {

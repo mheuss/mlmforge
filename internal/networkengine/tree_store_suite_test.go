@@ -98,7 +98,14 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		got, err := s.GetNode(ctx, tree, user)
 		require.NoError(t, err)
 		require.NotNil(t, got)
-		assert.Nil(t, got.RemovedByEventID, "only the soft delete writes this column")
+		assert.Nil(t, got.RemovedByEventID, "an inserted row has no removal stamp")
+
+		// GetByTree routes through the other scanner, which carries its own
+		// destination list.
+		all, err := s.GetByTree(ctx, tree)
+		require.NoError(t, err)
+		require.Len(t, all, 1)
+		assert.Nil(t, all[0].RemovedByEventID, "an inserted row has no removal stamp")
 	})
 
 	t.Run("GetNode returns nil for a soft-deleted user", func(t *testing.T) {

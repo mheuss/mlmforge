@@ -1628,8 +1628,6 @@ func TestHandleRootAdded_UncancelledPathsDoNotReadBack(t *testing.T) {
 	})
 
 	t.Run("the engine fails without a cancellation", func(t *testing.T) {
-		// inserted is true and withRetry returns, so the two earlier exits are
-		// passed. Only the cancellation check stands between here and the read.
 		store := readTrippingStore{MemoryTreeStore: NewMemoryTreeStore(), t: t}
 		tr := &reconcileTransport{mutationErr: &EngineError{Code: "TRANSPORT_HICCUP"}}
 		c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
@@ -1701,10 +1699,8 @@ func TestHandleRootAdded_CancelledInsertReportsTheRow(t *testing.T) {
 	assert.Equal(t, []string{posUser}, store.reads, "the read was attempted")
 }
 
-// The deadline twin of the cancellation case. withRetry wraps whatever ctx.Err()
-// returns, so an expired deadline reaches the same tail and must report the same
-// way. Without this case the tail can be narrowed to context.Canceled alone and
-// the suite stays green.
+// An expired deadline must report the stored row the same way a cancellation
+// does.
 func TestHandleRootAdded_ExpiredDeadlineReportsTheRow(t *testing.T) {
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	defer cancel()
@@ -1712,7 +1708,7 @@ func TestHandleRootAdded_ExpiredDeadlineReportsTheRow(t *testing.T) {
 	tr := &reconcileTransport{mutationErr: &EngineError{Code: engineCodeRootAlreadyExists}}
 	store := &ctxReadingStore{deleteRecordingStore: &deleteRecordingStore{MemoryTreeStore: NewMemoryTreeStore()}}
 	c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
-	// Not zero: at zero the select races its own timer. See the cancellation case.
+	// Not zero: at zero the select races its own timer.
 	c.retryDelay = time.Minute
 
 	event := makeEvent(EventTypeRootAdded, rootPayload())
@@ -1746,13 +1742,8 @@ func TestHandleRootAdded_SecondRootRefusedBeforeTheEngine(t *testing.T) {
 	assert.Nil(t, activeRow(t, store.MemoryTreeStore, posUser), "no row was written")
 }
 
-// preIndexStore accepts a second active depth-0 row. It stands in for a
-// database written before migration 000006, so a test can reach code that only
-// runs once such a row exists. Everything else, including the delete recording,
-// comes from the embedded store.
-//
-// It does not model a cancelled context: MemoryTreeStore ignores the one it is
-// given, and nothing below InsertNode here changes that.
+// preIndexStore accepts a second active depth-0 row, so a test can reach code
+// that only runs once such a row exists.
 type preIndexStore struct {
 	*deleteRecordingStore
 }

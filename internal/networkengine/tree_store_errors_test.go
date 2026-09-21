@@ -31,9 +31,9 @@ func TestRemovalNotProjectedErrorSurvivesWrapping(t *testing.T) {
 	}
 }
 
-// The five sentinels are the branches the consumer picks between. Two holding
-// the same text would read as one condition in a log and tell an operator the
-// wrong thing about which write was refused.
+// Each sentinel below is a branch the consumer picks between. Two holding the
+// same text would read as one condition in a log and tell an operator the wrong
+// thing about which write was refused.
 func TestTreeStoreSentinelsAreDistinct(t *testing.T) {
 	sentinels := map[string]error{
 		"ErrNodeAlreadyProjected": ErrNodeAlreadyProjected,

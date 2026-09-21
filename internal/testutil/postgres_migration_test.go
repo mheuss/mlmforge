@@ -130,21 +130,16 @@ func TestMigrations_SlotUniqueDownUp(t *testing.T) {
 }
 
 // TestMigrations_RootUniqueDownUp proves migration 000006's down file works,
-// not just that it contains words: migrate down to version 5, confirm the
-// index is gone, migrate back up to 6, confirm it returns. Mirrors
-// TestMigrations_SlotUniqueDownUp, which does the same for 000004.
+// not just that it contains words.
 func TestMigrations_RootUniqueDownUp(t *testing.T) {
 	if migrationContainer == nil {
 		t.Skip("Postgres container not available")
 	}
 
 	// Relative to this package's directory — Go sets a test's cwd to the
-	// package dir. testutil.findMigrationsDir resolves the same path via
-	// runtime.Caller but is unexported.
+	// package dir.
 	absPath, err := filepath.Abs("../../migrations")
 	require.NoError(t, err)
-	// The postgres database and file source drivers are registered by
-	// internal/testutil's blank imports, which this package already pulls in.
 	m, err := migrate.New(fmt.Sprintf("file://%s", absPath), migrationContainer.DSN)
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = m.Close() })

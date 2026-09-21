@@ -20,13 +20,13 @@ type PostgresTreeStore struct {
 
 // ON CONFLICT targets the primary key, which carries the event ID. A
 // redelivered event is skipped and reports zero rows instead of raising, while
-// the three partial unique indexes still raise. Changing the arbiter changes
-// which conflict is silent.
+// the partial unique indexes still raise. Changing the arbiter changes which
+// conflict is silent.
 const insertNodeSQL = `INSERT INTO tree_nodes (id, tree_id, user_id, parent_id, sponsor_id, position, depth, enrolled_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		 ON CONFLICT (id) DO NOTHING`
 
-// The three partial unique indexes on tree_nodes. pgx reports the index name in
+// Partial unique index names on tree_nodes. pgx reports the index name in
 // ConstraintName, which is what tells them apart.
 const (
 	activeUserIndex = "idx_tree_nodes_tree_user"
@@ -34,11 +34,11 @@ const (
 	activeRootIndex = "idx_tree_nodes_tree_root_active"
 )
 
-// conflictError maps a pg error naming one of the three indexes to its sentinel,
+// conflictError maps a pg error naming one of the indexes above to its sentinel,
 // and returns nil for anything else so the raw error surfaces.
 //
 // Matching on ConstraintName rather than SQLSTATE: 23505 covers every unique
-// violation on the table and cannot tell the three indexes apart.
+// violation on the table and cannot tell the indexes apart.
 func conflictError(err error) error {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {

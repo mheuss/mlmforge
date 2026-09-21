@@ -282,13 +282,16 @@ and paste from the repo root as written.
 | Test (Rust) | `cargo test` |
 | Format (Go) | `gofmt -w .` |
 | Format (Rust) | `cargo fmt` |
-| Lint (Go) | `golangci-lint run` |
+| Lint (Go) | `scripts/lint-go.sh` |
 | Lint (Rust) | `cargo clippy --all-targets --workspace -- -D warnings` |
 | All tests | `go test ./... && (cd engine && cargo test)` |
 | All format | `gofmt -w . && (cd engine && cargo fmt)` |
-| All lint | `golangci-lint run && (cd engine && cargo clippy --all-targets --workspace -- -D warnings)` |
+| All lint | `scripts/lint-go.sh && (cd engine && cargo clippy --all-targets --workspace -- -D warnings)` |
 | Check Go version pins | `scripts/check-go-pins.sh` |
 | Test the pin check | `scripts/check-go-pins-test.sh` |
+| Test the lint check | `scripts/lint-go-test.sh` |
+| Test that lint can fail | `scripts/mutate-lint-go.sh` |
+| Check the lint config is valid | `scripts/lint-go.sh --check-only && golangci-lint config verify` |
 | Audit (Go) | `scripts/audit-go.sh` |
 | Audit (Rust) | `cargo audit --file engine/Cargo.lock` |
 | Show what the audit scans | `scripts/audit-go.sh --list` |
@@ -300,13 +303,18 @@ and paste from the repo root as written.
 directory is trusted the file is inert. The repo looks pinned and your shell is
 not. `mise env | grep GOTOOLCHAIN` tells you whether it took.
 
-**Match your local `golangci-lint` to the version `ci.yml` pins.**
+**Your `golangci-lint` must be the version `.golangci-lint-version` pins.**
 
-v2.11.4 exits non-zero without linting anything against a go1.27 standard
-library. It reports that the Go it was built with is lower than the targeted
-version. Versions between that and the pin are untested. CI installs its own
-copy. A stale local binary fails only for you. `golangci-lint version` prints
-the Go it was built with.
+`scripts/lint-go.sh` refuses to lint when it is not. The refusal prints the
+pinned version, the version you have, the path it resolved, and the command that
+installs the right one. CI installs from the same file.
+
+Its checks read the repo root. The lint runs from where you are. From a
+subdirectory it compares against the root `go.mod` and lints that subtree.
+
+It also refuses when the binary was built with an older Go line than `go.mod`
+targets. v2.11.4 against a go1.27 standard library was observed exiting non-zero
+without linting anything.
 
 ---
 

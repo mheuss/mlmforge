@@ -1,0 +1,494 @@
+#!/usr/bin/env bash
+# Asserts what the lint wrapper reports, not only that it failed, so a deleted
+# guard cannot hide behind a shared exit code.
+set -uo pipefail
+
+# cat's diagnostics are localized and one assertion matches on their text.
+export LC_ALL=C
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+check=${LINT_GO_SCRIPT:-$root/scripts/lint-go.sh}
+data=$root/scripts/testdata
+
+pass=0
+fail=0
+
+record() {
+  local ok=$1 name=$2 detail=$3
+  if [ "$ok" = yes ]; then
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1))
+    echo "FAIL $name: $detail"
+  fi
+}
+
+# Asserts the exit code and that the output contains a phrase naming the guard.
+expect() {
+  local want_rc=$1 want_msg=$2 name=$3 out rc
+  shift 3
+  out=$("$check" "$@" 2>&1)
+  rc=$?
+  if [ "$rc" != "$want_rc" ]; then
+    record no "$name" "wanted rc=$want_rc, got rc=$rc: $out"
+  elif [ -n "$want_msg" ] && [[ $out != *"$want_msg"* ]]; then
+    record no "$name" "wanted output containing \"$want_msg\", got: $out"
+  else
+    record yes "$name" ""
+  fi
+}
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+# A golangci-lint that prints a chosen version line and records how it was
+# called.
+stub_dir() {
+  # Split, because under set -u bash declares every name in one local
+  # statement before running its assignments, so $name is unset in $dir.
+  local name=$1 line=$2 rc=${3:-0}
+  local dir=$work/$name
+  mkdir -p "$dir"
+  cat > "$dir/golangci-lint" <<STUB
+#!/usr/bin/env bash
+if [ "\$1" = version ]; then
+  printf '%s\n' '$line'
+  exit $rc
+fi
+printf '%s\n' "\$@" > "\${STUB_ARGS:-/dev/null}"
+[ -n "\${STUB_CALLS:-}" ] && echo x >> "\$STUB_CALLS"
+exit \${STUB_RUN_RC:-0}
+STUB
+  chmod +x "$dir/golangci-lint"
+  printf '%s' "$dir"
+}
+
+# Same as expect, with a stub directory prepended to PATH.
+expect_with() {
+  local dir=$1
+  shift
+  PATH="$dir:$PATH" expect "$@"
+}
+
+ok_line='golangci-lint has version 2.13.2 built with go1.27.0 from abc1234 on 2026-08-27T23:01:12Z'
+old_line='golangci-lint has version 2.11.4 built with go1.26.1 from def5678 on 2026-06-01T00:00:00Z'
+
+expect 1 "cannot read" "unreadable pin file" \
+  --check-only --version-file "$data/nonexistent"
+expect 1 "not obtained" "unreadable pin file marks pinned as not obtained" \
+  --check-only --version-file "$data/nonexistent"
+
+expect 1 "Is a directory" "a directory as the pin file keeps cat's reason" \
+  --check-only --version-file "$data"
+
+expect 1 "needs a file path" "option with no operand" \
+  --check-only --version-file
+
+expect 1 "is not a complete version" "partial pin" \
+  --check-only --version-file "$data/lintver-partial"
+expect 1 "is not a complete version" "latest pin" \
+  --check-only --version-file "$data/lintver-latest"
+expect 1 "is not a complete version" "empty pin file" \
+  --check-only --version-file "$data/lintver-empty"
+expect 1 "is not a complete version" "two-line pin file" \
+  --check-only --version-file "$data/lintver-twolines"
+# A three-line pin.
+expect 1 "is not a complete version" "non-dot separators" \
+  --check-only --version-file "$data/lintver-separators"
+expect 0 "" "bare pin without a leading v" \
+  --check-only --version-file "$data/lintver-bare"
+expect 0 "" "leading blank lines are trimmed like the action trims them" \
+  --check-only --version-file "$data/lintver-leading"
+expect 0 "" "a trailing space is trimmed" \
+  --check-only --version-file "$data/lintver-trailing"
+expect 0 "" "the default pin file is the tracked one" --check-only
+a=$("$check" --check-only --version-file "$data/lintver-ok" 2>&1); arc=$?
+b=$("$check" --check-only --version-file "$data/lintver-bare" 2>&1); brc=$?
+if [ "$arc" = "$brc" ] && [ "$a" = "$b" ]; then
+  record yes "a leading v changes nothing" ""
+else
+  record no "a leading v changes nothing" "rc $arc/$brc, out \"$a\" vs \"$b\""
+fi
+
+expect_with "$(stub_dir match "$ok_line")" 0 "" "version matches the pin" \
+  --check-only --version-file "$data/lintver-ok"
+drift_dir=$(stub_dir drift "$old_line")
+expect_with "$drift_dir" 1 "installed  2.11.4" "version differs from the pin" \
+  --check-only --version-file "$data/lintver-ok"
+expect_with "$drift_dir" 1 "$drift_dir/golangci-lint" "the mismatch names the resolved path" \
+  --check-only --version-file "$data/lintver-ok"
+expect_with "$drift_dir" 1 "pinned     v2.13.2" "the mismatch names the pin" \
+  --check-only --version-file "$data/lintver-ok"
+expect_with "$drift_dir" 1 "does not match the pin; not linting" "the mismatch names itself" \
+  --check-only --version-file "$data/lintver-ok"
+expect_with "$(stub_dir badrc "$ok_line" 3)" 1 "version command exited 3" "version command fails" \
+  --check-only --version-file "$data/lintver-ok"
+expect_with "$(stub_dir garbage 'not a version line')" 1 "has 0 version lines" "version output has no version line" \
+  --check-only --version-file "$data/lintver-ok"
+
+# A stale binary whose stderr names the pinned version.
+noisy=$work/noisy
+mkdir -p "$noisy"
+cat > "$noisy/golangci-lint" <<'NOISY'
+#!/usr/bin/env bash
+printf '%s\n' 'warn: plugin has version 2.13.2 built with go1.27.0 (cached)' >&2
+printf '%s\n' 'golangci-lint has version 2.11.4 built with go1.26.1 from x on y'
+NOISY
+chmod +x "$noisy/golangci-lint"
+expect_with "$noisy" 1 "installed  2.11.4" "a log line naming the pin does not satisfy the check" \
+  --check-only --version-file "$data/lintver-ok"
+
+# Two version lines on stdout. Neither alone identifies the binary.
+twolines=$work/twoversions
+mkdir -p "$twolines"
+cat > "$twolines/golangci-lint" <<'TWOV'
+#!/usr/bin/env bash
+printf '%s\n' 'golangci-lint has version 9.9.9 built with go1.20.0 from x on y'
+printf '%s\n' 'golangci-lint has version 2.13.2 built with go1.27.0 from x on y'
+TWOV
+chmod +x "$twolines/golangci-lint"
+expect_with "$twolines" 1 "has 2 version lines" "two version lines are refused" \
+  --check-only --version-file "$data/lintver-ok"
+
+# An indented decoy on stdout, which separating stderr does not reject.
+indented=$work/indented
+mkdir -p "$indented"
+cat > "$indented/golangci-lint" <<'IND'
+#!/usr/bin/env bash
+printf '%s\n' '  golangci-lint has version 9.9.9 built with go1.20.0 (from a plugin)'
+printf '%s\n' 'golangci-lint has version 2.13.2 built with go1.27.0 from x on y'
+IND
+chmod +x "$indented/golangci-lint"
+expect_with "$indented" 0 "" "an indented decoy line is not a version line" \
+  --check-only --version-file "$data/lintver-ok"
+
+# A well-formed decoy on stderr, which anchoring does not reject.
+errdecoy=$work/errdecoy
+mkdir -p "$errdecoy"
+cat > "$errdecoy/golangci-lint" <<'ERRD'
+#!/usr/bin/env bash
+printf '%s\n' 'golangci-lint has version 9.9.9 built with go1.20.0 from x on y' >&2
+printf '%s\n' 'golangci-lint has version 2.13.2 built with go1.27.0 from x on y'
+ERRD
+chmod +x "$errdecoy/golangci-lint"
+expect_with "$errdecoy" 0 "" "a version line on stderr is not the binary's version" \
+  --check-only --version-file "$data/lintver-ok"
+
+# A prerelease in the built-with field.
+rcver=$work/rcver
+mkdir -p "$rcver"
+cat > "$rcver/golangci-lint" <<'RCV'
+#!/usr/bin/env bash
+printf '%s\n' 'golangci-lint has version 2.11.4 built with go1.28rc1 from x on y'
+RCV
+chmod +x "$rcver/golangci-lint"
+expect_with "$rcver" 1 "built with go1.28rc1" "a prerelease toolchain is reported whole" \
+  --check-only --version-file "$data/lintver-ok"
+
+# An empty directory as the whole PATH, so command -v resolves nothing.
+empty=$work/emptypath
+mkdir -p "$empty"
+# /usr/bin and /bin so the script's own `env bash` shebang still resolves.
+out=$(PATH="$empty:/usr/bin:/bin" "$check" --check-only --version-file "$data/lintver-ok" 2>&1)
+rc=$?
+if [ "$rc" = 1 ] && [[ $out == *"no golangci-lint on PATH"* ]] \
+  && [[ $out == *"command -v golangci-lint found nothing"* ]] && [[ $out == *"v2.13.2"* ]]; then
+  record yes "no binary on PATH" ""
+else
+  record no "no binary on PATH" "rc=$rc: $out"
+fi
+# Real golangci-lint prints no leading v.
+v_line='golangci-lint has version v2.13.2 built with go1.27.0 from abc1234 on 2026-08-27T23:01:12Z'
+expect_with "$(stub_dir vprefixed "$v_line")" 0 "" "a binary reporting a leading v still matches" \
+  --check-only --version-file "$data/lintver-ok"
+expect_with "$(stub_dir drift2 "$old_line")" 1 "go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2" \
+  "the mismatch names the install command" --check-only --version-file "$data/lintver-ok"
+
+# Compare the whole output. A guard can exit 1 correctly while stderr changes.
+expect_silent() {
+  local dir=$1 name=$2 out rc
+  shift 2
+  out=$(PATH="$dir:$PATH" "$check" "$@" 2>&1)
+  rc=$?
+  if [ "$rc" = 0 ] && [ -z "$out" ]; then
+    record yes "$name" ""
+  else
+    record no "$name" "rc=$rc, out \"$out\""
+  fi
+}
+
+bw_dir=$(stub_dir bw "$ok_line")
+expect_silent "$bw_dir" "built-with go line meets the directive" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
+expect_with "$bw_dir" 1 "older Go line than this module targets" "built-with go line below the directive" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ahead"
+# Matching line, lower patch. A full-string comparison refuses it.
+expect_silent "$bw_dir" "a directive patch above the binary's is not a mismatch" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-patch-ahead"
+
+# A commented go line above the directive.
+expect_with "$bw_dir" 1 "go directive is 1.28.0" "a commented go line is not the directive" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-comment"
+# Two go lines, both behind the binary, so only the reported value differs.
+expect_with "$bw_dir" 1 "go directive is 1.28.0)" "only the first go line is the directive" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-twogo"
+# No directive at all, at an exit code the passing cases also return.
+expect_with "$bw_dir" 1 "cannot read a go directive from" "a go.mod with no directive refuses" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-nodirective"
+# A go.mod path that does not exist, on a run that is meant to lint.
+expect_with "$bw_dir" 1 "cannot read a go directive from" "a missing go.mod refuses" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-nonexistent"
+
+# A prerelease built-with whose version matches the pin.
+rc_match='golangci-lint has version 2.13.2 built with go1.28rc1 from x on y'
+expect_silent "$(stub_dir bwrc "$rc_match")" "a prerelease built-with above the directive is not a mismatch" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
+
+expect_with "$bw_dir" 1 "go directive is 2.0.0" "a directive a major ahead refuses" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-major-ahead"
+major_ahead='golangci-lint has version 2.13.2 built with go2.0.0 from x on y'
+expect_silent "$(stub_dir bwmajor "$major_ahead")" "a binary a major ahead is not a mismatch" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ahead"
+
+expect_with "$drift_dir" 1 "go directive not read yet" "a mismatch outranks an unread directive" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-nodirective"
+expect_with "$drift_dir" 1 "go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2" \
+  "a mismatch prints the install command even with no directive" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-nodirective"
+# Go writes rcN and betaN. Any other trailing text is not a suffix to discard.
+expect_with "$(stub_dir bwgarbage 'golangci-lint has version 2.13.2 built with go1.27garbage from x on y')" \
+  1 "cannot compare the built-with Go line" "an unrecognised built-with suffix refuses" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
+
+# A prerelease on the directive's side. Go writes that form.
+expect_with "$bw_dir" 1 "older Go line than this module targets" "a prerelease directive above the binary refuses" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-rc"
+# Both components are unparsable here. This pins the combination rather than
+# either half alone.
+expect_with "$bw_dir" 1 "cannot compare the built-with Go line" "an unparsable directive refuses" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-unparsable"
+
+# A prerelease on the binary's side, below the directive.
+bw_rc_behind='golangci-lint has version 2.13.2 built with go1.26rc1 from x on y'
+expect_with "$(stub_dir bwrcbehind "$bw_rc_behind")" 1 "older Go line than this module targets" \
+  "a prerelease binary below the directive refuses" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
+
+# One unparsable component each, with the other three parsable.
+expect_with "$(stub_dir bwmajorbad 'golangci-lint has version 2.13.2 built with gox.27 from x on y')" \
+  1 "cannot compare the built-with Go line" "an unparsable built-with major refuses" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
+expect_with "$(stub_dir bwminorbad 'golangci-lint has version 2.13.2 built with go1.rc from x on y')" \
+  1 "cannot compare the built-with Go line" "an unparsable built-with minor refuses" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
+expect_with "$bw_dir" 1 "cannot compare the built-with Go line" "an unparsable directive major refuses" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-major-unparsable"
+expect_with "$bw_dir" 1 "cannot compare the built-with Go line" "an unparsable directive minor refuses" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-minor-unparsable"
+expect_with "$bw_dir" 1 "cannot compare the built-with Go line" "a directive too long to compare refuses" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-huge"
+# Trailing text after a prerelease suffix. Stripping it would leave a number.
+expect_with "$(stub_dir bwrcjunk 'golangci-lint has version 2.13.2 built with go1.27rc1junk from x on y')" \
+  1 "cannot compare the built-with Go line" "trailing text after a prerelease suffix refuses" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
+# No dot at all. Splitting it yields the same string for major and minor.
+expect_with "$(stub_dir bwnodot 'golangci-lint has version 2.13.2 built with go127 from x on y')" \
+  1 "cannot compare the built-with Go line" "a built-with line with no dot refuses" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
+expect_with "$bw_dir" 1 "cannot compare the built-with Go line" "a directive with no dot refuses" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-nodot"
+# The refusal reports both pairs rather than concluding about both sides.
+expect_with "$(stub_dir bwmajorbad2 'golangci-lint has version 2.13.2 built with gox.27 from x on y')" \
+  1 "directive  major/minor  1/27" "the refusal reports the directive it did parse" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
+
+wf_args=(--check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok")
+
+expect_with "$bw_dir" 1 "sets both version and version-file" "workflow sets both inputs" \
+  "${wf_args[@]}" --workflow "$data/wf-lint-both.yml"
+expect_silent "$bw_dir" "workflow sets version-file alone" \
+  "${wf_args[@]}" --workflow "$data/wf-lint-file-only.yml"
+# version alone, which must not refuse.
+expect_silent "$bw_dir" "workflow sets version alone" \
+  "${wf_args[@]}" --workflow "$data/wf-lint-version-only.yml"
+# Commenting a key out is how someone moves the pin over.
+expect_silent "$bw_dir" "a commented-out version is not set" \
+  "${wf_args[@]}" --workflow "$data/wf-lint-both-commented.yml"
+# Quoting a key is valid YAML and leaves the name unchanged.
+expect_with "$bw_dir" 1 "sets both version and version-file" "quoted key names are the same keys" \
+  "${wf_args[@]}" --workflow "$data/wf-lint-quoted-keys.yml"
+# YAML allows space before the colon and the key is the same key.
+expect_with "$bw_dir" 1 "sets both version and version-file" "a space before the colon is the same key" \
+  "${wf_args[@]}" --workflow "$data/wf-lint-spaced-colon.yml"
+# A workflow larger than a pipe buffer.
+big=$work/wf-lint-big.yml
+cat "$data/wf-lint-both.yml" > "$big"
+for i in $(seq 1 40000); do echo "          # padding $i"; done >> "$big"
+expect_with "$bw_dir" 1 "sets both version and version-file" "a workflow past the pipe buffer still refuses" \
+  "${wf_args[@]}" --workflow "$big"
+expect_with "$bw_dir" 1 "the action uses version" "the refusal says which input wins" \
+  "${wf_args[@]}" --workflow "$data/wf-lint-both.yml"
+
+# The two cases below are the cost of reading the whole file. Both refuse, and
+# in neither does one step set both keys. They are here so the limitation is a
+# tested behaviour rather than a sentence in a comment.
+expect_with "$bw_dir" 1 "key-shaped lines anywhere in the file" "two steps with one key each still refuse" \
+  "${wf_args[@]}" --workflow "$data/wf-lint-two-steps.yml"
+expect_with "$bw_dir" 1 "key-shaped lines anywhere in the file" "another action's keys still refuse" \
+  "${wf_args[@]}" --workflow "$data/wf-lint-other-action.yml"
+
+# The fixture spells the key with a YAML escape rather than as version.
+expect_silent "$bw_dir" "an escaped key spelling is not seen" \
+  "${wf_args[@]}" --workflow "$data/wf-lint-escaped-key.yml"
+
+# A flow mapping puts both keys on one line, after { and after a comma.
+expect_with "$bw_dir" 1 "sets both version and version-file" "a flow mapping sets both keys" \
+  "${wf_args[@]}" --workflow "$data/wf-lint-flow-mapping.yml"
+# The same shape with setup-go's key names, which must not refuse.
+expect_silent "$bw_dir" "flow-style go-version keys are not these keys" \
+  "${wf_args[@]}" --workflow "$data/wf-lint-flow-go-version.yml"
+# go-version and go-version-file contain both names as substrings.
+expect_silent "$bw_dir" "go-version keys are not these keys" \
+  "${wf_args[@]}" --workflow "$data/wf-lint-go-version-keys.yml"
+expect_with "$bw_dir" 1 "cannot read" "a missing workflow refuses" \
+  "${wf_args[@]}" --workflow "$data/wf-lint-nonexistent.yml"
+# A directory can be opened and not read. Skipping it would leave the guard
+# silent on a typo'd path.
+expect 1 "Is a directory" "a directory as the workflow keeps cat's reason" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok" --workflow "$data"
+
+args_file=$work/args
+runner=$(stub_dir runner "$ok_line")
+
+# mktemp resolves TMPDIR, so a TMPDIR that does not exist is how its failure
+# path fires without touching the filesystem's permissions.
+out=$(TMPDIR=$work/nosuchtmpdir PATH="$(stub_dir mktempfail "$ok_line"):$PATH" \
+  "$check" --check-only --version-file "$data/lintver-ok" 2>&1)
+rc=$?
+if [ "$rc" = 1 ] && [[ $out == *"cannot create a temp file"* ]]; then
+  record yes "an unresolvable TMPDIR refuses" ""
+else
+  record no "an unresolvable TMPDIR refuses" "rc=$rc: $out"
+fi
+lint_args=(--version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok" --workflow "$data/wf-lint-file-only.yml")
+
+# A bare path operand must reach golangci-lint unchanged.
+rm -f "$args_file"
+STUB_ARGS=$args_file PATH="$runner:$PATH" "$check" "${lint_args[@]}" \
+  ./internal/... >/dev/null 2>&1
+rc=$?
+got=$(tr '\n' ' ' < "$args_file" 2>/dev/null)
+if [ "$rc" = 0 ] && [ "$got" = "run ./internal/... " ]; then
+  record yes "a bare path operand reaches the lint" ""
+else
+  record no "a bare path operand reaches the lint" "rc=$rc, args=\"$got\""
+fi
+
+STUB_ARGS=$args_file PATH="$runner:$PATH" "$check" "${lint_args[@]}" \
+  -- --timeout 9m ./internal/... >/dev/null 2>&1
+rc=$?
+got=$(tr '\n' ' ' < "$args_file" 2>/dev/null)
+if [ "$rc" = 0 ] && [ "$got" = "run --timeout 9m ./internal/... " ]; then
+  record yes "arguments reach golangci-lint run unchanged" ""
+else
+  record no "arguments reach golangci-lint run unchanged" "rc=$rc, args=\"$got\""
+fi
+
+calls=$work/calls
+: > "$calls"
+STUB_CALLS=$calls STUB_ARGS=$args_file PATH="$runner:$PATH" "$check" "${lint_args[@]}" >/dev/null 2>&1
+n=$(grep -c x "$calls")
+if [ "$n" = 1 ]; then
+  record yes "the lint is invoked exactly once" ""
+else
+  record no "the lint is invoked exactly once" "stub ran $n times"
+fi
+
+STUB_RUN_RC=7 STUB_ARGS=$args_file PATH="$runner:$PATH" "$check" "${lint_args[@]}" >/dev/null 2>&1
+rc=$?
+if [ "$rc" = 7 ]; then
+  record yes "the lint exit status propagates" ""
+else
+  record no "the lint exit status propagates" "wanted rc=7, got rc=$rc"
+fi
+
+rm -f "$args_file"
+STUB_ARGS=$args_file PATH="$runner:$PATH" "$check" --check-only "${lint_args[@]}" >/dev/null 2>&1
+if [ ! -e "$args_file" ]; then
+  record yes "check-only does not invoke the lint" ""
+else
+  record no "check-only does not invoke the lint" "stub was called with: $(cat "$args_file")"
+fi
+
+# A lint that really runs, in a TMPDIR that must be empty afterwards.
+tmphome=$work/tmphome
+mkdir -p "$tmphome"
+rm -f "$args_file"
+TMPDIR=$tmphome STUB_ARGS=$args_file PATH="$runner:$PATH" "$check" "${lint_args[@]}" >/dev/null 2>&1
+rc=$?
+left=$(ls -A "$tmphome" | wc -l)
+# Emptiness means nothing unless the lint ran, so the run is asserted first.
+if [ "$rc" != 0 ] || [ ! -s "$args_file" ]; then
+  record no "linting leaves no temp file behind" \
+    "rc=$rc, args file $([ -s "$args_file" ] && echo non-empty || echo 'empty or absent')"
+elif [ "$left" = 0 ]; then
+  record yes "linting leaves no temp file behind" ""
+else
+  record no "linting leaves no temp file behind" "$left left in TMPDIR: $(ls -A "$tmphome" | tr '\n' ' ')"
+fi
+
+# The same, on a path that returns without linting.
+checkonly_home=$work/tmphome-checkonly
+mkdir -p "$checkonly_home"
+TMPDIR=$checkonly_home PATH="$runner:$PATH" "$check" --check-only "${lint_args[@]}" >/dev/null 2>&1
+rc=$?
+left=$(ls -A "$checkonly_home" | wc -l)
+if [ "$rc" = 0 ] && [ "$left" = 0 ]; then
+  record yes "check-only leaves no temp file behind" ""
+else
+  record no "check-only leaves no temp file behind" "rc=$rc, $left left in TMPDIR"
+fi
+
+# Two directories on PATH. The stub is in the later one, and answering
+# "version" plants a different binary in the earlier one.
+early=$work/early
+late=$work/late
+mkdir -p "$early" "$late"
+cat > "$late/golangci-lint" <<PLANT
+#!/usr/bin/env bash
+if [ "\$1" = version ]; then
+  cat > "$early/golangci-lint" <<'PLANTED'
+#!/usr/bin/env bash
+echo planted > "\${STUB_ARGS:-/dev/null}"
+exit 0
+PLANTED
+  chmod +x "$early/golangci-lint"
+  printf '%s\n' '$ok_line'
+  exit 0
+fi
+printf '%s\n' "\$@" > "\${STUB_ARGS:-/dev/null}"
+exit 0
+PLANT
+chmod +x "$late/golangci-lint"
+rm -f "$args_file"
+PATH="$early:$late:$PATH" STUB_ARGS=$args_file "$check" "${lint_args[@]}" >/dev/null 2>&1
+ran_args=$(cat "$args_file" 2>/dev/null)
+if [ "$ran_args" = run ]; then
+  record yes "the lint runs the binary the check resolved" ""
+else
+  record no "the lint runs the binary the check resolved" "args file held \"$ran_args\", wanted \"run\""
+fi
+
+# The tracked workflow has to name the tracked pin file.
+real_wf=$root/.github/workflows/ci.yml
+if grep -qE '^[[:space:]]*version-file:[[:space:]]*\.golangci-lint-version[[:space:]]*$' "$real_wf"; then
+  record yes "CI installs from the tracked pin file" ""
+else
+  record no "CI installs from the tracked pin file" \
+    "version-file line was: $(grep -E '^[[:space:]]*version-file:' "$real_wf" | tr -d '\n')"
+fi
+
+expect 1 "unknown option" "unrecognised option" --check-only --nonsense
+
+echo "$pass passed, $fail failed, of $((pass + fail))"
+[ "$fail" = 0 ]

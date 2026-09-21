@@ -1,0 +1,232 @@
+#!/usr/bin/env bash
+# Refuses to lint when the resolved golangci-lint does not match the pin.
+# Input paths are arguments so the checks can be run against fixtures.
+set -uo pipefail
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+
+# Returns the leading digits when the whole value is digits followed by a Go
+# prerelease suffix, and the value unchanged otherwise. Anchored at both ends,
+# so trailing text is not silently dropped to leave a number behind.
+strip_known_suffix() {
+  if [[ $1 =~ ^([0-9]+)(rc|beta)[0-9]+$ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+  else
+    printf '%s' "$1"
+  fi
+}
+
+usage="usage: ${0##*/} [--check-only] [--version-file FILE] [--go-mod FILE] [--workflow FILE] [--] [golangci-lint arguments...]
+  a path operand needs no --, a golangci-lint flag does"
+
+check_only=false
+version_file=$root/.golangci-lint-version
+go_mod=$root/go.mod
+workflow=$root/.github/workflows/ci.yml
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --check-only) check_only=true; shift ;;
+    --version-file|--go-mod|--workflow)
+      # Checked before the assignment, because $2 under set -u aborts with a
+      # bash diagnostic naming a line number rather than a refusal.
+      if [ "$#" -lt 2 ]; then
+        echo "option \"$1\" needs a file path; not linting" >&2
+        echo "  $usage" >&2
+        exit 1
+      fi
+      case "$1" in
+        --version-file) version_file=$2 ;;
+        --go-mod) go_mod=$2 ;;
+        --workflow) workflow=$2 ;;
+      esac
+      shift 2
+      ;;
+    --) shift; break ;;
+    -*) echo "unknown option \"$1\"; not linting" >&2; echo "  $usage" >&2; exit 1 ;;
+    *) break ;;
+  esac
+done
+
+# Reads over the whole file: matching per step needs a YAML parser, at the
+# cost that two steps each setting one key look like one setting both.
+# cat's stderr is left alone because it names which of the reasons happened.
+# A path that does not resolve is a condition this cannot evaluate, so it
+# refuses rather than linting.
+if ! workflow_body=$(cat "$workflow"); then
+  echo "cannot read \"$workflow\"; not linting" >&2
+  echo "  the workflow is where a second pin would appear, so it is not optional" >&2
+  exit 1
+fi
+# A commented key needs no stripping: the anchored patterns below cannot match
+# a line whose first non-space character is a #.
+#
+# Here-strings rather than pipes. grep -q exits at its first match, and under
+# pipefail a writer killed by SIGPIPE makes the pipeline 141, which reads as
+# no match. A workflow larger than a pipe buffer would pass silently.
+# A key opens a line, or follows { or , in a flow mapping. Anchoring on the
+# line start alone misses `with: {version: x, version-file: y}`, which is legal
+# and sets both on one step.
+if grep -qE '(^|[{,])[[:space:]]*["'"'"']?version-file["'"'"']?[[:space:]]*:' <<< "$workflow_body" \
+  && grep -qE '(^|[{,])[[:space:]]*["'"'"']?version["'"'"']?[[:space:]]*:' <<< "$workflow_body"; then
+  echo "\"$workflow\" sets both version and version-file; not linting" >&2
+  echo "  this matches key-shaped lines anywhere in the file, not keys on a step" >&2
+  echo "  where one golangci-lint-action step carries both, the action uses version" >&2
+  exit 1
+fi
+
+# A directory can be opened and not read, so the read's own status is the check.
+# cat's stderr is left alone because it names which of the two happened.
+if ! pin_body=$(cat "$version_file"); then
+  echo "cannot read \"$version_file\"; not linting" >&2
+  echo "  pinned     not obtained (cat exited non-zero)" >&2
+  exit 1
+fi
+
+# Trims the whole value, so a leading newline goes too.
+# Interior whitespace stays: collapsing it accepts a pin that is not the pin.
+pin_raw=$pin_body
+pin_raw=${pin_raw#"${pin_raw%%[![:space:]]*}"}
+pin_raw=${pin_raw%"${pin_raw##*[![:space:]]}"}
+pin=${pin_raw#[vV]}
+
+# Anchored against the whole string. grep matches per line, so a two-line pin
+# file would satisfy it on line one.
+if ! [[ $pin =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  # %q so a value holding a newline or a carriage return renders on one line.
+  echo "pin is not a complete version; not linting" >&2
+  echo "  pinned     $(printf '%q' "$pin_raw")   ($version_file)" >&2
+  echo "  a pin must be MAJOR.MINOR.PATCH, with or without a leading v" >&2
+  exit 1
+fi
+
+if ! resolved=$(command -v golangci-lint); then
+  echo "no golangci-lint on PATH; not linting" >&2
+  echo "  pinned     v$pin   ($version_file)" >&2
+  echo "  installed  not obtained (command -v golangci-lint found nothing)" >&2
+  echo "  built with not obtained" >&2
+  exit 1
+fi
+
+# stderr goes to its own file. Merging it lets a log line mentioning the
+# pinned version satisfy the comparison against a binary that does not.
+if ! version_err=$(mktemp); then
+  echo "cannot create a temp file for the version command's stderr; not linting" >&2
+  echo "  pinned     v$pin   ($version_file)" >&2
+  echo "  installed  not obtained (mktemp failed; the binary was not run)   ($resolved)" >&2
+  echo "  built with not obtained" >&2
+  exit 1
+fi
+trap 'rm -f "$version_err"' EXIT
+version_rc=0
+version_out=$("$resolved" version 2>"$version_err") || version_rc=$?
+if [ "$version_rc" != 0 ]; then
+  echo "golangci-lint version command exited $version_rc; not linting" >&2
+  echo "  pinned     v$pin   ($version_file)" >&2
+  echo "  installed  not obtained (\"$resolved version\" exited $version_rc)" >&2
+  echo "  built with not obtained" >&2
+  echo "  stderr     $(printf '%q' "$(cat "$version_err")")" >&2
+  exit 1
+fi
+
+# Anchored to the start of a line, and counted. An unanchored search over the
+# whole output takes the leftmost match anywhere in it.
+installed=
+built_with=
+version_matches=0
+while IFS= read -r version_line; do
+  if [[ $version_line =~ ^golangci-lint\ has\ version\ ([^[:space:]]+)\ built\ with\ (go[^[:space:]]+) ]]; then
+    version_matches=$((version_matches + 1))
+    installed=${BASH_REMATCH[1]}
+    built_with=${BASH_REMATCH[2]}
+  fi
+done <<< "$version_out"
+
+if [ "$version_matches" != 1 ]; then
+  echo "golangci-lint version output has $version_matches version lines; not linting" >&2
+  echo "  pinned     v$pin   ($version_file)" >&2
+  echo "  installed  not obtained ($version_matches lines matched, one expected)   ($resolved)" >&2
+  echo "  built with not obtained" >&2
+  echo "  output     $(printf '%q' "$version_out")" >&2
+  exit 1
+fi
+
+if [ "${installed#[vV]}" != "$pin" ]; then
+  echo "golangci-lint does not match the pin; not linting" >&2
+  echo "  pinned     v$pin   ($version_file)" >&2
+  echo "  installed  $(printf '%q' "$installed")    ($resolved)" >&2
+  echo "  built with $(printf '%q' "$built_with")  (go directive not read yet)" >&2
+  echo >&2
+  echo "  install the pinned version:" >&2
+  echo "    go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v$pin" >&2
+  exit 1
+fi
+
+# Read below the version comparison, so a go.mod this cannot read never
+# suppresses a mismatch already observed and already actionable. It still
+# refuses, because a directive it cannot obtain is a comparison it cannot make.
+directive_note="go directive not obtained"
+directive_err=$(awk '/^go /{print $2; exit}' "$go_mod" 2>&1 >/dev/null)
+if directive=$(awk '/^go /{print $2; exit}' "$go_mod" 2>/dev/null) && [ -n "$directive" ]; then
+  directive_note="$go_mod go directive is $directive"
+else
+  echo "cannot read a go directive from \"$go_mod\"; not linting" >&2
+  echo "  pinned     v$pin   ($version_file)" >&2
+  echo "  installed  $(printf '%q' "$installed")    ($resolved)" >&2
+  echo "  built with $(printf '%q' "$built_with")  (go directive not obtained)" >&2
+  [ -n "$directive_err" ] && echo "  awk        $(printf '%q' "$directive_err")" >&2
+  exit 1
+fi
+
+
+# Major and minor only. The panic this guards against names a language version,
+# which carries no patch component.
+bw=${built_with#go}
+bw_major=${bw%%.*}; bw_rest=${bw#*.}; bw_minor=${bw_rest%%.*}
+d_major=${directive%%.*}; d_rest=${directive#*.}; d_minor=${d_rest%%.*}
+# A value with no dot leaves the remainder equal to the whole, so major and
+# minor come out identical and compare as equal rather than refusing.
+if [ "$bw_rest" = "$bw" ]; then bw_minor=; fi
+if [ "$d_rest" = "$directive" ]; then d_minor=; fi
+# Go writes a prerelease as rcN or betaN. Anything else trailing the digits is
+# not a suffix this recognises, and dropping it would turn an unparsable value
+# into a number.
+bw_minor=$(strip_known_suffix "$bw_minor")
+d_minor=$(strip_known_suffix "$d_minor")
+
+# Skipped unless all four parse, because the arithmetic would otherwise report a
+# bash line number and lint anyway. An absent directive is that same case: it
+# leaves both of its components empty. Bounded, because a digit string longer
+# than the arithmetic accepts is the same failure as a non-digit one.
+if ! [[ $bw_major =~ ^[0-9]{1,9}$ ]] || ! [[ $bw_minor =~ ^[0-9]{1,9}$ ]] \
+  || ! [[ $d_major =~ ^[0-9]{1,9}$ ]] || ! [[ $d_minor =~ ^[0-9]{1,9}$ ]]; then
+  echo "cannot compare the built-with Go line against the go directive; not linting" >&2
+  echo "  pinned     v$pin   ($version_file)" >&2
+  echo "  installed  $(printf '%q' "$installed")    ($resolved)" >&2
+  echo "  built with $(printf '%q' "$built_with")  ($directive_note)" >&2
+  echo "  built-with major/minor  $(printf '%q' "$bw_major")/$(printf '%q' "$bw_minor")" >&2
+  echo "  directive  major/minor  $(printf '%q' "$d_major")/$(printf '%q' "$d_minor")" >&2
+  echo "  a component that is not one to nine digits is what this refuses on" >&2
+  exit 1
+fi
+
+if { [ "$bw_major" -lt "$d_major" ] \
+    || { [ "$bw_major" -eq "$d_major" ] && [ "$bw_minor" -lt "$d_minor" ]; }; }; then
+  echo "golangci-lint was built with an older Go line than this module targets; not linting" >&2
+  echo "  pinned     v$pin   ($version_file)" >&2
+  echo "  installed  $(printf '%q' "$installed")    ($resolved)" >&2
+  echo "  built with $(printf '%q' "$built_with")  ($directive_note)" >&2
+  echo >&2
+  echo "  rebuild it against the current toolchain:" >&2
+  echo "    go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v$pin" >&2
+  exit 1
+fi
+
+if [ "$check_only" = true ]; then
+  exit 0
+fi
+
+# exec replaces this shell, so the EXIT trap never runs. Clean up here instead.
+rm -f "$version_err"
+
+exec "$resolved" run "$@"

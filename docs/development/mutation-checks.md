@@ -7,6 +7,31 @@ red.
 
 The technique is not the hard part. Running it honestly is.
 
+## Prove the unmutated copy passes first
+
+The four cases below ask whether the mutated run was sound. Did it compile? Did
+the filter match a test? Did the anchor land? Did a checkout eat uncommitted
+work? None of them asks whether the *unmutated* run is sound.
+
+If the harness cannot reproduce a clean pass on an untouched copy, every row
+after that is measuring the harness. Run the suite against an unmodified copy
+before any mutation. Refuse to report anything unless it comes back green with
+a count.
+
+```bash
+baseline=$(run_suite_against "$unmutated_copy")
+case "$baseline" in *", 0 failed"*) ;; *) echo "baseline not green"; exit 1 ;; esac
+```
+
+Keep the baseline's own denominator. Hold every later row to it. A mutation that
+truncates the run and goes red otherwise reads exactly like one the whole suite
+caught.
+
+This is not hypothetical. A harness ran the copy from a directory where the code
+under test could not resolve its own default paths. It reported every row as
+caught. It scored a perfect run. It was testing nothing. The failing case was
+the same one every time. It had nothing to do with any mutation.
+
 ## The harness lies in four ways, and all four look like a clean pass
 
 Every one of these produces zero failing tests. So does a suite that genuinely
@@ -85,6 +110,74 @@ harness refuse instead:
 Run it before the first mutation, not before each one: by the time a mutation
 is applied the file is dirty by design.
 
+## After a fix, re-run the whole set
+
+A fix can make a mutation survive in code it never touched. Re-running the rows
+the fix was aimed at will not find it.
+
+The mechanism is that a repair and the mutation that proved it live at different
+points on the same path. Add a guard upstream. It absorbs the input that made
+the downstream repair observable. The repaired line still works. No test fails.
+Nothing now distinguishes it from the broken version.
+
+Worked case. A comparison truncated a prerelease version. `1.26rc1` compared as
+`26`. Deleting that truncation failed a test. That failure got it pinned. A
+later fix added a check that every component parses as a number. The untruncated
+value fails that check. So it skips the comparison instead of reaching it. Both
+versions of the line now produce the same silent result. The truncation went
+from caught to surviving without being edited. Only a full re-run showed it.
+
+The same trigger has a second effect, on the harness rather than the code.
+Reformatting the code under mutation leaves expressions matching text that has
+moved. Those rows report as not applied. That is the right answer only if the harness
+separates a stale match from a mutation that ran. Re-read the not-applied
+rows after every edit to the code under mutation: a stale expression and a
+genuinely unreachable one look identical.
+
+**Re-run every row after every fix.** The cost is one suite run per mutation.
+The alternative is a guard that reads as pinned and is not.
+
+## A filtered reading discards the reason the count moved
+
+A pipeline that counts result lines throws away everything else the run said.
+When the count is the thing being reported, that is the one place the
+explanation was.
+
+The same suite on the same commit reported 1537 passing and 1358 passing, both
+at exit 0. The difference was a container that did not start. The run said so:
+it printed a line naming the missing container to stderr. An awk counting
+`RUN`, `PASS`, `SKIP` and `FAIL` lines matched none of them and dropped it. The
+number was published as verification. The explanation had already been
+given.
+
+**Keep the raw output. Read it whenever a figure moves.** A summary is fine
+when the figure is stable and useless the moment it is not.
+
+This is worse than a tool that says nothing. The evidence existed. The
+instrument removed it. A gap in coverage leaves the diagnostic waiting to be
+found. A filter destroys it in transit.
+
+## A suite cannot tell you it is testing the wrong requirement
+
+Tests check the code against what their author believed the requirement was.
+When that belief is wrong, they pass. They keep passing. Every gate that
+reads them agrees.
+
+Nine cases on one branch asserted that a lint proceeds when an input file
+cannot be read. The design said the opposite in two places: that the script
+exits non-zero without linting when an input cannot be read, and that it fails
+closed on any condition it cannot evaluate. The nine passed a claim check, a
+per-task review, a full code review and an external reviewer.
+
+Only an adversarial read caught it. The reason is worth keeping: the diff
+was internally consistent. Code and tests agreed with each other. A reviewer
+comparing them finds nothing. The disagreement was between the tests and a
+requirement document neither of them cites.
+
+**Re-read the requirement, not the diff, when a test encodes a refusal or a
+skip.** A test that says a check is skipped is asserting that skipping is
+correct. That is a claim about the requirement, not about the code.
+
 ## A surviving mutation is not always a defect
 
 Sometimes the code is equivalent under the mutation and no test can tell them
@@ -103,6 +196,40 @@ fail because of the data they run on:
 
 Mutate the fixture too: make the value a row varies identical to the baseline
 and check that the row goes red.
+
+## A green says every assertion passed, not that any of them held its guard
+
+A refusal test usually asserts an exit status and a substring of the message.
+That pins the guard only when the substring is something that guard alone
+prints.
+
+Guards in a sequence tend to report the same fields. Delete the first one and
+the input falls through to the second. It refuses for its own reason and prints
+a message that satisfies the same assertion. The suite stays green and
+the guard is gone.
+
+Two guards on one branch were deletable this way, with the suite at 73 of 73.
+The test named the one it meant:
+
+```
+# the guard under test
+no golangci-lint on PATH; not linting
+  installed  not obtained (command -v golangci-lint found nothing)
+
+# the guard below it, reached once the first was removed
+golangci-lint version command exited 127; not linting
+  installed  not obtained (" version" exited 127)
+```
+
+The assertion was `rc = 1`, the text `not obtained`, and the pinned version.
+All three survive the deletion. The test is named for a guard it never touched.
+
+**Assert a phrase only the guard under test prints.** Its headline is usually
+the only thing that qualifies. `not obtained` is shared; `command -v
+golangci-lint found nothing` is not.
+
+This presents as a clean pass, which is why reading the suite does not find it.
+Delete the guard and read which message prints. The colour will not tell you.
 
 ## A red says the test failed, not which line failed it
 

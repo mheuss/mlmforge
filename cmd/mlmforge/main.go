@@ -57,9 +57,7 @@ func run() int {
 	return 0
 }
 
-// newRootCmd builds the command tree. Separated from run so a test executes
-// the same tree production does, rather than a subtree that behaves
-// differently under cobra.
+// newRootCmd builds the command tree.
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "mlmforge",

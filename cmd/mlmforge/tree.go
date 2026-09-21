@@ -68,8 +68,8 @@ func newTreeLoadCmd(resolve flagResolver, open depsOpener, loader loaderFor) *co
 		Long: "Opens a database pool, starts the engine worker, replays one stored tree, and exits. " +
 			"The worker is started and stopped per invocation.",
 		Args: cobra.NoArgs,
-		// On load rather than the group: ExecuteC reads the leaf and the
-		// command it was called on, never the ancestors between them.
+		// Moving these to the tree group leaves a real invocation dumping
+		// usage after the operator message.
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, _ []string) error {

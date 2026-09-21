@@ -326,6 +326,12 @@ expect_with "$bw_dir" 1 "key-shaped lines anywhere in the file" "two steps with 
 expect_with "$bw_dir" 1 "key-shaped lines anywhere in the file" "another action's keys still refuse" \
   "${wf_args[@]}" --workflow "$data/wf-lint-other-action.yml"
 
+# The guard compares key spellings byte for byte, so a key written with a YAML
+# escape is a different string to it. This fixture spells version as
+# "ver\u0073ion" and is not seen.
+expect_silent "$bw_dir" "an escaped key spelling is not seen" \
+  "${wf_args[@]}" --workflow "$data/wf-lint-escaped-key.yml"
+
 # A flow mapping puts both keys on one line, after { and after a comma.
 expect_with "$bw_dir" 1 "sets both version and version-file" "a flow mapping sets both keys" \
   "${wf_args[@]}" --workflow "$data/wf-lint-flow-mapping.yml"

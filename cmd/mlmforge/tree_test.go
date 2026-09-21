@@ -270,9 +270,7 @@ func TestTreeLoadCmd_SignalsCancelTheLoad(t *testing.T) {
 	}
 }
 
-// Driving the root is what makes this a claim about the shipped binary. Cobra
-// resolves an argument differently for a parented command than for one
-// executed on its own.
+// Driving the root is what makes this a claim about the shipped binary.
 func TestRootCmd_TreeRejectsAnUnknownSubcommand(t *testing.T) {
 	root := newRootCmd()
 	root.SetOut(io.Discard)
@@ -293,7 +291,8 @@ func TestRootCmd_BareTreeStillPrintsHelpAndSucceeds(t *testing.T) {
 	root.SetArgs([]string{"tree"})
 
 	require.NoError(t, root.Execute())
-	require.Contains(t, out.String(), "load", "help must still list the subcommands")
+	require.Contains(t, out.String(), "Replay a stored tree into the engine",
+		"help must still list the subcommands")
 }
 
 // workerStub writes an executable file for the resolver to find. Nothing runs

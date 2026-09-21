@@ -28,5 +28,6 @@ func TestRootCmd_BareMigrateStillPrintsHelpAndSucceeds(t *testing.T) {
 	root.SetArgs([]string{"migrate"})
 
 	require.NoError(t, root.Execute())
-	require.Contains(t, out.String(), "up", "help must still list the subcommands")
+	require.Contains(t, out.String(), "Apply all pending migrations",
+		"help must still list the subcommands")
 }

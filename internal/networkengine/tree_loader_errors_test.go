@@ -77,7 +77,8 @@ func loadWithMutator(t *testing.T, treeType string, nodes []TreeNodeRow, m TreeM
 	for _, n := range nodes {
 		require.NoError(t, store.InsertNode(ctx, n))
 	}
-	return NewTreeLoader(store, m).LoadTree(ctx, "t", treeType, opts...)
+	_, err := NewTreeLoader(store, m).LoadTree(ctx, "t", treeType, opts...)
+	return err
 }
 
 // spacedNodes gives each node a distinct enrollment time.
@@ -462,7 +463,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			switch {
 			case tt.store != nil:
 				storeRowMutator = &stubMutator{}
-				err = NewTreeLoader(tt.store, storeRowMutator).LoadTree(
+				_, err = NewTreeLoader(tt.store, storeRowMutator).LoadTree(
 					context.Background(), "t", tt.treeType, tt.opts...)
 			case tt.direct:
 				_, err = loadWithStubDirect(t, tt.treeType, tt.nodes, tt.opts...)
@@ -743,9 +744,9 @@ func TestTreeLoader_PostCreateExitsCarryTheirCounts(t *testing.T) {
 		wantAttempted int
 		wantTotal     int
 	}{
-		// The three counts are deliberately zero on these rows, not omitted.
-		// Nothing has been placed, and Total is only populated at the nodes
-		// stage.
+		// Confirmed and Attempted are deliberately zero on the create and root
+		// rows, not omitted. Nothing has been placed. Total is zero only at
+		// the create stage, where no structure exists to strand.
 		{
 			name:          "create fails before anything is attempted",
 			wantFailedOp:  "CreateTree",
@@ -778,7 +779,7 @@ func TestTreeLoader_PostCreateExitsCarryTheirCounts(t *testing.T) {
 			wantStage:     TreeLoadStageRoot,
 			wantConfirmed: 0,
 			wantAttempted: 0,
-			wantTotal:     0,
+			wantTotal:     4,
 		},
 		{
 			// Create, root, then two placements are acknowledged. The third

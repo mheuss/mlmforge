@@ -29,6 +29,7 @@ Use-cases for the Network Engine bounded context.
 - [UC-NET-023: Repair inbound edges before tombstoning a node](#uc-net-023-repair-inbound-edges-before-tombstoning-a-node)
 - [UC-NET-024: Adding a response field a caller must not ignore](#uc-net-024-adding-a-response-field-a-caller-must-not-ignore)
 - [UC-NET-025: Four-outcome reconcile on a refused mutation](#uc-net-025-four-outcome-reconcile-on-a-refused-mutation)
+- [UC-NET-026: Deciding when a failed tree load is worth retrying](#uc-net-026-deciding-when-a-failed-tree-load-is-worth-retrying)
 
 ---
 
@@ -434,7 +435,7 @@ loader := networkengine.NewTreeLoader(store, engine)
 // clean up. Once the tree exists, the error carries the stage the load reached
 // and how many placements the engine acknowledged.
 for _, tree := range trees {
-	err := loader.LoadTree(ctx, tree.ID, tree.Type,
+	_, err := loader.LoadTree(ctx, tree.ID, tree.Type,
 		networkengine.WithMatrixParams(tree.Width, tree.Spillover))
 
 	var rejected *networkengine.TreeLoadRejectedError
@@ -1014,3 +1015,26 @@ if alreadyProjected {
 **Notes:** Four outcomes rather than two, because each pair splits on a different question. `notApplicable` and `inconclusive` both retry, but the first says the error is not one reconcile can speak to and the second says the inspection itself failed. Keeping `inconclusive` apart from `diverged` is what stops a timed-out query being reported as the engine disagreeing. `diverged` returning a nil error is backfilled with the engine error at the call site, because reporting the one outcome that means the two systems disagree as success is the worst answer the loop can give. The three handlers in `tree_consumer.go` are the worked examples, and `handleNodeRemoved` is the one that needs the flag, since its engine reply carries the only copy of the moved list. Related: UC-NET-014, which owns the gate and the database backstop this sits behind. Open cases are HEU-811 and HEU-813. The root path's damage is refused at the store by migration 000006 (HEU-810). The reconcile itself is unchanged.
 
 ---
+
+### UC-NET-026: Deciding when a failed tree load is worth retrying
+
+**Added:** Unreleased (HEU-788)
+**Files:** `cmd/mlmforge/treeload.go` (`treeLoadRetryable`, `runTreeLoad`)
+
+**Problem:** A caller that retries a `LoadTree` failure has to tell an infrastructure blip apart from a failure that will fail the same way forever. The error kind alone does not carry enough to decide.
+
+**Solution:** `treeLoadRetryable` allowlists rather than denylists. A cause nobody enumerated defaults to stopping. It retries one case: a `TreeLoadRejectedError` whose `Kind` is `TreeLoadStoreReadFailed` and whose wrapped error `pgconn.SafeToRetry` reports never reached the server. Everything else stops. Cancellation is checked first and separately. `TreeLoadStoreReadFailed` covers a refused connection, a cancelled context and a row that will not decode. Only the first of those can succeed on a second attempt. A `TreeLoadIncompleteError` is never retried at all. The structure already exists in the engine, so a retry reports `TREE_EXISTS`. The only real remedy is a process restart.
+
+**Usage:**
+```go
+// Cancellation reaches the engine stages too. TreeLoadIncompleteError has
+// no Kind field. A caller that checks only the rejected type honours
+// "do not retry a cancelled context" on one of two paths.
+_, err := loader.LoadTree(ctx, treeID, treeType, opts...)
+if err != nil && treeLoadRetryable(err) {
+    // Only reachable for a store read that never left the client.
+    _, err = loader.LoadTree(ctx, treeID, treeType, opts...)
+}
+```
+
+**Notes:** The allowlist is the load-bearing part. Denylisting would mean a new failure mode is retried by default. The failure modes here include ones that never terminate. Related: UC-NET-012 owns the preflight half of these two error types, which is what runs before any engine call. This entry owns the retry half, which runs after one has failed. Neither restates the other.

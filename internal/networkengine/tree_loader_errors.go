@@ -88,7 +88,8 @@ const (
 //
 // Confirmed and Total count non-root placements. Attempted is the one-based
 // index the message carries, so within TreeLoadStageNodes Confirmed is
-// Attempted minus one. All three are 0 at the other stages.
+// Attempted minus one. At TreeLoadStageRoot, Total is set and the other two
+// are 0. All three are 0 at TreeLoadStageCreate.
 type TreeLoadIncompleteError struct {
 	TreeID string
 	// NodeIDs holds every user the message names, in the order the message
@@ -106,7 +107,8 @@ type TreeLoadIncompleteError struct {
 	// unless Err is nil, which means the load stopped before the call was sent
 	// and no request was made for it.
 	Attempted int
-	// Total is how many non-root placements the load set out to make.
+	// Total is how many non-root placements the load set out to make. It is 0
+	// at TreeLoadStageCreate, where no structure exists to strand.
 	Total int
 	// Err is the TreeMutator operation's error, or nil when a nil guard fired
 	// instead. It may be a transport or context error rather than an
@@ -150,9 +152,10 @@ func newTreeLoadRejected(kind TreeLoadRejectionKind, treeID string, err error, m
 
 // newTreeLoadIncomplete builds a TreeLoadIncompleteError.
 // attempted is the one-based index the message carries and total is the
-// non-root count. Both are 0 outside TreeLoadStageNodes. Confirmed is derived
-// here rather than passed, so the count an operator reads cannot disagree with
-// the index the message names.
+// non-root count. attempted is 0 outside TreeLoadStageNodes, and total is 0
+// only at TreeLoadStageCreate. Confirmed is derived here rather than passed,
+// so the count an operator reads cannot disagree with the index the message
+// names.
 func newTreeLoadIncomplete(stage TreeLoadStage, treeID string, err error, attempted, total int, msg string, nodeIDs ...string) *TreeLoadIncompleteError {
 	return &TreeLoadIncompleteError{
 		TreeID:    treeID,

@@ -1,0 +1,97 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"io"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/mlmforge/mlmforge/internal/networkengine"
+)
+
+// treeDeps is what one tree subcommand needs for one invocation.
+type treeDeps struct {
+	store   networkengine.TreeStore
+	engine  networkengine.TreeEngine
+	release func() error
+}
+
+// depsOpener builds the dependencies for one invocation. A non-nil treeDeps
+// must carry a non-nil release.
+type depsOpener func(ctx context.Context, dbURL, workerPath string) (*treeDeps, error)
+
+// poolCloser is narrowed to the one method releaseDeps calls.
+type poolCloser interface{ Close() }
+
+// reachablePool is narrowed to the two methods startEngine calls.
+type reachablePool interface {
+	poolCloser
+	Ping(ctx context.Context) error
+}
+
+// engineStopper is narrowed to the one method releaseDeps calls.
+type engineStopper interface{ Stop() error }
+
+// releaseDeps stops the engine and closes the pool.
+func releaseDeps(engine engineStopper, pool poolCloser) error {
+	stopErr := engine.Stop()
+	pool.Close()
+	if stopErr != nil {
+		return fmt.Errorf("stop worker: %w", stopErr)
+	}
+	return nil
+}
+
+// startEngine reaches the database and then starts the worker, releasing pool
+// if either fails.
+func startEngine(ctx context.Context, workerPath string, pool reachablePool) (*networkengine.EngineClient, error) {
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("reach database: %w", err)
+	}
+	engine, err := networkengine.NewEngineClient(ctx, workerPath)
+	if err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("start worker at %s: %w", workerPath, err)
+	}
+	return engine, nil
+}
+
+// treeRunner is one tree operation.
+type treeRunner func(ctx context.Context, deps *treeDeps) error
+
+// openTreeDeps opens a pool and starts the worker.
+func openTreeDeps(ctx context.Context, dbURL, workerPath string) (*treeDeps, error) {
+	pool, err := pgxpool.New(ctx, dbURL)
+	if err != nil {
+		return nil, fmt.Errorf("open database pool: %w", err)
+	}
+	engine, err := startEngine(ctx, workerPath, pool)
+	if err != nil {
+		return nil, err
+	}
+	return &treeDeps{
+		store:   networkengine.NewPostgresTreeStore(pool),
+		engine:  engine,
+		release: func() error { return releaseDeps(engine, pool) },
+	}, nil
+}
+
+// withTreeDeps runs one operation and releases the dependencies afterwards. A
+// release failure is written to warn and does not change the returned error.
+func withTreeDeps(ctx context.Context, warn io.Writer, open depsOpener, dbURL, workerPath string, run treeRunner) (err error) {
+	deps, err := open(ctx, dbURL, workerPath)
+	if err != nil {
+		return err
+	}
+	// Deferred rather than called after run, so a panic releases too.
+	defer func() {
+		if relErr := deps.release(); relErr != nil {
+			// What was observed, and nothing about what it means. Why the
+			// release failed is not known here, so neither is whether
+			// anything is still running.
+			_, _ = fmt.Fprintf(warn, "warning: the run finished; releasing its worker and pool reported: %s\n", relErr)
+		}
+	}()
+	return run(ctx, deps)
+}

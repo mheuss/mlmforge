@@ -44,6 +44,14 @@ func run() int {
 		}
 	}()
 
+	if err := newRootCmd().Execute(); err != nil {
+		return 1
+	}
+	return 0
+}
+
+// newRootCmd builds the command tree.
+func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "mlmforge",
 		Short: "MLMForge compensation engine",
@@ -57,23 +65,12 @@ func run() int {
 	dbURL := migrateCmd.PersistentFlags().String("db-url", "", "PostgreSQL connection URL (or set DATABASE_URL env var)")
 	migrationsPath := migrateCmd.PersistentFlags().String("migrations", "./migrations", "Path to migration files")
 
-	// resolveDBURL returns the database URL from the flag or DATABASE_URL env var.
-	resolveDBURL := func() (string, error) {
-		if *dbURL != "" {
-			return *dbURL, nil
-		}
-		if env := os.Getenv("DATABASE_URL"); env != "" {
-			return env, nil
-		}
-		return "", fmt.Errorf("--db-url flag or DATABASE_URL env var is required")
-	}
-
 	migrateCmd.AddCommand(
 		&cobra.Command{
 			Use:   "up",
 			Short: "Apply all pending migrations",
 			RunE: func(cmd *cobra.Command, args []string) error {
-				url, err := resolveDBURL()
+				url, err := resolveDBURL(*dbURL)
 				if err != nil {
 					return err
 				}
@@ -84,7 +81,7 @@ func run() int {
 			Use:   "down",
 			Short: "Roll back the most recent migration",
 			RunE: func(cmd *cobra.Command, args []string) error {
-				url, err := resolveDBURL()
+				url, err := resolveDBURL(*dbURL)
 				if err != nil {
 					return err
 				}
@@ -103,7 +100,7 @@ func run() int {
 			Use:   "version",
 			Short: "Show current migration version",
 			RunE: func(cmd *cobra.Command, args []string) error {
-				url, err := resolveDBURL()
+				url, err := resolveDBURL(*dbURL)
 				if err != nil {
 					return err
 				}
@@ -118,9 +115,6 @@ func run() int {
 	)
 
 	root.AddCommand(migrateCmd)
-
-	if err := root.Execute(); err != nil {
-		return 1
-	}
-	return 0
+	root.AddCommand(newTreeCmd())
+	return root
 }

@@ -197,6 +197,40 @@ fail because of the data they run on:
 Mutate the fixture too: make the value a row varies identical to the baseline
 and check that the row goes red.
 
+## A green says every assertion passed, not that any of them held its guard
+
+A refusal test usually asserts an exit status and a substring of the message.
+That pins the guard only when the substring is something **only** that guard
+prints.
+
+Guards in a sequence tend to report the same fields. Delete the first one and
+the input falls through to the second, which refuses for its own reason and
+prints a message that satisfies the same assertion. The suite stays green and
+the guard is gone.
+
+Two guards on one branch were deletable this way, with the suite at 73 of 73.
+The test named the one it meant:
+
+```
+# the guard under test
+no golangci-lint on PATH; not linting
+  installed  not obtained (command -v golangci-lint found nothing)
+
+# the guard below it, reached once the first was removed
+golangci-lint version command exited 127; not linting
+  installed  not obtained (" version" exited 127)
+```
+
+The assertion was `rc = 1`, the text `not obtained`, and the pinned version.
+All three survive the deletion. The test is named for a guard it never touched.
+
+**Assert a phrase only the guard under test prints.** Its headline is usually
+the only thing that qualifies. `not obtained` is shared; `command -v
+golangci-lint found nothing` is not.
+
+This presents as a clean pass, which is why reading the suite does not find it.
+Delete the guard and read which message prints. The colour will not tell you.
+
 ## A red says the test failed, not which line failed it
 
 `require` and `assert` differ in one way that decides what a mutation pass

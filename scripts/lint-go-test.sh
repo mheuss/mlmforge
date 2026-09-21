@@ -360,7 +360,31 @@ expect 1 "Is a directory" "a directory as the workflow keeps cat's reason" \
 
 args_file=$work/args
 runner=$(stub_dir runner "$ok_line")
+
+# mktemp resolves TMPDIR, so a TMPDIR that does not exist is how its failure
+# path fires without touching the filesystem's permissions.
+out=$(TMPDIR=$work/nosuchtmpdir PATH="$(stub_dir mktempfail "$ok_line"):$PATH" \
+  "$check" --check-only --version-file "$data/lintver-ok" 2>&1)
+rc=$?
+if [ "$rc" = 1 ] && [[ $out == *"cannot create a temp file"* ]]; then
+  record yes "an unresolvable TMPDIR refuses" ""
+else
+  record no "an unresolvable TMPDIR refuses" "rc=$rc: $out"
+fi
 lint_args=(--version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok" --workflow "$data/wf-lint-file-only.yml")
+
+# The usage says a path operand needs no --. Consuming it instead of stopping
+# would drop it before golangci-lint ever sees it.
+rm -f "$args_file"
+STUB_ARGS=$args_file PATH="$runner:$PATH" "$check" "${lint_args[@]}" \
+  ./internal/... >/dev/null 2>&1
+rc=$?
+got=$(tr '\n' ' ' < "$args_file" 2>/dev/null)
+if [ "$rc" = 0 ] && [ "$got" = "run ./internal/... " ]; then
+  record yes "a bare path operand reaches the lint" ""
+else
+  record no "a bare path operand reaches the lint" "rc=$rc, args=\"$got\""
+fi
 
 STUB_ARGS=$args_file PATH="$runner:$PATH" "$check" "${lint_args[@]}" \
   -- --timeout 9m ./internal/... >/dev/null 2>&1

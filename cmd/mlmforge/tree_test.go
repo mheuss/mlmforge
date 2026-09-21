@@ -230,8 +230,9 @@ func (l *sigLoader) LoadTree(ctx context.Context, _, _ string, _ ...networkengin
 	return ctx.Err()
 }
 
-// Both registered signals get a case. Dropping either one from the command
-// leaves the other green, so one case would pin half the registration.
+// One case per signal. A single case would leave the other registration
+// unpinned, because dropping either one from the command leaves the other
+// green.
 //
 // The keep-alive takes the signal off its default disposition for this
 // process, so a missing registration fails the case instead of killing the

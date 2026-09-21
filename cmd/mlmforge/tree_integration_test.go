@@ -148,10 +148,8 @@ func seedTree(t *testing.T, pool *pgxpool.Pool, treeID string, children int) {
 // The ticket's symptom, inverted: the tree persistence layer is now reachable
 // from the binary, with no test helper in the path.
 //
-// Success alone does not prove the rows were read. LoadTree short circuits to
-// nil on an empty tree and the command prints the same line either way, so
-// this case passes with nothing seeded. TestTreeLoad_ReadsTheStoredRows below
-// is what distinguishes the two.
+// The node count is what separates this from an empty tree. Before it, this
+// case passed with nothing seeded.
 func TestTreeLoad_SucceedsForAWellFormedTree(t *testing.T) {
 	if pgContainer == nil {
 		t.Skip("Postgres container not available")
@@ -170,7 +168,9 @@ func TestTreeLoad_SucceedsForAWellFormedTree(t *testing.T) {
 	)
 
 	require.NoError(t, err)
-	require.Equal(t, "loaded tree "+tree+"\n", out.stdout.String())
+	// The count is what makes a replayed tree distinguishable from an empty
+	// one at a terminal. Root plus two children.
+	require.Equal(t, "loaded tree "+tree+" (3 nodes)\n", out.stdout.String())
 	require.Empty(t, out.stderr.String())
 }
 
@@ -232,7 +232,7 @@ func TestTreeLoad_AnEmptyTreeIsNotAFailure(t *testing.T) {
 	)
 
 	require.NoError(t, err)
-	require.Equal(t, "loaded tree "+tree+"\n", out.stdout.String())
+	require.Equal(t, "loaded tree "+tree+" (0 nodes)\n", out.stdout.String())
 }
 
 // An unsupported tree type is refused, the message reaches stderr, and cobra

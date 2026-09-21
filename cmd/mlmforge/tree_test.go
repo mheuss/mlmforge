@@ -49,7 +49,7 @@ func TestTreeLoadCmd_PassesItsFlagsToTheLoader(t *testing.T) {
 		func(context.Context, string, string) (*treeDeps, error) {
 			return &treeDeps{release: func() error { return nil }}, nil
 		},
-		func(*treeDeps) treeLoader { return rec },
+		func(*treeDeps, string) (treeLoader, nodeCounter) { return rec, countingTo(0) },
 	)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetArgs([]string{
@@ -104,7 +104,9 @@ func TestTreeLoadCmd_MatrixFlagValuesReachTheEngine(t *testing.T) {
 		func(context.Context, string, string) (*treeDeps, error) {
 			return &treeDeps{release: func() error { return nil }}, nil
 		},
-		func(*treeDeps) treeLoader { return networkengine.NewTreeLoader(store, mut) },
+		func(*treeDeps, string) (treeLoader, nodeCounter) {
+			return networkengine.NewTreeLoader(store, mut), countingTo(1)
+		},
 	)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetArgs([]string{
@@ -125,7 +127,7 @@ func TestTreeLoadCmd_ReleasesTheDepsAfterRunning(t *testing.T) {
 		func(context.Context, string, string) (*treeDeps, error) {
 			return &treeDeps{release: func() error { released = true; return nil }}, nil
 		},
-		func(*treeDeps) treeLoader { return &recordingLoader{} },
+		func(*treeDeps, string) (treeLoader, nodeCounter) { return &recordingLoader{}, countingTo(0) },
 	)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetArgs([]string{
@@ -146,7 +148,7 @@ func TestTreeLoadCmd_RejectsStrayPositionalArguments(t *testing.T) {
 		func(context.Context, string, string) (*treeDeps, error) {
 			return &treeDeps{release: func() error { return nil }}, nil
 		},
-		func(*treeDeps) treeLoader { return &recordingLoader{} },
+		func(*treeDeps, string) (treeLoader, nodeCounter) { return &recordingLoader{}, countingTo(0) },
 	)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
@@ -171,7 +173,9 @@ func TestTreeLoadCmd_ReportsAFailureOnceWithoutUsage(t *testing.T) {
 		func(context.Context, string, string) (*treeDeps, error) {
 			return &treeDeps{release: func() error { return nil }}, nil
 		},
-		func(*treeDeps) treeLoader { return &failingLoader{err: errors.New("boom")} },
+		func(*treeDeps, string) (treeLoader, nodeCounter) {
+			return &failingLoader{err: errors.New("boom")}, countingTo(0)
+		},
 	)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
@@ -253,7 +257,7 @@ func TestTreeLoadCmd_SignalsCancelTheLoad(t *testing.T) {
 				func(context.Context, string, string) (*treeDeps, error) {
 					return &treeDeps{release: func() error { return nil }}, nil
 				},
-				func(*treeDeps) treeLoader { return loader },
+				func(*treeDeps, string) (treeLoader, nodeCounter) { return loader, countingTo(0) },
 			)
 			cmd.SetOut(&bytes.Buffer{})
 			cmd.SetErr(&bytes.Buffer{})

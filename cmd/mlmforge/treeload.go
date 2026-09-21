@@ -45,13 +45,23 @@ func treeLoadRetryable(err error) bool {
 	return pgconn.SafeToRetry(rejected.Err)
 }
 
+// nodeCounter reports how many active nodes a tree holds.
+type nodeCounter func(ctx context.Context) (int, error)
+
 // runTreeLoad replays one tree, retrying only what treeLoadRetryable allows.
-func runTreeLoad(ctx context.Context, out io.Writer, loader treeLoader, treeID, treeType string, opts []networkengine.LoadTreeOption) error {
-	var err error
+//
+// The size is read before the load so a success can say how much was replayed.
+// Reading it first also means an unreadable store fails here rather than
+// reporting a load whose size is unknown.
+func runTreeLoad(ctx context.Context, out io.Writer, loader treeLoader, count nodeCounter, treeID, treeType string, opts []networkengine.LoadTreeOption) error {
+	size, err := count(ctx)
+	if err != nil {
+		return err
+	}
 	for attempt := 1; attempt <= maxLoadAttempts; attempt++ {
 		err = loader.LoadTree(ctx, treeID, treeType, opts...)
 		if err == nil {
-			_, _ = fmt.Fprintf(out, "loaded tree %s\n", treeID)
+			_, _ = fmt.Fprintf(out, "loaded tree %s (%d nodes)\n", treeID, size)
 			return nil
 		}
 		if !treeLoadRetryable(err) {

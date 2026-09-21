@@ -133,11 +133,17 @@ func TestTreeLoadCmd_ReleasesTheDepsAfterRunning(t *testing.T) {
 	require.True(t, released)
 }
 
-// Both flags are supplied so the args check is the only thing left that can
-// fail. Without them the missing --db-url raises first and the assertion
-// passes whether or not the stray argument was ever rejected.
+// Supplying both flags and asserting the message is what makes this fail when
+// the Args guard is removed. Without them the run still errors, on the unset
+// --db-url, and asserting the fact of an error cannot tell the two apart. The
+// injected opener keeps that path off the network.
 func TestTreeLoadCmd_RejectsStrayPositionalArguments(t *testing.T) {
-	cmd := newTreeCmd()
+	cmd := newTreeCmdWith(
+		func(context.Context, string, string) (*treeDeps, error) {
+			return &treeDeps{release: func() error { return nil }}, nil
+		},
+		func(*treeDeps) treeLoader { return &recordingLoader{} },
+	)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetArgs([]string{
@@ -145,7 +151,7 @@ func TestTreeLoadCmd_RejectsStrayPositionalArguments(t *testing.T) {
 		"--tree-id", "t", "--tree-type", "unilevel", "stray",
 	})
 
-	require.ErrorContains(t, cmd.Execute(), `unknown command "stray"`)
+	require.ErrorContains(t, cmd.Execute(), `unknown command "stray" for "tree load"`)
 }
 
 // workerStub writes an executable file so resolveWorkerPath succeeds without a

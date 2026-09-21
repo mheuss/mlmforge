@@ -196,9 +196,10 @@ one is about trusting Postgres to have rejected it already.
 
 ## The test count in networkengine depends on the machine
 
-Seventeen sites in `internal/networkengine` skip when no Postgres container is
-running. Sixteen are tests and one is a benchmark. They cover the store pairs,
-commission schema and amounts, qualification history, and tree persistence.
+Sites in `internal/networkengine` skip when no Postgres container is running.
+They cover the store pairs, commission schema and amounts, qualification
+history, and tree persistence. Several sit in shared helpers rather than in the
+tests themselves, so one site can skip many tests.
 
 Without the container the package passes with all of them skipped. It prints
 `ok` either way.

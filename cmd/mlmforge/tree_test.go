@@ -133,13 +133,19 @@ func TestTreeLoadCmd_ReleasesTheDepsAfterRunning(t *testing.T) {
 	require.True(t, released)
 }
 
+// Both flags are supplied so the args check is the only thing left that can
+// fail. Without them the missing --db-url raises first and the assertion
+// passes whether or not the stray argument was ever rejected.
 func TestTreeLoadCmd_RejectsStrayPositionalArguments(t *testing.T) {
 	cmd := newTreeCmd()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"load", "--tree-id", "t", "--tree-type", "unilevel", "stray"})
+	cmd.SetArgs([]string{
+		"load", "--db-url", "postgres://x", "--worker", workerStub(t),
+		"--tree-id", "t", "--tree-type", "unilevel", "stray",
+	})
 
-	require.Error(t, cmd.Execute())
+	require.ErrorContains(t, cmd.Execute(), `unknown command "stray"`)
 }
 
 // workerStub writes an executable file so resolveWorkerPath succeeds without a

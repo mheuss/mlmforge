@@ -31,7 +31,7 @@ func newTreeCmdWith(open depsOpener, loader loaderFor) *cobra.Command {
 	treeCmd := &cobra.Command{
 		Use:   "tree",
 		Short: "Tree persistence commands",
-		Long:  "Commands that reach the tree persistence layer. Each states its own behaviour.",
+		Long:  "Commands that reach the tree persistence layer.",
 		Args:  cobra.NoArgs,
 	}
 

@@ -18,14 +18,13 @@ func loadTreeOptions(treeType string, width int, spillover string) []networkengi
 	return []networkengine.LoadTreeOption{networkengine.WithMatrixParams(width, spillover)}
 }
 
-// loaderFor builds what a subcommand drives: the loader, and the counter that
-// reports how big the tree is.
-type loaderFor func(deps *treeDeps, treeID string) (treeLoader, nodeCounter)
+// loaderFor builds the loader a subcommand drives.
+type loaderFor func(deps *treeDeps) treeLoader
 
 // newTreeCmd builds the tree command group against the real dependencies.
 func newTreeCmd() *cobra.Command {
-	return newTreeCmdWith(openTreeDeps, func(d *treeDeps, treeID string) (treeLoader, nodeCounter) {
-		return networkengine.NewTreeLoader(d.store, d.engine), storeNodeCount(d.store, treeID)
+	return newTreeCmdWith(openTreeDeps, func(d *treeDeps) treeLoader {
+		return networkengine.NewTreeLoader(d.store, d.engine)
 	})
 }
 
@@ -57,17 +56,6 @@ func newTreeCmdWith(open depsOpener, loader loaderFor) *cobra.Command {
 	return treeCmd
 }
 
-// storeNodeCount counts the tree's active rows.
-func storeNodeCount(store networkengine.TreeStore, treeID string) nodeCounter {
-	return func(ctx context.Context) (int, error) {
-		rows, err := store.GetByTreeDepthOrdered(ctx, treeID)
-		if err != nil {
-			return 0, err
-		}
-		return len(rows), nil
-	}
-}
-
 // flagResolver returns the database URL and the worker path.
 type flagResolver func() (string, string, error)
 
@@ -96,8 +84,7 @@ func newTreeLoadCmd(resolve flagResolver, open depsOpener, loader loaderFor) *co
 			opts := loadTreeOptions(treeType, width, spillover)
 			return withTreeDeps(ctx, open, url, workerPath,
 				func(ctx context.Context, deps *treeDeps) error {
-					load, count := loader(deps, treeID)
-					return runTreeLoad(ctx, cmd.OutOrStdout(), load, count, treeID, treeType, opts)
+					return runTreeLoad(ctx, cmd.OutOrStdout(), loader(deps), treeID, treeType, opts)
 				})
 		},
 	}

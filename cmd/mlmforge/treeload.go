@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -19,7 +20,7 @@ var loadRetryDelay = 250 * time.Millisecond
 
 // treeLoader is the surface runTreeLoad drives.
 type treeLoader interface {
-	LoadTree(ctx context.Context, treeID, treeType string, opts ...networkengine.LoadTreeOption) error
+	LoadTree(ctx context.Context, treeID, treeType string, opts ...networkengine.LoadTreeOption) (int, error)
 }
 
 // treeLoadRetryable reports whether a load failure can succeed on a retry.
@@ -45,22 +46,19 @@ func treeLoadRetryable(err error) bool {
 	return pgconn.SafeToRetry(rejected.Err)
 }
 
-// nodeCounter reports how many active nodes a tree holds.
-type nodeCounter func(ctx context.Context) (int, error)
-
 // runTreeLoad replays one tree, retrying only what treeLoadRetryable allows.
-//
-// The size is read before the load so a success can say how much was replayed.
-// Reading it first also means an unreadable store fails here rather than
-// reporting a load whose size is unknown.
-func runTreeLoad(ctx context.Context, out io.Writer, loader treeLoader, count nodeCounter, treeID, treeType string, opts []networkengine.LoadTreeOption) error {
-	size, err := count(ctx)
-	if err != nil {
-		return err
-	}
+func runTreeLoad(ctx context.Context, out io.Writer, loader treeLoader, treeID, treeType string, opts []networkengine.LoadTreeOption) error {
+	var err error
 	for attempt := 1; attempt <= maxLoadAttempts; attempt++ {
-		err = loader.LoadTree(ctx, treeID, treeType, opts...)
+		var size int
+		size, err = loader.LoadTree(ctx, treeID, treeType, opts...)
 		if err == nil {
+			// Zero rows and a tree that is not in the database are the same
+			// read, so this must not claim a load that did not happen.
+			if size == 0 {
+				_, _ = fmt.Fprintf(out, "tree %s holds no rows; nothing was loaded\n", treeID)
+				return nil
+			}
 			_, _ = fmt.Fprintf(out, "loaded tree %s (%d nodes)\n", treeID, size)
 			return nil
 		}
@@ -68,12 +66,17 @@ func runTreeLoad(ctx context.Context, out io.Writer, loader treeLoader, count no
 			break
 		}
 		if attempt < maxLoadAttempts {
-			select {
-			case <-ctx.Done():
+			// Checked before the select. With both cases ready a select picks
+			// at random, so a cancelled context could win a coin flip and
+			// start another attempt.
+			if ctxErr := ctx.Err(); ctxErr != nil {
 				// The load error goes out too. A bare cancellation tells the
 				// operator nothing about what was failing.
-				err = errors.Join(err, ctx.Err())
-				return newTreeLoadFailure(err)
+				return newTreeLoadFailure(errors.Join(err, ctxErr))
+			}
+			select {
+			case <-ctx.Done():
+				return newTreeLoadFailure(errors.Join(err, ctx.Err()))
 			case <-time.After(loadRetryDelay):
 			}
 		}
@@ -102,12 +105,17 @@ func treeLoadFailureMessage(err error) string {
 	// both must not be reported as leaving the engine unchanged.
 	var incomplete *networkengine.TreeLoadIncompleteError
 	if errors.As(err, &incomplete) {
-		return fmt.Sprintf("load stopped at the %s stage; the engine acknowledged %d of %d placements",
-			incomplete.Stage, incomplete.Confirmed, incomplete.Total)
+		return fmt.Sprintf("load stopped at the %s stage; the engine acknowledged %d of %d placements: %s",
+			incomplete.Stage, incomplete.Confirmed, incomplete.Total, incomplete)
 	}
 	var rejected *networkengine.TreeLoadRejectedError
 	if errors.As(err, &rejected) {
-		return fmt.Sprintf("load refused before any engine call (%s); the engine is unchanged", rejected.Kind)
+		msg := fmt.Sprintf("load refused before any engine call (%s); the engine is unchanged: %s",
+			rejected.Kind, rejected)
+		if len(rejected.NodeIDs) > 0 {
+			msg += fmt.Sprintf(" (nodes: %s)", strings.Join(rejected.NodeIDs, ", "))
+		}
+		return msg
 	}
 	return fmt.Sprintf("load failed: %s", err)
 }

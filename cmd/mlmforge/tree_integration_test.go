@@ -218,7 +218,10 @@ func TestTreeLoad_AnEmptyTreeIsNotAFailure(t *testing.T) {
 	)
 
 	require.NoError(t, err)
-	require.Equal(t, "loaded tree "+tree+" (0 nodes)\n", out.stdout.String())
+	// It must not say it loaded one. A typo'd tree ID reads the same zero rows
+	// as a genuinely empty tree, and nothing else distinguishes them.
+	require.Equal(t, "tree "+tree+" holds no rows; nothing was loaded\n", out.stdout.String())
+	require.NotContains(t, out.stdout.String(), "loaded tree")
 }
 
 // An unsupported tree type is refused, the message reaches stderr, and cobra

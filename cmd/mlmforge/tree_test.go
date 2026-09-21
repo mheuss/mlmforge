@@ -36,9 +36,9 @@ type recordingLoader struct {
 	optCount         int
 }
 
-func (r *recordingLoader) LoadTree(_ context.Context, treeID, treeType string, opts ...networkengine.LoadTreeOption) error {
+func (r *recordingLoader) LoadTree(_ context.Context, treeID, treeType string, opts ...networkengine.LoadTreeOption) (int, error) {
 	r.treeID, r.treeType, r.optCount = treeID, treeType, len(opts)
-	return nil
+	return 0, nil
 }
 
 // Executing the command is the only thing that proves the flags reach the
@@ -49,7 +49,7 @@ func TestTreeLoadCmd_PassesItsFlagsToTheLoader(t *testing.T) {
 		func(context.Context, string, string) (*treeDeps, error) {
 			return &treeDeps{release: func() error { return nil }}, nil
 		},
-		func(*treeDeps, string) (treeLoader, nodeCounter) { return rec, countingTo(0) },
+		func(*treeDeps) treeLoader { return rec },
 	)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetArgs([]string{
@@ -102,9 +102,7 @@ func TestTreeLoadCmd_MatrixFlagValuesReachTheEngine(t *testing.T) {
 		func(context.Context, string, string) (*treeDeps, error) {
 			return &treeDeps{release: func() error { return nil }}, nil
 		},
-		func(*treeDeps, string) (treeLoader, nodeCounter) {
-			return networkengine.NewTreeLoader(store, mut), countingTo(1)
-		},
+		func(*treeDeps) treeLoader { return networkengine.NewTreeLoader(store, mut) },
 	)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetArgs([]string{
@@ -125,7 +123,7 @@ func TestTreeLoadCmd_ReleasesTheDepsAfterRunning(t *testing.T) {
 		func(context.Context, string, string) (*treeDeps, error) {
 			return &treeDeps{release: func() error { released = true; return nil }}, nil
 		},
-		func(*treeDeps, string) (treeLoader, nodeCounter) { return &recordingLoader{}, countingTo(0) },
+		func(*treeDeps) treeLoader { return &recordingLoader{} },
 	)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetArgs([]string{
@@ -146,7 +144,7 @@ func TestTreeLoadCmd_RejectsStrayPositionalArguments(t *testing.T) {
 		func(context.Context, string, string) (*treeDeps, error) {
 			return &treeDeps{release: func() error { return nil }}, nil
 		},
-		func(*treeDeps, string) (treeLoader, nodeCounter) { return &recordingLoader{}, countingTo(0) },
+		func(*treeDeps) treeLoader { return &recordingLoader{} },
 	)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
@@ -161,8 +159,8 @@ func TestTreeLoadCmd_RejectsStrayPositionalArguments(t *testing.T) {
 // failingLoader drives runTreeLoad down its reporting path.
 type failingLoader struct{ err error }
 
-func (f *failingLoader) LoadTree(context.Context, string, string, ...networkengine.LoadTreeOption) error {
-	return f.err
+func (f *failingLoader) LoadTree(context.Context, string, string, ...networkengine.LoadTreeOption) (int, error) {
+	return 0, f.err
 }
 
 // The failure reaches the operator exactly once, and brings no usage dump.
@@ -171,9 +169,7 @@ func TestTreeLoadCmd_ReportsAFailureOnceWithoutUsage(t *testing.T) {
 		func(context.Context, string, string) (*treeDeps, error) {
 			return &treeDeps{release: func() error { return nil }}, nil
 		},
-		func(*treeDeps, string) (treeLoader, nodeCounter) {
-			return &failingLoader{err: errors.New("boom")}, countingTo(0)
-		},
+		func(*treeDeps) treeLoader { return &failingLoader{err: errors.New("boom")} },
 	)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
@@ -220,21 +216,20 @@ type sigLoader struct {
 	sawDone bool
 }
 
-func (l *sigLoader) LoadTree(ctx context.Context, _, _ string, _ ...networkengine.LoadTreeOption) error {
+func (l *sigLoader) LoadTree(ctx context.Context, _, _ string, _ ...networkengine.LoadTreeOption) (int, error) {
 	if err := syscall.Kill(syscall.Getpid(), l.sig); err != nil {
-		return err
+		return 0, err
 	}
 	select {
 	case <-ctx.Done():
 		l.sawDone = true
 	case <-time.After(2 * time.Second):
 	}
-	return ctx.Err()
+	return 0, ctx.Err()
 }
 
 // One case per signal. A single case would leave the other registration
-// unpinned, because dropping either one from the command leaves the other
-// green.
+// unpinned.
 //
 // The keep-alive takes the signal off its default disposition for this
 // process, so a missing registration fails the case instead of killing the
@@ -255,7 +250,7 @@ func TestTreeLoadCmd_SignalsCancelTheLoad(t *testing.T) {
 				func(context.Context, string, string) (*treeDeps, error) {
 					return &treeDeps{release: func() error { return nil }}, nil
 				},
-				func(*treeDeps, string) (treeLoader, nodeCounter) { return loader, countingTo(0) },
+				func(*treeDeps) treeLoader { return loader },
 			)
 			cmd.SetOut(&bytes.Buffer{})
 			cmd.SetErr(&bytes.Buffer{})
@@ -274,8 +269,8 @@ func TestTreeLoadCmd_SignalsCancelTheLoad(t *testing.T) {
 	}
 }
 
-// workerStub writes an executable file so resolveWorkerPath succeeds without a
-// real worker. Nothing runs it: the opener is injected in these tests.
+// workerStub writes an executable file for the resolver to find. Nothing runs
+// it: the opener is injected in these tests.
 func workerStub(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "network-engine-worker")

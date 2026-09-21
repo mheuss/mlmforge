@@ -209,7 +209,9 @@ func TestTreePersistence_BulkLoadMatchesEventPath(t *testing.T) {
 
 	// Bulk-load from the adjacency table.
 	loader := NewTreeLoader(treeStore, freshEngine)
-	require.NoError(t, loader.LoadTree(ctx, treeID, "unilevel"))
+	_, lerr := loader.LoadTree(ctx, treeID, "unilevel")
+
+	require.NoError(t, lerr)
 
 	// Compare positions. The fresh engine should match the original.
 	freshRootPos, err := freshEngine.GetPosition(ctx, treeID, rootID)
@@ -285,7 +287,9 @@ func TestTreePersistence_LoadMatrixTreeCreatesInEngine(t *testing.T) {
 	// Before HEU-533 this errored at the create step. The engine has never
 	// seen treeID, so this mirrors startup reconstruction.
 	loader := NewTreeLoader(treeStore, engine)
-	require.NoError(t, loader.LoadTree(ctx, treeID, "matrix", WithMatrixParams(3, "breadth_first")))
+	_, lerr := loader.LoadTree(ctx, treeID, "matrix", WithMatrixParams(3, "breadth_first"))
+
+	require.NoError(t, lerr)
 
 	// The root exists in the freshly reconstructed matrix tree.
 	rootPos, err := engine.GetPosition(ctx, treeID, rootID)
@@ -334,7 +338,9 @@ func TestTreePersistence_MatrixMultiNodeRoundTrip(t *testing.T) {
 	}
 
 	loader := NewTreeLoader(treeStore, engine)
-	require.NoError(t, loader.LoadTree(ctx, treeID, "matrix", WithMatrixParams(width, "breadth_first")))
+	_, lerr := loader.LoadTree(ctx, treeID, "matrix", WithMatrixParams(width, "breadth_first"))
+
+	require.NoError(t, lerr)
 
 	// The root carries no sponsor in the engine by construction: AddRoot takes
 	// no sponsor and the Rust root is sponsor: None. Assert it separately.
@@ -563,7 +569,9 @@ func TestTreePersistence_SlotConflictFailsCleanAndTreeReloads(t *testing.T) {
 	defer func() { _ = freshEngine.Stop() }()
 
 	loader := NewTreeLoader(treeStore, freshEngine)
-	require.NoError(t, loader.LoadTree(ctx, treeID, "matrix", WithMatrixParams(width, "breadth_first")))
+	_, lerr := loader.LoadTree(ctx, treeID, "matrix", WithMatrixParams(width, "breadth_first"))
+
+	require.NoError(t, lerr)
 
 	got, err := freshEngine.GetPosition(ctx, treeID, u2)
 	require.NoError(t, err)
@@ -641,7 +649,7 @@ func TestTreePersistence_RejectedTreeLeavesEngineLoadable(t *testing.T) {
 	}
 
 	loader := NewTreeLoader(treeStore, engine)
-	err := loader.LoadTree(ctx, treeID, "matrix", WithMatrixParams(3, "breadth_first"))
+	_, err := loader.LoadTree(ctx, treeID, "matrix", WithMatrixParams(3, "breadth_first"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "has depth 3 but parent")
 
@@ -655,7 +663,9 @@ func TestTreePersistence_RejectedTreeLeavesEngineLoadable(t *testing.T) {
 	// Correct the data the way an operator would, then retry. This is the step
 	// that proves the engine is still usable: a leaked create would fail here.
 	require.NoError(t, treeStore.DeleteNode(ctx, treeID, u3))
-	require.NoError(t, loader.LoadTree(ctx, treeID, "matrix", WithMatrixParams(3, "breadth_first")))
+	_, lerr := loader.LoadTree(ctx, treeID, "matrix", WithMatrixParams(3, "breadth_first"))
+
+	require.NoError(t, lerr)
 
 	got, err := engine.GetPosition(ctx, treeID, u2)
 	require.NoError(t, err)
@@ -728,7 +738,8 @@ func TestTreePersistence_RemovedSponsorStillReloads(t *testing.T) {
 	defer func() { _ = freshEngine.Stop() }()
 
 	loader := NewTreeLoader(treeStore, freshEngine)
-	require.NoError(t, loader.LoadTree(ctx, treeID, "unilevel"),
+	_, lerr := loader.LoadTree(ctx, treeID, "unilevel")
+	require.NoError(t, lerr,
 		"a tree that has lost a recruiter must still rebuild from the store")
 
 	reloaded, err := freshEngine.GetSponsor(ctx, treeID, recruitID)

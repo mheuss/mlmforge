@@ -14,17 +14,18 @@ import (
 
 // stubLoader counts attempts and returns a fixed error.
 type stubLoader struct {
+	size     int
 	err      error
 	attempts int
 	onCall   func(attempt int)
 }
 
-func (s *stubLoader) LoadTree(context.Context, string, string, ...networkengine.LoadTreeOption) error {
+func (s *stubLoader) LoadTree(context.Context, string, string, ...networkengine.LoadTreeOption) (int, error) {
 	s.attempts++
 	if s.onCall != nil {
 		s.onCall(s.attempts)
 	}
-	return s.err
+	return s.size, s.err
 }
 
 // safeToRetryErr satisfies the interface pgconn.SafeToRetry looks for.
@@ -171,7 +172,7 @@ func TestRunTreeLoad_DoesNotRetryACancelledContext(t *testing.T) {
 		Err:  context.Canceled,
 	}}
 
-	err := runTreeLoad(t.Context(), &bytes.Buffer{}, loader, countingTo(0), "t", "unilevel", nil)
+	err := runTreeLoad(t.Context(), &bytes.Buffer{}, loader, "t", "unilevel", nil)
 
 	require.Error(t, err)
 	require.Equal(t, 1, loader.attempts)
@@ -182,7 +183,7 @@ func TestRunTreeLoad_DoesNotRetryAPermanentFailure(t *testing.T) {
 		Kind: networkengine.TreeLoadDataInvalid,
 	}}
 
-	err := runTreeLoad(t.Context(), &bytes.Buffer{}, loader, countingTo(0), "t", "unilevel", nil)
+	err := runTreeLoad(t.Context(), &bytes.Buffer{}, loader, "t", "unilevel", nil)
 
 	require.Error(t, err)
 	require.Equal(t, 1, loader.attempts)
@@ -200,7 +201,7 @@ func TestRunTreeLoad_BoundsRetriesOnARetryableFailure(t *testing.T) {
 	noRetryDelay(t)
 	loader := &stubLoader{err: retryable()}
 
-	err := runTreeLoad(t.Context(), &bytes.Buffer{}, loader, countingTo(0), "t", "unilevel", nil)
+	err := runTreeLoad(t.Context(), &bytes.Buffer{}, loader, "t", "unilevel", nil)
 
 	require.Error(t, err)
 	require.Equal(t, maxLoadAttempts, loader.attempts)
@@ -214,7 +215,7 @@ func TestRunTreeLoad_DoesNotSleepWhenTheDelayIsZero(t *testing.T) {
 	loader := &stubLoader{err: retryable()}
 	start := time.Now()
 
-	_ = runTreeLoad(t.Context(), &bytes.Buffer{}, loader, countingTo(0), "t", "unilevel", nil)
+	_ = runTreeLoad(t.Context(), &bytes.Buffer{}, loader, "t", "unilevel", nil)
 
 	require.Equal(t, maxLoadAttempts, loader.attempts)
 	require.Less(t, time.Since(start), zeroDelayCeiling,
@@ -228,12 +229,12 @@ func TestRunTreeLoad_StopsWhenTheContextIsCancelledBetweenAttempts(t *testing.T)
 	loader := &stubLoader{err: retryable(), onCall: func(int) { cancel() }}
 
 	var out bytes.Buffer
-	err := runTreeLoad(ctx, &out, loader, countingTo(0), "t", "unilevel", nil)
+	err := runTreeLoad(ctx, &out, loader, "t", "unilevel", nil)
 
 	require.ErrorIs(t, err, context.Canceled, "the cancellation must reach the caller")
 	require.ErrorIs(t, err, loader.err, "the load failure must not be dropped")
 	require.Equal(t, 1, loader.attempts)
-	require.EqualError(t, err, "load refused before any engine call (store_read_failed); the engine is unchanged")
+	require.ErrorContains(t, err, "load refused before any engine call (store_read_failed); the engine is unchanged: ")
 	require.Empty(t, out.String())
 }
 
@@ -243,9 +244,9 @@ func TestRunTreeLoad_ReportsARejectionAsLeavingTheEngineUnchanged(t *testing.T) 
 	}}
 	var out bytes.Buffer
 
-	err := runTreeLoad(t.Context(), &out, loader, countingTo(0), "t", "unilevel", nil)
+	err := runTreeLoad(t.Context(), &out, loader, "t", "unilevel", nil)
 
-	require.EqualError(t, err, "load refused before any engine call (data_invalid); the engine is unchanged")
+	require.ErrorContains(t, err, "load refused before any engine call (data_invalid); the engine is unchanged: ")
 	require.Empty(t, out.String())
 }
 
@@ -256,9 +257,9 @@ func TestRunTreeLoad_ReportsAnIncompleteLoadWithItsCounts(t *testing.T) {
 	}}
 	var out bytes.Buffer
 
-	err := runTreeLoad(t.Context(), &out, loader, countingTo(0), "t", "unilevel", nil)
+	err := runTreeLoad(t.Context(), &out, loader, "t", "unilevel", nil)
 
-	require.EqualError(t, err, "load stopped at the root stage; the engine acknowledged 0 of 47 placements")
+	require.ErrorContains(t, err, "load stopped at the root stage; the engine acknowledged 0 of 47 placements: ")
 	require.Empty(t, out.String())
 }
 
@@ -271,9 +272,9 @@ func TestRunTreeLoad_ReportsAChainHoldingBothAsIncomplete(t *testing.T) {
 	}}
 	var out bytes.Buffer
 
-	err := runTreeLoad(t.Context(), &out, loader, countingTo(0), "t", "unilevel", nil)
+	err := runTreeLoad(t.Context(), &out, loader, "t", "unilevel", nil)
 
-	require.EqualError(t, err, "load stopped at the nodes stage; the engine acknowledged 0 of 4 placements")
+	require.ErrorContains(t, err, "load stopped at the nodes stage; the engine acknowledged 0 of 4 placements: ")
 	require.Empty(t, out.String())
 }
 
@@ -281,17 +282,17 @@ func TestRunTreeLoad_ReportsAnUntypedFailure(t *testing.T) {
 	loader := &stubLoader{err: errors.New("something else")}
 	var out bytes.Buffer
 
-	err := runTreeLoad(t.Context(), &out, loader, countingTo(0), "t", "unilevel", nil)
+	err := runTreeLoad(t.Context(), &out, loader, "t", "unilevel", nil)
 
 	require.EqualError(t, err, "load failed: something else")
 	require.Empty(t, out.String())
 }
 
 func TestRunTreeLoad_ReportsSuccess(t *testing.T) {
-	loader := &stubLoader{}
+	loader := &stubLoader{size: 3}
 	var out bytes.Buffer
 
-	require.NoError(t, runTreeLoad(t.Context(), &out, loader, countingTo(3), "tree-9", "unilevel", nil))
+	require.NoError(t, runTreeLoad(t.Context(), &out, loader, "tree-9", "unilevel", nil))
 	require.Equal(t, 1, loader.attempts)
 	require.Equal(t, "loaded tree tree-9 (3 nodes)\n", out.String())
 }
@@ -304,22 +305,27 @@ func TestSafeToRetryRecognisesTheInterface(t *testing.T) {
 	require.False(t, pgconn.SafeToRetry(errors.New("x")))
 }
 
-// countingTo is a nodeCounter returning a fixed size.
-func countingTo(n int) nodeCounter {
-	return func(context.Context) (int, error) { return n, nil }
+// Zero rows and a tree that is not in the database are the same read, so the
+// command must not say it loaded one.
+func TestRunTreeLoad_DoesNotClaimALoadForZeroRows(t *testing.T) {
+	loader := &stubLoader{size: 0}
+	var out bytes.Buffer
+
+	require.NoError(t, runTreeLoad(t.Context(), &out, loader, "tree-9", "unilevel", nil))
+	require.Equal(t, "tree tree-9 holds no rows; nothing was loaded\n", out.String())
+	require.NotContains(t, out.String(), "loaded tree")
 }
 
-// A tree the operator can see the size of is the whole point of the count. An
-// unreadable store fails the load rather than reporting a size it does not
-// have, because LoadTree is about to fail on the same read.
-func TestRunTreeLoad_FailsWhenTheSizeCannotBeRead(t *testing.T) {
-	loader := &stubLoader{}
+// The cause is what tells two failures of the same kind apart. Without it a
+// bad tree type and a bad matrix width render byte-identically.
+func TestRunTreeLoad_KeepsTheCause(t *testing.T) {
+	loader := &stubLoader{err: &networkengine.TreeLoadRejectedError{
+		Kind: networkengine.TreeLoadConfigInvalid,
+	}}
 	var out bytes.Buffer
-	counter := func(context.Context) (int, error) { return 0, errors.New("store down") }
 
-	err := runTreeLoad(t.Context(), &out, loader, counter, "t", "unilevel", nil)
+	err := runTreeLoad(t.Context(), &out, loader, "t", "unilevel", nil)
 
-	require.ErrorContains(t, err, "store down")
-	require.Equal(t, 0, loader.attempts, "the load must not run when the size is unknown")
-	require.Empty(t, out.String())
+	require.ErrorContains(t, err, "config_invalid")
+	require.ErrorContains(t, err, "; the engine is unchanged: ")
 }

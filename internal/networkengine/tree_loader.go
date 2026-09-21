@@ -47,7 +47,7 @@ func WithMatrixParams(width int, spillover string) LoadTreeOption {
 // AddNodeAt so stored placements survive; their AddNode would re-derive
 // placement by spillover. Matrix trees need width and spillover supplied
 // through WithMatrixParams, which plain CreateTree does not carry.
-func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts ...LoadTreeOption) error {
+func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts ...LoadTreeOption) (int, error) {
 	var cfg loadTreeConfig
 	for _, opt := range opts {
 		opt(&cfg)
@@ -60,25 +60,25 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 	// would let a typo in startup wiring stay invisible until the first node
 	// arrived.
 	if err := validateTreeConfig(treeID, treeType, cfg); err != nil {
-		return err
+		return 0, err
 	}
 
 	nodes, err := l.store.GetByTreeDepthOrdered(ctx, treeID)
 	if err != nil {
-		return newTreeLoadRejected(TreeLoadStoreReadFailed, treeID, err,
+		return 0, newTreeLoadRejected(TreeLoadStoreReadFailed, treeID, err,
 			fmt.Sprintf("load tree %s: %s", treeID, err))
 	}
 	if len(nodes) == 0 {
-		return nil
+		return 0, nil
 	}
 
 	// Preflight. Nothing below this point runs until both phases succeed.
 	if err := validateNodes(treeID, treeType, cfg, nodes); err != nil {
-		return err
+		return 0, err
 	}
 	ordered, err := orderForReplay(treeID, nodes)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	// Counts non-root placements. Read before the first engine call.
@@ -86,11 +86,11 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 
 	if treeType == treeTypeMatrix {
 		if err := l.engine.CreateMatrixTree(ctx, treeID, cfg.matrixWidth, cfg.matrixSpillover); err != nil {
-			return newTreeLoadIncomplete(TreeLoadStageCreate, treeID, err, 0, 0,
+			return 0, newTreeLoadIncomplete(TreeLoadStageCreate, treeID, err, 0, 0,
 				fmt.Sprintf("create tree %s: %s", treeID, err))
 		}
 	} else if err := l.engine.CreateTree(ctx, treeID, treeType); err != nil {
-		return newTreeLoadIncomplete(TreeLoadStageCreate, treeID, err, 0, 0,
+		return 0, newTreeLoadIncomplete(TreeLoadStageCreate, treeID, err, 0, 0,
 			fmt.Sprintf("create tree %s: %s", treeID, err))
 	}
 
@@ -108,7 +108,7 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 	// is the only node with zero dependencies.
 	root := ordered[0]
 	if err := l.engine.AddRoot(ctx, treeID, root.UserID, root.EnrolledAt.Unix()); err != nil {
-		return newTreeLoadIncomplete(TreeLoadStageRoot, treeID, err, 0, total,
+		return 0, newTreeLoadIncomplete(TreeLoadStageRoot, treeID, err, 0, total,
 			fmt.Sprintf("add root %s (tree %s created but left empty): %s", root.UserID, treeID, err),
 			root.UserID)
 	}
@@ -119,7 +119,7 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 		// startup, where a nil deref panics the process instead of failing one
 		// tree, and the invariant now spans two functions.
 		if node.ParentID == nil || node.SponsorID == nil {
-			return newTreeLoadIncomplete(TreeLoadStageNodes, treeID, nil, i+1, total,
+			return 0, newTreeLoadIncomplete(TreeLoadStageNodes, treeID, nil, i+1, total,
 				fmt.Sprintf("node %s in tree %s has nil parent or sponsor (data corruption; %d of %d, tree left partly built)",
 					node.UserID, treeID, i+1, total),
 				node.UserID)
@@ -131,14 +131,14 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 			// rejects a nil position on every non-root matrix node. Kept for
 			// the same reason too — a nil deref here panics startup.
 			if node.Position == nil {
-				return newTreeLoadIncomplete(TreeLoadStageNodes, treeID, nil, i+1, total,
+				return 0, newTreeLoadIncomplete(TreeLoadStageNodes, treeID, nil, i+1, total,
 					fmt.Sprintf("matrix node %s in tree %s has nil position (the adjacency row is incomplete; %d of %d, tree left partly built)",
 						node.UserID, treeID, i+1, total),
 					node.UserID)
 			}
 			if err := l.engine.AddNodeAt(ctx, treeID, node.UserID, parentID, sponsorID,
 				*node.Position, node.EnrolledAt.Unix()); err != nil {
-				return newTreeLoadIncomplete(TreeLoadStageNodes, treeID, err, i+1, total,
+				return 0, newTreeLoadIncomplete(TreeLoadStageNodes, treeID, err, i+1, total,
 					fmt.Sprintf("add node %s (%d of %d, tree %s left partly built): %s",
 						node.UserID, i+1, total, treeID, err),
 					node.UserID)
@@ -152,13 +152,13 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 		}
 		if err := l.engine.AddNode(ctx, treeID, node.UserID, parentID, sponsorID,
 			node.EnrolledAt.Unix(), addOpts...); err != nil {
-			return newTreeLoadIncomplete(TreeLoadStageNodes, treeID, err, i+1, total,
+			return 0, newTreeLoadIncomplete(TreeLoadStageNodes, treeID, err, i+1, total,
 				fmt.Sprintf("add node %s (%d of %d, tree %s left partly built): %s",
 					node.UserID, i+1, total, treeID, err),
 				node.UserID)
 		}
 	}
-	return nil
+	return len(nodes), nil
 }
 
 // supportedTreeTypes are the structures LoadTree knows how to replay. Anything

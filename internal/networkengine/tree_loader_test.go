@@ -37,7 +37,7 @@ func TestTreeLoader_LoadEmptyTree(t *testing.T) {
 	engine := newEngineClientWithTransport(transport)
 	loader := NewTreeLoader(store, engine)
 
-	err := loader.LoadTree(context.Background(), "tree-1", "unilevel")
+	_, err := loader.LoadTree(context.Background(), "tree-1", "unilevel")
 	require.NoError(t, err)
 	assert.Empty(t, transport.ops, "no engine calls for empty tree")
 }
@@ -86,7 +86,7 @@ func TestTreeLoader_EmptyTreeStillChecksConfig(t *testing.T) {
 			store := &rejectingTreeStore{TreeStore: NewMemoryTreeStore(), t: t}
 			mutator := &stubMutator{}
 
-			err := NewTreeLoader(store, mutator).LoadTree(context.Background(), "t", tt.treeType, tt.opts...)
+			_, err := NewTreeLoader(store, mutator).LoadTree(context.Background(), "t", tt.treeType, tt.opts...)
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.wantErr)
@@ -146,7 +146,7 @@ func TestTreeLoader_LoadSingleRoot(t *testing.T) {
 	engine := newEngineClientWithTransport(transport)
 	loader := NewTreeLoader(store, engine)
 
-	err := loader.LoadTree(context.Background(), "tree-1", "unilevel")
+	_, err := loader.LoadTree(context.Background(), "tree-1", "unilevel")
 	require.NoError(t, err)
 
 	require.Len(t, transport.ops, 2)
@@ -179,7 +179,7 @@ func TestTreeLoader_LoadChain(t *testing.T) {
 	engine := newEngineClientWithTransport(transport)
 	loader := NewTreeLoader(store, engine)
 
-	err := loader.LoadTree(ctx, "tree-1", "unilevel")
+	_, err := loader.LoadTree(ctx, "tree-1", "unilevel")
 	require.NoError(t, err)
 
 	// create_tree + add_root + 3 add_node = 5 calls.
@@ -211,7 +211,7 @@ func TestTreeLoader_SkipsRemovedNodes(t *testing.T) {
 	engine := newEngineClientWithTransport(transport)
 	loader := NewTreeLoader(store, engine)
 
-	err := loader.LoadTree(ctx, "tree-1", "unilevel")
+	_, err := loader.LoadTree(ctx, "tree-1", "unilevel")
 	require.NoError(t, err)
 
 	// Only root should be loaded: create_tree + add_root.
@@ -232,7 +232,7 @@ func TestTreeLoader_NoDepthZeroRoot(t *testing.T) {
 	engine := newEngineClientWithTransport(transport)
 	loader := NewTreeLoader(store, engine)
 
-	err := loader.LoadTree(ctx, "tree-1", "unilevel")
+	_, err := loader.LoadTree(ctx, "tree-1", "unilevel")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "has no depth-0 root node")
 
@@ -259,7 +259,7 @@ func TestTreeLoader_ChildWithNilParent(t *testing.T) {
 	engine := newEngineClientWithTransport(transport)
 	loader := NewTreeLoader(store, engine)
 
-	err := loader.LoadTree(ctx, "tree-1", "unilevel")
+	_, err := loader.LoadTree(ctx, "tree-1", "unilevel")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "has nil parent or sponsor")
 	assert.Empty(t, transport.ops, "validation failure must make no engine calls")
@@ -276,7 +276,7 @@ func TestTreeLoader_LoadMatrixTree_RootOnlyRoutesToCreateMatrixTree(t *testing.T
 	mutator := &stubMutator{}
 	loader := NewTreeLoader(store, mutator)
 
-	err := loader.LoadTree(ctx, "m-tree", "matrix", WithMatrixParams(3, "breadth_first"))
+	_, err := loader.LoadTree(ctx, "m-tree", "matrix", WithMatrixParams(3, "breadth_first"))
 	require.NoError(t, err)
 
 	// A matrix tree must be created via CreateMatrixTree carrying width and
@@ -311,7 +311,7 @@ func TestTreeLoader_LoadMatrixTree_MultiNodeReplaysExplicitPlacement(t *testing.
 	mutator := &stubMutator{}
 	loader := NewTreeLoader(store, mutator)
 
-	err := loader.LoadTree(ctx, "m-tree", "matrix", WithMatrixParams(3, "breadth_first"))
+	_, err := loader.LoadTree(ctx, "m-tree", "matrix", WithMatrixParams(3, "breadth_first"))
 	require.NoError(t, err)
 
 	require.Equal(t, []matrixCreate{{structure: "m-tree", width: 3, spillover: "breadth_first"}}, mutator.matrixCreated)
@@ -414,7 +414,7 @@ func loadWithStub(t *testing.T, treeType string, nodes []TreeNodeRow, opts ...Lo
 		require.NoError(t, store.InsertNode(ctx, n))
 	}
 	mutator := &stubMutator{}
-	err := NewTreeLoader(store, mutator).LoadTree(ctx, "t", treeType, opts...)
+	_, err := NewTreeLoader(store, mutator).LoadTree(ctx, "t", treeType, opts...)
 	return mutator, err
 }
 
@@ -426,7 +426,7 @@ func loadWithStubDirect(t *testing.T, treeType string, nodes []TreeNodeRow, opts
 	t.Helper()
 	store := &MemoryTreeStore{nodes: nodes}
 	mutator := &stubMutator{}
-	err := NewTreeLoader(store, mutator).LoadTree(context.Background(), "t", treeType, opts...)
+	_, err := NewTreeLoader(store, mutator).LoadTree(context.Background(), "t", treeType, opts...)
 	return mutator, err
 }
 
@@ -868,7 +868,7 @@ func TestTreeLoader_ReplayFailureReportsProgress(t *testing.T) {
 			// succeed silently and fail on a confusing assertion instead.
 			require.NotNil(t, mutator.err, "failOn needs an err to return")
 
-			err := NewTreeLoader(store, mutator).LoadTree(ctx, "t", tt.treeType, tt.opts...)
+			_, err := NewTreeLoader(store, mutator).LoadTree(ctx, "t", tt.treeType, tt.opts...)
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.wantErr)
@@ -893,7 +893,7 @@ func TestTreeLoader_AddRootFailureReportsCreatedTree(t *testing.T) {
 	require.NoError(t, store.InsertNode(ctx, root))
 
 	mutator := &failAfterNMutator{failRoot: true, err: boom}
-	err := NewTreeLoader(store, mutator).LoadTree(ctx, "t", "unilevel")
+	_, err := NewTreeLoader(store, mutator).LoadTree(ctx, "t", "unilevel")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "add root u0")
@@ -922,7 +922,7 @@ func TestTreeLoader_CreateTreeFailureLeavesNothingBuilt(t *testing.T) {
 	require.NoError(t, store.InsertNode(ctx, root))
 
 	mutator := &stubMutator{failWith: boom}
-	err := NewTreeLoader(store, mutator).LoadTree(ctx, "t", "unilevel")
+	_, err := NewTreeLoader(store, mutator).LoadTree(ctx, "t", "unilevel")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "create tree t")
@@ -946,7 +946,7 @@ func TestTreeLoader_CreateMatrixTreeFailureLeavesNothingBuilt(t *testing.T) {
 	require.NoError(t, store.InsertNode(ctx, root))
 
 	mutator := &stubMutator{failWith: boom}
-	err := NewTreeLoader(store, mutator).LoadTree(ctx, "t", "matrix", WithMatrixParams(3, "breadth_first"))
+	_, err := NewTreeLoader(store, mutator).LoadTree(ctx, "t", "matrix", WithMatrixParams(3, "breadth_first"))
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "create tree t")
@@ -1326,7 +1326,7 @@ func TestTreeLoader_LoadMatrixTree_RequiresParams(t *testing.T) {
 	// Assert the guard's own message, not just "matrix". A zero-valued cfg also
 	// trips validateNodes' width range check, whose message contains "matrix"
 	// too — so the looser assertion passed even with this guard deleted.
-	err := loader.LoadTree(ctx, "m-tree", "matrix")
+	_, err := loader.LoadTree(ctx, "m-tree", "matrix")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "requires width and spillover")
 	assert.Empty(t, mutator.matrixCreated)

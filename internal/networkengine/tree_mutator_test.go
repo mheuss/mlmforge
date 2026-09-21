@@ -166,7 +166,7 @@ func TestTreeMutator_LoaderAcceptsInterface(t *testing.T) {
 	mutator := &stubMutator{}
 	loader := NewTreeLoader(store, mutator)
 
-	err := loader.LoadTree(ctx, "tree-1", "unilevel")
+	_, err := loader.LoadTree(ctx, "tree-1", "unilevel")
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"tree-1"}, mutator.created)

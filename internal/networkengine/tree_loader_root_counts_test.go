@@ -32,7 +32,7 @@ func TestLoadTree_RootStageReportsTheNonRootCount(t *testing.T) {
 		require.NoError(t, store.InsertNode(t.Context(), r))
 	}
 
-	err := networkengine.NewTreeLoader(store, failingMutator{failOn: "AddRoot"}).
+	_, err := networkengine.NewTreeLoader(store, failingMutator{failOn: "AddRoot"}).
 		LoadTree(t.Context(), "t", "unilevel")
 
 	var incomplete *networkengine.TreeLoadIncompleteError

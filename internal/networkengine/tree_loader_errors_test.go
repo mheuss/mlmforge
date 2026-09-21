@@ -77,7 +77,8 @@ func loadWithMutator(t *testing.T, treeType string, nodes []TreeNodeRow, m TreeM
 	for _, n := range nodes {
 		require.NoError(t, store.InsertNode(ctx, n))
 	}
-	return NewTreeLoader(store, m).LoadTree(ctx, "t", treeType, opts...)
+	_, err := NewTreeLoader(store, m).LoadTree(ctx, "t", treeType, opts...)
+	return err
 }
 
 // spacedNodes gives each node a distinct enrollment time.
@@ -462,7 +463,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			switch {
 			case tt.store != nil:
 				storeRowMutator = &stubMutator{}
-				err = NewTreeLoader(tt.store, storeRowMutator).LoadTree(
+				_, err = NewTreeLoader(tt.store, storeRowMutator).LoadTree(
 					context.Background(), "t", tt.treeType, tt.opts...)
 			case tt.direct:
 				_, err = loadWithStubDirect(t, tt.treeType, tt.nodes, tt.opts...)

@@ -156,8 +156,8 @@ func TestStartEngine_ClosesThePoolWhenTheWorkerWillNotStart(t *testing.T) {
 	require.Contains(t, err.Error(), missing, "the message must name the worker it tried")
 }
 
-// pgxpool.New does not connect, so an unreachable URL gets a pool and fails at
-// the ping. That is what makes this path testable without a container.
+// An unreachable URL reaches the ping rather than failing earlier, which is
+// what makes this path testable without a container.
 func TestOpenTreeDeps_ReportsAnUnreachableDatabase(t *testing.T) {
 	worker := filepath.Join(t.TempDir(), "network-engine-worker")
 

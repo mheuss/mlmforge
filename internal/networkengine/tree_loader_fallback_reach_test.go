@@ -160,7 +160,7 @@ func TestLoadTree_FailuresAtEveryStageNeverRenderTheFallback(t *testing.T) {
 				store = seeded
 			}
 
-			err := networkengine.NewTreeLoader(store, tt.engine).
+			_, err := networkengine.NewTreeLoader(store, tt.engine).
 				LoadTree(t.Context(), "t", tt.treeType, tt.opts...)
 
 			require.Error(t, err)

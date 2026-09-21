@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -267,6 +268,32 @@ func TestTreeLoadCmd_SignalsCancelTheLoad(t *testing.T) {
 			require.Error(t, err)
 		})
 	}
+}
+
+// Driving the root is what makes this a claim about the shipped binary. Cobra
+// resolves an argument differently for a parented command than for one
+// executed on its own.
+func TestRootCmd_TreeRejectsAnUnknownSubcommand(t *testing.T) {
+	root := newRootCmd()
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"tree", "bogus"})
+
+	err := root.Execute()
+
+	require.Error(t, err, "a mistyped subcommand must not report success")
+	require.Contains(t, err.Error(), "bogus", "the message must name the argument it refused")
+}
+
+func TestRootCmd_BareTreeStillPrintsHelpAndSucceeds(t *testing.T) {
+	var out bytes.Buffer
+	root := newRootCmd()
+	root.SetOut(&out)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"tree"})
+
+	require.NoError(t, root.Execute())
+	require.Contains(t, out.String(), "load", "help must still list the subcommands")
 }
 
 // workerStub writes an executable file for the resolver to find. Nothing runs

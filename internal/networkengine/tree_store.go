@@ -103,6 +103,9 @@ var (
 	// and position.
 	ErrSlotConflict = errors.New("an active row already holds this parent and position")
 
+	// ErrRootConflict reports an active depth-0 row already rooting this tree.
+	ErrRootConflict = errors.New("an active row already roots this tree")
+
 	// ErrReplayedPlacement reports an insert matching a row that has since
 	// been soft-deleted. The placement is not current and must not be resumed.
 	ErrReplayedPlacement = errors.New("a row with this event id exists and is soft-deleted")

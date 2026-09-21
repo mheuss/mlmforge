@@ -86,6 +86,28 @@ func TestTreeNodesActiveSlotIndex(t *testing.T) {
 	}
 }
 
+// conflictError matches this index by name. The name is covered by the
+// behavioral tests; the predicate is not. A wider predicate would refuse rows
+// the loader accepts, and a narrower one would let a second root through.
+func TestTreeNodesActiveRootIndex(t *testing.T) {
+	def := treeNodeIndexDef(t, activeRootIndex)
+
+	if !strings.Contains(def, "UNIQUE") {
+		t.Errorf("index must be UNIQUE to raise a conflict at all, got: %s", def)
+	}
+	if !strings.Contains(def, "(tree_id)") {
+		t.Errorf("index must key on tree alone, or a second root in one tree does not collide, got: %s", def)
+	}
+	if !strings.Contains(def, "depth = 0") {
+		t.Errorf("index must be limited to roots, or every node in a tree collides, got: %s", def)
+	}
+	// Without the predicate a removed root could never be replaced, which is
+	// the soft-delete contract in ADR-023.
+	if !strings.Contains(def, "removed_at IS NULL") {
+		t.Errorf("index must cover active rows only, got: %s", def)
+	}
+}
+
 // The Go constants are a copy of strings the Rust worker owns. Restating them
 // in a Go test only catches a Go-side edit, so this reads the worker's mapping
 // and fails if a variant is renamed or dropped there.

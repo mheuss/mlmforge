@@ -156,9 +156,10 @@ func TestMemoryTreeStore_DuplicateActiveSlotRejected(t *testing.T) {
 
 	// Two active rows with positions but nil parents do not conflict — the
 	// index's parent_id is NULL for both, and Postgres treats NULLs as
-	// distinct in unique indexes. The mirror must match that.
-	require.NoError(t, store.InsertNode(ctx, makeNode("tree-2", "r1", 0, nil, ptr("r1"), intPtr(0))))
-	require.NoError(t, store.InsertNode(ctx, makeNode("tree-2", "r2", 0, nil, ptr("r2"), intPtr(0))))
+	// distinct in unique indexes. The mirror must match that. Depth 1 is
+	// deliberate; see HEU-810.
+	require.NoError(t, store.InsertNode(ctx, makeNode("tree-2", "r1", 1, nil, ptr("r1"), intPtr(0))))
+	require.NoError(t, store.InsertNode(ctx, makeNode("tree-2", "r2", 1, nil, ptr("r2"), intPtr(0))))
 }
 
 func TestMemoryTreeStore_DuplicateIDRejected(t *testing.T) {

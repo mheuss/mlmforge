@@ -64,9 +64,9 @@ func TestTreeLoadCmd_PassesItsFlagsToTheLoader(t *testing.T) {
 	require.Equal(t, 1, rec.optCount)
 }
 
-// recordingMutator answers only the two calls a root-only matrix load makes.
-// The embedded interface is nil, so any other call panics rather than
-// returning a zero value a test could pass against.
+// recordingMutator answers only CreateMatrixTree and AddRoot. The embedded
+// interface is nil, so any other call panics rather than returning a zero
+// value a test could pass against.
 type recordingMutator struct {
 	networkengine.TreeMutator
 	width     int
@@ -84,11 +84,9 @@ func (m *recordingMutator) AddRoot(_ context.Context, _, userID string, _ int64)
 	return nil
 }
 
-// Counting the options cannot tell WithMatrixParams(3, "breadth_first") from
-// WithMatrixParams(0, ""), because loadTreeConfig is unexported and package
-// main cannot apply an option and read it back. Driving the real TreeLoader
-// puts the values somewhere observable: CreateMatrixTree takes them as
-// arguments.
+// Counting the options cannot tell two matrix configurations apart. Driving
+// the real loader puts the values somewhere observable: CreateMatrixTree takes
+// them as arguments.
 func TestTreeLoadCmd_MatrixFlagValuesReachTheEngine(t *testing.T) {
 	store := networkengine.NewMemoryTreeStore()
 	require.NoError(t, store.InsertNode(context.Background(), networkengine.TreeNodeRow{

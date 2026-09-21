@@ -47,9 +47,8 @@ func requireWorker(t *testing.T) string {
 
 // requireWorkerNotStale fails when a Rust source is newer than the binary.
 //
-// The networkengine package has its own freshness guard and this test package
-// cannot reach it. Without one here, a focused run of these cases can exercise
-// a worker built before the last change to the engine.
+// Without this check, a focused run of these cases can exercise a worker built
+// before the last change to the engine.
 func requireWorkerNotStale(t *testing.T, binPath string, built time.Time) {
 	t.Helper()
 	root, err := filepath.Abs("../../engine")
@@ -99,14 +98,12 @@ func isCrateIntegrationTests(path string) bool {
 	return err == nil
 }
 
-// testTreeID and testUserID build deterministic UUIDs. tree_id, user_id and
-// parent_id are UUID columns, so a bare label is rejected by Postgres.
+// testTreeID and testUserID build deterministic UUIDs for test rows.
 func testTreeID(n int) string { return fmt.Sprintf("aaaaaaaa-aaaa-aaaa-aaaa-%012d", n) }
 func testUserID(n int) string { return fmt.Sprintf("00000000-0000-0000-0000-%012d", n) }
 
 // cmdOutput keeps the two streams apart. One buffer cannot tell a message
-// written to stdout from the same message written to stderr, and the load
-// command uses both.
+// written to stdout from the same message written to stderr.
 type cmdOutput struct {
 	stdout bytes.Buffer
 	stderr bytes.Buffer
@@ -125,8 +122,7 @@ func runTreeCmd(t *testing.T, args ...string) (*cmdOutput, error) {
 
 // seedTree writes a root and n children straight to tree_nodes.
 //
-// The rows are seeded through the store rather than through a command,
-// because nothing in this branch writes a tree event. That is HEU-301's.
+// The rows are seeded through the store rather than through a command.
 func seedTree(t *testing.T, pool *pgxpool.Pool, treeID string, children int) {
 	t.Helper()
 	store := networkengine.NewPostgresTreeStore(pool)
@@ -145,11 +141,7 @@ func seedTree(t *testing.T, pool *pgxpool.Pool, treeID string, children int) {
 	}
 }
 
-// The ticket's symptom, inverted: the tree persistence layer is now reachable
-// from the binary, with no test helper in the path.
-//
-// The node count is what separates this from an empty tree. Before it, this
-// case passed with nothing seeded.
+// The node count is what separates this from an empty tree.
 func TestTreeLoad_SucceedsForAWellFormedTree(t *testing.T) {
 	if pgContainer == nil {
 		t.Skip("Postgres container not available")
@@ -175,12 +167,7 @@ func TestTreeLoad_SucceedsForAWellFormedTree(t *testing.T) {
 }
 
 // The rows have to leave Postgres and reach the loader. A tree holding only a
-// child and no depth-0 root is rejected by name, and that rejection is
-// unreachable unless the rows were read: an unread tree short circuits to
-// success.
-//
-// parent_id carries no foreign key, so a child whose parent is absent is
-// insertable.
+// child and no depth-0 root is rejected by name.
 func TestTreeLoad_ReadsTheStoredRows(t *testing.T) {
 	if pgContainer == nil {
 		t.Skip("Postgres container not available")
@@ -206,15 +193,14 @@ func TestTreeLoad_ReadsTheStoredRows(t *testing.T) {
 	)
 
 	require.Error(t, err)
-	// The kind is the discriminating part. "engine is unchanged" appears in
-	// every rejection message, including one raised when the read itself
-	// failed and no row was ever seen.
+	// The kind is the discriminating part, not the shared "engine is unchanged"
+	// text.
 	require.Contains(t, out.stderr.String(), "data_invalid")
 	require.Empty(t, out.stdout.String())
 }
 
-// An empty tree is not an error. LoadTree short circuits on zero rows, and the
-// command has to report that as success rather than inventing a failure.
+// An empty tree is not an error. The command has to report that as success
+// rather than inventing a failure.
 func TestTreeLoad_AnEmptyTreeIsNotAFailure(t *testing.T) {
 	if pgContainer == nil {
 		t.Skip("Postgres container not available")
@@ -236,9 +222,7 @@ func TestTreeLoad_AnEmptyTreeIsNotAFailure(t *testing.T) {
 }
 
 // An unsupported tree type is refused, the message reaches stderr, and cobra
-// appends no usage. The command opens a pool and starts the worker before the
-// loader runs, so this case needs both even though the rejection itself does
-// not read the store.
+// appends no usage.
 func TestTreeLoad_ReportsAConfigRejection(t *testing.T) {
 	if pgContainer == nil {
 		t.Skip("Postgres container not available")

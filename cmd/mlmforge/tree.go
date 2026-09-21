@@ -19,8 +19,7 @@ func loadTreeOptions(treeType string, width int, spillover string) []networkengi
 }
 
 // loaderFor builds what a subcommand drives: the loader, and the counter that
-// reports how big the tree is. Both are injected together so a test can
-// execute the command without a database or a worker.
+// reports how big the tree is.
 type loaderFor func(deps *treeDeps, treeID string) (treeLoader, nodeCounter)
 
 // newTreeCmd builds the tree command group against the real dependencies.
@@ -41,7 +40,7 @@ func newTreeCmdWith(open depsOpener, loader loaderFor) *cobra.Command {
 	dbURL := treeCmd.PersistentFlags().String("db-url", "", "PostgreSQL connection URL (or set DATABASE_URL env var)")
 	worker := treeCmd.PersistentFlags().String("worker", "", "Path to the network-engine-worker binary (or set "+workerPathEnv+" env var)")
 
-	// resolve reads both flags the way migrate reads its own.
+	// resolve reads both flags needed to open the tree dependencies.
 	resolve := func() (string, string, error) {
 		url, err := resolveDBURL(*dbURL)
 		if err != nil {
@@ -58,8 +57,7 @@ func newTreeCmdWith(open depsOpener, loader loaderFor) *cobra.Command {
 	return treeCmd
 }
 
-// storeNodeCount counts the tree's active rows. The loader reads the same set
-// again; one extra query is immaterial beside the per-node engine calls.
+// storeNodeCount counts the tree's active rows.
 func storeNodeCount(store networkengine.TreeStore, treeID string) nodeCounter {
 	return func(ctx context.Context) (int, error) {
 		rows, err := store.GetByTreeDepthOrdered(ctx, treeID)

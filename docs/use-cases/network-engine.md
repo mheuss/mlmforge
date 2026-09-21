@@ -1021,14 +1021,14 @@ if alreadyProjected {
 **Added:** Unreleased (HEU-788)
 **Files:** `cmd/mlmforge/treeload.go` (`treeLoadRetryable`, `runTreeLoad`)
 
-**Problem:** A caller that retries a `LoadTree` failure has to tell an infrastructure blip apart from a failure that will fail the same way forever, and the error kind alone does not carry enough to decide.
+**Problem:** A caller that retries a `LoadTree` failure has to tell an infrastructure blip apart from a failure that will fail the same way forever. The error kind alone does not carry enough to decide.
 
-**Solution:** `treeLoadRetryable` allowlists rather than denylists. A cause nobody enumerated defaults to stopping. It retries one case: a `TreeLoadRejectedError` whose `Kind` is `TreeLoadStoreReadFailed` and whose wrapped error `pgconn.SafeToRetry` reports never reached the server. Everything else stops. Cancellation is checked first and separately, because `TreeLoadStoreReadFailed` covers a refused connection, a cancelled context and a row that will not decode, and only the first of those can succeed on a second attempt. A `TreeLoadIncompleteError` is never retried at all: the structure already exists in the engine, so a retry reports `TREE_EXISTS` and the only real remedy is a process restart.
+**Solution:** `treeLoadRetryable` allowlists rather than denylists. A cause nobody enumerated defaults to stopping. It retries one case: a `TreeLoadRejectedError` whose `Kind` is `TreeLoadStoreReadFailed` and whose wrapped error `pgconn.SafeToRetry` reports never reached the server. Everything else stops. Cancellation is checked first and separately. `TreeLoadStoreReadFailed` covers a refused connection, a cancelled context and a row that will not decode. Only the first of those can succeed on a second attempt. A `TreeLoadIncompleteError` is never retried at all. The structure already exists in the engine, so a retry reports `TREE_EXISTS`. The only real remedy is a process restart.
 
 **Usage:**
 ```go
-// Cancellation reaches the engine stages too, and TreeLoadIncompleteError has
-// no Kind field, so a caller that checks only the rejected type honours
+// Cancellation reaches the engine stages too. TreeLoadIncompleteError has
+// no Kind field. A caller that checks only the rejected type honours
 // "do not retry a cancelled context" on one of two paths.
 err := loader.LoadTree(ctx, treeID, treeType, opts...)
 if err != nil && treeLoadRetryable(err) {
@@ -1037,4 +1037,4 @@ if err != nil && treeLoadRetryable(err) {
 }
 ```
 
-**Notes:** The allowlist is the load-bearing part. Denylisting would mean a new failure mode is retried by default, and the failure modes here include ones that never terminate. Related: UC-NET-012 owns the preflight half of these two error types, which is what runs before any engine call; this entry owns the retry half, which runs after one has failed. Neither restates the other.
+**Notes:** The allowlist is the load-bearing part. Denylisting would mean a new failure mode is retried by default. The failure modes here include ones that never terminate. Related: UC-NET-012 owns the preflight half of these two error types, which is what runs before any engine call. This entry owns the retry half, which runs after one has failed. Neither restates the other.

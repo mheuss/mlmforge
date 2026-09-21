@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -19,8 +20,7 @@ const workerRelPath = "../../engine/target/debug/network-engine-worker"
 
 // requireWorker returns the worker path, or skips unless CI is set.
 //
-// Mirrors the networkengine package's own gate: a silent skip in CI would
-// report green having started no worker.
+// A silent skip in CI would report green having started no worker.
 func requireWorker(t *testing.T) string {
 	t.Helper()
 	path := os.Getenv(workerPathEnv)
@@ -31,10 +31,15 @@ func requireWorker(t *testing.T) string {
 	require.NoError(t, err)
 	info, err := os.Stat(abs)
 	if err != nil {
-		if ci := os.Getenv("CI"); ci != "" {
-			t.Fatalf("worker binary not found at %s and CI=%q; build it with 'cargo build --workspace' in engine/", abs, ci)
+		// A permission or I/O error is not an absent binary, and skipping on
+		// one is indistinguishable from a pass.
+		if !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("stat worker binary at %s: %v", abs, err)
 		}
-		t.Skipf("worker binary not found at %s", abs)
+		if ci := os.Getenv("CI"); ci != "" {
+			t.Fatalf("stat worker binary at %s: %v (CI=%q); build it with 'cargo build --workspace' in engine/", abs, err, ci)
+		}
+		t.Skipf("stat worker binary at %s: %v", abs, err)
 	}
 	requireWorkerNotStale(t, abs, info.ModTime())
 	return abs
@@ -50,17 +55,22 @@ func requireWorkerNotStale(t *testing.T, binPath string, built time.Time) {
 	root, err := filepath.Abs("../../engine")
 	require.NoError(t, err)
 
-	var newest string
+	generated := filepath.Join(root, "target")
+
+	var newer string
 	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		// Skipped so that touching an engine test source, or a generated
-		// file under target/, does not demand a worker rebuild here.
-		if d.IsDir() && (d.Name() == "target" || d.Name() == "tests") {
-			return fs.SkipDir
+		// Matching on the directory name alone would also skip a tests
+		// directory under src/, whose files do reach the worker.
+		if d.IsDir() {
+			if path == generated || isCrateIntegrationTests(path) {
+				return fs.SkipDir
+			}
+			return nil
 		}
-		if d.IsDir() || filepath.Ext(path) != ".rs" {
+		if filepath.Ext(path) != ".rs" {
 			return nil
 		}
 		info, ierr := d.Info()
@@ -68,14 +78,25 @@ func requireWorkerNotStale(t *testing.T, binPath string, built time.Time) {
 			return ierr
 		}
 		if info.ModTime().After(built) {
-			newest = path
+			newer = path
 		}
 		return nil
 	})
 	require.NoError(t, err)
-	if newest != "" {
-		t.Fatalf("worker at %s is older than %s; rebuild with 'cargo build --workspace' in engine/ (do not touch the binary)", binPath, newest)
+	if newer != "" {
+		t.Fatalf("worker at %s is older than %s; rebuild with 'cargo build --workspace' in engine/ (do not touch the binary)", binPath, newer)
 	}
+}
+
+// isCrateIntegrationTests reports whether path is a "tests" directory sitting
+// beside a Cargo.toml. Those files compile into their own binaries, so the
+// worker can never be stale against them.
+func isCrateIntegrationTests(path string) bool {
+	if filepath.Base(path) != "tests" {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(filepath.Dir(path), "Cargo.toml"))
+	return err == nil
 }
 
 // testTreeID and testUserID build deterministic UUIDs. tree_id, user_id and
@@ -105,8 +126,7 @@ func runTreeCmd(t *testing.T, args ...string) (*cmdOutput, error) {
 // seedTree writes a root and n children straight to tree_nodes.
 //
 // The rows are seeded through the store rather than through a command,
-// because nothing in this branch writes a tree event. That is HEU-301's, and
-// the mutation commands were split out on 2026-09-19.
+// because nothing in this branch writes a tree event. That is HEU-301's.
 func seedTree(t *testing.T, pool *pgxpool.Pool, treeID string, children int) {
 	t.Helper()
 	store := networkengine.NewPostgresTreeStore(pool)
@@ -186,7 +206,10 @@ func TestTreeLoad_ReadsTheStoredRows(t *testing.T) {
 	)
 
 	require.Error(t, err)
-	require.Contains(t, out.stderr.String(), "engine is unchanged")
+	// The kind is the discriminating part. "engine is unchanged" appears in
+	// every rejection message, including one raised when the read itself
+	// failed and no row was ever seen.
+	require.Contains(t, out.stderr.String(), "data_invalid")
 	require.Empty(t, out.stdout.String())
 }
 
@@ -199,20 +222,23 @@ func TestTreeLoad_AnEmptyTreeIsNotAFailure(t *testing.T) {
 	worker := requireWorker(t)
 	_ = pgContainer.NewPool(t)
 
-	_, err := runTreeCmd(t,
+	tree := testTreeID(2)
+	out, err := runTreeCmd(t,
 		"load",
 		"--db-url", pgContainer.DSN,
 		"--worker", worker,
-		"--tree-id", testTreeID(2),
+		"--tree-id", tree,
 		"--tree-type", "unilevel",
 	)
 
 	require.NoError(t, err)
+	require.Equal(t, "loaded tree "+tree+"\n", out.stdout.String())
 }
 
-// A config error is refused before the store is read, so it must not need a
-// reachable database to report cleanly. The message goes to stderr, because
-// the command returns it rather than printing it.
+// An unsupported tree type is refused, the message reaches stderr, and cobra
+// appends no usage. The command opens a pool and starts the worker before the
+// loader runs, so this case needs both even though the rejection itself does
+// not read the store.
 func TestTreeLoad_ReportsAConfigRejection(t *testing.T) {
 	if pgContainer == nil {
 		t.Skip("Postgres container not available")
@@ -229,7 +255,7 @@ func TestTreeLoad_ReportsAConfigRejection(t *testing.T) {
 	)
 
 	require.Error(t, err)
-	require.Contains(t, out.stderr.String(), "engine is unchanged")
+	require.Contains(t, out.stderr.String(), "config_invalid")
 	require.Empty(t, out.stdout.String())
 	require.NotContains(t, out.stderr.String(), "Usage:")
 }

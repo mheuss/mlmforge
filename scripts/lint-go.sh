@@ -6,7 +6,7 @@ set -uo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
 # Returns the leading digits when what follows them is a Go prerelease suffix,
-# and the value unchanged otherwise, so the caller's number test still refuses.
+# and the value unchanged otherwise.
 strip_known_suffix() {
   case "$1" in
     *[0-9]rc[0-9]*|*[0-9]beta[0-9]*) printf '%s' "${1%%[![:digit:]]*}" ;;

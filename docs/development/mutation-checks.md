@@ -147,20 +147,20 @@ The same suite on the same commit reported 1537 passing and 1358 passing, both
 at exit 0. The difference was a container that did not start. The run said so:
 it printed a line naming the missing container to stderr. An awk counting
 `RUN`, `PASS`, `SKIP` and `FAIL` lines matched none of them and dropped it. The
-number was published as verification and the explanation had already been
+number was published as verification. The explanation had already been
 given.
 
 **Keep the raw output. Read it whenever a figure moves.** A summary is fine
 when the figure is stable and useless the moment it is not.
 
-This is worse than a tool that says nothing, because the evidence existed and
-the instrument removed it. A gap in coverage leaves the diagnostic waiting to
-be found; a filter destroys it in transit.
+This is worse than a tool that says nothing. The evidence existed. The
+instrument removed it. A gap in coverage leaves the diagnostic waiting to be
+found. A filter destroys it in transit.
 
 ## A suite cannot tell you it is testing the wrong requirement
 
 Tests check the code against what their author believed the requirement was.
-When that belief is wrong they pass, and they keep passing, and every gate that
+When that belief is wrong, they pass. They keep passing. Every gate that
 reads them agrees.
 
 Nine cases on one branch asserted that a lint proceeds when an input file
@@ -169,14 +169,14 @@ exits non-zero without linting when an input cannot be read, and that it fails
 closed on any condition it cannot evaluate. The nine passed a claim check, a
 per-task review, a full code review and an external reviewer.
 
-Only an adversarial read caught it, and the reason is worth keeping: **the diff
+Only an adversarial read caught it. The reason is worth keeping: **the diff
 was internally consistent.** Code and tests agreed with each other. A reviewer
 comparing them finds nothing. The disagreement was between the tests and a
 requirement document neither of them cites.
 
 **Re-read the requirement, not the diff, when a test encodes a refusal or a
 skip.** A test that says a check is skipped is asserting that skipping is
-correct, which is a claim about the requirement rather than about the code.
+correct. That is a claim about the requirement, not about the code.
 
 ## A surviving mutation is not always a defect
 

@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -152,6 +154,62 @@ func TestTreeLoadCmd_RejectsStrayPositionalArguments(t *testing.T) {
 	})
 
 	require.ErrorContains(t, cmd.Execute(), `unknown command "stray" for "tree load"`)
+}
+
+// failingLoader drives runTreeLoad down its reporting path.
+type failingLoader struct{ err error }
+
+func (f *failingLoader) LoadTree(context.Context, string, string, ...networkengine.LoadTreeOption) error {
+	return f.err
+}
+
+// The flags sit on load rather than on the group because ExecuteC reads only
+// the leaf and the command it was called on, never the ancestors between them.
+// On the group this assertion still passes and production still dumps usage.
+func TestTreeLoadCmd_ReportsAFailureOnceWithoutUsage(t *testing.T) {
+	cmd := newTreeCmdWith(
+		func(context.Context, string, string) (*treeDeps, error) {
+			return &treeDeps{release: func() error { return nil }}, nil
+		},
+		func(*treeDeps) treeLoader { return &failingLoader{err: errors.New("boom")} },
+	)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{
+		"load", "--db-url", "postgres://x", "--worker", workerStub(t),
+		"--tree-id", "t9", "--tree-type", "unilevel",
+	})
+
+	require.Error(t, cmd.Execute())
+	require.Equal(t, 1, strings.Count(out.String(), "load failed: boom"))
+	require.NotContains(t, out.String(), "Usage:")
+	require.NotContains(t, out.String(), "Error:")
+}
+
+// The test above passes with the flags on the group too, so it cannot tell the
+// working placement from the broken one. This drives the root command, which
+// is the entry point a real invocation uses and the only one where the
+// difference shows.
+func TestRootCmd_TreeLoadFailureDoesNotDumpUsage(t *testing.T) {
+	// newRootCmd wires the real opener, so the failure has to land before it.
+	// An unresolvable --db-url would dial whatever the host resolves to.
+	t.Setenv("DATABASE_URL", "")
+	t.Setenv(workerPathEnv, "")
+
+	root := newRootCmd()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{
+		"tree", "load", "--tree-id", "t9", "--tree-type", "unilevel",
+	})
+
+	err := root.Execute()
+
+	require.ErrorContains(t, err, "--db-url flag or DATABASE_URL env var is required")
+	require.NotContains(t, out.String(), "Usage:")
+	require.NotContains(t, out.String(), "Error:")
 }
 
 // workerStub writes an executable file so resolveWorkerPath succeeds without a

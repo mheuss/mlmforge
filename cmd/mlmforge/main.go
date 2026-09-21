@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/mlmforge/mlmforge/internal/observability"
@@ -44,6 +46,21 @@ func run() int {
 		}
 	}()
 
+	// Cancels on an operator interrupt, so the load retry loop and the engine
+	// teardown both see it. stop is released when run returns, not earlier.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := newRootCmd().ExecuteContext(ctx); err != nil {
+		return 1
+	}
+	return 0
+}
+
+// newRootCmd builds the command tree. Separated from run so a test executes
+// the same tree production does, rather than a subtree that behaves
+// differently under cobra.
+func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "mlmforge",
 		Short: "MLMForge compensation engine",
@@ -107,9 +124,6 @@ func run() int {
 	)
 
 	root.AddCommand(migrateCmd)
-
-	if err := root.Execute(); err != nil {
-		return 1
-	}
-	return 0
+	root.AddCommand(newTreeCmd())
+	return root
 }

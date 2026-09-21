@@ -40,6 +40,13 @@ func (s *MemoryTreeStore) InsertNode(_ context.Context, node TreeNodeRow) error 
 			if n.UserID == node.UserID {
 				return fmt.Errorf("%w: tree=%s user=%s", ErrActiveUserConflict, node.TreeID, node.UserID)
 			}
+			// One active depth-0 row per tree. Kept after the user check:
+			// a row breaking both rules must report the same sentinel the
+			// database would, and that order is not ours to set (HEU-794).
+			if node.Depth == 0 && n.Depth == 0 {
+				return fmt.Errorf("%w: tree=%s rooted by %s",
+					ErrRootConflict, node.TreeID, n.UserID)
+			}
 			// Mirror idx_tree_nodes_tree_parent_position_active (migration
 			// 000004): one active claim per (tree, parent, position). Rows
 			// without a position are outside the index (WHERE position IS
@@ -53,6 +60,13 @@ func (s *MemoryTreeStore) InsertNode(_ context.Context, node TreeNodeRow) error 
 			}
 		}
 	}
+	s.nodes = append(s.nodes, node)
+	return nil
+}
+
+// appendUnchecked stores a row without any of InsertNode's checks, for a test
+// that needs a row the constraints refuse.
+func (s *MemoryTreeStore) appendUnchecked(node TreeNodeRow) error {
 	s.nodes = append(s.nodes, node)
 	return nil
 }

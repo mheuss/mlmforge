@@ -3,6 +3,7 @@ package networkengine
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -148,11 +149,101 @@ func TestPostgresTreeStore_DuplicateActiveSlotRejected(t *testing.T) {
 	// Two active rows with positions but NULL parents do not conflict:
 	// the index treats NULLs as distinct. This pins the real database's
 	// behavior so the MemoryTreeStore mirror has a reference to drift from.
+	// Depth 1 is deliberate; see HEU-810.
 	treeID2 := testTreeUUID(2)
 	require.NoError(t, store.InsertNode(ctx,
-		makeUUIDNode(testNodeUUID(5), treeID2, testUserUUID(5), 0, nil, ptr(testUserUUID(5)), intPtr(0))))
+		makeUUIDNode(testNodeUUID(5), treeID2, testUserUUID(5), 1, nil, ptr(testUserUUID(5)), intPtr(0))))
 	require.NoError(t, store.InsertNode(ctx,
-		makeUUIDNode(testNodeUUID(6), treeID2, testUserUUID(6), 0, nil, ptr(testUserUUID(6)), intPtr(0))))
+		makeUUIDNode(testNodeUUID(6), treeID2, testUserUUID(6), 1, nil, ptr(testUserUUID(6)), intPtr(0))))
+}
+
+func TestPostgresTreeStore_SecondRootRejected(t *testing.T) {
+	store := newTestPostgresTreeStore(t)
+	ctx := context.Background()
+
+	treeID := testTreeUUID(1)
+	require.NoError(t, store.InsertNode(ctx,
+		makeUUIDNode(testNodeUUID(1), treeID, testUserUUID(1), 0, nil, nil, nil)))
+
+	err := store.InsertNode(ctx,
+		makeUUIDNode(testNodeUUID(2), treeID, testUserUUID(2), 0, nil, nil, nil))
+	require.ErrorIs(t, err, ErrRootConflict)
+
+	rows, gerr := store.GetByTree(ctx, treeID)
+	require.NoError(t, gerr)
+	roots := 0
+	for _, r := range rows {
+		if r.Depth == 0 {
+			roots++
+		}
+	}
+	assert.Equal(t, 1, roots, "the refused insert left no row behind")
+
+	// A removed root does not block its replacement (ADR-023).
+	require.NoError(t, store.DeleteNode(ctx, treeID, testUserUUID(1)))
+	require.NoError(t, store.InsertNode(ctx,
+		makeUUIDNode(testNodeUUID(3), treeID, testUserUUID(3), 0, nil, nil, nil)))
+}
+
+// The reason this constraint lives in the database rather than in a Go check.
+// Two processes can both read an empty tree and both decide to insert a root.
+func TestPostgresTreeStore_ConcurrentRootsLeaveOne(t *testing.T) {
+	store := newTestPostgresTreeStore(t)
+	ctx := context.Background()
+	treeID := testTreeUUID(1)
+
+	var started, done sync.WaitGroup
+	started.Add(2)
+	done.Add(2)
+	errs := make([]error, 2)
+	for i := 0; i < 2; i++ {
+		go func(i int) {
+			defer done.Done()
+			started.Done()
+			started.Wait()
+			errs[i] = store.InsertNode(ctx,
+				makeUUIDNode(testNodeUUID(i+1), treeID, testUserUUID(i+1), 0, nil, nil, nil))
+		}(i)
+	}
+	done.Wait()
+
+	okCount := 0
+	for _, err := range errs {
+		if err == nil {
+			okCount++
+			continue
+		}
+		require.ErrorIs(t, err, ErrRootConflict, "the loser is refused by the root index")
+	}
+	assert.Equal(t, 1, okCount, "exactly one insert wins")
+
+	// The requirement is about rows, not return values. One nil return
+	// strongly implies one row and does not prove it.
+	rows, gerr := store.GetByTree(ctx, treeID)
+	require.NoError(t, gerr)
+	roots := 0
+	for _, r := range rows {
+		if r.Depth == 0 {
+			roots++
+		}
+	}
+	assert.Equal(t, 1, roots, "and the tree holds exactly one active root")
+}
+
+func TestPostgresTreeStore_BulkInsertRejectsTwoRoots(t *testing.T) {
+	store := newTestPostgresTreeStore(t)
+	ctx := context.Background()
+	treeID := testTreeUUID(1)
+
+	err := store.BulkInsert(ctx, []TreeNodeRow{
+		makeUUIDNode(testNodeUUID(1), treeID, testUserUUID(1), 0, nil, nil, nil),
+		makeUUIDNode(testNodeUUID(2), treeID, testUserUUID(2), 0, nil, nil, nil),
+	})
+	require.ErrorIs(t, err, ErrRootConflict)
+
+	rows, gerr := store.GetByTree(ctx, treeID)
+	require.NoError(t, gerr)
+	assert.Empty(t, rows, "the transaction rolled the whole batch back")
 }
 
 func TestPostgresTreeStore_DeleteNode(t *testing.T) {

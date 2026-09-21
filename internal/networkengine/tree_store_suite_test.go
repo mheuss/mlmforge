@@ -561,8 +561,8 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		assert.Nil(t, removed, "the named tree's row is gone")
 	})
 
-	// The three constraints from migrations 000002 and 000004. UC-NET-014
-	// rests on the double rejecting the same writes Postgres rejects.
+	// UC-NET-014 rests on the double rejecting the same writes Postgres
+	// rejects, so each constraint below has a case on both stores.
 	t.Run("InsertNode rejects a duplicate row id", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
@@ -600,11 +600,16 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		ctx := context.Background()
 
 		tree := testTreeUUID(1)
-		user := testUserUUID(1)
+		rootUser := testUserUUID(1)
+		user := testUserUUID(2)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		// Depth 1 on the conflicting pair is deliberate; see HEU-810.
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(2), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
 
-		err := s.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), tree, user, 0, nil, nil, nil))
+		err := s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(3), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(1)))
 		require.ErrorIs(t, err, ErrActiveUserConflict)
 
 		// The sentinel says which branch. It cannot say which row, and this is
@@ -627,6 +632,25 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		err := s.InsertNode(ctx,
 			makeUUIDNode(testNodeUUID(3), tree, testUserUUID(3), 1, ptr(rootUser), ptr(rootUser), intPtr(0)))
 		assert.ErrorIs(t, err, ErrSlotConflict, "one active claim per tree, parent and position")
+	})
+
+	t.Run("InsertNode rejects a second active root in a tree", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, testUserUUID(1), 0, nil, nil, nil)))
+
+		// Two different users, so this row violates the root index alone.
+		// A same-user row would violate the active-user index too, and
+		// Postgres picks which of two violated indexes it reports.
+		err := s.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), tree, testUserUUID(2), 0, nil, nil, nil))
+		require.ErrorIs(t, err, ErrRootConflict)
+
+		// A removed root does not block its replacement (ADR-023).
+		require.NoError(t, s.DeleteNode(ctx, tree, testUserUUID(1)))
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(3), tree, testUserUUID(3), 0, nil, nil, nil)))
 	})
 
 	// A refused insert must not be a disguised update. On Postgres that is the

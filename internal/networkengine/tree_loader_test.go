@@ -439,6 +439,9 @@ func TestTreeLoader_ValidationFailures_Structural(t *testing.T) {
 		opts     []LoadTreeOption
 		nodes    []TreeNodeRow
 		wantErr  string
+		// direct seeds the store's rows in one go instead of inserting them
+		// one by one.
+		direct bool
 	}{
 		{
 			name:     "unsupported tree type",
@@ -480,6 +483,8 @@ func TestTreeLoader_ValidationFailures_Structural(t *testing.T) {
 				makeNode("t", "u0", 0, nil, ptr("u0"), nil),
 				makeNode("t", "u1", 0, nil, ptr("u1"), nil),
 			},
+			// see HEU-810
+			direct:  true,
 			wantErr: "more than one depth-0 root",
 		},
 		{
@@ -564,7 +569,11 @@ func TestTreeLoader_ValidationFailures_Structural(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mutator, err := loadWithStub(t, tt.treeType, tt.nodes, tt.opts...)
+			load := loadWithStub
+			if tt.direct {
+				load = loadWithStubDirect
+			}
+			mutator, err := load(t, tt.treeType, tt.nodes, tt.opts...)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.wantErr)
 			assert.Zero(t, mutator.totalCalls(), "preflight failure must make no engine calls")

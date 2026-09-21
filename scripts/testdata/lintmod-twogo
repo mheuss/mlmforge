@@ -1,0 +1,5 @@
+module example.com/fixture
+
+go 1.28.0
+
+go 1.99.0

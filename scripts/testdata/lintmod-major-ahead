@@ -1,0 +1,3 @@
+module example.com/fixture
+
+go 2.0.0

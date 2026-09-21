@@ -51,8 +51,6 @@ func newTreeCmdWith(open depsOpener, loader loaderFor) *cobra.Command {
 		return url, path, nil
 	}
 
-	// One subcommand today. The group is where the mutation commands land
-	// once HEU-788 and HEU-301's shared brainstorm places them.
 	treeCmd.AddCommand(newTreeLoadCmd(resolve, open, loader))
 	return treeCmd
 }

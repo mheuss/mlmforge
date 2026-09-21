@@ -55,8 +55,8 @@ func requireWorkerNotStale(t *testing.T, binPath string, built time.Time) {
 		if err != nil {
 			return err
 		}
-		// target/ holds sources cargo regenerates during the same build, and
-		// a crate's tests/ compiles into its own binary, never into this one.
+		// Skipped so that touching an engine test source, or a generated
+		// file under target/, does not demand a worker rebuild here.
 		if d.IsDir() && (d.Name() == "target" || d.Name() == "tests") {
 			return fs.SkipDir
 		}

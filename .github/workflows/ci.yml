@@ -106,13 +106,9 @@ jobs:
       - name: Lint wrapper behaves
         run: scripts/lint-go-test.sh
 
-      # A tracked harness nothing runs rots. Its rows are sed expressions keyed
-      # to the wrapper's text, and a row that stops matching fails the run.
       - name: Lint suite can fail
         run: scripts/mutate-lint-go.sh
 
-      # run does not validate the config. A misspelled key is accepted, the
-      # linter set silently falls back, and the run reports no issues.
       - name: Lint config is valid
         run: |
           scripts/lint-go.sh --check-only

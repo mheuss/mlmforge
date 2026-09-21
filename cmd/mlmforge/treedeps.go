@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"io"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mlmforge/mlmforge/internal/networkengine"
@@ -78,14 +78,23 @@ func openTreeDeps(ctx context.Context, dbURL, workerPath string) (*treeDeps, err
 }
 
 // withTreeDeps runs one operation and releases the dependencies afterwards.
-func withTreeDeps(ctx context.Context, open depsOpener, dbURL, workerPath string, run treeRunner) (err error) {
+//
+// A release failure is reported to warn and does not change the error. The
+// exit code describes the operation the caller asked for, and a load that
+// completed must not send an operator back to re-run it.
+func withTreeDeps(ctx context.Context, warn io.Writer, open depsOpener, dbURL, workerPath string, run treeRunner) (err error) {
 	deps, err := open(ctx, dbURL, workerPath)
 	if err != nil {
 		return err
 	}
 	// Deferred rather than called after run, so a panic releases too.
 	defer func() {
-		err = errors.Join(err, deps.release())
+		if relErr := deps.release(); relErr != nil {
+			// What was observed, and nothing about what it means. Why the
+			// release failed is not known here, so neither is whether
+			// anything is still running.
+			_, _ = fmt.Fprintf(warn, "warning: the run finished; releasing its worker and pool reported: %s\n", relErr)
+		}
 	}()
 	return run(ctx, deps)
 }

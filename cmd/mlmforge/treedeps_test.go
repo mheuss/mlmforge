@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"io/fs"
 	"path/filepath"
 	"testing"
@@ -56,7 +58,7 @@ func TestWithTreeDeps_ReleasesWhenTheOperationFails(t *testing.T) {
 	rec := &recordingDeps{}
 	boom := errors.New("operation failed")
 
-	err := withTreeDeps(t.Context(), rec.open, "db", "worker",
+	err := withTreeDeps(t.Context(), io.Discard, rec.open, "db", "worker",
 		func(context.Context, *treeDeps) error { return boom })
 
 	require.ErrorIs(t, err, boom)
@@ -66,7 +68,7 @@ func TestWithTreeDeps_ReleasesWhenTheOperationFails(t *testing.T) {
 func TestWithTreeDeps_ReleasesWhenTheOperationSucceeds(t *testing.T) {
 	rec := &recordingDeps{}
 
-	err := withTreeDeps(t.Context(), rec.open, "db", "worker",
+	err := withTreeDeps(t.Context(), io.Discard, rec.open, "db", "worker",
 		func(context.Context, *treeDeps) error { return nil })
 
 	require.NoError(t, err)
@@ -77,40 +79,64 @@ func TestWithTreeDeps_ReleasesWhenTheOperationPanics(t *testing.T) {
 	rec := &recordingDeps{}
 
 	require.Panics(t, func() {
-		_ = withTreeDeps(t.Context(), rec.open, "db", "worker",
+		_ = withTreeDeps(t.Context(), io.Discard, rec.open, "db", "worker",
 			func(context.Context, *treeDeps) error { panic("worker wedged") })
 	})
 
 	require.Equal(t, 1, rec.releases, "release was not called exactly once")
 }
 
-func TestWithTreeDeps_ReportsAReleaseFailureWhenTheOperationSucceeded(t *testing.T) {
+// Reversed 2026-09-21. This case previously asserted that a release failure
+// became the command's error. It exits 0 now: the run is what the operator
+// asked for, and reporting a failure over a run that completed invites them to
+// do it again.
+func TestWithTreeDeps_SucceedsWhenOnlyTheReleaseFailed(t *testing.T) {
 	stopErr := errors.New("stop failed")
 	rec := &recordingDeps{err: stopErr}
+	var warn bytes.Buffer
 
-	err := withTreeDeps(t.Context(), rec.open, "db", "worker",
+	err := withTreeDeps(t.Context(), &warn, rec.open, "db", "worker",
 		func(context.Context, *treeDeps) error { return nil })
 
-	require.ErrorIs(t, err, stopErr)
+	require.NoError(t, err, "a run that completed must not report failure")
+	require.Contains(t, warn.String(), "stop failed", "the release failure must still be visible")
 }
 
-func TestWithTreeDeps_ReportsBothWhenReleaseAlsoFails(t *testing.T) {
+// Reversed 2026-09-21 alongside the case above, which previously joined the
+// release error into the returned chain.
+func TestWithTreeDeps_ReturnsTheRunErrorAndWarnsAboutRelease(t *testing.T) {
 	boom := errors.New("operation failed")
 	stopErr := errors.New("stop failed")
 	rec := &recordingDeps{err: stopErr}
+	var warn bytes.Buffer
 
-	err := withTreeDeps(t.Context(), rec.open, "db", "worker",
+	err := withTreeDeps(t.Context(), &warn, rec.open, "db", "worker",
 		func(context.Context, *treeDeps) error { return boom })
 
 	require.ErrorIs(t, err, boom, "the operation failure must survive")
-	require.ErrorIs(t, err, stopErr, "the release error is absent from the chain")
+	require.NotErrorIs(t, err, stopErr, "the release error must not change what the run reported")
+	require.Contains(t, warn.String(), "stop failed")
+}
+
+// The warning says what was observed. It must not claim the worker is still
+// running, because the release error does not say why it failed.
+func TestWithTreeDeps_WarningDoesNotInferACause(t *testing.T) {
+	rec := &recordingDeps{err: errors.New("stop failed")}
+	var warn bytes.Buffer
+
+	_ = withTreeDeps(t.Context(), &warn, rec.open, "db", "worker",
+		func(context.Context, *treeDeps) error { return nil })
+
+	for _, banned := range []string{"leaked", "still running", "kill"} {
+		require.NotContains(t, warn.String(), banned)
+	}
 }
 
 func TestWithTreeDeps_ReturnsTheOpenErrorAndRunsNothing(t *testing.T) {
 	openErr := errors.New("open failed")
 	ran := false
 
-	err := withTreeDeps(t.Context(),
+	err := withTreeDeps(t.Context(), io.Discard,
 		func(context.Context, string, string) (*treeDeps, error) { return nil, openErr },
 		"db", "worker",
 		func(context.Context, *treeDeps) error { ran = true; return nil })
@@ -176,7 +202,7 @@ func TestWithTreeDeps_PassesTheResolvedArgumentsToTheOpener(t *testing.T) {
 		return &treeDeps{release: func() error { return nil }}, nil
 	}
 
-	err := withTreeDeps(t.Context(), open, "postgres://x", "/bin/worker",
+	err := withTreeDeps(t.Context(), io.Discard, open, "postgres://x", "/bin/worker",
 		func(context.Context, *treeDeps) error { return nil })
 
 	require.NoError(t, err)

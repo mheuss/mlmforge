@@ -82,7 +82,7 @@ func newTreeLoadCmd(resolve flagResolver, open depsOpener, loader loaderFor) *co
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 			opts := loadTreeOptions(treeType, width, spillover)
-			return withTreeDeps(ctx, open, url, workerPath,
+			return withTreeDeps(ctx, cmd.ErrOrStderr(), open, url, workerPath,
 				func(ctx context.Context, deps *treeDeps) error {
 					return runTreeLoad(ctx, cmd.OutOrStdout(), loader(deps), treeID, treeType, opts)
 				})

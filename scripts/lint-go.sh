@@ -5,13 +5,15 @@ set -uo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
-# Returns the leading digits when what follows them is a Go prerelease suffix,
-# and the value unchanged otherwise.
+# Returns the leading digits when the whole value is digits followed by a Go
+# prerelease suffix, and the value unchanged otherwise. Anchored at both ends,
+# so trailing text is not silently dropped to leave a number behind.
 strip_known_suffix() {
-  case "$1" in
-    *[0-9]rc[0-9]*|*[0-9]beta[0-9]*) printf '%s' "${1%%[![:digit:]]*}" ;;
-    *) printf '%s' "$1" ;;
-  esac
+  if [[ $1 =~ ^([0-9]+)(rc|beta)[0-9]+$ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+  else
+    printf '%s' "$1"
+  fi
 }
 
 usage="usage: ${0##*/} [--check-only] [--version-file FILE] [--go-mod FILE] [--workflow FILE] [--] [golangci-lint arguments...]
@@ -111,7 +113,7 @@ fi
 if ! version_err=$(mktemp); then
   echo "cannot create a temp file for the version command's stderr; not linting" >&2
   echo "  pinned     v$pin   ($version_file)" >&2
-  echo "  installed  not obtained (mktemp failed; the binary was not run)" >&2
+  echo "  installed  not obtained (mktemp failed; the binary was not run)   ($resolved)" >&2
   echo "  built with not obtained" >&2
   exit 1
 fi
@@ -143,7 +145,7 @@ done <<< "$version_out"
 if [ "$version_matches" != 1 ]; then
   echo "golangci-lint version output has $version_matches version lines; not linting" >&2
   echo "  pinned     v$pin   ($version_file)" >&2
-  echo "  installed  not obtained ($version_matches lines matched, one expected)" >&2
+  echo "  installed  not obtained ($version_matches lines matched, one expected)   ($resolved)" >&2
   echo "  built with not obtained" >&2
   echo "  output     $(printf '%q' "$version_out")" >&2
   exit 1
@@ -182,6 +184,10 @@ fi
 bw=${built_with#go}
 bw_major=${bw%%.*}; bw_rest=${bw#*.}; bw_minor=${bw_rest%%.*}
 d_major=${directive%%.*}; d_rest=${directive#*.}; d_minor=${d_rest%%.*}
+# A value with no dot leaves the remainder equal to the whole, so major and
+# minor come out identical and compare as equal rather than refusing.
+if [ "$bw_rest" = "$bw" ]; then bw_minor=; fi
+if [ "$d_rest" = "$directive" ]; then d_minor=; fi
 # Go writes a prerelease as rcN or betaN. Anything else trailing the digits is
 # not a suffix this recognises, and dropping it would turn an unparsable value
 # into a number.
@@ -198,7 +204,9 @@ if ! [[ $bw_major =~ ^[0-9]{1,9}$ ]] || ! [[ $bw_minor =~ ^[0-9]{1,9}$ ]] \
   echo "  pinned     v$pin   ($version_file)" >&2
   echo "  installed  $(printf '%q' "$installed")    ($resolved)" >&2
   echo "  built with $(printf '%q' "$built_with")  ($directive_note)" >&2
-  echo "  neither value yielded a major and a minor that compare as numbers" >&2
+  echo "  built-with major/minor  $(printf '%q' "$bw_major")/$(printf '%q' "$bw_minor")" >&2
+  echo "  directive  major/minor  $(printf '%q' "$d_major")/$(printf '%q' "$d_minor")" >&2
+  echo "  a component that is not one to nine digits is what this refuses on" >&2
   exit 1
 fi
 

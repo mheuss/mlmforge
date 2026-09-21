@@ -1,0 +1,5 @@
+module example.com/fixture
+
+go 127
+
+toolchain go1.27.1

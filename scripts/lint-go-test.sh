@@ -99,6 +99,8 @@ expect 0 "" "bare pin without a leading v" \
   --check-only --version-file "$data/lintver-bare"
 expect 0 "" "leading blank lines are trimmed like the action trims them" \
   --check-only --version-file "$data/lintver-leading"
+expect 0 "" "a trailing space is trimmed" \
+  --check-only --version-file "$data/lintver-trailing"
 expect 0 "" "the default pin file is the tracked one" --check-only
 a=$("$check" --check-only --version-file "$data/lintver-ok" 2>&1); arc=$?
 b=$("$check" --check-only --version-file "$data/lintver-bare" 2>&1); brc=$?
@@ -116,6 +118,8 @@ expect_with "$drift_dir" 1 "installed  2.11.4" "version differs from the pin" \
 expect_with "$drift_dir" 1 "$drift_dir/golangci-lint" "the mismatch names the resolved path" \
   --check-only --version-file "$data/lintver-ok"
 expect_with "$drift_dir" 1 "pinned     v2.13.2" "the mismatch names the pin" \
+  --check-only --version-file "$data/lintver-ok"
+expect_with "$drift_dir" 1 "does not match the pin; not linting" "the mismatch names itself" \
   --check-only --version-file "$data/lintver-ok"
 expect_with "$(stub_dir badrc "$ok_line" 3)" 1 "version command exited 3" "version command fails" \
   --check-only --version-file "$data/lintver-ok"
@@ -187,7 +191,8 @@ mkdir -p "$empty"
 # /usr/bin and /bin so the script's own `env bash` shebang still resolves.
 out=$(PATH="$empty:/usr/bin:/bin" "$check" --check-only --version-file "$data/lintver-ok" 2>&1)
 rc=$?
-if [ "$rc" = 1 ] && [[ $out == *"not obtained"* ]] && [[ $out == *"v2.13.2"* ]]; then
+if [ "$rc" = 1 ] && [[ $out == *"no golangci-lint on PATH"* ]] \
+  && [[ $out == *"command -v golangci-lint found nothing"* ]] && [[ $out == *"v2.13.2"* ]]; then
   record yes "no binary on PATH" ""
 else
   record no "no binary on PATH" "rc=$rc: $out"
@@ -283,6 +288,20 @@ expect_with "$bw_dir" 1 "cannot compare the built-with Go line" "an unparsable d
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-minor-unparsable"
 expect_with "$bw_dir" 1 "cannot compare the built-with Go line" "a directive too long to compare refuses" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-huge"
+# Trailing text after a prerelease suffix. Stripping it would leave a number.
+expect_with "$(stub_dir bwrcjunk 'golangci-lint has version 2.13.2 built with go1.27rc1junk from x on y')" \
+  1 "cannot compare the built-with Go line" "trailing text after a prerelease suffix refuses" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
+# No dot at all. Splitting it yields the same string for major and minor.
+expect_with "$(stub_dir bwnodot 'golangci-lint has version 2.13.2 built with go127 from x on y')" \
+  1 "cannot compare the built-with Go line" "a built-with line with no dot refuses" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
+expect_with "$bw_dir" 1 "cannot compare the built-with Go line" "a directive with no dot refuses" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-nodot"
+# The refusal reports both pairs rather than concluding about both sides.
+expect_with "$(stub_dir bwmajorbad2 'golangci-lint has version 2.13.2 built with gox.27 from x on y')" \
+  1 "directive  major/minor  1/27" "the refusal reports the directive it did parse" \
+  --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
 
 wf_args=(--check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok")
 
@@ -305,7 +324,7 @@ expect_with "$bw_dir" 1 "sets both version and version-file" "a space before the
 # A workflow larger than a pipe buffer.
 big=$work/wf-lint-big.yml
 cat "$data/wf-lint-both.yml" > "$big"
-for i in $(seq 1 4000); do echo "          # padding $i"; done >> "$big"
+for i in $(seq 1 40000); do echo "          # padding $i"; done >> "$big"
 expect_with "$bw_dir" 1 "sets both version and version-file" "a workflow past the pipe buffer still refuses" \
   "${wf_args[@]}" --workflow "$big"
 expect_with "$bw_dir" 1 "the action uses version" "the refusal says which input wins" \

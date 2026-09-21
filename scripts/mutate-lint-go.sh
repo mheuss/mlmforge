@@ -92,7 +92,9 @@ M caught       "go directive refusal dropped"           '/cannot read a go direc
 M caught       "note guard -> true"                     's|&& \[ -n "$directive" \]|\&\& true|'
 M caught       "d_minor suffix strip dropped"           's|d_minor=$(strip_known_suffix "$d_minor")|d_minor=$d_minor|'
 M caught       "bw_minor suffix strip dropped"          's|bw_minor=$(strip_known_suffix "$bw_minor")|bw_minor=$bw_minor|'
-M caught       "suffix allowlist widened"               's|\*\[0-9\]rc\[0-9\]\*\|\*\[0-9\]beta\[0-9\]\*|*[0-9]*|'
+M caught       "suffix strip un-anchored"               's@(rc|beta)\[0-9\]+\$@(rc|beta)[0-9]+@'
+M caught       "built-with no-dot guard dropped"         '/\[ "$bw_rest" = "$bw" \]/d'
+M caught       "directive no-dot guard dropped"          '/\[ "$d_rest" = "$directive" \]/d'
 M caught       "digit bound dropped"                    's|{1,9}|+|g'
 M caught       "d_major parse test -> true"             's|\[\[ $d_major =~ \^\[0-9\]{1,9}\$ \]\]|true|'
 M caught       "d_minor parse test -> true"             's|\[\[ $d_minor =~ \^\[0-9\]{1,9}\$ \]\]|true|'
@@ -115,6 +117,18 @@ M caught       "scope caveat line deleted"              '/key-shaped lines anywh
 M caught       "which-input-wins line deleted"          '/the action uses version" >&2/d'
 M caught       "here-strings back to pipes"             's@grep -qE \(.*\) <<< "\$workflow_body"@printf "%s\\n" "$workflow_body" | grep -qE \1@'
 M caught       "space before colon dropped"             's@\[\[:space:\]\]\*:@:@g'
+
+# --- the pin and the binary ---
+M caught       "trailing whitespace trim dropped"        '/pin_raw%"/d'
+M caught       "pin read status ignored"                's|if ! pin_body=$(cat "$version_file"); then|pin_body=$(cat "$version_file" 2>/dev/null); if false; then|'
+M caught       "pin format test -> true"                's|\[\[ $pin =~ \^\[0-9\]+\\.\[0-9\]+\\.\[0-9\]+\$ \]\]|true|'
+M caught       "leading v not stripped from the pin"     's|pin=${pin_raw#\[vV\]}|pin=$pin_raw|'
+M caught       "command -v refusal dropped"              's|if ! resolved=$(command -v golangci-lint); then|resolved=$(command -v golangci-lint); if false; then|'
+M caught       "version command status ignored"          's|\[ "$version_rc" != 0 \]|false|'
+M caught       "version line count check dropped"        's|\[ "$version_matches" != 1 \]|false|'
+M caught       "version line anchor dropped"             's|\^golangci-lint\\ has\\ version|golangci-lint\\ has\\ version|'
+M caught       "the pin comparison -> false"             's|\[ "${installed#\[vV\]}" != "$pin" \]|false|'
+M caught       "mismatch headline deleted"               '/does not match the pin; not linting/d'
 
 # --- the lint invocation ---
 M caught       "check-only early exit dropped"          's|\[ "$check_only" = true \]|false|'

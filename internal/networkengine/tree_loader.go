@@ -43,10 +43,13 @@ func WithMatrixParams(width int, spillover string) LoadTreeOption {
 
 // LoadTree reads all active nodes for a tree from the store, validates that
 // the set is reconstructable, orders it so every node follows its parent and
-// sponsor, then replays it into the engine. Matrix trees replay through
-// AddNodeAt so stored placements survive; their AddNode would re-derive
-// placement by spillover. Matrix trees need width and spillover supplied
-// through WithMatrixParams, which plain CreateTree does not carry.
+// sponsor, then replays it into the engine. It returns how many nodes it
+// replayed, counting the root, and zero for a tree with no active rows.
+//
+// Matrix trees replay through AddNodeAt so stored placements survive; their
+// AddNode would re-derive placement by spillover. Matrix trees need width and
+// spillover supplied through WithMatrixParams, which plain CreateTree does not
+// carry.
 func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts ...LoadTreeOption) (int, error) {
 	var cfg loadTreeConfig
 	for _, opt := range opts {

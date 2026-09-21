@@ -196,17 +196,36 @@ one is about trusting Postgres to have rejected it already.
 
 ## The test count in networkengine depends on the machine
 
-Seventeen sites in `internal/networkengine` skip when no Postgres container is
-running. Sixteen are tests and one is a benchmark. They cover the store pairs,
-commission schema and amounts, qualification history, and tree persistence.
+Sites in `internal/networkengine` skip when no Postgres container is running.
+They cover the store pairs, commission schema and amounts, qualification
+history, and tree persistence. Several sit in shared helpers rather than in the
+tests themselves. One site can skip many tests.
 
-Without the container the package passes with all of them skipped. With it the
-package passes with none skipped. Both print `ok`.
+Without the container the package passes with all of them skipped. It prints
+`ok` either way.
 
-**Report the package as ok with zero failures, and say how many skipped.**
+The container is not the only gate. The Rust worker binary at
+`engine/target/debug/network-engine-worker` is a second one. The tree
+persistence integration tests are among the sites that gate on it. A run with
+the container up and the worker unbuilt still skips and still prints `ok`. Build
+it with `cargo build --workspace` in `engine/`.
 
-A bare pass count is true on both machines and means something different on
-each. The skip count is what tells a reader which run they are looking at.
+A missing binary skips only outside CI. With `CI` set it fails instead
+(HEU-660). A green CI run says nothing about whether your own run covered those
+tests. A binary older than its sources fails either way (HEU-615). The same is
+true for any stat error other than "not found".
+
+**Report the package as ok with zero failures, how many skipped, and which
+gates were open.**
+
+A bare pass count is true on every machine and means something different on
+each. A bare skip count is now ambiguous too. The two gates cover overlapping sets.
+The same total can come from either. Naming the gates is
+what tells a reader which run they are looking at.
+
+Say which unit the number is in. Verbose output prints a line per level. A
+parent and its subtests each contribute. A count of skip lines is not a count of
+tests.
 
 ```
 go test ./internal/networkengine/ -v -count=1 2>&1 | grep -cE '^ *--- SKIP'

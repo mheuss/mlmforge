@@ -173,9 +173,29 @@ func (c *TreeEventConsumer) handleRootAdded(ctx context.Context, event platform.
 			payload.TreeID, held)
 	}
 
-	return c.withRetry(ctx, "add_root", payload.TreeID, payload.UserID, func() error {
+	err := c.withRetry(ctx, "add_root", payload.TreeID, payload.UserID, func() error {
 		return c.engine.AddRoot(ctx, payload.TreeID, payload.UserID, payload.EnrolledAt.Unix())
 	}, reconcile)
+	if err == nil || !inserted {
+		return err
+	}
+	if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+
+	// The caller's context is cancelled, so this read needs one of its own.
+	readCtx, cancelRead := detachedRead(ctx)
+	defer cancelRead()
+	row, rerr := c.store.GetNodeIncludingRemoved(readCtx, payload.TreeID, payload.UserID)
+	if rerr != nil {
+		return fmt.Errorf("%w; reading back the row for %s in tree %s failed: %v",
+			err, payload.UserID, payload.TreeID, rerr)
+	}
+	// Not "the row this delivery inserted is": the read is keyed on tree and
+	// user and prefers any active row, so both ids are named and the reader
+	// compares them.
+	return fmt.Errorf("%w; this delivery inserted event %s, and reading %s in tree %s returned %s",
+		err, event.ID, payload.UserID, payload.TreeID, describeExistingRow(row))
 }
 
 func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform.Event) error {
@@ -498,6 +518,11 @@ const storeWriteTimeout = 5 * time.Second
 // run repairs. And a cancelled context makes pgx destroy the connection
 // instead of returning it to the pool, so cancellation load leaks capacity.
 func detachedWrite(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), storeWriteTimeout)
+}
+
+// detachedRead bounds a read whose caller's context is already cancelled.
+func detachedRead(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(ctx), storeWriteTimeout)
 }
 

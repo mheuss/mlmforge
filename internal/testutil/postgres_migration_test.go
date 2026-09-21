@@ -128,3 +128,50 @@ func TestMigrations_SlotUniqueDownUp(t *testing.T) {
 	// stay missing for every test that follows.
 	require.NoError(t, m.Up(), "restore the shared container to head")
 }
+
+// TestMigrations_RootUniqueDownUp proves migration 000006's down file works,
+// not just that it contains words.
+func TestMigrations_RootUniqueDownUp(t *testing.T) {
+	if migrationContainer == nil {
+		t.Skip("Postgres container not available")
+	}
+
+	// Relative to this package's directory — Go sets a test's cwd to the
+	// package dir.
+	absPath, err := filepath.Abs("../../migrations")
+	require.NoError(t, err)
+	m, err := migrate.New(fmt.Sprintf("file://%s", absPath), migrationContainer.DSN)
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = m.Close() })
+
+	indexExists := func() bool {
+		pool, err := pgxpool.New(context.Background(), migrationContainer.DSN)
+		require.NoError(t, err)
+		defer pool.Close()
+		var exists bool
+		require.NoError(t, pool.QueryRow(context.Background(),
+			`SELECT EXISTS (SELECT 1 FROM pg_indexes
+			                WHERE indexname = 'idx_tree_nodes_tree_root_active')`,
+		).Scan(&exists))
+		return exists
+	}
+
+	require.True(t, indexExists(), "index present after full migrate up")
+	// Best-effort restore of the shared container on any failure from here
+	// down. Cleanups are LIFO, so this fires before m.Close. A dirty version
+	// is not recovered here: Up reports ErrDirty and later tests in this
+	// package fail on it.
+	t.Cleanup(func() { _ = m.Up() })
+	// Pinned versions, not Steps(-1): a relative step would roll back
+	// whichever migration is newest and fail confusingly. This test is about
+	// 000006's down file specifically.
+	require.NoError(t, m.Migrate(5), "migrate down to version 5 (drops 000006)")
+	require.False(t, indexExists(), "down file actually drops the index")
+	require.NoError(t, m.Migrate(6), "migrate back up to version 6")
+	require.True(t, indexExists(), "up file restores the index")
+	// Restore head. Up reports ErrNoChange when the steps above already
+	// reached it, which is not a failure.
+	if err := m.Up(); err != nil {
+		require.ErrorIs(t, err, migrate.ErrNoChange, "restore the shared container to head")
+	}
+}

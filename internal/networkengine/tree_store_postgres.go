@@ -58,7 +58,7 @@ func conflictError(err error) error {
 
 // treeNodeSelectColumns is the SELECT column list for tree_nodes queries.
 // Order must match the scanTreeNode/scanTreeNodes Scan call.
-const treeNodeSelectColumns = `id, tree_id, user_id, parent_id, sponsor_id, position, depth, enrolled_at, created_at, updated_at, removed_at`
+const treeNodeSelectColumns = `id, tree_id, user_id, parent_id, sponsor_id, position, depth, enrolled_at, created_at, updated_at, removed_at, removed_by_event_id`
 
 const getNodeSQL = `SELECT ` + treeNodeSelectColumns + ` FROM tree_nodes WHERE tree_id = $1 AND user_id = $2 AND removed_at IS NULL`
 const getChildrenSQL = `SELECT ` + treeNodeSelectColumns + ` FROM tree_nodes WHERE tree_id = $1 AND parent_id = $2 AND removed_at IS NULL`
@@ -214,6 +214,7 @@ func scanTreeNode(row pgx.Row) (*TreeNodeRow, error) {
 	err := row.Scan(
 		&n.ID, &n.TreeID, &n.UserID, &n.ParentID, &n.SponsorID,
 		&n.Position, &n.Depth, &n.EnrolledAt, &n.CreatedAt, &n.UpdatedAt, &n.RemovedAt,
+		&n.RemovedByEventID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -232,6 +233,7 @@ func scanTreeNodes(rows pgx.Rows) ([]TreeNodeRow, error) {
 		err := rows.Scan(
 			&n.ID, &n.TreeID, &n.UserID, &n.ParentID, &n.SponsorID,
 			&n.Position, &n.Depth, &n.EnrolledAt, &n.CreatedAt, &n.UpdatedAt, &n.RemovedAt,
+			&n.RemovedByEventID,
 		)
 		if err != nil {
 			return nil, err

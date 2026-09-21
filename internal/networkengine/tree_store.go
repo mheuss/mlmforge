@@ -20,6 +20,8 @@ type TreeNodeRow struct {
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 	RemovedAt  *time.Time
+	// Written by the soft delete. Null while the row is active.
+	RemovedByEventID *string
 }
 
 // TreeStore is the repository interface for tree node persistence.

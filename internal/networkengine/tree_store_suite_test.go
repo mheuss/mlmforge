@@ -86,6 +86,21 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		assert.Nil(t, got, "the user exists, but not in this tree")
 	})
 
+	t.Run("an active row carries no removal event id", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		user := testUserUUID(1)
+
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
+
+		got, err := s.GetNode(ctx, tree, user)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Nil(t, got.RemovedByEventID, "only the soft delete writes this column")
+	})
+
 	t.Run("GetNode returns nil for a soft-deleted user", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()

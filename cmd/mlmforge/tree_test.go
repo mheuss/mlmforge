@@ -211,12 +211,15 @@ func TestRootCmd_SilenceUsageIsSetWhereARealInvocationReadsIt(t *testing.T) {
 	require.NotContains(t, out.String(), "Usage:")
 }
 
-// sigLoader raises SIGINT at this process and reports whether the context it
-// was handed saw the cancellation.
-type sigLoader struct{ sawDone bool }
+// sigLoader raises one signal at this process and reports whether the context
+// it was handed saw the cancellation.
+type sigLoader struct {
+	sig     syscall.Signal
+	sawDone bool
+}
 
 func (l *sigLoader) LoadTree(ctx context.Context, _, _ string, _ ...networkengine.LoadTreeOption) error {
-	if err := syscall.Kill(syscall.Getpid(), syscall.SIGINT); err != nil {
+	if err := syscall.Kill(syscall.Getpid(), l.sig); err != nil {
 		return err
 	}
 	select {
@@ -227,33 +230,45 @@ func (l *sigLoader) LoadTree(ctx context.Context, _, _ string, _ ...networkengin
 	return ctx.Err()
 }
 
-// The keep-alive takes SIGINT off its default disposition for this process, so
-// a missing registration fails this case instead of killing the test binary.
-// Registrations multiplex, so it does not mask the one under test.
+// Both registered signals get a case. Dropping either one from the command
+// leaves the other green, so one case would pin half the registration.
 //
-// This covers one half, that the load is cancelled. It does not cover that
-// migrate is left alone, which needs a subprocess.
-func TestTreeLoadCmd_SIGINTCancelsTheLoad(t *testing.T) {
-	keepAlive := make(chan os.Signal, 1)
-	signal.Notify(keepAlive, os.Interrupt)
-	defer signal.Stop(keepAlive)
+// The keep-alive takes the signal off its default disposition for this
+// process, so a missing registration fails the case instead of killing the
+// test binary. Registrations multiplex, so it does not mask the one under
+// test.
+//
+// This covers the load command only. Whether other commands keep their default
+// disposition needs a subprocess and is not covered here.
+func TestTreeLoadCmd_SignalsCancelTheLoad(t *testing.T) {
+	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM} {
+		t.Run(sig.String(), func(t *testing.T) {
+			keepAlive := make(chan os.Signal, 1)
+			signal.Notify(keepAlive, sig)
+			defer signal.Stop(keepAlive)
 
-	loader := &sigLoader{}
-	cmd := newTreeCmdWith(
-		func(context.Context, string, string) (*treeDeps, error) {
-			return &treeDeps{release: func() error { return nil }}, nil
-		},
-		func(*treeDeps) treeLoader { return loader },
-	)
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{
-		"load", "--db-url", "postgres://x", "--worker", workerStub(t),
-		"--tree-id", "t9", "--tree-type", "unilevel",
-	})
+			loader := &sigLoader{sig: sig}
+			cmd := newTreeCmdWith(
+				func(context.Context, string, string) (*treeDeps, error) {
+					return &treeDeps{release: func() error { return nil }}, nil
+				},
+				func(*treeDeps) treeLoader { return loader },
+			)
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetErr(&bytes.Buffer{})
+			cmd.SetArgs([]string{
+				"load", "--db-url", "postgres://x", "--worker", workerStub(t),
+				"--tree-id", "t9", "--tree-type", "unilevel",
+			})
 
-	require.Error(t, cmd.Execute())
-	require.True(t, loader.sawDone, "SIGINT must reach the loader's context")
+			err := cmd.Execute()
+
+			// Asserted before the error, so a missing registration reports the
+			// signal rather than a bare nil.
+			require.True(t, loader.sawDone, "%s must reach the loader's context", sig)
+			require.Error(t, err)
+		})
+	}
 }
 
 // workerStub writes an executable file so resolveWorkerPath succeeds without a

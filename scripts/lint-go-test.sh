@@ -204,8 +204,7 @@ expect_with "$(stub_dir vprefixed "$v_line")" 0 "" "a binary reporting a leading
 expect_with "$(stub_dir drift2 "$old_line")" 1 "go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2" \
   "the mismatch names the install command" --check-only --version-file "$data/lintver-ok"
 
-# These cases compare the whole output, because some mutations here change only
-# what lands on stderr and leave the exit code alone.
+# Compare the whole output. A guard can exit 1 correctly while stderr changes.
 expect_silent() {
   local dir=$1 name=$2 out rc
   shift 2
@@ -373,8 +372,7 @@ else
 fi
 lint_args=(--version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok" --workflow "$data/wf-lint-file-only.yml")
 
-# The usage says a path operand needs no --. Consuming it instead of stopping
-# would drop it before golangci-lint ever sees it.
+# A bare path operand must reach golangci-lint unchanged.
 rm -f "$args_file"
 STUB_ARGS=$args_file PATH="$runner:$PATH" "$check" "${lint_args[@]}" \
   ./internal/... >/dev/null 2>&1

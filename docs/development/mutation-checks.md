@@ -169,8 +169,8 @@ exits non-zero without linting when an input cannot be read, and that it fails
 closed on any condition it cannot evaluate. The nine passed a claim check, a
 per-task review, a full code review and an external reviewer.
 
-Only an adversarial read caught it. The reason is worth keeping: **the diff
-was internally consistent.** Code and tests agreed with each other. A reviewer
+Only an adversarial read caught it. The reason is worth keeping: the diff
+was internally consistent. Code and tests agreed with each other. A reviewer
 comparing them finds nothing. The disagreement was between the tests and a
 requirement document neither of them cites.
 
@@ -200,12 +200,12 @@ and check that the row goes red.
 ## A green says every assertion passed, not that any of them held its guard
 
 A refusal test usually asserts an exit status and a substring of the message.
-That pins the guard only when the substring is something **only** that guard
+That pins the guard only when the substring is something that guard alone
 prints.
 
 Guards in a sequence tend to report the same fields. Delete the first one and
-the input falls through to the second, which refuses for its own reason and
-prints a message that satisfies the same assertion. The suite stays green and
+the input falls through to the second. It refuses for its own reason and prints
+a message that satisfies the same assertion. The suite stays green and
 the guard is gone.
 
 Two guards on one branch were deletable this way, with the suite at 73 of 73.

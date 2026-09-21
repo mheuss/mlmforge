@@ -235,6 +235,10 @@ func TestRunTreeLoad_StopsWhenTheContextIsCancelledBetweenAttempts(t *testing.T)
 	require.ErrorIs(t, err, loader.err, "the load failure must not be dropped")
 	require.Equal(t, 1, loader.attempts)
 	require.ErrorContains(t, err, "load refused before any engine call (store_read_failed); the engine is unchanged: ")
+	// errors.As pulls one member out of the join, so without a separate check
+	// the rendered line reports a database fault and never says the run was
+	// cut short.
+	require.ErrorContains(t, err, "the run was cancelled")
 	require.Empty(t, out.String())
 }
 
@@ -316,16 +320,32 @@ func TestRunTreeLoad_DoesNotClaimALoadForZeroRows(t *testing.T) {
 	require.NotContains(t, out.String(), "loaded tree")
 }
 
-// The cause is what tells two failures of the same kind apart. Without it a
-// bad tree type and a bad matrix width render byte-identically.
+// The cause is what tells two failures of the same kind apart. Two rejections
+// sharing a Kind must not render identically.
+//
+// Both errors are built through the loader rather than by keyed literal. A
+// literal with no msg renders the package fallback, which re-states the Kind
+// the outer format already printed, so this case would pass without the fix.
 func TestRunTreeLoad_KeepsTheCause(t *testing.T) {
-	loader := &stubLoader{err: &networkengine.TreeLoadRejectedError{
-		Kind: networkengine.TreeLoadConfigInvalid,
-	}}
-	var out bytes.Buffer
+	seed := networkengine.TreeNodeRow{
+		ID: "r", TreeID: "t", UserID: "u", Depth: 0,
+		EnrolledAt: time.Unix(1, 0).UTC(),
+	}
+	render := func(treeType string, opts ...networkengine.LoadTreeOption) string {
+		store := networkengine.NewMemoryTreeStore()
+		require.NoError(t, store.InsertNode(t.Context(), seed))
+		loader := networkengine.NewTreeLoader(store, nil)
+		var out bytes.Buffer
+		err := runTreeLoad(t.Context(), &out, loader, "t", treeType, opts)
+		require.Error(t, err)
+		return err.Error()
+	}
 
-	err := runTreeLoad(t.Context(), &out, loader, "t", "unilevel", nil)
+	badType := render("streamline")
+	badWidth := render("matrix", networkengine.WithMatrixParams(1, "breadth_first"))
 
-	require.ErrorContains(t, err, "config_invalid")
-	require.ErrorContains(t, err, "; the engine is unchanged: ")
+	require.Contains(t, badType, "config_invalid")
+	require.Contains(t, badWidth, "config_invalid")
+	require.NotEqual(t, badType, badWidth, "two config_invalid failures must not read alike")
+	require.Contains(t, badType, "streamline")
 }

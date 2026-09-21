@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -66,9 +65,9 @@ func runTreeLoad(ctx context.Context, out io.Writer, loader treeLoader, treeID, 
 			break
 		}
 		if attempt < maxLoadAttempts {
-			// Checked before the select. With both cases ready a select picks
-			// at random, so a cancelled context could win a coin flip and
-			// start another attempt.
+			// Checked before the select. Once the backoff timer is also
+			// ready a select picks at random, so losing that draw would start
+			// another attempt on a context already cancelled.
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				// The load error goes out too. A bare cancellation tells the
 				// operator nothing about what was failing.
@@ -105,17 +104,27 @@ func treeLoadFailureMessage(err error) string {
 	// both must not be reported as leaving the engine unchanged.
 	var incomplete *networkengine.TreeLoadIncompleteError
 	if errors.As(err, &incomplete) {
-		return fmt.Sprintf("load stopped at the %s stage; the engine acknowledged %d of %d placements: %s",
-			incomplete.Stage, incomplete.Confirmed, incomplete.Total, incomplete)
+		return fmt.Sprintf("load stopped at the %s stage; the engine acknowledged %d of %d placements: %s%s",
+			incomplete.Stage, incomplete.Confirmed, incomplete.Total, incomplete, interrupted(err))
 	}
 	var rejected *networkengine.TreeLoadRejectedError
 	if errors.As(err, &rejected) {
-		msg := fmt.Sprintf("load refused before any engine call (%s); the engine is unchanged: %s",
-			rejected.Kind, rejected)
-		if len(rejected.NodeIDs) > 0 {
-			msg += fmt.Sprintf(" (nodes: %s)", strings.Join(rejected.NodeIDs, ", "))
-		}
-		return msg
+		return fmt.Sprintf("load refused before any engine call (%s); the engine is unchanged: %s%s",
+			rejected.Kind, rejected, interrupted(err))
 	}
 	return fmt.Sprintf("load failed: %s", err)
+}
+
+// interrupted names a cancellation that errors.As would otherwise drop. It
+// pulls one member out of a join, so a cancellation joined beside a typed
+// error never reaches the rendered line.
+func interrupted(err error) string {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return " (the run was cancelled)"
+	case errors.Is(err, context.DeadlineExceeded):
+		return " (the run exceeded its deadline)"
+	default:
+		return ""
+	}
 }

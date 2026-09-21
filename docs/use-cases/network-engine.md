@@ -435,7 +435,7 @@ loader := networkengine.NewTreeLoader(store, engine)
 // clean up. Once the tree exists, the error carries the stage the load reached
 // and how many placements the engine acknowledged.
 for _, tree := range trees {
-	err := loader.LoadTree(ctx, tree.ID, tree.Type,
+	_, err := loader.LoadTree(ctx, tree.ID, tree.Type,
 		networkengine.WithMatrixParams(tree.Width, tree.Spillover))
 
 	var rejected *networkengine.TreeLoadRejectedError
@@ -1030,10 +1030,10 @@ if alreadyProjected {
 // Cancellation reaches the engine stages too. TreeLoadIncompleteError has
 // no Kind field. A caller that checks only the rejected type honours
 // "do not retry a cancelled context" on one of two paths.
-err := loader.LoadTree(ctx, treeID, treeType, opts...)
+_, err := loader.LoadTree(ctx, treeID, treeType, opts...)
 if err != nil && treeLoadRetryable(err) {
     // Only reachable for a store read that never left the client.
-    err = loader.LoadTree(ctx, treeID, treeType, opts...)
+    _, err = loader.LoadTree(ctx, treeID, treeType, opts...)
 }
 ```
 

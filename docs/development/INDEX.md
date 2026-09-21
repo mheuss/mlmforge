@@ -18,4 +18,5 @@ Cross-cutting, not tied to a subsystem.
 |---|---|
 | Checking that a test can fail | [mutation-checks.md](mutation-checks.md) |
 | Test doubles | [test-doubles.md](test-doubles.md) |
+| A green that covered nothing | [green-about-nothing.md](green-about-nothing.md) |
 | Guards in shell scripts | [shell-guards.md](shell-guards.md) |

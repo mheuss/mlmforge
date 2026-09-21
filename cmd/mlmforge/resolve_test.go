@@ -108,3 +108,27 @@ func TestResolveWorkerPath_ErrorsWhenNeitherIsSet(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), workerPathEnv)
 }
+
+// A path that exists but cannot be run is a worker-path failure, so it has to
+// name the path and the source the way an absent one does. Without this the
+// case surfaces later, out of the engine start, which does not know the source.
+func TestResolveWorkerPath_RejectsAPathItCannotRun(t *testing.T) {
+	dir := t.TempDir()
+	notExecutable := filepath.Join(dir, "network-engine-worker")
+	require.NoError(t, os.WriteFile(notExecutable, []byte("#!/bin/sh\n"), 0o644))
+
+	for _, tt := range []struct{ name, path string }{
+		{"a directory", dir},
+		{"a file without the execute bit", notExecutable},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(workerPathEnv, "")
+
+			_, err := resolveWorkerPath(tt.path)
+
+			require.Error(t, err)
+			require.ErrorContains(t, err, tt.path, "the message must name the path it tried")
+			require.ErrorContains(t, err, "--worker", "the message must name the source")
+		})
+	}
+}

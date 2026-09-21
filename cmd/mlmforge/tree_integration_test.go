@@ -69,7 +69,7 @@ func requireWorkerNotStale(t *testing.T, binPath string, built time.Time) {
 			}
 			return nil
 		}
-		if filepath.Ext(path) != ".rs" {
+		if !isWorkerInput(path) {
 			return nil
 		}
 		info, ierr := d.Info()
@@ -85,6 +85,17 @@ func requireWorkerNotStale(t *testing.T, binPath string, built time.Time) {
 	if newer != "" {
 		t.Fatalf("worker at %s is older than %s; rebuild with 'cargo build --workspace' in engine/ (do not touch the binary)", binPath, newer)
 	}
+}
+
+// isWorkerInput reports whether a change to path can change the worker binary.
+// Sources are the obvious half. A manifest or the lockfile changes what gets
+// compiled in without any .rs file being touched.
+func isWorkerInput(path string) bool {
+	switch filepath.Base(path) {
+	case "Cargo.toml", "Cargo.lock":
+		return true
+	}
+	return filepath.Ext(path) == ".rs"
 }
 
 // isCrateIntegrationTests reports whether path is a "tests" directory sitting

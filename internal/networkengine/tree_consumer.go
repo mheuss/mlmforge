@@ -369,9 +369,9 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 		if !isEngineCode(err, engineCodeUserNotFound) {
 			return reconcileNotApplicable, nil
 		}
-		// The stamp read answers whether this delivery already projected.
-		// The tree-and-user read below it only separates a removal that never
-		// landed from a user the store never held.
+		// The stamp read answers whether an earlier delivery of this event
+		// already projected. The tree-and-user read below it only separates a
+		// removal that never landed from a user the store never held.
 		stamped, serr := c.store.GetNodeByRemovalEvent(ctx, payload.TreeID, event.ID)
 		if serr != nil {
 			return reconcileInconclusive, serr

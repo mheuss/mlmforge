@@ -1977,6 +1977,7 @@ func TestHandleNodeRemoved_ReconcileFailsWhenOnlyAnEarlierRemovalsTombstoneExist
 	require.ErrorAs(t, err, &target)
 	assert.Equal(t, event.ID, target.EventID)
 	assert.Empty(t, store.responsors, "an unrepairable removal writes nothing")
+	assert.Len(t, tr.mutationOps, 1, "diverged does not retry")
 }
 
 // removalReadFailingStore fails the read keyed on the removal event and leaves

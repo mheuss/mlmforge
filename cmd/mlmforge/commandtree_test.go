@@ -18,10 +18,6 @@ func groupPaths(cmd *cobra.Command, prefix []string) [][]string {
 	}
 	paths := [][]string{prefix}
 	for _, child := range cmd.Commands() {
-		switch child.Name() {
-		case "help", "completion":
-			continue
-		}
 		next := append(append([]string{}, prefix...), child.Name())
 		paths = append(paths, groupPaths(child, next)...)
 	}
@@ -31,10 +27,6 @@ func groupPaths(cmd *cobra.Command, prefix []string) [][]string {
 // leafPaths returns the argument path of every command that holds no
 // subcommands.
 func leafPaths(cmd *cobra.Command, prefix []string) [][]string {
-	switch cmd.Name() {
-	case "help", "completion":
-		return nil
-	}
 	if !cmd.HasSubCommands() {
 		if len(prefix) > 0 {
 			return [][]string{prefix}

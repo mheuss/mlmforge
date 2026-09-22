@@ -222,9 +222,9 @@ func (s *MemoryTreeStore) GetByTreeDepthOrdered(_ context.Context, treeID string
 }
 
 func (s *MemoryTreeStore) BulkInsert(_ context.Context, nodes []TreeNodeRow) error {
-	// insertNodeAt validates against s.nodes, so pointing it at a copy is what
-	// makes the batch all-or-none: a conflict anywhere, including between two
-	// rows of this batch, leaves the original slice untouched.
+	// The batch goes into a copy, and the original is restored on the first
+	// error. That makes the batch all-or-none, including a conflict between
+	// two rows of this batch.
 	staged := make([]TreeNodeRow, len(s.nodes), len(s.nodes)+len(nodes))
 	copy(staged, s.nodes)
 

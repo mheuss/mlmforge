@@ -130,6 +130,12 @@ For an audit column, use `clock_timestamp()`. Measured on HEU-555: a
 replacement run's `started_at` landed 1.95s *before* the run it superseded was
 voided, making the lifecycle read backwards.
 
+A memory twin of a `now()` default takes one clock reading per transaction, not
+one per row. Every row a Postgres transaction inserts carries the same instant.
+A twin that reads the clock per row passes every single-row test and disagrees
+on the first batch. Pin it with a two-row batch in the shared suite. Found on
+HEU-403, where the tree store's memory `BulkInsert` stamped each row separately.
+
 ## A same-period foreign key is expressible
 
 "This column must reference a row sharing my `period_id`" looks like it needs a

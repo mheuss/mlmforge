@@ -73,6 +73,9 @@ const getNodeIncludingRemovedSQL = `SELECT ` + treeNodeSelectColumns +
 	` FROM tree_nodes WHERE tree_id = $1 AND user_id = $2
 	  ORDER BY removed_at DESC NULLS FIRST LIMIT 1`
 
+const getNodeByRemovalEventSQL = `SELECT ` + treeNodeSelectColumns +
+	` FROM tree_nodes WHERE tree_id = $1 AND removed_by_event_id = $2`
+
 func NewPostgresTreeStore(pool *pgxpool.Pool) *PostgresTreeStore {
 	return &PostgresTreeStore{pool: pool}
 }
@@ -159,6 +162,11 @@ func (s *PostgresTreeStore) GetNode(ctx context.Context, treeID, userID string) 
 
 func (s *PostgresTreeStore) GetNodeIncludingRemoved(ctx context.Context, treeID, userID string) (*TreeNodeRow, error) {
 	row := s.pool.QueryRow(ctx, getNodeIncludingRemovedSQL, treeID, userID)
+	return scanTreeNode(row)
+}
+
+func (s *PostgresTreeStore) GetNodeByRemovalEvent(ctx context.Context, treeID, removalEventID string) (*TreeNodeRow, error) {
+	row := s.pool.QueryRow(ctx, getNodeByRemovalEventSQL, treeID, removalEventID)
 	return scanTreeNode(row)
 }
 

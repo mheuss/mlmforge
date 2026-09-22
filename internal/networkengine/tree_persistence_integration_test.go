@@ -1103,6 +1103,14 @@ func TestTreePersistence_RedeliveredRemovalAfterAFailedReplacement(t *testing.T)
 	})
 	require.NoError(t, consumer.HandleEvent(ctx, r1))
 
+	tomb, err := treeStore.GetNodeIncludingRemoved(ctx, treeID, userID)
+	require.NoError(t, err)
+	require.NotNil(t, tomb, "no row for the user after R1's first delivery")
+	require.Equal(t, e1.ID, tomb.ID, "the newest row for the user after R1's first delivery")
+	require.NotNil(t, tomb.RemovedAt, "E1's row is still active after R1's first delivery")
+	require.NotNil(t, tomb.RemovedByEventID, "E1's tombstone carries no removal stamp")
+	require.Equal(t, r1.ID, *tomb.RemovedByEventID, "E1's tombstone stamp")
+
 	gate.gated.Store(true)
 	e2 := appendTreeEvent(t, eventStore, stream, 3, EventTypeNodePlaced, NodePlacedPayload{
 		TreeID: treeID, UserID: userID, ParentID: rootID, SponsorID: rootID,

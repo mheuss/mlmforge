@@ -730,8 +730,11 @@ func runTreeStoreSuite(
 		got, err := s.GetNode(ctx, tree, user)
 		require.NoError(t, err)
 		require.NotNil(t, got)
-		assert.True(t, got.CreatedAt.After(before), "CreatedAt read back as %v, want after %v", got.CreatedAt, before)
-		assert.True(t, got.UpdatedAt.After(before), "UpdatedAt read back as %v, want after %v", got.UpdatedAt, before)
+		after := time.Now().Add(time.Second)
+		assert.True(t, got.CreatedAt.After(before) && got.CreatedAt.Before(after),
+			"CreatedAt read back as %v, want between %v and %v", got.CreatedAt, before, after)
+		assert.True(t, got.CreatedAt.Equal(got.UpdatedAt),
+			"CreatedAt read back as %v and UpdatedAt as %v, want the same instant", got.CreatedAt, got.UpdatedAt)
 	})
 
 	t.Run("BulkInsert stamps CreatedAt and UpdatedAt over the caller's values", func(t *testing.T) {
@@ -750,8 +753,11 @@ func runTreeStoreSuite(
 		got, err := s.GetNode(ctx, tree, user)
 		require.NoError(t, err)
 		require.NotNil(t, got)
-		assert.True(t, got.CreatedAt.After(before), "CreatedAt read back as %v, want after %v", got.CreatedAt, before)
-		assert.True(t, got.UpdatedAt.After(before), "UpdatedAt read back as %v, want after %v", got.UpdatedAt, before)
+		after := time.Now().Add(time.Second)
+		assert.True(t, got.CreatedAt.After(before) && got.CreatedAt.Before(after),
+			"CreatedAt read back as %v, want between %v and %v", got.CreatedAt, before, after)
+		assert.True(t, got.CreatedAt.Equal(got.UpdatedAt),
+			"CreatedAt read back as %v and UpdatedAt as %v, want the same instant", got.CreatedAt, got.UpdatedAt)
 	})
 
 	t.Run("GetChildren does not cross tree boundaries", func(t *testing.T) {

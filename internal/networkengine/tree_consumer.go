@@ -370,11 +370,11 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 			return reconcileNotApplicable, nil
 		}
 		// The stamp read answers whether an earlier delivery of this event
-		// already projected. The tree-and-user read below it only separates a
-		// removal that never landed from a user the store never held.
+		// already projected. Without a stamp, the tree-and-user read below it
+		// separates three cases: an active row, a tombstone, and no row at all.
 		stamped, serr := c.store.GetNodeByRemovalEvent(ctx, payload.TreeID, event.ID)
 		if serr != nil {
-			return reconcileInconclusive, serr
+			return reconcileInconclusive, fmt.Errorf("read the row this removal stamped: %w", serr)
 		}
 		if stamped != nil {
 			alreadyProjected = true
@@ -382,7 +382,7 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 		}
 		existing, gerr := c.store.GetNodeIncludingRemoved(ctx, payload.TreeID, payload.UserID)
 		if gerr != nil {
-			return reconcileInconclusive, gerr
+			return reconcileInconclusive, fmt.Errorf("read the user's row: %w", gerr)
 		}
 		if existing != nil && existing.RemovedAt == nil {
 			// The engine applied the removal and no store write has landed.

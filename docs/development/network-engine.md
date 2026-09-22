@@ -843,7 +843,7 @@ Four limits remain:
 
 - The consumer trusts the `tree_type` label. No registry exists to verify it against.
 - The gate rejects matrix positions above the u8 ceiling (255), which no width can accept. The real bound is the tree's width, which nothing persists. A position in the width..255 band is therefore stored, refused loudly by the engine, and then makes the next reload preflight reject the whole tree. HEU-554 decides the direction for both gaps. The fix ships under it.
-- Redelivery is bounded (HEU-576). The scope is the event in flight. That scope is a constraint on HEU-301. A redelivered placement whose projection is still current completes, however old it is. It stops being current once its node was removed, or once a later event re-placed the user, and is then refused rather than reapplied. It is also refused when its parent's row was since removed, because the parent lookup runs before the guard (HEU-813). A redelivered removal converges when its own tombstone is in the store, whatever has happened to the user's placement since (HEU-811). One whose store write never landed fails typed (HEU-777). One arriving after the user was placed again can still remove the wrong node (HEU-789).
+- Redelivery is bounded (HEU-576). The scope is the event in flight. That scope is a constraint on HEU-301. A redelivered placement whose projection is still current completes, however old it is. It stops being current once its node was removed, or once a later event re-placed the user, and is then refused rather than reapplied. It is also refused when its parent's row was since removed, because the parent lookup runs before the guard (HEU-813). A redelivered removal that the engine refuses converges when its own tombstone is in the store (HEU-811). That holds even when a later placement of the user never reached the engine. One whose store write never landed fails typed (HEU-777). One arriving after a later placement landed in full can still remove the wrong node (HEU-789).
 - The agreement claim covers placement only. A matrix `node_removed` still diverges, because the consumer sends no pruning mode and the worker refuses the removal after the soft-delete lands (HEU-582).
 
 Matrix startup reload is no longer blocked by this defect.
@@ -856,15 +856,15 @@ Matrix startup reload is no longer blocked by this defect.
 
 `tree_nodes.id` holds the placing event's ID, so a removal cannot use it as a discriminator. Comparing a removal event's ID against it is false on every path, including a removal that genuinely never landed.
 
-Migration 000007 adds `removed_by_event_id`. `DeleteNodeAndResponsor` writes it in the soft delete's own statement, so the stamp lands with the tombstone or not at all. The column is null while the row is active. `DeleteNode` leaves it null. Its caller rolls back a row the same handler just inserted, which is not a removal and has no removal event to name.
+Migration 000007 adds `removed_by_event_id`. `DeleteNodeAndResponsor` writes it in the soft delete's own statement. The stamp lands with the tombstone or not at all. The column is null while the row is active. `DeleteNode` leaves it null. Its caller rolls back a row the same handler just inserted, which is not a removal and has no removal event to name.
 
-`GetNodeByRemovalEvent` reads the row a given removal event stamped, scoped to one tree. When one event has stamped more than one row, the newest tombstone wins, the same tie-break `GetNodeIncludingRemoved` uses. Two rows can carry one stamp only when a redelivered removal is accepted after the user was placed again, which is HEU-789's case.
+`GetNodeByRemovalEvent` reads the row a given removal event stamped, scoped to one tree. When one event has stamped more than one row, the newest tombstone wins. `GetNodeIncludingRemoved` uses the same tie-break. Two rows can carry one stamp only when a redelivered removal is accepted after the user was placed again, which is HEU-789's case.
 
-The removal reconcile asks this read first. A stamped row means an earlier delivery of this event already projected, and the reconcile converges without writing. Only with no stamp does it read by tree and user to separate a removal that never landed from a user the store never held. A failed stamp read retries. It is never read as "no stamp", because that would report a transient read error as a permanent divergence.
+The removal reconcile runs only when the engine refuses the removal with user-not-found. It asks this read first. A stamped row means an earlier delivery of this event already projected. The reconcile then converges without writing. With no stamp, it reads by tree and user. An active row means the removal never landed. A tombstone or no row at all converges. A failed stamp read retries. It is never read as "no stamp", because that could report a transient read error as a permanent divergence.
 
-The stamp says which event removed a row. It does not order several removals of the same user.
+The stamp says which event removed a row. It does not order several removals of the same user. HEU-789 asks that question.
 
-`DeleteNodeAndResponsor` also fails when its soft delete matches no active row, and writes nothing. The error states the matched row count and how many re-sponsor writes were not applied. It names no cause, because the store cannot see one.
+`DeleteNodeAndResponsor` also fails when its soft delete matches no active row. It writes nothing. The error states the matched row count and how many re-sponsor writes were not applied. It names no cause, because the store cannot see one.
 
 ## Worker Shutdown
 

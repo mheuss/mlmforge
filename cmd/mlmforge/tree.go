@@ -34,6 +34,10 @@ func newTreeCmdWith(open depsOpener, loader loaderFor) *cobra.Command {
 		Use:   "tree",
 		Short: "Tree persistence commands",
 		Long:  "Commands that reach the tree persistence layer.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
+		},
 	}
 
 	dbURL := treeCmd.PersistentFlags().String("db-url", "", "PostgreSQL connection URL (or set DATABASE_URL env var)")

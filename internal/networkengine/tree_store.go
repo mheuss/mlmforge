@@ -52,6 +52,7 @@ type TreeStore interface {
 
 	// GetNodeByRemovalEvent returns the row that the given removal event
 	// tombstoned, or nil when that event has stamped no row in this tree.
+	// When the event stamped more than one row, the newest tombstone wins.
 	GetNodeByRemovalEvent(ctx context.Context, treeID, removalEventID string) (*TreeNodeRow, error)
 
 	// GetChildren returns active children of a parent node.

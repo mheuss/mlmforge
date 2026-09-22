@@ -487,6 +487,29 @@ func runTreeStoreSuite(
 		assert.Equal(t, removalEvent, *got.RemovedByEventID)
 	})
 
+	t.Run("GetNodeByRemovalEvent returns the newest of two rows one event stamped", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		rootUser := testUserUUID(1)
+		user := testUserUUID(2)
+		removalEvent := testNodeUUID(9)
+
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(2), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
+		require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, user, removalEvent, nil))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(3), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(1))))
+		require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, user, removalEvent, nil))
+
+		got, err := s.GetNodeByRemovalEvent(ctx, tree, removalEvent)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, testNodeUUID(3), got.ID, "the later of the two tombstones this event stamped")
+	})
+
 	t.Run("GetNodeByRemovalEvent returns nil for an event that removed nothing", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()

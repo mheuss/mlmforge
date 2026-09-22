@@ -52,13 +52,12 @@ func leafPaths(cmd *cobra.Command, prefix []string) [][]string {
 	return paths
 }
 
-// A leaf takes no positional arguments today. One that grows a real argument
-// needs its own Args rule, and this case is where that shows up.
+// Every leaf refuses a positional argument it was not built to take.
 func TestEveryLeafCommandRejectsAStrayArgument(t *testing.T) {
 	paths := leafPaths(newRootCmd(), nil)
 
 	// Without this the test passes when the walk finds nothing.
-	require.GreaterOrEqual(t, len(paths), 4, "expected the migrate leaves and tree load")
+	require.GreaterOrEqual(t, len(paths), 4, "the walk found %d leaves: %v", len(paths), paths)
 
 	for _, path := range paths {
 		t.Run(strings.Join(path, " "), func(t *testing.T) {
@@ -77,7 +76,7 @@ func TestEveryCommandGroupRejectsAnUnknownSubcommand(t *testing.T) {
 	paths := groupPaths(newRootCmd(), nil)
 
 	// Without this the test passes when the walk finds nothing.
-	require.GreaterOrEqual(t, len(paths), 3, "expected the root and both groups")
+	require.GreaterOrEqual(t, len(paths), 3, "the walk found %d groups: %v", len(paths), paths)
 
 	for _, path := range paths {
 		name := "root"
@@ -100,7 +99,7 @@ func TestEveryCommandGroupRejectsAnUnknownSubcommand(t *testing.T) {
 func TestEveryCommandGroupStillPrintsHelpWithNoArguments(t *testing.T) {
 	paths := groupPaths(newRootCmd(), nil)
 
-	require.GreaterOrEqual(t, len(paths), 3, "expected the root and both groups")
+	require.GreaterOrEqual(t, len(paths), 3, "the walk found %d groups: %v", len(paths), paths)
 
 	for _, path := range paths {
 		name := "root"

@@ -257,5 +257,13 @@ func TestMemoryTreeStore_DeleteNodeAndResponsor(t *testing.T) {
 func TestMemoryTreeStore_Suite(t *testing.T) {
 	runTreeStoreSuite(t, func(t *testing.T) TreeStore {
 		return NewMemoryTreeStore()
+	}, func(t *testing.T, s TreeStore, nodeID string) *string {
+		for _, n := range s.(*MemoryTreeStore).nodes {
+			if n.ID == nodeID {
+				return n.RemovedByEventID
+			}
+		}
+		require.Failf(t, "no row", "no row with id %s", nodeID)
+		return nil
 	})
 }

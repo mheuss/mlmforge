@@ -27,7 +27,14 @@ func nodeUserIDs(nodes []TreeNodeRow) []string {
 // Nothing here asserts on CreatedAt or UpdatedAt. The two implementations
 // already disagree about both, which is HEU-817. HEU-403 is the adjacent
 // question of whether the struct should carry fields the insert drops.
-func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
+//
+// stampOf reads one row's removal stamp by the row's ID, whether or not the
+// row is active.
+func runTreeStoreSuite(
+	t *testing.T,
+	newStore func(t *testing.T) TreeStore,
+	stampOf func(t *testing.T, s TreeStore, nodeID string) *string,
+) {
 	t.Helper()
 
 	t.Run("InsertNode then GetNode returns the row", func(t *testing.T) {
@@ -100,8 +107,6 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		require.NotNil(t, got)
 		assert.Nil(t, got.RemovedByEventID, "an inserted row has no removal stamp")
 
-		// GetByTree routes through the other scanner, which carries its own
-		// destination list.
 		all, err := s.GetByTree(ctx, tree)
 		require.NoError(t, err)
 		require.Len(t, all, 1)
@@ -239,24 +244,39 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		tree := testTreeUUID(1)
 		rootUser := testUserUUID(1)
 		goneUser := testUserUUID(2)
+		recruit := testUserUUID(3)
 
 		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
 		require.NoError(t, s.InsertNode(ctx,
 			makeUUIDNode(testNodeUUID(2), tree, goneUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(3), tree, recruit, 1, ptr(rootUser), ptr(rootUser), intPtr(1))))
 		require.NoError(t, s.DeleteNode(ctx, tree, goneUser))
 
-		err := s.DeleteNodeAndResponsor(ctx, tree, goneUser, testNodeUUID(9), nil)
+		before, err := s.GetNodeIncludingRemoved(ctx, tree, goneUser)
+		require.NoError(t, err)
+		require.NotNil(t, before)
+		require.NotNil(t, before.RemovedAt)
+
+		err = s.DeleteNodeAndResponsor(ctx, tree, goneUser, testNodeUUID(9),
+			[]Responsored{{UserID: recruit, NewSponsorID: goneUser}})
 		require.Error(t, err, "a soft delete matching no active row is not a success")
 
-		tomb, gerr := s.GetNodeIncludingRemoved(ctx, tree, goneUser)
-		require.NoError(t, gerr)
+		tomb, err := s.GetNodeIncludingRemoved(ctx, tree, goneUser)
+		require.NoError(t, err)
 		require.NotNil(t, tomb)
-		assert.Nil(t, tomb.RemovedByEventID, "the existing tombstone is left alone")
+		assert.Nil(t, tomb.RemovedByEventID, "the existing tombstone gains no stamp")
+		require.NotNil(t, tomb.RemovedAt)
+		assert.True(t, before.RemovedAt.Equal(*tomb.RemovedAt), "the existing tombstone keeps its removal time")
+
+		unmoved, err := s.GetNode(ctx, tree, recruit)
+		require.NoError(t, err)
+		require.NotNil(t, unmoved)
+		require.NotNil(t, unmoved.SponsorID)
+		assert.Equal(t, rootUser, *unmoved.SponsorID, "the re-sponsor write is not committed")
 	})
 
 	// An older tombstone for the same user, plus a later active placement.
-	// An implementation that stamps whichever removed row it finds passes the
-	// first case above and fails this one.
 	t.Run("DeleteNodeAndResponsor stamps the active row, not an older tombstone", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
@@ -281,6 +301,8 @@ func runTreeStoreSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 		assert.Equal(t, testNodeUUID(3), got.ID, "the later placement is the one removed")
 		require.NotNil(t, got.RemovedByEventID)
 		assert.Equal(t, removalEvent, *got.RemovedByEventID)
+
+		assert.Nil(t, stampOf(t, s, testNodeUUID(2)), "the older tombstone gains no stamp")
 	})
 
 	t.Run("DeleteNodeAndResponsor repoints the moved recruits", func(t *testing.T) {

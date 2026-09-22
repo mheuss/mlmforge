@@ -127,8 +127,8 @@ func (s *PostgresTreeStore) DeleteNodeAndResponsor(
 	}
 	if tag.RowsAffected() != 1 {
 		return fmt.Errorf(
-			"removing %s from tree %s updated %d active rows, expected 1",
-			userID, treeID, tag.RowsAffected())
+			"soft delete for user %s in tree %s matched %d active rows; %d re-sponsor writes not applied",
+			userID, treeID, tag.RowsAffected(), len(moved))
 	}
 
 	for _, m := range moved {

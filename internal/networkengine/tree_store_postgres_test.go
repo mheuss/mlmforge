@@ -454,6 +454,13 @@ func TestPostgresTreeStore_TimestampsPopulated(t *testing.T) {
 func TestPostgresTreeStore_Suite(t *testing.T) {
 	runTreeStoreSuite(t, func(t *testing.T) TreeStore {
 		return newTestPostgresTreeStore(t)
+	}, func(t *testing.T, s TreeStore, nodeID string) *string {
+		var stamp *string
+		err := s.(*PostgresTreeStore).pool.QueryRow(context.Background(),
+			`SELECT removed_by_event_id::text FROM tree_nodes WHERE id = $1`, nodeID,
+		).Scan(&stamp)
+		require.NoError(t, err)
+		return stamp
 	})
 }
 

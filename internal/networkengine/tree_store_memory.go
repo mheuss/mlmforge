@@ -108,10 +108,8 @@ func (s *MemoryTreeStore) DeleteNodeAndResponsor(
 		targets = append(targets, found)
 	}
 
-	// Captured before anything is written. DeleteNode returns nil whether it
-	// removed a row or found none, and names no row, so after it runs there is
-	// no way to tell which one it touched. Searching for a removed row instead
-	// can find an earlier placement's tombstone.
+	// Captured before anything is written. Searching for a removed row after
+	// the delete can find an earlier placement's tombstone.
 	removing := -1
 	for i := range s.nodes {
 		if s.nodes[i].TreeID == treeID && s.nodes[i].UserID == userID && s.nodes[i].RemovedAt == nil {
@@ -121,7 +119,8 @@ func (s *MemoryTreeStore) DeleteNodeAndResponsor(
 	}
 	if removing < 0 {
 		return fmt.Errorf(
-			"removing %s from tree %s found no active row", userID, treeID)
+			"soft delete for user %s in tree %s matched 0 active rows; %d re-sponsor writes not applied",
+			userID, treeID, len(moved))
 	}
 
 	if err := s.DeleteNode(ctx, treeID, userID); err != nil {

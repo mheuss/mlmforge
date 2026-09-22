@@ -1915,6 +1915,21 @@ func TestHandleNodeRemoved_SucceedsAndWritesTheStore(t *testing.T) {
 	assert.Nil(t, activeRow(t, store.MemoryTreeStore, posUser))
 }
 
+func TestHandleNodeRemoved_StampsTheTombstoneWithTheEventID(t *testing.T) {
+	tr := &reconcileTransport{mutationResponse: json.RawMessage(`{"responsored":[]}`)}
+	c, store := newRemovalConsumer(tr)
+	seedRemovable(t, store)
+	event := makeEvent(EventTypeNodeRemoved, removedPayload())
+
+	require.NoError(t, c.HandleEvent(context.Background(), event))
+
+	tomb, err := store.GetNodeIncludingRemoved(context.Background(), "tree1", posUser)
+	require.NoError(t, err)
+	require.NotNil(t, tomb)
+	require.NotNil(t, tomb.RemovedByEventID, "the tombstone carries a removal stamp")
+	assert.Equal(t, event.ID, *tomb.RemovedByEventID)
+}
+
 // The engine has already applied the removal and its reply carried the only
 // copy of moved, so giving up on the store write is not a clean abort. It is
 // the divergence HEU-777 owns, and a shutdown landing in this window must not

@@ -58,7 +58,7 @@ func conflictError(err error) error {
 
 // treeNodeSelectColumns is the SELECT column list for tree_nodes queries.
 // Order must match the scanTreeNode/scanTreeNodes Scan call.
-const treeNodeSelectColumns = `id, tree_id, user_id, parent_id, sponsor_id, position, depth, enrolled_at, created_at, updated_at, removed_at`
+const treeNodeSelectColumns = `id, tree_id, user_id, parent_id, sponsor_id, position, depth, enrolled_at, created_at, updated_at, removed_at, removed_by_event_id`
 
 const getNodeSQL = `SELECT ` + treeNodeSelectColumns + ` FROM tree_nodes WHERE tree_id = $1 AND user_id = $2 AND removed_at IS NULL`
 const getChildrenSQL = `SELECT ` + treeNodeSelectColumns + ` FROM tree_nodes WHERE tree_id = $1 AND parent_id = $2 AND removed_at IS NULL`
@@ -72,6 +72,10 @@ const getByTreeDepthOrderedSQL = getByTreeSQL + ` ORDER BY depth ASC, enrolled_a
 const getNodeIncludingRemovedSQL = `SELECT ` + treeNodeSelectColumns +
 	` FROM tree_nodes WHERE tree_id = $1 AND user_id = $2
 	  ORDER BY removed_at DESC NULLS FIRST LIMIT 1`
+
+const getNodeByRemovalEventSQL = `SELECT ` + treeNodeSelectColumns +
+	` FROM tree_nodes WHERE tree_id = $1 AND removed_by_event_id = $2
+	  ORDER BY removed_at DESC LIMIT 1`
 
 func NewPostgresTreeStore(pool *pgxpool.Pool) *PostgresTreeStore {
 	return &PostgresTreeStore{pool: pool}
@@ -105,7 +109,7 @@ func (s *PostgresTreeStore) DeleteNode(ctx context.Context, treeID, userID strin
 
 func (s *PostgresTreeStore) DeleteNodeAndResponsor(
 	ctx context.Context,
-	treeID, userID string,
+	treeID, userID, removalEventID string,
 	moved []Responsored,
 ) error {
 	tx, err := s.pool.Begin(ctx)
@@ -114,12 +118,21 @@ func (s *PostgresTreeStore) DeleteNodeAndResponsor(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if _, err := tx.Exec(ctx,
-		`UPDATE tree_nodes SET removed_at = now(), updated_at = now()
+	// The stamp rides the soft delete's own statement, so it lands with the
+	// tombstone or not at all. removed_at IS NULL can only match the row that
+	// was active, so it cannot reach an earlier placement's tombstone.
+	tag, err := tx.Exec(ctx,
+		`UPDATE tree_nodes SET removed_at = now(), updated_at = now(), removed_by_event_id = $3
 		 WHERE tree_id = $1 AND user_id = $2 AND removed_at IS NULL`,
-		treeID, userID,
-	); err != nil {
+		treeID, userID, removalEventID,
+	)
+	if err != nil {
 		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf(
+			"soft delete for user %s in tree %s matched %d active rows; %d re-sponsor writes not applied",
+			userID, treeID, tag.RowsAffected(), len(moved))
 	}
 
 	for _, m := range moved {
@@ -150,6 +163,11 @@ func (s *PostgresTreeStore) GetNode(ctx context.Context, treeID, userID string) 
 
 func (s *PostgresTreeStore) GetNodeIncludingRemoved(ctx context.Context, treeID, userID string) (*TreeNodeRow, error) {
 	row := s.pool.QueryRow(ctx, getNodeIncludingRemovedSQL, treeID, userID)
+	return scanTreeNode(row)
+}
+
+func (s *PostgresTreeStore) GetNodeByRemovalEvent(ctx context.Context, treeID, removalEventID string) (*TreeNodeRow, error) {
+	row := s.pool.QueryRow(ctx, getNodeByRemovalEventSQL, treeID, removalEventID)
 	return scanTreeNode(row)
 }
 
@@ -214,6 +232,7 @@ func scanTreeNode(row pgx.Row) (*TreeNodeRow, error) {
 	err := row.Scan(
 		&n.ID, &n.TreeID, &n.UserID, &n.ParentID, &n.SponsorID,
 		&n.Position, &n.Depth, &n.EnrolledAt, &n.CreatedAt, &n.UpdatedAt, &n.RemovedAt,
+		&n.RemovedByEventID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -232,6 +251,7 @@ func scanTreeNodes(rows pgx.Rows) ([]TreeNodeRow, error) {
 		err := rows.Scan(
 			&n.ID, &n.TreeID, &n.UserID, &n.ParentID, &n.SponsorID,
 			&n.Position, &n.Depth, &n.EnrolledAt, &n.CreatedAt, &n.UpdatedAt, &n.RemovedAt,
+			&n.RemovedByEventID,
 		)
 		if err != nil {
 			return nil, err

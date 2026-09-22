@@ -226,7 +226,7 @@ func TestMemoryTreeStore_DeleteNodeAndResponsor(t *testing.T) {
 	t.Run("moves the sponsor and soft-deletes the removed node", func(t *testing.T) {
 		store := newStore()
 
-		require.NoError(t, store.DeleteNodeAndResponsor(ctx, "tree-1", recruiter,
+		require.NoError(t, store.DeleteNodeAndResponsor(ctx, "tree-1", recruiter, "ev-remove",
 			[]Responsored{{UserID: "user-3", NewSponsorID: root}}))
 
 		gone, err := store.GetNode(ctx, "tree-1", recruiter)
@@ -243,7 +243,7 @@ func TestMemoryTreeStore_DeleteNodeAndResponsor(t *testing.T) {
 	t.Run("writes nothing when a target has no active row", func(t *testing.T) {
 		store := newStore()
 
-		err := store.DeleteNodeAndResponsor(ctx, "tree-1", recruiter,
+		err := store.DeleteNodeAndResponsor(ctx, "tree-1", recruiter, "ev-remove",
 			[]Responsored{{UserID: "user-99", NewSponsorID: root}})
 		require.Error(t, err)
 
@@ -257,5 +257,13 @@ func TestMemoryTreeStore_DeleteNodeAndResponsor(t *testing.T) {
 func TestMemoryTreeStore_Suite(t *testing.T) {
 	runTreeStoreSuite(t, func(t *testing.T) TreeStore {
 		return NewMemoryTreeStore()
+	}, func(t *testing.T, s TreeStore, nodeID string) *string {
+		for _, n := range s.(*MemoryTreeStore).nodes {
+			if n.ID == nodeID {
+				return n.RemovedByEventID
+			}
+		}
+		require.Failf(t, "no row", "no row with id %s", nodeID)
+		return nil
 	})
 }

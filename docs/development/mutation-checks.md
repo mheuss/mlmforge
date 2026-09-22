@@ -262,3 +262,25 @@ a red does not.
 ## A double inherits the gaps of what it embeds
 
 See [test-doubles.md](test-doubles.md).
+
+## Mutate the twin that decides the behaviour
+
+A shared suite runs one case against every store twin. A mutation only proves
+something against a twin whose implementation can tell the correct behaviour
+from the mutated one.
+
+`MemoryTreeStore` only appends rows. Its slice order is therefore the order the
+rows were written, which is also their time order. A case asserting that the
+newest tombstone wins passes on the memory twin under "newest wins", and under
+"last match wins" too. Those two rules pick the same row in an append-only
+slice.
+
+Postgres has no such order. Only its `ORDER BY` decides which row comes back.
+So mutate the Postgres side, for example by reversing the sort to ascending, and
+watch the case fail there.
+
+The same mutation applied only to the memory twin survives. That survival says
+nothing about the test. Record which twin a mutation was applied to, and which
+twin failed.
+
+HEU-811 is where this came up.

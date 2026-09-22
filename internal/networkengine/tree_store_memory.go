@@ -85,7 +85,7 @@ func (s *MemoryTreeStore) DeleteNode(_ context.Context, treeID, userID string) e
 
 func (s *MemoryTreeStore) DeleteNodeAndResponsor(
 	ctx context.Context,
-	treeID, userID string,
+	treeID, userID, removalEventID string,
 	moved []Responsored,
 ) error {
 	// Mirrors the Postgres transaction by staging: nothing is written until
@@ -108,9 +108,26 @@ func (s *MemoryTreeStore) DeleteNodeAndResponsor(
 		targets = append(targets, found)
 	}
 
+	// Captured before anything is written. Searching for a removed row after
+	// the delete can find an earlier placement's tombstone.
+	removing := -1
+	for i := range s.nodes {
+		if s.nodes[i].TreeID == treeID && s.nodes[i].UserID == userID && s.nodes[i].RemovedAt == nil {
+			removing = i
+			break
+		}
+	}
+	if removing < 0 {
+		return fmt.Errorf(
+			"soft delete for user %s in tree %s matched 0 active rows; %d re-sponsor writes not applied",
+			userID, treeID, len(moved))
+	}
+
 	if err := s.DeleteNode(ctx, treeID, userID); err != nil {
 		return err
 	}
+	event := removalEventID
+	s.nodes[removing].RemovedByEventID = &event
 	for i, m := range moved {
 		sponsor := m.NewSponsorID
 		s.nodes[targets[i]].SponsorID = &sponsor
@@ -139,6 +156,21 @@ func (s *MemoryTreeStore) GetNodeIncludingRemoved(_ context.Context, treeID, use
 		if n.RemovedAt == nil {
 			return &n, nil
 		}
+		if best == nil || best.RemovedAt.Before(*n.RemovedAt) {
+			best = &n
+		}
+	}
+	return best, nil
+}
+
+func (s *MemoryTreeStore) GetNodeByRemovalEvent(_ context.Context, treeID, removalEventID string) (*TreeNodeRow, error) {
+	var best *TreeNodeRow
+	for i := range s.nodes {
+		stamp := s.nodes[i].RemovedByEventID
+		if s.nodes[i].TreeID != treeID || stamp == nil || *stamp != removalEventID {
+			continue
+		}
+		n := s.nodes[i]
 		if best == nil || best.RemovedAt.Before(*n.RemovedAt) {
 			best = &n
 		}

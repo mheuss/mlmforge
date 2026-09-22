@@ -369,12 +369,20 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 		if !isEngineCode(err, engineCodeUserNotFound) {
 			return reconcileNotApplicable, nil
 		}
-		// This branch turns on one thing: whether an active row is still
-		// there. The read below also keeps a removed row in reach, which a
-		// discriminator would need. HEU-811.
+		// The stamp read answers whether an earlier delivery of this event
+		// already projected. Without a stamp, the tree-and-user read below it
+		// separates three cases: an active row, a tombstone, and no row at all.
+		stamped, serr := c.store.GetNodeByRemovalEvent(ctx, payload.TreeID, event.ID)
+		if serr != nil {
+			return reconcileInconclusive, fmt.Errorf("read the row this removal stamped: %w", serr)
+		}
+		if stamped != nil {
+			alreadyProjected = true
+			return reconcileConverged, nil
+		}
 		existing, gerr := c.store.GetNodeIncludingRemoved(ctx, payload.TreeID, payload.UserID)
 		if gerr != nil {
-			return reconcileInconclusive, gerr
+			return reconcileInconclusive, fmt.Errorf("read the user's row: %w", gerr)
 		}
 		if existing != nil && existing.RemovedAt == nil {
 			// The engine applied the removal and no store write has landed.
@@ -399,8 +407,7 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 		return err
 	}
 
-	// The flag is set only where no active row was read, so there is nothing
-	// here to write.
+	// A converged reconcile leaves no store write to make.
 	if alreadyProjected {
 		return nil
 	}
@@ -410,7 +417,7 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 	// is the divergence HEU-777 owns, reachable by a shutdown in this window.
 	writeCtx, cancelWrite := detachedWrite(ctx)
 	defer cancelWrite()
-	if err := c.store.DeleteNodeAndResponsor(writeCtx, payload.TreeID, payload.UserID, moved); err != nil {
+	if err := c.store.DeleteNodeAndResponsor(writeCtx, payload.TreeID, payload.UserID, event.ID, moved); err != nil {
 		return fmt.Errorf("remove node and re-sponsor recruits: %w", err)
 	}
 	return nil

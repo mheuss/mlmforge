@@ -9,17 +9,18 @@ import (
 
 // TreeNodeRow represents a row in the tree_nodes adjacency table.
 type TreeNodeRow struct {
-	ID         string
-	TreeID     string
-	UserID     string
-	ParentID   *string
-	SponsorID  *string
-	Position   *int
-	Depth      int
-	EnrolledAt time.Time
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-	RemovedAt  *time.Time
+	ID               string
+	TreeID           string
+	UserID           string
+	ParentID         *string
+	SponsorID        *string
+	Position         *int
+	Depth            int
+	EnrolledAt       time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	RemovedAt        *time.Time
+	RemovedByEventID *string
 }
 
 // TreeStore is the repository interface for tree node persistence.
@@ -33,13 +34,14 @@ type TreeStore interface {
 	// DeleteNode soft-deletes a node by setting removed_at.
 	DeleteNode(ctx context.Context, treeID, userID string) error
 
-	// DeleteNodeAndResponsor soft-deletes a node and repoints the recruits
-	// the engine moved, in one transaction.
+	// DeleteNodeAndResponsor soft-deletes a node, stamps the removing event
+	// onto the tombstoned row, and repoints the recruits the engine moved, in
+	// one transaction.
 	//
 	// Both writes or neither. A soft delete that lands without the sponsor
 	// updates leaves the store naming a user the active-row query will not
 	// return, and the tree stops reloading.
-	DeleteNodeAndResponsor(ctx context.Context, treeID, userID string, moved []Responsored) error
+	DeleteNodeAndResponsor(ctx context.Context, treeID, userID, removalEventID string, moved []Responsored) error
 
 	// GetNode returns a single active node by tree and user ID.
 	GetNode(ctx context.Context, treeID, userID string) (*TreeNodeRow, error)
@@ -48,6 +50,11 @@ type TreeStore interface {
 	// not it is soft-deleted. An active row wins over any tombstone, and the
 	// newest tombstone wins over older ones.
 	GetNodeIncludingRemoved(ctx context.Context, treeID, userID string) (*TreeNodeRow, error)
+
+	// GetNodeByRemovalEvent returns the row that the given removal event
+	// tombstoned, or nil when that event has stamped no row in this tree.
+	// When the event stamped more than one row, the newest tombstone wins.
+	GetNodeByRemovalEvent(ctx context.Context, treeID, removalEventID string) (*TreeNodeRow, error)
 
 	// GetChildren returns active children of a parent node.
 	GetChildren(ctx context.Context, treeID, parentUserID string) ([]TreeNodeRow, error)

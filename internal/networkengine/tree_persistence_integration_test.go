@@ -1070,3 +1070,68 @@ func TestTreePersistence_RedeliveredRemovalFailsWhenTheStoreNeverLanded(t *testi
 	require.NotNil(t, orphaned.SponsorID)
 	assert.Equal(t, recruiterID, *orphaned.SponsorID, "recruit sponsor_id after the failed removal")
 }
+
+// E1 places U, R1 removes U, E2 places U again with the engine call failing,
+// then R1 is redelivered. R1 projected in full before E2 arrived.
+func TestTreePersistence_RedeliveredRemovalAfterAFailedReplacement(t *testing.T) {
+	eventStore, treeStore, _, _ := newIntegrationDeps(t)
+	ctx := context.Background()
+	engine, gate := newGatedEngine(t, "add_node")
+	gate.gated.Store(false)
+
+	treeID := testTreeUUID(1)
+	rootID, userID := testUserUUID(1), testUserUUID(2)
+	stream := TreeStreamName(treeID)
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	require.NoError(t, engine.CreateTree(ctx, treeID, treeTypeUnilevel))
+	consumer := NewTreeEventConsumer(treeStore, engine)
+
+	rootEvent := appendTreeEvent(t, eventStore, stream, 0, EventTypeRootAdded, RootAddedPayload{
+		TreeID: treeID, UserID: rootID, SponsorID: rootID, EnrolledAt: base,
+	})
+	require.NoError(t, consumer.HandleEvent(ctx, rootEvent))
+
+	e1 := appendTreeEvent(t, eventStore, stream, 1, EventTypeNodePlaced, NodePlacedPayload{
+		TreeID: treeID, UserID: userID, ParentID: rootID, SponsorID: rootID,
+		TreeType: treeTypeUnilevel, EnrolledAt: base.Add(time.Hour),
+	})
+	require.NoError(t, consumer.HandleEvent(ctx, e1))
+
+	r1 := appendTreeEvent(t, eventStore, stream, 2, EventTypeNodeRemoved, NodeRemovedPayload{
+		TreeID: treeID, UserID: userID, RemovedAt: base.Add(2 * time.Hour),
+	})
+	require.NoError(t, consumer.HandleEvent(ctx, r1))
+
+	tomb, err := treeStore.GetNodeIncludingRemoved(ctx, treeID, userID)
+	require.NoError(t, err)
+	require.NotNil(t, tomb, "no row for the user after R1's first delivery")
+	require.Equal(t, e1.ID, tomb.ID, "the newest row for the user after R1's first delivery")
+	require.NotNil(t, tomb.RemovedAt, "E1's row is still active after R1's first delivery")
+	require.NotNil(t, tomb.RemovedByEventID, "E1's tombstone carries no removal stamp")
+	require.Equal(t, r1.ID, *tomb.RemovedByEventID, "E1's tombstone stamp")
+
+	gate.gated.Store(true)
+	e2 := appendTreeEvent(t, eventStore, stream, 3, EventTypeNodePlaced, NodePlacedPayload{
+		TreeID: treeID, UserID: userID, ParentID: rootID, SponsorID: rootID,
+		TreeType: treeTypeUnilevel, EnrolledAt: base.Add(3 * time.Hour),
+	})
+	require.Error(t, consumer.HandleEvent(ctx, e2), "the gated engine call fails")
+	require.Positive(t, gate.forced.Load(), "the gate returned at least one refusal for add_node")
+	gate.gated.Store(false)
+
+	active, err := treeStore.GetNode(ctx, treeID, userID)
+	require.NoError(t, err)
+	require.NotNil(t, active, "no active row for the user after E2's failed delivery")
+	require.Equal(t, e2.ID, active.ID, "the active row after E2's failed delivery")
+	_, perr := engine.GetPosition(ctx, treeID, userID)
+	require.True(t, isEngineCode(perr, engineCodeUserNotFound),
+		"engine GetPosition for the user after E2's failed delivery returned %v", perr)
+
+	require.NoError(t, consumer.HandleEvent(ctx, r1), "the redelivered removal")
+
+	survivor, err := treeStore.GetNode(ctx, treeID, userID)
+	require.NoError(t, err)
+	require.NotNil(t, survivor, "no active row for the user after R1's redelivery")
+	assert.Equal(t, e2.ID, survivor.ID, "the active row after R1's redelivery")
+}

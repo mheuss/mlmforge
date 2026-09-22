@@ -24,9 +24,6 @@ func nodeUserIDs(nodes []TreeNodeRow) []string {
 // Postgres implementations must pass it identically. newStore returns a
 // fresh, empty store on each call.
 //
-// Nothing here asserts on CreatedAt or UpdatedAt. The two implementations
-// already disagree about both, which is HEU-817.
-//
 // stampOf reads one row's removal stamp by the row's ID, whether or not the
 // row is active.
 func runTreeStoreSuite(
@@ -715,6 +712,46 @@ func runTreeStoreSuite(
 		require.NotNil(t, got)
 		assert.True(t, node.EnrolledAt.Equal(got.EnrolledAt),
 			"EnrolledAt round-trips as the same instant, got %v want %v", got.EnrolledAt, node.EnrolledAt)
+	})
+
+	t.Run("InsertNode stamps CreatedAt and UpdatedAt over the caller's values", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		user := testUserUUID(1)
+		node := makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)
+		node.CreatedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		node.UpdatedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+		before := time.Now().Add(-time.Second)
+		require.NoError(t, s.InsertNode(ctx, node))
+
+		got, err := s.GetNode(ctx, tree, user)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.True(t, got.CreatedAt.After(before), "CreatedAt read back as %v, want after %v", got.CreatedAt, before)
+		assert.True(t, got.UpdatedAt.After(before), "UpdatedAt read back as %v, want after %v", got.UpdatedAt, before)
+	})
+
+	t.Run("BulkInsert stamps CreatedAt and UpdatedAt over the caller's values", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		user := testUserUUID(1)
+		node := makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)
+		node.CreatedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		node.UpdatedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+		before := time.Now().Add(-time.Second)
+		require.NoError(t, s.BulkInsert(ctx, []TreeNodeRow{node}))
+
+		got, err := s.GetNode(ctx, tree, user)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.True(t, got.CreatedAt.After(before), "CreatedAt read back as %v, want after %v", got.CreatedAt, before)
+		assert.True(t, got.UpdatedAt.After(before), "UpdatedAt read back as %v, want after %v", got.UpdatedAt, before)
 	})
 
 	t.Run("GetChildren does not cross tree boundaries", func(t *testing.T) {

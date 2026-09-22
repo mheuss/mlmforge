@@ -60,6 +60,9 @@ func (s *MemoryTreeStore) InsertNode(_ context.Context, node TreeNodeRow) error 
 			}
 		}
 	}
+	now := time.Now()
+	node.CreatedAt = now
+	node.UpdatedAt = now
 	s.nodes = append(s.nodes, node)
 	return nil
 }

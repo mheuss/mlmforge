@@ -18,9 +18,6 @@ func groupPaths(cmd *cobra.Command, prefix []string) [][]string {
 	}
 	paths := [][]string{prefix}
 	for _, child := range cmd.Commands() {
-		// Cobra attaches these during Execute, so they are absent on a tree
-		// that has not run. Named here so a walk of an executed tree skips
-		// them too.
 		switch child.Name() {
 		case "help", "completion":
 			continue
@@ -31,7 +28,7 @@ func groupPaths(cmd *cobra.Command, prefix []string) [][]string {
 	return paths
 }
 
-// leafPaths returns the argument path of every runnable command that holds no
+// leafPaths returns the argument path of every command that holds no
 // subcommands.
 func leafPaths(cmd *cobra.Command, prefix []string) [][]string {
 	switch cmd.Name() {
@@ -39,7 +36,7 @@ func leafPaths(cmd *cobra.Command, prefix []string) [][]string {
 		return nil
 	}
 	if !cmd.HasSubCommands() {
-		if cmd.Runnable() && len(prefix) > 0 {
+		if len(prefix) > 0 {
 			return [][]string{prefix}
 		}
 		return nil
@@ -52,7 +49,7 @@ func leafPaths(cmd *cobra.Command, prefix []string) [][]string {
 	return paths
 }
 
-// Every leaf refuses a positional argument it was not built to take.
+// Holds every leaf to taking no positional arguments.
 func TestEveryLeafCommandRejectsAStrayArgument(t *testing.T) {
 	paths := leafPaths(newRootCmd(), nil)
 
@@ -61,6 +58,8 @@ func TestEveryLeafCommandRejectsAStrayArgument(t *testing.T) {
 
 	for _, path := range paths {
 		t.Run(strings.Join(path, " "), func(t *testing.T) {
+			t.Setenv("DATABASE_URL", "")
+			t.Setenv(workerPathEnv, "")
 			root := newRootCmd()
 			root.SetOut(io.Discard)
 			root.SetErr(io.Discard)

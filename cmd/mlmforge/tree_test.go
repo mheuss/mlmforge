@@ -270,7 +270,6 @@ func TestTreeLoadCmd_SignalsCancelTheLoad(t *testing.T) {
 	}
 }
 
-// Driving the root is what makes this a claim about the shipped binary.
 func TestRootCmd_TreeRejectsAnUnknownSubcommand(t *testing.T) {
 	root := newRootCmd()
 	root.SetOut(io.Discard)

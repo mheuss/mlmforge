@@ -106,8 +106,6 @@ func (c *TreeEventConsumer) handleRootAdded(ctx context.Context, event platform.
 		SponsorID:  &payload.SponsorID,
 		Depth:      0,
 		EnrolledAt: payload.EnrolledAt,
-		CreatedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
 	}
 
 	inserted := true
@@ -277,8 +275,6 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform
 		Position:   payload.Position,
 		Depth:      depth,
 		EnrolledAt: payload.EnrolledAt,
-		CreatedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
 	}
 
 	if err := c.store.InsertNode(ctx, node); err != nil {

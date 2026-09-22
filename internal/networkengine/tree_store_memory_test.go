@@ -22,8 +22,6 @@ func makeNode(treeID, userID string, depth int, parentID, sponsorID *string, pos
 		Position:   position,
 		Depth:      depth,
 		EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-		CreatedAt:  time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-		UpdatedAt:  time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 	}
 }
 

@@ -155,6 +155,50 @@ func TestTreeConsumer_HandleNodePlaced(t *testing.T) {
 	assert.Equal(t, "add_node", transport.calls[0].op)
 }
 
+func TestTreeConsumer_LeavesStoreOwnedTimestampsUnset(t *testing.T) {
+	t.Run("root_added", func(t *testing.T) {
+		store := NewMemoryTreeStore()
+		consumer := NewTreeEventConsumer(store, newEngineClientWithTransport(newRecordingTransport()))
+
+		event := makeEvent(EventTypeRootAdded, RootAddedPayload{
+			TreeID:     "tree1",
+			UserID:     "user-root",
+			SponsorID:  "user-root",
+			EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		})
+		require.NoError(t, consumer.HandleEvent(context.Background(), event))
+
+		node, err := store.GetNode(context.Background(), "tree1", "user-root")
+		require.NoError(t, err)
+		require.NotNil(t, node)
+		assert.True(t, node.CreatedAt.IsZero(), "CreatedAt handed to the store: %v", node.CreatedAt)
+		assert.True(t, node.UpdatedAt.IsZero(), "UpdatedAt handed to the store: %v", node.UpdatedAt)
+	})
+
+	t.Run("node_placed", func(t *testing.T) {
+		store := NewMemoryTreeStore()
+		consumer := NewTreeEventConsumer(store, newEngineClientWithTransport(newRecordingTransport()))
+		require.NoError(t, store.InsertNode(context.Background(),
+			makeNode("tree1", "user-root", 0, nil, nil, nil)))
+
+		event := makeEvent(EventTypeNodePlaced, NodePlacedPayload{
+			TreeID:     "tree1",
+			UserID:     "user-child",
+			ParentID:   "user-root",
+			SponsorID:  "user-root",
+			TreeType:   treeTypeUnilevel,
+			EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
+		})
+		require.NoError(t, consumer.HandleEvent(context.Background(), event))
+
+		node, err := store.GetNode(context.Background(), "tree1", "user-child")
+		require.NoError(t, err)
+		require.NotNil(t, node)
+		assert.True(t, node.CreatedAt.IsZero(), "CreatedAt handed to the store: %v", node.CreatedAt)
+		assert.True(t, node.UpdatedAt.IsZero(), "UpdatedAt handed to the store: %v", node.UpdatedAt)
+	})
+}
+
 func TestTreeConsumer_NodePlacedRejectsWrongStream(t *testing.T) {
 	store := NewMemoryTreeStore()
 	transport := newRecordingTransport()

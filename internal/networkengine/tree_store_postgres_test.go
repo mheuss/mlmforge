@@ -37,8 +37,6 @@ func makeUUIDNode(nodeID, treeID, userID string, depth int, parentID, sponsorID 
 		Position:   position,
 		Depth:      depth,
 		EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-		CreatedAt:  time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-		UpdatedAt:  time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 	}
 }
 
@@ -442,6 +440,8 @@ func TestPostgresTreeStore_TimestampsPopulated(t *testing.T) {
 
 	before := time.Now().Add(-time.Second)
 	node := makeUUIDNode(testNodeUUID(1), tree1, userA, 0, nil, nil, nil)
+	node.CreatedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	node.UpdatedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	require.NoError(t, store.InsertNode(ctx, node))
 
 	got, err := store.GetNode(ctx, tree1, userA)

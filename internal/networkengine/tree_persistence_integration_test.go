@@ -1072,8 +1072,7 @@ func TestTreePersistence_RedeliveredRemovalFailsWhenTheStoreNeverLanded(t *testi
 }
 
 // E1 places U, R1 removes U, E2 places U again with the engine call failing,
-// then R1 is redelivered. R1's own tombstone is in the table, so the
-// redelivery has nothing left to do, and E2's row is not R1's to touch.
+// then R1 is redelivered. R1 projected in full before E2 arrived.
 func TestTreePersistence_RedeliveredRemovalAfterAFailedReplacement(t *testing.T) {
 	eventStore, treeStore, _, _ := newIntegrationDeps(t)
 	ctx := context.Background()

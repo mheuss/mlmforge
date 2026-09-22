@@ -20,6 +20,11 @@ func NewMemoryTreeStore() *MemoryTreeStore {
 }
 
 func (s *MemoryTreeStore) InsertNode(_ context.Context, node TreeNodeRow) error {
+	return s.insertNodeAt(node, time.Now())
+}
+
+// insertNodeAt stores one row, stamped with now.
+func (s *MemoryTreeStore) insertNodeAt(node TreeNodeRow, now time.Time) error {
 	// Primary-key mirror: the row id is the event ID, so a duplicate id is
 	// rejected whatever its tree or removed state. Checked in its own pass
 	// before the partial-index mirrors below, so a caller can tell an id
@@ -60,7 +65,6 @@ func (s *MemoryTreeStore) InsertNode(_ context.Context, node TreeNodeRow) error 
 			}
 		}
 	}
-	now := time.Now()
 	node.CreatedAt = now
 	node.UpdatedAt = now
 	s.nodes = append(s.nodes, node)
@@ -217,8 +221,8 @@ func (s *MemoryTreeStore) GetByTreeDepthOrdered(_ context.Context, treeID string
 	return result, nil
 }
 
-func (s *MemoryTreeStore) BulkInsert(ctx context.Context, nodes []TreeNodeRow) error {
-	// InsertNode validates against s.nodes, so pointing it at a copy is what
+func (s *MemoryTreeStore) BulkInsert(_ context.Context, nodes []TreeNodeRow) error {
+	// insertNodeAt validates against s.nodes, so pointing it at a copy is what
 	// makes the batch all-or-none: a conflict anywhere, including between two
 	// rows of this batch, leaves the original slice untouched.
 	staged := make([]TreeNodeRow, len(s.nodes), len(s.nodes)+len(nodes))
@@ -226,8 +230,9 @@ func (s *MemoryTreeStore) BulkInsert(ctx context.Context, nodes []TreeNodeRow) e
 
 	original := s.nodes
 	s.nodes = staged
+	now := time.Now()
 	for _, n := range nodes {
-		if err := s.InsertNode(ctx, n); err != nil {
+		if err := s.insertNodeAt(n, now); err != nil {
 			s.nodes = original
 			return err
 		}

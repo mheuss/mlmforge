@@ -760,6 +760,28 @@ func runTreeStoreSuite(
 			"CreatedAt read back as %v and UpdatedAt as %v, want the same instant", got.CreatedAt, got.UpdatedAt)
 	})
 
+	t.Run("BulkInsert stamps every row in a batch with one instant", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		rootUser := testUserUUID(1)
+		childUser := testUserUUID(2)
+		require.NoError(t, s.BulkInsert(ctx, []TreeNodeRow{
+			makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil),
+			makeUUIDNode(testNodeUUID(2), tree, childUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0)),
+		}))
+
+		root, err := s.GetNode(ctx, tree, rootUser)
+		require.NoError(t, err)
+		require.NotNil(t, root)
+		child, err := s.GetNode(ctx, tree, childUser)
+		require.NoError(t, err)
+		require.NotNil(t, child)
+		assert.True(t, root.CreatedAt.Equal(child.CreatedAt),
+			"first row's CreatedAt read back as %v, second as %v, want the same instant", root.CreatedAt, child.CreatedAt)
+	})
+
 	t.Run("GetChildren does not cross tree boundaries", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()

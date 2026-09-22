@@ -854,17 +854,17 @@ Matrix startup reload is no longer blocked by this defect.
 
 ### A tombstone carries the event that removed it
 
-`tree_nodes.id` holds the placing event's ID, so a removal cannot use it as a discriminator. Comparing a removal event's ID against it is false on every path, including a removal that genuinely never landed.
+`tree_nodes.id` holds the placing event's ID. A removal cannot use it as a discriminator. Comparing a removal event's ID against it is false on every path, including a removal that genuinely never landed.
 
-Migration 000007 adds `removed_by_event_id`. `DeleteNodeAndResponsor` writes it in the soft delete's own statement. The stamp lands with the tombstone or not at all. The column is null while the row is active. `DeleteNode` leaves it null. Its caller rolls back a row the same handler just inserted, which is not a removal and has no removal event to name.
+Migration 000007 adds `removed_by_event_id`. `DeleteNodeAndResponsor` writes it in the soft delete's own statement. The stamp lands with the tombstone or not at all. The column is null while the row is active. `DeleteNode` leaves it null. Its caller rolls back a row the same handler just inserted. That rollback is not a removal. It has no removal event to name.
 
-`GetNodeByRemovalEvent` reads the row a given removal event stamped, scoped to one tree. When one event has stamped more than one row, the newest tombstone wins. `GetNodeIncludingRemoved` uses the same tie-break. Two rows can carry one stamp only when a redelivered removal is accepted after the user was placed again, which is HEU-789's case.
+`GetNodeByRemovalEvent` reads the row a given removal event stamped, scoped to one tree. When one event has stamped more than one row, the newest tombstone wins. `GetNodeIncludingRemoved` uses the same tie-break. Two rows can carry one stamp only when a redelivered removal is accepted after the user was placed again (HEU-789).
 
-The removal reconcile runs only when the engine refuses the removal with user-not-found. It asks this read first. A stamped row means an earlier delivery of this event already projected. The reconcile then converges without writing. With no stamp, it reads by tree and user. An active row means the removal never landed. A tombstone or no row at all converges. A failed stamp read retries. It is never read as "no stamp", because that could report a transient read error as a permanent divergence.
+The removal reconcile runs only when the engine refuses the removal with user-not-found. It asks this read first. A stamped row means an earlier delivery of this event already projected. The reconcile then converges without writing. With no stamp, it reads by tree and user. An active row means the removal never landed. A tombstone or no row at all converges. A failed stamp read retries. It is never read as "no stamp". Reading it that way could report a transient read error as a permanent divergence.
 
 The stamp says which event removed a row. It does not order several removals of the same user. HEU-789 asks that question.
 
-`DeleteNodeAndResponsor` also fails when its soft delete matches no active row. It writes nothing. The error states the matched row count and how many re-sponsor writes were not applied. It names no cause, because the store cannot see one.
+`DeleteNodeAndResponsor` also fails when its soft delete matches no active row. It writes nothing. The error states the matched row count and how many re-sponsor writes were not applied. It names no cause. The store cannot see one.
 
 ## Worker Shutdown
 

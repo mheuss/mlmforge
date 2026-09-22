@@ -181,15 +181,15 @@ func TestMigrations_RemovedByEventDownUp(t *testing.T) {
 		t.Skip("Postgres container not available")
 	}
 
-	// Relative to this package's directory — Go sets a test's cwd to the
-	// package dir.
+	// This is relative to this package's directory. Go sets a test's cwd to
+	// the package dir.
 	absPath, err := filepath.Abs("../../migrations")
 	require.NoError(t, err)
 	m, err := migrate.New(fmt.Sprintf("file://%s", absPath), migrationContainer.DSN)
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = m.Close() })
 
-	// Proves migration 000007's files work, not just that they contain words.
+	// Proves the migration files actually work, not just that they contain words.
 	nullableUUIDColumnExists := func() bool {
 		pool, err := pgxpool.New(context.Background(), migrationContainer.DSN)
 		require.NoError(t, err)

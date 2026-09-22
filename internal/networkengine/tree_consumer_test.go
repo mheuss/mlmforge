@@ -155,9 +155,20 @@ func TestTreeConsumer_HandleNodePlaced(t *testing.T) {
 	assert.Equal(t, "add_node", transport.calls[0].op)
 }
 
+// insertRecordingStore records the rows the consumer passes to InsertNode.
+type insertRecordingStore struct {
+	TreeStore
+	inserted []TreeNodeRow
+}
+
+func (s *insertRecordingStore) InsertNode(ctx context.Context, node TreeNodeRow) error {
+	s.inserted = append(s.inserted, node)
+	return s.TreeStore.InsertNode(ctx, node)
+}
+
 func TestTreeConsumer_LeavesStoreOwnedTimestampsUnset(t *testing.T) {
 	t.Run("root_added", func(t *testing.T) {
-		store := NewMemoryTreeStore()
+		store := &insertRecordingStore{TreeStore: NewMemoryTreeStore()}
 		consumer := NewTreeEventConsumer(store, newEngineClientWithTransport(newRecordingTransport()))
 
 		event := makeEvent(EventTypeRootAdded, RootAddedPayload{
@@ -168,18 +179,18 @@ func TestTreeConsumer_LeavesStoreOwnedTimestampsUnset(t *testing.T) {
 		})
 		require.NoError(t, consumer.HandleEvent(context.Background(), event))
 
-		node, err := store.GetNode(context.Background(), "tree1", "user-root")
-		require.NoError(t, err)
-		require.NotNil(t, node)
-		assert.True(t, node.CreatedAt.IsZero(), "CreatedAt handed to the store: %v", node.CreatedAt)
-		assert.True(t, node.UpdatedAt.IsZero(), "UpdatedAt handed to the store: %v", node.UpdatedAt)
+		require.Len(t, store.inserted, 1)
+		row := store.inserted[0]
+		assert.True(t, row.CreatedAt.IsZero(), "CreatedAt passed to InsertNode: %v", row.CreatedAt)
+		assert.True(t, row.UpdatedAt.IsZero(), "UpdatedAt passed to InsertNode: %v", row.UpdatedAt)
 	})
 
 	t.Run("node_placed", func(t *testing.T) {
-		store := NewMemoryTreeStore()
-		consumer := NewTreeEventConsumer(store, newEngineClientWithTransport(newRecordingTransport()))
-		require.NoError(t, store.InsertNode(context.Background(),
+		mem := NewMemoryTreeStore()
+		require.NoError(t, mem.InsertNode(context.Background(),
 			makeNode("tree1", "user-root", 0, nil, nil, nil)))
+		store := &insertRecordingStore{TreeStore: mem}
+		consumer := NewTreeEventConsumer(store, newEngineClientWithTransport(newRecordingTransport()))
 
 		event := makeEvent(EventTypeNodePlaced, NodePlacedPayload{
 			TreeID:     "tree1",
@@ -191,11 +202,10 @@ func TestTreeConsumer_LeavesStoreOwnedTimestampsUnset(t *testing.T) {
 		})
 		require.NoError(t, consumer.HandleEvent(context.Background(), event))
 
-		node, err := store.GetNode(context.Background(), "tree1", "user-child")
-		require.NoError(t, err)
-		require.NotNil(t, node)
-		assert.True(t, node.CreatedAt.IsZero(), "CreatedAt handed to the store: %v", node.CreatedAt)
-		assert.True(t, node.UpdatedAt.IsZero(), "UpdatedAt handed to the store: %v", node.UpdatedAt)
+		require.Len(t, store.inserted, 1)
+		row := store.inserted[0]
+		assert.True(t, row.CreatedAt.IsZero(), "CreatedAt passed to InsertNode: %v", row.CreatedAt)
+		assert.True(t, row.UpdatedAt.IsZero(), "UpdatedAt passed to InsertNode: %v", row.UpdatedAt)
 	})
 }
 

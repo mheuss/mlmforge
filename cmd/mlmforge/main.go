@@ -60,6 +60,10 @@ func newRootCmd() *cobra.Command {
 	migrateCmd := &cobra.Command{
 		Use:   "migrate",
 		Short: "Database migration commands",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
+		},
 	}
 
 	dbURL := migrateCmd.PersistentFlags().String("db-url", "", "PostgreSQL connection URL (or set DATABASE_URL env var)")
@@ -69,6 +73,7 @@ func newRootCmd() *cobra.Command {
 		&cobra.Command{
 			Use:   "up",
 			Short: "Apply all pending migrations",
+			Args:  cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, args []string) error {
 				url, err := resolveDBURL(*dbURL)
 				if err != nil {
@@ -80,6 +85,7 @@ func newRootCmd() *cobra.Command {
 		&cobra.Command{
 			Use:   "down",
 			Short: "Roll back the most recent migration",
+			Args:  cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, args []string) error {
 				url, err := resolveDBURL(*dbURL)
 				if err != nil {
@@ -99,6 +105,7 @@ func newRootCmd() *cobra.Command {
 		&cobra.Command{
 			Use:   "version",
 			Short: "Show current migration version",
+			Args:  cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, args []string) error {
 				url, err := resolveDBURL(*dbURL)
 				if err != nil {

@@ -1124,6 +1124,9 @@ func TestTreePersistence_RedeliveredRemovalAfterAFailedReplacement(t *testing.T)
 	require.NoError(t, err)
 	require.NotNil(t, active, "no active row for the user after E2's failed delivery")
 	require.Equal(t, e2.ID, active.ID, "the active row after E2's failed delivery")
+	_, perr := engine.GetPosition(ctx, treeID, userID)
+	require.True(t, isEngineCode(perr, engineCodeUserNotFound),
+		"engine GetPosition for the user after E2's failed delivery returned %v", perr)
 
 	require.NoError(t, consumer.HandleEvent(ctx, r1), "the redelivered removal")
 

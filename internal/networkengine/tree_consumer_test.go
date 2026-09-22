@@ -1930,6 +1930,96 @@ func TestHandleNodeRemoved_StampsTheTombstoneWithTheEventID(t *testing.T) {
 	assert.Equal(t, event.ID, *tomb.RemovedByEventID)
 }
 
+// seedReplacement puts a later active placement for the removed user in the
+// store, behind whatever tombstone the test already wrote.
+func seedReplacement(t *testing.T, store *deleteRecordingStore) string {
+	t.Helper()
+	id := "cafe0000-0000-4000-8000-0000000000bb"
+	require.NoError(t, store.InsertNode(context.Background(), TreeNodeRow{
+		ID: id, TreeID: "tree1",
+		UserID: posUser, Depth: 1, ParentID: ptr(posParent), EnrolledAt: posEnrolled,
+	}))
+	return id
+}
+
+func TestHandleNodeRemoved_ReconcileConvergesOnItsOwnTombstoneBehindALaterPlacement(t *testing.T) {
+	tr := &reconcileTransport{mutationErr: &EngineError{Code: engineCodeUserNotFound}}
+	c, store := newRemovalConsumer(tr)
+	ctx := context.Background()
+	seedRemovable(t, store)
+	event := makeEvent(EventTypeNodeRemoved, removedPayload())
+	require.NoError(t, store.MemoryTreeStore.DeleteNodeAndResponsor(ctx, "tree1", posUser, event.ID, nil))
+	later := seedReplacement(t, store)
+
+	err := c.HandleEvent(ctx, event)
+
+	require.NoError(t, err, "this removal's own tombstone is in the store")
+	assert.Empty(t, store.responsors, "the store write must not run a second time")
+	assert.Len(t, tr.mutationOps, 1, "converged does not retry")
+	active := activeRow(t, store.MemoryTreeStore, posUser)
+	require.NotNil(t, active, "no active row for the user after the redelivery")
+	assert.Equal(t, later, active.ID, "the active row after the redelivery")
+}
+
+func TestHandleNodeRemoved_ReconcileFailsWhenOnlyAnEarlierRemovalsTombstoneExists(t *testing.T) {
+	tr := &reconcileTransport{mutationErr: &EngineError{Code: engineCodeUserNotFound}}
+	c, store := newRemovalConsumer(tr)
+	ctx := context.Background()
+	seedRemovable(t, store)
+	earlier := makeEvent(EventTypeNodeRemoved, removedPayload())
+	require.NoError(t, store.MemoryTreeStore.DeleteNodeAndResponsor(ctx, "tree1", posUser, earlier.ID, nil))
+	seedReplacement(t, store)
+	event := makeEvent(EventTypeNodeRemoved, removedPayload())
+
+	err := c.HandleEvent(ctx, event)
+
+	var target *RemovalNotProjectedError
+	require.ErrorAs(t, err, &target)
+	assert.Equal(t, event.ID, target.EventID)
+	assert.Empty(t, store.responsors, "an unrepairable removal writes nothing")
+}
+
+// removalReadFailingStore fails the read keyed on the removal event and leaves
+// every other method to the embedded store.
+type removalReadFailingStore struct {
+	*MemoryTreeStore
+	err error
+}
+
+func (s *removalReadFailingStore) GetNodeByRemovalEvent(_ context.Context, _, _ string) (*TreeNodeRow, error) {
+	return nil, s.err
+}
+
+func TestHandleNodeRemoved_ReconcileRetriesWhenAReadFails(t *testing.T) {
+	cases := map[string]func(*MemoryTreeStore) TreeStore{
+		"the removal event read": func(m *MemoryTreeStore) TreeStore {
+			return &removalReadFailingStore{MemoryTreeStore: m, err: errors.New("read failed")}
+		},
+		"the tree and user read": func(m *MemoryTreeStore) TreeStore {
+			return &readFailingStore{MemoryTreeStore: m, err: errors.New("read failed")}
+		},
+	}
+	for name, wrap := range cases {
+		t.Run(name, func(t *testing.T) {
+			tr := &reconcileTransport{mutationErr: &EngineError{Code: engineCodeUserNotFound}}
+			mem := NewMemoryTreeStore()
+			require.NoError(t, mem.InsertNode(context.Background(), TreeNodeRow{
+				ID: "cafe0000-0000-4000-8000-0000000000aa", TreeID: "tree1",
+				UserID: posUser, Depth: 1, ParentID: ptr(posParent), EnrolledAt: posEnrolled,
+			}))
+			c := NewTreeEventConsumer(wrap(mem), newEngineClientWithTransport(tr))
+			c.retryDelay = 0
+
+			err := c.HandleEvent(context.Background(), makeEvent(EventTypeNodeRemoved, removedPayload()))
+
+			require.Error(t, err)
+			var target *RemovalNotProjectedError
+			assert.False(t, errors.As(err, &target), "a failed read reported as a divergence: %v", err)
+			assert.Len(t, tr.mutationOps, c.maxRetries+1, "an inconclusive reconcile retries")
+		})
+	}
+}
+
 // The engine has already applied the removal and its reply carried the only
 // copy of moved, so giving up on the store write is not a clean abort. It is
 // the divergence HEU-777 owns, and a shutdown landing in this window must not

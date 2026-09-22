@@ -369,9 +369,17 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 		if !isEngineCode(err, engineCodeUserNotFound) {
 			return reconcileNotApplicable, nil
 		}
-		// This branch turns on one thing: whether an active row is still
-		// there. The read below also keeps a removed row in reach, which a
-		// discriminator would need. HEU-811.
+		// The stamp read answers whether this delivery already projected.
+		// The tree-and-user read below it only separates a removal that never
+		// landed from a user the store never held.
+		stamped, serr := c.store.GetNodeByRemovalEvent(ctx, payload.TreeID, event.ID)
+		if serr != nil {
+			return reconcileInconclusive, serr
+		}
+		if stamped != nil {
+			alreadyProjected = true
+			return reconcileConverged, nil
+		}
 		existing, gerr := c.store.GetNodeIncludingRemoved(ctx, payload.TreeID, payload.UserID)
 		if gerr != nil {
 			return reconcileInconclusive, gerr
@@ -399,8 +407,7 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 		return err
 	}
 
-	// The flag is set only where no active row was read, so there is nothing
-	// here to write.
+	// A converged reconcile leaves no store write to make.
 	if alreadyProjected {
 		return nil
 	}

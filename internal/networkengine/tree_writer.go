@@ -166,6 +166,23 @@ func (w *TreeWriter) AddRoot(ctx context.Context, r AddRootRequest) (WriteResult
 			return event, CheckAddRoot(userID.String(), r.EnrolledAt.Unix()), err
 		},
 	}
+	// Version 1 cannot change once written, but its absence can end before the
+	// lock is taken.
+	if !found {
+		spec.underLock = func(ctx context.Context) (treeShape, error) {
+			recorded, found, err := w.readShape(ctx, stream)
+			if err != nil {
+				return treeShape{}, err
+			}
+			if !found {
+				return requested, nil
+			}
+			if err := rootShapeConflict(tree, stream, recorded, r); err != nil {
+				return treeShape{}, err
+			}
+			return recorded, nil
+		}
+	}
 	return w.write(ctx, spec)
 }
 
@@ -323,6 +340,9 @@ type writeSpec struct {
 	// build returns the event to append and the mutation to check first, for
 	// the shape the write goes ahead with.
 	build func(shape treeShape) (platform.NewEvent, Mutation, error)
+	// underLock, when set, runs after the lock is taken and before the load,
+	// and returns the shape the write goes ahead with.
+	underLock func(ctx context.Context) (treeShape, error)
 }
 
 // write runs the locked part of a write.
@@ -340,6 +360,11 @@ func (w *TreeWriter) write(ctx context.Context, spec writeSpec) (result WriteRes
 	}()
 
 	shape := spec.shape
+	if spec.underLock != nil {
+		if shape, err = spec.underLock(ctx); err != nil {
+			return result, err
+		}
+	}
 	event, check, err := spec.build(shape)
 	if err != nil {
 		return result, err

@@ -864,3 +864,45 @@ func TestTreeWriterAppend_StatesAConflictWithoutTheStoresVersion(t *testing.T) {
 	var conflict *platform.ConcurrencyError
 	assert.ErrorAs(t, err, &conflict)
 }
+
+func TestTreeWriterAddRoot_UsesTheTypeRecordedUnderTheLock(t *testing.T) {
+	env := newWriterEnv()
+	log := &orderLog{}
+	locker := &hookLocker{inner: env.locker, before: func() {
+		appendDirect(t, env.events, EventTypeRootAdded, RootAddedPayload{
+			TreeID: writerTree, UserID: writerOther, SponsorID: writerOther,
+			EnrolledAt: writeTime, TreeType: treeTypeBinary,
+		})
+	}}
+	w := NewTreeWriter(env.events, &loggingStore{TreeStore: env.store, log: log, name: "w"},
+		newFakeWriterEngine(), locker)
+
+	_, err := w.AddRoot(context.Background(), unilevelRootRequest())
+
+	require.EqualError(t, err, "add root to tree "+writerTree+": stream "+TreeStreamName(writerTree)+
+		" records tree type binary at version 1, and the request names unilevel")
+	assert.Equal(t, -1, log.indexOf("w load"), "the refusal must come before the load: %v", log.snapshot())
+	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 1)
+}
+
+func TestTreeWriterAddRoot_UsesTheMatrixShapeRecordedUnderTheLock(t *testing.T) {
+	env := newWriterEnv()
+	recordedWidth, spillover := 5, "breadth_first"
+	locker := &hookLocker{inner: env.locker, before: func() {
+		appendDirect(t, env.events, EventTypeRootAdded, RootAddedPayload{
+			TreeID: writerTree, UserID: writerOther, SponsorID: writerOther,
+			EnrolledAt: writeTime, TreeType: treeTypeMatrix,
+			MatrixWidth: &recordedWidth, MatrixSpillover: &spillover,
+		})
+	}}
+	w := NewTreeWriter(env.events, env.store, newFakeWriterEngine(), locker)
+	width := 3
+	req := unilevelRootRequest()
+	req.TreeType, req.MatrixWidth, req.MatrixSpillover = treeTypeMatrix, &width, &spillover
+
+	_, err := w.AddRoot(context.Background(), req)
+
+	require.EqualError(t, err, "add root to tree "+writerTree+": stream "+TreeStreamName(writerTree)+
+		" records matrix width 5 at version 1, and the request names 3")
+	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 1)
+}

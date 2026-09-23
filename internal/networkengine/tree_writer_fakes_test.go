@@ -397,3 +397,18 @@ func (e *loggingEvents) Append(ctx context.Context, stream string, expected int6
 	e.log.add(fmt.Sprintf("append at %d", expected+1))
 	return e.EventStore.Append(ctx, stream, expected, events)
 }
+
+// hookLocker runs before once, then asks inner for the lock.
+type hookLocker struct {
+	inner  TreeLocker
+	before func()
+}
+
+func (l *hookLocker) Lock(ctx context.Context, treeID uuid.UUID) (func() error, error) {
+	if l.before != nil {
+		hook := l.before
+		l.before = nil
+		hook()
+	}
+	return l.inner.Lock(ctx, treeID)
+}

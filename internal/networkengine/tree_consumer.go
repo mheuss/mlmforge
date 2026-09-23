@@ -482,7 +482,8 @@ func detachedWrite(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(ctx), storeWriteTimeout)
 }
 
-// detachedRead bounds a read whose caller's context is already cancelled.
+// detachedRead returns a context a read can finish on after the caller has
+// given up, still bounded so it cannot hang.
 func detachedRead(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(ctx), storeWriteTimeout)
 }

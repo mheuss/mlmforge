@@ -806,11 +806,14 @@ func TestTreeWriterAppend_ReportsAnotherEventAtItsVersion(t *testing.T) {
 	_, err := w.Place(context.Background(), placeRequest(writerChild, nil))
 
 	require.Error(t, err)
-	m := regexp.MustCompile("; a read of that version found event " + interloper + ", so event ([0-9a-f-]{36}) was not appended$").
+	m := regexp.MustCompile("; a read of that version found event " + regexp.QuoteMeta(interloper) + ", so event ([0-9a-f-]{36}) was not appended$").
 		FindStringSubmatch(err.Error())
 	require.Len(t, m, 2, "error: %s", err)
 	assert.NotEqual(t, interloper, m[1])
 	assert.Contains(t, err.Error(), "append event "+m[1]+" to stream ")
+	stored := streamEvents(t, env.events, TreeStreamName(writerTree))
+	require.Len(t, stored, 2)
+	assert.Equal(t, interloper, stored[1].ID)
 }
 
 func TestTreeWriterAppend_ConfirmsALostReplyAfterTheCallerCancels(t *testing.T) {
@@ -825,6 +828,7 @@ func TestTreeWriterAppend_ConfirmsALostReplyAfterTheCallerCancels(t *testing.T) 
 
 	require.NoError(t, err, "the append committed before the caller's context ended")
 	assert.Equal(t, int64(2), res.Version)
+	require.ErrorIs(t, res.ProjectionErr, context.Canceled)
 }
 
 func TestTreeWriterAppend_ReportsAnUnknownOutcomeWhenTheReadFails(t *testing.T) {
@@ -845,6 +849,7 @@ func TestTreeWriterAppend_ReportsAnUnknownOutcomeWhenTheReadFails(t *testing.T) 
 		unknown.EventID, TreeStreamName(writerTree)))
 	assert.ErrorIs(t, err, appendErr)
 	assert.ErrorIs(t, err, readErr)
+	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 1)
 }
 
 func TestTreeWriterAppend_StatesAConflictWithoutTheStoresVersion(t *testing.T) {

@@ -264,7 +264,8 @@ type scriptedEvents struct {
 	// to the inner store before returning it.
 	appendErr   error
 	commitFirst bool
-	// readErr is what every ReadStream returns after a scripted Append failure.
+	// readErr is what the first ReadStream after a scripted Append failure
+	// returns.
 	readErr error
 	failed  bool
 }
@@ -301,7 +302,9 @@ func (s *scriptedEvents) ReadStream(ctx context.Context, stream string, from, li
 		return nil, err
 	}
 	if s.failed && s.readErr != nil {
-		return nil, s.readErr
+		err := s.readErr
+		s.readErr = nil
+		return nil, err
 	}
 	if s.readAs != nil && from == s.readAsVersion {
 		return []platform.Event{*s.readAs}, nil

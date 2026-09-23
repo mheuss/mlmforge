@@ -906,3 +906,42 @@ func TestTreeWriterAddRoot_UsesTheMatrixShapeRecordedUnderTheLock(t *testing.T) 
 		" records matrix width 5 at version 1, and the request names 3")
 	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 1)
 }
+
+func TestTreeWriterAddRoot_ChecksARootOfTheSameShapeThatLandedBeforeTheLock(t *testing.T) {
+	env := newWriterEnv()
+	locker := &hookLocker{inner: env.locker, before: func() {
+		appendDirect(t, env.events, EventTypeRootAdded, RootAddedPayload{
+			TreeID: writerTree, UserID: writerOther, SponsorID: writerOther,
+			EnrolledAt: writeTime, TreeType: treeTypeUnilevel,
+		})
+	}}
+	engine := newFakeWriterEngine()
+	engine.checkErr = &EngineError{Code: engineCodeRootAlreadyExists, Message: "tree already has a root node"}
+	w := NewTreeWriter(env.events, env.store, engine, locker)
+
+	res, err := w.AddRoot(context.Background(), unilevelRootRequest())
+
+	var engineErr *EngineError
+	require.ErrorAs(t, err, &engineErr)
+	assert.Equal(t, engineCodeRootAlreadyExists, engineErr.Code)
+	require.NotNil(t, res.CaughtUp)
+	assert.Equal(t, int64(1), res.CaughtUp.Version)
+	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 1)
+}
+
+func TestTreeWriterAddRoot_ReportsAReleaseFailureAlongsideAnUnderLockRefusal(t *testing.T) {
+	env := newWriterEnv()
+	unlockErr := errors.New("pg_advisory_unlock for tree x returned false")
+	locker := &hookLocker{inner: releaseFailingLocker{err: unlockErr}, before: func() {
+		appendDirect(t, env.events, EventTypeRootAdded, RootAddedPayload{
+			TreeID: writerTree, UserID: writerOther, SponsorID: writerOther,
+			EnrolledAt: writeTime, TreeType: treeTypeBinary,
+		})
+	}}
+	w := NewTreeWriter(env.events, env.store, newFakeWriterEngine(), locker)
+
+	res, err := w.AddRoot(context.Background(), unilevelRootRequest())
+
+	require.ErrorContains(t, err, " records tree type binary at version 1, and the request names unilevel")
+	assert.Equal(t, unlockErr, res.ReleaseErr)
+}

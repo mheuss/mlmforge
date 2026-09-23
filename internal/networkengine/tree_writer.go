@@ -166,7 +166,6 @@ func (w *TreeWriter) AddRoot(ctx context.Context, r AddRootRequest) (WriteResult
 			return event, CheckAddRoot(userID.String(), r.EnrolledAt.Unix()), err
 		},
 	}
-	// The stream was empty before the lock, so read version 1 again under it.
 	if !found {
 		spec.underLock = func(ctx context.Context) (treeShape, error) {
 			recorded, found, err := w.readShape(ctx, stream)

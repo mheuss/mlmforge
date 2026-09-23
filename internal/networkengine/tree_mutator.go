@@ -41,7 +41,8 @@ type TreeEngine interface {
 
 var _ TreeEngine = (*EngineClient)(nil)
 
-// TreeEngineChecker is the engine dependency of TreeWriter.
+// TreeEngineChecker is a TreeEngine that can also check a mutation without
+// applying it.
 type TreeEngineChecker interface {
 	TreeEngine
 	CheckMutation(ctx context.Context, structure string, m Mutation) error

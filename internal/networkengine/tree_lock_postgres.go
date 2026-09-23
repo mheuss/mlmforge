@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,6 +19,9 @@ const treeLockNamespace int32 = 0x74726565
 
 // treeLockPollInterval is the pause between two attempts on a held lock.
 const treeLockPollInterval = 100 * time.Millisecond
+
+// treeLockApplicationName names every lock connection in pg_stat_activity.
+const treeLockApplicationName = "mlmforge-tree-lock"
 
 // treeUnlockTimeout bounds the unlock call and the close that follows it.
 const treeUnlockTimeout = 5 * time.Second
@@ -52,6 +56,10 @@ func (l *PostgresTreeLocker) Lock(ctx context.Context, treeID uuid.UUID) (func()
 	if err != nil {
 		return nil, fmt.Errorf("parse the database URL for the lock on tree %s: %w", treeID, err)
 	}
+	if cfg.ConnConfig.RuntimeParams == nil {
+		cfg.ConnConfig.RuntimeParams = map[string]string{}
+	}
+	cfg.ConnConfig.RuntimeParams["application_name"] = treeLockApplicationName
 	conn, err := pgx.ConnectConfig(ctx, cfg.ConnConfig)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -68,10 +76,15 @@ func (l *PostgresTreeLocker) Lock(ctx context.Context, treeID uuid.UUID) (func()
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return nil, ctxErr
 			}
-			return nil, fmt.Errorf("pg_try_advisory_lock for tree %s returned an error: %w", treeID, err)
+			return nil, fmt.Errorf("the pg_try_advisory_lock query for tree %s failed: %w", treeID, err)
 		}
 		if granted {
-			return func() error { return releaseTreeLock(conn, treeID, key) }, nil
+			var once sync.Once
+			return func() error {
+				err := fmt.Errorf("unlock of tree %s was called after the lock was released", treeID)
+				once.Do(func() { err = releaseTreeLock(conn, treeID, key) })
+				return err
+			}, nil
 		}
 		select {
 		case <-ctx.Done():
@@ -103,7 +116,7 @@ func releaseTreeLock(conn *pgx.Conn, treeID uuid.UUID, key int32) error {
 	var errs []error
 	switch {
 	case unlockErr != nil:
-		errs = append(errs, fmt.Errorf("pg_advisory_unlock for tree %s returned an error: %w", treeID, unlockErr))
+		errs = append(errs, fmt.Errorf("the pg_advisory_unlock query for tree %s failed: %w", treeID, unlockErr))
 	case !released:
 		errs = append(errs, fmt.Errorf("pg_advisory_unlock for tree %s returned false", treeID))
 	}

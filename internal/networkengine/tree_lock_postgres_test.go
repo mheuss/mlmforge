@@ -17,6 +17,8 @@ func TestTreeLockKey_IsFixed(t *testing.T) {
 	assert.Equal(t, int32(1953654117), treeLockNamespace)
 	assert.Equal(t, int32(856866490), treeLockKey(uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-000000000001")))
 	assert.Equal(t, int32(840088871), treeLockKey(uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-000000000002")))
+	assert.Equal(t, int32(-1288558304), treeLockKey(uuid.MustParse("bbbbbbbb-bbbb-bbbb-bbbb-000000000001")),
+		"a key whose hash has the high bit set")
 }
 
 func requireLockDatabase(t *testing.T) string {
@@ -121,4 +123,38 @@ func TestPostgresTreeLocker_AStaleUnlockDoesNotFreeTheNextHolder(t *testing.T) {
 	defer cancelShort()
 	_, err = locker.Lock(short, tree)
 	require.ErrorIs(t, err, context.DeadlineExceeded, "a third Lock succeeded while the second holder held the tree")
+}
+
+// lockSessions counts the open lock connections Postgres reports.
+func lockSessions(t *testing.T, dsn string) int {
+	t.Helper()
+	conn, err := pgx.Connect(context.Background(), dsn)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close(context.Background()) }()
+	var n int
+	require.NoError(t, conn.QueryRow(context.Background(),
+		"SELECT count(*) FROM pg_stat_activity WHERE application_name = $1", treeLockApplicationName).Scan(&n))
+	return n
+}
+
+func TestPostgresTreeLocker_ClosesItsConnections(t *testing.T) {
+	dsn := requireLockDatabase(t)
+	tree := uuid.MustParse(testTreeUUID(6))
+	holder, waiter := NewPostgresTreeLocker(dsn), NewPostgresTreeLocker(dsn)
+	gone := func() bool { return lockSessions(t, dsn) == 0 }
+	require.Eventually(t, gone, 5*time.Second, 50*time.Millisecond, "lock connections left open by an earlier test")
+
+	unlock, err := holder.Lock(context.Background(), tree)
+	require.NoError(t, err)
+	require.Equal(t, 1, lockSessions(t, dsn), "a held lock keeps one connection open")
+
+	short, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	_, err = waiter.Lock(short, tree)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Eventually(t, func() bool { return lockSessions(t, dsn) == 1 }, 5*time.Second, 50*time.Millisecond,
+		"a Lock that gave up left its connection open")
+
+	require.NoError(t, unlock())
+	require.Eventually(t, gone, 5*time.Second, 50*time.Millisecond, "unlock left its connection open")
 }

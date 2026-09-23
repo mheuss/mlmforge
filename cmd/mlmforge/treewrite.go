@@ -85,7 +85,8 @@ func newTreeAddRootCmd(resolve flagResolver, open depsOpener, writer writerFor) 
 		Use:   "add-root",
 		Short: "Append a tree's root_added event and try to project it",
 		Long: "Opens a database pool, starts the engine worker, appends one tree.root_added event, tries to project it, and exits. " +
-			"The tree type and matrix flags shape the tree when its stream is empty. After that the stream's first event decides the type.",
+			"The tree type and matrix flags shape the tree when its stream is empty. After that the stream's first event decides the shape, " +
+			"and a type or matrix flag that differs from it is refused.",
 		Args: cobra.NoArgs,
 		// Moving this to the tree group leaves a real invocation dumping
 		// usage after the error line.

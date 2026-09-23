@@ -887,21 +887,30 @@ Each invocation starts a worker, rebuilds the tree in it from the store under th
 
 ### Before the append
 
-- Version 1 of a tree's stream records the tree type, and for a matrix the width and spillover. Every later write reads the type from there. A version 1 that is not a complete `root_added` refuses the write.
-- `add-root` on a stream that already has a version 1 is refused when its type, matrix width or spillover differs from what version 1 records. Matrix flags left off the request match. On an empty stream the check runs again under the lock, so a root that landed in between decides.
+- Version 1 of a tree's stream records the tree type, and for a matrix the width and spillover. Every later write reads the shape from there. A version 1 that is not a complete `root_added` refuses the write.
+- `add-root` on a stream that already has a version 1 is refused when its type, matrix width or spillover differs from what version 1 records. A matrix flag on a non-matrix tree is refused. Matrix flags left off the request match. On an empty stream the check runs again under the lock, so a root that landed in between decides.
 - Removing a tree's only root is allowed. A later `add-root` roots the tree again (Michael, 2026-09-23).
 - The stream's last event is redelivered through `HandleEvent`. Under the lock it is the only event that can be unprojected. Catch-up redelivers only `tree.root_added`, `tree.node_placed` and `tree.node_removed`. A last event of any other type refuses the write before `HandleEvent` is called. `HandleEvent` returns nil for a type it does not project, so calling it would report that event as projected.
 - `check_mutation` asks the engine whether the mutation would succeed. The worker runs the check functions the mutating ops call first, so no refusal rule is copied into Go.
 
 ### Three outcomes for an append
 
-An append is appended, not appended, or unknown. `Append` can commit and still return an error. The writer then reads the version it tried, on a context detached from the caller's. Its own event there means appended. Anything else means not appended. A failed read means unknown, and the CLI exits 1.
+`Append` can commit and still return an error. On any append error other than a concurrency conflict or a validation refusal, the writer reads the version it tried. The read runs on a context detached from the caller's. What it finds decides the outcome:
 
-When the read finds no event, the error says only that. A caller cancelled during COMMIT can see the commit fail while the server finishes it, and the read may run before the commit is visible. The event then shows up as the stream's last event, and the next write redelivers it.
+- Its own event: appended.
+- Another event: not appended.
+- No event: treated as not appended, and the error states only what the read found. A caller cancelled during COMMIT can see the commit fail while the server finishes it, and the read may run before the commit is visible. Such an event shows up as the stream's last event, and the next write redelivers it.
+- The read fails: unknown. The CLI exits 1.
 
 A confirmed append is a success even when projection fails. The CLI exits 0 and warns on stderr. The next write to the tree redelivers the event.
 
-`WriteResult` carries the stream, the event ID and version once the append is confirmed, the redelivered last event, the projection failure and the lock release failure. The release failure is set on every path after the lock is taken, including when the write returns an error.
+What `WriteResult` carries:
+
+- `Stream`, set before the lock is taken.
+- `EventID` and `Version`, set once the append is confirmed.
+- `CaughtUp`, the redelivered last event.
+- `ProjectionErr`, any failure after the append was confirmed.
+- `ReleaseErr`, set on every path after the lock is taken, including when the write returns an error.
 
 ## Worker Shutdown
 

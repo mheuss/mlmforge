@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 	"time"
 
@@ -261,6 +262,14 @@ func TestTreeLoad_ReportsAConfigRejection(t *testing.T) {
 // eventIDPattern matches an event ID in command output.
 const eventIDPattern = `[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`
 
+// appendedEventID returns the event ID from a command's "appended event" line.
+func appendedEventID(t *testing.T, stdout string) string {
+	t.Helper()
+	m := regexp.MustCompile(`appended event (` + eventIDPattern + `) at version`).FindStringSubmatch(stdout)
+	require.Len(t, m, 2, "stdout: %q", stdout)
+	return m[1]
+}
+
 func TestTreeWrite_AddRootPlaceRemoveThenLoad(t *testing.T) {
 	if pgContainer == nil {
 		t.Skip("Postgres container not available")
@@ -276,12 +285,15 @@ func TestTreeWrite_AddRootPlaceRemoveThenLoad(t *testing.T) {
 	require.NoError(t, err, out.stderr.String())
 	require.Regexp(t, `^appended event `+eventIDPattern+` at version 1 to stream `+stream+`; projected\n$`, out.stdout.String())
 	require.Empty(t, out.stderr.String())
+	rootEvent := appendedEventID(t, out.stdout.String())
 
 	out, err = runTreeCmd(t, append([]string{"place", "--user-id", child, "--parent-id", root,
 		"--sponsor-id", root, "--enrolled-at", "2026-09-23T13:00:00Z"}, conn...)...)
 	require.NoError(t, err, out.stderr.String())
-	require.Regexp(t, `^redelivered event `+eventIDPattern+` at version 1\nappended event `+eventIDPattern+
+	require.Regexp(t, `^redelivered event `+rootEvent+` at version 1\nappended event `+eventIDPattern+
 		` at version 2 to stream `+stream+`; projected\n$`, out.stdout.String())
+	require.Empty(t, out.stderr.String())
+	placeEvent := appendedEventID(t, out.stdout.String())
 
 	out, err = runTreeCmd(t, append([]string{"load", "--tree-type", "unilevel"}, conn...)...)
 	require.NoError(t, err, out.stderr.String())
@@ -290,8 +302,9 @@ func TestTreeWrite_AddRootPlaceRemoveThenLoad(t *testing.T) {
 	out, err = runTreeCmd(t, append([]string{"remove", "--user-id", child,
 		"--removed-at", "2026-09-23T14:00:00Z"}, conn...)...)
 	require.NoError(t, err, out.stderr.String())
-	require.Regexp(t, `^redelivered event `+eventIDPattern+` at version 2\nappended event `+eventIDPattern+
+	require.Regexp(t, `^redelivered event `+placeEvent+` at version 2\nappended event `+eventIDPattern+
 		` at version 3 to stream `+stream+`; projected\n$`, out.stdout.String())
+	require.Empty(t, out.stderr.String())
 
 	out, err = runTreeCmd(t, append([]string{"load", "--tree-type", "unilevel"}, conn...)...)
 	require.NoError(t, err, out.stderr.String())
@@ -315,6 +328,7 @@ func TestTreeWrite_ARefusedPlacementExitsNonZeroAndAppendsNothing(t *testing.T) 
 
 	require.Error(t, err)
 	require.Empty(t, out.stdout.String())
+	require.Contains(t, out.stderr.String(), "check_mutation for add_node in tree "+tree+" returned: ")
 	require.Contains(t, out.stderr.String(), "USER_ALREADY_EXISTS")
 	require.Contains(t, out.stderr.String(), "nothing was appended")
 	stored, err := platform.NewPostgresEventStore(pool).ReadStream(t.Context(), "tree-"+tree, 1, 0)

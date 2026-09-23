@@ -1069,13 +1069,13 @@ res, err := w.Place(ctx, networkengine.PlaceRequest{
     TreeID: tree, UserID: user, ParentID: parent, SponsorID: sponsor, Position: &slot, EnrolledAt: at,
 })
 if res.ReleaseErr != nil {
-    // report it; it is set on the error path too
+    // report it, on the error path too
 }
 if err != nil {
     return err // nothing is known to have been appended
 }
 if res.ProjectionErr != nil {
-    // the event is durable; the next write to this tree redelivers it
+    // the event is durable, and the next write to this tree redelivers it
 }
 ```
 
@@ -1088,16 +1088,16 @@ if res.ProjectionErr != nil {
 **Added:** Unreleased (HEU-301)
 **Files:** `internal/networkengine/tree_writer.go`, `internal/networkengine/tree_writer_errors.go`
 
-**Problem:** `EventStore.Append` returns the commit's error, and a commit can land while its reply is lost. A caller that treats every error as "not appended" can report a placement that happened as one that did not.
+**Problem:** `EventStore.Append` returns the commit's error, and a commit can land while its reply is lost. A caller that treats every error as "not appended" can report a placement that happened as one that did not. This entry narrows that to one case, a read that finds no event.
 
-**Solution:** On an append error that is neither a concurrency conflict nor a validation refusal, the writer reads the version it tried, on a context detached from the caller's. Its own event there means appended. Anything else means not appended. A failed read returns `AppendOutcomeUnknownError`, naming both errors.
+**Solution:** On an append error that is neither a concurrency conflict nor a validation refusal, the writer reads the version it tried, on a context detached from the caller's. Its own event there means appended. Another event there means not appended. No event there is treated as not appended, and the error states only what the read found. A failed read returns `AppendOutcomeUnknownError`, naming both errors.
 
 **Usage:**
 ```go
 _, err := w.Remove(ctx, req)
 var unknown *networkengine.AppendOutcomeUnknownError
 if errors.As(err, &unknown) {
-    // exit non-zero; the operation is not known to have been performed
+    // exit non-zero, because the operation is not known to have been performed
 }
 ```
 

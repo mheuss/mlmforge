@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mlmforge/mlmforge/internal/networkengine"
+	"github.com/mlmforge/mlmforge/internal/platform"
 	"github.com/stretchr/testify/require"
 )
 
@@ -255,4 +256,68 @@ func TestTreeLoad_ReportsAConfigRejection(t *testing.T) {
 	require.Contains(t, out.stderr.String(), "config_invalid")
 	require.Empty(t, out.stdout.String())
 	require.NotContains(t, out.stderr.String(), "Usage:")
+}
+
+// eventIDPattern matches an event ID in command output.
+const eventIDPattern = `[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`
+
+func TestTreeWrite_AddRootPlaceRemoveThenLoad(t *testing.T) {
+	if pgContainer == nil {
+		t.Skip("Postgres container not available")
+	}
+	worker := requireWorker(t)
+	_ = pgContainer.NewPool(t)
+	tree, root, child := testTreeID(30), testUserID(1), testUserID(2)
+	conn := []string{"--db-url", pgContainer.DSN, "--worker", worker, "--tree-id", tree}
+	stream := "tree-" + tree
+
+	out, err := runTreeCmd(t, append([]string{"add-root", "--user-id", root, "--sponsor-id", root,
+		"--tree-type", "unilevel", "--enrolled-at", "2026-09-23T12:00:00Z"}, conn...)...)
+	require.NoError(t, err, out.stderr.String())
+	require.Regexp(t, `^appended event `+eventIDPattern+` at version 1 to stream `+stream+`; projected\n$`, out.stdout.String())
+	require.Empty(t, out.stderr.String())
+
+	out, err = runTreeCmd(t, append([]string{"place", "--user-id", child, "--parent-id", root,
+		"--sponsor-id", root, "--enrolled-at", "2026-09-23T13:00:00Z"}, conn...)...)
+	require.NoError(t, err, out.stderr.String())
+	require.Regexp(t, `^redelivered event `+eventIDPattern+` at version 1\nappended event `+eventIDPattern+
+		` at version 2 to stream `+stream+`; projected\n$`, out.stdout.String())
+
+	out, err = runTreeCmd(t, append([]string{"load", "--tree-type", "unilevel"}, conn...)...)
+	require.NoError(t, err, out.stderr.String())
+	require.Equal(t, "loaded tree "+tree+" (2 nodes)\n", out.stdout.String())
+
+	out, err = runTreeCmd(t, append([]string{"remove", "--user-id", child,
+		"--removed-at", "2026-09-23T14:00:00Z"}, conn...)...)
+	require.NoError(t, err, out.stderr.String())
+	require.Regexp(t, `^redelivered event `+eventIDPattern+` at version 2\nappended event `+eventIDPattern+
+		` at version 3 to stream `+stream+`; projected\n$`, out.stdout.String())
+
+	out, err = runTreeCmd(t, append([]string{"load", "--tree-type", "unilevel"}, conn...)...)
+	require.NoError(t, err, out.stderr.String())
+	require.Equal(t, "loaded tree "+tree+" (1 nodes)\n", out.stdout.String())
+}
+
+func TestTreeWrite_ARefusedPlacementExitsNonZeroAndAppendsNothing(t *testing.T) {
+	if pgContainer == nil {
+		t.Skip("Postgres container not available")
+	}
+	worker := requireWorker(t)
+	pool := pgContainer.NewPool(t)
+	tree, root := testTreeID(31), testUserID(1)
+	conn := []string{"--db-url", pgContainer.DSN, "--worker", worker, "--tree-id", tree}
+	out, err := runTreeCmd(t, append([]string{"add-root", "--user-id", root, "--sponsor-id", root,
+		"--tree-type", "unilevel"}, conn...)...)
+	require.NoError(t, err, out.stderr.String())
+
+	out, err = runTreeCmd(t, append([]string{"place", "--user-id", root, "--parent-id", root,
+		"--sponsor-id", root}, conn...)...)
+
+	require.Error(t, err)
+	require.Empty(t, out.stdout.String())
+	require.Contains(t, out.stderr.String(), "USER_ALREADY_EXISTS")
+	require.Contains(t, out.stderr.String(), "nothing was appended")
+	stored, err := platform.NewPostgresEventStore(pool).ReadStream(t.Context(), "tree-"+tree, 1, 0)
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
 }

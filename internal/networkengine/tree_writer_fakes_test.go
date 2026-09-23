@@ -167,8 +167,14 @@ func (f *fakeWriterEngine) GetPosition(_ context.Context, structure, userID stri
 func (f *fakeWriterEngine) CheckMutation(_ context.Context, structure string, m Mutation) error {
 	f.calls = append(f.calls, "check "+m.op)
 	f.checks = append(f.checks, m)
-	if _, err := f.tree(structure); err != nil {
+	t, err := f.tree(structure)
+	if err != nil {
 		return err
+	}
+	if parent, ok := m.params["parent_id"].(string); ok {
+		if _, found := t.nodes[parent]; !found {
+			return fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", parent)
+		}
 	}
 	return f.checkErr
 }

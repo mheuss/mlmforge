@@ -55,8 +55,7 @@ type RemoveRequest struct {
 	RemovedAt time.Time
 }
 
-// CaughtUpEvent names the stream's previous last event, redelivered before a
-// write appended.
+// CaughtUpEvent names a redelivered last event.
 type CaughtUpEvent struct {
 	EventID string
 	Version int64
@@ -69,7 +68,7 @@ type WriteResult struct {
 	Stream        string
 	EventID       string
 	Version       int64
-	CaughtUp      *CaughtUpEvent // the last event, redelivered before the append
+	CaughtUp      *CaughtUpEvent // the stream's last event, redelivered and handled without error
 	ProjectionErr error          // any failure after the append was confirmed
 	ReleaseErr    error          // the unlock failed
 }
@@ -422,9 +421,9 @@ var treeEventTypes = map[string]bool{
 
 // catchUp redelivers the stream's last event through the consumer.
 func (w *TreeWriter) catchUp(ctx context.Context, tree, stream string, last platform.Event) (*CaughtUpEvent, error) {
-	// A nil return for any other type would read as projected.
+	// Redelivering any other type would return nil and count as projected.
 	if !treeEventTypes[last.Type] {
-		return nil, fmt.Errorf("stream %s ends with event %s at version %d of type %q, which is not a tree event; nothing was appended",
+		return nil, fmt.Errorf("stream %s ends with event %s at version %d of type %q, which catch-up does not redeliver; nothing was appended",
 			stream, last.ID, last.Version, last.Type)
 	}
 	if err := w.consumer.HandleEvent(ctx, last); err != nil {

@@ -642,6 +642,24 @@ func TestTreeWriterCatchUp_ProjectsAnUnprojectedLastEventBeforeAppending(t *test
 	assert.Less(t, insert, appendNew, "the earlier event must project before the new one is appended: %v", log.snapshot())
 }
 
+func TestTreeWriterCatchUp_ProjectsTheLastEventBeforeTheCheck(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	appendDirect(t, env.events, EventTypeNodePlaced, NodePlacedPayload{
+		TreeID: writerTree, UserID: writerChild, ParentID: writerRoot, SponsorID: writerRoot,
+		TreeType: treeTypeUnilevel, EnrolledAt: writeTime,
+	})
+	w, _ := env.writer()
+	req := placeRequest(writerOther, nil)
+	req.ParentID = writerChild
+
+	res, err := w.Place(context.Background(), req)
+
+	require.NoError(t, err, "a check before catch-up finds no parent %s", writerChild)
+	require.NoError(t, res.ProjectionErr)
+	assert.Equal(t, int64(3), res.Version)
+}
+
 func TestTreeWriterCatchUp_ConvergesOnAProjectedPlacement(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
@@ -681,7 +699,7 @@ func TestTreeWriterCatchUp_RefusesALastEventOfAnotherType(t *testing.T) {
 	_, err := w.Place(context.Background(), placeRequest(writerChild, nil))
 
 	require.EqualError(t, err, "stream "+TreeStreamName(writerTree)+" ends with event "+foreign.ID+
-		` at version 2 of type "tree.renamed", which is not a tree event; nothing was appended`)
+		` at version 2 of type "tree.renamed", which catch-up does not redeliver; nothing was appended`)
 	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 2)
 }
 

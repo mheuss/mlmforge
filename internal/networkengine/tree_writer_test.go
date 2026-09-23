@@ -405,6 +405,7 @@ func TestTreeWriterPlace_ChecksTheEngineCallTheConsumerMakes(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, res.ProjectionErr)
 			assert.Equal(t, []Mutation{tc.want}, engine.checks)
+			assert.Equal(t, engine.checks, engine.placements, "the checked call must be the call the projection made")
 		})
 	}
 }

@@ -31,6 +31,8 @@ type fakeWriterEngine struct {
 	checks   []Mutation
 	// calls logs the requests made, in order.
 	calls []string
+	// placements holds each placement call, in the form of its check.
+	placements []Mutation
 	// failAdd fails every add of the keyed user.
 	failAdd map[string]error
 }
@@ -124,10 +126,12 @@ func (f *fakeWriterEngine) AddNode(_ context.Context, structure, userID, parentI
 		opt(params)
 	}
 	position, _ := params["position"].(int)
+	f.placements = append(f.placements, CheckAddNode(userID, parentID, sponsorID, enrolledAt, opts...))
 	return f.place(structure, userID, parentID, sponsorID, position, enrolledAt)
 }
 
 func (f *fakeWriterEngine) AddNodeAt(_ context.Context, structure, userID, parentID, sponsorID string, position int, enrolledAt int64) error {
+	f.placements = append(f.placements, CheckAddNodeAt(userID, parentID, sponsorID, position, enrolledAt))
 	return f.place(structure, userID, parentID, sponsorID, position, enrolledAt)
 }
 

@@ -421,7 +421,7 @@ var treeEventTypes = map[string]bool{
 
 // catchUp redelivers the stream's last event through the consumer.
 func (w *TreeWriter) catchUp(ctx context.Context, tree, stream string, last platform.Event) (*CaughtUpEvent, error) {
-	// Redelivering any other type would return nil and count as projected.
+	// An unlisted type is refused rather than reported as caught up.
 	if !treeEventTypes[last.Type] {
 		return nil, fmt.Errorf("stream %s ends with event %s at version %d of type %q, which catch-up does not redeliver; nothing was appended",
 			stream, last.ID, last.Version, last.Type)

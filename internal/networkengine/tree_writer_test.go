@@ -529,6 +529,7 @@ func TestTreeWriterCheck_EveryRefusalCodeLeavesTheStreamUnchanged(t *testing.T) 
 			var engineErr *EngineError
 			require.ErrorAs(t, err, &engineErr)
 			assert.Equal(t, tc.code, engineErr.Code)
+			assert.Equal(t, "scripted refusal", engineErr.Message)
 			assert.Contains(t, err.Error(), "nothing was appended")
 			require.Len(t, engine.checks, 1)
 			assert.Equal(t, tc.mutation, engine.checks[0].op)
@@ -656,9 +657,11 @@ func TestTreeWriterCatchUp_ProjectsTheLastEventBeforeTheCheck(t *testing.T) {
 
 	res, err := w.Place(context.Background(), req)
 
-	require.NoError(t, err, "a check before catch-up finds no parent %s", writerChild)
+	require.NoError(t, err, "parent %s exists only in the unprojected last event", writerChild)
 	require.NoError(t, res.ProjectionErr)
 	assert.Equal(t, int64(3), res.Version)
+	require.NotNil(t, res.CaughtUp)
+	assert.Equal(t, int64(2), res.CaughtUp.Version)
 }
 
 func TestTreeWriterCatchUp_ConvergesOnAProjectedPlacement(t *testing.T) {

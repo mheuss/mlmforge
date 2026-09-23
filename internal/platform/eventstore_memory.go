@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -155,6 +156,8 @@ func (m *MemoryEventStore) ReadLastEvent(_ context.Context, stream string) (*Eve
 		return nil, nil
 	}
 	last := events[len(events)-1]
+	last.Payload = bytes.Clone(last.Payload)
+	last.Metadata = bytes.Clone(last.Metadata)
 	return &last, nil
 }
 

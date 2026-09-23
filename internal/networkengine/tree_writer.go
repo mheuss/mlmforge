@@ -213,7 +213,7 @@ func (w *TreeWriter) Place(ctx context.Context, r PlaceRequest) (WriteResult, er
 	})
 }
 
-// placementCheck is the check for the engine call that projects p.
+// placementCheck builds the check for placing p.
 func placementCheck(p NodePlacedPayload) Mutation {
 	switch p.TreeType {
 	case treeTypeMatrix:
@@ -260,8 +260,7 @@ func (w *TreeWriter) Remove(ctx context.Context, r RemoveRequest) (WriteResult, 
 	})
 }
 
-// refuseMatrixRemoval refuses a removal from a matrix tree. HEU-582 deletes it
-// when matrix removal lands, and adds a pruning mode to the removal payload.
+// refuseMatrixRemoval refuses a removal from a matrix tree.
 func refuseMatrixRemoval(user, tree, stream string) error {
 	return fmt.Errorf("remove %s from tree %s: stream %s records tree type matrix at version 1, "+
 		"and this writer does not remove from matrix trees", user, tree, stream)

@@ -1,0 +1,9 @@
+{
+    "description": "check_mutation naming an op it does not check is refused",
+    "request": {
+        "id": "cm-13",
+        "op": "check_mutation",
+        "params": {"structure": "test", "mutation": "place_from_tank"}
+    },
+    "expected_response": {"id": "cm-13", "ok": false, "error": {"code": "INVALID_PARAMS", "message_contains": "unknown mutation: place_from_tank"}}
+}

@@ -63,7 +63,91 @@ fn ping_returns_protocol_version() {
 
     let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
     assert_eq!(parsed["id"], "1");
-    assert_eq!(parsed["result"]["protocol_version"], 10);
+    assert_eq!(parsed["result"]["protocol_version"], 11);
+
+    drop(child.stdin.take());
+    child.wait().unwrap();
+}
+
+#[test]
+fn check_mutation_leaves_the_tree_unchanged() {
+    let mut child = common::spawn_worker();
+    build_three_node_chain(&mut child);
+    let newcomer = "00000000-0000-0000-0000-000000000004";
+
+    let resp = common::send_receive(
+        &mut child,
+        &format!(
+            r#"{{"id":"c1","op":"check_mutation","params":{{"structure":"{}","mutation":"remove_node","user_id":"{}"}}}}"#,
+            TREE_NAME, GRANDCHILD
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "check failed: {}", resp);
+    let resp = common::send_receive(
+        &mut child,
+        &format!(
+            r#"{{"id":"c2","op":"get_position","params":{{"structure":"{}","user_id":"{}"}}}}"#,
+            TREE_NAME, GRANDCHILD
+        ),
+    );
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "a passing removal check removed the node: {}",
+        resp
+    );
+
+    let resp = common::send_receive(
+        &mut child,
+        &format!(
+            r#"{{"id":"c3","op":"check_mutation","params":{{"structure":"{}","mutation":"add_node","user_id":"{}","parent_id":"{}","sponsor_id":"{}","enrolled_at":400}}}}"#,
+            TREE_NAME, newcomer, ROOT, ROOT
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "check failed: {}", resp);
+    let resp = common::send_receive(
+        &mut child,
+        &format!(
+            r#"{{"id":"c4","op":"get_position","params":{{"structure":"{}","user_id":"{}"}}}}"#,
+            TREE_NAME, newcomer
+        ),
+    );
+    assert!(
+        resp.contains("USER_NOT_FOUND"),
+        "a passing placement check placed the node: {}",
+        resp
+    );
+
+    drop(child.stdin.take());
+    child.wait().unwrap();
+}
+
+#[test]
+fn check_mutation_refuses_with_what_the_real_op_returns() {
+    let mut child = common::spawn_worker();
+    build_three_node_chain(&mut child);
+
+    let check = common::send_receive(
+        &mut child,
+        &format!(
+            r#"{{"id":"c1","op":"check_mutation","params":{{"structure":"{}","mutation":"remove_node","user_id":"{}"}}}}"#,
+            TREE_NAME, CHILD
+        ),
+    );
+    let real = common::send_receive(
+        &mut child,
+        &format!(
+            r#"{{"id":"c2","op":"remove_node","params":{{"structure":"{}","user_id":"{}"}}}}"#,
+            TREE_NAME, CHILD
+        ),
+    );
+
+    let check: serde_json::Value = serde_json::from_str(&check).unwrap();
+    let real: serde_json::Value = serde_json::from_str(&real).unwrap();
+    assert_eq!(check["error"]["code"], "HAS_CHILDREN", "check: {}", check);
+    assert_eq!(
+        check["error"], real["error"],
+        "the check and the real op disagree"
+    );
 
     drop(child.stdin.take());
     child.wait().unwrap();

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use network_engine::config::matrix::SpilloverDirection;
 use network_engine::tree::binary::BinaryTree;
+use network_engine::tree::error::TreeError;
 use network_engine::tree::matrix::MatrixTree;
 use network_engine::tree::node::Responsored;
 use network_engine::tree::unilevel::UnilevelTree;
@@ -108,9 +109,89 @@ pub(crate) fn handle_create_tree(state: &mut WorkerState, request: &Request) -> 
     Response::success(request.id.clone(), serde_json::json!({"created": true}))
 }
 
+// --- Mutation effects ---
+
+/// Whether a mutation handler applies its mutation or only runs its checks.
+#[derive(Clone, Copy)]
+enum Effect {
+    Apply,
+    Check,
+}
+
+/// The response to an add that ran.
+fn added_response<T>(request_id: &str, outcome: Result<T, TreeError>) -> Response {
+    match outcome {
+        Ok(_) => Response::success(request_id.to_string(), serde_json::json!({"added": true})),
+        Err(e) => tree_error_to_response(request_id, e),
+    }
+}
+
+/// The response to a unilevel or binary removal that ran.
+fn removed_response(request_id: &str, outcome: Result<Vec<Responsored>, TreeError>) -> Response {
+    match outcome {
+        Ok(responsored) => Response::success(
+            request_id.to_string(),
+            serde_json::json!({
+                "removed": true,
+                "responsored": responsored_json(&responsored),
+            }),
+        ),
+        Err(e) => tree_error_to_response(request_id, e),
+    }
+}
+
+/// The response to a check that ran under `check_mutation`.
+fn checked_response(request_id: &str, outcome: Result<(), TreeError>) -> Response {
+    match outcome {
+        Ok(()) => Response::success(request_id.to_string(), serde_json::json!({"checked": true})),
+        Err(e) => tree_error_to_response(request_id, e),
+    }
+}
+
+/// The refusal for a mutation `check_mutation` has no check for.
+fn uncheckable(request_id: &str, what: &str) -> Response {
+    Response::error(
+        request_id.to_string(),
+        "UNSUPPORTED_OP",
+        format!("check_mutation does not cover {}", what),
+    )
+}
+
+pub(crate) fn handle_check_mutation(state: &mut WorkerState, request: &Request) -> Response {
+    let params = match parse_params(request) {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    let mutation = match params.get("mutation").and_then(|v| v.as_str()) {
+        Some(m) => m,
+        None => {
+            return Response::error(
+                request.id.clone(),
+                "MISSING_PARAM",
+                "missing mutation (add_root, add_node, add_node_at, or remove_node)",
+            );
+        }
+    };
+    match mutation {
+        "add_root" => add_root(state, request, Effect::Check),
+        "add_node" => add_node(state, request, Effect::Check),
+        "add_node_at" => add_node_at(state, request, Effect::Check),
+        "remove_node" => remove_node(state, request, Effect::Check),
+        other => Response::error(
+            request.id.clone(),
+            "INVALID_PARAMS",
+            format!("unknown mutation: {}", other),
+        ),
+    }
+}
+
 // --- Tree mutation handlers ---
 
 pub(crate) fn handle_add_root(state: &mut WorkerState, request: &Request) -> Response {
+    add_root(state, request, Effect::Apply)
+}
+
+fn add_root(state: &mut WorkerState, request: &Request, effect: Effect) -> Response {
     let params = match parse_params(request) {
         Ok(p) => p,
         Err(resp) => return resp,
@@ -139,20 +220,27 @@ pub(crate) fn handle_add_root(state: &mut WorkerState, request: &Request) -> Res
         Err(resp) => return resp,
     };
 
-    match tree {
-        TreeInstance::Unilevel(t) => match t.add_root(user_id, enrolled_at) {
-            Ok(_) => Response::success(request.id.clone(), serde_json::json!({"added": true})),
-            Err(e) => tree_error_to_response(&request.id, e),
-        },
-        TreeInstance::Binary(t) => match t.add_root(user_id, enrolled_at) {
-            Ok(_) => Response::success(request.id.clone(), serde_json::json!({"added": true})),
-            Err(e) => tree_error_to_response(&request.id, e),
-        },
-        TreeInstance::Matrix(t) => match t.add_root(user_id, enrolled_at) {
-            Ok(_) => Response::success(request.id.clone(), serde_json::json!({"added": true})),
-            Err(e) => tree_error_to_response(&request.id, e),
-        },
-        TreeInstance::BoardPlan(_) | TreeInstance::Streamline(_) => Response::error(
+    let rid = request.id.as_str();
+    match (tree, effect) {
+        (TreeInstance::Unilevel(t), Effect::Apply) => {
+            added_response(rid, t.add_root(user_id, enrolled_at))
+        }
+        (TreeInstance::Unilevel(t), Effect::Check) => {
+            checked_response(rid, t.check_add_root(user_id))
+        }
+        (TreeInstance::Binary(t), Effect::Apply) => {
+            added_response(rid, t.add_root(user_id, enrolled_at))
+        }
+        (TreeInstance::Binary(t), Effect::Check) => {
+            checked_response(rid, t.check_add_root(user_id))
+        }
+        (TreeInstance::Matrix(t), Effect::Apply) => {
+            added_response(rid, t.add_root(user_id, enrolled_at))
+        }
+        (TreeInstance::Matrix(t), Effect::Check) => {
+            checked_response(rid, t.check_add_root(user_id))
+        }
+        (TreeInstance::BoardPlan(_) | TreeInstance::Streamline(_), _) => Response::error(
             request.id.clone(),
             "UNSUPPORTED_OP",
             "add_root is not supported for this structure type",
@@ -161,6 +249,10 @@ pub(crate) fn handle_add_root(state: &mut WorkerState, request: &Request) -> Res
 }
 
 pub(crate) fn handle_add_node(state: &mut WorkerState, request: &Request) -> Response {
+    add_node(state, request, Effect::Apply)
+}
+
+fn add_node(state: &mut WorkerState, request: &Request, effect: Effect) -> Response {
     let params = match parse_params(request) {
         Ok(p) => p,
         Err(resp) => return resp,
@@ -193,15 +285,20 @@ pub(crate) fn handle_add_node(state: &mut WorkerState, request: &Request) -> Res
         Err(resp) => return resp,
     };
 
+    let rid = request.id.as_str();
     match tree {
         TreeInstance::Unilevel(t) => {
             let parent_id = match parse_uuid(&params, "parent_id", &request.id) {
                 Ok(id) => id,
                 Err(resp) => return resp,
             };
-            match t.add_node(user_id, parent_id, sponsor_id, enrolled_at) {
-                Ok(_) => Response::success(request.id.clone(), serde_json::json!({"added": true})),
-                Err(e) => tree_error_to_response(&request.id, e),
+            match effect {
+                Effect::Apply => {
+                    added_response(rid, t.add_node(user_id, parent_id, sponsor_id, enrolled_at))
+                }
+                Effect::Check => {
+                    checked_response(rid, t.check_add_node(user_id, parent_id, sponsor_id))
+                }
             }
         }
         TreeInstance::Binary(t) => {
@@ -228,14 +325,20 @@ pub(crate) fn handle_add_node(state: &mut WorkerState, request: &Request) -> Res
                     );
                 }
             };
-            match t.add_node(user_id, parent_id, position, sponsor_id, enrolled_at) {
-                Ok(_) => Response::success(request.id.clone(), serde_json::json!({"added": true})),
-                Err(e) => tree_error_to_response(&request.id, e),
+            match effect {
+                Effect::Apply => added_response(
+                    rid,
+                    t.add_node(user_id, parent_id, position, sponsor_id, enrolled_at),
+                ),
+                Effect::Check => checked_response(
+                    rid,
+                    t.check_add_node(user_id, parent_id, position, sponsor_id),
+                ),
             }
         }
-        TreeInstance::Matrix(t) => match t.add_node(user_id, sponsor_id, enrolled_at) {
-            Ok(_) => Response::success(request.id.clone(), serde_json::json!({"added": true})),
-            Err(e) => tree_error_to_response(&request.id, e),
+        TreeInstance::Matrix(t) => match effect {
+            Effect::Apply => added_response(rid, t.add_node(user_id, sponsor_id, enrolled_at)),
+            Effect::Check => uncheckable(rid, "add_node on matrix trees"),
         },
         TreeInstance::BoardPlan(_) | TreeInstance::Streamline(_) => Response::error(
             request.id.clone(),
@@ -246,6 +349,10 @@ pub(crate) fn handle_add_node(state: &mut WorkerState, request: &Request) -> Res
 }
 
 pub(crate) fn handle_add_node_at(state: &mut WorkerState, request: &Request) -> Response {
+    add_node_at(state, request, Effect::Apply)
+}
+
+fn add_node_at(state: &mut WorkerState, request: &Request, effect: Effect) -> Response {
     let params = match parse_params(request) {
         Ok(p) => p,
         Err(resp) => return resp,
@@ -301,13 +408,16 @@ pub(crate) fn handle_add_node_at(state: &mut WorkerState, request: &Request) -> 
         Err(resp) => return resp,
     };
 
-    match tree {
-        TreeInstance::Matrix(t) => {
-            match t.add_node_at(user_id, sponsor_id, parent_id, position, enrolled_at) {
-                Ok(_) => Response::success(request.id.clone(), serde_json::json!({"added": true})),
-                Err(e) => tree_error_to_response(&request.id, e),
-            }
-        }
+    let rid = request.id.as_str();
+    match (tree, effect) {
+        (TreeInstance::Matrix(t), Effect::Apply) => added_response(
+            rid,
+            t.add_node_at(user_id, sponsor_id, parent_id, position, enrolled_at),
+        ),
+        (TreeInstance::Matrix(t), Effect::Check) => checked_response(
+            rid,
+            t.check_add_node_at(user_id, sponsor_id, parent_id, position),
+        ),
         _ => Response::error(
             request.id.clone(),
             "INVALID_PARAMS",
@@ -330,6 +440,10 @@ fn responsored_json(moved: &[Responsored]) -> Vec<serde_json::Value> {
 }
 
 pub(crate) fn handle_remove_node(state: &mut WorkerState, request: &Request) -> Response {
+    remove_node(state, request, Effect::Apply)
+}
+
+fn remove_node(state: &mut WorkerState, request: &Request, effect: Effect) -> Response {
     let params = match parse_params(request) {
         Ok(p) => p,
         Err(resp) => return resp,
@@ -348,32 +462,24 @@ pub(crate) fn handle_remove_node(state: &mut WorkerState, request: &Request) -> 
         Err(resp) => return resp,
     };
 
+    let rid = request.id.as_str();
     match tree {
-        TreeInstance::Unilevel(t) => match t.remove_node(user_id) {
-            Ok(responsored) => Response::success(
-                request.id.clone(),
-                serde_json::json!({
-                    "removed": true,
-                    "responsored": responsored_json(&responsored),
-                }),
-            ),
-            Err(e) => tree_error_to_response(&request.id, e),
+        TreeInstance::Unilevel(t) => match effect {
+            Effect::Apply => removed_response(rid, t.remove_node(user_id)),
+            Effect::Check => checked_response(rid, t.check_remove_node(user_id)),
         },
-        TreeInstance::Binary(t) => match t.remove_node(user_id) {
-            Ok(responsored) => Response::success(
-                request.id.clone(),
-                serde_json::json!({
-                    "removed": true,
-                    "responsored": responsored_json(&responsored),
-                }),
-            ),
-            Err(e) => tree_error_to_response(&request.id, e),
+        TreeInstance::Binary(t) => match effect {
+            Effect::Apply => removed_response(rid, t.remove_node(user_id)),
+            Effect::Check => checked_response(rid, t.check_remove_node(user_id)),
         },
         TreeInstance::Matrix(t) => {
             let mode = match parse_pruning_mode(&params, &request.id) {
                 Ok(m) => m,
                 Err(resp) => return resp,
             };
+            if matches!(effect, Effect::Check) {
+                return uncheckable(rid, "remove_node on matrix trees");
+            }
             match t.remove_node(user_id, mode) {
                 Ok(result) => {
                     let promoted = result.promoted.map(|u| u.to_string());

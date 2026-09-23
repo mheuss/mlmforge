@@ -1,0 +1,12 @@
+{
+    "description": "check_mutation passes an add_root the tree would accept",
+    "setup": [
+        {"id": "s-1", "op": "create_tree", "params": {"structure": "test", "tree_type": "unilevel"}}
+    ],
+    "request": {
+        "id": "cm-1",
+        "op": "check_mutation",
+        "params": {"structure": "test", "mutation": "add_root", "user_id": "00000000-0000-0000-0000-000000000001", "enrolled_at": 1000}
+    },
+    "expected_response": {"id": "cm-1", "ok": true, "result": {"checked": true}}
+}

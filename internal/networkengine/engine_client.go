@@ -42,11 +42,16 @@ import (
 // that ignores it writes a store that disagrees with the engine about who
 // sponsors whom, and nothing reconciles them afterwards.
 //
+// Moved to 11 by HEU-301. No request that was valid under 10 changes meaning.
+// The worker gained check_mutation, and a client built for 11 sends it before
+// every tree write. Without the move, a version-10 worker would pass the
+// handshake and then answer UNKNOWN_OP to each of those checks.
+//
 // This is the wire contract, not the stored row shape and not the authoring
 // format. Two other numbers nearby are also called a version: `detailVersion`
 // in commission_detail.go, and the plan schema version in
 // schemas/compensation-plan.schema.json. None is coupled to the others.
-const expectedProtocolVersion = 10
+const expectedProtocolVersion = 11
 
 // maxPingResponseInError bounds how much of an unexpected ping response is
 // quoted back in an error. The response is wire data and is otherwise

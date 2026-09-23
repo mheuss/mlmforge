@@ -126,7 +126,7 @@ fn added_response<T>(request_id: &str, outcome: Result<T, TreeError>) -> Respons
     }
 }
 
-/// The response to a unilevel or binary removal that ran.
+/// The response to a removal that reports only the responsored moves.
 fn removed_response(request_id: &str, outcome: Result<Vec<Responsored>, TreeError>) -> Response {
     match outcome {
         Ok(responsored) => Response::success(
@@ -477,8 +477,11 @@ fn remove_node(state: &mut WorkerState, request: &Request, effect: Effect) -> Re
                 Ok(m) => m,
                 Err(resp) => return resp,
             };
-            if matches!(effect, Effect::Check) {
-                return uncheckable(rid, "remove_node on matrix trees");
+            // After the pruning-mode parse, so a check without one answers
+            // MISSING_PARAM as remove_node does.
+            match effect {
+                Effect::Check => return uncheckable(rid, "remove_node on matrix trees"),
+                Effect::Apply => {}
             }
             match t.remove_node(user_id, mode) {
                 Ok(result) => {

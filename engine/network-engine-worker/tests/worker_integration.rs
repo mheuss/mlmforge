@@ -82,7 +82,7 @@ fn check_mutation_leaves_the_tree_unchanged() {
             TREE_NAME, GRANDCHILD
         ),
     );
-    assert!(resp.contains(r#""ok":true"#), "check failed: {}", resp);
+    assert!(resp.contains(r#""checked":true"#), "check failed: {}", resp);
     let resp = common::send_receive(
         &mut child,
         &format!(
@@ -103,7 +103,7 @@ fn check_mutation_leaves_the_tree_unchanged() {
             TREE_NAME, newcomer, ROOT, ROOT
         ),
     );
-    assert!(resp.contains(r#""ok":true"#), "check failed: {}", resp);
+    assert!(resp.contains(r#""checked":true"#), "check failed: {}", resp);
     let resp = common::send_receive(
         &mut child,
         &format!(

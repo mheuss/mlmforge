@@ -166,8 +166,7 @@ func (w *TreeWriter) AddRoot(ctx context.Context, r AddRootRequest) (WriteResult
 			return event, CheckAddRoot(userID.String(), r.EnrolledAt.Unix()), err
 		},
 	}
-	// Version 1 cannot change once written, but its absence can end before the
-	// lock is taken.
+	// The stream was empty before the lock, so read version 1 again under it.
 	if !found {
 		spec.underLock = func(ctx context.Context) (treeShape, error) {
 			recorded, found, err := w.readShape(ctx, stream)
@@ -340,8 +339,8 @@ type writeSpec struct {
 	// build returns the event to append and the mutation to check first, for
 	// the shape the write goes ahead with.
 	build func(shape treeShape) (platform.NewEvent, Mutation, error)
-	// underLock, when set, runs after the lock is taken and before the load,
-	// and returns the shape the write goes ahead with.
+	// underLock, when set, returns the shape the write goes ahead with in place
+	// of shape.
 	underLock func(ctx context.Context) (treeShape, error)
 }
 

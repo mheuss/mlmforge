@@ -1,0 +1,217 @@
+package networkengine
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/mlmforge/mlmforge/internal/platform"
+	"github.com/stretchr/testify/require"
+)
+
+// writeTime is the enrolment and removal time the writer tests use.
+var writeTime = time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+
+// Identifiers the writer unit tests share.
+var (
+	writerTree  = testTreeUUID(1)
+	writerRoot  = testUserUUID(1)
+	writerOther = testUserUUID(3)
+)
+
+// fakeWriterEngine keeps tree membership in memory, answers with the engine
+// codes the consumer's reconciles read, and answers CheckMutation from
+// checkErr.
+type fakeWriterEngine struct {
+	trees    map[string]*fakeEngineTree
+	checkErr error
+	checks   []Mutation
+	// failAdd fails every add of the keyed user.
+	failAdd map[string]error
+}
+
+type fakeEngineTree struct {
+	root  string
+	nodes map[string]EnginePosition
+}
+
+var _ TreeEngineChecker = (*fakeWriterEngine)(nil)
+
+func newFakeWriterEngine() *fakeWriterEngine {
+	return &fakeWriterEngine{trees: map[string]*fakeEngineTree{}, failAdd: map[string]error{}}
+}
+
+func fakeEngineError(code, format string, args ...any) error {
+	return &EngineError{Code: code, Message: fmt.Sprintf(format, args...)}
+}
+
+func (f *fakeWriterEngine) tree(structure string) (*fakeEngineTree, error) {
+	t, ok := f.trees[structure]
+	if !ok {
+		return nil, fakeEngineError("STRUCTURE_NOT_FOUND", "no tree named '%s'", structure)
+	}
+	return t, nil
+}
+
+func (f *fakeWriterEngine) CreateTree(_ context.Context, structure, _ string) error {
+	if _, ok := f.trees[structure]; ok {
+		return fakeEngineError("TREE_EXISTS", "tree '%s' already exists", structure)
+	}
+	f.trees[structure] = &fakeEngineTree{nodes: map[string]EnginePosition{}}
+	return nil
+}
+
+func (f *fakeWriterEngine) CreateMatrixTree(ctx context.Context, structure string, _ int, _ string) error {
+	return f.CreateTree(ctx, structure, treeTypeMatrix)
+}
+
+func (f *fakeWriterEngine) AddRoot(_ context.Context, structure, userID string, enrolledAt int64) error {
+	if err, ok := f.failAdd[userID]; ok {
+		return err
+	}
+	t, err := f.tree(structure)
+	if err != nil {
+		return err
+	}
+	if t.root != "" {
+		return fakeEngineError(engineCodeRootAlreadyExists, "tree already has a root node")
+	}
+	if _, ok := t.nodes[userID]; ok {
+		return fakeEngineError(engineCodeUserAlreadyExists, "user %s already exists in tree", userID)
+	}
+	t.root = userID
+	t.nodes[userID] = EnginePosition{UserID: userID, EnrolledAt: enrolledAt}
+	return nil
+}
+
+func (f *fakeWriterEngine) place(structure, userID, parentID, sponsorID string, position int, enrolledAt int64) error {
+	if err, ok := f.failAdd[userID]; ok {
+		return err
+	}
+	t, err := f.tree(structure)
+	if err != nil {
+		return err
+	}
+	if _, ok := t.nodes[userID]; ok {
+		return fakeEngineError(engineCodeUserAlreadyExists, "user %s already exists in tree", userID)
+	}
+	parent, ok := t.nodes[parentID]
+	if !ok {
+		return fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", parentID)
+	}
+	p, s := parentID, sponsorID
+	t.nodes[userID] = EnginePosition{
+		UserID: userID, ParentUserID: &p, SponsorUserID: &s,
+		Position: position, Depth: parent.Depth + 1, EnrolledAt: enrolledAt,
+	}
+	return nil
+}
+
+func (f *fakeWriterEngine) AddNode(_ context.Context, structure, userID, parentID, sponsorID string, enrolledAt int64, opts ...AddNodeOption) error {
+	params := map[string]any{}
+	for _, opt := range opts {
+		opt(params)
+	}
+	position, _ := params["position"].(int)
+	return f.place(structure, userID, parentID, sponsorID, position, enrolledAt)
+}
+
+func (f *fakeWriterEngine) AddNodeAt(_ context.Context, structure, userID, parentID, sponsorID string, position int, enrolledAt int64) error {
+	return f.place(structure, userID, parentID, sponsorID, position, enrolledAt)
+}
+
+func (f *fakeWriterEngine) RemoveNode(_ context.Context, structure, userID string) ([]Responsored, error) {
+	t, err := f.tree(structure)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := t.nodes[userID]; !ok {
+		return nil, fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", userID)
+	}
+	delete(t.nodes, userID)
+	if t.root == userID {
+		t.root = ""
+	}
+	return []Responsored{}, nil
+}
+
+func (f *fakeWriterEngine) GetPosition(_ context.Context, structure, userID string) (*EnginePosition, error) {
+	t, err := f.tree(structure)
+	if err != nil {
+		return nil, err
+	}
+	pos, ok := t.nodes[userID]
+	if !ok {
+		return nil, fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", userID)
+	}
+	return &pos, nil
+}
+
+func (f *fakeWriterEngine) CheckMutation(_ context.Context, _ string, m Mutation) error {
+	f.checks = append(f.checks, m)
+	return f.checkErr
+}
+
+// writerEnv holds the stores one test's writes share.
+type writerEnv struct {
+	events platform.EventStore
+	store  *MemoryTreeStore
+	locker *MemoryTreeLocker
+}
+
+func newWriterEnv() *writerEnv {
+	return &writerEnv{
+		events: platform.NewMemoryEventStore(),
+		store:  NewMemoryTreeStore(),
+		locker: NewMemoryTreeLocker(),
+	}
+}
+
+// writer builds a TreeWriter over a fresh engine, as each CLI invocation does.
+func (e *writerEnv) writer(opts ...TreeWriterOption) (*TreeWriter, *fakeWriterEngine) {
+	engine := newFakeWriterEngine()
+	return NewTreeWriter(e.events, e.store, engine, e.locker, opts...), engine
+}
+
+// mustAddRoot adds writerRoot as the root of writerTree through a writer.
+func mustAddRoot(t *testing.T, env *writerEnv, treeType string) {
+	t.Helper()
+	req := AddRootRequest{
+		TreeID: writerTree, UserID: writerRoot, SponsorID: writerRoot,
+		TreeType: treeType, EnrolledAt: writeTime,
+	}
+	if treeType == treeTypeMatrix {
+		width, spillover := 3, "breadth_first"
+		req.MatrixWidth, req.MatrixSpillover = &width, &spillover
+	}
+	w, _ := env.writer()
+	res, err := w.AddRoot(context.Background(), req)
+	require.NoError(t, err)
+	require.NoError(t, res.ProjectionErr)
+}
+
+// streamEvents reads a whole stream.
+func streamEvents(t *testing.T, events platform.EventStore, stream string) []platform.Event {
+	t.Helper()
+	got, err := events.ReadStream(context.Background(), stream, 1, 0)
+	require.NoError(t, err)
+	return got
+}
+
+// refusingLocker fails the test if the writer asks it for a lock.
+type refusingLocker struct{ t *testing.T }
+
+func (l refusingLocker) Lock(_ context.Context, treeID uuid.UUID) (func() error, error) {
+	l.t.Errorf("Lock was called for tree %s", treeID)
+	return nil, errors.New("refusingLocker: Lock was called")
+}
+
+// releaseFailingLocker grants every lock and fails every release.
+type releaseFailingLocker struct{ err error }
+
+func (l releaseFailingLocker) Lock(context.Context, uuid.UUID) (func() error, error) {
+	return func() error { return l.err }, nil
+}

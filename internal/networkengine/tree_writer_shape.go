@@ -33,6 +33,14 @@ func (s treeShape) config() loadTreeConfig {
 	return loadTreeConfig{matrixParamsSet: true, matrixWidth: s.width, matrixSpillover: s.spillover}
 }
 
+// loadOptions returns the shape as LoadTree options.
+func (s treeShape) loadOptions() []LoadTreeOption {
+	if s.treeType != treeTypeMatrix {
+		return nil
+	}
+	return []LoadTreeOption{WithMatrixParams(s.width, s.spillover)}
+}
+
 // readTreeShape reads the shape recorded by a stream's version 1, and refuses
 // one that is not a complete root_added.
 func readTreeShape(stream string, first platform.Event) (treeShape, error) {

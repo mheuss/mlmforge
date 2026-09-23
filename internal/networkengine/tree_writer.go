@@ -161,6 +161,112 @@ func (w *TreeWriter) AddRoot(ctx context.Context, r AddRootRequest) (WriteResult
 	return w.write(ctx, spec)
 }
 
+// Place appends a tree.node_placed event at the parent and position the
+// request names, and projects it.
+func (w *TreeWriter) Place(ctx context.Context, r PlaceRequest) (WriteResult, error) {
+	treeID, err := canonicalID("tree_id", r.TreeID)
+	if err != nil {
+		return WriteResult{}, err
+	}
+	userID, err := canonicalID("user_id", r.UserID)
+	if err != nil {
+		return WriteResult{}, err
+	}
+	parentID, err := canonicalID("parent_id", r.ParentID)
+	if err != nil {
+		return WriteResult{}, err
+	}
+	sponsorID, err := canonicalID("sponsor_id", r.SponsorID)
+	if err != nil {
+		return WriteResult{}, err
+	}
+	tree := treeID.String()
+	stream := TreeStreamName(tree)
+
+	shape, found, err := w.readShape(ctx, stream)
+	if err != nil {
+		return WriteResult{}, err
+	}
+	if !found {
+		return WriteResult{}, fmt.Errorf("place %s in tree %s: stream %s has no events", userID, tree, stream)
+	}
+	payload := NodePlacedPayload{
+		TreeID:     tree,
+		UserID:     userID.String(),
+		ParentID:   parentID.String(),
+		SponsorID:  sponsorID.String(),
+		Position:   r.Position,
+		TreeType:   shape.treeType,
+		EnrolledAt: r.EnrolledAt,
+	}
+	if err := checkNodePlacedShape(payload); err != nil {
+		return WriteResult{}, err
+	}
+
+	return w.write(ctx, writeSpec{
+		treeID: treeID,
+		shape:  shape,
+		build: func(treeShape) (platform.NewEvent, Mutation, error) {
+			event, err := newTreeEvent(EventTypeNodePlaced, payload)
+			return event, placementCheck(payload), err
+		},
+	})
+}
+
+// placementCheck is the check for the engine call that projects p.
+func placementCheck(p NodePlacedPayload) Mutation {
+	switch p.TreeType {
+	case treeTypeMatrix:
+		return CheckAddNodeAt(p.UserID, p.ParentID, p.SponsorID, *p.Position, p.EnrolledAt.Unix())
+	case treeTypeBinary:
+		return CheckAddNode(p.UserID, p.ParentID, p.SponsorID, p.EnrolledAt.Unix(), WithPosition(*p.Position))
+	default:
+		return CheckAddNode(p.UserID, p.ParentID, p.SponsorID, p.EnrolledAt.Unix())
+	}
+}
+
+// Remove appends a tree.node_removed event and projects it.
+func (w *TreeWriter) Remove(ctx context.Context, r RemoveRequest) (WriteResult, error) {
+	treeID, err := canonicalID("tree_id", r.TreeID)
+	if err != nil {
+		return WriteResult{}, err
+	}
+	userID, err := canonicalID("user_id", r.UserID)
+	if err != nil {
+		return WriteResult{}, err
+	}
+	tree := treeID.String()
+	stream := TreeStreamName(tree)
+
+	shape, found, err := w.readShape(ctx, stream)
+	if err != nil {
+		return WriteResult{}, err
+	}
+	if !found {
+		return WriteResult{}, fmt.Errorf("remove %s from tree %s: stream %s has no events", userID, tree, stream)
+	}
+	if shape.treeType == treeTypeMatrix {
+		return WriteResult{}, refuseMatrixRemoval(userID.String(), tree, stream)
+	}
+	payload := NodeRemovedPayload{TreeID: tree, UserID: userID.String(), RemovedAt: r.RemovedAt}
+
+	return w.write(ctx, writeSpec{
+		treeID: treeID,
+		shape:  shape,
+		build: func(treeShape) (platform.NewEvent, Mutation, error) {
+			event, err := newTreeEvent(EventTypeNodeRemoved, payload)
+			return event, CheckRemoveNode(payload.UserID), err
+		},
+	})
+}
+
+// refuseMatrixRemoval refuses a removal from a matrix tree. HEU-582 deletes it
+// when matrix removal lands, and adds a pruning mode to the removal payload.
+func refuseMatrixRemoval(user, tree, stream string) error {
+	return fmt.Errorf("remove %s from tree %s: stream %s records tree type matrix at version 1, "+
+		"and this writer does not remove from matrix trees", user, tree, stream)
+}
+
 // rootShapeConflict refuses a root request whose type or matrix parameters
 // differ from the shape version 1 records. Absent matrix parameters match.
 func rootShapeConflict(tree, stream string, recorded treeShape, r AddRootRequest) error {

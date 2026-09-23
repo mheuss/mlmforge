@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/mlmforge/mlmforge/internal/platform"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -352,4 +353,267 @@ func TestTreeWriterLock_ReportsTheCallersCancellation(t *testing.T) {
 		"the lock on tree "+writerTree+" was not acquired; the caller's context ended after ")
 	var waitErr *TreeLockWaitError
 	assert.False(t, errors.As(err, &waitErr), "a cancellation is not a lock-wait timeout")
+}
+
+func placeRequest(user string, position *int) PlaceRequest {
+	return PlaceRequest{
+		TreeID: writerTree, UserID: user, ParentID: writerRoot, SponsorID: writerRoot,
+		Position: position, EnrolledAt: writeTime,
+	}
+}
+
+func TestTreeWriterPlace_AppendsAndProjectsAPlacement(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	w, _ := env.writer()
+
+	res, err := w.Place(context.Background(), placeRequest(writerChild, nil))
+
+	require.NoError(t, err)
+	require.NoError(t, res.ProjectionErr)
+	assert.Equal(t, int64(2), res.Version)
+	stored := streamEvents(t, env.events, res.Stream)
+	require.Len(t, stored, 2)
+	var p NodePlacedPayload
+	require.NoError(t, json.Unmarshal(stored[1].Payload, &p))
+	assert.Equal(t, treeTypeUnilevel, p.TreeType, "the type comes from version 1")
+	row, err := env.store.GetNode(context.Background(), writerTree, writerChild)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, 1, row.Depth)
+}
+
+func TestTreeWriterPlace_ChecksTheEngineCallTheConsumerMakes(t *testing.T) {
+	one, two := 1, 2
+	cases := []struct {
+		treeType string
+		position *int
+		want     Mutation
+	}{
+		{treeTypeUnilevel, nil, CheckAddNode(writerChild, writerRoot, writerRoot, writeTime.Unix())},
+		{treeTypeBinary, &one, CheckAddNode(writerChild, writerRoot, writerRoot, writeTime.Unix(), WithPosition(1))},
+		{treeTypeMatrix, &two, CheckAddNodeAt(writerChild, writerRoot, writerRoot, 2, writeTime.Unix())},
+	}
+	for _, tc := range cases {
+		t.Run(tc.treeType, func(t *testing.T) {
+			env := newWriterEnv()
+			mustAddRoot(t, env, tc.treeType)
+			w, engine := env.writer()
+
+			res, err := w.Place(context.Background(), placeRequest(writerChild, tc.position))
+
+			require.NoError(t, err)
+			require.NoError(t, res.ProjectionErr)
+			assert.Equal(t, []Mutation{tc.want}, engine.checks)
+		})
+	}
+}
+
+func TestTreeWriterPlace_RefusesAnEmptyStreamBeforeTheLock(t *testing.T) {
+	env := newWriterEnv()
+	w := NewTreeWriter(env.events, env.store, newFakeWriterEngine(), refusingLocker{t})
+
+	_, err := w.Place(context.Background(), placeRequest(writerChild, nil))
+
+	require.EqualError(t, err, "place "+writerChild+" in tree "+writerTree+": stream "+
+		TreeStreamName(writerTree)+" has no events")
+}
+
+func TestTreeWriterRemove_RefusesAnEmptyStreamBeforeTheLock(t *testing.T) {
+	env := newWriterEnv()
+	w := NewTreeWriter(env.events, env.store, newFakeWriterEngine(), refusingLocker{t})
+
+	_, err := w.Remove(context.Background(), RemoveRequest{TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime})
+
+	require.EqualError(t, err, "remove "+writerChild+" from tree "+writerTree+": stream "+
+		TreeStreamName(writerTree)+" has no events")
+}
+
+func TestTreeWriterRemove_RefusesAMatrixTreeBeforeTheLock(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeMatrix)
+	two := 2
+	mustPlace(t, env, writerChild, &two)
+	w := NewTreeWriter(env.events, env.store, newFakeWriterEngine(), refusingLocker{t})
+
+	_, err := w.Remove(context.Background(), RemoveRequest{TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime})
+
+	require.EqualError(t, err, "remove "+writerChild+" from tree "+writerTree+": stream "+
+		TreeStreamName(writerTree)+" records tree type matrix at version 1, and this writer does not remove from matrix trees")
+	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 2)
+}
+
+func TestTreeWriterPlace_EnforcesThePositionRuleBeforeTheLock(t *testing.T) {
+	zero := 0
+	cases := []struct {
+		treeType string
+		position *int
+		want     string
+	}{
+		{treeTypeMatrix, nil, "matrix node_placed for " + writerChild + " in tree " + writerTree +
+			" has no position; matrix events must carry explicit placement"},
+		{treeTypeUnilevel, &zero, "unilevel node_placed for " + writerChild + " in tree " + writerTree +
+			" carries position 0; unilevel trees have no slots"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.treeType, func(t *testing.T) {
+			env := newWriterEnv()
+			mustAddRoot(t, env, tc.treeType)
+			w := NewTreeWriter(env.events, env.store, newFakeWriterEngine(), refusingLocker{t})
+
+			_, err := w.Place(context.Background(), placeRequest(writerChild, tc.position))
+
+			require.EqualError(t, err, tc.want)
+			assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 1)
+		})
+	}
+}
+
+func TestTreeWriterCheck_EveryRefusalCodeLeavesTheStreamUnchanged(t *testing.T) {
+	zero := 0
+	run := map[string]func(w *TreeWriter) (WriteResult, error){
+		"add_root": func(w *TreeWriter) (WriteResult, error) {
+			req := unilevelRootRequest()
+			req.UserID, req.SponsorID = writerOther, writerOther
+			return w.AddRoot(context.Background(), req)
+		},
+		"add_node": func(w *TreeWriter) (WriteResult, error) {
+			return w.Place(context.Background(), placeRequest(writerOther, &zero))
+		},
+		"add_node_at": func(w *TreeWriter) (WriteResult, error) {
+			return w.Place(context.Background(), placeRequest(writerOther, &zero))
+		},
+		"remove_node": func(w *TreeWriter) (WriteResult, error) {
+			return w.Remove(context.Background(), RemoveRequest{TreeID: writerTree, UserID: writerRoot, RemovedAt: writeTime})
+		},
+	}
+	treeTypeFor := map[string]string{
+		"add_root": treeTypeUnilevel, "add_node": treeTypeBinary,
+		"add_node_at": treeTypeMatrix, "remove_node": treeTypeUnilevel,
+	}
+	cases := []struct{ mutation, code string }{
+		{"add_root", "ROOT_ALREADY_EXISTS"},
+		{"add_root", "USER_ALREADY_EXISTS"},
+		{"add_node", "USER_ALREADY_EXISTS"},
+		{"add_node", "USER_NOT_FOUND"},
+		{"add_node", "POSITION_OCCUPIED"},
+		{"add_node", "INVALID_POSITION"},
+		{"add_node_at", "TREE_EMPTY"},
+		{"add_node_at", "INVALID_POSITION"},
+		{"add_node_at", "USER_ALREADY_EXISTS"},
+		{"add_node_at", "USER_NOT_FOUND"},
+		{"add_node_at", "SPONSOR_NOT_FOUND"},
+		{"add_node_at", "POSITION_OCCUPIED"},
+		{"remove_node", "USER_NOT_FOUND"},
+		{"remove_node", "HAS_CHILDREN"},
+		{"remove_node", "SPONSORLESS_WITH_RECRUITS"},
+		{"remove_node", "SPONSOR_CYCLE"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.mutation+" "+tc.code, func(t *testing.T) {
+			env := newWriterEnv()
+			mustAddRoot(t, env, treeTypeFor[tc.mutation])
+			if tc.mutation == "remove_node" {
+				mustPlace(t, env, writerChild, nil)
+			}
+			stream := TreeStreamName(writerTree)
+			before := len(streamEvents(t, env.events, stream))
+			w, engine := env.writer()
+			engine.checkErr = &EngineError{Code: tc.code, Message: "scripted refusal"}
+
+			_, err := run[tc.mutation](w)
+
+			var engineErr *EngineError
+			require.ErrorAs(t, err, &engineErr)
+			assert.Equal(t, tc.code, engineErr.Code)
+			assert.Contains(t, err.Error(), "nothing was appended")
+			require.Len(t, engine.checks, 1)
+			assert.Equal(t, tc.mutation, engine.checks[0].op)
+			assert.Len(t, streamEvents(t, env.events, stream), before)
+		})
+	}
+}
+
+func TestTreeWriterPlace_ReportsAProjectionFailureInTheResult(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	w, engine := env.writer()
+	engine.failAdd[writerChild] = errors.New("worker reply lost")
+
+	res, err := w.Place(context.Background(), placeRequest(writerChild, nil))
+
+	require.NoError(t, err, "a confirmed append is a success")
+	assert.Equal(t, int64(2), res.Version)
+	require.ErrorContains(t, res.ProjectionErr, "worker reply lost")
+	assert.Len(t, streamEvents(t, env.events, res.Stream), 2)
+}
+
+func TestTreeWriterPlace_ProjectsTheEventAtItsOwnVersion(t *testing.T) {
+	env := newWriterEnv()
+	scripted := &scriptedEvents{MemoryEventStore: platform.NewMemoryEventStore()}
+	env.events = scripted
+	mustAddRoot(t, env, treeTypeUnilevel)
+	scripted.afterAppend = func() {
+		appendDirect(t, scripted.MemoryEventStore, EventTypeNodePlaced, NodePlacedPayload{
+			TreeID: writerTree, UserID: writerOther, ParentID: writerRoot, SponsorID: writerRoot,
+			TreeType: treeTypeUnilevel, EnrolledAt: writeTime,
+		})
+	}
+	w, _ := env.writer()
+
+	res, err := w.Place(context.Background(), placeRequest(writerChild, nil))
+
+	require.NoError(t, err)
+	require.NoError(t, res.ProjectionErr)
+	assert.Equal(t, int64(2), res.Version)
+	own, err := env.store.GetNode(context.Background(), writerTree, writerChild)
+	require.NoError(t, err)
+	assert.NotNil(t, own, "the writer's own event must be projected")
+	later, err := env.store.GetNode(context.Background(), writerTree, writerOther)
+	require.NoError(t, err)
+	assert.Nil(t, later, "the event appended after it must not be projected")
+}
+
+func TestTreeWriterPlace_ReportsAnotherEventAtItsVersionWithoutProjecting(t *testing.T) {
+	env := newWriterEnv()
+	scripted := &scriptedEvents{MemoryEventStore: platform.NewMemoryEventStore()}
+	env.events = scripted
+	mustAddRoot(t, env, treeTypeUnilevel)
+	stream := TreeStreamName(writerTree)
+	scripted.readAsVersion = 2
+	scripted.readAs = &platform.Event{
+		ID: "dddddddd-dddd-dddd-dddd-000000000001", Stream: stream,
+		Type: EventTypeNodePlaced, Version: 2, Payload: json.RawMessage(`{}`),
+	}
+	w, _ := env.writer()
+
+	res, err := w.Place(context.Background(), placeRequest(writerChild, nil))
+
+	require.NoError(t, err)
+	require.EqualError(t, res.ProjectionErr, "stream "+stream+
+		" holds event dddddddd-dddd-dddd-dddd-000000000001 at version 2, where event "+res.EventID+
+		" was appended; nothing was projected")
+	row, err := env.store.GetNode(context.Background(), writerTree, writerChild)
+	require.NoError(t, err)
+	assert.Nil(t, row)
+}
+
+func TestTreeWriterRemove_AppendsAndProjectsARemoval(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	mustPlace(t, env, writerChild, nil)
+	w, engine := env.writer()
+
+	res, err := w.Remove(context.Background(), RemoveRequest{TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime})
+
+	require.NoError(t, err)
+	require.NoError(t, res.ProjectionErr)
+	assert.Equal(t, int64(3), res.Version)
+	assert.Equal(t, []Mutation{CheckRemoveNode(writerChild)}, engine.checks)
+	active, err := env.store.GetNode(context.Background(), writerTree, writerChild)
+	require.NoError(t, err)
+	assert.Nil(t, active)
+	stamped, err := env.store.GetNodeByRemovalEvent(context.Background(), writerTree, res.EventID)
+	require.NoError(t, err)
+	assert.NotNil(t, stamped)
 }

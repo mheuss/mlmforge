@@ -2,6 +2,7 @@ package networkengine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -19,6 +20,7 @@ var writeTime = time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 var (
 	writerTree  = testTreeUUID(1)
 	writerRoot  = testUserUUID(1)
+	writerChild = testUserUUID(2)
 	writerOther = testUserUUID(3)
 )
 
@@ -235,4 +237,73 @@ type releaseFailingLocker struct{ err error }
 
 func (l releaseFailingLocker) Lock(context.Context, uuid.UUID) (func() error, error) {
 	return func() error { return l.err }, nil
+}
+
+// scriptedEvents is a MemoryEventStore whose Append and ReadStream a test can
+// script once its setup is done.
+type scriptedEvents struct {
+	*platform.MemoryEventStore
+	// afterAppend runs once, after the next Append reaches the inner store.
+	afterAppend func()
+	// readAs replaces what ReadStream returns when read from readAsVersion.
+	readAs        *platform.Event
+	readAsVersion int64
+}
+
+func (s *scriptedEvents) Append(ctx context.Context, stream string, expected int64, events []platform.NewEvent) error {
+	if err := s.MemoryEventStore.Append(ctx, stream, expected, events); err != nil {
+		return err
+	}
+	s.runAfterAppend()
+	return nil
+}
+
+func (s *scriptedEvents) runAfterAppend() {
+	if s.afterAppend != nil {
+		hook := s.afterAppend
+		s.afterAppend = nil
+		hook()
+	}
+}
+
+func (s *scriptedEvents) ReadStream(ctx context.Context, stream string, from, limit int64) ([]platform.Event, error) {
+	if s.readAs != nil && from == s.readAsVersion {
+		return []platform.Event{*s.readAs}, nil
+	}
+	return s.MemoryEventStore.ReadStream(ctx, stream, from, limit)
+}
+
+// mustPlace places user under writerRoot through a writer.
+func mustPlace(t *testing.T, env *writerEnv, user string, position *int) WriteResult {
+	t.Helper()
+	w, _ := env.writer()
+	res, err := w.Place(context.Background(), PlaceRequest{
+		TreeID: writerTree, UserID: user, ParentID: writerRoot, SponsorID: writerRoot,
+		Position: position, EnrolledAt: writeTime,
+	})
+	require.NoError(t, err)
+	require.NoError(t, res.ProjectionErr)
+	return res
+}
+
+// appendDirect appends one event to writerTree's stream without projecting it.
+func appendDirect(t *testing.T, events platform.EventStore, eventType string, payload any) platform.Event {
+	t.Helper()
+	ctx := context.Background()
+	stream := TreeStreamName(writerTree)
+	last, err := events.ReadLastEvent(ctx, stream)
+	require.NoError(t, err)
+	var expected int64
+	if last != nil {
+		expected = last.Version
+	}
+	data, err := json.Marshal(payload)
+	require.NoError(t, err)
+	require.NoError(t, events.Append(ctx, stream, expected, []platform.NewEvent{{
+		ID: uuid.NewString(), Type: eventType, Payload: data,
+	}}))
+	stored, err := events.ReadStream(ctx, stream, expected+1, 1)
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
+	return stored[0]
 }

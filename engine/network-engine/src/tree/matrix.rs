@@ -2703,6 +2703,11 @@ mod tests {
             tree.check_add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0),
             Err(TreeError::TreeEmpty)
         );
+        assert_eq!(
+            tree.check_add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 3),
+            Err(TreeError::TreeEmpty),
+            "the empty-tree check runs before the width check"
+        );
         tree.add_root(test_uuid(1), 1000).unwrap();
 
         assert_eq!(

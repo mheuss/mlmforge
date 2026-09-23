@@ -1192,6 +1192,15 @@ mod tests {
             tree.check_add_node(test_uuid(2), test_uuid(1), 1, test_uuid(1)),
             Err(TreeError::UserAlreadyExists(test_uuid(2)))
         );
+        assert_eq!(
+            tree.check_add_node(test_uuid(2), test_uuid(1), 2, test_uuid(1)),
+            Err(TreeError::PositionOutOfRange {
+                user_id: test_uuid(1),
+                position: 2,
+                child_count: 2
+            }),
+            "the position check runs before the existing-user check"
+        );
     }
 
     #[test]

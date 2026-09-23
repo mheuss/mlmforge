@@ -2,6 +2,7 @@ package networkengine
 
 import (
 	"context"
+	"runtime/debug"
 	"testing"
 	"time"
 
@@ -139,6 +140,9 @@ func lockSessions(t *testing.T, dsn string) int {
 
 func TestPostgresTreeLocker_ClosesItsConnections(t *testing.T) {
 	dsn := requireLockDatabase(t)
+	// A garbage-collected socket closes through its finalizer, which would pass
+	// this test with the explicit close deleted.
+	defer debug.SetGCPercent(debug.SetGCPercent(-1))
 	tree := uuid.MustParse(testTreeUUID(6))
 	holder, waiter := NewPostgresTreeLocker(dsn), NewPostgresTreeLocker(dsn)
 	gone := func() bool { return lockSessions(t, dsn) == 0 }

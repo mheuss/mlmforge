@@ -370,6 +370,18 @@ func (l *orderLog) indexOf(entry string) int {
 	return slices.Index(l.snapshot(), entry)
 }
 
+// waitFor reports whether the entry appeared within timeout.
+func (l *orderLog) waitFor(entry string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if l.indexOf(entry) >= 0 {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return false
+}
+
 // loggingStore records each insert and each full-tree load.
 type loggingStore struct {
 	TreeStore

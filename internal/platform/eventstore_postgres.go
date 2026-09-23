@@ -15,6 +15,7 @@ const eventSelectColumns = `global_position, id, stream, type, version, payload,
 
 const readStreamSQL = `SELECT ` + eventSelectColumns + ` FROM events WHERE stream = $1 AND version >= $2 ORDER BY version`
 const readStreamLimitSQL = readStreamSQL + ` LIMIT $3`
+const readLastEventSQL = `SELECT ` + eventSelectColumns + ` FROM events WHERE stream = $1 ORDER BY version DESC LIMIT 1`
 const readCategorySQL = `SELECT ` + eventSelectColumns + ` FROM events WHERE split_part(stream, '-', 1) = $1 AND global_position > $2 ORDER BY global_position`
 const readCategoryLimitSQL = readCategorySQL + ` LIMIT $3`
 
@@ -138,6 +139,28 @@ func (s *PostgresEventStore) ReadStream(ctx context.Context, stream string, from
 	defer rows.Close()
 
 	return scanEvents(rows)
+}
+
+// ReadLastEvent returns the stream's last event, or nil for an empty stream.
+func (s *PostgresEventStore) ReadLastEvent(ctx context.Context, stream string) (*Event, error) {
+	if err := ValidateStreamName(stream); err != nil {
+		return nil, err
+	}
+
+	rows, err := s.pool.Query(ctx, readLastEventSQL, stream)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	events, err := scanEvents(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(events) == 0 {
+		return nil, nil
+	}
+	return &events[0], nil
 }
 
 // ReadCategory returns events across streams matching a category prefix.

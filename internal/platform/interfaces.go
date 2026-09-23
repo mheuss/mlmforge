@@ -69,6 +69,10 @@ type EventStore interface {
 	// Pass limit=0 to read all matching events.
 	ReadStream(ctx context.Context, stream string, fromVersion int64, limit int64) ([]Event, error)
 
+	// ReadLastEvent returns the highest-versioned event in a stream, or nil when
+	// the stream has no events.
+	ReadLastEvent(ctx context.Context, stream string) (*Event, error)
+
 	// ReadCategory returns events across all streams whose category matches
 	// the given prefix. Category is the part of the stream name before the
 	// first hyphen (e.g., category "order" matches streams "order-abc",

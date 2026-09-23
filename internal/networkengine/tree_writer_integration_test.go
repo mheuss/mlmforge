@@ -38,7 +38,7 @@ func newWriterIntegration(t *testing.T) *writerIntegration {
 	}
 }
 
-// engine starts a fresh worker, as each CLI invocation does.
+// engine starts a fresh worker for one writer.
 func (it *writerIntegration) engine(t *testing.T) *EngineClient {
 	t.Helper()
 	engine, err := NewEngineClient(context.Background(), it.worker)

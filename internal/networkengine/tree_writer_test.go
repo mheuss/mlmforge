@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -722,4 +723,93 @@ func TestTreeWriterCatchUp_ReportsAFailedRedeliveryAndAppendsNothing(t *testing.
 	assert.Equal(t, orphan.ID, failed.EventID)
 	assert.Equal(t, int64(2), failed.Version)
 	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 2)
+}
+
+// scriptedEnv is a writerEnv with a unilevel root added through a scripted
+// event store.
+func scriptedEnv(t *testing.T) (*writerEnv, *scriptedEvents) {
+	t.Helper()
+	env := newWriterEnv()
+	scripted := &scriptedEvents{MemoryEventStore: platform.NewMemoryEventStore()}
+	env.events = scripted
+	mustAddRoot(t, env, treeTypeUnilevel)
+	return env, scripted
+}
+
+func TestTreeWriterAppend_ConfirmsACommitWhoseReplyWasLost(t *testing.T) {
+	env, scripted := scriptedEnv(t)
+	scripted.appendErr, scripted.commitFirst = errors.New("connection reset by peer"), true
+	w, _ := env.writer()
+
+	res, err := w.Place(context.Background(), placeRequest(writerChild, nil))
+
+	require.NoError(t, err, "the read found the event, so it was appended")
+	require.NoError(t, res.ProjectionErr)
+	assert.Equal(t, int64(2), res.Version)
+	row, err := env.store.GetNode(context.Background(), writerTree, writerChild)
+	require.NoError(t, err)
+	assert.NotNil(t, row)
+}
+
+func TestTreeWriterAppend_ReportsACommitThatDidNotLand(t *testing.T) {
+	env, scripted := scriptedEnv(t)
+	appendErr := errors.New("connection reset by peer")
+	scripted.appendErr = appendErr
+	w, _ := env.writer()
+
+	_, err := w.Place(context.Background(), placeRequest(writerChild, nil))
+
+	require.ErrorIs(t, err, appendErr)
+	require.ErrorContains(t, err, " at version 2 returned: connection reset by peer; a read of that version found no event, so nothing was appended")
+	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 1)
+}
+
+func TestTreeWriterAppend_ReportsAnotherEventAtItsVersion(t *testing.T) {
+	env, scripted := scriptedEnv(t)
+	scripted.appendErr = errors.New("connection reset by peer")
+	var interloper string
+	scripted.afterAppend = func() {
+		interloper = appendDirect(t, scripted.MemoryEventStore, EventTypeNodePlaced, NodePlacedPayload{
+			TreeID: writerTree, UserID: writerOther, ParentID: writerRoot, SponsorID: writerRoot,
+			TreeType: treeTypeUnilevel, EnrolledAt: writeTime,
+		}).ID
+	}
+	w, _ := env.writer()
+
+	_, err := w.Place(context.Background(), placeRequest(writerChild, nil))
+
+	require.ErrorContains(t, err, "; a read of that version found event "+interloper+", so nothing was appended")
+}
+
+func TestTreeWriterAppend_ReportsAnUnknownOutcomeWhenTheReadFails(t *testing.T) {
+	env, scripted := scriptedEnv(t)
+	appendErr, readErr := errors.New("connection reset by peer"), errors.New("read timed out")
+	scripted.appendErr, scripted.readErr = appendErr, readErr
+	w, _ := env.writer()
+
+	_, err := w.Place(context.Background(), placeRequest(writerChild, nil))
+
+	var unknown *AppendOutcomeUnknownError
+	require.ErrorAs(t, err, &unknown)
+	assert.Equal(t, TreeStreamName(writerTree), unknown.Stream)
+	assert.Equal(t, int64(2), unknown.Version)
+	require.EqualError(t, err, fmt.Sprintf(
+		"append of event %s to stream %s at version 2 returned: connection reset by peer; "+
+			"reading version 2 to confirm it returned: read timed out; whether the event was appended is unknown",
+		unknown.EventID, TreeStreamName(writerTree)))
+	assert.ErrorIs(t, err, appendErr)
+	assert.ErrorIs(t, err, readErr)
+}
+
+func TestTreeWriterAppend_StatesAConflictWithoutTheStoresVersion(t *testing.T) {
+	env, scripted := scriptedEnv(t)
+	stream := TreeStreamName(writerTree)
+	scripted.appendErr = &platform.ConcurrencyError{Stream: stream, ExpectedVersion: 1, ActualVersion: 99}
+	w, _ := env.writer()
+
+	_, err := w.Place(context.Background(), placeRequest(writerChild, nil))
+
+	require.EqualError(t, err, "append to stream "+stream+" at expected version 1 was refused with a concurrency conflict")
+	var conflict *platform.ConcurrencyError
+	assert.ErrorAs(t, err, &conflict)
 }

@@ -32,3 +32,21 @@ func (e *CatchUpFailedError) Error() string {
 }
 
 func (e *CatchUpFailedError) Unwrap() error { return e.Err }
+
+// AppendOutcomeUnknownError reports an append that returned an error, whose
+// version could not be read to learn whether it landed.
+type AppendOutcomeUnknownError struct {
+	Stream    string
+	Version   int64
+	EventID   string
+	AppendErr error
+	ReadErr   error
+}
+
+func (e *AppendOutcomeUnknownError) Error() string {
+	return fmt.Sprintf("append of event %s to stream %s at version %d returned: %v; "+
+		"reading version %d to confirm it returned: %v; whether the event was appended is unknown",
+		e.EventID, e.Stream, e.Version, e.AppendErr, e.Version, e.ReadErr)
+}
+
+func (e *AppendOutcomeUnknownError) Unwrap() []error { return []error{e.AppendErr, e.ReadErr} }

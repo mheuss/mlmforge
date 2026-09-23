@@ -433,17 +433,40 @@ func (w *TreeWriter) catchUp(ctx context.Context, tree, stream string, last plat
 }
 
 // append appends one event at the expected version and returns the version it
-// landed at.
+// landed at. An error means the event is not known to have landed.
 func (w *TreeWriter) append(ctx context.Context, stream string, expected int64, event platform.NewEvent) (int64, error) {
-	err := w.events.Append(ctx, stream, expected, []platform.NewEvent{event})
-	if err == nil {
-		return expected + 1, nil
+	version := expected + 1
+	appendErr := w.events.Append(ctx, stream, expected, []platform.NewEvent{event})
+	if appendErr == nil {
+		return version, nil
 	}
 	var conflict *platform.ConcurrencyError
-	if errors.As(err, &conflict) {
-		return 0, &appendConflictError{stream: stream, expected: expected, err: err}
+	if errors.As(appendErr, &conflict) {
+		return 0, &appendConflictError{stream: stream, expected: expected, err: appendErr}
 	}
-	return 0, fmt.Errorf("append event %s to stream %s at version %d: %w", event.ID, stream, expected+1, err)
+	if errors.Is(appendErr, platform.ErrInvalidStreamName) || errors.Is(appendErr, platform.ErrEmptyAppend) {
+		return 0, fmt.Errorf("append event %s to stream %s: %w", event.ID, stream, appendErr)
+	}
+
+	// The commit may have landed and its reply been lost. The read that decides
+	// it runs even when the caller's context has ended.
+	readCtx, cancel := detachedRead(ctx)
+	defer cancel()
+	stored, readErr := w.events.ReadStream(readCtx, stream, version, 1)
+	if readErr != nil {
+		return 0, &AppendOutcomeUnknownError{
+			Stream: stream, Version: version, EventID: event.ID, AppendErr: appendErr, ReadErr: readErr,
+		}
+	}
+	if len(stored) == 1 && stored[0].Version == version {
+		if sameUUID(stored[0].ID, event.ID) {
+			return version, nil
+		}
+		return 0, fmt.Errorf("append event %s to stream %s at version %d returned: %w; a read of that version found event %s, so nothing was appended",
+			event.ID, stream, version, appendErr, stored[0].ID)
+	}
+	return 0, fmt.Errorf("append event %s to stream %s at version %d returned: %w; a read of that version found no event, so nothing was appended",
+		event.ID, stream, version, appendErr)
 }
 
 // project reads the event stored at version and projects that copy.

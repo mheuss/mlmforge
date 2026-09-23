@@ -255,14 +255,32 @@ func (l releaseFailingLocker) Lock(context.Context, uuid.UUID) (func() error, er
 // script once its setup is done.
 type scriptedEvents struct {
 	*platform.MemoryEventStore
-	// afterAppend runs once, after the next Append reaches the inner store.
+	// afterAppend runs once, after the next Append, failed or not.
 	afterAppend func()
 	// readAs replaces what ReadStream returns when read from readAsVersion.
 	readAs        *platform.Event
 	readAsVersion int64
+	// appendErr is what the next Append returns. commitFirst writes its events
+	// to the inner store before returning it.
+	appendErr   error
+	commitFirst bool
+	// readErr is what every ReadStream returns after a scripted Append failure.
+	readErr error
+	failed  bool
 }
 
 func (s *scriptedEvents) Append(ctx context.Context, stream string, expected int64, events []platform.NewEvent) error {
+	if s.appendErr != nil {
+		err := s.appendErr
+		s.appendErr, s.failed = nil, true
+		if s.commitFirst {
+			if innerErr := s.MemoryEventStore.Append(ctx, stream, expected, events); innerErr != nil {
+				return innerErr
+			}
+		}
+		s.runAfterAppend()
+		return err
+	}
 	if err := s.MemoryEventStore.Append(ctx, stream, expected, events); err != nil {
 		return err
 	}
@@ -279,6 +297,9 @@ func (s *scriptedEvents) runAfterAppend() {
 }
 
 func (s *scriptedEvents) ReadStream(ctx context.Context, stream string, from, limit int64) ([]platform.Event, error) {
+	if s.failed && s.readErr != nil {
+		return nil, s.readErr
+	}
 	if s.readAs != nil && from == s.readAsVersion {
 		return []platform.Event{*s.readAs}, nil
 	}

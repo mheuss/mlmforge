@@ -71,13 +71,19 @@ impl BinaryTree {
         Ok(())
     }
 
-    pub fn add_root(&mut self, user_id: Uuid, enrolled_at: i64) -> Result<NodeIndex, TreeError> {
+    /// Refuses a root this tree cannot take. Changes nothing.
+    pub fn check_add_root(&self, user_id: Uuid) -> Result<(), TreeError> {
         if self.arena.root.is_some() {
             return Err(TreeError::RootAlreadyExists);
         }
         if self.arena.index.contains_key(&user_id) {
             return Err(TreeError::UserAlreadyExists(user_id));
         }
+        Ok(())
+    }
+
+    pub fn add_root(&mut self, user_id: Uuid, enrolled_at: i64) -> Result<NodeIndex, TreeError> {
+        self.check_add_root(user_id)?;
 
         let node = Node {
             user_id,
@@ -103,6 +109,36 @@ impl BinaryTree {
         Ok(self.arena.node(idx))
     }
 
+    /// Refuses a placement this tree cannot take. Changes nothing.
+    pub fn check_add_node(
+        &self,
+        user_id: Uuid,
+        parent_id: Uuid,
+        position: usize,
+        sponsor_id: Uuid,
+    ) -> Result<(), TreeError> {
+        if position > 1 {
+            return Err(TreeError::PositionOutOfRange {
+                user_id: parent_id,
+                position,
+                child_count: 2,
+            });
+        }
+        if self.arena.index.contains_key(&user_id) {
+            return Err(TreeError::UserAlreadyExists(user_id));
+        }
+        let parent_idx = self.arena.resolve(parent_id)?;
+        self.arena.resolve(sponsor_id)?;
+        let parent_slots = self.slots.get(&parent_idx).copied().unwrap_or([None, None]);
+        if parent_slots[position].is_some() {
+            return Err(TreeError::PositionOccupied {
+                user_id: parent_id,
+                position,
+            });
+        }
+        Ok(())
+    }
+
     /// Adds a child node at an explicit position under a parent.
     ///
     /// Position 0 = left, position 1 = right. Both the position and
@@ -116,26 +152,9 @@ impl BinaryTree {
         sponsor_id: Uuid,
         enrolled_at: i64,
     ) -> Result<NodeIndex, TreeError> {
-        if position > 1 {
-            return Err(TreeError::PositionOutOfRange {
-                user_id: parent_id,
-                position,
-                child_count: 2,
-            });
-        }
-        if self.arena.index.contains_key(&user_id) {
-            return Err(TreeError::UserAlreadyExists(user_id));
-        }
+        self.check_add_node(user_id, parent_id, position, sponsor_id)?;
         let parent_idx = self.arena.resolve(parent_id)?;
         let sponsor_idx = self.arena.resolve(sponsor_id)?;
-
-        let parent_slots = self.slots.get(&parent_idx).copied().unwrap_or([None, None]);
-        if parent_slots[position].is_some() {
-            return Err(TreeError::PositionOccupied {
-                user_id: parent_id,
-                position,
-            });
-        }
 
         let parent_depth = self.arena.node(parent_idx).depth;
 
@@ -165,6 +184,16 @@ impl BinaryTree {
         Ok(idx)
     }
 
+    /// Refuses a removal this tree cannot make. Changes nothing.
+    pub fn check_remove_node(&self, user_id: Uuid) -> Result<(), TreeError> {
+        let idx = self.arena.resolve(user_id)?;
+        let child_count = self.arena.node(idx).children.len();
+        if child_count > 0 {
+            return Err(TreeError::HasChildren(user_id, child_count));
+        }
+        self.arena.check_sponsored_removable(&[idx])
+    }
+
     /// Removes a leaf node from the tree.
     ///
     /// The node must have no children. Removing a node with children
@@ -174,14 +203,8 @@ impl BinaryTree {
     /// The removed slot is added to the free list for reuse by the
     /// next `add_root` or `add_node` call.
     pub fn remove_node(&mut self, user_id: Uuid) -> Result<Vec<Responsored>, TreeError> {
+        self.check_remove_node(user_id)?;
         let idx = self.arena.resolve(user_id)?;
-        let child_count = self.arena.node(idx).children.len();
-
-        if child_count > 0 {
-            return Err(TreeError::HasChildren(user_id, child_count));
-        }
-
-        self.arena.check_sponsored_removable(&[idx])?;
 
         if let Some(parent_idx) = self.arena.node(idx).parent {
             let slots = self
@@ -1117,5 +1140,79 @@ mod tests {
         assert_eq!(tree.validate_restored(), Ok(()));
         let sponsor = tree.get_sponsor(test_uuid(3)).unwrap().unwrap();
         assert_eq!(sponsor.user_id, test_uuid(1));
+    }
+
+    #[test]
+    fn check_add_root_refuses_what_add_root_refuses_and_changes_nothing() {
+        let mut tree = BinaryTree::new();
+        assert_eq!(tree.check_add_root(test_uuid(1)), Ok(()));
+        assert!(
+            !tree.contains(test_uuid(1)),
+            "a passing check must not add the root"
+        );
+
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        assert_eq!(
+            tree.check_add_root(test_uuid(2)),
+            Err(TreeError::RootAlreadyExists)
+        );
+    }
+
+    #[test]
+    fn check_add_node_refuses_what_add_node_refuses_and_changes_nothing() {
+        let mut tree = BinaryTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0, test_uuid(1), 2000)
+            .unwrap();
+
+        assert_eq!(
+            tree.check_add_node(test_uuid(3), test_uuid(1), 1, test_uuid(1)),
+            Ok(())
+        );
+        assert!(
+            !tree.contains(test_uuid(3)),
+            "a passing check must not add the node"
+        );
+        assert_eq!(
+            tree.check_add_node(test_uuid(3), test_uuid(1), 0, test_uuid(1)),
+            Err(TreeError::PositionOccupied {
+                user_id: test_uuid(1),
+                position: 0
+            })
+        );
+        assert_eq!(
+            tree.check_add_node(test_uuid(3), test_uuid(1), 2, test_uuid(1)),
+            Err(TreeError::PositionOutOfRange {
+                user_id: test_uuid(1),
+                position: 2,
+                child_count: 2
+            })
+        );
+        assert_eq!(
+            tree.check_add_node(test_uuid(2), test_uuid(1), 1, test_uuid(1)),
+            Err(TreeError::UserAlreadyExists(test_uuid(2)))
+        );
+    }
+
+    #[test]
+    fn check_remove_node_refuses_what_remove_node_refuses_and_changes_nothing() {
+        let mut tree = BinaryTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0, test_uuid(1), 2000)
+            .unwrap();
+
+        assert_eq!(tree.check_remove_node(test_uuid(2)), Ok(()));
+        assert!(
+            tree.contains(test_uuid(2)),
+            "a passing check must not remove the node"
+        );
+        assert_eq!(
+            tree.check_remove_node(test_uuid(1)),
+            Err(TreeError::HasChildren(test_uuid(1), 1))
+        );
+        assert_eq!(
+            tree.check_remove_node(test_uuid(9)),
+            Err(TreeError::UserNotFound(test_uuid(9)))
+        );
     }
 }

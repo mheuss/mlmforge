@@ -51,6 +51,7 @@ func TestTreeLoadCmd_PassesItsFlagsToTheLoader(t *testing.T) {
 			return &treeDeps{release: func() error { return nil }}, nil
 		},
 		func(*treeDeps) treeLoader { return rec },
+		nil,
 	)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetArgs([]string{
@@ -104,6 +105,7 @@ func TestTreeLoadCmd_MatrixFlagValuesReachTheEngine(t *testing.T) {
 			return &treeDeps{release: func() error { return nil }}, nil
 		},
 		func(*treeDeps) treeLoader { return networkengine.NewTreeLoader(store, mut) },
+		nil,
 	)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetArgs([]string{
@@ -125,6 +127,7 @@ func TestTreeLoadCmd_ReleasesTheDepsAfterRunning(t *testing.T) {
 			return &treeDeps{release: func() error { released = true; return nil }}, nil
 		},
 		func(*treeDeps) treeLoader { return &recordingLoader{} },
+		nil,
 	)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetArgs([]string{
@@ -146,6 +149,7 @@ func TestTreeLoadCmd_RejectsStrayPositionalArguments(t *testing.T) {
 			return &treeDeps{release: func() error { return nil }}, nil
 		},
 		func(*treeDeps) treeLoader { return &recordingLoader{} },
+		nil,
 	)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
@@ -171,6 +175,7 @@ func TestTreeLoadCmd_ReportsAFailureOnceWithoutUsage(t *testing.T) {
 			return &treeDeps{release: func() error { return nil }}, nil
 		},
 		func(*treeDeps) treeLoader { return &failingLoader{err: errors.New("boom")} },
+		nil,
 	)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
@@ -252,6 +257,7 @@ func TestTreeLoadCmd_SignalsCancelTheLoad(t *testing.T) {
 					return &treeDeps{release: func() error { return nil }}, nil
 				},
 				func(*treeDeps) treeLoader { return loader },
+				nil,
 			)
 			cmd.SetOut(&bytes.Buffer{})
 			cmd.SetErr(&bytes.Buffer{})

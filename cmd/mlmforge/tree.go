@@ -23,13 +23,18 @@ type loaderFor func(deps *treeDeps) treeLoader
 
 // newTreeCmd builds the tree command group against the real dependencies.
 func newTreeCmd() *cobra.Command {
-	return newTreeCmdWith(openTreeDeps, func(d *treeDeps) treeLoader {
-		return networkengine.NewTreeLoader(d.store, d.engine)
-	})
+	return newTreeCmdWith(openTreeDeps,
+		func(d *treeDeps) treeLoader {
+			return networkengine.NewTreeLoader(d.store, d.engine)
+		},
+		func(d *treeDeps) treeWriter {
+			return networkengine.NewTreeWriter(d.events, d.store, d.engine, d.locker)
+		},
+	)
 }
 
 // newTreeCmdWith builds the group over injectable seams.
-func newTreeCmdWith(open depsOpener, loader loaderFor) *cobra.Command {
+func newTreeCmdWith(open depsOpener, loader loaderFor, writer writerFor) *cobra.Command {
 	treeCmd := &cobra.Command{
 		Use:   "tree",
 		Short: "Tree persistence commands",
@@ -56,7 +61,12 @@ func newTreeCmdWith(open depsOpener, loader loaderFor) *cobra.Command {
 		return url, path, nil
 	}
 
-	treeCmd.AddCommand(newTreeLoadCmd(resolve, open, loader))
+	treeCmd.AddCommand(
+		newTreeLoadCmd(resolve, open, loader),
+		newTreeAddRootCmd(resolve, open, writer),
+		newTreePlaceCmd(resolve, open, writer),
+		newTreeRemoveCmd(resolve, open, writer),
+	)
 	return treeCmd
 }
 

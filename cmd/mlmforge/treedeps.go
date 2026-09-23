@@ -7,12 +7,15 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mlmforge/mlmforge/internal/networkengine"
+	"github.com/mlmforge/mlmforge/internal/platform"
 )
 
 // treeDeps is what one tree subcommand needs for one invocation.
 type treeDeps struct {
+	events  platform.EventStore
 	store   networkengine.TreeStore
-	engine  networkengine.TreeEngine
+	engine  networkengine.TreeEngineChecker
+	locker  networkengine.TreeLocker
 	release func() error
 }
 
@@ -71,8 +74,10 @@ func openTreeDeps(ctx context.Context, dbURL, workerPath string) (*treeDeps, err
 		return nil, err
 	}
 	return &treeDeps{
+		events:  platform.NewPostgresEventStore(pool),
 		store:   networkengine.NewPostgresTreeStore(pool),
 		engine:  engine,
+		locker:  networkengine.NewPostgresTreeLocker(dbURL),
 		release: func() error { return releaseDeps(engine, pool) },
 	}, nil
 }

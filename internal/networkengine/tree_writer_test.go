@@ -165,6 +165,20 @@ func TestTreeWriterAddRoot_ReportsAReleaseFailureInTheResult(t *testing.T) {
 	assert.Equal(t, unlockErr, res.ReleaseErr)
 }
 
+func TestTreeWriterAddRoot_ReportsAReleaseFailureAlongsideARefusal(t *testing.T) {
+	env := newWriterEnv()
+	unlockErr := errors.New("pg_advisory_unlock for tree x returned false")
+	engine := newFakeWriterEngine()
+	engine.checkErr = &EngineError{Code: engineCodeRootAlreadyExists, Message: "tree already has a root node"}
+	w := NewTreeWriter(env.events, env.store, engine, releaseFailingLocker{err: unlockErr})
+
+	res, err := w.AddRoot(context.Background(), unilevelRootRequest())
+
+	require.ErrorContains(t, err, "check_mutation for add_root in tree "+writerTree+" returned: ")
+	assert.Equal(t, unlockErr, res.ReleaseErr)
+	assert.Empty(t, streamEvents(t, env.events, TreeStreamName(writerTree)))
+}
+
 func TestTreeWriterAddRoot_ReportsAnEngineThatAlreadyHoldsTheTree(t *testing.T) {
 	t.Run("when the store holds the tree", func(t *testing.T) {
 		env := newWriterEnv()

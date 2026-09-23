@@ -85,10 +85,7 @@ func checkNodePlacedShape(payload NodePlacedPayload) error {
 		// The width bound needs the tree's configured width, which nothing
 		// persists yet (HEU-554). The engine still enforces it at runtime.
 		// The u8 ceiling needs no width: no matrix can have a slot above
-		// math.MaxUint8, so anything larger is rejected here, mirroring the
-		// worker's u8::try_from(position) wire boundary. (The loader's own
-		// runtime bound is the width itself, which it gets via
-		// WithMatrixParams.)
+		// math.MaxUint8, so anything larger is rejected here.
 		if payload.Position == nil {
 			return fmt.Errorf("matrix node_placed for %s in tree %s has no position; matrix events must carry explicit placement",
 				payload.UserID, payload.TreeID)

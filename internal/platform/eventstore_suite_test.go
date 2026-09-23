@@ -71,17 +71,22 @@ func testReadLastEvent(t *testing.T, newStore func(t *testing.T) EventStore) {
 
 	t.Run("the returned event does not share bytes with the store", func(t *testing.T) {
 		s := newStore(t)
-		appendOne(t, s, "order-1", 0, "00000000-0000-0000-0000-000000000001")
+		require.NoError(t, s.Append(ctx, "order-1", 0, []NewEvent{{
+			ID: "00000000-0000-0000-0000-000000000001", Type: "OrderPlaced",
+			Payload: json.RawMessage(`{}`), Metadata: json.RawMessage(`{"a":1}`),
+		}}))
 		first, err := s.ReadLastEvent(ctx, "order-1")
 		require.NoError(t, err)
 		require.NotNil(t, first)
 
 		first.Payload[0] = 'X'
+		first.Metadata[0] = 'X'
 		again, err := s.ReadLastEvent(ctx, "order-1")
 
 		require.NoError(t, err)
 		require.NotNil(t, again)
 		assert.JSONEq(t, `{}`, string(again.Payload))
+		assert.JSONEq(t, `{"a":1}`, string(again.Metadata))
 	})
 
 	t.Run("an invalid stream name is refused", func(t *testing.T) {

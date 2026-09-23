@@ -37,8 +37,6 @@ func makeUUIDNode(nodeID, treeID, userID string, depth int, parentID, sponsorID 
 		Position:   position,
 		Depth:      depth,
 		EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-		CreatedAt:  time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-		UpdatedAt:  time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 	}
 }
 
@@ -431,24 +429,6 @@ func TestPostgresTreeStore_BulkInsertTransaction(t *testing.T) {
 	).Scan(&count)
 	require.NoError(t, err)
 	assert.Equal(t, 0, count, "node2 should not exist after failed bulk insert")
-}
-
-func TestPostgresTreeStore_TimestampsPopulated(t *testing.T) {
-	store := newTestPostgresTreeStore(t)
-	ctx := context.Background()
-
-	tree1 := testTreeUUID(1)
-	userA := testUserUUID(1)
-
-	before := time.Now().Add(-time.Second)
-	node := makeUUIDNode(testNodeUUID(1), tree1, userA, 0, nil, nil, nil)
-	require.NoError(t, store.InsertNode(ctx, node))
-
-	got, err := store.GetNode(ctx, tree1, userA)
-	require.NoError(t, err)
-	require.NotNil(t, got)
-	assert.True(t, got.CreatedAt.After(before), "created_at should be set by database")
-	assert.True(t, got.UpdatedAt.After(before), "updated_at should be set by database")
 }
 
 func TestPostgresTreeStore_Suite(t *testing.T) {

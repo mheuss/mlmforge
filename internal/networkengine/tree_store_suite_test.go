@@ -24,10 +24,6 @@ func nodeUserIDs(nodes []TreeNodeRow) []string {
 // Postgres implementations must pass it identically. newStore returns a
 // fresh, empty store on each call.
 //
-// Nothing here asserts on CreatedAt or UpdatedAt. The two implementations
-// already disagree about both, which is HEU-817. HEU-403 is the adjacent
-// question of whether the struct should carry fields the insert drops.
-//
 // stampOf reads one row's removal stamp by the row's ID, whether or not the
 // row is active.
 func runTreeStoreSuite(
@@ -716,6 +712,74 @@ func runTreeStoreSuite(
 		require.NotNil(t, got)
 		assert.True(t, node.EnrolledAt.Equal(got.EnrolledAt),
 			"EnrolledAt round-trips as the same instant, got %v want %v", got.EnrolledAt, node.EnrolledAt)
+	})
+
+	t.Run("InsertNode stamps CreatedAt and UpdatedAt over the caller's values", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		user := testUserUUID(1)
+		node := makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)
+		node.CreatedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		node.UpdatedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+		before := time.Now().Add(-time.Second)
+		require.NoError(t, s.InsertNode(ctx, node))
+
+		got, err := s.GetNode(ctx, tree, user)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		after := time.Now().Add(time.Second)
+		assert.True(t, got.CreatedAt.After(before) && got.CreatedAt.Before(after),
+			"CreatedAt read back as %v, want between %v and %v", got.CreatedAt, before, after)
+		assert.True(t, got.CreatedAt.Equal(got.UpdatedAt),
+			"CreatedAt read back as %v and UpdatedAt as %v, want the same instant", got.CreatedAt, got.UpdatedAt)
+	})
+
+	t.Run("BulkInsert stamps CreatedAt and UpdatedAt over the caller's values", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		user := testUserUUID(1)
+		node := makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)
+		node.CreatedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		node.UpdatedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+		before := time.Now().Add(-time.Second)
+		require.NoError(t, s.BulkInsert(ctx, []TreeNodeRow{node}))
+
+		got, err := s.GetNode(ctx, tree, user)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		after := time.Now().Add(time.Second)
+		assert.True(t, got.CreatedAt.After(before) && got.CreatedAt.Before(after),
+			"CreatedAt read back as %v, want between %v and %v", got.CreatedAt, before, after)
+		assert.True(t, got.CreatedAt.Equal(got.UpdatedAt),
+			"CreatedAt read back as %v and UpdatedAt as %v, want the same instant", got.CreatedAt, got.UpdatedAt)
+	})
+
+	t.Run("BulkInsert stamps every row in a batch with one instant", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		rootUser := testUserUUID(1)
+		childUser := testUserUUID(2)
+		require.NoError(t, s.BulkInsert(ctx, []TreeNodeRow{
+			makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil),
+			makeUUIDNode(testNodeUUID(2), tree, childUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0)),
+		}))
+
+		root, err := s.GetNode(ctx, tree, rootUser)
+		require.NoError(t, err)
+		require.NotNil(t, root)
+		child, err := s.GetNode(ctx, tree, childUser)
+		require.NoError(t, err)
+		require.NotNil(t, child)
+		assert.True(t, root.CreatedAt.Equal(child.CreatedAt),
+			"first row's CreatedAt read back as %v, second as %v, want the same instant", root.CreatedAt, child.CreatedAt)
 	})
 
 	t.Run("GetChildren does not cross tree boundaries", func(t *testing.T) {

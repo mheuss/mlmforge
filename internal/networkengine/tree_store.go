@@ -8,6 +8,8 @@ import (
 )
 
 // TreeNodeRow represents a row in the tree_nodes adjacency table.
+//
+// CreatedAt and UpdatedAt are owned by the store.
 type TreeNodeRow struct {
 	ID               string
 	TreeID           string

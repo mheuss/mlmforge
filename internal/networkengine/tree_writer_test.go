@@ -269,7 +269,7 @@ func TestTreeWriterLock_ReportsTheCallersDeadline(t *testing.T) {
 	assert.Contains(t, err.Error(),
 		"the lock on tree "+writerTree+" was not acquired; the caller's context ended after ")
 	var waitErr *TreeLockWaitError
-	assert.False(t, errors.As(err, &waitErr), "the caller's deadline is not the writer's lock wait")
+	assert.False(t, errors.As(err, &waitErr), "got a *TreeLockWaitError; want the caller's context error")
 }
 
 func TestTreeWriterLock_IgnoresANonPositiveWait(t *testing.T) {

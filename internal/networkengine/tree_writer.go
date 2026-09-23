@@ -79,7 +79,7 @@ type TreeWriter struct {
 type TreeWriterOption func(*TreeWriter)
 
 // WithLockWait sets how long each write waits for its tree's lock. A wait of
-// zero or less leaves the default in place.
+// zero or less is ignored.
 func WithLockWait(d time.Duration) TreeWriterOption {
 	return func(w *TreeWriter) {
 		if d > 0 {

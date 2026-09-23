@@ -22,13 +22,12 @@ var (
 	writerOther = testUserUUID(3)
 )
 
-// fakeWriterEngine keeps tree membership in memory, answers CheckMutation from
-// checkErr, and records the tree creations and checks it was asked for.
+// fakeWriterEngine stands in for the engine in writer tests.
 type fakeWriterEngine struct {
 	trees    map[string]*fakeEngineTree
 	checkErr error
 	checks   []Mutation
-	// calls holds tree creations, checks and lock requests in the order made.
+	// calls logs the requests made, in order.
 	calls []string
 	// failAdd fails every add of the keyed user.
 	failAdd map[string]error

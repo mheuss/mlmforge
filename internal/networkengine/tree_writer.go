@@ -413,7 +413,7 @@ func (w *TreeWriter) load(ctx context.Context, tree string, shape treeShape) err
 	return nil
 }
 
-// treeEventTypes are the event types HandleEvent projects.
+// treeEventTypes are the event types catch-up redelivers.
 var treeEventTypes = map[string]bool{
 	EventTypeRootAdded:   true,
 	EventTypeNodePlaced:  true,

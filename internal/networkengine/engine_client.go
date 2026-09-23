@@ -447,8 +447,7 @@ func (c *EngineClient) RemoveMatrixNode(ctx context.Context, structure, userID, 
 
 // --- Mutation checks ---
 
-// Mutation is one tree mutation, as check_mutation takes it. Build one with
-// CheckAddRoot, CheckAddNode, CheckAddNodeAt or CheckRemoveNode.
+// Mutation is one tree mutation for CheckMutation.
 type Mutation struct {
 	op     string
 	params map[string]any
@@ -478,7 +477,7 @@ func CheckRemoveNode(userID string) Mutation {
 // structure, without applying it.
 func (c *EngineClient) CheckMutation(ctx context.Context, structure string, m Mutation) error {
 	if m.op == "" {
-		return errors.New("check_mutation: the Mutation names no mutation; build one with a Check constructor")
+		return errors.New("check_mutation: the Mutation has no op")
 	}
 	params := make(map[string]any, len(m.params)+2)
 	maps.Copy(params, m.params)

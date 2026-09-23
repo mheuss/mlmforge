@@ -84,7 +84,7 @@ func TestEngineClient_CheckMutation_RefusesTheZeroMutation(t *testing.T) {
 
 	err := client.CheckMutation(context.Background(), "t", Mutation{})
 
-	require.EqualError(t, err, "check_mutation: the Mutation names no mutation; build one with a Check constructor")
+	require.EqualError(t, err, "check_mutation: the Mutation has no op")
 	assert.Empty(t, mock.lastOp, "nothing may reach the worker")
 }
 
@@ -124,31 +124,32 @@ func TestEngineClient_CheckMutation_AgreesWithTheRealOp(t *testing.T) {
 	}
 
 	cases := []struct {
-		name  string
-		setup func(*testing.T, *EngineClient)
-		check Mutation
-		apply func(*EngineClient) error
+		name     string
+		setup    func(*testing.T, *EngineClient)
+		check    Mutation
+		apply    func(*EngineClient) error
+		wantCode string
 	}{
 		{"add_root on an empty tree", create(treeTypeUnilevel), CheckAddRoot(root, 100),
-			func(c *EngineClient) error { return c.AddRoot(ctx, tree, root, 100) }},
+			func(c *EngineClient) error { return c.AddRoot(ctx, tree, root, 100) }, ""},
 		{"add_root with a root present", withRoot(treeTypeUnilevel), CheckAddRoot(child, 100),
-			func(c *EngineClient) error { return c.AddRoot(ctx, tree, child, 100) }},
+			func(c *EngineClient) error { return c.AddRoot(ctx, tree, child, 100) }, "ROOT_ALREADY_EXISTS"},
 		{"unilevel add_node", withRoot(treeTypeUnilevel), CheckAddNode(child, root, root, 200),
-			func(c *EngineClient) error { return c.AddNode(ctx, tree, child, root, root, 200) }},
+			func(c *EngineClient) error { return c.AddNode(ctx, tree, child, root, root, 200) }, ""},
 		{"unilevel add_node under a missing parent", withRoot(treeTypeUnilevel), CheckAddNode(child, other, root, 200),
-			func(c *EngineClient) error { return c.AddNode(ctx, tree, child, other, root, 200) }},
+			func(c *EngineClient) error { return c.AddNode(ctx, tree, child, other, root, 200) }, "USER_NOT_FOUND"},
 		{"binary add_node", withRoot(treeTypeBinary), CheckAddNode(child, root, root, 200, WithPosition(0)),
-			func(c *EngineClient) error { return c.AddNode(ctx, tree, child, root, root, 200, WithPosition(0)) }},
+			func(c *EngineClient) error { return c.AddNode(ctx, tree, child, root, root, 200, WithPosition(0)) }, ""},
 		{"binary add_node on an occupied slot", withChild(treeTypeBinary), CheckAddNode(other, root, root, 300, WithPosition(0)),
-			func(c *EngineClient) error { return c.AddNode(ctx, tree, other, root, root, 300, WithPosition(0)) }},
+			func(c *EngineClient) error { return c.AddNode(ctx, tree, other, root, root, 300, WithPosition(0)) }, "POSITION_OCCUPIED"},
 		{"matrix add_node_at", withRoot(treeTypeMatrix), CheckAddNodeAt(child, root, root, 2, 200),
-			func(c *EngineClient) error { return c.AddNodeAt(ctx, tree, child, root, root, 2, 200) }},
+			func(c *EngineClient) error { return c.AddNodeAt(ctx, tree, child, root, root, 2, 200) }, ""},
 		{"matrix add_node_at past the width", withRoot(treeTypeMatrix), CheckAddNodeAt(child, root, root, 3, 200),
-			func(c *EngineClient) error { return c.AddNodeAt(ctx, tree, child, root, root, 3, 200) }},
+			func(c *EngineClient) error { return c.AddNodeAt(ctx, tree, child, root, root, 3, 200) }, "INVALID_POSITION"},
 		{"remove_node of a leaf", withChild(treeTypeUnilevel), CheckRemoveNode(child),
-			func(c *EngineClient) error { _, err := c.RemoveNode(ctx, tree, child); return err }},
+			func(c *EngineClient) error { _, err := c.RemoveNode(ctx, tree, child); return err }, ""},
 		{"remove_node of a parent", withChild(treeTypeUnilevel), CheckRemoveNode(root),
-			func(c *EngineClient) error { _, err := c.RemoveNode(ctx, tree, root); return err }},
+			func(c *EngineClient) error { _, err := c.RemoveNode(ctx, tree, root); return err }, "HAS_CHILDREN"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -162,7 +163,8 @@ func TestEngineClient_CheckMutation_AgreesWithTheRealOp(t *testing.T) {
 			checkErr := client.CheckMutation(ctx, tree, tc.check)
 			applyErr := tc.apply(client)
 
-			assert.Equal(t, engineCodeOf(applyErr), engineCodeOf(checkErr))
+			assert.Equal(t, tc.wantCode, engineCodeOf(checkErr))
+			assert.Equal(t, engineErrorOf(applyErr), engineErrorOf(checkErr))
 		})
 	}
 }
@@ -177,4 +179,13 @@ func engineCodeOf(err error) string {
 		return e.Code
 	}
 	return "not an engine error: " + err.Error()
+}
+
+// engineErrorOf renders an error as the engine code and message it carries.
+func engineErrorOf(err error) string {
+	var e *EngineError
+	if errors.As(err, &e) {
+		return e.Code + ": " + e.Message
+	}
+	return engineCodeOf(err)
 }

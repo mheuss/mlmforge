@@ -55,23 +55,14 @@ type RemoveRequest struct {
 	RemovedAt time.Time
 }
 
-// CaughtUpEvent names the stream's previous last event, redelivered before a
-// write appended.
-type CaughtUpEvent struct {
-	EventID string
-	Version int64
-	Type    string
-}
-
 // WriteResult describes one write. EventID and Version are set once the
 // append is confirmed.
 type WriteResult struct {
 	Stream        string
 	EventID       string
 	Version       int64
-	CaughtUp      *CaughtUpEvent // the last event was redelivered and HandleEvent returned nil
-	ProjectionErr error          // any failure after the append was confirmed
-	ReleaseErr    error          // the unlock failed
+	ProjectionErr error // any failure after the append was confirmed
+	ReleaseErr    error // the unlock failed
 }
 
 // TreeWriter appends tree events and projects them, one tree at a time.

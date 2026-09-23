@@ -618,3 +618,89 @@ func TestTreeWriterRemove_AppendsAndProjectsARemoval(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, stamped)
 }
+
+func TestTreeWriterCatchUp_ProjectsAnUnprojectedLastEventBeforeAppending(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	unprojected := appendDirect(t, env.events, EventTypeNodePlaced, NodePlacedPayload{
+		TreeID: writerTree, UserID: writerChild, ParentID: writerRoot, SponsorID: writerRoot,
+		TreeType: treeTypeUnilevel, EnrolledAt: writeTime,
+	})
+	log := &orderLog{}
+	w := NewTreeWriter(&loggingEvents{EventStore: env.events, log: log},
+		&loggingStore{TreeStore: env.store, log: log, name: "w"}, newFakeWriterEngine(), env.locker)
+
+	res, err := w.Place(context.Background(), placeRequest(writerOther, nil))
+
+	require.NoError(t, err)
+	require.NoError(t, res.ProjectionErr)
+	assert.Equal(t, &CaughtUpEvent{EventID: unprojected.ID, Version: 2, Type: EventTypeNodePlaced}, res.CaughtUp)
+	assert.Equal(t, int64(3), res.Version)
+	insert, appendNew := log.indexOf("w insert "+writerChild), log.indexOf("append at 3")
+	require.GreaterOrEqual(t, insert, 0, "the unprojected placement was never inserted: %v", log.snapshot())
+	assert.Less(t, insert, appendNew, "the earlier event must project before the new one is appended: %v", log.snapshot())
+}
+
+func TestTreeWriterCatchUp_ConvergesOnAProjectedPlacement(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	placed := mustPlace(t, env, writerChild, nil)
+	w, _ := env.writer()
+
+	res, err := w.Place(context.Background(), placeRequest(writerOther, nil))
+
+	require.NoError(t, err)
+	require.NoError(t, res.ProjectionErr)
+	assert.Equal(t, &CaughtUpEvent{EventID: placed.EventID, Version: 2, Type: EventTypeNodePlaced}, res.CaughtUp)
+}
+
+func TestTreeWriterCatchUp_ConvergesOnAProjectedRemoval(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	mustPlace(t, env, writerChild, nil)
+	w, _ := env.writer()
+	removed, err := w.Remove(context.Background(), RemoveRequest{TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime})
+	require.NoError(t, err)
+	require.NoError(t, removed.ProjectionErr)
+	next, _ := env.writer()
+
+	res, err := next.Place(context.Background(), placeRequest(writerOther, nil))
+
+	require.NoError(t, err)
+	require.NoError(t, res.ProjectionErr)
+	assert.Equal(t, &CaughtUpEvent{EventID: removed.EventID, Version: 3, Type: EventTypeNodeRemoved}, res.CaughtUp)
+}
+
+func TestTreeWriterCatchUp_RefusesALastEventOfAnotherType(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	foreign := appendDirect(t, env.events, "tree.renamed", map[string]string{"name": "x"})
+	w, _ := env.writer()
+
+	_, err := w.Place(context.Background(), placeRequest(writerChild, nil))
+
+	require.EqualError(t, err, "stream "+TreeStreamName(writerTree)+" ends with event "+foreign.ID+
+		` at version 2 of type "tree.renamed", which is not a tree event; nothing was appended`)
+	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 2)
+}
+
+func TestTreeWriterCatchUp_ReportsAFailedRedeliveryAndAppendsNothing(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	orphan := appendDirect(t, env.events, EventTypeNodePlaced, NodePlacedPayload{
+		TreeID: writerTree, UserID: writerChild, ParentID: writerOther, SponsorID: writerRoot,
+		TreeType: treeTypeUnilevel, EnrolledAt: writeTime,
+	})
+	w, _ := env.writer()
+
+	_, err := w.Place(context.Background(), placeRequest(testUserUUID(4), nil))
+
+	require.EqualError(t, err, "redelivering event "+orphan.ID+" (tree.node_placed) at version 2 in stream "+
+		TreeStreamName(writerTree)+" returned: parent node "+writerOther+" not found in tree "+writerTree+
+		"; nothing was appended")
+	var failed *CatchUpFailedError
+	require.ErrorAs(t, err, &failed)
+	assert.Equal(t, orphan.ID, failed.EventID)
+	assert.Equal(t, int64(2), failed.Version)
+	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 2)
+}

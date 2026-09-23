@@ -55,14 +55,23 @@ type RemoveRequest struct {
 	RemovedAt time.Time
 }
 
+// CaughtUpEvent names the stream's previous last event, redelivered before a
+// write appended.
+type CaughtUpEvent struct {
+	EventID string
+	Version int64
+	Type    string
+}
+
 // WriteResult describes one write. EventID and Version are set once the
 // append is confirmed.
 type WriteResult struct {
 	Stream        string
 	EventID       string
 	Version       int64
-	ProjectionErr error // any failure after the append was confirmed
-	ReleaseErr    error // the unlock failed
+	CaughtUp      *CaughtUpEvent // the last event, redelivered before the append
+	ProjectionErr error          // any failure after the append was confirmed
+	ReleaseErr    error          // the unlock failed
 }
 
 // TreeWriter appends tree events and projects them, one tree at a time.
@@ -345,6 +354,9 @@ func (w *TreeWriter) write(ctx context.Context, spec writeSpec) (result WriteRes
 	}
 	var expected int64
 	if last != nil {
+		if result.CaughtUp, err = w.catchUp(ctx, tree, stream, *last); err != nil {
+			return result, err
+		}
 		expected = last.Version
 	}
 	if err := w.engine.CheckMutation(ctx, tree, check); err != nil {
@@ -399,6 +411,26 @@ func (w *TreeWriter) load(ctx context.Context, tree string, shape treeShape) err
 		return fmt.Errorf("create tree %s in the engine; nothing was appended: %w", tree, err)
 	}
 	return nil
+}
+
+// treeEventTypes are the event types HandleEvent projects.
+var treeEventTypes = map[string]bool{
+	EventTypeRootAdded:   true,
+	EventTypeNodePlaced:  true,
+	EventTypeNodeRemoved: true,
+}
+
+// catchUp redelivers the stream's last event through the consumer.
+func (w *TreeWriter) catchUp(ctx context.Context, tree, stream string, last platform.Event) (*CaughtUpEvent, error) {
+	// A nil return for any other type would read as projected.
+	if !treeEventTypes[last.Type] {
+		return nil, fmt.Errorf("stream %s ends with event %s at version %d of type %q, which is not a tree event; nothing was appended",
+			stream, last.ID, last.Version, last.Type)
+	}
+	if err := w.consumer.HandleEvent(ctx, last); err != nil {
+		return nil, &CatchUpFailedError{TreeID: tree, EventID: last.ID, Version: last.Version, Type: last.Type, Err: err}
+	}
+	return &CaughtUpEvent{EventID: last.ID, Version: last.Version, Type: last.Type}, nil
 }
 
 // append appends one event at the expected version and returns the version it

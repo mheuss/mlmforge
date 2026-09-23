@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -310,4 +312,55 @@ func appendDirect(t *testing.T, events platform.EventStore, eventType string, pa
 	require.NoError(t, err)
 	require.Len(t, stored, 1)
 	return stored[0]
+}
+
+// orderLog records calls across wrapped stores in the order they happen.
+type orderLog struct {
+	mu      sync.Mutex
+	entries []string
+}
+
+func (l *orderLog) add(entry string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.entries = append(l.entries, entry)
+}
+
+func (l *orderLog) snapshot() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.Clone(l.entries)
+}
+
+// indexOf returns the position of the first matching entry, or -1.
+func (l *orderLog) indexOf(entry string) int {
+	return slices.Index(l.snapshot(), entry)
+}
+
+// loggingStore records each insert and each full-tree load.
+type loggingStore struct {
+	TreeStore
+	log  *orderLog
+	name string
+}
+
+func (s *loggingStore) InsertNode(ctx context.Context, node TreeNodeRow) error {
+	s.log.add(s.name + " insert " + node.UserID)
+	return s.TreeStore.InsertNode(ctx, node)
+}
+
+func (s *loggingStore) GetByTreeDepthOrdered(ctx context.Context, treeID string) ([]TreeNodeRow, error) {
+	s.log.add(s.name + " load")
+	return s.TreeStore.GetByTreeDepthOrdered(ctx, treeID)
+}
+
+// loggingEvents records each append by the version it asks for.
+type loggingEvents struct {
+	platform.EventStore
+	log *orderLog
+}
+
+func (e *loggingEvents) Append(ctx context.Context, stream string, expected int64, events []platform.NewEvent) error {
+	e.log.add(fmt.Sprintf("append at %d", expected+1))
+	return e.EventStore.Append(ctx, stream, expected, events)
 }

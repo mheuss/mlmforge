@@ -890,7 +890,7 @@ Each invocation starts a worker, rebuilds the tree in it from the store under th
 - Version 1 of a tree's stream records the tree type, and for a matrix the width and spillover. Every later write reads the type from there. A version 1 that is not a complete `root_added` refuses the write.
 - `add-root` on a stream that already has a version 1 is refused when its type, matrix width or spillover differs from what version 1 records. Matrix flags left off the request match. On an empty stream the check runs again under the lock, so a root that landed in between decides.
 - Removing a tree's only root is allowed. A later `add-root` roots the tree again (Michael, 2026-09-23).
-- The stream's last event is redelivered through `HandleEvent`. Under the lock it is the only event that can be unprojected. A last event of a type `HandleEvent` does not project refuses the write, because `HandleEvent` returns nil for it.
+- The stream's last event is redelivered through `HandleEvent`. Under the lock it is the only event that can be unprojected. Catch-up redelivers only `tree.root_added`, `tree.node_placed` and `tree.node_removed`. A last event of any other type refuses the write before `HandleEvent` is called. `HandleEvent` returns nil for a type it does not project, so calling it would report that event as projected.
 - `check_mutation` asks the engine whether the mutation would succeed. The worker runs the check functions the mutating ops call first, so no refusal rule is copied into Go.
 
 ### Three outcomes for an append

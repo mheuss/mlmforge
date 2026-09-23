@@ -736,6 +736,29 @@ func scriptedEnv(t *testing.T) (*writerEnv, *scriptedEvents) {
 	return env, scripted
 }
 
+func TestTreeWriterCatchUp_LeavesTheRowOfAnEventTheEngineRefused(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	refused := appendDirect(t, env.events, EventTypeNodePlaced, NodePlacedPayload{
+		TreeID: writerTree, UserID: writerChild, ParentID: writerRoot, SponsorID: writerRoot,
+		TreeType: treeTypeUnilevel, EnrolledAt: writeTime,
+	})
+	w, engine := env.writer()
+	engine.failAdd[writerChild] = fakeEngineError("SPONSOR_NOT_FOUND", "sponsor %s not found in tree", writerRoot)
+
+	_, err := w.Place(context.Background(), placeRequest(writerOther, nil))
+
+	var failed *CatchUpFailedError
+	require.ErrorAs(t, err, &failed)
+	assert.Equal(t, refused.ID, failed.EventID)
+	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 2)
+	row, err := env.store.GetNode(context.Background(), writerTree, writerChild)
+	require.NoError(t, err)
+	require.NotNil(t, row, "no active row for %s after the refused redelivery", writerChild)
+	assert.Equal(t, refused.ID, row.ID)
+	assert.Nil(t, row.RemovedAt)
+}
+
 func TestTreeWriterAppend_ConfirmsACommitWhoseReplyWasLost(t *testing.T) {
 	env, scripted := scriptedEnv(t)
 	scripted.appendErr, scripted.commitFirst = errors.New("connection reset by peer"), true

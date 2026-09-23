@@ -297,6 +297,9 @@ func (s *scriptedEvents) runAfterAppend() {
 }
 
 func (s *scriptedEvents) ReadStream(ctx context.Context, stream string, from, limit int64) ([]platform.Event, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if s.failed && s.readErr != nil {
 		return nil, s.readErr
 	}

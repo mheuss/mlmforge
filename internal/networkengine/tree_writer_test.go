@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -805,7 +806,25 @@ func TestTreeWriterAppend_ReportsAnotherEventAtItsVersion(t *testing.T) {
 	_, err := w.Place(context.Background(), placeRequest(writerChild, nil))
 
 	require.Error(t, err)
-	require.Regexp(t, "; a read of that version found event "+interloper+", so event [0-9a-f-]{36} was not appended$", err.Error())
+	m := regexp.MustCompile("; a read of that version found event " + interloper + ", so event ([0-9a-f-]{36}) was not appended$").
+		FindStringSubmatch(err.Error())
+	require.Len(t, m, 2, "error: %s", err)
+	assert.NotEqual(t, interloper, m[1])
+	assert.Contains(t, err.Error(), "append event "+m[1]+" to stream ")
+}
+
+func TestTreeWriterAppend_ConfirmsALostReplyAfterTheCallerCancels(t *testing.T) {
+	env, scripted := scriptedEnv(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	scripted.appendErr, scripted.commitFirst = context.Canceled, true
+	scripted.afterAppend = cancel
+	w, _ := env.writer()
+
+	res, err := w.Place(ctx, placeRequest(writerChild, nil))
+
+	require.NoError(t, err, "the append committed before the caller's context ended")
+	assert.Equal(t, int64(2), res.Version)
 }
 
 func TestTreeWriterAppend_ReportsAnUnknownOutcomeWhenTheReadFails(t *testing.T) {

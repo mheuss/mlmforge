@@ -22,7 +22,7 @@ func NewMemoryTreeLocker() *MemoryTreeLocker {
 // Lock waits until the tree is free or ctx ends.
 func (l *MemoryTreeLocker) Lock(ctx context.Context, treeID uuid.UUID) (func() error, error) {
 	// A select with a free slot and an ended context picks either case at
-	// random.
+	// random, so without this check an ended context could take the lock.
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

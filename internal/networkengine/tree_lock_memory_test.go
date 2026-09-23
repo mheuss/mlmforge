@@ -90,6 +90,24 @@ func TestMemoryTreeLocker_RefusesAnEndedContextOnAFreeTree(t *testing.T) {
 	require.NoError(t, unlock())
 }
 
+func TestMemoryTreeLocker_AStaleUnlockDoesNotFreeTheNextHolder(t *testing.T) {
+	locker := NewMemoryTreeLocker()
+	tree := uuid.MustParse(testTreeUUID(1))
+	first, err := locker.Lock(context.Background(), tree)
+	require.NoError(t, err)
+	require.NoError(t, first())
+	second, err := locker.Lock(context.Background(), tree)
+	require.NoError(t, err)
+	defer func() { _ = second() }()
+
+	require.Error(t, first(), "the first holder's unlock ran twice")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, err = locker.Lock(ctx, tree)
+	require.ErrorIs(t, err, context.DeadlineExceeded, "the second holder must still hold the tree")
+}
+
 func TestMemoryTreeLocker_ASecondUnlockReportsItself(t *testing.T) {
 	locker := NewMemoryTreeLocker()
 	tree := uuid.MustParse(testTreeUUID(1))

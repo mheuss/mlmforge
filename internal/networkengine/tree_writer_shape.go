@@ -37,7 +37,7 @@ func (s treeShape) config() loadTreeConfig {
 // one that is not a complete root_added.
 func readTreeShape(stream string, first platform.Event) (treeShape, error) {
 	if first.Type != EventTypeRootAdded {
-		return treeShape{}, fmt.Errorf("stream %s holds %s at version 1, not %s", stream, first.Type, EventTypeRootAdded)
+		return treeShape{}, fmt.Errorf("stream %s holds %q at version 1, not %s", stream, first.Type, EventTypeRootAdded)
 	}
 	var p RootAddedPayload
 	if err := json.Unmarshal(first.Payload, &p); err != nil {

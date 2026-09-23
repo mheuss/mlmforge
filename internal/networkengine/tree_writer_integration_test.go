@@ -2,6 +2,7 @@ package networkengine
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"sync"
@@ -38,7 +39,7 @@ func newWriterIntegration(t *testing.T) *writerIntegration {
 	}
 }
 
-// engine starts a fresh worker for one writer.
+// engine starts a fresh worker.
 func (it *writerIntegration) engine(t *testing.T) *EngineClient {
 	t.Helper()
 	engine, err := NewEngineClient(context.Background(), it.worker)
@@ -79,11 +80,17 @@ func receive[T any](t *testing.T, ch chan T, timeout time.Duration) T {
 // that call returns.
 type heldEngine struct {
 	TreeEngineChecker
-	log     *orderLog
-	name    string
-	entered chan struct{}
-	release chan struct{}
-	once    sync.Once
+	log         *orderLog
+	name        string
+	entered     chan struct{}
+	release     chan struct{}
+	once        sync.Once
+	releaseOnce sync.Once
+}
+
+// open lets the held AddNode continue. It is safe to call more than once.
+func (g *heldEngine) open() {
+	g.releaseOnce.Do(func() { close(g.release) })
 }
 
 func newHeldEngine(engine TreeEngineChecker, log *orderLog, name string) *heldEngine {
@@ -130,31 +137,38 @@ func assertTwoWritersSerialise(t *testing.T, it *writerIntegration, firstTreeID,
 	place := func(w *TreeWriter, tree, user string, out chan error) {
 		res, err := w.Place(ctx, PlaceRequest{TreeID: tree, UserID: user, ParentID: root, SponsorID: root, EnrolledAt: writeTime})
 		if err == nil {
-			err = res.ProjectionErr
+			err = errors.Join(res.ProjectionErr, res.ReleaseErr)
 		}
 		out <- err
 	}
+	t.Cleanup(gate.open)
 
 	first := make(chan error, 1)
 	go place(w1, firstTreeID, testUserUUID(2), first)
-	receive(t, gate.entered, 30*time.Second)
+	select {
+	case <-gate.entered:
+	case err := <-first:
+		t.Fatalf("the first writer returned before its projection was held: %v", err)
+	case <-time.After(30 * time.Second):
+		t.Fatalf("the first writer's projection did not start within 30s: %v", log.snapshot())
+	}
 
 	second := make(chan error, 1)
 	go place(w2, secondTreeID, testUserUUID(3), second)
 	require.True(t, log.waitFor("w2 lock requested", 10*time.Second),
-		"the second writer never asked for the lock: %v", log.snapshot())
+		"no \"w2 lock requested\" entry within 10s: %v", log.snapshot())
 	time.Sleep(300 * time.Millisecond)
 	assert.Equal(t, -1, log.indexOf("w2 load"),
 		"the second writer loaded while the first held the tree: %v", log.snapshot())
 
-	close(gate.release)
+	gate.open()
 	require.NoError(t, receive(t, first, 30*time.Second))
 	require.NoError(t, receive(t, second, 30*time.Second))
 
 	entries := log.snapshot()
 	projected, loaded := slices.Index(entries, "w1 AddNode returned"), slices.Index(entries, "w2 load")
 	require.GreaterOrEqual(t, projected, 0, "%v", entries)
-	assert.Less(t, projected, loaded, "the second load must start after the first projection returns: %v", entries)
+	assert.Less(t, projected, loaded, "\"w2 load\" came before \"w1 AddNode returned\": %v", entries)
 }
 
 func TestTreeWriter_RootPlacementAndRemoval(t *testing.T) {
@@ -235,7 +249,7 @@ func TestTreeWriter_MatrixPlacementAtAnExplicitSlot(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, next.ProjectionErr)
-	require.NotNil(t, next.CaughtUp, "the matrix placement at version 2 was redelivered")
+	require.NotNil(t, next.CaughtUp, "CaughtUp is nil after the second matrix placement")
 	assert.Equal(t, placed.EventID, next.CaughtUp.EventID)
 
 	past := 3
@@ -290,7 +304,7 @@ func TestTreeWriter_EquivalentSpellingsShareOneStreamAndOneLock(t *testing.T) {
 	ctx := context.Background()
 	stored, err := it.events.ReadStream(ctx, TreeStreamName(tree), 1, 0)
 	require.NoError(t, err)
-	assert.Len(t, stored, 3, "both placements land in the lower-case stream")
+	assert.Len(t, stored, 3, "lower-case stream length")
 	upper, err := it.events.ReadStream(ctx, TreeStreamName(strings.ToUpper(tree)), 1, 0)
 	require.NoError(t, err)
 	assert.Empty(t, upper)
@@ -327,6 +341,7 @@ func TestTreeWriter_CompletesOnAOneConnectionPool(t *testing.T) {
 	pool, err := pgxpool.New(context.Background(), url)
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
+	require.EqualValues(t, 1, pool.Config().MaxConns)
 	events, store := platform.NewPostgresEventStore(pool), NewPostgresTreeStore(pool)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -344,6 +359,7 @@ func TestTreeWriter_CompletesOnAOneConnectionPool(t *testing.T) {
 		res, err := write(NewTreeWriter(events, store, it.engine(t), NewPostgresTreeLocker(url)))
 		require.NoError(t, err, "write %d", i)
 		require.NoError(t, res.ProjectionErr, "write %d", i)
+		require.NoError(t, res.ReleaseErr, "write %d", i)
 	}
 }
 
@@ -361,7 +377,10 @@ func TestTreeWriter_ReRootsATreeWhoseOnlyRootWasRemoved(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, rerooted.ProjectionErr)
+	require.NoError(t, rerooted.ReleaseErr)
 	assert.Equal(t, int64(3), rerooted.Version)
+	require.NotNil(t, rerooted.CaughtUp)
+	assert.Equal(t, removed.EventID, rerooted.CaughtUp.EventID)
 
 	engine := it.engine(t)
 	loaded, err := NewTreeLoader(it.store, engine).LoadTree(ctx, tree, treeTypeUnilevel)

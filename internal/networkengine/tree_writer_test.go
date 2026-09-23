@@ -804,7 +804,8 @@ func TestTreeWriterAppend_ReportsAnotherEventAtItsVersion(t *testing.T) {
 
 	_, err := w.Place(context.Background(), placeRequest(writerChild, nil))
 
-	require.ErrorContains(t, err, "; a read of that version found event "+interloper+", so nothing was appended")
+	require.Error(t, err)
+	require.Regexp(t, "; a read of that version found event "+interloper+", so event [0-9a-f-]{36} was not appended$", err.Error())
 }
 
 func TestTreeWriterAppend_ReportsAnUnknownOutcomeWhenTheReadFails(t *testing.T) {

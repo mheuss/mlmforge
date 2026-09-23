@@ -449,7 +449,7 @@ func (w *TreeWriter) append(ctx context.Context, stream string, expected int64, 
 	}
 
 	// The commit may have landed and its reply been lost. The read that decides
-	// it runs even when the caller's context has ended.
+	// it must not end with the caller's context.
 	readCtx, cancel := detachedRead(ctx)
 	defer cancel()
 	stored, readErr := w.events.ReadStream(readCtx, stream, version, 1)
@@ -462,8 +462,8 @@ func (w *TreeWriter) append(ctx context.Context, stream string, expected int64, 
 		if sameUUID(stored[0].ID, event.ID) {
 			return version, nil
 		}
-		return 0, fmt.Errorf("append event %s to stream %s at version %d returned: %w; a read of that version found event %s, so nothing was appended",
-			event.ID, stream, version, appendErr, stored[0].ID)
+		return 0, fmt.Errorf("append event %s to stream %s at version %d returned: %w; a read of that version found event %s, so event %s was not appended",
+			event.ID, stream, version, appendErr, stored[0].ID, event.ID)
 	}
 	return 0, fmt.Errorf("append event %s to stream %s at version %d returned: %w; a read of that version found no event, so nothing was appended",
 		event.ID, stream, version, appendErr)

@@ -6,16 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"math"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/mlmforge/mlmforge/internal/platform"
 )
 
-// TreeEventConsumer projects tree events into the adjacency table and
-// Rust engine. It is called synchronously by the placement service
-// after appending the event to the EventStore.
+// TreeEventConsumer projects tree events into the adjacency table and Rust
+// engine.
 type TreeEventConsumer struct {
 	store      TreeStore
 	engine     TreeEngine
@@ -212,48 +210,8 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform
 	if err := checkStream(event, "node_placed", payload.TreeID, payload.UserID); err != nil {
 		return err
 	}
-	if !supportedTreeTypes[payload.TreeType] {
-		return fmt.Errorf("node_placed for %s in tree %s has unsupported tree_type %q",
-			payload.UserID, payload.TreeID, payload.TreeType)
-	}
-	if payload.Position != nil && *payload.Position < 0 {
-		return fmt.Errorf("node_placed for %s in tree %s has negative position %d",
-			payload.UserID, payload.TreeID, *payload.Position)
-	}
-	switch payload.TreeType {
-	case treeTypeMatrix:
-		// The width bound needs the tree's configured width, which nothing
-		// persists yet (HEU-554). The engine still enforces it at runtime.
-		// The u8 ceiling needs no width: no matrix can have a slot above
-		// math.MaxUint8, so anything larger is rejected here, mirroring the
-		// worker's u8::try_from(position) wire boundary. (The loader's own
-		// runtime bound is the width itself, which it gets via
-		// WithMatrixParams.)
-		if payload.Position == nil {
-			return fmt.Errorf("matrix node_placed for %s in tree %s has no position; matrix events must carry explicit placement",
-				payload.UserID, payload.TreeID)
-		}
-		if *payload.Position > math.MaxUint8 {
-			return fmt.Errorf("matrix node_placed for %s in tree %s has position %d above the %d slot ceiling",
-				payload.UserID, payload.TreeID, *payload.Position, math.MaxUint8)
-		}
-	case treeTypeBinary:
-		if payload.Position == nil || *payload.Position > 1 {
-			return fmt.Errorf("binary node_placed for %s in tree %s needs position 0 or 1",
-				payload.UserID, payload.TreeID)
-		}
-	case treeTypeUnilevel:
-		if payload.Position != nil {
-			return fmt.Errorf("unilevel node_placed for %s in tree %s carries position %d; unilevel trees have no slots",
-				payload.UserID, payload.TreeID, *payload.Position)
-		}
-	default:
-		// Unreachable while supportedTreeTypes has three entries, but that
-		// map's comment says to expect a fourth. Mirror validateNodes: a new
-		// type must fail here loudly until its position rule is decided,
-		// not fall through and admit whatever the event carries.
-		return fmt.Errorf("node_placed for %s in tree %s has type %q with no position rule (add one to handleNodePlaced)",
-			payload.UserID, payload.TreeID, payload.TreeType)
+	if err := checkNodePlacedShape(payload); err != nil {
+		return err
 	}
 
 	// Look up parent depth to derive child depth.

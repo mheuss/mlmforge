@@ -43,9 +43,9 @@ import (
 // sponsors whom, and nothing reconciles them afterwards.
 //
 // Moved to 11 by HEU-301. No request that was valid under 10 changes meaning.
-// The worker gained check_mutation, and a client built for 11 sends it before
-// every tree write. Without the move, a version-10 worker would pass the
-// handshake and then answer UNKNOWN_OP to each of those checks.
+// The worker gained check_mutation. The number moved so that a client relying
+// on that op refuses a version-10 worker at the handshake, rather than meeting
+// UNKNOWN_OP on its first check.
 //
 // This is the wire contract, not the stored row shape and not the authoring
 // format. Two other numbers nearby are also called a version: `detailVersion`

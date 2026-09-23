@@ -22,13 +22,14 @@ var (
 	writerOther = testUserUUID(3)
 )
 
-// fakeWriterEngine keeps tree membership in memory, answers with the engine
-// codes the consumer's reconciles read, and answers CheckMutation from
-// checkErr.
+// fakeWriterEngine keeps tree membership in memory, answers CheckMutation from
+// checkErr, and records the tree creations and checks it was asked for.
 type fakeWriterEngine struct {
 	trees    map[string]*fakeEngineTree
 	checkErr error
 	checks   []Mutation
+	// calls holds tree creations, checks and lock requests in the order made.
+	calls []string
 	// failAdd fails every add of the keyed user.
 	failAdd map[string]error
 }
@@ -56,7 +57,12 @@ func (f *fakeWriterEngine) tree(structure string) (*fakeEngineTree, error) {
 	return t, nil
 }
 
-func (f *fakeWriterEngine) CreateTree(_ context.Context, structure, _ string) error {
+func (f *fakeWriterEngine) CreateTree(_ context.Context, structure, treeType string) error {
+	f.calls = append(f.calls, "create_tree "+treeType)
+	return f.createTree(structure)
+}
+
+func (f *fakeWriterEngine) createTree(structure string) error {
 	if _, ok := f.trees[structure]; ok {
 		return fakeEngineError("TREE_EXISTS", "tree '%s' already exists", structure)
 	}
@@ -64,8 +70,9 @@ func (f *fakeWriterEngine) CreateTree(_ context.Context, structure, _ string) er
 	return nil
 }
 
-func (f *fakeWriterEngine) CreateMatrixTree(ctx context.Context, structure string, _ int, _ string) error {
-	return f.CreateTree(ctx, structure, treeTypeMatrix)
+func (f *fakeWriterEngine) CreateMatrixTree(_ context.Context, structure string, width int, spillover string) error {
+	f.calls = append(f.calls, fmt.Sprintf("create_matrix_tree %d %s", width, spillover))
+	return f.createTree(structure)
 }
 
 func (f *fakeWriterEngine) AddRoot(_ context.Context, structure, userID string, enrolledAt int64) error {
@@ -150,8 +157,12 @@ func (f *fakeWriterEngine) GetPosition(_ context.Context, structure, userID stri
 	return &pos, nil
 }
 
-func (f *fakeWriterEngine) CheckMutation(_ context.Context, _ string, m Mutation) error {
+func (f *fakeWriterEngine) CheckMutation(_ context.Context, structure string, m Mutation) error {
+	f.calls = append(f.calls, "check "+m.op)
 	f.checks = append(f.checks, m)
+	if _, err := f.tree(structure); err != nil {
+		return err
+	}
 	return f.checkErr
 }
 
@@ -170,7 +181,7 @@ func newWriterEnv() *writerEnv {
 	}
 }
 
-// writer builds a TreeWriter over a fresh engine, as each CLI invocation does.
+// writer builds a TreeWriter over a fresh engine.
 func (e *writerEnv) writer(opts ...TreeWriterOption) (*TreeWriter, *fakeWriterEngine) {
 	engine := newFakeWriterEngine()
 	return NewTreeWriter(e.events, e.store, engine, e.locker, opts...), engine
@@ -207,6 +218,17 @@ type refusingLocker struct{ t *testing.T }
 func (l refusingLocker) Lock(_ context.Context, treeID uuid.UUID) (func() error, error) {
 	l.t.Errorf("Lock was called for tree %s", treeID)
 	return nil, errors.New("refusingLocker: Lock was called")
+}
+
+// recordingLocker records each lock request in the engine's call log.
+type recordingLocker struct {
+	inner  TreeLocker
+	engine *fakeWriterEngine
+}
+
+func (l recordingLocker) Lock(ctx context.Context, treeID uuid.UUID) (func() error, error) {
+	l.engine.calls = append(l.engine.calls, "lock")
+	return l.inner.Lock(ctx, treeID)
 }
 
 // releaseFailingLocker grants every lock and fails every release.

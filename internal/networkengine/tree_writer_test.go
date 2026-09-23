@@ -134,7 +134,38 @@ func TestTreeWriterAddRoot_TakesAnExistingTreesShapeFromVersion1(t *testing.T) {
 	var engineErr *EngineError
 	require.ErrorAs(t, err, &engineErr, "a request without matrix flags must reach the engine check")
 	assert.Equal(t, engineCodeRootAlreadyExists, engineErr.Code)
-	require.Len(t, engine.checks, 1)
+	assert.Equal(t, []Mutation{CheckAddRoot(writerOther, writeTime.Unix())}, engine.checks)
+	assert.Equal(t, []string{"create_matrix_tree 3 breadth_first", "check add_root"}, engine.calls)
+}
+
+func TestTreeWriterAddRoot_LocksThenCreatesThenChecks(t *testing.T) {
+	cases := []struct {
+		name     string
+		treeType string
+		create   string
+	}{
+		{"unilevel", treeTypeUnilevel, "create_tree unilevel"},
+		{"binary", treeTypeBinary, "create_tree binary"},
+		{"matrix", treeTypeMatrix, "create_matrix_tree 3 breadth_first"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newWriterEnv()
+			engine := newFakeWriterEngine()
+			w := NewTreeWriter(env.events, env.store, engine, recordingLocker{inner: env.locker, engine: engine})
+			req := unilevelRootRequest()
+			req.TreeType = tc.treeType
+			if tc.treeType == treeTypeMatrix {
+				width, spillover := 3, "breadth_first"
+				req.MatrixWidth, req.MatrixSpillover = &width, &spillover
+			}
+
+			_, err := w.AddRoot(context.Background(), req)
+
+			require.NoError(t, err)
+			assert.Equal(t, []string{"lock", tc.create, "check add_root"}, engine.calls)
+		})
+	}
 }
 
 func TestTreeWriterAddRoot_ReportsAProjectionFailureInTheResult(t *testing.T) {
@@ -221,6 +252,34 @@ func TestTreeWriterLock_TimeoutStatesTheTreeAndTheWait(t *testing.T) {
 	var waitErr *TreeLockWaitError
 	require.ErrorAs(t, err, &waitErr)
 	assert.Empty(t, streamEvents(t, env.events, TreeStreamName(writerTree)))
+}
+
+func TestTreeWriterLock_ReportsTheCallersDeadline(t *testing.T) {
+	env := newWriterEnv()
+	unlock, err := env.locker.Lock(context.Background(), uuid.MustParse(writerTree))
+	require.NoError(t, err)
+	defer func() { _ = unlock() }()
+	w, _ := env.writer(WithLockWait(5 * time.Second))
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+
+	_, err = w.AddRoot(ctx, unilevelRootRequest())
+
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Contains(t, err.Error(),
+		"the lock on tree "+writerTree+" was not acquired; the caller's context ended after ")
+	var waitErr *TreeLockWaitError
+	assert.False(t, errors.As(err, &waitErr), "the caller's deadline is not the writer's lock wait")
+}
+
+func TestTreeWriterLock_IgnoresANonPositiveWait(t *testing.T) {
+	env := newWriterEnv()
+	w, _ := env.writer(WithLockWait(0))
+
+	res, err := w.AddRoot(context.Background(), unilevelRootRequest())
+
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), res.Version)
 }
 
 func TestTreeWriterLock_ReportsTheCallersCancellation(t *testing.T) {

@@ -78,9 +78,14 @@ type TreeWriter struct {
 // TreeWriterOption configures a TreeWriter.
 type TreeWriterOption func(*TreeWriter)
 
-// WithLockWait sets how long each write waits for its tree's lock.
+// WithLockWait sets how long each write waits for its tree's lock. A wait of
+// zero or less leaves the default in place.
 func WithLockWait(d time.Duration) TreeWriterOption {
-	return func(w *TreeWriter) { w.lockWait = d }
+	return func(w *TreeWriter) {
+		if d > 0 {
+			w.lockWait = d
+		}
+	}
 }
 
 // NewTreeWriter creates a writer over one event store, tree store, engine and
@@ -188,7 +193,7 @@ type writeSpec struct {
 	build func(shape treeShape) (platform.NewEvent, Mutation, error)
 }
 
-// write runs the locked part of every operation.
+// write runs the locked part of a write.
 func (w *TreeWriter) write(ctx context.Context, spec writeSpec) (result WriteResult, err error) {
 	tree := spec.treeID.String()
 	stream := TreeStreamName(tree)
@@ -286,16 +291,19 @@ func (w *TreeWriter) append(ctx context.Context, stream string, expected int64, 
 	return 0, fmt.Errorf("append event %s to stream %s at version %d: %w", event.ID, stream, expected+1, err)
 }
 
-// project reads the event stored at version and projects that copy. Its error
-// is the write's ProjectionErr.
+// project reads the event stored at version and projects that copy.
 func (w *TreeWriter) project(ctx context.Context, stream, eventID string, version int64) error {
 	stored, err := w.events.ReadStream(ctx, stream, version, 1)
 	if err != nil {
 		return fmt.Errorf("read back event %s at version %d in stream %s: %w", eventID, version, stream, err)
 	}
-	if len(stored) == 0 || stored[0].Version != version {
+	if len(stored) == 0 {
 		return fmt.Errorf("read back at version %d in stream %s found no event; event %s was not projected",
 			version, stream, eventID)
+	}
+	if stored[0].Version != version {
+		return fmt.Errorf("read back at version %d in stream %s returned event %s at version %d; event %s was not projected",
+			version, stream, stored[0].ID, stored[0].Version, eventID)
 	}
 	if !sameUUID(stored[0].ID, eventID) {
 		return fmt.Errorf("stream %s holds event %s at version %d, where event %s was appended; nothing was projected",

@@ -2,8 +2,7 @@ package networkengine
 
 import "fmt"
 
-// appendConflictError reports an append refused on its expected version. Its
-// message leaves out the store's ActualVersion.
+// appendConflictError reports an append refused on its expected version.
 type appendConflictError struct {
 	stream   string
 	expected int64

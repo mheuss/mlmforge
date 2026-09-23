@@ -36,8 +36,8 @@ func timeFlag(name, value string, now time.Time) (time.Time, error) {
 	return t.UTC(), nil
 }
 
-// reportWrite prints a write's outcome and returns its error.
-func reportWrite(out, warn io.Writer, res networkengine.WriteResult, err error) error {
+// reportWrite prints a write's outcome and returns the error to report.
+func reportWrite(ctx context.Context, out, warn io.Writer, res networkengine.WriteResult, err error) error {
 	if err == nil {
 		if res.CaughtUp != nil {
 			_, _ = fmt.Fprintf(out, "redelivered event %s at version %d\n", res.CaughtUp.EventID, res.CaughtUp.Version)
@@ -56,15 +56,12 @@ func reportWrite(out, warn io.Writer, res networkengine.WriteResult, err error) 
 	if res.ReleaseErr != nil {
 		_, _ = fmt.Fprintf(warn, "warning: releasing the tree lock reported: %s\n", res.ReleaseErr)
 	}
-	// An unknown outcome can wrap a context error, so it is matched first.
+	// Matched first, so an unknown outcome never reads as an interruption.
 	var unknown *networkengine.AppendOutcomeUnknownError
-	switch {
-	case err == nil, errors.As(err, &unknown):
+	if err == nil || errors.As(err, &unknown) || ctx.Err() == nil {
 		return err
-	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-		return fmt.Errorf("the write was interrupted and no append was confirmed: %w", err)
 	}
-	return err
+	return fmt.Errorf("the command's context ended (%v) and no append was confirmed: %w", context.Cause(ctx), err)
 }
 
 // runTreeWrite resolves the connection flags and runs one write under the
@@ -87,7 +84,7 @@ func newTreeAddRootCmd(resolve flagResolver, open depsOpener, writer writerFor) 
 
 	cmd := &cobra.Command{
 		Use:   "add-root",
-		Short: "Append a tree's root_added event and project it",
+		Short: "Append a tree's root_added event and try to project it",
 		Long: "Opens a database pool, starts the engine worker, appends one tree.root_added event, tries to project it, and exits. " +
 			"The tree type and matrix flags shape the tree when its stream is empty. After that the stream's first event decides the type.",
 		Args: cobra.NoArgs,
@@ -110,7 +107,7 @@ func newTreeAddRootCmd(resolve flagResolver, open depsOpener, writer writerFor) 
 			}
 			return runTreeWrite(cmd, resolve, open, func(ctx context.Context, deps *treeDeps) error {
 				res, err := writer(deps).AddRoot(ctx, req)
-				return reportWrite(cmd.OutOrStdout(), cmd.ErrOrStderr(), res, err)
+				return reportWrite(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), res, err)
 			})
 		},
 	}
@@ -133,7 +130,7 @@ func newTreePlaceCmd(resolve flagResolver, open depsOpener, writer writerFor) *c
 
 	cmd := &cobra.Command{
 		Use:   "place",
-		Short: "Append a placement at an explicit parent and project it",
+		Short: "Append a placement at an explicit parent and try to project it",
 		Long: "Opens a database pool, starts the engine worker, appends one tree.node_placed event, tries to project it, and exits. " +
 			"Matrix and binary trees need --position. Unilevel trees take none.",
 		Args:         cobra.NoArgs,
@@ -151,7 +148,7 @@ func newTreePlaceCmd(resolve flagResolver, open depsOpener, writer writerFor) *c
 			}
 			return runTreeWrite(cmd, resolve, open, func(ctx context.Context, deps *treeDeps) error {
 				res, err := writer(deps).Place(ctx, req)
-				return reportWrite(cmd.OutOrStdout(), cmd.ErrOrStderr(), res, err)
+				return reportWrite(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), res, err)
 			})
 		},
 	}
@@ -172,7 +169,7 @@ func newTreeRemoveCmd(resolve flagResolver, open depsOpener, writer writerFor) *
 
 	cmd := &cobra.Command{
 		Use:   "remove",
-		Short: "Append a leaf's removal and project it",
+		Short: "Append a leaf's removal and try to project it",
 		Long: "Opens a database pool, starts the engine worker, appends one tree.node_removed event, tries to project it, and exits. " +
 			"Removal from a matrix tree is refused.",
 		Args:         cobra.NoArgs,
@@ -185,7 +182,7 @@ func newTreeRemoveCmd(resolve flagResolver, open depsOpener, writer writerFor) *
 			req := networkengine.RemoveRequest{TreeID: treeID, UserID: userID, RemovedAt: at}
 			return runTreeWrite(cmd, resolve, open, func(ctx context.Context, deps *treeDeps) error {
 				res, err := writer(deps).Remove(ctx, req)
-				return reportWrite(cmd.OutOrStdout(), cmd.ErrOrStderr(), res, err)
+				return reportWrite(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), res, err)
 			})
 		},
 	}

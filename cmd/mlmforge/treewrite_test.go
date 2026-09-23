@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -41,6 +42,12 @@ func (w *recordingWriter) Remove(_ context.Context, r networkengine.RemoveReques
 // runWriteCmd executes one write subcommand against w.
 func runWriteCmd(t *testing.T, w treeWriter, args ...string) (*cmdOutput, error) {
 	t.Helper()
+	return runWriteCmdContext(t, context.Background(), w, args...)
+}
+
+// runWriteCmdContext executes one write subcommand against w under ctx.
+func runWriteCmdContext(t *testing.T, ctx context.Context, w treeWriter, args ...string) (*cmdOutput, error) {
+	t.Helper()
 	cmd := newTreeCmdWith(
 		func(context.Context, string, string) (*treeDeps, error) {
 			return &treeDeps{release: func() error { return nil }}, nil
@@ -52,7 +59,7 @@ func runWriteCmd(t *testing.T, w treeWriter, args ...string) (*cmdOutput, error)
 	cmd.SetOut(&out.stdout)
 	cmd.SetErr(&out.stderr)
 	cmd.SetArgs(append(args, "--db-url", "postgres://x", "--worker", workerStub(t)))
-	return out, cmd.Execute()
+	return out, cmd.ExecuteContext(ctx)
 }
 
 func TestNewTreeCmd_RegistersTheWriteSubcommands(t *testing.T) {
@@ -249,20 +256,73 @@ func TestTreePlaceCmd_ReportsAnUnknownOutcomeAheadOfItsCancellation(t *testing.T
 			AppendErr: context.Canceled, ReadErr: errors.New("read timed out"),
 		},
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
 
-	out, err := runWriteCmd(t, w, "place", "--tree-id", "t", "--user-id", "u", "--parent-id", "p", "--sponsor-id", "p")
+	out, err := runWriteCmdContext(t, ctx, w, "place", "--tree-id", "t", "--user-id", "u", "--parent-id", "p", "--sponsor-id", "p")
 
 	var unknown *networkengine.AppendOutcomeUnknownError
 	require.ErrorAs(t, err, &unknown)
 	assert.Contains(t, out.stderr.String(), "whether the event was appended is unknown")
-	assert.NotContains(t, out.stderr.String(), "interrupted")
+	assert.NotContains(t, out.stderr.String(), "context ended")
 }
 
-func TestTreePlaceCmd_ReportsAnInterruptedWrite(t *testing.T) {
+func TestTreePlaceCmd_ReportsAWriteWhoseContextEnded(t *testing.T) {
 	w := &recordingWriter{result: networkengine.WriteResult{Stream: "tree-t"}, err: context.Canceled}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	out, err := runWriteCmdContext(t, ctx, w, "place", "--tree-id", "t", "--user-id", "u", "--parent-id", "p", "--sponsor-id", "p")
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Contains(t, out.stderr.String(),
+		"the command's context ended (context canceled) and no append was confirmed: context canceled")
+}
+
+func TestTreePlaceCmd_ReportsAnInternalDeadlineUnchanged(t *testing.T) {
+	inner := fmt.Errorf("store write: %w", context.DeadlineExceeded)
+	w := &recordingWriter{result: networkengine.WriteResult{Stream: "tree-t"}, err: inner}
 
 	out, err := runWriteCmd(t, w, "place", "--tree-id", "t", "--user-id", "u", "--parent-id", "p", "--sponsor-id", "p")
 
-	require.ErrorIs(t, err, context.Canceled)
-	assert.Contains(t, out.stderr.String(), "the write was interrupted and no append was confirmed: context canceled")
+	require.Equal(t, inner, err)
+	assert.NotContains(t, out.stderr.String(), "context ended")
+}
+
+func TestTreePlaceCmd_WarnsOnAReleaseFailureAlongsideAnError(t *testing.T) {
+	unknown := &networkengine.AppendOutcomeUnknownError{
+		Stream: "tree-t", Version: 2, EventID: "e2",
+		AppendErr: errors.New("connection reset"), ReadErr: errors.New("read timed out"),
+	}
+	w := &recordingWriter{
+		result: networkengine.WriteResult{Stream: "tree-t", ReleaseErr: errors.New("pg_advisory_unlock for tree t returned false")},
+		err:    unknown,
+	}
+
+	out, err := runWriteCmd(t, w, "place", "--tree-id", "t", "--user-id", "u", "--parent-id", "p", "--sponsor-id", "p")
+
+	require.ErrorIs(t, err, unknown)
+	assert.Contains(t, out.stderr.String(), "warning: releasing the tree lock reported: pg_advisory_unlock for tree t returned false\n")
+}
+
+func TestTreeWriteCmds_RequireTheirFlags(t *testing.T) {
+	cases := map[string][]string{
+		"add-root": {"--tree-id", "t", "--user-id", "u", "--sponsor-id", "s", "--tree-type", "unilevel"},
+		"place":    {"--tree-id", "t", "--user-id", "u", "--parent-id", "p", "--sponsor-id", "s"},
+		"remove":   {"--tree-id", "t", "--user-id", "u"},
+	}
+	for command, flags := range cases {
+		for i := 0; i < len(flags); i += 2 {
+			omitted := flags[i]
+			t.Run(command+" without "+omitted, func(t *testing.T) {
+				args := append([]string{command}, flags[:i]...)
+				args = append(args, flags[i+2:]...)
+				w := &recordingWriter{}
+
+				_, err := runWriteCmd(t, w, args...)
+
+				require.ErrorContains(t, err, `required flag(s) "`+omitted[2:]+`" not set`)
+			})
+		}
+	}
 }

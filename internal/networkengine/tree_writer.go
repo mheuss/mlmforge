@@ -129,8 +129,8 @@ func (w *TreeWriter) AddRoot(ctx context.Context, r AddRootRequest) (WriteResult
 	}
 	var requested treeShape
 	if found {
-		if shape.treeType != r.TreeType {
-			return WriteResult{}, rootTypeConflict(tree, stream, shape.treeType, r.TreeType)
+		if err := rootShapeConflict(tree, stream, shape, r); err != nil {
+			return WriteResult{}, err
 		}
 	} else {
 		if requested, err = shapeFromRequest(tree, r.TreeType, r.MatrixWidth, r.MatrixSpillover); err != nil {
@@ -161,11 +161,30 @@ func (w *TreeWriter) AddRoot(ctx context.Context, r AddRootRequest) (WriteResult
 	return w.write(ctx, spec)
 }
 
-// rootTypeConflict refuses a root whose requested type differs from the one
-// version 1 records.
-func rootTypeConflict(tree, stream, recorded, requested string) error {
-	return fmt.Errorf("add root to tree %s: stream %s records tree type %s at version 1, and the request names %s",
-		tree, stream, recorded, requested)
+// rootShapeConflict refuses a root request whose type or matrix parameters
+// differ from the shape version 1 records. Absent matrix parameters match.
+func rootShapeConflict(tree, stream string, recorded treeShape, r AddRootRequest) error {
+	prefix := fmt.Sprintf("add root to tree %s: stream %s records", tree, stream)
+	if recorded.treeType != r.TreeType {
+		return fmt.Errorf("%s tree type %s at version 1, and the request names %s", prefix, recorded.treeType, r.TreeType)
+	}
+	if recorded.treeType != treeTypeMatrix {
+		if r.MatrixWidth != nil {
+			return fmt.Errorf("%s no matrix width at version 1, and the request names %d", prefix, *r.MatrixWidth)
+		}
+		if r.MatrixSpillover != nil {
+			return fmt.Errorf("%s no matrix spillover at version 1, and the request names %q", prefix, *r.MatrixSpillover)
+		}
+		return nil
+	}
+	if r.MatrixWidth != nil && *r.MatrixWidth != recorded.width {
+		return fmt.Errorf("%s matrix width %d at version 1, and the request names %d", prefix, recorded.width, *r.MatrixWidth)
+	}
+	if r.MatrixSpillover != nil && *r.MatrixSpillover != recorded.spillover {
+		return fmt.Errorf("%s matrix spillover %q at version 1, and the request names %q",
+			prefix, recorded.spillover, *r.MatrixSpillover)
+	}
+	return nil
 }
 
 // readShape reads version 1 of a stream. found is false for an empty stream.

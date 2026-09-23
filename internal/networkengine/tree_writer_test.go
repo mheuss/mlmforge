@@ -138,6 +138,60 @@ func TestTreeWriterAddRoot_TakesAnExistingTreesShapeFromVersion1(t *testing.T) {
 	assert.Equal(t, []string{"create_matrix_tree 3 breadth_first", "check add_root"}, engine.calls)
 }
 
+func TestTreeWriterAddRoot_RefusesMatrixParametersThatDifferFromVersion1(t *testing.T) {
+	width3, width5 := 3, 5
+	breadth, depth := "breadth_first", "depth_first"
+	prefix := "add root to tree " + writerTree + ": stream " + TreeStreamName(writerTree) + " records "
+	cases := []struct {
+		name      string
+		recorded  string
+		width     *int
+		spillover *string
+		wantErr   string
+	}{
+		{"a different width", treeTypeMatrix, &width5, nil,
+			prefix + "matrix width 3 at version 1, and the request names 5"},
+		{"a different spillover", treeTypeMatrix, nil, &depth,
+			prefix + `matrix spillover "breadth_first" at version 1, and the request names "depth_first"`},
+		{"a width on a unilevel tree", treeTypeUnilevel, &width3, nil,
+			prefix + "no matrix width at version 1, and the request names 3"},
+		{"a spillover on a unilevel tree", treeTypeUnilevel, nil, &breadth,
+			prefix + `no matrix spillover at version 1, and the request names "breadth_first"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newWriterEnv()
+			mustAddRoot(t, env, tc.recorded)
+			w := NewTreeWriter(env.events, env.store, newFakeWriterEngine(), refusingLocker{t})
+			req := unilevelRootRequest()
+			req.UserID, req.SponsorID, req.TreeType = writerOther, writerOther, tc.recorded
+			req.MatrixWidth, req.MatrixSpillover = tc.width, tc.spillover
+
+			_, err := w.AddRoot(context.Background(), req)
+
+			require.EqualError(t, err, tc.wantErr)
+			assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 1)
+		})
+	}
+}
+
+func TestTreeWriterAddRoot_AcceptsMatrixParametersThatMatchVersion1(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeMatrix)
+	w, engine := env.writer()
+	engine.checkErr = &EngineError{Code: engineCodeRootAlreadyExists, Message: "tree already has a root node"}
+	width, spillover := 3, "breadth_first"
+	req := unilevelRootRequest()
+	req.UserID, req.SponsorID, req.TreeType = writerOther, writerOther, treeTypeMatrix
+	req.MatrixWidth, req.MatrixSpillover = &width, &spillover
+
+	_, err := w.AddRoot(context.Background(), req)
+
+	var engineErr *EngineError
+	require.ErrorAs(t, err, &engineErr, "matching matrix flags must reach the engine check")
+	assert.Equal(t, engineCodeRootAlreadyExists, engineErr.Code)
+}
+
 func TestTreeWriterAddRoot_LocksThenCreatesThenChecks(t *testing.T) {
 	cases := []struct {
 		name     string

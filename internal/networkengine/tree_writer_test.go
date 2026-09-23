@@ -787,7 +787,7 @@ func TestTreeWriterAppend_ReportsACommitThatDidNotLand(t *testing.T) {
 	_, err := w.Place(context.Background(), placeRequest(writerChild, nil))
 
 	require.ErrorIs(t, err, appendErr)
-	require.ErrorContains(t, err, " at version 2 returned: connection reset by peer; a read of that version found no event, so nothing was appended")
+	require.Regexp(t, " at version 2 returned: connection reset by peer; a read of that version found no event$", err.Error())
 	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 1)
 }
 

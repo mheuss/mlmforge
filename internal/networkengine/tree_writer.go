@@ -465,7 +465,7 @@ func (w *TreeWriter) append(ctx context.Context, stream string, expected int64, 
 		return 0, fmt.Errorf("append event %s to stream %s at version %d returned: %w; a read of that version found event %s, so event %s was not appended",
 			event.ID, stream, version, appendErr, stored[0].ID, event.ID)
 	}
-	return 0, fmt.Errorf("append event %s to stream %s at version %d returned: %w; a read of that version found no event, so nothing was appended",
+	return 0, fmt.Errorf("append event %s to stream %s at version %d returned: %w; a read of that version found no event",
 		event.ID, stream, version, appendErr)
 }
 

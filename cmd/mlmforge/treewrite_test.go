@@ -243,7 +243,7 @@ func TestTreePlaceCmd_SignalsCancelTheWrite(t *testing.T) {
 			_, err := runWriteCmd(t, w, "place", "--tree-id", "t", "--user-id", "u", "--parent-id", "p", "--sponsor-id", "p")
 
 			require.True(t, w.sawDone, "%s must reach the writer's context", sig)
-			require.Error(t, err)
+			require.ErrorContains(t, err, "signal received) and no append was confirmed")
 		})
 	}
 }

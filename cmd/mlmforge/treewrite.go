@@ -56,7 +56,6 @@ func reportWrite(ctx context.Context, out, warn io.Writer, res networkengine.Wri
 	if res.ReleaseErr != nil {
 		_, _ = fmt.Fprintf(warn, "warning: releasing the tree lock reported: %s\n", res.ReleaseErr)
 	}
-	// Matched first, so an unknown outcome never reads as an interruption.
 	var unknown *networkengine.AppendOutcomeUnknownError
 	if err == nil || errors.As(err, &unknown) || ctx.Err() == nil {
 		return err

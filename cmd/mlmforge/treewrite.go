@@ -88,7 +88,7 @@ func newTreeAddRootCmd(resolve flagResolver, open depsOpener, writer writerFor) 
 	cmd := &cobra.Command{
 		Use:   "add-root",
 		Short: "Append a tree's root_added event and project it",
-		Long: "Opens a database pool, starts the engine worker, appends one tree.root_added event, projects it, and exits. " +
+		Long: "Opens a database pool, starts the engine worker, appends one tree.root_added event, tries to project it, and exits. " +
 			"The tree type and matrix flags shape the tree when its stream is empty. After that the stream's first event decides the type.",
 		Args: cobra.NoArgs,
 		// Moving this to the tree group leaves a real invocation dumping
@@ -134,7 +134,7 @@ func newTreePlaceCmd(resolve flagResolver, open depsOpener, writer writerFor) *c
 	cmd := &cobra.Command{
 		Use:   "place",
 		Short: "Append a placement at an explicit parent and project it",
-		Long: "Opens a database pool, starts the engine worker, appends one tree.node_placed event, projects it, and exits. " +
+		Long: "Opens a database pool, starts the engine worker, appends one tree.node_placed event, tries to project it, and exits. " +
 			"Matrix and binary trees need --position. Unilevel trees take none.",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
@@ -173,7 +173,7 @@ func newTreeRemoveCmd(resolve flagResolver, open depsOpener, writer writerFor) *
 	cmd := &cobra.Command{
 		Use:   "remove",
 		Short: "Append a leaf's removal and project it",
-		Long: "Opens a database pool, starts the engine worker, appends one tree.node_removed event, projects it, and exits. " +
+		Long: "Opens a database pool, starts the engine worker, appends one tree.node_removed event, tries to project it, and exits. " +
 			"Removal from a matrix tree is refused.",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,

@@ -861,7 +861,7 @@ Four limits remain:
 - Redelivery is bounded (HEU-576). The scope is the event in flight. `TreeWriter` provides it by calling `HandleEvent` synchronously, in process, under the tree's lock. A redelivered placement whose projection is still current completes, however old it is. It stops being current once its node was removed, or once a later event re-placed the user, and is then refused rather than reapplied. It is also refused when its parent's row was since removed, because the parent lookup runs before the guard (HEU-813). A redelivered removal that the engine refuses converges when its own tombstone is in the store (HEU-811). That holds even when a later placement of the user never reached the engine. One whose store write never landed fails typed (HEU-777). One arriving after a later placement landed in full can still remove the wrong node (HEU-789). `TreeWriter` does not reach that case. Catch-up redelivers only the stream's last event. A removal followed by a later placement is no longer the last event.
 - The agreement claim covers placement only. No tree event path calls `RemoveMatrixNode`. A matrix removal cannot project (HEU-582). `TreeWriter.Remove` refuses a removal from a matrix tree before it appends anything. A matrix `node_removed` appended without the writer reaches `handleNodeRemoved`. That handler calls `RemoveNode` with no pruning mode. The worker refuses it with `MISSING_PARAM`. The handler retries, writes nothing to the store, and returns the error.
 
-Matrix startup reload is no longer blocked by this defect.
+Matrix startup reload is no longer blocked by the placement divergence HEU-553 fixed.
 
 ### The event id is the redelivery discriminator
 

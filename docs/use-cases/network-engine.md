@@ -1075,7 +1075,7 @@ if err != nil {
     return err // nothing is known to have been appended
 }
 if res.ProjectionErr != nil {
-    // the event is durable. The next write to this tree redelivers it.
+    // The event is durable. The next write to this tree redelivers it.
 }
 ```
 

@@ -105,10 +105,8 @@ func checkNodePlacedShape(payload NodePlacedPayload) error {
 				payload.UserID, payload.TreeID, *payload.Position)
 		}
 	default:
-		// Unreachable while supportedTreeTypes has three entries, but that
-		// map's comment says to expect a fourth. Mirror validateNodes: a new
-		// type must fail here loudly until its position rule is decided,
-		// not fall through and admit whatever the event carries.
+		// A new type must fail here loudly until its position rule is
+		// decided, not fall through and admit whatever the event carries.
 		return fmt.Errorf("node_placed for %s in tree %s has type %q with no position rule (add one to checkNodePlacedShape)",
 			payload.UserID, payload.TreeID, payload.TreeType)
 	}

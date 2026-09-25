@@ -229,6 +229,17 @@ Every tree type must test:
 
 These catch stack overflow, off-by-one, and performance issues that unit tests miss.
 
+### Adding a tree type
+
+The tree types are listed by hand in four places. Nothing generates one from another, and no test compares them. A new type has to be added to all four:
+
+- The worker's `create_tree` dispatch, in `engine/network-engine-worker/src/handlers/tree.rs`.
+- `supportedTreeTypes`, in `internal/networkengine/tree_loader.go`.
+- The loader's slot-rule switch, in the same file.
+- `checkNodePlacedShape`'s position-rule switch, in `internal/networkengine/tree_events.go`.
+
+The last two refuse a type they do not name. They fail at runtime, not in a test.
+
 ### Proptest regression files and vacuity checks
 
 Proptest writes a `.proptest-regressions` seed file next to a test the first time a case fails. The project checks the legitimate ones in (see `binary_commission_properties.proptest-regressions`) so saved edge cases re-run for everyone.
@@ -891,10 +902,10 @@ Each invocation starts a worker. It rebuilds the tree in the worker from the sto
 ### Before the append
 
 - Version 1 of a tree's stream records the tree type. For a matrix it also records the width and spillover. Every later write reads the shape from there. A version 1 that is not a complete `root_added` refuses the write.
-- `add-root` on a stream that already has a version 1 is refused when its type, matrix width or spillover differs from what version 1 records. A matrix flag on a non-matrix tree is refused. Matrix flags left off the request match. On an empty stream the check runs again under the lock. A root that landed in between decides.
+- `add-root` on a stream that already has a version 1 is refused when its type, matrix width or spillover differs from what version 1 records. A matrix flag on a non-matrix tree is refused. Matrix flags left off the request match. On an empty stream the check runs again under the lock. A root that landed between the first check and the lock is what the second check compares against.
 - Removing a tree's only root is allowed. A later `add-root` roots the tree again (Michael, 2026-09-23).
 - The stream's last event is redelivered through `HandleEvent`. Under the lock it is the only event that can be unprojected. Catch-up redelivers only `tree.root_added`, `tree.node_placed` and `tree.node_removed`. A last event of any other type refuses the write before `HandleEvent` is called. `HandleEvent` returns nil for a type it does not project. Calling it would report that event as projected.
-- `check_mutation` asks the engine whether the mutation would succeed. The worker runs the check functions the mutating ops call first. No refusal rule is copied into Go.
+- `check_mutation` asks the engine whether the mutation would succeed. The worker runs the check functions the mutating ops call first. That is why no refusal rule is copied into Go.
 
 ### Three outcomes for an append
 

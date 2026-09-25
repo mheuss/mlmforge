@@ -287,7 +287,7 @@ func validateNodes(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNode
 	// explicitly so that adding a fourth to supportedTreeTypes without deciding
 	// its slot rule fails here with an actionable message, rather than
 	// inheriting limit 0 and rejecting every node with "outside the range
-	// 0..-1". The comment on supportedTreeTypes says to expect a fourth.
+	// 0..-1".
 	var limit int
 	hasSlots := true
 	switch treeType {

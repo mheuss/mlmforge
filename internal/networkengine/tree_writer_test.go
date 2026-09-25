@@ -326,6 +326,7 @@ func TestTreeWriterLock_TimeoutCarriesTheLockersOwnError(t *testing.T) {
 	require.ErrorIs(t, err, connReset)
 	var waitErr *TreeLockWaitError
 	require.ErrorAs(t, err, &waitErr)
+	assert.Empty(t, streamEvents(t, env.events, TreeStreamName(writerTree)))
 }
 
 func TestTreeWriterLock_ReportsTheCallersDeadline(t *testing.T) {

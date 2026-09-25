@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS idx_tree_nodes_tree_removed_by_event;

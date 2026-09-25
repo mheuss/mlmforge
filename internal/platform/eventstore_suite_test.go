@@ -107,8 +107,7 @@ func TestPostgresEventStore_ReadLastEvent(t *testing.T) {
 	testReadLastEvent(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
 }
 
-// testDuplicateEventIDs holds both EventStore twins to one contract for a
-// reused event ID.
+// testDuplicateEventIDs checks that an EventStore refuses a reused event ID.
 func testDuplicateEventIDs(t *testing.T, newStore func(t *testing.T) EventStore) {
 	ctx := context.Background()
 	const (
@@ -125,11 +124,11 @@ func testDuplicateEventIDs(t *testing.T, newStore func(t *testing.T) EventStore)
 		require.False(t, errors.As(err, &ce), "expected a duplicate ID refusal, got %v", err)
 	}
 
-	t.Run("a reused ID in the same stream is refused and nothing is written", func(t *testing.T) {
+	t.Run("a batch with an ID the stream holds is refused and nothing is written", func(t *testing.T) {
 		s := newStore(t)
 		require.NoError(t, s.Append(ctx, "order-1", 0, []NewEvent{event(id1)}))
 
-		err := s.Append(ctx, "order-1", 1, []NewEvent{event(id1)})
+		err := s.Append(ctx, "order-1", 1, []NewEvent{event(id2), event(id1)})
 
 		requireNotConcurrencyError(t, err)
 		got, err := s.ReadStream(ctx, "order-1", 1, 0)
@@ -138,11 +137,11 @@ func testDuplicateEventIDs(t *testing.T, newStore func(t *testing.T) EventStore)
 		assert.Equal(t, id1, got[0].ID)
 	})
 
-	t.Run("a reused ID in another stream is refused and nothing is written", func(t *testing.T) {
+	t.Run("a batch with an ID another stream holds is refused and nothing is written", func(t *testing.T) {
 		s := newStore(t)
 		require.NoError(t, s.Append(ctx, "order-1", 0, []NewEvent{event(id1)}))
 
-		err := s.Append(ctx, "order-2", 0, []NewEvent{event(id1)})
+		err := s.Append(ctx, "order-2", 0, []NewEvent{event(id2), event(id1)})
 
 		requireNotConcurrencyError(t, err)
 		stream, err := s.ReadStream(ctx, "order-2", 1, 0)
@@ -174,8 +173,8 @@ func TestPostgresEventStore_DuplicateEventIDs(t *testing.T) {
 	testDuplicateEventIDs(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
 }
 
-// testByteIsolation holds both EventStore twins to one contract for who owns
-// the Payload and Metadata bytes.
+// testByteIsolation checks that an EventStore keeps its own copy of Payload
+// and Metadata bytes.
 func testByteIsolation(t *testing.T, newStore func(t *testing.T) EventStore) {
 	ctx := context.Background()
 	appendOne := func(t *testing.T, s EventStore) {

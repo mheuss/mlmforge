@@ -17,7 +17,7 @@ func TestMemoryEventStore_AppendAndReadBack(t *testing.T) {
 
 	events := []NewEvent{
 		{
-			ID:      "evt-1",
+			ID:      "00000000-0000-0000-0000-000000000001",
 			Type:    "OrderCompleted",
 			Payload: json.RawMessage(`{"order_id":"abc"}`),
 		},
@@ -30,7 +30,7 @@ func TestMemoryEventStore_AppendAndReadBack(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 
-	assert.Equal(t, "evt-1", got[0].ID)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000001", got[0].ID)
 	assert.Equal(t, "order-abc", got[0].Stream)
 	assert.Equal(t, "OrderCompleted", got[0].Type)
 	assert.Equal(t, int64(1), got[0].Version)
@@ -44,8 +44,8 @@ func TestMemoryEventStore_AppendMultipleEvents(t *testing.T) {
 	ctx := context.Background()
 
 	events := []NewEvent{
-		{ID: "evt-1", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
-		{ID: "evt-2", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000002", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
 	}
 
 	err := store.Append(ctx, "order-abc", 0, events)
@@ -67,7 +67,7 @@ func TestMemoryEventStore_AppendWithMetadata(t *testing.T) {
 
 	meta := json.RawMessage(`{"actor":"user-123"}`)
 	events := []NewEvent{
-		{ID: "evt-1", Type: "OrderCompleted", Payload: json.RawMessage(`{}`), Metadata: meta},
+		{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCompleted", Payload: json.RawMessage(`{}`), Metadata: meta},
 	}
 
 	err := store.Append(ctx, "order-abc", 0, events)
@@ -83,7 +83,7 @@ func TestMemoryEventStore_AppendNilMetadata(t *testing.T) {
 	ctx := context.Background()
 
 	events := []NewEvent{
-		{ID: "evt-1", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
 	}
 
 	err := store.Append(ctx, "order-abc", 0, events)
@@ -99,12 +99,12 @@ func TestMemoryEventStore_ConcurrencyConflict(t *testing.T) {
 	ctx := context.Background()
 
 	err := store.Append(ctx, "order-abc", 0, []NewEvent{
-		{ID: "evt-1", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
 	})
 	require.NoError(t, err)
 
 	err = store.Append(ctx, "order-abc", 0, []NewEvent{
-		{ID: "evt-2", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000002", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
 	})
 	require.Error(t, err)
 
@@ -120,12 +120,12 @@ func TestMemoryEventStore_ConcurrencyConflictDoesNotMutateStream(t *testing.T) {
 	ctx := context.Background()
 
 	err := store.Append(ctx, "order-abc", 0, []NewEvent{
-		{ID: "evt-1", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
 	})
 	require.NoError(t, err)
 
 	_ = store.Append(ctx, "order-abc", 0, []NewEvent{
-		{ID: "evt-2", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000002", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
 	})
 
 	got, err := store.ReadStream(ctx, "order-abc", 1, 0)
@@ -138,12 +138,12 @@ func TestMemoryEventStore_SkipVersionCheck(t *testing.T) {
 	ctx := context.Background()
 
 	err := store.Append(ctx, "order-abc", 0, []NewEvent{
-		{ID: "evt-1", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
 	})
 	require.NoError(t, err)
 
 	err = store.Append(ctx, "order-abc", -1, []NewEvent{
-		{ID: "evt-2", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000002", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
 	})
 	require.NoError(t, err)
 
@@ -157,7 +157,7 @@ func TestMemoryEventStore_NewStreamExpectedVersionZero(t *testing.T) {
 	ctx := context.Background()
 
 	err := store.Append(ctx, "order-new", 0, []NewEvent{
-		{ID: "evt-1", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
 	})
 	require.NoError(t, err)
 
@@ -171,12 +171,12 @@ func TestMemoryEventStore_CorrectExpectedVersionSucceeds(t *testing.T) {
 	ctx := context.Background()
 
 	err := store.Append(ctx, "order-abc", 0, []NewEvent{
-		{ID: "evt-1", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
 	})
 	require.NoError(t, err)
 
 	err = store.Append(ctx, "order-abc", 1, []NewEvent{
-		{ID: "evt-2", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000002", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
 	})
 	require.NoError(t, err)
 
@@ -199,9 +199,9 @@ func TestMemoryEventStore_ReadStreamFromVersion(t *testing.T) {
 	ctx := context.Background()
 
 	err := store.Append(ctx, "order-abc", 0, []NewEvent{
-		{ID: "evt-1", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
-		{ID: "evt-2", Type: "OrderUpdated", Payload: json.RawMessage(`{}`)},
-		{ID: "evt-3", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000002", Type: "OrderUpdated", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000003", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
 	})
 	require.NoError(t, err)
 
@@ -217,20 +217,20 @@ func TestMemoryEventStore_ReadCategoryMatchesPrefix(t *testing.T) {
 	ctx := context.Background()
 
 	_ = store.Append(ctx, "order-abc", 0, []NewEvent{
-		{ID: "evt-1", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
 	})
 	_ = store.Append(ctx, "order-def", 0, []NewEvent{
-		{ID: "evt-2", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000002", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
 	})
 	_ = store.Append(ctx, "autoship-xyz", 0, []NewEvent{
-		{ID: "evt-3", Type: "AutoshipCreated", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000003", Type: "AutoshipCreated", Payload: json.RawMessage(`{}`)},
 	})
 
 	got, err := store.ReadCategory(ctx, "order", 0, 0)
 	require.NoError(t, err)
 	require.Len(t, got, 2)
-	assert.Equal(t, "evt-1", got[0].ID)
-	assert.Equal(t, "evt-2", got[1].ID)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000001", got[0].ID)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000002", got[1].ID)
 }
 
 func TestMemoryEventStore_ReadCategoryAfterPosition(t *testing.T) {
@@ -238,16 +238,16 @@ func TestMemoryEventStore_ReadCategoryAfterPosition(t *testing.T) {
 	ctx := context.Background()
 
 	_ = store.Append(ctx, "order-abc", 0, []NewEvent{
-		{ID: "evt-1", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
 	})
 	_ = store.Append(ctx, "order-def", 0, []NewEvent{
-		{ID: "evt-2", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000002", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
 	})
 
 	got, err := store.ReadCategory(ctx, "order", 1, 0)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
-	assert.Equal(t, "evt-2", got[0].ID)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000002", got[0].ID)
 }
 
 func TestMemoryEventStore_ReadCategoryEmpty(t *testing.T) {
@@ -264,13 +264,13 @@ func TestMemoryEventStore_ReadCategoryGlobalOrder(t *testing.T) {
 	ctx := context.Background()
 
 	_ = store.Append(ctx, "order-abc", 0, []NewEvent{
-		{ID: "evt-1", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
 	})
 	_ = store.Append(ctx, "autoship-xyz", 0, []NewEvent{
-		{ID: "evt-2", Type: "AutoshipCreated", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000002", Type: "AutoshipCreated", Payload: json.RawMessage(`{}`)},
 	})
 	_ = store.Append(ctx, "order-def", 0, []NewEvent{
-		{ID: "evt-3", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000003", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
 	})
 
 	got, err := store.ReadCategory(ctx, "order", 0, 0)
@@ -287,16 +287,16 @@ func TestMemoryEventStore_ReadCategoryMultiHyphenStream(t *testing.T) {
 
 	// "commission-period-2026-01" has category "commission" (before first hyphen).
 	_ = store.Append(ctx, "commission-period-2026-01", 0, []NewEvent{
-		{ID: "evt-1", Type: "PeriodOpened", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000001", Type: "PeriodOpened", Payload: json.RawMessage(`{}`)},
 	})
 	_ = store.Append(ctx, "order-abc", 0, []NewEvent{
-		{ID: "evt-2", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000002", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
 	})
 
 	got, err := store.ReadCategory(ctx, "commission", 0, 0)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
-	assert.Equal(t, "evt-1", got[0].ID)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000001", got[0].ID)
 }
 
 func TestMemoryEventStore_AppendRejectsStreamWithoutHyphen(t *testing.T) {
@@ -306,7 +306,7 @@ func TestMemoryEventStore_AppendRejectsStreamWithoutHyphen(t *testing.T) {
 	// Stream names must follow {category}-{id} format. A name without a
 	// hyphen is rejected because there's no id part.
 	err := store.Append(ctx, "singleton", 0, []NewEvent{
-		{ID: "evt-1", Type: "SystemStarted", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000001", Type: "SystemStarted", Payload: json.RawMessage(`{}`)},
 	})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrInvalidStreamName)
@@ -317,11 +317,11 @@ func TestMemoryEventStore_VersionsAcrossStreamsIndependent(t *testing.T) {
 	ctx := context.Background()
 
 	_ = store.Append(ctx, "order-abc", 0, []NewEvent{
-		{ID: "evt-1", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
-		{ID: "evt-2", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000002", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
 	})
 	_ = store.Append(ctx, "order-def", 0, []NewEvent{
-		{ID: "evt-3", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000003", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
 	})
 
 	abc, err := store.ReadStream(ctx, "order-abc", 1, 0)
@@ -339,20 +339,20 @@ func TestMemoryEventStore_ReadStream_WithLimit(t *testing.T) {
 	ctx := context.Background()
 
 	err := store.Append(ctx, "order-abc", 0, []NewEvent{
-		{ID: "evt-1", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
-		{ID: "evt-2", Type: "OrderUpdated", Payload: json.RawMessage(`{}`)},
-		{ID: "evt-3", Type: "OrderShipped", Payload: json.RawMessage(`{}`)},
-		{ID: "evt-4", Type: "OrderDelivered", Payload: json.RawMessage(`{}`)},
-		{ID: "evt-5", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000002", Type: "OrderUpdated", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000003", Type: "OrderShipped", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000004", Type: "OrderDelivered", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000005", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
 	})
 	require.NoError(t, err)
 
 	got, err := store.ReadStream(ctx, "order-abc", 1, 3)
 	require.NoError(t, err)
 	require.Len(t, got, 3)
-	assert.Equal(t, "evt-1", got[0].ID)
-	assert.Equal(t, "evt-2", got[1].ID)
-	assert.Equal(t, "evt-3", got[2].ID)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000001", got[0].ID)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000002", got[1].ID)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000003", got[2].ID)
 }
 
 func TestMemoryEventStore_ReadCategory_WithLimit(t *testing.T) {
@@ -360,27 +360,27 @@ func TestMemoryEventStore_ReadCategory_WithLimit(t *testing.T) {
 	ctx := context.Background()
 
 	_ = store.Append(ctx, "order-abc", 0, []NewEvent{
-		{ID: "evt-1", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
 	})
 	_ = store.Append(ctx, "order-def", 0, []NewEvent{
-		{ID: "evt-2", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000002", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
 	})
 	_ = store.Append(ctx, "order-ghi", 0, []NewEvent{
-		{ID: "evt-3", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000003", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
 	})
 	_ = store.Append(ctx, "order-jkl", 0, []NewEvent{
-		{ID: "evt-4", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000004", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
 	})
 	_ = store.Append(ctx, "order-mno", 0, []NewEvent{
-		{ID: "evt-5", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000005", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
 	})
 
 	got, err := store.ReadCategory(ctx, "order", 0, 3)
 	require.NoError(t, err)
 	require.Len(t, got, 3)
-	assert.Equal(t, "evt-1", got[0].ID)
-	assert.Equal(t, "evt-2", got[1].ID)
-	assert.Equal(t, "evt-3", got[2].ID)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000001", got[0].ID)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000002", got[1].ID)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000003", got[2].ID)
 }
 
 func TestMemoryEventStore_ReadStream_FromVersionZero(t *testing.T) {
@@ -388,8 +388,8 @@ func TestMemoryEventStore_ReadStream_FromVersionZero(t *testing.T) {
 	ctx := context.Background()
 
 	err := store.Append(ctx, "order-abc", 0, []NewEvent{
-		{ID: "evt-1", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
-		{ID: "evt-2", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000002", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
 	})
 	require.NoError(t, err)
 
@@ -406,7 +406,7 @@ func TestMemoryEventStore_AppendRejectsEmptyStreamName(t *testing.T) {
 	ctx := context.Background()
 
 	events := []NewEvent{
-		{ID: "evt-1", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
 	}
 	err := store.Append(ctx, "", 0, events)
 	require.Error(t, err)
@@ -448,7 +448,7 @@ func TestMemoryEventStore_AppendRejectsEmptyType(t *testing.T) {
 	ctx := context.Background()
 
 	events := []NewEvent{
-		{ID: "evt-1", Type: "", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000001", Type: "", Payload: json.RawMessage(`{}`)},
 	}
 	err := store.Append(ctx, "order-abc", 0, events)
 	require.Error(t, err)
@@ -460,7 +460,7 @@ func TestMemoryEventStore_AppendRejectsNilPayload(t *testing.T) {
 	ctx := context.Background()
 
 	events := []NewEvent{
-		{ID: "evt-1", Type: "OrderCreated", Payload: nil},
+		{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: nil},
 	}
 	err := store.Append(ctx, "order-abc", 0, events)
 	require.Error(t, err)
@@ -473,8 +473,8 @@ func TestMemoryEventStore_AppendValidatesAllEvents(t *testing.T) {
 
 	// First event is valid, second has empty Type.
 	events := []NewEvent{
-		{ID: "evt-1", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
-		{ID: "evt-2", Type: "", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000002", Type: "", Payload: json.RawMessage(`{}`)},
 	}
 	err := store.Append(ctx, "order-abc", 0, events)
 	require.Error(t, err)
@@ -507,7 +507,7 @@ func TestMemoryEventStore_ConcurrentAppendAndRead(t *testing.T) {
 			for i := range eventsPerWrite {
 				evt := []NewEvent{
 					{
-						ID:      fmt.Sprintf("evt-%d-%d", w, i),
+						ID:      fmt.Sprintf("00000000-0000-0000-%04d-%012d", w, i),
 						Type:    "TestEvent",
 						Payload: json.RawMessage(`{}`),
 					},
@@ -604,7 +604,7 @@ func TestMemoryEventStore_AppendRejectsEmptyID_StreamName(t *testing.T) {
 	ctx := context.Background()
 
 	events := []NewEvent{
-		{ID: "evt-1", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+		{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
 	}
 
 	// Empty category part.

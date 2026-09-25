@@ -153,6 +153,31 @@ func testDuplicateEventIDs(t *testing.T, newStore func(t *testing.T) EventStore)
 		assert.Equal(t, "order-1", category[0].Stream)
 	})
 
+	t.Run("a batch with another spelling of an ID the stream holds is refused and nothing is written", func(t *testing.T) {
+		s := newStore(t)
+		require.NoError(t, s.Append(ctx, "order-1", 0, []NewEvent{event("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11")}))
+
+		err := s.Append(ctx, "order-1", 1, []NewEvent{event(id2), event("A0EEBC99-9C0B-4EF8-BB6D-6BB9BD380A11")})
+
+		requireNotConcurrencyError(t, err)
+		got, err := s.ReadStream(ctx, "order-1", 1, 0)
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+	})
+
+	t.Run("two spellings of one ID within one batch refuse the whole batch", func(t *testing.T) {
+		s := newStore(t)
+
+		err := s.Append(ctx, "order-1", 0, []NewEvent{
+			event("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"), event("{a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11}"),
+		})
+
+		requireNotConcurrencyError(t, err)
+		got, err := s.ReadStream(ctx, "order-1", 1, 0)
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+
 	t.Run("a reused ID within one batch refuses the whole batch", func(t *testing.T) {
 		s := newStore(t)
 
@@ -245,4 +270,90 @@ func TestMemoryEventStore_ByteIsolation(t *testing.T) {
 
 func TestPostgresEventStore_ByteIsolation(t *testing.T) {
 	testByteIsolation(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
+}
+
+// testEventIDForms checks which spellings of an event ID an EventStore
+// accepts, and the form it reads them back in.
+func testEventIDForms(t *testing.T, newStore func(t *testing.T) EventStore) {
+	ctx := context.Background()
+	const canonical = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"
+	appendID := func(s EventStore, id string) error {
+		return s.Append(ctx, "order-1", 0, []NewEvent{{ID: id, Type: "OrderPlaced", Payload: json.RawMessage(`{}`)}})
+	}
+
+	accepted := []string{
+		"a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+		"A0EEBC99-9C0B-4EF8-BB6D-6BB9BD380A11",
+		"{a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11}",
+		"a0eebc999c0b4ef8bb6d6bb9bd380a11",
+		"a0ee-bc99-9c0b-4ef8-bb6d-6bb9-bd38-0a11",
+		"a0eebc99-9c0b4ef8-bb6d6bb9-bd380a11",
+		"{a0eebc999c0b4ef8bb6d6bb9bd380a11}",
+	}
+	for _, id := range accepted {
+		t.Run("accepts "+id, func(t *testing.T) {
+			s := newStore(t)
+
+			require.NoError(t, appendID(s, id))
+
+			got, err := s.ReadStream(ctx, "order-1", 1, 0)
+			require.NoError(t, err)
+			require.Len(t, got, 1)
+			assert.Equal(t, canonical, got[0].ID)
+		})
+	}
+
+	refused := []string{
+		"evt-1",
+		"urn:uuid:a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+		"a0eebc99x9c0bx4ef8xbb6dx6bb9bd380a11",
+		" a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+		"{a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+		"a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11}",
+		"a0eebc99--9c0b-4ef8-bb6d-6bb9bd380a11",
+		"a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11-",
+		"a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a1",
+		"a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11a",
+		"a0-eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+	}
+	for _, id := range refused {
+		t.Run("refuses "+id, func(t *testing.T) {
+			s := newStore(t)
+
+			require.Error(t, appendID(s, id))
+
+			got, err := s.ReadStream(ctx, "order-1", 1, 0)
+			require.NoError(t, err)
+			assert.Empty(t, got)
+		})
+	}
+
+	t.Run("a version conflict is reported ahead of an ID that does not parse", func(t *testing.T) {
+		s := newStore(t)
+		require.NoError(t, appendID(s, canonical))
+
+		err := appendID(s, "evt-2")
+
+		var ce *ConcurrencyError
+		require.ErrorAs(t, err, &ce)
+	})
+
+	t.Run("a missing Type later in the batch is reported ahead of an ID that does not parse", func(t *testing.T) {
+		s := newStore(t)
+
+		err := s.Append(ctx, "order-1", 0, []NewEvent{
+			{ID: "evt-1", Type: "OrderPlaced", Payload: json.RawMessage(`{}`)},
+			{ID: canonical, Payload: json.RawMessage(`{}`)},
+		})
+
+		require.ErrorContains(t, err, "event at index 1 has empty Type")
+	})
+}
+
+func TestMemoryEventStore_EventIDForms(t *testing.T) {
+	testEventIDForms(t, func(*testing.T) EventStore { return NewMemoryEventStore() })
+}
+
+func TestPostgresEventStore_EventIDForms(t *testing.T) {
+	testEventIDForms(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
 }

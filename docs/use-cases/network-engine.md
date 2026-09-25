@@ -1058,7 +1058,7 @@ if err != nil && treeLoadRetryable(err) {
 **Added:** Unreleased (HEU-301)
 **Files:** `internal/networkengine/tree_writer.go`, `internal/networkengine/tree_lock_postgres.go`, `internal/networkengine/tree_lock_memory.go`
 
-**Problem:** Two processes can each load a tree, each decide correctly against what they saw, and together append a state neither would have allowed. An event store's version check serialises appends, not decisions.
+**Problem:** Two processes can each load a tree. Each can decide correctly against what it saw. Together they can append a state neither would have allowed. An event store's version check serialises appends, not decisions.
 
 **Solution:** `TreeWriter` holds a per-tree Postgres advisory lock from before the load until projection returns. The lock sits on a connection of its own. Under the lock it rebuilds the tree in a scratch engine and redelivers the stream's last event. It asks `check_mutation` whether the mutation would succeed, appends, and projects the stored copy. `MemoryTreeLocker` is a real per-tree lock for tests.
 
@@ -1075,11 +1075,11 @@ if err != nil {
     return err // nothing is known to have been appended
 }
 if res.ProjectionErr != nil {
-    // the event is durable, and the next write to this tree redelivers it
+    // the event is durable. The next write to this tree redelivers it.
 }
 ```
 
-**Notes:** A writer makes one write per tree per engine. Each write rebuilds its tree in the engine, and the worker cannot drop a structure, so a second write through the same engine is refused with `TREE_EXISTS`. Build a new writer over a new worker for each write, as the CLI does. The lock is cheap only because a CLI invocation lasts seconds. The scratch engine is what makes several HEU-777, HEU-789 and HEU-813 conclusions hold. A long-lived service re-examines both. The engine check shares its rules with the mutation through Rust `check_*` functions the mutating functions call first, so nothing is copied into Go. See `docs/development/network-engine.md`, "Tree Writes Go Through `TreeWriter`".
+**Notes:** A writer makes one write per tree per engine. Each write rebuilds its tree in the engine. The worker cannot drop a structure. A second write through the same engine is refused with `TREE_EXISTS`. Build a new writer over a new worker for each write, as the CLI does. The lock is cheap only because a CLI invocation lasts seconds. The scratch engine is what makes several HEU-777, HEU-789 and HEU-813 conclusions hold. A long-lived service re-examines both. The engine check shares its rules with the mutation through Rust `check_*` functions the mutating functions call first. Nothing is copied into Go. See `docs/development/network-engine.md`, "Tree Writes Go Through `TreeWriter`".
 
 ---
 
@@ -1088,9 +1088,9 @@ if res.ProjectionErr != nil {
 **Added:** Unreleased (HEU-301)
 **Files:** `internal/networkengine/tree_writer.go`, `internal/networkengine/tree_writer_errors.go`
 
-**Problem:** `EventStore.Append` returns the commit's error, and a commit can land while its reply is lost. A caller that treats every error as "not appended" can report a placement that happened as one that did not. This entry narrows that to one case, a read that finds no event.
+**Problem:** `EventStore.Append` returns the commit's error. A commit can land while its reply is lost. A caller that treats every error as "not appended" can report a placement that happened as one that did not. This entry narrows that to one case, a read that finds no event.
 
-**Solution:** On an append error that is neither a concurrency conflict nor a validation refusal, the writer reads the version it tried. The read runs on a context detached from the caller's. Its own event there means appended. Another event there means not appended. No event there is treated as not appended, and the error states only what the read found. A failed read returns `AppendOutcomeUnknownError`, naming both errors.
+**Solution:** On an append error that is neither a concurrency conflict nor a validation refusal, the writer reads the version it tried. The read runs on a context detached from the caller's. Its own event there means appended. Another event there means not appended. No event there is treated as not appended. The error states only what the read found. A failed read returns `AppendOutcomeUnknownError`, naming both errors.
 
 **Usage:**
 ```go
@@ -1101,4 +1101,4 @@ if errors.As(err, &unknown) {
 }
 ```
 
-**Notes:** Compare event IDs by value. A Postgres round trip returns a canonical UUID. A conflict message leaves out the store's `ActualVersion`, which can hold a version nobody read. When the read finds no event, the message states only that. A commit that a cancel during COMMIT hid from the read turns up as the stream's last event. The next write redelivers it. A CLI matches `AppendOutcomeUnknownError` before any context error, because it unwraps to both of its errors.
+**Notes:** Compare event IDs by value. A Postgres round trip returns a canonical UUID. A conflict message leaves out the store's `ActualVersion`. That value can hold a version nobody read. When the read finds no event, the message states only that. A commit that a cancel during COMMIT hid from the read turns up as the stream's last event. The next write redelivers it. A CLI matches `AppendOutcomeUnknownError` before any context error, because it unwraps to both of its errors.

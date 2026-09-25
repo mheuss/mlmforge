@@ -872,29 +872,29 @@ The stamp says which event removed a row. It does not order several removals of 
 
 ### One writer per tree at a time
 
-Each write holds a per-tree Postgres advisory lock from before the load until projection returns. The event store's version check serialises appends. It does not serialise decisions. Two runs can each load a tree, each decide correctly against what they saw, and together write a state neither allowed. The lock closes that gap.
+Each write holds a per-tree Postgres advisory lock from before the load until projection returns. The event store's version check serialises appends. It does not serialise decisions. Two runs can each load a tree. Each can decide correctly against what it saw. Together they can still write a state neither would have allowed. The lock closes that gap.
 
 - The lock uses the two-key form. The first key is a fixed namespace for tree writes. The second is FNV-1a over the tree ID's 16 bytes. Changing that function lets two binaries take different keys for one tree.
 - Every tree ID is canonicalised before it names a stream or a lock. Two spellings of one ID would otherwise name two streams and two locks.
 - The lock sits on a connection of its own, outside the stores' pool. On a one-connection pool, a lock holding the pool's only connection would deadlock the stores.
-- The lock is session-scoped. A writer that crashes drops its connection, and the lock goes with it.
-- The lock needs a direct Postgres session. Behind a pooler in transaction mode, the lock and the unlock can run on different server sessions, and the lock excludes nothing.
+- The lock is session-scoped. A writer that crashes drops its connection. The lock goes with it.
+- The lock needs a direct Postgres session. Behind a pooler in transaction mode, the lock and the unlock can run on different server sessions. Then the lock excludes nothing.
 - The writer does not re-check the lock while it holds it. If the server ends the lock's session mid-write, another writer can take the lock. The first writer learns of it only at unlock, as `ReleaseErr`.
 - The wait is bounded, 30 seconds by default. The timeout names the tree and the wait. It does not say another process holds the lock, because the writer cannot see that.
-- The timeout is a `TreeLockWaitError` wrapping the locker's own error, which is often `context.DeadlineExceeded`. Match `TreeLockWaitError` with `errors.As` before testing for a context error, or a lock timeout reads as the caller's own deadline.
+- The timeout is a `TreeLockWaitError` wrapping the locker's own error. That error is often `context.DeadlineExceeded`. Match `TreeLockWaitError` with `errors.As` before testing for a context error. Otherwise a lock timeout reads as the caller's own deadline.
 - The lock is cheap because a CLI invocation lasts seconds. A long-lived service that holds a connection for every tree operation re-examines it rather than inheriting it.
 
 ### The engine is scratch
 
-Each invocation starts a worker, rebuilds the tree in it from the store under the lock, and discards it on exit. The engine's jobs in a write are to check the mutation and to compute a removal's moved recruits. What HEU-777, HEU-789 and HEU-813 record as unreachable under the writer holds only while the engine is scratch. A service that keeps an engine in memory reopens them.
+Each invocation starts a worker. It rebuilds the tree in the worker from the store, under the lock. It discards the worker on exit. The engine's jobs in a write are to check the mutation and to compute a removal's moved recruits. What HEU-777, HEU-789 and HEU-813 record as unreachable under the writer holds only while the engine is scratch. A service that keeps an engine in memory reopens them.
 
 ### Before the append
 
-- Version 1 of a tree's stream records the tree type, and for a matrix the width and spillover. Every later write reads the shape from there. A version 1 that is not a complete `root_added` refuses the write.
-- `add-root` on a stream that already has a version 1 is refused when its type, matrix width or spillover differs from what version 1 records. A matrix flag on a non-matrix tree is refused. Matrix flags left off the request match. On an empty stream the check runs again under the lock, so a root that landed in between decides.
+- Version 1 of a tree's stream records the tree type. For a matrix it also records the width and spillover. Every later write reads the shape from there. A version 1 that is not a complete `root_added` refuses the write.
+- `add-root` on a stream that already has a version 1 is refused when its type, matrix width or spillover differs from what version 1 records. A matrix flag on a non-matrix tree is refused. Matrix flags left off the request match. On an empty stream the check runs again under the lock. A root that landed in between decides.
 - Removing a tree's only root is allowed. A later `add-root` roots the tree again (Michael, 2026-09-23).
-- The stream's last event is redelivered through `HandleEvent`. Under the lock it is the only event that can be unprojected. Catch-up redelivers only `tree.root_added`, `tree.node_placed` and `tree.node_removed`. A last event of any other type refuses the write before `HandleEvent` is called. `HandleEvent` returns nil for a type it does not project, so calling it would report that event as projected.
-- `check_mutation` asks the engine whether the mutation would succeed. The worker runs the check functions the mutating ops call first, so no refusal rule is copied into Go.
+- The stream's last event is redelivered through `HandleEvent`. Under the lock it is the only event that can be unprojected. Catch-up redelivers only `tree.root_added`, `tree.node_placed` and `tree.node_removed`. A last event of any other type refuses the write before `HandleEvent` is called. `HandleEvent` returns nil for a type it does not project. Calling it would report that event as projected.
+- `check_mutation` asks the engine whether the mutation would succeed. The worker runs the check functions the mutating ops call first. No refusal rule is copied into Go.
 
 ### Three outcomes for an append
 
@@ -902,7 +902,7 @@ Each invocation starts a worker, rebuilds the tree in it from the store under th
 
 - Its own event: appended.
 - Another event: not appended.
-- No event: treated as not appended, and the error states only what the read found. A caller cancelled during COMMIT can see the commit fail while the server finishes it. The read may run before the commit is visible. Such an event shows up as the stream's last event, and the next write redelivers it.
+- No event: treated as not appended. The error states only what the read found. A caller cancelled during COMMIT can see the commit fail while the server finishes it. The read may run before the commit is visible. Such an event shows up as the stream's last event. The next write redelivers it.
 - The read fails: unknown. The CLI exits 1.
 
 A confirmed append is a success even when projection fails. The CLI exits 0 and warns on stderr. The next write to the tree redelivers the event.

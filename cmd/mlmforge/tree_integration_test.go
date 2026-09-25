@@ -322,12 +322,13 @@ func TestTreeWrite_ARefusedPlacementExitsNonZeroAndAppendsNothing(t *testing.T) 
 	out, err := runTreeCmd(t, append([]string{"add-root", "--user-id", root, "--sponsor-id", root,
 		"--tree-type", "unilevel"}, conn...)...)
 	require.NoError(t, err, out.stderr.String())
+	rootEvent := appendedEventID(t, out.stdout.String())
 
 	out, err = runTreeCmd(t, append([]string{"place", "--user-id", root, "--parent-id", root,
 		"--sponsor-id", root}, conn...)...)
 
 	require.Error(t, err)
-	require.Empty(t, out.stdout.String())
+	require.Equal(t, "redelivered event "+rootEvent+" at version 1\n", out.stdout.String())
 	require.Contains(t, out.stderr.String(), "check_mutation for add_node in tree "+tree+" returned: ")
 	require.Contains(t, out.stderr.String(), "USER_ALREADY_EXISTS")
 	require.Contains(t, out.stderr.String(), "nothing was appended")

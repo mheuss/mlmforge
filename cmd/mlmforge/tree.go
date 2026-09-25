@@ -2,9 +2,6 @@ package main
 
 import (
 	"context"
-	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/mlmforge/mlmforge/internal/networkengine"
 	"github.com/spf13/cobra"
@@ -87,19 +84,10 @@ func newTreeLoadCmd(resolve flagResolver, open depsOpener, loader loaderFor) *co
 		// usage after the error line.
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			url, workerPath, err := resolve()
-			if err != nil {
-				return err
-			}
-			// Established here rather than on the root command, which would
-			// disable the default SIGINT kill for every command in the binary.
-			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
-			defer stop()
 			opts := loadTreeOptions(treeType, width, spillover)
-			return withTreeDeps(ctx, cmd.ErrOrStderr(), open, url, workerPath,
-				func(ctx context.Context, deps *treeDeps) error {
-					return runTreeLoad(ctx, cmd.OutOrStdout(), loader(deps), treeID, treeType, opts)
-				})
+			return runTreeCommand(cmd, resolve, open, func(ctx context.Context, deps *treeDeps) error {
+				return runTreeLoad(ctx, cmd.OutOrStdout(), loader(deps), treeID, treeType, opts)
+			})
 		},
 	}
 	cmd.Flags().StringVar(&treeID, "tree-id", "", "Tree to load (UUID)")

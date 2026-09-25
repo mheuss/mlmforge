@@ -1079,7 +1079,7 @@ if res.ProjectionErr != nil {
 }
 ```
 
-**Notes:** The lock is cheap only because a CLI invocation lasts seconds. The scratch engine is what makes several HEU-777, HEU-789 and HEU-813 conclusions hold. A long-lived service re-examines both. The engine check shares its rules with the mutation through Rust `check_*` functions the mutating functions call first, so nothing is copied into Go. See `docs/development/network-engine.md`, "Tree Writes Go Through `TreeWriter`".
+**Notes:** A writer makes one write per tree per engine. Each write rebuilds its tree in the engine, and the worker cannot drop a structure, so a second write through the same engine is refused with `TREE_EXISTS`. Build a new writer over a new worker for each write, as the CLI does. The lock is cheap only because a CLI invocation lasts seconds. The scratch engine is what makes several HEU-777, HEU-789 and HEU-813 conclusions hold. A long-lived service re-examines both. The engine check shares its rules with the mutation through Rust `check_*` functions the mutating functions call first, so nothing is copied into Go. See `docs/development/network-engine.md`, "Tree Writes Go Through `TreeWriter`".
 
 ---
 

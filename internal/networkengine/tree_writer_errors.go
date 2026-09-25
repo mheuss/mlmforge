@@ -1,6 +1,9 @@
 package networkengine
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // appendConflictError reports an append refused on its expected version.
 type appendConflictError struct {
@@ -50,3 +53,18 @@ func (e *AppendOutcomeUnknownError) Error() string {
 }
 
 func (e *AppendOutcomeUnknownError) Unwrap() []error { return []error{e.AppendErr, e.ReadErr} }
+
+// TreeLockWaitError reports a tree lock the writer waited for and did not
+// acquire.
+type TreeLockWaitError struct {
+	TreeID string
+	Waited time.Duration
+	Err    error
+}
+
+func (e *TreeLockWaitError) Error() string {
+	return fmt.Sprintf("waited %s for the lock on tree %s and did not acquire it; the locker returned: %v",
+		e.Waited, e.TreeID, e.Err)
+}
+
+func (e *TreeLockWaitError) Unwrap() error { return e.Err }

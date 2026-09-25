@@ -878,6 +878,8 @@ Each write holds a per-tree Postgres advisory lock from before the load until pr
 - Every tree ID is canonicalised before it names a stream or a lock. Two spellings of one ID would otherwise name two streams and two locks.
 - The lock sits on a connection of its own, outside the stores' pool. On a one-connection pool, a lock holding the pool's only connection would deadlock the stores.
 - The lock is session-scoped. A writer that crashes drops its connection, and the lock goes with it.
+- The lock needs a direct Postgres session. Behind a pooler in transaction mode, the lock and the unlock can run on different server sessions, and the lock excludes nothing.
+- The writer does not re-check the lock while it holds it. If the server ends the lock's session mid-write, another writer can take the lock. The first writer learns of it only at unlock, as `ReleaseErr`.
 - The wait is bounded, 30 seconds by default. The timeout names the tree and the wait. It does not say another process holds the lock, because the writer cannot see that.
 - The lock is cheap because a CLI invocation lasts seconds. A long-lived service that holds a connection for every tree operation re-examines it rather than inheriting it.
 
@@ -906,7 +908,7 @@ A confirmed append is a success even when projection fails. The CLI exits 0 and 
 
 What `WriteResult` carries:
 
-- `Stream`, set before the lock is taken.
+- `Stream`, set on every path that reaches the lock.
 - `EventID` and `Version`, set once the append is confirmed.
 - `CaughtUp`, the redelivered last event.
 - `ProjectionErr`, any failure after the append was confirmed.

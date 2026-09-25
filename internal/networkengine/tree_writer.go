@@ -14,17 +14,6 @@ import (
 // defaultTreeLockWait bounds how long a TreeWriter waits for a tree's lock.
 const defaultTreeLockWait = 30 * time.Second
 
-// TreeLockWaitError reports a tree lock the writer waited for and did not
-// acquire.
-type TreeLockWaitError struct {
-	TreeID string
-	Waited time.Duration
-}
-
-func (e *TreeLockWaitError) Error() string {
-	return fmt.Sprintf("waited %s for the lock on tree %s and did not acquire it", e.Waited, e.TreeID)
-}
-
 // AddRootRequest asks for a tree's root. The type and matrix parameters shape
 // the tree when its stream is empty.
 type AddRootRequest struct {
@@ -409,7 +398,7 @@ func (w *TreeWriter) lock(ctx context.Context, treeID uuid.UUID) (func() error, 
 			treeID, time.Since(start).Round(time.Millisecond), ctxErr)
 	}
 	if errors.Is(lockCtx.Err(), context.DeadlineExceeded) {
-		return nil, &TreeLockWaitError{TreeID: treeID.String(), Waited: w.lockWait}
+		return nil, &TreeLockWaitError{TreeID: treeID.String(), Waited: w.lockWait, Err: err}
 	}
 	return nil, fmt.Errorf("lock tree %s: %w", treeID, err)
 }

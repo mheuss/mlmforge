@@ -38,10 +38,10 @@ func timeFlag(name, value string, now time.Time) (time.Time, error) {
 
 // reportWrite prints a write's outcome and returns the error to report.
 func reportWrite(ctx context.Context, out, warn io.Writer, res networkengine.WriteResult, err error) error {
+	if res.CaughtUp != nil {
+		_, _ = fmt.Fprintf(out, "redelivered event %s at version %d\n", res.CaughtUp.EventID, res.CaughtUp.Version)
+	}
 	if err == nil {
-		if res.CaughtUp != nil {
-			_, _ = fmt.Fprintf(out, "redelivered event %s at version %d\n", res.CaughtUp.EventID, res.CaughtUp.Version)
-		}
 		projected := "projected"
 		if res.ProjectionErr != nil {
 			projected = "not projected"
@@ -63,9 +63,9 @@ func reportWrite(ctx context.Context, out, warn io.Writer, res networkengine.Wri
 	return fmt.Errorf("the command's context ended (%v) and no append was confirmed: %w", context.Cause(ctx), err)
 }
 
-// runTreeWrite resolves the connection flags and runs one write under the
-// command's own signal context.
-func runTreeWrite(cmd *cobra.Command, resolve flagResolver, open depsOpener, run treeRunner) error {
+// runTreeCommand resolves the connection flags and runs one tree command under
+// the command's own signal context.
+func runTreeCommand(cmd *cobra.Command, resolve flagResolver, open depsOpener, run treeRunner) error {
 	url, workerPath, err := resolve()
 	if err != nil {
 		return err
@@ -105,7 +105,7 @@ func newTreeAddRootCmd(resolve flagResolver, open depsOpener, writer writerFor) 
 			if cmd.Flags().Changed("matrix-spillover") {
 				req.MatrixSpillover = &spillover
 			}
-			return runTreeWrite(cmd, resolve, open, func(ctx context.Context, deps *treeDeps) error {
+			return runTreeCommand(cmd, resolve, open, func(ctx context.Context, deps *treeDeps) error {
 				res, err := writer(deps).AddRoot(ctx, req)
 				return reportWrite(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), res, err)
 			})
@@ -146,7 +146,7 @@ func newTreePlaceCmd(resolve flagResolver, open depsOpener, writer writerFor) *c
 			if cmd.Flags().Changed("position") {
 				req.Position = &position
 			}
-			return runTreeWrite(cmd, resolve, open, func(ctx context.Context, deps *treeDeps) error {
+			return runTreeCommand(cmd, resolve, open, func(ctx context.Context, deps *treeDeps) error {
 				res, err := writer(deps).Place(ctx, req)
 				return reportWrite(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), res, err)
 			})
@@ -180,7 +180,7 @@ func newTreeRemoveCmd(resolve flagResolver, open depsOpener, writer writerFor) *
 				return err
 			}
 			req := networkengine.RemoveRequest{TreeID: treeID, UserID: userID, RemovedAt: at}
-			return runTreeWrite(cmd, resolve, open, func(ctx context.Context, deps *treeDeps) error {
+			return runTreeCommand(cmd, resolve, open, func(ctx context.Context, deps *treeDeps) error {
 				res, err := writer(deps).Remove(ctx, req)
 				return reportWrite(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), res, err)
 			})
@@ -188,7 +188,7 @@ func newTreeRemoveCmd(resolve flagResolver, open depsOpener, writer writerFor) *
 	}
 	cmd.Flags().StringVar(&treeID, "tree-id", "", "Tree to write (UUID)")
 	cmd.Flags().StringVar(&userID, "user-id", "", "User to remove (UUID)")
-	cmd.Flags().StringVar(&removedAt, "removed-at", "", "Removal time, RFC 3339 (default now, in UTC)")
+	cmd.Flags().StringVar(&removedAt, "removed-at", "", "Removal time recorded in the event, RFC 3339 (default now, in UTC)")
 	for _, name := range []string{"tree-id", "user-id"} {
 		_ = cmd.MarkFlagRequired(name)
 	}

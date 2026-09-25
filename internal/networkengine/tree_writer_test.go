@@ -305,7 +305,9 @@ func TestTreeWriterLock_TimeoutStatesTheTreeAndTheWait(t *testing.T) {
 
 	_, err = w.AddRoot(context.Background(), unilevelRootRequest())
 
-	require.EqualError(t, err, "waited 50ms for the lock on tree "+writerTree+" and did not acquire it")
+	require.EqualError(t, err, "waited 50ms for the lock on tree "+writerTree+
+		" and did not acquire it; the locker returned: context deadline exceeded")
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 	var waitErr *TreeLockWaitError
 	require.ErrorAs(t, err, &waitErr)
 	assert.Empty(t, streamEvents(t, env.events, TreeStreamName(writerTree)))

@@ -167,6 +167,22 @@ func TestTreePlaceCmd_ReportsTheAppendOnStdout(t *testing.T) {
 	assert.Empty(t, out.stderr.String())
 }
 
+func TestTreePlaceCmd_ReportsARedeliveryAheadOfARefusal(t *testing.T) {
+	refusal := errors.New("check_mutation for add_node in tree t returned: engine error [USER_NOT_FOUND]; nothing was appended")
+	w := &recordingWriter{
+		result: networkengine.WriteResult{
+			Stream:   "tree-t",
+			CaughtUp: &networkengine.CaughtUpEvent{EventID: "e1", Version: 1, Type: networkengine.EventTypeRootAdded},
+		},
+		err: refusal,
+	}
+
+	out, err := runWriteCmd(t, w, "place", "--tree-id", "t", "--user-id", "u", "--parent-id", "p", "--sponsor-id", "p")
+
+	require.ErrorIs(t, err, refusal)
+	assert.Equal(t, "redelivered event e1 at version 1\n", out.stdout.String())
+}
+
 func TestTreePlaceCmd_ExitsZeroWhenTheAppendLandsAndProjectionFails(t *testing.T) {
 	w := &recordingWriter{result: networkengine.WriteResult{
 		Stream: "tree-t", EventID: "e2", Version: 2,

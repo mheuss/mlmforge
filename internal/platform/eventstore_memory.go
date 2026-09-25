@@ -60,12 +60,14 @@ type MemoryEventStore struct {
 	mu      sync.RWMutex
 	streams map[string][]Event
 	global  []Event
+	ids     map[string]struct{}
 }
 
 // NewMemoryEventStore creates an empty in-memory event store.
 func NewMemoryEventStore() *MemoryEventStore {
 	return &MemoryEventStore{
 		streams: make(map[string][]Event),
+		ids:     make(map[string]struct{}),
 	}
 }
 
@@ -96,6 +98,17 @@ func (m *MemoryEventStore) Append(_ context.Context, stream string, expectedVers
 		}
 	}
 
+	batch := make(map[string]int, len(events))
+	for i, ne := range events {
+		if _, ok := m.ids[ne.ID]; ok {
+			return fmt.Errorf("eventstore: event at index %d has ID %q, which the store already holds", i, ne.ID)
+		}
+		if first, ok := batch[ne.ID]; ok {
+			return fmt.Errorf("eventstore: event at index %d has ID %q, which the event at index %d also has", i, ne.ID, first)
+		}
+		batch[ne.ID] = i
+	}
+
 	now := time.Now()
 	for i, ne := range events {
 		version := current + int64(i) + 1
@@ -105,12 +118,13 @@ func (m *MemoryEventStore) Append(_ context.Context, stream string, expectedVers
 			Type:           ne.Type,
 			Version:        version,
 			GlobalPosition: int64(len(m.global)) + 1,
-			Payload:        ne.Payload,
-			Metadata:       ne.Metadata,
+			Payload:        bytes.Clone(ne.Payload),
+			Metadata:       bytes.Clone(ne.Metadata),
 			Timestamp:      now,
 		}
 		m.streams[stream] = append(m.streams[stream], evt)
 		m.global = append(m.global, evt)
+		m.ids[ne.ID] = struct{}{}
 	}
 
 	return nil
@@ -139,6 +153,7 @@ func (m *MemoryEventStore) ReadStream(_ context.Context, stream string, fromVers
 	if limit > 0 && int64(len(result)) > limit {
 		result = result[:limit]
 	}
+	cloneEventBytes(result)
 	return result, nil
 }
 
@@ -177,7 +192,16 @@ func (m *MemoryEventStore) ReadCategory(_ context.Context, category string, afte
 	if limit > 0 && int64(len(result)) > limit {
 		result = result[:limit]
 	}
+	cloneEventBytes(result)
 	return result, nil
+}
+
+// cloneEventBytes gives each event its own copy of Payload and Metadata.
+func cloneEventBytes(events []Event) {
+	for i := range events {
+		events[i].Payload = bytes.Clone(events[i].Payload)
+		events[i].Metadata = bytes.Clone(events[i].Metadata)
+	}
 }
 
 // categoryOf extracts the category from a stream name. The category is the

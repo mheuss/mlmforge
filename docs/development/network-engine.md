@@ -237,7 +237,7 @@ The tree types are listed by hand, in Go and in the worker. Nothing generates on
 git grep -nE 'treeType(Unilevel|Binary|Matrix)|"(unilevel|binary|matrix)" =>' -- '*.go' '*.rs'
 ```
 
-Some of those branches refuse a type they do not name. Others fall through to a default that treats it like another type:
+Some of those branches refuse a type they do not name. Others fall through to a default that treats it like another type. Among them:
 
 - Refuse: the worker's `create_tree` and `restore_snapshot` dispatches, `supportedTreeTypes`, the loader's slot-rule switch, and `checkNodePlacedShape`.
 - Fall through: `placementCheck` in the writer, the consumer's placement call, and its position comparison. A new type with slots would be checked without its position and projected with it.

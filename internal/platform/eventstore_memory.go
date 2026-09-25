@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -139,6 +140,25 @@ func (m *MemoryEventStore) ReadStream(_ context.Context, stream string, fromVers
 		result = result[:limit]
 	}
 	return result, nil
+}
+
+// ReadLastEvent returns the stream's last event, or nil for an empty stream.
+func (m *MemoryEventStore) ReadLastEvent(_ context.Context, stream string) (*Event, error) {
+	if err := ValidateStreamName(stream); err != nil {
+		return nil, err
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	events := m.streams[stream]
+	if len(events) == 0 {
+		return nil, nil
+	}
+	last := events[len(events)-1]
+	last.Payload = bytes.Clone(last.Payload)
+	last.Metadata = bytes.Clone(last.Metadata)
+	return &last, nil
 }
 
 // ReadCategory returns events across all streams matching a category prefix.

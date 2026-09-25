@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 )
 
@@ -42,11 +43,15 @@ import (
 // that ignores it writes a store that disagrees with the engine about who
 // sponsors whom, and nothing reconciles them afterwards.
 //
+// Moved to 11 by HEU-301. No request that was valid under 10 changes meaning.
+// The number moved so a client relying on check_mutation refuses a version-10
+// worker at the handshake, rather than meeting UNKNOWN_OP on its first check.
+//
 // This is the wire contract, not the stored row shape and not the authoring
 // format. Two other numbers nearby are also called a version: `detailVersion`
 // in commission_detail.go, and the plan schema version in
 // schemas/compensation-plan.schema.json. None is coupled to the others.
-const expectedProtocolVersion = 10
+const expectedProtocolVersion = 11
 
 // maxPingResponseInError bounds how much of an unexpected ping response is
 // quoted back in an error. The response is wire data and is otherwise
@@ -314,13 +319,19 @@ func (c *EngineClient) CreateMatrixTree(ctx context.Context, structure string, w
 
 // --- Tree mutation methods ---
 
-// AddRoot creates the root node of a tree in the engine.
-func (c *EngineClient) AddRoot(ctx context.Context, structure, userID string, enrolledAt int64) error {
-	_, err := c.call(ctx, "add_root", map[string]any{
-		"structure":   structure,
+// addRootParams are the add_root params other than the structure.
+func addRootParams(userID string, enrolledAt int64) map[string]any {
+	return map[string]any{
 		"user_id":     userID,
 		"enrolled_at": enrolledAt,
-	})
+	}
+}
+
+// AddRoot creates the root node of a tree in the engine.
+func (c *EngineClient) AddRoot(ctx context.Context, structure, userID string, enrolledAt int64) error {
+	params := addRootParams(userID, enrolledAt)
+	params["structure"] = structure
+	_, err := c.call(ctx, "add_root", params)
 	return err
 }
 
@@ -337,8 +348,15 @@ func WithPosition(position int) AddNodeOption {
 // AddNode adds a child node under parentID in the engine's tree.
 // For binary trees, use WithPosition to specify the slot.
 func (c *EngineClient) AddNode(ctx context.Context, structure, userID, parentID, sponsorID string, enrolledAt int64, opts ...AddNodeOption) error {
+	params := addNodeParams(userID, parentID, sponsorID, enrolledAt, opts)
+	params["structure"] = structure
+	_, err := c.call(ctx, "add_node", params)
+	return err
+}
+
+// addNodeParams are the add_node params other than the structure.
+func addNodeParams(userID, parentID, sponsorID string, enrolledAt int64, opts []AddNodeOption) map[string]any {
 	params := map[string]any{
-		"structure":   structure,
 		"user_id":     userID,
 		"parent_id":   parentID,
 		"sponsor_id":  sponsorID,
@@ -347,17 +365,20 @@ func (c *EngineClient) AddNode(ctx context.Context, structure, userID, parentID,
 	for _, opt := range opts {
 		opt(params)
 	}
-	_, err := c.call(ctx, "add_node", params)
-	return err
+	return params
+}
+
+// removeNodeParams are the remove_node params other than the structure.
+func removeNodeParams(userID string) map[string]any {
+	return map[string]any{"user_id": userID}
 }
 
 // RemoveNode removes a leaf node from the tree. The Rust engine
 // rejects removal of nodes that have children.
 func (c *EngineClient) RemoveNode(ctx context.Context, structure, userID string) ([]Responsored, error) {
-	r, err := callInto[RemovalResult](c, ctx, "remove_node", map[string]any{
-		"structure": structure,
-		"user_id":   userID,
-	})
+	params := removeNodeParams(userID)
+	params["structure"] = structure
+	r, err := callInto[RemovalResult](c, ctx, "remove_node", params)
 	if err != nil {
 		return nil, err
 	}
@@ -389,15 +410,21 @@ func (c *EngineClient) AddMatrixNode(ctx context.Context, structure, userID, spo
 // still compiles. TestEngineClient_AddNodeAt_WireParams pins the mapping
 // inside this method; call sites need their own assertion.
 func (c *EngineClient) AddNodeAt(ctx context.Context, structure, userID, parentID, sponsorID string, position int, enrolledAt int64) error {
-	_, err := c.call(ctx, "add_node_at", map[string]any{
-		"structure":   structure,
+	params := addNodeAtParams(userID, parentID, sponsorID, position, enrolledAt)
+	params["structure"] = structure
+	_, err := c.call(ctx, "add_node_at", params)
+	return err
+}
+
+// addNodeAtParams are the add_node_at params other than the structure.
+func addNodeAtParams(userID, parentID, sponsorID string, position int, enrolledAt int64) map[string]any {
+	return map[string]any{
 		"user_id":     userID,
 		"parent_id":   parentID,
 		"sponsor_id":  sponsorID,
 		"position":    position,
 		"enrolled_at": enrolledAt,
-	})
-	return err
+	}
 }
 
 // RemoveMatrixNode removes a node from a matrix tree using the specified pruning mode.
@@ -415,6 +442,48 @@ func (c *EngineClient) RemoveMatrixNode(ctx context.Context, structure, userID, 
 		return nil, fmt.Errorf("remove_node: response has no \"responsored\" key")
 	}
 	return &r, nil
+}
+
+// --- Mutation checks ---
+
+// Mutation is one tree mutation for CheckMutation.
+type Mutation struct {
+	op     string
+	params map[string]any
+}
+
+// CheckAddRoot describes an AddRoot call for CheckMutation.
+func CheckAddRoot(userID string, enrolledAt int64) Mutation {
+	return Mutation{op: "add_root", params: addRootParams(userID, enrolledAt)}
+}
+
+// CheckAddNode describes an AddNode call for CheckMutation.
+func CheckAddNode(userID, parentID, sponsorID string, enrolledAt int64, opts ...AddNodeOption) Mutation {
+	return Mutation{op: "add_node", params: addNodeParams(userID, parentID, sponsorID, enrolledAt, opts)}
+}
+
+// CheckAddNodeAt describes an AddNodeAt call for CheckMutation.
+func CheckAddNodeAt(userID, parentID, sponsorID string, position int, enrolledAt int64) Mutation {
+	return Mutation{op: "add_node_at", params: addNodeAtParams(userID, parentID, sponsorID, position, enrolledAt)}
+}
+
+// CheckRemoveNode describes a RemoveNode call for CheckMutation.
+func CheckRemoveNode(userID string) Mutation {
+	return Mutation{op: "remove_node", params: removeNodeParams(userID)}
+}
+
+// CheckMutation asks the worker whether a mutation would succeed on the named
+// structure, without applying it.
+func (c *EngineClient) CheckMutation(ctx context.Context, structure string, m Mutation) error {
+	if m.op == "" {
+		return errors.New("check_mutation: the Mutation has no op")
+	}
+	params := make(map[string]any, len(m.params)+2)
+	maps.Copy(params, m.params)
+	params["structure"] = structure
+	params["mutation"] = m.op
+	_, err := c.call(ctx, "check_mutation", params)
+	return err
 }
 
 // PlaceFromTank moves a holding tank entry back into the matrix tree

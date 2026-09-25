@@ -1,0 +1,9 @@
+{
+    "description": "check_mutation without a mutation param is refused",
+    "request": {
+        "id": "cm-12",
+        "op": "check_mutation",
+        "params": {"structure": "test"}
+    },
+    "expected_response": {"id": "cm-12", "ok": false, "error": {"code": "MISSING_PARAM", "message_contains": "missing mutation"}}
+}

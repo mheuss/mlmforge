@@ -28,6 +28,8 @@ fn dispatch(state: &mut WorkerState, request: &Request) -> Response {
         "remove_node" => handlers::tree::handle_remove_node(state, request),
         "place_from_tank" => handlers::tree::handle_place_from_tank(state, request),
         "get_holding_tank" => handlers::tree::handle_get_holding_tank(state, request),
+        // Tree mutation checks
+        "check_mutation" => handlers::tree::handle_check_mutation(state, request),
         // Tree queries
         "get_parent" => handlers::tree::handle_get_parent(state, request),
         "get_children" => handlers::tree::handle_get_children(state, request),

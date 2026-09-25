@@ -23,13 +23,18 @@ type loaderFor func(deps *treeDeps) treeLoader
 
 // newTreeCmd builds the tree command group against the real dependencies.
 func newTreeCmd() *cobra.Command {
-	return newTreeCmdWith(openTreeDeps, func(d *treeDeps) treeLoader {
-		return networkengine.NewTreeLoader(d.store, d.engine)
-	})
+	return newTreeCmdWith(openTreeDeps,
+		func(d *treeDeps) treeLoader {
+			return networkengine.NewTreeLoader(d.store, d.engine)
+		},
+		func(d *treeDeps) treeWriter {
+			return networkengine.NewTreeWriter(d.events, d.store, d.engine, d.locker)
+		},
+	)
 }
 
 // newTreeCmdWith builds the group over injectable seams.
-func newTreeCmdWith(open depsOpener, loader loaderFor) *cobra.Command {
+func newTreeCmdWith(open depsOpener, loader loaderFor, writer writerFor) *cobra.Command {
 	treeCmd := &cobra.Command{
 		Use:   "tree",
 		Short: "Tree persistence commands",
@@ -56,12 +61,31 @@ func newTreeCmdWith(open depsOpener, loader loaderFor) *cobra.Command {
 		return url, path, nil
 	}
 
-	treeCmd.AddCommand(newTreeLoadCmd(resolve, open, loader))
+	treeCmd.AddCommand(
+		newTreeLoadCmd(resolve, open, loader),
+		newTreeAddRootCmd(resolve, open, writer),
+		newTreePlaceCmd(resolve, open, writer),
+		newTreeRemoveCmd(resolve, open, writer),
+	)
 	return treeCmd
 }
 
 // flagResolver returns the database URL and the worker path.
 type flagResolver func() (string, string, error)
+
+// runTreeCommand resolves the connection flags and runs one tree command under
+// the command's own signal context.
+func runTreeCommand(cmd *cobra.Command, resolve flagResolver, open depsOpener, run treeRunner) error {
+	url, workerPath, err := resolve()
+	if err != nil {
+		return err
+	}
+	// Established here rather than on the root command, which would disable the
+	// default SIGINT kill for every command in the binary.
+	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return withTreeDeps(ctx, cmd.ErrOrStderr(), open, url, workerPath, run)
+}
 
 func newTreeLoadCmd(resolve flagResolver, open depsOpener, loader loaderFor) *cobra.Command {
 	var treeID, treeType, spillover string
@@ -77,19 +101,10 @@ func newTreeLoadCmd(resolve flagResolver, open depsOpener, loader loaderFor) *co
 		// usage after the error line.
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			url, workerPath, err := resolve()
-			if err != nil {
-				return err
-			}
-			// Established here rather than on the root command, which would
-			// disable the default SIGINT kill for every command in the binary.
-			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
-			defer stop()
 			opts := loadTreeOptions(treeType, width, spillover)
-			return withTreeDeps(ctx, cmd.ErrOrStderr(), open, url, workerPath,
-				func(ctx context.Context, deps *treeDeps) error {
-					return runTreeLoad(ctx, cmd.OutOrStdout(), loader(deps), treeID, treeType, opts)
-				})
+			return runTreeCommand(cmd, resolve, open, func(ctx context.Context, deps *treeDeps) error {
+				return runTreeLoad(ctx, cmd.OutOrStdout(), loader(deps), treeID, treeType, opts)
+			})
 		},
 	}
 	cmd.Flags().StringVar(&treeID, "tree-id", "", "Tree to load (UUID)")

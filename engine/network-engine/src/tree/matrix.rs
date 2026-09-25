@@ -150,13 +150,19 @@ impl MatrixTree {
         self.spillover
     }
 
-    pub fn add_root(&mut self, user_id: Uuid, enrolled_at: i64) -> Result<NodeIndex, TreeError> {
+    /// Refuses a root this tree cannot take. Changes nothing.
+    pub fn check_add_root(&self, user_id: Uuid) -> Result<(), TreeError> {
         if self.arena.root.is_some() {
             return Err(TreeError::RootAlreadyExists);
         }
         if self.arena.index.contains_key(&user_id) {
             return Err(TreeError::UserAlreadyExists(user_id));
         }
+        Ok(())
+    }
+
+    pub fn add_root(&mut self, user_id: Uuid, enrolled_at: i64) -> Result<NodeIndex, TreeError> {
+        self.check_add_root(user_id)?;
 
         let node = Node {
             user_id,
@@ -195,19 +201,14 @@ impl MatrixTree {
         self.arena.node_mut(parent_idx).children = children;
     }
 
-    /// Adds a node at an explicit parent and position.
-    ///
-    /// This is the admin-controlled placement path. The caller
-    /// specifies exactly which parent slot receives the new node.
-    /// Position must be in 0..width-1, and the slot must be empty.
-    pub fn add_node_at(
-        &mut self,
+    /// Refuses an explicit placement this tree cannot take. Changes nothing.
+    pub fn check_add_node_at(
+        &self,
         user_id: Uuid,
         sponsor_id: Uuid,
         parent_id: Uuid,
         position: u8,
-        enrolled_at: i64,
-    ) -> Result<NodeIndex, TreeError> {
+    ) -> Result<(), TreeError> {
         if self.arena.root.is_none() {
             return Err(TreeError::TreeEmpty);
         }
@@ -222,11 +223,10 @@ impl MatrixTree {
             return Err(TreeError::UserAlreadyExists(user_id));
         }
         let parent_idx = self.arena.resolve(parent_id)?;
-        let sponsor_idx = self.arena.resolve(sponsor_id).map_err(|e| match e {
+        self.arena.resolve(sponsor_id).map_err(|e| match e {
             TreeError::UserNotFound(id) => TreeError::SponsorNotFound(id),
             other => other,
         })?;
-
         let parent_slots = self
             .slots
             .get(&parent_idx)
@@ -237,6 +237,25 @@ impl MatrixTree {
                 position: position as usize,
             });
         }
+        Ok(())
+    }
+
+    /// Adds a node at an explicit parent and position.
+    ///
+    /// This is the admin-controlled placement path. The caller
+    /// specifies exactly which parent slot receives the new node.
+    /// Position must be in 0..width-1, and the slot must be empty.
+    pub fn add_node_at(
+        &mut self,
+        user_id: Uuid,
+        sponsor_id: Uuid,
+        parent_id: Uuid,
+        position: u8,
+        enrolled_at: i64,
+    ) -> Result<NodeIndex, TreeError> {
+        self.check_add_node_at(user_id, sponsor_id, parent_id, position)?;
+        let parent_idx = self.arena.resolve(parent_id)?;
+        let sponsor_idx = self.arena.resolve(sponsor_id)?;
 
         let parent_depth = self.arena.node(parent_idx).depth;
 
@@ -2659,5 +2678,75 @@ mod tests {
         assert_eq!(tree.validate_restored(), Ok(()));
         let sponsor = tree.get_sponsor(test_uuid(4)).unwrap().unwrap();
         assert_eq!(sponsor.user_id, test_uuid(1));
+    }
+
+    #[test]
+    fn check_add_root_refuses_what_add_root_refuses_and_changes_nothing() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        assert_eq!(tree.check_add_root(test_uuid(1)), Ok(()));
+        assert!(
+            !tree.contains(test_uuid(1)),
+            "a passing check must not add the root"
+        );
+
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        assert_eq!(
+            tree.check_add_root(test_uuid(2)),
+            Err(TreeError::RootAlreadyExists)
+        );
+    }
+
+    #[test]
+    fn check_add_node_at_refuses_what_add_node_at_refuses_and_changes_nothing() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        assert_eq!(
+            tree.check_add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0),
+            Err(TreeError::TreeEmpty)
+        );
+        assert_eq!(
+            tree.check_add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 3),
+            Err(TreeError::TreeEmpty),
+            "the empty-tree check runs before the width check"
+        );
+        tree.add_root(test_uuid(1), 1000).unwrap();
+
+        assert_eq!(
+            tree.check_add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 2),
+            Ok(())
+        );
+        assert!(
+            !tree.contains(test_uuid(2)),
+            "a passing check must not add the node"
+        );
+        assert_eq!(
+            tree.check_add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 3),
+            Err(TreeError::PositionOutOfRange {
+                user_id: test_uuid(1),
+                position: 3,
+                child_count: 3
+            })
+        );
+        assert_eq!(
+            tree.check_add_node_at(test_uuid(2), test_uuid(98), test_uuid(1), 0),
+            Err(TreeError::SponsorNotFound(test_uuid(98)))
+        );
+        assert_eq!(
+            tree.check_add_node_at(test_uuid(2), test_uuid(1), test_uuid(97), 0),
+            Err(TreeError::UserNotFound(test_uuid(97)))
+        );
+
+        tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
+            .unwrap();
+        assert_eq!(
+            tree.check_add_node_at(test_uuid(3), test_uuid(1), test_uuid(1), 0),
+            Err(TreeError::PositionOccupied {
+                user_id: test_uuid(1),
+                position: 0
+            })
+        );
+        assert_eq!(
+            tree.check_add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 1),
+            Err(TreeError::UserAlreadyExists(test_uuid(2)))
+        );
     }
 }

@@ -229,6 +229,21 @@ Every tree type must test:
 
 These catch stack overflow, off-by-one, and performance issues that unit tests miss.
 
+### Adding a tree type
+
+The tree types are listed by hand, in Go and in the worker. Nothing generates one list from another, and no test compares them. Find every branch on tree type before adding one:
+
+```
+git grep -nE 'treeType(Unilevel|Binary|Matrix)|"(unilevel|binary|matrix)" =>' -- '*.go' '*.rs'
+```
+
+Some of those branches refuse a type they do not name. Others fall through to a default that treats it like another type. Among them:
+
+- Refuse: the worker's `create_tree` and `restore_snapshot` dispatches, `supportedTreeTypes`, the loader's slot-rule switch, and `checkNodePlacedShape`.
+- Fall through: `placementCheck` in the writer, the consumer's placement call, and its position comparison. A new type with slots would be checked without its position and projected with it.
+
+A refusal fails at runtime, not in a test. A fall-through does not fail at all.
+
 ### Proptest regression files and vacuity checks
 
 Proptest writes a `.proptest-regressions` seed file next to a test the first time a case fails. The project checks the legitimate ones in (see `binary_commission_properties.proptest-regressions`) so saved edge cases re-run for everyone.
@@ -842,8 +857,8 @@ Harmless today: every other read of that vec is a `retain`, and the adjacency ta
 Four limits remain:
 
 - The consumer trusts the `tree_type` label. No registry exists to verify it against.
-- The gate rejects matrix positions above the u8 ceiling (255), which no width can accept. The real bound is the tree's width, which nothing persists. A position in the width..255 band is therefore stored, refused loudly by the engine, and then makes the next reload preflight reject the whole tree. HEU-554 decides the direction for both gaps. The fix ships under it.
-- Redelivery is bounded (HEU-576). The scope is the event in flight. That scope is a constraint on HEU-301. A redelivered placement whose projection is still current completes, however old it is. It stops being current once its node was removed, or once a later event re-placed the user, and is then refused rather than reapplied. It is also refused when its parent's row was since removed, because the parent lookup runs before the guard (HEU-813). A redelivered removal that the engine refuses converges when its own tombstone is in the store (HEU-811). That holds even when a later placement of the user never reached the engine. One whose store write never landed fails typed (HEU-777). One arriving after a later placement landed in full can still remove the wrong node (HEU-789).
+- The gate rejects matrix positions above the u8 ceiling (255), which no width can accept. The real bound is the tree's width, which the placement payload does not carry. Under `TreeWriter`, `check_mutation` refuses such a position before the append. An event appended without the writer is stored, refused loudly by the engine, and then makes the next reload preflight reject the whole tree. HEU-554 decides the direction for both gaps. The fix ships under it.
+- Redelivery is bounded (HEU-576). The scope is the event in flight. `TreeWriter` provides it by calling `HandleEvent` synchronously, in process, under the tree's lock. A redelivered placement whose projection is still current completes, however old it is. It stops being current once its node was removed, or once a later event re-placed the user, and is then refused rather than reapplied. It is also refused when its parent's row was since removed, because the parent lookup runs before the guard (HEU-813). A redelivered removal that the engine refuses converges when its own tombstone is in the store (HEU-811). That holds even when a later placement of the user never reached the engine. One whose store write never landed fails typed (HEU-777). One arriving after a later placement landed in full can still remove the wrong node (HEU-789). `TreeWriter` does not reach that case. Catch-up redelivers only the stream's last event. A removal followed by a later placement is no longer the last event.
 - The agreement claim covers placement only. A matrix `node_removed` still diverges, because the consumer sends no pruning mode and the worker refuses the removal after the soft-delete lands (HEU-582).
 
 Matrix startup reload is no longer blocked by this defect.
@@ -865,6 +880,55 @@ The removal reconcile runs only when the engine refuses the removal with user-no
 The stamp says which event removed a row. It does not order several removals of the same user. HEU-789 asks that question.
 
 `DeleteNodeAndResponsor` also fails when its soft delete matches no active row. It writes nothing. The error states the matched row count and how many re-sponsor writes were not applied. It names no cause. The store cannot see one.
+
+## Tree Writes Go Through `TreeWriter`
+
+`TreeWriter` appends every tree event (HEU-301). `mlmforge tree add-root`, `tree place` and `tree remove` drive it. Code that appends to a tree stream without it breaks each guarantee below.
+
+### One writer per tree at a time
+
+Each write holds a per-tree Postgres advisory lock from before the load until projection returns. The event store's version check serialises appends. It does not serialise decisions. Two runs can each load a tree. Each can decide correctly against what it saw. Together they can still write a state neither would have allowed. The lock closes that gap.
+
+- The lock uses the two-key form. The first key is a fixed namespace for tree writes. The second is FNV-1a over the tree ID's 16 bytes. Changing that function lets two binaries take different keys for one tree.
+- Every tree ID is canonicalised before it names a stream or a lock. Two spellings of one ID would otherwise name two streams and two locks.
+- The lock sits on a connection of its own, outside the stores' pool. On a one-connection pool, a lock holding the pool's only connection would deadlock the stores.
+- The lock is session-scoped. A writer that crashes drops its connection. The lock goes with it.
+- The lock needs a direct Postgres session. Behind a pooler in transaction mode, the lock and the unlock can run on different server sessions. Then the lock excludes nothing.
+- The writer does not re-check the lock while it holds it. If the server ends the lock's session mid-write, another writer can take the lock. The first writer learns of it only at unlock, as `ReleaseErr`.
+- The wait is bounded, 30 seconds by default. The timeout names the tree and the wait. It does not say another process holds the lock, because the writer cannot see that.
+- The timeout is a `TreeLockWaitError` wrapping the locker's own error. That error is often `context.DeadlineExceeded`. Match `TreeLockWaitError` with `errors.As` before testing for a context error. Otherwise a lock timeout reads as the caller's own deadline.
+- The lock is cheap because a CLI invocation lasts seconds. A long-lived service that holds a connection for every tree operation re-examines it rather than inheriting it.
+
+### The engine is scratch
+
+Each invocation starts a worker. It rebuilds the tree in the worker from the store, under the lock. It discards the worker on exit. The engine's jobs in a write are to check the mutation and to compute a removal's moved recruits. What HEU-777, HEU-789 and HEU-813 record as unreachable under the writer holds only while the engine is scratch. A service that keeps an engine in memory reopens them.
+
+### Before the append
+
+- Version 1 of a tree's stream records the tree type. For a matrix it also records the width and spillover. Every later write reads the shape from there. A version 1 that is not a complete `root_added` refuses the write.
+- `add-root` on a stream that already has a version 1 is refused when its type, matrix width or spillover differs from what version 1 records. A matrix flag on a non-matrix tree is refused. Matrix flags left off the request match. On an empty stream the check runs again under the lock. A root that landed between the first check and the lock is what the second check compares against.
+- Removing a tree's only root is allowed. A later `add-root` roots the tree again (Michael, 2026-09-23).
+- The stream's last event is redelivered through `HandleEvent`. Under the lock it is the only event that can be unprojected. Catch-up redelivers only `tree.root_added`, `tree.node_placed` and `tree.node_removed`. A last event of any other type refuses the write before `HandleEvent` is called. `HandleEvent` returns nil for a type it does not project. Calling it would report that event as projected.
+- `check_mutation` asks the engine whether the mutation would succeed. The worker runs the check functions the mutating ops call first. That is why no refusal rule is copied into Go.
+
+### Three outcomes for an append
+
+`Append` can commit and still return an error. On any append error other than a concurrency conflict or a validation refusal, the writer reads the version it tried. The read runs on a context detached from the caller's. What it finds decides the outcome:
+
+- Its own event: appended.
+- Another event: not appended.
+- No event: treated as not appended. The error states only what the read found. A caller cancelled during COMMIT can see the commit fail while the server finishes it. The read may run before the commit is visible. Such an event shows up as the stream's last event. The next write redelivers it.
+- The read fails: unknown. The CLI exits 1.
+
+A confirmed append is a success even when projection fails. The CLI exits 0 and warns on stderr. The next write to the tree redelivers the event.
+
+What `WriteResult` carries:
+
+- `Stream`, set on every path that reaches the lock.
+- `EventID` and `Version`, set once the append is confirmed.
+- `CaughtUp`, the redelivered last event.
+- `ProjectionErr`, any failure after the append was confirmed.
+- `ReleaseErr`, set on every path after the lock is taken, including when the write returns an error.
 
 ## Worker Shutdown
 

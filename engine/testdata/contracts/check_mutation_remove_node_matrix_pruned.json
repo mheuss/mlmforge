@@ -1,0 +1,14 @@
+{
+    "description": "check_mutation has no check for a matrix remove_node that names a pruning mode",
+    "setup": [
+        {"id": "s-1", "op": "create_tree", "params": {"structure": "test", "tree_type": "matrix", "width": 3, "spillover": "breadth_first"}},
+        {"id": "s-2", "op": "add_root", "params": {"structure": "test", "user_id": "00000000-0000-0000-0000-000000000001", "enrolled_at": 1000}},
+        {"id": "s-3", "op": "add_node_at", "params": {"structure": "test", "user_id": "00000000-0000-0000-0000-000000000002", "parent_id": "00000000-0000-0000-0000-000000000001", "sponsor_id": "00000000-0000-0000-0000-000000000001", "position": 0, "enrolled_at": 2000}}
+    ],
+    "request": {
+        "id": "cm-10",
+        "op": "check_mutation",
+        "params": {"structure": "test", "mutation": "remove_node", "user_id": "00000000-0000-0000-0000-000000000002", "pruning_mode": "promote_earliest"}
+    },
+    "expected_response": {"id": "cm-10", "ok": false, "error": {"code": "UNSUPPORTED_OP", "message_contains": "check_mutation does not cover remove_node on matrix trees"}}
+}

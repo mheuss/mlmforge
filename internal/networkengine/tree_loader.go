@@ -164,15 +164,7 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 	return len(nodes), nil
 }
 
-// supportedTreeTypes are the structures LoadTree knows how to replay. Anything
-// else would reach the worker as an unknown type after the engine had already
-// been mutated.
-//
-// This mirrors the worker's create_tree dispatch
-// (engine/network-engine-worker/src/handlers/tree.rs) and is not generated
-// from it. A new tree type has to be added in both places — and in
-// handleNodePlaced's position-rule switch, whose default arm names itself
-// when the rule is missing.
+// supportedTreeTypes are the structures LoadTree knows how to replay.
 var supportedTreeTypes = map[string]bool{
 	treeTypeUnilevel: true,
 	treeTypeBinary:   true,
@@ -295,7 +287,7 @@ func validateNodes(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNode
 	// explicitly so that adding a fourth to supportedTreeTypes without deciding
 	// its slot rule fails here with an actionable message, rather than
 	// inheriting limit 0 and rejecting every node with "outside the range
-	// 0..-1". The comment on supportedTreeTypes says to expect a fourth.
+	// 0..-1".
 	var limit int
 	hasSlots := true
 	switch treeType {

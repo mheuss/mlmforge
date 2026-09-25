@@ -52,3 +52,13 @@ no case to write by hand.
 
 A leaf that genuinely takes a positional argument will fail the leaf walk. That
 is the point to decide how the walk should treat it, not to delete the walk.
+
+## An exit code says whether the operation asked for was performed
+
+It does not say whether everything downstream of the operation succeeded.
+
+1. `mlmforge tree bogus` exits 1. The operation asked for does not exist (HEU-834).
+2. A run can succeed and still fail to release the worker and pool. That run exits 0. The release failure goes to stderr. A write command whose tree lock release failed does the same.
+3. `tree place` can confirm its append and still fail to project. That run exits 0. The projection failure goes to stderr (HEU-301).
+
+The same rule gives 1 when `tree place` cannot confirm its append. The operation is not known to have been performed. That applies the rule. It is not an exception to it.

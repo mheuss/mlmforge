@@ -314,6 +314,7 @@ func testEventIDForms(t *testing.T, newStore func(t *testing.T) EventStore) {
 		"a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11-",
 		"a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a1",
 		"a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11a",
+		"a0-eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
 	}
 	for _, id := range refused {
 		t.Run("refuses "+id, func(t *testing.T) {
@@ -326,6 +327,27 @@ func testEventIDForms(t *testing.T, newStore func(t *testing.T) EventStore) {
 			assert.Empty(t, got)
 		})
 	}
+
+	t.Run("a version conflict is reported ahead of an ID that does not parse", func(t *testing.T) {
+		s := newStore(t)
+		require.NoError(t, appendID(s, canonical))
+
+		err := appendID(s, "evt-2")
+
+		var ce *ConcurrencyError
+		require.ErrorAs(t, err, &ce)
+	})
+
+	t.Run("a missing Type later in the batch is reported ahead of an ID that does not parse", func(t *testing.T) {
+		s := newStore(t)
+
+		err := s.Append(ctx, "order-1", 0, []NewEvent{
+			{ID: "evt-1", Type: "OrderPlaced", Payload: json.RawMessage(`{}`)},
+			{ID: canonical, Payload: json.RawMessage(`{}`)},
+		})
+
+		require.ErrorContains(t, err, "event at index 1 has empty Type")
+	})
 }
 
 func TestMemoryEventStore_EventIDForms(t *testing.T) {

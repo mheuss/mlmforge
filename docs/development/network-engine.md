@@ -231,14 +231,18 @@ These catch stack overflow, off-by-one, and performance issues that unit tests m
 
 ### Adding a tree type
 
-The tree types are listed by hand in four places. Nothing generates one from another, and no test compares them. A new type has to be added to all four:
+The tree types are listed by hand, in Go and in the worker. Nothing generates one list from another, and no test compares them. Find every branch on tree type before adding one:
 
-- The worker's `create_tree` dispatch, in `engine/network-engine-worker/src/handlers/tree.rs`.
-- `supportedTreeTypes`, in `internal/networkengine/tree_loader.go`.
-- The loader's slot-rule switch, in the same file.
-- `checkNodePlacedShape`'s position-rule switch, in `internal/networkengine/tree_events.go`.
+```
+git grep -nE 'treeType(Unilevel|Binary|Matrix)|"(unilevel|binary|matrix)" =>' -- '*.go' '*.rs'
+```
 
-The last two refuse a type they do not name. They fail at runtime, not in a test.
+Some of those branches refuse a type they do not name. Others fall through to a default that treats it like another type:
+
+- Refuse: the worker's `create_tree` and `restore_snapshot` dispatches, `supportedTreeTypes`, the loader's slot-rule switch, and `checkNodePlacedShape`.
+- Fall through: `placementCheck` in the writer, the consumer's placement call, and its position comparison. A new type with slots would be checked without its position and projected with it.
+
+A refusal fails at runtime, not in a test. A fall-through does not fail at all.
 
 ### Proptest regression files and vacuity checks
 

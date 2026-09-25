@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/mlmforge/mlmforge/internal/networkengine"
 	"github.com/spf13/cobra"
@@ -69,6 +72,20 @@ func newTreeCmdWith(open depsOpener, loader loaderFor, writer writerFor) *cobra.
 
 // flagResolver returns the database URL and the worker path.
 type flagResolver func() (string, string, error)
+
+// runTreeCommand resolves the connection flags and runs one tree command under
+// the command's own signal context.
+func runTreeCommand(cmd *cobra.Command, resolve flagResolver, open depsOpener, run treeRunner) error {
+	url, workerPath, err := resolve()
+	if err != nil {
+		return err
+	}
+	// Established here rather than on the root command, which would disable the
+	// default SIGINT kill for every command in the binary.
+	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return withTreeDeps(ctx, cmd.ErrOrStderr(), open, url, workerPath, run)
+}
 
 func newTreeLoadCmd(resolve flagResolver, open depsOpener, loader loaderFor) *cobra.Command {
 	var treeID, treeType, spillover string

@@ -313,6 +313,21 @@ func TestTreeWriterLock_TimeoutStatesTheTreeAndTheWait(t *testing.T) {
 	assert.Empty(t, streamEvents(t, env.events, TreeStreamName(writerTree)))
 }
 
+func TestTreeWriterLock_TimeoutCarriesTheLockersOwnError(t *testing.T) {
+	env := newWriterEnv()
+	connReset := errors.New("conn reset")
+	w := NewTreeWriter(env.events, env.store, newFakeWriterEngine(), deadlineErrLocker{err: connReset},
+		WithLockWait(30*time.Millisecond))
+
+	_, err := w.AddRoot(context.Background(), unilevelRootRequest())
+
+	require.EqualError(t, err, "waited 30ms for the lock on tree "+writerTree+
+		" and did not acquire it; the locker returned: conn reset")
+	require.ErrorIs(t, err, connReset)
+	var waitErr *TreeLockWaitError
+	require.ErrorAs(t, err, &waitErr)
+}
+
 func TestTreeWriterLock_ReportsTheCallersDeadline(t *testing.T) {
 	env := newWriterEnv()
 	unlock, err := env.locker.Lock(context.Background(), uuid.MustParse(writerTree))

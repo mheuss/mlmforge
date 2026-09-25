@@ -244,6 +244,14 @@ func (l recordingLocker) Lock(ctx context.Context, treeID uuid.UUID) (func() err
 	return l.inner.Lock(ctx, treeID)
 }
 
+// deadlineErrLocker waits for its context to end, then returns err.
+type deadlineErrLocker struct{ err error }
+
+func (l deadlineErrLocker) Lock(ctx context.Context, _ uuid.UUID) (func() error, error) {
+	<-ctx.Done()
+	return nil, l.err
+}
+
 // releaseFailingLocker grants every lock and fails every release.
 type releaseFailingLocker struct{ err error }
 

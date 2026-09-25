@@ -881,6 +881,7 @@ Each write holds a per-tree Postgres advisory lock from before the load until pr
 - The lock needs a direct Postgres session. Behind a pooler in transaction mode, the lock and the unlock can run on different server sessions, and the lock excludes nothing.
 - The writer does not re-check the lock while it holds it. If the server ends the lock's session mid-write, another writer can take the lock. The first writer learns of it only at unlock, as `ReleaseErr`.
 - The wait is bounded, 30 seconds by default. The timeout names the tree and the wait. It does not say another process holds the lock, because the writer cannot see that.
+- The timeout is a `TreeLockWaitError` wrapping the locker's own error, which is often `context.DeadlineExceeded`. Match `TreeLockWaitError` with `errors.As` before testing for a context error, or a lock timeout reads as the caller's own deadline.
 - The lock is cheap because a CLI invocation lasts seconds. A long-lived service that holds a connection for every tree operation re-examines it rather than inheriting it.
 
 ### The engine is scratch

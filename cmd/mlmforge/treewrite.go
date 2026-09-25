@@ -5,9 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/mlmforge/mlmforge/internal/networkengine"
@@ -61,20 +58,6 @@ func reportWrite(ctx context.Context, out, warn io.Writer, res networkengine.Wri
 		return err
 	}
 	return fmt.Errorf("the command's context ended (%v) and no append was confirmed: %w", context.Cause(ctx), err)
-}
-
-// runTreeCommand resolves the connection flags and runs one tree command under
-// the command's own signal context.
-func runTreeCommand(cmd *cobra.Command, resolve flagResolver, open depsOpener, run treeRunner) error {
-	url, workerPath, err := resolve()
-	if err != nil {
-		return err
-	}
-	// Established here rather than on the root command, which would disable the
-	// default SIGINT kill for every command in the binary.
-	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	return withTreeDeps(ctx, cmd.ErrOrStderr(), open, url, workerPath, run)
 }
 
 func newTreeAddRootCmd(resolve flagResolver, open depsOpener, writer writerFor) *cobra.Command {

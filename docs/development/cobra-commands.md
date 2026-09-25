@@ -41,7 +41,12 @@ exited 0. Set `cobra.NoArgs` on every leaf that takes no positional arguments.
 
 Cobra handles the help flag before it validates arguments. So
 `mlmforge migrate bogus --help` prints help and exits 0, even with `NoArgs`
-set. Nothing runs. HEU-845 tracks whether that should change.
+set. Nothing runs. `-h` does the same. `mlmforge help migrate bogus` also
+prints the migrate help and exits 0.
+
+That exit 0 is the intended behaviour. The operation asked for is help. It
+ran. See
+[An exit code says whether the operation asked for was performed](#an-exit-code-says-whether-the-operation-asked-for-was-performed).
 
 ## How the binary holds new commands to this
 

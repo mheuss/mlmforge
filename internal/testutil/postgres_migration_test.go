@@ -222,3 +222,46 @@ func TestMigrations_RemovedByEventDownUp(t *testing.T) {
 		require.ErrorIs(t, err, migrate.ErrNoChange, "restore the shared container to head")
 	}
 }
+
+func TestMigrations_RemovalStampIndexDownUp(t *testing.T) {
+	if migrationContainer == nil {
+		t.Skip("Postgres container not available")
+	}
+
+	// This is relative to this package's directory. Go sets a test's cwd to
+	// the package dir.
+	absPath, err := filepath.Abs("../../migrations")
+	require.NoError(t, err)
+	m, err := migrate.New(fmt.Sprintf("file://%s", absPath), migrationContainer.DSN)
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = m.Close() })
+
+	indexExists := func() bool {
+		pool, err := pgxpool.New(context.Background(), migrationContainer.DSN)
+		require.NoError(t, err)
+		defer pool.Close()
+		var exists bool
+		require.NoError(t, pool.QueryRow(context.Background(),
+			`SELECT EXISTS (SELECT 1 FROM pg_indexes
+			                WHERE indexname = 'idx_tree_nodes_tree_removed_by_event'
+			                  AND indexdef LIKE '%WHERE (removed_by_event_id IS NOT NULL)')`,
+		).Scan(&exists))
+		return exists
+	}
+
+	require.True(t, indexExists(), "partial index present after full migrate up")
+	// Best-effort restore of the shared container on any failure from here
+	// down. Cleanups are LIFO, so this fires before m.Close.
+	t.Cleanup(func() { _ = m.Up() })
+	// Pinned versions, not Steps(-1): a relative step would roll back
+	// whichever migration is newest and fail confusingly.
+	require.NoError(t, m.Migrate(7), "migrate down to version 7 (drops 000008)")
+	require.False(t, indexExists(), "down file actually drops the index")
+	require.NoError(t, m.Migrate(8), "migrate back up to version 8")
+	require.True(t, indexExists(), "up file restores the index")
+	// Restore head. Up reports ErrNoChange when the steps above already
+	// reached it, which is not a failure.
+	if err := m.Up(); err != nil {
+		require.ErrorIs(t, err, migrate.ErrNoChange, "restore the shared container to head")
+	}
+}

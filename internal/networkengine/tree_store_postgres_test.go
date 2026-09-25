@@ -2,6 +2,7 @@ package networkengine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"testing"
@@ -400,6 +401,62 @@ func TestPostgresTreeStore_PartialIndex(t *testing.T) {
 	).Scan(&count)
 	require.NoError(t, err)
 	assert.Equal(t, 1, count, "soft-deleted row should still exist in table")
+}
+
+func TestPostgresTreeStore_RemovalStampLookupReadsOnlyTheStampedRow(t *testing.T) {
+	store := newTestPostgresTreeStore(t)
+	ctx := context.Background()
+	tree1 := testTreeUUID(1)
+	stamp := "cccccccc-cccc-cccc-cccc-000000000001"
+
+	// Enough rows that a sequential scan costs more than the index. At 50
+	// rows Postgres was seen to prefer the scan with the index present.
+	_, err := store.pool.Exec(ctx, `
+		INSERT INTO tree_nodes (tree_id, user_id, depth, enrolled_at, removed_at, removed_by_event_id)
+		SELECT $1, gen_random_uuid(), 1, now(),
+		       CASE WHEN g % 2 = 0 THEN now() END,
+		       CASE WHEN g % 2 = 0 THEN gen_random_uuid() END
+		FROM generate_series(1, 5000) g`, tree1)
+	require.NoError(t, err)
+	_, err = store.pool.Exec(ctx, `
+		INSERT INTO tree_nodes (tree_id, user_id, depth, enrolled_at, removed_at, removed_by_event_id)
+		VALUES ($1, gen_random_uuid(), 1, now(), now(), $2)`, tree1, stamp)
+	require.NoError(t, err)
+	_, err = store.pool.Exec(ctx, `ANALYZE tree_nodes`)
+	require.NoError(t, err)
+
+	var raw []byte
+	require.NoError(t, store.pool.QueryRow(ctx,
+		`EXPLAIN (ANALYZE, FORMAT JSON) `+getNodeByRemovalEventSQL, tree1, stamp,
+	).Scan(&raw))
+	var plans []struct {
+		Plan planNode `json:"Plan"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &plans))
+	require.Len(t, plans, 1)
+
+	var removed float64
+	var indexes []string
+	var walk func(n planNode)
+	walk = func(n planNode) {
+		removed += n.RowsRemovedByFilter
+		if n.IndexName != "" {
+			indexes = append(indexes, n.IndexName)
+		}
+		for _, child := range n.Plans {
+			walk(child)
+		}
+	}
+	walk(plans[0].Plan)
+
+	assert.Zero(t, removed, "rows read and discarded by a filter; plan: %s", raw)
+	assert.Contains(t, indexes, "idx_tree_nodes_tree_removed_by_event", "plan: %s", raw)
+}
+
+type planNode struct {
+	IndexName           string     `json:"Index Name"`
+	RowsRemovedByFilter float64    `json:"Rows Removed by Filter"`
+	Plans               []planNode `json:"Plans"`
 }
 
 func TestPostgresTreeStore_BulkInsertTransaction(t *testing.T) {

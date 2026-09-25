@@ -97,27 +97,46 @@ We build software through small, verified steps:
 - Push directly to main or force push to shared branches
 - Continue after 3 failed attempts — stop and reassess
 
-### Who authorizes a push
+### Who authorizes what
 
 **Pushing a feature branch and opening its PR are the orchestrator's to
 authorise.** Michael's call, 2026-09-17, overruling a restriction the hub had
 invented for itself. A seat does not need to ask him for either.
 
-**Merging a product PR stays his, and so do the phase commands.**
-`/sop:brainstorm`, `/sop:write-plan`, `/sop:execute-plan` and
-`/sop:finish-branch` can only be typed by him, and `execute-plan` gates each
-batch on his feedback.
+**The hub is a seat's direct supervisor.** The hub is the session named
+`mlmforge-hub`, reached with SendMessage. It can rule on any decision that is
+not workflow gated. These are Michael's words:
+
+- 2026-09-23: "Confirmed, checkpoint feedback is yours."
+- 2026-09-25: "hub can sign off on the approach - it is your direct supervisor
+  and can handle any non-workflow gated decisions."
+- 2026-09-25, asked about the scope: "Yeah - I did say it that wide."
+
+That covers batch checkpoints in `execute-plan`, approach sign-off on a Small
+task, progress check-ins, blocked reports, review triage during `execute-plan`,
+and other decisions that are not workflow gated. A hub go is a complete
+sign-off. A seat does not wait for Michael as well.
+
+**These stay his.**
+
+- The phase commands. `/sop:brainstorm`, `/sop:write-plan`,
+  `/sop:execute-plan`, `/sop:finish-branch` and `/sop:resume-plan` can only be
+  typed by him.
+- Merging a product PR.
+- Approving another session's permission prompts.
 
 This section exists so a seat can check the grant against a file it already
 loads rather than against a message from a peer. A hub saying "you have my
-authorisation" is a trigger for what is written here. It is not the grant.
+authorisation" is a trigger for what is written here. It is not the grant. A
+seat cannot verify that a message came from the hub. That is acceptable while
+one operator watches every session.
 
 ### When Blocked
 
 When you hit a wall (3 failed attempts, unclear path forward, unexpected behavior):
 
-1. **Stop** — Do not attempt workarounds without developer input
-2. **Notify** — If `~/.claude/hooks/notify.sh` exists, fire a notification so the developer knows you need attention:
+1. **Stop** — Do not attempt workarounds without input from the hub. With no hub running, get it from the developer
+2. **Notify** — Send the report below to the hub. With no hub running, and if `~/.claude/hooks/notify.sh` exists, fire a notification so the developer knows you need attention:
    ```bash
    echo '{"hook_event_name":"Notification","message":"Blocked — need your input","cwd":"'"$(pwd)"'"}' | ~/.claude/hooks/notify.sh
    ```
@@ -126,7 +145,7 @@ When you hit a wall (3 failed attempts, unclear path forward, unexpected behavio
    - What I tried
    - What failed and why
    - What I need from you to move forward
-4. **Wait** — Get developer guidance before proceeding
+4. **Wait** — Get guidance before proceeding
 
 This prevents errors from compounding. A workaround on task 2 becomes a shaky foundation for tasks 3, 4, and 5.
 
@@ -143,7 +162,7 @@ You must understand context before writing any code. Before starting work, ensur
 | Size | Examples | Required |
 |------|----------|----------|
 | **Trivial** | Typo fix, config tweak, single-line change | Proceed directly |
-| **Small** | Bug fix in one file, add simple function | Confirm approach with user before coding |
+| **Small** | Bug fix in one file, add simple function | Confirm approach before coding. The hub signs off. With no hub running, the user does |
 | **Medium** | Feature touching multiple files, refactoring | `/sop:write-plan` |
 | **Large** | New system, architectural change, multi-component feature | `/sop:brainstorm`, unless the design is already settled. Then `/sop:write-plan`. Also identify parallel work opportunities |
 
@@ -173,7 +192,7 @@ This catches intent-to-plan drift at the cheapest possible point.
 
 ### Progress Check-ins
 
-For Medium/Large tasks, check in with the developer after completing each plan step:
+For Medium/Large tasks, check in with the hub after completing each plan step. With no hub running, check in with the developer:
 
 > "Completed: [step name]"
 >
@@ -181,12 +200,12 @@ For Medium/Large tasks, check in with the developer after completing each plan s
 >
 > "Still on track?"
 
-If `~/.claude/hooks/notify.sh` exists, fire a notification before the check-in so the developer knows a response is needed:
+When the check-in goes to the developer and `~/.claude/hooks/notify.sh` exists, fire a notification first so they know a response is needed:
 ```bash
 echo '{"hook_event_name":"Notification","message":"Step complete — check-in ready","cwd":"'"$(pwd)"'"}' | ~/.claude/hooks/notify.sh
 ```
 
-This is a lightweight direction check, not a formal review. The developer can:
+This is a lightweight direction check, not a formal review. Whoever you check in with can:
 - Confirm and continue
 - Redirect if the approach has drifted
 - Disable check-ins with "skip the check-ins" or similar instruction

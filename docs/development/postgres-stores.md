@@ -200,6 +200,24 @@ This is the same seam as "TEXT cannot store a NUL byte" above, approached from
 the other side. That entry is about writing a value Postgres will reject. This
 one is about trusting Postgres to have rejected it already.
 
+## A plain pgx connection rejects pool-only URL settings
+
+`pgx.ConnectConfig` passes every URL setting it does not know to the server as a runtime parameter. Pool settings such as `pool_max_conns` are among them, and Postgres refuses them with `unrecognized configuration parameter`.
+
+A dedicated connection built from a pool's URL has to strip them first. Parse the URL with `pgxpool.ParseConfig`, then connect with its `ConnConfig`. `PostgresTreeLocker` does this, and a URL carrying `pool_max_conns=1` pins it (HEU-301).
+
+## A finalizer can close what a test expects the code to close
+
+A `pgx.Conn` that nothing references can be closed by the garbage collector's finalizer. A test that counts open sessions after the code should have closed one can then pass with the explicit `Close` deleted.
+
+Turn the collector off for the length of the test:
+
+```go
+defer debug.SetGCPercent(debug.SetGCPercent(-1))
+```
+
+Then confirm with a mutation that deleting the `Close` fails the test (HEU-301).
+
 ## The test count in networkengine depends on the machine
 
 Sites in `internal/networkengine` skip when no Postgres container is running.

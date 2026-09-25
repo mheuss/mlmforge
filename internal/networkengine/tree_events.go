@@ -82,8 +82,8 @@ func checkNodePlacedShape(payload NodePlacedPayload) error {
 	}
 	switch payload.TreeType {
 	case treeTypeMatrix:
-		// The width bound needs the tree's configured width, which nothing
-		// persists yet (HEU-554). The engine still enforces it at runtime.
+		// The width bound needs the tree's configured width, which this
+		// payload does not carry (HEU-554). The engine still enforces it.
 		// The u8 ceiling needs no width: no matrix can have a slot above
 		// math.MaxUint8, so anything larger is rejected here.
 		if payload.Position == nil {

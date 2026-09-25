@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -104,4 +105,144 @@ func TestMemoryEventStore_ReadLastEvent(t *testing.T) {
 
 func TestPostgresEventStore_ReadLastEvent(t *testing.T) {
 	testReadLastEvent(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
+}
+
+// testDuplicateEventIDs checks that an EventStore refuses a reused event ID.
+func testDuplicateEventIDs(t *testing.T, newStore func(t *testing.T) EventStore) {
+	ctx := context.Background()
+	const (
+		id1 = "00000000-0000-0000-0000-000000000001"
+		id2 = "00000000-0000-0000-0000-000000000002"
+	)
+	event := func(id string) NewEvent {
+		return NewEvent{ID: id, Type: "OrderPlaced", Payload: json.RawMessage(`{}`)}
+	}
+	requireNotConcurrencyError := func(t *testing.T, err error) {
+		t.Helper()
+		require.Error(t, err)
+		var ce *ConcurrencyError
+		require.False(t, errors.As(err, &ce), "expected a duplicate ID refusal, got %v", err)
+	}
+
+	t.Run("a batch with an ID the stream holds is refused and nothing is written", func(t *testing.T) {
+		s := newStore(t)
+		require.NoError(t, s.Append(ctx, "order-1", 0, []NewEvent{event(id1)}))
+
+		err := s.Append(ctx, "order-1", 1, []NewEvent{event(id2), event(id1)})
+
+		requireNotConcurrencyError(t, err)
+		got, err := s.ReadStream(ctx, "order-1", 1, 0)
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Equal(t, id1, got[0].ID)
+	})
+
+	t.Run("a batch with an ID another stream holds is refused and nothing is written", func(t *testing.T) {
+		s := newStore(t)
+		require.NoError(t, s.Append(ctx, "order-1", 0, []NewEvent{event(id1)}))
+
+		err := s.Append(ctx, "order-2", 0, []NewEvent{event(id2), event(id1)})
+
+		requireNotConcurrencyError(t, err)
+		stream, err := s.ReadStream(ctx, "order-2", 1, 0)
+		require.NoError(t, err)
+		assert.Empty(t, stream)
+		category, err := s.ReadCategory(ctx, "order", 0, 0)
+		require.NoError(t, err)
+		require.Len(t, category, 1)
+		assert.Equal(t, "order-1", category[0].Stream)
+	})
+
+	t.Run("a reused ID within one batch refuses the whole batch", func(t *testing.T) {
+		s := newStore(t)
+
+		err := s.Append(ctx, "order-1", 0, []NewEvent{event(id1), event(id2), event(id1)})
+
+		requireNotConcurrencyError(t, err)
+		got, err := s.ReadStream(ctx, "order-1", 1, 0)
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+}
+
+func TestMemoryEventStore_DuplicateEventIDs(t *testing.T) {
+	testDuplicateEventIDs(t, func(*testing.T) EventStore { return NewMemoryEventStore() })
+}
+
+func TestPostgresEventStore_DuplicateEventIDs(t *testing.T) {
+	testDuplicateEventIDs(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
+}
+
+// testByteIsolation checks that an EventStore keeps its own copy of Payload
+// and Metadata bytes.
+func testByteIsolation(t *testing.T, newStore func(t *testing.T) EventStore) {
+	ctx := context.Background()
+	appendOne := func(t *testing.T, s EventStore) {
+		t.Helper()
+		require.NoError(t, s.Append(ctx, "order-1", 0, []NewEvent{{
+			ID: "00000000-0000-0000-0000-000000000001", Type: "OrderPlaced",
+			Payload: json.RawMessage(`{}`), Metadata: json.RawMessage(`{"a":1}`),
+		}}))
+	}
+
+	t.Run("the caller's slices do not share bytes with the store", func(t *testing.T) {
+		s := newStore(t)
+		payload := json.RawMessage(`{}`)
+		metadata := json.RawMessage(`{"a":1}`)
+		require.NoError(t, s.Append(ctx, "order-1", 0, []NewEvent{{
+			ID: "00000000-0000-0000-0000-000000000001", Type: "OrderPlaced",
+			Payload: payload, Metadata: metadata,
+		}}))
+
+		payload[0] = 'X'
+		metadata[0] = 'X'
+		got, err := s.ReadLastEvent(ctx, "order-1")
+
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.JSONEq(t, `{}`, string(got.Payload))
+		assert.JSONEq(t, `{"a":1}`, string(got.Metadata))
+	})
+
+	t.Run("events from ReadStream do not share bytes with the store", func(t *testing.T) {
+		s := newStore(t)
+		appendOne(t, s)
+		first, err := s.ReadStream(ctx, "order-1", 1, 0)
+		require.NoError(t, err)
+		require.Len(t, first, 1)
+
+		first[0].Payload[0] = 'X'
+		first[0].Metadata[0] = 'X'
+		again, err := s.ReadStream(ctx, "order-1", 1, 0)
+
+		require.NoError(t, err)
+		require.Len(t, again, 1)
+		assert.JSONEq(t, `{}`, string(again[0].Payload))
+		assert.JSONEq(t, `{"a":1}`, string(again[0].Metadata))
+	})
+
+	t.Run("events from ReadCategory do not share bytes with the store", func(t *testing.T) {
+		s := newStore(t)
+		appendOne(t, s)
+		first, err := s.ReadCategory(ctx, "order", 0, 0)
+		require.NoError(t, err)
+		require.Len(t, first, 1)
+
+		first[0].Payload[0] = 'X'
+		first[0].Metadata[0] = 'X'
+		again, err := s.ReadCategory(ctx, "order", 0, 0)
+
+		require.NoError(t, err)
+		require.Len(t, again, 1)
+		assert.JSONEq(t, `{}`, string(again[0].Payload))
+		assert.JSONEq(t, `{"a":1}`, string(again[0].Metadata))
+	})
+}
+
+func TestMemoryEventStore_ByteIsolation(t *testing.T) {
+	testByteIsolation(t, func(*testing.T) EventStore { return NewMemoryEventStore() })
+}
+
+func TestPostgresEventStore_ByteIsolation(t *testing.T) {
+	testByteIsolation(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
 }

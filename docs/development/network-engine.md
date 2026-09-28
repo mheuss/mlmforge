@@ -830,7 +830,7 @@ The error code differs by type, which matters when grepping logs. Only `MatrixTr
 
 Matrix reload replays through `add_node_at`, which takes an explicit slot. Binary replay passes `position` through `add_node`. Both reject a nil position at preflight rather than defaulting to 0, because a silent 0 places the node in the wrong slot and the divergence is invisible afterwards.
 
-Unilevel carries no position; it appends to the parent's child list. A unilevel row that *has* a position is currently tolerated and then silently dropped by the worker — see HEU-563, which argues it should be rejected for symmetry with the root rule.
+Unilevel carries no position. It appends to the parent's child list. Preflight rejects a unilevel non-root row that has a position, the same way it rejects a root that has one (HEU-563).
 
 ### Why preflight validates everything before mutating anything
 

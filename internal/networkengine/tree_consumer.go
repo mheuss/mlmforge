@@ -205,8 +205,7 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform
 	// engine never honored is the divergence this consumer exists to prevent.
 	// Without these checks bad rows would be stored, and for the position
 	// rules LoadTree's validation would then refuse the whole tree at the
-	// next reload. (The unilevel rule is gate-only: the loader tolerates
-	// legacy unilevel positions — HEU-563.)
+	// next reload.
 	if err := checkStream(event, "node_placed", payload.TreeID, payload.UserID); err != nil {
 		return err
 	}

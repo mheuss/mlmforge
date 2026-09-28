@@ -206,6 +206,17 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			wantNodeIDs:      []string{"u0"},
 		},
 		{
+			name:     "empty user ID",
+			treeType: treeTypeUnilevel,
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, nil, nil),
+				makeNode("t", "", 1, ptr("u0"), ptr("u0"), nil),
+			},
+			engineFailsAfter: -1,
+			want:             `tree t has a row with an empty user ID (row ID "id-")`,
+			wantKind:         TreeLoadDataInvalid,
+		},
+		{
 			name:     "two roots",
 			treeType: treeTypeUnilevel,
 			nodes: spacedNodes([]TreeNodeRow{

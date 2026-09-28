@@ -565,6 +565,15 @@ func TestTreeLoader_ValidationFailures_Structural(t *testing.T) {
 			},
 			wantErr: "has depth 3 but parent u0 has depth 0",
 		},
+		{
+			name:     "empty user ID",
+			treeType: "unilevel",
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+				makeNode("t", "", 1, ptr("u0"), ptr("u0"), nil),
+			},
+			wantErr: "tree t has a row with an empty user ID",
+		},
 	}
 
 	for _, tt := range tests {
@@ -980,6 +989,22 @@ func TestTreeLoader_MatrixParamsIgnoredForNonMatrix(t *testing.T) {
 	// binary tree through CreateMatrixTree.
 	assert.Equal(t, []string{"t"}, mutator.created)
 	assert.Empty(t, mutator.matrixCreated)
+}
+
+// Two rows with an empty user ID are reported as an empty ID, not as a duplicate.
+func TestValidateNodes_TwoEmptyUserIDsReportTheEmptyID(t *testing.T) {
+	first := makeNode("t", "", 1, ptr("u0"), ptr("u0"), nil)
+	first.ID = "r1"
+	second := makeNode("t", "", 1, ptr("u0"), ptr("u0"), nil)
+	second.ID = "r2"
+	nodes := []TreeNodeRow{makeNode("t", "u0", 0, nil, ptr("u0"), nil), first, second}
+
+	err := validateNodes("t", "unilevel", loadTreeConfig{}, nodes)
+
+	var rejected *TreeLoadRejectedError
+	require.ErrorAs(t, err, &rejected)
+	assert.Equal(t, `tree t has a row with an empty user ID (row ID "r1")`, err.Error())
+	assert.Empty(t, rejected.NodeIDs)
 }
 
 // TestValidateNodes_UnilevelPositionIsTolerated pins current behavior, which is

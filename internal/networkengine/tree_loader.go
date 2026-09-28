@@ -244,6 +244,12 @@ func validateNodes(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNode
 
 	for i := range nodes {
 		n := &nodes[i]
+		// Ahead of the duplicate check, so two empty rows are not reported as a
+		// duplicate of a blank name.
+		if n.UserID == "" {
+			return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,
+				fmt.Sprintf("tree %s has a row with an empty user ID (row ID %q)", treeID, n.ID))
+		}
 		if _, dup := byID[n.UserID]; dup {
 			return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,
 				fmt.Sprintf("tree %s has duplicate user %s (data corruption?)", treeID, n.UserID),

@@ -38,15 +38,15 @@ func (e *lockKillingEvents) Append(ctx context.Context, stream string, expected 
 func terminateTreeLockHolder(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	rows, err := pool.Query(context.Background(),
-		`SELECT pg_terminate_backend(a.pid)
+		`SELECT pg_terminate_backend(a.pid, 5000)
 		   FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
 		  WHERE l.locktype = 'advisory' AND l.granted AND a.application_name = $1`,
 		treeLockApplicationName)
 	require.NoError(t, err)
-	signalled, err := pgx.CollectRows(rows, pgx.RowTo[bool])
+	ended, err := pgx.CollectRows(rows, pgx.RowTo[bool])
 	require.NoError(t, err)
-	require.Equal(t, []bool{true}, signalled,
-		"pg_terminate_backend results for backends named %q holding an advisory lock", treeLockApplicationName)
+	require.Equal(t, []bool{true}, ended,
+		"pg_terminate_backend(pid, 5000) results for backends named %q holding an advisory lock", treeLockApplicationName)
 }
 
 // buildSponsorChain places a, b and c under root, sponsored by root, a and b.

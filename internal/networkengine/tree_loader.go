@@ -366,8 +366,13 @@ func validateNodes(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNode
 				n.UserID, parent.UserID)
 		}
 
-		// A unilevel row that carries a position is not rejected — see HEU-563.
 		if !hasSlots {
+			if n.Position != nil {
+				return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,
+					fmt.Sprintf("%s node %s in tree %s has position %d, expected none",
+						treeType, n.UserID, treeID, *n.Position),
+					n.UserID)
+			}
 			continue
 		}
 

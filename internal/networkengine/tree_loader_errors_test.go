@@ -347,6 +347,18 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			wantNodeIDs:      []string{"u1", "u0"},
 		},
 		{
+			name:     "unilevel position",
+			treeType: treeTypeUnilevel,
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, nil, nil),
+				makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), intPtr(7)),
+			},
+			engineFailsAfter: -1,
+			want:             "unilevel node u1 in tree t has position 7, expected none",
+			wantKind:         TreeLoadDataInvalid,
+			wantNodeIDs:      []string{"u1"},
+		},
+		{
 			name:     "matrix nil position",
 			treeType: treeTypeMatrix,
 			opts:     matrixOpts(3),

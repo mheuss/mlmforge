@@ -574,6 +574,15 @@ func TestTreeLoader_ValidationFailures_Structural(t *testing.T) {
 			},
 			wantErr: "tree t has a row with an empty user ID",
 		},
+		{
+			name:     "unilevel node carries a position",
+			treeType: "unilevel",
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+				makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), intPtr(7)),
+			},
+			wantErr: "unilevel node u1 in tree t has position 7",
+		},
 	}
 
 	for _, tt := range tests {
@@ -991,6 +1000,20 @@ func TestTreeLoader_MatrixParamsIgnoredForNonMatrix(t *testing.T) {
 	assert.Empty(t, mutator.matrixCreated)
 }
 
+func TestValidateNodes_UnilevelPositionIsRejected(t *testing.T) {
+	nodes := []TreeNodeRow{
+		makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+		makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), intPtr(7)),
+	}
+
+	err := validateNodes("t", "unilevel", loadTreeConfig{}, nodes)
+
+	var rejected *TreeLoadRejectedError
+	require.ErrorAs(t, err, &rejected)
+	assert.Equal(t, TreeLoadDataInvalid, rejected.Kind)
+	assert.Equal(t, []string{"u1"}, rejected.NodeIDs)
+}
+
 // Two rows with an empty user ID are reported as an empty ID, not as a duplicate.
 func TestValidateNodes_TwoEmptyUserIDsReportTheEmptyID(t *testing.T) {
 	first := makeNode("t", "", 1, ptr("u0"), ptr("u0"), nil)
@@ -1005,28 +1028,6 @@ func TestValidateNodes_TwoEmptyUserIDsReportTheEmptyID(t *testing.T) {
 	require.ErrorAs(t, err, &rejected)
 	assert.Equal(t, `tree t has a row with an empty user ID (row ID "r1")`, err.Error())
 	assert.Empty(t, rejected.NodeIDs)
-}
-
-// TestValidateNodes_UnilevelPositionIsTolerated pins current behavior, which is
-// not obviously correct: a unilevel node carrying a position is accepted, and
-// LoadTree then forwards that position to the worker, whose unilevel add_node
-// never reads it. So the value is silently dropped.
-//
-// validateNodes rejects a *root* that carries a position, on the grounds that
-// the engine root occupies no slot. A unilevel node occupies no slot either, so
-// the two cases are treated inconsistently. The likeliest cause of such a row
-// is a binary or matrix tree being loaded under the wrong treeType, which would
-// rebuild a structurally different tree from the same nodes and go unnoticed.
-//
-// Tracked in HEU-563. This test exists so the tolerance is a recorded decision
-// rather than an oversight; if HEU-563 lands, replace it with a rejection test.
-func TestValidateNodes_UnilevelPositionIsTolerated(t *testing.T) {
-	nodes := []TreeNodeRow{
-		makeNode("t", "u0", 0, nil, ptr("u0"), nil),
-		makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), intPtr(7)),
-	}
-
-	require.NoError(t, validateNodes("t", "unilevel", loadTreeConfig{}, nodes))
 }
 
 // userIDs extracts the replay order for readable assertions.

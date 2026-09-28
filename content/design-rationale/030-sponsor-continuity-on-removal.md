@@ -1,10 +1,6 @@
 # 030: Sponsor Continuity on Removal
 
-> Status: describes the branch that introduces it. Not `main`. Everything
-> below is implemented on that branch: the repair, the refusal, the two error
-> codes, the `remove_node` response field, the Go projection change and the
-> protocol move. Read a present-tense claim here as a claim about that branch
-> until it merges.
+> Status: implemented on `main`.
 
 ## The Problem
 
@@ -109,14 +105,16 @@ The `remove_node` response names the recruits a removal moved, so a caller can s
 
 The engine has to answer before the store can be written. A removal whose reply is lost leaves the engine and the store disagreeing. The retry cannot recover it. That window is a consequence of the ordering this decision requires. HEU-777 carries it.
 
-Two concurrent removals in one tree can leave the store wrong with no error anywhere. The engine handles one request at a time and ends up correct. The store writes happen afterwards in Go and are ordered by nothing, so they can land in the opposite order and the later write can carry the earlier answer.
+Two removals in one tree have to reach the store in the order the engine applied them. The engine answers each removal with the recruits it moved, and the store write happens afterwards in Go. If two store writes landed in the opposite order, the later write would carry the earlier answer.
 
-Take root, then A, then B, with C recruited by B. Removing A and B at once has the engine move C to A and then to root, ending correct. If A's store write lands after B's, the store says C is sponsored by A. Both writes did what they were told and neither failed. The disagreement surfaces at the next restart, when the bulk load rebuilds the tree from the store.
+Take root, then A, then B, with C recruited by B. Removing B and then A has the engine move C to A and then to root. If B's store write landed after A's, the store would say C is sponsored by A. Both writes would have done what they were told and neither would fail. The disagreement would surface at the next restart, when the bulk load rebuilds the tree from the store.
 
-This is a different failure class from the lost reply above, and the two should not be read as one problem. That one fails loudly, through a retry that exhausts or a transaction that rolls back. This one produces no signal at all. A loud failure gets fixed. A silent one gets inherited.
+This is a different failure class from the lost reply above, and the two should not be read as one problem. That one fails loudly, through a retry that exhausts or a transaction that rolls back. This one would produce no signal at all. A loud failure gets fixed. A silent one gets inherited.
 
-It is reachable only if events for one tree can be handled at the same time. Nothing decides that yet, because `HandleEvent` has no caller outside tests. The ordering this decision requires is what makes the guarantee necessary, so the guarantee is what HEU-784 asks for rather than a reversal.
+The ordering this decision requires is what makes an ordering guarantee necessary. `TreeWriter` provides it. It holds a per-tree Postgres advisory lock from before it loads the tree until its projection returns, and it calls `HandleEvent` under that lock. So a second write to the same tree cannot load, append or project in between. A caller of `HandleEvent` that does not hold the tree's lock reopens this gap.
 
-The soft delete inside that store write is the one statement with no row-count check, where every re-sponsor beside it has one. Left lenient deliberately rather than by oversight. So a removal whose node has no active row still commits the sponsor updates beside it, against the all-or-nothing the method's own docblock states. HEU-778 carries it.
+The lock lives on a database connection of its own. If that connection dies mid-write, Postgres releases the lock, and a second writer can start while the first is still projecting. The store write refuses to land late. Its soft delete requires exactly one active row, the same check every re-sponsor beside it makes. Whichever of the two writers reaches the store second finds no active row, and its transaction rolls back with the sponsor updates inside it.
+
+If the first writer is the one refused, it reports a projection error and the second writer's removal completes. If the second writer is the one refused, its catch-up fails and it appends nothing, so its own removal is refused even when it was valid. Either way the removal of B reaches the store once, and nothing after it is overwritten by it. HEU-784 carries the tests for both orders.
 
 The three matrix repair sites have no path to the store. Matrix removal never reaches the engine through the consumer, so nothing carries their moved recruits to `tree_nodes`. The engine half is done and the store half is not, which is the shape the rule two sections up warns about. Whoever wires matrix removal up has to wire both. HEU-582 carries the missing dispatch.

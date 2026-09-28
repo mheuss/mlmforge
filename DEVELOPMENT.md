@@ -325,7 +325,7 @@ Full document: [`content/design-rationale/020-tree-topology-separation.md`](cont
 - `DeleteNodeAndResponsor` fails when its soft delete matches no active row. It writes nothing. Its error states what the store observed: how many active rows matched, and how many re-sponsor writes were not applied. It names no cause. The store cannot see why the row was missing.
 - Every tree write goes through `TreeWriter` (HEU-301). It holds a per-tree Postgres advisory lock from before the load until projection returns. The lock sits on a connection of its own, outside the stores' pool. `HandleEvent` is therefore serialised per tree while the writer holds its lock. That is the answer HEU-777 asked to have written down. A writer whose lock connection dies after it appends is the exception. A second writer can then take the lock and project while the first is still projecting. [030](content/design-rationale/030-sponsor-continuity-on-removal.md) says what the store does in that case.
 - The lock is cheap because a CLI invocation lasts seconds. A long-lived service that holds a connection for every tree operation is a different proposition. Whoever builds one re-examines the lock rather than inheriting it.
-- The engine is scratch per invocation. The writer rebuilds the tree from the store under the lock before every write. What HEU-777, HEU-789 and HEU-813 record as unreachable under the writer holds only while that is true.
+- The engine is scratch per invocation. The writer rebuilds the tree from the store under the lock before every write. What HEU-777, HEU-789, HEU-807 and HEU-813 record as unreachable under the writer holds only while that is true.
 
 ### ADR-022: Migration Framework
 

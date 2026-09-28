@@ -187,8 +187,9 @@ func TestTreeWriter_ACatchUpBehindALateProjectionAppendsNothing(t *testing.T) {
 }
 
 // TestTreeWriter_APlacementProjectedAfterItsLockWasLostIsRefused pins the
-// late writer's refusal. The store is not what it pins: it stays correct
-// whether or not the refusal happens.
+// late writer's refusal, and that the late writer's engine does not take the
+// placement. The store is not what it pins: it stays correct whether or not
+// the refusal happens.
 func TestTreeWriter_APlacementProjectedAfterItsLockWasLostIsRefused(t *testing.T) {
 	it := newWriterIntegration(t)
 	ctx := context.Background()
@@ -200,7 +201,8 @@ func TestTreeWriter_APlacementProjectedAfterItsLockWasLostIsRefused(t *testing.T
 	events := &lockKillingEvents{EventStore: it.events, t: t, pool: it.pool, meanwhile: func() {
 		second, secondErr = it.writer(t).Remove(ctx, RemoveRequest{TreeID: tree, UserID: x, RemovedAt: writeTime.Add(2 * time.Hour)})
 	}}
-	first, firstErr := NewTreeWriter(events, it.store, it.engine(t), NewPostgresTreeLocker(it.dsn)).
+	lateEngine := it.engine(t)
+	first, firstErr := NewTreeWriter(events, it.store, lateEngine, NewPostgresTreeLocker(it.dsn)).
 		Place(ctx, PlaceRequest{TreeID: tree, UserID: x, ParentID: root, SponsorID: root, EnrolledAt: writeTime.Add(time.Hour)})
 
 	require.NoError(t, firstErr)
@@ -213,6 +215,9 @@ func TestTreeWriter_APlacementProjectedAfterItsLockWasLostIsRefused(t *testing.T
 	assert.NoError(t, second.ProjectionErr)
 	assert.NoError(t, second.ReleaseErr)
 	assert.ErrorIs(t, first.ProjectionErr, ErrReplayedPlacement)
+	pos, posErr := lateEngine.GetPosition(ctx, tree, x)
+	assert.True(t, isEngineCode(posErr, engineCodeUserNotFound),
+		"GetPosition for %s on the first writer's engine returned position %+v and error %v", x, pos, posErr)
 	require.Error(t, first.ReleaseErr)
 	assert.Contains(t, first.ReleaseErr.Error(), "the pg_advisory_unlock query for tree "+tree+" failed")
 	row, err := it.store.GetNodeIncludingRemoved(ctx, tree, x)

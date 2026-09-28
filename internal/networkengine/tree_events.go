@@ -50,10 +50,8 @@ const (
 // An event with a missing or unknown type is rejected before projection.
 //
 // For matrix and binary trees, Position is required. Unilevel events must
-// omit Position: unilevel trees have no slots, and the engine ignores the
-// value, so storing one records a field the engine never honors.
-// Placement is the producer's decision (ADR-020); the consumer never lets
-// the engine invent one.
+// omit Position: unilevel trees have no slots. Placement is the producer's
+// decision (ADR-020); the consumer never lets the engine invent one.
 //
 // The consumer trusts TreeType. It has no registry, and no cheap worker
 // op, to verify the label against (HEU-554). A producer that mislabels a

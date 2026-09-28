@@ -186,9 +186,9 @@ constraint. The in-memory one does not.
 HEU-562 deleted a guard on an empty `user_id` in the tree loader, reasoning that
 the column is `UUID NOT NULL` so no row can hold one. That reasoning checked one
 implementation. The in-memory store has no such constraint, `validateNodes`
-never checks for it, and HEU-565 already records an empty user ID reaching the
-engine on the success path. The guard went back in, with a test that failed
-before the fix.
+did not check at the time, and HEU-565 already records an empty user ID
+reaching the engine on the success path. The guard went back in, with a test
+that failed before the fix.
 
 **A column definition is evidence about one implementation, not about the
 program.**

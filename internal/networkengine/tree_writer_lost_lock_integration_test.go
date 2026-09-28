@@ -185,3 +185,39 @@ func TestTreeWriter_ACatchUpBehindALateProjectionAppendsNothing(t *testing.T) {
 	}
 	assert.ErrorContains(t, got.err, "soft delete for user "+b+" in tree "+tree+" matched 0 active rows")
 }
+
+// TestTreeWriter_APlacementProjectedAfterItsLockWasLostIsRefused pins the
+// late writer's refusal. The store is not what it pins: it stays correct
+// whether or not the refusal happens.
+func TestTreeWriter_APlacementProjectedAfterItsLockWasLostIsRefused(t *testing.T) {
+	it := newWriterIntegration(t)
+	ctx := context.Background()
+	tree, root, x := testTreeUUID(311), testUserUUID(1), testUserUUID(2)
+	it.addUnilevelRoot(t, tree, root)
+
+	var second WriteResult
+	var secondErr error
+	events := &lockKillingEvents{EventStore: it.events, t: t, pool: it.pool, meanwhile: func() {
+		second, secondErr = it.writer(t).Remove(ctx, RemoveRequest{TreeID: tree, UserID: x, RemovedAt: writeTime.Add(2 * time.Hour)})
+	}}
+	first, firstErr := NewTreeWriter(events, it.store, it.engine(t), NewPostgresTreeLocker(it.dsn)).
+		Place(ctx, PlaceRequest{TreeID: tree, UserID: x, ParentID: root, SponsorID: root, EnrolledAt: writeTime.Add(time.Hour)})
+
+	require.NoError(t, firstErr)
+	require.NoError(t, secondErr)
+	assert.Equal(t, map[string]string{root: root}, activeSponsors(t, it.store, tree))
+	assert.Equal(t, int64(2), first.Version)
+	assert.Equal(t, int64(3), second.Version)
+	require.NotNil(t, second.CaughtUp, "the second writer reported no caught-up event")
+	assert.Equal(t, first.EventID, second.CaughtUp.EventID)
+	assert.NoError(t, second.ProjectionErr)
+	assert.NoError(t, second.ReleaseErr)
+	assert.ErrorIs(t, first.ProjectionErr, ErrReplayedPlacement)
+	require.Error(t, first.ReleaseErr)
+	assert.Contains(t, first.ReleaseErr.Error(), "the pg_advisory_unlock query for tree "+tree+" failed")
+	row, err := it.store.GetNodeIncludingRemoved(ctx, tree, x)
+	require.NoError(t, err)
+	require.NotNil(t, row, "no row at all for %s", x)
+	assert.Equal(t, first.EventID, row.ID)
+	assert.NotNil(t, row.RemovedAt, "the row for %s is active", x)
+}

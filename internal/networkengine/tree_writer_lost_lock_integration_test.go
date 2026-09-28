@@ -105,8 +105,8 @@ func TestTreeWriter_ARemovalProjectedAfterItsLockWasLostLeavesNoStaleSponsor(t *
 	assert.Contains(t, first.ReleaseErr.Error(), "the pg_advisory_unlock query for tree "+tree+" failed")
 }
 
-// parkedRemovalEngine holds its first RemoveNode after that call returns,
-// until open is called, and closes parked when it starts holding.
+// parkedRemovalEngine delays the return of its first RemoveNode until open is
+// called, and closes parked when the delay begins.
 type parkedRemovalEngine struct {
 	TreeEngineChecker
 	parked   chan struct{}
@@ -119,7 +119,7 @@ func newParkedRemovalEngine(engine TreeEngineChecker) *parkedRemovalEngine {
 	return &parkedRemovalEngine{TreeEngineChecker: engine, parked: make(chan struct{}), release: make(chan struct{})}
 }
 
-// open lets the held call return. It is safe to call more than once.
+// open lets the delayed call return. It is safe to call more than once.
 func (e *parkedRemovalEngine) open() {
 	e.openOnce.Do(func() { close(e.release) })
 }
@@ -155,23 +155,24 @@ func TestTreeWriter_ACatchUpBehindALateProjectionAppendsNothing(t *testing.T) {
 		select {
 		case <-parked.parked:
 		case got := <-second:
-			t.Fatalf("the second writer returned before its catch-up removal reached the engine: %v", got.err)
+			t.Fatalf("the second writer returned before any RemoveNode on the parked engine returned: %v", got.err)
 		case <-time.After(30 * time.Second):
-			t.Fatal("the second writer's catch-up removal did not return from the engine within 30s")
+			t.Fatal("within 30s the second writer had not returned and no RemoveNode on the parked engine had returned")
 		}
 	}}
 	first, firstErr := NewTreeWriter(events, it.store, it.engine(t), NewPostgresTreeLocker(it.dsn)).
 		Remove(ctx, RemoveRequest{TreeID: tree, UserID: b, RemovedAt: writeTime.Add(4 * time.Hour)})
+	require.NoError(t, firstErr)
 	parked.open()
 	got := receive(t, second, 30*time.Second)
 
-	require.NoError(t, firstErr)
 	assert.Equal(t, map[string]string{root: root, a: root, c: a}, activeSponsors(t, it.store, tree))
 	assert.NotEmpty(t, first.EventID, "the first writer reported no appended event")
 	assert.Equal(t, int64(5), first.Version)
 	assert.NoError(t, first.ProjectionErr)
 	assert.ErrorContains(t, first.ReleaseErr, "the pg_advisory_unlock query for tree "+tree+" failed")
 	assert.Empty(t, got.res.EventID, "the second writer reported an appended event")
+	assert.Nil(t, got.res.CaughtUp, "the second writer reported a caught-up event")
 	assert.NoError(t, got.res.ReleaseErr)
 	stored, err := it.events.ReadStream(ctx, TreeStreamName(tree), 1, 0)
 	require.NoError(t, err)

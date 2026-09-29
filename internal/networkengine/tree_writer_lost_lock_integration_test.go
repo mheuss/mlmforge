@@ -226,3 +226,31 @@ func TestTreeWriter_APlacementProjectedAfterItsLockWasLostIsRefused(t *testing.T
 	assert.Equal(t, first.EventID, row.ID)
 	assert.NotNil(t, row.RemovedAt, "the row for %s is active", x)
 }
+
+func TestTreeWriter_ALateRemovalLeavesAReplacedUserActive(t *testing.T) {
+	t.Skip("skipped until HEU-857: a late removal tombstoned the re-placed user B and left C sponsored by removed A, and every writer reported success")
+	it := newWriterIntegration(t)
+	ctx := context.Background()
+	tree, root, a, b, c := testTreeUUID(312), testUserUUID(1), testUserUUID(2), testUserUUID(3), testUserUUID(4)
+	it.buildSponsorChain(t, tree, root, a, b, c)
+
+	var replaced, removedA WriteResult
+	var replacedErr, removedAErr error
+	events := &lockKillingEvents{EventStore: it.events, t: t, pool: it.pool, meanwhile: func() {
+		replaced, replacedErr = it.writer(t).Place(ctx, PlaceRequest{
+			TreeID: tree, UserID: b, ParentID: root, SponsorID: root, EnrolledAt: writeTime.Add(5 * time.Hour)})
+		removedA, removedAErr = it.writer(t).Remove(ctx, RemoveRequest{TreeID: tree, UserID: a, RemovedAt: writeTime.Add(6 * time.Hour)})
+	}}
+	first, firstErr := NewTreeWriter(events, it.store, it.engine(t), NewPostgresTreeLocker(it.dsn)).
+		Remove(ctx, RemoveRequest{TreeID: tree, UserID: b, RemovedAt: writeTime.Add(4 * time.Hour)})
+
+	require.NoError(t, firstErr)
+	require.NoError(t, replacedErr)
+	require.NoError(t, removedAErr)
+	assert.NoError(t, replaced.ProjectionErr)
+	assert.NoError(t, removedA.ProjectionErr)
+	assert.Equal(t, int64(5), first.Version)
+	assert.Equal(t, int64(6), replaced.Version)
+	assert.Equal(t, int64(7), removedA.Version)
+	assert.Equal(t, map[string]string{root: root, b: root, c: root}, activeSponsors(t, it.store, tree))
+}

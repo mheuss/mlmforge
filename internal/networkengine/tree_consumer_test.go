@@ -1604,9 +1604,8 @@ func TestHandleRootAdded_ReconcileSkipsOtherEngineErrors(t *testing.T) {
 // deleteRecordingStore records which users the compensation deleted, so a test
 // can assert the blast radius rather than only that this event's row is gone.
 //
-// It records each call before refusing a cancelled context, and each call that
-// passed that check after it, so a refused call and a call that never happened
-// read differently.
+// It records each call before its context check, and again once the check
+// passes, so a refused call and a call that never happened read differently.
 type deleteRecordingStore struct {
 	*MemoryTreeStore
 	deleted         []string

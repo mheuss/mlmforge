@@ -1043,26 +1043,26 @@ func runTreeStoreSuite(
 		cancelled, cancel := context.WithCancel(ctx)
 		cancel()
 
-		require.Error(t, s.InsertNode(cancelled,
-			makeUUIDNode(testNodeUUID(4), tree, newUser, 1, ptr(rootUser), ptr(rootUser), intPtr(1))), "InsertNode")
-		require.Error(t, s.BulkInsert(cancelled, []TreeNodeRow{
+		require.ErrorIs(t, s.InsertNode(cancelled,
+			makeUUIDNode(testNodeUUID(4), tree, newUser, 1, ptr(rootUser), ptr(rootUser), intPtr(1))), context.Canceled, "InsertNode")
+		require.ErrorIs(t, s.BulkInsert(cancelled, []TreeNodeRow{
 			makeUUIDNode(testNodeUUID(5), tree, newUser, 1, ptr(rootUser), ptr(rootUser), intPtr(1)),
-		}), "BulkInsert")
-		require.Error(t, s.DeleteNode(cancelled, tree, recruit), "DeleteNode")
-		require.Error(t, s.DeleteNodeAndResponsor(cancelled, tree, removedUser, testNodeUUID(9),
-			[]Responsored{{UserID: recruit, NewSponsorID: rootUser}}), "DeleteNodeAndResponsor")
+		}), context.Canceled, "BulkInsert")
+		require.ErrorIs(t, s.DeleteNode(cancelled, tree, recruit), context.Canceled, "DeleteNode")
+		require.ErrorIs(t, s.DeleteNodeAndResponsor(cancelled, tree, removedUser, testNodeUUID(9),
+			[]Responsored{{UserID: recruit, NewSponsorID: rootUser}}), context.Canceled, "DeleteNodeAndResponsor")
 
 		got, err := s.GetByTree(ctx, tree)
 		require.NoError(t, err)
 		assert.ElementsMatch(t, []string{rootUser, removedUser, recruit}, nodeUserIDs(got),
-			"no row was added and none was removed")
+			"active users read back after the four cancelled writes")
 
 		moved, err := s.GetNode(ctx, tree, recruit)
 		require.NoError(t, err)
 		require.NotNil(t, moved)
 		require.NotNil(t, moved.SponsorID)
-		assert.Equal(t, removedUser, *moved.SponsorID, "the re-sponsor write did not land")
-		assert.Nil(t, stampOf(t, s, testNodeUUID(2)), "the removal stamp did not land")
+		assert.Equal(t, removedUser, *moved.SponsorID, "recruit's sponsor read back after the cancelled re-sponsor")
+		assert.Nil(t, stampOf(t, s, testNodeUUID(2)), "removal stamp read back on the row the cancelled delete named")
 	})
 
 	t.Run("DeleteNode moves UpdatedAt forward", func(t *testing.T) {
@@ -1151,7 +1151,7 @@ func runTreeStoreSuite(
 
 		got, err := s.GetNode(ctx, tree, ahead)
 		require.NoError(t, err)
-		assert.Nil(t, got, "the row ahead of the conflict rolls back with it")
+		assert.Nil(t, got, "active row read back for the user placed ahead of the conflicting row")
 	})
 
 	t.Run("BulkInsert reports a user conflict as ErrActiveUserConflict", func(t *testing.T) {
@@ -1202,12 +1202,12 @@ func runTreeStoreSuite(
 		gotA, err := s.GetNodeIncludingRemoved(ctx, tree, userA)
 		require.NoError(t, err)
 		require.NotNil(t, gotA)
-		assert.Equal(t, testNodeUUID(2), gotA.ID, "userA's two tombstones tie, so the higher id wins")
+		assert.Equal(t, testNodeUUID(2), gotA.ID, "tombstone id read back for userA, whose two tombstones share removed_at")
 
 		gotB, err := s.GetNodeIncludingRemoved(ctx, tree, userB)
 		require.NoError(t, err)
 		require.NotNil(t, gotB)
-		assert.Equal(t, testNodeUUID(4), gotB.ID, "userB's two tombstones tie, so the higher id wins")
+		assert.Equal(t, testNodeUUID(4), gotB.ID, "tombstone id read back for userB, whose two tombstones share removed_at")
 	})
 
 	t.Run("GetNodeByRemovalEvent breaks a removal-time tie by the highest id", func(t *testing.T) {
@@ -1240,12 +1240,12 @@ func runTreeStoreSuite(
 		gotA, err := s.GetNodeByRemovalEvent(ctx, tree, eventA)
 		require.NoError(t, err)
 		require.NotNil(t, gotA)
-		assert.Equal(t, testNodeUUID(2), gotA.ID, "eventA's two tombstones tie, so the higher id wins")
+		assert.Equal(t, testNodeUUID(2), gotA.ID, "tombstone id read back for eventA, whose two tombstones share removed_at")
 
 		gotB, err := s.GetNodeByRemovalEvent(ctx, tree, eventB)
 		require.NoError(t, err)
 		require.NotNil(t, gotB)
-		assert.Equal(t, testNodeUUID(4), gotB.ID, "eventB's two tombstones tie, so the higher id wins")
+		assert.Equal(t, testNodeUUID(4), gotB.ID, "tombstone id read back for eventB, whose two tombstones share removed_at")
 	})
 
 	t.Run("the removal-time tie-break reads a mixed-case id as lowercase", func(t *testing.T) {
@@ -1283,5 +1283,49 @@ func runTreeStoreSuite(
 		require.NotNil(t, byEvent)
 		assert.True(t, strings.EqualFold(upper, byEvent.ID),
 			"GetNodeByRemovalEvent returned id %s, want %s, which is the higher id once lowercased", byEvent.ID, upper)
+	})
+
+	t.Run("a later removal wins over a higher id in both reads", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		user := testUserUUID(1)
+		event := testNodeUUID(9)
+		earlier := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+		later := time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC)
+
+		// The higher id gets the earlier removal, so an order on id alone
+		// returns the wrong row. Both stamps are before the real removal time,
+		// so a hook that did not land leaves a row later than both.
+		for _, p := range []struct {
+			id string
+			at time.Time
+		}{
+			{testNodeUUID(2), earlier},
+			{testNodeUUID(1), later},
+		} {
+			require.NoError(t, s.InsertNode(ctx, makeUUIDNode(p.id, tree, user, 1, nil, nil, nil)))
+			require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, user, event, nil))
+			setRemovedAt(t, s, p.id, p.at)
+			back, err := s.GetNodeIncludingRemoved(ctx, tree, user)
+			require.NoError(t, err)
+			require.NotNil(t, back)
+			require.NotNil(t, back.RemovedAt)
+			require.False(t, back.RemovedAt.After(later),
+				"removed_at read back as %v after setRemovedAt on %s, want no later than %v", *back.RemovedAt, p.id, later)
+		}
+
+		byUser, err := s.GetNodeIncludingRemoved(ctx, tree, user)
+		require.NoError(t, err)
+		require.NotNil(t, byUser)
+		assert.Equal(t, testNodeUUID(1), byUser.ID,
+			"GetNodeIncludingRemoved returned id %s, want %s, the later removal", byUser.ID, testNodeUUID(1))
+
+		byEvent, err := s.GetNodeByRemovalEvent(ctx, tree, event)
+		require.NoError(t, err)
+		require.NotNil(t, byEvent)
+		assert.Equal(t, testNodeUUID(1), byEvent.ID,
+			"GetNodeByRemovalEvent returned id %s, want %s, the later removal", byEvent.ID, testNodeUUID(1))
 	})
 }

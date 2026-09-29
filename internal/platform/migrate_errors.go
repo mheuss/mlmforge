@@ -32,13 +32,13 @@ type SourceInfo struct {
 	Err         error
 }
 
-// Status is the record MigrateVersion read, and where its version sits in the migrations directory.
+// Status is a migration record and where its version sits in the migrations directory.
 type Status struct {
 	Record Record
 	Source SourceInfo
 }
 
-// ResetResult is the record before and after ResetDirty changed it.
+// ResetResult is a migration record before and after a reset.
 type ResetResult struct {
 	From Record
 	To   Record

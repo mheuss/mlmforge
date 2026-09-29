@@ -34,7 +34,7 @@ func newMigrateCmd() *cobra.Command {
 					return err
 				}
 				err = withoutReleaseErrors(cmd.ErrOrStderr(), "migrate up finished", platform.MigrateUp(target.url, *migrationsPath))
-				return migrateError("up", err)
+				return migrateError("up", connectError(err, target))
 			},
 		},
 		&cobra.Command{
@@ -53,7 +53,7 @@ func newMigrateCmd() *cobra.Command {
 					return nil
 				}
 				if err != nil {
-					return migrateError("down", err)
+					return migrateError("down", connectError(err, target))
 				}
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Rolled back one migration.")
 				return nil
@@ -71,7 +71,7 @@ func newMigrateCmd() *cobra.Command {
 				}
 				st, err := platform.MigrateVersion(target.url, *migrationsPath)
 				if err = withoutReleaseErrors(cmd.ErrOrStderr(), "the record was read", err); err != nil {
-					return err
+					return connectError(err, target)
 				}
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), versionText(st))
 				return nil
@@ -91,7 +91,7 @@ func newMigrateCmd() *cobra.Command {
 				}
 				res, err := platform.ResetDirty(target.url, *migrationsPath)
 				if err = withoutReleaseErrors(cmd.ErrOrStderr(), "the record was written", err); err != nil {
-					return migrateError("reset-dirty", err)
+					return migrateError("reset-dirty", connectError(err, target))
 				}
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), resetText(res))
 				return nil

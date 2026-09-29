@@ -84,7 +84,7 @@ func runTreeCommand(cmd *cobra.Command, resolve flagResolver, open depsOpener, r
 	// default SIGINT kill for every command in the binary.
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return withTreeDeps(ctx, cmd.ErrOrStderr(), open, target.url, workerPath, run)
+	return connectError(withTreeDeps(ctx, cmd.ErrOrStderr(), open, target.url, workerPath, run), target)
 }
 
 func newTreeLoadCmd(resolve flagResolver, open depsOpener, loader loaderFor) *cobra.Command {

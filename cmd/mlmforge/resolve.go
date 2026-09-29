@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/mlmforge/mlmforge/internal/platform"
 )
 
 // workerPathEnv is the environment variable naming the compiled Rust worker.
@@ -111,6 +113,15 @@ func appendQueryParam(raw, param string) string {
 		head += "#" + fragment
 	}
 	return head
+}
+
+// connectError replaces a ConnectTimeoutError's text with one line that names the timeout's source.
+func connectError(err error, target dbTarget) error {
+	var cte *platform.ConnectTimeoutError
+	if !errors.As(err, &cte) {
+		return err
+	}
+	return &operatorError{text: cte.Error() + " (" + target.timeout.String() + ")", err: err}
 }
 
 // resolveWorkerPath returns an absolute path to the worker binary.

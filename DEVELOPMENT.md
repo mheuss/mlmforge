@@ -333,7 +333,7 @@ Full document: [`content/design-rationale/020-tree-topology-separation.md`](cont
 
 **Context:** Database schema was managed inline via `CreateSchema()` methods that executed raw DDL. This approach has no version tracking, no rollback capability, and no way to coordinate schema changes across deployments.
 
-**Decision:** Use golang-migrate with versioned SQL files in `migrations/`. A CLI command (`./mlmforge migrate up/down/version/reset-dirty`) applies or rolls back migrations. In production, migrations run as a Kubernetes Job before application pods start. Schema changes follow the backward-compatible expand-and-contract pattern: add new columns/tables first (expand), deploy code that uses them, then remove old columns/tables (contract) in a later migration.
+**Decision:** Use golang-migrate with versioned SQL files in `migrations/`. A CLI command (`./mlmforge migrate up/down/version/reset-dirty`) applies, rolls back or inspects migrations, and resets a dirty record. In production, migrations run as a Kubernetes Job before application pods start. Schema changes follow the backward-compatible expand-and-contract pattern: add new columns/tables first (expand), deploy code that uses them, then remove old columns/tables (contract) in a later migration.
 
 **Consequences:**
 - All DDL lives in versioned, reviewable SQL files. No inline schema management.
@@ -341,8 +341,8 @@ Full document: [`content/design-rationale/020-tree-topology-separation.md`](cont
 - The expand-and-contract pattern means zero-downtime deployments but requires two migrations for breaking schema changes.
 - Replaces the `CreateSchema()` approach. Existing inline DDL was moved to migration 000001.
 - `migrate reset-dirty` recovers from a failed `migrate up`. It moves a record of "N, dirty" to the migration before N, clean. That is correct only while each up file runs as one implicit transaction, so a failed up at N leaves the schema at N-1.
-- Two checks hold that assumption. A unit test fails when an up file contains `BEGIN`, `COMMIT`, `ROLLBACK`, `ABORT` or `CONCURRENTLY` as a word. `up`, `down` and `reset-dirty` refuse a database URL that turns on `x-multi-statement`. The test guards those named forms only.
-- A failed `migrate down` leaves a record that reads the same as a failed up. `reset-dirty` does not handle that case (HEU-855).
+- Two checks hold that assumption. A unit test fails when an up file contains `BEGIN`, `COMMIT`, `ROLLBACK`, `ABORT` or `CONCURRENTLY` as a word, in any case. The test guards those named forms only. `up`, `down` and `reset-dirty` refuse a database URL that turns on `x-multi-statement`.
+- A failed `migrate down` leaves a record that reads the same as a failed up. `reset-dirty` cannot tell them apart. Run after a failed down, it moves the record one more version back, so the record ends two versions behind the schema (HEU-855).
 
 ### ADR-023: Soft Delete for Tree Topology
 

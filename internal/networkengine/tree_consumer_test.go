@@ -1724,7 +1724,8 @@ func (s *ctxReadingStore) GetNodeIncludingRemoved(ctx context.Context, treeID, u
 }
 
 // expiringContext reports context.DeadlineExceeded once expire is called, so a
-// test can place the expiry between two calls.
+// test can place the expiry between two calls. It models Err and Done only.
+// Deadline reports no deadline.
 type expiringContext struct {
 	context.Context
 	done chan struct{}
@@ -1783,7 +1784,7 @@ func TestHandleRootAdded_CancelledInsertReportsTheRow(t *testing.T) {
 }
 
 // An expired deadline must report the stored row the same way a cancellation
-// does. The deadline passes during the engine call, after the insert.
+// does. The deadline passes during the engine call.
 func TestHandleRootAdded_ExpiredDeadlineReportsTheRow(t *testing.T) {
 	ctx := newExpiringContext()
 

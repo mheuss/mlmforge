@@ -210,7 +210,7 @@ func ranksAhead(a, b TreeNodeRow) bool {
 	if !a.RemovedAt.Equal(*b.RemovedAt) {
 		return a.RemovedAt.After(*b.RemovedAt)
 	}
-	// Lowercased so a mixed-case id sorts as its canonical UUID text.
+	// Lowercased so the order does not depend on the id's letter case.
 	return strings.ToLower(a.ID) > strings.ToLower(b.ID)
 }
 

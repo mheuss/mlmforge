@@ -155,7 +155,7 @@ func TestTreeConsumer_HandleNodePlaced(t *testing.T) {
 	assert.Equal(t, "add_node", transport.calls[0].op)
 }
 
-// insertRecordingStore records the rows the consumer passes to ProjectInsert.
+// insertRecordingStore records the rows passed to ProjectInsert.
 type insertRecordingStore struct {
 	TreeStore
 	inserted []TreeNodeRow
@@ -181,8 +181,8 @@ func TestTreeConsumer_LeavesStoreOwnedTimestampsUnset(t *testing.T) {
 
 		require.Len(t, store.inserted, 1)
 		row := store.inserted[0]
-		assert.True(t, row.CreatedAt.IsZero(), "CreatedAt passed to InsertNode: %v", row.CreatedAt)
-		assert.True(t, row.UpdatedAt.IsZero(), "UpdatedAt passed to InsertNode: %v", row.UpdatedAt)
+		assert.True(t, row.CreatedAt.IsZero(), "CreatedAt passed to ProjectInsert: %v", row.CreatedAt)
+		assert.True(t, row.UpdatedAt.IsZero(), "UpdatedAt passed to ProjectInsert: %v", row.UpdatedAt)
 	})
 
 	t.Run("node_placed", func(t *testing.T) {
@@ -204,8 +204,8 @@ func TestTreeConsumer_LeavesStoreOwnedTimestampsUnset(t *testing.T) {
 
 		require.Len(t, store.inserted, 1)
 		row := store.inserted[0]
-		assert.True(t, row.CreatedAt.IsZero(), "CreatedAt passed to InsertNode: %v", row.CreatedAt)
-		assert.True(t, row.UpdatedAt.IsZero(), "UpdatedAt passed to InsertNode: %v", row.UpdatedAt)
+		assert.True(t, row.CreatedAt.IsZero(), "CreatedAt passed to ProjectInsert: %v", row.CreatedAt)
+		assert.True(t, row.UpdatedAt.IsZero(), "UpdatedAt passed to ProjectInsert: %v", row.UpdatedAt)
 	})
 }
 
@@ -1907,7 +1907,6 @@ func TestHandleNodeRemoved_ReconcileConvergesOnAProjectedRemoval(t *testing.T) {
 	ctx := context.Background()
 	seedRemovable(t, store)
 	require.NoError(t, store.DeleteNode(ctx, "tree1", posUser))
-	store.deleted = nil
 
 	err := c.HandleEvent(ctx, makeEvent(EventTypeNodeRemoved, removedPayload()))
 

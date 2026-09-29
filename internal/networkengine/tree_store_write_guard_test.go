@@ -15,8 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// unversionedStoreWrites are the TreeStore writes that record no projected
-// version.
+// unversionedStoreWrites are the method names the guard reports.
 var unversionedStoreWrites = map[string]bool{
 	"InsertNode":             true,
 	"DeleteNode":             true,
@@ -24,7 +23,13 @@ var unversionedStoreWrites = map[string]bool{
 	"BulkInsert":             true,
 }
 
-// storeImplementations may call the unversioned writes, which they define.
+// unversionedStoreHelpers are the package function names the guard reports.
+var unversionedStoreHelpers = map[string]bool{
+	"insertNode":             true,
+	"deleteNodeAndResponsor": true,
+}
+
+// storeImplementations are the files the guard does not read.
 var storeImplementations = map[string]bool{
 	"internal/networkengine/tree_store_memory.go":   true,
 	"internal/networkengine/tree_store_postgres.go": true,
@@ -62,14 +67,21 @@ func findUnversionedStoreWrites(root string) ([]string, error) {
 		if err != nil {
 			return err
 		}
+		report := func(pos token.Pos, name string) {
+			found = append(found, fmt.Sprintf("%s:%d: %s", rel, fset.Position(pos).Line, name))
+		}
+		// Any selector, not only a call's, so a method value such as
+		// f := s.InsertNode is reported too.
 		ast.Inspect(file, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if ok && unversionedStoreWrites[sel.Sel.Name] {
-				found = append(found, fmt.Sprintf("%s:%d: %s", rel, fset.Position(call.Pos()).Line, sel.Sel.Name))
+			switch n := n.(type) {
+			case *ast.SelectorExpr:
+				if unversionedStoreWrites[n.Sel.Name] {
+					report(n.Pos(), n.Sel.Name)
+				}
+			case *ast.CallExpr:
+				if id, ok := n.Fun.(*ast.Ident); ok && unversionedStoreHelpers[id.Name] {
+					report(n.Pos(), id.Name)
+				}
 			}
 			return true
 		})
@@ -101,14 +113,18 @@ func TestFindUnversionedStoreWrites_NamesEachCallOutsideTheStores(t *testing.T) 
 		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 		require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
 	}
-	write("cmd/tool/main.go", "package main\n\nfunc run(s store) {\n\ts.InsertNode(nil, row)\n\ts.ProjectInsert(nil, row, 1)\n}\n")
+	write("cmd/tool/main.go", "package main\n\nfunc run(s store) {\n\ts.InsertNode(nil, row)\n\ts.ProjectInsert(nil, row, 1)\n\tf := s.DeleteNode\n\tinsertNode(nil, tx, row)\n}\n")
 	write("cmd/tool/main_test.go", "package main\n\nfunc seed(s store) { s.BulkInsert(nil, nil) }\n")
 	write("internal/networkengine/tree_store_memory.go", "package networkengine\n\nfunc f(s *S) { s.DeleteNode(nil, \"\", \"\") }\n")
 
 	found, err := findUnversionedStoreWrites(root)
 
 	require.NoError(t, err)
-	assert.Equal(t, []string{"cmd/tool/main.go:4: InsertNode"}, found)
+	assert.Equal(t, []string{
+		"cmd/tool/main.go:4: InsertNode",
+		"cmd/tool/main.go:6: DeleteNode",
+		"cmd/tool/main.go:7: insertNode",
+	}, found)
 }
 
 func TestNoProductionCodeCallsAnUnversionedStoreWrite(t *testing.T) {

@@ -150,7 +150,7 @@ func SplitRelease(err error) (releases []error, rest error) {
 	return releases, errors.Join(others...)
 }
 
-// flattenJoined returns the parts of err, descending into joined errors only.
+// flattenJoined returns the parts of err, descending into any error that wraps several.
 func flattenJoined(err error) []error {
 	if err == nil {
 		return nil

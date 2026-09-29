@@ -68,6 +68,16 @@ func TestSplitRelease_Nil(t *testing.T) {
 	assert.Empty(t, releases)
 }
 
+func TestWithReleases_RoundTripsThroughSplitRelease(t *testing.T) {
+	op := errors.New("op")
+	unlock := &ReleaseError{What: "releasing the migration lock failed", Err: errors.New("u")}
+
+	assert.Same(t, op, withReleases(op, nil))
+	releases, rest := SplitRelease(withReleases(op, []error{unlock}))
+	assert.Same(t, op, rest)
+	assert.Equal(t, []error{unlock}, releases)
+}
+
 func TestMigrateErrors_WrappersUnwrapToTheirCause(t *testing.T) {
 	cause := errors.New("boom")
 	assert.ErrorIs(t, &ApplyError{Err: cause}, cause)

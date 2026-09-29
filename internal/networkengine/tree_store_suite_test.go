@@ -1166,8 +1166,7 @@ func runTreeStoreSuite(
 		require.NoError(t, s.InsertNode(ctx,
 			makeUUIDNode(testNodeUUID(2), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
 
-		// Depth 1 and a free slot, so this row breaks the user index alone. See
-		// HEU-810 and HEU-794.
+		// Depth 1 and a free slot are deliberate. See HEU-810 and HEU-794.
 		err := s.BulkInsert(ctx, []TreeNodeRow{
 			makeUUIDNode(testNodeUUID(3), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(1)),
 		})

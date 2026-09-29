@@ -237,3 +237,51 @@ func MigrateVersion(dbURL, migrationsPath string) (st Status, err error) {
 	}
 	return Status{Record: read.Record, Source: mg.sourceFor(read)}, nil
 }
+
+// ResetDirty changes a dirty migration record to the migration before it, clean.
+func ResetDirty(dbURL, migrationsPath string) (res ResetResult, err error) {
+	if err = refuseMultiStatement("reset-dirty", dbURL); err != nil {
+		return ResetResult{}, err
+	}
+	mg, err := openMigration(dbURL, migrationsPath)
+	if err != nil {
+		return ResetResult{}, err
+	}
+	defer mg.closeInto(&err)
+
+	if err = mg.db.Lock(); err != nil {
+		return ResetResult{}, fmt.Errorf("take migration lock: %w", err)
+	}
+	defer func() {
+		if unlockErr := mg.db.Unlock(); unlockErr != nil {
+			err = errors.Join(err, unlockErr)
+		}
+	}()
+
+	rec, err := mg.readRecord()
+	if err != nil {
+		return ResetResult{}, fmt.Errorf("read migration record: %w", err)
+	}
+	if rec.Version < 0 && rec.Dirty {
+		return ResetResult{}, &NegativeVersionError{Record: rec}
+	}
+	if !rec.Dirty {
+		return ResetResult{}, &NotDirtyError{Record: rec}
+	}
+	src := mg.sourceInfo(rec.Version)
+	if src.Err != nil {
+		return ResetResult{}, fmt.Errorf("read migration %d from %s: %w", rec.Version, src.Path, src.Err)
+	}
+	if !src.InSource {
+		return ResetResult{}, &VersionNotInSourceError{Record: rec, Path: src.Path}
+	}
+
+	to := Record{Version: database.NilVersion}
+	if src.HasPrevious {
+		to.Version = int(src.Previous)
+	}
+	if err = mg.db.SetVersion(to.Version, false); err != nil {
+		return ResetResult{}, fmt.Errorf("write migration record: %w", err)
+	}
+	return ResetResult{From: rec, To: to}, nil
+}

@@ -295,3 +295,26 @@ func TestMigrateError_ADirtyRecordOnDownNamesTheCommand(t *testing.T) {
 	require.EqualError(t, err, "migrate down did not run. "+dirtySixText)
 	requireNoForce(t, err.Error())
 }
+
+func TestResetText_NamesTheRecordBeforeAndAfter(t *testing.T) {
+	back := resetText(platform.ResetResult{From: sixDirty, To: platform.Record{Version: 5}})
+	none := resetText(platform.ResetResult{From: platform.Record{Version: 1, Dirty: true}, To: platform.Record{Version: -1}})
+
+	require.Equal(t, "The record read 6, dirty. It now reads 5, clean.\nRun `mlmforge migrate up` next.", back)
+	require.Equal(t, "The record read 1, dirty. It now holds no version.\nRun `mlmforge migrate up` next.", none)
+	requireNoForce(t, back+none)
+}
+
+func TestMigrateError_EachResetRefusalNamesTheRecordAndSaysNothingChanged(t *testing.T) {
+	cases := map[string]error{
+		"reset-dirty changes only a dirty record. The record reads 5, clean. The record was not changed.":        &platform.NotDirtyError{Record: platform.Record{Version: 5}},
+		"reset-dirty changes only a dirty record. The record holds no version. The record was not changed.":      &platform.NotDirtyError{Record: platform.Record{Version: -1}},
+		"The record reads -1, dirty. reset-dirty does not change a record at -1. The record was not changed.":    &platform.NegativeVersionError{Record: platform.Record{Version: -1, Dirty: true}},
+		"The record reads 9, dirty. The migrations directory /m has no migration 9. The record was not changed.": &platform.VersionNotInSourceError{Record: platform.Record{Version: 9, Dirty: true}, Path: "/m"},
+	}
+	for want, err := range cases {
+		got := migrateError("reset-dirty", err)
+		require.EqualError(t, got, want)
+		requireNoForce(t, got.Error())
+	}
+}

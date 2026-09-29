@@ -77,6 +77,24 @@ func newMigrateCmd() *cobra.Command {
 				return nil
 			},
 		},
+		&cobra.Command{
+			Use:   "reset-dirty",
+			Short: "Move a dirty migration record back to the previous migration, clean",
+			Args:  cobra.NoArgs,
+			RunE: func(cmd *cobra.Command, args []string) error {
+				cmd.SilenceUsage = true
+				url, err := resolveDBURL(*dbURL)
+				if err != nil {
+					return err
+				}
+				res, err := platform.ResetDirty(url, *migrationsPath)
+				if err = withoutReleaseErrors(cmd.ErrOrStderr(), "the record was written", err); err != nil {
+					return migrateError("reset-dirty", err)
+				}
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), resetText(res))
+				return nil
+			},
+		},
 	)
 
 	return migrateCmd

@@ -13,6 +13,8 @@ const (
 	upCommand    = "`mlmforge migrate up`"
 	downCommand  = "`mlmforge migrate down`"
 	resetCommand = "`mlmforge migrate reset-dirty`"
+
+	unchangedText = "The record was not changed."
 )
 
 // describeRecord states what a record reads, in the present tense.
@@ -128,6 +130,9 @@ func migrateErrorText(command string, err error) (string, bool) {
 		dirty    *platform.DirtyError
 		apply    *platform.ApplyError
 		rollback *platform.RollbackError
+		notDirty *platform.NotDirtyError
+		negative *platform.NegativeVersionError
+		missing  *platform.VersionNotInSourceError
 	)
 	switch {
 	case errors.As(err, &multi):
@@ -138,6 +143,13 @@ func migrateErrorText(command string, err error) (string, bool) {
 		return applyFailureText(apply), true
 	case errors.As(err, &rollback):
 		return rollbackFailureText(rollback), true
+	case errors.As(err, &notDirty):
+		return fmt.Sprintf("reset-dirty changes only a dirty record. The record %s. %s", describeRecord(notDirty.Record), unchangedText), true
+	case errors.As(err, &negative):
+		return negativeText(negative.Record.Version) + " " + unchangedText, true
+	case errors.As(err, &missing):
+		return fmt.Sprintf("The record %s. The migrations directory %s has no migration %d. %s",
+			describeRecord(missing.Record), missing.Path, missing.Record.Version, unchangedText), true
 	}
 	return "", false
 }
@@ -197,4 +209,9 @@ func rollbackFailureText(e *platform.RollbackError) string {
 		lines = append(lines, fmt.Sprintf("Do not run %s.", resetCommand))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// resetText describes a completed reset.
+func resetText(r platform.ResetResult) string {
+	return fmt.Sprintf("The record %s. It now %s.\nRun %s next.", describeRecordBefore(r.From), describeRecord(r.To), upCommand)
 }

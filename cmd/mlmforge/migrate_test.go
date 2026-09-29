@@ -77,3 +77,12 @@ func TestMigrateDown_RefusesMultiStatementModeBeforeConnecting(t *testing.T) {
 
 	require.EqualError(t, root.Execute(), "migrate down refused: the database URL sets x-multi-statement=true.")
 }
+
+func TestMigrateResetDirty_RefusesMultiStatementModeBeforeConnecting(t *testing.T) {
+	root := newRootCmd()
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"migrate", "reset-dirty", "--db-url", refusedDBURL + "&x-multi-statement=t"})
+
+	require.EqualError(t, root.Execute(), "migrate reset-dirty refused: the database URL sets x-multi-statement=t.")
+}

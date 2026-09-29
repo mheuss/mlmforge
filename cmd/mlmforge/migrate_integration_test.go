@@ -240,3 +240,76 @@ func TestMigrateDown_AnEmptyRecordHasNothingToRollBack(t *testing.T) {
 	require.Equal(t, "No migrations to roll back.\n", out.stdout.String())
 	require.Empty(t, out.stderr.String())
 }
+
+func TestMigrateResetDirty_MovesADirtyRecordBackOneMigration(t *testing.T) {
+	dsn := newMigrateDatabase(t)
+	migrateTo(t, dsn, 5)
+	setRecord(t, dsn, 6, true)
+
+	out, err := runMigrate(t, dsn, "reset-dirty")
+
+	require.NoError(t, err, out.stderr.String())
+	require.Equal(t, "The record read 6, dirty. It now reads 5, clean.\nRun `mlmforge migrate up` next.\n", out.stdout.String())
+	require.Empty(t, out.stderr.String())
+	require.Equal(t, []string{"5,false"}, readRecord(t, dsn))
+}
+
+func TestMigrateResetDirty_FromTheFirstMigrationLeavesNoVersion(t *testing.T) {
+	dsn := newMigrateDatabase(t)
+	migrateTo(t, dsn, 1)
+	setRecord(t, dsn, 1, true)
+
+	out, err := runMigrate(t, dsn, "reset-dirty")
+
+	require.NoError(t, err, out.stderr.String())
+	require.Equal(t, "The record read 1, dirty. It now holds no version.\nRun `mlmforge migrate up` next.\n", out.stdout.String())
+	require.Empty(t, readRecord(t, dsn))
+}
+
+func TestMigrateResetDirty_RefusesARecordItCannotActOnAndLeavesItUnchanged(t *testing.T) {
+	cases := []struct {
+		name   string
+		setup  func(t *testing.T, dsn string)
+		stderr string
+		record []string
+	}{
+		{
+			name:   "clean",
+			setup:  func(t *testing.T, dsn string) { migrateTo(t, dsn, 5) },
+			stderr: "Error: reset-dirty changes only a dirty record. The record reads 5, clean. The record was not changed.\n",
+			record: []string{"5,false"},
+		},
+		{
+			name:   "no version",
+			setup:  func(t *testing.T, dsn string) {},
+			stderr: "Error: reset-dirty changes only a dirty record. The record holds no version. The record was not changed.\n",
+			record: nil,
+		},
+		{
+			name:   "minus one dirty",
+			setup:  func(t *testing.T, dsn string) { migrateTo(t, dsn, 1); setRecord(t, dsn, -1, true) },
+			stderr: "Error: The record reads -1, dirty. reset-dirty does not change a record at -1. The record was not changed.\n",
+			record: []string{"-1,true"},
+		},
+		{
+			name:  "not in the directory",
+			setup: func(t *testing.T, dsn string) { migrateTo(t, dsn, 5); setRecord(t, dsn, 99, true) },
+			stderr: "Error: The record reads 99, dirty. The migrations directory " + platform.FindMigrationsDir(t) +
+				" has no migration 99. The record was not changed.\n",
+			record: []string{"99,true"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dsn := newMigrateDatabase(t)
+			tc.setup(t, dsn)
+
+			out, err := runMigrate(t, dsn, "reset-dirty")
+
+			require.Error(t, err)
+			require.Equal(t, tc.stderr, out.stderr.String())
+			require.Empty(t, out.stdout.String())
+			require.Equal(t, tc.record, readRecord(t, dsn))
+		})
+	}
+}

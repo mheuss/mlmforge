@@ -18,7 +18,7 @@ type ConnectTimeoutError struct {
 }
 
 func (e *ConnectTimeoutError) Error() string {
-	return fmt.Sprintf("no connection to %s was made; waited %.1fs", e.Hosts, e.Waited.Seconds())
+	return fmt.Sprintf("the connection to %s did not complete; waited %.1fs", e.Hosts, e.Waited.Seconds())
 }
 
 func (e *ConnectTimeoutError) Unwrap() error { return e.Err }

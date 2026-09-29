@@ -92,7 +92,7 @@ func TestTimeConnect_WrapsANetTimeout(t *testing.T) {
 	require.Equal(t, "db:5432", cte.Hosts)
 	require.GreaterOrEqual(t, cte.Waited, 20*time.Millisecond)
 	require.ErrorIs(t, err, driverErr)
-	require.Regexp(t, `^no connection to db:5432 was made; waited \d+\.\ds$`, err.Error())
+	require.Regexp(t, `^the connection to db:5432 did not complete; waited \d+\.\ds$`, err.Error())
 }
 
 func TestTimeConnect_WrapsADeadlineExceeded(t *testing.T) {
@@ -152,5 +152,5 @@ func TestConnectTimeoutError_TextHoldsOnlyTheHostsAndTheWait(t *testing.T) {
 		Err:    errors.New("failed to connect to `user=u database=app` with password s3cret"),
 	}
 
-	require.Equal(t, "no connection to db:5432 was made; waited 1.5s", err.Error())
+	require.Equal(t, "the connection to db:5432 did not complete; waited 1.5s", err.Error())
 }

@@ -71,11 +71,11 @@ const getByTreeDepthOrderedSQL = getByTreeSQL + ` ORDER BY depth ASC, enrolled_a
 // ties the first already resolved.
 const getNodeIncludingRemovedSQL = `SELECT ` + treeNodeSelectColumns +
 	` FROM tree_nodes WHERE tree_id = $1 AND user_id = $2
-	  ORDER BY removed_at DESC NULLS FIRST LIMIT 1`
+	  ORDER BY removed_at DESC NULLS FIRST, id DESC LIMIT 1`
 
 const getNodeByRemovalEventSQL = `SELECT ` + treeNodeSelectColumns +
 	` FROM tree_nodes WHERE tree_id = $1 AND removed_by_event_id = $2
-	  ORDER BY removed_at DESC LIMIT 1`
+	  ORDER BY removed_at DESC, id DESC LIMIT 1`
 
 func NewPostgresTreeStore(pool *pgxpool.Pool) *PostgresTreeStore {
 	return &PostgresTreeStore{pool: pool}

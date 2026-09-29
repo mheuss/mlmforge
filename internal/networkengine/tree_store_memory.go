@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -178,7 +179,7 @@ func (s *MemoryTreeStore) GetNodeIncludingRemoved(ctx context.Context, treeID, u
 		if n.RemovedAt == nil {
 			return &n, nil
 		}
-		if best == nil || best.RemovedAt.Before(*n.RemovedAt) {
+		if best == nil || ranksAhead(n, *best) {
 			best = &n
 		}
 	}
@@ -196,11 +197,21 @@ func (s *MemoryTreeStore) GetNodeByRemovalEvent(ctx context.Context, treeID, rem
 			continue
 		}
 		n := s.nodes[i]
-		if best == nil || best.RemovedAt.Before(*n.RemovedAt) {
+		if best == nil || ranksAhead(n, *best) {
 			best = &n
 		}
 	}
 	return best, nil
+}
+
+// ranksAhead reports whether tombstone a comes before tombstone b: removed
+// later, or removed at the same instant with the higher id.
+func ranksAhead(a, b TreeNodeRow) bool {
+	if !a.RemovedAt.Equal(*b.RemovedAt) {
+		return a.RemovedAt.After(*b.RemovedAt)
+	}
+	// Lowercased so a mixed-case id sorts as its canonical UUID text.
+	return strings.ToLower(a.ID) > strings.ToLower(b.ID)
 }
 
 func (s *MemoryTreeStore) GetChildren(ctx context.Context, treeID, parentUserID string) ([]TreeNodeRow, error) {

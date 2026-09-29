@@ -15,12 +15,14 @@ type recordingDriver struct {
 	database.Driver
 	calls     []string
 	record    Record
+	lockErr   error
+	setErr    error
 	unlockErr error
 }
 
 func (d *recordingDriver) Lock() error {
 	d.calls = append(d.calls, "Lock")
-	return nil
+	return d.lockErr
 }
 
 func (d *recordingDriver) Unlock() error {
@@ -35,7 +37,7 @@ func (d *recordingDriver) Version() (int, bool, error) {
 
 func (d *recordingDriver) SetVersion(version int, dirty bool) error {
 	d.calls = append(d.calls, fmt.Sprintf("SetVersion(%d, %t)", version, dirty))
-	return nil
+	return d.setErr
 }
 
 // resetMigration returns a migration over the real migrations directory with driver as its database.
@@ -75,4 +77,26 @@ func TestResetDirty_AnUnlockFailureAfterTheWriteKeepsTheResult(t *testing.T) {
 	assert.NoError(t, rest)
 	assert.Equal(t, []error{&ReleaseError{What: "releasing the migration lock failed", Err: errors.New("u")}}, releases)
 	assert.Equal(t, ResetResult{From: Record{Version: 6, Dirty: true}, To: Record{Version: 5}}, res)
+}
+
+func TestResetDirty_AFailedLockCallsNothingElse(t *testing.T) {
+	driver := &recordingDriver{record: Record{Version: 6, Dirty: true}, lockErr: errors.New("l")}
+
+	_, err := resetMigration(t, driver).resetDirty()
+
+	var notWritten *NotWrittenError
+	require.ErrorAs(t, err, &notWritten)
+	assert.EqualError(t, err, "take migration lock: l")
+	assert.Equal(t, []string{"Lock"}, driver.calls)
+}
+
+func TestResetDirty_AFailedWriteReReadsTheRecordInsideTheLock(t *testing.T) {
+	driver := &recordingDriver{record: Record{Version: 6, Dirty: true}, setErr: errors.New("s")}
+
+	_, err := resetMigration(t, driver).resetDirty()
+
+	var write *WriteError
+	require.ErrorAs(t, err, &write)
+	assert.Equal(t, RecordRead{Record: Record{Version: 6, Dirty: true}}, write.After)
+	assert.Equal(t, []string{"Lock", "Version", "SetVersion(5, false)", "Version", "Unlock"}, driver.calls)
 }

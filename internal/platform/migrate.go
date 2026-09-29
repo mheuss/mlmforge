@@ -255,7 +255,7 @@ func ResetDirty(dbURL, migrationsPath string) (res ResetResult, err error) {
 // resetDirty reads the record and rewrites it while holding the migration lock.
 func (mg *migration) resetDirty() (res ResetResult, err error) {
 	if err = mg.db.Lock(); err != nil {
-		return ResetResult{}, fmt.Errorf("take migration lock: %w", err)
+		return ResetResult{}, &NotWrittenError{Err: fmt.Errorf("take migration lock: %w", err)}
 	}
 	defer func() {
 		if unlockErr := mg.db.Unlock(); unlockErr != nil {
@@ -265,7 +265,7 @@ func (mg *migration) resetDirty() (res ResetResult, err error) {
 
 	rec, err := mg.readRecord()
 	if err != nil {
-		return ResetResult{}, fmt.Errorf("read migration record: %w", err)
+		return ResetResult{}, &NotWrittenError{Err: fmt.Errorf("read migration record: %w", err)}
 	}
 	if rec.Version < 0 && rec.Dirty {
 		return ResetResult{}, &NegativeVersionError{Record: rec}
@@ -275,7 +275,7 @@ func (mg *migration) resetDirty() (res ResetResult, err error) {
 	}
 	src := mg.sourceInfo(rec.Version)
 	if src.Err != nil {
-		return ResetResult{}, fmt.Errorf("read migration %d from %s: %w", rec.Version, src.Path, src.Err)
+		return ResetResult{}, &NotWrittenError{Err: fmt.Errorf("read migration %d from %s: %w", rec.Version, src.Path, src.Err)}
 	}
 	if !src.InSource {
 		return ResetResult{}, &VersionNotInSourceError{Record: rec, Path: src.Path}
@@ -286,7 +286,7 @@ func (mg *migration) resetDirty() (res ResetResult, err error) {
 		to.Version = int(src.Previous)
 	}
 	if err = mg.db.SetVersion(to.Version, false); err != nil {
-		return ResetResult{}, fmt.Errorf("write migration record: %w", err)
+		return ResetResult{}, &WriteError{Err: err, After: mg.recordRead()}
 	}
 	return ResetResult{From: rec, To: to}, nil
 }

@@ -318,3 +318,19 @@ func TestMigrateError_EachResetRefusalNamesTheRecordAndSaysNothingChanged(t *tes
 		requireNoForce(t, got.Error())
 	}
 }
+
+func TestMigrateError_AResetThatFailedBeforeWritingSaysSo(t *testing.T) {
+	err := migrateError("reset-dirty", &platform.NotWrittenError{Err: errors.New("take migration lock: l")})
+
+	require.EqualError(t, err, "take migration lock: l\nThis run did not write the record.")
+	requireNoForce(t, err.Error())
+}
+
+func TestWriteFailureText_NamesTheRecordReadAfterTheFailure(t *testing.T) {
+	read := writeFailureText(&platform.WriteError{Err: errors.New("s"), After: platform.RecordRead{Record: sixDirty}})
+	unread := writeFailureText(&platform.WriteError{Err: errors.New("s"), After: platform.RecordRead{Err: errors.New("r")}})
+
+	require.Equal(t, "write migration record: s\nThe record now reads 6, dirty.", read)
+	require.Equal(t, "write migration record: s\nThe record could not be read after the failure: r.", unread)
+	requireNoForce(t, read+unread)
+}

@@ -173,3 +173,22 @@ func withReleases(err error, releases []error) error {
 	}
 	return errors.Join(append([]error{err}, releases...)...)
 }
+
+// NotWrittenError reports a reset that failed before it wrote the record.
+type NotWrittenError struct {
+	Err error
+}
+
+func (e *NotWrittenError) Error() string { return e.Err.Error() }
+
+func (e *NotWrittenError) Unwrap() error { return e.Err }
+
+// WriteError reports a failed write of the record and the record read after it.
+type WriteError struct {
+	Err   error
+	After RecordRead
+}
+
+func (e *WriteError) Error() string { return "write migration record: " + e.Err.Error() }
+
+func (e *WriteError) Unwrap() error { return e.Err }

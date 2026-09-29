@@ -133,6 +133,8 @@ func migrateErrorText(command string, err error) (string, bool) {
 		notDirty *platform.NotDirtyError
 		negative *platform.NegativeVersionError
 		missing  *platform.VersionNotInSourceError
+		notWrote *platform.NotWrittenError
+		write    *platform.WriteError
 	)
 	switch {
 	case errors.As(err, &multi):
@@ -150,6 +152,10 @@ func migrateErrorText(command string, err error) (string, bool) {
 	case errors.As(err, &missing):
 		return fmt.Sprintf("The record %s. The migrations directory %s has no migration %d. %s",
 			describeRecord(missing.Record), missing.Path, missing.Record.Version, unchangedText), true
+	case errors.As(err, &notWrote):
+		return notWrote.Error() + "\nThis run did not write the record.", true
+	case errors.As(err, &write):
+		return writeFailureText(write), true
 	}
 	return "", false
 }
@@ -214,4 +220,12 @@ func rollbackFailureText(e *platform.RollbackError) string {
 // resetText describes a completed reset.
 func resetText(r platform.ResetResult) string {
 	return fmt.Sprintf("The record %s. It now %s.\nRun %s next.", describeRecordBefore(r.From), describeRecord(r.To), upCommand)
+}
+
+// writeFailureText is the text for a failed write of the record.
+func writeFailureText(e *platform.WriteError) string {
+	if e.After.Err != nil {
+		return fmt.Sprintf("%s\nThe record could not be read after the failure: %v.", e.Error(), e.After.Err)
+	}
+	return fmt.Sprintf("%s\nThe record now %s.", e.Error(), describeRecord(e.After.Record))
 }

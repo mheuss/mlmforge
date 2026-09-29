@@ -1114,7 +1114,7 @@ if errors.As(err, &unknown) {
 
 **Problem:** A writer that loses its lock can project its event after later events have projected. The store then goes backwards, and nothing reports it. A writer that loses its lock after loading can also append from an engine that missed events.
 
-**Solution:** `tree_projections` holds each tree's projected version. `ProjectInsert`, `ProjectRemoval` and `UndoRootProjection` check it in the same transaction as their row writes, and refuse an event below it with `ProjectionRefusedError`. The writer reads the version before it loads, and appends only when the stream's last event is at that version or one past it.
+**Solution:** `tree_projections` holds each tree's projected version. `ProjectInsert` and `ProjectRemoval` check it in the same transaction as their row writes, and refuse an event below it with `ProjectionRefusedError`. `UndoRootProjection` runs only when the version equals the event's. The writer reads the version before it loads, and appends only when the stream's last event is at that version or one past it.
 
 **Usage:**
 ```go

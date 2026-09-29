@@ -907,7 +907,7 @@ Each invocation starts a worker. It rebuilds the tree in the worker from the sto
 
 ### The projected version
 
-The store records one version per tree, the stream version its rows reflect, in `tree_projections` (migration 000009). `ProjectInsert`, `ProjectRemoval` and `UndoRootProjection` check it in the same transaction as their row writes. An event below it is refused with `ProjectionRefusedError` and writes nothing. An event at it runs the existing redelivery logic, which writes nothing for an event the store already holds. `InsertNode`, `DeleteNode`, `DeleteNodeAndResponsor` and `BulkInsert` record no version. A guard test fails if non-test code outside the stores calls them. Trees created before migration 000009 have no projection row, and the writer refuses them once their stream passes version 1.
+The store records one version per tree, the stream version its rows reflect, in `tree_projections` (migration 000009). `ProjectInsert` and `ProjectRemoval` check it in the same transaction as their row writes. An event below it is refused with `ProjectionRefusedError` and writes nothing. `UndoRootProjection` requires the version to equal the event's, and otherwise returns a plain error and deletes nothing. An event at it runs the existing redelivery logic, which writes nothing for an event the store already holds. `InsertNode`, `DeleteNode`, `DeleteNodeAndResponsor` and `BulkInsert` record no version. A guard test fails if non-test code outside the stores calls them. Trees created before migration 000009 have no projection row, and the writer refuses them once their stream passes version 1.
 
 ### Before the append
 

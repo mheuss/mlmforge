@@ -37,11 +37,11 @@ A validator cannot be the fix. Once a freed slot is reused the stale index names
 
 ### The engine is not the only holder of a sponsor edge
 
-`tree_nodes.sponsor_id` holds one too. The Go store soft-deletes the removed row and touches no other row. The startup bulk load selects only rows where `removed_at` is null. So a repair that lives only in the engine leaves the store naming a user the load will not return, and the tree stops rebuilding after a restart.
+`tree_nodes.sponsor_id` holds one too. Before this decision, the Go store soft-deleted the removed row and touched no other row. The startup bulk load selects only rows where `removed_at` is null. So a repair that lives only in the engine leaves the store naming a user the load will not return, and the tree stops rebuilding after a restart.
 
 Repairing one holder and not the other is worse than repairing neither, because the two then disagree and nothing reconciles them.
 
-**The engine must therefore report which recruits it moved, and the projection must write them.** That is what the `remove_node` response field and the accompanying protocol move are for. Both land with this decision on the same branch.
+**The engine must therefore report which recruits it moved, and the projection must write them.** That is what the `remove_node` response field and the accompanying protocol move are for. Both landed with this decision.
 
 The client requires that field on decode rather than letting it default. Absence and emptiness are different claims. An empty list says the engine looked and moved nobody, which a caller can act on. A missing key says nothing at all. Defaulting turns silence into the one answer that needs no work, so a worker that dropped the field would read as a worker that had nothing to move.
 
@@ -113,12 +113,14 @@ This is a different failure class from the lost reply above, and the two should 
 
 The ordering this decision requires is what makes it necessary to serialise writes per tree. `TreeWriter` does that. It holds a per-tree Postgres advisory lock from before it loads the tree until its projection returns. It calls `HandleEvent` under that lock. So while the lock is held, a second write to the same tree cannot load, append or project in between. A caller of `HandleEvent` that does not hold the tree's lock reopens this gap.
 
-The lock lives on a database connection of its own. If that connection dies, Postgres releases the lock. When that happens after the writer appends, a second writer can start while the first is still projecting.
+The lock lives on a database connection of its own. If that connection dies, Postgres releases the lock. A second writer can then take it while the first is still writing. What the store ends up holding depends on how far the first writer had got.
 
-Before it appends, the second writer projects the last event in the stream. That is the first writer's removal. So both writers now project the removal of B. The store refuses to land it twice. Its soft delete requires exactly one active row. Every re-sponsor beside it makes the same check. Whichever writer reaches the store second finds no active row. Its transaction rolls back with the sponsor updates inside it.
+If the first writer had already appended, the second writer projects the last event in the stream before it appends. That is the first writer's removal. So both writers now project the removal of B. The store refuses to land it twice. Its soft delete requires exactly one active row. Every re-sponsor beside it makes the same check. Whichever writer reaches the store second finds no active row. Its transaction rolls back with the sponsor updates inside it.
 
 If the first writer's write is the one rolled back, it reports a projection error. The second writer's removal of A then completes. If the second writer's write is the one rolled back, its catch-up fails. It appends nothing. Its own removal of A fails even when it was valid. Integration tests cover both outcomes.
 
-The check does not cover a user placed again before the late write lands. The soft delete matches the user's active row, not the row the removal targeted. If B is placed again after the first writer appends, the late removal matches B's new row. It passes the check and commits its sponsor updates. The store then holds no active B. C gets the sponsor the first writer's engine computed from the tree before B was placed again. If A has since been removed, C is sponsored by a removed user. A test records this and is skipped until HEU-857 lands. Before the test was skipped, it ran once, and no writer reported an error.
+The check does not cover a user placed again before the late write lands. The soft delete matches the user's active row, not the row the removal targeted. If B is placed again after the first writer appends, the late removal matches B's new row. It passes the check and commits its sponsor updates. The store then holds no active B. C gets the sponsor the first writer's engine computed from the tree before B was placed again. If A has since been removed, C is sponsored by a removed user. A test records this and is skipped until HEU-857 lands. In its run before the skip, every writer's error and projection error was nil. The first writer's release error was set, because its lock connection had been terminated.
+
+If the first writer had only loaded the tree, it reads the stream's last event after the second writer's events have landed. Catch-up applies only that last event. So the first writer checks and appends against a tree that misses the events before it, at a version that looks current. Two tests record this and are skipped until HEU-859 lands. In one, a removal leaves a recruit placed in the meantime sponsored by the removed user. In the other, a placement under a user removed in the meantime fails to project. Every later write to that tree then fails its catch-up.
 
 The three matrix repair sites have no path to the store. Matrix removal never reaches the engine through the consumer, so nothing carries their moved recruits to `tree_nodes`. The engine half is done and the store half is not, which is the shape the rule two sections up warns about. Whoever wires matrix removal up has to wire both. HEU-582 carries the missing dispatch.

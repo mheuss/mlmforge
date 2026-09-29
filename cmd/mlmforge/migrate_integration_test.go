@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -325,4 +327,43 @@ func TestMigrateDown_AVersionWithNoFileIsAnErrorNotNothingToRollBack(t *testing.
 	require.Error(t, err)
 	require.NotContains(t, out.stdout.String(), "No migrations to roll back.")
 	require.Equal(t, []string{"99,false"}, readRecord(t, dsn))
+}
+
+// latestMigration returns the highest version among the up migration files.
+func latestMigration(t *testing.T) int {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(platform.FindMigrationsDir(t), "*.up.sql"))
+	require.NoError(t, err)
+	latest := -1
+	for _, file := range files {
+		n, err := strconv.Atoi(strings.SplitN(filepath.Base(file), "_", 2)[0])
+		require.NoError(t, err, file)
+		latest = max(latest, n)
+	}
+	require.GreaterOrEqual(t, latest, 6, "found no migration at or past 6 in %v", files)
+	return latest
+}
+
+func TestMigrate_RecoversFromTheRootIndexFailureWithResetDirty(t *testing.T) {
+	dsn := newMigrateDatabase(t)
+	migrateTo(t, dsn, 5)
+	tree := testTreeID(831)
+	insertActiveRoots(t, dsn, tree)
+
+	out, err := runMigrate(t, dsn, "up")
+	require.Error(t, err)
+	require.Contains(t, out.stderr.String(), "Key (tree_id)=("+tree+") is duplicated")
+	require.Equal(t, []string{"6,true"}, readRecord(t, dsn))
+
+	conn := connectTo(t, dsn)
+	_, err = conn.Exec(t.Context(), "DELETE FROM tree_nodes WHERE tree_id = $1 AND user_id = $2", tree, testUserID(2))
+	require.NoError(t, err)
+
+	out, err = runMigrate(t, dsn, "reset-dirty")
+	require.NoError(t, err, out.stderr.String())
+	require.Equal(t, "The record read 6, dirty. It now reads 5, clean.\nRun `mlmforge migrate up` next.\n", out.stdout.String())
+
+	out, err = runMigrate(t, dsn, "up")
+	require.NoError(t, err, out.stderr.String())
+	require.Equal(t, []string{fmt.Sprintf("%d,false", latestMigration(t))}, readRecord(t, dsn))
 }

@@ -230,7 +230,7 @@ func TestTreeWriter_APlacementProjectedAfterItsLockWasLostIsRefused(t *testing.T
 
 func TestTreeWriter_ALateRemovalLeavesAUserPlacedAgainActive(t *testing.T) {
 	t.Skip("skipped until HEU-857: a late removal tombstoned B, placed again, and left C sponsored by removed A; " +
-		"every writer's error and projection error was nil, writer 1's release error was set because its lock connection was terminated, " +
+		"the scenario's writers returned no error and no projection error, writer 1's release error was set because its lock connection was terminated, " +
 		"and the next write failed to load the tree because C names a sponsor not in it")
 	it := newWriterIntegration(t)
 	ctx := context.Background()
@@ -260,7 +260,7 @@ func TestTreeWriter_ALateRemovalLeavesAUserPlacedAgainActive(t *testing.T) {
 	assert.ErrorContains(t, first.ReleaseErr, "the pg_advisory_unlock query for tree "+tree+" failed")
 	next, nextErr := it.writer(t).Place(ctx, PlaceRequest{
 		TreeID: tree, UserID: y, ParentID: root, SponsorID: root, EnrolledAt: writeTime.Add(7 * time.Hour)})
-	assert.NoError(t, nextErr, "a placement under the root after the first writer's late projection")
+	assert.NoError(t, nextErr, "a placement under the root after the first writer's attempt")
 	assert.NoError(t, next.ProjectionErr)
 }
 
@@ -285,7 +285,7 @@ func (s *lockKillingLoadStore) GetByTreeDepthOrdered(ctx context.Context, treeID
 
 func TestTreeWriter_ARemovalAfterALockLostBeforeItsAppendMovesEveryRecruit(t *testing.T) {
 	t.Skip("skipped until HEU-859: writer 1 lost its lock after its load, D was placed sponsored by B, and writer 1's removal of B left D sponsored by removed B; " +
-		"every writer's error and projection error was nil, writer 1's release error was set because its lock connection was terminated, " +
+		"the scenario's writers returned no error and no projection error, writer 1's release error was set because its lock connection was terminated, " +
 		"and the next write failed to load the tree because D names a sponsor not in it")
 	it := newWriterIntegration(t)
 	ctx := context.Background()
@@ -322,8 +322,8 @@ func TestTreeWriter_ARemovalAfterALockLostBeforeItsAppendMovesEveryRecruit(t *te
 		require.NoError(t, json.Unmarshal(ev.Payload, &p))
 		removalAppended = removalAppended || p.UserID == b
 	}
-	// The next write redelivers the stream's last event, so the store is
-	// judged after it rather than straight after the first writer returns.
+	// Judged after one more write, which may finish a projection the first
+	// writer left undone.
 	next, nextErr := it.writer(t).Place(ctx, PlaceRequest{
 		TreeID: tree, UserID: y, ParentID: root, SponsorID: root, EnrolledAt: writeTime.Add(8 * time.Hour)})
 	assert.NoError(t, nextErr, "a placement under the root after the first writer's attempt")

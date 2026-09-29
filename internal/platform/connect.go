@@ -62,6 +62,14 @@ func connectHosts(dbURL string) (string, bool) {
 	beforeFragment, _, _ := strings.Cut(rest, "#")
 	beforeQuery, rawQuery, _ := strings.Cut(beforeFragment, "?")
 	authority, _, _ := strings.Cut(beforeQuery, "/")
+	// An '@' past the authority means a raw '/', '?' or '#' split the userinfo, so the host part could hold password text.
+	if strings.Count(rest, "@") != strings.Count(authority, "@") {
+		return "", false
+	}
+	// Without this, a malformed pair such as 'port=1;password=x' would be echoed whole below.
+	if _, err := url.ParseQuery(rawQuery); err != nil {
+		return "", false
+	}
 	hostPart := authority
 	if at := strings.LastIndex(authority, "@"); at >= 0 {
 		hostPart = authority[at+1:]

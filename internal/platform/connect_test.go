@@ -17,6 +17,13 @@ func (fakeTimeout) Error() string   { return "read tcp: i/o timeout" }
 func (fakeTimeout) Timeout() bool   { return true }
 func (fakeTimeout) Temporary() bool { return false }
 
+// fakeRefused is a net.Error that does not report a timeout.
+type fakeRefused struct{}
+
+func (fakeRefused) Error() string   { return "dial tcp: connect: connection refused" }
+func (fakeRefused) Timeout() bool   { return false }
+func (fakeRefused) Temporary() bool { return false }
+
 func TestConnectHosts_StatesTheURLsHostFields(t *testing.T) {
 	tests := []struct {
 		name string
@@ -32,6 +39,9 @@ func TestConnectHosts_StatesTheURLsHostFields(t *testing.T) {
 		{name: "encoded at-sign in the password", url: "postgres://u:p%40ss@db:5432/app", want: "db:5432"},
 		{name: "query and fragment", url: "postgres://db:5432?sslmode=disable#frag", want: "db:5432"},
 		{name: "IPv6 host", url: "postgres://u@[::1]:5432/app", want: "[::1]:5432"},
+		{name: "raw at-sign in the password", url: "postgres://u:p@s3cret@db:5432/app", want: "db:5432"},
+		{name: "query after a fragment", url: "postgres://db:5432/app#x?host=evil", want: "db:5432"},
+		{name: "slash inside the query", url: "postgres://db:5432?sslmode=disable&x=/y", want: "db:5432"},
 		{name: "encoded query keys", url: "postgres://db/app?h%6fst=other&p%6frt=5433", want: "db (query h%6fst=other, query p%6frt=5433)"},
 	}
 	for _, tt := range tests {
@@ -50,6 +60,12 @@ func TestConnectHosts_RefusesAStringItCannotRead(t *testing.T) {
 		"host=db dbname=app",
 		"mysql://db/app",
 		"postgres://u:p@[::1]:5432,[::2]/app",
+		"postgres://u@db/app?port=5433;password=s3cret",
+		"postgres://u@db/app?host=db2;password=s3cret&connect_timeout=1",
+		"postgres://u@db/app?host=%zz",
+		"postgres://u:12/s3cret@db/app",
+		"postgres://u:ab?s3cret@db/app",
+		"postgres://u:p@x/s3cret@db/app",
 	} {
 		_, ok := connectHosts(raw)
 
@@ -95,6 +111,14 @@ func TestTimeConnect_PassesThroughWhenTheCallerWasCancelled(t *testing.T) {
 
 func TestTimeConnect_PassesThroughANonTimeout(t *testing.T) {
 	refused := errors.New("dial tcp 127.0.0.1:1: connect: connection refused")
+
+	err := TimeConnect(context.Background(), "postgres://db:5432/app", func() error { return refused })
+
+	require.Same(t, refused, err)
+}
+
+func TestTimeConnect_PassesThroughANetErrorThatIsNotATimeout(t *testing.T) {
+	refused := fmt.Errorf("dial: %w", fakeRefused{})
 
 	err := TimeConnect(context.Background(), "postgres://db:5432/app", func() error { return refused })
 

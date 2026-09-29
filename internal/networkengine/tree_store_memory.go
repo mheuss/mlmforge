@@ -274,6 +274,9 @@ func (s *MemoryTreeStore) ProjectRemoval(
 }
 
 func (s *MemoryTreeStore) UndoRootProjection(ctx context.Context, treeID, userID string, eventVersion int64) error {
+	if err := checkEventVersion(treeID, eventVersion); err != nil {
+		return err
+	}
 	projected, found := s.projected[treeID]
 	if !found {
 		return fmt.Errorf("tree %s has no projection row; the root row for %s was not deleted", treeID, userID)
@@ -282,7 +285,11 @@ func (s *MemoryTreeStore) UndoRootProjection(ctx context.Context, treeID, userID
 		return fmt.Errorf("tree %s has projected version %d, not %d; the root row for %s was not deleted",
 			treeID, projected, eventVersion, userID)
 	}
-	if row, _ := s.GetNode(ctx, treeID, userID); row == nil {
+	row, err := s.GetNode(ctx, treeID, userID)
+	if err != nil {
+		return err
+	}
+	if row == nil {
 		return fmt.Errorf("soft delete for root %s in tree %s matched 0 active rows; the projected version was not changed",
 			userID, treeID)
 	}
@@ -293,8 +300,12 @@ func (s *MemoryTreeStore) UndoRootProjection(ctx context.Context, treeID, userID
 	return nil
 }
 
-// refuseBelow refuses an event below the tree's projected version.
+// refuseBelow refuses an event version below 1, or below the tree's projected
+// version.
 func (s *MemoryTreeStore) refuseBelow(treeID string, eventVersion int64) error {
+	if err := checkEventVersion(treeID, eventVersion); err != nil {
+		return err
+	}
 	if projected := s.projected[treeID]; eventVersion < projected {
 		return &ProjectionRefusedError{TreeID: treeID, EventVersion: eventVersion, ProjectedVersion: projected}
 	}

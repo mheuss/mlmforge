@@ -91,12 +91,12 @@ type TreeStore interface {
 	// is a sort within each depth group.
 	GetByTreeDepthOrdered(ctx context.Context, treeID string) ([]TreeNodeRow, error)
 
-	// BulkInsert adds multiple nodes in a single transaction. It loads
-	// fixtures, and records no projected version.
+	// BulkInsert adds multiple nodes in a single transaction, and records no
+	// projected version.
 	BulkInsert(ctx context.Context, nodes []TreeNodeRow) error
 
-	// ProjectedVersion returns the highest stream version projected for the
-	// tree. found is false when the tree has no projection row.
+	// ProjectedVersion returns the stream version the tree's rows reflect.
+	// found is false when the tree has no projection row.
 	ProjectedVersion(ctx context.Context, treeID string) (version int64, found bool, err error)
 
 	// ProjectInsert inserts the row that the event at eventVersion projects,
@@ -125,6 +125,15 @@ type ProjectionRefusedError struct {
 func (e *ProjectionRefusedError) Error() string {
 	return fmt.Sprintf("tree %s has projected version %d; the event at version %d was not projected",
 		e.TreeID, e.ProjectedVersion, e.EventVersion)
+}
+
+// checkEventVersion refuses an event version below 1, which no stream event
+// carries.
+func checkEventVersion(treeID string, eventVersion int64) error {
+	if eventVersion < 1 {
+		return fmt.Errorf("tree %s was given event version %d, below 1; nothing was written", treeID, eventVersion)
+	}
+	return nil
 }
 
 // The conditions an insert can be refused for, and one the consumer raises

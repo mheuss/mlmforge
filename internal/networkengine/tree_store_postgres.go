@@ -282,9 +282,8 @@ func scanTreeNodes(rows pgx.Rows) ([]TreeNodeRow, error) {
 	return nodes, rows.Err()
 }
 
-// The row is created at 0 before it is locked, so two first projections of
-// one tree queue on it. DO NOTHING leaves the transaction usable where a
-// unique violation would abort it.
+// DO NOTHING leaves the transaction usable where a unique violation would
+// abort it.
 const (
 	createProjectionSQL = `INSERT INTO tree_projections (tree_id, projected_version) VALUES ($1, 0)
 		 ON CONFLICT (tree_id) DO NOTHING`
@@ -326,12 +325,18 @@ func (s *PostgresTreeStore) ProjectRemoval(
 // project runs write in one transaction that refuses an event below the tree's
 // projected version, and records eventVersion when it is higher.
 func (s *PostgresTreeStore) project(ctx context.Context, treeID string, eventVersion int64, write func(pgx.Tx) error) error {
+	if err := checkEventVersion(treeID, eventVersion); err != nil {
+		return err
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Created at 0 before it is locked, so two first projections of one tree
+	// queue on it. Without the FOR UPDATE below, a lower version could commit
+	// after a higher one and move the version back.
 	if _, err := tx.Exec(ctx, createProjectionSQL, treeID); err != nil {
 		return err
 	}
@@ -354,6 +359,9 @@ func (s *PostgresTreeStore) project(ctx context.Context, treeID string, eventVer
 }
 
 func (s *PostgresTreeStore) UndoRootProjection(ctx context.Context, treeID, userID string, eventVersion int64) error {
+	if err := checkEventVersion(treeID, eventVersion); err != nil {
+		return err
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return err

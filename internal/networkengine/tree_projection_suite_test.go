@@ -3,7 +3,9 @@ package networkengine
 import (
 	"context"
 	"testing"
+	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -254,6 +256,35 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		assert.Equal(t, before, readProjectionState(t, s, tree, root, child))
 	})
 
+	t.Run("undoing a root in a tree with no projection row deletes nothing", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		require.NoError(t, s.InsertNode(ctx, rootRow))
+		before := readProjectionState(t, s, tree, root)
+
+		err := s.UndoRootProjection(ctx, tree, root, 1)
+
+		require.EqualError(t, err, "tree "+tree+" has no projection row; the root row for "+root+" was not deleted")
+		assert.Equal(t, before, readProjectionState(t, s, tree, root))
+	})
+
+	t.Run("an event version below 1 is refused and writes nothing", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		insertErr := s.ProjectInsert(ctx, rootRow, 0)
+		removeErr := s.ProjectRemoval(ctx, tree, root, testNodeUUID(9), 0, nil)
+		undoErr := s.UndoRootProjection(ctx, tree, root, 0)
+
+		want := "tree " + tree + " was given event version 0, below 1; nothing was written"
+		require.EqualError(t, insertErr, want)
+		require.EqualError(t, removeErr, want)
+		require.EqualError(t, undoErr, want)
+		got := readProjectionState(t, s, tree, root)
+		assert.False(t, got.found)
+		assert.Nil(t, got.rows[root])
+	})
+
 	t.Run("undoing a root at a version the tree is not at deletes nothing", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
@@ -280,8 +311,6 @@ func TestPostgresTreeStore_ProjectionSuite(t *testing.T) {
 	})
 }
 
-// Two first projections of one tree queue on its projection row. The second
-// meets the first's committed row at the same version.
 func TestPostgresTreeStore_ConcurrentFirstProjectionsQueue(t *testing.T) {
 	store := newTestPostgresTreeStore(t)
 	ctx := context.Background()
@@ -316,4 +345,63 @@ func TestPostgresTreeStore_ConcurrentFirstProjectionsQueue(t *testing.T) {
 		assert.True(t, found, "round %d", i)
 		assert.Equal(t, int64(1), version, "round %d", i)
 	}
+}
+
+// waitForLockWaiters polls until at least n backends in this database wait on
+// a lock.
+func waitForLockWaiters(t *testing.T, pool *pgxpool.Pool, n int) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var waiting int
+		require.NoError(t, pool.QueryRow(context.Background(),
+			`SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database()`,
+		).Scan(&waiting))
+		if waiting >= n {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("after 10s, %d backends were waiting on a lock; want %d", waiting, n)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestPostgresTreeStore_ALowerVersionQueuedBehindAHigherOneIsRefused(t *testing.T) {
+	store := newTestPostgresTreeStore(t)
+	ctx := context.Background()
+	tree, root := testTreeUUID(1), testUserUUID(1)
+	require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
+	require.NoError(t, store.ProjectInsert(ctx,
+		makeUUIDNode(testNodeUUID(2), tree, testUserUUID(2), 1, ptr(root), ptr(root), intPtr(0)), 2))
+
+	blocker, err := store.pool.Begin(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = blocker.Rollback(context.Background()) })
+	_, err = blocker.Exec(ctx, `SELECT 1 FROM tree_projections WHERE tree_id = $1 FOR UPDATE`, tree)
+	require.NoError(t, err)
+
+	higher, lower := make(chan error, 1), make(chan error, 1)
+	go func() {
+		higher <- store.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(4), tree, testUserUUID(4), 1, ptr(root), ptr(root), intPtr(2)), 4)
+	}()
+	waitForLockWaiters(t, store.pool, 1)
+	go func() {
+		lower <- store.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(3), tree, testUserUUID(3), 1, ptr(root), ptr(root), intPtr(1)), 3)
+	}()
+	waitForLockWaiters(t, store.pool, 2)
+	require.NoError(t, blocker.Commit(ctx))
+
+	require.NoError(t, receive(t, higher, 10*time.Second))
+	var refused *ProjectionRefusedError
+	require.ErrorAs(t, receive(t, lower, 10*time.Second), &refused)
+	assert.Equal(t, ProjectionRefusedError{TreeID: tree, EventVersion: 3, ProjectedVersion: 4}, *refused)
+	version, _, err := store.ProjectedVersion(ctx, tree)
+	require.NoError(t, err)
+	assert.Equal(t, int64(4), version)
+	row, err := store.GetNode(ctx, tree, testUserUUID(3))
+	require.NoError(t, err)
+	assert.Nil(t, row, "the lower version's row landed")
 }

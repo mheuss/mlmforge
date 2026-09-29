@@ -67,11 +67,18 @@ func dirtyText(rec platform.Record, src platform.SourceInfo) string {
 	if rec.Version < 0 {
 		return negativeText(rec.Version)
 	}
-	return strings.Join([]string{
-		fmt.Sprintf("The record %s.", describeRecord(rec)),
-		fmt.Sprintf("If a failed %s told you to run %s: %s", upCommand, resetCommand, upRecovery(rec, src, "fix the cause it showed")),
-		fmt.Sprintf("In any other case, including a failed %s: do not run %s.", downCommand, resetCommand),
-	}, "\n")
+	lines := []string{fmt.Sprintf("The record %s.", describeRecord(rec))}
+	switch {
+	case src.Err != nil:
+		lines = append(lines, fmt.Sprintf("The migrations directory %s could not be read for migration %d: %v.", src.Path, rec.Version, src.Err))
+	case !src.InSource:
+		lines = append(lines, fmt.Sprintf("The migrations directory %s has no migration %d, so %s would refuse.", src.Path, rec.Version, resetCommand))
+	}
+	return strings.Join(append(lines,
+		fmt.Sprintf("Run %s only if the %s that failed on this record printed \"run %s\".", resetCommand, upCommand, resetCommand),
+		"Nothing in this output is that instruction.",
+		fmt.Sprintf("In any other case, including a failed %s, do not run it.", downCommand),
+	), "\n")
 }
 
 // versionText renders a Status as a version line and, for a dirty record, its recovery text.
@@ -124,7 +131,7 @@ func applyFailureText(e *platform.ApplyError) string {
 		lines = append(lines, unreadAfter(after.Err), noResetText)
 	case after.Err != nil:
 		lines = append(lines, unreadAfter(after.Err),
-			fmt.Sprintf("Postgres refused the migration file. If %s then shows the record dirty, run %s, then run %s.",
+			fmt.Sprintf("The error shows Postgres refused the migration file. If %s then shows the record dirty, fix the cause shown above, run %s, then run %s.",
 				versionCommand, resetCommand, upCommand))
 	case !after.Record.Dirty:
 	case after.Record.Version < 0:

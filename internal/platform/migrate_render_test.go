@@ -24,7 +24,10 @@ func TestIsBodyFailure_OnlyAPostgresErrorFromTheFileCounts(t *testing.T) {
 	assert.True(t, isBodyFailure(body))
 	assert.False(t, isBodyFailure(database.Error{Err: "migration failed", OrigErr: driver.ErrBadConn}),
 		"a dropped connection may have committed")
-	for _, state := range []string{"08006", "53100", "57P01", "58030", "XX000", "", "235"} {
+	for _, state := range []string{"55P03", "40P01", "42601"} {
+		assert.True(t, isBodyFailure(database.Error{Err: "migration failed: x", OrigErr: serverError{state: state}}), state)
+	}
+	for _, state := range []string{"08006", "53100", "57014", "57P01", "58030", "XX000", "", "235"} {
 		assert.False(t, isBodyFailure(database.Error{Err: "migration failed: x", OrigErr: serverError{state: state}}), state)
 	}
 	assert.False(t, isBodyFailure(database.Error{Err: "migration failed", OrigErr: errors.New("connection reset")}),
@@ -51,5 +54,5 @@ func TestDatabaseErrorText_KeepsTheLineNumberWithoutTheFile(t *testing.T) {
 	got := databaseErrorText(database.Error{Err: "migration failed: syntax error (column 3)", OrigErr: serverError{state: "23505"},
 		Line: 4, Query: []byte("-- a comment\nSELEC 1")})
 
-	assert.Equal(t, "migration failed: syntax error (column 3) (details: pq: duplicate key) in line 4", got)
+	assert.Equal(t, "migration failed: syntax error (column 3) in line 4 (details: pq: duplicate key)", got)
 }

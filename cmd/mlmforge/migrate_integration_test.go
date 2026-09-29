@@ -358,8 +358,9 @@ func TestMigrate_RecoversFromTheRootIndexFailureWithResetDirty(t *testing.T) {
 	require.Equal(t, []string{"6,true"}, readRecord(t, dsn))
 
 	conn := connectTo(t, dsn)
-	_, err = conn.Exec(t.Context(), "DELETE FROM tree_nodes WHERE tree_id = $1 AND user_id = $2", tree, testUserID(2))
+	tag, err := conn.Exec(t.Context(), "UPDATE tree_nodes SET removed_at = now() WHERE tree_id = $1 AND user_id = $2", tree, testUserID(2))
 	require.NoError(t, err)
+	require.EqualValues(t, 1, tag.RowsAffected())
 
 	out, err = runMigrate(t, dsn, "reset-dirty")
 	require.NoError(t, err, out.stderr.String())

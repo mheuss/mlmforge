@@ -65,6 +65,7 @@ type WriteResult struct {
 // TreeWriter appends tree events and projects them, one tree at a time.
 type TreeWriter struct {
 	events   platform.EventStore
+	store    TreeStore
 	engine   TreeEngineChecker
 	locker   TreeLocker
 	loader   *TreeLoader
@@ -91,6 +92,7 @@ func NewTreeWriter(events platform.EventStore, store TreeStore, engine TreeEngin
 	locker TreeLocker, opts ...TreeWriterOption) *TreeWriter {
 	w := &TreeWriter{
 		events:   events,
+		store:    store,
 		engine:   engine,
 		locker:   locker,
 		loader:   NewTreeLoader(store, engine),
@@ -356,6 +358,12 @@ func (w *TreeWriter) write(ctx context.Context, spec writeSpec) (result WriteRes
 	if err != nil {
 		return result, err
 	}
+	// Read before the rows. A projection landing between the two reads then
+	// leaves the engine ahead of loaded, never behind it.
+	loaded, found, err := w.store.ProjectedVersion(ctx, tree)
+	if err != nil {
+		return result, fmt.Errorf("read the projected version of tree %s; nothing was appended: %w", tree, err)
+	}
 	if err := w.load(ctx, tree, shape); err != nil {
 		return result, err
 	}
@@ -365,10 +373,15 @@ func (w *TreeWriter) write(ctx context.Context, spec writeSpec) (result WriteRes
 	}
 	var expected int64
 	if last != nil {
+		expected = last.Version
+	}
+	if err := checkLoadedVersion(tree, loaded, found, expected); err != nil {
+		return result, err
+	}
+	if last != nil {
 		if result.CaughtUp, err = w.catchUp(ctx, tree, stream, *last); err != nil {
 			return result, err
 		}
-		expected = last.Version
 	}
 	if err := w.engine.CheckMutation(ctx, tree, check); err != nil {
 		return result, fmt.Errorf("check_mutation for %s in tree %s returned: %w; nothing was appended",
@@ -420,6 +433,18 @@ func (w *TreeWriter) load(ctx context.Context, tree string, shape treeShape) err
 	}
 	if err != nil {
 		return fmt.Errorf("create tree %s in the engine; nothing was appended: %w", tree, err)
+	}
+	return nil
+}
+
+// checkLoadedVersion refuses a stream whose last version is neither the
+// version the tree was loaded at nor one past it.
+func checkLoadedVersion(tree string, loaded int64, found bool, last int64) error {
+	if last == loaded || last == loaded+1 {
+		return nil
+	}
+	if !found {
+		return &ProjectionMissingError{TreeID: tree, LastVersion: last}
 	}
 	return nil
 }

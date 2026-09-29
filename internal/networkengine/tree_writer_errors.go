@@ -68,3 +68,15 @@ func (e *TreeLockWaitError) Error() string {
 }
 
 func (e *TreeLockWaitError) Unwrap() error { return e.Err }
+
+// ProjectionMissingError reports a tree with no projection row whose stream
+// ends past version 1.
+type ProjectionMissingError struct {
+	TreeID      string
+	LastVersion int64
+}
+
+func (e *ProjectionMissingError) Error() string {
+	return fmt.Sprintf("tree %s has no projection row and stream %s ends at version %d; nothing was appended",
+		e.TreeID, TreeStreamName(e.TreeID), e.LastVersion)
+}

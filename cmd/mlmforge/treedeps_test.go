@@ -191,6 +191,7 @@ func TestStartEngine_ReportsAConnectTimeout(t *testing.T) {
 	require.Equal(t, "db:5432", cte.Hosts)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.ErrorContains(t, err, "reach database: the connection to db:5432 did not complete")
+	require.NotContains(t, err.Error(), "s3cret")
 }
 
 // An unreachable URL reaches the ping rather than failing earlier, which is

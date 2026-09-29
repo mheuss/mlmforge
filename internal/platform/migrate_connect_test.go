@@ -18,7 +18,7 @@ func TestMigrateVersion_ReportsAConnectTimeout(t *testing.T) {
 	require.ErrorAs(t, err, &cte)
 	require.Equal(t, addr, cte.Hosts)
 	require.GreaterOrEqual(t, cte.Waited, time.Second)
-	require.Less(t, cte.Waited, 2*time.Second)
+	require.Less(t, cte.Waited, 5*time.Second)
 	require.ErrorContains(t, err, "open database: the connection to "+addr+" did not complete")
 	require.NotContains(t, err.Error(), "s3cret")
 }

@@ -206,6 +206,28 @@ one is about trusting Postgres to have rejected it already.
 
 A dedicated connection built from a pool's URL has to strip them first. Parse the URL with `pgxpool.ParseConfig`, then connect with its `ConnConfig`. `PostgresTreeLocker` does this, and a URL carrying `pool_max_conns=1` pins it (HEU-301).
 
+## The two Postgres drivers read the URL differently
+
+Read in lib/pq v1.10.9 and pgx v5.9.2. Check again after upgrading either one.
+
+`migrate` reaches Postgres through golang-migrate and lib/pq. The tree commands
+use pgx. One URL can mean different things to each.
+
+- `connect_timeout=0`: lib/pq treats only the exact string `0` as no
+  timeout. It reads `00` as a 0-second deadline. pgx treats any value that
+  parses to 0 as no timeout.
+- An empty `connect_timeout=`: lib/pq drops it and falls back to
+  `PGCONNECT_TIMEOUT`. pgx fails to parse the URL.
+- `PGCONNECT_TIMEOUT`: Both read it. A URL value overrides it in both.
+- Services: pgx reads a `service` key and `PGSERVICE`. A service file
+  overrides the environment but not the URL. lib/pq ignores a `service` key and
+  panics when `PGSERVICE` or `PGSERVICEFILE` exists, even empty (HEU-862).
+- Deadlines: lib/pq's connect deadline covers the dial and startup only.
+  pgx resolves host names before its per-address timeout starts.
+- Errors that quote the URL: Go's `*url.Error` quotes the raw URL, password
+  included. pgx's `ParseConfigError` masks only a password in the userinfo, not
+  one in `?password=` (HEU-867).
+
 ## A finalizer can close what a test expects the code to close
 
 A `pgx.Conn` that nothing references can be closed by the garbage collector's finalizer. A test that counts open sessions after the code should have closed one can then pass with the explicit `Close` deleted.

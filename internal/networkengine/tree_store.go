@@ -127,8 +127,7 @@ func (e *ProjectionRefusedError) Error() string {
 		e.TreeID, e.ProjectedVersion, e.EventVersion)
 }
 
-// checkEventVersion refuses an event version below 1, which no stream event
-// carries.
+// checkEventVersion refuses an event version below 1.
 func checkEventVersion(treeID string, eventVersion int64) error {
 	if eventVersion < 1 {
 		return fmt.Errorf("tree %s was given event version %d, below 1; nothing was written", treeID, eventVersion)

@@ -334,9 +334,9 @@ func (s *PostgresTreeStore) project(ctx context.Context, treeID string, eventVer
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// Created at 0 before it is locked, so two first projections of one tree
-	// queue on it. Without the FOR UPDATE below, a lower version could commit
-	// after a higher one and move the version back.
+	// Create the row, then lock it, so two first projections of one tree queue
+	// on it. Without the lock, a lower version could commit after a higher one
+	// and move the version back.
 	if _, err := tx.Exec(ctx, createProjectionSQL, treeID); err != nil {
 		return err
 	}

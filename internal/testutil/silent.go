@@ -13,7 +13,6 @@ func ClearTimeoutEnv(t *testing.T) {
 	for _, name := range []string{"PGCONNECT_TIMEOUT", "PGSERVICE", "PGSERVICEFILE"} {
 		// Setenv first so the original value comes back after the test.
 		t.Setenv(name, "")
-		// Must be absent, not empty: an empty value still counts as set.
 		if err := os.Unsetenv(name); err != nil {
 			t.Fatalf("unset %s: %v", name, err)
 		}

@@ -18,6 +18,7 @@ import (
 
 // writerIntegration holds what the writer integration tests share.
 type writerIntegration struct {
+	pool   *pgxpool.Pool
 	events *platform.PostgresEventStore
 	store  *PostgresTreeStore
 	dsn    string
@@ -32,6 +33,7 @@ func newWriterIntegration(t *testing.T) *writerIntegration {
 	worker := findWorkerBinary(t)
 	pool := pgContainer.NewPool(t)
 	return &writerIntegration{
+		pool:   pool,
 		events: platform.NewPostgresEventStore(pool),
 		store:  NewPostgresTreeStore(pool),
 		dsn:    pgContainer.DSN,

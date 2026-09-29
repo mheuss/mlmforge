@@ -286,9 +286,6 @@ func (s *lockKillingLoadStore) GetByTreeDepthOrdered(ctx context.Context, treeID
 }
 
 func TestTreeWriter_ARemovalAfterALockLostBeforeItsAppendMovesEveryRecruit(t *testing.T) {
-	t.Skip("skipped until HEU-859: writer 1 lost its lock after its load, D was placed sponsored by B, and writer 1's removal of B left D sponsored by removed B; " +
-		"the scenario's writers returned no error and no projection error, writer 1's release error was set because its lock connection was terminated, " +
-		"and the next write failed to load the tree because D names a sponsor not in it")
 	it := newWriterIntegration(t)
 	ctx := context.Background()
 	tree, root, a, b, c, d, e, y := testTreeUUID(313), testUserUUID(1), testUserUUID(2), testUserUUID(3), testUserUUID(4),
@@ -339,8 +336,6 @@ func TestTreeWriter_ARemovalAfterALockLostBeforeItsAppendMovesEveryRecruit(t *te
 }
 
 func TestTreeWriter_APlacementAfterALockLostBeforeItsAppendLeavesTheTreeWritable(t *testing.T) {
-	t.Skip("skipped until HEU-859: writer 1 lost its lock after its load, B was removed, and writer 1 appended a placement under B; " +
-		"its projection failed with parent not found, and the next writer's catch-up failed the same way and appended nothing")
 	it := newWriterIntegration(t)
 	ctx := context.Background()
 	tree, root, a, b, c, e, x, y := testTreeUUID(314), testUserUUID(1), testUserUUID(2), testUserUUID(3), testUserUUID(4),

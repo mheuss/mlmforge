@@ -44,6 +44,48 @@ func TestTreeWriter_RefusesATreeWithNoProjectionRowPastVersion1(t *testing.T) {
 	assert.False(t, found, "the refused write left a projection row behind")
 }
 
+func TestTreeWriter_RefusesAnEmptyStreamWhenTheStoreHasAVersion(t *testing.T) {
+	env := newWriterEnv()
+	require.NoError(t, env.store.ProjectInsert(context.Background(), TreeNodeRow{
+		ID: testNodeUUID(1), TreeID: writerTree, UserID: writerRoot, SponsorID: &writerRoot,
+		EnrolledAt: writeTime,
+	}, 1))
+	w, _ := env.writer()
+
+	_, err := w.AddRoot(context.Background(), unilevelRootRequest())
+
+	var moved *StreamMovedError
+	require.ErrorAs(t, err, &moved)
+	assert.Equal(t, StreamMovedError{TreeID: writerTree, LoadedVersion: 1, LastVersion: 0}, *moved)
+	assert.Empty(t, streamEvents(t, env.events, TreeStreamName(writerTree)))
+}
+
+func TestTreeWriter_RefusesAStreamTwoEventsPastTheLoad(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	appendDirect(t, env.events, EventTypeNodePlaced, childPlacedPayload(writerChild))
+	appendDirect(t, env.events, EventTypeNodePlaced, childPlacedPayload(writerOther))
+	w, _ := env.writer()
+
+	res, err := w.Place(context.Background(), placeRequest(testUserUUID(4), nil))
+
+	var moved *StreamMovedError
+	require.ErrorAs(t, err, &moved)
+	assert.Equal(t, StreamMovedError{TreeID: writerTree, LoadedVersion: 1, LastVersion: 3}, *moved)
+	assert.EqualError(t, err, "tree "+writerTree+" was loaded at projected version 1 and stream "+
+		TreeStreamName(writerTree)+" ends at version 3; nothing was appended")
+	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 3)
+	assert.Nil(t, res.CaughtUp, "the refused write redelivered an event")
+	version, _, err := env.store.ProjectedVersion(context.Background(), writerTree)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), version)
+	for _, user := range []string{writerChild, writerOther} {
+		row, err := env.store.GetNode(context.Background(), writerTree, user)
+		require.NoError(t, err)
+		assert.Nil(t, row, "the refused write projected %s", user)
+	}
+}
+
 // projectingLoadStore records its version reads and full-tree loads, and runs
 // meanwhile once, before its first full-tree load.
 type projectingLoadStore struct {

@@ -80,3 +80,16 @@ func (e *ProjectionMissingError) Error() string {
 	return fmt.Sprintf("tree %s has no projection row and stream %s ends at version %d; nothing was appended",
 		e.TreeID, TreeStreamName(e.TreeID), e.LastVersion)
 }
+
+// StreamMovedError reports a stream whose last version is neither the version
+// the tree was loaded at nor one past it.
+type StreamMovedError struct {
+	TreeID        string
+	LoadedVersion int64
+	LastVersion   int64
+}
+
+func (e *StreamMovedError) Error() string {
+	return fmt.Sprintf("tree %s was loaded at projected version %d and stream %s ends at version %d; nothing was appended",
+		e.TreeID, e.LoadedVersion, TreeStreamName(e.TreeID), e.LastVersion)
+}

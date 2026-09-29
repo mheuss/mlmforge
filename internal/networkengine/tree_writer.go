@@ -358,8 +358,8 @@ func (w *TreeWriter) write(ctx context.Context, spec writeSpec) (result WriteRes
 	if err != nil {
 		return result, err
 	}
-	// Read before the rows. A projection landing between the two reads then
-	// leaves the engine ahead of loaded, never behind it.
+	// Read before the rows, so a projection that lands between the two reads
+	// leaves the engine ahead of loaded.
 	loaded, found, err := w.store.ProjectedVersion(ctx, tree)
 	if err != nil {
 		return result, fmt.Errorf("read the projected version of tree %s; nothing was appended: %w", tree, err)
@@ -437,8 +437,8 @@ func (w *TreeWriter) load(ctx context.Context, tree string, shape treeShape) err
 	return nil
 }
 
-// checkLoadedVersion refuses a tree with no projection row whose stream's last
-// version is neither the loaded version nor one past it.
+// checkLoadedVersion refuses a stream whose last version is neither the
+// version the tree was loaded at nor one past it.
 func checkLoadedVersion(tree string, loaded int64, found bool, last int64) error {
 	if last == loaded || last == loaded+1 {
 		return nil
@@ -446,7 +446,7 @@ func checkLoadedVersion(tree string, loaded int64, found bool, last int64) error
 	if !found {
 		return &ProjectionMissingError{TreeID: tree, LastVersion: last}
 	}
-	return nil
+	return &StreamMovedError{TreeID: tree, LoadedVersion: loaded, LastVersion: last}
 }
 
 // treeEventTypes are the event types catch-up redelivers.

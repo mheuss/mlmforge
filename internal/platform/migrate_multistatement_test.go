@@ -26,3 +26,8 @@ func TestRefuseMultiStatement_PassesAURLWithTheOptionOffOrAbsent(t *testing.T) {
 		assert.NoError(t, refuseMultiStatement("up", dbURL), dbURL)
 	}
 }
+
+func TestRefuseMultiStatement_LeavesWhatItCannotParseToTheDriver(t *testing.T) {
+	assert.NoError(t, refuseMultiStatement("up", "postgres://u:p@h/db?sslmode=disable&x-multi-statement=yes"))
+	assert.NoError(t, refuseMultiStatement("up", "postgres://u:p@h:notaport/db?x-multi-statement=true"))
+}

@@ -15,7 +15,7 @@ func refuseMultiStatement(command, dbURL string) error {
 	if value == "" {
 		return nil
 	}
-	// ParseBool rather than a compare with "true": "1", "t" and "TRUE" also turn the option on.
+	// Match ParseBool's accepted forms, not only "true".
 	on, err := strconv.ParseBool(value)
 	if err != nil || !on {
 		return nil

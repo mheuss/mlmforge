@@ -62,7 +62,7 @@ func connectHosts(dbURL string) (string, bool) {
 	beforeFragment, _, _ := strings.Cut(rest, "#")
 	beforeQuery, rawQuery, _ := strings.Cut(beforeFragment, "?")
 	authority, _, _ := strings.Cut(beforeQuery, "/")
-	// An '@' past the authority means a raw '/', '?' or '#' split the userinfo, so the host part could hold password text.
+	// Refuse any '@' outside the authority. A raw '/', '?' or '#' in the userinfo puts one there, and so can a legitimate path or query.
 	if strings.Count(rest, "@") != strings.Count(authority, "@") {
 		return "", false
 	}

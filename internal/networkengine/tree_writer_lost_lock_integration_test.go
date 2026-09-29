@@ -232,9 +232,6 @@ func TestTreeWriter_APlacementProjectedAfterItsLockWasLostIsRefused(t *testing.T
 }
 
 func TestTreeWriter_ALateRemovalLeavesAUserPlacedAgainActive(t *testing.T) {
-	t.Skip("skipped until HEU-857: a late removal tombstoned B, placed again, and left C sponsored by removed A; " +
-		"the scenario's writers returned no error and no projection error, writer 1's release error was set because its lock connection was terminated, " +
-		"and the next write failed to load the tree because C names a sponsor not in it")
 	it := newWriterIntegration(t)
 	ctx := context.Background()
 	tree, root, a, b, c, y := testTreeUUID(312), testUserUUID(1), testUserUUID(2), testUserUUID(3), testUserUUID(4), testUserUUID(8)
@@ -259,7 +256,9 @@ func TestTreeWriter_ALateRemovalLeavesAUserPlacedAgainActive(t *testing.T) {
 	assert.Equal(t, int64(6), replaced.Version)
 	assert.Equal(t, int64(7), removedA.Version)
 	assert.Equal(t, map[string]string{root: root, b: root, c: root}, activeSponsors(t, it.store, tree))
-	// first.ProjectionErr is left unasserted: how a refused late write is reported is HEU-857's to define.
+	var refused *ProjectionRefusedError
+	require.ErrorAs(t, first.ProjectionErr, &refused)
+	assert.Equal(t, ProjectionRefusedError{TreeID: tree, EventVersion: 5, ProjectedVersion: 7}, *refused)
 	assert.ErrorContains(t, first.ReleaseErr, "the pg_advisory_unlock query for tree "+tree+" failed")
 	next, nextErr := it.writer(t).Place(ctx, PlaceRequest{
 		TreeID: tree, UserID: y, ParentID: root, SponsorID: root, EnrolledAt: writeTime.Add(7 * time.Hour)})

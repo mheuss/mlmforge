@@ -214,14 +214,14 @@ func migrationErrorText(err error) string {
 
 // databaseErrorText renders a driver error's message and underlying error, leaving out its query.
 func databaseErrorText(e database.Error) string {
-	if e.Err == "" {
-		return fmt.Sprint(e.OrigErr)
-	}
-	text := e.Err
+	var location string
 	if e.Line > 0 {
-		text = fmt.Sprintf("%s in line %d", text, e.Line)
+		location = fmt.Sprintf(" in line %d", e.Line)
 	}
-	return fmt.Sprintf("%s (details: %v)", text, e.OrigErr)
+	if e.Err == "" {
+		return fmt.Sprintf("%v%s", e.OrigErr, location)
+	}
+	return fmt.Sprintf("%s%s (details: %v)", e.Err, location, e.OrigErr)
 }
 
 // isBodyFailure reports whether err shows Postgres refusing the migration file itself.

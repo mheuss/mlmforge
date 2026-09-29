@@ -15,7 +15,7 @@ const (
 	resetCommand   = "`mlmforge migrate reset-dirty`"
 	versionCommand = "`mlmforge migrate version`"
 
-	noResetText = "The error does not show that Postgres refused the migration file. Do not run " + resetCommand + "."
+	noResetText = "The error does not show that Postgres refused the migration file. " + resetCommand + " is not safe after this failure."
 
 	unchangedText = "The record was not changed."
 )
@@ -75,7 +75,7 @@ func dirtyText(rec platform.Record, src platform.SourceInfo) string {
 		lines = append(lines, fmt.Sprintf("The migrations directory %s has no migration %d, so %s would refuse.", src.Path, rec.Version, resetCommand))
 	}
 	return strings.Join(append(lines,
-		fmt.Sprintf("Run %s only if the %s that failed on this record printed \"run %s\".", resetCommand, upCommand, resetCommand),
+		fmt.Sprintf("Run %s only if the last %s that ran migration %d and failed printed \"run %s\".", resetCommand, upCommand, rec.Version, resetCommand),
 		"Nothing in this output is that instruction.",
 		fmt.Sprintf("In any other case, including a failed %s, do not run it.", downCommand),
 	), "\n")
@@ -237,9 +237,9 @@ func rollbackFailureText(e *platform.RollbackError) string {
 	case after.Record.Version < 0:
 		lines = append(lines, resetRefusesAt(after.Record.Version))
 	case e.Source.Err == nil && e.Source.InSource:
-		lines = append(lines, fmt.Sprintf("Do not run %s. %s", resetCommand, resetWould(e.Source)))
+		lines = append(lines, fmt.Sprintf("%s is not safe after a failed down. %s", resetCommand, resetWould(e.Source)))
 	default:
-		lines = append(lines, fmt.Sprintf("Do not run %s.", resetCommand))
+		lines = append(lines, fmt.Sprintf("%s is not safe after a failed down.", resetCommand))
 	}
 	return strings.Join(lines, "\n")
 }

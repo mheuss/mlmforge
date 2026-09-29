@@ -229,7 +229,7 @@ func TestMigrateDown_AFailedRollbackNamesTheRecordBeforeAndAfter(t *testing.T) {
 	require.True(t, strings.HasPrefix(out.stderr.String(), "Error: rollback migration: "), "stderr: %s", out.stderr.String())
 	require.True(t, strings.HasSuffix(out.stderr.String(),
 		"This run was `mlmforge migrate down`. The record read 8, clean before this run and now reads 7, dirty.\n"+
-			"Do not run `mlmforge migrate reset-dirty`. It would set the record to 6, clean.\n"),
+			"`mlmforge migrate reset-dirty` is not safe after a failed down. It would set the record to 6, clean.\n"),
 		"stderr: %s", out.stderr.String())
 	require.NotContains(t, out.stdout.String()+out.stderr.String(), "Usage:")
 	require.Equal(t, []string{"7,true"}, readRecord(t, dsn))

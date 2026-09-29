@@ -19,11 +19,11 @@ func requireNoForce(t *testing.T, text string) {
 var sixDirty = platform.Record{Version: 6, Dirty: true}
 
 const dirtySixText = "The record reads 6, dirty.\n" +
-	"Run `mlmforge migrate reset-dirty` only if the `mlmforge migrate up` that failed on this record printed \"run `mlmforge migrate reset-dirty`\".\n" +
+	"Run `mlmforge migrate reset-dirty` only if the last `mlmforge migrate up` that ran migration 6 and failed printed \"run `mlmforge migrate reset-dirty`\".\n" +
 	"Nothing in this output is that instruction.\n" +
 	"In any other case, including a failed `mlmforge migrate down`, do not run it."
 
-func TestDirtyText_NamesTheRecordAndBothRecoveryPaths(t *testing.T) {
+func TestDirtyText_NamesTheRecordAndTheConditionForAReset(t *testing.T) {
 	got := dirtyText(sixDirty, platform.SourceInfo{Path: "/m", InSource: true, Previous: 5, HasPrevious: true})
 
 	require.Equal(t, dirtySixText, got)
@@ -49,7 +49,7 @@ func TestDirtyText_AVersionMissingFromTheDirectorySaysResetWouldRefuse(t *testin
 
 	require.Equal(t, "The record reads 6, dirty.\n"+
 		"The migrations directory /m has no migration 6, so `mlmforge migrate reset-dirty` would refuse.\n"+
-		"Run `mlmforge migrate reset-dirty` only if the `mlmforge migrate up` that failed on this record printed \"run `mlmforge migrate reset-dirty`\".\n"+
+		"Run `mlmforge migrate reset-dirty` only if the last `mlmforge migrate up` that ran migration 6 and failed printed \"run `mlmforge migrate reset-dirty`\".\n"+
 		"Nothing in this output is that instruction.\n"+
 		"In any other case, including a failed `mlmforge migrate down`, do not run it.", got)
 	requireNoForce(t, got)
@@ -60,7 +60,7 @@ func TestDirtyText_AnUnreadableDirectoryNamesTheReadError(t *testing.T) {
 
 	require.Equal(t, "The record reads 6, dirty.\n"+
 		"The migrations directory /m could not be read for migration 6: permission denied.\n"+
-		"Run `mlmforge migrate reset-dirty` only if the `mlmforge migrate up` that failed on this record printed \"run `mlmforge migrate reset-dirty`\".\n"+
+		"Run `mlmforge migrate reset-dirty` only if the last `mlmforge migrate up` that ran migration 6 and failed printed \"run `mlmforge migrate reset-dirty`\".\n"+
 		"Nothing in this output is that instruction.\n"+
 		"In any other case, including a failed `mlmforge migrate down`, do not run it.", got)
 	requireNoForce(t, got)
@@ -129,7 +129,7 @@ func TestApplyFailureText_AFailedReReadWithoutABodyFailureSaysNotToReset(t *test
 	})
 
 	require.Equal(t, "apply migrations: boom\nThe record could not be read after the failure: connection reset.\n"+
-		"The error does not show that Postgres refused the migration file. Do not run `mlmforge migrate reset-dirty`.", got)
+		"The error does not show that Postgres refused the migration file. `mlmforge migrate reset-dirty` is not safe after this failure.", got)
 	requireNoForce(t, got)
 }
 
@@ -224,7 +224,7 @@ func TestRollbackFailureText_NamesTheRecordBeforeAndAfter(t *testing.T) {
 
 	require.Equal(t, "rollback migration: lock timeout\n"+
 		"This run was `mlmforge migrate down`. The record read 8, clean before this run and now reads 7, dirty.\n"+
-		"Do not run `mlmforge migrate reset-dirty`. It would set the record to 6, clean.", got)
+		"`mlmforge migrate reset-dirty` is not safe after a failed down. It would set the record to 6, clean.", got)
 	requireNoForce(t, got)
 }
 
@@ -238,7 +238,7 @@ func TestRollbackFailureText_AFailedBeforeReadNamesOnlyTheRecordAfter(t *testing
 
 	require.Equal(t, "rollback migration: boom\n"+
 		"This run was `mlmforge migrate down`. The record now reads 7, dirty.\n"+
-		"Do not run `mlmforge migrate reset-dirty`. It would set the record to 6, clean.", got)
+		"`mlmforge migrate reset-dirty` is not safe after a failed down. It would set the record to 6, clean.", got)
 	requireNoForce(t, got)
 }
 
@@ -252,7 +252,7 @@ func TestRollbackFailureText_AtTheFirstMigrationSaysNoVersionWouldBeLeft(t *test
 
 	require.Equal(t, "rollback migration: boom\n"+
 		"This run was `mlmforge migrate down`. The record read 2, clean before this run and now reads 1, dirty.\n"+
-		"Do not run `mlmforge migrate reset-dirty`. Afterwards the record would hold no version.", got)
+		"`mlmforge migrate reset-dirty` is not safe after a failed down. Afterwards the record would hold no version.", got)
 	requireNoForce(t, got)
 }
 
@@ -280,7 +280,7 @@ func TestRollbackFailureText_AVersionMissingFromTheDirectoryDropsTheEffect(t *te
 
 	require.Equal(t, "rollback migration: boom\n"+
 		"This run was `mlmforge migrate down`. The record read 8, clean before this run and now reads 7, dirty.\n"+
-		"Do not run `mlmforge migrate reset-dirty`.", got)
+		"`mlmforge migrate reset-dirty` is not safe after a failed down.", got)
 	requireNoForce(t, got)
 }
 
@@ -354,7 +354,7 @@ func TestApplyFailureText_WithoutAPositiveBodyFailureNeverOffersTheReset(t *test
 	require.Equal(t, "apply migrations: driver: bad connection\n"+
 		"This run was `mlmforge migrate up`. The record now reads 6, dirty.\n"+
 		"The error does not show that Postgres refused the migration file. "+
-		"Do not run `mlmforge migrate reset-dirty`.", got)
+		"`mlmforge migrate reset-dirty` is not safe after this failure.", got)
 	requireNoForce(t, got)
 }
 
@@ -367,4 +367,23 @@ func TestApplyFailureText_AFailedReReadAfterABodyFailurePointsAtVersion(t *testi
 		"The error shows Postgres refused the migration file. If `mlmforge migrate version` then shows the record dirty, "+
 		"fix the cause shown above, run `mlmforge migrate reset-dirty`, then run `mlmforge migrate up`.", got)
 	requireNoForce(t, got)
+}
+
+func TestApplyFailureText_SaysRunResetDirtyOnlyForABodyFailure(t *testing.T) {
+	trigger := "run " + resetCommand
+	source := platform.SourceInfo{Path: "/m", InSource: true, Previous: 5, HasPrevious: true}
+	reads := []platform.RecordRead{
+		{Record: sixDirty},
+		{Err: errors.New("connection reset")},
+		{Record: platform.Record{Version: 6}},
+		{Record: platform.Record{Version: -1, Dirty: true}},
+	}
+	for _, bodyFailed := range []bool{false, true} {
+		for _, after := range reads {
+			got := applyFailureText(&platform.ApplyError{Err: errors.New("e"), After: after, Source: source, BodyFailed: bodyFailed})
+
+			wantTrigger := bodyFailed && (after.Err != nil || (after.Record.Dirty && after.Record.Version >= 0))
+			require.Equal(t, wantTrigger, strings.Contains(got, trigger), "BodyFailed=%t after=%+v: %s", bodyFailed, after, got)
+		}
+	}
 }

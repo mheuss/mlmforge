@@ -33,7 +33,7 @@ func TimeConnect(ctx context.Context, dbURL string, connect func() error) error 
 	}
 	hosts, ok := connectHosts(dbURL)
 	if !ok {
-		return err
+		hosts = "the hosts in the connection string"
 	}
 	return &ConnectTimeoutError{Hosts: hosts, Waited: waited, Err: err}
 }

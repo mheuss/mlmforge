@@ -131,13 +131,22 @@ func TestTimeConnect_PassesThroughANetErrorThatIsNotATimeout(t *testing.T) {
 	require.Same(t, refused, err)
 }
 
-func TestTimeConnect_PassesThroughAStringItCannotRead(t *testing.T) {
-	for _, raw := range []string{"host=db dbname=app", "postgres://u:p@[::1]:5432,[::2]/app"} {
-		driverErr := fmt.Errorf("dial: %w", fakeTimeout{})
+func TestTimeConnect_HidesTheHostsOfAStringItCannotRead(t *testing.T) {
+	for _, raw := range []string{
+		"host=db dbname=app password=s3cret",
+		"postgres://u:p@[::1]:5432,[::2]/app",
+		"postgres://u:s3cret@db/app?application_name=a;b",
+	} {
+		driverErr := fmt.Errorf("failed to connect to `user=u database=app`: %w", fakeTimeout{})
 
 		err := TimeConnect(context.Background(), raw, func() error { return driverErr })
 
-		require.Same(t, driverErr, err, raw)
+		var cte *ConnectTimeoutError
+		require.ErrorAs(t, err, &cte, raw)
+		require.Equal(t, "the hosts in the connection string", cte.Hosts, raw)
+		require.ErrorIs(t, err, driverErr, raw)
+		require.NotContains(t, err.Error(), "s3cret", raw)
+		require.NotContains(t, err.Error(), "user=u", raw)
 	}
 }
 

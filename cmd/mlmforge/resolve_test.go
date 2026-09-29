@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -89,6 +90,12 @@ func TestResolveDBURL_ConnectTimeout(t *testing.T) {
 
 func TestResolveDBURL_AddingTheTimeoutKeepsThePath(t *testing.T) {
 	testutil.ClearTimeoutEnv(t)
+	for _, kv := range os.Environ() {
+		if name, _, _ := strings.Cut(kv, "="); strings.HasPrefix(name, "PG") {
+			t.Setenv(name, "")
+			require.NoError(t, os.Unsetenv(name))
+		}
+	}
 	for _, raw := range []string{
 		"postgres://u:p@db:5432/app",
 		"postgres://db/app?sslmode=disable",

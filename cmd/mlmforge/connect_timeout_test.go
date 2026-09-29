@@ -67,7 +67,7 @@ func TestMigrateCommands_ReportAConnectTimeout(t *testing.T) {
 			require.Less(t, time.Since(start), 5*time.Second)
 			require.Error(t, err)
 			text, waited := maskWait(t, err.Error())
-			require.Equal(t, "open database: the connection to "+addr+" did not complete; waited Ns (connect_timeout from the URL)", text)
+			require.Equal(t, "open database: the connection to "+addr+" did not complete; waited Ns (set by: connect_timeout in the URL)", text)
 			require.GreaterOrEqual(t, waited, 1.0)
 			require.Less(t, waited, 5.0)
 			requireNoDriverText(t, err.Error(), "s3cretpw")
@@ -84,7 +84,7 @@ func TestMigrateVersion_AConnectTimeoutOmitsAQueryPassword(t *testing.T) {
 
 	require.Error(t, err)
 	text, waited := maskWait(t, err.Error())
-	require.Equal(t, "open database: the connection to "+addr+" did not complete; waited Ns (connect_timeout from the URL)", text)
+	require.Equal(t, "open database: the connection to "+addr+" did not complete; waited Ns (set by: connect_timeout in the URL)", text)
 	require.Less(t, waited, 5.0)
 	requireNoDriverText(t, err.Error(), "qs3cretpw")
 }
@@ -104,7 +104,7 @@ func TestMigrateVersion_TheAddedDefaultReachesTheDriver(t *testing.T) {
 	require.Error(t, err)
 	requireNoDriverText(t, err.Error(), "s3cretpw")
 	text, waited := maskWait(t, err.Error())
-	require.Equal(t, "open database: the connection to "+addr+" did not complete; waited Ns (connect_timeout=1, added by mlmforge because the URL set none)", text)
+	require.Equal(t, "open database: the connection to "+addr+" did not complete; waited Ns (set by: connect_timeout=1, added by mlmforge because the URL set none)", text)
 	require.GreaterOrEqual(t, waited, 1.0)
 	require.Less(t, waited, 5.0)
 }
@@ -133,7 +133,7 @@ func TestTreeLoad_ReportsAConnectTimeout(t *testing.T) {
 			require.Less(t, time.Since(start), 5*time.Second)
 			require.Error(t, err)
 			text, waited := maskWait(t, err.Error())
-			require.Equal(t, "reach database: the connection to "+addr+" did not complete; waited Ns (connect_timeout from the URL)", text)
+			require.Equal(t, "reach database: the connection to "+addr+" did not complete; waited Ns (set by: connect_timeout in the URL)", text)
 			require.GreaterOrEqual(t, waited, 1.0)
 			require.Less(t, waited, 5.0)
 			requireNoDriverText(t, err.Error(), tc.password)
@@ -151,27 +151,65 @@ func TestTreeLoad_ReportsEveryHostAndTheCombinedWait(t *testing.T) {
 
 	require.Error(t, err)
 	text, waited := maskWait(t, err.Error())
-	require.Equal(t, "reach database: the connection to "+first+","+second+" did not complete; waited Ns (connect_timeout from the URL)", text)
+	require.Equal(t, "reach database: the connection to "+first+","+second+" did not complete; waited Ns (set by: connect_timeout in the URL)", text)
 	require.GreaterOrEqual(t, waited, 2.0)
 	require.Less(t, waited, 5.0)
 }
 
 func TestConnectError_NamesEachTimeoutSource(t *testing.T) {
 	cte := &platform.ConnectTimeoutError{Hosts: "db:5432", Waited: 1500 * time.Millisecond, Err: errors.New("driver")}
-	for source, want := range map[timeoutSource]string{
-		timeoutAdded:            "(connect_timeout=10, added by mlmforge because the URL set none)",
-		timeoutFromURL:          "(connect_timeout from the URL)",
-		timeoutFromEnv:          "(PGCONNECT_TIMEOUT)",
-		timeoutFromService:      "(no connect_timeout added; a service is named)",
-		timeoutFromEnvOrService: "(PGCONNECT_TIMEOUT or the named service)",
-		timeoutNone:             "(no connect timeout applies)",
-		timeoutUnknown:          "(no connect_timeout added; the URL was not changed)",
+	for _, tc := range []struct {
+		target dbTarget
+		want   string
+	}{
+		{dbTarget{timeout: timeoutAdded, addedSeconds: 10}, "(set by: connect_timeout=10, added by mlmforge because the URL set none)"},
+		{dbTarget{timeout: timeoutFromURL}, "(set by: connect_timeout in the URL)"},
+		{dbTarget{timeout: timeoutFromEnv}, "(set by: PGCONNECT_TIMEOUT)"},
+		{dbTarget{timeout: timeoutFromService}, "(set by: the named service)"},
+		{dbTarget{timeout: timeoutFromEnvOrService}, "(set by: PGCONNECT_TIMEOUT or the named service)"},
+		{dbTarget{timeout: timeoutNone}, "(set by: no setting mlmforge read; the URL's connect_timeout is empty)"},
+		{dbTarget{timeout: timeoutUnknown}, "(set by: not known; mlmforge did not change the connection string)"},
 	} {
-		err := connectError(cte, dbTarget{timeout: source})
+		err := connectError(cte, tc.target)
 
-		require.Equal(t, "the connection to db:5432 did not complete; waited 1.5s "+want, err.Error())
+		require.Equal(t, "the connection to db:5432 did not complete; waited 1.5s "+tc.want, err.Error())
 		require.ErrorIs(t, err, cte)
 	}
+}
+
+func TestConnectError_NamesTheSecondsThatWereAdded(t *testing.T) {
+	testutil.ClearTimeoutEnv(t)
+	previous := defaultConnectTimeout
+	defaultConnectTimeout = 7
+	target, err := resolveDBURL("postgres://db/app")
+	require.NoError(t, err)
+	defaultConnectTimeout = 3
+	t.Cleanup(func() { defaultConnectTimeout = previous })
+	cte := &platform.ConnectTimeoutError{Hosts: "db", Waited: 7 * time.Second, Err: errors.New("driver")}
+
+	got := connectError(cte, target)
+
+	require.Contains(t, target.url, "connect_timeout=7")
+	require.Equal(t, "the connection to db did not complete; waited 7.0s (set by: connect_timeout=7, added by mlmforge because the URL set none)", got.Error())
+}
+
+func TestTreeLoad_AnUnreadableURLStillReportsTheWaitWithoutDriverText(t *testing.T) {
+	testutil.ClearTimeoutEnv(t)
+	addr := testutil.SilentListener(t)
+	url := "postgres://app:s3cretpw@" + addr + "/app?sslmode=disable&connect_timeout=1&application_name=a;b"
+
+	start := time.Now()
+	err := executeRoot("tree", "load", "--db-url", url, "--worker", testWorker(t),
+		"--tree-id", "t9", "--tree-type", "unilevel")
+
+	require.Less(t, time.Since(start), 5*time.Second)
+	require.Error(t, err)
+	text, waited := maskWait(t, err.Error())
+	require.Equal(t, "reach database: the connection to the hosts in the connection string did not complete; waited Ns (set by: connect_timeout in the URL)", text)
+	require.GreaterOrEqual(t, waited, 1.0)
+	require.Less(t, waited, 5.0)
+	requireNoDriverText(t, err.Error(), "s3cretpw")
+	require.NotContains(t, err.Error(), "user=app")
 }
 
 func TestConnectError_PassesOtherErrorsThrough(t *testing.T) {
@@ -202,10 +240,10 @@ func TestConnectError_InsertsTheSourceAfterTheTimeoutUnderEveryPrefix(t *testing
 	tree := "aaaaaaaa-aaaa-aaaa-aaaa-000000000001"
 	lockErr := fmt.Errorf("lock tree %s: %w", tree, fmt.Errorf("open the lock connection for tree %s: %w", tree, cte))
 
-	err := connectError(lockErr, dbTarget{timeout: timeoutAdded})
+	err := connectError(lockErr, dbTarget{timeout: timeoutAdded, addedSeconds: 10})
 
 	require.Equal(t, "lock tree "+tree+": open the lock connection for tree "+tree+
-		": the connection to db:5432 did not complete; waited 10.0s (connect_timeout=10, added by mlmforge because the URL set none)", err.Error())
+		": the connection to db:5432 did not complete; waited 10.0s (set by: connect_timeout=10, added by mlmforge because the URL set none)", err.Error())
 	require.ErrorIs(t, err, cte)
 	requireNoDriverText(t, err.Error(), "s3cretpw")
 }
@@ -216,7 +254,7 @@ func TestConnectError_KeepsTextThatFollowsTheTimeout(t *testing.T) {
 
 	err := connectError(wrapped, dbTarget{timeout: timeoutFromURL})
 
-	require.Equal(t, "add root: the connection to db:5432 did not complete; waited 1.0s (connect_timeout from the URL); "+
+	require.Equal(t, "add root: the connection to db:5432 did not complete; waited 1.0s (set by: connect_timeout in the URL); "+
 		"the command's context ended and no append was confirmed", err.Error())
 }
 
@@ -226,6 +264,6 @@ func TestConnectError_AppendsTheSourceWhenTheTimeoutTextIsNotEmbedded(t *testing
 
 	err := connectError(opaque, dbTarget{timeout: timeoutFromEnv})
 
-	require.Equal(t, "the tree lock was not acquired (PGCONNECT_TIMEOUT)", err.Error())
+	require.Equal(t, "the tree lock was not acquired (set by: PGCONNECT_TIMEOUT)", err.Error())
 	require.ErrorIs(t, err, cte)
 }

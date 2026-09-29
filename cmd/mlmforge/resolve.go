@@ -31,29 +31,30 @@ const (
 	timeoutNone
 )
 
-// String names the timeout's source for the operator.
-func (s timeoutSource) String() string {
-	switch s {
-	case timeoutAdded:
-		return fmt.Sprintf("connect_timeout=%d, added by mlmforge because the URL set none", defaultConnectTimeout)
-	case timeoutFromURL:
-		return "connect_timeout from the URL"
-	case timeoutFromEnv:
-		return "PGCONNECT_TIMEOUT"
-	case timeoutFromService:
-		return "no connect_timeout added; a service is named"
-	case timeoutFromEnvOrService:
-		return "PGCONNECT_TIMEOUT or the named service"
-	case timeoutNone:
-		return "no connect timeout applies"
-	}
-	return "no connect_timeout added; the URL was not changed"
-}
-
 // dbTarget is a resolved database URL and the source of its connect timeout.
 type dbTarget struct {
-	url     string
-	timeout timeoutSource
+	url          string
+	timeout      timeoutSource
+	addedSeconds int
+}
+
+// setBy names the setting the connect timeout was read from.
+func (t dbTarget) setBy() string {
+	switch t.timeout {
+	case timeoutAdded:
+		return fmt.Sprintf("set by: connect_timeout=%d, added by mlmforge because the URL set none", t.addedSeconds)
+	case timeoutFromURL:
+		return "set by: connect_timeout in the URL"
+	case timeoutFromEnv:
+		return "set by: PGCONNECT_TIMEOUT"
+	case timeoutFromService:
+		return "set by: the named service"
+	case timeoutFromEnvOrService:
+		return "set by: PGCONNECT_TIMEOUT or the named service"
+	case timeoutNone:
+		return "set by: no setting mlmforge read; the URL's connect_timeout is empty"
+	}
+	return "set by: not known; mlmforge did not change the connection string"
 }
 
 // resolveDBURL returns the database URL from the flag or DATABASE_URL, with a
@@ -94,7 +95,7 @@ func withConnectTimeout(raw string) dbTarget {
 		return unchanged(timeoutFromService)
 	}
 	param := "connect_timeout=" + strconv.Itoa(defaultConnectTimeout)
-	return dbTarget{url: appendQueryParam(raw, param), timeout: timeoutAdded}
+	return dbTarget{url: appendQueryParam(raw, param), timeout: timeoutAdded, addedSeconds: defaultConnectTimeout}
 }
 
 // appendQueryParam adds param to the query of raw without re-encoding anything else.
@@ -121,7 +122,7 @@ func connectError(err error, target dbTarget) error {
 	if !errors.As(err, &cte) {
 		return err
 	}
-	source := " (" + target.timeout.String() + ")"
+	source := " (" + target.setBy() + ")"
 	text, timeout := err.Error(), cte.Error()
 	i := strings.Index(text, timeout)
 	if i < 0 {

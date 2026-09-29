@@ -41,7 +41,7 @@ func TestSilentListener_AcceptsAndNeverWrites(t *testing.T) {
 
 func TestSilentListener_CleanupClosesHeldConnections(t *testing.T) {
 	var conn net.Conn
-	t.Run("listener", func(t *testing.T) {
+	ran := t.Run("listener", func(t *testing.T) {
 		addr := SilentListener(t)
 		var err error
 		conn, err = net.DialTimeout("tcp", addr, time.Second)
@@ -49,6 +49,7 @@ func TestSilentListener_CleanupClosesHeldConnections(t *testing.T) {
 		_, err = conn.Write([]byte("startup"))
 		require.NoError(t, err)
 	})
+	require.True(t, ran, "the listener subtest failed")
 	defer func() { _ = conn.Close() }()
 	require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
 

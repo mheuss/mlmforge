@@ -502,7 +502,7 @@ for _, node := range ordered[1:] {
 ### UC-NET-014: Pre-projection event gate with database backstop
 
 **Added:** Unreleased (HEU-553), redelivery discriminator moved to the store layer in HEU-576, root uniqueness in HEU-810
-**Files:** `internal/networkengine/tree_consumer.go`, `internal/networkengine/tree_store.go` (`ErrNodeAlreadyProjected`, `ErrActiveUserConflict`, `ErrSlotConflict`, `ErrRootConflict`), `internal/networkengine/tree_store_postgres.go` (`InsertNode`, `BulkInsert`), `internal/networkengine/tree_store_memory.go` (`InsertNode`), `migrations/000004_add_tree_nodes_slot_unique.up.sql`, `migrations/000006_add_tree_nodes_root_unique.up.sql`, `internal/networkengine/tree_events.go` (`checkNodePlacedShape`)
+**Files:** `internal/networkengine/tree_consumer.go`, `internal/networkengine/tree_store.go` (`ErrNodeAlreadyProjected`, `ErrActiveUserConflict`, `ErrSlotConflict`, `ErrRootConflict`), `internal/networkengine/tree_store_postgres.go` (`InsertNode`, `ProjectInsert`, `BulkInsert`), `internal/networkengine/tree_store_memory.go` (`InsertNode`, `ProjectInsert`), `migrations/000004_add_tree_nodes_slot_unique.up.sql`, `migrations/000006_add_tree_nodes_root_unique.up.sql`, `internal/networkengine/tree_events.go` (`checkNodePlacedShape`)
 
 **Problem:** A projection consumer writes one event into two targets, the adjacency store and then the engine. An event that cannot be applied faithfully must not land in either. A stored row the engine never honored is silent divergence, and some malformed rows make reload preflight refuse the whole tree. Per-event validation cannot see races between events, and redelivering an already-stored event must stay distinguishable from corruption.
 
@@ -1121,7 +1121,7 @@ if errors.As(err, &unknown) {
 err := store.ProjectInsert(ctx, row, event.Version)
 var refused *networkengine.ProjectionRefusedError
 if errors.As(err, &refused) {
-    // a later event is already projected; this one wrote nothing
+    // A later event is already projected. This one wrote nothing.
 }
 ```
 

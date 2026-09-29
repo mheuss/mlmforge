@@ -60,15 +60,16 @@ func newMigrateCmd() *cobra.Command {
 			Short: "Show current migration version",
 			Args:  cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, args []string) error {
+				cmd.SilenceUsage = true
 				url, err := resolveDBURL(*dbURL)
 				if err != nil {
 					return err
 				}
-				v, dirty, err := platform.MigrateVersion(url, *migrationsPath)
-				if err != nil {
+				st, err := platform.MigrateVersion(url, *migrationsPath)
+				if err = withoutReleaseErrors(cmd.ErrOrStderr(), "the record was read", err); err != nil {
 					return err
 				}
-				fmt.Printf("Version: %d, Dirty: %v\n", v, dirty)
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), versionText(st))
 				return nil
 			},
 		},

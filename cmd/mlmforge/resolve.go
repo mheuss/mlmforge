@@ -98,10 +98,11 @@ func withConnectTimeout(raw string) dbTarget {
 // appendQueryParam adds param to the query of raw without re-encoding anything else.
 func appendQueryParam(raw, param string) string {
 	head, fragment, hasFragment := strings.Cut(raw, "#")
+	_, query, hasQuery := strings.Cut(head, "?")
 	switch {
-	case !strings.Contains(head, "?"):
+	case !hasQuery:
 		head += "?" + param
-	case strings.HasSuffix(head, "?") || strings.HasSuffix(head, "&"):
+	case query == "" || strings.HasSuffix(query, "&"):
 		head += param
 	default:
 		head += "&" + param

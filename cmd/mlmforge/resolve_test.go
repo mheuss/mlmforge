@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/mlmforge/mlmforge/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
@@ -51,6 +53,7 @@ func TestResolveDBURL_ConnectTimeout(t *testing.T) {
 		{name: "existing query", raw: "postgres://db/app?sslmode=disable", want: "postgres://db/app?sslmode=disable&connect_timeout=10", timeout: timeoutAdded},
 		{name: "trailing question mark", raw: "postgres://db/app?", want: "postgres://db/app?connect_timeout=10", timeout: timeoutAdded},
 		{name: "trailing ampersand", raw: "postgres://db/app?sslmode=disable&", want: "postgres://db/app?sslmode=disable&connect_timeout=10", timeout: timeoutAdded},
+		{name: "stray question mark in a value", raw: "postgres://db/app?application_name=x?", want: "postgres://db/app?application_name=x?&connect_timeout=10", timeout: timeoutAdded},
 		{name: "fragment", raw: "postgres://db/app?sslmode=disable#frag", want: "postgres://db/app?sslmode=disable&connect_timeout=10#frag", timeout: timeoutAdded},
 		{name: "postgresql scheme", raw: "postgresql://db/app", want: "postgresql://db/app?connect_timeout=10", timeout: timeoutAdded},
 		{name: "encoded userinfo is kept", raw: "postgres://u:p%40ss@db/app?sslmode=disable", want: "postgres://u:p%40ss@db/app?sslmode=disable&connect_timeout=10", timeout: timeoutAdded},
@@ -91,21 +94,27 @@ func TestResolveDBURL_AddingTheTimeoutKeepsThePath(t *testing.T) {
 		"postgres://db/app?sslmode=disable",
 		"postgres://db/app?",
 		"postgres://db/app?sslmode=disable&",
+		"postgres://db/app?application_name=x?",
 		"postgres://db/app?sslmode=disable#frag",
 		"postgresql://db/app",
 		"postgres://u:p%40ss@db/app?sslmode=disable",
 		"postgresql://db/app%2Fx",
 	} {
-		got, err := resolveDBURL(raw)
-		require.NoError(t, err)
+		t.Run(raw, func(t *testing.T) {
+			got, err := resolveDBURL(raw)
+			require.NoError(t, err)
 
-		in, err := url.Parse(raw)
-		require.NoError(t, err)
-		out, err := url.Parse(got.url)
-		require.NoError(t, err)
-		require.Equal(t, in.Path, out.Path, raw)
-		require.Equal(t, in.RawPath, out.RawPath, raw)
-		require.Equal(t, "10", out.Query().Get("connect_timeout"), raw)
+			in, err := url.Parse(raw)
+			require.NoError(t, err)
+			out, err := url.Parse(got.url)
+			require.NoError(t, err)
+			require.Equal(t, in.Path, out.Path)
+			require.Equal(t, in.RawPath, out.RawPath)
+			require.Equal(t, "10", out.Query().Get("connect_timeout"))
+			cfg, err := pgconn.ParseConfig(got.url)
+			require.NoError(t, err)
+			require.Equal(t, 10*time.Second, cfg.ConnectTimeout)
+		})
 	}
 }
 

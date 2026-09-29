@@ -228,7 +228,7 @@ func TestTreeWriter_APlacementProjectedAfterItsLockWasLostIsRefused(t *testing.T
 }
 
 func TestTreeWriter_ALateRemovalLeavesAReplacedUserActive(t *testing.T) {
-	t.Skip("skipped until HEU-857: a late removal tombstoned the re-placed user B and left C sponsored by removed A, and every writer reported success")
+	t.Skip("skipped until HEU-857: a late removal tombstoned the re-placed user B and left C sponsored by removed A; in the run before this skip, no writer reported an error")
 	it := newWriterIntegration(t)
 	ctx := context.Background()
 	tree, root, a, b, c := testTreeUUID(312), testUserUUID(1), testUserUUID(2), testUserUUID(3), testUserUUID(4)

@@ -14,14 +14,20 @@ func RunMigrationsForTest(t *testing.T, dbURL string) func() {
 
 	migrationsPath := FindMigrationsDir(t)
 
-	err := MigrateUp(dbURL, migrationsPath)
+	releases, err := SplitRelease(MigrateUp(dbURL, migrationsPath))
+	for _, release := range releases {
+		t.Logf("MigrateUp: %v", release)
+	}
 	if err != nil {
 		t.Fatalf("MigrateUp failed: %v", err)
 	}
 
 	return func() {
 		for {
-			err := MigrateDown(dbURL, migrationsPath)
+			releases, err := SplitRelease(MigrateDown(dbURL, migrationsPath))
+			for _, release := range releases {
+				t.Logf("MigrateDown: %v", release)
+			}
 			if err == nil {
 				continue
 			}

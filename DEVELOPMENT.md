@@ -333,13 +333,16 @@ Full document: [`content/design-rationale/020-tree-topology-separation.md`](cont
 
 **Context:** Database schema was managed inline via `CreateSchema()` methods that executed raw DDL. This approach has no version tracking, no rollback capability, and no way to coordinate schema changes across deployments.
 
-**Decision:** Use golang-migrate with versioned SQL files in `migrations/`. A CLI command (`./mlmforge migrate up/down/version`) applies or rolls back migrations. In production, migrations run as a Kubernetes Job before application pods start. Schema changes follow the backward-compatible expand-and-contract pattern: add new columns/tables first (expand), deploy code that uses them, then remove old columns/tables (contract) in a later migration.
+**Decision:** Use golang-migrate with versioned SQL files in `migrations/`. A CLI command (`./mlmforge migrate up/down/version/reset-dirty`) applies, rolls back or inspects migrations, and resets a dirty record. In production, migrations run as a Kubernetes Job before application pods start. Schema changes follow the backward-compatible expand-and-contract pattern: add new columns/tables first (expand), deploy code that uses them, then remove old columns/tables (contract) in a later migration.
 
 **Consequences:**
 - All DDL lives in versioned, reviewable SQL files. No inline schema management.
 - Rollback is explicit via `migrate down`. Each migration must have a working down file.
 - The expand-and-contract pattern means zero-downtime deployments but requires two migrations for breaking schema changes.
 - Replaces the `CreateSchema()` approach. Existing inline DDL was moved to migration 000001.
+- `migrate reset-dirty` recovers from a failed `migrate up`. It moves a record of "N, dirty" to the migration before N, clean. That is correct only while each up file runs as one implicit transaction. Under that condition, a failed up at N leaves the schema at N-1. A failed write of the record after the file committed also leaves "N, dirty", with N applied. So the CLI tells the operator to run `reset-dirty` only when the error shows Postgres refused the migration file itself. Its later dirty-record text defers to that instruction and spells out no steps. When the output of the failed run is lost, the CLI cannot tell which case applies and gives no recipe. HEU-855 would give the operator a way forward. `reset-dirty` reads and writes the record under golang-migrate's advisory lock, which excludes only processes using the same database URL form (HEU-861).
+- These checks hold that assumption. A unit test fails when an up file contains `BEGIN`, `COMMIT`, `ROLLBACK`, `ABORT`, `CONCURRENTLY` or `START TRANSACTION` as a whole word, in any case. The test guards those named forms only. A bare `END`, and a called procedure that commits part-way and then raises, are not guarded. `up`, `down` and `reset-dirty` refuse a database URL that turns on `x-multi-statement`.
+- A failed `migrate down` leaves a record that reads the same as a failed up. `reset-dirty` cannot tell them apart. After a failed down, it moves the record one more version back. The record then sits two versions behind the schema (HEU-855).
 
 ### ADR-023: Soft Delete for Tree Topology
 

@@ -40,6 +40,7 @@ func TestConnectHosts_StatesTheURLsHostFields(t *testing.T) {
 		{name: "query and fragment", url: "postgres://db:5432?sslmode=disable#frag", want: "db:5432"},
 		{name: "IPv6 host", url: "postgres://u@[::1]:5432/app", want: "[::1]:5432"},
 		{name: "raw at-sign in the password", url: "postgres://u:p@s3cret@db:5432/app", want: "db:5432"},
+		{name: "slash after a fragment", url: "postgres://db:5432#a/b", want: "db:5432"},
 		{name: "query after a fragment", url: "postgres://db:5432/app#x?host=evil", want: "db:5432"},
 		{name: "slash inside the query", url: "postgres://db:5432?sslmode=disable&x=/y", want: "db:5432"},
 		{name: "encoded query keys", url: "postgres://db/app?h%6fst=other&p%6frt=5433", want: "db (query h%6fst=other, query p%6frt=5433)"},
@@ -64,7 +65,12 @@ func TestConnectHosts_RefusesAStringItCannotRead(t *testing.T) {
 		"postgres://u@db/app?host=db2;password=s3cret&connect_timeout=1",
 		"postgres://u@db/app?host=%zz",
 		"postgres://u:12/s3cret@db/app",
-		"postgres://u:ab?s3cret@db/app",
+		"postgres://u:12?s3cret@db/app",
+		"postgres://u:12#s3cret@db/app",
+		"postgres://db/app?host=x password=s3cret",
+		"postgres://db/app?host=x+password=s3cret",
+		"postgres://db/app?host=x%20password%3Ds3cret",
+		"postgres://db/app?port=5433%20password%3Ds3cret",
 		"postgres://u:p@x/s3cret@db/app",
 	} {
 		_, ok := connectHosts(raw)

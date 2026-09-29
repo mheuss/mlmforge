@@ -79,10 +79,10 @@ func connectHosts(dbURL string) (string, bool) {
 	hasQueryHost := false
 	var labels []string
 	for _, pair := range strings.Split(rawQuery, "&") {
-		rawKey, _, _ := strings.Cut(pair, "=")
-		key, err := url.QueryUnescape(rawKey)
-		if err != nil {
-			continue
+		rawKey, rawValue, _ := strings.Cut(pair, "=")
+		key, _ := url.QueryUnescape(rawKey)
+		if (key == "host" || key == "port") && !plainHostValue(rawValue) {
+			return "", false
 		}
 		switch key {
 		case "host":
@@ -111,6 +111,23 @@ func connectHosts(dbURL string) (string, bool) {
 		b.WriteString(" (the URL sets no port)")
 	}
 	return b.String(), true
+}
+
+// plainHostValue reports whether a query value decodes to only the characters a host list or port list uses.
+func plainHostValue(rawValue string) bool {
+	value, err := url.QueryUnescape(rawValue)
+	if err != nil {
+		return false
+	}
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case strings.ContainsRune(".-_:,/[]", r):
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // hostPartHasPort reports whether any comma-separated entry names a port.

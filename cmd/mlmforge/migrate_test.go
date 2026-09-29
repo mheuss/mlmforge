@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"io"
-	"strings"
 	"testing"
 
 	"github.com/mlmforge/mlmforge/internal/platform"
@@ -88,23 +87,13 @@ func TestMigrateResetDirty_RefusesMultiStatementModeBeforeConnecting(t *testing.
 	require.EqualError(t, root.Execute(), "migrate reset-dirty refused: the database URL sets x-multi-statement=t.")
 }
 
-func TestMigrateHelp_NeverSaysForceAndResetDirtyNamesItsRule(t *testing.T) {
-	for _, path := range [][]string{{"migrate", "--help"}, {"migrate", "up", "--help"}, {"migrate", "down", "--help"},
-		{"migrate", "version", "--help"}, {"migrate", "reset-dirty", "--help"}} {
-		var out bytes.Buffer
-		root := newRootCmd()
-		root.SetOut(&out)
-		root.SetErr(&out)
-		root.SetArgs(path)
-
-		require.NoError(t, root.Execute(), path)
-		require.NotContains(t, strings.ToLower(out.String()), "force", path)
-	}
-
+func TestMigrateResetDirtyHelp_NamesTheUpVersusDownRule(t *testing.T) {
 	var out bytes.Buffer
 	root := newRootCmd()
 	root.SetOut(&out)
+	root.SetErr(&out)
 	root.SetArgs([]string{"migrate", "reset-dirty", "--help"})
+
 	require.NoError(t, root.Execute())
 	require.Contains(t, out.String(),
 		"Run it only after a failed `mlmforge migrate up`. Do not run it after a failed `mlmforge migrate down`.")

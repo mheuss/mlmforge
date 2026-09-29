@@ -110,3 +110,25 @@ func TestEveryCommandGroupStillPrintsHelpWithNoArguments(t *testing.T) {
 		})
 	}
 }
+
+func TestEveryCommandHelpNeverSaysForce(t *testing.T) {
+	root := newRootCmd()
+	paths := append(groupPaths(root, nil), leafPaths(root, nil)...)
+
+	// Without this the test passes when the walk finds nothing.
+	require.GreaterOrEqual(t, len(paths), 8, "the walk found %d commands: %v", len(paths), paths)
+
+	for _, path := range paths {
+		args := append(append([]string{}, path...), "--help")
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			var out bytes.Buffer
+			root := newRootCmd()
+			root.SetOut(&out)
+			root.SetErr(&out)
+			root.SetArgs(args)
+
+			require.NoError(t, root.Execute())
+			requireNoForce(t, out.String())
+		})
+	}
+}

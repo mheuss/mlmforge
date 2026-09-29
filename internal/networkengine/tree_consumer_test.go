@@ -1724,6 +1724,36 @@ func (s *ctxReadingStore) GetNodeIncludingRemoved(ctx context.Context, treeID, u
 	return s.deleteRecordingStore.GetNodeIncludingRemoved(ctx, treeID, userID)
 }
 
+// expiringContext reports context.DeadlineExceeded once expire is called, so a
+// test can place the expiry between two calls.
+type expiringContext struct {
+	context.Context
+	done chan struct{}
+}
+
+func newExpiringContext() *expiringContext {
+	return &expiringContext{Context: context.Background(), done: make(chan struct{})}
+}
+
+func (c *expiringContext) Done() <-chan struct{} { return c.done }
+
+func (c *expiringContext) Err() error {
+	select {
+	case <-c.done:
+		return context.DeadlineExceeded
+	default:
+		return nil
+	}
+}
+
+func (c *expiringContext) expire() {
+	select {
+	case <-c.done:
+	default:
+		close(c.done)
+	}
+}
+
 // A cancellation arriving before reconcile is entered leaves the row this
 // delivery inserted. The error names the cancellation. It must also name what
 // the store was observed to hold, and must claim nothing about the engine.
@@ -1754,12 +1784,14 @@ func TestHandleRootAdded_CancelledInsertReportsTheRow(t *testing.T) {
 }
 
 // An expired deadline must report the stored row the same way a cancellation
-// does.
+// does. The deadline passes during the engine call, after the insert.
 func TestHandleRootAdded_ExpiredDeadlineReportsTheRow(t *testing.T) {
-	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
-	defer cancel()
+	ctx := newExpiringContext()
 
-	tr := &reconcileTransport{mutationErr: &EngineError{Code: engineCodeRootAlreadyExists}}
+	tr := &reconcileTransport{
+		mutationErr: &EngineError{Code: engineCodeRootAlreadyExists},
+		onMutation:  ctx.expire,
+	}
 	store := &ctxReadingStore{deleteRecordingStore: &deleteRecordingStore{MemoryTreeStore: NewMemoryTreeStore()}}
 	c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
 	// Not zero: at zero the select races its own timer.

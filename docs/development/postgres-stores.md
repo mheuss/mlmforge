@@ -220,8 +220,8 @@ use pgx. One URL can mean different things to each.
   `PGCONNECT_TIMEOUT`. pgx fails to parse the URL.
 - `PGCONNECT_TIMEOUT`: Both read it. A URL value overrides it in both.
 - Services: pgx reads a `service` key and `PGSERVICE`. A service file
-  overrides the environment but not the URL. lib/pq ignores a `service` key and
-  panics when `PGSERVICE` or `PGSERVICEFILE` exists, even empty (HEU-862).
+  overrides the environment but not the URL. lib/pq does not look up a `service`
+  key. It sends it to the server as a startup parameter. It panics when `PGSERVICE` or `PGSERVICEFILE` exists, even empty (HEU-862).
 - Deadlines: lib/pq's connect deadline covers the dial and startup only.
   pgx resolves host names before its per-address timeout starts.
 - Errors that quote the URL: Go's `*url.Error` quotes the raw URL, password

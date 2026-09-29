@@ -56,3 +56,9 @@ func TestDatabaseErrorText_KeepsTheLineNumberWithoutTheFile(t *testing.T) {
 
 	assert.Equal(t, "migration failed: syntax error (column 3) in line 4 (details: pq: duplicate key)", got)
 }
+
+func TestDatabaseErrorText_KeepsTheLineNumberWithoutAMessage(t *testing.T) {
+	got := databaseErrorText(database.Error{OrigErr: serverError{state: "23505"}, Line: 4, Query: []byte("SELECT 1")})
+
+	assert.Equal(t, "pq: duplicate key in line 4", got)
+}

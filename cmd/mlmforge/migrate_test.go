@@ -96,5 +96,5 @@ func TestMigrateResetDirtyHelp_NamesTheUpVersusDownRule(t *testing.T) {
 
 	require.NoError(t, root.Execute())
 	require.Contains(t, out.String(),
-		"Run it only when the output of the `mlmforge migrate up` that failed tells you to. Do not run it after a failed `mlmforge migrate down`.")
+		"Run it only when the command that left the record dirty was a `mlmforge migrate up` whose output tells you to. Do not run it after a failed `mlmforge migrate down`.")
 }

@@ -75,7 +75,7 @@ func dirtyText(rec platform.Record, src platform.SourceInfo) string {
 		lines = append(lines, fmt.Sprintf("The migrations directory %s has no migration %d, so %s would refuse.", src.Path, rec.Version, resetCommand))
 	}
 	return strings.Join(append(lines,
-		fmt.Sprintf("Run %s only if the last %s that ran migration %d and failed printed \"run %s\".", resetCommand, upCommand, rec.Version, resetCommand),
+		fmt.Sprintf("Run %s only if the command that left this record was a %s that ran migration %d and printed \"run %s\".", resetCommand, upCommand, rec.Version, resetCommand),
 		"Nothing in this output is that instruction.",
 		fmt.Sprintf("In any other case, including a failed %s, do not run it.", downCommand),
 	), "\n")

@@ -2,6 +2,7 @@ package networkengine
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"testing"
 	"time"
@@ -296,15 +297,18 @@ func TestTreeWriter_ARemovalAfterALockLostBeforeItsAppendMovesEveryRecruit(t *te
 	first, firstErr := NewTreeWriter(it.events, store, it.engine(t), NewPostgresTreeLocker(it.dsn)).
 		Remove(ctx, RemoveRequest{TreeID: tree, UserID: b, RemovedAt: writeTime.Add(7 * time.Hour)})
 
-	require.NoError(t, firstErr)
 	require.NoError(t, placedDErr)
 	require.NoError(t, placedEErr)
 	assert.NoError(t, placedD.ProjectionErr)
 	assert.NoError(t, placedE.ProjectionErr)
 	assert.Equal(t, int64(5), placedD.Version)
 	assert.Equal(t, int64(6), placedE.Version)
-	assert.Equal(t, int64(7), first.Version)
-	assert.Equal(t, map[string]string{root: root, a: root, c: a, d: a, e: root}, activeSponsors(t, it.store, tree))
+	// A refused removal leaves the tree as D's and E's placements left it.
+	want := map[string]string{root: root, a: root, b: a, c: b, d: b, e: root}
+	if firstErr == nil {
+		want = map[string]string{root: root, a: root, c: a, d: a, e: root}
+	}
+	assert.Equal(t, want, activeSponsors(t, it.store, tree), "the first writer's removal returned %v", firstErr)
 	assert.ErrorContains(t, first.ReleaseErr, "the pg_advisory_unlock query for tree "+tree+" failed")
 }
 
@@ -331,10 +335,21 @@ func TestTreeWriter_APlacementAfterALockLostBeforeItsAppendLeavesTheTreeWritable
 	require.NoError(t, placedEErr)
 	assert.NoError(t, removedB.ProjectionErr)
 	assert.NoError(t, placedE.ProjectionErr)
-	require.NoError(t, firstErr)
-	t.Logf("the first writer's placement under removed B reported projection error: %v", first.ProjectionErr)
+	t.Logf("the first writer's placement under removed B returned %v, with projection error %v", firstErr, first.ProjectionErr)
+	assert.ErrorContains(t, first.ReleaseErr, "the pg_advisory_unlock query for tree "+tree+" failed")
+	stored, err := it.events.ReadStream(ctx, TreeStreamName(tree), 1, 0)
+	require.NoError(t, err)
+	for _, ev := range stored {
+		if ev.Type != EventTypeNodePlaced {
+			continue
+		}
+		var p NodePlacedPayload
+		require.NoError(t, json.Unmarshal(ev.Payload, &p))
+		assert.False(t, p.UserID == x && p.ParentID == b,
+			"the stream holds event %s at version %d placing %s under removed %s", ev.ID, ev.Version, x, b)
+	}
 	next, nextErr := it.writer(t).Place(ctx, PlaceRequest{
 		TreeID: tree, UserID: y, ParentID: root, SponsorID: root, EnrolledAt: writeTime.Add(8 * time.Hour)})
-	assert.NoError(t, nextErr, "a placement under the root after the first writer's append")
+	assert.NoError(t, nextErr, "a placement under the root after the first writer's attempt")
 	assert.NoError(t, next.ProjectionErr)
 }

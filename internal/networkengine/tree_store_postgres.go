@@ -26,6 +26,9 @@ const insertNodeSQL = `INSERT INTO tree_nodes (id, tree_id, user_id, parent_id, 
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		 ON CONFLICT (id) DO NOTHING`
 
+const softDeleteNodeSQL = `UPDATE tree_nodes SET removed_at = now(), updated_at = now()
+		 WHERE tree_id = $1 AND user_id = $2 AND removed_at IS NULL`
+
 // Partial unique index names on tree_nodes. pgx reports the index name in
 // ConstraintName, which is what tells them apart.
 const (
@@ -82,7 +85,17 @@ func NewPostgresTreeStore(pool *pgxpool.Pool) *PostgresTreeStore {
 }
 
 func (s *PostgresTreeStore) InsertNode(ctx context.Context, node TreeNodeRow) error {
-	tag, err := s.pool.Exec(ctx, insertNodeSQL,
+	return insertNode(ctx, s.pool, node)
+}
+
+// execer is what a pool and a transaction share for a write.
+type execer interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+// insertNode inserts one row through db.
+func insertNode(ctx context.Context, db execer, node TreeNodeRow) error {
+	tag, err := db.Exec(ctx, insertNodeSQL,
 		node.ID, node.TreeID, node.UserID, node.ParentID, node.SponsorID, node.Position, node.Depth, node.EnrolledAt,
 	)
 	if err != nil {
@@ -99,11 +112,7 @@ func (s *PostgresTreeStore) InsertNode(ctx context.Context, node TreeNodeRow) er
 }
 
 func (s *PostgresTreeStore) DeleteNode(ctx context.Context, treeID, userID string) error {
-	_, err := s.pool.Exec(ctx,
-		`UPDATE tree_nodes SET removed_at = now(), updated_at = now()
-		 WHERE tree_id = $1 AND user_id = $2 AND removed_at IS NULL`,
-		treeID, userID,
-	)
+	_, err := s.pool.Exec(ctx, softDeleteNodeSQL, treeID, userID)
 	return err
 }
 
@@ -118,6 +127,19 @@ func (s *PostgresTreeStore) DeleteNodeAndResponsor(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	if err := deleteNodeAndResponsor(ctx, tx, treeID, userID, removalEventID, moved); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// deleteNodeAndResponsor runs the soft delete and the re-sponsor writes in tx.
+func deleteNodeAndResponsor(
+	ctx context.Context,
+	tx pgx.Tx,
+	treeID, userID, removalEventID string,
+	moved []Responsored,
+) error {
 	// The stamp rides the soft delete's own statement, so it lands with the
 	// tombstone or not at all. removed_at IS NULL can only match the row that
 	// was active, so it cannot reach an earlier placement's tombstone.
@@ -152,8 +174,7 @@ func (s *PostgresTreeStore) DeleteNodeAndResponsor(
 				m.UserID, treeID, tag.RowsAffected())
 		}
 	}
-
-	return tx.Commit(ctx)
+	return nil
 }
 
 func (s *PostgresTreeStore) GetNode(ctx context.Context, treeID, userID string) (*TreeNodeRow, error) {
@@ -259,4 +280,108 @@ func scanTreeNodes(rows pgx.Rows) ([]TreeNodeRow, error) {
 		nodes = append(nodes, n)
 	}
 	return nodes, rows.Err()
+}
+
+// The row is created at 0 before it is locked, so two first projections of
+// one tree queue on it. DO NOTHING leaves the transaction usable where a
+// unique violation would abort it.
+const (
+	createProjectionSQL = `INSERT INTO tree_projections (tree_id, projected_version) VALUES ($1, 0)
+		 ON CONFLICT (tree_id) DO NOTHING`
+	lockProjectionSQL = `SELECT projected_version FROM tree_projections WHERE tree_id = $1 FOR UPDATE`
+	setProjectionSQL  = `UPDATE tree_projections SET projected_version = $2, updated_at = clock_timestamp()
+		 WHERE tree_id = $1`
+)
+
+func (s *PostgresTreeStore) ProjectedVersion(ctx context.Context, treeID string) (int64, bool, error) {
+	var version int64
+	err := s.pool.QueryRow(ctx, `SELECT projected_version FROM tree_projections WHERE tree_id = $1`, treeID).
+		Scan(&version)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return version, true, nil
+}
+
+func (s *PostgresTreeStore) ProjectInsert(ctx context.Context, node TreeNodeRow, eventVersion int64) error {
+	return s.project(ctx, node.TreeID, eventVersion, func(tx pgx.Tx) error {
+		return insertNode(ctx, tx, node)
+	})
+}
+
+func (s *PostgresTreeStore) ProjectRemoval(
+	ctx context.Context,
+	treeID, userID, removalEventID string,
+	eventVersion int64,
+	moved []Responsored,
+) error {
+	return s.project(ctx, treeID, eventVersion, func(tx pgx.Tx) error {
+		return deleteNodeAndResponsor(ctx, tx, treeID, userID, removalEventID, moved)
+	})
+}
+
+// project runs write in one transaction that refuses an event below the tree's
+// projected version, and records eventVersion when it is higher.
+func (s *PostgresTreeStore) project(ctx context.Context, treeID string, eventVersion int64, write func(pgx.Tx) error) error {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, createProjectionSQL, treeID); err != nil {
+		return err
+	}
+	var projected int64
+	if err := tx.QueryRow(ctx, lockProjectionSQL, treeID).Scan(&projected); err != nil {
+		return err
+	}
+	if eventVersion < projected {
+		return &ProjectionRefusedError{TreeID: treeID, EventVersion: eventVersion, ProjectedVersion: projected}
+	}
+	if err := write(tx); err != nil {
+		return err
+	}
+	if eventVersion > projected {
+		if _, err := tx.Exec(ctx, setProjectionSQL, treeID, eventVersion); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *PostgresTreeStore) UndoRootProjection(ctx context.Context, treeID, userID string, eventVersion int64) error {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var projected int64
+	err = tx.QueryRow(ctx, lockProjectionSQL, treeID).Scan(&projected)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("tree %s has no projection row; the root row for %s was not deleted", treeID, userID)
+	}
+	if err != nil {
+		return err
+	}
+	if projected != eventVersion {
+		return fmt.Errorf("tree %s has projected version %d, not %d; the root row for %s was not deleted",
+			treeID, projected, eventVersion, userID)
+	}
+	tag, err := tx.Exec(ctx, softDeleteNodeSQL, treeID, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("soft delete for root %s in tree %s matched %d active rows; the projected version was not changed",
+			userID, treeID, tag.RowsAffected())
+	}
+	if _, err := tx.Exec(ctx, setProjectionSQL, treeID, eventVersion-1); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }

@@ -91,8 +91,40 @@ type TreeStore interface {
 	// is a sort within each depth group.
 	GetByTreeDepthOrdered(ctx context.Context, treeID string) ([]TreeNodeRow, error)
 
-	// BulkInsert adds multiple nodes in a single transaction.
+	// BulkInsert adds multiple nodes in a single transaction. It loads
+	// fixtures, and records no projected version.
 	BulkInsert(ctx context.Context, nodes []TreeNodeRow) error
+
+	// ProjectedVersion returns the highest stream version projected for the
+	// tree. found is false when the tree has no projection row.
+	ProjectedVersion(ctx context.Context, treeID string) (version int64, found bool, err error)
+
+	// ProjectInsert inserts the row that the event at eventVersion projects,
+	// and records eventVersion as the tree's projected version.
+	ProjectInsert(ctx context.Context, node TreeNodeRow, eventVersion int64) error
+
+	// ProjectRemoval soft-deletes the user's row and repoints the moved
+	// recruits for the removal event at eventVersion, and records eventVersion
+	// as the tree's projected version.
+	ProjectRemoval(ctx context.Context, treeID, userID, removalEventID string, eventVersion int64, moved []Responsored) error
+
+	// UndoRootProjection soft-deletes the root row that the event at
+	// eventVersion inserted, and returns the tree's projected version to
+	// eventVersion - 1.
+	UndoRootProjection(ctx context.Context, treeID, userID string, eventVersion int64) error
+}
+
+// ProjectionRefusedError reports a projection whose event version was below
+// the tree's projected version.
+type ProjectionRefusedError struct {
+	TreeID           string
+	EventVersion     int64
+	ProjectedVersion int64
+}
+
+func (e *ProjectionRefusedError) Error() string {
+	return fmt.Sprintf("tree %s has projected version %d; the event at version %d was not projected",
+		e.TreeID, e.ProjectedVersion, e.EventVersion)
 }
 
 // The conditions an insert can be refused for, and one the consumer raises

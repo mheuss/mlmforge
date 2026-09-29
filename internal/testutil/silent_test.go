@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"errors"
 	"net"
 	"os"
 	"testing"
@@ -36,4 +37,26 @@ func TestSilentListener_AcceptsAndNeverWrites(t *testing.T) {
 	var netErr net.Error
 	require.ErrorAs(t, err, &netErr)
 	require.True(t, netErr.Timeout(), "read returned %v; want a timeout", err)
+}
+
+func TestSilentListener_CleanupClosesHeldConnections(t *testing.T) {
+	var conn net.Conn
+	t.Run("listener", func(t *testing.T) {
+		addr := SilentListener(t)
+		var err error
+		conn, err = net.DialTimeout("tcp", addr, time.Second)
+		require.NoError(t, err)
+		_, err = conn.Write([]byte("startup"))
+		require.NoError(t, err)
+	})
+	defer func() { _ = conn.Close() }()
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
+
+	_, err := conn.Read(make([]byte, 1))
+
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		require.False(t, netErr.Timeout(), "read timed out; the held connection was not closed")
+	}
+	require.Error(t, err)
 }

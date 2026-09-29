@@ -201,6 +201,7 @@ func TestMigrateUp_AFailedApplyShowsThePostgresDetailThenTheRecord(t *testing.T)
 		"Fix the cause shown above, run `mlmforge migrate reset-dirty` (it sets the record to 5, clean), " +
 		"then run `mlmforge migrate up`.\n"
 	require.Contains(t, stderr, detail)
+	require.NotContains(t, stderr, "One active root per tree", "the migration file body must not be echoed")
 	require.True(t, strings.HasSuffix(stderr, recovery), "stderr: %s", stderr)
 	require.Less(t, strings.Index(stderr, detail), strings.Index(stderr, recovery))
 	require.NotContains(t, out.stdout.String()+stderr, "Usage:")
@@ -252,7 +253,7 @@ func TestMigrateResetDirty_MovesADirtyRecordBackOneMigration(t *testing.T) {
 	out, err := runMigrate(t, dsn, "reset-dirty")
 
 	require.NoError(t, err, out.stderr.String())
-	require.Equal(t, "The record read 6, dirty. It now reads 5, clean.\nRun `mlmforge migrate up` next.\n", out.stdout.String())
+	require.Equal(t, "The record read 6, dirty. This run set it to 5, clean.\nRun `mlmforge migrate up` next.\n", out.stdout.String())
 	require.Empty(t, out.stderr.String())
 	require.Equal(t, []string{"5,false"}, readRecord(t, dsn))
 }
@@ -265,7 +266,7 @@ func TestMigrateResetDirty_FromTheFirstMigrationLeavesNoVersion(t *testing.T) {
 	out, err := runMigrate(t, dsn, "reset-dirty")
 
 	require.NoError(t, err, out.stderr.String())
-	require.Equal(t, "The record read 1, dirty. It now holds no version.\nRun `mlmforge migrate up` next.\n", out.stdout.String())
+	require.Equal(t, "The record read 1, dirty. This run set it to no version.\nRun `mlmforge migrate up` next.\n", out.stdout.String())
 	require.Empty(t, out.stderr.String())
 	require.Empty(t, readRecord(t, dsn))
 }
@@ -364,9 +365,25 @@ func TestMigrate_RecoversFromTheRootIndexFailureWithResetDirty(t *testing.T) {
 
 	out, err = runMigrate(t, dsn, "reset-dirty")
 	require.NoError(t, err, out.stderr.String())
-	require.Equal(t, "The record read 6, dirty. It now reads 5, clean.\nRun `mlmforge migrate up` next.\n", out.stdout.String())
+	require.Equal(t, "The record read 6, dirty. This run set it to 5, clean.\nRun `mlmforge migrate up` next.\n", out.stdout.String())
 
 	out, err = runMigrate(t, dsn, "up")
 	require.NoError(t, err, out.stderr.String())
 	require.Equal(t, []string{fmt.Sprintf("%d,false", latestMigration(t))}, readRecord(t, dsn))
+}
+
+func TestMigrateUp_AFailedFileIsNotEchoedAndNeverSaysForce(t *testing.T) {
+	dsn := newMigrateDatabase(t)
+	migrateTo(t, dsn, 4)
+	conn := connectTo(t, dsn)
+	_, err := conn.Exec(t.Context(), "CREATE TABLE commission_runs (id int)")
+	require.NoError(t, err)
+
+	out, err := runMigrate(t, dsn, "up")
+
+	require.Error(t, err)
+	stderr := out.stderr.String()
+	require.Contains(t, stderr, `relation "commission_runs" already exists`)
+	require.NotContains(t, stderr, "CREATE TABLE", "the migration file body must not be echoed")
+	requireNoForce(t, out.stdout.String()+stderr)
 }

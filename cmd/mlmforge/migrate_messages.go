@@ -19,7 +19,7 @@ const (
 
 // describeRecord states what a record reads, in the present tense.
 func describeRecord(r platform.Record) string {
-	if r.Version == -1 && !r.Dirty {
+	if r.IsNone() {
 		return "holds no version"
 	}
 	return "reads " + r.String()
@@ -27,7 +27,17 @@ func describeRecord(r platform.Record) string {
 
 // negativeText names a dirty record below 0 and says a reset does not change it.
 func negativeText(version int) string {
-	return fmt.Sprintf("The record reads %d, dirty. reset-dirty does not change a record at %d.", version, version)
+	return fmt.Sprintf("The record reads %d, dirty. %s", version, resetRefusesAt(version))
+}
+
+// resetRefusesAt says reset-dirty does not change a record at version.
+func resetRefusesAt(version int) string {
+	return fmt.Sprintf("reset-dirty does not change a record at %d.", version)
+}
+
+// unreadAfter says the record read after a failure itself failed.
+func unreadAfter(err error) string {
+	return fmt.Sprintf("The record could not be read after the failure: %v.", err)
 }
 
 // resetDoes describes the record a reset would leave, as a clause.
@@ -56,15 +66,15 @@ func dirtyText(rec platform.Record, src platform.SourceInfo) string {
 	}
 	return strings.Join([]string{
 		fmt.Sprintf("The record %s.", describeRecord(rec)),
-		fmt.Sprintf("If the command that failed was %s: %s", upCommand, upRecovery(rec, src, "fix the cause shown in its error")),
-		fmt.Sprintf("If the command that failed was %s: do not run %s.", downCommand, resetCommand),
+		fmt.Sprintf("If %s failed while running the migration file: %s", upCommand, upRecovery(rec, src, "fix the cause shown in its error")),
+		fmt.Sprintf("In any other case, including a failed %s: do not run %s.", downCommand, resetCommand),
 	}, "\n")
 }
 
 // versionText renders a Status as a version line and, for a dirty record, its recovery text.
 func versionText(st platform.Status) string {
 	rec := st.Record
-	if rec.Version == -1 && !rec.Dirty {
+	if rec.IsNone() {
 		return "Version: none, Dirty: false"
 	}
 	head := fmt.Sprintf("Version: %d, Dirty: %v", rec.Version, rec.Dirty)
@@ -99,7 +109,7 @@ func (e *operatorError) Unwrap() error { return e.err }
 
 // multiStatementText is the text for a refused multi-statement URL.
 func multiStatementText(e *platform.MultiStatementError) string {
-	return fmt.Sprintf("migrate %s refused: the database URL sets x-multi-statement=%s.", e.Command, e.Value)
+	return e.Error() + "."
 }
 
 // applyFailureText is the text for a failed migrate up.
@@ -108,12 +118,16 @@ func applyFailureText(e *platform.ApplyError) string {
 	after := e.After
 	switch {
 	case after.Err != nil:
-		lines = append(lines, fmt.Sprintf("The record could not be read after the failure: %v.", after.Err))
+		lines = append(lines, unreadAfter(after.Err))
 	case !after.Record.Dirty:
 	case after.Record.Version < 0:
 		lines = append(lines,
 			fmt.Sprintf("This run was %s. The record now %s.", upCommand, describeRecord(after.Record)),
-			fmt.Sprintf("reset-dirty does not change a record at %d.", after.Record.Version))
+			resetRefusesAt(after.Record.Version))
+	case !e.BodyFailed:
+		lines = append(lines,
+			fmt.Sprintf("This run was %s. The record now %s.", upCommand, describeRecord(after.Record)),
+			fmt.Sprintf("The error does not show that the migration file failed, so the file may have been applied. Do not run %s.", resetCommand))
 	default:
 		lines = append(lines,
 			fmt.Sprintf("This run was %s. The record now %s.", upCommand, describeRecord(after.Record)),
@@ -172,7 +186,7 @@ func migrateError(command string, err error) error {
 
 // describeRecordBefore states what a record read, in the past tense.
 func describeRecordBefore(r platform.Record) string {
-	if r.Version == -1 && !r.Dirty {
+	if r.IsNone() {
 		return "held no version"
 	}
 	return "read " + r.String()
@@ -192,7 +206,7 @@ func rollbackFailureText(e *platform.RollbackError) string {
 	after := e.After
 	switch {
 	case after.Err != nil:
-		lines = append(lines, fmt.Sprintf("The record could not be read after the failure: %v.", after.Err))
+		lines = append(lines, unreadAfter(after.Err))
 		return strings.Join(lines, "\n")
 	case !after.Record.Dirty:
 		return e.Error()
@@ -207,7 +221,7 @@ func rollbackFailureText(e *platform.RollbackError) string {
 
 	switch {
 	case after.Record.Version < 0:
-		lines = append(lines, fmt.Sprintf("reset-dirty does not change a record at %d.", after.Record.Version))
+		lines = append(lines, resetRefusesAt(after.Record.Version))
 	case e.Source.Err == nil && e.Source.InSource:
 		lines = append(lines, fmt.Sprintf("Do not run %s. %s", resetCommand, resetWould(e.Source)))
 	default:
@@ -218,13 +232,17 @@ func rollbackFailureText(e *platform.RollbackError) string {
 
 // resetText describes a completed reset.
 func resetText(r platform.ResetResult) string {
-	return fmt.Sprintf("The record %s. It now %s.\nRun %s next.", describeRecordBefore(r.From), describeRecord(r.To), upCommand)
+	set := "This run set it to no version."
+	if !r.To.IsNone() {
+		set = fmt.Sprintf("This run set it to %s.", r.To)
+	}
+	return fmt.Sprintf("The record %s. %s\nRun %s next.", describeRecordBefore(r.From), set, upCommand)
 }
 
 // writeFailureText is the text for a failed write of the record.
 func writeFailureText(e *platform.WriteError) string {
 	if e.After.Err != nil {
-		return fmt.Sprintf("%s\nThe record could not be read after the failure: %v.", e.Error(), e.After.Err)
+		return e.Error() + "\n" + unreadAfter(e.After.Err)
 	}
 	return fmt.Sprintf("%s\nThe record now %s.", e.Error(), describeRecord(e.After.Record))
 }

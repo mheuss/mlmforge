@@ -3,6 +3,9 @@ package platform
 import (
 	"errors"
 	"fmt"
+	"strings"
+
+	"github.com/golang-migrate/migrate/v4/database"
 )
 
 // Record is the row the migration version table holds. Version is -1 for a table with no row.
@@ -11,10 +14,13 @@ type Record struct {
 	Dirty   bool
 }
 
+// IsNone reports whether the record holds no version.
+func (r Record) IsNone() bool { return r.Version == -1 && !r.Dirty }
+
 // String names the record as "none", "6, dirty" or "5, clean".
 func (r Record) String() string {
 	switch {
-	case r.Version == -1 && !r.Dirty:
+	case r.IsNone():
 		return "none"
 	case r.Dirty:
 		return fmt.Sprintf("%d, dirty", r.Version)
@@ -99,13 +105,15 @@ func (e *DirtyError) Error() string {
 }
 
 // ApplyError reports a failed up migration and the record read after it.
+// BodyFailed is true only when the error shows Postgres refused the migration file itself.
 type ApplyError struct {
-	Err    error
-	After  RecordRead
-	Source SourceInfo
+	Err        error
+	After      RecordRead
+	Source     SourceInfo
+	BodyFailed bool
 }
 
-func (e *ApplyError) Error() string { return "apply migrations: " + e.Err.Error() }
+func (e *ApplyError) Error() string { return "apply migrations: " + migrationErrorText(e.Err) }
 
 func (e *ApplyError) Unwrap() error { return e.Err }
 
@@ -117,7 +125,7 @@ type RollbackError struct {
 	Source SourceInfo
 }
 
-func (e *RollbackError) Error() string { return "rollback migration: " + e.Err.Error() }
+func (e *RollbackError) Error() string { return "rollback migration: " + migrationErrorText(e.Err) }
 
 func (e *RollbackError) Unwrap() error { return e.Err }
 
@@ -192,3 +200,33 @@ type WriteError struct {
 func (e *WriteError) Error() string { return "write migration record: " + e.Err.Error() }
 
 func (e *WriteError) Unwrap() error { return e.Err }
+
+// migrationErrorText renders err, leaving out any query text a driver error holds.
+func migrationErrorText(err error) string {
+	switch e := err.(type) {
+	case database.Error:
+		return databaseErrorText(e)
+	case *database.Error:
+		return databaseErrorText(*e)
+	}
+	return err.Error()
+}
+
+// databaseErrorText renders a driver error's message and underlying error, leaving out its query.
+func databaseErrorText(e database.Error) string {
+	if e.Err == "" {
+		return fmt.Sprint(e.OrigErr)
+	}
+	return fmt.Sprintf("%s (details: %v)", e.Err, e.OrigErr)
+}
+
+// isBodyFailure reports whether err shows Postgres refusing the migration file itself.
+// Anything it does not recognise reads as false.
+func isBodyFailure(err error) bool {
+	dbErr, ok := err.(database.Error)
+	if !ok || !strings.HasPrefix(dbErr.Err, "migration failed") {
+		return false
+	}
+	var serverErr interface{ SQLState() string }
+	return errors.As(dbErr.OrigErr, &serverErr)
+}

@@ -56,7 +56,7 @@ func (mg *migration) upResult(upErr error) error {
 		return dirty
 	}
 	after := mg.recordRead()
-	return &ApplyError{Err: upErr, After: after, Source: mg.sourceFor(after)}
+	return &ApplyError{Err: upErr, After: after, Source: mg.sourceFor(after), BodyFailed: isBodyFailure(upErr)}
 }
 
 // ErrNoChange is returned by MigrateDown when there are no migrations to roll back.

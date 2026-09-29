@@ -165,7 +165,9 @@ func TestConnectError_NamesEachTimeoutSource(t *testing.T) {
 		{dbTarget{timeout: timeoutAdded, addedSeconds: 10}, "(set by: connect_timeout=10, added by mlmforge because the URL set none)"},
 		{dbTarget{timeout: timeoutFromURL}, "(set by: connect_timeout in the URL)"},
 		{dbTarget{timeout: timeoutFromEnv}, "(set by: PGCONNECT_TIMEOUT)"},
-		{dbTarget{timeout: timeoutFromService}, "(set by: the named service)"},
+		{dbTarget{timeout: timeoutFromService}, "(no connect_timeout added; a service is named)"},
+		{dbTarget{timeout: timeoutOffInURL}, "(no connect_timeout; the URL turns it off)"},
+		{dbTarget{timeout: timeoutOffInEnv}, "(no connect_timeout; PGCONNECT_TIMEOUT turns it off)"},
 		{dbTarget{timeout: timeoutFromEnvOrService}, "(set by: PGCONNECT_TIMEOUT or the named service)"},
 		{dbTarget{timeout: timeoutNone}, "(set by: no setting mlmforge read; the URL's connect_timeout is empty)"},
 		{dbTarget{timeout: timeoutUnknown}, "(set by: not known; mlmforge did not change the connection string)"},
@@ -180,11 +182,11 @@ func TestConnectError_NamesEachTimeoutSource(t *testing.T) {
 func TestConnectError_NamesTheSecondsThatWereAdded(t *testing.T) {
 	testutil.ClearTimeoutEnv(t)
 	previous := defaultConnectTimeout
+	t.Cleanup(func() { defaultConnectTimeout = previous })
 	defaultConnectTimeout = 7
 	target, err := resolveDBURL("postgres://db/app")
 	require.NoError(t, err)
 	defaultConnectTimeout = 3
-	t.Cleanup(func() { defaultConnectTimeout = previous })
 	cte := &platform.ConnectTimeoutError{Hosts: "db", Waited: 7 * time.Second, Err: errors.New("driver")}
 
 	got := connectError(cte, target)

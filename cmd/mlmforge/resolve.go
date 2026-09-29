@@ -29,6 +29,8 @@ const (
 	timeoutFromService
 	timeoutFromEnvOrService
 	timeoutNone
+	timeoutOffInURL
+	timeoutOffInEnv
 )
 
 // dbTarget is a resolved database URL and the source of its connect timeout.
@@ -38,8 +40,8 @@ type dbTarget struct {
 	addedSeconds int
 }
 
-// setBy names the setting the connect timeout was read from.
-func (t dbTarget) setBy() string {
+// sourceText states where the connect timeout came from, as far as mlmforge can tell.
+func (t dbTarget) sourceText() string {
 	switch t.timeout {
 	case timeoutAdded:
 		return fmt.Sprintf("set by: connect_timeout=%d, added by mlmforge because the URL set none", t.addedSeconds)
@@ -48,7 +50,11 @@ func (t dbTarget) setBy() string {
 	case timeoutFromEnv:
 		return "set by: PGCONNECT_TIMEOUT"
 	case timeoutFromService:
-		return "set by: the named service"
+		return "no connect_timeout added; a service is named"
+	case timeoutOffInURL:
+		return "no connect_timeout; the URL turns it off"
+	case timeoutOffInEnv:
+		return "no connect_timeout; PGCONNECT_TIMEOUT turns it off"
 	case timeoutFromEnvOrService:
 		return "set by: PGCONNECT_TIMEOUT or the named service"
 	case timeoutNone:
@@ -83,10 +89,14 @@ func withConnectTimeout(raw string) dbTarget {
 	q := u.Query()
 	// Cases run in precedence order. Moving one changes which source is reported.
 	switch {
+	case isZero(q.Get("connect_timeout")):
+		return unchanged(timeoutOffInURL)
 	case q.Get("connect_timeout") != "":
 		return unchanged(timeoutFromURL)
 	case os.Getenv("PGCONNECT_TIMEOUT") != "" && (q.Has("service") || os.Getenv("PGSERVICE") != ""):
 		return unchanged(timeoutFromEnvOrService)
+	case isZero(os.Getenv("PGCONNECT_TIMEOUT")):
+		return unchanged(timeoutOffInEnv)
 	case os.Getenv("PGCONNECT_TIMEOUT") != "":
 		return unchanged(timeoutFromEnv)
 	case q.Has("connect_timeout"):
@@ -96,6 +106,12 @@ func withConnectTimeout(raw string) dbTarget {
 	}
 	param := "connect_timeout=" + strconv.Itoa(defaultConnectTimeout)
 	return dbTarget{url: appendQueryParam(raw, param), timeout: timeoutAdded, addedSeconds: defaultConnectTimeout}
+}
+
+// isZero reports whether a connect_timeout value reads as zero seconds.
+func isZero(value string) bool {
+	n, err := strconv.Atoi(strings.TrimSpace(value))
+	return err == nil && n == 0
 }
 
 // appendQueryParam adds param to the query of raw without re-encoding anything else.
@@ -122,7 +138,7 @@ func connectError(err error, target dbTarget) error {
 	if !errors.As(err, &cte) {
 		return err
 	}
-	source := " (" + target.setBy() + ")"
+	source := " (" + target.sourceText() + ")"
 	text, timeout := err.Error(), cte.Error()
 	i := strings.Index(text, timeout)
 	if i < 0 {

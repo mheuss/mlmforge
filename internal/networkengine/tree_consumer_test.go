@@ -155,15 +155,15 @@ func TestTreeConsumer_HandleNodePlaced(t *testing.T) {
 	assert.Equal(t, "add_node", transport.calls[0].op)
 }
 
-// insertRecordingStore records the rows the consumer passes to InsertNode.
+// insertRecordingStore records the rows the consumer passes to ProjectInsert.
 type insertRecordingStore struct {
 	TreeStore
 	inserted []TreeNodeRow
 }
 
-func (s *insertRecordingStore) InsertNode(ctx context.Context, node TreeNodeRow) error {
+func (s *insertRecordingStore) ProjectInsert(ctx context.Context, node TreeNodeRow, eventVersion int64) error {
 	s.inserted = append(s.inserted, node)
-	return s.TreeStore.InsertNode(ctx, node)
+	return s.TreeStore.ProjectInsert(ctx, node, eventVersion)
 }
 
 func TestTreeConsumer_LeavesStoreOwnedTimestampsUnset(t *testing.T) {
@@ -1616,24 +1616,24 @@ type deleteRecordingStore struct {
 	wroteResponsors []string
 }
 
-func (c *deleteRecordingStore) DeleteNodeAndResponsor(
-	ctx context.Context, treeID, userID, removalEventID string, moved []Responsored,
+func (c *deleteRecordingStore) ProjectRemoval(
+	ctx context.Context, treeID, userID, removalEventID string, eventVersion int64, moved []Responsored,
 ) error {
 	c.responsors = append(c.responsors, userID)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	c.wroteResponsors = append(c.wroteResponsors, userID)
-	return c.MemoryTreeStore.DeleteNodeAndResponsor(ctx, treeID, userID, removalEventID, moved)
+	return c.MemoryTreeStore.ProjectRemoval(ctx, treeID, userID, removalEventID, eventVersion, moved)
 }
 
-func (c *deleteRecordingStore) DeleteNode(ctx context.Context, treeID, userID string) error {
+func (c *deleteRecordingStore) UndoRootProjection(ctx context.Context, treeID, userID string, eventVersion int64) error {
 	c.attempts = append(c.attempts, userID)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	c.deleted = append(c.deleted, userID)
-	return c.MemoryTreeStore.DeleteNode(ctx, treeID, userID)
+	return c.MemoryTreeStore.UndoRootProjection(ctx, treeID, userID, eventVersion)
 }
 
 // The design requires the root's enrolment to match, not just the depth. A
@@ -1802,9 +1802,10 @@ type preIndexStore struct {
 	*deleteRecordingStore
 }
 
-func (s preIndexStore) InsertNode(ctx context.Context, node TreeNodeRow) error {
-	err := s.deleteRecordingStore.InsertNode(ctx, node)
+func (s preIndexStore) ProjectInsert(ctx context.Context, node TreeNodeRow, eventVersion int64) error {
+	err := s.deleteRecordingStore.ProjectInsert(ctx, node, eventVersion)
 	if errors.Is(err, ErrRootConflict) {
+		s.advance(node.TreeID, eventVersion)
 		return s.appendUnchecked(node)
 	}
 	return err
@@ -2002,7 +2003,7 @@ func TestHandleNodeRemoved_ReconcileConvergesOnItsOwnTombstoneBehindALaterPlacem
 	ctx := context.Background()
 	seedRemovable(t, store)
 	event := makeEvent(EventTypeNodeRemoved, removedPayload())
-	require.NoError(t, store.MemoryTreeStore.DeleteNodeAndResponsor(ctx, "tree1", posUser, event.ID, nil))
+	require.NoError(t, store.DeleteNodeAndResponsor(ctx, "tree1", posUser, event.ID, nil))
 	later := seedReplacement(t, store)
 
 	err := c.HandleEvent(ctx, event)
@@ -2021,7 +2022,7 @@ func TestHandleNodeRemoved_ReconcileFailsWhenOnlyAnEarlierRemovalsTombstoneExist
 	ctx := context.Background()
 	seedRemovable(t, store)
 	earlier := makeEvent(EventTypeNodeRemoved, removedPayload())
-	require.NoError(t, store.MemoryTreeStore.DeleteNodeAndResponsor(ctx, "tree1", posUser, earlier.ID, nil))
+	require.NoError(t, store.DeleteNodeAndResponsor(ctx, "tree1", posUser, earlier.ID, nil))
 	seedReplacement(t, store)
 	event := makeEvent(EventTypeNodeRemoved, removedPayload())
 

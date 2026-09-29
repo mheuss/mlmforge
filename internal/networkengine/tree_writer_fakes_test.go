@@ -397,9 +397,9 @@ type loggingStore struct {
 	name string
 }
 
-func (s *loggingStore) InsertNode(ctx context.Context, node TreeNodeRow) error {
+func (s *loggingStore) ProjectInsert(ctx context.Context, node TreeNodeRow, eventVersion int64) error {
 	s.log.add(s.name + " insert " + node.UserID)
-	return s.TreeStore.InsertNode(ctx, node)
+	return s.TreeStore.ProjectInsert(ctx, node, eventVersion)
 }
 
 func (s *loggingStore) GetByTreeDepthOrdered(ctx context.Context, treeID string) ([]TreeNodeRow, error) {

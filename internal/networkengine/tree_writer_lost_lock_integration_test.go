@@ -101,8 +101,9 @@ func TestTreeWriter_ARemovalProjectedAfterItsLockWasLostLeavesNoStaleSponsor(t *
 	assert.Equal(t, first.EventID, second.CaughtUp.EventID)
 	assert.NoError(t, second.ProjectionErr)
 	assert.NoError(t, second.ReleaseErr)
-	require.Error(t, first.ProjectionErr)
-	assert.Contains(t, first.ProjectionErr.Error(), "soft delete for user "+b+" in tree "+tree+" matched 0 active rows")
+	var refused *ProjectionRefusedError
+	require.ErrorAs(t, first.ProjectionErr, &refused)
+	assert.Equal(t, ProjectionRefusedError{TreeID: tree, EventVersion: 5, ProjectedVersion: 6}, *refused)
 	require.Error(t, first.ReleaseErr)
 	assert.Contains(t, first.ReleaseErr.Error(), "the pg_advisory_unlock query for tree "+tree+" failed")
 }
@@ -215,7 +216,9 @@ func TestTreeWriter_APlacementProjectedAfterItsLockWasLostIsRefused(t *testing.T
 	assert.Equal(t, first.EventID, second.CaughtUp.EventID)
 	assert.NoError(t, second.ProjectionErr)
 	assert.NoError(t, second.ReleaseErr)
-	assert.ErrorIs(t, first.ProjectionErr, ErrReplayedPlacement)
+	var refused *ProjectionRefusedError
+	require.ErrorAs(t, first.ProjectionErr, &refused)
+	assert.Equal(t, ProjectionRefusedError{TreeID: tree, EventVersion: 2, ProjectedVersion: 3}, *refused)
 	pos, posErr := lateEngine.GetPosition(ctx, tree, x)
 	assert.True(t, isEngineCode(posErr, engineCodeUserNotFound),
 		"GetPosition for %s on the first writer's engine returned position %+v and error %v", x, pos, posErr)

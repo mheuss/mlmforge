@@ -933,8 +933,9 @@ func TestTreePersistence_ReplayedPlacementRefused(t *testing.T) {
 
 	err := consumer.HandleEvent(ctx, placed)
 
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrReplayedPlacement, "the replayed placement is refused")
+	var refused *ProjectionRefusedError
+	require.ErrorAs(t, err, &refused)
+	assert.Equal(t, ProjectionRefusedError{TreeID: treeID, EventVersion: 2, ProjectedVersion: 3}, *refused)
 
 	active, err := treeStore.GetNode(ctx, treeID, u2)
 	require.NoError(t, err)

@@ -1073,6 +1073,11 @@ func runTreeStoreSuite(
 
 		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
 		setUpdatedAt(t, s, testNodeUUID(1), stale)
+		backdated, err := s.GetNode(ctx, tree, user)
+		require.NoError(t, err)
+		require.NotNil(t, backdated)
+		require.True(t, backdated.UpdatedAt.Equal(stale),
+			"UpdatedAt read back as %v after setUpdatedAt, want %v", backdated.UpdatedAt, stale)
 
 		require.NoError(t, s.DeleteNode(ctx, tree, user))
 
@@ -1100,6 +1105,13 @@ func runTreeStoreSuite(
 			makeUUIDNode(testNodeUUID(3), tree, recruit, 2, ptr(removedUser), ptr(removedUser), intPtr(0))))
 		setUpdatedAt(t, s, testNodeUUID(2), stale)
 		setUpdatedAt(t, s, testNodeUUID(3), stale)
+		for _, u := range []string{removedUser, recruit} {
+			backdated, err := s.GetNode(ctx, tree, u)
+			require.NoError(t, err)
+			require.NotNil(t, backdated)
+			require.True(t, backdated.UpdatedAt.Equal(stale),
+				"%s's UpdatedAt read back as %v after setUpdatedAt, want %v", u, backdated.UpdatedAt, stale)
+		}
 
 		require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, removedUser, testNodeUUID(9),
 			[]Responsored{{UserID: recruit, NewSponsorID: rootUser}}))

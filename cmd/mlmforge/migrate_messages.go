@@ -75,7 +75,6 @@ func versionText(st platform.Status) string {
 }
 
 // withoutReleaseErrors writes each release failure in err to w as a warning and returns the rest.
-// done names what the operation did, and is printed only when nothing but release failures remain.
 func withoutReleaseErrors(w io.Writer, done string, err error) error {
 	releases, rest := platform.SplitRelease(err)
 	for _, release := range releases {

@@ -340,9 +340,9 @@ Full document: [`content/design-rationale/020-tree-topology-separation.md`](cont
 - Rollback is explicit via `migrate down`. Each migration must have a working down file.
 - The expand-and-contract pattern means zero-downtime deployments but requires two migrations for breaking schema changes.
 - Replaces the `CreateSchema()` approach. Existing inline DDL was moved to migration 000001.
-- `migrate reset-dirty` recovers from a failed `migrate up`. It moves a record of "N, dirty" to the migration before N, clean. That is correct only while each up file runs as one implicit transaction, so a failed up at N leaves the schema at N-1.
-- Two checks hold that assumption. A unit test fails when an up file contains `BEGIN`, `COMMIT`, `ROLLBACK`, `ABORT` or `CONCURRENTLY` as a word, in any case. The test guards those named forms only. `up`, `down` and `reset-dirty` refuse a database URL that turns on `x-multi-statement`.
-- A failed `migrate down` leaves a record that reads the same as a failed up. `reset-dirty` cannot tell them apart. Run after a failed down, it moves the record one more version back, so the record ends two versions behind the schema (HEU-855).
+- `migrate reset-dirty` recovers from a failed `migrate up`. It moves a record of "N, dirty" to the migration before N, clean. That is correct only while each up file runs as one implicit transaction. Under that condition, a failed up at N leaves the schema at N-1.
+- These checks hold that assumption. A unit test fails when an up file contains `BEGIN`, `COMMIT`, `ROLLBACK`, `ABORT` or `CONCURRENTLY` as a whole word, in any case. The test guards those named forms only. `up`, `down` and `reset-dirty` refuse a database URL that turns on `x-multi-statement`.
+- A failed `migrate down` leaves a record that reads the same as a failed up. `reset-dirty` cannot tell them apart. After a failed down, it moves the record one more version back. The record then sits two versions behind the schema (HEU-855).
 
 ### ADR-023: Soft Delete for Tree Topology
 

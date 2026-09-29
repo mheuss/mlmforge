@@ -37,7 +37,7 @@ func MigrateUp(dbURL, migrationsPath string) (err error) {
 	return mg.upOutcome(mg.m.Up())
 }
 
-// upOutcome splits release failures off an Up result, classifies the rest, and joins them back.
+// upOutcome classifies the result of Up.
 func (mg *migration) upOutcome(raw error) error {
 	releases, upErr := SplitRelease(raw)
 	return withReleases(mg.upResult(upErr), releases)
@@ -78,7 +78,7 @@ func MigrateDown(dbURL, migrationsPath string) (err error) {
 	return mg.downOutcome(before, mg.m.Steps(-1))
 }
 
-// downOutcome splits release failures off a Steps(-1) result, classifies the rest, and joins them back.
+// downOutcome classifies the result of Steps(-1).
 func (mg *migration) downOutcome(before RecordRead, raw error) error {
 	releases, downErr := SplitRelease(raw)
 	return withReleases(mg.downResult(before, downErr), releases)

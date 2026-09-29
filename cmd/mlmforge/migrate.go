@@ -29,11 +29,11 @@ func newMigrateCmd() *cobra.Command {
 			Args:  cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, args []string) error {
 				cmd.SilenceUsage = true
-				url, err := resolveDBURL(*dbURL)
+				target, err := resolveDBURL(*dbURL)
 				if err != nil {
 					return err
 				}
-				err = withoutReleaseErrors(cmd.ErrOrStderr(), "migrate up finished", platform.MigrateUp(url, *migrationsPath))
+				err = withoutReleaseErrors(cmd.ErrOrStderr(), "migrate up finished", platform.MigrateUp(target.url, *migrationsPath))
 				return migrateError("up", err)
 			},
 		},
@@ -43,11 +43,11 @@ func newMigrateCmd() *cobra.Command {
 			Args:  cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, args []string) error {
 				cmd.SilenceUsage = true
-				url, err := resolveDBURL(*dbURL)
+				target, err := resolveDBURL(*dbURL)
 				if err != nil {
 					return err
 				}
-				err = withoutReleaseErrors(cmd.ErrOrStderr(), "one migration was rolled back", platform.MigrateDown(url, *migrationsPath))
+				err = withoutReleaseErrors(cmd.ErrOrStderr(), "one migration was rolled back", platform.MigrateDown(target.url, *migrationsPath))
 				if errors.Is(err, platform.ErrNoChange) {
 					_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No migrations to roll back.")
 					return nil
@@ -65,11 +65,11 @@ func newMigrateCmd() *cobra.Command {
 			Args:  cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, args []string) error {
 				cmd.SilenceUsage = true
-				url, err := resolveDBURL(*dbURL)
+				target, err := resolveDBURL(*dbURL)
 				if err != nil {
 					return err
 				}
-				st, err := platform.MigrateVersion(url, *migrationsPath)
+				st, err := platform.MigrateVersion(target.url, *migrationsPath)
 				if err = withoutReleaseErrors(cmd.ErrOrStderr(), "the record was read", err); err != nil {
 					return err
 				}
@@ -85,11 +85,11 @@ func newMigrateCmd() *cobra.Command {
 			Args: cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, args []string) error {
 				cmd.SilenceUsage = true
-				url, err := resolveDBURL(*dbURL)
+				target, err := resolveDBURL(*dbURL)
 				if err != nil {
 					return err
 				}
-				res, err := platform.ResetDirty(url, *migrationsPath)
+				res, err := platform.ResetDirty(target.url, *migrationsPath)
 				if err = withoutReleaseErrors(cmd.ErrOrStderr(), "the record was written", err); err != nil {
 					return migrateError("reset-dirty", err)
 				}

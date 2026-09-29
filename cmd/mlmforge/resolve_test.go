@@ -1,10 +1,12 @@
 package main
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/mlmforge/mlmforge/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -16,12 +18,13 @@ func TestResolveDBURL(t *testing.T) {
 		want  string
 		wantE bool
 	}{
-		{name: "flag wins", flag: "postgres://flag", env: "postgres://env", want: "postgres://flag"},
-		{name: "env is the fallback", env: "postgres://env", want: "postgres://env"},
+		{name: "flag wins", flag: "postgres://flag", env: "postgres://env", want: "postgres://flag?connect_timeout=10"},
+		{name: "env is the fallback", env: "postgres://env", want: "postgres://env?connect_timeout=10"},
 		{name: "neither is an error", wantE: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			testutil.ClearTimeoutEnv(t)
 			t.Setenv("DATABASE_URL", tt.env)
 
 			got, err := resolveDBURL(tt.flag)
@@ -31,8 +34,78 @@ func TestResolveDBURL(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			require.Equal(t, tt.want, got)
+			require.Equal(t, tt.want, got.url)
 		})
+	}
+}
+
+func TestResolveDBURL_ConnectTimeout(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		env     map[string]string
+		want    string
+		timeout timeoutSource
+	}{
+		{name: "no query", raw: "postgres://u:p@db:5432/app", want: "postgres://u:p@db:5432/app?connect_timeout=10", timeout: timeoutAdded},
+		{name: "existing query", raw: "postgres://db/app?sslmode=disable", want: "postgres://db/app?sslmode=disable&connect_timeout=10", timeout: timeoutAdded},
+		{name: "trailing question mark", raw: "postgres://db/app?", want: "postgres://db/app?connect_timeout=10", timeout: timeoutAdded},
+		{name: "trailing ampersand", raw: "postgres://db/app?sslmode=disable&", want: "postgres://db/app?sslmode=disable&connect_timeout=10", timeout: timeoutAdded},
+		{name: "fragment", raw: "postgres://db/app?sslmode=disable#frag", want: "postgres://db/app?sslmode=disable&connect_timeout=10#frag", timeout: timeoutAdded},
+		{name: "postgresql scheme", raw: "postgresql://db/app", want: "postgresql://db/app?connect_timeout=10", timeout: timeoutAdded},
+		{name: "encoded userinfo is kept", raw: "postgres://u:p%40ss@db/app?sslmode=disable", want: "postgres://u:p%40ss@db/app?sslmode=disable&connect_timeout=10", timeout: timeoutAdded},
+		{name: "operator sets 5", raw: "postgres://db/app?connect_timeout=5", want: "postgres://db/app?connect_timeout=5", timeout: timeoutFromURL},
+		{name: "operator sets 0", raw: "postgres://db/app?connect_timeout=0", want: "postgres://db/app?connect_timeout=0", timeout: timeoutFromURL},
+		{name: "PGCONNECT_TIMEOUT", raw: "postgres://db/app", env: map[string]string{"PGCONNECT_TIMEOUT": "3"}, want: "postgres://db/app", timeout: timeoutFromEnv},
+		{name: "URL wins over PGCONNECT_TIMEOUT", raw: "postgres://db/app?connect_timeout=5", env: map[string]string{"PGCONNECT_TIMEOUT": "3"}, want: "postgres://db/app?connect_timeout=5", timeout: timeoutFromURL},
+		{name: "empty value", raw: "postgres://db/app?connect_timeout=", want: "postgres://db/app?connect_timeout=", timeout: timeoutNone},
+		{name: "empty value with PGCONNECT_TIMEOUT", raw: "postgres://db/app?connect_timeout=", env: map[string]string{"PGCONNECT_TIMEOUT": "3"}, want: "postgres://db/app?connect_timeout=", timeout: timeoutFromEnv},
+		{name: "service in the query", raw: "postgres://db/app?service=x", want: "postgres://db/app?service=x", timeout: timeoutFromService},
+		{name: "PGSERVICE", raw: "postgres://db/app", env: map[string]string{"PGSERVICE": "x"}, want: "postgres://db/app", timeout: timeoutFromService},
+		{name: "service in the query with PGCONNECT_TIMEOUT", raw: "postgres://db/app?service=x", env: map[string]string{"PGCONNECT_TIMEOUT": "3"}, want: "postgres://db/app?service=x", timeout: timeoutFromEnvOrService},
+		{name: "PGSERVICE with PGCONNECT_TIMEOUT", raw: "postgres://db/app", env: map[string]string{"PGSERVICE": "x", "PGCONNECT_TIMEOUT": "3"}, want: "postgres://db/app", timeout: timeoutFromEnvOrService},
+		{name: "keyword form", raw: "host=db dbname=app", want: "host=db dbname=app", timeout: timeoutUnknown},
+		{name: "another scheme", raw: "mysql://db/app", want: "mysql://db/app", timeout: timeoutUnknown},
+		{name: "unparseable", raw: "postgres://u:p@[::1]:5432,[::2]/app", want: "postgres://u:p@[::1]:5432,[::2]/app", timeout: timeoutUnknown},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			testutil.ClearTimeoutEnv(t)
+			for name, value := range tt.env {
+				t.Setenv(name, value)
+			}
+
+			got, err := resolveDBURL(tt.raw)
+
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got.url)
+			require.Equal(t, tt.timeout, got.timeout)
+		})
+	}
+}
+
+func TestResolveDBURL_AddingTheTimeoutKeepsThePath(t *testing.T) {
+	testutil.ClearTimeoutEnv(t)
+	for _, raw := range []string{
+		"postgres://u:p@db:5432/app",
+		"postgres://db/app?sslmode=disable",
+		"postgres://db/app?",
+		"postgres://db/app?sslmode=disable&",
+		"postgres://db/app?sslmode=disable#frag",
+		"postgresql://db/app",
+		"postgres://u:p%40ss@db/app?sslmode=disable",
+		"postgresql://db/app%2Fx",
+	} {
+		got, err := resolveDBURL(raw)
+		require.NoError(t, err)
+
+		in, err := url.Parse(raw)
+		require.NoError(t, err)
+		out, err := url.Parse(got.url)
+		require.NoError(t, err)
+		require.Equal(t, in.Path, out.Path, raw)
+		require.Equal(t, in.RawPath, out.RawPath, raw)
+		require.Equal(t, "10", out.Query().Get("connect_timeout"), raw)
 	}
 }
 

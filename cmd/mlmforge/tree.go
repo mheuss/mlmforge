@@ -49,16 +49,16 @@ func newTreeCmdWith(open depsOpener, loader loaderFor, writer writerFor) *cobra.
 	worker := treeCmd.PersistentFlags().String("worker", "", "Path to the network-engine-worker binary (or set "+workerPathEnv+" env var)")
 
 	// resolve reads both flags needed to open the tree dependencies.
-	resolve := func() (string, string, error) {
-		url, err := resolveDBURL(*dbURL)
+	resolve := func() (dbTarget, string, error) {
+		target, err := resolveDBURL(*dbURL)
 		if err != nil {
-			return "", "", err
+			return dbTarget{}, "", err
 		}
 		path, err := resolveWorkerPath(*worker)
 		if err != nil {
-			return "", "", err
+			return dbTarget{}, "", err
 		}
-		return url, path, nil
+		return target, path, nil
 	}
 
 	treeCmd.AddCommand(
@@ -70,13 +70,13 @@ func newTreeCmdWith(open depsOpener, loader loaderFor, writer writerFor) *cobra.
 	return treeCmd
 }
 
-// flagResolver returns the database URL and the worker path.
-type flagResolver func() (string, string, error)
+// flagResolver returns the database target and the worker path.
+type flagResolver func() (dbTarget, string, error)
 
 // runTreeCommand resolves the connection flags and runs one tree command under
 // the command's own signal context.
 func runTreeCommand(cmd *cobra.Command, resolve flagResolver, open depsOpener, run treeRunner) error {
-	url, workerPath, err := resolve()
+	target, workerPath, err := resolve()
 	if err != nil {
 		return err
 	}
@@ -84,7 +84,7 @@ func runTreeCommand(cmd *cobra.Command, resolve flagResolver, open depsOpener, r
 	// default SIGINT kill for every command in the binary.
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return withTreeDeps(ctx, cmd.ErrOrStderr(), open, url, workerPath, run)
+	return withTreeDeps(ctx, cmd.ErrOrStderr(), open, target.url, workerPath, run)
 }
 
 func newTreeLoadCmd(resolve flagResolver, open depsOpener, loader loaderFor) *cobra.Command {

@@ -280,10 +280,12 @@ func (s *lockKillingLoadStore) GetByTreeDepthOrdered(ctx context.Context, treeID
 
 func TestTreeWriter_ARemovalAfterALockLostBeforeItsAppendMovesEveryRecruit(t *testing.T) {
 	t.Skip("skipped until HEU-859: writer 1 lost its lock after its load, D was placed sponsored by B, and writer 1's removal of B left D sponsored by removed B; " +
-		"every writer's error and projection error was nil, and writer 1's release error was set because its lock connection was terminated")
+		"every writer's error and projection error was nil, writer 1's release error was set because its lock connection was terminated, " +
+		"and the next write failed to load the tree because D names a sponsor not in it")
 	it := newWriterIntegration(t)
 	ctx := context.Background()
-	tree, root, a, b, c, d, e := testTreeUUID(313), testUserUUID(1), testUserUUID(2), testUserUUID(3), testUserUUID(4), testUserUUID(5), testUserUUID(6)
+	tree, root, a, b, c, d, e, y := testTreeUUID(313), testUserUUID(1), testUserUUID(2), testUserUUID(3), testUserUUID(4),
+		testUserUUID(5), testUserUUID(6), testUserUUID(8)
 	it.buildSponsorChain(t, tree, root, a, b, c)
 
 	var placedD, placedE WriteResult
@@ -303,13 +305,30 @@ func TestTreeWriter_ARemovalAfterALockLostBeforeItsAppendMovesEveryRecruit(t *te
 	assert.NoError(t, placedE.ProjectionErr)
 	assert.Equal(t, int64(5), placedD.Version)
 	assert.Equal(t, int64(6), placedE.Version)
-	// A refused removal leaves the tree as D's and E's placements left it.
-	want := map[string]string{root: root, a: root, b: a, c: b, d: b, e: root}
-	if firstErr == nil {
-		want = map[string]string{root: root, a: root, c: a, d: a, e: root}
-	}
-	assert.Equal(t, want, activeSponsors(t, it.store, tree), "the first writer's removal returned %v", firstErr)
 	assert.ErrorContains(t, first.ReleaseErr, "the pg_advisory_unlock query for tree "+tree+" failed")
+	stored, err := it.events.ReadStream(ctx, TreeStreamName(tree), 1, 0)
+	require.NoError(t, err)
+	removalAppended := false
+	for _, ev := range stored {
+		if ev.Version <= placedE.Version || ev.Type != EventTypeNodeRemoved {
+			continue
+		}
+		var p NodeRemovedPayload
+		require.NoError(t, json.Unmarshal(ev.Payload, &p))
+		removalAppended = removalAppended || p.UserID == b
+	}
+	// The next write redelivers the stream's last event, so the store is
+	// judged after it rather than straight after the first writer returns.
+	next, nextErr := it.writer(t).Place(ctx, PlaceRequest{
+		TreeID: tree, UserID: y, ParentID: root, SponsorID: root, EnrolledAt: writeTime.Add(8 * time.Hour)})
+	assert.NoError(t, nextErr, "a placement under the root after the first writer's attempt")
+	assert.NoError(t, next.ProjectionErr)
+	want := map[string]string{root: root, a: root, b: a, c: b, d: b, e: root, y: root}
+	if removalAppended {
+		want = map[string]string{root: root, a: root, c: a, d: a, e: root, y: root}
+	}
+	assert.Equal(t, want, activeSponsors(t, it.store, tree),
+		"the first writer's removal returned %v; a removal of B after version %d is in the stream: %t", firstErr, placedE.Version, removalAppended)
 }
 
 func TestTreeWriter_APlacementAfterALockLostBeforeItsAppendLeavesTheTreeWritable(t *testing.T) {

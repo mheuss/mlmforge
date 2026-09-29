@@ -231,6 +231,14 @@ golangci-lint found nothing` is not.
 This presents as a clean pass, which is why reading the suite does not find it.
 Delete the guard and read which message prints. The colour will not tell you.
 
+**Grep for the message the mutation actually produces.** In testify v1.11.1,
+`assert.ErrorIs` prints two different messages. With a non-nil error that is
+not in the chain it prints `Target error should be in err chain`. With a nil
+error it prints `Expected error with "<target>" in chain but got nil`. A
+mutation that removes a guard often makes the error nil, so a proof grep
+written for the first form counts zero and reads as "not proven". HEU-784 hit
+this. Check the strings again after a testify upgrade.
+
 ## A red says the test failed, not which line failed it
 
 `require` and `assert` differ in one way that decides what a mutation pass
@@ -258,6 +266,42 @@ prints, you have found the second case.
 This is not in the numbered list above, because it does not look like a clean
 pass. It looks like a catch, which is worse: a clean pass invites suspicion and
 a red does not.
+
+## A skipped test for an open bug must pass under any fix that closes it
+
+A test that records a known bug and is skipped until a ticket fixes it has one
+job. The day someone removes the skip, it must go green if and only if the bug
+is gone. Nobody reads it closely before that day. So the way it can go wrong is
+by pinning the bug's mechanism instead of the damage the bug does.
+
+The wrong version asserts steps the buggy code happens to take on the way to
+the damage. A fix changes those steps. The test then fails under a correct fix,
+and whoever unskips it either weakens the assertion or goes looking for the
+wrong fix.
+
+HEU-784 wrote one this way. A writer lost its tree lock and then placed a user
+under a parent that another writer had removed in the meantime. The test
+required that placement to return no error. But that placement is the bug.
+Any correct fix refuses it, and a refused call returns an error. So the test
+could never pass.
+
+The fixed version asserts what must hold whatever the fix does:
+
+- No event placing that user under the removed parent is in the stream.
+- The next write to the tree succeeds.
+
+It leaves out how the late writer is turned away. A refusal and a catch-up are
+both fixes, and the test lets either through.
+
+**Before you skip the test, write down two plausible fixes and check the test
+passes under both.** A `go test -overlay` copy of the production file is enough
+to try each one without touching the tree. If the test only passes under one,
+it is pinning a design, not a bug.
+
+The sibling case goes the other way. If the expected outcome depends on what
+the late writer did, decide it from what was durably recorded, such as the
+event stream, not from the error the writer returned. An error can come after
+an append that landed.
 
 ## A double inherits the gaps of what it embeds
 

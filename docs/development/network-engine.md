@@ -895,6 +895,8 @@ Each write holds a per-tree Postgres advisory lock from before the load until pr
 - The lock is session-scoped. A writer that crashes drops its connection. The lock goes with it.
 - The lock needs a direct Postgres session. Behind a pooler in transaction mode, the lock and the unlock can run on different server sessions. Then the lock excludes nothing.
 - The writer does not re-check the lock while it holds it. If the server ends the lock's session mid-write, another writer can take the lock. The first writer learns of it only at unlock, as `ReleaseErr`.
+- A test that simulates a lost lock ends the lock's backend with `pg_terminate_backend(pid, timeout)`. The one-argument form returns once the signal is sent, not once the backend has exited. The waiting form returns false if the backend outlives the timeout.
+- In the HEU-784 tests, a store write that left a sponsor naming a removed user made the next write refuse to load the tree, and it appended nothing. That holds while every command loads the tree fresh from the store, as the CLI does today.
 - The wait is bounded, 30 seconds by default. The timeout names the tree and the wait. It does not say another process holds the lock, because the writer cannot see that.
 - The timeout is a `TreeLockWaitError` wrapping the locker's own error. That error is often `context.DeadlineExceeded`. Match `TreeLockWaitError` with `errors.As` before testing for a context error. Otherwise a lock timeout reads as the caller's own deadline.
 - The lock is cheap because a CLI invocation lasts seconds. A long-lived service that holds a connection for every tree operation re-examines it rather than inheriting it.

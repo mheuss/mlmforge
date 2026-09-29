@@ -93,6 +93,8 @@ func withConnectTimeout(raw string) dbTarget {
 		return unchanged(timeoutOffInURL)
 	case q.Get("connect_timeout") != "":
 		return unchanged(timeoutFromURL)
+	case isZero(os.Getenv("PGCONNECT_TIMEOUT")) && (q.Has("service") || os.Getenv("PGSERVICE") != ""):
+		return unchanged(timeoutFromService)
 	case os.Getenv("PGCONNECT_TIMEOUT") != "" && (q.Has("service") || os.Getenv("PGSERVICE") != ""):
 		return unchanged(timeoutFromEnvOrService)
 	case isZero(os.Getenv("PGCONNECT_TIMEOUT")):
@@ -108,10 +110,9 @@ func withConnectTimeout(raw string) dbTarget {
 	return dbTarget{url: appendQueryParam(raw, param), timeout: timeoutAdded, addedSeconds: defaultConnectTimeout}
 }
 
-// isZero reports whether a connect_timeout value reads as zero seconds.
+// isZero reports whether a connect_timeout value turns the timeout off.
 func isZero(value string) bool {
-	n, err := strconv.Atoi(strings.TrimSpace(value))
-	return err == nil && n == 0
+	return value == "0"
 }
 
 // appendQueryParam adds param to the query of raw without re-encoding anything else.

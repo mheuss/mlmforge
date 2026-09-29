@@ -13,21 +13,19 @@ const (
 	upCommand    = "`mlmforge migrate up`"
 	downCommand  = "`mlmforge migrate down`"
 	resetCommand = "`mlmforge migrate reset-dirty`"
-
-	negativeText  = "The record reads -1, dirty. reset-dirty does not change a record at -1."
-	unchangedText = "The record was not changed."
 )
 
 // describeRecord states what a record reads, in the present tense.
 func describeRecord(r platform.Record) string {
-	switch {
-	case r.Version < 0 && !r.Dirty:
+	if r.Version == -1 && !r.Dirty {
 		return "holds no version"
-	case r.Dirty:
-		return fmt.Sprintf("reads %d, dirty", r.Version)
-	default:
-		return fmt.Sprintf("reads %d, clean", r.Version)
 	}
+	return "reads " + r.String()
+}
+
+// negativeText names a dirty record below 0 and says a reset does not change it.
+func negativeText(version int) string {
+	return fmt.Sprintf("The record reads %d, dirty. reset-dirty does not change a record at %d.", version, version)
 }
 
 // resetDoes describes the record a reset would leave, as a clause.
@@ -52,7 +50,7 @@ func upRecovery(rec platform.Record, src platform.SourceInfo, fix string) string
 // dirtyText is the text for a dirty record when the command that left it is unknown.
 func dirtyText(rec platform.Record, src platform.SourceInfo) string {
 	if rec.Version < 0 {
-		return negativeText
+		return negativeText(rec.Version)
 	}
 	return strings.Join([]string{
 		fmt.Sprintf("The record %s.", describeRecord(rec)),
@@ -64,7 +62,7 @@ func dirtyText(rec platform.Record, src platform.SourceInfo) string {
 // versionText renders a Status as a version line and, for a dirty record, its recovery text.
 func versionText(st platform.Status) string {
 	rec := st.Record
-	if rec.Version < 0 && !rec.Dirty {
+	if rec.Version == -1 && !rec.Dirty {
 		return "Version: none, Dirty: false"
 	}
 	head := fmt.Sprintf("Version: %d, Dirty: %v", rec.Version, rec.Dirty)
@@ -113,8 +111,8 @@ func applyFailureText(e *platform.ApplyError) string {
 	case !after.Record.Dirty:
 	case after.Record.Version < 0:
 		lines = append(lines,
-			"This run was "+upCommand+". The record now reads -1, dirty.",
-			"reset-dirty does not change a record at -1.")
+			fmt.Sprintf("This run was %s. The record now %s.", upCommand, describeRecord(after.Record)),
+			fmt.Sprintf("reset-dirty does not change a record at %d.", after.Record.Version))
 	default:
 		lines = append(lines,
 			fmt.Sprintf("This run was %s. The record now %s.", upCommand, describeRecord(after.Record)),

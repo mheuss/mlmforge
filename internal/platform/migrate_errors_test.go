@@ -13,6 +13,7 @@ func TestRecord_StringNamesTheStoredState(t *testing.T) {
 	assert.Equal(t, "-1, dirty", Record{Version: -1, Dirty: true}.String())
 	assert.Equal(t, "6, dirty", Record{Version: 6, Dirty: true}.String())
 	assert.Equal(t, "5, clean", Record{Version: 5}.String())
+	assert.Equal(t, "-2, clean", Record{Version: -2}.String())
 }
 
 func TestMigrateErrors_ErrorStrings(t *testing.T) {

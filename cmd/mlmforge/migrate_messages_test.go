@@ -18,6 +18,11 @@ func requireNoForce(t *testing.T, text string) {
 
 var sixDirty = platform.Record{Version: 6, Dirty: true}
 
+const dirtySixText = "The record reads 6, dirty.\n" +
+	"If the command that failed was `mlmforge migrate up`: fix the cause shown in its error, " +
+	"run `mlmforge migrate reset-dirty` (it sets the record to 5, clean), then run `mlmforge migrate up`.\n" +
+	"If the command that failed was `mlmforge migrate down`: do not run `mlmforge migrate reset-dirty`."
+
 func TestDirtyText_NamesTheRecordAndBothRecoveryPaths(t *testing.T) {
 	got := dirtyText(sixDirty, platform.SourceInfo{Path: "/m", InSource: true, Previous: 5, HasPrevious: true})
 
@@ -171,4 +176,18 @@ func TestMigrateError_LeavesAnUntypedErrorAsItIs(t *testing.T) {
 
 	require.Same(t, plain, migrateError("up", plain))
 	require.NoError(t, migrateError("up", nil))
+}
+
+func TestDirtyText_ARecordBelowMinusOneNamesTheValueItRead(t *testing.T) {
+	got := dirtyText(platform.Record{Version: -2, Dirty: true}, platform.SourceInfo{Path: "/m"})
+
+	require.Equal(t, "The record reads -2, dirty. reset-dirty does not change a record at -2.", got)
+	requireNoForce(t, got)
+}
+
+func TestVersionText_ACleanRecordBelowMinusOnePrintsItsValue(t *testing.T) {
+	got := versionText(platform.Status{Record: platform.Record{Version: -2}})
+
+	require.Equal(t, "Version: -2, Dirty: false", got)
+	requireNoForce(t, got)
 }

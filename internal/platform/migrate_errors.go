@@ -14,7 +14,7 @@ type Record struct {
 // String names the record as "none", "6, dirty" or "5, clean".
 func (r Record) String() string {
 	switch {
-	case r.Version < 0 && !r.Dirty:
+	case r.Version == -1 && !r.Dirty:
 		return "none"
 	case r.Dirty:
 		return fmt.Sprintf("%d, dirty", r.Version)
@@ -59,7 +59,7 @@ func (e *NotDirtyError) Error() string {
 	return fmt.Sprintf("migration record is not dirty: %s", e.Record)
 }
 
-// NegativeVersionError reports a dirty record at -1.
+// NegativeVersionError reports a dirty record below 0.
 type NegativeVersionError struct {
 	Record Record
 }

@@ -92,11 +92,6 @@ func setRecord(t *testing.T, dsn string, version int, dirty bool) {
 	require.NoError(t, err)
 }
 
-const dirtySixText = "The record reads 6, dirty.\n" +
-	"If the command that failed was `mlmforge migrate up`: fix the cause shown in its error, " +
-	"run `mlmforge migrate reset-dirty` (it sets the record to 5, clean), then run `mlmforge migrate up`.\n" +
-	"If the command that failed was `mlmforge migrate down`: do not run `mlmforge migrate reset-dirty`."
-
 func TestMigrateVersion_ADirtyRecordPrintsItAndBothRecoveryPaths(t *testing.T) {
 	dsn := newMigrateDatabase(t)
 	migrateTo(t, dsn, 5)

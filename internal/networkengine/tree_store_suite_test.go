@@ -1296,8 +1296,8 @@ func runTreeStoreSuite(
 		later := time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC)
 
 		// The higher id gets the earlier removal, so an order on id alone
-		// returns the wrong row. Both stamps are before the real removal time,
-		// so a hook that did not land leaves a row later than both.
+		// returns the wrong row. Both stamps are in the past, so a hook that did
+		// not land leaves a later removed_at than either.
 		for _, p := range []struct {
 			id string
 			at time.Time

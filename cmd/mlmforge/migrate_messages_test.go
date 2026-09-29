@@ -191,3 +191,14 @@ func TestVersionText_ACleanRecordBelowMinusOnePrintsItsValue(t *testing.T) {
 	require.Equal(t, "Version: -2, Dirty: false", got)
 	requireNoForce(t, got)
 }
+
+func TestApplyFailureText_ARecordBelowMinusOneNamesTheValueItRead(t *testing.T) {
+	got := applyFailureText(&platform.ApplyError{
+		Err: errors.New("boom"), After: platform.RecordRead{Record: platform.Record{Version: -2, Dirty: true}},
+	})
+
+	require.Equal(t, "apply migrations: boom\n"+
+		"This run was `mlmforge migrate up`. The record now reads -2, dirty.\n"+
+		"reset-dirty does not change a record at -2.", got)
+	requireNoForce(t, got)
+}

@@ -44,14 +44,23 @@ func MigrateUp(dbURL, migrationsPath string) (err error) {
 	}
 	defer mg.closeInto(&err)
 
-	releases, upErr := SplitRelease(mg.m.Up())
+	return mg.upOutcome(mg.m.Up())
+}
+
+// upOutcome splits release failures off an Up result, classifies the rest, and joins them back.
+func (mg *migration) upOutcome(raw error) error {
+	releases, upErr := SplitRelease(raw)
 	return withReleases(mg.upResult(upErr), releases)
 }
 
-// upResult classifies what golang-migrate's Up returned once release failures are split off.
+// upResult classifies the result of golang-migrate's Up.
 func (mg *migration) upResult(upErr error) error {
 	if upErr == nil || errors.Is(upErr, migrate.ErrNoChange) {
 		return nil
+	}
+	// No lock means this run wrote nothing, so a record read now says nothing about it.
+	if errors.Is(upErr, migrate.ErrLockTimeout) {
+		return fmt.Errorf("apply migrations: %w", upErr)
 	}
 	if dirty, ok := mg.dirtyError(upErr); ok {
 		return dirty

@@ -45,7 +45,7 @@ func TestMigrateUp_RefusesMultiStatementModeBeforeConnecting(t *testing.T) {
 	require.EqualError(t, root.Execute(), "migrate up refused: the database URL sets x-multi-statement=1.")
 }
 
-func TestMigrateUp_AFailureBeforeAnyFileAddsNoRecoveryText(t *testing.T) {
+func TestMigrateUp_AConnectionFailureAddsNoRecoveryText(t *testing.T) {
 	root := newRootCmd()
 	root.SetOut(io.Discard)
 	root.SetErr(io.Discard)

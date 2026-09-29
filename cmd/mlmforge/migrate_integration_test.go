@@ -162,12 +162,12 @@ func readRecord(t *testing.T, dsn string) []string {
 	return got
 }
 
-// insertActiveRoots writes two active depth-0 rows into one tree.
+// insertActiveRoots writes two depth-0 rows with no removed_at into one tree.
 func insertActiveRoots(t *testing.T, dsn, tree string) {
 	t.Helper()
 	conn := connectTo(t, dsn)
-	_, err := conn.Exec(t.Context(), `INSERT INTO tree_nodes (tree_id, user_id, depth, enrolled_at)
-		VALUES ($1, $2, 0, now()), ($1, $3, 0, now())`, tree, testUserID(1), testUserID(2))
+	_, err := conn.Exec(t.Context(), `INSERT INTO tree_nodes (tree_id, user_id, depth, enrolled_at, removed_at)
+		VALUES ($1, $2, 0, now(), NULL), ($1, $3, 0, now(), NULL)`, tree, testUserID(1), testUserID(2))
 	require.NoError(t, err)
 }
 

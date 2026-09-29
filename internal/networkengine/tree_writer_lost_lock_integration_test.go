@@ -188,8 +188,7 @@ func TestTreeWriter_ACatchUpBehindALateProjectionAppendsNothing(t *testing.T) {
 
 // TestTreeWriter_APlacementProjectedAfterItsLockWasLostIsRefused pins the
 // late writer's refusal, and that the late writer's engine does not take the
-// placement. The store is not what it pins: it stays correct whether or not
-// the refusal happens.
+// placement.
 func TestTreeWriter_APlacementProjectedAfterItsLockWasLostIsRefused(t *testing.T) {
 	it := newWriterIntegration(t)
 	ctx := context.Background()

@@ -30,9 +30,10 @@ put rather than only what came back.
 
 ## Embedding carries the gaps with it
 
-`MemoryTreeStore` ignores `context.Context` entirely. `PostgresTreeStore`
-honours it, because a pool does. A double wrapping the memory store therefore
-cannot see a cancellation, whatever the test is called.
+`MemoryTreeStore` ignored `context.Context` entirely until HEU-798.
+`PostgresTreeStore` honours it, because a pool does. A double wrapping the
+memory store therefore could not see a cancellation, whatever the test was
+called.
 
 A test asserting that a compensating write survives a cancelled context passed
 against an implementation with no shield at all, because the double it embedded

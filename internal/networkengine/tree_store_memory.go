@@ -19,7 +19,10 @@ func NewMemoryTreeStore() *MemoryTreeStore {
 	return &MemoryTreeStore{}
 }
 
-func (s *MemoryTreeStore) InsertNode(_ context.Context, node TreeNodeRow) error {
+func (s *MemoryTreeStore) InsertNode(ctx context.Context, node TreeNodeRow) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return s.insertNodeAt(node, time.Now())
 }
 
@@ -78,7 +81,10 @@ func (s *MemoryTreeStore) appendUnchecked(node TreeNodeRow) error {
 	return nil
 }
 
-func (s *MemoryTreeStore) DeleteNode(_ context.Context, treeID, userID string) error {
+func (s *MemoryTreeStore) DeleteNode(ctx context.Context, treeID, userID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	now := time.Now()
 	for i := range s.nodes {
 		if s.nodes[i].TreeID == treeID && s.nodes[i].UserID == userID && s.nodes[i].RemovedAt == nil {
@@ -95,6 +101,9 @@ func (s *MemoryTreeStore) DeleteNodeAndResponsor(
 	treeID, userID, removalEventID string,
 	moved []Responsored,
 ) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// Mirrors the Postgres transaction by staging: nothing is written until
 	// every re-sponsor target has been found.
 	now := time.Now()
@@ -143,7 +152,10 @@ func (s *MemoryTreeStore) DeleteNodeAndResponsor(
 	return nil
 }
 
-func (s *MemoryTreeStore) GetNode(_ context.Context, treeID, userID string) (*TreeNodeRow, error) {
+func (s *MemoryTreeStore) GetNode(ctx context.Context, treeID, userID string) (*TreeNodeRow, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	for i := range s.nodes {
 		if s.nodes[i].TreeID == treeID && s.nodes[i].UserID == userID && s.nodes[i].RemovedAt == nil {
 			node := s.nodes[i] // detached copy to match Postgres semantics
@@ -153,7 +165,10 @@ func (s *MemoryTreeStore) GetNode(_ context.Context, treeID, userID string) (*Tr
 	return nil, nil
 }
 
-func (s *MemoryTreeStore) GetNodeIncludingRemoved(_ context.Context, treeID, userID string) (*TreeNodeRow, error) {
+func (s *MemoryTreeStore) GetNodeIncludingRemoved(ctx context.Context, treeID, userID string) (*TreeNodeRow, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var best *TreeNodeRow
 	for i := range s.nodes {
 		if s.nodes[i].TreeID != treeID || s.nodes[i].UserID != userID {
@@ -170,7 +185,10 @@ func (s *MemoryTreeStore) GetNodeIncludingRemoved(_ context.Context, treeID, use
 	return best, nil
 }
 
-func (s *MemoryTreeStore) GetNodeByRemovalEvent(_ context.Context, treeID, removalEventID string) (*TreeNodeRow, error) {
+func (s *MemoryTreeStore) GetNodeByRemovalEvent(ctx context.Context, treeID, removalEventID string) (*TreeNodeRow, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var best *TreeNodeRow
 	for i := range s.nodes {
 		stamp := s.nodes[i].RemovedByEventID
@@ -185,7 +203,10 @@ func (s *MemoryTreeStore) GetNodeByRemovalEvent(_ context.Context, treeID, remov
 	return best, nil
 }
 
-func (s *MemoryTreeStore) GetChildren(_ context.Context, treeID, parentUserID string) ([]TreeNodeRow, error) {
+func (s *MemoryTreeStore) GetChildren(ctx context.Context, treeID, parentUserID string) ([]TreeNodeRow, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var result []TreeNodeRow
 	for _, n := range s.nodes {
 		if n.TreeID == treeID && n.ParentID != nil && *n.ParentID == parentUserID && n.RemovedAt == nil {
@@ -195,7 +216,10 @@ func (s *MemoryTreeStore) GetChildren(_ context.Context, treeID, parentUserID st
 	return result, nil
 }
 
-func (s *MemoryTreeStore) GetByTree(_ context.Context, treeID string) ([]TreeNodeRow, error) {
+func (s *MemoryTreeStore) GetByTree(ctx context.Context, treeID string) ([]TreeNodeRow, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var result []TreeNodeRow
 	for _, n := range s.nodes {
 		if n.TreeID == treeID && n.RemovedAt == nil {
@@ -205,7 +229,10 @@ func (s *MemoryTreeStore) GetByTree(_ context.Context, treeID string) ([]TreeNod
 	return result, nil
 }
 
-func (s *MemoryTreeStore) GetByTreeDepthOrdered(_ context.Context, treeID string) ([]TreeNodeRow, error) {
+func (s *MemoryTreeStore) GetByTreeDepthOrdered(ctx context.Context, treeID string) ([]TreeNodeRow, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var result []TreeNodeRow
 	for _, n := range s.nodes {
 		if n.TreeID == treeID && n.RemovedAt == nil {
@@ -221,7 +248,10 @@ func (s *MemoryTreeStore) GetByTreeDepthOrdered(_ context.Context, treeID string
 	return result, nil
 }
 
-func (s *MemoryTreeStore) BulkInsert(_ context.Context, nodes []TreeNodeRow) error {
+func (s *MemoryTreeStore) BulkInsert(ctx context.Context, nodes []TreeNodeRow) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// The batch goes into a copy, and the original is restored on the first
 	// error. That makes the batch all-or-none, including a conflict between
 	// two rows of this batch.

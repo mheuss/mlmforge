@@ -970,4 +970,94 @@ func runTreeStoreSuite(
 		assert.ErrorIs(t, err, ErrNodeAlreadyProjected,
 			"the primary key is the branch that means already projected")
 	})
+
+	t.Run("every method refuses a cancelled context", func(t *testing.T) {
+		s := newStore(t)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		tree := testTreeUUID(1)
+		user := testUserUUID(1)
+		node := makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)
+
+		calls := []struct {
+			name string
+			call func() error
+		}{
+			{"InsertNode", func() error { return s.InsertNode(ctx, node) }},
+			{"DeleteNode", func() error { return s.DeleteNode(ctx, tree, user) }},
+			{"DeleteNodeAndResponsor", func() error {
+				return s.DeleteNodeAndResponsor(ctx, tree, user, testNodeUUID(9), nil)
+			}},
+			{"GetNode", func() error {
+				_, err := s.GetNode(ctx, tree, user)
+				return err
+			}},
+			{"GetNodeIncludingRemoved", func() error {
+				_, err := s.GetNodeIncludingRemoved(ctx, tree, user)
+				return err
+			}},
+			{"GetNodeByRemovalEvent", func() error {
+				_, err := s.GetNodeByRemovalEvent(ctx, tree, testNodeUUID(9))
+				return err
+			}},
+			{"GetChildren", func() error {
+				_, err := s.GetChildren(ctx, tree, user)
+				return err
+			}},
+			{"GetByTree", func() error {
+				_, err := s.GetByTree(ctx, tree)
+				return err
+			}},
+			{"GetByTreeDepthOrdered", func() error {
+				_, err := s.GetByTreeDepthOrdered(ctx, tree)
+				return err
+			}},
+			{"BulkInsert", func() error { return s.BulkInsert(ctx, []TreeNodeRow{node}) }},
+		}
+		for _, c := range calls {
+			assert.ErrorIs(t, c.call(), context.Canceled, c.name)
+		}
+	})
+
+	t.Run("a write with a cancelled context changes nothing", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		rootUser := testUserUUID(1)
+		removedUser := testUserUUID(2)
+		recruit := testUserUUID(3)
+		newUser := testUserUUID(4)
+
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(2), tree, removedUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(3), tree, recruit, 2, ptr(removedUser), ptr(removedUser), intPtr(0))))
+
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+
+		require.Error(t, s.InsertNode(cancelled,
+			makeUUIDNode(testNodeUUID(4), tree, newUser, 1, ptr(rootUser), ptr(rootUser), intPtr(1))), "InsertNode")
+		require.Error(t, s.BulkInsert(cancelled, []TreeNodeRow{
+			makeUUIDNode(testNodeUUID(5), tree, newUser, 1, ptr(rootUser), ptr(rootUser), intPtr(1)),
+		}), "BulkInsert")
+		require.Error(t, s.DeleteNode(cancelled, tree, recruit), "DeleteNode")
+		require.Error(t, s.DeleteNodeAndResponsor(cancelled, tree, removedUser, testNodeUUID(9),
+			[]Responsored{{UserID: recruit, NewSponsorID: rootUser}}), "DeleteNodeAndResponsor")
+
+		got, err := s.GetByTree(ctx, tree)
+		require.NoError(t, err)
+		assert.ElementsMatch(t, []string{rootUser, removedUser, recruit}, nodeUserIDs(got),
+			"no row was added and none was removed")
+
+		moved, err := s.GetNode(ctx, tree, recruit)
+		require.NoError(t, err)
+		require.NotNil(t, moved)
+		require.NotNil(t, moved.SponsorID)
+		assert.Equal(t, removedUser, *moved.SponsorID, "the re-sponsor write did not land")
+		assert.Nil(t, stampOf(t, s, testNodeUUID(2)), "the removal stamp did not land")
+	})
 }

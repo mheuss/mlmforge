@@ -1604,10 +1604,8 @@ func TestHandleRootAdded_ReconcileSkipsOtherEngineErrors(t *testing.T) {
 // deleteRecordingStore records which users the compensation deleted, so a test
 // can assert the blast radius rather than only that this event's row is gone.
 //
-// It refuses a cancelled context, which MemoryTreeStore does not (HEU-798) and
-// PostgresTreeStore does, because a pool honours it. Without that the memory
-// double cannot tell a compensation shielded from cancellation from one that
-// is not.
+// It records each call before refusing a cancelled context and each write
+// after, so a refused call and a call that never happened read differently.
 type deleteRecordingStore struct {
 	*MemoryTreeStore
 	deleted         []string

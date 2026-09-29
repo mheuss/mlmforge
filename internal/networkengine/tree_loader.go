@@ -244,6 +244,10 @@ func validateNodes(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNode
 
 	for i := range nodes {
 		n := &nodes[i]
+		if n.UserID == "" {
+			return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,
+				fmt.Sprintf("tree %s has a row with an empty user ID (row ID %q)", treeID, n.ID))
+		}
 		if _, dup := byID[n.UserID]; dup {
 			return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,
 				fmt.Sprintf("tree %s has duplicate user %s (data corruption?)", treeID, n.UserID),
@@ -360,8 +364,13 @@ func validateNodes(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNode
 				n.UserID, parent.UserID)
 		}
 
-		// A unilevel row that carries a position is not rejected — see HEU-563.
 		if !hasSlots {
+			if n.Position != nil {
+				return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,
+					fmt.Sprintf("%s node %s in tree %s has position %d, expected none",
+						treeType, n.UserID, treeID, *n.Position),
+					n.UserID)
+			}
 			continue
 		}
 

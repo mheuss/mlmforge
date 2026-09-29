@@ -437,8 +437,8 @@ func (w *TreeWriter) load(ctx context.Context, tree string, shape treeShape) err
 	return nil
 }
 
-// checkLoadedVersion refuses a stream whose last version is neither the
-// version the tree was loaded at nor one past it.
+// checkLoadedVersion refuses a tree with no projection row whose stream's last
+// version is neither the loaded version nor one past it.
 func checkLoadedVersion(tree string, loaded int64, found bool, last int64) error {
 	if last == loaded || last == loaded+1 {
 		return nil

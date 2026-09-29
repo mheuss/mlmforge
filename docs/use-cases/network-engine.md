@@ -32,6 +32,7 @@ Use-cases for the Network Engine bounded context.
 - [UC-NET-026: Deciding when a failed tree load is worth retrying](#uc-net-026-deciding-when-a-failed-tree-load-is-worth-retrying)
 - [UC-NET-027: Serialising writes to one tree across processes](#uc-net-027-serialising-writes-to-one-tree-across-processes)
 - [UC-NET-028: Resolving an append whose reply was lost](#uc-net-028-resolving-an-append-whose-reply-was-lost)
+- [UC-NET-029: Refusing a projection that arrives out of order](#uc-net-029-refusing-a-projection-that-arrives-out-of-order)
 
 ---
 
@@ -1060,7 +1061,7 @@ if err != nil && treeLoadRetryable(err) {
 
 **Problem:** Two processes can each load a tree. Each can decide correctly against what it saw. Together they can append a state neither would have allowed. An event store's version check serialises appends, not decisions.
 
-**Solution:** `TreeWriter` holds a per-tree Postgres advisory lock from before the load until projection returns. The lock sits on a connection of its own. Under the lock it rebuilds the tree in a scratch engine and redelivers the stream's last event. It asks `check_mutation` whether the mutation would succeed, appends, and projects the stored copy. `MemoryTreeLocker` is a real per-tree lock for tests.
+**Solution:** `TreeWriter` holds a per-tree Postgres advisory lock from before the load until projection returns. The lock sits on a connection of its own. Under the lock it reads the tree's projected version, rebuilds the tree in a scratch engine, and redelivers the stream's last event. It refuses the write unless that event is at the projected version or one past it. It asks `check_mutation` whether the mutation would succeed, appends, and projects the stored copy. `MemoryTreeLocker` is a real per-tree lock for tests.
 
 **Usage:**
 ```go
@@ -1075,7 +1076,8 @@ if err != nil {
     return err // nothing is known to have been appended
 }
 if res.ProjectionErr != nil {
-    // The event is durable. The next write to this tree redelivers it.
+    // The event is durable. The next write to this tree redelivers it,
+    // unless this is a ProjectionRefusedError.
 }
 ```
 
@@ -1101,4 +1103,26 @@ if errors.As(err, &unknown) {
 }
 ```
 
-**Notes:** Compare event IDs by value. A Postgres round trip returns a canonical UUID. A conflict message leaves out the store's `ActualVersion`. That value can hold a version nobody read. When the read finds no event, the message states only that. A commit that a cancel during COMMIT hid from the read turns up as the stream's last event. The next write redelivers it. A CLI matches `AppendOutcomeUnknownError` before any context error, because it unwraps to both of its errors.
+**Notes:** Compare event IDs by value. A Postgres round trip returns a canonical UUID. A conflict message leaves out the store's `ActualVersion`. That value can hold a version nobody read. When the read finds no event, the message states only that. A commit that a cancel during COMMIT hid from the read turns up as the stream's last event. The next write redelivers it, because the stream is then one past the tree's projected version. A CLI matches `AppendOutcomeUnknownError` before any context error, because it unwraps to both of its errors.
+
+---
+
+### UC-NET-029: Refusing a projection that arrives out of order
+
+**Added:** Unreleased (HEU-857)
+**Files:** `internal/networkengine/tree_store.go`, `internal/networkengine/tree_store_postgres.go`, `internal/networkengine/tree_store_memory.go`, `internal/networkengine/tree_writer.go`, `migrations/000009_create_tree_projections.up.sql`
+
+**Problem:** A writer that loses its lock can project its event after later events have projected. The store then goes backwards, and nothing reports it. A writer that loses its lock after loading can also append from an engine that missed events.
+
+**Solution:** `tree_projections` holds each tree's projected version. `ProjectInsert`, `ProjectRemoval` and `UndoRootProjection` check it in the same transaction as their row writes, and refuse an event below it with `ProjectionRefusedError`. The writer reads the version before it loads, and appends only when the stream's last event is at that version or one past it.
+
+**Usage:**
+```go
+err := store.ProjectInsert(ctx, row, event.Version)
+var refused *networkengine.ProjectionRefusedError
+if errors.As(err, &refused) {
+    // a later event is already projected; this one wrote nothing
+}
+```
+
+**Notes:** An event at the projected version runs the existing redelivery logic, which writes nothing for an event the store already holds. The Postgres writes run at Read Committed and create the projection row at 0 before locking it, so two first projections queue. `InsertNode`, `DeleteNode`, `DeleteNodeAndResponsor` and `BulkInsert` record no version, and a guard test keeps them out of non-test code outside the stores (HEU-864).

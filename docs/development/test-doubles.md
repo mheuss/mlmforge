@@ -42,13 +42,13 @@ When a double stands in for the production implementation, it has to model the
 behaviour under test even where the embedded type omits it:
 
 ```go
-func (c *deleteRecordingStore) DeleteNode(ctx context.Context, treeID, userID string) error {
+func (c *deleteRecordingStore) UndoRootProjection(ctx context.Context, treeID, userID string, eventVersion int64) error {
     c.attempts = append(c.attempts, userID)
     if err := ctx.Err(); err != nil {
         return err
     }
     c.deleted = append(c.deleted, userID)
-    return c.MemoryTreeStore.DeleteNode(ctx, treeID, userID)
+    return c.MemoryTreeStore.UndoRootProjection(ctx, treeID, userID, eventVersion)
 }
 ```
 

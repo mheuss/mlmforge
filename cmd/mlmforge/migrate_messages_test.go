@@ -19,7 +19,7 @@ func requireNoForce(t *testing.T, text string) {
 var sixDirty = platform.Record{Version: 6, Dirty: true}
 
 const dirtySixText = "The record reads 6, dirty.\n" +
-	"If `mlmforge migrate up` failed while running the migration file: fix the cause shown in its error, " +
+	"If a failed `mlmforge migrate up` told you to run `mlmforge migrate reset-dirty`: fix the cause it showed, " +
 	"run `mlmforge migrate reset-dirty` (it sets the record to 5, clean), then run `mlmforge migrate up`.\n" +
 	"In any other case, including a failed `mlmforge migrate down`: do not run `mlmforge migrate reset-dirty`."
 
@@ -34,7 +34,7 @@ func TestDirtyText_AtTheFirstMigrationSaysNoVersionIsLeft(t *testing.T) {
 	got := dirtyText(platform.Record{Version: 1, Dirty: true}, platform.SourceInfo{Path: "/m", InSource: true})
 
 	require.Equal(t, "The record reads 1, dirty.\n"+
-		"If `mlmforge migrate up` failed while running the migration file: fix the cause shown in its error, "+
+		"If a failed `mlmforge migrate up` told you to run `mlmforge migrate reset-dirty`: fix the cause it showed, "+
 		"run `mlmforge migrate reset-dirty` (afterwards the record holds no version), then run `mlmforge migrate up`.\n"+
 		"In any other case, including a failed `mlmforge migrate down`: do not run `mlmforge migrate reset-dirty`.", got)
 	requireNoForce(t, got)
@@ -44,7 +44,7 @@ func TestDirtyText_AVersionMissingFromTheDirectorySaysResetWillRefuse(t *testing
 	got := dirtyText(sixDirty, platform.SourceInfo{Path: "/m"})
 
 	require.Equal(t, "The record reads 6, dirty.\n"+
-		"If `mlmforge migrate up` failed while running the migration file: The migrations directory /m has no migration 6, "+
+		"If a failed `mlmforge migrate up` told you to run `mlmforge migrate reset-dirty`: The migrations directory /m has no migration 6, "+
 		"so `mlmforge migrate reset-dirty` will refuse.\n"+
 		"In any other case, including a failed `mlmforge migrate down`: do not run `mlmforge migrate reset-dirty`.", got)
 	requireNoForce(t, got)
@@ -54,7 +54,7 @@ func TestDirtyText_AnUnreadableDirectoryNamesTheReadError(t *testing.T) {
 	got := dirtyText(sixDirty, platform.SourceInfo{Path: "/m", Err: errors.New("permission denied")})
 
 	require.Equal(t, "The record reads 6, dirty.\n"+
-		"If `mlmforge migrate up` failed while running the migration file: The migrations directory /m could not be read for migration 6: permission denied.\n"+
+		"If a failed `mlmforge migrate up` told you to run `mlmforge migrate reset-dirty`: The migrations directory /m could not be read for migration 6: permission denied.\n"+
 		"In any other case, including a failed `mlmforge migrate down`: do not run `mlmforge migrate reset-dirty`.", got)
 	requireNoForce(t, got)
 }
@@ -116,12 +116,13 @@ func TestApplyFailureText_ADirtyRecordAddsTheRecordAndTheRecovery(t *testing.T) 
 	requireNoForce(t, got)
 }
 
-func TestApplyFailureText_AFailedReReadSaysSo(t *testing.T) {
+func TestApplyFailureText_AFailedReReadWithoutABodyFailureSaysNotToReset(t *testing.T) {
 	got := applyFailureText(&platform.ApplyError{
 		Err: errors.New("boom"), After: platform.RecordRead{Err: errors.New("connection reset")},
 	})
 
-	require.Equal(t, "apply migrations: boom\nThe record could not be read after the failure: connection reset.", got)
+	require.Equal(t, "apply migrations: boom\nThe record could not be read after the failure: connection reset.\n"+
+		"The error does not show that Postgres refused the migration file. Do not run `mlmforge migrate reset-dirty`.", got)
 	requireNoForce(t, got)
 }
 
@@ -338,14 +339,25 @@ func TestWriteFailureText_NamesTheRecordReadAfterTheFailure(t *testing.T) {
 
 func TestApplyFailureText_WithoutAPositiveBodyFailureNeverOffersTheReset(t *testing.T) {
 	got := applyFailureText(&platform.ApplyError{
-		Err:    errors.New("pq: canceling statement due to lock timeout"),
+		Err:    errors.New("driver: bad connection"),
 		After:  platform.RecordRead{Record: sixDirty},
 		Source: platform.SourceInfo{Path: "/m", InSource: true, Previous: 5, HasPrevious: true},
 	})
 
-	require.Equal(t, "apply migrations: pq: canceling statement due to lock timeout\n"+
+	require.Equal(t, "apply migrations: driver: bad connection\n"+
 		"This run was `mlmforge migrate up`. The record now reads 6, dirty.\n"+
-		"The error does not show that the migration file failed, so the file may have been applied. "+
+		"The error does not show that Postgres refused the migration file. "+
 		"Do not run `mlmforge migrate reset-dirty`.", got)
+	requireNoForce(t, got)
+}
+
+func TestApplyFailureText_AFailedReReadAfterABodyFailurePointsAtVersion(t *testing.T) {
+	got := applyFailureText(&platform.ApplyError{
+		Err: errors.New("boom"), After: platform.RecordRead{Err: errors.New("connection reset")}, BodyFailed: true,
+	})
+
+	require.Equal(t, "apply migrations: boom\nThe record could not be read after the failure: connection reset.\n"+
+		"Postgres refused the migration file. If `mlmforge migrate version` then shows the record dirty, "+
+		"run `mlmforge migrate reset-dirty`, then run `mlmforge migrate up`.", got)
 	requireNoForce(t, got)
 }

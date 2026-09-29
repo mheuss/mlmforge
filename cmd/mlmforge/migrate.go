@@ -81,7 +81,7 @@ func newMigrateCmd() *cobra.Command {
 			Use:   "reset-dirty",
 			Short: "Move a dirty migration record back to the previous migration, clean",
 			Long: "Move a dirty migration record back to the previous migration, clean.\n\n" +
-				"Run it only after a failed `mlmforge migrate up`. Do not run it after a failed `mlmforge migrate down`.",
+				"Run it only when a failed `mlmforge migrate up` tells you to. Do not run it after a failed `mlmforge migrate down`.",
 			Args: cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, args []string) error {
 				cmd.SilenceUsage = true

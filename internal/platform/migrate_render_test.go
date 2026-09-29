@@ -37,3 +37,10 @@ func TestApplyError_LeavesTheMigrationFileOutOfItsText(t *testing.T) {
 	assert.Equal(t, "apply migrations: pq: duplicate key", (&ApplyError{Err: bookkeeping}).Error())
 	assert.Equal(t, "rollback migration: pq: duplicate key", (&RollbackError{Err: bookkeeping}).Error())
 }
+
+func TestDatabaseErrorText_KeepsTheLineNumberWithoutTheFile(t *testing.T) {
+	got := databaseErrorText(database.Error{Err: "migration failed: syntax error (column 3)", OrigErr: serverError{},
+		Line: 4, Query: []byte("-- a comment\nSELEC 1")})
+
+	assert.Equal(t, "migration failed: syntax error (column 3) (details: pq: duplicate key) in line 4", got)
+}

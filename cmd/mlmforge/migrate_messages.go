@@ -10,9 +10,12 @@ import (
 )
 
 const (
-	upCommand    = "`mlmforge migrate up`"
-	downCommand  = "`mlmforge migrate down`"
-	resetCommand = "`mlmforge migrate reset-dirty`"
+	upCommand      = "`mlmforge migrate up`"
+	downCommand    = "`mlmforge migrate down`"
+	resetCommand   = "`mlmforge migrate reset-dirty`"
+	versionCommand = "`mlmforge migrate version`"
+
+	noResetText = "The error does not show that Postgres refused the migration file. Do not run " + resetCommand + "."
 
 	unchangedText = "The record was not changed."
 )
@@ -66,7 +69,7 @@ func dirtyText(rec platform.Record, src platform.SourceInfo) string {
 	}
 	return strings.Join([]string{
 		fmt.Sprintf("The record %s.", describeRecord(rec)),
-		fmt.Sprintf("If %s failed while running the migration file: %s", upCommand, upRecovery(rec, src, "fix the cause shown in its error")),
+		fmt.Sprintf("If a failed %s told you to run %s: %s", upCommand, resetCommand, upRecovery(rec, src, "fix the cause it showed")),
 		fmt.Sprintf("In any other case, including a failed %s: do not run %s.", downCommand, resetCommand),
 	}, "\n")
 }
@@ -117,8 +120,12 @@ func applyFailureText(e *platform.ApplyError) string {
 	lines := []string{e.Error()}
 	after := e.After
 	switch {
+	case after.Err != nil && !e.BodyFailed:
+		lines = append(lines, unreadAfter(after.Err), noResetText)
 	case after.Err != nil:
-		lines = append(lines, unreadAfter(after.Err))
+		lines = append(lines, unreadAfter(after.Err),
+			fmt.Sprintf("Postgres refused the migration file. If %s then shows the record dirty, run %s, then run %s.",
+				versionCommand, resetCommand, upCommand))
 	case !after.Record.Dirty:
 	case after.Record.Version < 0:
 		lines = append(lines,
@@ -127,7 +134,7 @@ func applyFailureText(e *platform.ApplyError) string {
 	case !e.BodyFailed:
 		lines = append(lines,
 			fmt.Sprintf("This run was %s. The record now %s.", upCommand, describeRecord(after.Record)),
-			fmt.Sprintf("The error does not show that the migration file failed, so the file may have been applied. Do not run %s.", resetCommand))
+			noResetText)
 	default:
 		lines = append(lines,
 			fmt.Sprintf("This run was %s. The record now %s.", upCommand, describeRecord(after.Record)),

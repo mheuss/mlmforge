@@ -110,7 +110,7 @@ func withConnectTimeout(raw string) dbTarget {
 	return dbTarget{url: appendQueryParam(raw, param), timeout: timeoutAdded, addedSeconds: defaultConnectTimeout}
 }
 
-// isZero reports whether a connect_timeout value turns the timeout off.
+// isZero reports whether mlmforge treats a connect_timeout value as turning the timeout off.
 func isZero(value string) bool {
 	return value == "0"
 }

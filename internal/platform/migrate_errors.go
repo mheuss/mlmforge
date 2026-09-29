@@ -234,5 +234,17 @@ func isBodyFailure(err error) bool {
 		return false
 	}
 	var serverErr interface{ SQLState() string }
-	return errors.As(dbErr.OrigErr, &serverErr)
+	if !errors.As(dbErr.OrigErr, &serverErr) {
+		return false
+	}
+	state := serverErr.SQLState()
+	if len(state) != 5 {
+		return false
+	}
+	// Connection, resource, operator-intervention, system and internal errors do not count as a rejection.
+	switch state[:2] {
+	case "08", "53", "57", "58", "XX":
+		return false
+	}
+	return true
 }

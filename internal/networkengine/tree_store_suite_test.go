@@ -25,11 +25,13 @@ func nodeUserIDs(nodes []TreeNodeRow) []string {
 // fresh, empty store on each call.
 //
 // stampOf reads one row's removal stamp by the row's ID, whether or not the
-// row is active.
+// row is active. setUpdatedAt overwrites one row's update time by the row's
+// ID.
 func runTreeStoreSuite(
 	t *testing.T,
 	newStore func(t *testing.T) TreeStore,
 	stampOf func(t *testing.T, s TreeStore, nodeID string) *string,
+	setUpdatedAt func(t *testing.T, s TreeStore, nodeID string, at time.Time),
 ) {
 	t.Helper()
 
@@ -1059,5 +1061,59 @@ func runTreeStoreSuite(
 		require.NotNil(t, moved.SponsorID)
 		assert.Equal(t, removedUser, *moved.SponsorID, "the re-sponsor write did not land")
 		assert.Nil(t, stampOf(t, s, testNodeUUID(2)), "the removal stamp did not land")
+	})
+
+	t.Run("DeleteNode moves UpdatedAt forward", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		user := testUserUUID(1)
+		stale := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
+		setUpdatedAt(t, s, testNodeUUID(1), stale)
+
+		require.NoError(t, s.DeleteNode(ctx, tree, user))
+
+		got, err := s.GetNodeIncludingRemoved(ctx, tree, user)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.True(t, got.UpdatedAt.After(stale),
+			"UpdatedAt read back as %v after the delete, want later than %v", got.UpdatedAt, stale)
+	})
+
+	t.Run("DeleteNodeAndResponsor moves UpdatedAt forward on the removed row and the recruit", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		rootUser := testUserUUID(1)
+		removedUser := testUserUUID(2)
+		recruit := testUserUUID(3)
+		stale := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(2), tree, removedUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(3), tree, recruit, 2, ptr(removedUser), ptr(removedUser), intPtr(0))))
+		setUpdatedAt(t, s, testNodeUUID(2), stale)
+		setUpdatedAt(t, s, testNodeUUID(3), stale)
+
+		require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, removedUser, testNodeUUID(9),
+			[]Responsored{{UserID: recruit, NewSponsorID: rootUser}}))
+
+		removed, err := s.GetNodeIncludingRemoved(ctx, tree, removedUser)
+		require.NoError(t, err)
+		require.NotNil(t, removed)
+		assert.True(t, removed.UpdatedAt.After(stale),
+			"removed row's UpdatedAt read back as %v, want later than %v", removed.UpdatedAt, stale)
+
+		moved, err := s.GetNode(ctx, tree, recruit)
+		require.NoError(t, err)
+		require.NotNil(t, moved)
+		assert.True(t, moved.UpdatedAt.After(stale),
+			"recruit's UpdatedAt read back as %v, want later than %v", moved.UpdatedAt, stale)
 	})
 }

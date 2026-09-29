@@ -263,5 +263,14 @@ func TestMemoryTreeStore_Suite(t *testing.T) {
 		}
 		require.Failf(t, "no row", "no row with id %s", nodeID)
 		return nil
+	}, func(t *testing.T, s TreeStore, nodeID string, at time.Time) {
+		nodes := s.(*MemoryTreeStore).nodes
+		for i := range nodes {
+			if nodes[i].ID == nodeID {
+				nodes[i].UpdatedAt = at
+				return
+			}
+		}
+		require.Failf(t, "no row", "no row with id %s", nodeID)
 	})
 }

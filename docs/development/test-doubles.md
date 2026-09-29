@@ -40,7 +40,9 @@ against an implementation with no shield at all, because the double it embedded
 could not tell the two apart.
 
 When a double stands in for the production implementation, it has to model the
-behaviour under test even where the embedded type omits it:
+behaviour under test even where the embedded type omits it. The example below
+was written while the gap existed. It is kept for the order of its two records,
+which still matters now that the embedded store refuses too:
 
 ```go
 func (c *deleteRecordingStore) DeleteNode(ctx context.Context, treeID, userID string) error {

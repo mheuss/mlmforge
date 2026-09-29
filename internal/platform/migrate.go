@@ -13,16 +13,6 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 )
 
-// migrationSourceURL converts a migrations directory path to a file:// URL,
-// normalizing to an absolute path so behavior is not CWD-dependent.
-func migrationSourceURL(migrationsPath string) (string, error) {
-	absPath, err := filepath.Abs(migrationsPath)
-	if err != nil {
-		return "", fmt.Errorf("resolve migrations path: %w", err)
-	}
-	return fmt.Sprintf("file://%s", absPath), nil
-}
-
 // dirtyError returns a DirtyError when err carries golang-migrate's dirty-record error.
 func (mg *migration) dirtyError(err error) (*DirtyError, bool) {
 	var dirty migrate.ErrDirty
@@ -74,24 +64,44 @@ var ErrNoChange = migrate.ErrNoChange
 
 // MigrateDown rolls back the most recent migration.
 // Returns ErrNoChange when there are no migrations left to roll back.
-func MigrateDown(dbURL, migrationsPath string) error {
-	sourceURL, err := migrationSourceURL(migrationsPath)
+func MigrateDown(dbURL, migrationsPath string) (err error) {
+	if err = refuseMultiStatement("down", dbURL); err != nil {
+		return err
+	}
+	mg, err := openMigration(dbURL, migrationsPath)
 	if err != nil {
 		return err
 	}
-	m, err := migrate.New(sourceURL, dbURL)
-	if err != nil {
-		return fmt.Errorf("create migrator: %w", err)
-	}
-	defer func() { _, _ = m.Close() }()
+	defer mg.closeInto(&err)
 
-	if err := m.Steps(-1); err != nil {
-		if err == migrate.ErrNoChange {
-			return ErrNoChange
-		}
-		return fmt.Errorf("rollback migration: %w", err)
+	before := mg.recordRead()
+	return mg.downOutcome(before, mg.m.Steps(-1))
+}
+
+// downOutcome splits release failures off a Steps(-1) result, classifies the rest, and joins them back.
+func (mg *migration) downOutcome(before RecordRead, raw error) error {
+	releases, downErr := SplitRelease(raw)
+	return withReleases(mg.downResult(before, downErr), releases)
+}
+
+// downResult classifies the result of golang-migrate's Steps(-1).
+func (mg *migration) downResult(before RecordRead, downErr error) error {
+	switch {
+	case downErr == nil:
+		return nil
+	case errors.Is(downErr, migrate.ErrNoChange):
+		return ErrNoChange
+	// No lock means this run wrote nothing, so a record read now says nothing about it.
+	case errors.Is(downErr, migrate.ErrLockTimeout):
+		return fmt.Errorf("rollback migration: %w", downErr)
+	case errors.Is(downErr, os.ErrNotExist) && before.Err == nil && before.Record == Record{Version: database.NilVersion}:
+		return ErrNoChange
 	}
-	return nil
+	if dirty, ok := mg.dirtyError(downErr); ok {
+		return dirty
+	}
+	after := mg.recordRead()
+	return &RollbackError{Err: downErr, Before: before, After: after, Source: mg.sourceFor(after)}
 }
 
 // migration holds one source driver, one database driver, and the migrator built from them.

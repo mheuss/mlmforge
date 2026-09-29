@@ -204,3 +204,39 @@ func TestMigrateUp_AFailedApplyShowsThePostgresDetailThenTheRecord(t *testing.T)
 	require.NotContains(t, out.stdout.String()+stderr, "Usage:")
 	require.Equal(t, []string{"6,true"}, readRecord(t, dsn))
 }
+
+func TestMigrateDown_AFailedRollbackNamesTheRecordBeforeAndAfter(t *testing.T) {
+	dsn := newMigrateDatabase(t)
+	migrateTo(t, dsn, 8)
+
+	blocker, err := pgx.Connect(t.Context(), dsn)
+	require.NoError(t, err)
+	tx, err := blocker.Begin(t.Context())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = tx.Rollback(context.Background())
+		_ = blocker.Close(context.Background())
+	})
+	_, err = tx.Exec(t.Context(), "LOCK TABLE tree_nodes IN ACCESS EXCLUSIVE MODE")
+	require.NoError(t, err)
+
+	out, err := runMigrate(t, withParam(t, dsn, "lock_timeout", "500"), "down")
+
+	require.Error(t, err)
+	require.True(t, strings.HasSuffix(out.stderr.String(),
+		"This run was `mlmforge migrate down`. The record read 8, clean before this run and now reads 7, dirty.\n"+
+			"Do not run `mlmforge migrate reset-dirty`. It would set the record to 6, clean.\n"),
+		"stderr: %s", out.stderr.String())
+	require.NotContains(t, out.stdout.String()+out.stderr.String(), "Usage:")
+	require.Equal(t, []string{"7,true"}, readRecord(t, dsn))
+}
+
+func TestMigrateDown_AnEmptyRecordHasNothingToRollBack(t *testing.T) {
+	dsn := newMigrateDatabase(t)
+
+	out, err := runMigrate(t, dsn, "down")
+
+	require.NoError(t, err, out.stderr.String())
+	require.Equal(t, "No migrations to roll back.\n", out.stdout.String())
+	require.Empty(t, out.stderr.String())
+}

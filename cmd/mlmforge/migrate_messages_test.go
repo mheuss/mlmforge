@@ -202,3 +202,96 @@ func TestApplyFailureText_ARecordBelowMinusOneNamesTheValueItRead(t *testing.T) 
 		"reset-dirty does not change a record at -2.", got)
 	requireNoForce(t, got)
 }
+
+var sevenDirtyAfterDown = platform.RecordRead{Record: platform.Record{Version: 7, Dirty: true}}
+
+func TestRollbackFailureText_NamesTheRecordBeforeAndAfter(t *testing.T) {
+	got := rollbackFailureText(&platform.RollbackError{
+		Err:    errors.New("lock timeout"),
+		Before: platform.RecordRead{Record: platform.Record{Version: 8}},
+		After:  sevenDirtyAfterDown,
+		Source: platform.SourceInfo{Path: "/m", InSource: true, Previous: 6, HasPrevious: true},
+	})
+
+	require.Equal(t, "rollback migration: lock timeout\n"+
+		"This run was `mlmforge migrate down`. The record read 8, clean before this run and now reads 7, dirty.\n"+
+		"Do not run `mlmforge migrate reset-dirty`. It would set the record to 6, clean.", got)
+	requireNoForce(t, got)
+}
+
+func TestRollbackFailureText_AFailedBeforeReadNamesOnlyTheRecordAfter(t *testing.T) {
+	got := rollbackFailureText(&platform.RollbackError{
+		Err:    errors.New("boom"),
+		Before: platform.RecordRead{Err: errors.New("x")},
+		After:  sevenDirtyAfterDown,
+		Source: platform.SourceInfo{Path: "/m", InSource: true, Previous: 6, HasPrevious: true},
+	})
+
+	require.Equal(t, "rollback migration: boom\n"+
+		"This run was `mlmforge migrate down`. The record now reads 7, dirty.\n"+
+		"Do not run `mlmforge migrate reset-dirty`. It would set the record to 6, clean.", got)
+	requireNoForce(t, got)
+}
+
+func TestRollbackFailureText_AtTheFirstMigrationSaysNoVersionWouldBeLeft(t *testing.T) {
+	got := rollbackFailureText(&platform.RollbackError{
+		Err:    errors.New("boom"),
+		Before: platform.RecordRead{Record: platform.Record{Version: 2}},
+		After:  platform.RecordRead{Record: platform.Record{Version: 1, Dirty: true}},
+		Source: platform.SourceInfo{Path: "/m", InSource: true},
+	})
+
+	require.Equal(t, "rollback migration: boom\n"+
+		"This run was `mlmforge migrate down`. The record read 2, clean before this run and now reads 1, dirty.\n"+
+		"Do not run `mlmforge migrate reset-dirty`. Afterwards the record would hold no version.", got)
+	requireNoForce(t, got)
+}
+
+func TestRollbackFailureText_AMinusOneRecordSaysResetWillNotChangeIt(t *testing.T) {
+	got := rollbackFailureText(&platform.RollbackError{
+		Err:    errors.New("boom"),
+		Before: platform.RecordRead{Record: platform.Record{Version: 1}},
+		After:  platform.RecordRead{Record: platform.Record{Version: -1, Dirty: true}},
+		Source: platform.SourceInfo{Path: "/m"},
+	})
+
+	require.Equal(t, "rollback migration: boom\n"+
+		"This run was `mlmforge migrate down`. The record read 1, clean before this run and now reads -1, dirty.\n"+
+		"reset-dirty does not change a record at -1.", got)
+	requireNoForce(t, got)
+}
+
+func TestRollbackFailureText_AVersionMissingFromTheDirectoryDropsTheEffect(t *testing.T) {
+	got := rollbackFailureText(&platform.RollbackError{
+		Err:    errors.New("boom"),
+		Before: platform.RecordRead{Record: platform.Record{Version: 8}},
+		After:  sevenDirtyAfterDown,
+		Source: platform.SourceInfo{Path: "/m"},
+	})
+
+	require.Equal(t, "rollback migration: boom\n"+
+		"This run was `mlmforge migrate down`. The record read 8, clean before this run and now reads 7, dirty.\n"+
+		"Do not run `mlmforge migrate reset-dirty`.", got)
+	requireNoForce(t, got)
+}
+
+func TestRollbackFailureText_ACleanOrUnreadableRecordAfter(t *testing.T) {
+	clean := rollbackFailureText(&platform.RollbackError{
+		Err: errors.New("boom"), After: platform.RecordRead{Record: platform.Record{Version: 8}},
+	})
+	unread := rollbackFailureText(&platform.RollbackError{
+		Err: errors.New("boom"), After: platform.RecordRead{Err: errors.New("reset")},
+	})
+
+	require.Equal(t, "rollback migration: boom", clean)
+	require.Equal(t, "rollback migration: boom\nThe record could not be read after the failure: reset.", unread)
+	requireNoForce(t, clean+unread)
+}
+
+func TestMigrateError_ADirtyRecordOnDownNamesTheCommand(t *testing.T) {
+	err := migrateError("down", &platform.DirtyError{Record: sixDirty,
+		Source: platform.SourceInfo{Path: "/m", InSource: true, Previous: 5, HasPrevious: true}})
+
+	require.EqualError(t, err, "migrate down did not run. "+dirtySixText)
+	requireNoForce(t, err.Error())
+}

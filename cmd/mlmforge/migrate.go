@@ -42,18 +42,20 @@ func newMigrateCmd() *cobra.Command {
 			Short: "Roll back the most recent migration",
 			Args:  cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, args []string) error {
+				cmd.SilenceUsage = true
 				url, err := resolveDBURL(*dbURL)
 				if err != nil {
 					return err
 				}
-				if err := platform.MigrateDown(url, *migrationsPath); err != nil {
-					if errors.Is(err, platform.ErrNoChange) {
-						fmt.Println("No migrations to roll back.")
-						return nil
-					}
-					return err
+				err = withoutReleaseErrors(cmd.ErrOrStderr(), "one migration was rolled back", platform.MigrateDown(url, *migrationsPath))
+				if errors.Is(err, platform.ErrNoChange) {
+					_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No migrations to roll back.")
+					return nil
 				}
-				fmt.Println("Rolled back one migration.")
+				if err != nil {
+					return migrateError("down", err)
+				}
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Rolled back one migration.")
 				return nil
 			},
 		},

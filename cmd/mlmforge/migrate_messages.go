@@ -124,9 +124,10 @@ func applyFailureText(e *platform.ApplyError) string {
 // migrateErrorText returns the operator text for the typed migrate error err holds.
 func migrateErrorText(command string, err error) (string, bool) {
 	var (
-		multi *platform.MultiStatementError
-		dirty *platform.DirtyError
-		apply *platform.ApplyError
+		multi    *platform.MultiStatementError
+		dirty    *platform.DirtyError
+		apply    *platform.ApplyError
+		rollback *platform.RollbackError
 	)
 	switch {
 	case errors.As(err, &multi):
@@ -135,6 +136,8 @@ func migrateErrorText(command string, err error) (string, bool) {
 		return fmt.Sprintf("migrate %s did not run. %s", command, dirtyText(dirty.Record, dirty.Source)), true
 	case errors.As(err, &apply):
 		return applyFailureText(apply), true
+	case errors.As(err, &rollback):
+		return rollbackFailureText(rollback), true
 	}
 	return "", false
 }
@@ -148,4 +151,50 @@ func migrateError(command string, err error) error {
 		return &operatorError{text: text, err: err}
 	}
 	return err
+}
+
+// describeRecordBefore states what a record read, in the past tense.
+func describeRecordBefore(r platform.Record) string {
+	if r.Version == -1 && !r.Dirty {
+		return "held no version"
+	}
+	return "read " + r.String()
+}
+
+// resetWould describes the record a reset would leave, as a sentence.
+func resetWould(src platform.SourceInfo) string {
+	if src.HasPrevious {
+		return fmt.Sprintf("It would set the record to %d, clean.", src.Previous)
+	}
+	return "Afterwards the record would hold no version."
+}
+
+// rollbackFailureText is the text for a failed migrate down.
+func rollbackFailureText(e *platform.RollbackError) string {
+	lines := []string{e.Error()}
+	after := e.After
+	switch {
+	case after.Err != nil:
+		lines = append(lines, fmt.Sprintf("The record could not be read after the failure: %v.", after.Err))
+		return strings.Join(lines, "\n")
+	case !after.Record.Dirty:
+		return e.Error()
+	}
+
+	observed := fmt.Sprintf("The record now %s.", describeRecord(after.Record))
+	if e.Before.Err == nil {
+		observed = fmt.Sprintf("The record %s before this run and now %s.",
+			describeRecordBefore(e.Before.Record), describeRecord(after.Record))
+	}
+	lines = append(lines, "This run was "+downCommand+". "+observed)
+
+	switch {
+	case after.Record.Version < 0:
+		lines = append(lines, fmt.Sprintf("reset-dirty does not change a record at %d.", after.Record.Version))
+	case e.Source.Err == nil && e.Source.InSource:
+		lines = append(lines, fmt.Sprintf("Do not run %s. %s", resetCommand, resetWould(e.Source)))
+	default:
+		lines = append(lines, fmt.Sprintf("Do not run %s.", resetCommand))
+	}
+	return strings.Join(lines, "\n")
 }

@@ -68,3 +68,12 @@ func TestMigrateUp_AStrayArgumentStillPrintsUsage(t *testing.T) {
 	require.Error(t, root.Execute())
 	require.Contains(t, out.String(), "Usage:")
 }
+
+func TestMigrateDown_RefusesMultiStatementModeBeforeConnecting(t *testing.T) {
+	root := newRootCmd()
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"migrate", "down", "--db-url", refusedDBURL + "&x-multi-statement=true"})
+
+	require.EqualError(t, root.Execute(), "migrate down refused: the database URL sets x-multi-statement=true.")
+}

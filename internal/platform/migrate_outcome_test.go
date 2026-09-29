@@ -47,3 +47,28 @@ func TestUpResult_ALockTimeoutReadsNoRecord(t *testing.T) {
 	assert.ErrorIs(t, err, migrate.ErrLockTimeout)
 	assert.EqualError(t, err, "apply migrations: timeout: can't acquire database lock")
 }
+
+func TestDownOutcome_NoChangeWithAnUnlockFailureKeepsOnlyTheRelease(t *testing.T) {
+	releases, rest := SplitRelease(sourceOnlyMigration(t).downOutcome(RecordRead{}, errors.Join(migrate.ErrNoChange, unlockFailed)))
+
+	assert.ErrorIs(t, rest, ErrNoChange)
+	assert.Equal(t, []error{unlockFailed}, releases)
+}
+
+func TestDownOutcome_ADirtyRecordWithAnUnlockFailureKeepsBoth(t *testing.T) {
+	releases, rest := SplitRelease(sourceOnlyMigration(t).downOutcome(RecordRead{}, errors.Join(migrate.ErrDirty{Version: 6}, unlockFailed)))
+
+	var dirty *DirtyError
+	require.ErrorAs(t, rest, &dirty)
+	assert.Equal(t, Record{Version: 6, Dirty: true}, dirty.Record)
+	assert.Equal(t, []error{unlockFailed}, releases)
+}
+
+func TestDownResult_ALockTimeoutReadsNoRecord(t *testing.T) {
+	err := (&migration{}).downResult(RecordRead{}, migrate.ErrLockTimeout)
+
+	var rollback *RollbackError
+	assert.False(t, errors.As(err, &rollback), "a lock timeout must not carry a record read afterwards")
+	assert.ErrorIs(t, err, migrate.ErrLockTimeout)
+	assert.EqualError(t, err, "rollback migration: timeout: can't acquire database lock")
+}

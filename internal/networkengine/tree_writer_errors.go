@@ -81,8 +81,8 @@ func (e *ProjectionMissingError) Error() string {
 		e.TreeID, TreeStreamName(e.TreeID), e.LastVersion)
 }
 
-// StreamMovedError reports a stream whose last version is neither the version
-// the tree was loaded at nor one past it.
+// StreamMovedError reports a stream whose last version is neither the tree's
+// projected version, read before its load, nor one past it.
 type StreamMovedError struct {
 	TreeID        string
 	LoadedVersion int64
@@ -90,6 +90,6 @@ type StreamMovedError struct {
 }
 
 func (e *StreamMovedError) Error() string {
-	return fmt.Sprintf("tree %s was loaded at projected version %d and stream %s ends at version %d; nothing was appended",
+	return fmt.Sprintf("tree %s had projected version %d before its load, and stream %s ends at version %d; nothing was appended",
 		e.TreeID, e.LoadedVersion, TreeStreamName(e.TreeID), e.LastVersion)
 }

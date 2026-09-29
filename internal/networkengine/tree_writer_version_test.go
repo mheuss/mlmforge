@@ -72,7 +72,7 @@ func TestTreeWriter_RefusesAStreamTwoEventsPastTheLoad(t *testing.T) {
 	var moved *StreamMovedError
 	require.ErrorAs(t, err, &moved)
 	assert.Equal(t, StreamMovedError{TreeID: writerTree, LoadedVersion: 1, LastVersion: 3}, *moved)
-	assert.EqualError(t, err, "tree "+writerTree+" was loaded at projected version 1 and stream "+
+	assert.EqualError(t, err, "tree "+writerTree+" had projected version 1 before its load, and stream "+
 		TreeStreamName(writerTree)+" ends at version 3; nothing was appended")
 	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 3)
 	assert.Nil(t, res.CaughtUp, "the refused write redelivered an event")

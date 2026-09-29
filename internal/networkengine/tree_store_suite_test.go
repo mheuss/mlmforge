@@ -1128,4 +1128,46 @@ func runTreeStoreSuite(
 		assert.True(t, moved.UpdatedAt.After(stale),
 			"recruit's UpdatedAt read back as %v, want later than %v", moved.UpdatedAt, stale)
 	})
+
+	t.Run("BulkInsert reports a slot conflict as ErrSlotConflict", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		rootUser := testUserUUID(1)
+		ahead := testUserUUID(3)
+
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(2), tree, testUserUUID(2), 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
+
+		err := s.BulkInsert(ctx, []TreeNodeRow{
+			makeUUIDNode(testNodeUUID(3), tree, ahead, 1, ptr(rootUser), ptr(rootUser), intPtr(1)),
+			makeUUIDNode(testNodeUUID(4), tree, testUserUUID(4), 1, ptr(rootUser), ptr(rootUser), intPtr(0)),
+		})
+		require.ErrorIs(t, err, ErrSlotConflict)
+
+		got, err := s.GetNode(ctx, tree, ahead)
+		require.NoError(t, err)
+		assert.Nil(t, got, "the row ahead of the conflict rolls back with it")
+	})
+
+	t.Run("BulkInsert reports a user conflict as ErrActiveUserConflict", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		rootUser := testUserUUID(1)
+		user := testUserUUID(2)
+
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(2), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
+
+		// Depth 1 and a free slot, so this row breaks the user index alone. HEU-794.
+		err := s.BulkInsert(ctx, []TreeNodeRow{
+			makeUUIDNode(testNodeUUID(3), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(1)),
+		})
+		require.ErrorIs(t, err, ErrActiveUserConflict)
+	})
 }

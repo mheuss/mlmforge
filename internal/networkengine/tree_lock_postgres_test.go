@@ -8,6 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/mlmforge/mlmforge/internal/platform"
+	"github.com/mlmforge/mlmforge/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -161,4 +163,22 @@ func TestPostgresTreeLocker_ClosesItsConnections(t *testing.T) {
 
 	require.NoError(t, unlock())
 	require.Eventually(t, gone, 5*time.Second, 50*time.Millisecond, "unlock left its connection open")
+}
+
+func TestPostgresTreeLocker_ReportsAConnectTimeout(t *testing.T) {
+	testutil.ClearTimeoutEnv(t)
+	addr := testutil.SilentListener(t)
+	locker := NewPostgresTreeLocker("postgres://app:s3cret@" + addr + "/app?sslmode=disable&connect_timeout=1")
+	tree := uuid.MustParse(testTreeUUID(1))
+
+	unlock, err := locker.Lock(context.Background(), tree)
+
+	require.Nil(t, unlock)
+	var cte *platform.ConnectTimeoutError
+	require.ErrorAs(t, err, &cte)
+	require.Equal(t, addr, cte.Hosts)
+	require.GreaterOrEqual(t, cte.Waited, time.Second)
+	require.Less(t, cte.Waited, 2*time.Second)
+	require.ErrorContains(t, err, "open the lock connection for tree "+tree.String())
+	require.NotContains(t, err.Error(), "s3cret")
 }

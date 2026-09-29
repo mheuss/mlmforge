@@ -963,3 +963,16 @@ func TestTreeWriterAddRoot_ReportsAReleaseFailureAlongsideAnUnderLockRefusal(t *
 	require.ErrorContains(t, err, " records tree type binary at version 1, and the request names unilevel")
 	assert.Equal(t, unlockErr, res.ReleaseErr)
 }
+
+func TestTreeWriterLock_KeepsAConnectTimeoutReachable(t *testing.T) {
+	env := newWriterEnv()
+	cte := &platform.ConnectTimeoutError{Hosts: "db:5432", Waited: time.Second, Err: context.DeadlineExceeded}
+	w := NewTreeWriter(env.events, env.store, newFakeWriterEngine(), immediateErrLocker{err: cte})
+
+	_, err := w.AddRoot(context.Background(), unilevelRootRequest())
+
+	var got *platform.ConnectTimeoutError
+	require.ErrorAs(t, err, &got)
+	require.Same(t, cte, got)
+	assert.Empty(t, streamEvents(t, env.events, TreeStreamName(writerTree)))
+}

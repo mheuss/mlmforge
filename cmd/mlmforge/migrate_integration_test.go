@@ -266,6 +266,7 @@ func TestMigrateResetDirty_FromTheFirstMigrationLeavesNoVersion(t *testing.T) {
 
 	require.NoError(t, err, out.stderr.String())
 	require.Equal(t, "The record read 1, dirty. It now holds no version.\nRun `mlmforge migrate up` next.\n", out.stdout.String())
+	require.Empty(t, out.stderr.String())
 	require.Empty(t, readRecord(t, dsn))
 }
 
@@ -325,7 +326,8 @@ func TestMigrateDown_AVersionWithNoFileIsAnErrorNotNothingToRollBack(t *testing.
 	out, err := runMigrate(t, dsn, "down")
 
 	require.Error(t, err)
-	require.NotContains(t, out.stdout.String(), "No migrations to roll back.")
+	require.True(t, strings.HasPrefix(out.stderr.String(), "Error: rollback migration: "), "stderr: %s", out.stderr.String())
+	require.Empty(t, out.stdout.String())
 	require.Equal(t, []string{"99,false"}, readRecord(t, dsn))
 }
 

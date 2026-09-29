@@ -249,6 +249,11 @@ func ResetDirty(dbURL, migrationsPath string) (res ResetResult, err error) {
 	}
 	defer mg.closeInto(&err)
 
+	return mg.resetDirty()
+}
+
+// resetDirty reads the record and rewrites it while holding the migration lock.
+func (mg *migration) resetDirty() (res ResetResult, err error) {
 	if err = mg.db.Lock(); err != nil {
 		return ResetResult{}, fmt.Errorf("take migration lock: %w", err)
 	}

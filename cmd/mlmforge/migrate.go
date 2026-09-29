@@ -80,7 +80,9 @@ func newMigrateCmd() *cobra.Command {
 		&cobra.Command{
 			Use:   "reset-dirty",
 			Short: "Move a dirty migration record back to the previous migration, clean",
-			Args:  cobra.NoArgs,
+			Long: "Move a dirty migration record back to the previous migration, clean.\n\n" +
+				"Run it only after a failed `mlmforge migrate up`. Do not run it after a failed `mlmforge migrate down`.",
+			Args: cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, args []string) error {
 				cmd.SilenceUsage = true
 				url, err := resolveDBURL(*dbURL)

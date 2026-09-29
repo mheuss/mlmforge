@@ -115,13 +115,20 @@ func appendQueryParam(raw, param string) string {
 	return head
 }
 
-// connectError replaces a ConnectTimeoutError's text with one line that names the timeout's source.
+// connectError names the timeout's source right after a ConnectTimeoutError's text, keeping the rest of the message.
 func connectError(err error, target dbTarget) error {
 	var cte *platform.ConnectTimeoutError
 	if !errors.As(err, &cte) {
 		return err
 	}
-	return &operatorError{text: cte.Error() + " (" + target.timeout.String() + ")", err: err}
+	source := " (" + target.timeout.String() + ")"
+	text, timeout := err.Error(), cte.Error()
+	i := strings.Index(text, timeout)
+	if i < 0 {
+		return &operatorError{text: text + source, err: err}
+	}
+	end := i + len(timeout)
+	return &operatorError{text: text[:end] + source + text[end:], err: err}
 }
 
 // resolveWorkerPath returns an absolute path to the worker binary.

@@ -49,7 +49,8 @@ func terminateTreeLockHolder(t *testing.T, pool *pgxpool.Pool) {
 		"pg_terminate_backend(pid, 5000) results for backends named %q holding an advisory lock", treeLockApplicationName)
 }
 
-// buildSponsorChain places a, b and c under root, sponsored by root, a and b.
+// buildSponsorChain adds root as the tree's root, then places a, b and c under
+// it, sponsored by root, a and b.
 func (it *writerIntegration) buildSponsorChain(t *testing.T, tree, root, a, b, c string) {
 	t.Helper()
 	it.addUnilevelRoot(t, tree, root)
@@ -155,9 +156,9 @@ func TestTreeWriter_ACatchUpBehindALateProjectionAppendsNothing(t *testing.T) {
 		select {
 		case <-parked.parked:
 		case got := <-second:
-			t.Fatalf("the second writer returned before any RemoveNode on the parked engine returned: %v", got.err)
+			t.Fatalf("the second writer returned before the parked engine began its delay: %v", got.err)
 		case <-time.After(30 * time.Second):
-			t.Fatal("within 30s the second writer had not returned and no RemoveNode on the parked engine had returned")
+			t.Fatal("within 30s the second writer had not returned and the parked engine had not begun its delay")
 		}
 	}}
 	first, firstErr := NewTreeWriter(events, it.store, it.engine(t), NewPostgresTreeLocker(it.dsn)).
@@ -226,8 +227,9 @@ func TestTreeWriter_APlacementProjectedAfterItsLockWasLostIsRefused(t *testing.T
 	assert.NotNil(t, row.RemovedAt, "the row for %s is active", x)
 }
 
-func TestTreeWriter_ALateRemovalLeavesAReplacedUserActive(t *testing.T) {
-	t.Skip("skipped until HEU-857: a late removal tombstoned the re-placed user B and left C sponsored by removed A; in the run before this skip, no writer reported an error")
+func TestTreeWriter_ALateRemovalLeavesAUserPlacedAgainActive(t *testing.T) {
+	t.Skip("skipped until HEU-857: a late removal tombstoned B, placed again, and left C sponsored by removed A; " +
+		"every writer's error and projection error was nil, and writer 1's release error was set because its lock connection was terminated")
 	it := newWriterIntegration(t)
 	ctx := context.Background()
 	tree, root, a, b, c := testTreeUUID(312), testUserUUID(1), testUserUUID(2), testUserUUID(3), testUserUUID(4)
@@ -252,4 +254,87 @@ func TestTreeWriter_ALateRemovalLeavesAReplacedUserActive(t *testing.T) {
 	assert.Equal(t, int64(6), replaced.Version)
 	assert.Equal(t, int64(7), removedA.Version)
 	assert.Equal(t, map[string]string{root: root, b: root, c: root}, activeSponsors(t, it.store, tree))
+	// first.ProjectionErr is left unasserted: how a refused late write is reported is HEU-857's to define.
+	assert.ErrorContains(t, first.ReleaseErr, "the pg_advisory_unlock query for tree "+tree+" failed")
+}
+
+// lockKillingLoadStore ends the tree lock's backend after its first full-tree
+// load, then runs meanwhile before returning.
+type lockKillingLoadStore struct {
+	TreeStore
+	t         *testing.T
+	pool      *pgxpool.Pool
+	meanwhile func()
+	once      sync.Once
+}
+
+func (s *lockKillingLoadStore) GetByTreeDepthOrdered(ctx context.Context, treeID string) ([]TreeNodeRow, error) {
+	rows, err := s.TreeStore.GetByTreeDepthOrdered(ctx, treeID)
+	s.once.Do(func() {
+		terminateTreeLockHolder(s.t, s.pool)
+		s.meanwhile()
+	})
+	return rows, err
+}
+
+func TestTreeWriter_ARemovalAfterALockLostBeforeItsAppendMovesEveryRecruit(t *testing.T) {
+	t.Skip("skipped until HEU-859: writer 1 lost its lock after its load, D was placed sponsored by B, and writer 1's removal of B left D sponsored by removed B; " +
+		"every writer's error and projection error was nil, and writer 1's release error was set because its lock connection was terminated")
+	it := newWriterIntegration(t)
+	ctx := context.Background()
+	tree, root, a, b, c, d, e := testTreeUUID(313), testUserUUID(1), testUserUUID(2), testUserUUID(3), testUserUUID(4), testUserUUID(5), testUserUUID(6)
+	it.buildSponsorChain(t, tree, root, a, b, c)
+
+	var placedD, placedE WriteResult
+	var placedDErr, placedEErr error
+	store := &lockKillingLoadStore{TreeStore: it.store, t: t, pool: it.pool, meanwhile: func() {
+		placedD, placedDErr = it.writer(t).Place(ctx, PlaceRequest{
+			TreeID: tree, UserID: d, ParentID: root, SponsorID: b, EnrolledAt: writeTime.Add(5 * time.Hour)})
+		placedE, placedEErr = it.writer(t).Place(ctx, PlaceRequest{
+			TreeID: tree, UserID: e, ParentID: root, SponsorID: root, EnrolledAt: writeTime.Add(6 * time.Hour)})
+	}}
+	first, firstErr := NewTreeWriter(it.events, store, it.engine(t), NewPostgresTreeLocker(it.dsn)).
+		Remove(ctx, RemoveRequest{TreeID: tree, UserID: b, RemovedAt: writeTime.Add(7 * time.Hour)})
+
+	require.NoError(t, firstErr)
+	require.NoError(t, placedDErr)
+	require.NoError(t, placedEErr)
+	assert.NoError(t, placedD.ProjectionErr)
+	assert.NoError(t, placedE.ProjectionErr)
+	assert.Equal(t, int64(5), placedD.Version)
+	assert.Equal(t, int64(6), placedE.Version)
+	assert.Equal(t, int64(7), first.Version)
+	assert.Equal(t, map[string]string{root: root, a: root, c: a, d: a, e: root}, activeSponsors(t, it.store, tree))
+	assert.ErrorContains(t, first.ReleaseErr, "the pg_advisory_unlock query for tree "+tree+" failed")
+}
+
+func TestTreeWriter_APlacementAfterALockLostBeforeItsAppendLeavesTheTreeWritable(t *testing.T) {
+	t.Skip("skipped until HEU-859: writer 1 lost its lock after its load, B was removed, and writer 1 appended a placement under B; " +
+		"its projection failed with parent not found, and the next writer's catch-up failed the same way and appended nothing")
+	it := newWriterIntegration(t)
+	ctx := context.Background()
+	tree, root, a, b, c, e, x, y := testTreeUUID(314), testUserUUID(1), testUserUUID(2), testUserUUID(3), testUserUUID(4),
+		testUserUUID(6), testUserUUID(7), testUserUUID(8)
+	it.buildSponsorChain(t, tree, root, a, b, c)
+
+	var removedB, placedE WriteResult
+	var removedBErr, placedEErr error
+	store := &lockKillingLoadStore{TreeStore: it.store, t: t, pool: it.pool, meanwhile: func() {
+		removedB, removedBErr = it.writer(t).Remove(ctx, RemoveRequest{TreeID: tree, UserID: b, RemovedAt: writeTime.Add(5 * time.Hour)})
+		placedE, placedEErr = it.writer(t).Place(ctx, PlaceRequest{
+			TreeID: tree, UserID: e, ParentID: root, SponsorID: root, EnrolledAt: writeTime.Add(6 * time.Hour)})
+	}}
+	first, firstErr := NewTreeWriter(it.events, store, it.engine(t), NewPostgresTreeLocker(it.dsn)).
+		Place(ctx, PlaceRequest{TreeID: tree, UserID: x, ParentID: b, SponsorID: b, EnrolledAt: writeTime.Add(7 * time.Hour)})
+
+	require.NoError(t, removedBErr)
+	require.NoError(t, placedEErr)
+	assert.NoError(t, removedB.ProjectionErr)
+	assert.NoError(t, placedE.ProjectionErr)
+	require.NoError(t, firstErr)
+	t.Logf("the first writer's placement under removed B reported projection error: %v", first.ProjectionErr)
+	next, nextErr := it.writer(t).Place(ctx, PlaceRequest{
+		TreeID: tree, UserID: y, ParentID: root, SponsorID: root, EnrolledAt: writeTime.Add(8 * time.Hour)})
+	assert.NoError(t, nextErr, "a placement under the root after the first writer's append")
+	assert.NoError(t, next.ProjectionErr)
 }

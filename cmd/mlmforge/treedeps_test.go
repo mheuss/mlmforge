@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"path/filepath"
 	"testing"
 
+	"github.com/mlmforge/mlmforge/internal/platform"
 	"github.com/stretchr/testify/require"
 )
 
@@ -154,7 +156,7 @@ func TestStartEngine_ClosesThePoolWhenTheDatabaseIsUnreachable(t *testing.T) {
 	pool := &fakePool{pingErr: unreachable}
 	worker := filepath.Join(t.TempDir(), "network-engine-worker")
 
-	engine, err := startEngine(t.Context(), worker, pool)
+	engine, err := startEngine(t.Context(), "postgres://u@127.0.0.1:1/db", worker, pool)
 
 	require.Error(t, err)
 	require.Nil(t, engine)
@@ -167,13 +169,28 @@ func TestStartEngine_ClosesThePoolWhenTheWorkerWillNotStart(t *testing.T) {
 	pool := &fakePool{}
 	missing := filepath.Join(t.TempDir(), "network-engine-worker")
 
-	engine, err := startEngine(t.Context(), missing, pool)
+	engine, err := startEngine(t.Context(), "postgres://u@127.0.0.1:1/db", missing, pool)
 
 	require.Error(t, err)
 	require.Nil(t, engine)
 	require.Equal(t, 1, pool.closes, "close was not called exactly once")
 	require.ErrorIs(t, err, fs.ErrNotExist, "the cause must survive the wrapper")
 	require.Contains(t, err.Error(), missing, "the message must name the worker it tried")
+}
+
+func TestStartEngine_ReportsAConnectTimeout(t *testing.T) {
+	pool := &fakePool{pingErr: fmt.Errorf("failed to connect: %w", context.DeadlineExceeded)}
+	worker := filepath.Join(t.TempDir(), "network-engine-worker")
+
+	engine, err := startEngine(t.Context(), "postgres://u:s3cret@db:5432/app", worker, pool)
+
+	require.Nil(t, engine)
+	require.Equal(t, 1, pool.closes, "close was not called exactly once")
+	var cte *platform.ConnectTimeoutError
+	require.ErrorAs(t, err, &cte)
+	require.Equal(t, "db:5432", cte.Hosts)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.ErrorContains(t, err, "reach database: the connection to db:5432 did not complete")
 }
 
 // An unreachable URL reaches the ping rather than failing earlier, which is

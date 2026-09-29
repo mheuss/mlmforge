@@ -5,6 +5,7 @@ import (
 	"io"
 	"testing"
 
+	"github.com/mlmforge/mlmforge/internal/platform"
 	"github.com/stretchr/testify/require"
 )
 
@@ -30,4 +31,40 @@ func TestRootCmd_BareMigrateStillPrintsHelpAndSucceeds(t *testing.T) {
 	require.NoError(t, root.Execute())
 	require.Contains(t, out.String(), "Apply all pending migrations",
 		"help must still list the subcommands")
+}
+
+// Port 1 on the loopback refuses the connection, so reaching the database would produce a dial error instead.
+const refusedDBURL = "postgres://u:p@127.0.0.1:1/db?sslmode=disable"
+
+func TestMigrateUp_RefusesMultiStatementModeBeforeConnecting(t *testing.T) {
+	root := newRootCmd()
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"migrate", "up", "--db-url", refusedDBURL + "&x-multi-statement=1"})
+
+	require.EqualError(t, root.Execute(), "migrate up refused: the database URL sets x-multi-statement=1.")
+}
+
+func TestMigrateUp_AFailureBeforeAnyFileAddsNoRecoveryText(t *testing.T) {
+	root := newRootCmd()
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"migrate", "up", "--db-url", refusedDBURL, "--migrations", platform.FindMigrationsDir(t)})
+
+	err := root.Execute()
+
+	require.ErrorContains(t, err, "open database")
+	require.NotContains(t, err.Error(), "The record")
+	require.NotContains(t, err.Error(), "This run was")
+}
+
+func TestMigrateUp_AStrayArgumentStillPrintsUsage(t *testing.T) {
+	var out bytes.Buffer
+	root := newRootCmd()
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"migrate", "up", "stray"})
+
+	require.Error(t, root.Execute())
+	require.Contains(t, out.String(), "Usage:")
 }

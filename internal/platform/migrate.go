@@ -23,22 +23,41 @@ func migrationSourceURL(migrationsPath string) (string, error) {
 	return fmt.Sprintf("file://%s", absPath), nil
 }
 
+// dirtyError returns a DirtyError when err carries golang-migrate's dirty-record error.
+func (mg *migration) dirtyError(err error) (*DirtyError, bool) {
+	var dirty migrate.ErrDirty
+	if !errors.As(err, &dirty) {
+		return nil, false
+	}
+	rec := Record{Version: dirty.Version, Dirty: true}
+	return &DirtyError{Record: rec, Source: mg.sourceInfo(rec.Version)}, true
+}
+
 // MigrateUp applies all pending database migrations from the given directory.
-func MigrateUp(dbURL, migrationsPath string) error {
-	sourceURL, err := migrationSourceURL(migrationsPath)
+func MigrateUp(dbURL, migrationsPath string) (err error) {
+	if err = refuseMultiStatement("up", dbURL); err != nil {
+		return err
+	}
+	mg, err := openMigration(dbURL, migrationsPath)
 	if err != nil {
 		return err
 	}
-	m, err := migrate.New(sourceURL, dbURL)
-	if err != nil {
-		return fmt.Errorf("create migrator: %w", err)
-	}
-	defer func() { _, _ = m.Close() }()
+	defer mg.closeInto(&err)
 
-	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
-		return fmt.Errorf("apply migrations: %w", err)
+	releases, upErr := SplitRelease(mg.m.Up())
+	return withReleases(mg.upResult(upErr), releases)
+}
+
+// upResult classifies what golang-migrate's Up returned once release failures are split off.
+func (mg *migration) upResult(upErr error) error {
+	if upErr == nil || errors.Is(upErr, migrate.ErrNoChange) {
+		return nil
 	}
-	return nil
+	if dirty, ok := mg.dirtyError(upErr); ok {
+		return dirty
+	}
+	after := mg.recordRead()
+	return &ApplyError{Err: upErr, After: after, Source: mg.sourceFor(after)}
 }
 
 // ErrNoChange is returned by MigrateDown when there are no migrations to roll back.

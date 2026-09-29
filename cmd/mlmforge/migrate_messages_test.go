@@ -95,3 +95,80 @@ func TestWithoutReleaseErrors_AfterASucceededOperationSaysWhatItDid(t *testing.T
 	require.NoError(t, rest)
 	require.Equal(t, "warning: the record was written; releasing the migration lock failed: u\n", warnings.String())
 }
+
+func TestApplyFailureText_ADirtyRecordAddsTheRecordAndTheRecovery(t *testing.T) {
+	got := applyFailureText(&platform.ApplyError{
+		Err:    errors.New("migration failed: detail"),
+		After:  platform.RecordRead{Record: sixDirty},
+		Source: platform.SourceInfo{Path: "/m", InSource: true, Previous: 5, HasPrevious: true},
+	})
+
+	require.Equal(t, "apply migrations: migration failed: detail\n"+
+		"This run was `mlmforge migrate up`. The record now reads 6, dirty.\n"+
+		"Fix the cause shown above, run `mlmforge migrate reset-dirty` (it sets the record to 5, clean), "+
+		"then run `mlmforge migrate up`.", got)
+	requireNoForce(t, got)
+}
+
+func TestApplyFailureText_AFailedReReadSaysSo(t *testing.T) {
+	got := applyFailureText(&platform.ApplyError{
+		Err: errors.New("boom"), After: platform.RecordRead{Err: errors.New("connection reset")},
+	})
+
+	require.Equal(t, "apply migrations: boom\nThe record could not be read after the failure: connection reset.", got)
+	requireNoForce(t, got)
+}
+
+func TestApplyFailureText_ACleanRecordAddsNothing(t *testing.T) {
+	got := applyFailureText(&platform.ApplyError{
+		Err: errors.New("boom"), After: platform.RecordRead{Record: platform.Record{Version: 5}},
+	})
+
+	require.Equal(t, "apply migrations: boom", got)
+	requireNoForce(t, got)
+}
+
+func TestApplyFailureText_AMinusOneRecordSaysResetWillNotChangeIt(t *testing.T) {
+	got := applyFailureText(&platform.ApplyError{
+		Err: errors.New("boom"), After: platform.RecordRead{Record: platform.Record{Version: -1, Dirty: true}},
+	})
+
+	require.Equal(t, "apply migrations: boom\n"+
+		"This run was `mlmforge migrate up`. The record now reads -1, dirty.\n"+
+		"reset-dirty does not change a record at -1.", got)
+	requireNoForce(t, got)
+}
+
+func TestApplyFailureText_AVersionMissingFromTheDirectorySaysResetWillRefuse(t *testing.T) {
+	got := applyFailureText(&platform.ApplyError{
+		Err: errors.New("boom"), After: platform.RecordRead{Record: sixDirty},
+		Source: platform.SourceInfo{Path: "/m"},
+	})
+
+	require.Equal(t, "apply migrations: boom\n"+
+		"This run was `mlmforge migrate up`. The record now reads 6, dirty.\n"+
+		"The migrations directory /m has no migration 6, so `mlmforge migrate reset-dirty` will refuse.", got)
+	requireNoForce(t, got)
+}
+
+func TestMigrateError_ADirtyRecordOnUpReplacesTheLibraryText(t *testing.T) {
+	err := migrateError("up", &platform.DirtyError{Record: sixDirty,
+		Source: platform.SourceInfo{Path: "/m", InSource: true, Previous: 5, HasPrevious: true}})
+
+	require.EqualError(t, err, "migrate up did not run. "+dirtySixText)
+	requireNoForce(t, err.Error())
+}
+
+func TestMigrateError_AMultiStatementRefusalNamesTheCommandAndTheValue(t *testing.T) {
+	err := migrateError("up", &platform.MultiStatementError{Command: "up", Value: "1"})
+
+	require.EqualError(t, err, "migrate up refused: the database URL sets x-multi-statement=1.")
+	requireNoForce(t, err.Error())
+}
+
+func TestMigrateError_LeavesAnUntypedErrorAsItIs(t *testing.T) {
+	plain := errors.New("open database: dial tcp: connection refused")
+
+	require.Same(t, plain, migrateError("up", plain))
+	require.NoError(t, migrateError("up", nil))
+}

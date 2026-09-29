@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -85,4 +86,68 @@ func withoutReleaseErrors(w io.Writer, done string, err error) error {
 		}
 	}
 	return rest
+}
+
+// operatorError carries replacement text for an error and still unwraps to it.
+type operatorError struct {
+	text string
+	err  error
+}
+
+func (e *operatorError) Error() string { return e.text }
+
+func (e *operatorError) Unwrap() error { return e.err }
+
+// multiStatementText is the text for a refused multi-statement URL.
+func multiStatementText(e *platform.MultiStatementError) string {
+	return fmt.Sprintf("migrate %s refused: the database URL sets x-multi-statement=%s.", e.Command, e.Value)
+}
+
+// applyFailureText is the text for a failed migrate up.
+func applyFailureText(e *platform.ApplyError) string {
+	lines := []string{e.Error()}
+	after := e.After
+	switch {
+	case after.Err != nil:
+		lines = append(lines, fmt.Sprintf("The record could not be read after the failure: %v.", after.Err))
+	case !after.Record.Dirty:
+	case after.Record.Version < 0:
+		lines = append(lines,
+			"This run was "+upCommand+". The record now reads -1, dirty.",
+			"reset-dirty does not change a record at -1.")
+	default:
+		lines = append(lines,
+			fmt.Sprintf("This run was %s. The record now %s.", upCommand, describeRecord(after.Record)),
+			upRecovery(after.Record, e.Source, "Fix the cause shown above"))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// migrateErrorText returns the operator text for the typed migrate error err holds.
+func migrateErrorText(command string, err error) (string, bool) {
+	var (
+		multi *platform.MultiStatementError
+		dirty *platform.DirtyError
+		apply *platform.ApplyError
+	)
+	switch {
+	case errors.As(err, &multi):
+		return multiStatementText(multi), true
+	case errors.As(err, &dirty):
+		return fmt.Sprintf("migrate %s did not run. %s", command, dirtyText(dirty.Record, dirty.Source)), true
+	case errors.As(err, &apply):
+		return applyFailureText(apply), true
+	}
+	return "", false
+}
+
+// migrateError replaces a typed migrate error with its operator text and returns any other error unchanged.
+func migrateError(command string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if text, ok := migrateErrorText(command, err); ok {
+		return &operatorError{text: text, err: err}
+	}
+	return err
 }

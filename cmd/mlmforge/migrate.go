@@ -28,11 +28,13 @@ func newMigrateCmd() *cobra.Command {
 			Short: "Apply all pending migrations",
 			Args:  cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, args []string) error {
+				cmd.SilenceUsage = true
 				url, err := resolveDBURL(*dbURL)
 				if err != nil {
 					return err
 				}
-				return platform.MigrateUp(url, *migrationsPath)
+				err = withoutReleaseErrors(cmd.ErrOrStderr(), "migrate up finished", platform.MigrateUp(url, *migrationsPath))
+				return migrateError("up", err)
 			},
 		},
 		&cobra.Command{

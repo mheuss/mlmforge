@@ -115,7 +115,7 @@ func appendQueryParam(raw, param string) string {
 	return head
 }
 
-// connectError names the timeout's source right after a ConnectTimeoutError's text, keeping the rest of the message.
+// connectError adds the timeout's source to a ConnectTimeoutError's message.
 func connectError(err error, target dbTarget) error {
 	var cte *platform.ConnectTimeoutError
 	if !errors.As(err, &cte) {

@@ -28,7 +28,6 @@ func SilentListener(t *testing.T) string {
 		t.Fatalf("listen on the loopback: %v", err)
 	}
 	var mu sync.Mutex
-	// Holding each connection keeps it open until cleanup.
 	var held []net.Conn
 	done := make(chan struct{})
 	go func() {

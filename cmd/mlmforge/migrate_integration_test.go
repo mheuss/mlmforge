@@ -223,6 +223,7 @@ func TestMigrateDown_AFailedRollbackNamesTheRecordBeforeAndAfter(t *testing.T) {
 	out, err := runMigrate(t, withParam(t, dsn, "lock_timeout", "500"), "down")
 
 	require.Error(t, err)
+	require.True(t, strings.HasPrefix(out.stderr.String(), "Error: rollback migration: "), "stderr: %s", out.stderr.String())
 	require.True(t, strings.HasSuffix(out.stderr.String(),
 		"This run was `mlmforge migrate down`. The record read 8, clean before this run and now reads 7, dirty.\n"+
 			"Do not run `mlmforge migrate reset-dirty`. It would set the record to 6, clean.\n"),
@@ -312,4 +313,16 @@ func TestMigrateResetDirty_RefusesARecordItCannotActOnAndLeavesItUnchanged(t *te
 			require.Equal(t, tc.record, readRecord(t, dsn))
 		})
 	}
+}
+
+func TestMigrateDown_AVersionWithNoFileIsAnErrorNotNothingToRollBack(t *testing.T) {
+	dsn := newMigrateDatabase(t)
+	migrateTo(t, dsn, 5)
+	setRecord(t, dsn, 99, false)
+
+	out, err := runMigrate(t, dsn, "down")
+
+	require.Error(t, err)
+	require.NotContains(t, out.stdout.String(), "No migrations to roll back.")
+	require.Equal(t, []string{"99,false"}, readRecord(t, dsn))
 }

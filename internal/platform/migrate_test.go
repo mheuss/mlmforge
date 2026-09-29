@@ -3,7 +3,6 @@ package platform
 import (
 	"context"
 	"errors"
-	"os"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -52,15 +51,12 @@ func TestMigrateUpDown(t *testing.T) {
 	migrationsPath := FindMigrationsDir(t)
 
 	// Roll all migrations down, then back up to verify the full cycle.
-	// The loop terminates on ErrNoChange or os.ErrNotExist. The latter
-	// occurs when golang-migrate has rolled back past all numbered
-	// migration files.
 	for {
 		err := MigrateDown(pgContainer.DSN, migrationsPath)
 		if err == nil {
 			continue
 		}
-		if errors.Is(err, ErrNoChange) || errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, ErrNoChange) {
 			break
 		}
 		require.NoError(t, err, "unexpected rollback error")

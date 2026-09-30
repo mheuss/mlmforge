@@ -44,7 +44,7 @@ func TestMigrateVersion_APostgresURLReachesTheDriver(t *testing.T) {
 
 			require.ErrorContains(t, err, "dial tcp 127.0.0.1:1")
 			var cse *ConnStringError
-			require.False(t, errors.As(err, &cse), "the driver was not reached: %v", err)
+			require.False(t, errors.As(err, &cse), "expected a dial error for a valid URL; the error chain holds a *ConnStringError: %v", err)
 		})
 	}
 }

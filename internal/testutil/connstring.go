@@ -27,7 +27,7 @@ func (c ConnStringCase) WithoutPassword() string {
 	return strings.ReplaceAll(c.ConnString, c.Password, "")
 }
 
-// ConnStringCases returns the refused connection strings the leak tests run.
+// ConnStringCases returns the refused connection strings, each with its password.
 func ConnStringCases() []ConnStringCase {
 	return []ConnStringCase{
 		{Name: "slash", ConnString: "postgres://app:Zm9vQmFy/cXV4eHl6@127.0.0.1:1/app",

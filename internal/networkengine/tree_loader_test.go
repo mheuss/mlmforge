@@ -777,10 +777,10 @@ func TestTreeLoader_ValidPositionsAccepted(t *testing.T) {
 	}, mutator.nodesAt)
 }
 
-// failAfterNMutator fails the Nth node-adding call and delegates the rest, so
-// a test can assert what LoadTree reports about how far a replay got.
-// stubMutator.failWith cannot express this: it fails every call including
-// CreateTree, so the replay never starts.
+// failAfterNMutator fails one engine call after the create succeeds, so a test
+// can assert what LoadTree reports about how far a load got. It fails the
+// failOn-th AddNode or AddNodeAt call, or AddRoot when failRoot is set, or
+// places the root and then fails when landRootThenFail is set.
 type failAfterNMutator struct {
 	stubMutator
 	failOn           int  // 1-based index among AddNode/AddNodeAt calls
@@ -902,13 +902,9 @@ func TestTreeLoader_ReplayFailureReportsProgress(t *testing.T) {
 	}
 }
 
-// TestTreeLoader_AddRootFailureReportsCreatedTree covers the one mid-load exit
-// that used to report nothing about what survived it. The create runs before
-// AddRoot. When root placement does not report success, the root may be placed
-// or not, and the structure exists either way. The worker cannot drop it
-// (HEU-557), so a retry reports TREE_EXISTS and only a restart clears it. The
-// message has to say the tree exists, or the operator reads a bare "add root
-// failed" and retries into a dead end.
+// TestTreeLoader_AddRootFailureReportsCreatedTree checks that a root-stage
+// failure reports the tree as created, whether the root was refused or landed
+// with its reply lost.
 func TestTreeLoader_AddRootFailureReportsCreatedTree(t *testing.T) {
 	tests := []struct {
 		name             string

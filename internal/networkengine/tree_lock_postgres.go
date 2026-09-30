@@ -55,7 +55,7 @@ func (l *PostgresTreeLocker) Lock(ctx context.Context, treeID uuid.UUID) (func()
 	// connection would send them to Postgres, which rejects them.
 	cfg, err := pgxpool.ParseConfig(l.dbURL)
 	if err != nil {
-		return nil, fmt.Errorf("parse the database URL for the lock on tree %s: %w", treeID, err)
+		return nil, fmt.Errorf("parse the database URL for the lock on tree %s: %w", treeID, platform.PgxConnStringError(err))
 	}
 	if cfg.ConnConfig.RuntimeParams == nil {
 		cfg.ConnConfig.RuntimeParams = map[string]string{}

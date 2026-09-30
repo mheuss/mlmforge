@@ -2,6 +2,7 @@ package networkengine
 
 import (
 	"context"
+	"fmt"
 	"runtime/debug"
 	"testing"
 	"time"
@@ -181,4 +182,30 @@ func TestPostgresTreeLocker_ReportsAConnectTimeout(t *testing.T) {
 	require.Less(t, cte.Waited, 5*time.Second)
 	require.ErrorContains(t, err, "open the lock connection for tree "+tree.String())
 	require.NotContains(t, err.Error(), "s3cret")
+}
+
+func TestPostgresTreeLocker_ARefusedConnStringHoldsNoPassword(t *testing.T) {
+	tree := uuid.MustParse(testTreeUUID(1))
+	for _, tc := range testutil.ConnStringCases() {
+		if tc.PgxStage == "" {
+			continue
+		}
+		t.Run(tc.Name, func(t *testing.T) {
+			testutil.IsolatePgxEnv(t)
+			want := "parse the database URL for the lock on tree " + tree.String() + ": " +
+				testutil.RefusalText(t, "pgx", tc.PgxStage)
+
+			unlock, err := NewPostgresTreeLocker(tc.ConnString).Lock(context.Background(), tree)
+
+			require.Nil(t, unlock)
+			require.Error(t, err)
+			testutil.RequireNoPasswordWindow(t, fmt.Sprintf("%v\n%+v", err, err), tc.Password, want, tc.WithoutPassword())
+			testutil.RequireNoDriverParseError(t, err)
+			require.EqualError(t, err, want)
+			var cse *platform.ConnStringError
+			require.ErrorAs(t, err, &cse)
+			require.Equal(t, "pgx", cse.Driver())
+			require.Equal(t, tc.PgxStage, cse.Stage())
+		})
+	}
 }

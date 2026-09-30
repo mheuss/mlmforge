@@ -1,0 +1,77 @@
+package platform
+
+import (
+	"errors"
+	"net/url"
+	"testing"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/mlmforge/mlmforge/internal/testutil"
+	"github.com/stretchr/testify/require"
+)
+
+func TestConnStringError_NamesTheDriverAndTheStage(t *testing.T) {
+	for _, tc := range []struct {
+		err    *ConnStringError
+		driver string
+		stage  string
+	}{
+		{&ConnStringError{driver: driverMigrate, stage: stageParse}, "golang-migrate", "parse"},
+		{&ConnStringError{driver: driverPgx, stage: stageParse}, "pgx", "parse"},
+		{&ConnStringError{driver: driverPgx, stage: stageRefused}, "pgx", "refused"},
+	} {
+		require.Equal(t, testutil.RefusalText(t, tc.driver, tc.stage), tc.err.Error())
+		require.Equal(t, tc.driver, tc.err.Driver())
+		require.Equal(t, tc.stage, tc.err.Stage())
+	}
+}
+
+func TestConnStringError_EndsTheChain(t *testing.T) {
+	require.Nil(t, errors.Unwrap(&ConnStringError{driver: driverPgx, stage: stageRefused}))
+}
+
+func TestPgxConnStringError_ReplacesEachRefusal(t *testing.T) {
+	for _, tc := range testutil.ConnStringCases() {
+		t.Run(tc.Name, func(t *testing.T) {
+			testutil.IsolatePgxEnv(t)
+			_, parseErr := pgxpool.ParseConfig(tc.ConnString)
+			require.Error(t, parseErr)
+
+			err := PgxConnStringError(parseErr)
+
+			var cse *ConnStringError
+			require.ErrorAs(t, err, &cse)
+			require.Equal(t, "pgx", cse.Driver())
+			require.Equal(t, tc.PgxStage, cse.Stage())
+			testutil.RequireNoDriverParseError(t, err)
+		})
+	}
+}
+
+func TestPgxConnStringError_PassesOtherErrorsThrough(t *testing.T) {
+	other := errors.New("dial tcp 127.0.0.1:1: connect: connection refused")
+
+	require.Same(t, other, PgxConnStringError(other))
+	require.NoError(t, PgxConnStringError(nil))
+}
+
+func TestMigrateConnStringError_ReplacesAParseError(t *testing.T) {
+	parseErr := &url.Error{Op: "parse", URL: "postgres://app:Zm9vQmFy/cXV4eHl6@h/app", Err: errors.New("invalid port")}
+
+	err := migrateConnStringError(parseErr)
+
+	var cse *ConnStringError
+	require.ErrorAs(t, err, &cse)
+	require.Equal(t, "golang-migrate", cse.Driver())
+	require.Equal(t, "parse", cse.Stage())
+	testutil.RequireNoDriverParseError(t, err)
+}
+
+func TestMigrateConnStringError_PassesOtherErrorsThrough(t *testing.T) {
+	notParse := &url.Error{Op: "Get", URL: "http://h", Err: errors.New("boom")}
+	other := errors.New("dial tcp 127.0.0.1:1: connect: connection refused")
+
+	require.Same(t, notParse, migrateConnStringError(notParse))
+	require.Same(t, other, migrateConnStringError(other))
+	require.NoError(t, migrateConnStringError(nil))
+}

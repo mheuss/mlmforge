@@ -777,20 +777,24 @@ func TestTreeLoader_ValidPositionsAccepted(t *testing.T) {
 	}, mutator.nodesAt)
 }
 
-// failAfterNMutator fails the Nth node-adding call and delegates the rest, so
-// a test can assert what LoadTree reports about how far a replay got.
-// stubMutator.failWith cannot express this: it fails every call including
-// CreateTree, so the replay never starts.
+// failAfterNMutator fails one engine call after the create succeeds.
 type failAfterNMutator struct {
 	stubMutator
-	failOn   int  // 1-based index among AddNode/AddNodeAt calls
-	failRoot bool // fail AddRoot instead, after the create succeeds
-	calls    int
-	err      error
+	failOn           int  // 1-based index among AddNode/AddNodeAt calls
+	failRoot         bool // fail AddRoot instead, after the create succeeds
+	landRootThenFail bool // place the root, then return err as if the reply were lost
+	calls            int
+	err              error
 }
 
 func (m *failAfterNMutator) AddRoot(ctx context.Context, structure, userID string, enrolledAt int64) error {
 	if m.failRoot {
+		return m.err
+	}
+	if m.landRootThenFail {
+		if err := m.stubMutator.AddRoot(ctx, structure, userID, enrolledAt); err != nil {
+			return err
+		}
 		return m.err
 	}
 	return m.stubMutator.AddRoot(ctx, structure, userID, enrolledAt)
@@ -895,32 +899,49 @@ func TestTreeLoader_ReplayFailureReportsProgress(t *testing.T) {
 	}
 }
 
-// TestTreeLoader_AddRootFailureReportsCreatedTree covers the one mid-load exit
-// that used to report nothing about what survived it. The create runs before
-// AddRoot, so a root failure leaves the structure in the worker with no nodes —
-// and the worker cannot drop it (HEU-557), so a retry reports TREE_EXISTS and
-// only a restart clears it. The message has to say the tree exists, or the
-// operator reads a bare "add root failed" and retries into a dead end.
+// TestTreeLoader_AddRootFailureReportsCreatedTree checks that a root-stage
+// failure reports the tree as created, whether the root was refused or landed
+// with its reply lost.
 func TestTreeLoader_AddRootFailureReportsCreatedTree(t *testing.T) {
-	store := NewMemoryTreeStore()
-	ctx := context.Background()
-	boom := errors.New("transport closed")
+	tests := []struct {
+		name             string
+		failRoot         bool
+		landRootThenFail bool
+		wantRoots        []string
+	}{
+		{name: "root refused", failRoot: true},
+		{name: "root landed, reply lost", landRootThenFail: true, wantRoots: []string{"u0"}},
+	}
 
-	root := makeNode("t", "u0", 0, nil, ptr("u0"), nil)
-	root.EnrolledAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	require.NoError(t, store.InsertNode(ctx, root))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewMemoryTreeStore()
+			ctx := context.Background()
+			boom := errors.New("transport closed")
 
-	mutator := &failAfterNMutator{failRoot: true, err: boom}
-	_, err := NewTreeLoader(store, mutator).LoadTree(ctx, "t", "unilevel")
+			root := makeNode("t", "u0", 0, nil, ptr("u0"), nil)
+			root.EnrolledAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+			require.NoError(t, store.InsertNode(ctx, root))
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "add root u0")
-	assert.Contains(t, err.Error(), "tree t created but left empty")
-	assert.ErrorIs(t, err, boom, "the transport error must stay wrapped")
+			mutator := &failAfterNMutator{failRoot: tt.failRoot, landRootThenFail: tt.landRootThenFail, err: boom}
+			_, err := NewTreeLoader(store, mutator).LoadTree(ctx, "t", "unilevel")
 
-	// The create really did land, which is what makes the message true.
-	assert.Equal(t, []string{"t"}, mutator.created)
-	assert.Empty(t, mutator.roots)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "add root u0")
+			assert.Contains(t, err.Error(), "tree t created")
+			assert.NotContains(t, err.Error(), "empty")
+			assert.ErrorIs(t, err, boom, "the transport error must stay wrapped")
+
+			var incomplete *TreeLoadIncompleteError
+			require.ErrorAs(t, err, &incomplete)
+			assert.Equal(t, TreeLoadStageRoot, incomplete.Stage)
+			assert.Equal(t, "t", incomplete.TreeID)
+
+			// The create really did land, which is what makes the message true.
+			assert.Equal(t, []string{"t"}, mutator.created)
+			assert.Equal(t, tt.wantRoots, mutator.roots)
+		})
+	}
 }
 
 // TestTreeLoader_CreateTreeFailureLeavesNothingBuilt covers the CreateTree

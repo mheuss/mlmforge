@@ -67,7 +67,7 @@ type treeRunner func(ctx context.Context, deps *treeDeps) error
 func openTreeDeps(ctx context.Context, dbURL, workerPath string) (*treeDeps, error) {
 	pool, err := pgxpool.New(ctx, dbURL)
 	if err != nil {
-		return nil, fmt.Errorf("open database pool: %w", err)
+		return nil, fmt.Errorf("open database pool: %w", platform.PgxConnStringError(err))
 	}
 	engine, err := startEngine(ctx, dbURL, workerPath, pool)
 	if err != nil {

@@ -21,3 +21,4 @@ Cross-cutting, not tied to a subsystem.
 | A green that covered nothing | [green-about-nothing.md](green-about-nothing.md) |
 | Guards in shell scripts | [shell-guards.md](shell-guards.md) |
 | Argument rules on cobra commands | [cobra-commands.md](cobra-commands.md) |
+| Database connection strings a driver refuses | [connection-strings.md](connection-strings.md) |

@@ -358,3 +358,39 @@ When you add a key:
   disagree.
 - Mutate the earlier key away and watch that case fail on the twin that
   decides it.
+
+## Prove a chain check on its own with `%.0w`
+
+A test that checks both an error's text and its chain usually fails on the text first. Revert a fix and the text leaks, so the chain check never gets to fail on its own. The suite goes red, and nothing has shown the chain check can catch anything.
+
+Wrap the replacement and the original together, and hide the original's text:
+
+```go
+fmt.Errorf("open database pool: %w%.0w", replacement, original)
+```
+
+`%.0w` prints nothing but still wraps. The text now matches the fixed text, and `errors.As` still finds the original. Only the chain check can fail.
+
+HEU-867 used this to show `RequireNoDriverParseError` failing on all 10 pgx cases with no password window reported.
+
+## Count what a table test selects, not what completes
+
+A table test that filters its cases can pass on zero of them. Rename a case, or change the field the filter reads, and nothing runs. The test is still green. Assert the count after the loop.
+
+Count before `t.Run`, not inside the closure:
+
+```go
+selected := 0
+for _, tc := range cases {
+	if tc.Name != "slash" {
+		continue
+	}
+	selected++
+	t.Run(tc.Name, func(t *testing.T) { ... })
+}
+require.Equal(t, 1, selected, "cases selected")
+```
+
+A counter inside the closure fails the parent under `-run`. `t.Run` returns without running a subtest the filter skips, so a count of completed subtests comes up short whenever someone runs one case by name. It also adds a second failure on top of a real one, because `require` stops the subtest before the increment.
+
+HEU-867 hit both. The first version counted inside the closure, and the targeted re-review caught it.

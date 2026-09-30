@@ -358,8 +358,8 @@ func (w *TreeWriter) write(ctx context.Context, spec writeSpec) (result WriteRes
 	if err != nil {
 		return result, err
 	}
-	// Read before the rows, so a projection that lands between the two reads
-	// leaves the engine ahead of loaded.
+	// Read before the rows. A projection landing between the two reads then
+	// leaves the rows newer than loaded.
 	loaded, found, err := w.store.ProjectedVersion(ctx, tree)
 	if err != nil {
 		return result, fmt.Errorf("read the projected version of tree %s; nothing was appended: %w", tree, err)

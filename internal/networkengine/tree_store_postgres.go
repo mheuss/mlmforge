@@ -89,7 +89,7 @@ func (s *PostgresTreeStore) InsertNode(ctx context.Context, node TreeNodeRow) er
 	return insertNode(ctx, s.pool, node)
 }
 
-// execer is what a pool and a transaction share for a write.
+// execer is the Exec method the store's writes need.
 type execer interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }

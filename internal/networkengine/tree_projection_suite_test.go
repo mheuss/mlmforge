@@ -32,7 +32,7 @@ func readProjectionState(t *testing.T, s TreeStore, tree string, users ...string
 	return projectionState{version: version, found: found, rows: rows}
 }
 
-// runTreeProjectionSuite is the version contract both stores must pass.
+// runTreeProjectionSuite checks the projected-version behavior of a TreeStore.
 // newStore returns a fresh, empty store on each call.
 func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore) {
 	t.Helper()

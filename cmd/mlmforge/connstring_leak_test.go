@@ -32,6 +32,7 @@ func requireRefusalPrinted(t *testing.T, tc testutil.ConnStringCase, want, stdou
 }
 
 func TestMigrateCommands_ARefusedConnStringPrintsNoPassword(t *testing.T) {
+	ran := 0
 	for _, sub := range []string{"up", "down", "version", "reset-dirty"} {
 		for _, tc := range testutil.ConnStringCases() {
 			if tc.MigrateStage == "" {
@@ -45,9 +46,11 @@ func TestMigrateCommands_ARefusedConnStringPrintsNoPassword(t *testing.T) {
 					"--db-url", tc.ConnString, "--migrations", platform.FindMigrationsDir(t))
 
 				requireRefusalPrinted(t, tc, want, stdout, stderr, err)
+				ran++
 			})
 		}
 	}
+	require.Equal(t, 28, ran, "migrate subtests that ran to the end")
 }
 
 func TestTreeCommands_ARefusedConnStringPrintsNoPassword(t *testing.T) {
@@ -60,6 +63,7 @@ func TestTreeCommands_ARefusedConnStringPrintsNoPassword(t *testing.T) {
 		{"place", []string{"--tree-id", "t9", "--user-id", "u", "--parent-id", "p", "--sponsor-id", "u"}},
 		{"remove", []string{"--tree-id", "t9", "--user-id", "u"}},
 	}
+	ran := 0
 	for _, command := range commands {
 		for _, tc := range testutil.ConnStringCases() {
 			if tc.Name != "slash" && tc.Name != "bad-sslmode" {
@@ -73,7 +77,9 @@ func TestTreeCommands_ARefusedConnStringPrintsNoPassword(t *testing.T) {
 				stdout, stderr, err := executeRootCaptured(args...)
 
 				requireRefusalPrinted(t, tc, want, stdout, stderr, err)
+				ran++
 			})
 		}
 	}
+	require.Equal(t, 8, ran, "tree subtests that ran to the end")
 }

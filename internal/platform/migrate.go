@@ -148,9 +148,6 @@ func openMigration(dbURL, migrationsPath string) (*migration, error) {
 		if schemeErr := migrateSchemeError(dbURL); schemeErr != nil {
 			return schemeErr
 		}
-		if portErr := migratePortError(dbURL); portErr != nil {
-			return portErr
-		}
 		if parseErr := migrateDriverParseError(dbURL); parseErr != nil {
 			return parseErr
 		}

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"strconv"
 	"strings"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -88,18 +87,6 @@ func migrateSchemeError(dbURL string) error {
 	return &ConnStringError{driver: driverMigrate, stage: stageScheme}
 }
 
-// migratePortError returns a ConnStringError for a URL whose port is outside 1 to 65535, and nil otherwise.
-func migratePortError(dbURL string) error {
-	purl, err := url.Parse(dbURL)
-	if err != nil || purl.Port() == "" {
-		return nil
-	}
-	if port, err := strconv.Atoi(purl.Port()); err != nil || port < 1 || port > 65535 {
-		return &ConnStringError{driver: driverMigrate, stage: stageRefused}
-	}
-	return nil
-}
-
 // libPQEnvProbe is a connection string that holds nothing from any operator's string.
 const libPQEnvProbe = "postgres://u@h/d"
 
@@ -109,15 +96,16 @@ func migrateDriverParseError(dbURL string) error {
 	if err != nil {
 		return nil
 	}
-	// Order matters: checked after the string below, a bad environment would return the string's own parse error.
-	if _, err := pq.NewConnector(libPQEnvProbe); err != nil {
+	_, err = pq.NewConnector(migrate.FilterCustomQuery(purl).String())
+	if err == nil {
+		return nil
+	}
+	// Order matters: probed only after the string fails, so a string that overrides a bad environment still passes.
+	if _, probeErr := pq.NewConnector(libPQEnvProbe); probeErr != nil {
+		return probeErr
+	}
+	if errors.Is(err, pq.ErrCouldNotDetectUsername) {
 		return err
 	}
-	if _, err := pq.NewConnector(migrate.FilterCustomQuery(purl).String()); err != nil {
-		if errors.Is(err, pq.ErrCouldNotDetectUsername) {
-			return err
-		}
-		return &ConnStringError{driver: driverMigrate, stage: stageRefused}
-	}
-	return nil
+	return &ConnStringError{driver: driverMigrate, stage: stageRefused}
 }

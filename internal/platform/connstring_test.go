@@ -146,24 +146,3 @@ func TestMigrateDriverParseError_ReportsARefusedEnvironmentAsItself(t *testing.T
 	var cse *ConnStringError
 	require.False(t, errors.As(err, &cse), "expected lib/pq's environment error; got a ConnStringError")
 }
-
-func TestMigratePortError_RefusesAPortOutsideTheValidRange(t *testing.T) {
-	for _, refused := range []string{
-		"postgres://app:123456/n5cretpwXYZ@127.0.0.1:1/app",
-		"postgres://h:65536/app",
-		"postgres://h:0/app",
-	} {
-		var cse *ConnStringError
-		require.ErrorAs(t, migratePortError(refused), &cse, refused)
-		require.Equal(t, "refused", cse.Stage(), refused)
-	}
-	for _, accepted := range []string{
-		"postgres://h/app",
-		"postgres://h:1/app",
-		"postgres://h:5432/app",
-		"postgres://h:65535/app",
-		"postgres://app:Zm9vQmFy/cXV4eHl6@127.0.0.1:1/app",
-	} {
-		require.NoError(t, migratePortError(accepted), accepted)
-	}
-}

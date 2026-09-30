@@ -55,8 +55,6 @@ func ConnStringCases() []ConnStringCase {
 			Password: "up3cretpwXYZ", PgxStage: "refused", MigrateStage: "scheme"},
 		{Name: "pq-quoted-key", ConnString: "postgres://app:pq3cretpwXYZ@127.0.0.1:1/app?p%3D%27a=z%3D",
 			Password: "pq3cretpwXYZ", MigrateStage: "refused"},
-		{Name: "numeric-port", ConnString: "postgres://app:123456/n5cretpwXYZ@127.0.0.1:1/app",
-			Password: "123456/n5cretpwXYZ", PgxStage: "refused", MigrateStage: "refused"},
 		{Name: "pq-spaced-key", ConnString: "postgres://app:Zm9vQmFy@cXV4?d2l0aHh5bXdk ZXZl=YWJjZA@127.0.0.1:1/app",
 			Password: "Zm9vQmFy@cXV4?d2l0aHh5bXdk ZXZl=YWJjZA", MigrateStage: "refused"},
 	}

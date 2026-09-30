@@ -59,7 +59,16 @@ type WriteResult struct {
 	Version       int64
 	CaughtUp      *CaughtUpEvent // the stream's last event, redelivered and handled without error
 	ProjectionErr error          // any failure after the append was confirmed
-	ReleaseErr    error          // the unlock failed
+	Observed      *ProjectionObservation
+	ReleaseErr    error // the unlock failed
+}
+
+// ProjectionObservation is the tree's projected version, read after a
+// projection error.
+type ProjectionObservation struct {
+	Version int64
+	Found   bool
+	Err     error
 }
 
 // TreeWriter appends tree events and projects them, one tree at a time.
@@ -379,6 +388,9 @@ func (w *TreeWriter) write(ctx context.Context, spec writeSpec) (result WriteRes
 	}
 	result.EventID, result.Version = event.ID, version
 	result.ProjectionErr = w.project(ctx, stream, event.ID, version)
+	if result.ProjectionErr != nil {
+		result.Observed = w.observe(ctx, tree)
+	}
 	return result, nil
 }
 
@@ -418,6 +430,15 @@ func (w *TreeWriter) prepare(ctx context.Context, tree string, shape treeShape) 
 		return 0, nil, 0, err
 	}
 	return loaded, last, nodes, nil
+}
+
+// observe reads the tree's projected version with a context the caller's
+// cancellation does not reach.
+func (w *TreeWriter) observe(ctx context.Context, tree string) *ProjectionObservation {
+	readCtx, cancel := detachedRead(ctx)
+	defer cancel()
+	version, found, err := w.store.ProjectedVersion(readCtx, tree)
+	return &ProjectionObservation{Version: version, Found: found, Err: err}
 }
 
 // lock takes the tree's lock, waiting at most w.lockWait.

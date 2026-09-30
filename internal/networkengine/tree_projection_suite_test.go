@@ -52,6 +52,31 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		assert.Equal(t, int64(0), got.version)
 	})
 
+	t.Run("every projection method refuses a cancelled context", func(t *testing.T) {
+		s := newStore(t)
+		require.NoError(t, s.ProjectInsert(context.Background(), rootRow, 3))
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		calls := []struct {
+			name string
+			call func() error
+		}{
+			{"ProjectedVersion", func() error {
+				_, _, err := s.ProjectedVersion(ctx, tree)
+				return err
+			}},
+			{"ProjectInsert", func() error { return s.ProjectInsert(ctx, childRow, 2) }},
+			{"ProjectRemoval", func() error {
+				return s.ProjectRemoval(ctx, tree, child, testNodeUUID(9), 2, nil)
+			}},
+			{"UndoRootProjection", func() error { return s.UndoRootProjection(ctx, tree, root, 1) }},
+		}
+		for _, c := range calls {
+			assert.ErrorIs(t, c.call(), context.Canceled, c.name)
+		}
+	})
+
 	t.Run("a projection above the version records its version", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()

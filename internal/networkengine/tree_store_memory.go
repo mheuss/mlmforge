@@ -282,12 +282,18 @@ func (s *MemoryTreeStore) BulkInsert(ctx context.Context, nodes []TreeNodeRow) e
 	return nil
 }
 
-func (s *MemoryTreeStore) ProjectedVersion(_ context.Context, treeID string) (int64, bool, error) {
+func (s *MemoryTreeStore) ProjectedVersion(ctx context.Context, treeID string) (int64, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, false, err
+	}
 	version, found := s.projected[treeID]
 	return version, found, nil
 }
 
 func (s *MemoryTreeStore) ProjectInsert(ctx context.Context, node TreeNodeRow, eventVersion int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := s.refuseBelow(node.TreeID, eventVersion); err != nil {
 		return err
 	}
@@ -304,6 +310,9 @@ func (s *MemoryTreeStore) ProjectRemoval(
 	eventVersion int64,
 	moved []Responsored,
 ) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := s.refuseBelow(treeID, eventVersion); err != nil {
 		return err
 	}
@@ -315,6 +324,9 @@ func (s *MemoryTreeStore) ProjectRemoval(
 }
 
 func (s *MemoryTreeStore) UndoRootProjection(ctx context.Context, treeID, userID string, eventVersion int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := checkEventVersion(treeID, eventVersion); err != nil {
 		return err
 	}

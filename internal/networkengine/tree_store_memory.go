@@ -332,7 +332,8 @@ func (s *MemoryTreeStore) UndoRootProjection(ctx context.Context, treeID, userID
 	}
 	projected, found := s.projected[treeID]
 	if !found {
-		return fmt.Errorf("tree %s has no projection row; the root row for %s was not deleted", treeID, userID)
+		return fmt.Errorf("tree %s has no projection row; the root row for %s at version %d was not deleted",
+			treeID, userID, eventVersion)
 	}
 	if projected != eventVersion {
 		return fmt.Errorf("tree %s has projected version %d, not %d; the root row for %s was not deleted",

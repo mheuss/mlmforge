@@ -1110,7 +1110,7 @@ if errors.As(err, &unknown) {
 ### UC-NET-029: Refusing a projection that arrives out of order
 
 **Added:** Unreleased (HEU-857)
-**Files:** `internal/networkengine/tree_store.go`, `internal/networkengine/tree_store_postgres.go`, `internal/networkengine/tree_store_memory.go`, `internal/networkengine/tree_writer.go`, `migrations/000009_create_tree_projections.up.sql`
+**Files:** `internal/networkengine/tree_store.go`, `internal/networkengine/tree_store_postgres.go`, `internal/networkengine/tree_store_memory.go`, `internal/networkengine/tree_consumer.go`, `internal/networkengine/tree_writer.go`, `internal/networkengine/tree_writer_errors.go`, `migrations/000009_create_tree_projections.up.sql`
 
 **Problem:** A writer that loses its lock can project its event after later events have projected. The store then goes backwards. Nothing reports it. A writer that loses its lock after loading can also append from an engine that missed events.
 

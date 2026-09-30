@@ -372,7 +372,8 @@ func (s *PostgresTreeStore) UndoRootProjection(ctx context.Context, treeID, user
 	var projected int64
 	err = tx.QueryRow(ctx, lockProjectionSQL, treeID).Scan(&projected)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("tree %s has no projection row; the root row for %s was not deleted", treeID, userID)
+		return fmt.Errorf("tree %s has no projection row; the root row for %s at version %d was not deleted",
+			treeID, userID, eventVersion)
 	}
 	if err != nil {
 		return err

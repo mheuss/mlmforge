@@ -289,7 +289,7 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 
 		err := s.UndoRootProjection(ctx, tree, root, 1)
 
-		require.EqualError(t, err, "tree "+tree+" has no projection row; the root row for "+root+" was not deleted")
+		require.EqualError(t, err, "tree "+tree+" has no projection row; the root row for "+root+" at version 1 was not deleted")
 		assert.Equal(t, before, readProjectionState(t, s, tree, root))
 	})
 
@@ -380,13 +380,14 @@ func waitForLockWaiters(t *testing.T, pool *pgxpool.Pool, n int) {
 	for {
 		var waiting int
 		require.NoError(t, pool.QueryRow(context.Background(),
-			`SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database()`,
+			`SELECT count(*) FROM pg_stat_activity
+			 WHERE wait_event_type = 'Lock' AND datname = current_database() AND query LIKE '%tree_projections%'`,
 		).Scan(&waiting))
 		if waiting >= n {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("after 10s, %d backends were waiting on a lock; want %d", waiting, n)
+			t.Fatalf("after 10s, %d backends were waiting on a lock with a tree_projections query; want %d", waiting, n)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

@@ -112,7 +112,7 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 	root := ordered[0]
 	if err := l.engine.AddRoot(ctx, treeID, root.UserID, root.EnrolledAt.Unix()); err != nil {
 		return 0, newTreeLoadIncomplete(TreeLoadStageRoot, treeID, err, 0, total,
-			fmt.Sprintf("add root %s (tree %s created but left empty): %s", root.UserID, treeID, err),
+			fmt.Sprintf("add root %s (tree %s created; root placement did not report success): %s", root.UserID, treeID, err),
 			root.UserID)
 	}
 

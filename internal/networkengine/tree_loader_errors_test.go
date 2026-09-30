@@ -443,7 +443,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			treeType:         treeTypeUnilevel,
 			nodes:            unilevelFixture(),
 			engineFailsAfter: 1,
-			want:             "add root u0 (tree t created but left empty): engine error [BOOM]: worker said no",
+			want:             "add root u0 (tree t created; root placement did not report success): engine error [BOOM]: worker said no",
 		},
 		{
 			name:             "AddNode fails",

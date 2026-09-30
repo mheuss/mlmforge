@@ -2,6 +2,7 @@ package networkengine
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,11 +26,14 @@ func nodeUserIDs(nodes []TreeNodeRow) []string {
 // fresh, empty store on each call.
 //
 // stampOf reads one row's removal stamp by the row's ID, whether or not the
-// row is active.
+// row is active. setUpdatedAt and setRemovedAt overwrite one row's update time
+// and removal time by the row's ID.
 func runTreeStoreSuite(
 	t *testing.T,
 	newStore func(t *testing.T) TreeStore,
 	stampOf func(t *testing.T, s TreeStore, nodeID string) *string,
+	setUpdatedAt func(t *testing.T, s TreeStore, nodeID string, at time.Time),
+	setRemovedAt func(t *testing.T, s TreeStore, nodeID string, at time.Time),
 ) {
 	t.Helper()
 
@@ -969,5 +973,359 @@ func runTreeStoreSuite(
 		err := s.InsertNode(ctx, node)
 		assert.ErrorIs(t, err, ErrNodeAlreadyProjected,
 			"the primary key is the branch that means already projected")
+	})
+
+	t.Run("every method refuses a cancelled context", func(t *testing.T) {
+		s := newStore(t)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		tree := testTreeUUID(1)
+		user := testUserUUID(1)
+		node := makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)
+
+		calls := []struct {
+			name string
+			call func() error
+		}{
+			{"InsertNode", func() error { return s.InsertNode(ctx, node) }},
+			{"DeleteNode", func() error { return s.DeleteNode(ctx, tree, user) }},
+			{"DeleteNodeAndResponsor", func() error {
+				return s.DeleteNodeAndResponsor(ctx, tree, user, testNodeUUID(9), nil)
+			}},
+			{"GetNode", func() error {
+				_, err := s.GetNode(ctx, tree, user)
+				return err
+			}},
+			{"GetNodeIncludingRemoved", func() error {
+				_, err := s.GetNodeIncludingRemoved(ctx, tree, user)
+				return err
+			}},
+			{"GetNodeByRemovalEvent", func() error {
+				_, err := s.GetNodeByRemovalEvent(ctx, tree, testNodeUUID(9))
+				return err
+			}},
+			{"GetChildren", func() error {
+				_, err := s.GetChildren(ctx, tree, user)
+				return err
+			}},
+			{"GetByTree", func() error {
+				_, err := s.GetByTree(ctx, tree)
+				return err
+			}},
+			{"GetByTreeDepthOrdered", func() error {
+				_, err := s.GetByTreeDepthOrdered(ctx, tree)
+				return err
+			}},
+			{"BulkInsert", func() error { return s.BulkInsert(ctx, []TreeNodeRow{node}) }},
+		}
+		for _, c := range calls {
+			assert.ErrorIs(t, c.call(), context.Canceled, c.name)
+		}
+	})
+
+	t.Run("a write with a cancelled context changes nothing", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		rootUser := testUserUUID(1)
+		removedUser := testUserUUID(2)
+		recruit := testUserUUID(3)
+		newUser := testUserUUID(4)
+
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(2), tree, removedUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(3), tree, recruit, 2, ptr(removedUser), ptr(removedUser), intPtr(0))))
+
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+
+		require.ErrorIs(t, s.InsertNode(cancelled,
+			makeUUIDNode(testNodeUUID(4), tree, newUser, 1, ptr(rootUser), ptr(rootUser), intPtr(1))), context.Canceled, "InsertNode")
+		require.ErrorIs(t, s.BulkInsert(cancelled, []TreeNodeRow{
+			makeUUIDNode(testNodeUUID(5), tree, newUser, 1, ptr(rootUser), ptr(rootUser), intPtr(1)),
+		}), context.Canceled, "BulkInsert")
+		require.ErrorIs(t, s.DeleteNode(cancelled, tree, recruit), context.Canceled, "DeleteNode")
+		require.ErrorIs(t, s.DeleteNodeAndResponsor(cancelled, tree, removedUser, testNodeUUID(9),
+			[]Responsored{{UserID: recruit, NewSponsorID: rootUser}}), context.Canceled, "DeleteNodeAndResponsor")
+
+		got, err := s.GetByTree(ctx, tree)
+		require.NoError(t, err)
+		assert.ElementsMatch(t, []string{rootUser, removedUser, recruit}, nodeUserIDs(got),
+			"active users read back after the four cancelled writes")
+
+		moved, err := s.GetNode(ctx, tree, recruit)
+		require.NoError(t, err)
+		require.NotNil(t, moved)
+		require.NotNil(t, moved.SponsorID)
+		assert.Equal(t, removedUser, *moved.SponsorID, "recruit's sponsor read back after the cancelled re-sponsor")
+		assert.Nil(t, stampOf(t, s, testNodeUUID(2)), "removal stamp read back on the row the cancelled delete named")
+	})
+
+	t.Run("DeleteNode moves UpdatedAt forward", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		user := testUserUUID(1)
+		stale := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
+		setUpdatedAt(t, s, testNodeUUID(1), stale)
+		backdated, err := s.GetNode(ctx, tree, user)
+		require.NoError(t, err)
+		require.NotNil(t, backdated)
+		require.True(t, backdated.UpdatedAt.Equal(stale),
+			"UpdatedAt read back as %v after setUpdatedAt, want %v", backdated.UpdatedAt, stale)
+
+		require.NoError(t, s.DeleteNode(ctx, tree, user))
+
+		got, err := s.GetNodeIncludingRemoved(ctx, tree, user)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.True(t, got.UpdatedAt.After(stale),
+			"UpdatedAt read back as %v after the delete, want later than %v", got.UpdatedAt, stale)
+	})
+
+	t.Run("DeleteNodeAndResponsor moves UpdatedAt forward on the removed row and the recruit", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		rootUser := testUserUUID(1)
+		removedUser := testUserUUID(2)
+		recruit := testUserUUID(3)
+		stale := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(2), tree, removedUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(3), tree, recruit, 2, ptr(removedUser), ptr(removedUser), intPtr(0))))
+		setUpdatedAt(t, s, testNodeUUID(2), stale)
+		setUpdatedAt(t, s, testNodeUUID(3), stale)
+		for _, u := range []string{removedUser, recruit} {
+			backdated, err := s.GetNode(ctx, tree, u)
+			require.NoError(t, err)
+			require.NotNil(t, backdated)
+			require.True(t, backdated.UpdatedAt.Equal(stale),
+				"%s's UpdatedAt read back as %v after setUpdatedAt, want %v", u, backdated.UpdatedAt, stale)
+		}
+
+		require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, removedUser, testNodeUUID(9),
+			[]Responsored{{UserID: recruit, NewSponsorID: rootUser}}))
+
+		removed, err := s.GetNodeIncludingRemoved(ctx, tree, removedUser)
+		require.NoError(t, err)
+		require.NotNil(t, removed)
+		assert.True(t, removed.UpdatedAt.After(stale),
+			"removed row's UpdatedAt read back as %v, want later than %v", removed.UpdatedAt, stale)
+
+		moved, err := s.GetNode(ctx, tree, recruit)
+		require.NoError(t, err)
+		require.NotNil(t, moved)
+		assert.True(t, moved.UpdatedAt.After(stale),
+			"recruit's UpdatedAt read back as %v, want later than %v", moved.UpdatedAt, stale)
+	})
+
+	t.Run("BulkInsert reports a slot conflict as ErrSlotConflict", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		rootUser := testUserUUID(1)
+		ahead := testUserUUID(3)
+
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(2), tree, testUserUUID(2), 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
+
+		err := s.BulkInsert(ctx, []TreeNodeRow{
+			makeUUIDNode(testNodeUUID(3), tree, ahead, 1, ptr(rootUser), ptr(rootUser), intPtr(1)),
+			makeUUIDNode(testNodeUUID(4), tree, testUserUUID(4), 1, ptr(rootUser), ptr(rootUser), intPtr(0)),
+		})
+		require.ErrorIs(t, err, ErrSlotConflict)
+
+		got, err := s.GetNode(ctx, tree, ahead)
+		require.NoError(t, err)
+		assert.Nil(t, got, "active row read back for the user placed ahead of the conflicting row")
+	})
+
+	t.Run("BulkInsert reports a user conflict as ErrActiveUserConflict", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		rootUser := testUserUUID(1)
+		user := testUserUUID(2)
+
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(2), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
+
+		// Depth 1 and a free slot are deliberate. See HEU-810 and HEU-794.
+		err := s.BulkInsert(ctx, []TreeNodeRow{
+			makeUUIDNode(testNodeUUID(3), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(1)),
+		})
+		require.ErrorIs(t, err, ErrActiveUserConflict)
+	})
+
+	t.Run("GetNodeIncludingRemoved breaks a removal-time tie by the highest id", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		userA := testUserUUID(1)
+		userB := testUserUUID(2)
+		tie := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+
+		// userA's higher id is placed second and userB's first, so neither a
+		// first-found nor a last-found rule returns both expected rows.
+		for _, p := range []struct{ id, user string }{
+			{testNodeUUID(1), userA}, {testNodeUUID(2), userA},
+			{testNodeUUID(4), userB}, {testNodeUUID(3), userB},
+		} {
+			require.NoError(t, s.InsertNode(ctx, makeUUIDNode(p.id, tree, p.user, 1, nil, nil, nil)))
+			require.NoError(t, s.DeleteNode(ctx, tree, p.user))
+			setRemovedAt(t, s, p.id, tie)
+			back, err := s.GetNodeIncludingRemoved(ctx, tree, p.user)
+			require.NoError(t, err)
+			require.NotNil(t, back)
+			require.NotNil(t, back.RemovedAt)
+			require.True(t, back.RemovedAt.Equal(tie),
+				"removed_at read back as %v after setRemovedAt on %s, want %v", *back.RemovedAt, p.id, tie)
+		}
+
+		gotA, err := s.GetNodeIncludingRemoved(ctx, tree, userA)
+		require.NoError(t, err)
+		require.NotNil(t, gotA)
+		assert.Equal(t, testNodeUUID(2), gotA.ID, "tombstone id read back for userA, whose two tombstones share removed_at")
+
+		gotB, err := s.GetNodeIncludingRemoved(ctx, tree, userB)
+		require.NoError(t, err)
+		require.NotNil(t, gotB)
+		assert.Equal(t, testNodeUUID(4), gotB.ID, "tombstone id read back for userB, whose two tombstones share removed_at")
+	})
+
+	t.Run("GetNodeByRemovalEvent breaks a removal-time tie by the highest id", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		user := testUserUUID(1)
+		eventA := testNodeUUID(8)
+		eventB := testNodeUUID(9)
+		tie := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+
+		// eventA stamps its higher id second and eventB stamps its higher id
+		// first, so neither a first-found nor a last-found rule returns both.
+		for _, p := range []struct{ id, event string }{
+			{testNodeUUID(1), eventA}, {testNodeUUID(2), eventA},
+			{testNodeUUID(4), eventB}, {testNodeUUID(3), eventB},
+		} {
+			require.NoError(t, s.InsertNode(ctx, makeUUIDNode(p.id, tree, user, 1, nil, nil, nil)))
+			require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, user, p.event, nil))
+			setRemovedAt(t, s, p.id, tie)
+			back, err := s.GetNodeByRemovalEvent(ctx, tree, p.event)
+			require.NoError(t, err)
+			require.NotNil(t, back)
+			require.NotNil(t, back.RemovedAt)
+			require.True(t, back.RemovedAt.Equal(tie),
+				"removed_at read back as %v after setRemovedAt on %s, want %v", *back.RemovedAt, p.id, tie)
+		}
+
+		gotA, err := s.GetNodeByRemovalEvent(ctx, tree, eventA)
+		require.NoError(t, err)
+		require.NotNil(t, gotA)
+		assert.Equal(t, testNodeUUID(2), gotA.ID, "tombstone id read back for eventA, whose two tombstones share removed_at")
+
+		gotB, err := s.GetNodeByRemovalEvent(ctx, tree, eventB)
+		require.NoError(t, err)
+		require.NotNil(t, gotB)
+		assert.Equal(t, testNodeUUID(4), gotB.ID, "tombstone id read back for eventB, whose two tombstones share removed_at")
+	})
+
+	t.Run("the removal-time tie-break reads a mixed-case id as lowercase", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		user := testUserUUID(1)
+		tie := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+		lower := "bbbbbbbb-bbbb-bbbb-bbbb-00000000000a"
+		upper := "BBBBBBBB-BBBB-BBBB-BBBB-00000000000B"
+
+		event := testNodeUUID(9)
+
+		for _, id := range []string{lower, upper} {
+			require.NoError(t, s.InsertNode(ctx, makeUUIDNode(id, tree, user, 1, nil, nil, nil)))
+			require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, user, event, nil))
+			setRemovedAt(t, s, id, tie)
+			back, err := s.GetNodeIncludingRemoved(ctx, tree, user)
+			require.NoError(t, err)
+			require.NotNil(t, back)
+			require.NotNil(t, back.RemovedAt)
+			require.True(t, back.RemovedAt.Equal(tie),
+				"removed_at read back as %v after setRemovedAt on %s, want %v", *back.RemovedAt, id, tie)
+		}
+
+		byUser, err := s.GetNodeIncludingRemoved(ctx, tree, user)
+		require.NoError(t, err)
+		require.NotNil(t, byUser)
+		assert.True(t, strings.EqualFold(upper, byUser.ID),
+			"GetNodeIncludingRemoved returned id %s, want %s, which is the higher id once lowercased", byUser.ID, upper)
+
+		byEvent, err := s.GetNodeByRemovalEvent(ctx, tree, event)
+		require.NoError(t, err)
+		require.NotNil(t, byEvent)
+		assert.True(t, strings.EqualFold(upper, byEvent.ID),
+			"GetNodeByRemovalEvent returned id %s, want %s, which is the higher id once lowercased", byEvent.ID, upper)
+	})
+
+	t.Run("a later removal wins over a higher id in both reads", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		user := testUserUUID(1)
+		event := testNodeUUID(9)
+		earlier := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+		later := time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC)
+
+		// The higher id gets the earlier removal, so an order on id alone
+		// returns the wrong row. Both stamps are in the past, so a hook that did
+		// not land leaves a later removed_at than either.
+		for _, p := range []struct {
+			id string
+			at time.Time
+		}{
+			{testNodeUUID(2), earlier},
+			{testNodeUUID(1), later},
+		} {
+			require.NoError(t, s.InsertNode(ctx, makeUUIDNode(p.id, tree, user, 1, nil, nil, nil)))
+			require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, user, event, nil))
+			setRemovedAt(t, s, p.id, p.at)
+			back, err := s.GetNodeIncludingRemoved(ctx, tree, user)
+			require.NoError(t, err)
+			require.NotNil(t, back)
+			require.NotNil(t, back.RemovedAt)
+			require.False(t, back.RemovedAt.After(later),
+				"removed_at read back as %v after setRemovedAt on %s, want no later than %v", *back.RemovedAt, p.id, later)
+		}
+
+		byUser, err := s.GetNodeIncludingRemoved(ctx, tree, user)
+		require.NoError(t, err)
+		require.NotNil(t, byUser)
+		assert.Equal(t, testNodeUUID(1), byUser.ID,
+			"GetNodeIncludingRemoved returned id %s, want %s, the later removal", byUser.ID, testNodeUUID(1))
+
+		byEvent, err := s.GetNodeByRemovalEvent(ctx, tree, event)
+		require.NoError(t, err)
+		require.NotNil(t, byEvent)
+		assert.Equal(t, testNodeUUID(1), byEvent.ID,
+			"GetNodeByRemovalEvent returned id %s, want %s, the later removal", byEvent.ID, testNodeUUID(1))
 	})
 }

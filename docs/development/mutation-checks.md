@@ -328,3 +328,24 @@ nothing about the test. Record which twin a mutation was applied to, and which
 twin failed.
 
 HEU-811 is where this came up.
+
+## A new sort key can hide the one before it
+
+Adding a key to an `ORDER BY`, or a tie-break to a comparator, changes what the
+existing cases prove. A case that pinned the first key did so only while
+nothing else ordered its rows. If its fixture happens to order the rows the
+same way under the new key, the case passes under either key. The first key
+has lost its only test, and nothing turns red.
+
+HEU-803 added `id DESC` behind `removed_at DESC`. Both existing "newest
+tombstone" cases placed the later removal second, so it also had the higher
+id. An adversarial reviewer ordered Postgres by id alone and dropped
+`removed_at` entirely. The whole suite passed on both stores.
+
+When you add a key:
+
+- Find every case that pins an earlier key.
+- Give at least one of them rows where the new key and the earlier key
+  disagree.
+- Mutate the earlier key away and watch that case fail on the twin that
+  decides it.

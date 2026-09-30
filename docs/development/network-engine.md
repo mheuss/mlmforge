@@ -873,7 +873,7 @@ Matrix startup reload is no longer blocked by the placement divergence HEU-553 f
 
 Migration 000007 adds `removed_by_event_id`. `DeleteNodeAndResponsor` writes it in the soft delete's own statement. The stamp lands with the tombstone or not at all. The column is null while the row is active. `DeleteNode` leaves it null. Its caller rolls back a row the same handler just inserted. That rollback is not a removal. It has no removal event to name.
 
-`GetNodeByRemovalEvent` reads the row a given removal event stamped, scoped to one tree. When one event has stamped more than one row, the newest tombstone wins. `GetNodeIncludingRemoved` uses the same tie-break. Two rows can carry one stamp only when a redelivered removal is accepted after the user was placed again (HEU-789).
+`GetNodeByRemovalEvent` reads the row a given removal event stamped, scoped to one tree. When one event has stamped more than one row, the newest tombstone wins. `GetNodeIncludingRemoved` uses the same rule. On equal removal times, both return the highest id (HEU-803). The id order is defined for canonical hyphenated UUIDs. Two rows can carry one stamp only when a redelivered removal is accepted after the user was placed again (HEU-789).
 
 The removal reconcile runs only when the engine refuses the removal with user-not-found. It asks this read first. A stamped row means an earlier delivery of this event already projected. The reconcile then converges without writing. With no stamp, it reads by tree and user. An active row means the removal never landed. A tombstone or no row at all converges. A failed stamp read retries. It is never read as "no stamp". Reading it that way could report a transient read error as a permanent divergence.
 

@@ -68,14 +68,15 @@ const getByTreeDepthOrderedSQL = getByTreeSQL + ` ORDER BY depth ASC, enrolled_a
 // DESC NULLS FIRST is one key doing both jobs: the active row sorts ahead of
 // every tombstone, and the newest tombstone sorts ahead of older ones. Two
 // keys on the same column cannot do this, because the second can only break
-// ties the first already resolved.
+// ties the first already resolved. The id key breaks ties between rows that
+// share a removed_at.
 const getNodeIncludingRemovedSQL = `SELECT ` + treeNodeSelectColumns +
 	` FROM tree_nodes WHERE tree_id = $1 AND user_id = $2
-	  ORDER BY removed_at DESC NULLS FIRST LIMIT 1`
+	  ORDER BY removed_at DESC NULLS FIRST, id DESC LIMIT 1`
 
 const getNodeByRemovalEventSQL = `SELECT ` + treeNodeSelectColumns +
 	` FROM tree_nodes WHERE tree_id = $1 AND removed_by_event_id = $2
-	  ORDER BY removed_at DESC LIMIT 1`
+	  ORDER BY removed_at DESC, id DESC LIMIT 1`
 
 func NewPostgresTreeStore(pool *pgxpool.Pool) *PostgresTreeStore {
 	return &PostgresTreeStore{pool: pool}

@@ -82,7 +82,7 @@ pub(crate) fn handle_take_snapshot(state: &WorkerState, request: &Request) -> Re
 /// an offset into the request line.
 const POSITION_NOTE: &str = "(the position counts into the snapshot payload, not the request line)";
 
-/// Deserializes and replaces a tree or board plan engine from a snapshot.
+/// Restores a structure from a snapshot under a name not already in use.
 ///
 /// Params: structure, tree_type, data.
 pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request) -> Response {
@@ -109,7 +109,7 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
             request.id.clone(),
             "TREE_EXISTS",
             format!(
-                "structure '{}' already exists; remove it first to restore a snapshot",
+                "structure '{}' already exists; restore_snapshot does not replace an existing structure",
                 params.structure
             ),
         );

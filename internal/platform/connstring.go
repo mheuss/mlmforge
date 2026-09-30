@@ -90,7 +90,7 @@ func migrateSchemeError(dbURL string) error {
 // libPQEnvProbe is a connection string that holds nothing from any operator's string.
 const libPQEnvProbe = "postgres://u@h/d"
 
-// migrateDriverParseError returns lib/pq's refusal of the environment, or a ConnStringError when lib/pq refuses the filtered connection string, and nil otherwise.
+// migrateDriverParseError returns lib/pq's own error for a refused environment or an undetectable user, a ConnStringError when lib/pq refuses the filtered connection string, and nil otherwise.
 func migrateDriverParseError(dbURL string) error {
 	purl, err := url.Parse(dbURL)
 	if err != nil {

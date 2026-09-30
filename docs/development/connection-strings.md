@@ -33,8 +33,10 @@ The open gap is HEU-875. A password with an unencoded `/`, `#`, `?` or `@` can s
 
 ## golang-migrate v4.19.1
 
-- An unparseable URL comes back as a `*url.Error` with `Op` `parse`. Its text quotes the URL. Go cuts the URL at `#`, and the part before the cut still holds the password.
+- An unparseable URL comes back as a `*url.Error` with `Op` `parse`.
   Pinned by the `slash`, `bad-escape` and `fragment` rows of `TestMigrateVersion_ARefusedConnStringHoldsNoPassword`.
+- That error's text quotes the URL. Go cuts the URL at `#`, and the part before the cut still holds the password.
+  Observed on the CLI, 2026-09-30. Not pinned, because the fix withholds the text.
 - The driver name is the text before the first `:`, matched exactly. For an unknown name, the error quotes that text. A keyword-form string with a `:` after the password printed the password.
   Read in source, not pinned. The scheme check refuses these strings first.
 - It hands lib/pq `migrate.FilterCustomQuery(purl).String()`.
@@ -42,7 +44,7 @@ The open gap is HEU-875. A password with an unencoded `/`, `#`, `?` or `@` can s
 
 ## lib/pq v1.10.9
 
-- `ParseURL` writes query keys raw and quotes only values. A key holding `='` or whitespace shifts the keyword text. `parseOpts` then fails with a plain error that quotes it, for example `missing "=" after "s3cretPWxyz'"`.
+- `ParseURL` writes query keys raw and quotes only values. A key holding `='` or whitespace shifts the keyword text. `parseOpts` then fails with a plain error that quotes it. The `pq-quoted-key` case gave `missing "=" after "pq3cretpwXYZ'" in connection info string"`.
   Pinned by `TestMigrateDriverParseError_RefusesWhatLibPQCannotParse`.
 - A string without `//` is parsed as keyword text. An opaque `postgres:user:pw@…` printed whole.
   Read in source, not pinned. The scheme check refuses it first. A live-server check against Postgres 16 on 2026-09-30 found the server rejects such a string's first key as an unknown or invalid configuration parameter.

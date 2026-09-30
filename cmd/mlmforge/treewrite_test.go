@@ -287,14 +287,17 @@ func TestTreePlaceCmd_ExitsZeroForAStoreObservedPastARefusedEvent(t *testing.T) 
 		"the event at version 2 was not projected. The tree's projected version is 3.\n", out.stderr.String())
 }
 
-func TestTreeWriteCmds_NameExitThreeInTheirHelp(t *testing.T) {
+func TestTreeWriteCmds_NameTheirExitCodesInTheirHelp(t *testing.T) {
 	var named []string
 	for _, c := range newTreeCmd().Commands() {
 		switch c.Name() {
 		case "add-root", "place", "remove":
 			named = append(named, c.Name())
+			assert.Contains(t, c.Long, "Exits 0 when the event was appended and the store was observed current, "+
+				"with any warnings on stderr.", "%s help", c.Name())
 			assert.Contains(t, c.Long, "Exits 3 when the event was appended and the store was not observed current.",
 				"%s help", c.Name())
+			assert.Contains(t, c.Long, "Exits 1 when no append was confirmed.", "%s help", c.Name())
 		}
 	}
 	assert.ElementsMatch(t, []string{"add-root", "place", "remove"}, named)

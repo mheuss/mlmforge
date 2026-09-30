@@ -47,8 +47,8 @@ func releaseDeps(engine engineStopper, pool poolCloser) error {
 
 // startEngine reaches the database and then starts the worker, releasing pool
 // if either fails.
-func startEngine(ctx context.Context, workerPath string, pool reachablePool) (*networkengine.EngineClient, error) {
-	if err := pool.Ping(ctx); err != nil {
+func startEngine(ctx context.Context, dbURL, workerPath string, pool reachablePool) (*networkengine.EngineClient, error) {
+	if err := platform.TimeConnect(ctx, dbURL, func() error { return pool.Ping(ctx) }); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("reach database: %w", err)
 	}
@@ -69,7 +69,7 @@ func openTreeDeps(ctx context.Context, dbURL, workerPath string) (*treeDeps, err
 	if err != nil {
 		return nil, fmt.Errorf("open database pool: %w", err)
 	}
-	engine, err := startEngine(ctx, workerPath, pool)
+	engine, err := startEngine(ctx, dbURL, workerPath, pool)
 	if err != nil {
 		return nil, err
 	}

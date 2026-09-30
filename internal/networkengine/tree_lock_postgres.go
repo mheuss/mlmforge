@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/mlmforge/mlmforge/internal/platform"
 )
 
 // treeLockNamespace is the first advisory lock key of every tree write lock.
@@ -60,7 +61,12 @@ func (l *PostgresTreeLocker) Lock(ctx context.Context, treeID uuid.UUID) (func()
 		cfg.ConnConfig.RuntimeParams = map[string]string{}
 	}
 	cfg.ConnConfig.RuntimeParams["application_name"] = treeLockApplicationName
-	conn, err := pgx.ConnectConfig(ctx, cfg.ConnConfig)
+	var conn *pgx.Conn
+	err = platform.TimeConnect(ctx, l.dbURL, func() error {
+		var connErr error
+		conn, connErr = pgx.ConnectConfig(ctx, cfg.ConnConfig)
+		return connErr
+	})
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr

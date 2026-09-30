@@ -432,3 +432,10 @@ func (l *hookLocker) Lock(ctx context.Context, treeID uuid.UUID) (func() error, 
 	}
 	return l.inner.Lock(ctx, treeID)
 }
+
+// immediateErrLocker returns err without waiting.
+type immediateErrLocker struct{ err error }
+
+func (l immediateErrLocker) Lock(context.Context, uuid.UUID) (func() error, error) {
+	return nil, l.err
+}

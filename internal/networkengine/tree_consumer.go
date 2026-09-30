@@ -107,7 +107,7 @@ func (c *TreeEventConsumer) handleRootAdded(ctx context.Context, event platform.
 	}
 
 	inserted := true
-	if err := c.store.InsertNode(ctx, node); err != nil {
+	if err := c.store.ProjectInsert(ctx, node, event.Version); err != nil {
 		if !errors.Is(err, ErrNodeAlreadyProjected) {
 			return fmt.Errorf("store root node: %w", err)
 		}
@@ -157,7 +157,7 @@ func (c *TreeEventConsumer) handleRootAdded(ctx context.Context, event platform.
 		// this compensation exists to prevent, and no later run repairs it.
 		writeCtx, cancelWrite := detachedWrite(ctx)
 		defer cancelWrite()
-		if derr := c.store.DeleteNode(writeCtx, payload.TreeID, payload.UserID); derr != nil {
+		if derr := c.store.UndoRootProjection(writeCtx, payload.TreeID, payload.UserID, event.Version); derr != nil {
 			return reconcileDiverged, fmt.Errorf(
 				"engine refused add_root in tree %s, %s, and deleting the row this event inserted failed: %w",
 				payload.TreeID, held, derr)
@@ -231,7 +231,7 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform
 		EnrolledAt: payload.EnrolledAt,
 	}
 
-	if err := c.store.InsertNode(ctx, node); err != nil {
+	if err := c.store.ProjectInsert(ctx, node, event.Version); err != nil {
 		if !errors.Is(err, ErrNodeAlreadyProjected) {
 			return fmt.Errorf("store placed node: %w", err)
 		}
@@ -367,7 +367,7 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 	// is the divergence HEU-777 owns, reachable by a shutdown in this window.
 	writeCtx, cancelWrite := detachedWrite(ctx)
 	defer cancelWrite()
-	if err := c.store.DeleteNodeAndResponsor(writeCtx, payload.TreeID, payload.UserID, event.ID, moved); err != nil {
+	if err := c.store.ProjectRemoval(writeCtx, payload.TreeID, payload.UserID, event.ID, event.Version, moved); err != nil {
 		return fmt.Errorf("remove node and re-sponsor recruits: %w", err)
 	}
 	return nil

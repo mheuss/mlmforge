@@ -101,8 +101,9 @@ func TestTreeWriter_ARemovalProjectedAfterItsLockWasLostLeavesNoStaleSponsor(t *
 	assert.Equal(t, first.EventID, second.CaughtUp.EventID)
 	assert.NoError(t, second.ProjectionErr)
 	assert.NoError(t, second.ReleaseErr)
-	require.Error(t, first.ProjectionErr)
-	assert.Contains(t, first.ProjectionErr.Error(), "soft delete for user "+b+" in tree "+tree+" matched 0 active rows")
+	var refused *ProjectionRefusedError
+	require.ErrorAs(t, first.ProjectionErr, &refused)
+	assert.Equal(t, ProjectionRefusedError{TreeID: tree, EventVersion: 5, ProjectedVersion: 6}, *refused)
 	require.Error(t, first.ReleaseErr)
 	assert.Contains(t, first.ReleaseErr.Error(), "the pg_advisory_unlock query for tree "+tree+" failed")
 }
@@ -215,7 +216,9 @@ func TestTreeWriter_APlacementProjectedAfterItsLockWasLostIsRefused(t *testing.T
 	assert.Equal(t, first.EventID, second.CaughtUp.EventID)
 	assert.NoError(t, second.ProjectionErr)
 	assert.NoError(t, second.ReleaseErr)
-	assert.ErrorIs(t, first.ProjectionErr, ErrReplayedPlacement)
+	var refused *ProjectionRefusedError
+	require.ErrorAs(t, first.ProjectionErr, &refused)
+	assert.Equal(t, ProjectionRefusedError{TreeID: tree, EventVersion: 2, ProjectedVersion: 3}, *refused)
 	pos, posErr := lateEngine.GetPosition(ctx, tree, x)
 	assert.True(t, isEngineCode(posErr, engineCodeUserNotFound),
 		"GetPosition for %s on the first writer's engine returned position %+v and error %v", x, pos, posErr)
@@ -229,9 +232,6 @@ func TestTreeWriter_APlacementProjectedAfterItsLockWasLostIsRefused(t *testing.T
 }
 
 func TestTreeWriter_ALateRemovalLeavesAUserPlacedAgainActive(t *testing.T) {
-	t.Skip("skipped until HEU-857: a late removal tombstoned B, placed again, and left C sponsored by removed A; " +
-		"the scenario's writers returned no error and no projection error, writer 1's release error was set because its lock connection was terminated, " +
-		"and the next write failed to load the tree because C names a sponsor not in it")
 	it := newWriterIntegration(t)
 	ctx := context.Background()
 	tree, root, a, b, c, y := testTreeUUID(312), testUserUUID(1), testUserUUID(2), testUserUUID(3), testUserUUID(4), testUserUUID(8)
@@ -256,7 +256,9 @@ func TestTreeWriter_ALateRemovalLeavesAUserPlacedAgainActive(t *testing.T) {
 	assert.Equal(t, int64(6), replaced.Version)
 	assert.Equal(t, int64(7), removedA.Version)
 	assert.Equal(t, map[string]string{root: root, b: root, c: root}, activeSponsors(t, it.store, tree))
-	// first.ProjectionErr is left unasserted: how a refused late write is reported is HEU-857's to define.
+	var refused *ProjectionRefusedError
+	require.ErrorAs(t, first.ProjectionErr, &refused)
+	assert.Equal(t, ProjectionRefusedError{TreeID: tree, EventVersion: 5, ProjectedVersion: 7}, *refused)
 	assert.ErrorContains(t, first.ReleaseErr, "the pg_advisory_unlock query for tree "+tree+" failed")
 	next, nextErr := it.writer(t).Place(ctx, PlaceRequest{
 		TreeID: tree, UserID: y, ParentID: root, SponsorID: root, EnrolledAt: writeTime.Add(7 * time.Hour)})
@@ -284,9 +286,6 @@ func (s *lockKillingLoadStore) GetByTreeDepthOrdered(ctx context.Context, treeID
 }
 
 func TestTreeWriter_ARemovalAfterALockLostBeforeItsAppendMovesEveryRecruit(t *testing.T) {
-	t.Skip("skipped until HEU-859: writer 1 lost its lock after its load, D was placed sponsored by B, and writer 1's removal of B left D sponsored by removed B; " +
-		"the scenario's writers returned no error and no projection error, writer 1's release error was set because its lock connection was terminated, " +
-		"and the next write failed to load the tree because D names a sponsor not in it")
 	it := newWriterIntegration(t)
 	ctx := context.Background()
 	tree, root, a, b, c, d, e, y := testTreeUUID(313), testUserUUID(1), testUserUUID(2), testUserUUID(3), testUserUUID(4),
@@ -337,8 +336,6 @@ func TestTreeWriter_ARemovalAfterALockLostBeforeItsAppendMovesEveryRecruit(t *te
 }
 
 func TestTreeWriter_APlacementAfterALockLostBeforeItsAppendLeavesTheTreeWritable(t *testing.T) {
-	t.Skip("skipped until HEU-859: writer 1 lost its lock after its load, B was removed, and writer 1 appended a placement under B; " +
-		"its projection failed with parent not found, and the next writer's catch-up failed the same way and appended nothing")
 	it := newWriterIntegration(t)
 	ctx := context.Background()
 	tree, root, a, b, c, e, x, y := testTreeUUID(314), testUserUUID(1), testUserUUID(2), testUserUUID(3), testUserUUID(4),

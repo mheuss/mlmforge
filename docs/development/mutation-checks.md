@@ -197,6 +197,15 @@ fail because of the data they run on:
 Mutate the fixture too: make the value a row varies identical to the baseline
 and check that the row goes red.
 
+## A fixture's default value hides that value hard-coded
+
+A test that only runs at the value a fixture helper fills in cannot catch code
+that uses that value as a constant. If every event a helper builds has version
+1, code that passes `1` where it should pass the event's version stays green.
+
+Run at least one test at a value the helper does not default to. Then replace
+the variable with the default constant and check that test goes red.
+
 ## A green says every assertion passed, not that any of them held its guard
 
 A refusal test usually asserts an exit status and a substring of the message.

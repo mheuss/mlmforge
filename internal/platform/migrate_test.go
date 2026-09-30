@@ -36,6 +36,7 @@ func TestMigrateUp(t *testing.T) {
 
 	assert.True(t, tableExists(t, pool, "events"), "events table should exist after MigrateUp")
 	assert.True(t, tableExists(t, pool, "tree_nodes"), "tree_nodes table should exist after MigrateUp")
+	assert.True(t, tableExists(t, pool, "tree_projections"), "tree_projections table should exist after MigrateUp")
 }
 
 func TestMigrateUpDown(t *testing.T) {
@@ -64,10 +65,12 @@ func TestMigrateUpDown(t *testing.T) {
 
 	assert.False(t, tableExists(t, pool, "events"), "events table should not exist after full rollback")
 	assert.False(t, tableExists(t, pool, "tree_nodes"), "tree_nodes table should not exist after full rollback")
+	assert.False(t, tableExists(t, pool, "tree_projections"), "tree_projections table should not exist after full rollback")
 
 	// Re-apply migrations so subsequent tests still have tables.
 	err = MigrateUp(pgContainer.DSN, migrationsPath)
 	require.NoError(t, err)
 	assert.True(t, tableExists(t, pool, "events"), "events table should exist after up")
 	assert.True(t, tableExists(t, pool, "tree_nodes"), "tree_nodes table should exist after up")
+	assert.True(t, tableExists(t, pool, "tree_projections"), "tree_projections table should exist after up")
 }

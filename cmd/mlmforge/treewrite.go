@@ -45,7 +45,12 @@ func reportWrite(ctx context.Context, out, warn io.Writer, res networkengine.Wri
 		}
 		_, _ = fmt.Fprintf(out, "appended event %s at version %d to stream %s; %s\n",
 			res.EventID, res.Version, res.Stream, projected)
-		if res.ProjectionErr != nil {
+		var refused *networkengine.ProjectionRefusedError
+		switch {
+		case errors.As(res.ProjectionErr, &refused):
+			_, _ = fmt.Fprintf(warn, "warning: event %s at version %d was appended and did not project: %s.\n",
+				res.EventID, res.Version, res.ProjectionErr)
+		case res.ProjectionErr != nil:
 			_, _ = fmt.Fprintf(warn, "warning: event %s at version %d was appended and did not project: %s. "+
 				"The next write to this tree retries it.\n", res.EventID, res.Version, res.ProjectionErr)
 		}

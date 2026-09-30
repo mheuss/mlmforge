@@ -68,3 +68,29 @@ func (e *TreeLockWaitError) Error() string {
 }
 
 func (e *TreeLockWaitError) Unwrap() error { return e.Err }
+
+// ProjectionMissingError reports a tree with no projection row whose stream
+// ends past version 1.
+type ProjectionMissingError struct {
+	TreeID      string
+	LastVersion int64
+}
+
+func (e *ProjectionMissingError) Error() string {
+	return fmt.Sprintf("tree %s has no projection row and stream %s ends at version %d; nothing was appended",
+		e.TreeID, TreeStreamName(e.TreeID), e.LastVersion)
+}
+
+// StreamMovedError reports a stream whose last version is neither the tree's
+// projected version nor one past it. The stream can be ahead of that version or
+// behind it. LoadedVersion is the projected version read before the load.
+type StreamMovedError struct {
+	TreeID        string
+	LoadedVersion int64
+	LastVersion   int64
+}
+
+func (e *StreamMovedError) Error() string {
+	return fmt.Sprintf("tree %s had projected version %d before its load, and stream %s ends at version %d; nothing was appended",
+		e.TreeID, e.LoadedVersion, TreeStreamName(e.TreeID), e.LastVersion)
+}

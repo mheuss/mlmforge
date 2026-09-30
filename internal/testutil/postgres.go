@@ -141,7 +141,7 @@ func (c *PostgresContainer) NewPool(tb testing.TB) *pgxpool.Pool {
 	// One TRUNCATE covers all tables atomically, so the foreign key from
 	// commission_results to commission_runs needs neither CASCADE nor a
 	// particular order.
-	_, err = pool.Exec(ctx, "TRUNCATE events, tree_nodes, qualification_history, "+
+	_, err = pool.Exec(ctx, "TRUNCATE events, tree_nodes, tree_projections, qualification_history, "+
 		"commission_results, commission_runs RESTART IDENTITY")
 	if err != nil {
 		tb.Fatalf("truncate tables: %v", err)

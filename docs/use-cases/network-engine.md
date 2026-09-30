@@ -32,6 +32,7 @@ Use-cases for the Network Engine bounded context.
 - [UC-NET-026: Deciding when a failed tree load is worth retrying](#uc-net-026-deciding-when-a-failed-tree-load-is-worth-retrying)
 - [UC-NET-027: Serialising writes to one tree across processes](#uc-net-027-serialising-writes-to-one-tree-across-processes)
 - [UC-NET-028: Resolving an append whose reply was lost](#uc-net-028-resolving-an-append-whose-reply-was-lost)
+- [UC-NET-029: Refusing a projection that arrives out of order](#uc-net-029-refusing-a-projection-that-arrives-out-of-order)
 
 ---
 
@@ -501,13 +502,13 @@ for _, node := range ordered[1:] {
 ### UC-NET-014: Pre-projection event gate with database backstop
 
 **Added:** Unreleased (HEU-553), redelivery discriminator moved to the store layer in HEU-576, root uniqueness in HEU-810
-**Files:** `internal/networkengine/tree_consumer.go`, `internal/networkengine/tree_store.go` (`ErrNodeAlreadyProjected`, `ErrActiveUserConflict`, `ErrSlotConflict`, `ErrRootConflict`), `internal/networkengine/tree_store_postgres.go` (`InsertNode`, `BulkInsert`), `internal/networkengine/tree_store_memory.go` (`InsertNode`), `migrations/000004_add_tree_nodes_slot_unique.up.sql`, `migrations/000006_add_tree_nodes_root_unique.up.sql`, `internal/networkengine/tree_events.go` (`checkNodePlacedShape`)
+**Files:** `internal/networkengine/tree_consumer.go`, `internal/networkengine/tree_store.go` (`ErrNodeAlreadyProjected`, `ErrActiveUserConflict`, `ErrSlotConflict`, `ErrRootConflict`), `internal/networkengine/tree_store_postgres.go` (`InsertNode`, `ProjectInsert`, `BulkInsert`), `internal/networkengine/tree_store_memory.go` (`InsertNode`, `ProjectInsert`), `migrations/000004_add_tree_nodes_slot_unique.up.sql`, `migrations/000006_add_tree_nodes_root_unique.up.sql`, `internal/networkengine/tree_events.go` (`checkNodePlacedShape`)
 
 **Problem:** A projection consumer writes one event into two targets, the adjacency store and then the engine. An event that cannot be applied faithfully must not land in either. A stored row the engine never honored is silent divergence, and some malformed rows make reload preflight refuse the whole tree. Per-event validation cannot see races between events, and redelivering an already-stored event must stay distinguishable from corruption.
 
 **Solution:** Three layers. A gate at the top of the handler rejects everything checkable from the payload alone (stream identity, known `tree_type`, per-type position rules) before either projection, so a rejected event leaves no trace outside the EventStore. Partial unique indexes arbitrate what the gate cannot see. `idx_tree_nodes_tree_parent_position_active` (migration 000004) resolves two events claiming one slot. `idx_tree_nodes_tree_root_active` (migration 000006) resolves two claiming to root one tree. Both resolve at the insert, loudly, with the store still reloadable. A root is outside the slot index. That index covers only rows carrying a position. That is why the root needed its own index. The insert names the primary key as its `ON CONFLICT` arbiter and does nothing on a match. A row already carrying this event's id is skipped and reported rather than raising. A row conflicting only on one of the partial unique indexes raises. `BulkInsert` shares that statement inside one transaction. A raised primary-key violation there would abort the batch before the store could report the skip. The batch is still discarded on any conflict it does report. The layers do not make the two projections atomic. The store insert still lands before the engine call. An engine failure leaves a stored row whose engine side is unconfirmed. Since HEU-576 a redelivery of that event completes the engine side rather than failing at the insert.
 
-**Notes:** Distinct from UC-NET-012, which preflights an irreversible bulk replay. Here each event is individually recoverable, so the gate stays thin (payload-checkable rules only) and the database owns cross-event races. The gate cannot check the matrix width bound. The placement payload does not carry the width, which lives on the stream's first event (HEU-554). The u8 ceiling is gated. The width..255 band is the documented residual. Redelivering a placement whose projection is still current succeeds (HEU-576), however old it is. It stops being current once its node was removed, or once a later event re-placed the user, and is then refused rather than reapplied. It is also refused when its parent's row was since removed (HEU-813). That scope is the event in flight. `TreeWriter` provides it (UC-NET-027). A redelivered removal that the engine refuses converges when its own tombstone is in the store (HEU-811). That holds even when a later placement of the user never reached the engine. One arriving after a later placement landed in full can still remove the wrong node (HEU-789). `TreeWriter` does not reach that case. Catch-up redelivers only the stream's last event. A removal followed by a later placement is no longer the last event. `MemoryTreeStore` mirrors all four constraints and checks the row id in its own pass. That makes the discriminator unit-testable against the double. The two stores do not agree on which constraint they name when several are violated at once (HEU-794).
+**Notes:** Distinct from UC-NET-012, which preflights an irreversible bulk replay. Here each event is individually recoverable, so the gate stays thin (payload-checkable rules only) and the database owns cross-event races. The gate cannot check the matrix width bound. The placement payload does not carry the width, which lives on the stream's first event (HEU-554). The u8 ceiling is gated. The width..255 band is the documented residual. Redelivering a placement whose projection is still current succeeds (HEU-576), however old it is. It stops being current once its node was removed, or once a later event re-placed the user, and is then refused rather than reapplied. It is also refused when its parent's row was since removed (HEU-813). That scope is the event in flight. `TreeWriter` provides it (UC-NET-027). A redelivered removal that the engine refuses converges when its own tombstone is in the store (HEU-811). That holds even when a later placement of the user never reached the engine. One arriving after a later placement landed in full is below the tree's projected version. The store refuses it (HEU-857). The engine may still have applied it. HEU-789 tracks that for when a caller redelivers old events. `TreeWriter` does not reach that case. Catch-up redelivers only the stream's last event. A removal followed by a later placement is no longer the last event. `MemoryTreeStore` mirrors all four constraints and checks the row id in its own pass. That makes the discriminator unit-testable against the double. The two stores do not agree on which constraint they name when several are violated at once (HEU-794).
 
 ---
 
@@ -1060,7 +1061,7 @@ if err != nil && treeLoadRetryable(err) {
 
 **Problem:** Two processes can each load a tree. Each can decide correctly against what it saw. Together they can append a state neither would have allowed. An event store's version check serialises appends, not decisions.
 
-**Solution:** `TreeWriter` holds a per-tree Postgres advisory lock from before the load until projection returns. The lock sits on a connection of its own. Under the lock it rebuilds the tree in a scratch engine and redelivers the stream's last event. It asks `check_mutation` whether the mutation would succeed, appends, and projects the stored copy. `MemoryTreeLocker` is a real per-tree lock for tests.
+**Solution:** `TreeWriter` holds a per-tree Postgres advisory lock from before the load until projection returns. The lock sits on a connection of its own. Under the lock it reads the tree's projected version, rebuilds the tree in a scratch engine, and redelivers the stream's last event. It refuses the write unless that event is at the projected version or one past it. It asks `check_mutation` whether the mutation would succeed, appends, and projects the stored copy. `MemoryTreeLocker` is a real per-tree lock for tests.
 
 **Usage:**
 ```go
@@ -1075,7 +1076,8 @@ if err != nil {
     return err // nothing is known to have been appended
 }
 if res.ProjectionErr != nil {
-    // The event is durable. The next write to this tree redelivers it.
+    // The event is durable. The next write to this tree redelivers it,
+    // unless this is a ProjectionRefusedError.
 }
 ```
 
@@ -1101,4 +1103,26 @@ if errors.As(err, &unknown) {
 }
 ```
 
-**Notes:** Compare event IDs by value. A Postgres round trip returns a canonical UUID. A conflict message leaves out the store's `ActualVersion`. That value can hold a version nobody read. When the read finds no event, the message states only that. A commit that a cancel during COMMIT hid from the read turns up as the stream's last event. The next write redelivers it. A CLI matches `AppendOutcomeUnknownError` before any context error, because it unwraps to both of its errors.
+**Notes:** Compare event IDs by value. A Postgres round trip returns a canonical UUID. A conflict message leaves out the store's `ActualVersion`. That value can hold a version nobody read. When the read finds no event, the message states only that. A commit that a cancel during COMMIT hid from the read turns up as the stream's last event. The next write redelivers it, because the stream is then one past the tree's projected version. A CLI matches `AppendOutcomeUnknownError` before any context error, because it unwraps to both of its errors.
+
+---
+
+### UC-NET-029: Refusing a projection that arrives out of order
+
+**Added:** Unreleased (HEU-857)
+**Files:** `internal/networkengine/tree_store.go`, `internal/networkengine/tree_store_postgres.go`, `internal/networkengine/tree_store_memory.go`, `internal/networkengine/tree_consumer.go`, `internal/networkengine/tree_writer.go`, `internal/networkengine/tree_writer_errors.go`, `migrations/000009_create_tree_projections.up.sql`
+
+**Problem:** A writer that loses its lock can project its event after later events have projected. The store then goes backwards. Nothing reports it. A writer that loses its lock after loading can also append from an engine that missed events.
+
+**Solution:** `tree_projections` holds each tree's projected version. `ProjectInsert` and `ProjectRemoval` check it in the same transaction as their row writes. They refuse an event below it with `ProjectionRefusedError`. `UndoRootProjection` runs only when the version equals the event's. The writer reads the version before it loads. It appends only when the stream's last event is at that version or one past it.
+
+**Usage:**
+```go
+err := store.ProjectInsert(ctx, row, event.Version)
+var refused *networkengine.ProjectionRefusedError
+if errors.As(err, &refused) {
+    // A later event is already projected. This one wrote nothing.
+}
+```
+
+**Notes:** An event at the projected version runs the existing redelivery logic, which writes nothing for an event the store already holds. The Postgres writes run at Read Committed and create the projection row at 0 before locking it. Two first projections then queue. `InsertNode`, `DeleteNode`, `DeleteNodeAndResponsor` and `BulkInsert` record no version. A guard test keeps them out of non-test code outside the stores (HEU-864).

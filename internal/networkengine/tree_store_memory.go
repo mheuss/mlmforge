@@ -13,7 +13,8 @@ var _ TreeStore = (*MemoryTreeStore)(nil)
 
 // MemoryTreeStore is an in-memory TreeStore for testing.
 type MemoryTreeStore struct {
-	nodes []TreeNodeRow
+	nodes     []TreeNodeRow
+	projected map[string]int64
 }
 
 func NewMemoryTreeStore() *MemoryTreeStore {
@@ -279,4 +280,105 @@ func (s *MemoryTreeStore) BulkInsert(ctx context.Context, nodes []TreeNodeRow) e
 		}
 	}
 	return nil
+}
+
+func (s *MemoryTreeStore) ProjectedVersion(ctx context.Context, treeID string) (int64, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, false, err
+	}
+	version, found := s.projected[treeID]
+	return version, found, nil
+}
+
+func (s *MemoryTreeStore) ProjectInsert(ctx context.Context, node TreeNodeRow, eventVersion int64) error {
+	if err := checkEventVersion(node.TreeID, eventVersion); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := s.refuseBelow(node.TreeID, eventVersion); err != nil {
+		return err
+	}
+	if err := s.InsertNode(ctx, node); err != nil {
+		return err
+	}
+	s.advance(node.TreeID, eventVersion)
+	return nil
+}
+
+func (s *MemoryTreeStore) ProjectRemoval(
+	ctx context.Context,
+	treeID, userID, removalEventID string,
+	eventVersion int64,
+	moved []Responsored,
+) error {
+	if err := checkEventVersion(treeID, eventVersion); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := s.refuseBelow(treeID, eventVersion); err != nil {
+		return err
+	}
+	if err := s.DeleteNodeAndResponsor(ctx, treeID, userID, removalEventID, moved); err != nil {
+		return err
+	}
+	s.advance(treeID, eventVersion)
+	return nil
+}
+
+func (s *MemoryTreeStore) UndoRootProjection(ctx context.Context, treeID, userID string, eventVersion int64) error {
+	if err := checkEventVersion(treeID, eventVersion); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	projected, found := s.projected[treeID]
+	if !found {
+		return fmt.Errorf("tree %s has no projection row; the root row for %s at version %d was not deleted",
+			treeID, userID, eventVersion)
+	}
+	if projected != eventVersion {
+		return fmt.Errorf("tree %s has projected version %d, not %d; the root row for %s was not deleted",
+			treeID, projected, eventVersion, userID)
+	}
+	row, err := s.GetNode(ctx, treeID, userID)
+	if err != nil {
+		return err
+	}
+	if row == nil {
+		return fmt.Errorf("soft delete for root %s in tree %s matched 0 active rows; the projected version was not changed",
+			userID, treeID)
+	}
+	if err := s.DeleteNode(ctx, treeID, userID); err != nil {
+		return err
+	}
+	s.projected[treeID] = eventVersion - 1
+	return nil
+}
+
+// refuseBelow refuses an event version below 1, or below the tree's projected
+// version.
+func (s *MemoryTreeStore) refuseBelow(treeID string, eventVersion int64) error {
+	if err := checkEventVersion(treeID, eventVersion); err != nil {
+		return err
+	}
+	if projected := s.projected[treeID]; eventVersion < projected {
+		return &ProjectionRefusedError{TreeID: treeID, EventVersion: eventVersion, ProjectedVersion: projected}
+	}
+	return nil
+}
+
+// advance records eventVersion as the tree's projected version when it is
+// higher than the one recorded.
+func (s *MemoryTreeStore) advance(treeID string, eventVersion int64) {
+	if s.projected == nil {
+		s.projected = map[string]int64{}
+	}
+	if eventVersion > s.projected[treeID] {
+		s.projected[treeID] = eventVersion
+	}
 }

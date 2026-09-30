@@ -45,20 +45,24 @@ was written while the gap existed. It is kept for the order of its two records.
 That order still matters now that the embedded store refuses too:
 
 ```go
-func (c *deleteRecordingStore) DeleteNode(ctx context.Context, treeID, userID string) error {
+func (c *deleteRecordingStore) UndoRootProjection(ctx context.Context, treeID, userID string, eventVersion int64) error {
     c.attempts = append(c.attempts, userID)
     if err := ctx.Err(); err != nil {
         return err
     }
+    if err := c.MemoryTreeStore.UndoRootProjection(ctx, treeID, userID, eventVersion); err != nil {
+        return err
+    }
     c.deleted = append(c.deleted, userID)
-    return c.MemoryTreeStore.DeleteNode(ctx, treeID, userID)
+    return nil
 }
 ```
 
-Record the attempt above the shield, and the result below it. That order is
-load-bearing. A double that records only after the shield reports a refused
-call and a call that never happened as the same empty slice, and telling those
-two apart is usually the reason the double exists.
+Record the attempt above the shield. Record the result only after the call it
+describes returns without an error. That order is load-bearing. A double that
+records only after the shield reports a refused call and a call that never
+happened as the same empty slice, and telling those two apart is usually the
+reason the double exists.
 
 Before embedding, ask what the embedded type does not do that production does.
 Where the answer is filed as a ticket rather than fixed, the double is where it
@@ -69,6 +73,29 @@ bites.
 A double that returns a zero value for an unconfigured case lets a test pass
 while comparing against state nothing ever held. Return an error instead, so an
 unconfigured case fails loudly rather than agreeing with whatever was expected.
+
+## A list of every method covers only the methods it names
+
+A suite case that loops over "every method" of an interface checks the methods
+written in its list. A method added to the interface later is not in that list.
+Nothing fails, and a double can skip the contract without anyone seeing it.
+
+This is most likely at a merge. One branch adds methods while another adds the
+list. Both merge cleanly, and neither side knew about the other.
+
+```go
+calls := []struct {
+    name string
+    call func() error
+}{
+    {"Get", func() error { _, err := s.Get(ctx, id); return err }},
+    {"Put", func() error { return s.Put(ctx, row) }},
+}
+```
+
+A `Delete` added to the interface after this was written is not checked here.
+After you add a method to an interface, or merge a branch that did, search the
+shared suites for cases like this one and add the new methods.
 
 ## Check the double the same way as the code
 

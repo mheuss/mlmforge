@@ -197,6 +197,22 @@ func TestTreePlaceCmd_ExitsZeroWhenTheAppendLandsAndProjectionFails(t *testing.T
 		"engine add_node failed after 2 retries. The next write to this tree retries it.\n", out.stderr.String())
 }
 
+func TestTreePlaceCmd_DoesNotPromiseARetryForARefusedProjection(t *testing.T) {
+	refused := &networkengine.ProjectionRefusedError{TreeID: "t", EventVersion: 2, ProjectedVersion: 3}
+	w := &recordingWriter{result: networkengine.WriteResult{
+		Stream: "tree-t", EventID: "e2", Version: 2,
+		ProjectionErr: fmt.Errorf("project event e2 at version 2 in stream tree-t: %w", refused),
+	}}
+
+	out, err := runWriteCmd(t, w, "place", "--tree-id", "t", "--user-id", "u", "--parent-id", "p", "--sponsor-id", "p")
+
+	require.NoError(t, err, "a confirmed append exits 0")
+	assert.Equal(t, "appended event e2 at version 2 to stream tree-t; not projected\n", out.stdout.String())
+	assert.Equal(t, "warning: event e2 at version 2 was appended and did not project: "+
+		"project event e2 at version 2 in stream tree-t: tree t has projected version 3; "+
+		"the event at version 2 was not projected.\n", out.stderr.String())
+}
+
 func TestTreePlaceCmd_ExitsNonZeroWhenTheOutcomeIsUnknown(t *testing.T) {
 	w := &recordingWriter{
 		result: networkengine.WriteResult{Stream: "tree-t"},

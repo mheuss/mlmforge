@@ -6128,7 +6128,7 @@ fn take_snapshot_data(worker: &mut std::process::Child, structure: &str) -> serd
     parsed["result"]["data"].clone()
 }
 
-/// Restores `data` under a fresh name and returns the raw response.
+/// Restores `data` under `name` and returns the raw response.
 fn restore_under(
     worker: &mut std::process::Child,
     name: &str,
@@ -6403,6 +6403,48 @@ fn restore_rejects_undeserializable_data_with_invalid_params() {
         !resp.contains("INCONSISTENT_SNAPSHOT"),
         "a shape that will not deserialize must not report INCONSISTENT_SNAPSHOT, got: {}",
         resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_over_an_existing_structure_is_refused_and_leaves_it_unchanged() {
+    let mut worker = common::spawn_worker();
+    build_three_node_chain(&mut worker);
+    let snapshot_request = format!(
+        r#"{{"id":"snap","op":"take_snapshot","params":{{"structure":"{}"}}}}"#,
+        TREE_NAME
+    );
+    let before = query(&mut worker, &snapshot_request);
+
+    create_tree(&mut worker, "Empty");
+    let payload = take_snapshot_data(&mut worker, "Empty");
+    assert_ne!(
+        payload, before["data"],
+        "the restore payload equals the existing structure's snapshot data"
+    );
+
+    let resp = restore_under(&mut worker, TREE_NAME, "unilevel", payload);
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(parsed["ok"], false, "response: {}", resp);
+    assert_eq!(parsed["error"]["code"], "TREE_EXISTS", "response: {}", resp);
+    assert_eq!(
+        parsed["error"]["message"],
+        format!(
+            "structure '{}' already exists; restore_snapshot does not replace an existing structure",
+            TREE_NAME
+        ),
+        "response: {}",
+        resp
+    );
+
+    let after = query(&mut worker, &snapshot_request);
+    assert_eq!(
+        after, before,
+        "take_snapshot of '{}' differs after the refused restore",
+        TREE_NAME
     );
 
     drop(worker.stdin.take());

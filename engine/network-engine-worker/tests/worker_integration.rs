@@ -6409,6 +6409,8 @@ fn restore_rejects_undeserializable_data_with_invalid_params() {
     worker.wait().unwrap();
 }
 
+// ---- HEU-854: restoring over an existing structure --------------------------
+
 #[test]
 fn restore_over_an_existing_structure_is_refused_and_leaves_it_unchanged() {
     let mut worker = common::spawn_worker();

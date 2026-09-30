@@ -373,7 +373,7 @@ func TestPostgresTreeStore_ConcurrentFirstProjectionsQueue(t *testing.T) {
 }
 
 // waitForLockWaiters polls until at least n backends in this database wait on
-// a lock.
+// a lock in a query that mentions tree_projections.
 func waitForLockWaiters(t *testing.T, pool *pgxpool.Pool, n int) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)

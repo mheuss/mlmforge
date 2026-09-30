@@ -1604,8 +1604,9 @@ func TestHandleRootAdded_ReconcileSkipsOtherEngineErrors(t *testing.T) {
 // deleteRecordingStore records which users the compensation deleted, so a test
 // can assert the blast radius rather than only that this event's row is gone.
 //
-// It records each call before its context check, and again once the check
-// passes, so a refused call and a call that never happened read differently.
+// It records each call before its context check, and records the deletion only
+// once the undo returns nil, so a refused call and a call that never happened
+// read differently.
 type deleteRecordingStore struct {
 	*MemoryTreeStore
 	deleted         []string
@@ -1630,8 +1631,11 @@ func (c *deleteRecordingStore) UndoRootProjection(ctx context.Context, treeID, u
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := c.MemoryTreeStore.UndoRootProjection(ctx, treeID, userID, eventVersion); err != nil {
+		return err
+	}
 	c.deleted = append(c.deleted, userID)
-	return c.MemoryTreeStore.UndoRootProjection(ctx, treeID, userID, eventVersion)
+	return nil
 }
 
 // The design requires the root's enrolment to match, not just the depth. A

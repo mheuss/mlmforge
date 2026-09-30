@@ -50,15 +50,19 @@ func (c *deleteRecordingStore) UndoRootProjection(ctx context.Context, treeID, u
     if err := ctx.Err(); err != nil {
         return err
     }
+    if err := c.MemoryTreeStore.UndoRootProjection(ctx, treeID, userID, eventVersion); err != nil {
+        return err
+    }
     c.deleted = append(c.deleted, userID)
-    return c.MemoryTreeStore.UndoRootProjection(ctx, treeID, userID, eventVersion)
+    return nil
 }
 ```
 
-Record the attempt above the shield, and the result below it. That order is
-load-bearing. A double that records only after the shield reports a refused
-call and a call that never happened as the same empty slice, and telling those
-two apart is usually the reason the double exists.
+Record the attempt above the shield. Record the result only after the call it
+describes returns without an error. That order is load-bearing. A double that
+records only after the shield reports a refused call and a call that never
+happened as the same empty slice, and telling those two apart is usually the
+reason the double exists.
 
 Before embedding, ask what the embedded type does not do that production does.
 Where the answer is filed as a ticket rather than fixed, the double is where it

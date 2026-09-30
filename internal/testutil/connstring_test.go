@@ -29,6 +29,7 @@ func TestConnStringCases_NoPasswordOverlapsTheTextAroundIt(t *testing.T) {
 		known := []string{
 			tc.WithoutPassword(),
 			RefusalText(t, "golang-migrate", "parse"),
+			RefusalText(t, "golang-migrate", "scheme"),
 			RefusalText(t, "pgx", "parse"),
 			RefusalText(t, "pgx", "refused"),
 		}

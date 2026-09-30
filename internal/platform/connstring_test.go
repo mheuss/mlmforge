@@ -19,6 +19,7 @@ func TestConnStringError_NamesTheDriverAndTheStage(t *testing.T) {
 		{&ConnStringError{driver: driverMigrate, stage: stageParse}, "golang-migrate", "parse"},
 		{&ConnStringError{driver: driverPgx, stage: stageParse}, "pgx", "parse"},
 		{&ConnStringError{driver: driverPgx, stage: stageRefused}, "pgx", "refused"},
+		{&ConnStringError{driver: driverMigrate, stage: stageScheme}, "golang-migrate", "scheme"},
 	} {
 		t.Run(tc.driver+"/"+tc.stage, func(t *testing.T) {
 			require.Equal(t, testutil.RefusalText(t, tc.driver, tc.stage), tc.err.Error())
@@ -34,6 +35,9 @@ func TestConnStringError_EndsTheChain(t *testing.T) {
 
 func TestPgxConnStringError_ReplacesEachRefusal(t *testing.T) {
 	for _, tc := range testutil.ConnStringCases() {
+		if tc.PgxStage == "" {
+			continue
+		}
 		t.Run(tc.Name, func(t *testing.T) {
 			testutil.IsolatePgxEnv(t)
 			_, parseErr := pgxpool.ParseConfig(tc.ConnString)
@@ -77,4 +81,24 @@ func TestMigrateConnStringError_PassesOtherErrorsThrough(t *testing.T) {
 	require.Same(t, notParse, migrateConnStringError(notParse))
 	require.Same(t, other, migrateConnStringError(other))
 	require.NoError(t, migrateConnStringError(nil))
+}
+
+func TestMigrateSchemeError_RefusesAnythingButAPostgresURL(t *testing.T) {
+	for _, refused := range []string{
+		"host=h password=x",
+		"password=x host=::1 dbname=app",
+		"postgres:app@h/app",
+		"postgresql:app@h/app",
+		"POSTGRES://h/app",
+		"mysql://h/app",
+		":x",
+		"",
+	} {
+		var cse *ConnStringError
+		require.ErrorAs(t, migrateSchemeError(refused), &cse, refused)
+		require.Equal(t, "scheme", cse.Stage(), refused)
+	}
+	for _, accepted := range []string{"postgres://h/app", "postgresql://h/app"} {
+		require.NoError(t, migrateSchemeError(accepted), accepted)
+	}
 }

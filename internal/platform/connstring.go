@@ -20,6 +20,7 @@ type connStage string
 
 const (
 	stageParse   connStage = "parse"
+	stageScheme  connStage = "scheme"
 	stageRefused connStage = "refused"
 )
 
@@ -29,13 +30,16 @@ type ConnStringError struct {
 	stage  connStage
 }
 
-// Driver names the driver that refused the connection string.
+// Driver names the driver whose call site refused the connection string.
 func (e *ConnStringError) Driver() string { return string(e.driver) }
 
-// Stage is "parse" when a URL-form string failed to parse, and "refused" otherwise.
+// Stage is "parse" when a URL-form string failed to parse, "scheme" when migrate refused the string's scheme, and "refused" otherwise.
 func (e *ConnStringError) Stage() string { return string(e.stage) }
 
 func (e *ConnStringError) Error() string {
+	if e.stage == stageScheme {
+		return "mlmforge migrate accepts only a connection string that starts with postgres:// or postgresql://. The connection string is withheld because it can contain a password."
+	}
 	what := "could not parse the connection string"
 	if e.stage == stageRefused {
 		what = "refused the connection string"
@@ -71,4 +75,12 @@ func migrateConnStringError(err error) error {
 		return err
 	}
 	return &ConnStringError{driver: driverMigrate, stage: stageParse}
+}
+
+// migrateSchemeError returns a ConnStringError for a string without a postgres:// or postgresql:// prefix, and nil otherwise.
+func migrateSchemeError(dbURL string) error {
+	if strings.HasPrefix(dbURL, "postgres://") || strings.HasPrefix(dbURL, "postgresql://") {
+		return nil
+	}
+	return &ConnStringError{driver: driverMigrate, stage: stageScheme}
 }

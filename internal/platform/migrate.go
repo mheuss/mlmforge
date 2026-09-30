@@ -145,9 +145,12 @@ func openMigration(dbURL, migrationsPath string) (*migration, error) {
 	}
 	var db database.Driver
 	err = TimeConnect(context.Background(), dbURL, func() error {
+		if schemeErr := migrateSchemeError(dbURL); schemeErr != nil {
+			return schemeErr
+		}
 		var openErr error
 		db, openErr = database.Open(dbURL)
-		return openErr
+		return migrateConnStringError(openErr)
 	})
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("open database: %w", err),

@@ -929,6 +929,7 @@ func TestTreeLoader_AddRootFailureReportsCreatedTree(t *testing.T) {
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "add root u0")
 			assert.Contains(t, err.Error(), "tree t created")
+			assert.NotContains(t, err.Error(), "empty")
 			assert.ErrorIs(t, err, boom, "the transport error must stay wrapped")
 
 			var incomplete *TreeLoadIncompleteError

@@ -769,7 +769,7 @@ func TestTreeLoader_PostCreateExitsCarryTheirCounts(t *testing.T) {
 	}{
 		// Confirmed and Attempted are deliberately zero on the create and root
 		// rows, not omitted. Nothing non-root has been placed. Total is zero
-		// only at the create stage, where no structure exists to strand.
+		// only at the create stage.
 		{
 			name:          "create fails before anything is attempted",
 			wantFailedOp:  "CreateTree",

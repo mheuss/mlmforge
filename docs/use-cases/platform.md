@@ -19,11 +19,13 @@ Use-cases for the Platform bounded context.
 
 **Usage:**
 ```go
-pool, err := pgxpool.New(ctx, dbURL)
+// A new call site that parses a connection string with pgx
+cfg, err := pgxpool.ParseConfig(connString)
 if err != nil {
-    return nil, fmt.Errorf("open database pool: %w", platform.PgxConnStringError(err))
+    return fmt.Errorf("open the report pool: %w", platform.PgxConnStringError(err))
 }
 
+// A caller deciding what to log or tag
 var cse *platform.ConnStringError
 if errors.As(err, &cse) {
     // cse.Driver() and cse.Stage() are safe to log or tag. err.Error() holds no part of the string.

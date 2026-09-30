@@ -20,9 +20,11 @@ func TestConnStringError_NamesTheDriverAndTheStage(t *testing.T) {
 		{&ConnStringError{driver: driverPgx, stage: stageParse}, "pgx", "parse"},
 		{&ConnStringError{driver: driverPgx, stage: stageRefused}, "pgx", "refused"},
 	} {
-		require.Equal(t, testutil.RefusalText(t, tc.driver, tc.stage), tc.err.Error())
-		require.Equal(t, tc.driver, tc.err.Driver())
-		require.Equal(t, tc.stage, tc.err.Stage())
+		t.Run(tc.driver+"/"+tc.stage, func(t *testing.T) {
+			require.Equal(t, testutil.RefusalText(t, tc.driver, tc.stage), tc.err.Error())
+			require.Equal(t, tc.driver, tc.err.Driver())
+			require.Equal(t, tc.stage, tc.err.Stage())
+		})
 	}
 }
 
@@ -44,6 +46,7 @@ func TestPgxConnStringError_ReplacesEachRefusal(t *testing.T) {
 			require.Equal(t, "pgx", cse.Driver())
 			require.Equal(t, tc.PgxStage, cse.Stage())
 			testutil.RequireNoDriverParseError(t, err)
+			testutil.RequireNoPasswordWindow(t, err.Error(), tc.Password, tc.WithoutPassword())
 		})
 	}
 }

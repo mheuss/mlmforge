@@ -32,7 +32,7 @@ type ConnStringError struct {
 // Driver names the driver that refused the connection string.
 func (e *ConnStringError) Driver() string { return string(e.driver) }
 
-// Stage is "parse" when the string failed to parse, and "refused" otherwise.
+// Stage is "parse" when a URL-form string failed to parse, and "refused" otherwise.
 func (e *ConnStringError) Stage() string { return string(e.stage) }
 
 func (e *ConnStringError) Error() string {
@@ -55,8 +55,10 @@ func PgxConnStringError(err error) error {
 
 // pgxStage reports parse for a URL-form string that url.Parse rejects, and refused otherwise.
 func pgxStage(connString string) connStage {
-	isURL := strings.HasPrefix(connString, "postgres://") || strings.HasPrefix(connString, "postgresql://")
-	if _, err := url.Parse(connString); isURL && err != nil {
+	if !strings.HasPrefix(connString, "postgres://") && !strings.HasPrefix(connString, "postgresql://") {
+		return stageRefused
+	}
+	if _, err := url.Parse(connString); err != nil {
 		return stageParse
 	}
 	return stageRefused

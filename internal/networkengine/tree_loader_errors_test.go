@@ -443,7 +443,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			treeType:         treeTypeUnilevel,
 			nodes:            unilevelFixture(),
 			engineFailsAfter: 1,
-			want:             "add root u0 (tree t created but left empty): engine error [BOOM]: worker said no",
+			want:             "add root u0 (tree t created; root placement did not report success): engine error [BOOM]: worker said no",
 		},
 		{
 			name:             "AddNode fails",
@@ -691,7 +691,7 @@ func TestTreeLoadErrors_StayReachableThroughAnOuterWrap(t *testing.T) {
 	rejected := newTreeLoadRejected(TreeLoadConfigInvalid, "t", nil,
 		"tree t has an unsupported spillover")
 	incomplete := newTreeLoadIncomplete(TreeLoadStageRoot, "t", nil, 0, 0,
-		"add root u0 (tree t left partly built): engine error [BOOM]: worker said no",
+		"add root u0 (tree t created; root placement did not report success): engine error [BOOM]: worker said no",
 		"u0")
 
 	var asRejected *TreeLoadRejectedError
@@ -768,8 +768,8 @@ func TestTreeLoader_PostCreateExitsCarryTheirCounts(t *testing.T) {
 		wantTotal     int
 	}{
 		// Confirmed and Attempted are deliberately zero on the create and root
-		// rows, not omitted. Nothing has been placed. Total is zero only at
-		// the create stage, where no structure exists to strand.
+		// rows, not omitted. Nothing non-root has been placed. Total is zero
+		// only at the create stage.
 		{
 			name:          "create fails before anything is attempted",
 			wantFailedOp:  "CreateTree",

@@ -84,7 +84,7 @@ type LoadRequest struct {
 type LoadResult struct {
 	CaughtUp       *CaughtUpEvent         // the stream's last event, redelivered and handled without error
 	ProjectedAfter *ProjectionObservation // the projected version read after a redelivery
-	Nodes          int                    // the active rows the load leaves
+	Nodes          int                    // the active rows the load leaves, set only when Load returns no error
 	ReleaseErr     error                  // the unlock failed
 }
 
@@ -450,12 +450,12 @@ func (w *TreeWriter) Load(ctx context.Context, r LoadRequest) (result LoadResult
 	if result.CaughtUp, err = w.catchUp(ctx, tree, stream, *last); err != nil {
 		return result, err
 	}
-	after, found, err := w.store.ProjectedVersion(ctx, tree)
+	after, afterFound, err := w.store.ProjectedVersion(ctx, tree)
 	if err != nil {
 		return result, fmt.Errorf("read the projected version of tree %s after redelivering version %d: %w",
 			tree, last.Version, err)
 	}
-	result.ProjectedAfter = &ProjectionObservation{Version: after, Found: found}
+	result.ProjectedAfter = &ProjectionObservation{Version: after, Found: afterFound}
 	rows, err := w.store.GetByTree(ctx, tree)
 	if err != nil {
 		return result, fmt.Errorf("read the active rows of tree %s after redelivering version %d: %w",
@@ -486,7 +486,7 @@ func rejectEarlyRead(tree string, err error) error {
 	if !errors.As(err, &read) {
 		return err
 	}
-	return newTreeLoadRejected(TreeLoadStoreReadFailed, tree, err, err.Error())
+	return newTreeLoadRejected(TreeLoadStoreReadFailed, tree, read.err, err.Error())
 }
 
 // storeReadError is a failed read made before any engine call.

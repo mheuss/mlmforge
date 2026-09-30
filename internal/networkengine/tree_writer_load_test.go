@@ -84,7 +84,7 @@ func TestTreeWriter_LoadsATreeWithNothingBehindWithoutRedelivering(t *testing.T)
 	require.NoError(t, err)
 	assert.Equal(t, LoadResult{Nodes: 2}, res)
 	assert.Equal(t, 1, store.depthReads, "a load with nothing behind reads the rows once")
-	assert.Zero(t, store.treeReads, "a load with nothing behind reads the rows once")
+	assert.Zero(t, store.treeReads, "a load with nothing behind read the rows again after loading")
 }
 
 func TestTreeWriter_LoadRedeliversTheLastEventWhenTheStoreIsOneBehind(t *testing.T) {
@@ -193,8 +193,7 @@ func TestTreeWriter_LoadReportsARedeliveryThatFailed(t *testing.T) {
 	assert.Zero(t, res.Nodes)
 }
 
-// A removal of a user the store never held converges without a store write,
-// so the projected version stays where it was.
+// The removed user has no row in the store.
 func TestTreeWriter_LoadReportsARedeliveryThatLeftTheVersionBehind(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
@@ -213,8 +212,7 @@ func TestTreeWriter_LoadReportsARedeliveryThatLeftTheVersionBehind(t *testing.T)
 	}, res)
 }
 
-// A tree created before migration 000009 holds its root row and no projection
-// row. The redelivered root finds its row and converges, so no row appears.
+// The store holds the root row and no projection row.
 func TestTreeWriter_LoadReportsATreeThatStillHasNoProjectionRow(t *testing.T) {
 	env := newWriterEnv()
 	root := appendDirect(t, env.events, EventTypeRootAdded, rootAddedPayload())
@@ -268,7 +266,7 @@ func TestTreeWriter_LoadReturnsTheRedeliveryWhenTheCountFails(t *testing.T) {
 func TestTreeWriter_LoadRefusesATreeTypeThatDiffersFromTheStream(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
-	w, _ := env.writer(WithLockWait(time.Millisecond))
+	w, _ := env.writer()
 
 	_, err := w.Load(context.Background(), LoadRequest{TreeID: writerTree, TreeType: treeTypeBinary})
 
@@ -338,7 +336,7 @@ func TestTreeWriter_LoadTypesAFailedProjectedVersionReadAsARejection(t *testing.
 	var rejected *TreeLoadRejectedError
 	require.ErrorAs(t, err, &rejected)
 	assert.Equal(t, TreeLoadStoreReadFailed, rejected.Kind)
-	assert.ErrorIs(t, err, cause)
+	assert.Equal(t, cause, rejected.Err)
 	assert.Zero(t, store.depthReads, "the rows were read after the version read failed")
 }
 
@@ -355,4 +353,40 @@ func TestTreeWriter_LoadTypesAFailedVersion1ReadAsARejection(t *testing.T) {
 	require.ErrorAs(t, err, &rejected)
 	assert.Equal(t, TreeLoadStoreReadFailed, rejected.Kind)
 	assert.ErrorIs(t, err, cause)
+}
+
+func TestTreeWriter_LoadUsesTheTypeRecordedUnderTheLock(t *testing.T) {
+	env := newWriterEnv()
+	log := &orderLog{}
+	locker := &hookLocker{inner: env.locker, before: func() {
+		appendDirect(t, env.events, EventTypeRootAdded, RootAddedPayload{
+			TreeID: writerTree, UserID: writerOther, SponsorID: writerOther,
+			EnrolledAt: writeTime, TreeType: treeTypeBinary,
+		})
+	}}
+	w := NewTreeWriter(env.events, &loggingStore{TreeStore: env.store, log: log, name: "w"},
+		newFakeWriterEngine(), locker)
+
+	_, err := w.Load(context.Background(), loadRequest())
+
+	require.EqualError(t, err, "load tree "+writerTree+": stream "+TreeStreamName(writerTree)+
+		" records tree type binary at version 1, and the request names unilevel")
+	assert.Equal(t, -1, log.indexOf("w load"), "the refusal must come before the load: %v", log.snapshot())
+}
+
+func TestTreeWriter_LoadLeavesAFailedVersionReadAfterTheRedeliveryUntyped(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	pending := appendDirect(t, env.events, EventTypeNodePlaced, childPlacedPayload(writerChild))
+	store := &readCountingStore{TreeStore: env.store, versionErr: errors.New("connection reset"), versionErrFrom: 2}
+	w := NewTreeWriter(env.events, store, newFakeWriterEngine(), env.locker)
+
+	res, err := w.Load(context.Background(), loadRequest())
+
+	require.EqualError(t, err, "read the projected version of tree "+writerTree+
+		" after redelivering version 2: connection reset")
+	require.NotNil(t, res.CaughtUp)
+	assert.Equal(t, pending.ID, res.CaughtUp.EventID)
+	var rejected *TreeLoadRejectedError
+	assert.False(t, errors.As(err, &rejected), "a failure after the redelivery was typed as retryable")
 }

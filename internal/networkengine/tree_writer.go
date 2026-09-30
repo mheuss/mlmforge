@@ -411,8 +411,8 @@ func (w *TreeWriter) write(ctx context.Context, spec writeSpec) (result WriteRes
 	return result, nil
 }
 
-// Load brings the tree's store level with its stream when the store is one
-// event behind, then loads the tree.
+// Load loads the tree, and brings its store level with its stream when the
+// store is one event behind.
 func (w *TreeWriter) Load(ctx context.Context, r LoadRequest) (result LoadResult, err error) {
 	treeID, err := canonicalID("tree_id", r.TreeID)
 	if err != nil {

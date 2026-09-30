@@ -39,8 +39,8 @@ func TestLoadTree_RootStageReportsTheNonRootCount(t *testing.T) {
 	require.ErrorAs(t, err, &incomplete)
 	require.Equal(t, networkengine.TreeLoadStageRoot, incomplete.Stage)
 	require.Equal(t, 2, incomplete.Total, "two non-root rows were read")
-	require.Equal(t, 0, incomplete.Attempted, "no placement was attempted")
-	require.Equal(t, 0, incomplete.Confirmed, "no placement was acknowledged")
+	require.Equal(t, 0, incomplete.Attempted, "no non-root placement was attempted")
+	require.Equal(t, 0, incomplete.Confirmed, "no non-root placement was acknowledged")
 }
 
 // Pins what a keyed literal renders at the root stage. The placement index of

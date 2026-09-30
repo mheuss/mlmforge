@@ -42,14 +42,6 @@ func (s *readCountingStore) GetByTree(ctx context.Context, treeID string) ([]Tre
 	return s.TreeStore.GetByTree(ctx, treeID)
 }
 
-// projectedVersion reads writerTree's projected version from the env's store.
-func projectedVersion(t *testing.T, env *writerEnv) (int64, bool) {
-	t.Helper()
-	version, found, err := env.store.ProjectedVersion(context.Background(), writerTree)
-	require.NoError(t, err)
-	return version, found
-}
-
 func TestTreeWriter_AWriteKeepsItsProjectedVersionReadError(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)

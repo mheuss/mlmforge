@@ -52,6 +52,10 @@ func runArgs(root *cobra.Command, args []string) int {
 	return exitCode(root.Execute())
 }
 
+// exitNotCurrent is the exit code for an appended event whose store was not
+// observed current.
+const exitNotCurrent = 3
+
 // exitCodeError carries an exit code other than 1.
 type exitCodeError struct {
 	code int

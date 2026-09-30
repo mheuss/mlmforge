@@ -183,18 +183,92 @@ func TestTreePlaceCmd_ReportsARedeliveryAheadOfARefusal(t *testing.T) {
 	assert.Equal(t, "redelivered event e1 at version 1\n", out.stdout.String())
 }
 
-func TestTreePlaceCmd_ExitsZeroWhenTheAppendLandsAndProjectionFails(t *testing.T) {
-	w := &recordingWriter{result: networkengine.WriteResult{
+// projectionFailure is a confirmed append at version 2 whose projection
+// failed, with the version the writer read afterwards.
+func projectionFailure(observed *networkengine.ProjectionObservation) networkengine.WriteResult {
+	return networkengine.WriteResult{
 		Stream: "tree-t", EventID: "e2", Version: 2,
 		ProjectionErr: errors.New("engine add_node failed after 2 retries"),
+		Observed:      observed,
+	}
+}
+
+const projectionWarning = "warning: event e2 at version 2 was appended and did not project: " +
+	"engine add_node failed after 2 retries."
+
+func TestTreePlaceCmd_ReportsAProjectionFailureByWhatItObserved(t *testing.T) {
+	notCurrent := "Error: event e2 at version 2 was appended and the store was not observed current\n"
+	cases := []struct {
+		name     string
+		observed *networkengine.ProjectionObservation
+		stderr   string
+		exit     int
+	}{
+		{
+			name:     "one behind",
+			observed: &networkengine.ProjectionObservation{Version: 1, Found: true},
+			stderr:   projectionWarning + " The next write or tree load of this tree redelivers it.\n" + notCurrent,
+			exit:     3,
+		},
+		{
+			name:     "current",
+			observed: &networkengine.ProjectionObservation{Version: 2, Found: true},
+			stderr:   projectionWarning + " The tree's projected version is 2.\n",
+			exit:     0,
+		},
+		{
+			name:     "two behind",
+			observed: &networkengine.ProjectionObservation{Version: 0, Found: true},
+			stderr:   projectionWarning + " The tree's projected version is 0.\n" + notCurrent,
+			exit:     3,
+		},
+		{
+			name:     "no projection row",
+			observed: &networkengine.ProjectionObservation{},
+			stderr:   projectionWarning + " The tree has no projection row.\n" + notCurrent,
+			exit:     3,
+		},
+		{
+			name:     "the read failed",
+			observed: &networkengine.ProjectionObservation{Err: errors.New("connection reset")},
+			stderr:   projectionWarning + " The tree's projected version could not be read: connection reset.\n" + notCurrent,
+			exit:     3,
+		},
+		{
+			name:   "not read",
+			stderr: projectionWarning + " The tree's projected version was not read.\n" + notCurrent,
+			exit:   3,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := &recordingWriter{result: projectionFailure(tc.observed)}
+
+			out, err := runWriteCmd(t, w, "place", "--tree-id", "t", "--user-id", "u", "--parent-id", "p", "--sponsor-id", "p")
+
+			assert.Equal(t, tc.exit, exitCode(err))
+			assert.Equal(t, "appended event e2 at version 2 to stream tree-t; not projected\n", out.stdout.String())
+			assert.Equal(t, tc.stderr, out.stderr.String())
+		})
+	}
+}
+
+// An add-root whose projection failed before its row existed leaves the stream
+// at version 1 with no projection row. That is one behind, so the next load
+// redelivers it.
+func TestTreeAddRootCmd_PromisesARedeliveryWhenTheRootLeftNoProjectionRow(t *testing.T) {
+	w := &recordingWriter{result: networkengine.WriteResult{
+		Stream: "tree-t", EventID: "e1", Version: 1,
+		ProjectionErr: errors.New("store root node: connection reset"),
+		Observed:      &networkengine.ProjectionObservation{},
 	}}
 
-	out, err := runWriteCmd(t, w, "place", "--tree-id", "t", "--user-id", "u", "--parent-id", "p", "--sponsor-id", "p")
+	out, err := runWriteCmd(t, w, "add-root", "--tree-id", "t", "--user-id", "u", "--sponsor-id", "u", "--tree-type", "unilevel")
 
-	require.NoError(t, err, "a confirmed append exits 0")
-	assert.Equal(t, "appended event e2 at version 2 to stream tree-t; not projected\n", out.stdout.String())
-	assert.Equal(t, "warning: event e2 at version 2 was appended and did not project: "+
-		"engine add_node failed after 2 retries. The next write to this tree retries it.\n", out.stderr.String())
+	assert.Equal(t, 3, exitCode(err))
+	assert.Equal(t, "warning: event e1 at version 1 was appended and did not project: store root node: connection reset. "+
+		"The next write or tree load of this tree redelivers it.\n"+
+		"Error: event e1 at version 1 was appended and the store was not observed current\n", out.stderr.String())
 }
 
 func TestTreePlaceCmd_DoesNotPromiseARetryForARefusedProjection(t *testing.T) {
@@ -202,15 +276,26 @@ func TestTreePlaceCmd_DoesNotPromiseARetryForARefusedProjection(t *testing.T) {
 	w := &recordingWriter{result: networkengine.WriteResult{
 		Stream: "tree-t", EventID: "e2", Version: 2,
 		ProjectionErr: fmt.Errorf("project event e2 at version 2 in stream tree-t: %w", refused),
+		Observed:      &networkengine.ProjectionObservation{Version: 3, Found: true},
 	}}
 
 	out, err := runWriteCmd(t, w, "place", "--tree-id", "t", "--user-id", "u", "--parent-id", "p", "--sponsor-id", "p")
 
-	require.NoError(t, err, "a confirmed append exits 0")
+	require.NoError(t, err, "a store observed past the event exits 0")
 	assert.Equal(t, "appended event e2 at version 2 to stream tree-t; not projected\n", out.stdout.String())
 	assert.Equal(t, "warning: event e2 at version 2 was appended and did not project: "+
 		"project event e2 at version 2 in stream tree-t: tree t has projected version 3; "+
-		"the event at version 2 was not projected.\n", out.stderr.String())
+		"the event at version 2 was not projected. The tree's projected version is 3.\n", out.stderr.String())
+}
+
+func TestTreeWriteCmds_NameExitThreeInTheirHelp(t *testing.T) {
+	for _, c := range newTreeCmd().Commands() {
+		switch c.Name() {
+		case "add-root", "place", "remove":
+			assert.Contains(t, c.Long, "Exits 3 when the event was appended and the store was not observed current.",
+				"%s help", c.Name())
+		}
+	}
 }
 
 func TestTreePlaceCmd_ExitsNonZeroWhenTheOutcomeIsUnknown(t *testing.T) {

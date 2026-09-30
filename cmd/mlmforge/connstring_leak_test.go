@@ -41,6 +41,7 @@ func TestMigrateCommands_ARefusedConnStringPrintsNoPassword(t *testing.T) {
 			selected++
 			t.Run(sub+"/"+tc.Name, func(t *testing.T) {
 				testutil.ClearTimeoutEnv(t)
+				testutil.ClearLibPQEnv(t)
 				want := "open database: " + testutil.RefusalText(t, "golang-migrate", tc.MigrateStage)
 
 				stdout, stderr, err := executeRootCaptured("migrate", sub,
@@ -50,7 +51,7 @@ func TestMigrateCommands_ARefusedConnStringPrintsNoPassword(t *testing.T) {
 			})
 		}
 	}
-	require.Equal(t, 36, selected, "migrate cases selected")
+	require.Equal(t, 40, selected, "migrate cases selected")
 }
 
 func TestTreeCommands_ARefusedConnStringPrintsNoPassword(t *testing.T) {

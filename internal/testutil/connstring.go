@@ -3,6 +3,7 @@ package testutil
 import (
 	"errors"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -54,6 +55,8 @@ func ConnStringCases() []ConnStringCase {
 			Password: "up3cretpwXYZ", PgxStage: "refused", MigrateStage: "scheme"},
 		{Name: "pq-quoted-key", ConnString: "postgres://app:pq3cretpwXYZ@127.0.0.1:1/app?p%3D%27a=z%3D",
 			Password: "pq3cretpwXYZ", MigrateStage: "refused"},
+		{Name: "numeric-port", ConnString: "postgres://app:123456/n5cretpwXYZ@127.0.0.1:1/app",
+			Password: "123456/n5cretpwXYZ", PgxStage: "refused", MigrateStage: "refused"},
 		{Name: "pq-spaced-key", ConnString: "postgres://app:Zm9vQmFy@cXV4?d2l0aHh5bXdk ZXZl=YWJjZA@127.0.0.1:1/app",
 			Password: "Zm9vQmFy@cXV4?d2l0aHh5bXdk ZXZl=YWJjZA", MigrateStage: "refused"},
 	}
@@ -105,7 +108,7 @@ func RequireNoPasswordWindow(t *testing.T, text, password string, known ...strin
 	}
 }
 
-// RequireNoDriverParseError fails the test when err's chain holds a *url.Error or a *pgconn.ParseConfigError.
+// RequireNoDriverParseError fails the test when err is nil or its chain holds a *url.Error or a *pgconn.ParseConfigError.
 func RequireNoDriverParseError(t *testing.T, err error) {
 	t.Helper()
 	if err == nil {
@@ -118,6 +121,17 @@ func RequireNoDriverParseError(t *testing.T, err error) {
 	var pce *pgconn.ParseConfigError
 	if errors.As(err, &pce) {
 		t.Fatalf("the error chain holds a *pgconn.ParseConfigError")
+	}
+}
+
+// ClearLibPQEnv unsets the lib/pq settings that make it refuse any connection string, for one test.
+func ClearLibPQEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{"PGCLIENTENCODING", "PGDATESTYLE"} {
+		t.Setenv(name, "")
+		if err := os.Unsetenv(name); err != nil {
+			t.Fatalf("unset %s: %v", name, err)
+		}
 	}
 }
 

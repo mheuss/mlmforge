@@ -16,6 +16,7 @@ func TestMigrateVersion_ARefusedConnStringHoldsNoPassword(t *testing.T) {
 		}
 		t.Run(tc.Name, func(t *testing.T) {
 			testutil.ClearTimeoutEnv(t)
+			testutil.ClearLibPQEnv(t)
 			want := "open database: " + testutil.RefusalText(t, "golang-migrate", tc.MigrateStage)
 
 			_, err := MigrateVersion(tc.ConnString, FindMigrationsDir(t))
@@ -39,6 +40,7 @@ func TestMigrateVersion_APostgresURLReachesTheDriver(t *testing.T) {
 	} {
 		t.Run(url, func(t *testing.T) {
 			testutil.ClearTimeoutEnv(t)
+			testutil.ClearLibPQEnv(t)
 
 			_, err := MigrateVersion(url, FindMigrationsDir(t))
 
@@ -50,12 +52,15 @@ func TestMigrateVersion_APostgresURLReachesTheDriver(t *testing.T) {
 }
 
 func TestMigrateVersion_AStringMigrateAcceptsReachesTheDialWithNoPassword(t *testing.T) {
+	selected := 0
 	for _, tc := range testutil.ConnStringCases() {
 		if tc.MigrateStage != "" {
 			continue
 		}
+		selected++
 		t.Run(tc.Name, func(t *testing.T) {
 			testutil.ClearTimeoutEnv(t)
+			testutil.ClearLibPQEnv(t)
 
 			_, err := MigrateVersion(tc.ConnString, FindMigrationsDir(t))
 
@@ -64,4 +69,20 @@ func TestMigrateVersion_AStringMigrateAcceptsReachesTheDialWithNoPassword(t *tes
 			require.ErrorContains(t, err, "dial tcp 127.0.0.1:1")
 		})
 	}
+	require.Equal(t, 4, selected, "cases migrate accepts")
+}
+
+func TestMigrateVersion_ARefusedEnvironmentWithARefusedStringHoldsNoPassword(t *testing.T) {
+	testutil.ClearTimeoutEnv(t)
+	testutil.ClearLibPQEnv(t)
+	t.Setenv("PGCLIENTENCODING", "LATIN1")
+	password := "pq3cretpwXYZ"
+	connString := "postgres://app:" + password + "@127.0.0.1:1/app?p%3D%27a=z%3D"
+	want := "open database: client_encoding must be absent or 'UTF8'"
+
+	_, err := MigrateVersion(connString, FindMigrationsDir(t))
+
+	require.Error(t, err)
+	testutil.RequireNoPasswordWindow(t, fmt.Sprintf("%v\n%+v", err, err), password, want, "postgres://app:@127.0.0.1:1/app?p%3D%27a=z%3D")
+	require.EqualError(t, err, want)
 }

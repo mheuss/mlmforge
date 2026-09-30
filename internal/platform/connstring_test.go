@@ -35,8 +35,10 @@ func TestConnStringError_EndsTheChain(t *testing.T) {
 }
 
 func TestPgxConnStringError_ReplacesEachRefusal(t *testing.T) {
+	accepted := 0
 	for _, tc := range testutil.ConnStringCases() {
 		if tc.PgxStage == "" {
+			accepted++
 			t.Run(tc.Name, func(t *testing.T) {
 				testutil.IsolatePgxEnv(t)
 				_, err := pgxpool.ParseConfig(tc.ConnString)
@@ -59,6 +61,7 @@ func TestPgxConnStringError_ReplacesEachRefusal(t *testing.T) {
 			testutil.RequireNoPasswordWindow(t, err.Error(), tc.Password, tc.WithoutPassword())
 		})
 	}
+	require.Equal(t, 3, accepted, "cases pgx accepts")
 }
 
 func TestPgxConnStringError_PassesOtherErrorsThrough(t *testing.T) {
@@ -110,21 +113,57 @@ func TestMigrateSchemeError_RefusesAnythingButAPostgresURL(t *testing.T) {
 }
 
 func TestMigrateDriverParseError_RefusesWhatLibPQCannotParse(t *testing.T) {
+	testutil.ClearLibPQEnv(t)
+	selected := 0
 	for _, tc := range testutil.ConnStringCases() {
-		if tc.MigrateStage != "refused" {
+		if tc.Name != "pq-quoted-key" && tc.Name != "pq-spaced-key" {
 			continue
 		}
+		selected++
 		t.Run(tc.Name, func(t *testing.T) {
 			var cse *ConnStringError
 			require.ErrorAs(t, migrateDriverParseError(tc.ConnString), &cse)
 			require.Equal(t, "refused", cse.Stage())
 		})
 	}
+	require.Equal(t, 2, selected, "lib/pq cases selected")
 	for _, accepted := range []string{
 		"postgres://app@127.0.0.1:1/app?sslmode=disable",
 		"postgres://app@127.0.0.1:1/app?password=x&sslmode=bogus",
 		"postgres://app:Zm9vQmFy/cXV4eHl6@127.0.0.1:1/app",
 	} {
 		require.NoError(t, migrateDriverParseError(accepted), accepted)
+	}
+}
+
+func TestMigrateDriverParseError_ReportsARefusedEnvironmentAsItself(t *testing.T) {
+	testutil.ClearLibPQEnv(t)
+	t.Setenv("PGCLIENTENCODING", "LATIN1")
+
+	err := migrateDriverParseError("postgres://app:pq3cretpwXYZ@127.0.0.1:1/app?p%3D%27a=z%3D")
+
+	require.EqualError(t, err, "client_encoding must be absent or 'UTF8'")
+	var cse *ConnStringError
+	require.False(t, errors.As(err, &cse), "expected lib/pq's environment error; got a ConnStringError")
+}
+
+func TestMigratePortError_RefusesAPortOutsideTheValidRange(t *testing.T) {
+	for _, refused := range []string{
+		"postgres://app:123456/n5cretpwXYZ@127.0.0.1:1/app",
+		"postgres://h:65536/app",
+		"postgres://h:0/app",
+	} {
+		var cse *ConnStringError
+		require.ErrorAs(t, migratePortError(refused), &cse, refused)
+		require.Equal(t, "refused", cse.Stage(), refused)
+	}
+	for _, accepted := range []string{
+		"postgres://h/app",
+		"postgres://h:1/app",
+		"postgres://h:5432/app",
+		"postgres://h:65535/app",
+		"postgres://app:Zm9vQmFy/cXV4eHl6@127.0.0.1:1/app",
+	} {
+		require.NoError(t, migratePortError(accepted), accepted)
 	}
 }

@@ -50,6 +50,22 @@ has not.
 call site.** The text pass cannot discover a gitignored directory. Naming the
 paths in the dispatch is the only fix available from outside.
 
+## Two more that print a clean pass
+
+HEU-798, HEU-817 and HEU-803, 2026-09-29.
+
+- **A fresh worktree has no engine worker binary.** Engine-backed Go tests
+  skip when `engine/target/debug/network-engine-worker` is missing. On that
+  branch 64 of them skipped, and `go test` still printed `ok` for the package.
+  Build the worker with `cargo build --workspace` in `engine/` before reading a
+  package result. Count the `--- SKIP` lines in a `-v` run.
+- **A suite hook that writes state directly can stop writing without failing
+  anything.** The tree-store suite backdates `updated_at` and `removed_at`
+  through test hooks. A case asserting that a delete moves `UpdatedAt` past a
+  backdated value passes whether or not the backdate landed, because the insert
+  time is already later. Read each hook's write back before the case relies on
+  it. A hook turned into a no-op should then fail at the read-back.
+
 ## Naming the trap does not disarm it
 
 The third instance above was written by the person who had named it. Having

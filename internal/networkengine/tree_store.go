@@ -49,13 +49,17 @@ type TreeStore interface {
 	GetNode(ctx context.Context, treeID, userID string) (*TreeNodeRow, error)
 
 	// GetNodeIncludingRemoved returns a node by tree and user ID whether or
-	// not it is soft-deleted. An active row wins over any tombstone, and the
-	// newest tombstone wins over older ones.
+	// not it is soft-deleted. An active row wins over any tombstone. Among
+	// tombstones the latest removed_at wins, and on equal removed_at the
+	// highest id wins. The id order is defined only for canonical hyphenated
+	// UUIDs.
 	GetNodeIncludingRemoved(ctx context.Context, treeID, userID string) (*TreeNodeRow, error)
 
 	// GetNodeByRemovalEvent returns the row that the given removal event
 	// tombstoned, or nil when that event has stamped no row in this tree.
-	// When the event stamped more than one row, the newest tombstone wins.
+	// When the event stamped more than one row, the latest removed_at wins,
+	// and on equal removed_at the highest id wins. The id order is defined only
+	// for canonical hyphenated UUIDs.
 	GetNodeByRemovalEvent(ctx context.Context, treeID, removalEventID string) (*TreeNodeRow, error)
 
 	// GetChildren returns active children of a parent node.

@@ -1604,10 +1604,8 @@ func TestHandleRootAdded_ReconcileSkipsOtherEngineErrors(t *testing.T) {
 // deleteRecordingStore records which users the compensation deleted, so a test
 // can assert the blast radius rather than only that this event's row is gone.
 //
-// It refuses a cancelled context, which MemoryTreeStore does not (HEU-798) and
-// PostgresTreeStore does, because a pool honours it. Without that the memory
-// double cannot tell a compensation shielded from cancellation from one that
-// is not.
+// It records each call before its context check, and again once the check
+// passes, so a refused call and a call that never happened read differently.
 type deleteRecordingStore struct {
 	*MemoryTreeStore
 	deleted         []string
@@ -1724,6 +1722,37 @@ func (s *ctxReadingStore) GetNodeIncludingRemoved(ctx context.Context, treeID, u
 	return s.deleteRecordingStore.GetNodeIncludingRemoved(ctx, treeID, userID)
 }
 
+// expiringContext reports context.DeadlineExceeded once expire is called, so a
+// test can place the expiry between two calls. It models Err and Done only.
+// Deadline reports no deadline.
+type expiringContext struct {
+	context.Context
+	done chan struct{}
+}
+
+func newExpiringContext() *expiringContext {
+	return &expiringContext{Context: context.Background(), done: make(chan struct{})}
+}
+
+func (c *expiringContext) Done() <-chan struct{} { return c.done }
+
+func (c *expiringContext) Err() error {
+	select {
+	case <-c.done:
+		return context.DeadlineExceeded
+	default:
+		return nil
+	}
+}
+
+func (c *expiringContext) expire() {
+	select {
+	case <-c.done:
+	default:
+		close(c.done)
+	}
+}
+
 // A cancellation arriving before reconcile is entered leaves the row this
 // delivery inserted. The error names the cancellation. It must also name what
 // the store was observed to hold, and must claim nothing about the engine.
@@ -1754,12 +1783,14 @@ func TestHandleRootAdded_CancelledInsertReportsTheRow(t *testing.T) {
 }
 
 // An expired deadline must report the stored row the same way a cancellation
-// does.
+// does. The deadline passes during the engine call.
 func TestHandleRootAdded_ExpiredDeadlineReportsTheRow(t *testing.T) {
-	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
-	defer cancel()
+	ctx := newExpiringContext()
 
-	tr := &reconcileTransport{mutationErr: &EngineError{Code: engineCodeRootAlreadyExists}}
+	tr := &reconcileTransport{
+		mutationErr: &EngineError{Code: engineCodeRootAlreadyExists},
+		onMutation:  ctx.expire,
+	}
 	store := &ctxReadingStore{deleteRecordingStore: &deleteRecordingStore{MemoryTreeStore: NewMemoryTreeStore()}}
 	c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
 	// Not zero: at zero the select races its own timer.

@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -142,7 +143,12 @@ func openMigration(dbURL, migrationsPath string) (*migration, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open migrations source %s: %w", absPath, err)
 	}
-	db, err := database.Open(dbURL)
+	var db database.Driver
+	err = TimeConnect(context.Background(), dbURL, func() error {
+		var openErr error
+		db, openErr = database.Open(dbURL)
+		return openErr
+	})
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("open database: %w", err),
 			releaseErr("closing the migrations source failed", src.Close()))

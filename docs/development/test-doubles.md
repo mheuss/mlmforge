@@ -30,16 +30,19 @@ put rather than only what came back.
 
 ## Embedding carries the gaps with it
 
-`MemoryTreeStore` ignores `context.Context` entirely. `PostgresTreeStore`
-honours it, because a pool does. A double wrapping the memory store therefore
-cannot see a cancellation, whatever the test is called.
+`MemoryTreeStore` ignored `context.Context` entirely until HEU-798.
+`PostgresTreeStore` honours it, because a pool does. A double wrapping the
+memory store therefore could not see a cancellation, whatever the test was
+called.
 
 A test asserting that a compensating write survives a cancelled context passed
 against an implementation with no shield at all, because the double it embedded
 could not tell the two apart.
 
 When a double stands in for the production implementation, it has to model the
-behaviour under test even where the embedded type omits it:
+behaviour under test even where the embedded type omits it. The example below
+was written while the gap existed. It is kept for the order of its two records.
+That order still matters now that the embedded store refuses too:
 
 ```go
 func (c *deleteRecordingStore) UndoRootProjection(ctx context.Context, treeID, userID string, eventVersion int64) error {

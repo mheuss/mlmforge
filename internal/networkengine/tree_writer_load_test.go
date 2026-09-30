@@ -83,7 +83,7 @@ func TestTreeWriter_LoadsATreeWithNothingBehindWithoutRedelivering(t *testing.T)
 
 	require.NoError(t, err)
 	assert.Equal(t, LoadResult{Nodes: 2}, res)
-	assert.Equal(t, 1, store.depthReads, "a load with nothing behind reads the rows once")
+	assert.Equal(t, 1, store.depthReads, "a load with nothing behind read the rows a different number of times")
 	assert.Zero(t, store.treeReads, "a load with nothing behind read the rows again after loading")
 }
 
@@ -260,7 +260,7 @@ func TestTreeWriter_LoadReturnsTheRedeliveryWhenTheCountFails(t *testing.T) {
 	require.NotNil(t, res.CaughtUp)
 	assert.Equal(t, pending.ID, res.CaughtUp.EventID)
 	var rejected *TreeLoadRejectedError
-	assert.False(t, errors.As(err, &rejected), "a failure after the redelivery was typed as retryable")
+	assert.False(t, errors.As(err, &rejected), "a failure after the redelivery was typed as TreeLoadRejectedError")
 }
 
 func TestTreeWriter_LoadRefusesATreeTypeThatDiffersFromTheStream(t *testing.T) {
@@ -352,7 +352,7 @@ func TestTreeWriter_LoadTypesAFailedVersion1ReadAsARejection(t *testing.T) {
 	var rejected *TreeLoadRejectedError
 	require.ErrorAs(t, err, &rejected)
 	assert.Equal(t, TreeLoadStoreReadFailed, rejected.Kind)
-	assert.ErrorIs(t, err, cause)
+	assert.Equal(t, cause, rejected.Err)
 }
 
 func TestTreeWriter_LoadUsesTheTypeRecordedUnderTheLock(t *testing.T) {
@@ -388,5 +388,5 @@ func TestTreeWriter_LoadLeavesAFailedVersionReadAfterTheRedeliveryUntyped(t *tes
 	require.NotNil(t, res.CaughtUp)
 	assert.Equal(t, pending.ID, res.CaughtUp.EventID)
 	var rejected *TreeLoadRejectedError
-	assert.False(t, errors.As(err, &rejected), "a failure after the redelivery was typed as retryable")
+	assert.False(t, errors.As(err, &rejected), "a failure after the redelivery was typed as TreeLoadRejectedError")
 }

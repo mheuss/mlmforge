@@ -128,11 +128,11 @@ func (w *TreeWriter) AddRoot(ctx context.Context, r AddRootRequest) (WriteResult
 	}
 	var requested treeShape
 	if found {
-		if err := rootShapeConflict(tree, stream, shape, r); err != nil {
+		if err := shapeConflict("add root to", tree, stream, shape, r.TreeType, r.MatrixWidth, r.MatrixSpillover); err != nil {
 			return WriteResult{}, err
 		}
 	} else {
-		if requested, err = shapeFromRequest(tree, r.TreeType, r.MatrixWidth, r.MatrixSpillover); err != nil {
+		if requested, err = shapeFromRequest("add root to", tree, r.TreeType, r.MatrixWidth, r.MatrixSpillover); err != nil {
 			return WriteResult{}, err
 		}
 		shape = requested
@@ -166,7 +166,7 @@ func (w *TreeWriter) AddRoot(ctx context.Context, r AddRootRequest) (WriteResult
 			if !found {
 				return requested, nil
 			}
-			if err := rootShapeConflict(tree, stream, recorded, r); err != nil {
+			if err := shapeConflict("add root to", tree, stream, recorded, r.TreeType, r.MatrixWidth, r.MatrixSpillover); err != nil {
 				return treeShape{}, err
 			}
 			return recorded, nil
@@ -280,28 +280,28 @@ func refuseMatrixRemoval(user, tree, stream string) error {
 		"and this writer does not remove from matrix trees", user, tree, stream)
 }
 
-// rootShapeConflict refuses a root request whose type or matrix parameters
-// differ from the shape version 1 records. Absent matrix parameters match.
-func rootShapeConflict(tree, stream string, recorded treeShape, r AddRootRequest) error {
-	prefix := fmt.Sprintf("add root to tree %s: stream %s records", tree, stream)
-	if recorded.treeType != r.TreeType {
-		return fmt.Errorf("%s tree type %s at version 1, and the request names %s", prefix, recorded.treeType, r.TreeType)
+// shapeConflict refuses a requested type or matrix parameter that differs from
+// the shape version 1 records. Absent matrix parameters match.
+func shapeConflict(action, tree, stream string, recorded treeShape, treeType string, width *int, spillover *string) error {
+	prefix := fmt.Sprintf("%s tree %s: stream %s records", action, tree, stream)
+	if recorded.treeType != treeType {
+		return fmt.Errorf("%s tree type %s at version 1, and the request names %s", prefix, recorded.treeType, treeType)
 	}
 	if recorded.treeType != treeTypeMatrix {
-		if r.MatrixWidth != nil {
-			return fmt.Errorf("%s no matrix width at version 1, and the request names %d", prefix, *r.MatrixWidth)
+		if width != nil {
+			return fmt.Errorf("%s no matrix width at version 1, and the request names %d", prefix, *width)
 		}
-		if r.MatrixSpillover != nil {
-			return fmt.Errorf("%s no matrix spillover at version 1, and the request names %q", prefix, *r.MatrixSpillover)
+		if spillover != nil {
+			return fmt.Errorf("%s no matrix spillover at version 1, and the request names %q", prefix, *spillover)
 		}
 		return nil
 	}
-	if r.MatrixWidth != nil && *r.MatrixWidth != recorded.width {
-		return fmt.Errorf("%s matrix width %d at version 1, and the request names %d", prefix, recorded.width, *r.MatrixWidth)
+	if width != nil && *width != recorded.width {
+		return fmt.Errorf("%s matrix width %d at version 1, and the request names %d", prefix, recorded.width, *width)
 	}
-	if r.MatrixSpillover != nil && *r.MatrixSpillover != recorded.spillover {
+	if spillover != nil && *spillover != recorded.spillover {
 		return fmt.Errorf("%s matrix spillover %q at version 1, and the request names %q",
-			prefix, recorded.spillover, *r.MatrixSpillover)
+			prefix, recorded.spillover, *spillover)
 	}
 	return nil
 }

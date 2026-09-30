@@ -777,10 +777,7 @@ func TestTreeLoader_ValidPositionsAccepted(t *testing.T) {
 	}, mutator.nodesAt)
 }
 
-// failAfterNMutator fails one engine call after the create succeeds, so a test
-// can assert what LoadTree reports about how far a load got. It fails the
-// failOn-th AddNode or AddNodeAt call, or AddRoot when failRoot is set, or
-// places the root and then fails when landRootThenFail is set.
+// failAfterNMutator fails one engine call after the create succeeds.
 type failAfterNMutator struct {
 	stubMutator
 	failOn           int  // 1-based index among AddNode/AddNodeAt calls

@@ -43,8 +43,6 @@ func TestTreeWriter_ObservesNothingWhenTheProjectionSucceeds(t *testing.T) {
 	assert.Nil(t, res.Observed)
 }
 
-// The placement's row and version commit before its engine call, so an engine
-// failure leaves the store current.
 func TestTreeWriter_ObservesTheStoreCurrentAfterAnEngineFailure(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)

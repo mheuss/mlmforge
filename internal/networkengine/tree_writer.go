@@ -57,10 +57,10 @@ type WriteResult struct {
 	Stream        string
 	EventID       string
 	Version       int64
-	CaughtUp      *CaughtUpEvent // the stream's last event, redelivered and handled without error
-	ProjectionErr error          // any failure after the append was confirmed
-	Observed      *ProjectionObservation
-	ReleaseErr    error // the unlock failed
+	CaughtUp      *CaughtUpEvent         // the stream's last event, redelivered and handled without error
+	ProjectionErr error                  // any failure after the append was confirmed
+	Observed      *ProjectionObservation // the projected version, re-read after a projection error
+	ReleaseErr    error                  // the unlock failed
 }
 
 // ProjectionObservation is the tree's projected version, read after a

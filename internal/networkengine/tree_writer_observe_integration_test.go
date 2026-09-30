@@ -18,8 +18,6 @@ func (failingAddEngine) AddNode(context.Context, string, string, string, string,
 	return errors.New("failingAddEngine: add_node refused")
 }
 
-// A placement's row and version commit before its engine call. An engine that
-// then fails leaves a store that is current, and the write has to say so.
 func TestTreeWriter_ObservesTheStoreCurrentWhenTheEngineFailsAfterTheInsert(t *testing.T) {
 	it := newWriterIntegration(t)
 	ctx := context.Background()
@@ -34,5 +32,5 @@ func TestTreeWriter_ObservesTheStoreCurrentWhenTheEngineFailsAfterTheInsert(t *t
 	assert.Equal(t, &ProjectionObservation{Version: 2, Found: true}, res.Observed)
 	row, err := it.store.GetNode(ctx, tree, child)
 	require.NoError(t, err)
-	assert.NotNil(t, row, "the placement's row did not commit before the engine call")
+	assert.NotNil(t, row, "GetNode for the placed user returned no row after the engine refused add_node")
 }

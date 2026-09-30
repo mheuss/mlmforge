@@ -19,6 +19,9 @@ func TestOpenTreeDeps_ARefusedConnStringHoldsNoPassword(t *testing.T) {
 			want := "open database pool: " + testutil.RefusalText(t, "pgx", tc.PgxStage)
 
 			deps, err := openTreeDeps(t.Context(), tc.ConnString, testWorker(t))
+			if deps != nil {
+				t.Cleanup(func() { _ = deps.release() })
+			}
 
 			require.Nil(t, deps)
 			require.Error(t, err)

@@ -50,7 +50,7 @@ func TestMigrateCommands_ARefusedConnStringPrintsNoPassword(t *testing.T) {
 			})
 		}
 	}
-	require.Equal(t, 28, selected, "migrate cases selected")
+	require.Equal(t, 36, selected, "migrate cases selected")
 }
 
 func TestTreeCommands_ARefusedConnStringPrintsNoPassword(t *testing.T) {

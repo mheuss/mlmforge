@@ -20,6 +20,7 @@ func TestConnStringError_NamesTheDriverAndTheStage(t *testing.T) {
 		{&ConnStringError{driver: driverPgx, stage: stageParse}, "pgx", "parse"},
 		{&ConnStringError{driver: driverPgx, stage: stageRefused}, "pgx", "refused"},
 		{&ConnStringError{driver: driverMigrate, stage: stageScheme}, "golang-migrate", "scheme"},
+		{&ConnStringError{driver: driverMigrate, stage: stageRefused}, "golang-migrate", "refused"},
 	} {
 		t.Run(tc.driver+"/"+tc.stage, func(t *testing.T) {
 			require.Equal(t, testutil.RefusalText(t, tc.driver, tc.stage), tc.err.Error())
@@ -36,6 +37,11 @@ func TestConnStringError_EndsTheChain(t *testing.T) {
 func TestPgxConnStringError_ReplacesEachRefusal(t *testing.T) {
 	for _, tc := range testutil.ConnStringCases() {
 		if tc.PgxStage == "" {
+			t.Run(tc.Name, func(t *testing.T) {
+				testutil.IsolatePgxEnv(t)
+				_, err := pgxpool.ParseConfig(tc.ConnString)
+				require.NoError(t, err, "a case with no pgx stage expects pgx to accept it")
+			})
 			continue
 		}
 		t.Run(tc.Name, func(t *testing.T) {
@@ -100,5 +106,25 @@ func TestMigrateSchemeError_RefusesAnythingButAPostgresURL(t *testing.T) {
 	}
 	for _, accepted := range []string{"postgres://h/app", "postgresql://h/app"} {
 		require.NoError(t, migrateSchemeError(accepted), accepted)
+	}
+}
+
+func TestMigrateDriverParseError_RefusesWhatLibPQCannotParse(t *testing.T) {
+	for _, tc := range testutil.ConnStringCases() {
+		if tc.MigrateStage != "refused" {
+			continue
+		}
+		t.Run(tc.Name, func(t *testing.T) {
+			var cse *ConnStringError
+			require.ErrorAs(t, migrateDriverParseError(tc.ConnString), &cse)
+			require.Equal(t, "refused", cse.Stage())
+		})
+	}
+	for _, accepted := range []string{
+		"postgres://app@127.0.0.1:1/app?sslmode=disable",
+		"postgres://app@127.0.0.1:1/app?password=x&sslmode=bogus",
+		"postgres://app:Zm9vQmFy/cXV4eHl6@127.0.0.1:1/app",
+	} {
+		require.NoError(t, migrateDriverParseError(accepted), accepted)
 	}
 }

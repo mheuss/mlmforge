@@ -48,3 +48,20 @@ func TestMigrateVersion_APostgresURLReachesTheDriver(t *testing.T) {
 		})
 	}
 }
+
+func TestMigrateVersion_AStringMigrateAcceptsReachesTheDialWithNoPassword(t *testing.T) {
+	for _, tc := range testutil.ConnStringCases() {
+		if tc.MigrateStage != "" {
+			continue
+		}
+		t.Run(tc.Name, func(t *testing.T) {
+			testutil.ClearTimeoutEnv(t)
+
+			_, err := MigrateVersion(tc.ConnString, FindMigrationsDir(t))
+
+			require.Error(t, err)
+			testutil.RequireNoPasswordWindow(t, fmt.Sprintf("%v\n%+v", err, err), tc.Password, tc.WithoutPassword())
+			require.ErrorContains(t, err, "dial tcp 127.0.0.1:1")
+		})
+	}
+}

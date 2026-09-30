@@ -6,7 +6,9 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/golang-migrate/migrate/v4"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/lib/pq"
 )
 
 type connDriver string
@@ -83,4 +85,16 @@ func migrateSchemeError(dbURL string) error {
 		return nil
 	}
 	return &ConnStringError{driver: driverMigrate, stage: stageScheme}
+}
+
+// migrateDriverParseError returns a ConnStringError when lib/pq refuses the filtered connection string, and nil otherwise.
+func migrateDriverParseError(dbURL string) error {
+	purl, err := url.Parse(dbURL)
+	if err != nil {
+		return nil
+	}
+	if _, err := pq.NewConnector(migrate.FilterCustomQuery(purl).String()); err != nil {
+		return &ConnStringError{driver: driverMigrate, stage: stageRefused}
+	}
+	return nil
 }

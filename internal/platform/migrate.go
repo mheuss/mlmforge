@@ -148,6 +148,9 @@ func openMigration(dbURL, migrationsPath string) (*migration, error) {
 		if schemeErr := migrateSchemeError(dbURL); schemeErr != nil {
 			return schemeErr
 		}
+		if parseErr := migrateDriverParseError(dbURL); parseErr != nil {
+			return parseErr
+		}
 		var openErr error
 		db, openErr = database.Open(dbURL)
 		return migrateConnStringError(openErr)

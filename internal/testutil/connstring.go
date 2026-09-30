@@ -52,14 +52,19 @@ func ConnStringCases() []ConnStringCase {
 			Password: "op3cretpwXYZ", PgxStage: "refused", MigrateStage: "scheme"},
 		{Name: "uppercase-scheme", ConnString: "POSTGRES://app:up3cretpwXYZ@127.0.0.1:1/app",
 			Password: "up3cretpwXYZ", PgxStage: "refused", MigrateStage: "scheme"},
+		{Name: "pq-quoted-key", ConnString: "postgres://app:pq3cretpwXYZ@127.0.0.1:1/app?p%3D%27a=z%3D",
+			Password: "pq3cretpwXYZ", MigrateStage: "refused"},
+		{Name: "pq-spaced-key", ConnString: "postgres://app:Zm9vQmFy@cXV4?d2l0aHh5bXdk ZXZl=YWJjZA@127.0.0.1:1/app",
+			Password: "Zm9vQmFy@cXV4?d2l0aHh5bXdk ZXZl=YWJjZA", MigrateStage: "refused"},
 	}
 }
 
 var refusalTexts = map[string]string{
-	"golang-migrate/parse":  "golang-migrate could not parse the connection string. The connection string and golang-migrate's message are withheld because they can contain a password.",
-	"golang-migrate/scheme": "mlmforge migrate accepts only a connection string that starts with postgres:// or postgresql://. The connection string is withheld because it can contain a password.",
-	"pgx/parse":             "pgx could not parse the connection string. The connection string and pgx's message are withheld because they can contain a password.",
-	"pgx/refused":           "pgx refused the connection string. The connection string and pgx's message are withheld because they can contain a password.",
+	"golang-migrate/parse":   "golang-migrate could not parse the connection string. The connection string and golang-migrate's message are withheld because they can contain a password.",
+	"golang-migrate/refused": "golang-migrate refused the connection string. The connection string and golang-migrate's message are withheld because they can contain a password.",
+	"golang-migrate/scheme":  "mlmforge migrate accepts only a connection string that starts with postgres:// or postgresql://. The connection string is withheld because it can contain a password.",
+	"pgx/parse":              "pgx could not parse the connection string. The connection string and pgx's message are withheld because they can contain a password.",
+	"pgx/refused":            "pgx refused the connection string. The connection string and pgx's message are withheld because they can contain a password.",
 }
 
 // RefusalText returns the text a refused connection string is expected to print for driver and stage.
@@ -103,6 +108,9 @@ func RequireNoPasswordWindow(t *testing.T, text, password string, known ...strin
 // RequireNoDriverParseError fails the test when err's chain holds a *url.Error or a *pgconn.ParseConfigError.
 func RequireNoDriverParseError(t *testing.T, err error) {
 	t.Helper()
+	if err == nil {
+		t.Fatalf("expected an error; got nil")
+	}
 	var ue *url.Error
 	if errors.As(err, &ue) {
 		t.Fatalf("the error chain holds a *url.Error")

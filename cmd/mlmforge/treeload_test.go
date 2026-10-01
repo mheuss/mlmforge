@@ -304,9 +304,10 @@ func TestRunTreeLoad_NamesACancellationOnAFailedCreate(t *testing.T) {
 
 func TestRunTreeLoad_NamesADeadlineOnAnIncompleteLoad(t *testing.T) {
 	incomplete := &networkengine.TreeLoadIncompleteError{
-		Stage: networkengine.TreeLoadStageNodes,
-		Total: 4,
-		Err:   context.DeadlineExceeded,
+		Stage:     networkengine.TreeLoadStageNodes,
+		Attempted: 1,
+		Total:     4,
+		Err:       context.DeadlineExceeded,
 	}
 	loader := &stubLoader{err: incomplete}
 	var out bytes.Buffer

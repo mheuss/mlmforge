@@ -42,8 +42,8 @@ A raw `@` alone in a password does not split the string. A raw `/`, `?` or `#` i
   Read in source, not pinned. `pgxStage` re-parses the rejected string instead, and the `parse` rows of `TestPgxConnStringError_ReplacesEachRefusal` pin that.
 - It accepts `password=… host=::1 dbname=app` and the two lib/pq query-key strings.
   Pinned by the no-pgx-stage rows of `TestPgxConnStringError_ReplacesEachRefusal`.
-- It reads a string whose scheme is not lowercase `postgres://` or `postgresql://` as keyword/value text. With an `=` in it, the text before the `=` becomes a runtime parameter name sent to the server.
-  Pinned by `TestDriverReadings_PgxReadsAMisCasedSchemeAsKeywordValueText`.
+- It reads a string whose scheme is not lowercase `postgres://` or `postgresql://` as keyword/value text. With an `=` in it, the text before the `=` becomes a runtime parameter name.
+  Pinned by `TestDriverReadings_PgxReadsAMisCasedSchemeAsKeywordValueText`, which checks the parsed runtime parameters. That pgx then sends the name to the server was observed against Postgres 16 on 2026-10-01, when the server echoed it in `unrecognized configuration parameter`. Not pinned.
 
 ## golang-migrate v4.19.1
 

@@ -33,6 +33,7 @@ Use-cases for the Network Engine bounded context.
 - [UC-NET-027: Serialising writes to one tree across processes](#uc-net-027-serialising-writes-to-one-tree-across-processes)
 - [UC-NET-028: Resolving an append whose reply was lost](#uc-net-028-resolving-an-append-whose-reply-was-lost)
 - [UC-NET-029: Refusing a projection that arrives out of order](#uc-net-029-refusing-a-projection-that-arrives-out-of-order)
+- [UC-NET-030: Loading a tree whose store may be one event behind its stream](#uc-net-030-loading-a-tree-whose-store-may-be-one-event-behind-its-stream)
 
 ---
 
@@ -1127,3 +1128,32 @@ if errors.As(err, &refused) {
 ```
 
 **Notes:** An event at the projected version runs the existing redelivery logic, which writes nothing for an event the store already holds. The Postgres writes run at Read Committed and create the projection row at 0 before locking it. Two first projections then queue. `InsertNode`, `DeleteNode`, `DeleteNodeAndResponsor` and `BulkInsert` record no version. A guard test keeps them out of non-test code outside the stores (HEU-864).
+
+---
+
+### UC-NET-030: Loading a tree whose store may be one event behind its stream
+
+**Added:** Unreleased (HEU-777)
+**Files:** `internal/networkengine/tree_writer.go`, `cmd/mlmforge/treeload.go`
+
+**Problem:** A write can append its event and then fail to update the store, so a load that reads only the store builds a tree one event short of its stream.
+
+**Solution:** `TreeWriter.Load` takes the tree's lock and runs the same fence a write runs. When the stream's last event is one past the projected version, it redelivers that event and reads the projected version again. It refuses a stream two or more past the store, behind it, or past version 1 with no projection row.
+
+**Usage:**
+```go
+w := networkengine.NewTreeWriter(events, store, engine, networkengine.NewPostgresTreeLocker(dbURL))
+res, err := w.Load(ctx, networkengine.LoadRequest{TreeID: tree, TreeType: "unilevel"})
+if res.CaughtUp != nil {
+    // Report the redelivery, even when err is set.
+}
+if res.ReleaseErr != nil {
+    // Report it, on the error path too.
+}
+if err != nil {
+    return err
+}
+// res.Nodes counts the tree the load left.
+```
+
+**Notes:** `MatrixWidth` and `MatrixSpillover` left nil take the shape recorded at version 1. A conflicting value is refused with add-root's rule. Build a new writer over a new worker for each load, as UC-NET-027 says for writes. Retry only what `treeLoadRetryable` allows (UC-NET-026).

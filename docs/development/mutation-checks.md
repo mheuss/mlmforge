@@ -67,7 +67,8 @@ catches both.
 Rename a function and forget the test, and `-run TestTheNewName` selects
 nothing. No tests run, no failures print, every mutation reads as surviving.
 
-Count what ran, in the same function, and refuse a result without it:
+Capture verbose `go test` output in `$out`. Count what ran in the same function
+and refuse a result without it:
 
 ```bash
 ran=$(echo "$out" | grep -cE '^=== RUN')

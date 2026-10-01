@@ -903,7 +903,7 @@ Each write holds a per-tree Postgres advisory lock from before the load until pr
 
 ### The engine is scratch
 
-Each invocation starts a worker. It rebuilds the tree in the worker from the store, under the lock. It discards the worker on exit. The engine's jobs in a write are to check the mutation and to compute a removal's moved recruits. What HEU-789 and HEU-813 record as unreachable under the writer holds only while the engine is scratch. So does HEU-777's repair, which redelivers a removal to an engine rebuilt from the store. A service that keeps an engine in memory reopens all three.
+Each invocation starts a worker. It rebuilds the tree in the worker from the store, under the lock. It discards the worker on exit. The engine's jobs in a write are to check the mutation and to compute a removal's moved recruits. What HEU-789 and HEU-813 record as unreachable under the writer holds only while the engine is scratch. So does HEU-777's repair, which redelivers a removal to an engine rebuilt from the store. A service that keeps an engine in memory reopens HEU-789, HEU-813 and that repair.
 
 ### The projected version
 

@@ -103,6 +103,21 @@ func TestDriverReadings_AnAlphabeticPortBeforeAQueryFailsToParse(t *testing.T) {
 	require.ErrorContains(t, urlErr, `invalid port ":abcd" after host`)
 }
 
+func TestDriverReadings_AnOutOfRangePortIsRefusedByPgxAndSplitByLibPQ(t *testing.T) {
+	testutil.ClearLibPQEnv(t)
+	clearPgxDefaults(t)
+	connString := "postgres://app:123456/s3cretPW@127.0.0.1:1/app"
+
+	_, pgxErr := pgconn.ParseConfig(connString)
+	require.ErrorContains(t, pgxErr, `invalid port (strconv.ParseUint: parsing "123456": value out of range)`)
+
+	u, err := url.Parse(connString)
+	require.NoError(t, err)
+	got, err := pq.ParseURL(migrate.FilterCustomQuery(u).String())
+	require.NoError(t, err)
+	require.Equal(t, "dbname='s3cretPW@127.0.0.1:1/app' host='app' port='123456'", got)
+}
+
 func TestDriverReadings_PgxReadsAMisCasedSchemeAsKeywordValueText(t *testing.T) {
 	testutil.ClearLibPQEnv(t)
 	clearPgxDefaults(t)

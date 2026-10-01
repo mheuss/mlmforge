@@ -15,7 +15,7 @@ Use-cases for the Platform bounded context.
 
 **Problem:** A driver that refuses a connection string often quotes it, or part of it, in its error. The password goes with it, to the terminal, to job logs, and to anything that walks the error chain.
 
-**Solution:** Replace the driver's error at the call site with `ConnStringError`. It names the driver and a stage and holds nothing from the string. It has no `Unwrap`, so the raw string in the driver's error cannot be reached through the chain. pgx refusals go through `PgxConnStringError`. The migrate path runs its checks inside `openMigration`.
+**Solution:** Replace the driver's error at the call site with `ConnStringError`. It names the driver, the stage and, for stage `raw-at`, the part. It holds nothing from the string. It has no `Unwrap`, so the raw string in the driver's error cannot be reached through the chain. pgx refusals go through `PgxConnStringError`. The migrate path runs its checks inside `openMigration`.
 
 **Usage:**
 ```go
@@ -28,7 +28,7 @@ if err != nil {
 // A caller deciding what to log or tag
 var cse *platform.ConnStringError
 if errors.As(err, &cse) {
-    // cse.Driver() and cse.Stage() are safe to log or tag. err.Error() holds no part of the string.
+    // cse.Driver(), cse.Stage() and cse.Part() are safe to log or tag. err.Error() holds no part of the string.
 }
 ```
 
@@ -46,4 +46,4 @@ for _, tc := range testutil.ConnStringCases() {
 }
 ```
 
-**Notes:** Run the password-window and chain checks before the full-text check, so a mutation shows each one failing on its own. What each driver does with a refused string, and which test pins it, is in `docs/development/connection-strings.md`. Before either command opens a driver, `resolveDBURL` runs `PreDriverError`. It refuses a `postgres://` or `postgresql://` scheme that is not all lowercase, and a raw `@` after the host part, which is where a raw `/`, `?` or `#` in a password puts the userinfo's closing `@`. A raw `&` in a `?password=` value still splits it into a new key that can reach a server error. That is HEU-877.
+**Notes:** Run the password-window and chain checks before the full-text check, so a mutation shows each one failing on its own. What each driver does with a refused string, and which test pins it, is in `docs/development/connection-strings.md`. Before `mlmforge migrate` or `mlmforge tree` opens a driver, `resolveDBURL` runs `PreDriverError`. A call site that does not go through `resolveDBURL` is not covered. `PreDriverError` refuses a `postgres://` or `postgresql://` scheme that is not all lowercase, and a raw `@` after the host part, which is where a raw `/`, `?` or `#` in a password puts the userinfo's closing `@`. A raw `&` in a `?password=` value still splits it into a new key that can reach a server error. That is HEU-877.

@@ -8,9 +8,9 @@ Every fact below names the library version it was read at, and the test that pin
 
 ## What `mlmforge` does about it
 
-`internal/platform` defines `ConnStringError`. It names the driver and a stage, and for stage `raw-at` a part. It holds nothing from the string and has no `Unwrap`. Every refused string at the three call sites comes back as one.
+`internal/platform` defines `ConnStringError`. It names the driver and a stage. For stage `raw-at` it also names a part. It holds nothing from the string and has no `Unwrap`. Every refused string at the three call sites comes back as one.
 
-Before either command opens a driver, `resolveDBURL` runs `PreDriverError` on the raw string. It refuses two shapes with driver `mlmforge`, and the protection stops at that CLI entry. Callers of the lower layers are not covered.
+Before either command opens a driver, `resolveDBURL` runs `PreDriverError` on the raw string. It refuses two shapes with driver `mlmforge`. The protection stops at that CLI entry. Callers of the lower layers are not covered.
 
 - Stage `scheme-case`: the string starts with `postgres://` or `postgresql://` only when case is ignored. pgx reads such a string as keyword/value text.
 - Stage `raw-at`, with a part: a lowercase `postgres://` or `postgresql://` string has a raw `@` in its path, query or fragment. A literal `@` there has to be written `%40`.
@@ -23,11 +23,11 @@ Then each call site does its own mapping.
   2. lib/pq's own parse runs on the string golang-migrate would hand it. A refusal becomes stage `refused`. If lib/pq also refuses a neutral probe string, the environment is at fault, and lib/pq's own error is returned instead.
   3. A `*url.Error` from `database.Open` becomes stage `parse`.
 
-A raw `@` alone in a password does not split the string. A raw `/`, `?` or `#` in a password does, and it puts the userinfo's closing `@` after the host part. The `raw-at` stage refuses that shape (HEU-875).
+A raw `@` alone in a password does not split the string. A raw `/`, `?` or `#` in a password does. It puts the userinfo's closing `@` after the host part. The `raw-at` stage refuses that shape (HEU-875).
 
 ## net/url, Go 1.27
 
-- It cuts at the first `#`, then at the first `?`, and ends the host part at the first `/`. Inside the host part it splits the userinfo at the last `@`, and it accepts a raw `@` there.
+- It cuts at the first `#`, then at the first `?`. It ends the host part at the first `/`. Inside the host part it splits the userinfo at the last `@`. It accepts a raw `@` there.
   Pinned by `TestDriverReadings_SplitWhereRecorded`, which reads the split through pgx and lib/pq.
 
 ## pgx v5.9.2
@@ -43,7 +43,7 @@ A raw `@` alone in a password does not split the string. A raw `/`, `?` or `#` i
 - It accepts `password=… host=::1 dbname=app` and the two lib/pq query-key strings.
   Pinned by the no-pgx-stage rows of `TestPgxConnStringError_ReplacesEachRefusal`.
 - It reads a string whose scheme is not lowercase `postgres://` or `postgresql://` as keyword/value text. With an `=` in it, the text before the `=` becomes a runtime parameter name.
-  Pinned by `TestDriverReadings_PgxReadsAMisCasedSchemeAsKeywordValueText`, which checks the parsed runtime parameters. That pgx then sends the name to the server was observed against Postgres 16 on 2026-10-01, when the server echoed it in `unrecognized configuration parameter`. Not pinned.
+  Pinned by `TestDriverReadings_PgxReadsAMisCasedSchemeAsKeywordValueText`, which checks the parsed runtime parameters. Observed against Postgres 16 on 2026-10-01: pgx sent the name to the server. The server echoed it in `unrecognized configuration parameter`. That part is not pinned.
 
 ## golang-migrate v4.19.1
 

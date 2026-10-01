@@ -36,7 +36,7 @@ func TestResolveRefusedTwins_ReachTheDriverParsers(t *testing.T) {
 				return
 			}
 			_, rowErr := pgconn.ParseConfig(tc.ConnString)
-			require.Error(t, twinErr, "pgx accepted the twin; re-check the proof bar for this row")
+			require.Error(t, twinErr, "expected pgx to refuse the twin; it parsed without error")
 			require.Error(t, rowErr)
 			require.Equal(t, pgxReason(t, rowErr), pgxReason(t, twinErr))
 			require.Contains(t, pgxReason(t, twinErr), "invalid port")

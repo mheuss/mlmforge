@@ -121,6 +121,6 @@ func requirePgxDialsNoName(t *testing.T, tc ResolveRefusedCase) {
 		hosts = append(hosts, fallback.Host)
 	}
 	for _, host := range hosts {
-		require.True(t, strings.HasPrefix(host, "/"), "%s: pgx would dial %q, which is not a socket path", tc.Name, host)
+		require.True(t, strings.HasPrefix(host, "/"), "%s: pgx parsed the wiring string with host %q, which is not a socket path", tc.Name, host)
 	}
 }

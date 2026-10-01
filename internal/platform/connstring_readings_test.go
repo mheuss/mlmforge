@@ -100,7 +100,7 @@ func TestDriverReadings_AnAlphabeticPortBeforeAQueryFailsToParse(t *testing.T) {
 	connString := "postgres://app:abcd?s3cretPW@127.0.0.1:1/app"
 
 	_, pgxErr := pgconn.ParseConfig(connString)
-	_, urlErr := url.Parse(connString)
+	_, urlErr := url.Parse(connString) //nolint:staticcheck // SA1007: the test pins that url.Parse rejects this string
 
 	require.ErrorContains(t, pgxErr, `invalid port ":abcd" after host`)
 	require.ErrorContains(t, urlErr, `invalid port ":abcd" after host`)

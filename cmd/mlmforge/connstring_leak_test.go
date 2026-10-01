@@ -43,6 +43,9 @@ func TestMigrateCommands_ARefusedConnStringPrintsNoPassword(t *testing.T) {
 				testutil.ClearTimeoutEnv(t)
 				testutil.ClearLibPQEnv(t)
 				want := "open database: " + testutil.RefusalText(t, "golang-migrate", tc.MigrateStage)
+				if tc.ResolveStage != "" {
+					want = testutil.PreDriverText(t, tc.ResolveStage, tc.ResolvePart)
+				}
 
 				stdout, stderr, err := executeRootCaptured("migrate", sub,
 					"--db-url", tc.ConnString, "--migrations", platform.FindMigrationsDir(t))
@@ -74,6 +77,9 @@ func TestTreeCommands_ARefusedConnStringPrintsNoPassword(t *testing.T) {
 			t.Run(command.name+"/"+tc.Name, func(t *testing.T) {
 				testutil.IsolatePgxEnv(t)
 				want := "open database pool: " + testutil.RefusalText(t, "pgx", tc.PgxStage)
+				if tc.ResolveStage != "" {
+					want = testutil.PreDriverText(t, tc.ResolveStage, tc.ResolvePart)
+				}
 				args := append([]string{"tree", command.name, "--db-url", tc.ConnString, "--worker", testWorker(t)}, command.flags...)
 
 				stdout, stderr, err := executeRootCaptured(args...)

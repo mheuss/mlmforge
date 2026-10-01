@@ -73,6 +73,9 @@ func resolveDBURL(flagValue string) (dbTarget, error) {
 	if raw == "" {
 		return dbTarget{}, errors.New("--db-url flag or DATABASE_URL env var is required")
 	}
+	if err := platform.PreDriverError(raw); err != nil {
+		return dbTarget{}, err
+	}
 	return withConnectTimeout(raw), nil
 }
 

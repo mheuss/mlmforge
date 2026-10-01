@@ -61,8 +61,7 @@ func TestTreeLoadCmd_PassesItsFlagsToTheLoader(t *testing.T) {
 	}, rec.req)
 }
 
-// A matrix flag left off the command line must reach the writer as absent,
-// or a matrix tree could only be loaded by restating its shape.
+// A matrix flag left off the command line must reach the writer as absent.
 func TestTreeLoadCmd_LeavesMatrixParametersUnsetWhenAbsent(t *testing.T) {
 	rec := &recordingLoader{}
 	cmd := newTreeCmdWith(

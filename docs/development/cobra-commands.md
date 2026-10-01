@@ -66,4 +66,4 @@ It does not say whether everything downstream of the operation succeeded.
 2. A run can succeed and still fail to release the worker and pool. That run exits 0. The release failure goes to stderr. A write command whose tree lock release failed does the same.
 3. A write command (`tree add-root`, `tree place`, `tree remove`) can confirm its append and still fail to project. The command then reads the tree's projected version. At or past the appended version it exits 0. Otherwise it exits 3 (HEU-777). The projection failure goes to stderr either way.
 
-The same rule gives 1 when a write command cannot confirm its append. The operation is not known to have been performed. That applies the rule. It is not an exception to it. Exit 3 refines the rule rather than breaking it: the operation was performed, and the store was not observed current.
+The same rule gives 1 when a write command cannot confirm its append. The operation is not known to have been performed. That applies the rule. It is not an exception to it. Exit 3 refines the rule rather than breaking it. The operation was performed. The store was not observed current.

@@ -253,8 +253,6 @@ func TestTreePlaceCmd_ReportsAProjectionFailureByWhatItObserved(t *testing.T) {
 	}
 }
 
-// The appended root is at version 1 and the tree was observed with no
-// projection row.
 func TestTreeAddRootCmd_PromisesARedeliveryWhenTheRootLeftNoProjectionRow(t *testing.T) {
 	w := &recordingWriter{result: networkengine.WriteResult{
 		Stream: "tree-t", EventID: "e1", Version: 1,

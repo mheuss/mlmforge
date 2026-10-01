@@ -193,7 +193,6 @@ func TestTreeWriter_LoadReportsARedeliveryThatFailed(t *testing.T) {
 	assert.Zero(t, res.Nodes)
 }
 
-// The removed user has no row in the store.
 func TestTreeWriter_LoadReportsARedeliveryThatLeftTheVersionBehind(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
@@ -212,7 +211,6 @@ func TestTreeWriter_LoadReportsARedeliveryThatLeftTheVersionBehind(t *testing.T)
 	}, res)
 }
 
-// The store holds the root row and no projection row.
 func TestTreeWriter_LoadReportsATreeThatStillHasNoProjectionRow(t *testing.T) {
 	env := newWriterEnv()
 	root := appendDirect(t, env.events, EventTypeRootAdded, rootAddedPayload())

@@ -190,9 +190,11 @@ func TestRawAtError_NamesThePartThatHoldsTheAt(t *testing.T) {
 		{"postgres://h/app?password=p@ss", "query"},
 		{"postgres://h/db?x=a/b@c", "query"},
 		{"postgres://h/app?x=a@b#c@d", "query"},
+		{"postgres://app:pa?ss@127.0.0.1:1/app", "query"},
 		{"postgres://h?x=1#a@b", "fragment"},
 		{"postgres://h/d#x?y@z", "fragment"},
 		{"postgres://h?x=1#a/b@c", "fragment"},
+		{"postgres://app:pa#ss@127.0.0.1:1/app", "fragment"},
 	} {
 		t.Run(tc.connString, func(t *testing.T) {
 			var cse *ConnStringError
@@ -251,7 +253,7 @@ func TestSchemeCaseError_AcceptsEverythingElse(t *testing.T) {
 	}
 }
 
-func TestPreDriverError_RunsTheSchemeCheckThenTheAtCheck(t *testing.T) {
+func TestPreDriverError_RefusesWhatEitherCheckRefuses(t *testing.T) {
 	for _, tc := range []struct {
 		connString string
 		stage      string

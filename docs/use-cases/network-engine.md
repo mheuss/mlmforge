@@ -1036,7 +1036,7 @@ if alreadyProjected {
 
 **Problem:** A caller that retries a `LoadTree` failure has to tell an infrastructure blip apart from a failure that will fail the same way forever. The error kind alone does not carry enough to decide.
 
-**Solution:** `treeLoadRetryable` allowlists rather than denylists. A cause nobody enumerated defaults to stopping. It retries one case: a `TreeLoadRejectedError` whose `Kind` is `TreeLoadStoreReadFailed` and whose wrapped error `pgconn.SafeToRetry` reports never reached the server. Everything else stops. Cancellation is checked first and separately. `TreeLoadStoreReadFailed` covers a refused connection, a cancelled context and a row that will not decode. Only the first of those can succeed on a second attempt. A `TreeLoadIncompleteError` is never retried at all. The structure already exists in the engine, so a retry reports `TREE_EXISTS`. The only real remedy is a process restart.
+**Solution:** `treeLoadRetryable` allowlists rather than denylists. A cause nobody enumerated defaults to stopping. It retries one case: a `TreeLoadRejectedError` whose `Kind` is `TreeLoadStoreReadFailed` and whose wrapped error `pgconn.SafeToRetry` reports never reached the server. Everything else stops. Cancellation is checked first and separately. `TreeLoadStoreReadFailed` covers a refused connection, a cancelled context and a row that will not decode. Only the first of those can succeed on a second attempt. A `TreeLoadIncompleteError` is never retried at all. The structure already exists in the engine, so a retry reports `TREE_EXISTS`. The only real remedy is a process restart. `tree load` now goes through `TreeWriter.Load`, whose reads of version 1 and of the projected version fail as `TreeLoadStoreReadFailed` too, since both come before any engine call.
 
 **Usage:**
 ```go
@@ -1076,8 +1076,9 @@ if err != nil {
     return err // nothing is known to have been appended
 }
 if res.ProjectionErr != nil {
-    // The event is durable. The next write to this tree redelivers it,
-    // unless this is a ProjectionRefusedError.
+    // The event is durable. res.Observed says whether the store was seen
+    // current. When it is exactly one behind, the next write or tree load
+    // redelivers the event.
 }
 ```
 

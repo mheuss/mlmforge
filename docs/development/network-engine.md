@@ -858,7 +858,7 @@ Four limits remain:
 
 - The consumer trusts the `tree_type` label. No registry exists to verify it against. `TreeWriter` does not take the label from its caller. It copies it from the stream's version-1 event.
 - The gate rejects matrix positions above the u8 ceiling (255), which no width can accept. The real bound is the tree's width, which the placement payload does not carry. Under `TreeWriter`, `check_mutation` refuses such a position before the append. An event appended without the writer is stored, refused loudly by the engine, and then makes the next reload preflight reject the whole tree. HEU-554 decides the direction for both gaps. The fix ships under it.
-- Redelivery is bounded (HEU-576). The scope is the event in flight. `TreeWriter` provides it by calling `HandleEvent` synchronously, in process, under the tree's lock. A redelivered placement whose projection is still current completes, however old it is. It stops being current once its node was removed, or once a later event re-placed the user, and is then refused rather than reapplied. It is also refused when its parent's row was since removed, because the parent lookup runs before the guard (HEU-813). A redelivered removal that the engine refuses converges when its own tombstone is in the store (HEU-811). That holds even when a later placement of the user never reached the engine. One whose store write never landed fails typed (HEU-777). One arriving after a later placement landed in full is below the tree's projected version. The store refuses it (HEU-857). The engine may still have applied it. HEU-789 tracks that for when a caller redelivers old events. `TreeWriter` does not reach that case. Catch-up redelivers only the stream's last event. A removal followed by a later placement is no longer the last event. When a redelivery reaches its store write, the store refuses it if it is below the tree's projected version (HEU-857). The parent lookup and a removal's engine call run before that write.
+- Redelivery is bounded (HEU-576). The scope is the event in flight. `TreeWriter` provides it by calling `HandleEvent` synchronously, in process, under the tree's lock. A redelivered placement whose projection is still current completes, however old it is. It stops being current once its node was removed, or once a later event re-placed the user, and is then refused rather than reapplied. It is also refused when its parent's row was since removed, because the parent lookup runs before the guard (HEU-813). A redelivered removal that the engine refuses converges when its own tombstone is in the store (HEU-811). That holds even when a later placement of the user never reached the engine. One whose store write never landed fails typed, and the next write or `tree load` redelivers it to an engine rebuilt from the store. One arriving after a later placement landed in full is below the tree's projected version. The store refuses it (HEU-857). The engine may still have applied it. HEU-789 tracks that for when a caller redelivers old events. `TreeWriter` does not reach that case. Catch-up redelivers only the stream's last event. A removal followed by a later placement is no longer the last event. When a redelivery reaches its store write, the store refuses it if it is below the tree's projected version (HEU-857). The parent lookup and a removal's engine call run before that write.
 - The agreement claim covers placement only. No tree event path calls `RemoveMatrixNode`. A matrix removal cannot project (HEU-582). `TreeWriter.Remove` refuses a removal from a matrix tree before it appends anything. A matrix `node_removed` appended without the writer reaches `handleNodeRemoved`. That handler calls `RemoveNode` with no pruning mode. The worker refuses it with `MISSING_PARAM`. The handler retries, writes nothing to the store, and returns the error.
 
 Matrix startup reload is no longer blocked by the placement divergence HEU-553 fixed.
@@ -883,7 +883,7 @@ The stamp says which event removed a row. It does not order several removals of 
 
 ## Tree Writes Go Through `TreeWriter`
 
-`TreeWriter` appends every tree event (HEU-301). `mlmforge tree add-root`, `tree place` and `tree remove` drive it. Code that appends to a tree stream without it breaks each guarantee below.
+`TreeWriter` appends every tree event (HEU-301). `mlmforge tree add-root`, `tree place` and `tree remove` drive it, and `tree load` drives its `Load`. Code that appends to a tree stream without it breaks each guarantee below.
 
 ### One writer per tree at a time
 
@@ -927,7 +927,7 @@ The store records one version per tree, the stream version its rows reflect, in 
 - No event: treated as not appended. The error states only what the read found. A caller cancelled during COMMIT can see the commit fail while the server finishes it. The read may run before the commit is visible. Such an event shows up as the stream's last event. The next write redelivers it.
 - The read fails: unknown. The CLI exits 1.
 
-A confirmed append is a success even when projection fails. The CLI exits 0 and warns on stderr. The next write to the tree redelivers the event. A projection the store refused as below its version is not redelivered, because a later event is already projected. Its warning leaves out "The next write to this tree retries it."
+A confirmed append is a success even when projection fails. A projection error does not show the store is behind: a placement commits its row and version before its engine call. So the writer reads the tree's projected version on a detached context and reports it as `Observed`. At or past the appended version the CLI exits 0 and states the version. Exactly one below, it exits 3 and says the next write or `tree load` redelivers the event. Further below, with no row, or when the read fails, it exits 3 and states what it saw. A projection the store refused as below its version observes a later version, so it exits 0 and its warning names no redelivery.
 
 What `WriteResult` carries:
 
@@ -935,7 +935,17 @@ What `WriteResult` carries:
 - `EventID` and `Version`, set once the append is confirmed.
 - `CaughtUp`, the redelivered last event.
 - `ProjectionErr`, any failure after the append was confirmed.
+- `Observed`, the projected version read after a projection error, or the read's error.
 - `ReleaseErr`, set on every path after the lock is taken, including when the write returns an error.
+
+### Loading through the writer
+
+`tree load` calls `TreeWriter.Load`. It takes the tree's lock and runs the same fence as a write. When the stream's last version is the projected version plus one, it redelivers that event through `HandleEvent`. When they are equal it redelivers nothing, so a load with nothing behind prints what it printed before HEU-777. After a redelivery it reads the projected version again and reports it when the redelivery did not advance it. The node count is the loader's when nothing was redelivered, and a fresh read when something was.
+
+- Load's `--tree-type` and matrix flags must match version 1, with `add-root`'s rule. Matrix flags left off match.
+- A fence refusal exits 1 and changes no store rows or projected version. The scratch engine may already be loaded, and is discarded.
+- A failed read of version 1 or of the projected version comes before any engine call, so it is a `TreeLoadRejectedError` of kind `store_read_failed` and follows the retry rule. Anything after the engine load is not retried.
+- A tree created before migration 000009 has no projection row, and load refuses it once its stream passes version 1.
 
 ## Worker Shutdown
 

@@ -463,7 +463,7 @@ for _, tree := range trees {
 	case errors.As(err, &incomplete):
 		// The structure may be partly built. Nothing can drop it. Stage and
 		// Confirmed are what an operator reads to size the damage.
-		return fmt.Errorf("restart required, %s stopped at %s with %d of %d placements acknowledged: %w",
+		return fmt.Errorf("restart required, %s stopped at %s with %d of %d non-root placements acknowledged: %w",
 			incomplete.TreeID, incomplete.Stage, incomplete.Confirmed, incomplete.Total, err)
 
 	default:
@@ -1037,7 +1037,7 @@ if alreadyProjected {
 
 **Problem:** A caller that retries a `TreeWriter.Load` failure has to tell an infrastructure blip apart from a failure that will fail the same way forever. The error kind alone does not carry enough to decide.
 
-**Solution:** `treeLoadRetryable` allowlists rather than denylists. A cause nobody enumerated defaults to stopping. It retries one case: a `TreeLoadRejectedError` whose `Kind` is `TreeLoadStoreReadFailed` and whose wrapped error `pgconn.SafeToRetry` reports never reached the server. Everything else stops. Cancellation is checked first and separately. `TreeLoadStoreReadFailed` covers a refused connection, a cancelled context and a row that will not decode. Only the first of those can succeed on a second attempt. A `TreeLoadIncompleteError` is never retried at all. The structure already exists in the engine, so a retry reports `TREE_EXISTS`. The only real remedy is a process restart. `tree load` goes through `TreeWriter.Load`. Its read of version 1 and its first read of the projected version also fail as `TreeLoadStoreReadFailed`. Both come before any engine call.
+**Solution:** `treeLoadRetryable` allowlists rather than denylists. A cause nobody enumerated defaults to stopping. It retries one case: a `TreeLoadRejectedError` whose `Kind` is `TreeLoadStoreReadFailed` and whose wrapped error `pgconn.SafeToRetry` reports never reached the server. Everything else stops. Cancellation is checked first and separately. `TreeLoadStoreReadFailed` covers a refused connection, a cancelled context and a row that will not decode. Only the first of those can succeed on a second attempt. A `TreeLoadIncompleteError` is never retried at all. The structure may exist in the engine, so a retry may report `TREE_EXISTS`. The only real remedy is a process restart. `tree load` goes through `TreeWriter.Load`. Its read of version 1 and its first read of the projected version also fail as `TreeLoadStoreReadFailed`. Both come before any engine call.
 
 **Usage:**
 ```go

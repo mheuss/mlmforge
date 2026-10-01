@@ -10,6 +10,7 @@ import (
 	"github.com/mlmforge/mlmforge/internal/observability"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/attribute"
 	otellog "go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/trace"
@@ -131,9 +132,9 @@ func TestObservabilityEndToEnd(t *testing.T) {
 			"log record should carry the Go span's span id")
 
 		// The engine module path survives the bridge as the target attribute.
-		attrs := make(map[string]otellog.Value)
-		rec.WalkAttributes(func(kv otellog.KeyValue) bool {
-			attrs[kv.Key] = kv.Value
+		attrs := make(map[string]attribute.Value)
+		rec.WalkAttributes(func(kv attribute.KeyValue) bool {
+			attrs[string(kv.Key)] = kv.Value
 			return true
 		})
 		assert.Equal(t, "network_engine::commission::walk", attrs["target"].AsString(),

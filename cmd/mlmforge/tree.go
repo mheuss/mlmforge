@@ -87,11 +87,12 @@ func newTreeLoadCmd(resolve flagResolver, open depsOpener, loader loadWriterFor)
 		Use:   "load",
 		Short: "Replay a stored tree into the engine",
 		Long: "Opens a database pool, starts the engine worker, replays one stored tree, and exits. " +
-			"When the tree's store is one event behind its stream, it first redelivers the stream's last event " +
+			"When the tree's store is one event behind its stream, it replays the store, then redelivers the stream's last event " +
 			"and prints a redelivered line. " +
-			"Exits 1 when the stream is two or more events past the store or behind it, when the tree has no projection row " +
-			"and its stream is past version 1, when a type or matrix flag differs from the stream's first event, " +
-			"or when the redelivery fails. A tree created before migration 000009 has no projection row, " +
+			"Exits 0 when the load finished, including after a redelivery, with any warnings on stderr. " +
+			"Exits 1 on any other failure, including when the stream is two or more events past the store or behind it, " +
+			"when the tree has no projection row and its stream is past version 1, when a type or matrix flag differs " +
+			"from the stream's first event, or when the redelivery fails. A tree created before migration 000009 has no projection row, " +
 			"so it is refused once its stream passes version 1. " +
 			"The worker is started and stopped per invocation.",
 		Args: cobra.NoArgs,

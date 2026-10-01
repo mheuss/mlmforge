@@ -301,7 +301,9 @@ func TestTreeWriteCmds_NameTheirExitCodesInTheirHelp(t *testing.T) {
 		case "load":
 			named = append(named, c.Name())
 			assert.NotContains(t, c.Long, "Exits 3", "load never appends")
-			assert.Contains(t, c.Long, "Exits 1 when", "load help")
+			assert.Contains(t, c.Long, "Exits 0 when the load finished, including after a redelivery, "+
+				"with any warnings on stderr.", "load help")
+			assert.Contains(t, c.Long, "Exits 1 on any other failure, including when", "load help")
 		}
 	}
 	assert.ElementsMatch(t, []string{"add-root", "place", "remove", "load"}, named)

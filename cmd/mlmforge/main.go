@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -42,10 +43,38 @@ func run() int {
 		}
 	}()
 
-	if err := newRootCmd().Execute(); err != nil {
-		return 1
+	return runArgs(newRootCmd(), os.Args[1:])
+}
+
+// runArgs executes the command tree and returns the process exit code.
+func runArgs(root *cobra.Command, args []string) int {
+	root.SetArgs(args)
+	return exitCode(root.Execute())
+}
+
+// exitNotCurrent is the exit code for an appended event whose store was not
+// observed current.
+const exitNotCurrent = 3
+
+// exitCodeError carries an exit code other than 1.
+type exitCodeError struct {
+	code int
+	err  error
+}
+
+func (e *exitCodeError) Error() string { return e.err.Error() }
+func (e *exitCodeError) Unwrap() error { return e.err }
+
+// exitCode maps a command's error to the process exit code.
+func exitCode(err error) int {
+	if err == nil {
+		return 0
 	}
-	return 0
+	var coded *exitCodeError
+	if errors.As(err, &coded) {
+		return coded.code
+	}
+	return 1
 }
 
 // newRootCmd builds the command tree.

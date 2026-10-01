@@ -80,18 +80,18 @@ func readTreeShape(stream string, first platform.Event) (treeShape, error) {
 	return shape, nil
 }
 
-// shapeFromRequest builds the shape an AddRoot request names, for a stream
+// shapeFromRequest builds the shape a request names, for a stream
 // that has no version 1 yet.
-func shapeFromRequest(tree, treeType string, width *int, spillover *string) (treeShape, error) {
+func shapeFromRequest(action, tree, treeType string, width *int, spillover *string) (treeShape, error) {
 	if treeType != treeTypeMatrix && (width != nil || spillover != nil) {
 		return treeShape{}, fmt.Errorf(
-			"add root to tree %s: matrix width and spillover apply only to matrix trees, and the request names %q",
-			tree, treeType)
+			"%s tree %s: matrix width and spillover apply only to matrix trees, and the request names %q",
+			action, tree, treeType)
 	}
 	shape := treeShape{treeType: treeType}
 	if treeType == treeTypeMatrix {
 		if width == nil || spillover == nil {
-			return treeShape{}, fmt.Errorf("add root to tree %s: a matrix tree needs a width and a spillover", tree)
+			return treeShape{}, fmt.Errorf("%s tree %s: a matrix tree needs a width and a spillover", action, tree)
 		}
 		shape.width, shape.spillover = *width, *spillover
 	}

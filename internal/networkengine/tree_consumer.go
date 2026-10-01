@@ -339,8 +339,7 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 			// This handler is engine-first, so that covers a redelivery and
 			// equally a first delivery whose reply was lost on an earlier
 			// attempt: either way RemoveNode's reply carried the only copy of
-			// the moved list and nothing here can rebuild it. HEU-777 owns
-			// the repair.
+			// the moved list and nothing here can rebuild it.
 			return reconcileDiverged, &RemovalNotProjectedError{
 				TreeID:  payload.TreeID,
 				UserID:  payload.UserID,
@@ -362,9 +361,7 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 		return nil
 	}
 
-	// RemoveNode's reply carried the only copy of moved and the engine has
-	// already applied the removal, so giving up here is not a clean abort. It
-	// is the divergence HEU-777 owns, reachable by a shutdown in this window.
+	// The moved list cannot be rebuilt here, so giving up is not a clean abort.
 	writeCtx, cancelWrite := detachedWrite(ctx)
 	defer cancelWrite()
 	if err := c.store.ProjectRemoval(writeCtx, payload.TreeID, payload.UserID, event.ID, event.Version, moved); err != nil {

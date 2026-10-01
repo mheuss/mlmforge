@@ -35,34 +35,75 @@ func timeFlag(name, value string, now time.Time) (time.Time, error) {
 
 // reportWrite prints a write's outcome and returns the error to report.
 func reportWrite(ctx context.Context, out, warn io.Writer, res networkengine.WriteResult, err error) error {
-	if res.CaughtUp != nil {
-		_, _ = fmt.Fprintf(out, "redelivered event %s at version %d\n", res.CaughtUp.EventID, res.CaughtUp.Version)
-	}
+	printRedelivered(out, res.CaughtUp, "")
+	var notCurrent error
 	if err == nil {
 		projected := "projected"
 		if res.ProjectionErr != nil {
-			projected = "not projected"
+			projected = "projection returned an error"
 		}
 		_, _ = fmt.Fprintf(out, "appended event %s at version %d to stream %s; %s\n",
 			res.EventID, res.Version, res.Stream, projected)
-		var refused *networkengine.ProjectionRefusedError
-		switch {
-		case errors.As(res.ProjectionErr, &refused):
-			_, _ = fmt.Fprintf(warn, "warning: event %s at version %d was appended and did not project: %s.\n",
-				res.EventID, res.Version, res.ProjectionErr)
-		case res.ProjectionErr != nil:
-			_, _ = fmt.Fprintf(warn, "warning: event %s at version %d was appended and did not project: %s. "+
-				"The next write to this tree retries it.\n", res.EventID, res.Version, res.ProjectionErr)
+		if res.ProjectionErr != nil {
+			notCurrent = warnProjection(warn, res)
 		}
 	}
-	if res.ReleaseErr != nil {
-		_, _ = fmt.Fprintf(warn, "warning: releasing the tree lock reported: %s\n", res.ReleaseErr)
+	printReleaseWarning(warn, res.ReleaseErr)
+	if err == nil {
+		return notCurrent
 	}
 	var unknown *networkengine.AppendOutcomeUnknownError
-	if err == nil || errors.As(err, &unknown) || ctx.Err() == nil {
+	if errors.As(err, &unknown) || ctx.Err() == nil {
 		return err
 	}
 	return fmt.Errorf("the command's context ended (%v) and no append was confirmed: %w", context.Cause(ctx), err)
+}
+
+// warnProjection prints what a write observed after its projection returned an
+// error. It returns an exit-3 error unless the store was observed current.
+func warnProjection(warn io.Writer, res networkengine.WriteResult) error {
+	head := fmt.Sprintf("warning: event %s at version %d was appended and its projection returned an error: %s.",
+		res.EventID, res.Version, res.ProjectionErr)
+	notCurrent := &exitCodeError{code: exitNotCurrent, err: fmt.Errorf(
+		"event %s at version %d was appended and the store was not observed current", res.EventID, res.Version)}
+	obs := res.Observed
+	switch {
+	case obs == nil:
+		_, _ = fmt.Fprintf(warn, "%s The tree's projected version was not read.\n", head)
+		return notCurrent
+	case obs.Err != nil:
+		_, _ = fmt.Fprintf(warn, "%s The tree's projected version could not be read: %s.\n", head, obs.Err)
+		return notCurrent
+	}
+	seen := fmt.Sprintf("The tree's projected version is %d.", obs.Version)
+	if !obs.Found {
+		seen = "The tree has no projection row."
+	}
+	if obs.Found && obs.Version >= res.Version {
+		_, _ = fmt.Fprintf(warn, "%s %s\n", head, seen)
+		return nil
+	}
+	if obs.Version == res.Version-1 {
+		seen += " The next write or tree load of this tree redelivers it."
+	}
+	_, _ = fmt.Fprintf(warn, "%s %s\n", head, seen)
+	return notCurrent
+}
+
+// printRedelivered prints the redelivered-event line, when there was one.
+func printRedelivered(out io.Writer, ev *networkengine.CaughtUpEvent, suffix string) {
+	if ev == nil {
+		return
+	}
+	_, _ = fmt.Fprintf(out, "redelivered event %s at version %d%s\n", ev.EventID, ev.Version, suffix)
+}
+
+// printReleaseWarning prints a failed lock release, when there was one.
+func printReleaseWarning(warn io.Writer, err error) {
+	if err == nil {
+		return
+	}
+	_, _ = fmt.Fprintf(warn, "warning: releasing the tree lock reported: %s\n", err)
 }
 
 func newTreeAddRootCmd(resolve flagResolver, open depsOpener, writer writerFor) *cobra.Command {
@@ -74,7 +115,9 @@ func newTreeAddRootCmd(resolve flagResolver, open depsOpener, writer writerFor) 
 		Short: "Append a tree's root_added event and try to project it",
 		Long: "Opens a database pool, starts the engine worker, appends one tree.root_added event, tries to project it, and exits. " +
 			"The tree type and matrix flags shape the tree when its stream is empty. After that the stream's first event decides the shape, " +
-			"and a type or matrix flag that differs from it is refused.",
+			"and a type or matrix flag that differs from it is refused. " +
+			"Exits 0 when the event was appended and the store was observed current, with any warnings on stderr. " +
+			"Exits 3 when the event was appended and the store was not observed current. Exits 1 when no append was confirmed.",
 		Args: cobra.NoArgs,
 		// Moving this to the tree group leaves a real invocation dumping
 		// usage after the error line.
@@ -120,7 +163,9 @@ func newTreePlaceCmd(resolve flagResolver, open depsOpener, writer writerFor) *c
 		Use:   "place",
 		Short: "Append a placement at an explicit parent and try to project it",
 		Long: "Opens a database pool, starts the engine worker, appends one tree.node_placed event, tries to project it, and exits. " +
-			"Matrix and binary trees need --position. Unilevel trees take none.",
+			"Matrix and binary trees need --position. Unilevel trees take none. " +
+			"Exits 0 when the event was appended and the store was observed current, with any warnings on stderr. " +
+			"Exits 3 when the event was appended and the store was not observed current. Exits 1 when no append was confirmed.",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -159,7 +204,9 @@ func newTreeRemoveCmd(resolve flagResolver, open depsOpener, writer writerFor) *
 		Use:   "remove",
 		Short: "Append a leaf's removal and try to project it",
 		Long: "Opens a database pool, starts the engine worker, appends one tree.node_removed event, tries to project it, and exits. " +
-			"Removal from a matrix tree is refused.",
+			"Removal from a matrix tree is refused. " +
+			"Exits 0 when the event was appended and the store was observed current, with any warnings on stderr. " +
+			"Exits 3 when the event was appended and the store was not observed current. Exits 1 when no append was confirmed.",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {

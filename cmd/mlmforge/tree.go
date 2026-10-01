@@ -10,22 +10,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// loadTreeOptions turns the matrix flags into loader options.
-func loadTreeOptions(treeType string, width int, spillover string) []networkengine.LoadTreeOption {
-	if treeType != "matrix" {
-		return nil
-	}
-	return []networkengine.LoadTreeOption{networkengine.WithMatrixParams(width, spillover)}
-}
-
-// loaderFor builds the loader a subcommand drives.
-type loaderFor func(deps *treeDeps) treeLoader
+// loadWriterFor builds the writer tree load drives.
+type loadWriterFor func(deps *treeDeps) treeLoadWriter
 
 // newTreeCmd builds the tree command group against the real dependencies.
 func newTreeCmd() *cobra.Command {
 	return newTreeCmdWith(openTreeDeps,
-		func(d *treeDeps) treeLoader {
-			return networkengine.NewTreeLoader(d.store, d.engine)
+		func(d *treeDeps) treeLoadWriter {
+			return networkengine.NewTreeWriter(d.events, d.store, d.engine, d.locker)
 		},
 		func(d *treeDeps) treeWriter {
 			return networkengine.NewTreeWriter(d.events, d.store, d.engine, d.locker)
@@ -34,7 +26,7 @@ func newTreeCmd() *cobra.Command {
 }
 
 // newTreeCmdWith builds the group over injectable seams.
-func newTreeCmdWith(open depsOpener, loader loaderFor, writer writerFor) *cobra.Command {
+func newTreeCmdWith(open depsOpener, loader loadWriterFor, writer writerFor) *cobra.Command {
 	treeCmd := &cobra.Command{
 		Use:   "tree",
 		Short: "Tree persistence commands",
@@ -87,7 +79,7 @@ func runTreeCommand(cmd *cobra.Command, resolve flagResolver, open depsOpener, r
 	return connectError(withTreeDeps(ctx, cmd.ErrOrStderr(), open, target.url, workerPath, run), target)
 }
 
-func newTreeLoadCmd(resolve flagResolver, open depsOpener, loader loaderFor) *cobra.Command {
+func newTreeLoadCmd(resolve flagResolver, open depsOpener, loader loadWriterFor) *cobra.Command {
 	var treeID, treeType, spillover string
 	var width int
 
@@ -95,15 +87,28 @@ func newTreeLoadCmd(resolve flagResolver, open depsOpener, loader loaderFor) *co
 		Use:   "load",
 		Short: "Replay a stored tree into the engine",
 		Long: "Opens a database pool, starts the engine worker, replays one stored tree, and exits. " +
+			"When the tree's store is one event behind its stream, it replays the store, then redelivers the stream's last event " +
+			"and prints a redelivered line. " +
+			"Exits 0 when the load finished, including after a redelivery, with any warnings on stderr. " +
+			"Exits 1 on any other failure, including when the stream is two or more events past the store or behind it, " +
+			"when the tree has no projection row and its stream is past version 1, when a type or matrix flag differs " +
+			"from the stream's first event, or when the redelivery fails. A tree created before migration 000009 has no projection row, " +
+			"so it is refused once its stream passes version 1. " +
 			"The worker is started and stopped per invocation.",
 		Args: cobra.NoArgs,
 		// Moving this to the tree group leaves a real invocation dumping
 		// usage after the error line.
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			opts := loadTreeOptions(treeType, width, spillover)
+			req := networkengine.LoadRequest{TreeID: treeID, TreeType: treeType}
+			if cmd.Flags().Changed("matrix-width") {
+				req.MatrixWidth = &width
+			}
+			if cmd.Flags().Changed("matrix-spillover") {
+				req.MatrixSpillover = &spillover
+			}
 			return runTreeCommand(cmd, resolve, open, func(ctx context.Context, deps *treeDeps) error {
-				return runTreeLoad(ctx, cmd.OutOrStdout(), loader(deps), treeID, treeType, opts)
+				return runTreeLoad(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), loader(deps), req)
 			})
 		},
 	}

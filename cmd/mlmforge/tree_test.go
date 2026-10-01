@@ -26,20 +26,14 @@ func TestNewTreeCmd_RegistersTheLoadSubcommand(t *testing.T) {
 	require.True(t, names["load"])
 }
 
-func TestLoadTreeOptions_OnlySetMatrixParamsWhenAsked(t *testing.T) {
-	require.Empty(t, loadTreeOptions("unilevel", 0, ""))
-	require.Len(t, loadTreeOptions("matrix", 3, "breadth_first"), 1)
-}
-
-// recordingLoader captures what the RunE body passed through.
+// recordingLoader captures the request the RunE body sent.
 type recordingLoader struct {
-	treeID, treeType string
-	optCount         int
+	req networkengine.LoadRequest
 }
 
-func (r *recordingLoader) LoadTree(_ context.Context, treeID, treeType string, opts ...networkengine.LoadTreeOption) (int, error) {
-	r.treeID, r.treeType, r.optCount = treeID, treeType, len(opts)
-	return 0, nil
+func (r *recordingLoader) Load(_ context.Context, req networkengine.LoadRequest) (networkengine.LoadResult, error) {
+	r.req = req
+	return networkengine.LoadResult{}, nil
 }
 
 // Executing the command is the only thing that proves the flags reach the
@@ -50,7 +44,7 @@ func TestTreeLoadCmd_PassesItsFlagsToTheLoader(t *testing.T) {
 		func(context.Context, string, string) (*treeDeps, error) {
 			return &treeDeps{release: func() error { return nil }}, nil
 		},
-		func(*treeDeps) treeLoader { return rec },
+		func(*treeDeps) treeLoadWriter { return rec },
 		nil,
 	)
 	cmd.SetOut(&bytes.Buffer{})
@@ -61,63 +55,31 @@ func TestTreeLoadCmd_PassesItsFlagsToTheLoader(t *testing.T) {
 	})
 
 	require.NoError(t, cmd.Execute())
-	require.Equal(t, "t9", rec.treeID)
-	require.Equal(t, "matrix", rec.treeType)
-	require.Equal(t, 1, rec.optCount)
+	width, spillover := 3, "breadth_first"
+	require.Equal(t, networkengine.LoadRequest{
+		TreeID: "t9", TreeType: "matrix", MatrixWidth: &width, MatrixSpillover: &spillover,
+	}, rec.req)
 }
 
-// recordingMutator answers only CreateMatrixTree and AddRoot. The embedded
-// interface is nil, so any other call panics rather than returning a zero
-// value a test could pass against.
-type recordingMutator struct {
-	networkengine.TreeMutator
-	width     int
-	spillover string
-	roots     []string
-}
-
-func (m *recordingMutator) CreateMatrixTree(_ context.Context, _ string, width int, spillover string) error {
-	m.width, m.spillover = width, spillover
-	return nil
-}
-
-func (m *recordingMutator) AddRoot(_ context.Context, _, userID string, _ int64) error {
-	m.roots = append(m.roots, userID)
-	return nil
-}
-
-// Counting the options cannot tell two matrix configurations apart. Driving
-// the real loader puts the values somewhere observable: CreateMatrixTree takes
-// them as arguments.
-func TestTreeLoadCmd_MatrixFlagValuesReachTheEngine(t *testing.T) {
-	store := networkengine.NewMemoryTreeStore()
-	require.NoError(t, store.InsertNode(context.Background(), networkengine.TreeNodeRow{
-		ID:         "row-1",
-		TreeID:     "t9",
-		UserID:     "u-root",
-		Depth:      0,
-		EnrolledAt: time.Unix(1700000000, 0),
-	}))
-	mut := &recordingMutator{}
-
+// A matrix flag left off the command line must reach the writer as absent.
+func TestTreeLoadCmd_LeavesMatrixParametersUnsetWhenAbsent(t *testing.T) {
+	rec := &recordingLoader{}
 	cmd := newTreeCmdWith(
 		func(context.Context, string, string) (*treeDeps, error) {
 			return &treeDeps{release: func() error { return nil }}, nil
 		},
-		func(*treeDeps) treeLoader { return networkengine.NewTreeLoader(store, mut) },
+		func(*treeDeps) treeLoadWriter { return rec },
 		nil,
 	)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetArgs([]string{
 		"load", "--db-url", "postgres://x", "--worker", workerStub(t),
 		"--tree-id", "t9", "--tree-type", "matrix",
-		"--matrix-width", "3", "--matrix-spillover", "breadth_first",
 	})
 
 	require.NoError(t, cmd.Execute())
-	require.Equal(t, 3, mut.width)
-	require.Equal(t, "breadth_first", mut.spillover)
-	require.Equal(t, []string{"u-root"}, mut.roots)
+	require.Nil(t, rec.req.MatrixWidth)
+	require.Nil(t, rec.req.MatrixSpillover)
 }
 
 func TestTreeLoadCmd_ReleasesTheDepsAfterRunning(t *testing.T) {
@@ -126,7 +88,7 @@ func TestTreeLoadCmd_ReleasesTheDepsAfterRunning(t *testing.T) {
 		func(context.Context, string, string) (*treeDeps, error) {
 			return &treeDeps{release: func() error { released = true; return nil }}, nil
 		},
-		func(*treeDeps) treeLoader { return &recordingLoader{} },
+		func(*treeDeps) treeLoadWriter { return &recordingLoader{} },
 		nil,
 	)
 	cmd.SetOut(&bytes.Buffer{})
@@ -148,7 +110,7 @@ func TestTreeLoadCmd_RejectsStrayPositionalArguments(t *testing.T) {
 		func(context.Context, string, string) (*treeDeps, error) {
 			return &treeDeps{release: func() error { return nil }}, nil
 		},
-		func(*treeDeps) treeLoader { return &recordingLoader{} },
+		func(*treeDeps) treeLoadWriter { return &recordingLoader{} },
 		nil,
 	)
 	cmd.SetOut(&bytes.Buffer{})
@@ -164,8 +126,8 @@ func TestTreeLoadCmd_RejectsStrayPositionalArguments(t *testing.T) {
 // failingLoader drives runTreeLoad down its reporting path.
 type failingLoader struct{ err error }
 
-func (f *failingLoader) LoadTree(context.Context, string, string, ...networkengine.LoadTreeOption) (int, error) {
-	return 0, f.err
+func (f *failingLoader) Load(context.Context, networkengine.LoadRequest) (networkengine.LoadResult, error) {
+	return networkengine.LoadResult{}, f.err
 }
 
 // The failure reaches the operator exactly once, and brings no usage dump.
@@ -174,7 +136,7 @@ func TestTreeLoadCmd_ReportsAFailureOnceWithoutUsage(t *testing.T) {
 		func(context.Context, string, string) (*treeDeps, error) {
 			return &treeDeps{release: func() error { return nil }}, nil
 		},
-		func(*treeDeps) treeLoader { return &failingLoader{err: errors.New("boom")} },
+		func(*treeDeps) treeLoadWriter { return &failingLoader{err: errors.New("boom")} },
 		nil,
 	)
 	var out bytes.Buffer
@@ -222,16 +184,16 @@ type sigLoader struct {
 	sawDone bool
 }
 
-func (l *sigLoader) LoadTree(ctx context.Context, _, _ string, _ ...networkengine.LoadTreeOption) (int, error) {
+func (l *sigLoader) Load(ctx context.Context, _ networkengine.LoadRequest) (networkengine.LoadResult, error) {
 	if err := syscall.Kill(syscall.Getpid(), l.sig); err != nil {
-		return 0, err
+		return networkengine.LoadResult{}, err
 	}
 	select {
 	case <-ctx.Done():
 		l.sawDone = true
 	case <-time.After(2 * time.Second):
 	}
-	return 0, ctx.Err()
+	return networkengine.LoadResult{}, ctx.Err()
 }
 
 // One case per signal. A single case would leave the other registration
@@ -256,7 +218,7 @@ func TestTreeLoadCmd_SignalsCancelTheLoad(t *testing.T) {
 				func(context.Context, string, string) (*treeDeps, error) {
 					return &treeDeps{release: func() error { return nil }}, nil
 				},
-				func(*treeDeps) treeLoader { return loader },
+				func(*treeDeps) treeLoadWriter { return loader },
 				nil,
 			)
 			cmd.SetOut(&bytes.Buffer{})

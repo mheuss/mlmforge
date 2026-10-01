@@ -57,9 +57,35 @@ type WriteResult struct {
 	Stream        string
 	EventID       string
 	Version       int64
-	CaughtUp      *CaughtUpEvent // the stream's last event, redelivered and handled without error
-	ProjectionErr error          // any failure after the append was confirmed
-	ReleaseErr    error          // the unlock failed
+	CaughtUp      *CaughtUpEvent         // the stream's last event, redelivered and handled without error
+	ProjectionErr error                  // any failure after the append was confirmed
+	Observed      *ProjectionObservation // the projected version, re-read after a projection error
+	ReleaseErr    error                  // the unlock failed
+}
+
+// ProjectionObservation is the tree's projected version, read after a
+// projection error.
+type ProjectionObservation struct {
+	Version int64
+	Found   bool
+	Err     error
+}
+
+// LoadRequest names a tree to load and the shape the caller expects. A nil
+// matrix field was not given.
+type LoadRequest struct {
+	TreeID          string
+	TreeType        string
+	MatrixWidth     *int
+	MatrixSpillover *string
+}
+
+// LoadResult describes one load.
+type LoadResult struct {
+	CaughtUp       *CaughtUpEvent         // the stream's last event, redelivered and handled without error
+	ProjectedAfter *ProjectionObservation // the projected version read after a redelivery
+	Nodes          int                    // the active rows the load leaves, set only when Load returns no error
+	ReleaseErr     error                  // the unlock failed
 }
 
 // TreeWriter appends tree events and projects them, one tree at a time.
@@ -128,11 +154,11 @@ func (w *TreeWriter) AddRoot(ctx context.Context, r AddRootRequest) (WriteResult
 	}
 	var requested treeShape
 	if found {
-		if err := rootShapeConflict(tree, stream, shape, r); err != nil {
+		if err := shapeConflict("add root to", tree, stream, shape, r.TreeType, r.MatrixWidth, r.MatrixSpillover); err != nil {
 			return WriteResult{}, err
 		}
 	} else {
-		if requested, err = shapeFromRequest(tree, r.TreeType, r.MatrixWidth, r.MatrixSpillover); err != nil {
+		if requested, err = shapeFromRequest("add root to", tree, r.TreeType, r.MatrixWidth, r.MatrixSpillover); err != nil {
 			return WriteResult{}, err
 		}
 		shape = requested
@@ -166,7 +192,7 @@ func (w *TreeWriter) AddRoot(ctx context.Context, r AddRootRequest) (WriteResult
 			if !found {
 				return requested, nil
 			}
-			if err := rootShapeConflict(tree, stream, recorded, r); err != nil {
+			if err := shapeConflict("add root to", tree, stream, recorded, r.TreeType, r.MatrixWidth, r.MatrixSpillover); err != nil {
 				return treeShape{}, err
 			}
 			return recorded, nil
@@ -280,28 +306,28 @@ func refuseMatrixRemoval(user, tree, stream string) error {
 		"and this writer does not remove from matrix trees", user, tree, stream)
 }
 
-// rootShapeConflict refuses a root request whose type or matrix parameters
-// differ from the shape version 1 records. Absent matrix parameters match.
-func rootShapeConflict(tree, stream string, recorded treeShape, r AddRootRequest) error {
-	prefix := fmt.Sprintf("add root to tree %s: stream %s records", tree, stream)
-	if recorded.treeType != r.TreeType {
-		return fmt.Errorf("%s tree type %s at version 1, and the request names %s", prefix, recorded.treeType, r.TreeType)
+// shapeConflict refuses a requested type or matrix parameter that differs from
+// the shape version 1 records. Absent matrix parameters match.
+func shapeConflict(action, tree, stream string, recorded treeShape, treeType string, width *int, spillover *string) error {
+	prefix := fmt.Sprintf("%s tree %s: stream %s records", action, tree, stream)
+	if recorded.treeType != treeType {
+		return fmt.Errorf("%s tree type %s at version 1, and the request names %s", prefix, recorded.treeType, treeType)
 	}
 	if recorded.treeType != treeTypeMatrix {
-		if r.MatrixWidth != nil {
-			return fmt.Errorf("%s no matrix width at version 1, and the request names %d", prefix, *r.MatrixWidth)
+		if width != nil {
+			return fmt.Errorf("%s no matrix width at version 1, and the request names %d", prefix, *width)
 		}
-		if r.MatrixSpillover != nil {
-			return fmt.Errorf("%s no matrix spillover at version 1, and the request names %q", prefix, *r.MatrixSpillover)
+		if spillover != nil {
+			return fmt.Errorf("%s no matrix spillover at version 1, and the request names %q", prefix, *spillover)
 		}
 		return nil
 	}
-	if r.MatrixWidth != nil && *r.MatrixWidth != recorded.width {
-		return fmt.Errorf("%s matrix width %d at version 1, and the request names %d", prefix, recorded.width, *r.MatrixWidth)
+	if width != nil && *width != recorded.width {
+		return fmt.Errorf("%s matrix width %d at version 1, and the request names %d", prefix, recorded.width, *width)
 	}
-	if r.MatrixSpillover != nil && *r.MatrixSpillover != recorded.spillover {
+	if spillover != nil && *spillover != recorded.spillover {
 		return fmt.Errorf("%s matrix spillover %q at version 1, and the request names %q",
-			prefix, recorded.spillover, *r.MatrixSpillover)
+			prefix, recorded.spillover, *spillover)
 	}
 	return nil
 }
@@ -310,7 +336,7 @@ func rootShapeConflict(tree, stream string, recorded treeShape, r AddRootRequest
 func (w *TreeWriter) readShape(ctx context.Context, stream string) (shape treeShape, found bool, err error) {
 	first, err := w.events.ReadStream(ctx, stream, 1, 1)
 	if err != nil {
-		return treeShape{}, false, fmt.Errorf("read version 1 of stream %s: %w", stream, err)
+		return treeShape{}, false, &storeReadError{what: fmt.Sprintf("read version 1 of stream %s", stream), err: err}
 	}
 	if len(first) == 0 {
 		return treeShape{}, false, nil
@@ -358,27 +384,13 @@ func (w *TreeWriter) write(ctx context.Context, spec writeSpec) (result WriteRes
 	if err != nil {
 		return result, err
 	}
-	// Read before the rows. A projection landing between the two reads then
-	// leaves the rows newer than loaded.
-	loaded, found, err := w.store.ProjectedVersion(ctx, tree)
+	_, last, _, err := w.prepare(ctx, tree, shape)
 	if err != nil {
-		return result, fmt.Errorf("read the projected version of tree %s; nothing was appended: %w", tree, err)
-	}
-	if err := w.load(ctx, tree, shape); err != nil {
 		return result, err
-	}
-	last, err := w.events.ReadLastEvent(ctx, stream)
-	if err != nil {
-		return result, fmt.Errorf("read the last event of stream %s; nothing was appended: %w", stream, err)
 	}
 	var expected int64
 	if last != nil {
 		expected = last.Version
-	}
-	if err := checkLoadedVersion(tree, loaded, found, expected); err != nil {
-		return result, err
-	}
-	if last != nil {
 		if result.CaughtUp, err = w.catchUp(ctx, tree, stream, *last); err != nil {
 			return result, err
 		}
@@ -393,7 +405,135 @@ func (w *TreeWriter) write(ctx context.Context, spec writeSpec) (result WriteRes
 	}
 	result.EventID, result.Version = event.ID, version
 	result.ProjectionErr = w.project(ctx, stream, event.ID, version)
+	if result.ProjectionErr != nil {
+		result.Observed = w.observe(ctx, tree)
+	}
 	return result, nil
+}
+
+// Load loads the tree, and brings its store level with its stream when the
+// store is one event behind.
+func (w *TreeWriter) Load(ctx context.Context, r LoadRequest) (result LoadResult, err error) {
+	treeID, err := canonicalID("tree_id", r.TreeID)
+	if err != nil {
+		return result, err
+	}
+	tree := treeID.String()
+	stream := TreeStreamName(tree)
+
+	shape, found, err := w.loadShape(ctx, tree, stream, r)
+	if err != nil {
+		return result, err
+	}
+	unlock, err := w.lock(ctx, treeID)
+	if err != nil {
+		return result, err
+	}
+	defer func() {
+		result.ReleaseErr = unlock()
+	}()
+	// Version 1's absence is not final until the lock is held.
+	if !found {
+		if shape, _, err = w.loadShape(ctx, tree, stream, r); err != nil {
+			return result, err
+		}
+	}
+
+	loaded, last, nodes, err := w.prepare(ctx, tree, shape)
+	if err != nil {
+		return result, rejectEarlyRead(tree, err)
+	}
+	if last == nil || last.Version != loaded+1 {
+		result.Nodes = nodes
+		return result, nil
+	}
+	if result.CaughtUp, err = w.catchUp(ctx, tree, stream, *last); err != nil {
+		return result, err
+	}
+	after, afterFound, err := w.store.ProjectedVersion(ctx, tree)
+	if err != nil {
+		return result, fmt.Errorf("read the projected version of tree %s after redelivering version %d: %w",
+			tree, last.Version, err)
+	}
+	result.ProjectedAfter = &ProjectionObservation{Version: after, Found: afterFound}
+	rows, err := w.store.GetByTree(ctx, tree)
+	if err != nil {
+		return result, fmt.Errorf("read the active rows of tree %s after redelivering version %d: %w",
+			tree, last.Version, err)
+	}
+	result.Nodes = len(rows)
+	return result, nil
+}
+
+// loadShape returns the shape a load goes ahead with: the one version 1
+// records, or the requested one for an empty stream.
+func (w *TreeWriter) loadShape(ctx context.Context, tree, stream string, r LoadRequest) (treeShape, bool, error) {
+	recorded, found, err := w.readShape(ctx, stream)
+	if err != nil {
+		return treeShape{}, false, rejectEarlyRead(tree, err)
+	}
+	if found {
+		return recorded, true, shapeConflict("load", tree, stream, recorded, r.TreeType, r.MatrixWidth, r.MatrixSpillover)
+	}
+	shape, err := shapeFromRequest("load", tree, r.TreeType, r.MatrixWidth, r.MatrixSpillover)
+	return shape, false, err
+}
+
+// rejectEarlyRead types a failed read made before any engine call as a load
+// rejection, and returns any other error unchanged.
+func rejectEarlyRead(tree string, err error) error {
+	var read *storeReadError
+	if !errors.As(err, &read) {
+		return err
+	}
+	return newTreeLoadRejected(TreeLoadStoreReadFailed, tree, read.err, err.Error())
+}
+
+// storeReadError is a failed store read, carrying what was being read.
+type storeReadError struct {
+	what string
+	err  error
+}
+
+func (e *storeReadError) Error() string { return e.what + ": " + e.err.Error() }
+func (e *storeReadError) Unwrap() error { return e.err }
+
+// prepare loads the tree and refuses a stream the store cannot be brought
+// level with by one redelivery. nodes is the loader's row count.
+func (w *TreeWriter) prepare(ctx context.Context, tree string, shape treeShape) (loaded int64, last *platform.Event, nodes int, err error) {
+	// Read before the rows. A projection landing between the two reads then
+	// leaves the rows newer than loaded.
+	loaded, found, err := w.store.ProjectedVersion(ctx, tree)
+	if err != nil {
+		return 0, nil, 0, &storeReadError{
+			what: fmt.Sprintf("read the projected version of tree %s; nothing was appended", tree), err: err,
+		}
+	}
+	if nodes, err = w.load(ctx, tree, shape); err != nil {
+		return 0, nil, 0, err
+	}
+	stream := TreeStreamName(tree)
+	last, err = w.events.ReadLastEvent(ctx, stream)
+	if err != nil {
+		return 0, nil, 0, fmt.Errorf("read the last event of stream %s; nothing was appended: %w", stream, err)
+	}
+	var lastVersion int64
+	if last != nil {
+		lastVersion = last.Version
+	}
+	if err := checkLoadedVersion(tree, loaded, found, lastVersion); err != nil {
+		return 0, nil, 0, err
+	}
+	return loaded, last, nodes, nil
+}
+
+// observe reads the tree's projected version with a context the caller's
+// cancellation does not reach.
+func (w *TreeWriter) observe(ctx context.Context, tree string) *ProjectionObservation {
+	readCtx, cancel := detachedRead(ctx)
+	defer cancel()
+	version, found, err := w.store.ProjectedVersion(readCtx, tree)
+	return &ProjectionObservation{Version: version, Found: found, Err: err}
 }
 
 // lock takes the tree's lock, waiting at most w.lockWait.
@@ -417,14 +557,14 @@ func (w *TreeWriter) lock(ctx context.Context, treeID uuid.UUID) (func() error, 
 }
 
 // load rebuilds the tree in the engine from the store, or creates it empty
-// when the store holds no rows.
-func (w *TreeWriter) load(ctx context.Context, tree string, shape treeShape) error {
+// when the store holds no rows. It returns the rows loaded.
+func (w *TreeWriter) load(ctx context.Context, tree string, shape treeShape) (int, error) {
 	n, err := w.loader.LoadTree(ctx, tree, shape.treeType, shape.loadOptions()...)
 	if err != nil {
-		return fmt.Errorf("load tree %s; nothing was appended: %w", tree, err)
+		return 0, fmt.Errorf("load tree %s; nothing was appended: %w", tree, err)
 	}
 	if n > 0 {
-		return nil
+		return n, nil
 	}
 	if shape.treeType == treeTypeMatrix {
 		err = w.engine.CreateMatrixTree(ctx, tree, shape.width, shape.spillover)
@@ -432,9 +572,9 @@ func (w *TreeWriter) load(ctx context.Context, tree string, shape treeShape) err
 		err = w.engine.CreateTree(ctx, tree, shape.treeType)
 	}
 	if err != nil {
-		return fmt.Errorf("create tree %s in the engine; nothing was appended: %w", tree, err)
+		return 0, fmt.Errorf("create tree %s in the engine; nothing was appended: %w", tree, err)
 	}
-	return nil
+	return 0, nil
 }
 
 // checkLoadedVersion refuses a stream whose last version is neither the

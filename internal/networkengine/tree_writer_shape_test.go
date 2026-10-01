@@ -123,7 +123,7 @@ func TestShapeFromRequest(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := shapeFromRequest("t", tc.treeType, tc.width, tc.spillover)
+			got, err := shapeFromRequest("add root to", "t", tc.treeType, tc.width, tc.spillover)
 			if tc.wantErr != "" {
 				require.EqualError(t, err, tc.wantErr)
 				return

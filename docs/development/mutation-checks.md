@@ -137,6 +137,17 @@ genuinely unreachable one look identical.
 **Re-run every row after every fix.** The cost is one suite run per mutation.
 The alternative is a guard that reads as pinned and is not.
 
+A test edit is a fix too. Cutting a table test in review triage can remove a row
+that was the only other guard for a mutation. Nothing goes red when the row
+goes, and the mutation still fails one test, so the set reads as pinned.
+
+Worked case, HEU-777. A review cut `TestRunArgs_MapsAWritesOutcomeToItsExitCode`
+to one row per command. That dropped its `current` row. The mutation `>=` to `>`
+in `warnProjection` then failed only the place command test. The plan named two.
+The batch mutation re-run found it, and the row came back.
+
+**After trimming a test, re-run every mutation that names it.**
+
 ## A filtered reading discards the reason the count moved
 
 A pipeline that counts result lines throws away everything else the run said.

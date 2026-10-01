@@ -944,15 +944,9 @@ func TestTreeLoader_AddRootFailureReportsCreatedTree(t *testing.T) {
 	}
 }
 
-// TestTreeLoader_CreateTreeFailureLeavesNothingBuilt covers the CreateTree
-// error path. failAfterNMutator cannot reach it, because it delegates the
-// create so a replay can start. This is the case stubMutator.failWith exists
-// for: failing every call means the very first one fails.
-//
-// The distinction from the AddRoot case above is what the operator does next.
-// Nothing was created, so a retry is clean and needs no restart. The message
-// must not claim a surviving tree.
-func TestTreeLoader_CreateTreeFailureLeavesNothingBuilt(t *testing.T) {
+// TestTreeLoader_CreateTreeFailureStopsBeforeRoot checks that a failed create
+// is reported and that no root or node call follows it.
+func TestTreeLoader_CreateTreeFailureStopsBeforeRoot(t *testing.T) {
 	store := NewMemoryTreeStore()
 	ctx := context.Background()
 	boom := errors.New("transport closed")
@@ -973,10 +967,9 @@ func TestTreeLoader_CreateTreeFailureLeavesNothingBuilt(t *testing.T) {
 	assert.Empty(t, mutator.nodes)
 }
 
-// TestTreeLoader_CreateMatrixTreeFailureLeavesNothingBuilt is the matrix half.
-// Matrix routes through CreateMatrixTree rather than CreateTree, so its failure
-// path is separate code and was equally untested.
-func TestTreeLoader_CreateMatrixTreeFailureLeavesNothingBuilt(t *testing.T) {
+// TestTreeLoader_CreateMatrixTreeFailureStopsBeforeRoot checks that a failed
+// matrix create is reported and that no root or node call follows it.
+func TestTreeLoader_CreateMatrixTreeFailureStopsBeforeRoot(t *testing.T) {
 	store := NewMemoryTreeStore()
 	ctx := context.Background()
 	boom := errors.New("transport closed")

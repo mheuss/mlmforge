@@ -114,14 +114,17 @@ func newTreeLoadFailure(err error) *treeLoadFailure {
 func (e *treeLoadFailure) Error() string { return e.msg }
 func (e *treeLoadFailure) Unwrap() error { return e.err }
 
-// treeLoadFailureMessage states what the load left behind. The two typed errors
-// are told apart with errors.As, never by matching on the message.
+// treeLoadFailureMessage describes a failed tree load for the operator.
 func treeLoadFailureMessage(err error) string {
 	// Incomplete is checked first, matching treeLoadRetryable. A chain holding
 	// both must not be reported as leaving the engine unchanged.
 	var incomplete *networkengine.TreeLoadIncompleteError
 	if errors.As(err, &incomplete) {
-		return fmt.Sprintf("load stopped at the %s stage; the engine acknowledged %d of %d placements: %s%s",
+		if incomplete.Stage == networkengine.TreeLoadStageCreate {
+			return fmt.Sprintf("load stopped at the create stage; the create did not report success: %s%s",
+				incomplete, interrupted(err))
+		}
+		return fmt.Sprintf("load stopped at the %s stage; the engine acknowledged %d of %d non-root placements: %s%s",
 			incomplete.Stage, incomplete.Confirmed, incomplete.Total, incomplete, interrupted(err))
 	}
 	var rejected *networkengine.TreeLoadRejectedError

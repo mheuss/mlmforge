@@ -107,8 +107,8 @@ type TreeLoadIncompleteError struct {
 	// unless Err is nil, which means the load stopped before the call was sent
 	// and no request was made for it.
 	Attempted int
-	// Total is how many non-root placements the load set out to make. It is 0
-	// at TreeLoadStageCreate, where no structure exists to strand.
+	// Total is how many non-root placements the load set out to make, once the
+	// create reports success. It is 0 at TreeLoadStageCreate.
 	Total int
 	// Err is the TreeMutator operation's error, or nil when a nil guard fired
 	// instead. It may be a transport or context error rather than an

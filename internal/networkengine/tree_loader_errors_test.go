@@ -771,7 +771,7 @@ func TestTreeLoader_PostCreateExitsCarryTheirCounts(t *testing.T) {
 		// rows, not omitted. Nothing non-root has been placed. Total is zero
 		// only at the create stage.
 		{
-			name:          "create fails before anything is attempted",
+			name:          "create fails before any placement is attempted",
 			wantFailedOp:  "CreateTree",
 			treeType:      treeTypeUnilevel,
 			nodes:         unilevelFixture(),
@@ -782,7 +782,7 @@ func TestTreeLoader_PostCreateExitsCarryTheirCounts(t *testing.T) {
 			wantTotal:     0,
 		},
 		{
-			name:          "matrix create fails before anything is attempted",
+			name:          "matrix create fails before any placement is attempted",
 			wantFailedOp:  "CreateMatrixTree",
 			treeType:      treeTypeMatrix,
 			opts:          matrixOpts(3),

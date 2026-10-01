@@ -944,7 +944,7 @@ What `WriteResult` carries:
 
 - Load's `--tree-type` and matrix flags must match version 1, with `add-root`'s rule. Matrix flags left off match.
 - A fence refusal exits 1 and changes no store rows or projected version. The scratch engine may already be loaded, and is discarded.
-- A failed read of version 1 or of the projected version comes before any engine call, so it is a `TreeLoadRejectedError` of kind `store_read_failed` and follows the retry rule. Anything after the engine load is not retried.
+- A failed read of version 1 or the first read of the projected version comes before any engine call, so it is a `TreeLoadRejectedError` of kind `store_read_failed` and follows the retry rule. Anything after the engine load is not retried.
 - A tree created before migration 000009 has no projection row, and load refuses it once its stream passes version 1.
 
 ## Worker Shutdown

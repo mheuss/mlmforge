@@ -293,7 +293,7 @@ func TestTreeWriter_LoadMatchesMatrixParametersOnlyWhenGiven(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			env := newWriterEnv()
 			mustAddRoot(t, env, treeTypeMatrix)
-			w, _ := env.writer()
+			w, engine := env.writer()
 			tc.req.TreeID = writerTree
 
 			res, err := w.Load(context.Background(), tc.req)
@@ -304,6 +304,8 @@ func TestTreeWriter_LoadMatchesMatrixParametersOnlyWhenGiven(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.Equal(t, 1, res.Nodes)
+			require.NotEmpty(t, engine.calls, "the load made no engine call")
+			assert.Equal(t, "create_matrix_tree 3 breadth_first", engine.calls[0])
 		})
 	}
 }

@@ -298,9 +298,13 @@ func TestTreeWriteCmds_NameTheirExitCodesInTheirHelp(t *testing.T) {
 			assert.Contains(t, c.Long, "Exits 3 when the event was appended and the store was not observed current.",
 				"%s help", c.Name())
 			assert.Contains(t, c.Long, "Exits 1 when no append was confirmed.", "%s help", c.Name())
+		case "load":
+			named = append(named, c.Name())
+			assert.NotContains(t, c.Long, "Exits 3", "load never appends")
+			assert.Contains(t, c.Long, "Exits 1 when", "load help")
 		}
 	}
-	assert.ElementsMatch(t, []string{"add-root", "place", "remove"}, named)
+	assert.ElementsMatch(t, []string{"add-root", "place", "remove", "load"}, named)
 }
 
 func TestTreePlaceCmd_WarnsOnAReleaseFailureAfterAProjectionFailure(t *testing.T) {

@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/mlmforge/mlmforge/internal/networkengine"
+	"github.com/mlmforge/mlmforge/internal/platform"
 	"github.com/stretchr/testify/require"
 )
 
@@ -20,12 +22,17 @@ type stubLoader struct {
 	onCall   func(attempt int)
 }
 
-func (s *stubLoader) LoadTree(context.Context, string, string, ...networkengine.LoadTreeOption) (int, error) {
+func (s *stubLoader) Load(context.Context, networkengine.LoadRequest) (networkengine.LoadResult, error) {
 	s.attempts++
 	if s.onCall != nil {
 		s.onCall(s.attempts)
 	}
-	return s.size, s.err
+	return networkengine.LoadResult{Nodes: s.size}, s.err
+}
+
+// unilevelLoad asks for tree as a unilevel tree.
+func unilevelLoad(tree string) networkengine.LoadRequest {
+	return networkengine.LoadRequest{TreeID: tree, TreeType: "unilevel"}
 }
 
 // safeToRetryErr satisfies the interface pgconn.SafeToRetry looks for.
@@ -172,7 +179,7 @@ func TestRunTreeLoad_DoesNotRetryACancelledContext(t *testing.T) {
 		Err:  context.Canceled,
 	}}
 
-	err := runTreeLoad(t.Context(), &bytes.Buffer{}, loader, "t", "unilevel", nil)
+	err := runTreeLoad(t.Context(), &bytes.Buffer{}, io.Discard, loader, unilevelLoad("t"))
 
 	require.Error(t, err)
 	require.Equal(t, 1, loader.attempts)
@@ -183,7 +190,7 @@ func TestRunTreeLoad_DoesNotRetryAPermanentFailure(t *testing.T) {
 		Kind: networkengine.TreeLoadDataInvalid,
 	}}
 
-	err := runTreeLoad(t.Context(), &bytes.Buffer{}, loader, "t", "unilevel", nil)
+	err := runTreeLoad(t.Context(), &bytes.Buffer{}, io.Discard, loader, unilevelLoad("t"))
 
 	require.Error(t, err)
 	require.Equal(t, 1, loader.attempts)
@@ -201,7 +208,7 @@ func TestRunTreeLoad_BoundsRetriesOnARetryableFailure(t *testing.T) {
 	noRetryDelay(t)
 	loader := &stubLoader{err: retryable()}
 
-	err := runTreeLoad(t.Context(), &bytes.Buffer{}, loader, "t", "unilevel", nil)
+	err := runTreeLoad(t.Context(), &bytes.Buffer{}, io.Discard, loader, unilevelLoad("t"))
 
 	require.Error(t, err)
 	require.Equal(t, maxLoadAttempts, loader.attempts)
@@ -215,7 +222,7 @@ func TestRunTreeLoad_DoesNotSleepWhenTheDelayIsZero(t *testing.T) {
 	loader := &stubLoader{err: retryable()}
 	start := time.Now()
 
-	_ = runTreeLoad(t.Context(), &bytes.Buffer{}, loader, "t", "unilevel", nil)
+	_ = runTreeLoad(t.Context(), &bytes.Buffer{}, io.Discard, loader, unilevelLoad("t"))
 
 	require.Equal(t, maxLoadAttempts, loader.attempts)
 	require.Less(t, time.Since(start), zeroDelayCeiling,
@@ -229,7 +236,7 @@ func TestRunTreeLoad_StopsWhenTheContextIsCancelledBetweenAttempts(t *testing.T)
 	loader := &stubLoader{err: retryable(), onCall: func(int) { cancel() }}
 
 	var out bytes.Buffer
-	err := runTreeLoad(ctx, &out, loader, "t", "unilevel", nil)
+	err := runTreeLoad(ctx, &out, io.Discard, loader, unilevelLoad("t"))
 
 	require.ErrorIs(t, err, context.Canceled, "the cancellation must reach the caller")
 	require.ErrorIs(t, err, loader.err, "the load failure must not be dropped")
@@ -248,7 +255,7 @@ func TestRunTreeLoad_ReportsARejectionAsLeavingTheEngineUnchanged(t *testing.T) 
 	}}
 	var out bytes.Buffer
 
-	err := runTreeLoad(t.Context(), &out, loader, "t", "unilevel", nil)
+	err := runTreeLoad(t.Context(), &out, io.Discard, loader, unilevelLoad("t"))
 
 	require.ErrorContains(t, err, "load refused before any engine call (data_invalid); the engine is unchanged: ")
 	require.Empty(t, out.String())
@@ -261,7 +268,7 @@ func TestRunTreeLoad_ReportsAnIncompleteLoadWithItsCounts(t *testing.T) {
 	}}
 	var out bytes.Buffer
 
-	err := runTreeLoad(t.Context(), &out, loader, "t", "unilevel", nil)
+	err := runTreeLoad(t.Context(), &out, io.Discard, loader, unilevelLoad("t"))
 
 	require.ErrorContains(t, err, "load stopped at the root stage; the engine acknowledged 0 of 47 placements: ")
 	require.Empty(t, out.String())
@@ -276,7 +283,7 @@ func TestRunTreeLoad_ReportsAChainHoldingBothAsIncomplete(t *testing.T) {
 	}}
 	var out bytes.Buffer
 
-	err := runTreeLoad(t.Context(), &out, loader, "t", "unilevel", nil)
+	err := runTreeLoad(t.Context(), &out, io.Discard, loader, unilevelLoad("t"))
 
 	require.ErrorContains(t, err, "load stopped at the nodes stage; the engine acknowledged 0 of 4 placements: ")
 	require.Empty(t, out.String())
@@ -286,7 +293,7 @@ func TestRunTreeLoad_ReportsAnUntypedFailure(t *testing.T) {
 	loader := &stubLoader{err: errors.New("something else")}
 	var out bytes.Buffer
 
-	err := runTreeLoad(t.Context(), &out, loader, "t", "unilevel", nil)
+	err := runTreeLoad(t.Context(), &out, io.Discard, loader, unilevelLoad("t"))
 
 	require.EqualError(t, err, "load failed: something else")
 	require.Empty(t, out.String())
@@ -296,7 +303,7 @@ func TestRunTreeLoad_ReportsSuccess(t *testing.T) {
 	loader := &stubLoader{size: 3}
 	var out bytes.Buffer
 
-	require.NoError(t, runTreeLoad(t.Context(), &out, loader, "tree-9", "unilevel", nil))
+	require.NoError(t, runTreeLoad(t.Context(), &out, io.Discard, loader, unilevelLoad("tree-9")))
 	require.Equal(t, 1, loader.attempts)
 	require.Equal(t, "loaded tree tree-9 (3 nodes)\n", out.String())
 }
@@ -315,7 +322,7 @@ func TestRunTreeLoad_DoesNotClaimALoadForZeroRows(t *testing.T) {
 	loader := &stubLoader{size: 0}
 	var out bytes.Buffer
 
-	require.NoError(t, runTreeLoad(t.Context(), &out, loader, "tree-9", "unilevel", nil))
+	require.NoError(t, runTreeLoad(t.Context(), &out, io.Discard, loader, unilevelLoad("tree-9")))
 	require.Equal(t, "tree tree-9 holds no rows; nothing was loaded\n", out.String())
 	require.NotContains(t, out.String(), "loaded tree")
 }
@@ -323,29 +330,203 @@ func TestRunTreeLoad_DoesNotClaimALoadForZeroRows(t *testing.T) {
 // The cause is what tells two failures of the same kind apart. Two rejections
 // sharing a Kind must not render identically.
 //
-// Both errors are built through the loader rather than by keyed literal. A
+// Both errors are built through the writer rather than by keyed literal. A
 // literal with no msg renders the package fallback, which re-states the Kind
 // the outer format already printed, so this case would pass without the fix.
 func TestRunTreeLoad_KeepsTheCause(t *testing.T) {
-	seed := networkengine.TreeNodeRow{
-		ID: "r", TreeID: "t", UserID: "u", Depth: 0,
-		EnrolledAt: time.Unix(1, 0).UTC(),
-	}
-	render := func(treeType string, opts ...networkengine.LoadTreeOption) string {
-		store := networkengine.NewMemoryTreeStore()
-		require.NoError(t, store.InsertNode(t.Context(), seed))
-		loader := networkengine.NewTreeLoader(store, nil)
+	render := func(req networkengine.LoadRequest) string {
+		w := networkengine.NewTreeWriter(platform.NewMemoryEventStore(), networkengine.NewMemoryTreeStore(),
+			nil, networkengine.NewMemoryTreeLocker())
 		var out bytes.Buffer
-		err := runTreeLoad(t.Context(), &out, loader, "t", treeType, opts)
+		err := runTreeLoad(t.Context(), &out, io.Discard, w, req)
 		require.Error(t, err)
 		return err.Error()
 	}
+	tree := testTreeID(50)
+	width, spillover := 1, "breadth_first"
 
-	badType := render("streamline")
-	badWidth := render("matrix", networkengine.WithMatrixParams(1, "breadth_first"))
+	badType := render(networkengine.LoadRequest{TreeID: tree, TreeType: "streamline"})
+	badWidth := render(networkengine.LoadRequest{
+		TreeID: tree, TreeType: "matrix", MatrixWidth: &width, MatrixSpillover: &spillover,
+	})
 
 	require.Contains(t, badType, "config_invalid")
 	require.Contains(t, badWidth, "config_invalid")
 	require.NotEqual(t, badType, badWidth, "two config_invalid failures must not read alike")
 	require.Contains(t, badType, "streamline")
+}
+
+func TestRunTreeLoad_ReportsARedeliveryAheadOfTheLoadedLine(t *testing.T) {
+	loader := &resultLoader{res: networkengine.LoadResult{
+		CaughtUp:       &networkengine.CaughtUpEvent{EventID: "e2", Version: 2, Type: networkengine.EventTypeNodePlaced},
+		ProjectedAfter: &networkengine.ProjectionObservation{Version: 2, Found: true}, Nodes: 2,
+	}}
+	var out bytes.Buffer
+
+	require.NoError(t, runTreeLoad(t.Context(), &out, io.Discard, loader, unilevelLoad("tree-9")))
+	require.Equal(t, "redelivered event e2 at version 2\nloaded tree tree-9 (2 nodes)\n", out.String())
+}
+
+func TestRunTreeLoad_ReportsARedeliveryThatLeftTheVersionBehind(t *testing.T) {
+	loader := &resultLoader{res: networkengine.LoadResult{
+		CaughtUp:       &networkengine.CaughtUpEvent{EventID: "e2", Version: 2, Type: networkengine.EventTypeNodeRemoved},
+		ProjectedAfter: &networkengine.ProjectionObservation{Version: 1, Found: true}, Nodes: 1,
+	}}
+	var out bytes.Buffer
+
+	require.NoError(t, runTreeLoad(t.Context(), &out, io.Discard, loader, unilevelLoad("tree-9")))
+	require.Equal(t, "redelivered event e2 at version 2; the projected version is still 1\n"+
+		"loaded tree tree-9 (1 nodes)\n", out.String())
+}
+
+func TestRunTreeLoad_ReportsARedeliveryThatLeftNoProjectionRow(t *testing.T) {
+	loader := &resultLoader{res: networkengine.LoadResult{
+		CaughtUp:       &networkengine.CaughtUpEvent{EventID: "e1", Version: 1, Type: networkengine.EventTypeRootAdded},
+		ProjectedAfter: &networkengine.ProjectionObservation{}, Nodes: 1,
+	}}
+	var out bytes.Buffer
+
+	require.NoError(t, runTreeLoad(t.Context(), &out, io.Discard, loader, unilevelLoad("tree-9")))
+	require.Equal(t, "redelivered event e1 at version 1; the tree has no projection row\n"+
+		"loaded tree tree-9 (1 nodes)\n", out.String())
+}
+
+func TestRunTreeLoad_ReportsARedeliveryAheadOfALaterFailure(t *testing.T) {
+	noRetryDelay(t)
+	loader := &resultLoader{
+		res: networkengine.LoadResult{
+			CaughtUp: &networkengine.CaughtUpEvent{EventID: "e2", Version: 2, Type: networkengine.EventTypeNodePlaced},
+		},
+		err: errors.New("read the active rows of tree t after redelivering version 2: connection reset"),
+	}
+	var out bytes.Buffer
+
+	err := runTreeLoad(t.Context(), &out, io.Discard, loader, unilevelLoad("t"))
+
+	require.EqualError(t, err, "load failed: read the active rows of tree t after redelivering version 2: connection reset")
+	require.Equal(t, 1, exitCode(err))
+	require.Equal(t, "redelivered event e2 at version 2\n", out.String())
+	require.Equal(t, 1, loader.attempts)
+}
+
+func TestRunTreeLoad_WarnsOnAReleaseFailureAlongsideAnError(t *testing.T) {
+	loader := &resultLoader{
+		res: networkengine.LoadResult{
+			CaughtUp:   &networkengine.CaughtUpEvent{EventID: "e2", Version: 2, Type: networkengine.EventTypeNodePlaced},
+			ReleaseErr: errors.New("pg_advisory_unlock for tree t returned false"),
+		},
+		err: errors.New("read the active rows of tree t after redelivering version 2: connection reset"),
+	}
+	var out, warn bytes.Buffer
+
+	err := runTreeLoad(t.Context(), &out, &warn, loader, unilevelLoad("t"))
+
+	require.Equal(t, 1, exitCode(err))
+	require.Equal(t, "redelivered event e2 at version 2\n", out.String())
+	require.Equal(t, "warning: releasing the tree lock reported: pg_advisory_unlock for tree t returned false\n",
+		warn.String())
+}
+
+func TestRunTreeLoad_WarnsWhenTheLockReleaseFails(t *testing.T) {
+	loader := &resultLoader{res: networkengine.LoadResult{
+		Nodes: 1, ReleaseErr: errors.New("pg_advisory_unlock for tree t returned false"),
+	}}
+	var out, warn bytes.Buffer
+
+	require.NoError(t, runTreeLoad(t.Context(), &out, &warn, loader, unilevelLoad("t")))
+	require.Equal(t, "loaded tree t (1 nodes)\n", out.String())
+	require.Equal(t, "warning: releasing the tree lock reported: pg_advisory_unlock for tree t returned false\n",
+		warn.String())
+}
+
+// resultLoader returns one fixed result and error, and counts attempts.
+type resultLoader struct {
+	res      networkengine.LoadResult
+	err      error
+	attempts int
+}
+
+func (r *resultLoader) Load(context.Context, networkengine.LoadRequest) (networkengine.LoadResult, error) {
+	r.attempts++
+	return r.res, r.err
+}
+
+func TestRunTreeLoad_ReportsAFailedRedeliveryWithoutALoadedLine(t *testing.T) {
+	loader := &resultLoader{err: &networkengine.CatchUpFailedError{
+		TreeID: "t", EventID: "e2", Version: 2, Type: networkengine.EventTypeNodePlaced,
+		Err: errors.New("parent node p not found in tree t"),
+	}}
+	var out bytes.Buffer
+
+	err := runTreeLoad(t.Context(), &out, io.Discard, loader, unilevelLoad("t"))
+
+	var failed *networkengine.CatchUpFailedError
+	require.ErrorAs(t, err, &failed)
+	require.Equal(t, 1, exitCode(err))
+	require.Empty(t, out.String())
+	require.Equal(t, 1, loader.attempts)
+}
+
+// createOnlyEngine answers CreateTree. The embedded interface is nil, so any
+// other call panics rather than returning a value a test could pass against.
+type createOnlyEngine struct {
+	networkengine.TreeEngineChecker
+}
+
+func (createOnlyEngine) CreateTree(context.Context, string, string) error { return nil }
+
+// flakyVersionStore fails its first ProjectedVersion with a cause that is safe
+// to retry.
+type flakyVersionStore struct {
+	networkengine.TreeStore
+	reads int
+}
+
+func (s *flakyVersionStore) ProjectedVersion(ctx context.Context, treeID string) (int64, bool, error) {
+	s.reads++
+	if s.reads == 1 {
+		return 0, false, safeToRetryErr{errors.New("wrote no bytes")}
+	}
+	return s.TreeStore.ProjectedVersion(ctx, treeID)
+}
+
+// flakyFirstReadEvents fails its first ReadStream with a cause that is safe to
+// retry.
+type flakyFirstReadEvents struct {
+	*platform.MemoryEventStore
+	reads int
+}
+
+func (e *flakyFirstReadEvents) ReadStream(ctx context.Context, stream string, from, limit int64) ([]platform.Event, error) {
+	e.reads++
+	if e.reads == 1 {
+		return nil, safeToRetryErr{errors.New("wrote no bytes")}
+	}
+	return e.MemoryEventStore.ReadStream(ctx, stream, from, limit)
+}
+
+func TestRunTreeLoad_RetriesASafeProjectedVersionFailureOverTheWriter(t *testing.T) {
+	noRetryDelay(t)
+	store := &flakyVersionStore{TreeStore: networkengine.NewMemoryTreeStore()}
+	w := networkengine.NewTreeWriter(platform.NewMemoryEventStore(), store, createOnlyEngine{},
+		networkengine.NewMemoryTreeLocker())
+	tree := testTreeID(51)
+	var out bytes.Buffer
+
+	require.NoError(t, runTreeLoad(t.Context(), &out, io.Discard, w, unilevelLoad(tree)))
+	require.Equal(t, 2, store.reads, "the failed version read was not retried")
+	require.Equal(t, "tree "+tree+" holds no rows; nothing was loaded\n", out.String())
+}
+
+func TestRunTreeLoad_RetriesASafeVersion1ReadFailureOverTheWriter(t *testing.T) {
+	noRetryDelay(t)
+	events := &flakyFirstReadEvents{MemoryEventStore: platform.NewMemoryEventStore()}
+	w := networkengine.NewTreeWriter(events, networkengine.NewMemoryTreeStore(), createOnlyEngine{},
+		networkengine.NewMemoryTreeLocker())
+	tree := testTreeID(52)
+	var out bytes.Buffer
+
+	require.NoError(t, runTreeLoad(t.Context(), &out, io.Discard, w, unilevelLoad(tree)))
+	require.Greater(t, events.reads, 1, "the failed version-1 read was not retried")
+	require.Equal(t, "tree "+tree+" holds no rows; nothing was loaded\n", out.String())
 }

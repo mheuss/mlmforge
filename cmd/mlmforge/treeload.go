@@ -17,9 +17,9 @@ const maxLoadAttempts = 3
 // loadRetryDelay is the pause between attempts.
 var loadRetryDelay = 250 * time.Millisecond
 
-// treeLoader is the surface runTreeLoad drives.
-type treeLoader interface {
-	LoadTree(ctx context.Context, treeID, treeType string, opts ...networkengine.LoadTreeOption) (int, error)
+// treeLoadWriter is the surface runTreeLoad drives.
+type treeLoadWriter interface {
+	Load(ctx context.Context, r networkengine.LoadRequest) (networkengine.LoadResult, error)
 }
 
 // treeLoadRetryable reports whether a load failure can succeed on a retry.
@@ -45,22 +45,25 @@ func treeLoadRetryable(err error) bool {
 	return pgconn.SafeToRetry(rejected.Err)
 }
 
-// runTreeLoad replays one tree, retrying only what treeLoadRetryable allows.
-func runTreeLoad(ctx context.Context, out io.Writer, loader treeLoader, treeID, treeType string, opts []networkengine.LoadTreeOption) error {
+// runTreeLoad loads one tree, retrying only what treeLoadRetryable allows.
+func runTreeLoad(ctx context.Context, out, warn io.Writer, loader treeLoadWriter, req networkengine.LoadRequest) error {
 	var err error
 	for attempt := 1; attempt <= maxLoadAttempts; attempt++ {
-		var size int
-		size, err = loader.LoadTree(ctx, treeID, treeType, opts...)
+		var res networkengine.LoadResult
+		res, err = loader.Load(ctx, req)
+		printRedelivered(out, res.CaughtUp, stillBehind(res))
 		if err == nil {
 			// Zero rows and a tree that is not in the database are the same
 			// read, so this must not claim a load that did not happen.
-			if size == 0 {
-				_, _ = fmt.Fprintf(out, "tree %s holds no rows; nothing was loaded\n", treeID)
-				return nil
+			if res.Nodes == 0 {
+				_, _ = fmt.Fprintf(out, "tree %s holds no rows; nothing was loaded\n", req.TreeID)
+			} else {
+				_, _ = fmt.Fprintf(out, "loaded tree %s (%d nodes)\n", req.TreeID, res.Nodes)
 			}
-			_, _ = fmt.Fprintf(out, "loaded tree %s (%d nodes)\n", treeID, size)
+			printReleaseWarning(warn, res.ReleaseErr)
 			return nil
 		}
+		printReleaseWarning(warn, res.ReleaseErr)
 		if !treeLoadRetryable(err) {
 			break
 		}
@@ -81,6 +84,20 @@ func runTreeLoad(ctx context.Context, out io.Writer, loader treeLoader, treeID, 
 		}
 	}
 	return newTreeLoadFailure(err)
+}
+
+// stillBehind names a projected version a redelivery did not advance.
+func stillBehind(res networkengine.LoadResult) string {
+	after := res.ProjectedAfter
+	switch {
+	case res.CaughtUp == nil || after == nil:
+		return ""
+	case !after.Found:
+		return "; the tree has no projection row"
+	case after.Version < res.CaughtUp.Version:
+		return fmt.Sprintf("; the projected version is still %d", after.Version)
+	}
+	return ""
 }
 
 // treeLoadFailure carries the operator message while keeping the cause

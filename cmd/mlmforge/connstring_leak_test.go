@@ -128,6 +128,7 @@ func requirePreDriverRefusal(t *testing.T, tc testutil.ResolveRefusedCase, stdou
 	testutil.RequireNoDriverParseError(t, err)
 	var cse *platform.ConnStringError
 	require.ErrorAs(t, err, &cse)
+	require.Equal(t, "mlmforge", cse.Driver())
 	require.Equal(t, tc.Stage, cse.Stage())
 	require.Equal(t, tc.Part, cse.Part())
 }

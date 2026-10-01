@@ -36,6 +36,10 @@ func TestConnStringCases_NoPasswordOverlapsTheTextAroundIt(t *testing.T) {
 			RefusalText(t, "golang-migrate", "refused"),
 			RefusalText(t, "pgx", "parse"),
 			RefusalText(t, "pgx", "refused"),
+			PreDriverText(t, "raw-at", "path"),
+			PreDriverText(t, "raw-at", "query"),
+			PreDriverText(t, "raw-at", "fragment"),
+			PreDriverText(t, "scheme-case", ""),
 		}
 		for _, k := range known {
 			require.Empty(t, PasswordWindows(k, tc.Password), "%s overlaps %q", tc.Name, k)
@@ -123,4 +127,22 @@ func requirePgxDialsNoName(t *testing.T, tc ResolveRefusedCase) {
 	for _, host := range hosts {
 		require.True(t, strings.HasPrefix(host, "/"), "%s: pgx parsed the wiring string with host %q, which is not a socket path", tc.Name, host)
 	}
+}
+
+func TestResolveRefusedCases_EachDialableTwinIsAMustReachRow(t *testing.T) {
+	reaches := map[string]bool{}
+	for _, tc := range ReachesDriverCases() {
+		reaches[tc.ConnString] = true
+	}
+	checked := 0
+	for _, tc := range ResolveRefusedCases() {
+		u, err := url.Parse(tc.Twin)
+		require.NoError(t, err, tc.Name)
+		if u.Hostname() != "127.0.0.1" {
+			continue
+		}
+		checked++
+		require.True(t, reaches[tc.Twin], "%s: twin %q is not a ReachesDriverCases row", tc.Name, tc.Twin)
+	}
+	require.Equal(t, 2, checked, "twins that dial 127.0.0.1")
 }

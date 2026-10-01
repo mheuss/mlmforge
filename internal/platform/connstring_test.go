@@ -271,3 +271,19 @@ func TestPreDriverError_RefusesWhatEitherCheckRefuses(t *testing.T) {
 	}
 	require.NoError(t, PreDriverError("postgres://app:pr@of@PW@127.0.0.1:1/app"))
 }
+
+func TestPreDriverError_MatchesEachConnStringCaseResolveStage(t *testing.T) {
+	for _, tc := range testutil.ConnStringCases() {
+		t.Run(tc.Name, func(t *testing.T) {
+			err := PreDriverError(tc.ConnString)
+			if tc.ResolveStage == "" {
+				require.NoError(t, err)
+				return
+			}
+			var cse *ConnStringError
+			require.ErrorAs(t, err, &cse)
+			require.Equal(t, tc.ResolveStage, cse.Stage())
+			require.Equal(t, tc.ResolvePart, cse.Part())
+		})
+	}
+}

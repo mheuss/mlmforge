@@ -62,7 +62,7 @@ func ConnStringCases() []ConnStringCase {
 	}
 }
 
-// Twin checks a ResolveRefusedCase's twin is held to.
+// The checks a ResolveRefusedCase's twin is held to.
 const (
 	TwinParsers    = "parsers"
 	TwinPgxRefuses = "pgx-refuses"
@@ -87,7 +87,7 @@ func (c ResolveRefusedCase) WiringWithoutPassword() string {
 	return strings.ReplaceAll(c.Wiring, c.WiringPassword, "")
 }
 
-// ResolveRefusedCases returns the connection strings mlmforge refuses before any driver, each with the twin that still reaches the driver.
+// ResolveRefusedCases returns the connection strings mlmforge refuses before any driver, each with its twin, held to the check its TwinCheck names.
 func ResolveRefusedCases() []ResolveRefusedCase {
 	return []ResolveRefusedCase{
 		{Name: "ticket-path",

@@ -1,10 +1,13 @@
 package testutil
 
 import (
+	"net"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
 )
 
@@ -77,5 +80,47 @@ func TestResolveRefusedCases_NoPasswordOverlapsTheTextAroundIt(t *testing.T) {
 func TestReachesDriverCases_EachRowNamesADial(t *testing.T) {
 	for _, tc := range ReachesDriverCases() {
 		require.True(t, strings.HasPrefix(tc.Dial, "dial tcp 127.0.0.1:"), tc.Name)
+		u, err := url.Parse(tc.ConnString)
+		require.NoError(t, err, tc.Name)
+		require.Equal(t, "127.0.0.1", u.Hostname(), tc.Name)
+	}
+}
+
+func TestResolveRefusedCases_EachWiringHostCannotReachDNS(t *testing.T) {
+	ClearTimeoutEnv(t)
+	for _, name := range []string{"PGHOST", "PGPORT"} {
+		t.Setenv(name, "")
+	}
+	for _, tc := range ResolveRefusedCases() {
+		if !strings.HasPrefix(tc.Wiring, "postgres://") && !strings.HasPrefix(tc.Wiring, "postgresql://") {
+			requirePgxDialsNoName(t, tc)
+			continue
+		}
+		u, err := url.Parse(tc.Wiring)
+		require.NoError(t, err, tc.Name)
+		hosts := []string{u.Hostname()}
+		if queryHost := u.Query().Get("host"); queryHost != "" {
+			hosts = append(hosts, queryHost)
+		}
+		for _, host := range hosts {
+			require.True(t, strings.HasSuffix(host, ".invalid") || net.ParseIP(host) != nil,
+				"%s: wiring host %q is neither a .invalid name nor a literal IP", tc.Name, host)
+		}
+	}
+}
+
+// requirePgxDialsNoName fails the test when pgx accepts a wiring string and would dial any host that is not a socket path.
+func requirePgxDialsNoName(t *testing.T, tc ResolveRefusedCase) {
+	t.Helper()
+	cfg, err := pgconn.ParseConfig(tc.Wiring)
+	if err != nil {
+		return
+	}
+	hosts := []string{cfg.Host}
+	for _, fallback := range cfg.Fallbacks {
+		hosts = append(hosts, fallback.Host)
+	}
+	for _, host := range hosts {
+		require.True(t, strings.HasPrefix(host, "/"), "%s: pgx would dial %q, which is not a socket path", tc.Name, host)
 	}
 }

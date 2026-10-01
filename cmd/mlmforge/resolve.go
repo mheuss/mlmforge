@@ -64,7 +64,8 @@ func (t dbTarget) sourceText() string {
 }
 
 // resolveDBURL returns the database URL from the flag or DATABASE_URL, with a
-// connect timeout added when nothing else sets one.
+// connect timeout added when nothing else sets one, or an error for a URL
+// mlmforge refuses before any driver sees it.
 func resolveDBURL(flagValue string) (dbTarget, error) {
 	raw := flagValue
 	if raw == "" {

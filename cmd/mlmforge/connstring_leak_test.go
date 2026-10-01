@@ -167,3 +167,43 @@ func TestTreeCommands_RefuseBeforeTheDriver(t *testing.T) {
 	}
 	require.Equal(t, 44, selected, "tree runs")
 }
+
+func TestMigrateVersion_AStringThatReachesTheDriverPassesTheCLI(t *testing.T) {
+	for _, tc := range testutil.ReachesDriverCases() {
+		t.Run(tc.Name, func(t *testing.T) {
+			testutil.ClearTimeoutEnv(t)
+			testutil.ClearLibPQEnv(t)
+			for name, value := range tc.Env {
+				t.Setenv(name, value)
+			}
+
+			_, _, err := executeRootCaptured("migrate", "version",
+				"--db-url", tc.ConnString, "--migrations", platform.FindMigrationsDir(t))
+
+			require.ErrorContains(t, err, tc.Dial)
+			var cse *platform.ConnStringError
+			require.False(t, errors.As(err, &cse), "expected a dial error; the error chain holds a *ConnStringError: %v", err)
+		})
+	}
+}
+
+func TestTreeLoad_AStringThatReachesTheDriverPassesTheCLI(t *testing.T) {
+	selected := 0
+	for _, tc := range testutil.ReachesDriverCases() {
+		if !tc.Tree {
+			continue
+		}
+		selected++
+		t.Run(tc.Name, func(t *testing.T) {
+			testutil.IsolatePgxEnv(t)
+
+			_, _, err := executeRootCaptured("tree", "load", "--db-url", tc.ConnString, "--worker", testWorker(t),
+				"--tree-id", "t9", "--tree-type", "unilevel")
+
+			require.ErrorContains(t, err, tc.Dial)
+			var cse *platform.ConnStringError
+			require.False(t, errors.As(err, &cse), "expected a dial error; the error chain holds a *ConnStringError: %v", err)
+		})
+	}
+	require.Equal(t, 7, selected, "tree rows")
+}

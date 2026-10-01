@@ -56,6 +56,12 @@ mise exec -- go build ./... || { echo BUILD_FAILED; return; }
 Neuter a branch with `&& false` rather than deleting it, so the variables stay
 used.
 
+`go build` passing is not enough. `go test` also runs part of `go vet`,
+including its printf check. Drop an argument from a `Sprintf` but keep its
+verb, and `go build` exits 0 while `go test` reports `[build failed]` with no
+test lines. Drop the verb with the argument. The `=== RUN` count in item 2
+catches both.
+
 ### 2. The filter matched no test
 
 Rename a function and forget the test, and `-run TestTheNewName` selects

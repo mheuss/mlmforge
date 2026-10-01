@@ -111,6 +111,24 @@ func migrateSchemeError(dbURL string) error {
 	return &ConnStringError{driver: driverMigrate, stage: stageScheme}
 }
 
+// PreDriverError returns a ConnStringError for a connection string mlmforge refuses before any driver sees it, and nil otherwise.
+func PreDriverError(dbURL string) error {
+	if err := schemeCaseError(dbURL); err != nil {
+		return err
+	}
+	return rawAtError(dbURL)
+}
+
+// schemeCaseError returns a ConnStringError for a string whose postgres:// or postgresql:// scheme is not written in lowercase, and nil otherwise.
+func schemeCaseError(dbURL string) error {
+	for _, scheme := range []string{"postgres://", "postgresql://"} {
+		if len(dbURL) >= len(scheme) && strings.EqualFold(dbURL[:len(scheme)], scheme) && !strings.HasPrefix(dbURL, scheme) {
+			return &ConnStringError{driver: driverMlmforge, stage: stageSchemeCase}
+		}
+	}
+	return nil
+}
+
 // rawAtError returns a ConnStringError for a postgres:// or postgresql:// string with a raw '@' after the host part, and nil otherwise.
 func rawAtError(dbURL string) error {
 	rest, ok := strings.CutPrefix(dbURL, "postgres://")

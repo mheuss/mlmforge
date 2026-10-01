@@ -218,3 +218,54 @@ func TestRawAtError_AcceptsAnAtOnlyInTheHostPart(t *testing.T) {
 		require.NoError(t, rawAtError(connString), connString)
 	}
 }
+
+func TestSchemeCaseError_RefusesAMisCasedScheme(t *testing.T) {
+	for _, connString := range []string{
+		"POSTGRES://h/app",
+		"Postgres://h/app",
+		"POSTGRESQL://h/app",
+		"postgresQL://h/app",
+		"postGres://h/app",
+		"PostgreSQL://u.invalid/app",
+	} {
+		var cse *ConnStringError
+		require.ErrorAs(t, schemeCaseError(connString), &cse, connString)
+		require.Equal(t, "mlmforge", cse.Driver(), connString)
+		require.Equal(t, "scheme-case", cse.Stage(), connString)
+		require.Empty(t, cse.Part(), connString)
+	}
+}
+
+func TestSchemeCaseError_AcceptsEverythingElse(t *testing.T) {
+	for _, connString := range []string{
+		"postgres://h/app",
+		"postgresql://h/app",
+		"host=h password=x",
+		"mysql://h/app",
+		"postgres:app@h/app",
+		"POSTGRES:",
+		"postgres",
+		"",
+	} {
+		require.NoError(t, schemeCaseError(connString), connString)
+	}
+}
+
+func TestPreDriverError_RunsTheSchemeCheckThenTheAtCheck(t *testing.T) {
+	for _, tc := range []struct {
+		connString string
+		stage      string
+		part       string
+	}{
+		{"POSTGRES://app:1234/s3cretPW@127.0.0.1:1/app", "scheme-case", ""},
+		{"postgres://app:1234/s3cretPW@127.0.0.1:1/app", "raw-at", "path"},
+	} {
+		t.Run(tc.connString, func(t *testing.T) {
+			var cse *ConnStringError
+			require.ErrorAs(t, PreDriverError(tc.connString), &cse)
+			require.Equal(t, tc.stage, cse.Stage())
+			require.Equal(t, tc.part, cse.Part())
+		})
+	}
+	require.NoError(t, PreDriverError("postgres://app:pr@of@PW@127.0.0.1:1/app"))
+}

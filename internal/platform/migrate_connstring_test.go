@@ -98,7 +98,7 @@ func TestMigrateVersion_AStringThatReachedTheDriverStillDoes(t *testing.T) {
 
 			_, err := MigrateVersion(tc.ConnString, FindMigrationsDir(t))
 
-			require.ErrorContains(t, err, tc.Dial)
+			require.ErrorContains(t, err, tc.Dial+":")
 			var cse *ConnStringError
 			require.False(t, errors.As(err, &cse), "expected a dial error; the error chain holds a *ConnStringError: %v", err)
 		})

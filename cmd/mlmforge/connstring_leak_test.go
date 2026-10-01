@@ -118,12 +118,13 @@ func executeTreeCaptured(open depsOpener, args ...string) (stdout, stderr string
 func requirePreDriverRefusal(t *testing.T, tc testutil.ResolveRefusedCase, stdout, stderr string, err error) {
 	t.Helper()
 	want := testutil.PreDriverText(t, tc.Stage, tc.Part)
-	require.EqualError(t, err, want)
-	require.Equal(t, "Error: "+want+"\n", stderr)
-	require.Empty(t, stdout)
+	require.Error(t, err)
 	if tc.WiringPassword != "" {
 		testutil.RequireNoPasswordWindow(t, stdout+"\n"+stderr+"\n"+err.Error(), tc.WiringPassword, want, tc.WiringWithoutPassword())
 	}
+	require.EqualError(t, err, want)
+	require.Equal(t, "Error: "+want+"\n", stderr)
+	require.Empty(t, stdout)
 	testutil.RequireNoDriverParseError(t, err)
 	var cse *platform.ConnStringError
 	require.ErrorAs(t, err, &cse)
@@ -169,7 +170,9 @@ func TestTreeCommands_RefuseBeforeTheDriver(t *testing.T) {
 }
 
 func TestMigrateVersion_AStringThatReachesTheDriverPassesTheCLI(t *testing.T) {
+	selected := 0
 	for _, tc := range testutil.ReachesDriverCases() {
+		selected++
 		t.Run(tc.Name, func(t *testing.T) {
 			testutil.ClearTimeoutEnv(t)
 			testutil.ClearLibPQEnv(t)
@@ -180,11 +183,12 @@ func TestMigrateVersion_AStringThatReachesTheDriverPassesTheCLI(t *testing.T) {
 			_, _, err := executeRootCaptured("migrate", "version",
 				"--db-url", tc.ConnString, "--migrations", platform.FindMigrationsDir(t))
 
-			require.ErrorContains(t, err, tc.Dial)
+			require.ErrorContains(t, err, tc.Dial+":")
 			var cse *platform.ConnStringError
 			require.False(t, errors.As(err, &cse), "expected a dial error; the error chain holds a *ConnStringError: %v", err)
 		})
 	}
+	require.Equal(t, 14, selected, "migrate rows")
 }
 
 func TestTreeLoad_AStringThatReachesTheDriverPassesTheCLI(t *testing.T) {
@@ -193,6 +197,7 @@ func TestTreeLoad_AStringThatReachesTheDriverPassesTheCLI(t *testing.T) {
 		if !tc.Tree {
 			continue
 		}
+		require.Empty(t, tc.Env, "%s: tree load does not apply a row's environment", tc.Name)
 		selected++
 		t.Run(tc.Name, func(t *testing.T) {
 			testutil.IsolatePgxEnv(t)
@@ -200,7 +205,7 @@ func TestTreeLoad_AStringThatReachesTheDriverPassesTheCLI(t *testing.T) {
 			_, _, err := executeRootCaptured("tree", "load", "--db-url", tc.ConnString, "--worker", testWorker(t),
 				"--tree-id", "t9", "--tree-type", "unilevel")
 
-			require.ErrorContains(t, err, tc.Dial)
+			require.ErrorContains(t, err, tc.Dial+":")
 			var cse *platform.ConnStringError
 			require.False(t, errors.As(err, &cse), "expected a dial error; the error chain holds a *ConnStringError: %v", err)
 		})

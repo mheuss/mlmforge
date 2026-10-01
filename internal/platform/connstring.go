@@ -14,33 +14,57 @@ import (
 type connDriver string
 
 const (
-	driverMigrate connDriver = "golang-migrate"
-	driverPgx     connDriver = "pgx"
+	driverMigrate  connDriver = "golang-migrate"
+	driverPgx      connDriver = "pgx"
+	driverMlmforge connDriver = "mlmforge"
 )
 
 type connStage string
 
 const (
-	stageParse   connStage = "parse"
-	stageScheme  connStage = "scheme"
-	stageRefused connStage = "refused"
+	stageParse      connStage = "parse"
+	stageScheme     connStage = "scheme"
+	stageRefused    connStage = "refused"
+	stageRawAt      connStage = "raw-at"
+	stageSchemeCase connStage = "scheme-case"
 )
 
-// ConnStringError reports a connection string a driver refused, holding nothing from the string.
+type connPart string
+
+const (
+	partPath     connPart = "path"
+	partQuery    connPart = "query"
+	partFragment connPart = "fragment"
+)
+
+// ConnStringError reports a connection string that mlmforge or a driver refused, holding nothing from the string.
 type ConnStringError struct {
 	driver connDriver
 	stage  connStage
+	part   connPart
 }
 
-// Driver names the driver whose call site refused the connection string.
+// Driver names the driver whose call site refused the connection string, or mlmforge for a check that runs before any driver.
 func (e *ConnStringError) Driver() string { return string(e.driver) }
 
-// Stage is "parse" when a URL-form string failed to parse, "scheme" when migrate refused the string's scheme, and "refused" otherwise.
+// Stage is "parse" when a URL-form string failed to parse, "scheme" when migrate refused the string's scheme, "raw-at" or "scheme-case" when mlmforge refused it before any driver, and "refused" otherwise.
 func (e *ConnStringError) Stage() string { return string(e.stage) }
 
+// Part names where a raw-at refusal found the '@', and is empty for every other stage.
+func (e *ConnStringError) Part() string { return string(e.part) }
+
 func (e *ConnStringError) Error() string {
-	if e.stage == stageScheme {
+	switch e.stage {
+	case stageScheme:
 		return "mlmforge migrate accepts only a connection string that starts with postgres:// or postgresql://. The connection string is withheld because it can contain a password."
+	case stageRawAt:
+		// Concatenated, not formatted: the text holds %40.
+		return "mlmforge found a raw @ after the host part, in the connection string's " + string(e.part) +
+			". If a password holds @ / ? or #, percent-encode them. Write any other literal @ there as %40." +
+			" The connection string is withheld because it can contain a password."
+	case stageSchemeCase:
+		return "mlmforge found a connection string whose scheme is not all lowercase. Write postgres:// or postgresql:// in lowercase." +
+			" The connection string is withheld because it can contain a password."
 	}
 	what := "could not parse the connection string"
 	if e.stage == stageRefused {

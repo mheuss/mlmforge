@@ -78,6 +78,23 @@ func RefusalText(t *testing.T, driver, stage string) string {
 	return text
 }
 
+var preDriverTexts = map[string]string{
+	"raw-at/path":     "mlmforge found a raw @ after the host part, in the connection string's path. If a password holds @ / ? or #, percent-encode them. Write any other literal @ there as %40. The connection string is withheld because it can contain a password.",
+	"raw-at/query":    "mlmforge found a raw @ after the host part, in the connection string's query. If a password holds @ / ? or #, percent-encode them. Write any other literal @ there as %40. The connection string is withheld because it can contain a password.",
+	"raw-at/fragment": "mlmforge found a raw @ after the host part, in the connection string's fragment. If a password holds @ / ? or #, percent-encode them. Write any other literal @ there as %40. The connection string is withheld because it can contain a password.",
+	"scheme-case/":    "mlmforge found a connection string whose scheme is not all lowercase. Write postgres:// or postgresql:// in lowercase. The connection string is withheld because it can contain a password.",
+}
+
+// PreDriverText returns the text a connection string refused before any driver is expected to print for stage and part.
+func PreDriverText(t *testing.T, stage, part string) string {
+	t.Helper()
+	text, ok := preDriverTexts[stage+"/"+part]
+	if !ok {
+		t.Fatalf("no pre-driver text for stage %q and part %q", stage, part)
+	}
+	return text
+}
+
 // PasswordWindows returns each window of password, in order, that appears in text.
 func PasswordWindows(text, password string) []string {
 	var found []string

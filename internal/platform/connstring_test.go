@@ -30,6 +30,38 @@ func TestConnStringError_NamesTheDriverAndTheStage(t *testing.T) {
 	}
 }
 
+func TestConnStringError_NamesThePreDriverStageAndPart(t *testing.T) {
+	for _, tc := range []struct {
+		err   *ConnStringError
+		stage string
+		part  string
+	}{
+		{&ConnStringError{driver: driverMlmforge, stage: stageRawAt, part: partPath}, "raw-at", "path"},
+		{&ConnStringError{driver: driverMlmforge, stage: stageRawAt, part: partQuery}, "raw-at", "query"},
+		{&ConnStringError{driver: driverMlmforge, stage: stageRawAt, part: partFragment}, "raw-at", "fragment"},
+		{&ConnStringError{driver: driverMlmforge, stage: stageSchemeCase}, "scheme-case", ""},
+	} {
+		t.Run(tc.stage+"/"+tc.part, func(t *testing.T) {
+			require.Equal(t, testutil.PreDriverText(t, tc.stage, tc.part), tc.err.Error())
+			require.Equal(t, "mlmforge", tc.err.Driver())
+			require.Equal(t, tc.stage, tc.err.Stage())
+			require.Equal(t, tc.part, tc.err.Part())
+		})
+	}
+}
+
+func TestConnStringError_HasNoPartForTheDriverStages(t *testing.T) {
+	for _, err := range []*ConnStringError{
+		{driver: driverMigrate, stage: stageParse},
+		{driver: driverMigrate, stage: stageScheme},
+		{driver: driverMigrate, stage: stageRefused},
+		{driver: driverPgx, stage: stageParse},
+		{driver: driverPgx, stage: stageRefused},
+	} {
+		require.Empty(t, err.Part(), "%s/%s", err.Driver(), err.Stage())
+	}
+}
+
 func TestConnStringError_EndsTheChain(t *testing.T) {
 	require.Nil(t, errors.Unwrap(&ConnStringError{driver: driverPgx, stage: stageRefused}))
 }

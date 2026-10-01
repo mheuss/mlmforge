@@ -178,3 +178,43 @@ func TestMigrateDriverParseError_ReportsARefusedEnvironmentAsItself(t *testing.T
 	var cse *ConnStringError
 	require.False(t, errors.As(err, &cse), "expected lib/pq's environment error; got a ConnStringError")
 }
+
+func TestRawAtError_NamesThePartThatHoldsTheAt(t *testing.T) {
+	for _, tc := range []struct {
+		connString string
+		part       string
+	}{
+		{"postgres://app:Zm9vQmFy@cXV4eHl6/d2l0aA@127.0.0.1:1/app", "path"},
+		{"postgresql://h/my@db", "path"},
+		{"postgres://h/a@b?c@d#e@f", "path"},
+		{"postgres://h/app?password=p@ss", "query"},
+		{"postgres://h/db?x=a/b@c", "query"},
+		{"postgres://h/app?x=a@b#c@d", "query"},
+		{"postgres://h?x=1#a@b", "fragment"},
+		{"postgres://h/d#x?y@z", "fragment"},
+		{"postgres://h?x=1#a/b@c", "fragment"},
+	} {
+		t.Run(tc.connString, func(t *testing.T) {
+			var cse *ConnStringError
+			require.ErrorAs(t, rawAtError(tc.connString), &cse)
+			require.Equal(t, "mlmforge", cse.Driver())
+			require.Equal(t, "raw-at", cse.Stage())
+			require.Equal(t, tc.part, cse.Part())
+		})
+	}
+}
+
+func TestRawAtError_AcceptsAnAtOnlyInTheHostPart(t *testing.T) {
+	for _, connString := range []string{
+		"postgres://app:pr@of@PW@127.0.0.1:1/app",
+		"postgres://app:Zm9vQmFy%40cXV4eHl6%2Fd2l0aA@127.0.0.1:1/app",
+		"postgres://h/my%40db?password=p%40ss#x",
+		"postgresql://h/app",
+		"host=h password=p@ss",
+		"POSTGRES://app:1234/s3cretPW@127.0.0.1:1/app",
+		"mysql://h/a@b",
+		"",
+	} {
+		require.NoError(t, rawAtError(connString), connString)
+	}
+}

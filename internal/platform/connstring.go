@@ -111,6 +111,29 @@ func migrateSchemeError(dbURL string) error {
 	return &ConnStringError{driver: driverMigrate, stage: stageScheme}
 }
 
+// rawAtError returns a ConnStringError for a postgres:// or postgresql:// string with a raw '@' after the host part, and nil otherwise.
+func rawAtError(dbURL string) error {
+	rest, ok := strings.CutPrefix(dbURL, "postgres://")
+	if !ok {
+		if rest, ok = strings.CutPrefix(dbURL, "postgresql://"); !ok {
+			return nil
+		}
+	}
+	// Cut in this order. Any other order puts an '@' in the wrong part, or misses one.
+	beforeFragment, fragment, _ := strings.Cut(rest, "#")
+	beforeQuery, query, _ := strings.Cut(beforeFragment, "?")
+	_, path, _ := strings.Cut(beforeQuery, "/")
+	for _, p := range []struct {
+		part connPart
+		text string
+	}{{partPath, path}, {partQuery, query}, {partFragment, fragment}} {
+		if strings.Contains(p.text, "@") {
+			return &ConnStringError{driver: driverMlmforge, stage: stageRawAt, part: p.part}
+		}
+	}
+	return nil
+}
+
 // libPQEnvProbe is a connection string that holds nothing from any operator's string.
 const libPQEnvProbe = "postgres://u@h/d"
 

@@ -289,8 +289,8 @@ func TestTreeLoad_PrintsTheSameLineForAnEmptyStream(t *testing.T) {
 	require.Empty(t, out.stderr.String())
 }
 
-// When the engine fails after the insert commits, the write command has to
-// exit 0 and say the store is current.
+// When the engine fails after the insert commits, reportWrite has to map the
+// write to exit 0 and say the store is current.
 func TestTreePlace_ExitsZeroWhenTheEngineFailsAfterTheInsertCommits(t *testing.T) {
 	if pgContainer == nil {
 		t.Skip("Postgres container not available")

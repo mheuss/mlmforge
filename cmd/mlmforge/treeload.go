@@ -114,10 +114,7 @@ func newTreeLoadFailure(err error) *treeLoadFailure {
 func (e *treeLoadFailure) Error() string { return e.msg }
 func (e *treeLoadFailure) Unwrap() error { return e.err }
 
-// treeLoadFailureMessage states the stage a load reached and, after the create,
-// how many non-root placements the engine acknowledged. For a load refused
-// before any engine call, it says so. Anything else gets a generic load-failed
-// message.
+// treeLoadFailureMessage describes a failed tree load for the operator.
 func treeLoadFailureMessage(err error) string {
 	// Incomplete is checked first, matching treeLoadRetryable. A chain holding
 	// both must not be reported as leaving the engine unchanged.

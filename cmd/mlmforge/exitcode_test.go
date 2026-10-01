@@ -64,6 +64,11 @@ func TestRunArgs_MapsAWritesOutcomeToItsExitCode(t *testing.T) {
 			name: "remove with the store observed behind", exit: 3, result: behind, warn: redelivers,
 			args: []string{"remove", "--tree-id", "t", "--user-id", "u"},
 		},
+		{
+			name: "place with the store observed current", exit: 0, args: place,
+			result: projectionFailure(&networkengine.ProjectionObservation{Version: 2, Found: true}),
+			warn:   "The tree's projected version is 2.",
+		},
 		{name: "projected", args: place, result: networkengine.WriteResult{Stream: "tree-t", EventID: "e2", Version: 2}, exit: 0},
 		{
 			name: "nothing appended", args: place, result: networkengine.WriteResult{Stream: "tree-t"},

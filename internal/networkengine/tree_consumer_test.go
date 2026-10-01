@@ -2111,9 +2111,7 @@ func TestHandleNodeRemoved_ReconcileRetriesWhenAReadFails(t *testing.T) {
 }
 
 // The engine has already applied the removal and its reply carried the only
-// copy of moved, so giving up on the store write is not a clean abort. It is
-// the divergence HEU-777 owns, and a shutdown landing in this window must not
-// be what causes it.
+// copy of moved, so giving up on the store write is not a clean abort.
 func TestHandleNodeRemoved_StoreWriteSurvivesCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	tr := &reconcileTransport{

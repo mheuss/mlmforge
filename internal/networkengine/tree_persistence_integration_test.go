@@ -1063,8 +1063,6 @@ func TestTreePersistence_RedeliveredRemovalFailsWhenTheStoreNeverLanded(t *testi
 	require.NoError(t, err)
 	assert.NotNil(t, still, "GetNode returned no row for the recruiter")
 
-	// The state HEU-777 has to repair: the recruit still names a sponsor the
-	// engine no longer holds.
 	orphaned, err := treeStore.GetNode(ctx, treeID, recruitID)
 	require.NoError(t, err)
 	require.NotNil(t, orphaned)

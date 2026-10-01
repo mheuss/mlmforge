@@ -270,7 +270,21 @@ func TestRunTreeLoad_ReportsAnIncompleteLoadWithItsCounts(t *testing.T) {
 
 	err := runTreeLoad(t.Context(), &out, io.Discard, loader, unilevelLoad("t"))
 
-	require.ErrorContains(t, err, "load stopped at the root stage; the engine acknowledged 0 of 47 placements: ")
+	require.ErrorContains(t, err, "load stopped at the root stage; the engine acknowledged 0 of 47 non-root placements: ")
+	require.Empty(t, out.String())
+}
+
+func TestRunTreeLoad_ReportsAFailedCreateWithoutCounts(t *testing.T) {
+	incomplete := &networkengine.TreeLoadIncompleteError{
+		Stage: networkengine.TreeLoadStageCreate,
+	}
+	loader := &stubLoader{err: incomplete}
+	var out bytes.Buffer
+
+	err := runTreeLoad(t.Context(), &out, io.Discard, loader, unilevelLoad("t"))
+
+	require.EqualError(t, err, "load stopped at the create stage; the create did not report success: "+incomplete.Error())
+	require.NotContains(t, err.Error(), "placements")
 	require.Empty(t, out.String())
 }
 
@@ -285,7 +299,7 @@ func TestRunTreeLoad_ReportsAChainHoldingBothAsIncomplete(t *testing.T) {
 
 	err := runTreeLoad(t.Context(), &out, io.Discard, loader, unilevelLoad("t"))
 
-	require.ErrorContains(t, err, "load stopped at the nodes stage; the engine acknowledged 0 of 4 placements: ")
+	require.ErrorContains(t, err, "load stopped at the nodes stage; the engine acknowledged 0 of 4 non-root placements: ")
 	require.Empty(t, out.String())
 }
 

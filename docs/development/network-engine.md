@@ -924,14 +924,14 @@ The store records one version per tree, the stream version its rows reflect, in 
 
 - Its own event: appended.
 - Another event: not appended.
-- No event: treated as not appended. The error states only what the read found. A caller cancelled during COMMIT can see the commit fail while the server finishes it. The read may run before the commit is visible. Such an event shows up as the stream's last event. The next write redelivers it.
+- No event: treated as not appended. The error states only what the read found. A caller cancelled during COMMIT can see the commit fail while the server finishes it. The read may run before the commit is visible. Such an event shows up as the stream's last event. The next write or `tree load` redelivers it.
 - The read fails: unknown. The CLI exits 1.
 
 A confirmed append is a success even when projection fails. A projection error does not show the store is behind. A placement commits its row and version before its engine call. So the writer reads the tree's projected version on a detached context and reports it as `Observed`. The CLI exits by what it saw:
 
 - At or past the appended version, it exits 0 and states the version.
-- Exactly one below, it exits 3 and says the next write or `tree load` redelivers the event.
-- Further below, with no row, or when the read fails, it exits 3 and states what it saw.
+- Exactly one below, it exits 3, states what it saw, and says the next write or `tree load` redelivers the event. An appended version 1 with no projection row is one below.
+- Further below, with no row past version 1, or when the read fails, it exits 3 and states what it saw.
 - A projection the store refused as below its version observes a later version. It exits 0. Its warning names no redelivery.
 
 What `WriteResult` carries:

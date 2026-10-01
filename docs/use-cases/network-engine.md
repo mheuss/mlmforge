@@ -1104,7 +1104,7 @@ if errors.As(err, &unknown) {
 }
 ```
 
-**Notes:** Compare event IDs by value. A Postgres round trip returns a canonical UUID. A conflict message leaves out the store's `ActualVersion`. That value can hold a version nobody read. When the read finds no event, the message states only that. A commit that a cancel during COMMIT hid from the read turns up as the stream's last event. The next write redelivers it, because the stream is then one past the tree's projected version. A CLI matches `AppendOutcomeUnknownError` before any context error, because it unwraps to both of its errors.
+**Notes:** Compare event IDs by value. A Postgres round trip returns a canonical UUID. A conflict message leaves out the store's `ActualVersion`. That value can hold a version nobody read. When the read finds no event, the message states only that. A commit that a cancel during COMMIT hid from the read turns up as the stream's last event. The next write or `tree load` redelivers it, because the stream is then one past the tree's projected version. A CLI matches `AppendOutcomeUnknownError` before any context error, because it unwraps to both of its errors.
 
 ---
 

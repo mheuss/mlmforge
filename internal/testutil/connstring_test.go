@@ -48,3 +48,34 @@ func TestIsolatePgxEnv_PointsTheServiceFilesAtAnEmptyDirectory(t *testing.T) {
 	require.True(t, os.IsNotExist(err))
 	require.NotEmpty(t, os.Getenv("PGSYSCONFDIR"))
 }
+
+func TestResolveRefusedCases_EachStringCarriesItsPassword(t *testing.T) {
+	for _, tc := range ResolveRefusedCases() {
+		require.True(t, strings.Contains(tc.ConnString, tc.Password), tc.Name)
+		require.True(t, strings.Contains(tc.Wiring, tc.WiringPassword), tc.Name)
+		require.Equal(t, tc.Password == "", tc.WiringPassword == "", tc.Name)
+		require.NotEmpty(t, tc.Twin, tc.Name)
+		require.NotEqual(t, tc.ConnString, tc.Twin, tc.Name)
+		require.Contains(t, []string{TwinParsers, TwinPgxRefuses, TwinResolve}, tc.TwinCheck, tc.Name)
+		require.NotEmpty(t, PreDriverText(t, tc.Stage, tc.Part), tc.Name)
+	}
+}
+
+func TestResolveRefusedCases_NoPasswordOverlapsTheTextAroundIt(t *testing.T) {
+	for _, tc := range ResolveRefusedCases() {
+		if tc.Password == "" {
+			continue
+		}
+		want := PreDriverText(t, tc.Stage, tc.Part)
+		require.Empty(t, PasswordWindows(want, tc.Password), tc.Name)
+		require.Empty(t, PasswordWindows(strings.ReplaceAll(tc.ConnString, tc.Password, ""), tc.Password), tc.Name)
+		require.Empty(t, PasswordWindows(want, tc.WiringPassword), tc.Name)
+		require.Empty(t, PasswordWindows(tc.WiringWithoutPassword(), tc.WiringPassword), tc.Name)
+	}
+}
+
+func TestReachesDriverCases_EachRowNamesADial(t *testing.T) {
+	for _, tc := range ReachesDriverCases() {
+		require.True(t, strings.HasPrefix(tc.Dial, "dial tcp 127.0.0.1:"), tc.Name)
+	}
+}

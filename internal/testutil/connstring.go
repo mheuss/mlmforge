@@ -21,6 +21,8 @@ type ConnStringCase struct {
 	Password     string
 	PgxStage     string
 	MigrateStage string
+	ResolveStage string
+	ResolvePart  string
 }
 
 // WithoutPassword returns the connection string with its password removed.
@@ -32,11 +34,11 @@ func (c ConnStringCase) WithoutPassword() string {
 func ConnStringCases() []ConnStringCase {
 	return []ConnStringCase{
 		{Name: "slash", ConnString: "postgres://app:Zm9vQmFy/cXV4eHl6@127.0.0.1:1/app",
-			Password: "Zm9vQmFy/cXV4eHl6", PgxStage: "parse", MigrateStage: "parse"}, // gitleaks:allow
+			Password: "Zm9vQmFy/cXV4eHl6", PgxStage: "parse", MigrateStage: "parse", ResolveStage: "raw-at", ResolvePart: "path"}, // gitleaks:allow
 		{Name: "bad-escape", ConnString: "postgres://app:Zm9vQmFy%zzcXV4eHl6@127.0.0.1:1/app",
 			Password: "Zm9vQmFy%zzcXV4eHl6", PgxStage: "parse", MigrateStage: "parse"},
 		{Name: "fragment", ConnString: "postgres://app:Zm9vQmFy#cXV4eHl6@127.0.0.1:1/app",
-			Password: "Zm9vQmFy#cXV4eHl6", PgxStage: "parse", MigrateStage: "parse"},
+			Password: "Zm9vQmFy#cXV4eHl6", PgxStage: "parse", MigrateStage: "parse", ResolveStage: "raw-at", ResolvePart: "fragment"},
 		{Name: "bad-sslmode", ConnString: "postgres://app@127.0.0.1:1/app?password=qs3cretpwXYZ&sslmode=bogus",
 			Password: "qs3cretpwXYZ", PgxStage: "refused"}, // gitleaks:allow
 		{Name: "missing-service", ConnString: "postgres://app@127.0.0.1:1/app?password=qs3cretpwXYZ&service=nosuch",
@@ -52,11 +54,130 @@ func ConnStringCases() []ConnStringCase {
 		{Name: "opaque-scheme", ConnString: "postgres:app:op3cretpwXYZ@127.0.0.1:1/app",
 			Password: "op3cretpwXYZ", PgxStage: "refused", MigrateStage: "scheme"},
 		{Name: "uppercase-scheme", ConnString: "POSTGRES://app:up3cretpwXYZ@127.0.0.1:1/app",
-			Password: "up3cretpwXYZ", PgxStage: "refused", MigrateStage: "scheme"},
+			Password: "up3cretpwXYZ", PgxStage: "refused", MigrateStage: "scheme", ResolveStage: "scheme-case"},
 		{Name: "pq-quoted-key", ConnString: "postgres://app:pq3cretpwXYZ@127.0.0.1:1/app?p%3D%27a=z%3D",
 			Password: "pq3cretpwXYZ", MigrateStage: "refused"},
 		{Name: "pq-spaced-key", ConnString: "postgres://app:Zm9vQmFy@cXV4?d2l0aHh5bXdk ZXZl=YWJjZA@127.0.0.1:1/app",
-			Password: "Zm9vQmFy@cXV4?d2l0aHh5bXdk ZXZl=YWJjZA", MigrateStage: "refused"},
+			Password: "Zm9vQmFy@cXV4?d2l0aHh5bXdk ZXZl=YWJjZA", MigrateStage: "refused", ResolveStage: "raw-at", ResolvePart: "query"},
+	}
+}
+
+// Twin checks a ResolveRefusedCase's twin is held to.
+const (
+	TwinParsers    = "parsers"
+	TwinPgxRefuses = "pgx-refuses"
+	TwinResolve    = "resolve"
+)
+
+// ResolveRefusedCase is a connection string mlmforge refuses before any driver sees it.
+type ResolveRefusedCase struct {
+	Name           string
+	ConnString     string
+	Password       string
+	Wiring         string
+	WiringPassword string
+	Twin           string
+	TwinCheck      string
+	Stage          string
+	Part           string
+}
+
+// WiringWithoutPassword returns the wiring string with its password removed.
+func (c ResolveRefusedCase) WiringWithoutPassword() string {
+	return strings.ReplaceAll(c.Wiring, c.WiringPassword, "")
+}
+
+// ResolveRefusedCases returns the connection strings mlmforge refuses before any driver, each with the twin that still reaches the driver.
+func ResolveRefusedCases() []ResolveRefusedCase {
+	return []ResolveRefusedCase{
+		{Name: "ticket-path",
+			ConnString: "postgres://app:Zm9vQmFy@cXV4eHl6/d2l0aA@127.0.0.1:1/app", Password: "Zm9vQmFy@cXV4eHl6/d2l0aA", // gitleaks:allow
+			Wiring: "postgres://app:Zm9vQmFy@cXV4.invalid/d2l0aA@127.0.0.1:1/app", WiringPassword: "Zm9vQmFy@cXV4.invalid/d2l0aA", // gitleaks:allow
+			Twin: "postgres://app:Zm9vQmFy@cXV4eHl6/d2l0aA%40127.0.0.1:1/app", TwinCheck: TwinParsers, // gitleaks:allow
+			Stage: "raw-at", Part: "path"},
+		{Name: "numeric-port-path",
+			ConnString: "postgres://app:1234/s3cretPW@127.0.0.1:1/app", Password: "1234/s3cretPW", // gitleaks:allow
+			Wiring: "postgres://u.invalid:1234/s3cretPW@127.0.0.1:1/app", WiringPassword: "1234/s3cretPW", // gitleaks:allow
+			Twin: "postgres://app:1234/s3cretPW%40127.0.0.1:1/app", TwinCheck: TwinParsers,
+			Stage: "raw-at", Part: "path"},
+		{Name: "out-of-range-port-path",
+			ConnString: "postgres://app:123456/s3cretPW@127.0.0.1:1/app", Password: "123456/s3cretPW", // gitleaks:allow
+			Wiring: "postgres://u.invalid:123456/s3cretPW@127.0.0.1:1/app", WiringPassword: "123456/s3cretPW", // gitleaks:allow
+			Twin: "postgres://app:123456/s3cretPW%40127.0.0.1:1/app", TwinCheck: TwinPgxRefuses,
+			Stage: "raw-at", Part: "path"},
+		{Name: "option-value-query",
+			ConnString: "postgres://app:Zm9v@h?binary_parameters=s3cretPW@127.0.0.1:1/app", Password: "Zm9v@h?binary_parameters=s3cretPW", // gitleaks:allow
+			Wiring: "postgres://app:Zm9v@h.invalid?binary_parameters=s3cretPW@127.0.0.1:1/app", WiringPassword: "Zm9v@h.invalid?binary_parameters=s3cretPW", // gitleaks:allow
+			Twin: "postgres://app:Zm9v@h?binary_parameters=s3cretPW%40127.0.0.1:1/app", TwinCheck: TwinParsers, // gitleaks:allow
+			Stage: "raw-at", Part: "query"},
+		{Name: "fragment",
+			ConnString: "postgres://u.invalid:1234#s3cretPWxyz@127.0.0.1:1/app", Password: "1234#s3cretPWxyz", // gitleaks:allow
+			Wiring: "postgres://u.invalid:1234#s3cretPWxyz@127.0.0.1:1/app", WiringPassword: "1234#s3cretPWxyz", // gitleaks:allow
+			Twin: "postgres://u.invalid:1234#s3cretPWxyz%40127.0.0.1:1/app", TwinCheck: TwinParsers,
+			Stage: "raw-at", Part: "fragment"},
+		{Name: "database-name",
+			ConnString: "postgres://app:pw4xyzQr@127.0.0.1:1/my@db", Password: "pw4xyzQr", // gitleaks:allow
+			Wiring: "postgres://app:pw4xyzQr@127.0.0.1:1/my@db", WiringPassword: "pw4xyzQr", // gitleaks:allow
+			Twin: "postgres://app:pw4xyzQr@127.0.0.1:1/my%40db", TwinCheck: TwinParsers, // gitleaks:allow
+			Stage: "raw-at", Part: "path"},
+		{Name: "query-password",
+			ConnString: "postgres://app@127.0.0.1:1/app?password=qs3cret@pwXYZ", Password: "qs3cret@pwXYZ", // gitleaks:allow
+			Wiring: "postgres://app@127.0.0.1:1/app?password=qs3cret@pwXYZ", WiringPassword: "qs3cret@pwXYZ", // gitleaks:allow
+			Twin: "postgres://app@127.0.0.1:1/app?password=qs3cret%40pwXYZ", TwinCheck: TwinParsers, // gitleaks:allow
+			Stage: "raw-at", Part: "query"},
+		{Name: "uppercase-scheme-path",
+			ConnString: "POSTGRES://app:1234/s3cretPW@127.0.0.1:1/app", Password: "1234/s3cretPW", // gitleaks:allow
+			Wiring: "POSTGRES://u.invalid:1234/s3cretPW@127.0.0.1:1/app", WiringPassword: "1234/s3cretPW", // gitleaks:allow
+			Twin: "postgres://app:1234/s3cretPW%40127.0.0.1:1/app", TwinCheck: TwinParsers,
+			Stage: "scheme-case"},
+		{Name: "mixed-case-scheme-path",
+			ConnString: "Postgres://app:Zm9vQmFy@cXV4eHl6/d2l0aA@127.0.0.1:1/app", Password: "Zm9vQmFy@cXV4eHl6/d2l0aA", // gitleaks:allow
+			Wiring: "Postgres://app:Zm9vQmFy@cXV4.invalid/d2l0aA@127.0.0.1:1/app", WiringPassword: "Zm9vQmFy@cXV4.invalid/d2l0aA", // gitleaks:allow
+			Twin: "postgres://app:Zm9vQmFy@cXV4eHl6/d2l0aA%40127.0.0.1:1/app", TwinCheck: TwinParsers, // gitleaks:allow
+			Stage: "scheme-case"},
+		{Name: "uppercase-scheme-query",
+			ConnString: "POSTGRESQL://app:Zm9v@h?binary_parameters=s3cretPW@127.0.0.1:1/app", Password: "Zm9v@h?binary_parameters=s3cretPW", // gitleaks:allow
+			Wiring: "POSTGRESQL://app:Zm9v@h.invalid?binary_parameters=s3cretPW@127.0.0.1:1/app", WiringPassword: "Zm9v@h.invalid?binary_parameters=s3cretPW", // gitleaks:allow
+			Twin: "postgres://app:Zm9v@h?binary_parameters=s3cretPW%40127.0.0.1:1/app", TwinCheck: TwinParsers, // gitleaks:allow
+			Stage: "scheme-case"},
+		{Name: "mixed-case-scheme-plain",
+			ConnString: "PostgreSQL://u.invalid/app",
+			Wiring:     "PostgreSQL://u.invalid/app",
+			Twin:       "postgresql://u.invalid/app", TwinCheck: TwinResolve,
+			Stage: "scheme-case"},
+	}
+}
+
+// ReachesDriverCase is a connection string that reaches a driver, with the dial it reaches.
+type ReachesDriverCase struct {
+	Name       string
+	Env        map[string]string
+	ConnString string
+	Dial       string
+	Tree       bool
+}
+
+// ReachesDriverCases returns the connection strings that must still reach a driver.
+func ReachesDriverCases() []ReachesDriverCase {
+	return []ReachesDriverCase{
+		{Name: "postgres scheme", ConnString: "postgres://app@127.0.0.1:1/app?sslmode=disable", Dial: "dial tcp 127.0.0.1:1"},
+		{Name: "postgresql scheme", ConnString: "postgresql://app@127.0.0.1:1/app?sslmode=disable", Dial: "dial tcp 127.0.0.1:1"},
+		{Name: "client_encoding overrides the environment", Env: map[string]string{"PGCLIENTENCODING": "LATIN1"},
+			ConnString: "postgres://app:S3cretPWxyz@127.0.0.1:1/app?client_encoding=UTF8&sslmode=disable", Dial: "dial tcp 127.0.0.1:1"},
+		{Name: "datestyle overrides the environment", Env: map[string]string{"PGDATESTYLE": "German"},
+			ConnString: "postgres://app:S3cretPWxyz@127.0.0.1:1/app?datestyle=ISO%2C+MDY&sslmode=disable", Dial: "dial tcp 127.0.0.1:1"},
+		{Name: "query port overrides an out-of-range authority port",
+			ConnString: "postgres://app:S3cretPWxyz@127.0.0.1:100000/app?port=2&sslmode=disable", Dial: "dial tcp 127.0.0.1:2"},
+		{Name: "query port overrides authority port 0",
+			ConnString: "postgres://app:S3cretPWxyz@127.0.0.1:0/app?port=1&sslmode=disable", Dial: "dial tcp 127.0.0.1:1"},
+		{Name: "authority port 0", ConnString: "postgres://app:S3cretPWxyz@127.0.0.1:0/app?sslmode=disable", Dial: "dial tcp 127.0.0.1:0"},
+		{Name: "bare at in the userinfo", ConnString: "postgres://app:pr@of@PW@127.0.0.1:1/app", Dial: "dial tcp 127.0.0.1:1", Tree: true},
+		{Name: "ticket password encoded", ConnString: "postgres://app:Zm9vQmFy%40cXV4eHl6%2Fd2l0aA@127.0.0.1:1/app", Dial: "dial tcp 127.0.0.1:1", Tree: true},
+		{Name: "numeric password encoded", ConnString: "postgres://app:1234%2Fs3cretPW@127.0.0.1:1/app", Dial: "dial tcp 127.0.0.1:1", Tree: true},
+		{Name: "query password encoded", ConnString: "postgres://app:Zm9v%40h%3Fbinary_parameters=s3cretPW@127.0.0.1:1/app", Dial: "dial tcp 127.0.0.1:1", Tree: true},
+		{Name: "fragment password encoded", ConnString: "postgres://u.invalid:1234%23s3cretPWxyz@127.0.0.1:1/app", Dial: "dial tcp 127.0.0.1:1", Tree: true},
+		{Name: "database name with %40", ConnString: "postgres://app:pw4xyzQr@127.0.0.1:1/my%40db", Dial: "dial tcp 127.0.0.1:1", Tree: true},
+		{Name: "query password with %40", ConnString: "postgres://app@127.0.0.1:1/app?password=qs3cret%40pwXYZ", Dial: "dial tcp 127.0.0.1:1", Tree: true},
 	}
 }
 

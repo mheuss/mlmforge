@@ -489,7 +489,7 @@ func rejectEarlyRead(tree string, err error) error {
 	return newTreeLoadRejected(TreeLoadStoreReadFailed, tree, read.err, err.Error())
 }
 
-// storeReadError is a failed read made before any engine call.
+// storeReadError is a failed store read, carrying what was being read.
 type storeReadError struct {
 	what string
 	err  error

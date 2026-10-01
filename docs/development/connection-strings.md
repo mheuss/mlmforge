@@ -68,7 +68,8 @@ A raw `@` alone in a password does not split the string. A raw `/`, `?` or `#` i
   Pinned by the query-port rows of `TestMigrateVersion_AStringThatReachedTheDriverStillDoes`.
 - It drops a key with an empty value. `connect_timeout=` never reaches the parser.
   Pinned by the `empty-timeout` row of `TestMigrateVersion_AStringMigrateAcceptsReachesTheDialWithNoPassword`.
-- It panics when `PGSERVICE`, `PGSERVICEFILE`, `PGREALM` or `PGHOSTADDR` is set. That is HEU-862.
-  Read in source and observed on the CLI. Not pinned.
+- It panics when any of `PGHOSTADDR`, `PGSERVICE`, `PGSERVICEFILE`, `PGREALM`, `PGREQUIRESSL`, `PGSSLCRL`, `PGREQUIREPEER`, `PGKRBSRVNAME`, `PGGSSLIB`, `PGSYSCONFDIR` or `PGLOCALEDIR` is set. HEU-862 covers the service variables.
+  Read in source, not pinned. A probe hit the `PGSYSCONFDIR` panic on 2026-10-01.
+- `testutil.IsolatePgxEnv` sets `PGSERVICEFILE` and `PGSYSCONFDIR`, so a test that calls lib/pq must not run under it. `testutil.ClearTimeoutEnv` unsets `PGSERVICE` and `PGSERVICEFILE`. No helper unsets the other nine panic variables.
 - It returns `ErrCouldNotDetectUsername` when no user is given and none can be found. That error holds no part of the string, so `migrateDriverParseError` passes it through.
   Read in source, not pinned. No test can make the OS user lookup fail.

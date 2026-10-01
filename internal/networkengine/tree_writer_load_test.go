@@ -390,3 +390,30 @@ func TestTreeWriter_LoadLeavesAFailedVersionReadAfterTheRedeliveryUntyped(t *tes
 	var rejected *TreeLoadRejectedError
 	assert.False(t, errors.As(err, &rejected), "a failure after the redelivery was typed as TreeLoadRejectedError")
 }
+
+// lastEventFailingEvents fails every ReadLastEvent.
+type lastEventFailingEvents struct {
+	*platform.MemoryEventStore
+	err error
+}
+
+func (e *lastEventFailingEvents) ReadLastEvent(context.Context, string) (*platform.Event, error) {
+	return nil, e.err
+}
+
+func TestTreeWriter_LoadLeavesAFailedLastEventReadUntyped(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	events := &lastEventFailingEvents{MemoryEventStore: env.events.(*platform.MemoryEventStore),
+		err: errors.New("connection reset")}
+	engine := newFakeWriterEngine()
+	w := NewTreeWriter(events, env.store, engine, env.locker)
+
+	_, err := w.Load(context.Background(), loadRequest())
+
+	require.EqualError(t, err, "read the last event of stream "+TreeStreamName(writerTree)+
+		"; nothing was appended: connection reset")
+	require.NotEmpty(t, engine.calls, "the load made no engine call before the failed read")
+	var rejected *TreeLoadRejectedError
+	assert.False(t, errors.As(err, &rejected), "the failed last-event read was typed as TreeLoadRejectedError")
+}

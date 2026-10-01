@@ -1034,7 +1034,7 @@ if alreadyProjected {
 **Added:** Unreleased (HEU-788)
 **Files:** `cmd/mlmforge/treeload.go` (`treeLoadRetryable`, `runTreeLoad`)
 
-**Problem:** A caller that retries a `LoadTree` failure has to tell an infrastructure blip apart from a failure that will fail the same way forever. The error kind alone does not carry enough to decide.
+**Problem:** A caller that retries a `TreeWriter.Load` failure has to tell an infrastructure blip apart from a failure that will fail the same way forever. The error kind alone does not carry enough to decide.
 
 **Solution:** `treeLoadRetryable` allowlists rather than denylists. A cause nobody enumerated defaults to stopping. It retries one case: a `TreeLoadRejectedError` whose `Kind` is `TreeLoadStoreReadFailed` and whose wrapped error `pgconn.SafeToRetry` reports never reached the server. Everything else stops. Cancellation is checked first and separately. `TreeLoadStoreReadFailed` covers a refused connection, a cancelled context and a row that will not decode. Only the first of those can succeed on a second attempt. A `TreeLoadIncompleteError` is never retried at all. The structure already exists in the engine, so a retry reports `TREE_EXISTS`. The only real remedy is a process restart. `tree load` now goes through `TreeWriter.Load`, whose reads of version 1 and of the projected version fail as `TreeLoadStoreReadFailed` too, since both come before any engine call.
 
@@ -1043,10 +1043,10 @@ if alreadyProjected {
 // Cancellation reaches the engine stages too. TreeLoadIncompleteError has
 // no Kind field. A caller that checks only the rejected type honours
 // "do not retry a cancelled context" on one of two paths.
-_, err := loader.LoadTree(ctx, treeID, treeType, opts...)
+_, err := w.Load(ctx, req)
 if err != nil && treeLoadRetryable(err) {
     // Only reachable for a store read that never left the client.
-    _, err = loader.LoadTree(ctx, treeID, treeType, opts...)
+    _, err = w.Load(ctx, req)
 }
 ```
 

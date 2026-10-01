@@ -288,6 +288,35 @@ func TestRunTreeLoad_ReportsAFailedCreateWithoutCounts(t *testing.T) {
 	require.Empty(t, out.String())
 }
 
+func TestRunTreeLoad_NamesACancellationOnAFailedCreate(t *testing.T) {
+	incomplete := &networkengine.TreeLoadIncompleteError{
+		Stage: networkengine.TreeLoadStageCreate,
+		Err:   context.Canceled,
+	}
+	loader := &stubLoader{err: incomplete}
+	var out bytes.Buffer
+
+	err := runTreeLoad(t.Context(), &out, io.Discard, loader, unilevelLoad("t"))
+
+	require.EqualError(t, err, "load stopped at the create stage; the create did not report success: "+incomplete.Error()+" (the run was cancelled)")
+	require.Empty(t, out.String())
+}
+
+func TestRunTreeLoad_NamesADeadlineOnAnIncompleteLoad(t *testing.T) {
+	incomplete := &networkengine.TreeLoadIncompleteError{
+		Stage: networkengine.TreeLoadStageNodes,
+		Total: 4,
+		Err:   context.DeadlineExceeded,
+	}
+	loader := &stubLoader{err: incomplete}
+	var out bytes.Buffer
+
+	err := runTreeLoad(t.Context(), &out, io.Discard, loader, unilevelLoad("t"))
+
+	require.EqualError(t, err, "load stopped at the nodes stage; the engine acknowledged 0 of 4 non-root placements: "+incomplete.Error()+" (the run exceeded its deadline)")
+	require.Empty(t, out.String())
+}
+
 // Reporting this as a rejection would understate what the engine may hold.
 func TestRunTreeLoad_ReportsAChainHoldingBothAsIncomplete(t *testing.T) {
 	loader := &stubLoader{err: &networkengine.TreeLoadIncompleteError{

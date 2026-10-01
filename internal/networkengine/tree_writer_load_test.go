@@ -417,3 +417,17 @@ func TestTreeWriter_LoadLeavesAFailedLastEventReadUntyped(t *testing.T) {
 	var rejected *TreeLoadRejectedError
 	assert.False(t, errors.As(err, &rejected), "the failed last-event read was typed as TreeLoadRejectedError")
 }
+
+func TestTreeWriter_LoadCreatesAnEmptyMatrixTreeWithTheRequestedShape(t *testing.T) {
+	env := newWriterEnv()
+	w, engine := env.writer()
+	width, spillover := 5, "breadth_first"
+
+	res, err := w.Load(context.Background(), LoadRequest{
+		TreeID: writerTree, TreeType: treeTypeMatrix, MatrixWidth: &width, MatrixSpillover: &spillover,
+	})
+
+	require.NoError(t, err)
+	assert.Zero(t, res.Nodes)
+	assert.Equal(t, []string{"create_matrix_tree 5 breadth_first"}, engine.calls)
+}

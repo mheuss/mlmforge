@@ -931,7 +931,7 @@ A confirmed append is a success even when projection fails. A projection error d
 
 - At or past the appended version, it exits 0 and states the version.
 - Exactly one below, it exits 3, states what it saw, and says the next write or `tree load` redelivers the event. An appended version 1 with no projection row is one below.
-- Further below, with no row past version 1, or when the read fails, it exits 3 and states what it saw.
+- Further below, with no row and an appended version past 1, or when the read fails, it exits 3 and states what it saw.
 - A projection the store refused as below its version observes a later version. It exits 0. Its warning names no redelivery.
 
 What `WriteResult` carries:

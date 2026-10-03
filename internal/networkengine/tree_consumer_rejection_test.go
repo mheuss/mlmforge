@@ -138,17 +138,26 @@ func TestTreeConsumer_EventRejectedThatDoesNotUnmarshal(t *testing.T) {
 }
 
 func TestTreeConsumer_EventRejectedAtVersion2IsApplied(t *testing.T) {
-	f := newRejectionFixture(t)
+	tree, root, rootRow := testTreeUUID(1), testUserUUID(1), testNodeUUID(1)
+	store := NewMemoryTreeStore()
+	transport := newRecordingTransport()
+	consumer := NewTreeEventConsumer(store, newEngineClientWithTransport(transport))
+	require.NoError(t, store.ProjectInsert(context.Background(), makeUUIDNode(rootRow, tree, root, 0, nil, ptr(root), nil), 1))
+	event := platform.Event{
+		ID: testNodeUUID(30), Stream: TreeStreamName(tree), Type: EventTypeEventRejected, Version: 2,
+		Payload: mustJSON(t, EventRejectedPayload{
+			TreeID: tree, RejectedEventID: rootRow, RejectedVersion: 1,
+			RejectedType: EventTypeRootAdded, Reason: "engine refused the root",
+		}),
+	}
 
-	err := f.consumer.HandleEvent(context.Background(), f.rejection(t, func(e *platform.Event, p *EventRejectedPayload) {
-		e.Version, p.RejectedVersion, p.RejectedEventID, p.RejectedType = 2, 1, testNodeUUID(1), EventTypeRootAdded
-	}))
+	require.NoError(t, consumer.HandleEvent(context.Background(), event))
 
-	require.NoError(t, err)
-	got := readProjectionState(t, f.store, f.tree, f.root)
-	require.NotNil(t, got.rows[f.root])
-	assert.NotNil(t, got.rows[f.root].RemovedAt, "a rejection at version 2 left its row active")
-	assert.Empty(t, f.transport.calls)
+	got := readProjectionState(t, store, tree, root)
+	assert.Equal(t, int64(2), got.version)
+	require.NotNil(t, got.rows[root])
+	assert.NotNil(t, got.rows[root].RemovedAt, "a rejection at version 2 left its row active")
+	assert.Empty(t, transport.calls)
 }
 
 func TestTreeConsumer_EventRejectedCanonicalisesTheRejectedEventID(t *testing.T) {

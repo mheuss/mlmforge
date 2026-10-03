@@ -116,6 +116,10 @@ type TreeStore interface {
 	// eventVersion inserted, and returns the tree's projected version to
 	// eventVersion - 1.
 	UndoRootProjection(ctx context.Context, treeID, userID string, eventVersion int64) error
+
+	// ProjectRejection soft-deletes the active rows the rejected event
+	// inserted, and records eventVersion as the tree's projected version.
+	ProjectRejection(ctx context.Context, treeID, rejectedEventID string, eventVersion int64) error
 }
 
 // ProjectionRefusedError reports a projection whose event version was below

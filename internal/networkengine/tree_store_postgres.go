@@ -323,6 +323,16 @@ func (s *PostgresTreeStore) ProjectRemoval(
 	})
 }
 
+const softDeleteRejectedSQL = `UPDATE tree_nodes SET removed_at = now(), updated_at = now()
+		 WHERE tree_id = $1 AND id = $2 AND removed_at IS NULL`
+
+func (s *PostgresTreeStore) ProjectRejection(ctx context.Context, treeID, rejectedEventID string, eventVersion int64) error {
+	return s.project(ctx, treeID, eventVersion, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, softDeleteRejectedSQL, treeID, rejectedEventID)
+		return err
+	})
+}
+
 // project runs write in one transaction that refuses an event below the tree's
 // projected version, and records eventVersion when it is higher.
 func (s *PostgresTreeStore) project(ctx context.Context, treeID string, eventVersion int64, write func(pgx.Tx) error) error {

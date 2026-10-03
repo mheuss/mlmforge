@@ -362,7 +362,7 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		require.NoError(t, s.ProjectRejection(ctx, tree, testNodeUUID(8), 3))
 
 		got := readProjectionState(t, s, tree, root)
-		assert.Equal(t, int64(3), got.version, "the jump from 1 to 3 was refused")
+		assert.Equal(t, int64(3), got.version, "ProjectRejection returned nil; the projected version is not 3")
 		require.NotNil(t, got.rows[root])
 		assert.Nil(t, got.rows[root].RemovedAt)
 	})

@@ -162,7 +162,22 @@ var (
 	// ErrReplayedPlacement reports an insert matching a row that has since
 	// been soft-deleted. The placement is not current and must not be resumed.
 	ErrReplayedPlacement = errors.New("a row with this event id exists and is soft-deleted")
+
+	// ErrUnprojectableEvent reports an event refused for what it carries,
+	// before any engine call.
+	ErrUnprojectableEvent = errors.New("the event cannot be projected as written")
 )
+
+// unprojectableEventError marks err as ErrUnprojectableEvent and keeps err's
+// text.
+type unprojectableEventError struct{ err error }
+
+func (e *unprojectableEventError) Error() string        { return e.err.Error() }
+func (e *unprojectableEventError) Unwrap() error        { return e.err }
+func (e *unprojectableEventError) Is(target error) bool { return target == ErrUnprojectableEvent }
+
+// unprojectable marks err as ErrUnprojectableEvent.
+func unprojectable(err error) error { return &unprojectableEventError{err: err} }
 
 // RemovalNotProjectedError reports a removal the engine applied whose store
 // write did not land.

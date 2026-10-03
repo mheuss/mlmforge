@@ -90,11 +90,11 @@ func describeExistingRow(row *TreeNodeRow) string {
 func (c *TreeEventConsumer) handleRootAdded(ctx context.Context, event platform.Event) error {
 	var payload RootAddedPayload
 	if err := json.Unmarshal(event.Payload, &payload); err != nil {
-		return fmt.Errorf("unmarshal root_added payload: %w", err)
+		return unprojectable(fmt.Errorf("unmarshal root_added payload: %w", err))
 	}
 
 	if err := checkStream(event, "root_added", payload.TreeID, payload.UserID); err != nil {
-		return err
+		return unprojectable(err)
 	}
 
 	node := TreeNodeRow{
@@ -197,17 +197,17 @@ func (c *TreeEventConsumer) handleRootAdded(ctx context.Context, event platform.
 func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform.Event) error {
 	var payload NodePlacedPayload
 	if err := json.Unmarshal(event.Payload, &payload); err != nil {
-		return fmt.Errorf("unmarshal node_placed payload: %w", err)
+		return unprojectable(fmt.Errorf("unmarshal node_placed payload: %w", err))
 	}
 
 	// Reject malformed payloads before either projection. A node_placed that
 	// cannot be applied faithfully must not land anywhere: a stored row the
 	// engine never honored is the divergence this consumer exists to prevent.
 	if err := checkStream(event, "node_placed", payload.TreeID, payload.UserID); err != nil {
-		return err
+		return unprojectable(err)
 	}
 	if err := checkNodePlacedShape(payload); err != nil {
-		return err
+		return unprojectable(err)
 	}
 
 	// Look up parent depth to derive child depth.
@@ -216,7 +216,7 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform
 		return fmt.Errorf("get parent node: %w", err)
 	}
 	if parent == nil {
-		return fmt.Errorf("parent node %s not found in tree %s", payload.ParentID, payload.TreeID)
+		return unprojectable(fmt.Errorf("parent node %s not found in tree %s", payload.ParentID, payload.TreeID))
 	}
 	depth := parent.Depth + 1
 
@@ -297,11 +297,11 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform
 func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platform.Event) error {
 	var payload NodeRemovedPayload
 	if err := json.Unmarshal(event.Payload, &payload); err != nil {
-		return fmt.Errorf("unmarshal node_removed payload: %w", err)
+		return unprojectable(fmt.Errorf("unmarshal node_removed payload: %w", err))
 	}
 
 	if err := checkStream(event, "node_removed", payload.TreeID, payload.UserID); err != nil {
-		return err
+		return unprojectable(err)
 	}
 
 	var moved []Responsored

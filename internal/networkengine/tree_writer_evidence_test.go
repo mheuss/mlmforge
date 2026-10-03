@@ -185,3 +185,17 @@ func TestTreeConsumer_ARedeliveryMeetsItsOwnTombstoneBeforeAnotherEventsRow(t *t
 	}
 	assert.Empty(t, transport.calls)
 }
+
+func TestRejectionEvidence_RefusesWhenNoActiveRowCarriesTheEventsID(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	mustPlace(t, env, writerChild, nil)
+	w, _ := env.writer()
+	last := platform.Event{ID: testNodeUUID(5), Type: EventTypeNodePlaced, Version: 3}
+
+	got, err := w.rejectionEvidence(context.Background(), writerTree, unilevelShape, last,
+		&TreeLoadRejectedError{TreeID: writerTree, Kind: TreeLoadDataInvalid})
+
+	require.NoError(t, err)
+	assert.False(t, got, "a data_invalid load counted as evidence with no row carrying the event's ID")
+}

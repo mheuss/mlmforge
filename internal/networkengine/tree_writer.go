@@ -621,8 +621,6 @@ func (w *TreeWriter) catchUp(ctx context.Context, tree, stream string, last plat
 			stream, last.ID, last.Version, last.Type)
 	}
 	if last.Type == EventTypeEventRejected {
-		// Applying it here would leave the engine loaded with the rows it
-		// removes.
 		if pending := pendingRejection(tree, &last, loaded, nil); pending != nil {
 			return nil, pending
 		}

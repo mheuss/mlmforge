@@ -384,14 +384,14 @@ func (w *TreeWriter) write(ctx context.Context, spec writeSpec) (result WriteRes
 	if err != nil {
 		return result, err
 	}
-	_, last, _, err := w.prepare(ctx, tree, shape)
+	loaded, last, _, err := w.prepare(ctx, tree, shape)
 	if err != nil {
 		return result, err
 	}
 	var expected int64
 	if last != nil {
 		expected = last.Version
-		if result.CaughtUp, err = w.catchUp(ctx, tree, stream, *last); err != nil {
+		if result.CaughtUp, err = w.catchUp(ctx, tree, stream, *last, loaded); err != nil {
 			return result, err
 		}
 	}
@@ -447,7 +447,7 @@ func (w *TreeWriter) Load(ctx context.Context, r LoadRequest) (result LoadResult
 		result.Nodes = nodes
 		return result, nil
 	}
-	if result.CaughtUp, err = w.catchUp(ctx, tree, stream, *last); err != nil {
+	if result.CaughtUp, err = w.catchUp(ctx, tree, stream, *last, loaded); err != nil {
 		return result, err
 	}
 	after, afterFound, err := w.store.ProjectedVersion(ctx, tree)
@@ -509,13 +509,29 @@ func (w *TreeWriter) prepare(ctx context.Context, tree string, shape treeShape) 
 			what: fmt.Sprintf("read the projected version of tree %s; nothing was appended", tree), err: err,
 		}
 	}
-	if nodes, err = w.load(ctx, tree, shape); err != nil {
-		return 0, nil, 0, err
-	}
 	stream := TreeStreamName(tree)
+	nodes, loadErr := w.load(ctx, tree, shape)
+	if loadErr != nil {
+		// Read only to name a pending rejection. A failed read leaves the load
+		// error as the report.
+		if last, readErr := w.events.ReadLastEvent(ctx, stream); readErr == nil {
+			if pending := pendingRejection(tree, last, loaded, loadErr); pending != nil {
+				return 0, nil, 0, pending
+			}
+		}
+		return 0, nil, 0, loadErr
+	}
 	last, err = w.events.ReadLastEvent(ctx, stream)
 	if err != nil {
 		return 0, nil, 0, fmt.Errorf("read the last event of stream %s; nothing was appended: %w", stream, err)
+	}
+	if pending := pendingRejection(tree, last, loaded, nil); pending != nil {
+		return 0, nil, 0, pending
+	}
+	if last != nil && last.Type == EventTypeEventRejected && last.Version == loaded {
+		if err := w.checkRejectionTarget(ctx, stream, *last); err != nil {
+			return 0, nil, 0, fmt.Errorf("%w; nothing was appended", err)
+		}
 	}
 	var lastVersion int64
 	if last != nil {
@@ -591,17 +607,28 @@ func checkLoadedVersion(tree string, loaded int64, found bool, last int64) error
 
 // treeEventTypes are the event types catch-up redelivers.
 var treeEventTypes = map[string]bool{
-	EventTypeRootAdded:   true,
-	EventTypeNodePlaced:  true,
-	EventTypeNodeRemoved: true,
+	EventTypeRootAdded:     true,
+	EventTypeNodePlaced:    true,
+	EventTypeNodeRemoved:   true,
+	EventTypeEventRejected: true,
 }
 
 // catchUp redelivers the stream's last event through the consumer.
-func (w *TreeWriter) catchUp(ctx context.Context, tree, stream string, last platform.Event) (*CaughtUpEvent, error) {
+func (w *TreeWriter) catchUp(ctx context.Context, tree, stream string, last platform.Event, loaded int64) (*CaughtUpEvent, error) {
 	// An unlisted type is refused rather than reported as caught up.
 	if !treeEventTypes[last.Type] {
 		return nil, fmt.Errorf("stream %s ends with event %s at version %d of type %q, which catch-up does not redeliver; nothing was appended",
 			stream, last.ID, last.Version, last.Type)
+	}
+	if last.Type == EventTypeEventRejected {
+		// Applying it here would leave the engine loaded with the rows it
+		// removes.
+		if pending := pendingRejection(tree, &last, loaded, nil); pending != nil {
+			return nil, pending
+		}
+		if err := w.checkRejectionTarget(ctx, stream, last); err != nil {
+			return nil, fmt.Errorf("%w; nothing was appended", err)
+		}
 	}
 	if err := w.consumer.HandleEvent(ctx, last); err != nil {
 		return nil, &CatchUpFailedError{TreeID: tree, EventID: last.ID, Version: last.Version, Type: last.Type, Err: err}
@@ -663,6 +690,11 @@ func (w *TreeWriter) project(ctx context.Context, stream, eventID string, versio
 	if !sameUUID(stored[0].ID, eventID) {
 		return fmt.Errorf("stream %s holds event %s at version %d, where event %s was appended; nothing was projected",
 			stream, stored[0].ID, version, eventID)
+	}
+	if stored[0].Type == EventTypeEventRejected {
+		if err := w.checkRejectionTarget(ctx, stream, stored[0]); err != nil {
+			return fmt.Errorf("project event %s at version %d in stream %s: %w", eventID, version, stream, err)
+		}
 	}
 	if err := w.consumer.HandleEvent(ctx, stored[0]); err != nil {
 		return fmt.Errorf("project event %s at version %d in stream %s: %w", eventID, version, stream, err)

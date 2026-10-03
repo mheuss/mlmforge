@@ -94,3 +94,26 @@ func (e *StreamMovedError) Error() string {
 	return fmt.Sprintf("tree %s had projected version %d before its load, and stream %s ends at version %d; nothing was appended",
 		e.TreeID, e.LoadedVersion, TreeStreamName(e.TreeID), e.LastVersion)
 }
+
+// RejectionPendingError reports a stream that ends with a rejection the store
+// has not applied.
+type RejectionPendingError struct {
+	TreeID          string
+	RejectionID     string
+	Version         int64
+	RejectedEventID string
+	Projected       int64
+	LoadErr         error // the load's error, when the load failed before this check
+}
+
+func (e *RejectionPendingError) Error() string {
+	msg := fmt.Sprintf("stream %s ends with rejection %s at version %d of event %s, and tree %s has projected version %d; "+
+		"nothing was appended. Run mlmforge tree reject-event --tree-id %s --event-id %s again to project it",
+		TreeStreamName(e.TreeID), e.RejectionID, e.Version, e.RejectedEventID, e.TreeID, e.Projected, e.TreeID, e.RejectedEventID)
+	if e.LoadErr != nil {
+		msg += ". The load before this check returned: " + e.LoadErr.Error()
+	}
+	return msg
+}
+
+func (e *RejectionPendingError) Unwrap() error { return e.LoadErr }

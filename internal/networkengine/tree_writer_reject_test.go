@@ -260,3 +260,23 @@ func TestTreeWriterProject_RefusesARejectionThatNamesTheWrongEvent(t *testing.T)
 	require.NoError(t, verr)
 	assert.Equal(t, int64(2), version)
 }
+
+func TestTreeWriterCatchUp_RefusesAnAppliedRejectionThatNamesTheWrongEvent(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	mustPlace(t, env, writerChild, nil)
+	stream := TreeStreamName(writerTree)
+	placed := streamEvents(t, env.events, stream)[1]
+	other := uuid.NewString()
+	bad := appendDirect(t, env.events, EventTypeEventRejected, EventRejectedPayload{
+		TreeID: writerTree, RejectedEventID: other, RejectedVersion: 2,
+		RejectedType: EventTypeNodePlaced, Reason: "appended by the test",
+	})
+	require.NoError(t, env.store.ProjectRejection(context.Background(), writerTree, testNodeUUID(77), 3))
+	w, _ := env.writer()
+
+	_, err := w.catchUp(context.Background(), writerTree, stream, bad, 3)
+
+	require.EqualError(t, err, fmt.Sprintf("rejection %s at version 3 of stream %s names event %s (%s), and version 2 holds event %s (%s); nothing was appended",
+		bad.ID, stream, other, EventTypeNodePlaced, placed.ID, EventTypeNodePlaced))
+}

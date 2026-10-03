@@ -8,7 +8,14 @@ Every fact below names the library version it was read at, and the test that pin
 
 ## What `mlmforge` does about it
 
-`internal/platform` defines `ConnStringError`. It names the driver and a stage, holds nothing from the string, and has no `Unwrap`. Every refused string at the three call sites comes back as one.
+`internal/platform` defines `ConnStringError`. It names the driver and a stage. For stage `raw-at` it also names a part. It holds nothing from the string and has no `Unwrap`. Every refused string at the three call sites comes back as one.
+
+Before either command opens a driver, `resolveDBURL` runs `PreDriverError` on the raw string. It refuses two shapes with driver `mlmforge`. The protection stops at that CLI entry. Callers of the lower layers are not covered.
+
+- Stage `scheme-case`: the string starts with `postgres://` or `postgresql://` only when case is ignored. pgx reads such a string as keyword/value text.
+- Stage `raw-at`, with a part: a lowercase `postgres://` or `postgresql://` string has a raw `@` in its path, query or fragment. A literal `@` there has to be written `%40`.
+
+Then each call site does its own mapping.
 
 - pgx, at `openTreeDeps` and `PostgresTreeLocker.Lock`: `PgxConnStringError` replaces a `*pgconn.ParseConfigError`.
 - golang-migrate, at `openMigration`, in this order:
@@ -16,7 +23,12 @@ Every fact below names the library version it was read at, and the test that pin
   2. lib/pq's own parse runs on the string golang-migrate would hand it. A refusal becomes stage `refused`. If lib/pq also refuses a neutral probe string, the environment is at fault, and lib/pq's own error is returned instead.
   3. A `*url.Error` from `database.Open` becomes stage `parse`.
 
-The open gap is HEU-875. A password with an unencoded `/`, `#`, `?` or `@` can split a string that a driver still accepts. A later dial, DNS, connect or option error then prints the split-off part.
+A raw `@` alone in a password does not split the string. A raw `/`, `?` or `#` in a password does. It puts the userinfo's closing `@` after the host part. The `raw-at` stage refuses that shape (HEU-875).
+
+## net/url, Go 1.27
+
+- It cuts at the first `#`, then at the first `?`. It ends the host part at the first `/`. Inside the host part it splits the userinfo at the last `@`. It accepts a raw `@` there.
+  Pinned by `TestDriverReadings_SplitWhereRecorded`, which reads the split through pgx and lib/pq.
 
 ## pgx v5.9.2
 
@@ -30,6 +42,8 @@ The open gap is HEU-875. A password with an unencoded `/`, `#`, `?` or `@` can s
   Read in source, not pinned. `pgxStage` re-parses the rejected string instead, and the `parse` rows of `TestPgxConnStringError_ReplacesEachRefusal` pin that.
 - It accepts `password=… host=::1 dbname=app` and the two lib/pq query-key strings.
   Pinned by the no-pgx-stage rows of `TestPgxConnStringError_ReplacesEachRefusal`.
+- It reads a string whose scheme is not lowercase `postgres://` or `postgresql://` as keyword/value text. With an `=` in it, the text before the first `=` becomes a runtime parameter name.
+  Pinned by `TestDriverReadings_PgxReadsAMisCasedSchemeAsKeywordValueText`, which checks the parsed runtime parameters. Observed against Postgres 16 on 2026-10-01: pgx sent the name to the server. The server echoed it in `unrecognized configuration parameter`. That part is not pinned.
 
 ## golang-migrate v4.19.1
 
@@ -54,7 +68,8 @@ The open gap is HEU-875. A password with an unencoded `/`, `#`, `?` or `@` can s
   Pinned by the query-port rows of `TestMigrateVersion_AStringThatReachedTheDriverStillDoes`.
 - It drops a key with an empty value. `connect_timeout=` never reaches the parser.
   Pinned by the `empty-timeout` row of `TestMigrateVersion_AStringMigrateAcceptsReachesTheDialWithNoPassword`.
-- It panics when `PGSERVICE`, `PGSERVICEFILE`, `PGREALM` or `PGHOSTADDR` is set. That is HEU-862.
-  Read in source and observed on the CLI. Not pinned.
+- It panics when any of `PGHOSTADDR`, `PGSERVICE`, `PGSERVICEFILE`, `PGREALM`, `PGREQUIRESSL`, `PGSSLCRL`, `PGREQUIREPEER`, `PGKRBSRVNAME`, `PGGSSLIB`, `PGSYSCONFDIR` or `PGLOCALEDIR` is set. HEU-862 covers the service variables.
+  Read in source, not pinned. A probe hit the `PGSYSCONFDIR` panic on 2026-10-01.
+- `testutil.IsolatePgxEnv` sets `PGSERVICEFILE` and `PGSYSCONFDIR`, so a test that calls lib/pq must not run under it. `testutil.ClearTimeoutEnv` unsets `PGSERVICE` and `PGSERVICEFILE`. No helper unsets the other nine panic variables.
 - It returns `ErrCouldNotDetectUsername` when no user is given and none can be found. That error holds no part of the string, so `migrateDriverParseError` passes it through.
   Read in source, not pinned. No test can make the OS user lookup fail.

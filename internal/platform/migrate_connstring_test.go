@@ -88,34 +88,17 @@ func TestMigrateVersion_ARefusedEnvironmentWithARefusedStringHoldsNoPassword(t *
 }
 
 func TestMigrateVersion_AStringThatReachedTheDriverStillDoes(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		env  map[string]string
-		url  string
-		dial string
-	}{
-		{"postgres scheme", nil, "postgres://app@127.0.0.1:1/app?sslmode=disable", "dial tcp 127.0.0.1:1"},
-		{"postgresql scheme", nil, "postgresql://app@127.0.0.1:1/app?sslmode=disable", "dial tcp 127.0.0.1:1"},
-		{"client_encoding overrides the environment", map[string]string{"PGCLIENTENCODING": "LATIN1"},
-			"postgres://app:S3cretPWxyz@127.0.0.1:1/app?client_encoding=UTF8&sslmode=disable", "dial tcp 127.0.0.1:1"},
-		{"datestyle overrides the environment", map[string]string{"PGDATESTYLE": "German"},
-			"postgres://app:S3cretPWxyz@127.0.0.1:1/app?datestyle=ISO%2C+MDY&sslmode=disable", "dial tcp 127.0.0.1:1"},
-		{"query port overrides an out-of-range authority port", nil,
-			"postgres://app:S3cretPWxyz@127.0.0.1:100000/app?port=2&sslmode=disable", "dial tcp 127.0.0.1:2"},
-		{"query port overrides authority port 0", nil,
-			"postgres://app:S3cretPWxyz@127.0.0.1:0/app?port=1&sslmode=disable", "dial tcp 127.0.0.1:1"},
-		{"authority port 0", nil, "postgres://app:S3cretPWxyz@127.0.0.1:0/app?sslmode=disable", "dial tcp 127.0.0.1:0"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tc := range testutil.ReachesDriverCases() {
+		t.Run(tc.Name, func(t *testing.T) {
 			testutil.ClearTimeoutEnv(t)
 			testutil.ClearLibPQEnv(t)
-			for name, value := range tc.env {
+			for name, value := range tc.Env {
 				t.Setenv(name, value)
 			}
 
-			_, err := MigrateVersion(tc.url, FindMigrationsDir(t))
+			_, err := MigrateVersion(tc.ConnString, FindMigrationsDir(t))
 
-			require.ErrorContains(t, err, tc.dial)
+			require.ErrorContains(t, err, tc.Dial+":")
 			var cse *ConnStringError
 			require.False(t, errors.As(err, &cse), "expected a dial error; the error chain holds a *ConnStringError: %v", err)
 		})

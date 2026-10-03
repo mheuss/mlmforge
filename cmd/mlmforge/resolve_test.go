@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/mlmforge/mlmforge/internal/platform"
 	"github.com/mlmforge/mlmforge/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
@@ -221,6 +222,56 @@ func TestResolveWorkerPath_RejectsAPathItCannotRun(t *testing.T) {
 			require.Error(t, err)
 			require.ErrorContains(t, err, tt.path, "the message must name the path it tried")
 			require.ErrorContains(t, err, "--worker", "the message must name the source")
+		})
+	}
+}
+
+func TestResolveDBURL_RefusesBeforeTheDrivers(t *testing.T) {
+	for _, tc := range testutil.ResolveRefusedCases() {
+		t.Run(tc.Name, func(t *testing.T) {
+			testutil.ClearTimeoutEnv(t)
+			want := testutil.PreDriverText(t, tc.Stage, tc.Part)
+
+			got, err := resolveDBURL(tc.ConnString)
+
+			require.EqualError(t, err, want)
+			require.Equal(t, dbTarget{}, got)
+			var cse *platform.ConnStringError
+			require.ErrorAs(t, err, &cse)
+			require.Equal(t, "mlmforge", cse.Driver())
+			require.Equal(t, tc.Stage, cse.Stage())
+			require.Equal(t, tc.Part, cse.Part())
+			if tc.Password != "" {
+				testutil.RequireNoPasswordWindow(t, err.Error(), tc.Password, want, strings.ReplaceAll(tc.ConnString, tc.Password, ""))
+			}
+		})
+	}
+}
+
+func TestResolveDBURL_RefusesADatabaseURLFromTheEnvironment(t *testing.T) {
+	testutil.ClearTimeoutEnv(t)
+	t.Setenv("DATABASE_URL", "postgres://app:1234/s3cretPW@127.0.0.1:1/app")
+
+	_, err := resolveDBURL("")
+
+	require.EqualError(t, err, testutil.PreDriverText(t, "raw-at", "path"))
+}
+
+func TestResolveDBURL_PassesWhatReachesTheDriver(t *testing.T) {
+	var passing []string
+	for _, tc := range testutil.ReachesDriverCases() {
+		passing = append(passing, tc.ConnString)
+	}
+	for _, tc := range testutil.ResolveRefusedCases() {
+		passing = append(passing, tc.Twin)
+	}
+	for _, connString := range passing {
+		t.Run(connString, func(t *testing.T) {
+			testutil.ClearTimeoutEnv(t)
+
+			_, err := resolveDBURL(connString)
+
+			require.NoError(t, err)
 		})
 	}
 }

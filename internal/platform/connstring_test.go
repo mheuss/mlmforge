@@ -30,6 +30,38 @@ func TestConnStringError_NamesTheDriverAndTheStage(t *testing.T) {
 	}
 }
 
+func TestConnStringError_NamesThePreDriverStageAndPart(t *testing.T) {
+	for _, tc := range []struct {
+		err   *ConnStringError
+		stage string
+		part  string
+	}{
+		{&ConnStringError{driver: driverMlmforge, stage: stageRawAt, part: partPath}, "raw-at", "path"},
+		{&ConnStringError{driver: driverMlmforge, stage: stageRawAt, part: partQuery}, "raw-at", "query"},
+		{&ConnStringError{driver: driverMlmforge, stage: stageRawAt, part: partFragment}, "raw-at", "fragment"},
+		{&ConnStringError{driver: driverMlmforge, stage: stageSchemeCase}, "scheme-case", ""},
+	} {
+		t.Run(tc.stage+"/"+tc.part, func(t *testing.T) {
+			require.Equal(t, testutil.PreDriverText(t, tc.stage, tc.part), tc.err.Error())
+			require.Equal(t, "mlmforge", tc.err.Driver())
+			require.Equal(t, tc.stage, tc.err.Stage())
+			require.Equal(t, tc.part, tc.err.Part())
+		})
+	}
+}
+
+func TestConnStringError_HasNoPartForTheDriverStages(t *testing.T) {
+	for _, err := range []*ConnStringError{
+		{driver: driverMigrate, stage: stageParse},
+		{driver: driverMigrate, stage: stageScheme},
+		{driver: driverMigrate, stage: stageRefused},
+		{driver: driverPgx, stage: stageParse},
+		{driver: driverPgx, stage: stageRefused},
+	} {
+		require.Empty(t, err.Part(), "%s/%s", err.Driver(), err.Stage())
+	}
+}
+
 func TestConnStringError_EndsTheChain(t *testing.T) {
 	require.Nil(t, errors.Unwrap(&ConnStringError{driver: driverPgx, stage: stageRefused}))
 }
@@ -145,4 +177,113 @@ func TestMigrateDriverParseError_ReportsARefusedEnvironmentAsItself(t *testing.T
 	require.EqualError(t, err, "client_encoding must be absent or 'UTF8'")
 	var cse *ConnStringError
 	require.False(t, errors.As(err, &cse), "expected lib/pq's environment error; got a ConnStringError")
+}
+
+func TestRawAtError_NamesThePartThatHoldsTheAt(t *testing.T) {
+	for _, tc := range []struct {
+		connString string
+		part       string
+	}{
+		{"postgres://app:Zm9vQmFy@cXV4eHl6/d2l0aA@127.0.0.1:1/app", "path"},
+		{"postgresql://h/my@db", "path"},
+		{"postgres://h/a@b?c@d#e@f", "path"},
+		{"postgres://h/app?password=p@ss", "query"},
+		{"postgres://h/db?x=a/b@c", "query"},
+		{"postgres://h/app?x=a@b#c@d", "query"},
+		{"postgres://app:pa?ss@127.0.0.1:1/app", "query"},
+		{"postgres://h?x=1#a@b", "fragment"},
+		{"postgres://h/d#x?y@z", "fragment"},
+		{"postgres://h?x=1#a/b@c", "fragment"},
+		{"postgres://app:pa#ss@127.0.0.1:1/app", "fragment"},
+	} {
+		t.Run(tc.connString, func(t *testing.T) {
+			var cse *ConnStringError
+			require.ErrorAs(t, rawAtError(tc.connString), &cse)
+			require.Equal(t, "mlmforge", cse.Driver())
+			require.Equal(t, "raw-at", cse.Stage())
+			require.Equal(t, tc.part, cse.Part())
+		})
+	}
+}
+
+func TestRawAtError_AcceptsAnAtOnlyInTheHostPart(t *testing.T) {
+	for _, connString := range []string{
+		"postgres://app:pr@of@PW@127.0.0.1:1/app",
+		"postgres://app:Zm9vQmFy%40cXV4eHl6%2Fd2l0aA@127.0.0.1:1/app",
+		"postgres://h/my%40db?password=p%40ss#x",
+		"postgresql://h/app",
+		"host=h password=p@ss",
+		"POSTGRES://app:1234/s3cretPW@127.0.0.1:1/app",
+		"mysql://h/a@b",
+		"",
+	} {
+		require.NoError(t, rawAtError(connString), connString)
+	}
+}
+
+func TestSchemeCaseError_RefusesAMisCasedScheme(t *testing.T) {
+	for _, connString := range []string{
+		"POSTGRES://h/app",
+		"Postgres://h/app",
+		"POSTGRESQL://h/app",
+		"postgresQL://h/app",
+		"postGres://h/app",
+		"PostgreSQL://u.invalid/app",
+	} {
+		var cse *ConnStringError
+		require.ErrorAs(t, schemeCaseError(connString), &cse, connString)
+		require.Equal(t, "mlmforge", cse.Driver(), connString)
+		require.Equal(t, "scheme-case", cse.Stage(), connString)
+		require.Empty(t, cse.Part(), connString)
+	}
+}
+
+func TestSchemeCaseError_AcceptsEverythingElse(t *testing.T) {
+	for _, connString := range []string{
+		"postgres://h/app",
+		"postgresql://h/app",
+		"host=h password=x",
+		"mysql://h/app",
+		"postgres:app@h/app",
+		"POSTGRES:",
+		"postgres",
+		"",
+	} {
+		require.NoError(t, schemeCaseError(connString), connString)
+	}
+}
+
+func TestPreDriverError_RefusesWhatEitherCheckRefuses(t *testing.T) {
+	for _, tc := range []struct {
+		connString string
+		stage      string
+		part       string
+	}{
+		{"POSTGRES://app:1234/s3cretPW@127.0.0.1:1/app", "scheme-case", ""},
+		{"postgres://app:1234/s3cretPW@127.0.0.1:1/app", "raw-at", "path"},
+	} {
+		t.Run(tc.connString, func(t *testing.T) {
+			var cse *ConnStringError
+			require.ErrorAs(t, PreDriverError(tc.connString), &cse)
+			require.Equal(t, tc.stage, cse.Stage())
+			require.Equal(t, tc.part, cse.Part())
+		})
+	}
+	require.NoError(t, PreDriverError("postgres://app:pr@of@PW@127.0.0.1:1/app"))
+}
+
+func TestPreDriverError_MatchesEachConnStringCaseResolveStage(t *testing.T) {
+	for _, tc := range testutil.ConnStringCases() {
+		t.Run(tc.Name, func(t *testing.T) {
+			err := PreDriverError(tc.ConnString)
+			if tc.ResolveStage == "" {
+				require.NoError(t, err)
+				return
+			}
+			var cse *ConnStringError
+			require.ErrorAs(t, err, &cse)
+			require.Equal(t, tc.ResolveStage, cse.Stage())
+			require.Equal(t, tc.ResolvePart, cse.Part())
+		})
+	}
 }

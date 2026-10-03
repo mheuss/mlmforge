@@ -429,6 +429,56 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		require.EqualError(t, err, "tree "+tree+" was given event version 0, below 1; nothing was written")
 		assert.False(t, readProjectionState(t, s, tree).found)
 	})
+
+	t.Run("a redelivered row reports its own id, never an active-row index", func(t *testing.T) {
+		slotted := makeUUIDNode(testNodeUUID(4), tree, testUserUUID(4), 1, ptr(root), ptr(root), intPtr(2))
+		for _, row := range []TreeNodeRow{rootRow, slotted} {
+			s := newStore(t)
+			ctx := context.Background()
+			if row.Depth > 0 {
+				require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+			}
+			require.NoError(t, s.ProjectInsert(ctx, row, 2))
+
+			err := s.ProjectInsert(ctx, row, 2)
+
+			require.ErrorIs(t, err, ErrNodeAlreadyProjected, "row %s", row.ID)
+			for _, conflict := range []error{ErrActiveUserConflict, ErrSlotConflict, ErrRootConflict} {
+				assert.NotErrorIs(t, err, conflict, "row %s", row.ID)
+			}
+		}
+	})
+
+	t.Run("a redelivered root whose own row is a tombstone reports its own id when another root is active", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.UndoRootProjection(ctx, tree, root, 1))
+		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(6), tree, testUserUUID(6), 0, nil, ptr(testUserUUID(6)), nil), 2))
+
+		err := s.ProjectInsert(ctx, rootRow, 2)
+
+		require.ErrorIs(t, err, ErrNodeAlreadyProjected)
+		for _, conflict := range []error{ErrActiveUserConflict, ErrSlotConflict, ErrRootConflict} {
+			assert.NotErrorIs(t, err, conflict)
+		}
+	})
+
+	t.Run("a redelivered row whose own row is a tombstone reports its own id when another event holds the user and slot", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+		require.NoError(t, s.ProjectRemoval(ctx, tree, child, testNodeUUID(9), 3, nil))
+		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(5), tree, child, 1, ptr(root), ptr(root), intPtr(0)), 4))
+
+		err := s.ProjectInsert(ctx, childRow, 4)
+
+		require.ErrorIs(t, err, ErrNodeAlreadyProjected)
+		for _, conflict := range []error{ErrActiveUserConflict, ErrSlotConflict, ErrRootConflict} {
+			assert.NotErrorIs(t, err, conflict)
+		}
+	})
 }
 
 func TestMemoryTreeStore_ProjectionSuite(t *testing.T) {

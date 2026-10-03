@@ -103,7 +103,7 @@ type RejectionPendingError struct {
 	Version         int64
 	RejectedEventID string
 	Projected       int64
-	LoadErr         error // the load's error, when the load failed before this check
+	LoadErr         error // the load's error, when the load also failed
 }
 
 func (e *RejectionPendingError) Error() string {

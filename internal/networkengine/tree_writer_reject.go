@@ -19,9 +19,9 @@ func rejectionPayload(event platform.Event) (EventRejectedPayload, error) {
 }
 
 // pendingRejection returns an error when last is a rejection above the
-// projected version, and nil otherwise.
+// projected version and within two versions of it, and nil otherwise.
 func pendingRejection(tree string, last *platform.Event, projected int64, loadErr error) error {
-	if last == nil || last.Type != EventTypeEventRejected || last.Version <= projected {
+	if last == nil || last.Type != EventTypeEventRejected || last.Version <= projected || last.Version-2 > projected {
 		return nil
 	}
 	p, err := rejectionPayload(*last)
@@ -50,9 +50,17 @@ func (w *TreeWriter) checkRejectionTarget(ctx context.Context, stream string, re
 	if err != nil {
 		return fmt.Errorf("read version %d of stream %s, before rejection %s: %w", before, stream, rejection.ID, err)
 	}
-	if len(prev) != 1 || prev[0].Version != before {
-		return fmt.Errorf("a read of version %d of stream %s, before rejection %s, found no event at that version",
+	if len(prev) == 0 {
+		return fmt.Errorf("a read of version %d of stream %s, before rejection %s, returned no event",
 			before, stream, rejection.ID)
+	}
+	if prev[0].Version != before {
+		return fmt.Errorf("a read of version %d of stream %s, before rejection %s, returned event %s at version %d",
+			before, stream, rejection.ID, prev[0].ID, prev[0].Version)
+	}
+	if p.RejectedVersion != before {
+		return fmt.Errorf("rejection %s at version %d of stream %s names rejected version %d, not %d",
+			rejection.ID, rejection.Version, stream, p.RejectedVersion, before)
 	}
 	if !sameUUID(prev[0].ID, p.RejectedEventID) || prev[0].Type != p.RejectedType {
 		return fmt.Errorf("rejection %s at version %d of stream %s names event %s (%s), and version %d holds event %s (%s)",

@@ -2,6 +2,7 @@ package networkengine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -13,8 +14,7 @@ import (
 )
 
 // stuckPlacement appends a placement of writerChild naming a sponsor the tree
-// does not hold, and runs one write whose engine refuses it, leaving the row
-// at version 2.
+// does not hold, and runs one write whose engine refuses it.
 func stuckPlacement(t *testing.T, env *writerEnv) platform.Event {
 	t.Helper()
 	mustAddRoot(t, env, treeTypeUnilevel)
@@ -30,8 +30,8 @@ func stuckPlacement(t *testing.T, env *writerEnv) platform.Event {
 	return stuck
 }
 
-// unprojectedRemoval appends a removal of writerChild at version 3 and
-// projects nothing, leaving the store at version 2.
+// unprojectedRemoval places writerChild, then appends its removal without
+// projecting it.
 func unprojectedRemoval(t *testing.T, env *writerEnv) platform.Event {
 	t.Helper()
 	mustAddRoot(t, env, treeTypeUnilevel)
@@ -50,7 +50,8 @@ func appendRejection(t *testing.T, env *writerEnv, stuck platform.Event) platfor
 	})
 }
 
-// pendingMessage is RejectionPendingError's text with no load error.
+// pendingMessage is the pending-rejection message the tests expect, with no
+// load error.
 func pendingMessage(rejection, stuck platform.Event, projected int64) string {
 	return fmt.Sprintf("stream %s ends with rejection %s at version %d of event %s, and tree %s has projected version %d; "+
 		"nothing was appended. Run mlmforge tree reject-event --tree-id %s --event-id %s again to project it",
@@ -279,4 +280,120 @@ func TestTreeWriterCatchUp_RefusesAnAppliedRejectionThatNamesTheWrongEvent(t *te
 
 	require.EqualError(t, err, fmt.Sprintf("rejection %s at version 3 of stream %s names event %s (%s), and version 2 holds event %s (%s); nothing was appended",
 		bad.ID, stream, other, EventTypeNodePlaced, placed.ID, EventTypeNodePlaced))
+}
+
+func TestTreeWriter_AStoreThreeBehindAStreamEndingRejectionMeetsTheFence(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	appendDirect(t, env.events, EventTypeNodePlaced, childPlacedPayload(writerChild))
+	third := appendDirect(t, env.events, EventTypeNodePlaced, childPlacedPayload(writerOther))
+	appendRejection(t, env, third)
+	want := StreamMovedError{TreeID: writerTree, LoadedVersion: 1, LastVersion: 4}
+
+	w, engine := env.writer()
+	_, writeErr := w.Place(context.Background(), placeRequest(testUserUUID(4), nil))
+	l, _ := env.writer()
+	_, loadErr := l.Load(context.Background(), loadRequest())
+
+	var moved *StreamMovedError
+	require.ErrorAs(t, writeErr, &moved)
+	assert.Equal(t, want, *moved)
+	require.ErrorAs(t, loadErr, &moved)
+	assert.Equal(t, want, *moved)
+	assert.Empty(t, engine.checks)
+}
+
+func TestTreeWriter_ARejectionAtVersion3WithNoProjectionRowMeetsTheFence(t *testing.T) {
+	env := newWriterEnv()
+	appendDirect(t, env.events, EventTypeRootAdded, rootAddedPayload())
+	placed := appendDirect(t, env.events, EventTypeNodePlaced, childPlacedPayload(writerChild))
+	appendRejection(t, env, placed)
+	want := ProjectionMissingError{TreeID: writerTree, LastVersion: 3}
+
+	w, engine := env.writer()
+	_, writeErr := w.Place(context.Background(), placeRequest(testUserUUID(4), nil))
+	l, _ := env.writer()
+	_, loadErr := l.Load(context.Background(), loadRequest())
+
+	var missing *ProjectionMissingError
+	require.ErrorAs(t, writeErr, &missing)
+	assert.Equal(t, want, *missing)
+	require.ErrorAs(t, loadErr, &missing)
+	assert.Equal(t, want, *missing)
+	assert.Empty(t, engine.checks)
+}
+
+func TestTreeWriter_APendingRejectionWhosePayloadDoesNotDecodeIsRefused(t *testing.T) {
+	cases := []struct {
+		name     string
+		setup    func(t *testing.T, env *writerEnv)
+		loadKind bool
+	}{
+		{"after a successful load", func(t *testing.T, env *writerEnv) {
+			mustAddRoot(t, env, treeTypeUnilevel)
+			mustPlace(t, env, writerChild, nil)
+		}, false},
+		{"after a failed load", func(t *testing.T, env *writerEnv) { stuckPlacement(t, env) }, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			env := newWriterEnv()
+			c.setup(t, env)
+			bad := appendDirect(t, env.events, EventTypeEventRejected, json.RawMessage(`"not an object"`))
+			w, _ := env.writer()
+
+			_, err := w.Place(context.Background(), placeRequest(testUserUUID(4), nil))
+
+			require.ErrorContains(t, err, "ends with rejection "+bad.ID+" at version 3, above projected version 2; nothing was appended: unmarshal event_rejected payload of event "+bad.ID)
+			var pending *RejectionPendingError
+			assert.False(t, errors.As(err, &pending))
+			var rejected *TreeLoadRejectedError
+			assert.Equal(t, c.loadKind, errors.As(err, &rejected), "the load error's presence in the chain")
+		})
+	}
+}
+
+func TestTreeWriter_RefusesAnAppliedRejectionWithATamperedVersion(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	mustPlace(t, env, writerChild, nil)
+	stream := TreeStreamName(writerTree)
+	placed := streamEvents(t, env.events, stream)[1]
+	bad := appendDirect(t, env.events, EventTypeEventRejected, EventRejectedPayload{
+		TreeID: writerTree, RejectedEventID: placed.ID, RejectedVersion: 1,
+		RejectedType: EventTypeNodePlaced, Reason: "appended by the test",
+	})
+	require.NoError(t, env.store.ProjectRejection(context.Background(), writerTree, testNodeUUID(77), 3))
+	want := fmt.Sprintf("rejection %s at version 3 of stream %s names rejected version 1, not 2; nothing was appended", bad.ID, stream)
+
+	w, _ := env.writer()
+	_, writeErr := w.Place(context.Background(), placeRequest(writerOther, nil))
+	l, _ := env.writer()
+	_, loadErr := l.Load(context.Background(), loadRequest())
+
+	require.EqualError(t, writeErr, want)
+	require.EqualError(t, loadErr, want)
+}
+
+func TestTreeWriterCheckRejectionTarget_ReportsWhatTheReadReturned(t *testing.T) {
+	env, scripted := scriptedEnv(t)
+	mustPlace(t, env, writerChild, nil)
+	stream := TreeStreamName(writerTree)
+	placed := streamEvents(t, env.events, stream)[1]
+	rejection := appendRejection(t, env, placed)
+	w, _ := env.writer()
+
+	moved := placed
+	moved.Version = 7
+	scripted.readAs, scripted.readAsVersion = &moved, 2
+	wrongVersion := w.checkRejectionTarget(context.Background(), stream, rejection)
+	scripted.readAs = nil
+	far := rejection
+	far.Version = 9
+	none := w.checkRejectionTarget(context.Background(), stream, far)
+
+	require.EqualError(t, wrongVersion, fmt.Sprintf("a read of version 2 of stream %s, before rejection %s, returned event %s at version 7",
+		stream, rejection.ID, placed.ID))
+	require.EqualError(t, none, fmt.Sprintf("a read of version 8 of stream %s, before rejection %s, returned no event",
+		stream, rejection.ID))
 }

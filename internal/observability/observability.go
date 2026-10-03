@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutlog"
 	otellog "go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/log/global"
@@ -127,14 +128,14 @@ func (o *Observer) HandleSignal(raw json.RawMessage) {
 	if sig.Level != "" {
 		rec.SetSeverityText(sig.Level)
 	}
-	rec.SetBody(otellog.StringValue(sig.Message))
+	rec.SetBody(attribute.StringValue(sig.Message))
 	if ts, err := time.Parse(time.RFC3339Nano, sig.Timestamp); err == nil {
 		rec.SetTimestamp(ts)
 	}
 
-	attrs := make([]otellog.KeyValue, 0, len(sig.Fields)+3)
+	attrs := make([]attribute.KeyValue, 0, len(sig.Fields)+3)
 	if sig.Target != "" {
-		attrs = append(attrs, otellog.String("target", sig.Target))
+		attrs = append(attrs, attribute.String("target", sig.Target))
 	}
 	// Sort field keys so attribute order is deterministic across runs.
 	keys := make([]string, 0, len(sig.Fields))
@@ -154,10 +155,10 @@ func (o *Observer) HandleSignal(raw json.RawMessage) {
 		emitCtx = trace.ContextWithSpanContext(emitCtx, sc)
 	} else {
 		if sig.TraceID != "" {
-			attrs = append(attrs, otellog.String("trace_id", sig.TraceID))
+			attrs = append(attrs, attribute.String("trace_id", sig.TraceID))
 		}
 		if sig.SpanID != "" {
-			attrs = append(attrs, otellog.String("span_id", sig.SpanID))
+			attrs = append(attrs, attribute.String("span_id", sig.SpanID))
 		}
 	}
 	rec.AddAttributes(attrs...)
@@ -213,37 +214,37 @@ func severityForLevel(level string) otellog.Severity {
 // string -> String, number -> Float64, bool -> Bool, and null/object/array ->
 // a compact JSON string. This mirrors the Rust visitor's primitive-or-debug
 // handling so both sides render fields the same way.
-func fieldToKeyValue(key string, raw json.RawMessage) otellog.KeyValue {
+func fieldToKeyValue(key string, raw json.RawMessage) attribute.KeyValue {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {
-		return otellog.String(key, "")
+		return attribute.String(key, "")
 	}
 
 	switch trimmed[0] {
 	case '"':
 		var s string
 		if err := json.Unmarshal(trimmed, &s); err == nil {
-			return otellog.String(key, s)
+			return attribute.String(key, s)
 		}
 	case 't', 'f':
 		var b bool
 		if err := json.Unmarshal(trimmed, &b); err == nil {
-			return otellog.Bool(key, b)
+			return attribute.Bool(key, b)
 		}
 	case '{', '[', 'n':
 		// object / array / null fall through to the compact-JSON string below.
 	default:
 		var f float64
 		if err := json.Unmarshal(trimmed, &f); err == nil {
-			return otellog.Float64(key, f)
+			return attribute.Float64(key, f)
 		}
 	}
 
 	var buf bytes.Buffer
 	if err := json.Compact(&buf, trimmed); err == nil {
-		return otellog.String(key, buf.String())
+		return attribute.String(key, buf.String())
 	}
-	return otellog.String(key, string(trimmed))
+	return attribute.String(key, string(trimmed))
 }
 
 // newLogProcessor builds the log processor from the environment. It returns a

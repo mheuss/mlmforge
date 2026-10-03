@@ -134,6 +134,21 @@ func TestTreeConsumer_EventRejectedThatDoesNotUnmarshal(t *testing.T) {
 
 	require.ErrorContains(t, err, "unmarshal event_rejected payload")
 	assert.Equal(t, int64(2), readProjectionState(t, f.store, f.tree).version)
+	assert.Empty(t, f.transport.calls)
+}
+
+func TestTreeConsumer_EventRejectedAtVersion2IsApplied(t *testing.T) {
+	f := newRejectionFixture(t)
+
+	err := f.consumer.HandleEvent(context.Background(), f.rejection(t, func(e *platform.Event, p *EventRejectedPayload) {
+		e.Version, p.RejectedVersion, p.RejectedEventID, p.RejectedType = 2, 1, testNodeUUID(1), EventTypeRootAdded
+	}))
+
+	require.NoError(t, err)
+	got := readProjectionState(t, f.store, f.tree, f.root)
+	require.NotNil(t, got.rows[f.root])
+	assert.NotNil(t, got.rows[f.root].RemovedAt, "a rejection at version 2 left its row active")
+	assert.Empty(t, f.transport.calls)
 }
 
 func TestTreeConsumer_EventRejectedCanonicalisesTheRejectedEventID(t *testing.T) {
@@ -158,4 +173,5 @@ func TestTreeConsumer_EventRejectedRefusesARejectedEventIDThatIsNotAUUID(t *test
 
 	require.ErrorContains(t, err, "event_rejected "+testNodeUUID(30)+` names rejected_event_id "not-a-uuid", which is not a UUID: `)
 	assert.Equal(t, before, readProjectionState(t, f.store, f.tree, f.root, f.child))
+	assert.Empty(t, f.transport.calls)
 }

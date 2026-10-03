@@ -403,7 +403,6 @@ func (c *TreeEventConsumer) handleEventRejected(ctx context.Context, event platf
 		return fmt.Errorf("event_rejected %s names rejected type %q, which is not a rejectable tree event type",
 			event.ID, p.RejectedType)
 	}
-	// Canonical, so both stores match the row the same way.
 	rejected, err := uuid.Parse(p.RejectedEventID)
 	if err != nil {
 		return fmt.Errorf("event_rejected %s names rejected_event_id %q, which is not a UUID: %w", event.ID, p.RejectedEventID, err)

@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	otellog "go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/log/global"
 	lognoop "go.opentelemetry.io/otel/log/noop"
@@ -71,10 +72,10 @@ func (e *captureExporter) Export(_ context.Context, records []sdklog.Record) err
 func (e *captureExporter) Shutdown(context.Context) error   { return nil }
 func (e *captureExporter) ForceFlush(context.Context) error { return nil }
 
-func collectAttrs(rec sdklog.Record) map[string]otellog.Value {
-	attrs := make(map[string]otellog.Value, rec.AttributesLen())
-	rec.WalkAttributes(func(kv otellog.KeyValue) bool {
-		attrs[kv.Key] = kv.Value
+func collectAttrs(rec sdklog.Record) map[string]attribute.Value {
+	attrs := make(map[string]attribute.Value, rec.AttributesLen())
+	rec.WalkAttributes(func(kv attribute.KeyValue) bool {
+		attrs[string(kv.Key)] = kv.Value
 		return true
 	})
 	return attrs
@@ -183,7 +184,7 @@ func TestInit_LogsDisabled(t *testing.T) {
 
 	// Emitting through the global logger must not panic even with no processor.
 	var rec otellog.Record
-	rec.SetBody(otellog.StringValue("dropped"))
+	rec.SetBody(attribute.StringValue("dropped"))
 	rec.SetSeverity(otellog.SeverityInfo)
 	global.Logger("test").Emit(context.Background(), rec)
 }
@@ -202,7 +203,7 @@ func TestInit_LogsToFile(t *testing.T) {
 	assertProvidersWired(t)
 
 	var rec otellog.Record
-	rec.SetBody(otellog.StringValue("hello from a record"))
+	rec.SetBody(attribute.StringValue("hello from a record"))
 	rec.SetSeverity(otellog.SeverityWarn)
 	global.Logger("test").Emit(context.Background(), rec)
 

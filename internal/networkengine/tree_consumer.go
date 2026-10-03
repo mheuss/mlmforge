@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -41,6 +42,8 @@ func (c *TreeEventConsumer) HandleEvent(ctx context.Context, event platform.Even
 		return c.handleNodePlaced(ctx, event)
 	case EventTypeNodeRemoved:
 		return c.handleNodeRemoved(ctx, event)
+	case EventTypeEventRejected:
+		return c.handleEventRejected(ctx, event)
 	default:
 		return nil
 	}
@@ -366,6 +369,47 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 	defer cancelWrite()
 	if err := c.store.ProjectRemoval(writeCtx, payload.TreeID, payload.UserID, event.ID, event.Version, moved); err != nil {
 		return fmt.Errorf("remove node and re-sponsor recruits: %w", err)
+	}
+	return nil
+}
+
+// handleEventRejected applies an operator's rejection of the event before it.
+func (c *TreeEventConsumer) handleEventRejected(ctx context.Context, event platform.Event) error {
+	var p EventRejectedPayload
+	if err := json.Unmarshal(event.Payload, &p); err != nil {
+		return fmt.Errorf("unmarshal event_rejected payload: %w", err)
+	}
+	for _, field := range []struct{ name, value string }{
+		{"tree_id", p.TreeID},
+		{"rejected_event_id", p.RejectedEventID},
+		{"rejected_type", p.RejectedType},
+		{"reason", p.Reason},
+	} {
+		if strings.TrimSpace(field.value) == "" {
+			return fmt.Errorf("event_rejected %s has an empty %s", event.ID, field.name)
+		}
+	}
+	if want := TreeStreamName(p.TreeID); event.Stream != want {
+		return fmt.Errorf("event_rejected %s for tree %s arrived on stream %q, want %q", event.ID, p.TreeID, event.Stream, want)
+	}
+	if event.Version < 2 {
+		return fmt.Errorf("event_rejected %s is at version %d, below 2", event.ID, event.Version)
+	}
+	if p.RejectedVersion != event.Version-1 {
+		return fmt.Errorf("event_rejected %s at version %d names rejected version %d, not %d",
+			event.ID, event.Version, p.RejectedVersion, event.Version-1)
+	}
+	if !rejectableEventTypes[p.RejectedType] {
+		return fmt.Errorf("event_rejected %s names rejected type %q, which is not a rejectable tree event type",
+			event.ID, p.RejectedType)
+	}
+	// Canonical, so both stores match the row the same way.
+	rejected, err := uuid.Parse(p.RejectedEventID)
+	if err != nil {
+		return fmt.Errorf("event_rejected %s names rejected_event_id %q, which is not a UUID: %w", event.ID, p.RejectedEventID, err)
+	}
+	if err := c.store.ProjectRejection(ctx, p.TreeID, rejected.String(), event.Version); err != nil {
+		return fmt.Errorf("project event_rejected %s: %w", event.ID, err)
 	}
 	return nil
 }

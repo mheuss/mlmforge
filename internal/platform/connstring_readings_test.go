@@ -139,7 +139,7 @@ func TestDriverReadings_PgxReadsAMisCasedSchemeAsKeywordValueText(t *testing.T) 
 	require.Equal(t, map[string]string{"POSTGRESQL://app:Zm9v@h?binary_parameters": "s3cretPW@127.0.0.1:1/app"}, cfg.RuntimeParams)
 }
 
-func TestDriverReadings_PgxSendsAStrayLeadingCharacterAsAParameterName(t *testing.T) {
+func TestDriverReadings_PgxSendsANonURLFirstKeyAsAParameterName(t *testing.T) {
 	testutil.ClearLibPQEnv(t)
 	clearPgxDefaults(t)
 	const tail = "postgres://proofuser:pr0ofPWxyz@127.0.0.1:1/proofdb?sslmode" // gitleaks:allow
@@ -289,7 +289,7 @@ func TestDriverReadings_LibPQTrimsSpaceAroundAKeyAndNeitherDriverFoldsCase(t *te
 	}
 }
 
-// libPQOption returns the value lib/pq's connector holds for key, or "" if it holds none, after parsing connString as golang-migrate hands it over.
+// libPQOption returns the value lib/pq's connector holds for key, or "" if it holds none, after parsing connString's FilterCustomQuery form.
 func libPQOption(t *testing.T, connString, key string) string {
 	t.Helper()
 	u, err := url.Parse(connString)

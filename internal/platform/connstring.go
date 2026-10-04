@@ -51,7 +51,7 @@ type ConnStringError struct {
 // Driver names the driver whose call site refused the connection string, or mlmforge for a check that runs before any driver.
 func (e *ConnStringError) Driver() string { return string(e.driver) }
 
-// Stage is "parse" when a URL-form string failed to parse, "scheme" when migrate refused the string's scheme, "raw-at", "scheme-case", "keyword-key", "after-password" or "raw-plus" when mlmforge refused it before any driver, and "refused" otherwise.
+// Stage names the check or parse step that refused the connection string.
 func (e *ConnStringError) Stage() string { return string(e.stage) }
 
 // Part names where a raw-at refusal found the '@', and is empty for every other stage.
@@ -81,7 +81,8 @@ func (e *ConnStringError) Error() string {
 			" The connection string is withheld because it can contain a password."
 	case stageRawPlus:
 		// Concatenated, not formatted: the text holds %2B and %20.
-		return "mlmforge found a raw + in the connection string's query password, which is read as a space." +
+		return "mlmforge found a raw + in the connection string's query password." +
+			" A raw + in a query value is read as a space." +
 			" Write a plus as %2B and a space as %20." +
 			" The connection string is withheld because it can contain a password."
 	}
@@ -132,7 +133,7 @@ func migrateSchemeError(dbURL string) error {
 
 // PreDriverError returns a ConnStringError for a connection string mlmforge refuses before any driver sees it, and nil otherwise.
 func PreDriverError(dbURL string) error {
-	// Order matters: where two checks refuse one string, the earlier one gives the more specific message.
+	// Order matters: where two checks refuse one string, the earlier check's stage is reported.
 	for _, check := range []func(string) error{schemeCaseError, keywordKeyError, rawAtError, afterPasswordError, rawPlusError} {
 		if err := check(dbURL); err != nil {
 			return err
@@ -151,7 +152,7 @@ func schemeCaseError(dbURL string) error {
 	return nil
 }
 
-// keywordKeyError returns a ConnStringError for a non-URL string whose first keyword key holds an ASCII byte no server parameter name can hold, and nil otherwise.
+// keywordKeyError returns a ConnStringError for a non-URL string whose first keyword key holds an ASCII byte outside A-Z a-z 0-9 _ . $, and nil otherwise.
 func keywordKeyError(dbURL string) error {
 	if strings.HasPrefix(dbURL, "postgres://") || strings.HasPrefix(dbURL, "postgresql://") {
 		return nil
@@ -217,7 +218,7 @@ func isPasswordKey(key string) bool {
 	return strings.TrimFunc(key, unicode.IsSpace) == "password"
 }
 
-// afterPasswordError returns a ConnStringError when any '&' follows the start of the query's password segment, and nil otherwise.
+// afterPasswordError returns a ConnStringError when any '&' follows the start of the query's first password segment, and nil otherwise.
 func afterPasswordError(dbURL string) error {
 	segments, ok := querySegments(dbURL)
 	if !ok {

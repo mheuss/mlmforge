@@ -71,7 +71,7 @@ func pqSettings(t *testing.T, text string) map[string]string {
 	return settings
 }
 
-// readBoth returns pgx's reading of connString and lib/pq's settings for the string golang-migrate would hand it.
+// readBoth returns pgx's reading of connString and lib/pq's settings for its FilterCustomQuery form.
 func readBoth(t *testing.T, connString string) (pgxReading, map[string]string) {
 	t.Helper()
 	cfg, err := pgconn.ParseConfig(connString)

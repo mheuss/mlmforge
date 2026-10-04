@@ -10,15 +10,15 @@ Every fact below names the library version it was read at, and the test that pin
 
 `internal/platform` defines `ConnStringError`. It names the driver and a stage. For stage `raw-at` it also names a part. It holds nothing from the string and has no `Unwrap`. Every refused string at the three call sites comes back as one.
 
-Before either command opens a driver, `resolveDBURL` runs `PreDriverError` on the raw string. It runs five checks in this order and returns the first refusal, with driver `mlmforge`. The protection stops at that CLI entry. Callers of the lower layers are not covered.
+Before either command opens a driver, `resolveDBURL` runs `PreDriverError` on the raw string. It runs these checks in this order and returns the first refusal, with driver `mlmforge`. The protection stops at that CLI entry. Callers of the lower layers are not covered.
 
 - Stage `scheme-case`: the string starts with `postgres://` or `postgresql://` only when case is ignored. pgx reads such a string as keyword/value text.
-- Stage `keyword-key`: the string has no exact lowercase `postgres://` or `postgresql://` prefix, and its first keyword key holds an ASCII character outside `A-Z a-z 0-9 _ . $`. pgx would send that key to the server as a parameter name, and the server would print it. Bytes at or above `0x80` pass, because Postgres 16 accepts them in a dotted parameter name. A string with no `=` passes this check, and pgx refuses it at parse instead.
+- Stage `keyword-key`: the string has no exact lowercase `postgres://` or `postgresql://` prefix, and its first keyword key holds an ASCII character outside `A-Z a-z 0-9 _ . $`. pgx would send that key to the server as a parameter name, and the server would print it. Bytes at or above `0x80` pass, because Postgres 16 accepts them in a dotted parameter name. A string with no `=` passes this check, and pgx refuses it at parse instead. Read in pgx source, not pinned.
 - Stage `raw-at`, with a part: a lowercase `postgres://` or `postgresql://` string has a raw `@` in its path, query or fragment. A literal `@` there has to be written `%40`.
 - Stage `after-password`: a lowercase URL's query has any `&` after the start of its `password` segment, including an empty segment. A key that reads `password` once surrounding whitespace is trimmed counts too, because lib/pq trims it and reads it as the password. Put `password` last, or move the password into the userinfo. A literal `&` in the password has to be written `%26`.
 - Stage `raw-plus`: a lowercase URL's query `password` value holds a raw `+`, which Go's query decoding reads as a space. The key is matched the same way, after trimming whitespace. A literal `+` has to be written `%2B`, and a space `%20`.
 
-The `keyword-key` class was measured against a Postgres 16 server on 2026-10-04, and no test pins the server's side. After a Postgres upgrade, re-run that probe on `tree load` against a scratch server. Use keyword strings whose first key is `my-key`, `a.b-c`, `a.b:c`, `é.x`, `a.é` and `a.b$c`. The first three must get a FATAL parameter error, and the last three must connect. If any result differs, the class is wrong for that edge.
+The `keyword-key` class was measured against a Postgres 16 server on 2026-10-04, and no test pins the server's side. After a Postgres upgrade, re-run that probe on `tree load` against a scratch server. Use keyword strings whose first key is `my-key`, `a.b-c`, `a.b:c`, `é.x`, `a.é` and `a.b$c`. The first three must get a FATAL parameter error. The last three must connect. If any result differs, the class is wrong for that edge.
 
 Then each call site does its own mapping.
 
@@ -54,7 +54,7 @@ A raw `&` in a `?password=` value splits it. Each piece after the `&` becomes it
 - It reads a string whose scheme is not lowercase `postgres://` or `postgresql://` as keyword/value text. With an `=` in it, the text before the first `=` becomes a runtime parameter name.
   Pinned by `TestDriverReadings_PgxReadsAMisCasedSchemeAsKeywordValueText`, which checks the parsed runtime parameters. Observed against Postgres 16 on 2026-10-01: pgx sent the name to the server. The server echoed it in `unrecognized configuration parameter`. That part is not pinned.
 - It reads any string without an exact `postgres://` or `postgresql://` prefix as keyword/value text. So a leading space, tab, quote or BOM makes the whole URL before its first `=` a runtime parameter name.
-  Pinned by `TestDriverReadings_PgxSendsAStrayLeadingCharacterAsAParameterName`. Not pinned, observed on a live Postgres 16 server, 2026-10-04: the server printed that name, once with the whole password in it. The outputs are recorded on HEU-880.
+  Pinned by `TestDriverReadings_PgxSendsANonURLFirstKeyAsAParameterName`. Not pinned, observed on a live Postgres 16 server, 2026-10-04: the server printed that name, once with the whole password in it. The outputs are recorded on HEU-880.
 - It sends every query key that is not one of its own settings as a startup parameter, even with an empty value. It does not trim or fold the case of a key, so `+password` and `PASSWORD` are parameters, not the password. Query key order does not change its reading.
   Pinned by `TestDriverReadings_ARawAmpersandSplitsAQueryPassword`, `TestDriverReadings_QueryKeysAreDecodedAndTheirOrderIsIgnored` and `TestDriverReadings_LibPQTrimsSpaceAroundAKeyAndNeitherDriverFoldsCase`. Not pinned, observed on a live Postgres 16 server, 2026-10-04: the server printed such a key in `unrecognized configuration parameter`. The outputs are recorded on HEU-877.
 

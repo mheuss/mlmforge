@@ -21,6 +21,8 @@ const (
 	neitherBelowText = "Neither form of " + resetCommand + " changes a record below -1."
 
 	unchangedText = "The record was not changed."
+
+	afterDownCommandName = "reset-dirty --after-failed-down"
 )
 
 // describeRecord states what a record reads, in the present tense.
@@ -205,6 +207,8 @@ func migrateErrorText(command string, err error) (string, bool) {
 		negative *platform.NegativeVersionError
 		missing  *platform.VersionNotInSourceError
 		notWrote *platform.NotWrittenError
+		noNext   *platform.NoNextMigrationError
+		noDown   *platform.NoDownFileError
 		write    *platform.WriteError
 	)
 	switch {
@@ -218,11 +222,23 @@ func migrateErrorText(command string, err error) (string, bool) {
 		return rollbackFailureText(rollback), true
 	case errors.As(err, &notDirty):
 		return fmt.Sprintf("reset-dirty changes only a dirty record. The record %s. %s", describeRecord(notDirty.Record), unchangedText), true
+	case errors.As(err, &negative) && command == afterDownCommandName:
+		return fmt.Sprintf("The record reads %d, dirty. reset-dirty --after-failed-down does not change a record below -1. %s",
+			negative.Record.Version, unchangedText), true
 	case errors.As(err, &negative):
 		return negativeText(negative.Record.Version) + " " + unchangedText, true
 	case errors.As(err, &missing):
 		return fmt.Sprintf("The record %s. The migrations directory %s has no migration %d. %s",
 			describeRecord(missing.Record), missing.Path, missing.Record.Version, unchangedText), true
+	case errors.As(err, &noNext) && noNext.Record.Version < 0:
+		return fmt.Sprintf("The record %s. The migrations directory %s has no migrations. %s",
+			describeRecord(noNext.Record), noNext.Path, unchangedText), true
+	case errors.As(err, &noNext):
+		return fmt.Sprintf("The record %s. The migrations directory %s has no migration after %d. %s",
+			describeRecord(noNext.Record), noNext.Path, noNext.Record.Version, unchangedText), true
+	case errors.As(err, &noDown):
+		return fmt.Sprintf("The record %s. The migrations directory %s has no down file for migration %d. %s",
+			describeRecord(noDown.Record), noDown.Path, noDown.Version, unchangedText), true
 	case errors.As(err, &notWrote):
 		return notWrote.Error() + "\nThis run did not write the record.", true
 	case errors.As(err, &write):
@@ -322,13 +338,13 @@ func unreadableDirText(src platform.SourceInfo, version int) string {
 	return fmt.Sprintf("The migrations directory %s could not be read for migration %d: %v.", src.Path, version, src.Err)
 }
 
-// resetText describes a completed reset.
-func resetText(r platform.ResetResult) string {
+// resetText describes a completed reset and names the command to run next.
+func resetText(r platform.ResetResult, next string) string {
 	set := "This run set it to no version."
 	if !r.To.IsNone() {
 		set = fmt.Sprintf("This run set it to %s.", r.To)
 	}
-	return fmt.Sprintf("The record %s. %s\nRun %s next.", describeRecordBefore(r.From), set, upCommand)
+	return fmt.Sprintf("The record %s. %s\nRun %s next.", describeRecordBefore(r.From), set, next)
 }
 
 // writeFailureText is the text for a failed write of the record.

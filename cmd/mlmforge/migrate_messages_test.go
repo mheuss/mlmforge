@@ -417,13 +417,30 @@ func TestMigrateError_ADirtyRecordOnDownNamesTheCommand(t *testing.T) {
 	requireNoForce(t, err.Error())
 }
 
-func TestResetText_NamesTheRecordBeforeAndAfter(t *testing.T) {
-	back := resetText(platform.ResetResult{From: sixDirty, To: platform.Record{Version: 5}})
-	none := resetText(platform.ResetResult{From: platform.Record{Version: 1, Dirty: true}, To: platform.Record{Version: -1}})
+func TestResetText_NamesTheRecordBeforeAndAfterAndTheNextCommand(t *testing.T) {
+	back := resetText(platform.ResetResult{From: sixDirty, To: platform.Record{Version: 5}}, upCommand)
+	none := resetText(platform.ResetResult{From: platform.Record{Version: 1, Dirty: true}, To: platform.Record{Version: -1}}, upCommand)
+	forward := resetText(platform.ResetResult{From: platform.Record{Version: 8, Dirty: true}, To: platform.Record{Version: 9}}, downCommand)
 
 	require.Equal(t, "The record read 6, dirty. This run set it to 5, clean.\nRun `mlmforge migrate up` next.", back)
 	require.Equal(t, "The record read 1, dirty. This run set it to no version.\nRun `mlmforge migrate up` next.", none)
-	requireNoForce(t, back+none)
+	require.Equal(t, "The record read 8, dirty. This run set it to 9, clean.\nRun `mlmforge migrate down` next.", forward)
+	requireNoForce(t, back+none+forward)
+}
+
+func TestMigrateError_EachAfterFailedDownRefusalNamesTheRecordAndSaysNothingChanged(t *testing.T) {
+	cases := map[string]error{
+		"The record reads 9, dirty. The migrations directory /m has no migration after 9. The record was not changed.":               &platform.NoNextMigrationError{Record: platform.Record{Version: 9, Dirty: true}, Path: "/m"},
+		"The record reads -1, dirty. The migrations directory /m has no migrations. The record was not changed.":                     &platform.NoNextMigrationError{Record: platform.Record{Version: -1, Dirty: true}, Path: "/m"},
+		"The record reads 8, dirty. The migrations directory /m has no down file for migration 9. The record was not changed.":       &platform.NoDownFileError{Record: platform.Record{Version: 8, Dirty: true}, Version: 9, Path: "/m"},
+		"The record reads -2, dirty. reset-dirty --after-failed-down does not change a record below -1. The record was not changed.": &platform.NegativeVersionError{Record: platform.Record{Version: -2, Dirty: true}},
+		"reset-dirty changes only a dirty record. The record reads 5, clean. The record was not changed.":                            &platform.NotDirtyError{Record: platform.Record{Version: 5}},
+	}
+	for want, err := range cases {
+		got := migrateError(afterDownCommandName, err)
+		require.EqualError(t, got, want)
+		requireNoForce(t, got.Error())
+	}
 }
 
 func TestMigrateError_EachResetRefusalNamesTheRecordAndSaysNothingChanged(t *testing.T) {

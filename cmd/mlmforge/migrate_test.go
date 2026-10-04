@@ -97,12 +97,18 @@ func TestMigrateResetDirtyHelp_NamesTheUpVersusDownRule(t *testing.T) {
 	root.SetArgs([]string{"migrate", "reset-dirty", "--help"})
 
 	require.NoError(t, root.Execute())
-	require.Contains(t, out.String(),
-		"Run it only when the command that left the record dirty was a `mlmforge migrate up` whose output tells you to. Do not run it after a failed `mlmforge migrate down`.")
+	require.Contains(t, out.String(), "Move a dirty migration record to a clean one.\n\n"+
+		"Without --after-failed-down, it moves the record back to the previous migration. Run it only when a failed `mlmforge migrate up` printed the instruction to.\n\n"+
+		"With --after-failed-down, it moves the record forward to the next migration. Run it only when a failed `mlmforge migrate down` printed the instruction to.")
+	require.Contains(t, out.String(), "--after-failed-down")
+
+	resetCmd, _, err := newRootCmd().Find([]string{"migrate", "reset-dirty"})
+	require.NoError(t, err)
+	require.Equal(t, "Move a dirty migration record back one migration, or forward one with --after-failed-down", resetCmd.Short)
 }
 
 func TestMigrateCommands_RefuseAnUnsupportedVariableWithoutAPanic(t *testing.T) {
-	for _, args := range [][]string{{"up"}, {"down"}, {"version"}, {"reset-dirty"}} {
+	for _, args := range [][]string{{"up"}, {"down"}, {"version"}, {"reset-dirty"}, {"reset-dirty", "--after-failed-down"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			testutil.ClearLibPQEnv(t)
 			t.Setenv("PGSERVICE", "svc-value-7f3")

@@ -283,10 +283,12 @@ func (w *TreeWriter) retry(ctx context.Context, tree, stream string, shape treeS
 	return err
 }
 
-// resumeRejection handles a stream that already ends with a rejection. A
-// missing projection row reads as projected version 0.
+// resumeRejection handles a stream that already ends with a rejection.
 func (w *TreeWriter) resumeRejection(ctx context.Context, result RejectResult, tree, eventID string,
 	last platform.Event, projected int64, projectedFound bool) (RejectResult, error) {
+	if !projectedFound {
+		projected = 0
+	}
 	stream := result.Stream
 	p, err := rejectionPayload(last)
 	if err != nil {

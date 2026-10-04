@@ -896,7 +896,7 @@ func TestTreeWriterReject_ARerunProjectsAPendingRejectionAndAppendsNothing(t *te
 	second, err := w.Reject(ctx, rejectRequest(stuck.ID))
 	require.NoError(t, err)
 	assert.Equal(t, RejectOutcomeResumed, second.Outcome)
-	require.Error(t, second.ProjectionErr, "the second projection was meant to fail")
+	require.ErrorContains(t, second.ProjectionErr, "connection reset by peer")
 	assert.Equal(t, &ProjectionObservation{Version: 2, Found: true}, second.Observed)
 
 	third, err := w.Reject(ctx, rejectRequest(stuck.ID))
@@ -926,7 +926,7 @@ func TestTreeWriterReject_ARerunProjectsAPendingRejectionAndAppendsNothing(t *te
 func TestTreeWriterReject_ResumesARejectionOnATreeWithNoProjectionRow(t *testing.T) {
 	env := newWriterEnv()
 	root := appendDirect(t, env.events, EventTypeRootAdded, rootAddedPayload())
-	appendRejection(t, env, root)
+	rejection := appendRejection(t, env, root)
 	w, _ := env.writer()
 
 	res, err := w.Reject(context.Background(), rejectRequest(root.ID))
@@ -938,6 +938,10 @@ func TestTreeWriterReject_ResumesARejectionOnATreeWithNoProjectionRow(t *testing
 	require.NoError(t, err)
 	assert.True(t, found)
 	assert.Equal(t, int64(2), version)
+	assert.Equal(t, rejection.ID, res.EventID)
+	assert.Equal(t, int64(2), res.Version)
+	assert.Equal(t, root.ID, res.RejectedEventID)
+	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 2)
 }
 
 func TestTreeWriterReject_RefusesARejectionOfAnotherEvent(t *testing.T) {
@@ -952,6 +956,7 @@ func TestTreeWriterReject_RefusesARejectionOfAnotherEvent(t *testing.T) {
 
 	require.EqualError(t, err, "stream "+TreeStreamName(writerTree)+" ends with rejection "+rejection.ID+
 		" of event "+events[1].ID+", not event "+events[0].ID+"; nothing was appended")
+	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 3)
 }
 
 func TestTreeWriterReject_RefusesAResumedRejectionThatNamesTheWrongEvent(t *testing.T) {
@@ -1052,4 +1057,26 @@ func TestTreeWriterReject_RefusesAPendingRejectionTheStoreCannotBeBehindBy(t *te
 		require.ErrorAs(t, err, &moved)
 		assert.Equal(t, StreamMovedError{TreeID: writerTree, LoadedVersion: 9, LastVersion: 3}, *moved)
 	})
+}
+
+func TestTreeWriterReject_ResumesARejectionTwoVersionsAheadOfTheStore(t *testing.T) {
+	env := newWriterEnv()
+	removal := unprojectedRemoval(t, env)
+	rejection := appendRejection(t, env, removal)
+	w, _ := env.writer()
+
+	res, err := w.Reject(context.Background(), rejectRequest(removal.ID))
+
+	require.NoError(t, err)
+	require.NoError(t, res.ProjectionErr)
+	assert.Equal(t, RejectOutcomeResumed, res.Outcome)
+	assert.Equal(t, rejection.ID, res.EventID)
+	version, found, err := env.store.ProjectedVersion(context.Background(), writerTree)
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, int64(4), version)
+	row, err := env.store.GetNode(context.Background(), writerTree, writerChild)
+	require.NoError(t, err)
+	assert.NotNil(t, row, "resuming a rejected removal took the user out of the tree")
+	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 4)
 }

@@ -108,7 +108,7 @@ type RejectionPendingError struct {
 
 func (e *RejectionPendingError) Error() string {
 	msg := fmt.Sprintf("stream %s ends with rejection %s at version %d of event %s, and tree %s has projected version %d; "+
-		"nothing was appended. Run mlmforge tree reject-event --tree-id %s --event-id %s again to project it",
+		"nothing was appended. Run mlmforge tree reject-event --tree-id %s --event-id %s --reason <text> again to project it",
 		TreeStreamName(e.TreeID), e.RejectionID, e.Version, e.RejectedEventID, e.TreeID, e.Projected, e.TreeID, e.RejectedEventID)
 	if e.LoadErr != nil {
 		msg += ". The load before this check returned: " + e.LoadErr.Error()

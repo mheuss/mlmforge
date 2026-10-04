@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -181,7 +182,7 @@ func TestTreeRejectEventCmd_ExitsThreeUntilARerunProjects(t *testing.T) {
 	stuck := appendUnprojected(t, events, tree, 1, networkengine.EventTypeNodePlaced, networkengine.NodePlacedPayload{
 		TreeID: tree, UserID: child, ParentID: root, SponsorID: absent, TreeType: "unilevel", EnrolledAt: at,
 	})
-	// The row and version the consumer leaves when the engine refuses the placement.
+	// The stuck placement's row, committed at version 2.
 	require.NoError(t, store.ProjectInsert(t.Context(), networkengine.TreeNodeRow{
 		ID: stuck.ID, TreeID: tree, UserID: child, ParentID: &root, SponsorID: &absent, Depth: 1, EnrolledAt: at,
 	}, 2))
@@ -241,7 +242,8 @@ func TestTreeRejectEventCmd_HelpStatesTheMeaningAndTheExitCodes(t *testing.T) {
 		"The tree type and matrix shape that version 1 records still apply after its root is rejected.",
 		"Exits 0 when the store was observed at or past the rejection.",
 		"Exits 3 when a rejection is in the stream and the store was not observed current; run the command again to project it.",
-		"Exits 1 when nothing was appended and no rejection is pending, meaning none that the store is one or two versions behind.",
+		"On a rerun that projects a rejection already in the stream, --reason is required but not recorded: nothing is appended, and the rejection keeps its own reason.",
+		"Exits 1 when it refused and appended nothing, or when it could not confirm whether its append landed. The reason is on stderr.",
 	} {
 		assert.Contains(t, cmd.Long, want)
 	}
@@ -254,5 +256,36 @@ func TestTreeLoadFailureMessage_NamesAPendingRejection(t *testing.T) {
 			&networkengine.TreeLoadRejectedError{TreeID: "t", Kind: networkengine.TreeLoadDataInvalid}),
 	}
 
-	assert.Equal(t, "load refused: "+pending.Error(), treeLoadFailureMessage(pending))
+	assert.Equal(t, "load stopped: "+pending.Error(), treeLoadFailureMessage(pending))
+}
+
+func TestTreeRejectEventCmd_PrintsARetryErrorTheRefusalDoesNotCarry(t *testing.T) {
+	retry := errors.New("load tree t; nothing was appended: node u references sponsor s that is not in the tree")
+	res := networkengine.RejectResult{Stream: "tree-t", RejectedEventID: "e", RejectedVersion: 2, RetryErr: retry}
+	for _, c := range []struct {
+		name  string
+		err   error
+		lines int
+	}{
+		{"a refusal that does not wrap it", errors.New("read the active rows of tree t: connection reset; nothing was appended"), 1},
+		{"a refusal that wraps it", fmt.Errorf("retrying event e returned an error that is not evidence; nothing was appended: %w", retry), 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := &recordingWriter{rejectResult: res, err: c.err}
+
+			out, err := runWriteCmd(t, w, "reject-event", "--tree-id", "t", "--event-id", "e", "--reason", "r")
+
+			assert.Equal(t, 1, exitCode(err))
+			assert.Equal(t, c.lines, strings.Count(out.stderr.String(), "retrying event e at version 2 returned: "+retry.Error()))
+		})
+	}
+}
+
+func TestTreeRejectEventCmd_RefusesAnOutcomeItDoesNotReport(t *testing.T) {
+	w := &recordingWriter{rejectResult: networkengine.RejectResult{Stream: "tree-t"}}
+
+	out, err := runWriteCmd(t, w, "reject-event", "--tree-id", "t", "--event-id", "e", "--reason", "r")
+
+	require.EqualError(t, err, `reject returned no error and outcome "", which this command does not report`)
+	assert.Empty(t, out.stdout.String())
 }

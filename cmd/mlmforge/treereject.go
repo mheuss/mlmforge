@@ -18,7 +18,8 @@ const rejectEventLong = "Opens a database pool, starts the engine worker, and ap
 	"The command first tries the event once more, and refuses unless that attempt fails in a way that shows the event cannot apply. " +
 	"Exits 0 when the store was observed at or past the rejection. " +
 	"Exits 3 when a rejection is in the stream and the store was not observed current; run the command again to project it. " +
-	"Exits 1 when nothing was appended and no rejection is pending, meaning none that the store is one or two versions behind."
+	"On a rerun that projects a rejection already in the stream, --reason is required but not recorded: nothing is appended, and the rejection keeps its own reason. " +
+	"Exits 1 when it refused and appended nothing, or when it could not confirm whether its append landed. The reason is on stderr."
 
 func newTreeRejectEventCmd(resolve flagResolver, open depsOpener, writer writerFor) *cobra.Command {
 	var treeID, eventID, reason string
@@ -49,6 +50,9 @@ func newTreeRejectEventCmd(resolve flagResolver, open depsOpener, writer writerF
 // reportReject prints a Reject's outcome and returns the error to report.
 func reportReject(ctx context.Context, out, warn io.Writer, res networkengine.RejectResult, err error) error {
 	if err != nil {
+		if res.RetryErr != nil && !errors.Is(err, res.RetryErr) {
+			_, _ = fmt.Fprintf(warn, "retrying event %s at version %d returned: %s\n", res.RejectedEventID, res.RejectedVersion, res.RetryErr)
+		}
 		printReleaseWarning(warn, res.ReleaseErr)
 		var unknown *networkengine.AppendOutcomeUnknownError
 		if errors.As(err, &unknown) || ctx.Err() == nil {
@@ -73,6 +77,9 @@ func reportReject(ctx context.Context, out, warn io.Writer, res networkengine.Re
 	case networkengine.RejectOutcomeAlreadyApplied:
 		_, _ = fmt.Fprintf(out, "rejection %s at version %d for event %s is already projected; nothing was appended\n",
 			res.EventID, res.Version, res.RejectedEventID)
+	default:
+		printReleaseWarning(warn, res.ReleaseErr)
+		return fmt.Errorf("reject returned no error and outcome %q, which this command does not report", res.Outcome)
 	}
 	var notCurrent error
 	if res.ProjectionErr != nil {

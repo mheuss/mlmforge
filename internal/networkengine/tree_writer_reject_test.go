@@ -55,7 +55,7 @@ func appendRejection(t *testing.T, env *writerEnv, stuck platform.Event) platfor
 // load error.
 func pendingMessage(rejection, stuck platform.Event, projected int64) string {
 	return fmt.Sprintf("stream %s ends with rejection %s at version %d of event %s, and tree %s has projected version %d; "+
-		"nothing was appended. Run mlmforge tree reject-event --tree-id %s --event-id %s again to project it",
+		"nothing was appended. Run mlmforge tree reject-event --tree-id %s --event-id %s --reason <text> again to project it",
 		TreeStreamName(writerTree), rejection.ID, rejection.Version, stuck.ID, writerTree, projected, writerTree, stuck.ID)
 }
 

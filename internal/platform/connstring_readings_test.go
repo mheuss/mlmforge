@@ -3,6 +3,7 @@ package platform
 import (
 	"net/url"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -136,4 +137,175 @@ func TestDriverReadings_PgxReadsAMisCasedSchemeAsKeywordValueText(t *testing.T) 
 	cfg, err := pgconn.ParseConfig("POSTGRESQL://app:Zm9v@h?binary_parameters=s3cretPW@127.0.0.1:1/app")
 	require.NoError(t, err)
 	require.Equal(t, map[string]string{"POSTGRESQL://app:Zm9v@h?binary_parameters": "s3cretPW@127.0.0.1:1/app"}, cfg.RuntimeParams)
+}
+
+func TestDriverReadings_PgxSendsANonURLFirstKeyAsAParameterName(t *testing.T) {
+	testutil.ClearLibPQEnv(t)
+	clearPgxDefaults(t)
+	const tail = "postgres://proofuser:pr0ofPWxyz@127.0.0.1:1/proofdb?sslmode" // gitleaks:allow
+
+	for _, tc := range []struct {
+		connString string
+		params     map[string]string
+	}{
+		{" " + tail + "=disable", map[string]string{tail: "disable"}},
+		{"\t" + tail + "=disable", map[string]string{tail: "disable"}},
+		{"\n" + tail + "=disable", map[string]string{tail: "disable"}},
+		{"\"" + tail + "=disable\"", map[string]string{"\"" + tail: "disable\""}},
+		{"\ufeff" + tail + "=disable", map[string]string{"\ufeff" + tail: "disable"}},
+		{"postgres:app:Zm9vQmFy@127.0.0.1:1/app?sslmode=disable", map[string]string{"postgres:app:Zm9vQmFy@127.0.0.1:1/app?sslmode": "disable"}},
+		{" POSTGRESQL://app:Zm9v@h?binary_parameters=s3cretPW@127.0.0.1:1/app", map[string]string{"POSTGRESQL://app:Zm9v@h?binary_parameters": "s3cretPW@127.0.0.1:1/app"}}, // gitleaks:allow
+	} {
+		t.Run(tc.connString, func(t *testing.T) {
+			cfg, err := pgconn.ParseConfig(tc.connString)
+			require.NoError(t, err)
+			require.Equal(t, tc.params, cfg.RuntimeParams)
+		})
+	}
+}
+
+func TestDriverReadings_ARawAmpersandSplitsAQueryPassword(t *testing.T) {
+	for _, tc := range []struct {
+		connString string
+		pgx        pgxReading
+		pq         string
+	}{
+		{"postgres://app@127.0.0.1:1/app?password=Zm9v&cXV4eHl6&sslmode=disable",
+			pgxReading{"127.0.0.1", 1, "app", "app", "Zm9v", map[string]string{"cXV4eHl6": ""}},
+			"dbname='app' host='127.0.0.1' password='Zm9v' port='1' sslmode='disable' user='app'"},
+		{"postgres://app@127.0.0.1:1/app?password=Zm9v&cXV4=eHl6&sslmode=disable",
+			pgxReading{"127.0.0.1", 1, "app", "app", "Zm9v", map[string]string{"cXV4": "eHl6"}},
+			"cXV4='eHl6' dbname='app' host='127.0.0.1' password='Zm9v' port='1' sslmode='disable' user='app'"},
+		{"postgres://app@127.0.0.1:1/app?password=Zm9v&cXV4eHl6==&sslmode=disable",
+			pgxReading{"127.0.0.1", 1, "app", "app", "Zm9v", map[string]string{"cXV4eHl6": "="}},
+			"cXV4eHl6='=' dbname='app' host='127.0.0.1' password='Zm9v' port='1' sslmode='disable' user='app'"},
+		{"postgres://app@127.0.0.1:1/app?password=Zm9v&cXV4eHl6=&sslmode=disable",
+			pgxReading{"127.0.0.1", 1, "app", "app", "Zm9v", map[string]string{"cXV4eHl6": ""}},
+			"dbname='app' host='127.0.0.1' password='Zm9v' port='1' sslmode='disable' user='app'"},
+		{"postgres://app@127.0.0.1:1/app?password=Zm9v&my.cXV4eHl6&sslmode=disable",
+			pgxReading{"127.0.0.1", 1, "app", "app", "Zm9v", map[string]string{"my.cXV4eHl6": ""}},
+			"dbname='app' host='127.0.0.1' password='Zm9v' port='1' sslmode='disable' user='app'"},
+		{"postgres://app@127.0.0.1:1/app?password=qs3cretpwXYZ&",
+			pgxReading{"127.0.0.1", 1, "app", "app", "qs3cretpwXYZ", map[string]string{}},
+			"dbname='app' host='127.0.0.1' password='qs3cretpwXYZ' port='1' user='app'"}, // gitleaks:allow
+		{"postgres://app@127.0.0.1:1/app?password=qs3cretpwXYZ&#x",
+			pgxReading{"127.0.0.1", 1, "app", "app", "qs3cretpwXYZ", map[string]string{}},
+			"dbname='app' host='127.0.0.1' password='qs3cretpwXYZ' port='1' user='app'"}, // gitleaks:allow
+	} {
+		t.Run(tc.connString, func(t *testing.T) {
+			testutil.ClearLibPQEnv(t)
+			clearPgxDefaults(t)
+
+			cfg, err := pgconn.ParseConfig(tc.connString)
+			require.NoError(t, err)
+			require.Equal(t, tc.pgx, pgxReading{cfg.Host, cfg.Port, cfg.Database, cfg.User, cfg.Password, cfg.RuntimeParams})
+
+			u, err := url.Parse(tc.connString)
+			require.NoError(t, err)
+			got, err := pq.ParseURL(migrate.FilterCustomQuery(u).String())
+			require.NoError(t, err)
+			require.Equal(t, tc.pq, got)
+		})
+	}
+}
+
+func TestDriverReadings_QueryKeysAreDecodedAndTheirOrderIsIgnored(t *testing.T) {
+	want := pgxReading{"127.0.0.1", 1, "app", "app", "qs3cretpwXYZ", map[string]string{}}
+	const wantPQ = "dbname='app' host='127.0.0.1' password='qs3cretpwXYZ' port='1' sslmode='disable' user='app'" // gitleaks:allow
+	for _, connString := range []string{
+		"postgres://app@127.0.0.1:1/app?password=qs3cretpwXYZ&sslmode=disable",
+		"postgres://app@127.0.0.1:1/app?sslmode=disable&password=qs3cretpwXYZ", // gitleaks:allow
+		"postgres://app@127.0.0.1:1/app?pass%77ord=qs3cretpwXYZ&sslmode=disable",
+	} {
+		t.Run(connString, func(t *testing.T) {
+			testutil.ClearLibPQEnv(t)
+			clearPgxDefaults(t)
+
+			cfg, err := pgconn.ParseConfig(connString)
+			require.NoError(t, err)
+			require.Equal(t, want, pgxReading{cfg.Host, cfg.Port, cfg.Database, cfg.User, cfg.Password, cfg.RuntimeParams})
+
+			u, err := url.Parse(connString)
+			require.NoError(t, err)
+			got, err := pq.ParseURL(migrate.FilterCustomQuery(u).String())
+			require.NoError(t, err)
+			require.Equal(t, wantPQ, got)
+		})
+	}
+}
+
+func TestDriverReadings_APlusIsASpaceInTheQueryAndLiteralInTheUserinfo(t *testing.T) {
+	for _, tc := range []struct {
+		connString string
+		password   string
+		pq         string
+	}{
+		{"postgres://plusr@127.0.0.1:1/app?password=Zm9v+cXV4", "Zm9v cXV4",
+			"dbname='app' host='127.0.0.1' password='Zm9v cXV4' port='1' user='plusr'"},
+		{"postgres://plusr:Zm9v+cXV4@127.0.0.1:1/app", "Zm9v+cXV4", // gitleaks:allow
+			"dbname='app' host='127.0.0.1' password='Zm9v+cXV4' port='1' user='plusr'"},
+	} {
+		t.Run(tc.connString, func(t *testing.T) {
+			testutil.ClearLibPQEnv(t)
+			clearPgxDefaults(t)
+
+			cfg, err := pgconn.ParseConfig(tc.connString)
+			require.NoError(t, err)
+			require.Equal(t, tc.password, cfg.Password)
+
+			u, err := url.Parse(tc.connString)
+			require.NoError(t, err)
+			got, err := pq.ParseURL(migrate.FilterCustomQuery(u).String())
+			require.NoError(t, err)
+			require.Equal(t, tc.pq, got)
+		})
+	}
+}
+
+func TestDriverReadings_LibPQTrimsSpaceAroundAKeyAndNeitherDriverFoldsCase(t *testing.T) {
+	testutil.ClearLibPQEnv(t)
+	clearPgxDefaults(t)
+	const spacePassword = " password"
+
+	for _, tc := range []struct {
+		connString string
+		pqPassword string
+		pgxParams  map[string]string
+	}{
+		{"postgres://u@h/app?+password=a&b=c", "a", map[string]string{spacePassword: "a", "b": "c"}},
+		{"postgres://u@h/app?password+=a+b", "a b", map[string]string{"password ": "a b"}},
+		{"postgres://u@h/app?%09password=a+b", "a b", map[string]string{"\tpassword": "a b"}},
+		{"postgres://u@h/app?password%0A=a+b", "a b", map[string]string{"password\n": "a b"}},
+		{"postgres://u@h/app?%0Bpassword=a+b", "a b", map[string]string{"\vpassword": "a b"}},
+		{"postgres://u@h/app?password%0C=a+b", "a b", map[string]string{"password\f": "a b"}},
+		{"postgres://u@h/app?%C2%A0password=a+b", "a b", map[string]string{"\u00a0password": "a b"}},
+		{"postgres://u@h/app?PASSWORD=a", "", map[string]string{"PASSWORD": "a"}},
+		{"postgres://u@h/app?Password=a", "", map[string]string{"Password": "a"}},
+	} {
+		t.Run(tc.connString, func(t *testing.T) {
+			cfg, err := pgconn.ParseConfig(tc.connString)
+			require.NoError(t, err)
+			require.Empty(t, cfg.Password, "pgx")
+			require.Equal(t, tc.pgxParams, cfg.RuntimeParams, "pgx parameters")
+
+			got := libPQOption(t, tc.connString, "password")
+			require.Equal(t, tc.pqPassword, got, "lib/pq password")
+		})
+	}
+}
+
+// libPQOption returns the value lib/pq's connector holds for key, or "" if it holds none, after parsing connString's FilterCustomQuery form.
+func libPQOption(t *testing.T, connString, key string) string {
+	t.Helper()
+	u, err := url.Parse(connString)
+	require.NoError(t, err)
+	c, err := pq.NewConnector(migrate.FilterCustomQuery(u).String())
+	require.NoError(t, err)
+	opts := reflect.ValueOf(c).Elem().FieldByName("opts")
+	require.True(t, opts.IsValid(), "lib/pq's Connector has no opts field to read")
+	v := opts.MapIndex(reflect.ValueOf(key))
+	if !v.IsValid() {
+		return ""
+	}
+	return v.String()
 }

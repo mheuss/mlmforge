@@ -39,15 +39,15 @@ func ConnStringCases() []ConnStringCase {
 			Password: "Zm9vQmFy%zzcXV4eHl6", PgxStage: "parse", MigrateStage: "parse"},
 		{Name: "fragment", ConnString: "postgres://app:Zm9vQmFy#cXV4eHl6@127.0.0.1:1/app",
 			Password: "Zm9vQmFy#cXV4eHl6", PgxStage: "parse", MigrateStage: "parse", ResolveStage: "raw-at", ResolvePart: "fragment"},
-		{Name: "bad-sslmode", ConnString: "postgres://app@127.0.0.1:1/app?password=qs3cretpwXYZ&sslmode=bogus",
+		{Name: "bad-sslmode", ConnString: "postgres://app@127.0.0.1:1/app?sslmode=bogus&password=qs3cretpwXYZ", // gitleaks:allow
 			Password: "qs3cretpwXYZ", PgxStage: "refused"}, // gitleaks:allow
-		{Name: "missing-service", ConnString: "postgres://app@127.0.0.1:1/app?password=qs3cretpwXYZ&service=nosuch",
+		{Name: "missing-service", ConnString: "postgres://app@127.0.0.1:1/app?service=nosuch&password=qs3cretpwXYZ", // gitleaks:allow
 			Password: "qs3cretpwXYZ", PgxStage: "refused"}, // gitleaks:allow
-		{Name: "empty-timeout", ConnString: "postgres://app@127.0.0.1:1/app?password=qs3cretpwXYZ&connect_timeout=",
+		{Name: "empty-timeout", ConnString: "postgres://app@127.0.0.1:1/app?connect_timeout=&password=qs3cretpwXYZ", // gitleaks:allow
 			Password: "qs3cretpwXYZ", PgxStage: "refused"}, // gitleaks:allow
 		{Name: "keyword-form", ConnString: "host=127.0.0.1 port=1 password=kv3cretpwXYZ sslmode=bogus", // gitleaks:allow
 			Password: "kv3cretpwXYZ", PgxStage: "refused", MigrateStage: "scheme"}, // gitleaks:allow
-		{Name: "bad-pool-option", ConnString: "postgres://app@127.0.0.1:1/app?password=qs3cretpwXYZ&pool_max_conns=abc",
+		{Name: "bad-pool-option", ConnString: "postgres://app@127.0.0.1:1/app?pool_max_conns=abc&password=qs3cretpwXYZ", // gitleaks:allow
 			Password: "qs3cretpwXYZ", PgxStage: "refused"}, // gitleaks:allow
 		{Name: "keyword-colon", ConnString: "password=kc3cretpwXYZ host=::1 dbname=app",
 			Password: "kc3cretpwXYZ", MigrateStage: "scheme"},
@@ -69,6 +69,12 @@ const (
 	TwinResolve    = "resolve"
 )
 
+// How a ResolveRefusedCase's twin is compared with the string it replaces.
+const (
+	SameReading     = "reading"
+	SameCredentials = "credentials"
+)
+
 // ResolveRefusedCase is a connection string mlmforge refuses before any driver sees it.
 type ResolveRefusedCase struct {
 	Name           string
@@ -80,6 +86,9 @@ type ResolveRefusedCase struct {
 	TwinCheck      string
 	Stage          string
 	Part           string
+	SameTarget     string
+	TwinPassword   string
+	SplitKeys      []string
 }
 
 // WiringWithoutPassword returns the wiring string with its password removed.
@@ -145,6 +154,106 @@ func ResolveRefusedCases() []ResolveRefusedCase {
 			Wiring:     "PostgreSQL://u.invalid/app",
 			Twin:       "postgresql://u.invalid/app", TwinCheck: TwinResolve,
 			Stage: "scheme-case"},
+		{Name: "keyword-leading-space-query",
+			ConnString: " postgres://app:Zm9v@h?binary_parameters=s3cretPW@127.0.0.1:1/app", Password: "Zm9v@h?binary_parameters=s3cretPW", // gitleaks:allow
+			Wiring: " postgres://app:Zm9v@[::1]?binary_parameters=s3cretPW@127.0.0.1:1/app", WiringPassword: "Zm9v@[::1]?binary_parameters=s3cretPW", // gitleaks:allow
+			Twin: "postgres://app:Zm9v@h?binary_parameters=s3cretPW%40127.0.0.1:1/app", TwinCheck: TwinParsers, // gitleaks:allow
+			Stage: "keyword-key"},
+		{Name: "keyword-leading-space-mixed-case",
+			ConnString: " POSTGRESQL://app:Zm9v@h?binary_parameters=s3cretPW@127.0.0.1:1/app", Password: "Zm9v@h?binary_parameters=s3cretPW", // gitleaks:allow
+			Wiring: " POSTGRESQL://app:Zm9v@[::1]?binary_parameters=s3cretPW@127.0.0.1:1/app", WiringPassword: "Zm9v@[::1]?binary_parameters=s3cretPW", // gitleaks:allow
+			Twin: "postgres://app:Zm9v@h?binary_parameters=s3cretPW%40127.0.0.1:1/app", TwinCheck: TwinParsers, // gitleaks:allow
+			Stage: "keyword-key"},
+		{Name: "keyword-leading-space-url",
+			ConnString: " postgres://proofuser:pr0ofPWxyz@127.0.0.1:1/proofdb?sslmode=disable", Password: "pr0ofPWxyz", // gitleaks:allow
+			Wiring: " postgres://proofuser:pr0ofPWxyz@127.0.0.1:1/proofdb?sslmode=disable", WiringPassword: "pr0ofPWxyz", // gitleaks:allow
+			Twin: "postgres://proofuser:pr0ofPWxyz@127.0.0.1:1/proofdb?sslmode=disable", TwinCheck: TwinParsers, // gitleaks:allow
+			Stage: "keyword-key"},
+		{Name: "keyword-leading-tab-url",
+			ConnString: "\tpostgres://proofuser:pr0ofPWxyz@127.0.0.1:1/proofdb?sslmode=disable", Password: "pr0ofPWxyz", // gitleaks:allow
+			Wiring: "\tpostgres://proofuser:pr0ofPWxyz@127.0.0.1:1/proofdb?sslmode=disable", WiringPassword: "pr0ofPWxyz", // gitleaks:allow
+			Twin: "postgres://proofuser:pr0ofPWxyz@127.0.0.1:1/proofdb?sslmode=disable", TwinCheck: TwinParsers, // gitleaks:allow
+			Stage: "keyword-key"},
+		{Name: "keyword-leading-newline-url",
+			ConnString: "\npostgres://proofuser:pr0ofPWxyz@127.0.0.1:1/proofdb?sslmode=disable", Password: "pr0ofPWxyz", // gitleaks:allow
+			Wiring: "\npostgres://proofuser:pr0ofPWxyz@127.0.0.1:1/proofdb?sslmode=disable", WiringPassword: "pr0ofPWxyz", // gitleaks:allow
+			Twin: "postgres://proofuser:pr0ofPWxyz@127.0.0.1:1/proofdb?sslmode=disable", TwinCheck: TwinParsers, // gitleaks:allow
+			Stage: "keyword-key"},
+		{Name: "keyword-quoted-url",
+			ConnString: "\"postgres://proofuser:pr0ofPWxyz@127.0.0.1:1/proofdb?sslmode=disable\"", Password: "pr0ofPWxyz", // gitleaks:allow
+			Wiring: "\"postgres://proofuser:pr0ofPWxyz@127.0.0.1:1/proofdb?sslmode=disable\"", WiringPassword: "pr0ofPWxyz", // gitleaks:allow
+			Twin: "postgres://proofuser:pr0ofPWxyz@127.0.0.1:1/proofdb?sslmode=disable", TwinCheck: TwinParsers, // gitleaks:allow
+			Stage: "keyword-key"},
+		{Name: "keyword-bom-url",
+			ConnString: "\ufeffpostgres://proofuser:pr0ofPWxyz@127.0.0.1:1/proofdb?sslmode=disable", Password: "pr0ofPWxyz", // gitleaks:allow
+			Wiring: "\ufeffpostgres://proofuser:pr0ofPWxyz@127.0.0.1:1/proofdb?sslmode=disable", WiringPassword: "pr0ofPWxyz", // gitleaks:allow
+			Twin: "postgres://proofuser:pr0ofPWxyz@127.0.0.1:1/proofdb?sslmode=disable", TwinCheck: TwinParsers, // gitleaks:allow
+			Stage: "keyword-key"},
+		{Name: "keyword-opaque-scheme",
+			ConnString: "postgres:app:Zm9vQmFy@127.0.0.1:1/app?sslmode=disable", Password: "Zm9vQmFy", // gitleaks:allow
+			Wiring: "postgres:app:Zm9vQmFy@127.0.0.1:1/app?sslmode=disable", WiringPassword: "Zm9vQmFy", // gitleaks:allow
+			Twin: "postgres://app:Zm9vQmFy@127.0.0.1:1/app?sslmode=disable", TwinCheck: TwinParsers, // gitleaks:allow
+			Stage: "keyword-key"},
+		{Name: "ticket-ampersand",
+			ConnString: "postgres://amp2@127.0.0.1:32770/proofdb?password=Zm9v&cXV4eHl6&sslmode=disable", Password: "Zm9v&cXV4eHl6", // gitleaks:allow
+			Wiring: "postgres://amp2@127.0.0.1:1/proofdb?password=Zm9v&cXV4eHl6&sslmode=disable", WiringPassword: "Zm9v&cXV4eHl6", // gitleaks:allow
+			Twin: "postgres://amp2@127.0.0.1:32770/proofdb?sslmode=disable&password=Zm9v%26cXV4eHl6", TwinCheck: TwinParsers, // gitleaks:allow
+			Stage: "after-password", SameTarget: SameCredentials, TwinPassword: "Zm9v&cXV4eHl6", SplitKeys: []string{"cXV4eHl6"}},
+		{Name: "ampersand-key-value",
+			ConnString: "postgres://app@127.0.0.1:1/app?password=Zm9v&cXV4=eHl6&sslmode=disable", Password: "Zm9v&cXV4=eHl6", // gitleaks:allow
+			Wiring: "postgres://app@127.0.0.1:1/app?password=Zm9v&cXV4=eHl6&sslmode=disable", WiringPassword: "Zm9v&cXV4=eHl6", // gitleaks:allow
+			Twin: "postgres://app@127.0.0.1:1/app?sslmode=disable&password=Zm9v%26cXV4%3DeHl6", TwinCheck: TwinParsers, // gitleaks:allow
+			Stage: "after-password", SameTarget: SameCredentials, TwinPassword: "Zm9v&cXV4=eHl6", SplitKeys: []string{"cXV4"}},
+		{Name: "ampersand-base64-padding",
+			ConnString: "postgres://app@127.0.0.1:1/app?password=Zm9v&cXV4eHl6==&sslmode=disable", Password: "Zm9v&cXV4eHl6==", // gitleaks:allow
+			Wiring: "postgres://app@127.0.0.1:1/app?password=Zm9v&cXV4eHl6==&sslmode=disable", WiringPassword: "Zm9v&cXV4eHl6==", // gitleaks:allow
+			Twin: "postgres://app@127.0.0.1:1/app?sslmode=disable&password=Zm9v%26cXV4eHl6%3D%3D", TwinCheck: TwinParsers, // gitleaks:allow
+			Stage: "after-password", SameTarget: SameCredentials, TwinPassword: "Zm9v&cXV4eHl6==", SplitKeys: []string{"cXV4eHl6"}},
+		{Name: "ampersand-empty-value",
+			ConnString: "postgres://app@127.0.0.1:1/app?password=Zm9v&cXV4eHl6=&sslmode=disable", Password: "Zm9v&cXV4eHl6=", // gitleaks:allow
+			Wiring: "postgres://app@127.0.0.1:1/app?password=Zm9v&cXV4eHl6=&sslmode=disable", WiringPassword: "Zm9v&cXV4eHl6=", // gitleaks:allow
+			Twin: "postgres://app@127.0.0.1:1/app?sslmode=disable&password=Zm9v%26cXV4eHl6%3D", TwinCheck: TwinParsers, // gitleaks:allow
+			Stage: "after-password", SameTarget: SameCredentials, TwinPassword: "Zm9v&cXV4eHl6=", SplitKeys: []string{"cXV4eHl6"}},
+		{Name: "ampersand-dotted-piece",
+			ConnString: "postgres://app@127.0.0.1:1/app?password=Zm9v&my.cXV4eHl6&sslmode=disable", Password: "Zm9v&my.cXV4eHl6", // gitleaks:allow
+			Wiring: "postgres://app@127.0.0.1:1/app?password=Zm9v&my.cXV4eHl6&sslmode=disable", WiringPassword: "Zm9v&my.cXV4eHl6", // gitleaks:allow
+			Twin: "postgres://app@127.0.0.1:1/app?sslmode=disable&password=Zm9v%26my.cXV4eHl6", TwinCheck: TwinParsers, // gitleaks:allow
+			Stage: "after-password", SameTarget: SameCredentials, TwinPassword: "Zm9v&my.cXV4eHl6", SplitKeys: []string{"my.cXV4eHl6"}},
+		{Name: "password-before-key",
+			ConnString: "postgres://app@127.0.0.1:1/app?password=qs3cretpwXYZ&sslmode=disable", Password: "qs3cretpwXYZ", // gitleaks:allow
+			Wiring: "postgres://app@127.0.0.1:1/app?password=qs3cretpwXYZ&sslmode=disable", WiringPassword: "qs3cretpwXYZ", // gitleaks:allow
+			Twin: "postgres://app@127.0.0.1:1/app?sslmode=disable&password=qs3cretpwXYZ", TwinCheck: TwinParsers, // gitleaks:allow
+			Stage: "after-password", SameTarget: SameReading},
+		{Name: "encoded-password-key",
+			ConnString: "postgres://app@127.0.0.1:1/app?pass%77ord=qs3cretpwXYZ&sslmode=disable", Password: "qs3cretpwXYZ", // gitleaks:allow
+			Wiring: "postgres://app@127.0.0.1:1/app?pass%77ord=qs3cretpwXYZ&sslmode=disable", WiringPassword: "qs3cretpwXYZ", // gitleaks:allow
+			Twin: "postgres://app@127.0.0.1:1/app?sslmode=disable&pass%77ord=qs3cretpwXYZ", TwinCheck: TwinParsers, // gitleaks:allow
+			Stage: "after-password", SameTarget: SameReading},
+		{Name: "trailing-ampersand",
+			ConnString: "postgres://app@127.0.0.1:1/app?password=qs3cretpwXYZ&", Password: "qs3cretpwXYZ", // gitleaks:allow
+			Wiring: "postgres://app@127.0.0.1:1/app?password=qs3cretpwXYZ&", WiringPassword: "qs3cretpwXYZ", // gitleaks:allow
+			Twin: "postgres://app@127.0.0.1:1/app?password=qs3cretpwXYZ", TwinCheck: TwinParsers, // gitleaks:allow
+			Stage: "after-password", SameTarget: SameReading},
+		{Name: "trailing-ampersand-fragment",
+			ConnString: "postgres://app@127.0.0.1:1/app?password=qs3cretpwXYZ&#x", Password: "qs3cretpwXYZ", // gitleaks:allow
+			Wiring: "postgres://app@127.0.0.1:1/app?password=qs3cretpwXYZ&#x", WiringPassword: "qs3cretpwXYZ", // gitleaks:allow
+			Twin: "postgres://app@127.0.0.1:1/app?password=qs3cretpwXYZ#x", TwinCheck: TwinParsers, // gitleaks:allow
+			Stage: "after-password", SameTarget: SameReading},
+		{Name: "raw-plus",
+			ConnString: "postgres://plusr@127.0.0.1:1/app?password=Zm9v+cXV4", Password: "Zm9v+cXV4", // gitleaks:allow
+			Wiring: "postgres://plusr@127.0.0.1:1/app?password=Zm9v+cXV4", WiringPassword: "Zm9v+cXV4", // gitleaks:allow
+			Twin: "postgres://plusr@127.0.0.1:1/app?password=Zm9v%2BcXV4", TwinCheck: TwinParsers, // gitleaks:allow
+			Stage: "raw-plus", SameTarget: SameCredentials, TwinPassword: "Zm9v+cXV4"},
+		{Name: "raw-plus-space",
+			ConnString: "postgres://plus@127.0.0.1:1/app?password=Zm9v+cXV4", Password: "Zm9v+cXV4", // gitleaks:allow
+			Wiring: "postgres://plus@127.0.0.1:1/app?password=Zm9v+cXV4", WiringPassword: "Zm9v+cXV4", // gitleaks:allow
+			Twin: "postgres://plus@127.0.0.1:1/app?password=Zm9v%20cXV4", TwinCheck: TwinParsers, // gitleaks:allow
+			Stage: "raw-plus", SameTarget: SameCredentials, TwinPassword: "Zm9v cXV4"},
+		{Name: "case-variant-password-before-key",
+			ConnString: "postgres://app@127.0.0.1:1/app?PASSWORD=qs3cretpwXYZ&sslmode=disable", Password: "qs3cretpwXYZ", // gitleaks:allow
+			Wiring: "postgres://app@127.0.0.1:1/app?PASSWORD=qs3cretpwXYZ&sslmode=disable", WiringPassword: "qs3cretpwXYZ", // gitleaks:allow
+			Twin: "postgres://app@127.0.0.1:1/app?sslmode=disable&PASSWORD=qs3cretpwXYZ", TwinCheck: TwinParsers, // gitleaks:allow
+			Stage: "after-password", SameTarget: SameReading},
 	}
 }
 
@@ -178,6 +287,19 @@ func ReachesDriverCases() []ReachesDriverCase {
 		{Name: "fragment password encoded", ConnString: "postgres://u.invalid:1234%23s3cretPWxyz@127.0.0.1:1/app", Dial: "dial tcp 127.0.0.1:1", Tree: true},
 		{Name: "database name with %40", ConnString: "postgres://app:pw4xyzQr@127.0.0.1:1/my%40db", Dial: "dial tcp 127.0.0.1:1", Tree: true},
 		{Name: "query password with %40", ConnString: "postgres://app@127.0.0.1:1/app?password=qs3cret%40pwXYZ", Dial: "dial tcp 127.0.0.1:1", Tree: true},
+		{Name: "keyword twin without the stray character", ConnString: "postgres://proofuser:pr0ofPWxyz@127.0.0.1:1/proofdb?sslmode=disable", Dial: "dial tcp 127.0.0.1:1", Tree: true},   // gitleaks:allow
+		{Name: "opaque scheme twin", ConnString: "postgres://app:Zm9vQmFy@127.0.0.1:1/app?sslmode=disable", Dial: "dial tcp 127.0.0.1:1", Tree: true},                                     // gitleaks:allow
+		{Name: "ampersand key value encoded", ConnString: "postgres://app@127.0.0.1:1/app?sslmode=disable&password=Zm9v%26cXV4%3DeHl6", Dial: "dial tcp 127.0.0.1:1", Tree: true},         // gitleaks:allow
+		{Name: "ampersand base64 padding encoded", ConnString: "postgres://app@127.0.0.1:1/app?sslmode=disable&password=Zm9v%26cXV4eHl6%3D%3D", Dial: "dial tcp 127.0.0.1:1", Tree: true}, // gitleaks:allow
+		{Name: "ampersand empty value encoded", ConnString: "postgres://app@127.0.0.1:1/app?sslmode=disable&password=Zm9v%26cXV4eHl6%3D", Dial: "dial tcp 127.0.0.1:1", Tree: true},       // gitleaks:allow
+		{Name: "ampersand dotted piece encoded", ConnString: "postgres://app@127.0.0.1:1/app?sslmode=disable&password=Zm9v%26my.cXV4eHl6", Dial: "dial tcp 127.0.0.1:1", Tree: true},      // gitleaks:allow
+		{Name: "password moved last", ConnString: "postgres://app@127.0.0.1:1/app?sslmode=disable&password=qs3cretpwXYZ", Dial: "dial tcp 127.0.0.1:1", Tree: true},                       // gitleaks:allow
+		{Name: "encoded password key moved last", ConnString: "postgres://app@127.0.0.1:1/app?sslmode=disable&pass%77ord=qs3cretpwXYZ", Dial: "dial tcp 127.0.0.1:1", Tree: true},         // gitleaks:allow
+		{Name: "trailing ampersand removed", ConnString: "postgres://app@127.0.0.1:1/app?password=qs3cretpwXYZ", Dial: "dial tcp 127.0.0.1:1", Tree: true},                                // gitleaks:allow
+		{Name: "trailing ampersand removed before a fragment", ConnString: "postgres://app@127.0.0.1:1/app?password=qs3cretpwXYZ#x", Dial: "dial tcp 127.0.0.1:1", Tree: true},            // gitleaks:allow
+		{Name: "plus encoded", ConnString: "postgres://plusr@127.0.0.1:1/app?password=Zm9v%2BcXV4", Dial: "dial tcp 127.0.0.1:1", Tree: true},                                             // gitleaks:allow
+		{Name: "space encoded", ConnString: "postgres://plus@127.0.0.1:1/app?password=Zm9v%20cXV4", Dial: "dial tcp 127.0.0.1:1", Tree: true},                                             // gitleaks:allow
+		{Name: "case-variant password key moved last", ConnString: "postgres://app@127.0.0.1:1/app?sslmode=disable&PASSWORD=qs3cretpwXYZ", Dial: "dial tcp 127.0.0.1:1", Tree: true},      // gitleaks:allow
 	}
 }
 
@@ -204,6 +326,9 @@ var preDriverTexts = map[string]string{
 	"raw-at/query":    "mlmforge found a raw @ after the host part, in the connection string's query. If a password holds @ / ? or #, percent-encode them. Write any other literal @ there as %40. The connection string is withheld because it can contain a password.",
 	"raw-at/fragment": "mlmforge found a raw @ after the host part, in the connection string's fragment. If a password holds @ / ? or #, percent-encode them. Write any other literal @ there as %40. The connection string is withheld because it can contain a password.",
 	"scheme-case/":    "mlmforge found a connection string whose scheme is not all lowercase. Write postgres:// or postgresql:// in lowercase. The connection string is withheld because it can contain a password.",
+	"keyword-key/":    "mlmforge found a connection string that is not a postgres:// or postgresql:// URL, and its first keyword holds a character no setting name can hold. Check for a stray character, such as a space or a quote, before postgres://. The connection string is withheld because it can contain a password.",
+	"after-password/": "mlmforge found a query key or & after password in the connection string. Put password last in the query, or move the password into the user part before the @. Write each & in the password as %26. The connection string is withheld because it can contain a password.",
+	"raw-plus/":       "mlmforge found a raw + in the connection string's query password. A raw + in a query value is read as a space. Write a plus as %2B and a space as %20. The connection string is withheld because it can contain a password.",
 }
 
 // PreDriverText returns the text a connection string refused before any driver is expected to print for stage and part.

@@ -68,6 +68,7 @@ var treeRefusalCommands = []struct {
 	{"add-root", []string{"--tree-id", "t9", "--user-id", "u", "--sponsor-id", "u", "--tree-type", "unilevel"}},
 	{"place", []string{"--tree-id", "t9", "--user-id", "u", "--parent-id", "p", "--sponsor-id", "u"}},
 	{"remove", []string{"--tree-id", "t9", "--user-id", "u"}},
+	{"reject-event", []string{"--tree-id", "t9", "--event-id", "e9", "--reason", "r"}},
 }
 
 func TestTreeCommands_ARefusedConnStringPrintsNoPassword(t *testing.T) {
@@ -92,7 +93,7 @@ func TestTreeCommands_ARefusedConnStringPrintsNoPassword(t *testing.T) {
 			})
 		}
 	}
-	require.Equal(t, 8, selected, "tree cases selected")
+	require.Equal(t, 10, selected, "tree cases selected")
 }
 
 // failingOpener fails the test if a tree command opens its dependencies.
@@ -149,7 +150,7 @@ func TestMigrateCommands_RefuseBeforeTheDriver(t *testing.T) {
 			})
 		}
 	}
-	require.Equal(t, 44, selected, "migrate runs")
+	require.Equal(t, 124, selected, "migrate runs")
 }
 
 func TestTreeCommands_RefuseBeforeTheDriver(t *testing.T) {
@@ -167,7 +168,7 @@ func TestTreeCommands_RefuseBeforeTheDriver(t *testing.T) {
 			})
 		}
 	}
-	require.Equal(t, 44, selected, "tree runs")
+	require.Equal(t, 155, selected, "tree runs")
 }
 
 func TestMigrateVersion_AStringThatReachesTheDriverPassesTheCLI(t *testing.T) {
@@ -189,7 +190,7 @@ func TestMigrateVersion_AStringThatReachesTheDriverPassesTheCLI(t *testing.T) {
 			require.False(t, errors.As(err, &cse), "expected a dial error; the error chain holds a *ConnStringError: %v", err)
 		})
 	}
-	require.Equal(t, 14, selected, "migrate rows")
+	require.Equal(t, 27, selected, "migrate rows")
 }
 
 func TestTreeLoad_AStringThatReachesTheDriverPassesTheCLI(t *testing.T) {
@@ -211,5 +212,5 @@ func TestTreeLoad_AStringThatReachesTheDriverPassesTheCLI(t *testing.T) {
 			require.False(t, errors.As(err, &cse), "expected a dial error; the error chain holds a *ConnStringError: %v", err)
 		})
 	}
-	require.Equal(t, 7, selected, "tree rows")
+	require.Equal(t, 20, selected, "tree rows")
 }

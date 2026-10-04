@@ -3,6 +3,8 @@ package platform
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/golang-migrate/migrate/v4/database"
@@ -175,4 +177,28 @@ func TestResetAfterFailedDown_ANextMigrationWithNoDownFileWritesNothing(t *testi
 
 	assert.Equal(t, &NoDownFileError{Record: Record{Version: 2, Dirty: true}, Version: 7, Path: dir}, err)
 	assert.Equal(t, []string{"Lock", "Version", "Unlock"}, driver.calls)
+}
+
+func TestResetAfterFailedDown_AnUnreadableFileRefusesWithoutWriting(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a file with mode 000")
+	}
+	cases := map[string]string{
+		"the record's up file": "2_a.up.sql",
+		"the next down file":   "7_b.down.sql",
+	}
+	for name, file := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := writeMigrations(t, sparseMigrations)
+			require.NoError(t, os.Chmod(filepath.Join(dir, file), 0))
+			driver := &recordingDriver{record: Record{Version: 2, Dirty: true}}
+			mg := resetMigrationIn(t, dir, driver)
+
+			_, err := mg.resetLocked(mg.nextTarget)
+
+			var notWritten *NotWrittenError
+			require.ErrorAs(t, err, &notWritten)
+			assert.Equal(t, []string{"Lock", "Version", "Unlock"}, driver.calls)
+		})
+	}
 }

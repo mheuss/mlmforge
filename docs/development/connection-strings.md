@@ -10,10 +10,13 @@ Every fact below names the library version it was read at, and the test that pin
 
 `internal/platform` defines `ConnStringError`. It names the driver and a stage. For stage `raw-at` it also names a part. It holds nothing from the string and has no `Unwrap`. Every refused string at the three call sites comes back as one.
 
-Before either command opens a driver, `resolveDBURL` runs `PreDriverError` on the raw string. It refuses two shapes with driver `mlmforge`. The protection stops at that CLI entry. Callers of the lower layers are not covered.
+Before either command opens a driver, `resolveDBURL` runs `PreDriverError` on the raw string. It runs five checks in this order and returns the first refusal, with driver `mlmforge`. The protection stops at that CLI entry. Callers of the lower layers are not covered.
 
 - Stage `scheme-case`: the string starts with `postgres://` or `postgresql://` only when case is ignored. pgx reads such a string as keyword/value text.
+- Stage `keyword-key`: the string has no exact lowercase `postgres://` or `postgresql://` prefix, and its first keyword key holds an ASCII character outside `A-Z a-z 0-9 _ . $`. pgx would send that key to the server as a parameter name, and the server would print it. Bytes at or above `0x80` pass, because Postgres 16 accepts them in a dotted parameter name. The class was measured against Postgres 16 on 2026-10-04, and no test pins the server's side. After a Postgres upgrade, re-run that probe on `tree load` against a scratch server, with keyword strings whose first key is `my-key`, `a.b-c`, `a.b:c`, `é.x`, `a.é` and `a.b$c`. The first three must get a FATAL parameter error, and the last three must connect. If any result differs, this stage's class is wrong for that edge.
 - Stage `raw-at`, with a part: a lowercase `postgres://` or `postgresql://` string has a raw `@` in its path, query or fragment. A literal `@` there has to be written `%40`.
+- Stage `after-password`: a lowercase URL's query has any `&` after the start of its `password` segment, including an empty segment. A key that reads `password` once surrounding whitespace is trimmed counts too, because lib/pq trims it and reads it as the password. Put `password` last, or move the password into the userinfo. A literal `&` in the password has to be written `%26`.
+- Stage `raw-plus`: a lowercase URL's query `password` value holds a raw `+`, which Go's query decoding reads as a space. The key is matched the same way, after trimming whitespace. A literal `+` has to be written `%2B`, and a space `%20`.
 
 Then each call site does its own mapping.
 
@@ -24,6 +27,8 @@ Then each call site does its own mapping.
   3. A `*url.Error` from `database.Open` becomes stage `parse`.
 
 A raw `@` alone in a password does not split the string. A raw `/`, `?` or `#` in a password does. It puts the userinfo's closing `@` after the host part. The `raw-at` stage refuses that shape (HEU-875).
+
+A raw `&` in a `?password=` value splits it. Each piece after the `&` becomes its own query key, and the server prints the key. A raw `+` in it is read as a space. The `after-password` and `raw-plus` stages refuse those shapes (HEU-877, HEU-878). A string that is not a URL but holds one, after a stray space, quote or BOM, is refused by `keyword-key` (HEU-880).
 
 ## net/url, Go 1.27
 

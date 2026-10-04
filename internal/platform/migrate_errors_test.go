@@ -18,14 +18,17 @@ func TestRecord_StringNamesTheStoredState(t *testing.T) {
 
 func TestMigrateErrors_ErrorStrings(t *testing.T) {
 	cases := map[string]error{
-		"migration record is not dirty: 5, clean":                       &NotDirtyError{Record: Record{Version: 5}},
-		"migration record is -1, dirty":                                 &NegativeVersionError{Record: Record{Version: -1, Dirty: true}},
-		"migration record is 9, dirty; /m has no migration 9":           &VersionNotInSourceError{Record: Record{Version: 9, Dirty: true}, Path: "/m"},
-		"migrate up refused: the database URL sets x-multi-statement=1": &MultiStatementError{Command: "up", Value: "1"},
-		"migration record is 6, dirty":                                  &DirtyError{Record: Record{Version: 6, Dirty: true}},
-		"apply migrations: boom":                                        &ApplyError{Err: errors.New("boom")},
-		"rollback migration: boom":                                      &RollbackError{Err: errors.New("boom")},
-		"closing the migration drivers failed: boom":                    &ReleaseError{What: "closing the migration drivers failed", Err: errors.New("boom")},
+		"migration record is not dirty: 5, clean":                           &NotDirtyError{Record: Record{Version: 5}},
+		"migration record is -1, dirty":                                     &NegativeVersionError{Record: Record{Version: -1, Dirty: true}},
+		"migration record is 9, dirty; /m has no migration 9":               &VersionNotInSourceError{Record: Record{Version: 9, Dirty: true}, Path: "/m"},
+		"migrate up refused: the database URL sets x-multi-statement=1":     &MultiStatementError{Command: "up", Value: "1"},
+		"migration record is 6, dirty":                                      &DirtyError{Record: Record{Version: 6, Dirty: true}},
+		"apply migrations: boom":                                            &ApplyError{Err: errors.New("boom")},
+		"rollback migration: boom":                                          &RollbackError{Err: errors.New("boom")},
+		"closing the migration drivers failed: boom":                        &ReleaseError{What: "closing the migration drivers failed", Err: errors.New("boom")},
+		"migration record is 9, dirty; /m has no migration after 9":         &NoNextMigrationError{Record: Record{Version: 9, Dirty: true}, Path: "/m"},
+		"migration record is -1, dirty; /m has no migrations":               &NoNextMigrationError{Record: Record{Version: -1, Dirty: true}, Path: "/m"},
+		"migration record is 8, dirty; /m has no down file for migration 9": &NoDownFileError{Record: Record{Version: 8, Dirty: true}, Version: 9, Path: "/m"},
 	}
 	for want, err := range cases {
 		assert.Equal(t, want, err.Error())

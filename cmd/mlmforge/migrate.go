@@ -22,6 +22,35 @@ func newMigrateCmd() *cobra.Command {
 	dbURL := migrateCmd.PersistentFlags().String("db-url", "", "PostgreSQL connection URL (or set DATABASE_URL env var)")
 	migrationsPath := migrateCmd.PersistentFlags().String("migrations", "./migrations", "Path to migration files")
 
+	var afterFailedDown bool
+	resetDirtyCmd := &cobra.Command{
+		Use:   "reset-dirty",
+		Short: "Move a dirty migration record back one migration, or forward one with --after-failed-down",
+		Long: "Move a dirty migration record to a clean one.\n\n" +
+			"Without --after-failed-down, it moves the record back to the previous migration. Run it only when a failed `mlmforge migrate up` printed the instruction to.\n\n" +
+			"With --after-failed-down, it moves the record forward to the next migration. Run it only when a failed `mlmforge migrate down` printed the instruction to.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+			target, err := resolveDBURL(*dbURL)
+			if err != nil {
+				return err
+			}
+			command, reset, next := "reset-dirty", platform.ResetDirty, upCommand
+			if afterFailedDown {
+				command, reset, next = afterDownCommandName, platform.ResetAfterFailedDown, downCommand
+			}
+			res, err := reset(target.url, *migrationsPath)
+			if err = withoutReleaseErrors(cmd.ErrOrStderr(), "the record was written", err); err != nil {
+				return migrateError(command, connectError(err, target))
+			}
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), resetText(res, next))
+			return nil
+		},
+	}
+	resetDirtyCmd.Flags().BoolVar(&afterFailedDown, "after-failed-down", false,
+		"Move the record forward to the next migration. Use it only when a failed migrate down printed the instruction to.")
+
 	migrateCmd.AddCommand(
 		&cobra.Command{
 			Use:   "up",
@@ -77,26 +106,7 @@ func newMigrateCmd() *cobra.Command {
 				return nil
 			},
 		},
-		&cobra.Command{
-			Use:   "reset-dirty",
-			Short: "Move a dirty migration record back to the previous migration, clean",
-			Long: "Move a dirty migration record back to the previous migration, clean.\n\n" +
-				"Run it only when the command that left the record dirty was a `mlmforge migrate up` whose output tells you to. Do not run it after a failed `mlmforge migrate down`.",
-			Args: cobra.NoArgs,
-			RunE: func(cmd *cobra.Command, args []string) error {
-				cmd.SilenceUsage = true
-				target, err := resolveDBURL(*dbURL)
-				if err != nil {
-					return err
-				}
-				res, err := platform.ResetDirty(target.url, *migrationsPath)
-				if err = withoutReleaseErrors(cmd.ErrOrStderr(), "the record was written", err); err != nil {
-					return migrateError("reset-dirty", connectError(err, target))
-				}
-				_, _ = fmt.Fprintln(cmd.OutOrStdout(), resetText(res))
-				return nil
-			},
-		},
+		resetDirtyCmd,
 	)
 
 	return migrateCmd

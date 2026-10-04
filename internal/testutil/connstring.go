@@ -385,10 +385,15 @@ func RequireNoDriverParseError(t *testing.T, err error) {
 	}
 }
 
-// ClearLibPQEnv unsets the lib/pq settings that make it refuse any connection string, for one test.
+// ClearLibPQEnv unsets the lib/pq settings that make it refuse any connection string or panic, for one test.
 func ClearLibPQEnv(t *testing.T) {
 	t.Helper()
-	for _, name := range []string{"PGCLIENTENCODING", "PGDATESTYLE"} {
+	for _, name := range []string{
+		"PGCLIENTENCODING", "PGDATESTYLE",
+		"PGHOSTADDR", "PGSERVICE", "PGSERVICEFILE", "PGREALM",
+		"PGREQUIRESSL", "PGSSLCRL", "PGREQUIREPEER",
+		"PGKRBSRVNAME", "PGGSSLIB", "PGSYSCONFDIR", "PGLOCALEDIR",
+	} {
 		t.Setenv(name, "")
 		if err := os.Unsetenv(name); err != nil {
 			t.Fatalf("unset %s: %v", name, err)

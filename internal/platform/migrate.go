@@ -102,7 +102,7 @@ func (mg *migration) downResult(before RecordRead, downErr error) error {
 		return dirty
 	}
 	after := mg.recordRead()
-	return &RollbackError{Err: downErr, Before: before, After: after, Source: mg.sourceFor(after)}
+	return &RollbackError{Err: downErr, Before: before, After: after, Source: mg.sourceFor(after), BodyFailed: isBodyFailure(downErr)}
 }
 
 // migration holds one source driver, one database driver, and the migrator built from them.
@@ -135,6 +135,9 @@ func releaseErr(what string, err error) error {
 
 // openMigration opens the drivers one migrate command uses.
 func openMigration(dbURL, migrationsPath string) (*migration, error) {
+	if err := refuseUnsupportedEnv(); err != nil {
+		return nil, err
+	}
 	absPath, err := filepath.Abs(migrationsPath)
 	if err != nil {
 		return nil, fmt.Errorf("resolve migrations path: %w", err)
@@ -195,6 +198,16 @@ func (mg *migration) recordRead() RecordRead {
 // sourceInfo places version in the migrations directory.
 func (mg *migration) sourceInfo(version int) SourceInfo {
 	info := SourceInfo{Path: mg.path}
+	if version == database.NilVersion {
+		first, err := mg.source.First()
+		switch {
+		case err == nil:
+			info.Next, info.HasNext = first, true
+		case !errors.Is(err, os.ErrNotExist):
+			info.Err = err
+		}
+		return info
+	}
 	if version < 0 {
 		return info
 	}
@@ -209,6 +222,15 @@ func (mg *migration) sourceInfo(version int) SourceInfo {
 	}
 	_ = body.Close()
 	info.InSource = true
+
+	next, err := mg.source.Next(n)
+	switch {
+	case err == nil:
+		info.Next, info.HasNext = next, true
+	case !errors.Is(err, os.ErrNotExist):
+		info.Err = err
+		return info
+	}
 
 	first, err := mg.source.First()
 	if err != nil {
@@ -264,8 +286,22 @@ func ResetDirty(dbURL, migrationsPath string) (res ResetResult, err error) {
 	return mg.resetDirty()
 }
 
-// resetDirty reads the record and rewrites it while holding the migration lock.
-func (mg *migration) resetDirty() (res ResetResult, err error) {
+// ResetAfterFailedDown changes a dirty migration record to the migration after it, clean.
+func ResetAfterFailedDown(dbURL, migrationsPath string) (res ResetResult, err error) {
+	if err = refuseMultiStatement("reset-dirty --after-failed-down", dbURL); err != nil {
+		return ResetResult{}, err
+	}
+	mg, err := openMigration(dbURL, migrationsPath)
+	if err != nil {
+		return ResetResult{}, err
+	}
+	defer mg.closeInto(&err)
+
+	return mg.resetLocked(mg.nextTarget)
+}
+
+// resetLocked reads the record and writes the record target picks, while holding the migration lock.
+func (mg *migration) resetLocked(target func(Record) (Record, error)) (res ResetResult, err error) {
 	if err = mg.db.Lock(); err != nil {
 		return ResetResult{}, &NotWrittenError{Err: fmt.Errorf("take migration lock: %w", err)}
 	}
@@ -279,26 +315,80 @@ func (mg *migration) resetDirty() (res ResetResult, err error) {
 	if err != nil {
 		return ResetResult{}, &NotWrittenError{Err: fmt.Errorf("read migration record: %w", err)}
 	}
-	if rec.Version < 0 && rec.Dirty {
-		return ResetResult{}, &NegativeVersionError{Record: rec}
-	}
 	if !rec.Dirty {
 		return ResetResult{}, &NotDirtyError{Record: rec}
 	}
-	src := mg.sourceInfo(rec.Version)
-	if src.Err != nil {
-		return ResetResult{}, &NotWrittenError{Err: fmt.Errorf("read migration %d from %s: %w", rec.Version, src.Path, src.Err)}
-	}
-	if !src.InSource {
-		return ResetResult{}, &VersionNotInSourceError{Record: rec, Path: src.Path}
-	}
-
-	to := Record{Version: database.NilVersion}
-	if src.HasPrevious {
-		to.Version = int(src.Previous)
+	to, err := target(rec)
+	if err != nil {
+		return ResetResult{}, err
 	}
 	if err = mg.db.SetVersion(to.Version, false); err != nil {
 		return ResetResult{}, &WriteError{Err: err, After: mg.recordRead()}
 	}
 	return ResetResult{From: rec, To: to}, nil
+}
+
+// resetDirty moves a dirty record back to the previous migration, clean, while holding the migration lock.
+func (mg *migration) resetDirty() (ResetResult, error) {
+	return mg.resetLocked(mg.previousTarget)
+}
+
+// previousTarget picks the migration before a dirty record's version, or no version from the first migration.
+func (mg *migration) previousTarget(rec Record) (Record, error) {
+	if rec.Version < 0 {
+		return Record{}, &NegativeVersionError{Record: rec}
+	}
+	src := mg.sourceInfo(rec.Version)
+	if src.Err != nil {
+		return Record{}, &NotWrittenError{Err: fmt.Errorf("read migration %d from %s: %w", rec.Version, src.Path, src.Err)}
+	}
+	if !src.InSource {
+		return Record{}, &VersionNotInSourceError{Record: rec, Path: src.Path}
+	}
+	to := Record{Version: database.NilVersion}
+	if src.HasPrevious {
+		to.Version = int(src.Previous)
+	}
+	return to, nil
+}
+
+// nextTarget picks the migration after a dirty record's version, or the first migration from -1.
+func (mg *migration) nextTarget(rec Record) (Record, error) {
+	var next uint
+	var err error
+	switch {
+	case rec.Version < database.NilVersion:
+		return Record{}, &NegativeVersionError{Record: rec}
+	case rec.Version == database.NilVersion:
+		next, err = mg.source.First()
+	default:
+		n := uint(rec.Version)
+		body, _, readErr := mg.source.ReadUp(n)
+		if errors.Is(readErr, os.ErrNotExist) {
+			return Record{}, &VersionNotInSourceError{Record: rec, Path: mg.path}
+		}
+		if readErr != nil {
+			return Record{}, &NotWrittenError{Err: fmt.Errorf("read migration %d from %s: %w", n, mg.path, readErr)}
+		}
+		_ = body.Close()
+		next, err = mg.source.Next(n)
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return Record{}, &NoNextMigrationError{Record: rec, Path: mg.path}
+	}
+	if err != nil {
+		return Record{}, &NotWrittenError{Err: fmt.Errorf("read the migrations directory %s: %w", mg.path, err)}
+	}
+
+	down, _, err := mg.source.ReadDown(next)
+	if errors.Is(err, os.ErrNotExist) {
+		return Record{}, &NoDownFileError{Record: rec, Version: next, Path: mg.path}
+	}
+	if err != nil {
+		return Record{}, &NotWrittenError{Err: fmt.Errorf("read the down file of migration %d from %s: %w", next, mg.path, err)}
+	}
+	if err = down.Close(); err != nil {
+		return Record{}, &NotWrittenError{Err: fmt.Errorf("close the down file of migration %d from %s: %w", next, mg.path, err)}
+	}
+	return Record{Version: int(next)}, nil
 }

@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/mlmforge/mlmforge/internal/platform"
+	"github.com/mlmforge/mlmforge/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -95,6 +97,60 @@ func TestMigrateResetDirtyHelp_NamesTheUpVersusDownRule(t *testing.T) {
 	root.SetArgs([]string{"migrate", "reset-dirty", "--help"})
 
 	require.NoError(t, root.Execute())
-	require.Contains(t, out.String(),
-		"Run it only when the command that left the record dirty was a `mlmforge migrate up` whose output tells you to. Do not run it after a failed `mlmforge migrate down`.")
+	require.Contains(t, out.String(), "Move a dirty migration record to a clean one.\n\n"+
+		"Without --after-failed-down, it moves the record back to the previous migration. Run it only when a failed `mlmforge migrate up` printed the instruction to.\n\n"+
+		"With --after-failed-down, it moves the record forward to the next migration. Run it only when a failed `mlmforge migrate down` printed the instruction to.")
+	require.Contains(t, out.String(), "--after-failed-down")
+
+	resetCmd, _, err := newRootCmd().Find([]string{"migrate", "reset-dirty"})
+	require.NoError(t, err)
+	require.Equal(t, "Move a dirty migration record back one migration, or forward one with --after-failed-down", resetCmd.Short)
+}
+
+func TestMigrateCommands_RefuseAnUnsupportedVariableWithoutAPanic(t *testing.T) {
+	for _, args := range [][]string{{"up"}, {"down"}, {"version"}, {"reset-dirty"}, {"reset-dirty", "--after-failed-down"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			testutil.ClearLibPQEnv(t)
+			t.Setenv("PGSERVICE", "svc-value-7f3")
+			var stderr bytes.Buffer
+			root := newRootCmd()
+			root.SetOut(io.Discard)
+			root.SetErr(&stderr)
+			root.SetArgs(append(append([]string{"migrate"}, args...),
+				"--db-url", refusedDBURL, "--migrations", platform.FindMigrationsDir(t)))
+
+			err := root.Execute()
+
+			require.Equal(t, 1, exitCode(err))
+			require.Contains(t, stderr.String(), "PGSERVICE")
+			require.NotContains(t, stderr.String(), "panic")
+			require.NotContains(t, stderr.String(), "goroutine")
+			require.NotContains(t, stderr.String(), "svc-value-7f3")
+		})
+	}
+}
+
+func TestMigrateVersion_NamesEveryUnsupportedVariableAndNoValue(t *testing.T) {
+	testutil.ClearLibPQEnv(t)
+	t.Setenv("PGSERVICE", "svc-value-7f3")
+	t.Setenv("PGSYSCONFDIR", "sys-value-7f3")
+	t.Setenv("PGHOSTADDR", "")
+	var stderr bytes.Buffer
+	root := newRootCmd()
+	root.SetOut(io.Discard)
+	root.SetErr(&stderr)
+	root.SetArgs([]string{"migrate", "version", "--db-url", refusedDBURL, "--migrations", platform.FindMigrationsDir(t)})
+
+	require.Error(t, root.Execute())
+	require.Equal(t, "Error: mlmforge migrate refused to open the database: the environment sets PGHOSTADDR, PGSERVICE and PGSYSCONFDIR. "+
+		"mlmforge migrate does not accept these variables. Unset them and run the command again.\n", stderr.String())
+}
+
+func TestMigrateResetDirtyAfterFailedDown_RefusesMultiStatementModeBeforeConnecting(t *testing.T) {
+	root := newRootCmd()
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"migrate", "reset-dirty", "--after-failed-down", "--db-url", refusedDBURL + "&x-multi-statement=t"})
+
+	require.EqualError(t, root.Execute(), "migrate reset-dirty --after-failed-down refused: the database URL sets x-multi-statement=t.")
 }

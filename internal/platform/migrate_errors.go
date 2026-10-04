@@ -35,6 +35,8 @@ type SourceInfo struct {
 	InSource    bool
 	Previous    uint
 	HasPrevious bool
+	Next        uint
+	HasNext     bool
 	Err         error
 }
 
@@ -65,7 +67,7 @@ func (e *NotDirtyError) Error() string {
 	return fmt.Sprintf("migration record is not dirty: %s", e.Record)
 }
 
-// NegativeVersionError reports a dirty record below 0.
+// NegativeVersionError reports a dirty record at a negative version that a reset refuses.
 type NegativeVersionError struct {
 	Record Record
 }
@@ -82,6 +84,30 @@ type VersionNotInSourceError struct {
 
 func (e *VersionNotInSourceError) Error() string {
 	return fmt.Sprintf("migration record is %s; %s has no migration %d", e.Record, e.Path, e.Record.Version)
+}
+
+// NoNextMigrationError reports a dirty record with no migration after its version in the migrations directory.
+type NoNextMigrationError struct {
+	Record Record
+	Path   string
+}
+
+func (e *NoNextMigrationError) Error() string {
+	if e.Record.Version < 0 {
+		return fmt.Sprintf("migration record is %s; %s has no migrations", e.Record, e.Path)
+	}
+	return fmt.Sprintf("migration record is %s; %s has no migration after %d", e.Record, e.Path, e.Record.Version)
+}
+
+// NoDownFileError reports a migration with no down file in the migrations directory.
+type NoDownFileError struct {
+	Record  Record
+	Version uint
+	Path    string
+}
+
+func (e *NoDownFileError) Error() string {
+	return fmt.Sprintf("migration record is %s; %s has no down file for migration %d", e.Record, e.Path, e.Version)
 }
 
 // MultiStatementError reports a database URL that turns on multi-statement mode for a command that refuses it.
@@ -119,10 +145,11 @@ func (e *ApplyError) Unwrap() error { return e.Err }
 
 // RollbackError reports a failed down migration and the record read before and after it.
 type RollbackError struct {
-	Err    error
-	Before RecordRead
-	After  RecordRead
-	Source SourceInfo
+	Err        error
+	Before     RecordRead
+	After      RecordRead
+	Source     SourceInfo
+	BodyFailed bool
 }
 
 func (e *RollbackError) Error() string { return "rollback migration: " + migrationErrorText(e.Err) }
@@ -224,6 +251,9 @@ func databaseErrorText(e database.Error) string {
 	return fmt.Sprintf("%s%s (details: %v)", e.Err, location, e.OrigErr)
 }
 
+// sqlStateCompletionUnknown is the SQLSTATE Postgres names statement_completion_unknown.
+const sqlStateCompletionUnknown = "40003"
+
 // isBodyFailure reports whether err shows Postgres refusing the migration file itself.
 // Anything it does not recognise reads as false.
 func isBodyFailure(err error) bool {
@@ -236,7 +266,7 @@ func isBodyFailure(err error) bool {
 		return false
 	}
 	state := serverErr.SQLState()
-	if len(state) != 5 {
+	if len(state) != 5 || state == sqlStateCompletionUnknown {
 		return false
 	}
 	// Connection, resource, operator-intervention, system and internal errors do not count as a rejection.

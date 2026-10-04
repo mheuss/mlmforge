@@ -24,9 +24,10 @@ Then each call site does its own mapping.
 
 - pgx, at `openTreeDeps` and `PostgresTreeLocker.Lock`: `PgxConnStringError` replaces a `*pgconn.ParseConfigError`.
 - golang-migrate, at `openMigration`, in this order:
-  1. A string without an exact `postgres://` or `postgresql://` prefix is refused as stage `scheme`.
-  2. lib/pq's own parse runs on the string golang-migrate would hand it. A refusal becomes stage `refused`. If lib/pq also refuses a neutral probe string, the environment is at fault, and lib/pq's own error is returned instead.
-  3. A `*url.Error` from `database.Open` becomes stage `parse`.
+  1. The environment is checked before the string. If any of the eleven variables lib/pq panics on is set, even to an empty value, `openMigration` returns `UnsupportedEnvError`. It names each variable that is set and never its value (HEU-862). Pinned by `TestMigrateCommands_RefuseAnUnsupportedVariableBeforeOpeningAnything` and `TestMigrateVersion_RefusesTheEnvironmentBeforeOpeningTheSource`. The empty value is pinned by `TestRefuseUnsupportedEnv_AnEmptyValueCounts`, `TestRefuseUnsupportedEnv_NamesEveryVariableSetInListOrder` and `TestMigrateVersion_NamesEveryUnsupportedVariableAndNoValue`.
+  2. A string without an exact `postgres://` or `postgresql://` prefix is refused as stage `scheme`.
+  3. lib/pq's own parse runs on the string golang-migrate would hand it. A refusal becomes stage `refused`. If lib/pq also refuses a neutral probe string, the environment is at fault, and lib/pq's own error is returned instead.
+  4. A `*url.Error` from `database.Open` becomes stage `parse`.
 
 A raw `@` alone in a password does not split the string. A raw `/`, `?` or `#` in a password does. It puts the userinfo's closing `@` after the host part. The `raw-at` stage refuses that shape (HEU-875).
 
@@ -86,8 +87,9 @@ A raw `&` in a `?password=` value splits it. Each piece after the `&` becomes it
   Pinned by `TestDriverReadings_ARawAmpersandSplitsAQueryPassword`. Not pinned, observed on a live Postgres 16 server, 2026-10-04: `migrate` printed `pq: unrecognized configuration parameter` with the piece's key. The outputs are recorded on HEU-877.
 - Its keyword parser skips `unicode.IsSpace` around a key, in `scanner.SkipSpaces` and `parseOpts`. So `+password`, `%09password` and `%C2%A0password` all become its password. It does not fold case, so `PASSWORD` does not.
   Pinned by `TestDriverReadings_LibPQTrimsSpaceAroundAKeyAndNeitherDriverFoldsCase`, which reads the connector's parsed options.
-- It panics when any of `PGHOSTADDR`, `PGSERVICE`, `PGSERVICEFILE`, `PGREALM`, `PGREQUIRESSL`, `PGSSLCRL`, `PGREQUIREPEER`, `PGKRBSRVNAME`, `PGGSSLIB`, `PGSYSCONFDIR` or `PGLOCALEDIR` is set. HEU-862 covers the service variables.
-  Read in source, not pinned. A probe hit the `PGSYSCONFDIR` panic on 2026-10-01.
-- `testutil.IsolatePgxEnv` sets `PGSERVICEFILE` and `PGSYSCONFDIR`, so a test that calls lib/pq must not run under it. `testutil.ClearTimeoutEnv` unsets `PGSERVICE` and `PGSERVICEFILE`. No helper unsets the other nine panic variables.
+- It panics when any of `PGHOSTADDR`, `PGSERVICE`, `PGSERVICEFILE`, `PGREALM`, `PGREQUIRESSL`, `PGSSLCRL`, `PGREQUIREPEER`, `PGKRBSRVNAME`, `PGGSSLIB`, `PGSYSCONFDIR` or `PGLOCALEDIR` is set, even to an empty value. `migrate` refuses these before lib/pq reads the environment (HEU-862).
+  Pinned by `TestUnsupportedEnvNames_MatchWhatLibPQPanicsOn`, which sets each of the 40 PostgreSQL 17 libpq environment variables, and `PGREALM`, alone and recovers the panic. The test sets each to `x`. The panic on an empty value is read in source, not pinned.
+- `testutil.IsolatePgxEnv` sets `PGSERVICEFILE` and `PGSYSCONFDIR`, so a test that calls lib/pq must not run under it. `testutil.ClearTimeoutEnv` unsets `PGSERVICE` and `PGSERVICEFILE`. `testutil.ClearLibPQEnv` unsets the eleven panic variables, and `PGCLIENTENCODING` and `PGDATESTYLE`.
+  Pinned by `TestClearLibPQEnv_UnsetsEveryVariableLibPQRefusesOrPanicsOn`.
 - It returns `ErrCouldNotDetectUsername` when no user is given and none can be found. That error holds no part of the string, so `migrateDriverParseError` passes it through.
   Read in source, not pinned. No test can make the OS user lookup fail.

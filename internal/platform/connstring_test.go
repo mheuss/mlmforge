@@ -372,6 +372,7 @@ func TestRawPlusError_RefusesARawPlusInThePassword(t *testing.T) {
 		"postgres://h/app?sslmode=disable&password=a+b",
 		"postgres://h/app?pass%77ord=a+b",
 		"postgres://h/app?password=+",
+		"postgresql://h/app?password=a+b",
 		"postgres://h/app?+password=a+b",
 		"postgres://h/app?password+=a+b",
 		"postgres://h/app?%09password=a+b",

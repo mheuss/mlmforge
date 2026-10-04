@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -65,7 +66,7 @@ func pqSettings(t *testing.T, text string) map[string]string {
 			value.WriteByte(rest[i])
 		}
 		require.Less(t, i, len(rest), "lib/pq text has an unterminated value at offset %d", full-len(rest))
-		settings[key] = value.String()
+		settings[strings.TrimFunc(key, unicode.IsSpace)] = value.String()
 		text = strings.TrimPrefix(rest[i+1:], " ")
 	}
 	return settings
@@ -104,6 +105,8 @@ func TestResolveRefusedTwins_ReachTheSameTarget(t *testing.T) {
 			require.Equal(t, tc.TwinPassword, twinPgx.Password)
 			require.Equal(t, tc.TwinPassword, twinPQ["password"])
 			for _, key := range tc.SplitKeys {
+				require.Contains(t, tc.TwinPassword, "&"+key, "split key is not a piece of the twin's password")
+				require.Contains(t, rowPgx.RuntimeParams, key, "pgx does not send the split key as a parameter")
 				delete(rowPgx.RuntimeParams, key)
 				delete(rowPQ, key)
 			}

@@ -25,6 +25,7 @@ type encodedPasswordTarget struct {
 // newEncodedPasswordTarget creates a login role with password and an empty database it owns, and drops both when the test ends.
 func newEncodedPasswordTarget(t *testing.T, password string) encodedPasswordTarget {
 	t.Helper()
+	require.NotContains(t, password, "'", "the role SQL quotes the password with single quotes")
 	n := encodedPasswordSeq.Add(1)
 	target := encodedPasswordTarget{role: fmt.Sprintf("encoded_role_%d", n), dbName: fmt.Sprintf("encoded_db_%d", n)}
 

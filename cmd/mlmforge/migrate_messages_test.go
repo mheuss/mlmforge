@@ -216,73 +216,194 @@ func TestApplyFailureText_ARecordBelowMinusOneNamesTheValueItRead(t *testing.T) 
 
 var sevenDirtyAfterDown = platform.RecordRead{Record: platform.Record{Version: 7, Dirty: true}}
 
+// sevenSource places 7 between 6 and 8 in a directory at /m.
+var sevenSource = platform.SourceInfo{Path: "/m", InSource: true, Previous: 6, HasPrevious: true, Next: 8, HasNext: true}
+
+const sevenAfterDownInstruction = "The error shows Postgres refused the migration file. Fix the cause shown above, " +
+	"run `mlmforge migrate reset-dirty --after-failed-down` (it sets the record to 8, clean), then run `mlmforge migrate down` again.\n" +
+	"`mlmforge migrate reset-dirty` without the flag is not safe after a failed down. It would set the record to 6, clean."
+
 func TestRollbackFailureText_NamesTheRecordBeforeAndAfter(t *testing.T) {
 	got := rollbackFailureText(&platform.RollbackError{
-		Err:    errors.New("lock timeout"),
-		Before: platform.RecordRead{Record: platform.Record{Version: 8}},
-		After:  sevenDirtyAfterDown,
-		Source: platform.SourceInfo{Path: "/m", InSource: true, Previous: 6, HasPrevious: true},
+		Err:        errors.New("lock timeout"),
+		Before:     platform.RecordRead{Record: platform.Record{Version: 8}},
+		After:      sevenDirtyAfterDown,
+		Source:     sevenSource,
+		BodyFailed: true,
 	})
 
 	require.Equal(t, "rollback migration: lock timeout\n"+
 		"This run was `mlmforge migrate down`. The record read 8, clean before this run and now reads 7, dirty.\n"+
-		"`mlmforge migrate reset-dirty` is not safe after a failed down. It would set the record to 6, clean.", got)
+		sevenAfterDownInstruction, got)
 	requireNoForce(t, got)
 }
 
 func TestRollbackFailureText_AFailedBeforeReadNamesOnlyTheRecordAfter(t *testing.T) {
 	got := rollbackFailureText(&platform.RollbackError{
-		Err:    errors.New("boom"),
-		Before: platform.RecordRead{Err: errors.New("x")},
-		After:  sevenDirtyAfterDown,
-		Source: platform.SourceInfo{Path: "/m", InSource: true, Previous: 6, HasPrevious: true},
+		Err:        errors.New("boom"),
+		Before:     platform.RecordRead{Err: errors.New("x")},
+		After:      sevenDirtyAfterDown,
+		Source:     sevenSource,
+		BodyFailed: true,
 	})
 
 	require.Equal(t, "rollback migration: boom\n"+
 		"This run was `mlmforge migrate down`. The record now reads 7, dirty.\n"+
-		"`mlmforge migrate reset-dirty` is not safe after a failed down. It would set the record to 6, clean.", got)
+		sevenAfterDownInstruction, got)
 	requireNoForce(t, got)
 }
 
 func TestRollbackFailureText_AtTheFirstMigrationSaysNoVersionWouldBeLeft(t *testing.T) {
 	got := rollbackFailureText(&platform.RollbackError{
-		Err:    errors.New("boom"),
-		Before: platform.RecordRead{Record: platform.Record{Version: 2}},
-		After:  platform.RecordRead{Record: platform.Record{Version: 1, Dirty: true}},
-		Source: platform.SourceInfo{Path: "/m", InSource: true},
+		Err:        errors.New("boom"),
+		Before:     platform.RecordRead{Record: platform.Record{Version: 2}},
+		After:      platform.RecordRead{Record: platform.Record{Version: 1, Dirty: true}},
+		Source:     platform.SourceInfo{Path: "/m", InSource: true, Next: 2, HasNext: true},
+		BodyFailed: true,
 	})
 
 	require.Equal(t, "rollback migration: boom\n"+
 		"This run was `mlmforge migrate down`. The record read 2, clean before this run and now reads 1, dirty.\n"+
-		"`mlmforge migrate reset-dirty` is not safe after a failed down. Afterwards the record would hold no version.", got)
+		"The error shows Postgres refused the migration file. Fix the cause shown above, "+
+		"run `mlmforge migrate reset-dirty --after-failed-down` (it sets the record to 2, clean), then run `mlmforge migrate down` again.\n"+
+		"`mlmforge migrate reset-dirty` without the flag is not safe after a failed down. Afterwards the record would hold no version.", got)
 	requireNoForce(t, got)
 }
 
-func TestRollbackFailureText_AMinusOneRecordSaysResetWillNotChangeIt(t *testing.T) {
+func TestRollbackFailureText_AMinusOneRecordNamesTheFirstMigration(t *testing.T) {
 	got := rollbackFailureText(&platform.RollbackError{
-		Err:    errors.New("boom"),
-		Before: platform.RecordRead{Record: platform.Record{Version: 1}},
-		After:  platform.RecordRead{Record: platform.Record{Version: -1, Dirty: true}},
-		Source: platform.SourceInfo{Path: "/m"},
+		Err:        errors.New("boom"),
+		Before:     platform.RecordRead{Record: platform.Record{Version: 1}},
+		After:      platform.RecordRead{Record: platform.Record{Version: -1, Dirty: true}},
+		Source:     platform.SourceInfo{Path: "/m", Next: 1, HasNext: true},
+		BodyFailed: true,
 	})
 
 	require.Equal(t, "rollback migration: boom\n"+
 		"This run was `mlmforge migrate down`. The record read 1, clean before this run and now reads -1, dirty.\n"+
-		"reset-dirty does not change a record at -1.", got)
+		"The error shows Postgres refused the migration file. Fix the cause shown above, "+
+		"run `mlmforge migrate reset-dirty --after-failed-down` (it sets the record to 1, clean), then run `mlmforge migrate down` again.\n"+
+		"`mlmforge migrate reset-dirty` without the flag does not change a record at -1.", got)
 	requireNoForce(t, got)
 }
 
-func TestRollbackFailureText_AVersionMissingFromTheDirectoryDropsTheEffect(t *testing.T) {
+func TestRollbackFailureText_AVersionMissingFromTheDirectorySaysTheFlagWillRefuse(t *testing.T) {
 	got := rollbackFailureText(&platform.RollbackError{
-		Err:    errors.New("boom"),
-		Before: platform.RecordRead{Record: platform.Record{Version: 8}},
-		After:  sevenDirtyAfterDown,
-		Source: platform.SourceInfo{Path: "/m"},
+		Err:        errors.New("boom"),
+		Before:     platform.RecordRead{Record: platform.Record{Version: 8}},
+		After:      sevenDirtyAfterDown,
+		Source:     platform.SourceInfo{Path: "/m"},
+		BodyFailed: true,
 	})
 
 	require.Equal(t, "rollback migration: boom\n"+
 		"This run was `mlmforge migrate down`. The record read 8, clean before this run and now reads 7, dirty.\n"+
-		"`mlmforge migrate reset-dirty` is not safe after a failed down.", got)
+		"The migrations directory /m has no migration 7, so `mlmforge migrate reset-dirty --after-failed-down` will refuse.", got)
+	requireNoForce(t, got)
+}
+
+func TestRollbackFailureText_NoMigrationAfterTheRecordSaysTheFlagWillRefuse(t *testing.T) {
+	got := rollbackFailureText(&platform.RollbackError{
+		Err:        errors.New("boom"),
+		Before:     platform.RecordRead{Record: platform.Record{Version: 8}},
+		After:      sevenDirtyAfterDown,
+		Source:     platform.SourceInfo{Path: "/m", InSource: true, Previous: 6, HasPrevious: true},
+		BodyFailed: true,
+	})
+
+	require.Equal(t, "rollback migration: boom\n"+
+		"This run was `mlmforge migrate down`. The record read 8, clean before this run and now reads 7, dirty.\n"+
+		"The migrations directory /m has no migration after 7, so `mlmforge migrate reset-dirty --after-failed-down` will refuse.", got)
+	requireNoForce(t, got)
+}
+
+func TestRollbackFailureText_AnUnreadableDirectoryStillGivesTheInstruction(t *testing.T) {
+	got := rollbackFailureText(&platform.RollbackError{
+		Err:        errors.New("boom"),
+		Before:     platform.RecordRead{Record: platform.Record{Version: 8}},
+		After:      sevenDirtyAfterDown,
+		Source:     platform.SourceInfo{Path: "/m", Err: errors.New("permission denied")},
+		BodyFailed: true,
+	})
+
+	require.Equal(t, "rollback migration: boom\n"+
+		"This run was `mlmforge migrate down`. The record read 8, clean before this run and now reads 7, dirty.\n"+
+		"The migrations directory /m could not be read for migration 7: permission denied.\n"+
+		"The error shows Postgres refused the migration file. Fix the directory and the cause shown above, "+
+		"run `mlmforge migrate reset-dirty --after-failed-down`, then run `mlmforge migrate down` again.", got)
+	requireNoForce(t, got)
+}
+
+func TestRollbackFailureText_AMinusOneRecordWithNoMigrationsSaysTheFlagWillRefuse(t *testing.T) {
+	got := rollbackFailureText(&platform.RollbackError{
+		Err:        errors.New("boom"),
+		Before:     platform.RecordRead{Record: platform.Record{Version: 1}},
+		After:      platform.RecordRead{Record: platform.Record{Version: -1, Dirty: true}},
+		Source:     platform.SourceInfo{Path: "/m"},
+		BodyFailed: true,
+	})
+
+	require.Equal(t, "rollback migration: boom\n"+
+		"This run was `mlmforge migrate down`. The record read 1, clean before this run and now reads -1, dirty.\n"+
+		"The migrations directory /m has no migrations, so `mlmforge migrate reset-dirty --after-failed-down` will refuse.", got)
+	requireNoForce(t, got)
+}
+
+func TestRollbackFailureText_AMinusOneRecordWithAnUnreadableDirectory(t *testing.T) {
+	got := rollbackFailureText(&platform.RollbackError{
+		Err:        errors.New("boom"),
+		Before:     platform.RecordRead{Record: platform.Record{Version: 1}},
+		After:      platform.RecordRead{Record: platform.Record{Version: -1, Dirty: true}},
+		Source:     platform.SourceInfo{Path: "/m", Err: errors.New("permission denied")},
+		BodyFailed: true,
+	})
+
+	require.Equal(t, "rollback migration: boom\n"+
+		"This run was `mlmforge migrate down`. The record read 1, clean before this run and now reads -1, dirty.\n"+
+		"The migrations directory /m could not be read: permission denied.\n"+
+		"The error shows Postgres refused the migration file. Fix the directory and the cause shown above, "+
+		"run `mlmforge migrate reset-dirty --after-failed-down`, then run `mlmforge migrate down` again.", got)
+	requireNoForce(t, got)
+}
+
+func TestRollbackFailureText_WithoutABodyFailureOffersNeitherReset(t *testing.T) {
+	got := rollbackFailureText(&platform.RollbackError{
+		Err:    errors.New("driver: bad connection"),
+		Before: platform.RecordRead{Record: platform.Record{Version: 8}},
+		After:  sevenDirtyAfterDown,
+		Source: sevenSource,
+	})
+
+	require.Equal(t, "rollback migration: driver: bad connection\n"+
+		"This run was `mlmforge migrate down`. The record read 8, clean before this run and now reads 7, dirty.\n"+
+		"The error does not show that Postgres refused the migration file. "+
+		"Neither `mlmforge migrate reset-dirty` nor `mlmforge migrate reset-dirty --after-failed-down` is safe after this failure.", got)
+	requireNoForce(t, got)
+}
+
+func TestRollbackFailureText_AFailedReReadAfterABodyFailurePointsAtVersion(t *testing.T) {
+	got := rollbackFailureText(&platform.RollbackError{
+		Err: errors.New("boom"), After: platform.RecordRead{Err: errors.New("connection reset")}, BodyFailed: true,
+	})
+
+	require.Equal(t, "rollback migration: boom\nThe record could not be read after the failure: connection reset.\n"+
+		"The error shows Postgres refused the migration file. If `mlmforge migrate version` then shows the record dirty, "+
+		"fix the cause shown above, run `mlmforge migrate reset-dirty --after-failed-down`, then run `mlmforge migrate down` again.", got)
+	requireNoForce(t, got)
+}
+
+func TestRollbackFailureText_ARecordBelowMinusOneOffersNeitherReset(t *testing.T) {
+	got := rollbackFailureText(&platform.RollbackError{
+		Err:        errors.New("boom"),
+		Before:     platform.RecordRead{Record: platform.Record{Version: 1}},
+		After:      platform.RecordRead{Record: platform.Record{Version: -2, Dirty: true}},
+		Source:     platform.SourceInfo{Path: "/m"},
+		BodyFailed: true,
+	})
+
+	require.Equal(t, "rollback migration: boom\n"+
+		"This run was `mlmforge migrate down`. The record read 1, clean before this run and now reads -2, dirty.\n"+
+		"Neither form of `mlmforge migrate reset-dirty` changes a record below -1.", got)
 	requireNoForce(t, got)
 }
 
@@ -295,8 +416,28 @@ func TestRollbackFailureText_ACleanOrUnreadableRecordAfter(t *testing.T) {
 	})
 
 	require.Equal(t, "rollback migration: boom", clean)
-	require.Equal(t, "rollback migration: boom\nThe record could not be read after the failure: reset.", unread)
+	require.Equal(t, "rollback migration: boom\nThe record could not be read after the failure: reset.\n"+
+		"The error does not show that Postgres refused the migration file. "+
+		"Neither `mlmforge migrate reset-dirty` nor `mlmforge migrate reset-dirty --after-failed-down` is safe after this failure.", unread)
 	requireNoForce(t, clean+unread)
+}
+
+func TestRollbackFailureText_SaysRunAfterFailedDownOnlyForABodyFailure(t *testing.T) {
+	trigger := "run " + afterDownCommand
+	sources := []platform.SourceInfo{sevenSource, {Path: "/m"}, {Path: "/m", Err: errors.New("permission denied")}}
+	reads := []platform.RecordRead{
+		sevenDirtyAfterDown,
+		{Err: errors.New("connection reset")},
+		{Record: platform.Record{Version: 7}},
+		{Record: platform.Record{Version: -1, Dirty: true}},
+	}
+	for _, source := range sources {
+		for _, after := range reads {
+			got := rollbackFailureText(&platform.RollbackError{Err: errors.New("e"), After: after, Source: source})
+
+			require.NotContains(t, got, trigger, "the trigger without a body failure: %s", got)
+		}
+	}
 }
 
 func TestMigrateError_ADirtyRecordOnDownNamesTheCommand(t *testing.T) {

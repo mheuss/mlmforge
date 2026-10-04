@@ -16,8 +16,9 @@ const (
 	afterDownCommand = "`mlmforge migrate reset-dirty --after-failed-down`"
 	versionCommand   = "`mlmforge migrate version`"
 
-	refusedFileText = "The error shows Postgres refused the migration file."
-	noResetText     = "The error does not show that Postgres refused the migration file. Neither " + resetCommand + " nor " + afterDownCommand + " is safe after this failure."
+	refusedFileText  = "The error shows Postgres refused the migration file."
+	noResetText      = "The error does not show that Postgres refused the migration file. Neither " + resetCommand + " nor " + afterDownCommand + " is safe after this failure."
+	neitherBelowText = "Neither form of " + resetCommand + " changes a record below -1."
 
 	unchangedText = "The record was not changed."
 )
@@ -222,9 +223,12 @@ func rollbackFailureText(e *platform.RollbackError) string {
 	lines := []string{e.Error()}
 	after := e.After
 	switch {
+	case after.Err != nil && !e.BodyFailed:
+		return strings.Join(append(lines, unreadAfter(after.Err), noResetText), "\n")
 	case after.Err != nil:
-		lines = append(lines, unreadAfter(after.Err))
-		return strings.Join(lines, "\n")
+		return strings.Join(append(lines, unreadAfter(after.Err),
+			fmt.Sprintf("%s If %s then shows the record dirty, fix the cause shown above, run %s, then run %s again.",
+				refusedFileText, versionCommand, afterDownCommand, downCommand)), "\n")
 	case !after.Record.Dirty:
 		return e.Error()
 	}
@@ -237,14 +241,45 @@ func rollbackFailureText(e *platform.RollbackError) string {
 	lines = append(lines, "This run was "+downCommand+". "+observed)
 
 	switch {
-	case after.Record.Version < 0:
-		lines = append(lines, resetRefusesAt(after.Record.Version))
-	case e.Source.Err == nil && e.Source.InSource:
-		lines = append(lines, fmt.Sprintf("%s is not safe after a failed down. %s", resetCommand, resetWould(e.Source)))
+	case after.Record.Version < -1:
+		lines = append(lines, neitherBelowText)
+	case !e.BodyFailed:
+		lines = append(lines, noResetText)
 	default:
-		lines = append(lines, fmt.Sprintf("%s is not safe after a failed down.", resetCommand))
+		lines = append(lines, downRecovery(after.Record, e.Source)...)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// downRecovery returns the recovery lines for a dirty record left by a migrate down whose file Postgres refused.
+func downRecovery(rec platform.Record, src platform.SourceInfo) []string {
+	switch {
+	case src.Err != nil:
+		return []string{
+			unreadableDirText(src, rec.Version),
+			fmt.Sprintf("%s Fix the directory and the cause shown above, run %s, then run %s again.", refusedFileText, afterDownCommand, downCommand),
+		}
+	case rec.Version >= 0 && !src.InSource:
+		return []string{fmt.Sprintf("The migrations directory %s has no migration %d, so %s will refuse.", src.Path, rec.Version, afterDownCommand)}
+	case !src.HasNext && rec.Version < 0:
+		return []string{fmt.Sprintf("The migrations directory %s has no migrations, so %s will refuse.", src.Path, afterDownCommand)}
+	case !src.HasNext:
+		return []string{fmt.Sprintf("The migrations directory %s has no migration after %d, so %s will refuse.", src.Path, rec.Version, afterDownCommand)}
+	}
+	lines := []string{fmt.Sprintf("%s Fix the cause shown above, run %s (it sets the record to %d, clean), then run %s again.",
+		refusedFileText, afterDownCommand, src.Next, downCommand)}
+	if rec.Version < 0 {
+		return append(lines, fmt.Sprintf("%s without the flag does not change a record at %d.", resetCommand, rec.Version))
+	}
+	return append(lines, fmt.Sprintf("%s without the flag is not safe after a failed down. %s", resetCommand, resetWould(src)))
+}
+
+// unreadableDirText names a migrations directory read failure, and the migration it was reading when there was one.
+func unreadableDirText(src platform.SourceInfo, version int) string {
+	if version < 0 {
+		return fmt.Sprintf("The migrations directory %s could not be read: %v.", src.Path, src.Err)
+	}
+	return fmt.Sprintf("The migrations directory %s could not be read for migration %d: %v.", src.Path, version, src.Err)
 }
 
 // resetText describes a completed reset.

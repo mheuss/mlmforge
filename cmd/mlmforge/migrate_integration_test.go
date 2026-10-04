@@ -229,7 +229,9 @@ func TestMigrateDown_AFailedRollbackNamesTheRecordBeforeAndAfter(t *testing.T) {
 	require.True(t, strings.HasPrefix(out.stderr.String(), "Error: rollback migration: "), "stderr: %s", out.stderr.String())
 	require.True(t, strings.HasSuffix(out.stderr.String(),
 		"This run was `mlmforge migrate down`. The record read 8, clean before this run and now reads 7, dirty.\n"+
-			"`mlmforge migrate reset-dirty` is not safe after a failed down. It would set the record to 6, clean.\n"),
+			"The error shows Postgres refused the migration file. Fix the cause shown above, "+
+			"run `mlmforge migrate reset-dirty --after-failed-down` (it sets the record to 8, clean), then run `mlmforge migrate down` again.\n"+
+			"`mlmforge migrate reset-dirty` without the flag is not safe after a failed down. It would set the record to 6, clean.\n"),
 		"stderr: %s", out.stderr.String())
 	require.NotContains(t, out.stdout.String()+out.stderr.String(), "Usage:")
 	require.Equal(t, []string{"7,true"}, readRecord(t, dsn))

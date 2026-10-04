@@ -67,6 +67,13 @@ step was not observed to finish.
 1. `mlmforge tree bogus` exits 1. The operation asked for does not exist (HEU-834).
 2. A run can succeed and still fail to release the worker and pool. That run exits 0. The release failure goes to stderr. A write command whose tree lock release failed does the same.
 3. A write command (`tree add-root`, `tree place`, `tree remove`) can confirm its append and still fail to project. The command then reads the tree's projected version. At or past the appended version it exits 0. Otherwise it exits 3 (HEU-777). The projection failure goes to stderr either way.
-4. `tree reject-event` appends a rejection of the stream's last event and tries to project it. It exits 0 when the rejection was projected without error or was already projected, or when its projection returned an error and the store was then observed at or past it. It exits 3 when it appended or found a pending rejection, its projection returned an error, and the store was not then observed at or past it. That holds whichever run appended the rejection. It exits 1 on any other failure, including when it refused and appended nothing, or when it could not confirm whether its append landed. A rerun that finds a rejection already in the stream requires `--reason`. It does not record it (HEU-850).
+4. `tree reject-event` appends a rejection of the stream's last event and tries to project it (HEU-850). Its exit code follows what the command observed.
+   - It exits 0 when the rejection was projected without error.
+   - It exits 0 when the rejection was already projected.
+   - It exits 0 when projection returned an error and the store was then observed at or past the rejection's version.
+   - It exits 3 when it appended or found a pending rejection, projection returned an error, and the store was not then observed at or past the rejection's version. This holds whichever run appended the rejection.
+   - It exits 1 on any other failure. That includes a refusal that appended nothing, and an append whose outcome it could not confirm.
+
+   A rerun that finds a rejection already in the stream still requires `--reason`. It does not record the reason.
 
 The same rule gives 1 when a write command cannot confirm its append. The operation is not known to have been performed. That applies the rule. It is not an exception to it.

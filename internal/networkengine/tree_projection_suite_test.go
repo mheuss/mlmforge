@@ -338,7 +338,7 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		assert.NotNil(t, got.rows[child].RemovedAt, "the rejected event's row is still active")
 		assert.Nil(t, got.rows[child].RemovedByEventID, "the rejection stamped the row")
 		require.NotNil(t, got.rows[root])
-		assert.Nil(t, got.rows[root].RemovedAt, "the rejection reached another event's row")
+		assert.Nil(t, got.rows[root].RemovedAt, "the root's row was soft-deleted")
 	})
 
 	t.Run("a rejection applied twice leaves the store as the first left it", func(t *testing.T) {

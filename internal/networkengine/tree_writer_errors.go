@@ -83,7 +83,7 @@ func (e *ProjectionMissingError) Error() string {
 
 // StreamMovedError reports a stream whose last version is neither the tree's
 // projected version nor one past it. The stream can be ahead of that version or
-// behind it. LoadedVersion is the projected version read; NoLoad is set when no
+// behind it. LoadedVersion is the projected version read. NoLoad is set when no
 // load followed that read.
 type StreamMovedError struct {
 	TreeID        string

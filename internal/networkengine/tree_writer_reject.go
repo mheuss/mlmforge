@@ -19,8 +19,8 @@ func rejectionPayload(event platform.Event) (EventRejectedPayload, error) {
 	return p, nil
 }
 
-// pendingRejection returns an error when last is a rejection above the
-// projected version and within two versions of it, and nil otherwise.
+// pendingRejection returns the refusal for a stream-ending rejection that
+// projecting it can still bring the store level with, and nil otherwise.
 func pendingRejection(tree string, last *platform.Event, projected int64, loadErr error) error {
 	if last == nil || last.Type != EventTypeEventRejected || last.Version <= projected || last.Version-2 > projected {
 		return nil

@@ -480,7 +480,7 @@ func TestTreeWriterReject_RejectsACompensatedRoot(t *testing.T) {
 	addSecond := AddRootRequest{TreeID: writerTree, UserID: second, SponsorID: second, TreeType: treeTypeUnilevel, EnrolledAt: writeTime}
 	_, err := trigger.AddRoot(context.Background(), addSecond)
 	var failed *CatchUpFailedError
-	require.ErrorAs(t, err, &failed, "the trigger write did not run the compensation")
+	require.ErrorAs(t, err, &failed, "the trigger write did not return a CatchUpFailedError")
 	w, _ := env.writer()
 
 	res, err := w.Reject(context.Background(), rejectRequest(root.ID))

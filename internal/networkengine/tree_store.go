@@ -167,8 +167,7 @@ var (
 	// been soft-deleted. The placement is not current and must not be resumed.
 	ErrReplayedPlacement = errors.New("a row with this event id exists and is soft-deleted")
 
-	// ErrUnprojectableEvent reports an event refused for what it carries,
-	// before any engine call.
+	// ErrUnprojectableEvent reports an event refused for what it carries.
 	ErrUnprojectableEvent = errors.New("the event cannot be projected as written")
 )
 

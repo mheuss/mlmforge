@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/mlmforge/mlmforge/internal/platform"
+	"github.com/mlmforge/mlmforge/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -97,4 +99,43 @@ func TestMigrateResetDirtyHelp_NamesTheUpVersusDownRule(t *testing.T) {
 	require.NoError(t, root.Execute())
 	require.Contains(t, out.String(),
 		"Run it only when the command that left the record dirty was a `mlmforge migrate up` whose output tells you to. Do not run it after a failed `mlmforge migrate down`.")
+}
+
+func TestMigrateCommands_RefuseAnUnsupportedVariableWithoutAPanic(t *testing.T) {
+	for _, args := range [][]string{{"up"}, {"down"}, {"version"}, {"reset-dirty"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			testutil.ClearLibPQEnv(t)
+			t.Setenv("PGSERVICE", "svc-value-7f3")
+			var stderr bytes.Buffer
+			root := newRootCmd()
+			root.SetOut(io.Discard)
+			root.SetErr(&stderr)
+			root.SetArgs(append(append([]string{"migrate"}, args...),
+				"--db-url", refusedDBURL, "--migrations", platform.FindMigrationsDir(t)))
+
+			err := root.Execute()
+
+			require.Equal(t, 1, exitCode(err))
+			require.Contains(t, stderr.String(), "PGSERVICE")
+			require.NotContains(t, stderr.String(), "panic")
+			require.NotContains(t, stderr.String(), "goroutine")
+			require.NotContains(t, stderr.String(), "svc-value-7f3")
+		})
+	}
+}
+
+func TestMigrateVersion_NamesEveryUnsupportedVariableAndNoValue(t *testing.T) {
+	testutil.ClearLibPQEnv(t)
+	t.Setenv("PGSERVICE", "svc-value-7f3")
+	t.Setenv("PGSYSCONFDIR", "sys-value-7f3")
+	t.Setenv("PGHOSTADDR", "")
+	var stderr bytes.Buffer
+	root := newRootCmd()
+	root.SetOut(io.Discard)
+	root.SetErr(&stderr)
+	root.SetArgs([]string{"migrate", "version", "--db-url", refusedDBURL, "--migrations", platform.FindMigrationsDir(t)})
+
+	require.Error(t, root.Execute())
+	require.Equal(t, "Error: mlmforge migrate refused to open the database: the environment sets PGHOSTADDR, PGSERVICE and PGSYSCONFDIR. "+
+		"mlmforge migrate does not accept these variables. Unset them and run the command again.\n", stderr.String())
 }

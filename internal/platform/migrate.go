@@ -135,6 +135,9 @@ func releaseErr(what string, err error) error {
 
 // openMigration opens the drivers one migrate command uses.
 func openMigration(dbURL, migrationsPath string) (*migration, error) {
+	if err := refuseUnsupportedEnv(); err != nil {
+		return nil, err
+	}
 	absPath, err := filepath.Abs(migrationsPath)
 	if err != nil {
 		return nil, fmt.Errorf("resolve migrations path: %w", err)

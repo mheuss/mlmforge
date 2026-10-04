@@ -42,5 +42,5 @@ func TestResolveRefusedTwins_ReachTheDriverParsers(t *testing.T) {
 			require.Contains(t, pgxReason(t, twinErr), "invalid port")
 		})
 	}
-	require.Equal(t, 10, checked, "twins checked at the parsers")
+	require.Equal(t, 29, checked, "twins checked at the parsers")
 }

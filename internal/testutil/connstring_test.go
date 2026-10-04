@@ -71,6 +71,24 @@ func TestResolveRefusedCases_EachStringCarriesItsPassword(t *testing.T) {
 	}
 }
 
+func TestResolveRefusedCases_EachQueryStageNamesHowItsTwinCompares(t *testing.T) {
+	queryRows := 0
+	for _, tc := range ResolveRefusedCases() {
+		switch tc.Stage {
+		case "after-password", "raw-plus":
+			queryRows++
+			require.Contains(t, []string{SameReading, SameCredentials}, tc.SameTarget, tc.Name)
+		default:
+			require.Empty(t, tc.SameTarget, tc.Name)
+		}
+		require.Equal(t, tc.SameTarget == SameCredentials, tc.TwinPassword != "", tc.Name)
+		if tc.SameTarget != SameCredentials {
+			require.Empty(t, tc.SplitKeys, tc.Name)
+		}
+	}
+	require.Equal(t, 11, queryRows, "after-password and raw-plus rows")
+}
+
 func TestResolveRefusedCases_NoPasswordOverlapsTheTextAroundIt(t *testing.T) {
 	for _, tc := range ResolveRefusedCases() {
 		if tc.Password == "" {
@@ -141,11 +159,11 @@ func TestResolveRefusedCases_EachDialableTwinIsAMustReachRow(t *testing.T) {
 	for _, tc := range ResolveRefusedCases() {
 		u, err := url.Parse(tc.Twin)
 		require.NoError(t, err, tc.Name)
-		if u.Hostname() != "127.0.0.1" {
+		if u.Host != "127.0.0.1:1" {
 			continue
 		}
 		checked++
 		require.True(t, reaches[tc.Twin], "%s: twin %q is not a ReachesDriverCases row", tc.Name, tc.Twin)
 	}
-	require.Equal(t, 2, checked, "twins that dial 127.0.0.1")
+	require.Equal(t, 18, checked, "twins that dial 127.0.0.1:1")
 }

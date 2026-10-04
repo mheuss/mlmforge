@@ -152,7 +152,7 @@ func schemeCaseError(dbURL string) error {
 	return nil
 }
 
-// keywordKeyError returns a ConnStringError for a non-URL string whose first keyword key holds an ASCII byte outside A-Z a-z 0-9 _ . $, and nil otherwise.
+// keywordKeyError returns a ConnStringError for a non-URL string whose first keyword key holds an ASCII byte outside A-Z a-z 0-9 _ . $, unless it starts with _pq_., and nil otherwise.
 func keywordKeyError(dbURL string) error {
 	if strings.HasPrefix(dbURL, "postgres://") || strings.HasPrefix(dbURL, "postgresql://") {
 		return nil
@@ -162,7 +162,7 @@ func keywordKeyError(dbURL string) error {
 		return nil
 	}
 	key := strings.Trim(before, " \t\n\r\v\f")
-	// Removing this exemption refuses a string that connects today.
+	// Removing the _pq_. exemption refuses a string that connects today.
 	if key == "" || strings.HasPrefix(key, "_pq_.") {
 		return nil
 	}

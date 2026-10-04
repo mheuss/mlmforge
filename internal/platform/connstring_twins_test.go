@@ -46,7 +46,7 @@ func TestResolveRefusedTwins_ReachTheDriverParsers(t *testing.T) {
 			require.Contains(t, pgxReason(t, twinErr), "invalid port")
 		})
 	}
-	require.Equal(t, 29, checked, "twins checked at the parsers")
+	require.Equal(t, 30, checked, "twins checked at the parsers")
 }
 
 // pqSettings returns lib/pq's keyword text as a map of key to unquoted value.
@@ -117,5 +117,5 @@ func TestResolveRefusedTwins_ReachTheSameTarget(t *testing.T) {
 			require.Equal(t, rowPQ, twinPQ)
 		})
 	}
-	require.Equal(t, 11, checked, "twins compared for the same target")
+	require.Equal(t, 12, checked, "twins compared for the same target")
 }

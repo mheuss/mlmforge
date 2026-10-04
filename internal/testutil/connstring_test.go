@@ -86,7 +86,7 @@ func TestResolveRefusedCases_EachQueryStageNamesHowItsTwinCompares(t *testing.T)
 			require.Empty(t, tc.SplitKeys, tc.Name)
 		}
 	}
-	require.Equal(t, 11, queryRows, "after-password and raw-plus rows")
+	require.Equal(t, 12, queryRows, "after-password and raw-plus rows")
 }
 
 func TestResolveRefusedCases_NoPasswordOverlapsTheTextAroundIt(t *testing.T) {
@@ -165,5 +165,5 @@ func TestResolveRefusedCases_EachDialableTwinIsAMustReachRow(t *testing.T) {
 		checked++
 		require.True(t, reaches[tc.Twin], "%s: twin %q is not a ReachesDriverCases row", tc.Name, tc.Twin)
 	}
-	require.Equal(t, 18, checked, "twins that dial 127.0.0.1:1")
+	require.Equal(t, 19, checked, "twins that dial 127.0.0.1:1")
 }

@@ -249,6 +249,11 @@ func ResolveRefusedCases() []ResolveRefusedCase {
 			Wiring: "postgres://plus@127.0.0.1:1/app?password=Zm9v+cXV4", WiringPassword: "Zm9v+cXV4", // gitleaks:allow
 			Twin: "postgres://plus@127.0.0.1:1/app?password=Zm9v%20cXV4", TwinCheck: TwinParsers, // gitleaks:allow
 			Stage: "raw-plus", SameTarget: SameCredentials, TwinPassword: "Zm9v cXV4"},
+		{Name: "case-variant-password-before-key",
+			ConnString: "postgres://app@127.0.0.1:1/app?PASSWORD=qs3cretpwXYZ&sslmode=disable", Password: "qs3cretpwXYZ", // gitleaks:allow
+			Wiring: "postgres://app@127.0.0.1:1/app?PASSWORD=qs3cretpwXYZ&sslmode=disable", WiringPassword: "qs3cretpwXYZ", // gitleaks:allow
+			Twin: "postgres://app@127.0.0.1:1/app?sslmode=disable&PASSWORD=qs3cretpwXYZ", TwinCheck: TwinParsers, // gitleaks:allow
+			Stage: "after-password", SameTarget: SameReading},
 	}
 }
 
@@ -294,6 +299,7 @@ func ReachesDriverCases() []ReachesDriverCase {
 		{Name: "trailing ampersand removed before a fragment", ConnString: "postgres://app@127.0.0.1:1/app?password=qs3cretpwXYZ#x", Dial: "dial tcp 127.0.0.1:1", Tree: true},            // gitleaks:allow
 		{Name: "plus encoded", ConnString: "postgres://plusr@127.0.0.1:1/app?password=Zm9v%2BcXV4", Dial: "dial tcp 127.0.0.1:1", Tree: true},                                             // gitleaks:allow
 		{Name: "space encoded", ConnString: "postgres://plus@127.0.0.1:1/app?password=Zm9v%20cXV4", Dial: "dial tcp 127.0.0.1:1", Tree: true},                                             // gitleaks:allow
+		{Name: "case-variant password key moved last", ConnString: "postgres://app@127.0.0.1:1/app?sslmode=disable&PASSWORD=qs3cretpwXYZ", Dial: "dial tcp 127.0.0.1:1", Tree: true},      // gitleaks:allow
 	}
 }
 

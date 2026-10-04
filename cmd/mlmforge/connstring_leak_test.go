@@ -150,7 +150,7 @@ func TestMigrateCommands_RefuseBeforeTheDriver(t *testing.T) {
 			})
 		}
 	}
-	require.Equal(t, 120, selected, "migrate runs")
+	require.Equal(t, 124, selected, "migrate runs")
 }
 
 func TestTreeCommands_RefuseBeforeTheDriver(t *testing.T) {
@@ -168,7 +168,7 @@ func TestTreeCommands_RefuseBeforeTheDriver(t *testing.T) {
 			})
 		}
 	}
-	require.Equal(t, 150, selected, "tree runs")
+	require.Equal(t, 155, selected, "tree runs")
 }
 
 func TestMigrateVersion_AStringThatReachesTheDriverPassesTheCLI(t *testing.T) {
@@ -190,7 +190,7 @@ func TestMigrateVersion_AStringThatReachesTheDriverPassesTheCLI(t *testing.T) {
 			require.False(t, errors.As(err, &cse), "expected a dial error; the error chain holds a *ConnStringError: %v", err)
 		})
 	}
-	require.Equal(t, 26, selected, "migrate rows")
+	require.Equal(t, 27, selected, "migrate rows")
 }
 
 func TestTreeLoad_AStringThatReachesTheDriverPassesTheCLI(t *testing.T) {
@@ -212,5 +212,5 @@ func TestTreeLoad_AStringThatReachesTheDriverPassesTheCLI(t *testing.T) {
 			require.False(t, errors.As(err, &cse), "expected a dial error; the error chain holds a *ConnStringError: %v", err)
 		})
 	}
-	require.Equal(t, 19, selected, "tree rows")
+	require.Equal(t, 20, selected, "tree rows")
 }

@@ -67,7 +67,7 @@ func (e *NotDirtyError) Error() string {
 	return fmt.Sprintf("migration record is not dirty: %s", e.Record)
 }
 
-// NegativeVersionError reports a dirty record below 0.
+// NegativeVersionError reports a dirty record at a negative version that a reset refuses.
 type NegativeVersionError struct {
 	Record Record
 }
@@ -84,6 +84,30 @@ type VersionNotInSourceError struct {
 
 func (e *VersionNotInSourceError) Error() string {
 	return fmt.Sprintf("migration record is %s; %s has no migration %d", e.Record, e.Path, e.Record.Version)
+}
+
+// NoNextMigrationError reports a dirty record with no migration after its version in the migrations directory.
+type NoNextMigrationError struct {
+	Record Record
+	Path   string
+}
+
+func (e *NoNextMigrationError) Error() string {
+	if e.Record.Version < 0 {
+		return fmt.Sprintf("migration record is %s; %s has no migrations", e.Record, e.Path)
+	}
+	return fmt.Sprintf("migration record is %s; %s has no migration after %d", e.Record, e.Path, e.Record.Version)
+}
+
+// NoDownFileError reports a migration with no down file in the migrations directory.
+type NoDownFileError struct {
+	Record  Record
+	Version uint
+	Path    string
+}
+
+func (e *NoDownFileError) Error() string {
+	return fmt.Sprintf("migration record is %s; %s has no down file for migration %d", e.Record, e.Path, e.Version)
 }
 
 // MultiStatementError reports a database URL that turns on multi-statement mode for a command that refuses it.

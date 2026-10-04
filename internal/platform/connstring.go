@@ -131,10 +131,13 @@ func migrateSchemeError(dbURL string) error {
 
 // PreDriverError returns a ConnStringError for a connection string mlmforge refuses before any driver sees it, and nil otherwise.
 func PreDriverError(dbURL string) error {
-	if err := schemeCaseError(dbURL); err != nil {
-		return err
+	// Order matters: where two checks refuse one string, the earlier one gives the more specific message.
+	for _, check := range []func(string) error{schemeCaseError, keywordKeyError, rawAtError, afterPasswordError, rawPlusError} {
+		if err := check(dbURL); err != nil {
+			return err
+		}
 	}
-	return rawAtError(dbURL)
+	return nil
 }
 
 // schemeCaseError returns a ConnStringError for a string whose postgres:// or postgresql:// scheme is not written in lowercase, and nil otherwise.

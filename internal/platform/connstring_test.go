@@ -390,14 +390,19 @@ func TestRawPlusError_AcceptsAnEncodedPlusAndAPlusElsewhere(t *testing.T) {
 	}
 }
 
-func TestPreDriverError_RefusesWhatEitherCheckRefuses(t *testing.T) {
+func TestPreDriverError_ReturnsTheFirstCheckThatRefuses(t *testing.T) {
 	for _, tc := range []struct {
 		connString string
 		stage      string
 		part       string
 	}{
 		{"POSTGRES://app:1234/s3cretPW@127.0.0.1:1/app", "scheme-case", ""},
+		{"POSTGRES://h/app?x=1", "scheme-case", ""},
+		{" postgres://u:pw@h/db?sslmode=disable", "keyword-key", ""},
 		{"postgres://app:1234/s3cretPW@127.0.0.1:1/app", "raw-at", "path"},
+		{"postgres://h/app?password=a@b&c", "raw-at", "query"},
+		{"postgres://h/app?password=a+b&c", "after-password", ""},
+		{"postgres://h/app?password=a+b", "raw-plus", ""},
 	} {
 		t.Run(tc.connString, func(t *testing.T) {
 			var cse *ConnStringError
@@ -406,7 +411,13 @@ func TestPreDriverError_RefusesWhatEitherCheckRefuses(t *testing.T) {
 			require.Equal(t, tc.part, cse.Part())
 		})
 	}
-	require.NoError(t, PreDriverError("postgres://app:pr@of@PW@127.0.0.1:1/app"))
+	for _, connString := range []string{
+		"postgres://app:pr@of@PW@127.0.0.1:1/app",
+		"postgres://h/app?sslmode=disable&password=x",
+		"host=h password=x",
+	} {
+		require.NoError(t, PreDriverError(connString), connString)
+	}
 }
 
 func TestPreDriverError_MatchesEachConnStringCaseResolveStage(t *testing.T) {

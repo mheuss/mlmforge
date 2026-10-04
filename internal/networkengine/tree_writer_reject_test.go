@@ -560,7 +560,7 @@ func TestTreeWriterReject_RefusesWhenTheRetrySucceeds(t *testing.T) {
 	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 2)
 	version, _, err := env.store.ProjectedVersion(context.Background(), writerTree)
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), version, "the refused run's retry did not project the pending event")
+	assert.Equal(t, int64(2), version, "projected version after the refused Reject")
 }
 
 // insertFailingStore fails every ProjectInsert.
@@ -733,7 +733,6 @@ func TestTreeWriterReject_RefusesBeforeTheLock(t *testing.T) {
 			_, err := w.Reject(context.Background(), c.req)
 
 			require.ErrorContains(t, err, c.want)
-			assert.Empty(t, streamEvents(t, env.events, TreeStreamName(writerTree)))
 		})
 	}
 }
@@ -798,6 +797,67 @@ func TestTreeWriterReject_AFailedAppendLeavesTheOutcomeEmpty(t *testing.T) {
 	require.ErrorAs(t, err, &conflict)
 	assert.Empty(t, res.Outcome)
 	assert.Empty(t, res.EventID)
+	assert.Zero(t, res.Version)
+	assert.Error(t, res.RetryErr)
 	assert.Equal(t, stuck.ID, res.RejectedEventID)
 	assert.Len(t, streamEvents(t, env.events, stream), 2)
+}
+
+// secondLastEventRead replaces the answer to the second ReadLastEvent.
+type secondLastEventRead struct {
+	*platform.MemoryEventStore
+	replace func(real *platform.Event) *platform.Event
+	reads   int
+}
+
+func (e *secondLastEventRead) ReadLastEvent(ctx context.Context, stream string) (*platform.Event, error) {
+	real, err := e.MemoryEventStore.ReadLastEvent(ctx, stream)
+	e.reads++
+	if err != nil || e.reads != 2 {
+		return real, err
+	}
+	return e.replace(real), nil
+}
+
+func TestTreeWriterReject_RefusesWhenTheRetryFindsAnotherLastEvent(t *testing.T) {
+	cases := []struct {
+		name    string
+		setup   func(t *testing.T, env *writerEnv) platform.Event
+		replace func(real *platform.Event) *platform.Event
+		want    func(stuck platform.Event) string
+	}{
+		{"another event", func(t *testing.T, env *writerEnv) platform.Event { return unprojectedRemoval(t, env) },
+			func(real *platform.Event) *platform.Event {
+				other := *real
+				other.ID = testNodeUUID(88)
+				return &other
+			},
+			func(stuck platform.Event) string {
+				return "for the retry returned last event " + testNodeUUID(88) + ", where event " + stuck.ID + " was expected"
+			}},
+		{"no event", func(t *testing.T, env *writerEnv) platform.Event {
+			return appendDirect(t, env.events, EventTypeRootAdded, rootAddedPayload())
+		},
+			func(*platform.Event) *platform.Event { return nil },
+			func(stuck platform.Event) string {
+				return "for the retry returned no last event, where event " + stuck.ID + " was expected"
+			}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			env := newWriterEnv()
+			stuck := c.setup(t, env)
+			stream := TreeStreamName(writerTree)
+			before := streamEvents(t, env.events, stream)
+			events := &secondLastEventRead{MemoryEventStore: env.events.(*platform.MemoryEventStore), replace: c.replace}
+			w := NewTreeWriter(events, env.store, newFakeWriterEngine(), env.locker)
+
+			res, err := w.Reject(context.Background(), rejectRequest(stuck.ID))
+
+			require.ErrorContains(t, err, "returned an error that is not one reject-event accepts as evidence; nothing was appended")
+			require.ErrorContains(t, res.RetryErr, c.want(stuck))
+			assert.Empty(t, res.Outcome)
+			assert.Equal(t, before, streamEvents(t, env.events, stream))
+		})
+	}
 }

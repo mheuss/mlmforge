@@ -17,11 +17,13 @@ import (
 
 // recordingWriter captures the request each write command sends.
 type recordingWriter struct {
-	addRoot networkengine.AddRootRequest
-	place   networkengine.PlaceRequest
-	remove  networkengine.RemoveRequest
-	result  networkengine.WriteResult
-	err     error
+	addRoot      networkengine.AddRootRequest
+	place        networkengine.PlaceRequest
+	remove       networkengine.RemoveRequest
+	result       networkengine.WriteResult
+	err          error
+	reject       networkengine.RejectRequest
+	rejectResult networkengine.RejectResult
 }
 
 func (w *recordingWriter) AddRoot(_ context.Context, r networkengine.AddRootRequest) (networkengine.WriteResult, error) {
@@ -37,6 +39,11 @@ func (w *recordingWriter) Place(_ context.Context, r networkengine.PlaceRequest)
 func (w *recordingWriter) Remove(_ context.Context, r networkengine.RemoveRequest) (networkengine.WriteResult, error) {
 	w.remove = r
 	return w.result, w.err
+}
+
+func (w *recordingWriter) Reject(_ context.Context, r networkengine.RejectRequest) (networkengine.RejectResult, error) {
+	w.reject = r
+	return w.rejectResult, w.err
 }
 
 // runWriteCmd executes one write subcommand against w.
@@ -68,7 +75,7 @@ func TestNewTreeCmd_RegistersTheWriteSubcommands(t *testing.T) {
 		names[c.Name()] = true
 	}
 
-	for _, want := range []string{"add-root", "place", "remove"} {
+	for _, want := range []string{"add-root", "place", "remove", "reject-event"} {
 		assert.True(t, names[want], "missing subcommand %s", want)
 	}
 }

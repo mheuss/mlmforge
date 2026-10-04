@@ -116,8 +116,14 @@ func (e *treeLoadFailure) Unwrap() error { return e.err }
 
 // treeLoadFailureMessage describes a failed tree load for the operator.
 func treeLoadFailureMessage(err error) string {
-	// Incomplete is checked first, matching treeLoadRetryable. A chain holding
-	// both must not be reported as leaving the engine unchanged.
+	// Checked first. Its text carries the load error, which the branches below
+	// would print alone.
+	var pending *networkengine.RejectionPendingError
+	if errors.As(err, &pending) {
+		return fmt.Sprintf("load refused: %s%s", pending, interrupted(err))
+	}
+	// Incomplete is checked before rejected. A chain holding both must not be
+	// reported as leaving the engine unchanged.
 	var incomplete *networkengine.TreeLoadIncompleteError
 	if errors.As(err, &incomplete) {
 		if incomplete.Stage == networkengine.TreeLoadStageCreate {

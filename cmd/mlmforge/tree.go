@@ -58,6 +58,7 @@ func newTreeCmdWith(open depsOpener, loader loadWriterFor, writer writerFor) *co
 		newTreeAddRootCmd(resolve, open, writer),
 		newTreePlaceCmd(resolve, open, writer),
 		newTreeRemoveCmd(resolve, open, writer),
+		newTreeRejectEventCmd(resolve, open, writer),
 	)
 	return treeCmd
 }

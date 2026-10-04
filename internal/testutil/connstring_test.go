@@ -146,3 +146,22 @@ func TestResolveRefusedCases_EachDialableTwinIsAMustReachRow(t *testing.T) {
 	}
 	require.Equal(t, 2, checked, "twins that dial 127.0.0.1")
 }
+
+func TestClearLibPQEnv_UnsetsEveryVariableLibPQRefusesOrPanicsOn(t *testing.T) {
+	names := []string{
+		"PGCLIENTENCODING", "PGDATESTYLE",
+		"PGHOSTADDR", "PGSERVICE", "PGSERVICEFILE", "PGREALM",
+		"PGREQUIRESSL", "PGSSLCRL", "PGREQUIREPEER",
+		"PGKRBSRVNAME", "PGGSSLIB", "PGSYSCONFDIR", "PGLOCALEDIR",
+	}
+	for _, name := range names {
+		t.Setenv(name, "x")
+	}
+
+	ClearLibPQEnv(t)
+
+	for _, name := range names {
+		_, ok := os.LookupEnv(name)
+		require.False(t, ok, "%s is still set", name)
+	}
+}

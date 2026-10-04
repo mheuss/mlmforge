@@ -393,3 +393,131 @@ func TestMigrateUp_AFailedFileIsNotEchoedAndNeverSaysForce(t *testing.T) {
 	require.NotContains(t, stderr, "CREATE TABLE", "the migration file body must not be echoed")
 	requireNoForce(t, out.stdout.String()+stderr)
 }
+
+// holdTableLock holds ACCESS EXCLUSIVE on table from a second connection, and returns a function that releases it.
+func holdTableLock(t *testing.T, dsn, table string) func() {
+	t.Helper()
+	blocker, err := pgx.Connect(t.Context(), dsn)
+	require.NoError(t, err)
+	tx, err := blocker.Begin(t.Context())
+	require.NoError(t, err)
+	release := func() {
+		_ = tx.Rollback(context.Background())
+		_ = blocker.Close(context.Background())
+	}
+	t.Cleanup(release)
+	_, err = tx.Exec(t.Context(), "LOCK TABLE "+table+" IN ACCESS EXCLUSIVE MODE")
+	require.NoError(t, err)
+	return release
+}
+
+func TestMigrate_RecoversFromAFailedDownWithResetDirtyAfterFailedDown(t *testing.T) {
+	dsn := newMigrateDatabase(t)
+	migrateTo(t, dsn, 9)
+	release := holdTableLock(t, dsn, "tree_projections")
+
+	out, err := runMigrate(t, withParam(t, dsn, "lock_timeout", "500"), "down")
+	require.Error(t, err)
+	require.Contains(t, out.stderr.String(),
+		"run `mlmforge migrate reset-dirty --after-failed-down` (it sets the record to 9, clean)")
+	require.Equal(t, []string{"8,true"}, readRecord(t, dsn))
+	release()
+
+	out, err = runMigrate(t, dsn, "reset-dirty", "--after-failed-down")
+	require.NoError(t, err, out.stderr.String())
+	require.Equal(t, "The record read 8, dirty. This run set it to 9, clean.\nRun `mlmforge migrate down` next.\n", out.stdout.String())
+	require.Equal(t, []string{"9,false"}, readRecord(t, dsn))
+
+	out, err = runMigrate(t, dsn, "down")
+	require.NoError(t, err, out.stderr.String())
+	require.Equal(t, []string{"8,false"}, readRecord(t, dsn))
+}
+
+func TestMigrate_RecoversAMinusOneRecordWithResetDirtyAfterFailedDown(t *testing.T) {
+	dsn := newMigrateDatabase(t)
+	migrateTo(t, dsn, 1)
+	release := holdTableLock(t, dsn, "events")
+
+	out, err := runMigrate(t, withParam(t, dsn, "lock_timeout", "500"), "down")
+	require.Error(t, err)
+	require.Contains(t, out.stderr.String(), "(it sets the record to 1, clean)")
+	require.Equal(t, []string{"-1,true"}, readRecord(t, dsn))
+	release()
+
+	out, err = runMigrate(t, dsn, "reset-dirty", "--after-failed-down")
+	require.NoError(t, err, out.stderr.String())
+	require.Equal(t, "The record read -1, dirty. This run set it to 1, clean.\nRun `mlmforge migrate down` next.\n", out.stdout.String())
+	require.Equal(t, []string{"1,false"}, readRecord(t, dsn))
+}
+
+func TestMigrateResetDirtyAfterFailedDown_RefusesARecordItCannotActOnAndLeavesItUnchanged(t *testing.T) {
+	latest := latestMigration(t)
+	dir := platform.FindMigrationsDir(t)
+	cases := []struct {
+		name   string
+		setup  func(t *testing.T, dsn string)
+		stderr string
+		record []string
+	}{
+		{
+			name:   "clean",
+			setup:  func(t *testing.T, dsn string) { migrateTo(t, dsn, 5) },
+			stderr: "Error: reset-dirty changes only a dirty record. The record reads 5, clean. The record was not changed.\n",
+			record: []string{"5,false"},
+		},
+		{
+			name:   "no version",
+			setup:  func(t *testing.T, dsn string) {},
+			stderr: "Error: reset-dirty changes only a dirty record. The record holds no version. The record was not changed.\n",
+			record: nil,
+		},
+		{
+			name:   "below minus one",
+			setup:  func(t *testing.T, dsn string) { migrateTo(t, dsn, 1); setRecord(t, dsn, -2, true) },
+			stderr: "Error: The record reads -2, dirty. reset-dirty --after-failed-down does not change a record below -1. The record was not changed.\n",
+			record: []string{"-2,true"},
+		},
+		{
+			name:   "not in the directory",
+			setup:  func(t *testing.T, dsn string) { migrateTo(t, dsn, 5); setRecord(t, dsn, 99, true) },
+			stderr: "Error: The record reads 99, dirty. The migrations directory " + dir + " has no migration 99. The record was not changed.\n",
+			record: []string{"99,true"},
+		},
+		{
+			name:  "the last migration",
+			setup: func(t *testing.T, dsn string) { migrateTo(t, dsn, uint(latest)); setRecord(t, dsn, latest, true) },
+			stderr: fmt.Sprintf("Error: The record reads %d, dirty. The migrations directory %s has no migration after %d. The record was not changed.\n",
+				latest, dir, latest),
+			record: []string{fmt.Sprintf("%d,true", latest)},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dsn := newMigrateDatabase(t)
+			tc.setup(t, dsn)
+
+			out, err := runMigrate(t, dsn, "reset-dirty", "--after-failed-down")
+
+			require.Error(t, err)
+			require.Equal(t, tc.stderr, out.stderr.String())
+			require.Empty(t, out.stdout.String())
+			require.Equal(t, tc.record, readRecord(t, dsn))
+		})
+	}
+}
+
+func TestMigrateVersion_ADirtyRecordNamesBothInstructions(t *testing.T) {
+	dsn := newMigrateDatabase(t)
+	migrateTo(t, dsn, 8)
+	setRecord(t, dsn, 8, true)
+
+	out, err := runMigrate(t, dsn, "version")
+
+	require.NoError(t, err, out.stderr.String())
+	require.Equal(t, "Version: 8, Dirty: true\n"+
+		"The record reads 8, dirty.\n"+
+		"Run `mlmforge migrate reset-dirty` only if the command that left this record was a `mlmforge migrate up` that ran migration 8 and printed \"run `mlmforge migrate reset-dirty`\".\n"+
+		"Run `mlmforge migrate reset-dirty --after-failed-down` only if the command that left this record was a `mlmforge migrate down` that ran the down file of migration 9 and printed \"run `mlmforge migrate reset-dirty --after-failed-down`\".\n"+
+		"Nothing in this output is either instruction.\n"+
+		"In any other case, do not run either.\n", out.stdout.String())
+}

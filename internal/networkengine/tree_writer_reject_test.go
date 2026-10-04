@@ -861,3 +861,195 @@ func TestTreeWriterReject_RefusesWhenTheRetryFindsAnotherLastEvent(t *testing.T)
 		})
 	}
 }
+
+// rejectionFailingStore fails its first failures calls to ProjectRejection.
+type rejectionFailingStore struct {
+	TreeStore
+	failures int
+}
+
+func (s *rejectionFailingStore) ProjectRejection(ctx context.Context, treeID, rejectedEventID string, eventVersion int64) error {
+	if s.failures > 0 {
+		s.failures--
+		return errors.New("connection reset by peer")
+	}
+	return s.TreeStore.ProjectRejection(ctx, treeID, rejectedEventID, eventVersion)
+}
+
+func TestTreeWriterReject_ARerunProjectsAPendingRejectionAndAppendsNothing(t *testing.T) {
+	env := newWriterEnv()
+	stuck := stuckPlacement(t, env)
+	store := &rejectionFailingStore{TreeStore: env.store, failures: 2}
+	w := NewTreeWriter(env.events, store, newFakeWriterEngine(), env.locker)
+	ctx := context.Background()
+	stream := TreeStreamName(writerTree)
+
+	first, err := w.Reject(ctx, rejectRequest(stuck.ID))
+	require.NoError(t, err)
+	assert.Equal(t, RejectOutcomeRejected, first.Outcome)
+	assert.NotEmpty(t, first.EventID)
+	assert.Equal(t, int64(3), first.Version)
+	assert.Equal(t, stuck.ID, first.RejectedEventID)
+	require.ErrorContains(t, first.ProjectionErr, "connection reset by peer")
+	assert.Equal(t, &ProjectionObservation{Version: 2, Found: true}, first.Observed)
+
+	second, err := w.Reject(ctx, rejectRequest(stuck.ID))
+	require.NoError(t, err)
+	assert.Equal(t, RejectOutcomeResumed, second.Outcome)
+	require.Error(t, second.ProjectionErr, "the second projection was meant to fail")
+	assert.Equal(t, &ProjectionObservation{Version: 2, Found: true}, second.Observed)
+
+	third, err := w.Reject(ctx, rejectRequest(stuck.ID))
+	require.NoError(t, err)
+	assert.Equal(t, RejectOutcomeResumed, third.Outcome)
+	require.NoError(t, third.ProjectionErr)
+
+	fourth, err := w.Reject(ctx, rejectRequest(stuck.ID))
+	require.NoError(t, err)
+	assert.Equal(t, RejectOutcomeAlreadyApplied, fourth.Outcome)
+
+	for _, res := range []RejectResult{second, third, fourth} {
+		assert.Equal(t, first.EventID, res.EventID)
+		assert.Equal(t, int64(3), res.Version)
+		assert.Equal(t, stuck.ID, res.RejectedEventID)
+		assert.Equal(t, int64(2), res.RejectedVersion)
+	}
+	assert.Len(t, streamEvents(t, env.events, stream), 3)
+	version, _, err := env.store.ProjectedVersion(ctx, writerTree)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), version)
+	row, err := env.store.GetNode(ctx, writerTree, writerChild)
+	require.NoError(t, err)
+	assert.Nil(t, row, "the rejected placement's row is still active")
+}
+
+func TestTreeWriterReject_ResumesARejectionOnATreeWithNoProjectionRow(t *testing.T) {
+	env := newWriterEnv()
+	root := appendDirect(t, env.events, EventTypeRootAdded, rootAddedPayload())
+	appendRejection(t, env, root)
+	w, _ := env.writer()
+
+	res, err := w.Reject(context.Background(), rejectRequest(root.ID))
+
+	require.NoError(t, err)
+	require.NoError(t, res.ProjectionErr)
+	assert.Equal(t, RejectOutcomeResumed, res.Outcome)
+	version, found, err := env.store.ProjectedVersion(context.Background(), writerTree)
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, int64(2), version)
+}
+
+func TestTreeWriterReject_RefusesARejectionOfAnotherEvent(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	mustPlace(t, env, writerChild, nil)
+	events := streamEvents(t, env.events, TreeStreamName(writerTree))
+	rejection := appendRejection(t, env, events[1])
+	w, _ := env.writer()
+
+	_, err := w.Reject(context.Background(), rejectRequest(events[0].ID))
+
+	require.EqualError(t, err, "stream "+TreeStreamName(writerTree)+" ends with rejection "+rejection.ID+
+		" of event "+events[1].ID+", not event "+events[0].ID+"; nothing was appended")
+}
+
+func TestTreeWriterReject_RefusesAResumedRejectionThatNamesTheWrongEvent(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(p *EventRejectedPayload)
+	}{
+		{"another event's ID", func(p *EventRejectedPayload) { p.RejectedEventID = uuid.NewString() }},
+		{"another type", func(p *EventRejectedPayload) { p.RejectedType = EventTypeNodeRemoved }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			env := newWriterEnv()
+			mustAddRoot(t, env, treeTypeUnilevel)
+			mustPlace(t, env, writerChild, nil)
+			stream := TreeStreamName(writerTree)
+			placed := streamEvents(t, env.events, stream)[1]
+			p := EventRejectedPayload{TreeID: writerTree, RejectedEventID: placed.ID, RejectedVersion: 2,
+				RejectedType: EventTypeNodePlaced, Reason: "appended by the test"}
+			c.mutate(&p)
+			bad := appendDirect(t, env.events, EventTypeEventRejected, p)
+			w, _ := env.writer()
+
+			res, err := w.Reject(context.Background(), rejectRequest(p.RejectedEventID))
+
+			require.EqualError(t, err, fmt.Sprintf("rejection %s at version 3 of stream %s names event %s (%s), "+
+				"and version 2 holds event %s (%s); nothing was appended or projected",
+				bad.ID, stream, p.RejectedEventID, p.RejectedType, placed.ID, EventTypeNodePlaced))
+			assert.Empty(t, res.Outcome)
+			row, err := env.store.GetNode(context.Background(), writerTree, writerChild)
+			require.NoError(t, err)
+			assert.NotNil(t, row, "a rejection naming the wrong event soft-deleted a row")
+			assert.Len(t, streamEvents(t, env.events, stream), 3)
+			version, _, err := env.store.ProjectedVersion(context.Background(), writerTree)
+			require.NoError(t, err)
+			assert.Equal(t, int64(2), version)
+		})
+	}
+}
+
+func TestTreeWriterReject_RefusesToRejectARejection(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	mustPlace(t, env, writerChild, nil)
+	placed := streamEvents(t, env.events, TreeStreamName(writerTree))[1]
+	rejection := appendRejection(t, env, placed)
+	w, _ := env.writer()
+
+	res, err := w.Reject(context.Background(), rejectRequest(rejection.ID))
+
+	require.EqualError(t, err, "stream "+TreeStreamName(writerTree)+" ends with rejection "+rejection.ID+
+		" of event "+placed.ID+", not event "+rejection.ID+"; nothing was appended")
+	assert.Empty(t, res.Outcome)
+	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 3)
+}
+
+func TestTreeWriterReject_RefusesAPendingRejectionTheStoreCannotBeBehindBy(t *testing.T) {
+	t.Run("two events behind the rejected one", func(t *testing.T) {
+		env := newWriterEnv()
+		mustAddRoot(t, env, treeTypeUnilevel)
+		appendDirect(t, env.events, EventTypeNodePlaced, childPlacedPayload(writerChild))
+		third := appendDirect(t, env.events, EventTypeNodePlaced, childPlacedPayload(writerOther))
+		appendRejection(t, env, third)
+		w, _ := env.writer()
+
+		_, err := w.Reject(context.Background(), rejectRequest(third.ID))
+
+		var moved *StreamMovedError
+		require.ErrorAs(t, err, &moved)
+		assert.Equal(t, StreamMovedError{TreeID: writerTree, LoadedVersion: 1, LastVersion: 4}, *moved)
+	})
+	t.Run("no projection row past version 2", func(t *testing.T) {
+		env := newWriterEnv()
+		appendDirect(t, env.events, EventTypeRootAdded, rootAddedPayload())
+		placed := appendDirect(t, env.events, EventTypeNodePlaced, childPlacedPayload(writerChild))
+		appendRejection(t, env, placed)
+		w, _ := env.writer()
+
+		_, err := w.Reject(context.Background(), rejectRequest(placed.ID))
+
+		var missing *ProjectionMissingError
+		require.ErrorAs(t, err, &missing)
+		assert.Equal(t, ProjectionMissingError{TreeID: writerTree, LastVersion: 3}, *missing)
+	})
+	t.Run("a store ahead of the rejection", func(t *testing.T) {
+		env := newWriterEnv()
+		mustAddRoot(t, env, treeTypeUnilevel)
+		placed := mustPlace(t, env, writerChild, nil)
+		placedEvent := streamEvents(t, env.events, TreeStreamName(writerTree))[1]
+		appendRejection(t, env, placedEvent)
+		require.NoError(t, env.store.ProjectInsert(context.Background(),
+			makeUUIDNode(testNodeUUID(60), writerTree, testUserUUID(6), 1, ptr(writerRoot), ptr(writerRoot), nil), 9))
+		w, _ := env.writer()
+
+		_, err := w.Reject(context.Background(), rejectRequest(placed.EventID))
+
+		var moved *StreamMovedError
+		require.ErrorAs(t, err, &moved)
+		assert.Equal(t, StreamMovedError{TreeID: writerTree, LoadedVersion: 9, LastVersion: 3}, *moved)
+	})
+}

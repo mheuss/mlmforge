@@ -283,8 +283,38 @@ func (w *TreeWriter) retry(ctx context.Context, tree, stream string, shape treeS
 	return err
 }
 
-// resumeRejection handles a stream that already ends with a rejection.
-func (w *TreeWriter) resumeRejection(_ context.Context, result RejectResult, _, _ string,
-	last platform.Event, _ int64, _ bool) (RejectResult, error) {
-	return result, fmt.Errorf("stream %s ends with rejection %s; nothing was appended", result.Stream, last.ID)
+// resumeRejection handles a stream that already ends with a rejection. A
+// missing projection row reads as projected version 0.
+func (w *TreeWriter) resumeRejection(ctx context.Context, result RejectResult, tree, eventID string,
+	last platform.Event, projected int64, projectedFound bool) (RejectResult, error) {
+	stream := result.Stream
+	p, err := rejectionPayload(last)
+	if err != nil {
+		return result, fmt.Errorf("%w; nothing was appended", err)
+	}
+	if !sameUUID(p.RejectedEventID, eventID) {
+		return result, fmt.Errorf("stream %s ends with rejection %s of event %s, not event %s; nothing was appended",
+			stream, last.ID, p.RejectedEventID, eventID)
+	}
+	result.RejectedEventID, result.RejectedVersion = p.RejectedEventID, p.RejectedVersion
+	result.EventID, result.Version = last.ID, last.Version
+	switch projected {
+	case last.Version:
+		result.Outcome = RejectOutcomeAlreadyApplied
+		return result, nil
+	case last.Version - 1, last.Version - 2:
+		if err := w.checkRejectionTarget(ctx, stream, last); err != nil {
+			return result, fmt.Errorf("%w; nothing was appended or projected", err)
+		}
+		result.Outcome = RejectOutcomeResumed
+		result.ProjectionErr = w.project(ctx, stream, last.ID, last.Version)
+		if result.ProjectionErr != nil {
+			result.Observed = w.observe(ctx, tree)
+		}
+		return result, nil
+	}
+	if !projectedFound {
+		return result, &ProjectionMissingError{TreeID: tree, LastVersion: last.Version}
+	}
+	return result, &StreamMovedError{TreeID: tree, LoadedVersion: projected, LastVersion: last.Version}
 }

@@ -52,9 +52,10 @@ func TestResolveRefusedTwins_ReachTheDriverParsers(t *testing.T) {
 func pqSettings(t *testing.T, text string) map[string]string {
 	t.Helper()
 	settings := map[string]string{}
+	full := len(text)
 	for text != "" {
 		key, rest, ok := strings.Cut(text, "='")
-		require.True(t, ok, "lib/pq text has no key='value' entry at offset %d", len(text))
+		require.True(t, ok, "lib/pq text has no key='value' entry at offset %d", full-len(text))
 		var value strings.Builder
 		i := 0
 		for ; i < len(rest) && rest[i] != '\''; i++ {
@@ -63,7 +64,7 @@ func pqSettings(t *testing.T, text string) map[string]string {
 			}
 			value.WriteByte(rest[i])
 		}
-		require.Less(t, i, len(rest), "lib/pq text has an unterminated value at offset %d", len(text)-len(rest))
+		require.Less(t, i, len(rest), "lib/pq text has an unterminated value at offset %d", full-len(rest))
 		settings[key] = value.String()
 		text = strings.TrimPrefix(rest[i+1:], " ")
 	}

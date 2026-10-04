@@ -871,7 +871,7 @@ Matrix startup reload is no longer blocked by the placement divergence HEU-553 f
 
 `tree_nodes.id` holds the placing event's ID. A removal cannot use it as a discriminator. Comparing a removal event's ID against it is false on every path, including a removal that genuinely never landed.
 
-Migration 000007 adds `removed_by_event_id`. `DeleteNodeAndResponsor` writes it in the soft delete's own statement. The stamp lands with the tombstone or not at all. The column is null while the row is active. `UndoRootProjection` leaves it null. Its caller rolls back a row the same handler just inserted. That rollback is not a removal. It has no removal event to name.
+Migration 000007 adds `removed_by_event_id`. `DeleteNodeAndResponsor` writes it in the soft delete's own statement. The stamp lands with the tombstone or not at all. The column is null while the row is active. `UndoRootProjection` leaves it null. Its caller rolls back a row the same handler just inserted. That rollback is not a removal. It has no removal event to name. A rejection's soft delete leaves the column null for the same reason (HEU-850).
 
 `GetNodeByRemovalEvent` reads the row a given removal event stamped, scoped to one tree. When one event has stamped more than one row, the newest tombstone wins. `GetNodeIncludingRemoved` uses the same rule. On equal removal times, both return the highest id (HEU-803). The id order is defined for canonical hyphenated UUIDs. A redelivered removal arriving after the user was placed again is below the tree's projected version. On a tree with a projection row, `ProjectRemoval` refuses it, so no second stamp lands (HEU-857). A tree created before migration 000009 has no projection row, so nothing refuses the removal there. `DeleteNodeAndResponsor` checks no version at all (HEU-864). HEU-868 covers two converged removal branches that leave the version behind. HEU-789 tracks the engine half, for when a caller redelivers old events.
 
@@ -883,7 +883,7 @@ The stamp says which event removed a row. It does not order several removals of 
 
 ## Tree Writes Go Through `TreeWriter`
 
-`TreeWriter` appends every tree event (HEU-301). `mlmforge tree add-root`, `tree place` and `tree remove` drive it, and `tree load` drives its `Load`. Code that appends to a tree stream without it breaks each guarantee below.
+`TreeWriter` appends every tree event (HEU-301). `mlmforge tree add-root`, `tree place`, `tree remove` and `tree reject-event` drive it, and `tree load` drives its `Load`. Code that appends to a tree stream without it breaks each guarantee below.
 
 ### One writer per tree at a time
 
@@ -907,7 +907,7 @@ Each invocation starts a worker. It rebuilds the tree in the worker from the sto
 
 ### The projected version
 
-The store records one version per tree, the stream version its rows reflect, in `tree_projections` (migration 000009). `ProjectInsert` and `ProjectRemoval` check it in the same transaction as their row writes. An event below it is refused with `ProjectionRefusedError` and writes nothing. An event at it runs the existing redelivery logic, which writes nothing for an event the store already holds. `UndoRootProjection` requires the version to equal the event's, and otherwise returns a plain error and deletes nothing. `InsertNode`, `DeleteNode`, `DeleteNodeAndResponsor` and `BulkInsert` record no version. A guard test fails if non-test code outside the stores calls them. Trees created before migration 000009 have no projection row, and the writer refuses them once their stream passes version 1.
+The store records one version per tree, the stream version its rows reflect, in `tree_projections` (migration 000009). `ProjectInsert`, `ProjectRemoval` and `ProjectRejection` check it in the same transaction as their row writes. An event below it is refused with `ProjectionRefusedError` and writes nothing. An event at it runs the existing redelivery logic, which writes nothing for an event the store already holds. `UndoRootProjection` requires the version to equal the event's, and otherwise returns a plain error and deletes nothing. `InsertNode`, `DeleteNode`, `DeleteNodeAndResponsor` and `BulkInsert` record no version. A guard test fails if non-test code outside the stores calls them. Trees created before migration 000009 have no projection row, and the writer refuses them once their stream passes version 1.
 
 ### Before the append
 
@@ -915,7 +915,7 @@ The store records one version per tree, the stream version its rows reflect, in 
 - `add-root` on a stream that already has a version 1 is refused when its type, matrix width or spillover differs from what version 1 records. A matrix flag on a non-matrix tree is refused. Matrix flags left off the request match. On an empty stream the check runs again under the lock. A root that landed between the first check and the lock is what the second check compares against.
 - Removing a tree's only root is allowed. A later `add-root` roots the tree again (Michael, 2026-09-23).
 - The writer reads the tree's projected version before it loads the rows. After the load it reads the stream's last version. It goes ahead only when the last version is the projected version or one past it. A tree with no projection row whose stream ends past version 1 is refused with `ProjectionMissingError`. Any other mismatch is refused with `StreamMovedError`. Neither appends anything.
-- The stream's last event is redelivered through `HandleEvent`. Under the lock it is the only event that can be unprojected. Catch-up redelivers only `tree.root_added`, `tree.node_placed` and `tree.node_removed`. A last event of any other type refuses the write before `HandleEvent` is called. `HandleEvent` returns nil for a type it does not project. Calling it would report that event as projected.
+- The stream's last event is redelivered through `HandleEvent`. Under the lock it is the only event that can be unprojected. Catch-up redelivers only `tree.root_added`, `tree.node_placed`, `tree.node_removed` and `tree.event_rejected`. A rejection is redelivered only when the store has applied it. A write or `tree load` on a stream ending in a rejection the store is one or two versions behind is refused with `RejectionPendingError`, which names `tree reject-event`. A wider gap meets the fence (HEU-850). A last event of any other type refuses the write before `HandleEvent` is called. `HandleEvent` returns nil for a type it does not project. Calling it would report that event as projected.
 - `check_mutation` asks the engine whether the mutation would succeed. The worker runs the check functions the mutating ops call first. That is why no refusal rule is copied into Go.
 
 ### Three outcomes for an append

@@ -67,5 +67,6 @@ step was not observed to finish.
 1. `mlmforge tree bogus` exits 1. The operation asked for does not exist (HEU-834).
 2. A run can succeed and still fail to release the worker and pool. That run exits 0. The release failure goes to stderr. A write command whose tree lock release failed does the same.
 3. A write command (`tree add-root`, `tree place`, `tree remove`) can confirm its append and still fail to project. The command then reads the tree's projected version. At or past the appended version it exits 0. Otherwise it exits 3 (HEU-777). The projection failure goes to stderr either way.
+4. `tree reject-event` appends a rejection of the stream's last event and tries to project it. It exits 0 when the store was observed at or past the rejection, including a rerun that finds it already projected. It exits 3 when a rejection is in the stream and the store was not observed current, whichever run appended it. It exits 1 when it refused and appended nothing, or when it could not confirm whether its append landed. A rerun that projects a pending rejection, one the store is one or two versions behind, requires `--reason` but does not record it (HEU-850).
 
 The same rule gives 1 when a write command cannot confirm its append. The operation is not known to have been performed. That applies the rule. It is not an exception to it.

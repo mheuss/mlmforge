@@ -34,6 +34,7 @@ Use-cases for the Network Engine bounded context.
 - [UC-NET-028: Resolving an append whose reply was lost](#uc-net-028-resolving-an-append-whose-reply-was-lost)
 - [UC-NET-029: Refusing a projection that arrives out of order](#uc-net-029-refusing-a-projection-that-arrives-out-of-order)
 - [UC-NET-030: Loading a tree whose store may be one event behind its stream](#uc-net-030-loading-a-tree-whose-store-may-be-one-event-behind-its-stream)
+- [UC-NET-031: Recovering a tree stuck behind an event that cannot apply](#uc-net-031-recovering-a-tree-stuck-behind-an-event-that-cannot-apply)
 
 ---
 
@@ -1157,3 +1158,28 @@ if err != nil {
 ```
 
 **Notes:** `MatrixWidth` and `MatrixSpillover` left nil take the shape recorded at version 1. A conflicting value is refused with add-root's rule. Build a new writer over a new worker for each load, as UC-NET-027 says for writes. Retry only what `treeLoadRetryable` allows (UC-NET-026).
+
+---
+
+### UC-NET-031: Recovering a tree stuck behind an event that cannot apply
+
+**Added:** Unreleased (HEU-850)
+**Files:** `internal/networkengine/tree_writer_reject.go`, `cmd/mlmforge/treereject.go`
+
+**Problem:** An event appended to a tree's stream that fails every redelivery leaves the tree refusing every write, and the append-only stream cannot drop it.
+
+**Solution:** `TreeWriter.Reject` takes the tree's lock, retries the stream's last event the way a write would, and appends a `tree.event_rejected` naming it only when the retry's error shows the event cannot apply. Applying the rejection soft-deletes the row the event left and moves the projected version past it. When the stream already ends with a rejection, `Reject` projects it if the store is one or two versions behind, and reports it if the store is already there.
+
+**Usage:**
+```go
+w := networkengine.NewTreeWriter(events, store, engine, networkengine.NewPostgresTreeLocker(dbURL))
+res, err := w.Reject(ctx, networkengine.RejectRequest{TreeID: tree, EventID: stuck, Reason: "sponsor never enrolled"})
+if err != nil {
+    return err // refused, or the append's outcome is unknown
+}
+if res.ProjectionErr != nil && (res.Observed == nil || res.Observed.Version < res.Version) {
+    // The rejection is in the stream and not applied. Run Reject again.
+}
+```
+
+**Notes:** A rejected event did not happen: rejecting a removal leaves the user in the tree, and version 1 still sets the tree's shape after its root is rejected. Build a new writer over a new worker for each call, as UC-NET-027 says for writes. A write or load that meets a pending rejection refuses with `RejectionPendingError`. Related: UC-NET-027, UC-NET-030.

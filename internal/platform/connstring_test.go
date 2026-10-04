@@ -310,6 +310,48 @@ func TestKeywordKeyError_AcceptsAKeyWithNoRefusedASCIIByte(t *testing.T) {
 	}
 }
 
+func TestAfterPasswordError_RefusesAnAmpersandAfterThePassword(t *testing.T) {
+	for _, connString := range []string{
+		"postgres://amp2@127.0.0.1:32770/proofdb?password=Zm9v&cXV4eHl6&sslmode=disable",
+		"postgres://h/app?password=x&sslmode=disable",
+		"postgres://h/app?pass%77ord=x&sslmode=disable",
+		"postgres://h/app?password=a&password=b",
+		"postgres://h/app?password=x&",
+		"postgres://h/app?password=x&#frag",
+		"postgres://h/app?password=x&&",
+		"postgresql://h/app?password=x&a.b",
+		"postgres://h/app?password=x&c;d",
+	} {
+		t.Run(connString, func(t *testing.T) {
+			var cse *ConnStringError
+			require.ErrorAs(t, afterPasswordError(connString), &cse)
+			require.Equal(t, "mlmforge", cse.Driver())
+			require.Equal(t, "after-password", cse.Stage())
+			require.Empty(t, cse.Part())
+		})
+	}
+}
+
+func TestAfterPasswordError_AcceptsThePasswordLast(t *testing.T) {
+	for _, connString := range []string{
+		"postgres://h/app?sslmode=disable&password=x",
+		"postgres://h/app?password=x",
+		"postgres://h/app?password=x#a&b",
+		"postgres://h/d#x?password=a&b",
+		"postgres://h/app?&password=x",
+		"postgres://h/app?sslmode=disable",
+		"postgres://h/app",
+		"postgres://h/app#password=x&y",
+		"postgres://u:pa&ss@h/app?sslmode=disable",
+		"postgres://h/app?pass%zzword=x&y",
+		"host=h password=x sslmode=disable",
+		"POSTGRES://h/app?password=x&y",
+		"",
+	} {
+		require.NoError(t, afterPasswordError(connString), connString)
+	}
+}
+
 func TestPreDriverError_RefusesWhatEitherCheckRefuses(t *testing.T) {
 	for _, tc := range []struct {
 		connString string

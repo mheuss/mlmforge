@@ -181,6 +181,50 @@ func isRefusedKeyByte(b byte) bool {
 	return true
 }
 
+// querySegment is one &-separated piece of a URL's query.
+type querySegment struct {
+	key   string
+	value string
+}
+
+// querySegments returns every &-separated segment of a postgres:// or postgresql:// string's query, empty ones included, and false for any other string.
+func querySegments(dbURL string) ([]querySegment, bool) {
+	if !strings.HasPrefix(dbURL, "postgres://") && !strings.HasPrefix(dbURL, "postgresql://") {
+		return nil, false
+	}
+	beforeFragment, _, _ := strings.Cut(dbURL, "#")
+	_, query, found := strings.Cut(beforeFragment, "?")
+	if !found {
+		return nil, true
+	}
+	var segments []querySegment
+	for _, raw := range strings.Split(query, "&") {
+		key, value, _ := strings.Cut(raw, "=")
+		if decoded, err := url.QueryUnescape(key); err == nil {
+			key = decoded
+		}
+		segments = append(segments, querySegment{key: key, value: value})
+	}
+	return segments, true
+}
+
+// afterPasswordError returns a ConnStringError when any '&' follows the start of the query's password segment, and nil otherwise.
+func afterPasswordError(dbURL string) error {
+	segments, ok := querySegments(dbURL)
+	if !ok {
+		return nil
+	}
+	for i, s := range segments {
+		if s.key == "password" {
+			if i < len(segments)-1 {
+				return &ConnStringError{driver: driverMlmforge, stage: stageAfterPassword}
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
 // rawAtError returns a ConnStringError for a postgres:// or postgresql:// string with a raw '@' after the host part, and nil otherwise.
 func rawAtError(dbURL string) error {
 	rest, ok := strings.CutPrefix(dbURL, "postgres://")

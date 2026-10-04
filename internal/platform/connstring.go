@@ -147,6 +147,40 @@ func schemeCaseError(dbURL string) error {
 	return nil
 }
 
+// keywordKeyError returns a ConnStringError for a non-URL string whose first keyword key holds an ASCII byte no server parameter name can hold, and nil otherwise.
+func keywordKeyError(dbURL string) error {
+	if strings.HasPrefix(dbURL, "postgres://") || strings.HasPrefix(dbURL, "postgresql://") {
+		return nil
+	}
+	before, _, found := strings.Cut(dbURL, "=")
+	if !found {
+		return nil
+	}
+	key := strings.Trim(before, " \t\n\r\v\f")
+	if key == "" {
+		return nil
+	}
+	for i := 0; i < len(key); i++ {
+		if isRefusedKeyByte(key[i]) {
+			return &ConnStringError{driver: driverMlmforge, stage: stageKeywordKey}
+		}
+	}
+	return nil
+}
+
+// isRefusedKeyByte reports whether b is an ASCII byte outside A-Z, a-z, 0-9, '_', '.' and '$'.
+func isRefusedKeyByte(b byte) bool {
+	switch {
+	case b >= 0x80:
+		return false
+	case 'a' <= b && b <= 'z', 'A' <= b && b <= 'Z', '0' <= b && b <= '9':
+		return false
+	case b == '_', b == '.', b == '$':
+		return false
+	}
+	return true
+}
+
 // rawAtError returns a ConnStringError for a postgres:// or postgresql:// string with a raw '@' after the host part, and nil otherwise.
 func rawAtError(dbURL string) error {
 	rest, ok := strings.CutPrefix(dbURL, "postgres://")

@@ -256,6 +256,60 @@ func TestSchemeCaseError_AcceptsEverythingElse(t *testing.T) {
 	}
 }
 
+func TestKeywordKeyError_RefusesAFirstKeyNoParameterNameCanHold(t *testing.T) {
+	for _, connString := range []string{
+		" postgres://app:Zm9v@h?binary_parameters=s3cretPW@127.0.0.1:1/app",
+		" POSTGRESQL://app:Zm9v@h?binary_parameters=s3cretPW@127.0.0.1:1/app",
+		" postgres://proofuser:pr0ofPWxyz@127.0.0.1:1/proofdb?sslmode=disable",
+		"\tpostgres://u:pw@h/db?sslmode=disable",
+		"\npostgres://u:pw@h/db?sslmode=disable",
+		"\"postgres://u:pw@h/db?sslmode=disable\"",
+		"\ufeffpostgres://u:pw@h/db?sslmode=disable",
+		"postgres:app:Zm9vQmFy@127.0.0.1:1/app?sslmode=disable",
+		"my-key=1 host=h",
+		"a.b-c=1 host=h",
+		"a.b:c=1 host=h",
+		"a.b/c=1 host=h",
+		"my key=1 host=h",
+		"a\tb=1 host=h",
+		"a\nb=1 host=h",
+		"a\"b=1 host=h",
+	} {
+		t.Run(connString, func(t *testing.T) {
+			var cse *ConnStringError
+			require.ErrorAs(t, keywordKeyError(connString), &cse)
+			require.Equal(t, "mlmforge", cse.Driver())
+			require.Equal(t, "keyword-key", cse.Stage())
+			require.Empty(t, cse.Part())
+		})
+	}
+}
+
+func TestKeywordKeyError_AcceptsAKeyWithNoRefusedASCIIByte(t *testing.T) {
+	for _, connString := range []string{
+		"host=h port=1",
+		" host=h dbname=app",
+		"\rhost=h dbname=app",
+		"\vhost=h dbname=app",
+		"\fhost=h dbname=app",
+		"Application_Name=x host=h",
+		"a$b.c=1 host=h",
+		"a.b$c=1 host=h",
+		"é.x=1 host=h",
+		"a.é=1 host=h",
+		"éx=1 host=h",
+		"a.1b=1 host=h",
+		"postgres://u:pw@h/db?x=a b",
+		"postgresql://h/app?x=y",
+		"postgres:app:pw@h/app",
+		"=x",
+		"  =x",
+		"",
+	} {
+		require.NoError(t, keywordKeyError(connString), connString)
+	}
+}
+
 func TestPreDriverError_RefusesWhatEitherCheckRefuses(t *testing.T) {
 	for _, tc := range []struct {
 		connString string

@@ -194,7 +194,7 @@ func applyFailureText(e *platform.ApplyError) string {
 	case after.Record.Version < 0:
 		lines = append(lines,
 			fmt.Sprintf("This run was %s. The record now %s.", upCommand, describeRecord(after.Record)),
-			fmt.Sprintf("Neither form of %s is safe after a failed up that leaves a record at %d.", resetCommand, after.Record.Version))
+			fmt.Sprintf("Neither form of %s is safe after a failed up when the record then reads %d.", resetCommand, after.Record.Version))
 	default:
 		lines = append(lines,
 			fmt.Sprintf("This run was %s. The record now %s.", upCommand, describeRecord(after.Record)),

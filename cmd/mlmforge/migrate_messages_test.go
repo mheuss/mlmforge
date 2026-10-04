@@ -127,7 +127,7 @@ func TestApplyFailureText_AMinusOneRecordSaysResetWillNotChangeIt(t *testing.T) 
 
 	require.Equal(t, "apply migrations: boom\n"+
 		"This run was `mlmforge migrate up`. The record now reads -1, dirty.\n"+
-		"Neither form of `mlmforge migrate reset-dirty` is safe after a failed up that leaves a record at -1.", got)
+		"Neither form of `mlmforge migrate reset-dirty` is safe after a failed up when the record then reads -1.", got)
 	requireNoForce(t, got)
 }
 
@@ -515,6 +515,7 @@ func TestApplyFailureText_SaysRunResetDirtyOnlyForABodyFailure(t *testing.T) {
 				got := applyFailureText(&platform.ApplyError{Err: errors.New("e"), After: after, Source: source, BodyFailed: bodyFailed})
 				has := strings.Contains(got, trigger)
 
+				require.NotContains(t, got, "run "+afterDownCommand, "the down trigger in up text: %s", got)
 				require.False(t, has && !bodyFailed, "the trigger without a body failure: %s", got)
 				if source == readable {
 					want := bodyFailed && (after.Err != nil || (after.Record.Dirty && after.Record.Version >= 0))
@@ -625,7 +626,7 @@ func TestDirtyText_ARecordBelowMinusOneNamesTheValueItRead(t *testing.T) {
 
 func TestRollbackFailureText_NeverContainsTheUpTrigger(t *testing.T) {
 	trigger := "run " + resetCommand
-	sources := []platform.SourceInfo{sevenSource, {Path: "/m"}, {Path: "/m", Err: errors.New("permission denied")}, {Path: "/m", Next: 1, HasNext: true}, {Path: "/m", InSource: true}}
+	sources := []platform.SourceInfo{sevenSource, {Path: "/m"}, {Path: "/m", Err: errors.New("permission denied")}, {Path: "/m", Next: 1, HasNext: true}, {Path: "/m", InSource: true}, {Path: "/m", InSource: true, Next: 8, HasNext: true}}
 	reads := []platform.RecordRead{
 		sevenDirtyAfterDown,
 		{Err: errors.New("connection reset")},

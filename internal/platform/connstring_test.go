@@ -274,6 +274,8 @@ func TestKeywordKeyError_RefusesAFirstKeyNoParameterNameCanHold(t *testing.T) {
 		"a\tb=1 host=h",
 		"a\nb=1 host=h",
 		"a\"b=1 host=h",
+		"_PQ_.a-b=1 host=h",
+		"_Pq_.a-b=1 host=h",
 	} {
 		t.Run(connString, func(t *testing.T) {
 			var cse *ConnStringError
@@ -303,6 +305,8 @@ func TestKeywordKeyError_AcceptsAKeyWithNoRefusedASCIIByte(t *testing.T) {
 		"a.é=1 host=h",
 		"éx=1 host=h",
 		"a.1b=1 host=h",
+		"_pq_.a-b=1 host=h",
+		"_pq_.x=1 host=h",
 		"postgres://u:pw@h/db?x=a b",
 		"postgresql://h/app?x=y",
 		"postgres:app:pw@h/app",
@@ -332,6 +336,8 @@ func TestAfterPasswordError_RefusesAnAmpersandAfterThePassword(t *testing.T) {
 		"postgres://h/app?%0Bpassword=a&b=c",
 		"postgres://h/app?password%0C=a&b=c",
 		"postgres://h/app?%C2%A0password=a&b=c",
+		"postgres://h/app?PASSWORD=x&y",
+		"postgres://h/app?Password=x&y",
 	} {
 		t.Run(connString, func(t *testing.T) {
 			var cse *ConnStringError
@@ -357,8 +363,6 @@ func TestAfterPasswordError_AcceptsThePasswordLast(t *testing.T) {
 		"postgres://h/app?pass%zzword=x&y",
 		"host=h password=x sslmode=disable",
 		"POSTGRES://h/app?password=x&y",
-		"postgres://h/app?PASSWORD=x&y",
-		"postgres://h/app?Password=x&y",
 		"",
 	} {
 		require.NoError(t, afterPasswordError(connString), connString)
@@ -380,6 +384,8 @@ func TestRawPlusError_RefusesARawPlusInThePassword(t *testing.T) {
 		"postgres://h/app?%0Bpassword=a+b",
 		"postgres://h/app?password%0C=a+b",
 		"postgres://h/app?%C2%A0password=a+b",
+		"postgres://h/app?PASSWORD=a+b",
+		"postgres://h/app?Password=a+b",
 	} {
 		t.Run(connString, func(t *testing.T) {
 			var cse *ConnStringError
@@ -401,8 +407,6 @@ func TestRawPlusError_AcceptsAnEncodedPlusAndAPlusElsewhere(t *testing.T) {
 		"postgres://h/app?password=x&password=a+b",
 		"host=h password=a+b",
 		"POSTGRES://h/app?password=a+b",
-		"postgres://h/app?PASSWORD=a+b",
-		"postgres://h/app?Password=a+b",
 		"",
 	} {
 		require.NoError(t, rawPlusError(connString), connString)

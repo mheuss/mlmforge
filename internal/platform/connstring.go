@@ -162,7 +162,8 @@ func keywordKeyError(dbURL string) error {
 		return nil
 	}
 	key := strings.Trim(before, " \t\n\r\v\f")
-	if key == "" {
+	// Removing this exemption refuses a string that connects today.
+	if key == "" || strings.HasPrefix(key, "_pq_.") {
 		return nil
 	}
 	for i := 0; i < len(key); i++ {
@@ -213,9 +214,9 @@ func querySegments(dbURL string) ([]querySegment, bool) {
 	return segments, true
 }
 
-// isPasswordKey reports whether a decoded query key names the password once surrounding whitespace is trimmed.
+// isPasswordKey reports whether a decoded query key reads "password" in any letter case once surrounding whitespace is trimmed.
 func isPasswordKey(key string) bool {
-	return strings.TrimFunc(key, unicode.IsSpace) == "password"
+	return strings.EqualFold(strings.TrimFunc(key, unicode.IsSpace), "password")
 }
 
 // afterPasswordError returns a ConnStringError when any '&' follows the start of the query's first password segment, and nil otherwise.

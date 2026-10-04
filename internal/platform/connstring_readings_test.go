@@ -150,9 +150,11 @@ func TestDriverReadings_PgxSendsANonURLFirstKeyAsAParameterName(t *testing.T) {
 	}{
 		{" " + tail + "=disable", map[string]string{tail: "disable"}},
 		{"\t" + tail + "=disable", map[string]string{tail: "disable"}},
+		{"\n" + tail + "=disable", map[string]string{tail: "disable"}},
 		{"\"" + tail + "=disable\"", map[string]string{"\"" + tail: "disable\""}},
 		{"\ufeff" + tail + "=disable", map[string]string{"\ufeff" + tail: "disable"}},
 		{"postgres:app:Zm9vQmFy@127.0.0.1:1/app?sslmode=disable", map[string]string{"postgres:app:Zm9vQmFy@127.0.0.1:1/app?sslmode": "disable"}},
+		{" POSTGRESQL://app:Zm9v@h?binary_parameters=s3cretPW@127.0.0.1:1/app", map[string]string{"POSTGRESQL://app:Zm9v@h?binary_parameters": "s3cretPW@127.0.0.1:1/app"}}, // gitleaks:allow
 	} {
 		t.Run(tc.connString, func(t *testing.T) {
 			cfg, err := pgconn.ParseConfig(tc.connString)
@@ -267,21 +269,23 @@ func TestDriverReadings_LibPQTrimsSpaceAroundAKeyAndNeitherDriverFoldsCase(t *te
 	for _, tc := range []struct {
 		connString string
 		pqPassword string
+		pgxParams  map[string]string
 	}{
-		{"postgres://u@h/app?+password=a&b=c", "a"},
-		{"postgres://u@h/app?password+=a+b", "a b"},
-		{"postgres://u@h/app?%09password=a+b", "a b"},
-		{"postgres://u@h/app?password%0A=a+b", "a b"},
-		{"postgres://u@h/app?%0Bpassword=a+b", "a b"},
-		{"postgres://u@h/app?password%0C=a+b", "a b"},
-		{"postgres://u@h/app?%C2%A0password=a+b", "a b"},
-		{"postgres://u@h/app?PASSWORD=a", ""},
-		{"postgres://u@h/app?Password=a", ""},
+		{"postgres://u@h/app?+password=a&b=c", "a", map[string]string{" password": "a", "b": "c"}},
+		{"postgres://u@h/app?password+=a+b", "a b", map[string]string{"password ": "a b"}},
+		{"postgres://u@h/app?%09password=a+b", "a b", map[string]string{"\tpassword": "a b"}},
+		{"postgres://u@h/app?password%0A=a+b", "a b", map[string]string{"password\n": "a b"}},
+		{"postgres://u@h/app?%0Bpassword=a+b", "a b", map[string]string{"\vpassword": "a b"}},
+		{"postgres://u@h/app?password%0C=a+b", "a b", map[string]string{"password\f": "a b"}},
+		{"postgres://u@h/app?%C2%A0password=a+b", "a b", map[string]string{"\u00a0password": "a b"}},
+		{"postgres://u@h/app?PASSWORD=a", "", map[string]string{"PASSWORD": "a"}},
+		{"postgres://u@h/app?Password=a", "", map[string]string{"Password": "a"}},
 	} {
 		t.Run(tc.connString, func(t *testing.T) {
 			cfg, err := pgconn.ParseConfig(tc.connString)
 			require.NoError(t, err)
 			require.Empty(t, cfg.Password, "pgx")
+			require.Equal(t, tc.pgxParams, cfg.RuntimeParams, "pgx parameters")
 
 			got := libPQOption(t, tc.connString, "password")
 			require.Equal(t, tc.pqPassword, got, "lib/pq password")

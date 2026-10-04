@@ -40,6 +40,9 @@ func TestConnStringCases_NoPasswordOverlapsTheTextAroundIt(t *testing.T) {
 			PreDriverText(t, "raw-at", "query"),
 			PreDriverText(t, "raw-at", "fragment"),
 			PreDriverText(t, "scheme-case", ""),
+			PreDriverText(t, "keyword-key", ""),
+			PreDriverText(t, "after-password", ""),
+			PreDriverText(t, "raw-plus", ""),
 		}
 		for _, k := range known {
 			require.Empty(t, PasswordWindows(k, tc.Password), "%s overlaps %q", tc.Name, k)

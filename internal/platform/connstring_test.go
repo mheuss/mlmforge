@@ -40,6 +40,9 @@ func TestConnStringError_NamesThePreDriverStageAndPart(t *testing.T) {
 		{&ConnStringError{driver: driverMlmforge, stage: stageRawAt, part: partQuery}, "raw-at", "query"},
 		{&ConnStringError{driver: driverMlmforge, stage: stageRawAt, part: partFragment}, "raw-at", "fragment"},
 		{&ConnStringError{driver: driverMlmforge, stage: stageSchemeCase}, "scheme-case", ""},
+		{&ConnStringError{driver: driverMlmforge, stage: stageKeywordKey}, "keyword-key", ""},
+		{&ConnStringError{driver: driverMlmforge, stage: stageAfterPassword}, "after-password", ""},
+		{&ConnStringError{driver: driverMlmforge, stage: stageRawPlus}, "raw-plus", ""},
 	} {
 		t.Run(tc.stage+"/"+tc.part, func(t *testing.T) {
 			require.Equal(t, testutil.PreDriverText(t, tc.stage, tc.part), tc.err.Error())

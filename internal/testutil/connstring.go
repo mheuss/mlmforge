@@ -204,6 +204,9 @@ var preDriverTexts = map[string]string{
 	"raw-at/query":    "mlmforge found a raw @ after the host part, in the connection string's query. If a password holds @ / ? or #, percent-encode them. Write any other literal @ there as %40. The connection string is withheld because it can contain a password.",
 	"raw-at/fragment": "mlmforge found a raw @ after the host part, in the connection string's fragment. If a password holds @ / ? or #, percent-encode them. Write any other literal @ there as %40. The connection string is withheld because it can contain a password.",
 	"scheme-case/":    "mlmforge found a connection string whose scheme is not all lowercase. Write postgres:// or postgresql:// in lowercase. The connection string is withheld because it can contain a password.",
+	"keyword-key/":    "mlmforge found a connection string that is not a postgres:// or postgresql:// URL, and its first keyword holds a character no setting name can hold. Check for a stray character, such as a space or a quote, before postgres://. The connection string is withheld because it can contain a password.",
+	"after-password/": "mlmforge found a query key or & after password in the connection string. Put password last in the query, or move the password into the user part before the @. Write each & in the password as %26. The connection string is withheld because it can contain a password.",
+	"raw-plus/":       "mlmforge found a raw + in the connection string's query password, which is read as a space. Write a plus as %2B and a space as %20. The connection string is withheld because it can contain a password.",
 }
 
 // PreDriverText returns the text a connection string refused before any driver is expected to print for stage and part.

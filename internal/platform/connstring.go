@@ -22,11 +22,14 @@ const (
 type connStage string
 
 const (
-	stageParse      connStage = "parse"
-	stageScheme     connStage = "scheme"
-	stageRefused    connStage = "refused"
-	stageRawAt      connStage = "raw-at"
-	stageSchemeCase connStage = "scheme-case"
+	stageParse         connStage = "parse"
+	stageScheme        connStage = "scheme"
+	stageRefused       connStage = "refused"
+	stageRawAt         connStage = "raw-at"
+	stageSchemeCase    connStage = "scheme-case"
+	stageKeywordKey    connStage = "keyword-key"
+	stageAfterPassword connStage = "after-password"
+	stageRawPlus       connStage = "raw-plus"
 )
 
 type connPart string
@@ -47,7 +50,7 @@ type ConnStringError struct {
 // Driver names the driver whose call site refused the connection string, or mlmforge for a check that runs before any driver.
 func (e *ConnStringError) Driver() string { return string(e.driver) }
 
-// Stage is "parse" when a URL-form string failed to parse, "scheme" when migrate refused the string's scheme, "raw-at" or "scheme-case" when mlmforge refused it before any driver, and "refused" otherwise.
+// Stage is "parse" when a URL-form string failed to parse, "scheme" when migrate refused the string's scheme, "raw-at", "scheme-case", "keyword-key", "after-password" or "raw-plus" when mlmforge refused it before any driver, and "refused" otherwise.
 func (e *ConnStringError) Stage() string { return string(e.stage) }
 
 // Part names where a raw-at refusal found the '@', and is empty for every other stage.
@@ -64,6 +67,21 @@ func (e *ConnStringError) Error() string {
 			" The connection string is withheld because it can contain a password."
 	case stageSchemeCase:
 		return "mlmforge found a connection string whose scheme is not all lowercase. Write postgres:// or postgresql:// in lowercase." +
+			" The connection string is withheld because it can contain a password."
+	case stageKeywordKey:
+		return "mlmforge found a connection string that is not a postgres:// or postgresql:// URL, and its first keyword holds a character no setting name can hold." +
+			" Check for a stray character, such as a space or a quote, before postgres://." +
+			" The connection string is withheld because it can contain a password."
+	case stageAfterPassword:
+		// Concatenated, not formatted: the text holds %26.
+		return "mlmforge found a query key or & after password in the connection string." +
+			" Put password last in the query, or move the password into the user part before the @." +
+			" Write each & in the password as %26." +
+			" The connection string is withheld because it can contain a password."
+	case stageRawPlus:
+		// Concatenated, not formatted: the text holds %2B and %20.
+		return "mlmforge found a raw + in the connection string's query password, which is read as a space." +
+			" Write a plus as %2B and a space as %20." +
 			" The connection string is withheld because it can contain a password."
 	}
 	what := "could not parse the connection string"

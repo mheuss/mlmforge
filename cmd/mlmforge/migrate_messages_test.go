@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -129,7 +130,8 @@ func TestApplyFailureText_AFailedReReadWithoutABodyFailureSaysNotToReset(t *test
 	})
 
 	require.Equal(t, "apply migrations: boom\nThe record could not be read after the failure: connection reset.\n"+
-		"The error does not show that Postgres refused the migration file. `mlmforge migrate reset-dirty` is not safe after this failure.", got)
+		"The error does not show that Postgres refused the migration file. "+
+		"Neither `mlmforge migrate reset-dirty` nor `mlmforge migrate reset-dirty --after-failed-down` is safe after this failure.", got)
 	requireNoForce(t, got)
 }
 
@@ -144,7 +146,7 @@ func TestApplyFailureText_ACleanRecordAddsNothing(t *testing.T) {
 
 func TestApplyFailureText_AMinusOneRecordSaysResetWillNotChangeIt(t *testing.T) {
 	got := applyFailureText(&platform.ApplyError{
-		Err: errors.New("boom"), After: platform.RecordRead{Record: platform.Record{Version: -1, Dirty: true}},
+		Err: errors.New("boom"), After: platform.RecordRead{Record: platform.Record{Version: -1, Dirty: true}}, BodyFailed: true,
 	})
 
 	require.Equal(t, "apply migrations: boom\n"+
@@ -203,7 +205,7 @@ func TestVersionText_ACleanRecordBelowMinusOnePrintsItsValue(t *testing.T) {
 
 func TestApplyFailureText_ARecordBelowMinusOneNamesTheValueItRead(t *testing.T) {
 	got := applyFailureText(&platform.ApplyError{
-		Err: errors.New("boom"), After: platform.RecordRead{Record: platform.Record{Version: -2, Dirty: true}},
+		Err: errors.New("boom"), After: platform.RecordRead{Record: platform.Record{Version: -2, Dirty: true}}, BodyFailed: true,
 	})
 
 	require.Equal(t, "apply migrations: boom\n"+
@@ -354,7 +356,7 @@ func TestApplyFailureText_WithoutAPositiveBodyFailureNeverOffersTheReset(t *test
 	require.Equal(t, "apply migrations: driver: bad connection\n"+
 		"This run was `mlmforge migrate up`. The record now reads 6, dirty.\n"+
 		"The error does not show that Postgres refused the migration file. "+
-		"`mlmforge migrate reset-dirty` is not safe after this failure.", got)
+		"Neither `mlmforge migrate reset-dirty` nor `mlmforge migrate reset-dirty --after-failed-down` is safe after this failure.", got)
 	requireNoForce(t, got)
 }
 
@@ -393,4 +395,34 @@ func TestApplyFailureText_SaysRunResetDirtyOnlyForABodyFailure(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestApplyFailureText_ANegativeRecordAfterAnUnclearFailureOffersNeitherReset(t *testing.T) {
+	for _, version := range []int{-1, -2} {
+		got := applyFailureText(&platform.ApplyError{
+			Err: errors.New("boom"), After: platform.RecordRead{Record: platform.Record{Version: version, Dirty: true}},
+		})
+
+		require.Equal(t, fmt.Sprintf("apply migrations: boom\n"+
+			"This run was `mlmforge migrate up`. The record now reads %d, dirty.\n"+
+			"The error does not show that Postgres refused the migration file. "+
+			"Neither `mlmforge migrate reset-dirty` nor `mlmforge migrate reset-dirty --after-failed-down` is safe after this failure.", version), got)
+		requireNoForce(t, got)
+	}
+}
+
+func TestApplyFailureText_AnUnreadableDirectoryAfterABodyFailureStillGivesTheInstruction(t *testing.T) {
+	got := applyFailureText(&platform.ApplyError{
+		Err:        errors.New("migration failed: detail"),
+		After:      platform.RecordRead{Record: sixDirty},
+		Source:     platform.SourceInfo{Path: "/m", Err: errors.New("permission denied")},
+		BodyFailed: true,
+	})
+
+	require.Equal(t, "apply migrations: migration failed: detail\n"+
+		"This run was `mlmforge migrate up`. The record now reads 6, dirty.\n"+
+		"The migrations directory /m could not be read for migration 6: permission denied.\n"+
+		"The error shows Postgres refused the migration file. Fix the directory and the cause shown above, "+
+		"run `mlmforge migrate reset-dirty`, then run `mlmforge migrate up`.", got)
+	requireNoForce(t, got)
 }

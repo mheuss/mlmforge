@@ -10,12 +10,14 @@ import (
 )
 
 const (
-	upCommand      = "`mlmforge migrate up`"
-	downCommand    = "`mlmforge migrate down`"
-	resetCommand   = "`mlmforge migrate reset-dirty`"
-	versionCommand = "`mlmforge migrate version`"
+	upCommand        = "`mlmforge migrate up`"
+	downCommand      = "`mlmforge migrate down`"
+	resetCommand     = "`mlmforge migrate reset-dirty`"
+	afterDownCommand = "`mlmforge migrate reset-dirty --after-failed-down`"
+	versionCommand   = "`mlmforge migrate version`"
 
-	noResetText = "The error does not show that Postgres refused the migration file. " + resetCommand + " is not safe after this failure."
+	refusedFileText = "The error shows Postgres refused the migration file."
+	noResetText     = "The error does not show that Postgres refused the migration file. Neither " + resetCommand + " nor " + afterDownCommand + " is safe after this failure."
 
 	unchangedText = "The record was not changed."
 )
@@ -55,7 +57,8 @@ func resetDoes(src platform.SourceInfo) string {
 func upRecovery(rec platform.Record, src platform.SourceInfo, fix string) string {
 	switch {
 	case src.Err != nil:
-		return fmt.Sprintf("The migrations directory %s could not be read for migration %d: %v.", src.Path, rec.Version, src.Err)
+		return fmt.Sprintf("The migrations directory %s could not be read for migration %d: %v.\n%s Fix the directory and the cause shown above, run %s, then run %s.",
+			src.Path, rec.Version, src.Err, refusedFileText, resetCommand, upCommand)
 	case !src.InSource:
 		return fmt.Sprintf("The migrations directory %s has no migration %d, so %s will refuse.", src.Path, rec.Version, resetCommand)
 	}
@@ -134,14 +137,14 @@ func applyFailureText(e *platform.ApplyError) string {
 			fmt.Sprintf("The error shows Postgres refused the migration file. If %s then shows the record dirty, fix the cause shown above, run %s, then run %s.",
 				versionCommand, resetCommand, upCommand))
 	case !after.Record.Dirty:
-	case after.Record.Version < 0:
-		lines = append(lines,
-			fmt.Sprintf("This run was %s. The record now %s.", upCommand, describeRecord(after.Record)),
-			resetRefusesAt(after.Record.Version))
 	case !e.BodyFailed:
 		lines = append(lines,
 			fmt.Sprintf("This run was %s. The record now %s.", upCommand, describeRecord(after.Record)),
 			noResetText)
+	case after.Record.Version < 0:
+		lines = append(lines,
+			fmt.Sprintf("This run was %s. The record now %s.", upCommand, describeRecord(after.Record)),
+			resetRefusesAt(after.Record.Version))
 	default:
 		lines = append(lines,
 			fmt.Sprintf("This run was %s. The record now %s.", upCommand, describeRecord(after.Record)),

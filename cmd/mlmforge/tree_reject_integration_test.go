@@ -108,7 +108,7 @@ func TestTreeRejectEvent_RecoversACompensatedRoot(t *testing.T) {
 	rootAdded := appendUnprojected(t, events, tree, 0, networkengine.EventTypeRootAdded, networkengine.RootAddedPayload{
 		TreeID: tree, UserID: root, SponsorID: root, TreeType: "unilevel", EnrolledAt: rejectTime,
 	})
-	// The consumer's two store calls when the engine refuses add_root.
+	// The compensated state: the root's row inserted, then undone.
 	require.NoError(t, store.ProjectInsert(t.Context(), networkengine.TreeNodeRow{
 		ID: rootAdded.ID, TreeID: tree, UserID: root, SponsorID: &root, Depth: 0, EnrolledAt: rejectTime,
 	}, 1))

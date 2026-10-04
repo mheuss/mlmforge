@@ -40,6 +40,9 @@ func TestConnStringCases_NoPasswordOverlapsTheTextAroundIt(t *testing.T) {
 			PreDriverText(t, "raw-at", "query"),
 			PreDriverText(t, "raw-at", "fragment"),
 			PreDriverText(t, "scheme-case", ""),
+			PreDriverText(t, "keyword-key", ""),
+			PreDriverText(t, "after-password", ""),
+			PreDriverText(t, "raw-plus", ""),
 		}
 		for _, k := range known {
 			require.Empty(t, PasswordWindows(k, tc.Password), "%s overlaps %q", tc.Name, k)
@@ -66,6 +69,24 @@ func TestResolveRefusedCases_EachStringCarriesItsPassword(t *testing.T) {
 		require.Contains(t, []string{TwinParsers, TwinPgxRefuses, TwinResolve}, tc.TwinCheck, tc.Name)
 		require.NotEmpty(t, PreDriverText(t, tc.Stage, tc.Part), tc.Name)
 	}
+}
+
+func TestResolveRefusedCases_EachQueryStageNamesHowItsTwinCompares(t *testing.T) {
+	queryRows := 0
+	for _, tc := range ResolveRefusedCases() {
+		switch tc.Stage {
+		case "after-password", "raw-plus":
+			queryRows++
+			require.Contains(t, []string{SameReading, SameCredentials}, tc.SameTarget, tc.Name)
+		default:
+			require.Empty(t, tc.SameTarget, tc.Name)
+		}
+		require.Equal(t, tc.SameTarget == SameCredentials, tc.TwinPassword != "", tc.Name)
+		if tc.SameTarget != SameCredentials {
+			require.Empty(t, tc.SplitKeys, tc.Name)
+		}
+	}
+	require.Equal(t, 12, queryRows, "after-password and raw-plus rows")
 }
 
 func TestResolveRefusedCases_NoPasswordOverlapsTheTextAroundIt(t *testing.T) {
@@ -138,13 +159,13 @@ func TestResolveRefusedCases_EachDialableTwinIsAMustReachRow(t *testing.T) {
 	for _, tc := range ResolveRefusedCases() {
 		u, err := url.Parse(tc.Twin)
 		require.NoError(t, err, tc.Name)
-		if u.Hostname() != "127.0.0.1" {
+		if u.Host != "127.0.0.1:1" {
 			continue
 		}
 		checked++
 		require.True(t, reaches[tc.Twin], "%s: twin %q is not a ReachesDriverCases row", tc.Name, tc.Twin)
 	}
-	require.Equal(t, 2, checked, "twins that dial 127.0.0.1")
+	require.Equal(t, 19, checked, "twins that dial 127.0.0.1:1")
 }
 
 func TestClearLibPQEnv_UnsetsEveryVariableLibPQRefusesOrPanicsOn(t *testing.T) {

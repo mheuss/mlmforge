@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"unicode"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -22,11 +23,14 @@ const (
 type connStage string
 
 const (
-	stageParse      connStage = "parse"
-	stageScheme     connStage = "scheme"
-	stageRefused    connStage = "refused"
-	stageRawAt      connStage = "raw-at"
-	stageSchemeCase connStage = "scheme-case"
+	stageParse         connStage = "parse"
+	stageScheme        connStage = "scheme"
+	stageRefused       connStage = "refused"
+	stageRawAt         connStage = "raw-at"
+	stageSchemeCase    connStage = "scheme-case"
+	stageKeywordKey    connStage = "keyword-key"
+	stageAfterPassword connStage = "after-password"
+	stageRawPlus       connStage = "raw-plus"
 )
 
 type connPart string
@@ -47,7 +51,7 @@ type ConnStringError struct {
 // Driver names the driver whose call site refused the connection string, or mlmforge for a check that runs before any driver.
 func (e *ConnStringError) Driver() string { return string(e.driver) }
 
-// Stage is "parse" when a URL-form string failed to parse, "scheme" when migrate refused the string's scheme, "raw-at" or "scheme-case" when mlmforge refused it before any driver, and "refused" otherwise.
+// Stage names the check or parse step that refused the connection string.
 func (e *ConnStringError) Stage() string { return string(e.stage) }
 
 // Part names where a raw-at refusal found the '@', and is empty for every other stage.
@@ -64,6 +68,22 @@ func (e *ConnStringError) Error() string {
 			" The connection string is withheld because it can contain a password."
 	case stageSchemeCase:
 		return "mlmforge found a connection string whose scheme is not all lowercase. Write postgres:// or postgresql:// in lowercase." +
+			" The connection string is withheld because it can contain a password."
+	case stageKeywordKey:
+		return "mlmforge found a connection string that is not a postgres:// or postgresql:// URL, and its first keyword holds a character no setting name can hold." +
+			" Check for a stray character, such as a space or a quote, before postgres://." +
+			" The connection string is withheld because it can contain a password."
+	case stageAfterPassword:
+		// Concatenated, not formatted: the text holds %26.
+		return "mlmforge found a query key or & after password in the connection string." +
+			" Put password last in the query, or move the password into the user part before the @." +
+			" Write each & in the password as %26." +
+			" The connection string is withheld because it can contain a password."
+	case stageRawPlus:
+		// Concatenated, not formatted: the text holds %2B and %20.
+		return "mlmforge found a raw + in the connection string's query password." +
+			" A raw + in a query value is read as a space." +
+			" Write a plus as %2B and a space as %20." +
 			" The connection string is withheld because it can contain a password."
 	}
 	what := "could not parse the connection string"
@@ -113,10 +133,13 @@ func migrateSchemeError(dbURL string) error {
 
 // PreDriverError returns a ConnStringError for a connection string mlmforge refuses before any driver sees it, and nil otherwise.
 func PreDriverError(dbURL string) error {
-	if err := schemeCaseError(dbURL); err != nil {
-		return err
+	// Order matters: where two checks refuse one string, the earlier check's stage is reported.
+	for _, check := range []func(string) error{schemeCaseError, keywordKeyError, rawAtError, afterPasswordError, rawPlusError} {
+		if err := check(dbURL); err != nil {
+			return err
+		}
 	}
-	return rawAtError(dbURL)
+	return nil
 }
 
 // schemeCaseError returns a ConnStringError for a string whose postgres:// or postgresql:// scheme is not written in lowercase, and nil otherwise.
@@ -124,6 +147,107 @@ func schemeCaseError(dbURL string) error {
 	for _, scheme := range []string{"postgres://", "postgresql://"} {
 		if len(dbURL) >= len(scheme) && strings.EqualFold(dbURL[:len(scheme)], scheme) && !strings.HasPrefix(dbURL, scheme) {
 			return &ConnStringError{driver: driverMlmforge, stage: stageSchemeCase}
+		}
+	}
+	return nil
+}
+
+// keywordKeyError returns a ConnStringError for a non-URL string whose first keyword key holds an ASCII byte outside A-Z a-z 0-9 _ . $, unless it starts with _pq_., and nil otherwise.
+func keywordKeyError(dbURL string) error {
+	if strings.HasPrefix(dbURL, "postgres://") || strings.HasPrefix(dbURL, "postgresql://") {
+		return nil
+	}
+	before, _, found := strings.Cut(dbURL, "=")
+	if !found {
+		return nil
+	}
+	key := strings.Trim(before, " \t\n\r\v\f")
+	// Removing the _pq_. exemption refuses a string that connects today.
+	if key == "" || strings.HasPrefix(key, "_pq_.") {
+		return nil
+	}
+	for i := 0; i < len(key); i++ {
+		if isRefusedKeyByte(key[i]) {
+			return &ConnStringError{driver: driverMlmforge, stage: stageKeywordKey}
+		}
+	}
+	return nil
+}
+
+// isRefusedKeyByte reports whether b is an ASCII byte outside A-Z, a-z, 0-9, '_', '.' and '$'.
+func isRefusedKeyByte(b byte) bool {
+	switch {
+	case b >= 0x80:
+		return false
+	case 'a' <= b && b <= 'z', 'A' <= b && b <= 'Z', '0' <= b && b <= '9':
+		return false
+	case b == '_', b == '.', b == '$':
+		return false
+	}
+	return true
+}
+
+// querySegment is one &-separated piece of a URL's query.
+type querySegment struct {
+	key   string
+	value string
+}
+
+// querySegments returns every &-separated segment of a postgres:// or postgresql:// string's query, empty ones included, and false for any other string.
+func querySegments(dbURL string) ([]querySegment, bool) {
+	if !strings.HasPrefix(dbURL, "postgres://") && !strings.HasPrefix(dbURL, "postgresql://") {
+		return nil, false
+	}
+	beforeFragment, _, _ := strings.Cut(dbURL, "#")
+	_, query, found := strings.Cut(beforeFragment, "?")
+	if !found {
+		return nil, true
+	}
+	var segments []querySegment
+	for _, raw := range strings.Split(query, "&") {
+		key, value, _ := strings.Cut(raw, "=")
+		if decoded, err := url.QueryUnescape(key); err == nil {
+			key = decoded
+		}
+		segments = append(segments, querySegment{key: key, value: value})
+	}
+	return segments, true
+}
+
+// isPasswordKey reports whether a decoded query key reads "password" in any letter case once surrounding whitespace is trimmed.
+func isPasswordKey(key string) bool {
+	return strings.EqualFold(strings.TrimFunc(key, unicode.IsSpace), "password")
+}
+
+// afterPasswordError returns a ConnStringError when any '&' follows the start of the query's first password segment, and nil otherwise.
+func afterPasswordError(dbURL string) error {
+	segments, ok := querySegments(dbURL)
+	if !ok {
+		return nil
+	}
+	for i, s := range segments {
+		if isPasswordKey(s.key) {
+			if i < len(segments)-1 {
+				return &ConnStringError{driver: driverMlmforge, stage: stageAfterPassword}
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
+// rawPlusError returns a ConnStringError when the query's first password value holds a raw '+', and nil otherwise.
+func rawPlusError(dbURL string) error {
+	segments, ok := querySegments(dbURL)
+	if !ok {
+		return nil
+	}
+	for _, s := range segments {
+		if isPasswordKey(s.key) {
+			if strings.Contains(s.value, "+") {
+				return &ConnStringError{driver: driverMlmforge, stage: stageRawPlus}
+			}
+			return nil
 		}
 	}
 	return nil

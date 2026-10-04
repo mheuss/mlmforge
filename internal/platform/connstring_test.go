@@ -40,6 +40,9 @@ func TestConnStringError_NamesThePreDriverStageAndPart(t *testing.T) {
 		{&ConnStringError{driver: driverMlmforge, stage: stageRawAt, part: partQuery}, "raw-at", "query"},
 		{&ConnStringError{driver: driverMlmforge, stage: stageRawAt, part: partFragment}, "raw-at", "fragment"},
 		{&ConnStringError{driver: driverMlmforge, stage: stageSchemeCase}, "scheme-case", ""},
+		{&ConnStringError{driver: driverMlmforge, stage: stageKeywordKey}, "keyword-key", ""},
+		{&ConnStringError{driver: driverMlmforge, stage: stageAfterPassword}, "after-password", ""},
+		{&ConnStringError{driver: driverMlmforge, stage: stageRawPlus}, "raw-plus", ""},
 	} {
 		t.Run(tc.stage+"/"+tc.part, func(t *testing.T) {
 			require.Equal(t, testutil.PreDriverText(t, tc.stage, tc.part), tc.err.Error())
@@ -253,14 +256,183 @@ func TestSchemeCaseError_AcceptsEverythingElse(t *testing.T) {
 	}
 }
 
-func TestPreDriverError_RefusesWhatEitherCheckRefuses(t *testing.T) {
+func TestKeywordKeyError_RefusesAFirstKeyNoParameterNameCanHold(t *testing.T) {
+	for _, connString := range []string{
+		" postgres://app:Zm9v@h?binary_parameters=s3cretPW@127.0.0.1:1/app",
+		" POSTGRESQL://app:Zm9v@h?binary_parameters=s3cretPW@127.0.0.1:1/app",
+		" postgres://proofuser:pr0ofPWxyz@127.0.0.1:1/proofdb?sslmode=disable",
+		"\tpostgres://u:pw@h/db?sslmode=disable",
+		"\npostgres://u:pw@h/db?sslmode=disable",
+		"\"postgres://u:pw@h/db?sslmode=disable\"",
+		"\ufeffpostgres://u:pw@h/db?sslmode=disable",
+		"postgres:app:Zm9vQmFy@127.0.0.1:1/app?sslmode=disable",
+		"my-key=1 host=h",
+		"a.b-c=1 host=h",
+		"a.b:c=1 host=h",
+		"a.b/c=1 host=h",
+		"my key=1 host=h",
+		"a\tb=1 host=h",
+		"a\nb=1 host=h",
+		"a\"b=1 host=h",
+		"_PQ_.a-b=1 host=h",
+		"_Pq_.a-b=1 host=h",
+		"_pq_a-b=1 host=h",
+		"x_pq_.a-b=1 host=h",
+		" postgres://u:pw@h/_pq_.a?x=1",
+	} {
+		t.Run(connString, func(t *testing.T) {
+			var cse *ConnStringError
+			require.ErrorAs(t, keywordKeyError(connString), &cse)
+			require.Equal(t, "mlmforge", cse.Driver())
+			require.Equal(t, "keyword-key", cse.Stage())
+			require.Empty(t, cse.Part())
+		})
+	}
+}
+
+func TestKeywordKeyError_AcceptsAKeyWithNoRefusedASCIIByte(t *testing.T) {
+	for _, connString := range []string{
+		"host=h port=1",
+		" host=h dbname=app",
+		"\rhost=h dbname=app",
+		"\vhost=h dbname=app",
+		"\fhost=h dbname=app",
+		"\thost=h dbname=app",
+		"\nhost=h dbname=app",
+		"host =h",
+		"host\t=h",
+		"Application_Name=x host=h",
+		"a$b.c=1 host=h",
+		"a.b$c=1 host=h",
+		"é.x=1 host=h",
+		"a.é=1 host=h",
+		"éx=1 host=h",
+		"a.1b=1 host=h",
+		"_pq_.a-b=1 host=h",
+		"_pq_.x=1 host=h",
+		" _pq_.a-b=1 host=h",
+		"\t_pq_.a-b=1 host=h",
+		"postgres://u:pw@h/db?x=a b",
+		"postgresql://h/app?x=y",
+		"postgres:app:pw@h/app",
+		"=x",
+		"  =x",
+		"",
+	} {
+		require.NoError(t, keywordKeyError(connString), connString)
+	}
+}
+
+func TestAfterPasswordError_RefusesAnAmpersandAfterThePassword(t *testing.T) {
+	for _, connString := range []string{
+		"postgres://amp2@127.0.0.1:32770/proofdb?password=Zm9v&cXV4eHl6&sslmode=disable",
+		"postgres://h/app?password=x&sslmode=disable",
+		"postgres://h/app?pass%77ord=x&sslmode=disable",
+		"postgres://h/app?password=a&password=b",
+		"postgres://h/app?password=x&",
+		"postgres://h/app?password=x&#frag",
+		"postgres://h/app?password=x&&",
+		"postgresql://h/app?password=x&a.b",
+		"postgres://h/app?password=x&c;d",
+		"postgres://h/app?+password=a&b=c",
+		"postgres://h/app?password+=a&b=c",
+		"postgres://h/app?%09password=a&b=c",
+		"postgres://h/app?password%0A=a&b=c",
+		"postgres://h/app?%0Bpassword=a&b=c",
+		"postgres://h/app?password%0C=a&b=c",
+		"postgres://h/app?%C2%A0password=a&b=c",
+		"postgres://h/app?PASSWORD=x&y",
+		"postgres://h/app?Password=x&y",
+		"postgres://h/app?+PASSWORD=x&y",
+	} {
+		t.Run(connString, func(t *testing.T) {
+			var cse *ConnStringError
+			require.ErrorAs(t, afterPasswordError(connString), &cse)
+			require.Equal(t, "mlmforge", cse.Driver())
+			require.Equal(t, "after-password", cse.Stage())
+			require.Empty(t, cse.Part())
+		})
+	}
+}
+
+func TestAfterPasswordError_AcceptsThePasswordLast(t *testing.T) {
+	for _, connString := range []string{
+		"postgres://h/app?sslmode=disable&password=x",
+		"postgres://h/app?password=x",
+		"postgres://h/app?password=x#a&b",
+		"postgres://h/d#x?password=a&b",
+		"postgres://h/app?&password=x",
+		"postgres://h/app?sslmode=disable",
+		"postgres://h/app",
+		"postgres://h/app#password=x&y",
+		"postgres://u:pa&ss@h/app?sslmode=disable",
+		"postgres://h/app?pass%zzword=x&y",
+		"host=h password=x sslmode=disable",
+		"POSTGRES://h/app?password=x&y",
+		"",
+	} {
+		require.NoError(t, afterPasswordError(connString), connString)
+	}
+}
+
+func TestRawPlusError_RefusesARawPlusInThePassword(t *testing.T) {
+	for _, connString := range []string{
+		"postgres://plusr@127.0.0.1:1/app?password=Zm9v+cXV4",
+		"postgres://plus@127.0.0.1:1/app?password=Zm9v+cXV4",
+		"postgres://h/app?sslmode=disable&password=a+b",
+		"postgres://h/app?pass%77ord=a+b",
+		"postgres://h/app?password=+",
+		"postgresql://h/app?password=a+b",
+		"postgres://h/app?+password=a+b",
+		"postgres://h/app?password+=a+b",
+		"postgres://h/app?%09password=a+b",
+		"postgres://h/app?password%0A=a+b",
+		"postgres://h/app?%0Bpassword=a+b",
+		"postgres://h/app?password%0C=a+b",
+		"postgres://h/app?%C2%A0password=a+b",
+		"postgres://h/app?PASSWORD=a+b",
+		"postgres://h/app?Password=a+b",
+		"postgres://h/app?%09Password=a+b",
+	} {
+		t.Run(connString, func(t *testing.T) {
+			var cse *ConnStringError
+			require.ErrorAs(t, rawPlusError(connString), &cse)
+			require.Equal(t, "mlmforge", cse.Driver())
+			require.Equal(t, "raw-plus", cse.Stage())
+			require.Empty(t, cse.Part())
+		})
+	}
+}
+
+func TestRawPlusError_AcceptsAnEncodedPlusAndAPlusElsewhere(t *testing.T) {
+	for _, connString := range []string{
+		"postgres://plusr@127.0.0.1:1/app?password=Zm9v%2BcXV4",
+		"postgres://plus@127.0.0.1:1/app?password=Zm9v%20cXV4",
+		"postgres://h/app?application_name=a+b&password=x",
+		"postgres://u:a+b@h/app",
+		"postgres://h/app?password=x#a+b",
+		"postgres://h/app?password=x&password=a+b",
+		"host=h password=a+b",
+		"POSTGRES://h/app?password=a+b",
+		"",
+	} {
+		require.NoError(t, rawPlusError(connString), connString)
+	}
+}
+
+func TestPreDriverError_ReturnsTheFirstCheckThatRefuses(t *testing.T) {
 	for _, tc := range []struct {
 		connString string
 		stage      string
 		part       string
 	}{
 		{"POSTGRES://app:1234/s3cretPW@127.0.0.1:1/app", "scheme-case", ""},
+		{"POSTGRES://h/app?x=1", "scheme-case", ""},
+		{" postgres://u:pw@h/db?sslmode=disable", "keyword-key", ""},
 		{"postgres://app:1234/s3cretPW@127.0.0.1:1/app", "raw-at", "path"},
+		{"postgres://h/app?password=a@b&c", "raw-at", "query"},
+		{"postgres://h/app?password=a+b&c", "after-password", ""},
+		{"postgres://h/app?password=a+b", "raw-plus", ""},
 	} {
 		t.Run(tc.connString, func(t *testing.T) {
 			var cse *ConnStringError
@@ -269,7 +441,13 @@ func TestPreDriverError_RefusesWhatEitherCheckRefuses(t *testing.T) {
 			require.Equal(t, tc.part, cse.Part())
 		})
 	}
-	require.NoError(t, PreDriverError("postgres://app:pr@of@PW@127.0.0.1:1/app"))
+	for _, connString := range []string{
+		"postgres://app:pr@of@PW@127.0.0.1:1/app",
+		"postgres://h/app?sslmode=disable&password=x",
+		"host=h password=x",
+	} {
+		require.NoError(t, PreDriverError(connString), connString)
+	}
 }
 
 func TestPreDriverError_MatchesEachConnStringCaseResolveStage(t *testing.T) {

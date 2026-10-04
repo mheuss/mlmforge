@@ -35,6 +35,8 @@ type SourceInfo struct {
 	InSource    bool
 	Previous    uint
 	HasPrevious bool
+	Next        uint
+	HasNext     bool
 	Err         error
 }
 

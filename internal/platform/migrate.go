@@ -195,6 +195,16 @@ func (mg *migration) recordRead() RecordRead {
 // sourceInfo places version in the migrations directory.
 func (mg *migration) sourceInfo(version int) SourceInfo {
 	info := SourceInfo{Path: mg.path}
+	if version == database.NilVersion {
+		first, err := mg.source.First()
+		switch {
+		case err == nil:
+			info.Next, info.HasNext = first, true
+		case !errors.Is(err, os.ErrNotExist):
+			info.Err = err
+		}
+		return info
+	}
 	if version < 0 {
 		return info
 	}
@@ -209,6 +219,15 @@ func (mg *migration) sourceInfo(version int) SourceInfo {
 	}
 	_ = body.Close()
 	info.InSource = true
+
+	next, err := mg.source.Next(n)
+	switch {
+	case err == nil:
+		info.Next, info.HasNext = next, true
+	case !errors.Is(err, os.ErrNotExist):
+		info.Err = err
+		return info
+	}
 
 	first, err := mg.source.First()
 	if err != nil {

@@ -309,7 +309,7 @@ func TestTreeWriteCmds_NameTheirExitCodesInTheirHelp(t *testing.T) {
 			assert.Contains(t, c.Long, "Exits 0 when the load finished, including after a redelivery, "+
 				"with any warnings on stderr.", "load help")
 			assert.Contains(t, c.Long, "Exits 1 on any other failure, including when", "load help")
-			assert.Contains(t, c.Long, "When that event is a rejection, it refuses instead and names tree reject-event.", "load help")
+			assert.Contains(t, c.Long, "When the stream ends with a rejection one or two events past the store, it refuses instead and names tree reject-event.", "load help")
 		}
 	}
 	assert.ElementsMatch(t, []string{"add-root", "place", "remove", "load"}, named)

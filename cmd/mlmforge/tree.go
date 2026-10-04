@@ -90,7 +90,7 @@ func newTreeLoadCmd(resolve flagResolver, open depsOpener, loader loadWriterFor)
 		Long: "Opens a database pool, starts the engine worker, replays one stored tree, and exits. " +
 			"When the tree's store is one event behind its stream, it replays the store, then redelivers the stream's last event " +
 			"and prints a redelivered line. " +
-			"When that event is a rejection, it refuses instead and names tree reject-event. " +
+			"When the stream ends with a rejection one or two events past the store, it refuses instead and names tree reject-event. " +
 			"Exits 0 when the load finished, including after a redelivery, with any warnings on stderr. " +
 			"Exits 1 on any other failure, including when the stream is two or more events past the store or behind it, " +
 			"when the tree has no projection row and its stream is past version 1, when a type or matrix flag differs " +

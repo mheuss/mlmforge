@@ -144,7 +144,6 @@ func (e *ApplyError) Error() string { return "apply migrations: " + migrationErr
 func (e *ApplyError) Unwrap() error { return e.Err }
 
 // RollbackError reports a failed down migration and the record read before and after it.
-// BodyFailed is true only when the error shows Postgres refused the migration file itself.
 type RollbackError struct {
 	Err        error
 	Before     RecordRead

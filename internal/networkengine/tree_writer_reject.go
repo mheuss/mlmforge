@@ -27,8 +27,12 @@ func pendingRejection(tree string, last *platform.Event, projected int64, found 
 	}
 	p, err := rejectionPayload(*last)
 	if err != nil {
-		return errors.Join(fmt.Errorf("stream %s ends with rejection %s at version %d, above projected version %d; nothing was appended: %w",
-			TreeStreamName(tree), last.ID, last.Version, projected, err), loadErr)
+		seen := fmt.Sprintf("above projected version %d", projected)
+		if !found {
+			seen = fmt.Sprintf("and tree %s has no projection row", tree)
+		}
+		return errors.Join(fmt.Errorf("stream %s ends with rejection %s at version %d, %s; nothing was appended: %w",
+			TreeStreamName(tree), last.ID, last.Version, seen, err), loadErr)
 	}
 	return &RejectionPendingError{
 		TreeID: tree, RejectionID: last.ID, Version: last.Version,

@@ -117,8 +117,8 @@ type TreeStore interface {
 	// eventVersion - 1.
 	UndoRootProjection(ctx context.Context, treeID, userID string, eventVersion int64) error
 
-	// ProjectRejection soft-deletes the active rows the rejected event
-	// inserted, and records eventVersion as the tree's projected version.
+	// ProjectRejection soft-deletes the tree's active rows whose ID is
+	// rejectedEventID, and records eventVersion as the tree's projected version.
 	ProjectRejection(ctx context.Context, treeID, rejectedEventID string, eventVersion int64) error
 }
 

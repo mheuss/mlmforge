@@ -365,6 +365,18 @@ func TestTreeWriter_APendingRejectionWhosePayloadDoesNotDecodeIsRefused(t *testi
 	}
 }
 
+func TestTreeWriter_AnUndecodablePendingRejectionOnATreeWithNoProjectionRowSaysSo(t *testing.T) {
+	env := newWriterEnv()
+	appendDirect(t, env.events, EventTypeRootAdded, rootAddedPayload())
+	bad := appendDirect(t, env.events, EventTypeEventRejected, json.RawMessage(`"not an object"`))
+	w, _ := env.writer()
+
+	_, err := w.Load(context.Background(), loadRequest())
+
+	require.ErrorContains(t, err, "stream "+TreeStreamName(writerTree)+" ends with rejection "+bad.ID+" at version 2, and tree "+
+		writerTree+" has no projection row; nothing was appended: unmarshal event_rejected payload of event "+bad.ID)
+}
+
 func TestTreeWriter_RefusesAnAppliedRejectionWithATamperedVersion(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)

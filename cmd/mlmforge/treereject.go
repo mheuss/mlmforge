@@ -89,8 +89,9 @@ func reportReject(ctx context.Context, out, warn io.Writer, res networkengine.Re
 	return notCurrent
 }
 
-// warnRejectionProjection prints what Reject observed after a projection
-// error. It returns an exit-3 error unless the store was observed current.
+// warnRejectionProjection prints what was observed after a rejection's
+// projection returned an error. It returns an exit-3 error unless the store was
+// observed current.
 func warnRejectionProjection(warn io.Writer, res networkengine.RejectResult) error {
 	head := fmt.Sprintf("warning: rejection %s at version %d is in the stream and its projection returned an error: %s.",
 		res.EventID, res.Version, res.ProjectionErr)

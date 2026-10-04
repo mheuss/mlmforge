@@ -558,6 +558,9 @@ func TestTreeWriterReject_RefusesWhenTheRetrySucceeds(t *testing.T) {
 		" returned no error; nothing was appended")
 	assert.Empty(t, res.Outcome)
 	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 2)
+	version, _, err := env.store.ProjectedVersion(context.Background(), writerTree)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), version, "the refused run's retry did not project the pending event")
 }
 
 // insertFailingStore fails every ProjectInsert.
@@ -730,6 +733,7 @@ func TestTreeWriterReject_RefusesBeforeTheLock(t *testing.T) {
 			_, err := w.Reject(context.Background(), c.req)
 
 			require.ErrorContains(t, err, c.want)
+			assert.Empty(t, streamEvents(t, env.events, TreeStreamName(writerTree)))
 		})
 	}
 }
@@ -745,6 +749,7 @@ func TestTreeWriterReject_RefusesAnEventThatIsNotTheLast(t *testing.T) {
 
 	require.EqualError(t, err, "stream "+TreeStreamName(writerTree)+" ends with event "+placed.EventID+
 		" at version 2, not event "+first.ID+"; nothing was appended")
+	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 2)
 }
 
 func TestTreeWriterReject_RefusesAnEventOfAnotherType(t *testing.T) {
@@ -757,6 +762,7 @@ func TestTreeWriterReject_RefusesAnEventOfAnotherType(t *testing.T) {
 
 	require.EqualError(t, err, "stream "+TreeStreamName(writerTree)+" ends with event "+foreign.ID+
 		` at version 2 of type "tree.renamed", which reject-event does not reject; nothing was appended`)
+	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 2)
 }
 
 func TestTreeWriterReject_RefusesWhenTheLockIsNotAcquired(t *testing.T) {
@@ -769,4 +775,29 @@ func TestTreeWriterReject_RefusesWhenTheLockIsNotAcquired(t *testing.T) {
 	require.ErrorContains(t, err, "lock refused")
 	assert.True(t, strings.HasPrefix(err.Error(), "lock tree "+writerTree), err.Error())
 	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 2)
+}
+
+func TestTreeWriterReject_AFailedAppendLeavesTheOutcomeEmpty(t *testing.T) {
+	env, scripted := scriptedEnv(t)
+	stuck := appendDirect(t, env.events, EventTypeNodePlaced, NodePlacedPayload{
+		TreeID: writerTree, UserID: writerChild, ParentID: writerRoot, SponsorID: writerOther,
+		TreeType: treeTypeUnilevel, EnrolledAt: writeTime,
+	})
+	trigger, engine := env.writer()
+	engine.failAdd[writerChild] = fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", writerOther)
+	_, err := trigger.Place(context.Background(), placeRequest(testUserUUID(4), nil))
+	var failed *CatchUpFailedError
+	require.ErrorAs(t, err, &failed)
+	stream := TreeStreamName(writerTree)
+	scripted.appendErr = &platform.ConcurrencyError{Stream: stream, ExpectedVersion: 2, ActualVersion: 3}
+	w, _ := env.writer()
+
+	res, err := w.Reject(context.Background(), rejectRequest(stuck.ID))
+
+	var conflict *appendConflictError
+	require.ErrorAs(t, err, &conflict)
+	assert.Empty(t, res.Outcome)
+	assert.Empty(t, res.EventID)
+	assert.Equal(t, stuck.ID, res.RejectedEventID)
+	assert.Len(t, streamEvents(t, env.events, stream), 2)
 }

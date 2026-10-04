@@ -161,7 +161,7 @@ const (
 	RejectOutcomeAlreadyApplied RejectOutcome = "already_applied"
 )
 
-// RejectResult describes one Reject. Outcome is empty when nothing was done.
+// RejectResult describes one Reject.
 type RejectResult struct {
 	Stream          string
 	Outcome         RejectOutcome
@@ -219,7 +219,7 @@ func (w *TreeWriter) Reject(ctx context.Context, r RejectRequest) (result Reject
 		return result, fmt.Errorf("read the last event of stream %s; nothing was appended: %w", stream, err)
 	}
 	if last == nil {
-		return result, fmt.Errorf("reject event %s in tree %s: stream %s has no events", eventID, tree, stream)
+		return result, fmt.Errorf("reject event %s in tree %s: a read of the last event of stream %s returned none", eventID, tree, stream)
 	}
 	if last.Type == EventTypeEventRejected {
 		return w.resumeRejection(ctx, result, tree, eventID.String(), *last, projected, projectedFound)
@@ -234,7 +234,7 @@ func (w *TreeWriter) Reject(ctx context.Context, r RejectRequest) (result Reject
 	}
 	result.RejectedEventID, result.RejectedVersion = last.ID, last.Version
 
-	retryErr := w.retry(ctx, tree, stream, shape)
+	retryErr := w.retry(ctx, tree, stream, shape, *last)
 	if retryErr == nil {
 		return result, fmt.Errorf("retrying event %s at version %d in stream %s returned no error; nothing was appended",
 			last.ID, last.Version, stream)
@@ -267,15 +267,17 @@ func (w *TreeWriter) Reject(ctx context.Context, r RejectRequest) (result Reject
 	return result, nil
 }
 
-// retry tries the stream's last event once more, as a write would before
-// appending.
-func (w *TreeWriter) retry(ctx context.Context, tree, stream string, shape treeShape) error {
+// retry loads the tree and redelivers expected, the stream's last event.
+func (w *TreeWriter) retry(ctx context.Context, tree, stream string, shape treeShape, expected platform.Event) error {
 	loaded, last, _, err := w.prepare(ctx, tree, shape)
 	if err != nil {
 		return err
 	}
 	if last == nil {
-		return nil
+		return fmt.Errorf("a read of stream %s for the retry returned no last event, where event %s was expected", stream, expected.ID)
+	}
+	if !sameUUID(last.ID, expected.ID) {
+		return fmt.Errorf("a read of stream %s for the retry returned last event %s, where event %s was expected", stream, last.ID, expected.ID)
 	}
 	_, err = w.catchUp(ctx, tree, stream, *last, loaded)
 	return err

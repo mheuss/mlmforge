@@ -59,6 +59,14 @@ func pendingMessage(rejection, stuck platform.Event, projected int64) string {
 		TreeStreamName(writerTree), rejection.ID, rejection.Version, stuck.ID, writerTree, projected, writerTree, stuck.ID)
 }
 
+// pendingNoRowMessage is the pending-rejection message the tests expect for a
+// tree with no projection row, with no load error.
+func pendingNoRowMessage(rejection, stuck platform.Event) string {
+	return fmt.Sprintf("stream %s ends with rejection %s at version %d of event %s, and tree %s has no projection row; "+
+		"nothing was appended. Run mlmforge tree reject-event --tree-id %s --event-id %s --reason <text> again to project it",
+		TreeStreamName(writerTree), rejection.ID, rejection.Version, stuck.ID, writerTree, writerTree, stuck.ID)
+}
+
 func TestTreeWriter_AWriteRefusesAPendingRejectionBeforeCheckingTheMutation(t *testing.T) {
 	env := newWriterEnv()
 	stuck := unprojectedRemoval(t, env)
@@ -165,7 +173,10 @@ func TestTreeWriter_APendingRejectionOnATreeWithNoProjectionRowIsRefused(t *test
 
 	_, err := w.Load(context.Background(), loadRequest())
 
-	require.EqualError(t, err, pendingMessage(rejection, root, 0))
+	require.EqualError(t, err, pendingNoRowMessage(rejection, root))
+	var pending *RejectionPendingError
+	require.ErrorAs(t, err, &pending)
+	assert.False(t, pending.Found)
 }
 
 func TestTreeWriterCatchUp_RefusesAPendingRejectionWithoutHandlingIt(t *testing.T) {
@@ -176,7 +187,7 @@ func TestTreeWriterCatchUp_RefusesAPendingRejectionWithoutHandlingIt(t *testing.
 	rejection := appendRejection(t, env, placed)
 	w, _ := env.writer()
 
-	_, err := w.catchUp(context.Background(), writerTree, TreeStreamName(writerTree), rejection, 2)
+	_, err := w.catchUp(context.Background(), writerTree, TreeStreamName(writerTree), rejection, 2, true)
 
 	require.EqualError(t, err, pendingMessage(rejection, placed, 2))
 	row, err := env.store.GetNode(context.Background(), writerTree, writerChild)
@@ -277,7 +288,7 @@ func TestTreeWriterCatchUp_RefusesAnAppliedRejectionThatNamesTheWrongEvent(t *te
 	require.NoError(t, env.store.ProjectRejection(context.Background(), writerTree, testNodeUUID(77), 3))
 	w, _ := env.writer()
 
-	_, err := w.catchUp(context.Background(), writerTree, stream, bad, 3)
+	_, err := w.catchUp(context.Background(), writerTree, stream, bad, 3, true)
 
 	require.EqualError(t, err, fmt.Sprintf("rejection %s at version 3 of stream %s names event %s (%s), and version 2 holds event %s (%s); nothing was appended",
 		bad.ID, stream, other, EventTypeNodePlaced, placed.ID, EventTypeNodePlaced))

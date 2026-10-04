@@ -384,14 +384,14 @@ func (w *TreeWriter) write(ctx context.Context, spec writeSpec) (result WriteRes
 	if err != nil {
 		return result, err
 	}
-	loaded, last, _, err := w.prepare(ctx, tree, shape)
+	loaded, found, last, _, err := w.prepare(ctx, tree, shape)
 	if err != nil {
 		return result, err
 	}
 	var expected int64
 	if last != nil {
 		expected = last.Version
-		if result.CaughtUp, err = w.catchUp(ctx, tree, stream, *last, loaded); err != nil {
+		if result.CaughtUp, err = w.catchUp(ctx, tree, stream, *last, loaded, found); err != nil {
 			return result, err
 		}
 	}
@@ -439,7 +439,7 @@ func (w *TreeWriter) Load(ctx context.Context, r LoadRequest) (result LoadResult
 		}
 	}
 
-	loaded, last, nodes, err := w.prepare(ctx, tree, shape)
+	loaded, found, last, nodes, err := w.prepare(ctx, tree, shape)
 	if err != nil {
 		return result, rejectEarlyRead(tree, err)
 	}
@@ -447,7 +447,7 @@ func (w *TreeWriter) Load(ctx context.Context, r LoadRequest) (result LoadResult
 		result.Nodes = nodes
 		return result, nil
 	}
-	if result.CaughtUp, err = w.catchUp(ctx, tree, stream, *last, loaded); err != nil {
+	if result.CaughtUp, err = w.catchUp(ctx, tree, stream, *last, loaded, found); err != nil {
 		return result, err
 	}
 	after, afterFound, err := w.store.ProjectedVersion(ctx, tree)
@@ -500,12 +500,13 @@ func (e *storeReadError) Unwrap() error { return e.err }
 
 // prepare loads the tree and refuses a stream the store cannot be brought
 // level with by one redelivery. nodes is the loader's row count.
-func (w *TreeWriter) prepare(ctx context.Context, tree string, shape treeShape) (loaded int64, last *platform.Event, nodes int, err error) {
+func (w *TreeWriter) prepare(ctx context.Context, tree string, shape treeShape) (
+	loaded int64, found bool, last *platform.Event, nodes int, err error) {
 	// Read before the rows. A projection landing between the two reads then
 	// leaves the rows newer than loaded.
-	loaded, found, err := w.store.ProjectedVersion(ctx, tree)
+	loaded, found, err = w.store.ProjectedVersion(ctx, tree)
 	if err != nil {
-		return 0, nil, 0, &storeReadError{
+		return 0, false, nil, 0, &storeReadError{
 			what: fmt.Sprintf("read the projected version of tree %s; nothing was appended", tree), err: err,
 		}
 	}
@@ -515,22 +516,22 @@ func (w *TreeWriter) prepare(ctx context.Context, tree string, shape treeShape) 
 		// Read only to name a pending rejection. A failed read leaves the load
 		// error as the report.
 		if last, readErr := w.events.ReadLastEvent(ctx, stream); readErr == nil {
-			if pending := pendingRejection(tree, last, loaded, loadErr); pending != nil {
-				return 0, nil, 0, pending
+			if pending := pendingRejection(tree, last, loaded, found, loadErr); pending != nil {
+				return 0, false, nil, 0, pending
 			}
 		}
-		return 0, nil, 0, loadErr
+		return 0, false, nil, 0, loadErr
 	}
 	last, err = w.events.ReadLastEvent(ctx, stream)
 	if err != nil {
-		return 0, nil, 0, fmt.Errorf("read the last event of stream %s; nothing was appended: %w", stream, err)
+		return 0, false, nil, 0, fmt.Errorf("read the last event of stream %s; nothing was appended: %w", stream, err)
 	}
-	if pending := pendingRejection(tree, last, loaded, nil); pending != nil {
-		return 0, nil, 0, pending
+	if pending := pendingRejection(tree, last, loaded, found, nil); pending != nil {
+		return 0, false, nil, 0, pending
 	}
 	if last != nil && last.Type == EventTypeEventRejected && last.Version == loaded {
 		if err := w.checkRejectionTarget(ctx, stream, *last); err != nil {
-			return 0, nil, 0, fmt.Errorf("%w; nothing was appended", err)
+			return 0, false, nil, 0, fmt.Errorf("%w; nothing was appended", err)
 		}
 	}
 	var lastVersion int64
@@ -538,9 +539,9 @@ func (w *TreeWriter) prepare(ctx context.Context, tree string, shape treeShape) 
 		lastVersion = last.Version
 	}
 	if err := checkLoadedVersion(tree, loaded, found, lastVersion); err != nil {
-		return 0, nil, 0, err
+		return 0, false, nil, 0, err
 	}
-	return loaded, last, nodes, nil
+	return loaded, found, last, nodes, nil
 }
 
 // observe reads the tree's projected version with a context the caller's
@@ -614,14 +615,14 @@ var treeEventTypes = map[string]bool{
 }
 
 // catchUp redelivers the stream's last event through the consumer.
-func (w *TreeWriter) catchUp(ctx context.Context, tree, stream string, last platform.Event, loaded int64) (*CaughtUpEvent, error) {
+func (w *TreeWriter) catchUp(ctx context.Context, tree, stream string, last platform.Event, loaded int64, found bool) (*CaughtUpEvent, error) {
 	// An unlisted type is refused rather than reported as caught up.
 	if !treeEventTypes[last.Type] {
 		return nil, fmt.Errorf("stream %s ends with event %s at version %d of type %q, which catch-up does not redeliver; nothing was appended",
 			stream, last.ID, last.Version, last.Type)
 	}
 	if last.Type == EventTypeEventRejected {
-		if pending := pendingRejection(tree, &last, loaded, nil); pending != nil {
+		if pending := pendingRejection(tree, &last, loaded, found, nil); pending != nil {
 			return nil, pending
 		}
 		if err := w.checkRejectionTarget(ctx, stream, last); err != nil {

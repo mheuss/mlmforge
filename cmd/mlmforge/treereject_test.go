@@ -251,7 +251,7 @@ func TestTreeRejectEventCmd_HelpStatesTheMeaningAndTheExitCodes(t *testing.T) {
 
 func TestTreeLoadFailureMessage_NamesAPendingRejection(t *testing.T) {
 	pending := &networkengine.RejectionPendingError{
-		TreeID: "t", RejectionID: "r", Version: 3, RejectedEventID: "e", Projected: 2,
+		TreeID: "t", RejectionID: "r", Version: 3, RejectedEventID: "e", Projected: 2, Found: true,
 		LoadErr: fmt.Errorf("load tree t; nothing was appended: %w",
 			&networkengine.TreeLoadRejectedError{TreeID: "t", Kind: networkengine.TreeLoadDataInvalid}),
 	}

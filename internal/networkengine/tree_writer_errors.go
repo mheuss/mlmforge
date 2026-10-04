@@ -109,13 +109,18 @@ type RejectionPendingError struct {
 	Version         int64
 	RejectedEventID string
 	Projected       int64
+	Found           bool  // the tree has a projection row
 	LoadErr         error // the load's error, when the load also failed
 }
 
 func (e *RejectionPendingError) Error() string {
-	msg := fmt.Sprintf("stream %s ends with rejection %s at version %d of event %s, and tree %s has projected version %d; "+
+	seen := fmt.Sprintf("has projected version %d", e.Projected)
+	if !e.Found {
+		seen = "has no projection row"
+	}
+	msg := fmt.Sprintf("stream %s ends with rejection %s at version %d of event %s, and tree %s %s; "+
 		"nothing was appended. Run mlmforge tree reject-event --tree-id %s --event-id %s --reason <text> again to project it",
-		TreeStreamName(e.TreeID), e.RejectionID, e.Version, e.RejectedEventID, e.TreeID, e.Projected, e.TreeID, e.RejectedEventID)
+		TreeStreamName(e.TreeID), e.RejectionID, e.Version, e.RejectedEventID, e.TreeID, seen, e.TreeID, e.RejectedEventID)
 	if e.LoadErr != nil {
 		msg += ". The load before this check returned: " + e.LoadErr.Error()
 	}

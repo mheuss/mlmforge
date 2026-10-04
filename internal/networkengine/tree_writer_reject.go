@@ -21,7 +21,7 @@ func rejectionPayload(event platform.Event) (EventRejectedPayload, error) {
 
 // pendingRejection returns the refusal for a stream-ending rejection that
 // projecting it can still bring the store level with, and nil otherwise.
-func pendingRejection(tree string, last *platform.Event, projected int64, loadErr error) error {
+func pendingRejection(tree string, last *platform.Event, projected int64, found bool, loadErr error) error {
 	if last == nil || last.Type != EventTypeEventRejected || last.Version <= projected || last.Version-2 > projected {
 		return nil
 	}
@@ -32,7 +32,7 @@ func pendingRejection(tree string, last *platform.Event, projected int64, loadEr
 	}
 	return &RejectionPendingError{
 		TreeID: tree, RejectionID: last.ID, Version: last.Version,
-		RejectedEventID: p.RejectedEventID, Projected: projected, LoadErr: loadErr,
+		RejectedEventID: p.RejectedEventID, Projected: projected, Found: found, LoadErr: loadErr,
 	}
 }
 
@@ -269,7 +269,7 @@ func (w *TreeWriter) Reject(ctx context.Context, r RejectRequest) (result Reject
 
 // retry loads the tree and redelivers expected, the stream's last event.
 func (w *TreeWriter) retry(ctx context.Context, tree, stream string, shape treeShape, expected platform.Event) error {
-	loaded, last, _, err := w.prepare(ctx, tree, shape)
+	loaded, found, last, _, err := w.prepare(ctx, tree, shape)
 	if err != nil {
 		return err
 	}
@@ -279,7 +279,7 @@ func (w *TreeWriter) retry(ctx context.Context, tree, stream string, shape treeS
 	if !sameUUID(last.ID, expected.ID) {
 		return fmt.Errorf("a read of stream %s for the retry returned last event %s, where event %s was expected", stream, last.ID, expected.ID)
 	}
-	_, err = w.catchUp(ctx, tree, stream, *last, loaded)
+	_, err = w.catchUp(ctx, tree, stream, *last, loaded, found)
 	return err
 }
 

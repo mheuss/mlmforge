@@ -413,8 +413,10 @@ Full document: [`content/design-rationale/020-tree-topology-separation.md`](cont
 - A rejected event did not happen. Rejecting a removal leaves the user in the tree.
 - Version 1 still defines the tree's type and matrix shape after its root is rejected. A tree's shape belongs to its compensation plan.
 - Every projection of a rejection first checks that the event before it is the one it names. A reader that replays or repairs a stream must look ahead for rejections, and must run the same check before projecting one.
-- Resuming a pending rejection does not retry its event or re-check the evidence. It trusts a well-formed rejection's evidence, because only `reject-event` produces one. `EventStore.Append` is internal, and that trust rests on it.
-- A write or `tree load` on a stream ending in a rejection the store is one or two versions behind refuses and names the command. Rerunning the command projects the rejection without appending another.
+- Resuming a pending rejection does not retry its event or re-check the evidence. It trusts a well-formed rejection's evidence, because only `reject-event` produces one. That trust rests on `EventStore.Append` being internal to this module, and on only `TreeWriter` calling it outside tests. That second part is a convention.
+- A write or `tree load` on a stream ending in a rejection the store is one or two versions behind refuses and names `reject-event`. Rerunning `reject-event` projects the rejection without appending another.
+
+---
 
 ## Context-Specific Development Guides
 

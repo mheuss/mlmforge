@@ -16,9 +16,9 @@ const rejectEventLong = "Opens a database pool, starts the engine worker, and ap
 	"Rejecting a removal leaves the user in the tree. " +
 	"The tree type and matrix shape that version 1 records still apply after its root is rejected. " +
 	"The command first tries the event once more, and refuses unless that attempt fails in a way that shows the event cannot apply. " +
-	"Exits 0 when the store was observed at or past the rejection. " +
-	"Exits 3 when a rejection is in the stream and the store was not observed current; run the command again to project it. " +
-	"On a rerun that projects a rejection already in the stream, --reason is required but not recorded: nothing is appended, and the rejection keeps its own reason. " +
+	"Exits 0 when the rejection was projected without error or was already projected, or when the store was then observed at or past it. " +
+	"Exits 3 when it appended or found a pending rejection, tried to project it, and did not observe the store at or past it; run the command again to project it. " +
+	"On a rerun that finds a rejection already in the stream, --reason is required but not recorded: nothing is appended, and the rejection keeps its own reason. " +
 	"Exits 1 when it refused and appended nothing, or when it could not confirm whether its append landed. The cause is on stderr."
 
 func newTreeRejectEventCmd(resolve flagResolver, open depsOpener, writer writerFor) *cobra.Command {

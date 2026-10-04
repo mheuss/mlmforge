@@ -1106,7 +1106,7 @@ if errors.As(err, &unknown) {
 }
 ```
 
-**Notes:** Compare event IDs by value. A Postgres round trip returns a canonical UUID. A conflict message leaves out the store's `ActualVersion`. That value can hold a version nobody read. When the read finds no event, the message states only that. A commit that a cancel during COMMIT hid from the read turns up as the stream's last event. The next write or `tree load` redelivers it, because the stream is then one past the tree's projected version. A CLI matches `AppendOutcomeUnknownError` before any context error, because it unwraps to both of its errors.
+**Notes:** Compare event IDs by value. A Postgres round trip returns a canonical UUID. A conflict message leaves out the store's `ActualVersion`. That value can hold a version nobody read. When the read finds no event, the message states only that. A commit that a cancel during COMMIT hid from the read turns up as the stream's last event. The next write or `tree load` redelivers it, because the stream is then one past the tree's projected version. A rejection is refused instead, with `RejectionPendingError`. A CLI matches `AppendOutcomeUnknownError` before any context error, because it unwraps to both of its errors.
 
 ---
 
@@ -1139,7 +1139,7 @@ if errors.As(err, &refused) {
 
 **Problem:** A write can append its event and then fail to update the store, so a load that reads only the store builds a tree one event short of its stream.
 
-**Solution:** `TreeWriter.Load` takes the tree's lock and runs the same fence a write runs. When the stream's last event is one past the projected version, it redelivers that event and reads the projected version again. It refuses a stream two or more past the store, behind it, or past version 1 with no projection row.
+**Solution:** `TreeWriter.Load` takes the tree's lock and runs the same fence a write runs. When the stream's last event is one past the projected version, it redelivers that event and reads the projected version again. When that event is a rejection, it refuses with `RejectionPendingError` instead. It refuses a stream two or more past the store, behind it, or past version 1 with no projection row.
 
 **Usage:**
 ```go
@@ -1164,22 +1164,28 @@ if err != nil {
 ### UC-NET-031: Recovering a tree stuck behind an event that cannot apply
 
 **Added:** Unreleased (HEU-850)
-**Files:** `internal/networkengine/tree_writer_reject.go`, `cmd/mlmforge/treereject.go`
+**Files:** `internal/networkengine/tree_writer_reject.go`, `internal/networkengine/tree_writer.go`, `internal/networkengine/tree_writer_errors.go`, `internal/networkengine/tree_events.go`, `internal/networkengine/tree_consumer.go`, `internal/networkengine/tree_store.go`, `internal/networkengine/tree_store_postgres.go`, `internal/networkengine/tree_store_memory.go`, `cmd/mlmforge/treereject.go`
 
-**Problem:** An event appended to a tree's stream that fails every redelivery leaves the tree refusing every write, and the append-only stream cannot drop it.
+**Problem:** An event that fails every redelivery leaves its tree refusing every write. The stream is append-only, so the event cannot be dropped.
 
-**Solution:** `TreeWriter.Reject` takes the tree's lock, retries the stream's last event the way a write would, and appends a `tree.event_rejected` naming it only when the retry's error shows the event cannot apply. Applying the rejection soft-deletes the row the event left and moves the projected version past it. When the stream already ends with a rejection, `Reject` projects it if the store is one or two versions behind, and reports it if the store is already there.
+**Solution:** `TreeWriter.Reject` takes the tree's lock and retries the stream's last event the way a write would. It appends a `tree.event_rejected` naming that event only when the retry's error shows the event cannot apply. Applying the rejection soft-deletes any active row whose ID is the rejected event's ID. It moves the projected version to the rejection's. When the stream already ends with a rejection, `Reject` projects it if the store is one or two versions behind, and reports it if the store is already there.
 
 **Usage:**
 ```go
 w := networkengine.NewTreeWriter(events, store, engine, networkengine.NewPostgresTreeLocker(dbURL))
 res, err := w.Reject(ctx, networkengine.RejectRequest{TreeID: tree, EventID: stuck, Reason: "sponsor never enrolled"})
+if res.ReleaseErr != nil {
+    // Report it, on the error path too.
+}
 if err != nil {
     return err // refused, or the append's outcome is unknown
 }
-if res.ProjectionErr != nil && (res.Observed == nil || res.Observed.Version < res.Version) {
-    // The rejection is in the stream and not applied. Run Reject again.
+if res.ProjectionErr != nil {
+    obs := res.Observed
+    if !obs.Found || obs.Err != nil || obs.Version < res.Version {
+        // The rejection is in the stream and not seen applied. Run Reject again.
+    }
 }
 ```
 
-**Notes:** A rejected event did not happen: rejecting a removal leaves the user in the tree, and version 1 still sets the tree's shape after its root is rejected. Build a new writer over a new worker for each call, as UC-NET-027 says for writes. A write or load that meets a pending rejection refuses with `RejectionPendingError`. Related: UC-NET-027, UC-NET-030.
+**Notes:** A rejected event did not happen. Rejecting a removal leaves the user in the tree. Version 1 still sets the tree's shape after its root is rejected. Build a new writer over a new worker for each call, as UC-NET-027 says for writes. A write or load that meets a pending rejection refuses with `RejectionPendingError`. Related: UC-NET-027, UC-NET-030.

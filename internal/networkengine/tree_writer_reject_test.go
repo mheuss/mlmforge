@@ -1026,7 +1026,9 @@ func TestTreeWriterReject_RefusesAPendingRejectionTheStoreCannotBeBehindBy(t *te
 
 		var moved *StreamMovedError
 		require.ErrorAs(t, err, &moved)
-		assert.Equal(t, StreamMovedError{TreeID: writerTree, LoadedVersion: 1, LastVersion: 4}, *moved)
+		assert.Equal(t, StreamMovedError{TreeID: writerTree, LoadedVersion: 1, LastVersion: 4, NoLoad: true}, *moved)
+		assert.EqualError(t, err, "tree "+writerTree+" has projected version 1, and stream "+TreeStreamName(writerTree)+
+			" ends at version 4; nothing was appended")
 	})
 	t.Run("no projection row past version 2", func(t *testing.T) {
 		env := newWriterEnv()
@@ -1055,7 +1057,7 @@ func TestTreeWriterReject_RefusesAPendingRejectionTheStoreCannotBeBehindBy(t *te
 
 		var moved *StreamMovedError
 		require.ErrorAs(t, err, &moved)
-		assert.Equal(t, StreamMovedError{TreeID: writerTree, LoadedVersion: 9, LastVersion: 3}, *moved)
+		assert.Equal(t, StreamMovedError{TreeID: writerTree, LoadedVersion: 9, LastVersion: 3, NoLoad: true}, *moved)
 	})
 }
 

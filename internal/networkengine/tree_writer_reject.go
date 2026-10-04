@@ -318,5 +318,5 @@ func (w *TreeWriter) resumeRejection(ctx context.Context, result RejectResult, t
 	if !projectedFound {
 		return result, &ProjectionMissingError{TreeID: tree, LastVersion: last.Version}
 	}
-	return result, &StreamMovedError{TreeID: tree, LoadedVersion: projected, LastVersion: last.Version}
+	return result, &StreamMovedError{TreeID: tree, LoadedVersion: projected, LastVersion: last.Version, NoLoad: true}
 }

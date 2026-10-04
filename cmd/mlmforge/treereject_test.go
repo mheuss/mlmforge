@@ -243,7 +243,7 @@ func TestTreeRejectEventCmd_HelpStatesTheMeaningAndTheExitCodes(t *testing.T) {
 		"Exits 0 when the store was observed at or past the rejection.",
 		"Exits 3 when a rejection is in the stream and the store was not observed current; run the command again to project it.",
 		"On a rerun that projects a rejection already in the stream, --reason is required but not recorded: nothing is appended, and the rejection keeps its own reason.",
-		"Exits 1 when it refused and appended nothing, or when it could not confirm whether its append landed. The reason is on stderr.",
+		"Exits 1 when it refused and appended nothing, or when it could not confirm whether its append landed. The cause is on stderr.",
 	} {
 		assert.Contains(t, cmd.Long, want)
 	}

@@ -145,3 +145,12 @@ func TestMigrateVersion_NamesEveryUnsupportedVariableAndNoValue(t *testing.T) {
 	require.Equal(t, "Error: mlmforge migrate refused to open the database: the environment sets PGHOSTADDR, PGSERVICE and PGSYSCONFDIR. "+
 		"mlmforge migrate does not accept these variables. Unset them and run the command again.\n", stderr.String())
 }
+
+func TestMigrateResetDirtyAfterFailedDown_RefusesMultiStatementModeBeforeConnecting(t *testing.T) {
+	root := newRootCmd()
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"migrate", "reset-dirty", "--after-failed-down", "--db-url", refusedDBURL + "&x-multi-statement=t"})
+
+	require.EqualError(t, root.Execute(), "migrate reset-dirty --after-failed-down refused: the database URL sets x-multi-statement=t.")
+}

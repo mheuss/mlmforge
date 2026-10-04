@@ -288,7 +288,7 @@ func ResetDirty(dbURL, migrationsPath string) (res ResetResult, err error) {
 
 // ResetAfterFailedDown changes a dirty migration record to the migration after it, clean.
 func ResetAfterFailedDown(dbURL, migrationsPath string) (res ResetResult, err error) {
-	if err = refuseMultiStatement("reset-dirty", dbURL); err != nil {
+	if err = refuseMultiStatement("reset-dirty --after-failed-down", dbURL); err != nil {
 		return ResetResult{}, err
 	}
 	mg, err := openMigration(dbURL, migrationsPath)

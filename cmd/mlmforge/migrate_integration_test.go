@@ -299,7 +299,7 @@ func TestMigrateResetDirty_RefusesARecordItCannotActOnAndLeavesItUnchanged(t *te
 		{
 			name:   "minus one dirty",
 			setup:  func(t *testing.T, dsn string) { migrateTo(t, dsn, 1); setRecord(t, dsn, -1, true) },
-			stderr: "Error: The record reads -1, dirty. reset-dirty does not change a record at -1. The record was not changed.\n",
+			stderr: "Error: The record reads -1, dirty. `mlmforge migrate reset-dirty` without the flag does not change a record at -1. The record was not changed.\n",
 			record: []string{"-1,true"},
 		},
 		{
@@ -440,7 +440,8 @@ func TestMigrate_RecoversAMinusOneRecordWithResetDirtyAfterFailedDown(t *testing
 
 	out, err := runMigrate(t, withParam(t, dsn, "lock_timeout", "500"), "down")
 	require.Error(t, err)
-	require.Contains(t, out.stderr.String(), "(it sets the record to 1, clean)")
+	require.Contains(t, out.stderr.String(),
+		"run `mlmforge migrate reset-dirty --after-failed-down` (it sets the record to 1, clean)")
 	require.Equal(t, []string{"-1,true"}, readRecord(t, dsn))
 	release()
 
@@ -448,6 +449,10 @@ func TestMigrate_RecoversAMinusOneRecordWithResetDirtyAfterFailedDown(t *testing
 	require.NoError(t, err, out.stderr.String())
 	require.Equal(t, "The record read -1, dirty. This run set it to 1, clean.\nRun `mlmforge migrate down` next.\n", out.stdout.String())
 	require.Equal(t, []string{"1,false"}, readRecord(t, dsn))
+
+	out, err = runMigrate(t, dsn, "down")
+	require.NoError(t, err, out.stderr.String())
+	require.Empty(t, readRecord(t, dsn))
 }
 
 func TestMigrateResetDirtyAfterFailedDown_RefusesARecordItCannotActOnAndLeavesItUnchanged(t *testing.T) {

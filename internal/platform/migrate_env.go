@@ -19,6 +19,9 @@ type UnsupportedEnvError struct {
 }
 
 func (e *UnsupportedEnvError) Error() string {
+	if len(e.Names) == 0 {
+		return "mlmforge migrate refused to open the database: the environment check named no variable."
+	}
 	if len(e.Names) == 1 {
 		return fmt.Sprintf("mlmforge migrate refused to open the database: the environment sets %s. "+
 			"mlmforge migrate does not accept %s. Unset it and run the command again.", e.Names[0], e.Names[0])
@@ -29,7 +32,10 @@ func (e *UnsupportedEnvError) Error() string {
 
 // joinNames joins names as "A and B" or "A, B and C".
 func joinNames(names []string) string {
-	if len(names) == 1 {
+	switch len(names) {
+	case 0:
+		return ""
+	case 1:
 		return names[0]
 	}
 	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]

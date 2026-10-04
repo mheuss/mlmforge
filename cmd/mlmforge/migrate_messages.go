@@ -38,9 +38,12 @@ func negativeText(version int) string {
 	return fmt.Sprintf("The record reads %d, dirty. %s", version, resetRefusesAt(version))
 }
 
-// resetRefusesAt says reset-dirty does not change a record at version.
+// resetRefusesAt says which form of reset-dirty does not change a record at version.
 func resetRefusesAt(version int) string {
-	return fmt.Sprintf("reset-dirty does not change a record at %d.", version)
+	if version < -1 {
+		return neitherBelowText
+	}
+	return fmt.Sprintf("%s without the flag does not change a record at %d.", resetCommand, version)
 }
 
 // unreadAfter says the record read after a failure itself failed.

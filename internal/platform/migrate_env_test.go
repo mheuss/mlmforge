@@ -34,7 +34,7 @@ func libpqPanics() (panicked bool) {
 }
 
 func TestUnsupportedEnvNames_MatchWhatLibPQPanicsOn(t *testing.T) {
-	names := slices.Clone(libpqDocumentedEnv)
+	names := append(slices.Clone(libpqDocumentedEnv), "PGREALM")
 	for _, name := range unsupportedEnvNames {
 		if !slices.Contains(names, name) {
 			names = append(names, name)
@@ -89,6 +89,12 @@ func TestUnsupportedEnvError_TwoNamesJoinWithAnd(t *testing.T) {
 
 	assert.Equal(t, "mlmforge migrate refused to open the database: the environment sets PGSERVICE and PGSYSCONFDIR. "+
 		"mlmforge migrate does not accept these variables. Unset them and run the command again.", err.Error())
+}
+
+func TestUnsupportedEnvError_NoNamesDoesNotPanic(t *testing.T) {
+	assert.Equal(t, "mlmforge migrate refused to open the database: the environment check named no variable.",
+		(&UnsupportedEnvError{}).Error())
+	assert.Equal(t, "", joinNames(nil))
 }
 
 func TestRefuseUnsupportedEnv_NothingSetPasses(t *testing.T) {

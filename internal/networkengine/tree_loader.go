@@ -525,8 +525,8 @@ func orderForReplay(treeID string, nodes []TreeNodeRow) ([]*TreeNodeRow, error) 
 	return ordered, nil
 }
 
-// preflight checks that nodes can be replayed, without calling the engine. An
-// empty set passes.
+// preflight validates nodes and orders them for replay, without calling the
+// engine. An empty set passes.
 func preflight(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNodeRow) error {
 	if len(nodes) == 0 {
 		return nil

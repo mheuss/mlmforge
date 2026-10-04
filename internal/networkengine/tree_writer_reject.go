@@ -83,8 +83,8 @@ var rejectionRefusalCodes = map[string]bool{
 	"SPONSOR_CYCLE":             true,
 }
 
-// rejectionSentinels are the store and consumer refusals that count as
-// evidence that an event cannot apply.
+// rejectionSentinels are the errors that count as evidence that an event
+// cannot apply.
 var rejectionSentinels = []error{
 	ErrReplayedPlacement, ErrActiveUserConflict, ErrSlotConflict, ErrRootConflict, ErrUnprojectableEvent,
 }
@@ -97,6 +97,9 @@ func (w *TreeWriter) rejectionEvidence(ctx context.Context, tree string, shape t
 	}
 	var failed *CatchUpFailedError
 	if errors.As(retryErr, &failed) {
+		if !sameUUID(failed.EventID, last.ID) {
+			return false, nil
+		}
 		for _, sentinel := range rejectionSentinels {
 			if errors.Is(failed.Err, sentinel) {
 				return true, nil

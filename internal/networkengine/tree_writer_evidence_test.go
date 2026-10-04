@@ -14,7 +14,7 @@ import (
 
 var unilevelShape = treeShape{treeType: treeTypeUnilevel}
 
-// caughtUpFailure wraps err the way catch-up reports a failed redelivery of last.
+// caughtUpFailure wraps err in a CatchUpFailedError naming last.
 func caughtUpFailure(last platform.Event, err error) error {
 	return &CatchUpFailedError{TreeID: writerTree, EventID: last.ID, Version: last.Version, Type: last.Type, Err: err}
 }
@@ -62,7 +62,12 @@ func TestRejectionEvidence_RefusesWhatSaysNothingAboutTheEvent(t *testing.T) {
 		"a load whose store read failed": &TreeLoadRejectedError{
 			TreeID: writerTree, Kind: TreeLoadStoreReadFailed, Err: errors.New("connection reset"),
 		},
-		"a fence refusal": &StreamMovedError{TreeID: writerTree, LoadedVersion: 1, LastVersion: 3},
+		"a fence refusal":                       &StreamMovedError{TreeID: writerTree, LoadedVersion: 1, LastVersion: 3},
+		"a replayed placement outside catch-up": fmt.Errorf("x: %w", ErrReplayedPlacement),
+		"a refusal code outside catch-up":       fakeEngineError("SPONSOR_NOT_FOUND", "refused"),
+		"a catch-up failure of another event": &CatchUpFailedError{
+			TreeID: writerTree, EventID: testNodeUUID(6), Version: 2, Type: EventTypeNodePlaced, Err: ErrReplayedPlacement,
+		},
 	}
 	for _, code := range []string{
 		"USER_ALREADY_EXISTS", "ROOT_ALREADY_EXISTS", "USER_NOT_FOUND", "INTERNAL_ERROR",
@@ -87,6 +92,9 @@ func TestRejectionEvidence_CountsALoadStoppedOnlyByTheStuckRow(t *testing.T) {
 	stuck := stuckPlacement(t, env)
 	w, _ := env.writer()
 	_, retryErr := w.Place(context.Background(), placeRequest(testUserUUID(4), nil))
+	var rejected *TreeLoadRejectedError
+	require.ErrorAs(t, retryErr, &rejected)
+	require.Equal(t, TreeLoadDataInvalid, rejected.Kind)
 
 	got, err := w.rejectionEvidence(context.Background(), writerTree, unilevelShape, stuck, retryErr)
 
@@ -94,8 +102,7 @@ func TestRejectionEvidence_CountsALoadStoppedOnlyByTheStuckRow(t *testing.T) {
 	assert.True(t, got)
 }
 
-// orphanRow is an active row naming a sponsor the tree does not hold, written
-// with no event behind it.
+// orphanRow is an active row naming a sponsor the tree does not hold.
 func orphanRow() TreeNodeRow {
 	sponsor := testUserUUID(6)
 	root := writerRoot
@@ -105,7 +112,7 @@ func orphanRow() TreeNodeRow {
 	}
 }
 
-func TestRejectionEvidence_RefusesALoadFailureWithNoRowForTheEvent(t *testing.T) {
+func TestRejectionEvidence_RefusesARemovalWhileAnotherRowBreaksTheLoad(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
 	mustPlace(t, env, writerChild, nil)

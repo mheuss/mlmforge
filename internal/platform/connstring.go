@@ -225,6 +225,23 @@ func afterPasswordError(dbURL string) error {
 	return nil
 }
 
+// rawPlusError returns a ConnStringError when the query's first password value holds a raw '+', and nil otherwise.
+func rawPlusError(dbURL string) error {
+	segments, ok := querySegments(dbURL)
+	if !ok {
+		return nil
+	}
+	for _, s := range segments {
+		if s.key == "password" {
+			if strings.Contains(s.value, "+") {
+				return &ConnStringError{driver: driverMlmforge, stage: stageRawPlus}
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
 // rawAtError returns a ConnStringError for a postgres:// or postgresql:// string with a raw '@' after the host part, and nil otherwise.
 func rawAtError(dbURL string) error {
 	rest, ok := strings.CutPrefix(dbURL, "postgres://")

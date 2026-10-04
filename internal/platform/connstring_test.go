@@ -356,6 +356,40 @@ func TestAfterPasswordError_AcceptsThePasswordLast(t *testing.T) {
 	}
 }
 
+func TestRawPlusError_RefusesARawPlusInThePassword(t *testing.T) {
+	for _, connString := range []string{
+		"postgres://plusr@127.0.0.1:1/app?password=Zm9v+cXV4",
+		"postgres://plus@127.0.0.1:1/app?password=Zm9v+cXV4",
+		"postgres://h/app?sslmode=disable&password=a+b",
+		"postgres://h/app?pass%77ord=a+b",
+		"postgres://h/app?password=+",
+	} {
+		t.Run(connString, func(t *testing.T) {
+			var cse *ConnStringError
+			require.ErrorAs(t, rawPlusError(connString), &cse)
+			require.Equal(t, "mlmforge", cse.Driver())
+			require.Equal(t, "raw-plus", cse.Stage())
+			require.Empty(t, cse.Part())
+		})
+	}
+}
+
+func TestRawPlusError_AcceptsAnEncodedPlusAndAPlusElsewhere(t *testing.T) {
+	for _, connString := range []string{
+		"postgres://plusr@127.0.0.1:1/app?password=Zm9v%2BcXV4",
+		"postgres://plus@127.0.0.1:1/app?password=Zm9v%20cXV4",
+		"postgres://h/app?application_name=a+b&password=x",
+		"postgres://u:a+b@h/app",
+		"postgres://h/app?password=x#a+b",
+		"postgres://h/app?password=x&password=a+b",
+		"host=h password=a+b",
+		"POSTGRES://h/app?password=a+b",
+		"",
+	} {
+		require.NoError(t, rawPlusError(connString), connString)
+	}
+}
+
 func TestPreDriverError_RefusesWhatEitherCheckRefuses(t *testing.T) {
 	for _, tc := range []struct {
 		connString string

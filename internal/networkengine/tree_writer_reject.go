@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/mlmforge/mlmforge/internal/platform"
 )
@@ -139,4 +140,149 @@ func (w *TreeWriter) stuckRowStopsTheLoad(ctx context.Context, tree string, shap
 		return false, nil
 	}
 	return preflight(tree, shape.treeType, shape.config(), remaining) == nil, nil
+}
+
+// RejectRequest names the tree event to reject and why.
+type RejectRequest struct {
+	TreeID  string
+	EventID string
+	Reason  string
+}
+
+// RejectOutcome names what a Reject did.
+type RejectOutcome string
+
+const (
+	// RejectOutcomeRejected appended a rejection.
+	RejectOutcomeRejected RejectOutcome = "rejected"
+	// RejectOutcomeResumed projected a rejection already in the stream.
+	RejectOutcomeResumed RejectOutcome = "resumed"
+	// RejectOutcomeAlreadyApplied found the rejection already projected.
+	RejectOutcomeAlreadyApplied RejectOutcome = "already_applied"
+)
+
+// RejectResult describes one Reject. Outcome is empty when nothing was done.
+type RejectResult struct {
+	Stream          string
+	Outcome         RejectOutcome
+	RejectedEventID string                 // the event the rejection names
+	RejectedVersion int64                  // that event's version
+	RetryErr        error                  // what the retry returned, when it failed
+	EventID         string                 // the rejection's ID, once appended or found
+	Version         int64                  // the rejection's version
+	ProjectionErr   error                  // any failure projecting the rejection
+	Observed        *ProjectionObservation // the projected version, re-read after a projection error
+	ReleaseErr      error                  // the unlock failed
+}
+
+// Reject appends a rejection of the stream's last event, or projects one
+// already there, under the tree's lock.
+func (w *TreeWriter) Reject(ctx context.Context, r RejectRequest) (result RejectResult, err error) {
+	treeID, err := canonicalID("tree_id", r.TreeID)
+	if err != nil {
+		return result, err
+	}
+	eventID, err := canonicalID("event_id", r.EventID)
+	if err != nil {
+		return result, err
+	}
+	tree := treeID.String()
+	stream := TreeStreamName(tree)
+	result.Stream = stream
+	reason := strings.TrimSpace(r.Reason)
+	if reason == "" {
+		return result, fmt.Errorf("reject event %s in tree %s: the reason is empty after trimming whitespace; nothing was appended",
+			eventID, tree)
+	}
+	shape, found, err := w.readShape(ctx, stream)
+	if err != nil {
+		return result, err
+	}
+	if !found {
+		return result, fmt.Errorf("reject event %s in tree %s: stream %s has no events", eventID, tree, stream)
+	}
+
+	unlock, err := w.lock(ctx, treeID)
+	if err != nil {
+		return result, err
+	}
+	defer func() {
+		result.ReleaseErr = unlock()
+	}()
+
+	projected, projectedFound, err := w.store.ProjectedVersion(ctx, tree)
+	if err != nil {
+		return result, fmt.Errorf("read the projected version of tree %s; nothing was appended: %w", tree, err)
+	}
+	last, err := w.events.ReadLastEvent(ctx, stream)
+	if err != nil {
+		return result, fmt.Errorf("read the last event of stream %s; nothing was appended: %w", stream, err)
+	}
+	if last == nil {
+		return result, fmt.Errorf("reject event %s in tree %s: stream %s has no events", eventID, tree, stream)
+	}
+	if last.Type == EventTypeEventRejected {
+		return w.resumeRejection(ctx, result, tree, eventID.String(), *last, projected, projectedFound)
+	}
+	if !sameUUID(last.ID, eventID.String()) {
+		return result, fmt.Errorf("stream %s ends with event %s at version %d, not event %s; nothing was appended",
+			stream, last.ID, last.Version, eventID)
+	}
+	if !rejectableEventTypes[last.Type] {
+		return result, fmt.Errorf("stream %s ends with event %s at version %d of type %q, which reject-event does not reject; nothing was appended",
+			stream, last.ID, last.Version, last.Type)
+	}
+	result.RejectedEventID, result.RejectedVersion = last.ID, last.Version
+
+	retryErr := w.retry(ctx, tree, stream, shape)
+	if retryErr == nil {
+		return result, fmt.Errorf("retrying event %s at version %d in stream %s returned no error; nothing was appended",
+			last.ID, last.Version, stream)
+	}
+	result.RetryErr = retryErr
+	evidence, err := w.rejectionEvidence(ctx, tree, shape, *last, retryErr)
+	if err != nil {
+		return result, fmt.Errorf("%w; nothing was appended", err)
+	}
+	if !evidence {
+		return result, fmt.Errorf("retrying event %s at version %d in stream %s returned an error that is not one reject-event accepts as evidence; nothing was appended: %w",
+			last.ID, last.Version, stream, retryErr)
+	}
+
+	event, err := newTreeEvent(EventTypeEventRejected, EventRejectedPayload{
+		TreeID: tree, RejectedEventID: last.ID, RejectedVersion: last.Version, RejectedType: last.Type, Reason: reason,
+	})
+	if err != nil {
+		return result, err
+	}
+	version, err := w.append(ctx, stream, last.Version, event)
+	if err != nil {
+		return result, err
+	}
+	result.Outcome, result.EventID, result.Version = RejectOutcomeRejected, event.ID, version
+	result.ProjectionErr = w.project(ctx, stream, event.ID, version)
+	if result.ProjectionErr != nil {
+		result.Observed = w.observe(ctx, tree)
+	}
+	return result, nil
+}
+
+// retry tries the stream's last event once more, as a write would before
+// appending.
+func (w *TreeWriter) retry(ctx context.Context, tree, stream string, shape treeShape) error {
+	loaded, last, _, err := w.prepare(ctx, tree, shape)
+	if err != nil {
+		return err
+	}
+	if last == nil {
+		return nil
+	}
+	_, err = w.catchUp(ctx, tree, stream, *last, loaded)
+	return err
+}
+
+// resumeRejection handles a stream that already ends with a rejection.
+func (w *TreeWriter) resumeRejection(_ context.Context, result RejectResult, _, _ string,
+	last platform.Event, _ int64, _ bool) (RejectResult, error) {
+	return result, fmt.Errorf("stream %s ends with rejection %s; nothing was appended", result.Stream, last.ID)
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -396,4 +397,376 @@ func TestTreeWriterCheckRejectionTarget_ReportsWhatTheReadReturned(t *testing.T)
 		stream, rejection.ID, placed.ID))
 	require.EqualError(t, none, fmt.Sprintf("a read of version 8 of stream %s, before rejection %s, returned no event",
 		stream, rejection.ID))
+}
+
+// rejectRequest asks to reject eventID in writerTree.
+func rejectRequest(eventID string) RejectRequest {
+	return RejectRequest{TreeID: writerTree, EventID: eventID, Reason: "sponsor never enrolled"}
+}
+
+// rejectionIn decodes the last event of writerTree's stream as a rejection.
+func rejectionIn(t *testing.T, env *writerEnv) (platform.Event, EventRejectedPayload) {
+	t.Helper()
+	events := streamEvents(t, env.events, TreeStreamName(writerTree))
+	last := events[len(events)-1]
+	require.Equal(t, EventTypeEventRejected, last.Type)
+	p, err := rejectionPayload(last)
+	require.NoError(t, err)
+	return last, p
+}
+
+func TestTreeWriterReject_RejectsAPlacementWhoseRowStopsTheLoad(t *testing.T) {
+	env := newWriterEnv()
+	stuck := stuckPlacement(t, env)
+	w, engine := env.writer()
+
+	res, err := w.Reject(context.Background(), rejectRequest(stuck.ID))
+
+	require.NoError(t, err)
+	require.NoError(t, res.ProjectionErr)
+	assert.Equal(t, RejectOutcomeRejected, res.Outcome)
+	assert.Equal(t, stuck.ID, res.RejectedEventID)
+	assert.Equal(t, int64(2), res.RejectedVersion)
+	assert.Equal(t, int64(3), res.Version)
+	var rejected *TreeLoadRejectedError
+	require.ErrorAs(t, res.RetryErr, &rejected)
+	assert.Empty(t, engine.checks)
+	rejection, p := rejectionIn(t, env)
+	assert.Equal(t, res.EventID, rejection.ID)
+	assert.Equal(t, EventRejectedPayload{
+		TreeID: writerTree, RejectedEventID: stuck.ID, RejectedVersion: 2,
+		RejectedType: EventTypeNodePlaced, Reason: "sponsor never enrolled",
+	}, p)
+	row, err := env.store.GetNodeIncludingRemoved(context.Background(), writerTree, writerChild)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, stuck.ID, row.ID)
+	assert.NotNil(t, row.RemovedAt)
+	assert.Nil(t, row.RemovedByEventID)
+
+	next, _ := env.writer()
+	placed, err := next.Place(context.Background(), placeRequest(testUserUUID(4), nil))
+	require.NoError(t, err)
+	assert.Equal(t, &CaughtUpEvent{EventID: rejection.ID, Version: 3, Type: EventTypeEventRejected}, placed.CaughtUp)
+	assert.Equal(t, int64(4), placed.Version)
+}
+
+func TestTreeWriterReject_RejectsAPlacementTheEngineRefusesOnItsFirstDelivery(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	stuck := appendDirect(t, env.events, EventTypeNodePlaced, childPlacedPayload(writerChild))
+	w, engine := env.writer()
+	engine.failAdd[writerChild] = fakeEngineError("SPONSOR_NOT_FOUND", "sponsor not found in tree")
+
+	res, err := w.Reject(context.Background(), rejectRequest(stuck.ID))
+
+	require.NoError(t, err)
+	assert.Equal(t, RejectOutcomeRejected, res.Outcome)
+	var engineErr *EngineError
+	require.ErrorAs(t, res.RetryErr, &engineErr)
+	assert.Equal(t, "SPONSOR_NOT_FOUND", engineErr.Code)
+	row, err := env.store.GetNodeIncludingRemoved(context.Background(), writerTree, writerChild)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.NotNil(t, row.RemovedAt)
+}
+
+func TestTreeWriterReject_RejectsACompensatedRoot(t *testing.T) {
+	env := newWriterEnv()
+	root := appendDirect(t, env.events, EventTypeRootAdded, rootAddedPayload())
+	trigger, engine := env.writer()
+	engine.failAdd[writerRoot] = fakeEngineError(engineCodeRootAlreadyExists, "tree already has a root node")
+	second := testUserUUID(5)
+	addSecond := AddRootRequest{TreeID: writerTree, UserID: second, SponsorID: second, TreeType: treeTypeUnilevel, EnrolledAt: writeTime}
+	_, err := trigger.AddRoot(context.Background(), addSecond)
+	var failed *CatchUpFailedError
+	require.ErrorAs(t, err, &failed, "the trigger write did not run the compensation")
+	w, _ := env.writer()
+
+	res, err := w.Reject(context.Background(), rejectRequest(root.ID))
+
+	require.NoError(t, err)
+	require.NoError(t, res.ProjectionErr)
+	require.ErrorIs(t, res.RetryErr, ErrReplayedPlacement)
+	version, _, err := env.store.ProjectedVersion(context.Background(), writerTree)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), version)
+
+	binary, _ := env.writer()
+	addBinary := addSecond
+	addBinary.TreeType = treeTypeBinary
+	_, err = binary.AddRoot(context.Background(), addBinary)
+	require.EqualError(t, err, "add root to tree "+writerTree+": stream "+TreeStreamName(writerTree)+
+		" records tree type unilevel at version 1, and the request names binary")
+
+	again, _ := env.writer()
+	added, err := again.AddRoot(context.Background(), addSecond)
+	require.NoError(t, err)
+	require.NoError(t, added.ProjectionErr)
+	assert.Equal(t, int64(3), added.Version)
+}
+
+// refusingRemovalEngine refuses every removal with HAS_CHILDREN.
+type refusingRemovalEngine struct{ *fakeWriterEngine }
+
+func (refusingRemovalEngine) RemoveNode(context.Context, string, string) ([]Responsored, error) {
+	return nil, fakeEngineError("HAS_CHILDREN", "user has children")
+}
+
+func TestReject_RemovalLeavesUserActive(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	placed := mustPlace(t, env, writerChild, nil)
+	removal := appendDirect(t, env.events, EventTypeNodeRemoved, NodeRemovedPayload{
+		TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime,
+	})
+	w := NewTreeWriter(env.events, env.store, refusingRemovalEngine{newFakeWriterEngine()}, env.locker)
+
+	res, err := w.Reject(context.Background(), rejectRequest(removal.ID))
+
+	require.NoError(t, err)
+	require.NoError(t, res.ProjectionErr)
+	assert.Equal(t, int64(4), res.Version)
+	row, err := env.store.GetNode(context.Background(), writerTree, writerChild)
+	require.NoError(t, err)
+	require.NotNil(t, row, "rejecting the removal took the user out of the tree")
+	assert.Equal(t, placed.EventID, row.ID)
+	stamped, err := env.store.GetNodeByRemovalEvent(context.Background(), writerTree, removal.ID)
+	require.NoError(t, err)
+	assert.Nil(t, stamped)
+
+	next, _ := env.writer()
+	_, err = next.Place(context.Background(), PlaceRequest{
+		TreeID: writerTree, UserID: writerOther, ParentID: writerChild, SponsorID: writerChild, EnrolledAt: writeTime,
+	})
+	require.NoError(t, err)
+	loader, _ := env.writer()
+	loaded, err := loader.Load(context.Background(), loadRequest())
+	require.NoError(t, err)
+	assert.Equal(t, 3, loaded.Nodes)
+}
+
+func TestTreeWriterReject_RefusesWhenTheRetrySucceeds(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	pending := appendDirect(t, env.events, EventTypeNodePlaced, childPlacedPayload(writerChild))
+	w, _ := env.writer()
+
+	res, err := w.Reject(context.Background(), rejectRequest(pending.ID))
+
+	require.EqualError(t, err, "retrying event "+pending.ID+" at version 2 in stream "+TreeStreamName(writerTree)+
+		" returned no error; nothing was appended")
+	assert.Empty(t, res.Outcome)
+	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 2)
+}
+
+// insertFailingStore fails every ProjectInsert.
+type insertFailingStore struct{ TreeStore }
+
+func (insertFailingStore) ProjectInsert(context.Context, TreeNodeRow, int64) error {
+	return errors.New("connection reset by peer")
+}
+
+func TestTreeWriterReject_RefusesARetryErrorThatIsNotEvidence(t *testing.T) {
+	cases := []struct {
+		name  string
+		build func(env *writerEnv) *TreeWriter
+	}{
+		{"an engine INTERNAL_ERROR", func(env *writerEnv) *TreeWriter {
+			w, engine := env.writer()
+			engine.failAdd[writerChild] = fakeEngineError("INTERNAL_ERROR", "handler panicked")
+			return w
+		}},
+		{"an engine USER_ALREADY_EXISTS", func(env *writerEnv) *TreeWriter {
+			w, engine := env.writer()
+			engine.failAdd[writerChild] = fakeEngineError(engineCodeUserAlreadyExists, "user already exists in tree")
+			return w
+		}},
+		{"a transport error", func(env *writerEnv) *TreeWriter {
+			w, engine := env.writer()
+			engine.failAdd[writerChild] = errors.New("write |1: broken pipe")
+			return w
+		}},
+		{"a cancelled engine call", func(env *writerEnv) *TreeWriter {
+			w, engine := env.writer()
+			engine.failAdd[writerChild] = fmt.Errorf("add_node: %w", context.Canceled)
+			return w
+		}},
+		{"an engine call past its deadline", func(env *writerEnv) *TreeWriter {
+			w, engine := env.writer()
+			engine.failAdd[writerChild] = context.DeadlineExceeded
+			return w
+		}},
+		{"a store error", func(env *writerEnv) *TreeWriter {
+			return NewTreeWriter(env.events, insertFailingStore{env.store}, newFakeWriterEngine(), env.locker)
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			env := newWriterEnv()
+			mustAddRoot(t, env, treeTypeUnilevel)
+			pending := appendDirect(t, env.events, EventTypeNodePlaced, childPlacedPayload(writerChild))
+
+			res, err := c.build(env).Reject(context.Background(), rejectRequest(pending.ID))
+
+			require.ErrorContains(t, err, "retrying event "+pending.ID+" at version 2 in stream "+TreeStreamName(writerTree)+
+				" returned an error that is not one reject-event accepts as evidence; nothing was appended: ")
+			assert.Empty(t, res.Outcome)
+			assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 2)
+		})
+	}
+}
+
+func TestTreeWriterReject_RefusesALoadFailureTheTieRuleDoesNotAccept(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(t *testing.T, env *writerEnv) (*TreeWriter, platform.Event)
+	}{
+		{"a load whose store read failed", func(t *testing.T, env *writerEnv) (*TreeWriter, platform.Event) {
+			stuck := stuckPlacement(t, env)
+			return NewTreeWriter(env.events, depthReadFailingStore{env.store}, newFakeWriterEngine(), env.locker), stuck
+		}},
+		{"no row carries the event's ID", func(t *testing.T, env *writerEnv) (*TreeWriter, platform.Event) {
+			mustAddRoot(t, env, treeTypeUnilevel)
+			mustPlace(t, env, writerChild, nil)
+			require.NoError(t, env.store.InsertNode(context.Background(), orphanRow()))
+			removal := appendDirect(t, env.events, EventTypeNodeRemoved, NodeRemovedPayload{
+				TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime,
+			})
+			w, _ := env.writer()
+			return w, removal
+		}},
+		{"the load still fails without the event's row", func(t *testing.T, env *writerEnv) (*TreeWriter, platform.Event) {
+			mustAddRoot(t, env, treeTypeUnilevel)
+			mustPlace(t, env, writerChild, nil)
+			placed := streamEvents(t, env.events, TreeStreamName(writerTree))[1]
+			require.NoError(t, env.store.InsertNode(context.Background(), orphanRow()))
+			w, _ := env.writer()
+			return w, placed
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			env := newWriterEnv()
+			w, last := c.setup(t, env)
+			before := streamEvents(t, env.events, TreeStreamName(writerTree))
+
+			res, err := w.Reject(context.Background(), rejectRequest(last.ID))
+
+			require.ErrorContains(t, err, "retrying event "+last.ID+" at version "+fmt.Sprint(last.Version)+" in stream "+
+				TreeStreamName(writerTree)+" returned an error that is not one reject-event accepts as evidence; nothing was appended: ")
+			assert.Empty(t, res.Outcome)
+			assert.Equal(t, before, streamEvents(t, env.events, TreeStreamName(writerTree)))
+		})
+	}
+}
+
+func TestTreeWriterReject_AUnilevelFirstDeliveryRefusesThenTheLoadRuleRejects(t *testing.T) {
+	env := newWriterEnv()
+	ctx := context.Background()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	stuck := appendDirect(t, env.events, EventTypeNodePlaced, NodePlacedPayload{
+		TreeID: writerTree, UserID: writerChild, ParentID: writerRoot, SponsorID: writerOther,
+		TreeType: treeTypeUnilevel, EnrolledAt: writeTime,
+	})
+	first, engine := env.writer()
+	engine.failAdd[writerChild] = fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", writerOther)
+
+	_, err := first.Reject(ctx, rejectRequest(stuck.ID))
+
+	require.ErrorContains(t, err, "returned an error that is not one reject-event accepts as evidence; nothing was appended")
+	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 2)
+	row, err := env.store.GetNode(ctx, writerTree, writerChild)
+	require.NoError(t, err)
+	require.NotNil(t, row, "the refused first run's retry did not commit the row")
+	assert.Equal(t, stuck.ID, row.ID)
+
+	second, _ := env.writer()
+	res, err := second.Reject(ctx, rejectRequest(stuck.ID))
+
+	require.NoError(t, err)
+	assert.Equal(t, RejectOutcomeRejected, res.Outcome)
+	var rejected *TreeLoadRejectedError
+	require.ErrorAs(t, res.RetryErr, &rejected)
+}
+
+func TestTreeWriterReject_StoresATrimmedReasonAndCanonicalIDs(t *testing.T) {
+	env := newWriterEnv()
+	stuck := stuckPlacement(t, env)
+	w, _ := env.writer()
+
+	res, err := w.Reject(context.Background(), RejectRequest{
+		TreeID: strings.ToUpper(writerTree), EventID: strings.ToUpper(stuck.ID), Reason: "  sponsor never enrolled \n",
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, RejectOutcomeRejected, res.Outcome)
+	assert.Equal(t, TreeStreamName(writerTree), res.Stream)
+	_, p := rejectionIn(t, env)
+	assert.Equal(t, "sponsor never enrolled", p.Reason)
+	assert.Equal(t, writerTree, p.TreeID)
+	assert.Equal(t, stuck.ID, p.RejectedEventID)
+}
+
+func TestTreeWriterReject_RefusesBeforeTheLock(t *testing.T) {
+	event := testNodeUUID(5)
+	cases := []struct {
+		name string
+		req  RejectRequest
+		want string
+	}{
+		{"a tree ID that is not a UUID", RejectRequest{TreeID: "tree-9", EventID: event, Reason: "r"}, `tree_id "tree-9" is not a UUID`},
+		{"an event ID that is not a UUID", RejectRequest{TreeID: writerTree, EventID: "e-9", Reason: "r"}, `event_id "e-9" is not a UUID`},
+		{"a whitespace reason", RejectRequest{TreeID: writerTree, EventID: event, Reason: " \t "},
+			"reject event " + event + " in tree " + writerTree + ": the reason is empty after trimming whitespace; nothing was appended"},
+		{"an empty stream", RejectRequest{TreeID: writerTree, EventID: event, Reason: "r"},
+			"reject event " + event + " in tree " + writerTree + ": stream " + TreeStreamName(writerTree) + " has no events"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			env := newWriterEnv()
+			w := NewTreeWriter(env.events, env.store, newFakeWriterEngine(), refusingLocker{t})
+
+			_, err := w.Reject(context.Background(), c.req)
+
+			require.ErrorContains(t, err, c.want)
+		})
+	}
+}
+
+func TestTreeWriterReject_RefusesAnEventThatIsNotTheLast(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	placed := mustPlace(t, env, writerChild, nil)
+	first := streamEvents(t, env.events, TreeStreamName(writerTree))[0]
+	w, _ := env.writer()
+
+	_, err := w.Reject(context.Background(), rejectRequest(first.ID))
+
+	require.EqualError(t, err, "stream "+TreeStreamName(writerTree)+" ends with event "+placed.EventID+
+		" at version 2, not event "+first.ID+"; nothing was appended")
+}
+
+func TestTreeWriterReject_RefusesAnEventOfAnotherType(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	foreign := appendDirect(t, env.events, "tree.renamed", map[string]string{"name": "x"})
+	w, _ := env.writer()
+
+	_, err := w.Reject(context.Background(), rejectRequest(foreign.ID))
+
+	require.EqualError(t, err, "stream "+TreeStreamName(writerTree)+" ends with event "+foreign.ID+
+		` at version 2 of type "tree.renamed", which reject-event does not reject; nothing was appended`)
+}
+
+func TestTreeWriterReject_RefusesWhenTheLockIsNotAcquired(t *testing.T) {
+	env := newWriterEnv()
+	stuck := stuckPlacement(t, env)
+	w := NewTreeWriter(env.events, env.store, newFakeWriterEngine(), immediateErrLocker{err: errors.New("lock refused")})
+
+	_, err := w.Reject(context.Background(), rejectRequest(stuck.ID))
+
+	require.ErrorContains(t, err, "lock refused")
+	assert.True(t, strings.HasPrefix(err.Error(), "lock tree "+writerTree), err.Error())
+	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 2)
 }

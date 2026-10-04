@@ -3,6 +3,7 @@ package platform
 import (
 	"net/url"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -257,4 +258,49 @@ func TestDriverReadings_APlusIsASpaceInTheQueryAndLiteralInTheUserinfo(t *testin
 			require.Equal(t, tc.pq, got)
 		})
 	}
+}
+
+func TestDriverReadings_LibPQTrimsSpaceAroundAKeyAndNeitherDriverFoldsCase(t *testing.T) {
+	testutil.ClearLibPQEnv(t)
+	clearPgxDefaults(t)
+
+	for _, tc := range []struct {
+		connString string
+		pqPassword string
+	}{
+		{"postgres://u@h/app?+password=a&b=c", "a"},
+		{"postgres://u@h/app?password+=a+b", "a b"},
+		{"postgres://u@h/app?%09password=a+b", "a b"},
+		{"postgres://u@h/app?password%0A=a+b", "a b"},
+		{"postgres://u@h/app?%0Bpassword=a+b", "a b"},
+		{"postgres://u@h/app?password%0C=a+b", "a b"},
+		{"postgres://u@h/app?%C2%A0password=a+b", "a b"},
+		{"postgres://u@h/app?PASSWORD=a", ""},
+		{"postgres://u@h/app?Password=a", ""},
+	} {
+		t.Run(tc.connString, func(t *testing.T) {
+			cfg, err := pgconn.ParseConfig(tc.connString)
+			require.NoError(t, err)
+			require.Empty(t, cfg.Password, "pgx")
+
+			got := libPQOption(t, tc.connString, "password")
+			require.Equal(t, tc.pqPassword, got, "lib/pq password")
+		})
+	}
+}
+
+// libPQOption returns the value lib/pq's connector holds for key, or "" if it holds none, after parsing connString as golang-migrate hands it over.
+func libPQOption(t *testing.T, connString, key string) string {
+	t.Helper()
+	u, err := url.Parse(connString)
+	require.NoError(t, err)
+	c, err := pq.NewConnector(migrate.FilterCustomQuery(u).String())
+	require.NoError(t, err)
+	opts := reflect.ValueOf(c).Elem().FieldByName("opts")
+	require.True(t, opts.IsValid(), "lib/pq's Connector has no opts field to read")
+	v := opts.MapIndex(reflect.ValueOf(key))
+	if !v.IsValid() {
+		return ""
+	}
+	return v.String()
 }

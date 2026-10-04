@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"unicode"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -211,6 +212,11 @@ func querySegments(dbURL string) ([]querySegment, bool) {
 	return segments, true
 }
 
+// isPasswordKey reports whether a decoded query key names the password once surrounding whitespace is trimmed.
+func isPasswordKey(key string) bool {
+	return strings.TrimFunc(key, unicode.IsSpace) == "password"
+}
+
 // afterPasswordError returns a ConnStringError when any '&' follows the start of the query's password segment, and nil otherwise.
 func afterPasswordError(dbURL string) error {
 	segments, ok := querySegments(dbURL)
@@ -218,7 +224,7 @@ func afterPasswordError(dbURL string) error {
 		return nil
 	}
 	for i, s := range segments {
-		if s.key == "password" {
+		if isPasswordKey(s.key) {
 			if i < len(segments)-1 {
 				return &ConnStringError{driver: driverMlmforge, stage: stageAfterPassword}
 			}
@@ -235,7 +241,7 @@ func rawPlusError(dbURL string) error {
 		return nil
 	}
 	for _, s := range segments {
-		if s.key == "password" {
+		if isPasswordKey(s.key) {
 			if strings.Contains(s.value, "+") {
 				return &ConnStringError{driver: driverMlmforge, stage: stageRawPlus}
 			}

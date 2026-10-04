@@ -38,7 +38,7 @@ func negativeText(version int) string {
 	return fmt.Sprintf("The record reads %d, dirty. %s", version, resetRefusesAt(version))
 }
 
-// resetRefusesAt says which form of reset-dirty does not change a record at version.
+// resetRefusesAt says what reset-dirty does not change at version.
 func resetRefusesAt(version int) string {
 	if version < -1 {
 		return neitherBelowText
@@ -187,10 +187,14 @@ func applyFailureText(e *platform.ApplyError) string {
 		lines = append(lines,
 			fmt.Sprintf("This run was %s. The record now %s.", upCommand, describeRecord(after.Record)),
 			noResetText)
+	case after.Record.Version < -1:
+		lines = append(lines,
+			fmt.Sprintf("This run was %s. The record now %s.", upCommand, describeRecord(after.Record)),
+			neitherBelowText)
 	case after.Record.Version < 0:
 		lines = append(lines,
 			fmt.Sprintf("This run was %s. The record now %s.", upCommand, describeRecord(after.Record)),
-			resetRefusesAt(after.Record.Version))
+			fmt.Sprintf("Neither form of %s is safe after a failed up that leaves a record at %d.", resetCommand, after.Record.Version))
 	default:
 		lines = append(lines,
 			fmt.Sprintf("This run was %s. The record now %s.", upCommand, describeRecord(after.Record)),

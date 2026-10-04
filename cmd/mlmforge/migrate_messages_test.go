@@ -127,7 +127,7 @@ func TestApplyFailureText_AMinusOneRecordSaysResetWillNotChangeIt(t *testing.T) 
 
 	require.Equal(t, "apply migrations: boom\n"+
 		"This run was `mlmforge migrate up`. The record now reads -1, dirty.\n"+
-		"`mlmforge migrate reset-dirty` without the flag does not change a record at -1.", got)
+		"Neither form of `mlmforge migrate reset-dirty` is safe after a failed up that leaves a record at -1.", got)
 	requireNoForce(t, got)
 }
 
@@ -448,6 +448,7 @@ func TestMigrateError_EachResetRefusalNamesTheRecordAndSaysNothingChanged(t *tes
 		"reset-dirty changes only a dirty record. The record reads 5, clean. The record was not changed.":                                         &platform.NotDirtyError{Record: platform.Record{Version: 5}},
 		"reset-dirty changes only a dirty record. The record holds no version. The record was not changed.":                                       &platform.NotDirtyError{Record: platform.Record{Version: -1}},
 		"The record reads -1, dirty. `mlmforge migrate reset-dirty` without the flag does not change a record at -1. The record was not changed.": &platform.NegativeVersionError{Record: platform.Record{Version: -1, Dirty: true}},
+		"The record reads -2, dirty. Neither form of `mlmforge migrate reset-dirty` changes a record below -1. The record was not changed.":       &platform.NegativeVersionError{Record: platform.Record{Version: -2, Dirty: true}},
 		"The record reads 9, dirty. The migrations directory /m has no migration 9. The record was not changed.":                                  &platform.VersionNotInSourceError{Record: platform.Record{Version: 9, Dirty: true}, Path: "/m"},
 	}
 	for want, err := range cases {
@@ -624,7 +625,7 @@ func TestDirtyText_ARecordBelowMinusOneNamesTheValueItRead(t *testing.T) {
 
 func TestRollbackFailureText_NeverContainsTheUpTrigger(t *testing.T) {
 	trigger := "run " + resetCommand
-	sources := []platform.SourceInfo{sevenSource, {Path: "/m"}, {Path: "/m", Err: errors.New("permission denied")}, {Path: "/m", Next: 1, HasNext: true}}
+	sources := []platform.SourceInfo{sevenSource, {Path: "/m"}, {Path: "/m", Err: errors.New("permission denied")}, {Path: "/m", Next: 1, HasNext: true}, {Path: "/m", InSource: true}}
 	reads := []platform.RecordRead{
 		sevenDirtyAfterDown,
 		{Err: errors.New("connection reset")},

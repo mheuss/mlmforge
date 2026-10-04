@@ -39,15 +39,15 @@ func ConnStringCases() []ConnStringCase {
 			Password: "Zm9vQmFy%zzcXV4eHl6", PgxStage: "parse", MigrateStage: "parse"},
 		{Name: "fragment", ConnString: "postgres://app:Zm9vQmFy#cXV4eHl6@127.0.0.1:1/app",
 			Password: "Zm9vQmFy#cXV4eHl6", PgxStage: "parse", MigrateStage: "parse", ResolveStage: "raw-at", ResolvePart: "fragment"},
-		{Name: "bad-sslmode", ConnString: "postgres://app@127.0.0.1:1/app?sslmode=bogus&password=qs3cretpwXYZ",
+		{Name: "bad-sslmode", ConnString: "postgres://app@127.0.0.1:1/app?sslmode=bogus&password=qs3cretpwXYZ", // gitleaks:allow
 			Password: "qs3cretpwXYZ", PgxStage: "refused"}, // gitleaks:allow
-		{Name: "missing-service", ConnString: "postgres://app@127.0.0.1:1/app?service=nosuch&password=qs3cretpwXYZ",
+		{Name: "missing-service", ConnString: "postgres://app@127.0.0.1:1/app?service=nosuch&password=qs3cretpwXYZ", // gitleaks:allow
 			Password: "qs3cretpwXYZ", PgxStage: "refused"}, // gitleaks:allow
-		{Name: "empty-timeout", ConnString: "postgres://app@127.0.0.1:1/app?connect_timeout=&password=qs3cretpwXYZ",
+		{Name: "empty-timeout", ConnString: "postgres://app@127.0.0.1:1/app?connect_timeout=&password=qs3cretpwXYZ", // gitleaks:allow
 			Password: "qs3cretpwXYZ", PgxStage: "refused"}, // gitleaks:allow
 		{Name: "keyword-form", ConnString: "host=127.0.0.1 port=1 password=kv3cretpwXYZ sslmode=bogus", // gitleaks:allow
 			Password: "kv3cretpwXYZ", PgxStage: "refused", MigrateStage: "scheme"}, // gitleaks:allow
-		{Name: "bad-pool-option", ConnString: "postgres://app@127.0.0.1:1/app?pool_max_conns=abc&password=qs3cretpwXYZ",
+		{Name: "bad-pool-option", ConnString: "postgres://app@127.0.0.1:1/app?pool_max_conns=abc&password=qs3cretpwXYZ", // gitleaks:allow
 			Password: "qs3cretpwXYZ", PgxStage: "refused"}, // gitleaks:allow
 		{Name: "keyword-colon", ConnString: "password=kc3cretpwXYZ host=::1 dbname=app",
 			Password: "kc3cretpwXYZ", MigrateStage: "scheme"},

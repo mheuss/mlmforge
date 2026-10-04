@@ -185,10 +185,10 @@ func TestDriverReadings_ARawAmpersandSplitsAQueryPassword(t *testing.T) {
 			"dbname='app' host='127.0.0.1' password='Zm9v' port='1' sslmode='disable' user='app'"},
 		{"postgres://app@127.0.0.1:1/app?password=qs3cretpwXYZ&",
 			pgxReading{"127.0.0.1", 1, "app", "app", "qs3cretpwXYZ", map[string]string{}},
-			"dbname='app' host='127.0.0.1' password='qs3cretpwXYZ' port='1' user='app'"},
+			"dbname='app' host='127.0.0.1' password='qs3cretpwXYZ' port='1' user='app'"}, // gitleaks:allow
 		{"postgres://app@127.0.0.1:1/app?password=qs3cretpwXYZ&#x",
 			pgxReading{"127.0.0.1", 1, "app", "app", "qs3cretpwXYZ", map[string]string{}},
-			"dbname='app' host='127.0.0.1' password='qs3cretpwXYZ' port='1' user='app'"},
+			"dbname='app' host='127.0.0.1' password='qs3cretpwXYZ' port='1' user='app'"}, // gitleaks:allow
 	} {
 		t.Run(tc.connString, func(t *testing.T) {
 			testutil.ClearLibPQEnv(t)
@@ -209,10 +209,10 @@ func TestDriverReadings_ARawAmpersandSplitsAQueryPassword(t *testing.T) {
 
 func TestDriverReadings_QueryKeysAreDecodedAndTheirOrderIsIgnored(t *testing.T) {
 	want := pgxReading{"127.0.0.1", 1, "app", "app", "qs3cretpwXYZ", map[string]string{}}
-	const wantPQ = "dbname='app' host='127.0.0.1' password='qs3cretpwXYZ' port='1' sslmode='disable' user='app'"
+	const wantPQ = "dbname='app' host='127.0.0.1' password='qs3cretpwXYZ' port='1' sslmode='disable' user='app'" // gitleaks:allow
 	for _, connString := range []string{
 		"postgres://app@127.0.0.1:1/app?password=qs3cretpwXYZ&sslmode=disable",
-		"postgres://app@127.0.0.1:1/app?sslmode=disable&password=qs3cretpwXYZ",
+		"postgres://app@127.0.0.1:1/app?sslmode=disable&password=qs3cretpwXYZ", // gitleaks:allow
 		"postgres://app@127.0.0.1:1/app?pass%77ord=qs3cretpwXYZ&sslmode=disable",
 	} {
 		t.Run(connString, func(t *testing.T) {

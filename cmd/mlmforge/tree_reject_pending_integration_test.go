@@ -20,11 +20,11 @@ func appendCorrectRejection(t *testing.T, events platform.EventStore, tree strin
 	})
 }
 
-// requirePendingRefusal checks the tree is at projected, then runs a write
-// and tree load, and checks both name reject-event, carry a load error only
-// when withLoadErr is set, and leave the stream alone.
+// requirePendingRefusal requires a write and tree load on a tree with a pending
+// rejection to refuse and name reject-event. loadErr is the load error text the
+// refusal carries, or empty when it carries none.
 func requirePendingRefusal(t *testing.T, events platform.EventStore, store networkengine.TreeStore, tree, stuckID string,
-	projected int64, withLoadErr bool, conn, write []string) {
+	projected int64, loadErr string, conn, write []string) {
 	t.Helper()
 	requireProjectedVersion(t, store, tree, projected)
 	want := "Run mlmforge tree reject-event --tree-id " + tree + " --event-id " + stuckID + " --reason <text> again to project it"
@@ -37,17 +37,28 @@ func requirePendingRefusal(t *testing.T, events platform.EventStore, store netwo
 	require.Equal(t, 1, exitCode(err), "the write's exit code")
 	require.Contains(t, out.stderr.String(), want, "the write did not print the reject-event instruction")
 	require.Empty(t, out.stdout.String())
-	require.Equal(t, withLoadErr, pending.LoadErr != nil, "the write's pending error carries a load error")
+	requirePendingLoadErr(t, pending, loadErr, "the write")
 
 	out, err = runTreeCmd(t, append([]string{"load", "--tree-type", "unilevel"}, conn...)...)
 	require.ErrorAs(t, err, &pending, "tree load: %s", out.stderr.String())
 	require.True(t, strings.HasPrefix(err.Error(), "load stopped: "), err.Error())
-	require.Equal(t, withLoadErr, pending.LoadErr != nil, "tree load's pending error carries a load error")
+	requirePendingLoadErr(t, pending, loadErr, "tree load")
 	require.ErrorContains(t, err, want)
 	require.Equal(t, 1, exitCode(err), "tree load's exit code")
 	require.Contains(t, out.stderr.String(), want, "tree load did not print the reject-event instruction")
 	require.Empty(t, out.stdout.String())
 	require.Equal(t, before, readTreeStream(t, events, tree), "a refused command changed the stream")
+}
+
+// requirePendingLoadErr requires pending to carry a load error containing want,
+// or none when want is empty.
+func requirePendingLoadErr(t *testing.T, pending *networkengine.RejectionPendingError, want, cmd string) {
+	t.Helper()
+	if want == "" {
+		require.NoError(t, pending.LoadErr, "%s's pending error carries a load error", cmd)
+		return
+	}
+	require.ErrorContains(t, pending.LoadErr, want, "%s's pending error", cmd)
 }
 
 // requireResumed runs reject-event over a pending rejection and checks it
@@ -83,7 +94,7 @@ func TestTreeRejectEvent_APendingPlacementRejectionNamesTheCommand(t *testing.T)
 	rejection := appendCorrectRejection(t, events, tree, stuck)
 
 	store := networkengine.NewPostgresTreeStore(pool)
-	requirePendingRefusal(t, events, store, tree, stuck.ID, 2, true, conn, place)
+	requirePendingRefusal(t, events, store, tree, stuck.ID, 2, "references sponsor "+absent+" that is not in the tree", conn, place)
 	requireResumed(t, events, store, tree, stuck, rejection, conn)
 
 	out, err = runTreeCmd(t, place...)
@@ -110,7 +121,7 @@ func TestTreeRejectEvent_APendingRootRejectionNamesTheCommand(t *testing.T) {
 	rejection := appendCorrectRejection(t, events, tree, rootAdded)
 	addRoot := append([]string{"add-root", "--user-id", second, "--sponsor-id", second, "--tree-type", "unilevel"}, conn...)
 
-	requirePendingRefusal(t, events, store, tree, rootAdded.ID, 0, false, conn, addRoot)
+	requirePendingRefusal(t, events, store, tree, rootAdded.ID, 0, "", conn, addRoot)
 	requireResumed(t, events, store, tree, rootAdded, rejection, conn)
 
 	out, err := runTreeCmd(t, addRoot...)
@@ -143,7 +154,7 @@ func TestTreeRejectEvent_APendingRemovalRejectionNamesTheCommand(t *testing.T) {
 	rejection := appendCorrectRejection(t, events, tree, removal)
 
 	store := networkengine.NewPostgresTreeStore(pool)
-	requirePendingRefusal(t, events, store, tree, removal.ID, 3, false, conn, place)
+	requirePendingRefusal(t, events, store, tree, removal.ID, 3, "", conn, place)
 	requireResumed(t, events, store, tree, removal, rejection, conn)
 
 	out, err := runTreeCmd(t, place...)

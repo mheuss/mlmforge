@@ -35,6 +35,7 @@ func requireGrewByTheRejection(t *testing.T, before, after []platform.Event, rej
 	return last
 }
 
+// requireProjectedVersion requires tree's projection row to hold want.
 func requireProjectedVersion(t *testing.T, store networkengine.TreeStore, tree string, want int64) {
 	t.Helper()
 	got, found, err := store.ProjectedVersion(t.Context(), tree)

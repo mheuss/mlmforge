@@ -128,7 +128,7 @@ func TestTreeRejectEventCmd_ReportsEachOutcome(t *testing.T) {
 
 func TestTreeRejectEventCmd_ARejectionItCannotResumeExitsOne(t *testing.T) {
 	for _, err := range []error{
-		&networkengine.StreamMovedError{TreeID: "t", LoadedVersion: 9, LastVersion: 3},
+		&networkengine.StreamMovedError{TreeID: "t", LoadedVersion: 9, LastVersion: 3, NoLoad: true},
 		&networkengine.ProjectionMissingError{TreeID: "t", LastVersion: 3},
 	} {
 		w := &recordingWriter{rejectResult: networkengine.RejectResult{Stream: "tree-t"}, err: err}

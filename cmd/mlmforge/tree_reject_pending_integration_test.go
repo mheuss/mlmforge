@@ -2,6 +2,7 @@ package main
 
 import (
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/mlmforge/mlmforge/internal/networkengine"
@@ -9,8 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// appendCorrectRejection appends a rejection naming stuck, as a run of
-// reject-event whose projection failed would leave it.
+// appendCorrectRejection appends a correct rejection of stuck and projects
+// nothing.
 func appendCorrectRejection(t *testing.T, events platform.EventStore, tree string, stuck platform.Event) platform.Event {
 	t.Helper()
 	return appendUnprojected(t, events, tree, stuck.Version, networkengine.EventTypeEventRejected, networkengine.EventRejectedPayload{
@@ -19,10 +20,13 @@ func appendCorrectRejection(t *testing.T, events platform.EventStore, tree strin
 	})
 }
 
-// requirePendingRefusal runs a write and tree load, and checks both name
-// reject-event and leave the stream alone.
-func requirePendingRefusal(t *testing.T, events platform.EventStore, tree, stuckID string, conn, write []string) {
+// requirePendingRefusal checks the tree is at projected, then runs a write
+// and tree load, and checks both name reject-event, carry a load error only
+// when withLoadErr is set, and leave the stream alone.
+func requirePendingRefusal(t *testing.T, events platform.EventStore, store networkengine.TreeStore, tree, stuckID string,
+	projected int64, withLoadErr bool, conn, write []string) {
 	t.Helper()
+	requireProjectedVersion(t, store, tree, projected)
 	want := "Run mlmforge tree reject-event --tree-id " + tree + " --event-id " + stuckID + " --reason <text> again to project it"
 	before := readTreeStream(t, events, tree)
 	var pending *networkengine.RejectionPendingError
@@ -32,10 +36,13 @@ func requirePendingRefusal(t *testing.T, events platform.EventStore, tree, stuck
 	require.ErrorContains(t, err, want)
 	require.Equal(t, 1, exitCode(err), "the write's exit code")
 	require.Contains(t, out.stderr.String(), want, "the write did not print the reject-event instruction")
+	require.Empty(t, out.stdout.String())
+	require.Equal(t, withLoadErr, pending.LoadErr != nil, "the write's pending error carries a load error")
 
 	out, err = runTreeCmd(t, append([]string{"load", "--tree-type", "unilevel"}, conn...)...)
 	require.ErrorAs(t, err, &pending, "tree load: %s", out.stderr.String())
-	require.ErrorContains(t, err, "load stopped: ")
+	require.True(t, strings.HasPrefix(err.Error(), "load stopped: "), err.Error())
+	require.Equal(t, withLoadErr, pending.LoadErr != nil, "tree load's pending error carries a load error")
 	require.ErrorContains(t, err, want)
 	require.Equal(t, 1, exitCode(err), "tree load's exit code")
 	require.Contains(t, out.stderr.String(), want, "tree load did not print the reject-event instruction")
@@ -45,17 +52,16 @@ func requirePendingRefusal(t *testing.T, events platform.EventStore, tree, stuck
 
 // requireResumed runs reject-event over a pending rejection and checks it
 // projected without appending.
-func requireResumed(t *testing.T, events platform.EventStore, tree string, stuck, rejection platform.Event, conn []string) {
+func requireResumed(t *testing.T, events platform.EventStore, store networkengine.TreeStore, tree string, stuck, rejection platform.Event, conn []string) {
 	t.Helper()
 	before := readTreeStream(t, events, tree)
 	out, err := runTreeCmd(t, append([]string{"reject-event", "--event-id", stuck.ID, "--reason", "resume"}, conn...)...)
 	require.NoError(t, err, out.stderr.String())
-	require.Equal(t, "rejection "+rejection.ID+" at version "+itoa(rejection.Version)+" for event "+stuck.ID+
+	require.Equal(t, "rejection "+rejection.ID+" at version "+strconv.FormatInt(rejection.Version, 10)+" for event "+stuck.ID+
 		" was pending; projected; nothing was appended\n", out.stdout.String())
 	require.Equal(t, before, readTreeStream(t, events, tree))
+	requireProjectedVersion(t, store, tree, rejection.Version)
 }
-
-func itoa(v int64) string { return strconv.FormatInt(v, 10) }
 
 func TestTreeRejectEvent_APendingPlacementRejectionNamesTheCommand(t *testing.T) {
 	if pgContainer == nil {
@@ -76,8 +82,9 @@ func TestTreeRejectEvent_APendingPlacementRejectionNamesTheCommand(t *testing.T)
 	require.ErrorContains(t, err, "USER_NOT_FOUND")
 	rejection := appendCorrectRejection(t, events, tree, stuck)
 
-	requirePendingRefusal(t, events, tree, stuck.ID, conn, place)
-	requireResumed(t, events, tree, stuck, rejection, conn)
+	store := networkengine.NewPostgresTreeStore(pool)
+	requirePendingRefusal(t, events, store, tree, stuck.ID, 2, true, conn, place)
+	requireResumed(t, events, store, tree, stuck, rejection, conn)
 
 	out, err = runTreeCmd(t, place...)
 	require.NoError(t, err, out.stderr.String())
@@ -103,8 +110,8 @@ func TestTreeRejectEvent_APendingRootRejectionNamesTheCommand(t *testing.T) {
 	rejection := appendCorrectRejection(t, events, tree, rootAdded)
 	addRoot := append([]string{"add-root", "--user-id", second, "--sponsor-id", second, "--tree-type", "unilevel"}, conn...)
 
-	requirePendingRefusal(t, events, tree, rootAdded.ID, conn, addRoot)
-	requireResumed(t, events, tree, rootAdded, rejection, conn)
+	requirePendingRefusal(t, events, store, tree, rootAdded.ID, 0, false, conn, addRoot)
+	requireResumed(t, events, store, tree, rootAdded, rejection, conn)
 
 	out, err := runTreeCmd(t, addRoot...)
 	require.NoError(t, err, out.stderr.String())
@@ -135,8 +142,9 @@ func TestTreeRejectEvent_APendingRemovalRejectionNamesTheCommand(t *testing.T) {
 	require.ErrorContains(t, err, "HAS_CHILDREN")
 	rejection := appendCorrectRejection(t, events, tree, removal)
 
-	requirePendingRefusal(t, events, tree, removal.ID, conn, place)
-	requireResumed(t, events, tree, removal, rejection, conn)
+	store := networkengine.NewPostgresTreeStore(pool)
+	requirePendingRefusal(t, events, store, tree, removal.ID, 3, false, conn, place)
+	requireResumed(t, events, store, tree, removal, rejection, conn)
 
 	out, err := runTreeCmd(t, place...)
 	require.NoError(t, err, out.stderr.String())

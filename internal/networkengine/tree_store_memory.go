@@ -329,6 +329,27 @@ func (s *MemoryTreeStore) ProjectRemoval(
 	return nil
 }
 
+func (s *MemoryTreeStore) ProjectRejection(ctx context.Context, treeID, rejectedEventID string, eventVersion int64) error {
+	if err := checkEventVersion(treeID, eventVersion); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := s.refuseBelow(treeID, eventVersion); err != nil {
+		return err
+	}
+	now := time.Now()
+	for i := range s.nodes {
+		if s.nodes[i].TreeID == treeID && s.nodes[i].ID == rejectedEventID && s.nodes[i].RemovedAt == nil {
+			s.nodes[i].RemovedAt = &now
+			s.nodes[i].UpdatedAt = now
+		}
+	}
+	s.advance(treeID, eventVersion)
+	return nil
+}
+
 func (s *MemoryTreeStore) UndoRootProjection(ctx context.Context, treeID, userID string, eventVersion int64) error {
 	if err := checkEventVersion(treeID, eventVersion); err != nil {
 		return err

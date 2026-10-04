@@ -116,6 +116,10 @@ type TreeStore interface {
 	// eventVersion inserted, and returns the tree's projected version to
 	// eventVersion - 1.
 	UndoRootProjection(ctx context.Context, treeID, userID string, eventVersion int64) error
+
+	// ProjectRejection soft-deletes the tree's active rows whose ID is
+	// rejectedEventID, and records eventVersion as the tree's projected version.
+	ProjectRejection(ctx context.Context, treeID, rejectedEventID string, eventVersion int64) error
 }
 
 // ProjectionRefusedError reports a projection whose event version was below
@@ -162,7 +166,21 @@ var (
 	// ErrReplayedPlacement reports an insert matching a row that has since
 	// been soft-deleted. The placement is not current and must not be resumed.
 	ErrReplayedPlacement = errors.New("a row with this event id exists and is soft-deleted")
+
+	// ErrUnprojectableEvent reports an event refused for what it carries.
+	ErrUnprojectableEvent = errors.New("the event cannot be projected as written")
 )
+
+// unprojectableEventError marks err as ErrUnprojectableEvent and keeps err's
+// text.
+type unprojectableEventError struct{ err error }
+
+func (e *unprojectableEventError) Error() string        { return e.err.Error() }
+func (e *unprojectableEventError) Unwrap() error        { return e.err }
+func (e *unprojectableEventError) Is(target error) bool { return target == ErrUnprojectableEvent }
+
+// unprojectable marks err as ErrUnprojectableEvent.
+func unprojectable(err error) error { return &unprojectableEventError{err: err} }
 
 // RemovalNotProjectedError reports a removal the engine applied whose store
 // write did not land.

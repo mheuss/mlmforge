@@ -525,6 +525,19 @@ func orderForReplay(treeID string, nodes []TreeNodeRow) ([]*TreeNodeRow, error) 
 	return ordered, nil
 }
 
+// preflight validates nodes in the order replay uses, without calling the
+// engine. An empty set passes.
+func preflight(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNodeRow) error {
+	if len(nodes) == 0 {
+		return nil
+	}
+	if err := validateNodes(treeID, treeType, cfg, nodes); err != nil {
+		return err
+	}
+	_, err := orderForReplay(treeID, nodes)
+	return err
+}
+
 // cycleError explains why a replay order could not be produced. It runs only
 // on the failure path, so it recomputes what it needs rather than making the
 // successful pass carry it.

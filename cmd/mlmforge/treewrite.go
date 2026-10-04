@@ -16,6 +16,7 @@ type treeWriter interface {
 	AddRoot(ctx context.Context, r networkengine.AddRootRequest) (networkengine.WriteResult, error)
 	Place(ctx context.Context, r networkengine.PlaceRequest) (networkengine.WriteResult, error)
 	Remove(ctx context.Context, r networkengine.RemoveRequest) (networkengine.WriteResult, error)
+	Reject(ctx context.Context, r networkengine.RejectRequest) (networkengine.RejectResult, error)
 }
 
 // writerFor builds the writer a write command drives.

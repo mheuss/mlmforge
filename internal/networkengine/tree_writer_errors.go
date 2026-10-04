@@ -83,14 +83,48 @@ func (e *ProjectionMissingError) Error() string {
 
 // StreamMovedError reports a stream whose last version is neither the tree's
 // projected version nor one past it. The stream can be ahead of that version or
-// behind it. LoadedVersion is the projected version read before the load.
+// behind it. LoadedVersion is the projected version read. NoLoad is set when no
+// load followed that read.
 type StreamMovedError struct {
 	TreeID        string
 	LoadedVersion int64
 	LastVersion   int64
+	NoLoad        bool
 }
 
 func (e *StreamMovedError) Error() string {
+	if e.NoLoad {
+		return fmt.Sprintf("tree %s has projected version %d, and stream %s ends at version %d; nothing was appended",
+			e.TreeID, e.LoadedVersion, TreeStreamName(e.TreeID), e.LastVersion)
+	}
 	return fmt.Sprintf("tree %s had projected version %d before its load, and stream %s ends at version %d; nothing was appended",
 		e.TreeID, e.LoadedVersion, TreeStreamName(e.TreeID), e.LastVersion)
 }
+
+// RejectionPendingError reports a stream that ends with a rejection the store
+// has not applied.
+type RejectionPendingError struct {
+	TreeID          string
+	RejectionID     string
+	Version         int64
+	RejectedEventID string
+	Projected       int64
+	Found           bool  // the tree has a projection row
+	LoadErr         error // the load's error, when the load also failed
+}
+
+func (e *RejectionPendingError) Error() string {
+	seen := fmt.Sprintf("has projected version %d", e.Projected)
+	if !e.Found {
+		seen = "has no projection row"
+	}
+	msg := fmt.Sprintf("stream %s ends with rejection %s at version %d of event %s, and tree %s %s; "+
+		"nothing was appended. Run mlmforge tree reject-event --tree-id %s --event-id %s --reason <text> again to project it",
+		TreeStreamName(e.TreeID), e.RejectionID, e.Version, e.RejectedEventID, e.TreeID, seen, e.TreeID, e.RejectedEventID)
+	if e.LoadErr != nil {
+		msg += ". The load before this check returned: " + e.LoadErr.Error()
+	}
+	return msg
+}
+
+func (e *RejectionPendingError) Unwrap() error { return e.LoadErr }

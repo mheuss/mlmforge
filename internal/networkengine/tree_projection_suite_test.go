@@ -71,6 +71,7 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 				return s.ProjectRemoval(ctx, tree, child, testNodeUUID(9), 2, nil)
 			}},
 			{"UndoRootProjection", func() error { return s.UndoRootProjection(ctx, tree, root, 1) }},
+			{"ProjectRejection", func() error { return s.ProjectRejection(ctx, tree, childRow.ID, 4) }},
 		}
 		for _, c := range calls {
 			assert.ErrorIs(t, c.call(), context.Canceled, c.name)
@@ -322,6 +323,162 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		require.EqualError(t, err, "tree "+tree+" has projected version 2, not 1; the root row for "+root+" was not deleted")
 		assert.Equal(t, before, readProjectionState(t, s, tree, root))
 	})
+
+	t.Run("a rejection soft-deletes the rejected event's row and records its version", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+
+		require.NoError(t, s.ProjectRejection(ctx, tree, childRow.ID, 3))
+
+		got := readProjectionState(t, s, tree, root, child)
+		assert.Equal(t, int64(3), got.version)
+		require.NotNil(t, got.rows[child])
+		assert.NotNil(t, got.rows[child].RemovedAt, "the rejected event's row is still active")
+		assert.Nil(t, got.rows[child].RemovedByEventID, "the rejection stamped the row")
+		require.NotNil(t, got.rows[root])
+		assert.Nil(t, got.rows[root].RemovedAt, "the root's row was soft-deleted")
+	})
+
+	t.Run("a rejection applied twice leaves the store as the first left it", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+		require.NoError(t, s.ProjectRejection(ctx, tree, childRow.ID, 3))
+		before := readProjectionState(t, s, tree, root, child)
+
+		require.NoError(t, s.ProjectRejection(ctx, tree, childRow.ID, 3))
+
+		assert.Equal(t, before, readProjectionState(t, s, tree, root, child))
+	})
+
+	t.Run("a rejection that matches no row still records its version", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+
+		require.NoError(t, s.ProjectRejection(ctx, tree, testNodeUUID(8), 3))
+
+		got := readProjectionState(t, s, tree, root)
+		assert.Equal(t, int64(3), got.version, "ProjectRejection returned nil; the projected version is not 3")
+		require.NotNil(t, got.rows[root])
+		assert.Nil(t, got.rows[root].RemovedAt)
+	})
+
+	t.Run("a rejection on a tree with no projection row creates it", func(t *testing.T) {
+		s := newStore(t)
+
+		require.NoError(t, s.ProjectRejection(context.Background(), tree, testNodeUUID(8), 2))
+
+		got := readProjectionState(t, s, tree)
+		assert.True(t, got.found)
+		assert.Equal(t, int64(2), got.version)
+	})
+
+	t.Run("a rejection below the version is refused and writes nothing", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 3))
+		before := readProjectionState(t, s, tree, root, child)
+
+		err := s.ProjectRejection(ctx, tree, childRow.ID, 2)
+
+		var refused *ProjectionRefusedError
+		require.ErrorAs(t, err, &refused)
+		assert.Equal(t, ProjectionRefusedError{TreeID: tree, EventVersion: 2, ProjectedVersion: 3}, *refused)
+		assert.Equal(t, before, readProjectionState(t, s, tree, root, child))
+	})
+
+	t.Run("a rejection leaves an older tombstone of the row alone", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+		require.NoError(t, s.ProjectRemoval(ctx, tree, child, testNodeUUID(9), 3, nil))
+		before := readProjectionState(t, s, tree, child)
+
+		require.NoError(t, s.ProjectRejection(ctx, tree, childRow.ID, 4))
+
+		got := readProjectionState(t, s, tree, child)
+		assert.Equal(t, int64(4), got.version)
+		assert.Equal(t, before.rows[child], got.rows[child], "the rejection rewrote a tombstone")
+	})
+
+	t.Run("a rejection with a cancelled context writes nothing", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+		before := readProjectionState(t, s, tree, root, child)
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+
+		require.ErrorIs(t, s.ProjectRejection(cancelled, tree, childRow.ID, 3), context.Canceled)
+
+		assert.Equal(t, before, readProjectionState(t, s, tree, root, child))
+	})
+
+	t.Run("a rejection at event version 0 is refused and writes nothing", func(t *testing.T) {
+		s := newStore(t)
+
+		err := s.ProjectRejection(context.Background(), tree, childRow.ID, 0)
+
+		require.EqualError(t, err, "tree "+tree+" was given event version 0, below 1; nothing was written")
+		assert.False(t, readProjectionState(t, s, tree).found)
+	})
+
+	t.Run("a redelivered row reports its own id, never an active-row index", func(t *testing.T) {
+		slotted := makeUUIDNode(testNodeUUID(4), tree, testUserUUID(4), 1, ptr(root), ptr(root), intPtr(2))
+		for _, row := range []TreeNodeRow{rootRow, slotted} {
+			s := newStore(t)
+			ctx := context.Background()
+			if row.Depth > 0 {
+				require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+			}
+			require.NoError(t, s.ProjectInsert(ctx, row, 2))
+
+			err := s.ProjectInsert(ctx, row, 2)
+
+			require.ErrorIs(t, err, ErrNodeAlreadyProjected, "row %s", row.ID)
+			for _, conflict := range []error{ErrActiveUserConflict, ErrSlotConflict, ErrRootConflict} {
+				assert.NotErrorIs(t, err, conflict, "row %s", row.ID)
+			}
+		}
+	})
+
+	t.Run("a redelivered root whose own row is a tombstone reports its own id when another root is active", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.UndoRootProjection(ctx, tree, root, 1))
+		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(6), tree, testUserUUID(6), 0, nil, ptr(testUserUUID(6)), nil), 2))
+
+		err := s.ProjectInsert(ctx, rootRow, 2)
+
+		require.ErrorIs(t, err, ErrNodeAlreadyProjected)
+		for _, conflict := range []error{ErrActiveUserConflict, ErrSlotConflict, ErrRootConflict} {
+			assert.NotErrorIs(t, err, conflict)
+		}
+	})
+
+	t.Run("a redelivered row whose own row is a tombstone reports its own id when another event holds the user and slot", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+		require.NoError(t, s.ProjectRemoval(ctx, tree, child, testNodeUUID(9), 3, nil))
+		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(5), tree, child, 1, ptr(root), ptr(root), intPtr(0)), 4))
+
+		err := s.ProjectInsert(ctx, childRow, 4)
+
+		require.ErrorIs(t, err, ErrNodeAlreadyProjected)
+		for _, conflict := range []error{ErrActiveUserConflict, ErrSlotConflict, ErrRootConflict} {
+			assert.NotErrorIs(t, err, conflict)
+		}
+	})
 }
 
 func TestMemoryTreeStore_ProjectionSuite(t *testing.T) {
@@ -334,6 +491,18 @@ func TestPostgresTreeStore_ProjectionSuite(t *testing.T) {
 	runTreeProjectionSuite(t, func(t *testing.T) TreeStore {
 		return newTestPostgresTreeStore(t)
 	})
+}
+
+func TestPostgresTreeStore_AFailedRejectionLeavesTheVersion(t *testing.T) {
+	store := newTestPostgresTreeStore(t)
+	ctx := context.Background()
+	tree, root := testTreeUUID(1), testUserUUID(1)
+	require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
+
+	err := store.ProjectRejection(ctx, tree, "not-a-uuid", 2)
+
+	require.Error(t, err, "Postgres accepted a rejected event ID that is not a UUID")
+	assert.Equal(t, int64(1), readProjectionState(t, store, tree).version)
 }
 
 func TestPostgresTreeStore_ConcurrentFirstProjectionsQueue(t *testing.T) {

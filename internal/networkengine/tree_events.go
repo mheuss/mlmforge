@@ -8,9 +8,10 @@ import (
 
 // Tree event type constants for the EventStore type field.
 const (
-	EventTypeRootAdded   = "tree.root_added"
-	EventTypeNodePlaced  = "tree.node_placed"
-	EventTypeNodeRemoved = "tree.node_removed"
+	EventTypeRootAdded     = "tree.root_added"
+	EventTypeNodePlaced    = "tree.node_placed"
+	EventTypeNodeRemoved   = "tree.node_removed"
+	EventTypeEventRejected = "tree.event_rejected"
 )
 
 // TreeStreamName returns the EventStore stream name for a tree.
@@ -115,4 +116,22 @@ type NodeRemovedPayload struct {
 	TreeID    string    `json:"tree_id"`
 	UserID    string    `json:"user_id"`
 	RemovedAt time.Time `json:"removed_at"`
+}
+
+// EventRejectedPayload is the event payload when an operator rejects a
+// tree stream's last event. RejectedVersion is the rejection's own version
+// minus one.
+type EventRejectedPayload struct {
+	TreeID          string `json:"tree_id"`
+	RejectedEventID string `json:"rejected_event_id"`
+	RejectedVersion int64  `json:"rejected_version"`
+	RejectedType    string `json:"rejected_type"`
+	Reason          string `json:"reason"`
+}
+
+// rejectableEventTypes are the event types a rejection may name.
+var rejectableEventTypes = map[string]bool{
+	EventTypeRootAdded:   true,
+	EventTypeNodePlaced:  true,
+	EventTypeNodeRemoved: true,
 }

@@ -102,7 +102,7 @@ func (mg *migration) downResult(before RecordRead, downErr error) error {
 		return dirty
 	}
 	after := mg.recordRead()
-	return &RollbackError{Err: downErr, Before: before, After: after, Source: mg.sourceFor(after)}
+	return &RollbackError{Err: downErr, Before: before, After: after, Source: mg.sourceFor(after), BodyFailed: isBodyFailure(downErr)}
 }
 
 // migration holds one source driver, one database driver, and the migrator built from them.

@@ -1,10 +1,12 @@
 package platform
 
 import (
+	"database/sql/driver"
 	"errors"
 	"testing"
 
 	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database"
 	"github.com/golang-migrate/migrate/v4/source"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -71,4 +73,28 @@ func TestDownResult_ALockTimeoutReadsNoRecord(t *testing.T) {
 	assert.False(t, errors.As(err, &rollback), "a lock timeout must not carry a record read afterwards")
 	assert.ErrorIs(t, err, migrate.ErrLockTimeout)
 	assert.EqualError(t, err, "rollback migration: timeout: can't acquire database lock")
+}
+
+func TestDownResult_SetsBodyFailedForTheShapesIsBodyFailureIsTestedWith(t *testing.T) {
+	cases := map[string]struct {
+		err  error
+		want bool
+	}{
+		"unique violation in the file": {database.Error{Err: "migration failed: duplicate key", OrigErr: serverError{state: "23505"}}, true},
+		"lock timeout in the file":     {database.Error{Err: "migration failed: x", OrigErr: serverError{state: "55P03"}}, true},
+		"dropped connection":           {database.Error{Err: "migration failed", OrigErr: driver.ErrBadConn}, false},
+		"no SQLSTATE":                  {database.Error{Err: "migration failed", OrigErr: errors.New("connection reset")}, false},
+		"query canceled":               {database.Error{Err: "migration failed: x", OrigErr: serverError{state: "57014"}}, false},
+		"failed commit":                {database.Error{Err: "transaction commit failed", OrigErr: serverError{state: "23505"}}, false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			mg := resetMigration(t, &recordingDriver{record: Record{Version: 7, Dirty: true}})
+
+			var rollback *RollbackError
+			require.ErrorAs(t, mg.downResult(RecordRead{Record: Record{Version: 8}}, tc.err), &rollback)
+			assert.Equal(t, tc.want, rollback.BodyFailed)
+			assert.Equal(t, RecordRead{Record: Record{Version: 7, Dirty: true}}, rollback.After)
+		})
+	}
 }

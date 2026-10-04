@@ -62,3 +62,9 @@ func TestDatabaseErrorText_KeepsTheLineNumberWithoutAMessage(t *testing.T) {
 
 	assert.Equal(t, "pq: duplicate key in line 4", got)
 }
+
+func TestIsBodyFailure_AnUnknownStatementOutcomeIsNotARefusal(t *testing.T) {
+	assert.False(t, isBodyFailure(database.Error{Err: "migration failed: x", OrigErr: serverError{state: "40003"}}))
+	assert.True(t, isBodyFailure(database.Error{Err: "migration failed: x", OrigErr: serverError{state: "40001"}}),
+		"the rest of class 40 still counts")
+}

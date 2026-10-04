@@ -228,6 +228,9 @@ func databaseErrorText(e database.Error) string {
 	return fmt.Sprintf("%s%s (details: %v)", e.Err, location, e.OrigErr)
 }
 
+// sqlStateCompletionUnknown is the SQLSTATE Postgres names statement_completion_unknown.
+const sqlStateCompletionUnknown = "40003"
+
 // isBodyFailure reports whether err shows Postgres refusing the migration file itself.
 // Anything it does not recognise reads as false.
 func isBodyFailure(err error) bool {
@@ -240,7 +243,7 @@ func isBodyFailure(err error) bool {
 		return false
 	}
 	state := serverErr.SQLState()
-	if len(state) != 5 {
+	if len(state) != 5 || state == sqlStateCompletionUnknown {
 		return false
 	}
 	// Connection, resource, operator-intervention, system and internal errors do not count as a rejection.

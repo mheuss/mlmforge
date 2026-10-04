@@ -98,3 +98,15 @@ func TestDownResult_SetsBodyFailedForTheShapesIsBodyFailureIsTestedWith(t *testi
 		})
 	}
 }
+
+func TestUpAndDownResults_AnUnknownStatementOutcomeIsNotBodyFailed(t *testing.T) {
+	unknown := database.Error{Err: "migration failed: x", OrigErr: serverError{state: "40003"}}
+	mg := resetMigration(t, &recordingDriver{record: Record{Version: 6, Dirty: true}})
+
+	var apply *ApplyError
+	require.ErrorAs(t, mg.upResult(unknown), &apply)
+	assert.False(t, apply.BodyFailed)
+	var rollback *RollbackError
+	require.ErrorAs(t, mg.downResult(RecordRead{Record: Record{Version: 7}}, unknown), &rollback)
+	assert.False(t, rollback.BodyFailed)
+}

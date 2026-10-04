@@ -826,7 +826,7 @@ func TestTreeWriterReject_RefusesWhenTheRetryFindsAnotherLastEvent(t *testing.T)
 		replace func(real *platform.Event) *platform.Event
 		want    func(stuck platform.Event) string
 	}{
-		{"another event", func(t *testing.T, env *writerEnv) platform.Event { return unprojectedRemoval(t, env) },
+		{"another event", unprojectedRemoval,
 			func(real *platform.Event) *platform.Event {
 				other := *real
 				other.ID = testNodeUUID(88)

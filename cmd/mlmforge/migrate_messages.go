@@ -68,21 +68,61 @@ func upRecovery(rec platform.Record, src platform.SourceInfo, fix string) string
 
 // dirtyText is the text for a dirty record when the command that left it is unknown.
 func dirtyText(rec platform.Record, src platform.SourceInfo) string {
-	if rec.Version < 0 {
-		return negativeText(rec.Version)
+	switch {
+	case rec.Version < -1:
+		return fmt.Sprintf("The record reads %d, dirty. %s", rec.Version, neitherBelowText)
+	case rec.Version < 0:
+		return minusOneDirtyText(rec, src)
 	}
 	lines := []string{fmt.Sprintf("The record %s.", describeRecord(rec))}
 	switch {
 	case src.Err != nil:
-		lines = append(lines, fmt.Sprintf("The migrations directory %s could not be read for migration %d: %v.", src.Path, rec.Version, src.Err))
+		lines = append(lines, unreadableDirText(src, rec.Version))
 	case !src.InSource:
-		lines = append(lines, fmt.Sprintf("The migrations directory %s has no migration %d, so %s would refuse.", src.Path, rec.Version, resetCommand))
+		lines = append(lines, fmt.Sprintf("The migrations directory %s has no migration %d, so %s and %s would refuse.",
+			src.Path, rec.Version, resetCommand, afterDownCommand))
+	case !src.HasNext:
+		lines = append(lines, fmt.Sprintf("The migrations directory %s has no migration after %d, so %s would refuse.",
+			src.Path, rec.Version, afterDownCommand))
 	}
 	return strings.Join(append(lines,
-		fmt.Sprintf("Run %s only if the command that left this record was a %s that ran migration %d and printed \"run %s\".", resetCommand, upCommand, rec.Version, resetCommand),
-		"Nothing in this output is that instruction.",
-		fmt.Sprintf("In any other case, including a failed %s, do not run it.", downCommand),
+		fmt.Sprintf("Run %s only if the command that left this record was a %s that ran migration %d and printed \"run %s\".",
+			resetCommand, upCommand, rec.Version, resetCommand),
+		afterDownOnlyIf(src),
+		"Nothing in this output is either instruction.",
+		"In any other case, do not run either.",
 	), "\n")
+}
+
+// minusOneDirtyText is the text for a record of -1, dirty.
+func minusOneDirtyText(rec platform.Record, src platform.SourceInfo) string {
+	lines := []string{fmt.Sprintf("The record %s.", describeRecord(rec))}
+	if src.Err != nil {
+		lines = append(lines, unreadableDirText(src, rec.Version))
+	}
+	lines = append(lines, fmt.Sprintf("%s without the flag does not change a record at %d.", resetCommand, rec.Version))
+	if src.Err == nil && !src.HasNext {
+		return strings.Join(append(lines,
+			fmt.Sprintf("The migrations directory %s has no migrations, so %s would refuse.", src.Path, afterDownCommand),
+			"Nothing in this output is an instruction to run.",
+			"Do not run either form.",
+		), "\n")
+	}
+	return strings.Join(append(lines,
+		afterDownOnlyIf(src),
+		"Nothing in this output is that instruction.",
+		"In any other case, do not run it.",
+	), "\n")
+}
+
+// afterDownOnlyIf names the condition for running reset-dirty --after-failed-down.
+func afterDownOnlyIf(src platform.SourceInfo) string {
+	ranDown := ""
+	if src.HasNext {
+		ranDown = fmt.Sprintf(" that ran the down file of migration %d", src.Next)
+	}
+	return fmt.Sprintf("Run %s only if the command that left this record was a %s%s and printed \"run %s\".",
+		afterDownCommand, downCommand, ranDown, afterDownCommand)
 }
 
 // versionText renders a Status as a version line and, for a dirty record, its recovery text.

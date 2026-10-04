@@ -114,7 +114,11 @@ func TestMigrateVersion_AStoredMinusOneDirtyRecordPrintsAsStored(t *testing.T) {
 
 	require.NoError(t, err, out.stderr.String())
 	require.Equal(t, "Version: -1, Dirty: true\n"+
-		"The record reads -1, dirty. reset-dirty does not change a record at -1.\n", out.stdout.String())
+		"The record reads -1, dirty.\n"+
+		"`mlmforge migrate reset-dirty` without the flag does not change a record at -1.\n"+
+		"Run `mlmforge migrate reset-dirty --after-failed-down` only if the command that left this record was a `mlmforge migrate down` that ran the down file of migration 1 and printed \"run `mlmforge migrate reset-dirty --after-failed-down`\".\n"+
+		"Nothing in this output is that instruction.\n"+
+		"In any other case, do not run it.\n", out.stdout.String())
 }
 
 func TestMigrateVersion_ATableWithNoRowPrintsNone(t *testing.T) {

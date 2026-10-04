@@ -19,23 +19,28 @@ func requireNoForce(t *testing.T, text string) {
 
 var sixDirty = platform.Record{Version: 6, Dirty: true}
 
-const dirtySixText = "The record reads 6, dirty.\n" +
-	"Run `mlmforge migrate reset-dirty` only if the command that left this record was a `mlmforge migrate up` that ran migration 6 and printed \"run `mlmforge migrate reset-dirty`\".\n" +
-	"Nothing in this output is that instruction.\n" +
-	"In any other case, including a failed `mlmforge migrate down`, do not run it."
+// sixSource places 6 between 5 and 7 in a directory at /m.
+var sixSource = platform.SourceInfo{Path: "/m", InSource: true, Previous: 5, HasPrevious: true, Next: 7, HasNext: true}
+
+const (
+	upOnlyIfSix = "Run `mlmforge migrate reset-dirty` only if the command that left this record was a `mlmforge migrate up` that ran migration 6 and printed \"run `mlmforge migrate reset-dirty`\".\n"
+	downOnlyIf  = "Run `mlmforge migrate reset-dirty --after-failed-down` only if the command that left this record was a `mlmforge migrate down` and printed \"run `mlmforge migrate reset-dirty --after-failed-down`\".\n"
+	eitherTail  = "Nothing in this output is either instruction.\nIn any other case, do not run either."
+)
+
+const dirtySixText = "The record reads 6, dirty.\n" + upOnlyIfSix +
+	"Run `mlmforge migrate reset-dirty --after-failed-down` only if the command that left this record was a `mlmforge migrate down` that ran the down file of migration 7 and printed \"run `mlmforge migrate reset-dirty --after-failed-down`\".\n" +
+	eitherTail
 
 func TestDirtyText_NamesTheRecordAndTheConditionForAReset(t *testing.T) {
-	got := dirtyText(sixDirty, platform.SourceInfo{Path: "/m", InSource: true, Previous: 5, HasPrevious: true})
+	got := dirtyText(sixDirty, sixSource)
 
 	require.Equal(t, dirtySixText, got)
 	requireNoForce(t, got)
 }
 
 func TestDirtyText_NeverSpellsOutTheResetSteps(t *testing.T) {
-	for _, src := range []platform.SourceInfo{
-		{Path: "/m", InSource: true, Previous: 5, HasPrevious: true},
-		{Path: "/m", InSource: true},
-	} {
+	for _, src := range []platform.SourceInfo{sixSource, {Path: "/m", InSource: true, Next: 7, HasNext: true}} {
 		got := dirtyText(sixDirty, src)
 
 		require.Equal(t, dirtySixText, got)
@@ -45,35 +50,6 @@ func TestDirtyText_NeverSpellsOutTheResetSteps(t *testing.T) {
 	}
 }
 
-func TestDirtyText_AVersionMissingFromTheDirectorySaysResetWouldRefuse(t *testing.T) {
-	got := dirtyText(sixDirty, platform.SourceInfo{Path: "/m"})
-
-	require.Equal(t, "The record reads 6, dirty.\n"+
-		"The migrations directory /m has no migration 6, so `mlmforge migrate reset-dirty` would refuse.\n"+
-		"Run `mlmforge migrate reset-dirty` only if the command that left this record was a `mlmforge migrate up` that ran migration 6 and printed \"run `mlmforge migrate reset-dirty`\".\n"+
-		"Nothing in this output is that instruction.\n"+
-		"In any other case, including a failed `mlmforge migrate down`, do not run it.", got)
-	requireNoForce(t, got)
-}
-
-func TestDirtyText_AnUnreadableDirectoryNamesTheReadError(t *testing.T) {
-	got := dirtyText(sixDirty, platform.SourceInfo{Path: "/m", Err: errors.New("permission denied")})
-
-	require.Equal(t, "The record reads 6, dirty.\n"+
-		"The migrations directory /m could not be read for migration 6: permission denied.\n"+
-		"Run `mlmforge migrate reset-dirty` only if the command that left this record was a `mlmforge migrate up` that ran migration 6 and printed \"run `mlmforge migrate reset-dirty`\".\n"+
-		"Nothing in this output is that instruction.\n"+
-		"In any other case, including a failed `mlmforge migrate down`, do not run it.", got)
-	requireNoForce(t, got)
-}
-
-func TestDirtyText_AMinusOneRecordNamesOnlyTheRecord(t *testing.T) {
-	got := dirtyText(platform.Record{Version: -1, Dirty: true}, platform.SourceInfo{Path: "/m"})
-
-	require.Equal(t, "The record reads -1, dirty. reset-dirty does not change a record at -1.", got)
-	requireNoForce(t, got)
-}
-
 func TestVersionText_NamesEachRecordShape(t *testing.T) {
 	none := versionText(platform.Status{Record: platform.Record{Version: -1}})
 	clean := versionText(platform.Status{Record: platform.Record{Version: 5}})
@@ -81,7 +57,7 @@ func TestVersionText_NamesEachRecordShape(t *testing.T) {
 	require.Equal(t, "Version: 5, Dirty: false", clean)
 	requireNoForce(t, none+clean)
 	dirty := versionText(platform.Status{Record: sixDirty,
-		Source: platform.SourceInfo{Path: "/m", InSource: true, Previous: 5, HasPrevious: true}})
+		Source: sixSource})
 	require.Equal(t, "Version: 6, Dirty: true\n"+dirtySixText, dirty)
 	requireNoForce(t, dirty)
 }
@@ -169,7 +145,7 @@ func TestApplyFailureText_AVersionMissingFromTheDirectorySaysResetWillRefuse(t *
 
 func TestMigrateError_ADirtyRecordOnUpReplacesTheLibraryText(t *testing.T) {
 	err := migrateError("up", &platform.DirtyError{Record: sixDirty,
-		Source: platform.SourceInfo{Path: "/m", InSource: true, Previous: 5, HasPrevious: true}})
+		Source: sixSource})
 
 	require.EqualError(t, err, "migrate up did not run. "+dirtySixText)
 	requireNoForce(t, err.Error())
@@ -187,13 +163,6 @@ func TestMigrateError_LeavesAnUntypedErrorAsItIs(t *testing.T) {
 
 	require.Same(t, plain, migrateError("up", plain))
 	require.NoError(t, migrateError("up", nil))
-}
-
-func TestDirtyText_ARecordBelowMinusOneNamesTheValueItRead(t *testing.T) {
-	got := dirtyText(platform.Record{Version: -2, Dirty: true}, platform.SourceInfo{Path: "/m"})
-
-	require.Equal(t, "The record reads -2, dirty. reset-dirty does not change a record at -2.", got)
-	requireNoForce(t, got)
 }
 
 func TestVersionText_ACleanRecordBelowMinusOnePrintsItsValue(t *testing.T) {
@@ -442,7 +411,7 @@ func TestRollbackFailureText_SaysRunAfterFailedDownOnlyForABodyFailure(t *testin
 
 func TestMigrateError_ADirtyRecordOnDownNamesTheCommand(t *testing.T) {
 	err := migrateError("down", &platform.DirtyError{Record: sixDirty,
-		Source: platform.SourceInfo{Path: "/m", InSource: true, Previous: 5, HasPrevious: true}})
+		Source: sixSource})
 
 	require.EqualError(t, err, "migrate down did not run. "+dirtySixText)
 	requireNoForce(t, err.Error())
@@ -565,5 +534,73 @@ func TestApplyFailureText_AnUnreadableDirectoryAfterABodyFailureStillGivesTheIns
 		"The migrations directory /m could not be read for migration 6: permission denied.\n"+
 		"The error shows Postgres refused the migration file. Fix the directory and the cause shown above, "+
 		"run `mlmforge migrate reset-dirty`, then run `mlmforge migrate up`.", got)
+	requireNoForce(t, got)
+}
+
+func TestDirtyText_AVersionMissingFromTheDirectorySaysBothResetsWouldRefuse(t *testing.T) {
+	got := dirtyText(sixDirty, platform.SourceInfo{Path: "/m"})
+
+	require.Equal(t, "The record reads 6, dirty.\n"+
+		"The migrations directory /m has no migration 6, so `mlmforge migrate reset-dirty` and `mlmforge migrate reset-dirty --after-failed-down` would refuse.\n"+
+		upOnlyIfSix+downOnlyIf+eitherTail, got)
+	requireNoForce(t, got)
+}
+
+func TestDirtyText_NoMigrationAfterTheRecordSaysTheFlagWouldRefuse(t *testing.T) {
+	got := dirtyText(sixDirty, platform.SourceInfo{Path: "/m", InSource: true, Previous: 5, HasPrevious: true})
+
+	require.Equal(t, "The record reads 6, dirty.\n"+
+		"The migrations directory /m has no migration after 6, so `mlmforge migrate reset-dirty --after-failed-down` would refuse.\n"+
+		upOnlyIfSix+downOnlyIf+eitherTail, got)
+	requireNoForce(t, got)
+}
+
+func TestDirtyText_AnUnreadableDirectoryNamesTheReadError(t *testing.T) {
+	got := dirtyText(sixDirty, platform.SourceInfo{Path: "/m", Err: errors.New("permission denied")})
+
+	require.Equal(t, "The record reads 6, dirty.\n"+
+		"The migrations directory /m could not be read for migration 6: permission denied.\n"+
+		upOnlyIfSix+downOnlyIf+eitherTail, got)
+	requireNoForce(t, got)
+}
+
+func TestDirtyText_AMinusOneRecordNamesOnlyTheFlaggedReset(t *testing.T) {
+	got := dirtyText(platform.Record{Version: -1, Dirty: true}, platform.SourceInfo{Path: "/m", Next: 1, HasNext: true})
+
+	require.Equal(t, "The record reads -1, dirty.\n"+
+		"`mlmforge migrate reset-dirty` without the flag does not change a record at -1.\n"+
+		"Run `mlmforge migrate reset-dirty --after-failed-down` only if the command that left this record was a `mlmforge migrate down` that ran the down file of migration 1 and printed \"run `mlmforge migrate reset-dirty --after-failed-down`\".\n"+
+		"Nothing in this output is that instruction.\n"+
+		"In any other case, do not run it.", got)
+	requireNoForce(t, got)
+}
+
+func TestDirtyText_AMinusOneRecordWithNoMigrationsOffersNothing(t *testing.T) {
+	got := dirtyText(platform.Record{Version: -1, Dirty: true}, platform.SourceInfo{Path: "/m"})
+
+	require.Equal(t, "The record reads -1, dirty.\n"+
+		"`mlmforge migrate reset-dirty` without the flag does not change a record at -1.\n"+
+		"The migrations directory /m has no migrations, so `mlmforge migrate reset-dirty --after-failed-down` would refuse.\n"+
+		"Nothing in this output is an instruction to run.\n"+
+		"Do not run either form.", got)
+	requireNoForce(t, got)
+}
+
+func TestDirtyText_AMinusOneRecordWithAnUnreadableDirectory(t *testing.T) {
+	got := dirtyText(platform.Record{Version: -1, Dirty: true}, platform.SourceInfo{Path: "/m", Err: errors.New("permission denied")})
+
+	require.Equal(t, "The record reads -1, dirty.\n"+
+		"The migrations directory /m could not be read: permission denied.\n"+
+		"`mlmforge migrate reset-dirty` without the flag does not change a record at -1.\n"+
+		"Run `mlmforge migrate reset-dirty --after-failed-down` only if the command that left this record was a `mlmforge migrate down` and printed \"run `mlmforge migrate reset-dirty --after-failed-down`\".\n"+
+		"Nothing in this output is that instruction.\n"+
+		"In any other case, do not run it.", got)
+	requireNoForce(t, got)
+}
+
+func TestDirtyText_ARecordBelowMinusOneNamesTheValueItRead(t *testing.T) {
+	got := dirtyText(platform.Record{Version: -2, Dirty: true}, platform.SourceInfo{Path: "/m"})
+
+	require.Equal(t, "The record reads -2, dirty. Neither form of `mlmforge migrate reset-dirty` changes a record below -1.", got)
 	requireNoForce(t, got)
 }

@@ -24,7 +24,7 @@ Then each call site does its own mapping.
 
 - pgx, at `openTreeDeps` and `PostgresTreeLocker.Lock`: `PgxConnStringError` replaces a `*pgconn.ParseConfigError`.
 - golang-migrate, at `openMigration`, in this order:
-  1. The environment is checked before the string. If any of the eleven variables lib/pq panics on is set, even to an empty value, `openMigration` returns `UnsupportedEnvError`. It names each variable that is set and never its value (HEU-862). Pinned by `TestMigrateCommands_RefuseAnUnsupportedVariableBeforeOpeningAnything` and `TestMigrateVersion_RefusesTheEnvironmentBeforeOpeningTheSource`. The empty value is pinned by `TestRefuseUnsupportedEnv_AnEmptyValueCounts`, for `PGSERVICE` only.
+  1. The environment is checked before the string. If any of the eleven variables lib/pq panics on is set, even to an empty value, `openMigration` returns `UnsupportedEnvError`. It names each variable that is set and never its value (HEU-862). Pinned by `TestMigrateCommands_RefuseAnUnsupportedVariableBeforeOpeningAnything` and `TestMigrateVersion_RefusesTheEnvironmentBeforeOpeningTheSource`. The empty value is pinned by `TestRefuseUnsupportedEnv_AnEmptyValueCounts`, `TestRefuseUnsupportedEnv_NamesEveryVariableSetInListOrder` and `TestMigrateVersion_NamesEveryUnsupportedVariableAndNoValue`.
   2. A string without an exact `postgres://` or `postgresql://` prefix is refused as stage `scheme`.
   3. lib/pq's own parse runs on the string golang-migrate would hand it. A refusal becomes stage `refused`. If lib/pq also refuses a neutral probe string, the environment is at fault, and lib/pq's own error is returned instead.
   4. A `*url.Error` from `database.Open` becomes stage `parse`.

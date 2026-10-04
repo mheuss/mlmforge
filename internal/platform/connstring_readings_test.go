@@ -265,13 +265,14 @@ func TestDriverReadings_APlusIsASpaceInTheQueryAndLiteralInTheUserinfo(t *testin
 func TestDriverReadings_LibPQTrimsSpaceAroundAKeyAndNeitherDriverFoldsCase(t *testing.T) {
 	testutil.ClearLibPQEnv(t)
 	clearPgxDefaults(t)
+	const spacePassword = " password"
 
 	for _, tc := range []struct {
 		connString string
 		pqPassword string
 		pgxParams  map[string]string
 	}{
-		{"postgres://u@h/app?+password=a&b=c", "a", map[string]string{" password": "a", "b": "c"}},
+		{"postgres://u@h/app?+password=a&b=c", "a", map[string]string{spacePassword: "a", "b": "c"}},
 		{"postgres://u@h/app?password+=a+b", "a b", map[string]string{"password ": "a b"}},
 		{"postgres://u@h/app?%09password=a+b", "a b", map[string]string{"\tpassword": "a b"}},
 		{"postgres://u@h/app?password%0A=a+b", "a b", map[string]string{"password\n": "a b"}},

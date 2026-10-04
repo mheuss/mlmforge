@@ -137,3 +137,124 @@ func TestDriverReadings_PgxReadsAMisCasedSchemeAsKeywordValueText(t *testing.T) 
 	require.NoError(t, err)
 	require.Equal(t, map[string]string{"POSTGRESQL://app:Zm9v@h?binary_parameters": "s3cretPW@127.0.0.1:1/app"}, cfg.RuntimeParams)
 }
+
+func TestDriverReadings_PgxSendsAStrayLeadingCharacterAsAParameterName(t *testing.T) {
+	testutil.ClearLibPQEnv(t)
+	clearPgxDefaults(t)
+	const tail = "postgres://proofuser:pr0ofPWxyz@127.0.0.1:1/proofdb?sslmode" // gitleaks:allow
+
+	for _, tc := range []struct {
+		connString string
+		params     map[string]string
+	}{
+		{" " + tail + "=disable", map[string]string{tail: "disable"}},
+		{"\t" + tail + "=disable", map[string]string{tail: "disable"}},
+		{"\"" + tail + "=disable\"", map[string]string{"\"" + tail: "disable\""}},
+		{"\ufeff" + tail + "=disable", map[string]string{"\ufeff" + tail: "disable"}},
+		{"postgres:app:Zm9vQmFy@127.0.0.1:1/app?sslmode=disable", map[string]string{"postgres:app:Zm9vQmFy@127.0.0.1:1/app?sslmode": "disable"}},
+	} {
+		t.Run(tc.connString, func(t *testing.T) {
+			cfg, err := pgconn.ParseConfig(tc.connString)
+			require.NoError(t, err)
+			require.Equal(t, tc.params, cfg.RuntimeParams)
+		})
+	}
+}
+
+func TestDriverReadings_ARawAmpersandSplitsAQueryPassword(t *testing.T) {
+	for _, tc := range []struct {
+		connString string
+		pgx        pgxReading
+		pq         string
+	}{
+		{"postgres://app@127.0.0.1:1/app?password=Zm9v&cXV4eHl6&sslmode=disable",
+			pgxReading{"127.0.0.1", 1, "app", "app", "Zm9v", map[string]string{"cXV4eHl6": ""}},
+			"dbname='app' host='127.0.0.1' password='Zm9v' port='1' sslmode='disable' user='app'"},
+		{"postgres://app@127.0.0.1:1/app?password=Zm9v&cXV4=eHl6&sslmode=disable",
+			pgxReading{"127.0.0.1", 1, "app", "app", "Zm9v", map[string]string{"cXV4": "eHl6"}},
+			"cXV4='eHl6' dbname='app' host='127.0.0.1' password='Zm9v' port='1' sslmode='disable' user='app'"},
+		{"postgres://app@127.0.0.1:1/app?password=Zm9v&cXV4eHl6==&sslmode=disable",
+			pgxReading{"127.0.0.1", 1, "app", "app", "Zm9v", map[string]string{"cXV4eHl6": "="}},
+			"cXV4eHl6='=' dbname='app' host='127.0.0.1' password='Zm9v' port='1' sslmode='disable' user='app'"},
+		{"postgres://app@127.0.0.1:1/app?password=Zm9v&cXV4eHl6=&sslmode=disable",
+			pgxReading{"127.0.0.1", 1, "app", "app", "Zm9v", map[string]string{"cXV4eHl6": ""}},
+			"dbname='app' host='127.0.0.1' password='Zm9v' port='1' sslmode='disable' user='app'"},
+		{"postgres://app@127.0.0.1:1/app?password=Zm9v&my.cXV4eHl6&sslmode=disable",
+			pgxReading{"127.0.0.1", 1, "app", "app", "Zm9v", map[string]string{"my.cXV4eHl6": ""}},
+			"dbname='app' host='127.0.0.1' password='Zm9v' port='1' sslmode='disable' user='app'"},
+		{"postgres://app@127.0.0.1:1/app?password=qs3cretpwXYZ&",
+			pgxReading{"127.0.0.1", 1, "app", "app", "qs3cretpwXYZ", map[string]string{}},
+			"dbname='app' host='127.0.0.1' password='qs3cretpwXYZ' port='1' user='app'"},
+		{"postgres://app@127.0.0.1:1/app?password=qs3cretpwXYZ&#x",
+			pgxReading{"127.0.0.1", 1, "app", "app", "qs3cretpwXYZ", map[string]string{}},
+			"dbname='app' host='127.0.0.1' password='qs3cretpwXYZ' port='1' user='app'"},
+	} {
+		t.Run(tc.connString, func(t *testing.T) {
+			testutil.ClearLibPQEnv(t)
+			clearPgxDefaults(t)
+
+			cfg, err := pgconn.ParseConfig(tc.connString)
+			require.NoError(t, err)
+			require.Equal(t, tc.pgx, pgxReading{cfg.Host, cfg.Port, cfg.Database, cfg.User, cfg.Password, cfg.RuntimeParams})
+
+			u, err := url.Parse(tc.connString)
+			require.NoError(t, err)
+			got, err := pq.ParseURL(migrate.FilterCustomQuery(u).String())
+			require.NoError(t, err)
+			require.Equal(t, tc.pq, got)
+		})
+	}
+}
+
+func TestDriverReadings_QueryKeysAreDecodedAndTheirOrderIsIgnored(t *testing.T) {
+	want := pgxReading{"127.0.0.1", 1, "app", "app", "qs3cretpwXYZ", map[string]string{}}
+	const wantPQ = "dbname='app' host='127.0.0.1' password='qs3cretpwXYZ' port='1' sslmode='disable' user='app'"
+	for _, connString := range []string{
+		"postgres://app@127.0.0.1:1/app?password=qs3cretpwXYZ&sslmode=disable",
+		"postgres://app@127.0.0.1:1/app?sslmode=disable&password=qs3cretpwXYZ",
+		"postgres://app@127.0.0.1:1/app?pass%77ord=qs3cretpwXYZ&sslmode=disable",
+	} {
+		t.Run(connString, func(t *testing.T) {
+			testutil.ClearLibPQEnv(t)
+			clearPgxDefaults(t)
+
+			cfg, err := pgconn.ParseConfig(connString)
+			require.NoError(t, err)
+			require.Equal(t, want, pgxReading{cfg.Host, cfg.Port, cfg.Database, cfg.User, cfg.Password, cfg.RuntimeParams})
+
+			u, err := url.Parse(connString)
+			require.NoError(t, err)
+			got, err := pq.ParseURL(migrate.FilterCustomQuery(u).String())
+			require.NoError(t, err)
+			require.Equal(t, wantPQ, got)
+		})
+	}
+}
+
+func TestDriverReadings_APlusIsASpaceInTheQueryAndLiteralInTheUserinfo(t *testing.T) {
+	for _, tc := range []struct {
+		connString string
+		password   string
+		pq         string
+	}{
+		{"postgres://plusr@127.0.0.1:1/app?password=Zm9v+cXV4", "Zm9v cXV4",
+			"dbname='app' host='127.0.0.1' password='Zm9v cXV4' port='1' user='plusr'"},
+		{"postgres://plusr:Zm9v+cXV4@127.0.0.1:1/app", "Zm9v+cXV4", // gitleaks:allow
+			"dbname='app' host='127.0.0.1' password='Zm9v+cXV4' port='1' user='plusr'"},
+	} {
+		t.Run(tc.connString, func(t *testing.T) {
+			testutil.ClearLibPQEnv(t)
+			clearPgxDefaults(t)
+
+			cfg, err := pgconn.ParseConfig(tc.connString)
+			require.NoError(t, err)
+			require.Equal(t, tc.password, cfg.Password)
+
+			u, err := url.Parse(tc.connString)
+			require.NoError(t, err)
+			got, err := pq.ParseURL(migrate.FilterCustomQuery(u).String())
+			require.NoError(t, err)
+			require.Equal(t, tc.pq, got)
+		})
+	}
+}

@@ -11,8 +11,10 @@ import (
 	"testing"
 
 	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database"
 	"github.com/jackc/pgx/v5"
 	"github.com/mlmforge/mlmforge/internal/platform"
+	"github.com/mlmforge/mlmforge/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -525,4 +527,31 @@ func TestMigrateVersion_ADirtyRecordNamesBothInstructions(t *testing.T) {
 		"Run `mlmforge migrate reset-dirty --after-failed-down` only if the command that left this record was a `mlmforge migrate down` that ran the down file of migration 9 and printed \"run `mlmforge migrate reset-dirty --after-failed-down`\".\n"+
 		"Nothing in this output is either instruction.\n"+
 		"In any other case, do not run either.\n", out.stdout.String())
+}
+
+// holdMigrateDriverLock takes golang-migrate's own advisory lock for dsn's database on a separate session, as another client would.
+func holdMigrateDriverLock(t *testing.T, dsn string) {
+	t.Helper()
+	u, err := url.Parse(dsn)
+	require.NoError(t, err)
+	key, err := database.GenerateAdvisoryLockId(u.Path, "public", "schema_migrations")
+	require.NoError(t, err)
+	holder := connectTo(t, dsn)
+	_, err = holder.Exec(t.Context(), "SELECT pg_advisory_lock($1::bigint)", key)
+	require.NoError(t, err)
+}
+
+func TestMigrateUp_AServerLockTimeoutPrintsNoRecovery(t *testing.T) {
+	dsn := newMigrateDatabase(t)
+	migrateTo(t, dsn, 5)
+	setRecord(t, dsn, 6, true)
+	holdMigrateDriverLock(t, dsn)
+
+	out, err := runMigrate(t, withParam(t, dsn, "lock_timeout", "500"), "up")
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "try lock failed")
+	require.NotContains(t, err.Error()+out.stderr.String(), "reset-dirty")
+	version, dirty := testutil.ReadRecord(t, dsn)
+	require.Equal(t, platform.Record{Version: 6, Dirty: true}, platform.Record{Version: version, Dirty: dirty})
 }

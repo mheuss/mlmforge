@@ -71,12 +71,16 @@ func (mg *migration) sourceHolds(n uint) bool {
 	return false
 }
 
-// downOnce rolls back one migration unless ctx has already ended.
-func (mg *migration) downOnce(ctx context.Context) error {
-	if ctx.Err() != nil {
-		return nil
-	}
-	return mg.m.Steps(-1)
+// downStep reads the record and rolls back one migration unless ctx has ended, both under the database driver's own lock.
+func (mg *migration) downStep(ctx context.Context) (before RecordRead, err error) {
+	err = mg.holdingDriverLock(func() error {
+		before = mg.recordRead()
+		if ctx.Err() != nil {
+			return nil
+		}
+		return mg.m.Steps(-1)
+	})
+	return before, err
 }
 
 // upStopped is the outcome of an up that ended early: nil when the record reads as the last migration in the source, a StoppedError otherwise.

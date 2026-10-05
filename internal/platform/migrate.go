@@ -92,8 +92,8 @@ func MigrateDown(ctx context.Context, dbURL, migrationsPath string, wait LockWai
 	}
 	defer mg.closeInto(&err)
 
-	before := mg.recordRead()
-	return mg.downOutcome(ctx, before, mg.downOnce(ctx))
+	before, raw := mg.downStep(ctx)
+	return mg.downOutcome(ctx, before, raw)
 }
 
 // downOutcome classifies the result of Steps(-1).

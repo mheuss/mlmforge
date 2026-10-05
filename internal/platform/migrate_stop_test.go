@@ -176,8 +176,8 @@ func TestMigrateDown_AStopBeforeItsFileChangesNothing(t *testing.T) {
 	require.NoError(t, err)
 	ctx := endedContext()
 
-	before := mg.recordRead()
-	err = mg.downOutcome(ctx, before, mg.downOnce(ctx))
+	before, raw := mg.downStep(ctx)
+	err = mg.downOutcome(ctx, before, raw)
 	mg.closeInto(&err)
 
 	var stopped *StoppedError
@@ -410,4 +410,38 @@ func TestHoldingDriverLock_AFailedHoldRunsNothing(t *testing.T) {
 
 	assert.False(t, ran)
 	assert.Equal(t, &LockNotTakenError{Err: errors.New("l")}, err)
+}
+
+func TestMigrateDown_AStopWhileWaitingForGolangMigratesLockChangesNothing(t *testing.T) {
+	dsn := newResetDatabase(t)
+	dir := writeMigrations(t, twoFastMigrations)
+	require.NoError(t, MigrateUp(context.Background(), dsn, dir, nil))
+	mg, err := openMigration(context.Background(), dsn, dir, nil)
+	require.NoError(t, err)
+	u, err := url.Parse(dsn)
+	require.NoError(t, err)
+	key, err := database.GenerateAdvisoryLockId(u.Path, "public", "schema_migrations")
+	require.NoError(t, err)
+	holder, err := pgx.Connect(context.Background(), dsn)
+	require.NoError(t, err)
+	defer func() { _ = holder.Close(context.Background()) }()
+	_, err = holder.Exec(context.Background(), "SELECT pg_advisory_lock($1::bigint)", key)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		before, raw := mg.downStep(ctx)
+		result <- mg.downOutcome(ctx, before, raw)
+	}()
+	testutil.WaitForActiveQuery(t, pgContainer.DSN, "pg_advisory_lock")
+
+	cancel()
+	_, err = holder.Exec(context.Background(), "SELECT pg_advisory_unlock($1::bigint)", key)
+	require.NoError(t, err)
+	err = <-result
+	mg.closeInto(&err)
+
+	var stopped *StoppedError
+	require.ErrorAs(t, err, &stopped)
+	assert.True(t, testutil.TableExists(t, dsn, "fast_b"))
 }

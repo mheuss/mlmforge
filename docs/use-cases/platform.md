@@ -11,11 +11,11 @@ Use-cases for the Platform bounded context.
 ### UC-PLATFORM-001: Withhold a refused database connection string
 
 **Added:** Unreleased (HEU-867)
-**Files:** `internal/platform/connstring.go` (`ConnStringError`, `PreDriverError`, `keywordKeyError`, `afterPasswordError`, `rawPlusError`, `PgxConnStringError`, `migrateSchemeError`, `migrateDriverParseError`, `migrateConnStringError`), `internal/platform/migrate.go` (`openMigration`), `cmd/mlmforge/treedeps.go` (`openTreeDeps`), `internal/networkengine/tree_lock_postgres.go` (`PostgresTreeLocker.Lock`), `cmd/mlmforge/resolve.go` (`resolveDBURL`), `internal/testutil/connstring.go` (`ConnStringCases`, `ResolveRefusedCases`, `ReachesDriverCases`, `RequireNoPasswordWindow`, `RequireNoDriverParseError`)
+**Files:** `internal/platform/connstring.go` (`ConnStringError`, `PreDriverError`, `keywordKeyError`, `afterPasswordError`, `rawPlusError`, `PgxConnStringError`, `migrateSchemeError`, `migrateDriverParseError`, `migrateConnStringError`), `internal/platform/migrate.go` (`openMigration`), `internal/platform/migrate_session.go` (`dialSession`), `cmd/mlmforge/treedeps.go` (`openTreeDeps`), `internal/networkengine/tree_lock_postgres.go` (`PostgresTreeLocker.Lock`), `cmd/mlmforge/resolve.go` (`resolveDBURL`), `internal/testutil/connstring.go` (`ConnStringCases`, `ResolveRefusedCases`, `ReachesDriverCases`, `RequireNoPasswordWindow`, `RequireNoDriverParseError`)
 
 **Problem:** A driver that refuses a connection string often quotes it, or part of it, in its error. The password goes with it, to the terminal, to job logs, and to anything that walks the error chain.
 
-**Solution:** Replace the driver's error at the call site with `ConnStringError`. It names the driver and the stage. For stage `raw-at` it also names the part. It holds nothing from the string. It has no `Unwrap`, so the raw string in the driver's error cannot be reached through the chain. pgx refusals go through `PgxConnStringError`. The migrate path runs its checks inside `openMigration`.
+**Solution:** Replace the driver's error at the call site with `ConnStringError`. It names the driver and the stage. For stage `raw-at` it also names the part. It holds nothing from the string. It has no `Unwrap`, so the raw string in the driver's error cannot be reached through the chain. pgx refusals go through `PgxConnStringError`. The migrate path checks the environment in `openMigration` and the string in `dialSession`.
 
 **Usage:**
 ```go

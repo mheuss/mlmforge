@@ -45,7 +45,7 @@ func (mg *migration) downOnce(ctx context.Context) error {
 	return mg.m.Steps(-1)
 }
 
-// upStopped is the outcome of an up that ended after its context ended: nil when no migration is left, a StoppedError otherwise.
+// upStopped is the outcome of an up that ended early: nil when no migration is left, a StoppedError otherwise.
 func (mg *migration) upStopped(before RecordRead) error {
 	after := mg.recordRead()
 	if after.Err != nil {

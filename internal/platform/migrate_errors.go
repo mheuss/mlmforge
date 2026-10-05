@@ -323,7 +323,7 @@ func (e *LockNotTakenError) Error() string { return migrationErrorText(e.Err) }
 
 func (e *LockNotTakenError) Unwrap() error { return e.Err }
 
-// StoppedError reports a migrate up or down that ended early because its context ended.
+// StoppedError reports a migrate up or down that ended before its last migration.
 type StoppedError struct {
 	Command string
 	Before  RecordRead

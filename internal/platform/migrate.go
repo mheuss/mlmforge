@@ -27,7 +27,7 @@ func (mg *migration) dirtyError(err error) (*DirtyError, bool) {
 // A PID of 0 means the holder's PID was not read.
 type LockWait func(holderPID int)
 
-// MigrateUp applies all pending database migrations from the given directory.
+// MigrateUp applies the pending database migrations from the given directory, stopping between migrations once ctx ends.
 func MigrateUp(ctx context.Context, dbURL, migrationsPath string, wait LockWait) (err error) {
 	if err = refuseUnusedSettings("up", dbURL); err != nil {
 		return err
@@ -45,7 +45,7 @@ func MigrateUp(ctx context.Context, dbURL, migrationsPath string, wait LockWait)
 	return mg.upOutcome(ctx, before, mg.upInSteps(ctx))
 }
 
-// upOutcome classifies the result of Up.
+// upOutcome classifies the result of applying the pending migrations.
 func (mg *migration) upOutcome(ctx context.Context, before RecordRead, raw error) error {
 	releases, upErr := SplitRelease(raw)
 	if upErr == nil && (ctx.Err() != nil || len(releases) > 0) {
@@ -54,7 +54,7 @@ func (mg *migration) upOutcome(ctx context.Context, before RecordRead, raw error
 	return withReleases(mg.upResult(upErr), releases)
 }
 
-// upResult classifies the result of golang-migrate's Up.
+// upResult classifies an error from applying the pending migrations.
 func (mg *migration) upResult(upErr error) error {
 	if upErr == nil || errors.Is(upErr, migrate.ErrNoChange) {
 		return nil

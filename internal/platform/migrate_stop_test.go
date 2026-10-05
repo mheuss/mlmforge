@@ -198,6 +198,15 @@ func TestUpInSteps_KeepsUpsOutcomes(t *testing.T) {
 			files: twoFastMigrations, record: &Record{Version: 9},
 			check: func(t *testing.T, err error) { assert.ErrorIs(t, err, os.ErrNotExist) },
 		},
+		"an empty migrations directory": {
+			files: map[string]string{},
+			check: func(t *testing.T, err error) { assert.ErrorIs(t, err, os.ErrNotExist) },
+		},
+		"a last version with only a down file": {
+			files:  map[string]string{"1_a.up.sql": "SELECT 1;", "1_a.down.sql": "SELECT 1;", "2_b.down.sql": "SELECT 1;"},
+			record: &Record{Version: 2},
+			check:  func(t *testing.T, err error) { assert.ErrorIs(t, err, migrate.ErrNoChange) },
+		},
 		"two pending migrations": {
 			files: twoFastMigrations,
 			check: func(t *testing.T, err error) { assert.NoError(t, err) },
@@ -207,6 +216,11 @@ func TestUpInSteps_KeepsUpsOutcomes(t *testing.T) {
 			files: map[string]string{"1_bad.up.sql": "SELEC 1;", "1_bad.down.sql": "SELECT 1;"},
 			check: func(t *testing.T, err error) { assert.Error(t, err) },
 			want:  &Record{Version: 1, Dirty: true},
+		},
+		"a second file failing after the first applied": {
+			files: map[string]string{"1_a.up.sql": "CREATE TABLE ok_a (id int);", "1_a.down.sql": "DROP TABLE ok_a;", "2_bad.up.sql": "SELEC 1;", "2_bad.down.sql": "SELECT 1;"},
+			check: func(t *testing.T, err error) { assert.Error(t, err) },
+			want:  &Record{Version: 2, Dirty: true},
 		},
 	}
 	for name, tc := range cases {
@@ -260,4 +274,17 @@ func TestUpOutcome_AReleaseFailureWithNothingLeftIsSuccess(t *testing.T) {
 	releases, rest := SplitRelease(err)
 	assert.NoError(t, rest)
 	assert.Equal(t, []error{unlockFailed}, releases)
+}
+
+func TestMigrateUp_ASecondFailingFileKeepsItsApplyError(t *testing.T) {
+	dsn := newResetDatabase(t)
+	dir := writeMigrations(t, map[string]string{"1_a.up.sql": "CREATE TABLE ok_a (id int);", "1_a.down.sql": "DROP TABLE ok_a;", "2_bad.up.sql": "SELEC 1;", "2_bad.down.sql": "SELECT 1;"})
+
+	err := MigrateUp(context.Background(), dsn, dir, nil)
+
+	var apply *ApplyError
+	require.ErrorAs(t, err, &apply)
+	assert.True(t, apply.BodyFailed)
+	assert.Equal(t, RecordRead{Record: Record{Version: 2, Dirty: true}}, apply.After)
+	assert.True(t, testutil.TableExists(t, dsn, "ok_a"))
 }

@@ -2,9 +2,11 @@ package platform
 
 import (
 	"context"
+	"errors"
+	"io"
+	"os"
 
 	"github.com/golang-migrate/migrate/v4"
-	"github.com/golang-migrate/migrate/v4/database"
 )
 
 // upInSteps applies pending migrations one at a time.
@@ -25,16 +27,35 @@ func (mg *migration) upInSteps(ctx context.Context) error {
 	return nil
 }
 
-// upToDate reports whether the record is clean and the source has no migration after it.
-// A read failure reports false.
+// upToDate reports whether the record reads as the last migration in the source.
 func (mg *migration) upToDate() bool {
 	rec, err := mg.readRecord()
-	if err != nil || rec.Dirty {
+	return err == nil && mg.isLast(rec)
+}
+
+// isLast reports whether rec is clean and names a version the source holds, with no migration after it.
+// It reports false on any source read failure.
+func (mg *migration) isLast(rec Record) bool {
+	if rec.Dirty || rec.Version < 0 {
 		return false
 	}
-	src := mg.sourceInfo(rec.Version)
-	placed := src.InSource || rec.Version == database.NilVersion
-	return src.Err == nil && placed && !src.HasNext
+	n := uint(rec.Version)
+	if !mg.sourceHolds(n) {
+		return false
+	}
+	_, err := mg.source.Next(n)
+	return errors.Is(err, os.ErrNotExist)
+}
+
+// sourceHolds reports whether the source has an up file or a down file for version n.
+func (mg *migration) sourceHolds(n uint) bool {
+	for _, read := range []func(uint) (io.ReadCloser, string, error){mg.source.ReadUp, mg.source.ReadDown} {
+		if body, _, err := read(n); err == nil {
+			_ = body.Close()
+			return true
+		}
+	}
+	return false
 }
 
 // downOnce rolls back one migration unless ctx has already ended.
@@ -51,15 +72,13 @@ func (mg *migration) upStopped(before RecordRead) error {
 	if after.Err != nil {
 		return &StoppedError{Command: "up", Before: before, After: after}
 	}
-	src := mg.sourceInfo(after.Record.Version)
-	placed := src.InSource || after.Record.Version == database.NilVersion
-	if src.Err == nil && placed && !src.HasNext && !after.Record.Dirty {
+	if mg.isLast(after.Record) {
 		return nil
 	}
-	return &StoppedError{Command: "up", Before: before, After: after, Source: src}
+	return &StoppedError{Command: "up", Before: before, After: after, Source: mg.sourceInfo(after.Record.Version)}
 }
 
-// downStopped is the outcome of a down that ended after its context ended: nil when the record moved, a StoppedError otherwise.
+// downStopped is the outcome of a down whose context ended: nil when the record moved, a StoppedError otherwise.
 func (mg *migration) downStopped(before RecordRead) error {
 	after := mg.recordRead()
 	if after.Err == nil && before.Err == nil && after.Record != before.Record {

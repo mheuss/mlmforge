@@ -32,7 +32,11 @@ func startMigrate(t *testing.T, stderr io.Writer, dsn, dir string, args ...strin
 	}()
 	t.Cleanup(func() {
 		cancel()
-		<-exited
+		select {
+		case <-exited:
+		case <-time.After(15 * time.Second):
+			t.Errorf("the command was still running 15s after its context was cancelled")
+		}
 	})
 	return result
 }
@@ -142,8 +146,7 @@ func TestMigrateUp_ASignalDuringTheLastFileSucceeds(t *testing.T) {
 func TestMigrateDown_ASignalDuringItsFileFinishesTheRollback(t *testing.T) {
 	keepSignalAlive(t, syscall.SIGINT)
 	dsn := newMigrateDatabase(t)
-	sleepSeconds := 2
-	dir := testutil.SlowMigrations(t, sleepSeconds)
+	dir := testutil.SlowMigrations(t, 2)
 	require.NoError(t, awaitDone(t, startMigrate(t, io.Discard, dsn, dir, "up"), 10*time.Second))
 	var stderr syncBuffer
 	done := startMigrate(t, &stderr, dsn, dir, "down")

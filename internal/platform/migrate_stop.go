@@ -7,7 +7,7 @@ import (
 	"github.com/golang-migrate/migrate/v4/database"
 )
 
-// upInSteps applies pending migrations one at a time, and returns once none are left, a step fails, or ctx has ended between steps.
+// upInSteps applies pending migrations one at a time.
 func (mg *migration) upInSteps(ctx context.Context) error {
 	applied := false
 	for ctx.Err() == nil {
@@ -26,7 +26,7 @@ func (mg *migration) upInSteps(ctx context.Context) error {
 }
 
 // upToDate reports whether the record is clean and the source has no migration after it.
-// Any read failure reports false, so the next step meets the failure itself.
+// A read failure reports false.
 func (mg *migration) upToDate() bool {
 	rec, err := mg.readRecord()
 	if err != nil || rec.Dirty {

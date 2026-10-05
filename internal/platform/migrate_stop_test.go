@@ -244,3 +244,20 @@ func TestMigrateUp_AFailingFileKeepsItsApplyError(t *testing.T) {
 	assert.True(t, apply.BodyFailed)
 	assert.Equal(t, RecordRead{Record: Record{Version: 1, Dirty: true}}, apply.After)
 }
+
+func TestUpOutcome_AReleaseFailureWithMigrationsLeftIsAStop(t *testing.T) {
+	err := stopMigration(t, &recordingDriver{record: Record{Version: 1}}).upOutcome(context.Background(), RecordRead{}, errors.Join(nil, unlockFailed))
+
+	releases, rest := SplitRelease(err)
+	var stopped *StoppedError
+	assert.ErrorAs(t, rest, &stopped)
+	assert.Equal(t, []error{unlockFailed}, releases)
+}
+
+func TestUpOutcome_AReleaseFailureWithNothingLeftIsSuccess(t *testing.T) {
+	err := stopMigration(t, &recordingDriver{record: Record{Version: 2}}).upOutcome(context.Background(), RecordRead{}, errors.Join(nil, unlockFailed))
+
+	releases, rest := SplitRelease(err)
+	assert.NoError(t, rest)
+	assert.Equal(t, []error{unlockFailed}, releases)
+}

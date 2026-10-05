@@ -14,10 +14,6 @@ import (
 	"github.com/mlmforge/mlmforge/internal/platform"
 )
 
-// treeLockNamespace is the first advisory lock key of every tree write lock.
-// Its four bytes spell "tree" in ASCII.
-const treeLockNamespace int32 = 0x74726565
-
 // treeLockPollInterval is the pause between two attempts on a held lock.
 const treeLockPollInterval = 100 * time.Millisecond
 
@@ -76,7 +72,7 @@ func (l *PostgresTreeLocker) Lock(ctx context.Context, treeID uuid.UUID) (func()
 	key := treeLockKey(treeID)
 	for {
 		var granted bool
-		err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1, $2)", treeLockNamespace, key).Scan(&granted)
+		err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1, $2)", platform.TreeLockNamespace, key).Scan(&granted)
 		if err != nil {
 			closeLockConn(conn)
 			if ctxErr := ctx.Err(); ctxErr != nil {
@@ -114,7 +110,7 @@ func releaseTreeLock(conn *pgx.Conn, treeID uuid.UUID, key int32) error {
 	defer cancel()
 
 	var released bool
-	unlockErr := conn.QueryRow(ctx, "SELECT pg_advisory_unlock($1, $2)", treeLockNamespace, key).Scan(&released)
+	unlockErr := conn.QueryRow(ctx, "SELECT pg_advisory_unlock($1, $2)", platform.TreeLockNamespace, key).Scan(&released)
 	// Closing ends the session, which drops the lock even when the unlock call
 	// failed.
 	closeErr := conn.Close(ctx)

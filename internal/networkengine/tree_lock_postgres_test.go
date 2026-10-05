@@ -18,7 +18,6 @@ import (
 // The expected values were computed at planning time with FNV-1a over the
 // UUID's 16 bytes.
 func TestTreeLockKey_IsFixed(t *testing.T) {
-	assert.Equal(t, int32(1953654117), treeLockNamespace)
 	assert.Equal(t, int32(856866490), treeLockKey(uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-000000000001")))
 	assert.Equal(t, int32(840088871), treeLockKey(uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-000000000002")))
 	assert.Equal(t, int32(-1288558304), treeLockKey(uuid.MustParse("bbbbbbbb-bbbb-bbbb-bbbb-000000000001")),
@@ -89,7 +88,7 @@ func TestPostgresTreeLocker_ALostSessionReleasesTheLock(t *testing.T) {
 
 	holder, err := pgx.Connect(ctx, dsn)
 	require.NoError(t, err)
-	_, err = holder.Exec(ctx, "SELECT pg_advisory_lock($1, $2)", treeLockNamespace, treeLockKey(tree))
+	_, err = holder.Exec(ctx, "SELECT pg_advisory_lock($1, $2)", platform.TreeLockNamespace, treeLockKey(tree))
 	require.NoError(t, err)
 
 	locker := NewPostgresTreeLocker(dsn)

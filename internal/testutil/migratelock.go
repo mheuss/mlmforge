@@ -183,7 +183,7 @@ func WaitForQueryGone(t *testing.T, dsn, text string) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("a backend still ran a query containing %q after 10s", text)
+	t.Fatalf("a backend's query still contained %q after 10s", text)
 }
 
 // CuttableProxy forwards loopback connections to target, and returns its address and a function that closes every connection it carries.

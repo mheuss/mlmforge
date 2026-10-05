@@ -13,10 +13,10 @@ import (
 	"github.com/lib/pq"
 )
 
-// migrateApplicationName names every migrate connection whose URL names none.
+// migrateApplicationName is the fallback application name of a migrate connection.
 const migrateApplicationName = "mlmforge-migrate"
 
-// session is the one database connection a migrate command runs on.
+// session holds one database connection and the pool that owns it.
 type session struct {
 	db           *sql.DB
 	conn         *sql.Conn
@@ -47,6 +47,7 @@ func dialSession(ctx context.Context, dbURL string) (session, error) {
 			return &ConnStringError{driver: driverMigrate, stage: stageRefused}
 		}
 		db := sql.OpenDB(connector)
+		db.SetMaxOpenConns(1)
 		conn, err := db.Conn(context.Background())
 		if err != nil {
 			_ = db.Close()
@@ -58,25 +59,26 @@ func dialSession(ctx context.Context, dbURL string) (session, error) {
 	return s, err
 }
 
-// checkIntervalOption makes the server poll for a vanished client every second, so a killed migrate's file rolls back.
+// checkIntervalOption asks the server to check every second that the client is still connected.
 const checkIntervalOption = "-c client_connection_check_interval=1000"
 
-// driverURL is the string lib/pq receives: the URL without golang-migrate's settings, with a fallback application name and the check interval.
+// driverURL returns purl without golang-migrate's settings, with a fallback application name and the check interval added.
 func driverURL(purl *url.URL) string {
 	filtered := migrate.FilterCustomQuery(purl)
 	q := filtered.Query()
-	q.Set("fallback_application_name", migrateApplicationName)
-	q.Set("options", sessionOptions(q.Get("options"), q.Has("options"), os.Getenv("PGOPTIONS")))
+	if !q.Has("fallback_application_name") {
+		q.Set("fallback_application_name", migrateApplicationName)
+	}
+	q.Set("options", sessionOptions(q.Get("options"), os.Getenv("PGOPTIONS")))
 	filtered.RawQuery = q.Encode()
 	return filtered.String()
 }
 
-// sessionOptions puts the check interval ahead of the options lib/pq would otherwise send.
-// A URL options key replaces PGOPTIONS in lib/pq, so only one of the two is kept.
-func sessionOptions(fromURL string, urlHasOptions bool, fromEnv string) string {
-	theirs := fromEnv
-	if urlHasOptions {
-		theirs = fromURL
+// sessionOptions puts the check interval ahead of the URL's options, or of PGOPTIONS when the URL's are empty.
+func sessionOptions(fromURL, fromEnv string) string {
+	theirs := fromURL
+	if theirs == "" {
+		theirs = fromEnv
 	}
 	if theirs == "" {
 		return checkIntervalOption

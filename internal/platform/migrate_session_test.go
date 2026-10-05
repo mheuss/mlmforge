@@ -5,9 +5,11 @@ import (
 	"errors"
 	"net/url"
 	"os"
+	"reflect"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/lib/pq"
 	"github.com/mlmforge/mlmforge/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,21 +33,55 @@ func TestReleaseSession_RunsEveryStepInOrderAndTagsEachFailure(t *testing.T) {
 }
 
 func TestSessionOptions_PutsTheCheckIntervalFirst(t *testing.T) {
-	cases := map[string]struct {
-		fromURL string
-		urlHas  bool
-		fromEnv string
-		want    string
-	}{
+	cases := map[string]struct{ fromURL, fromEnv, want string }{
 		"nothing else":               {want: "-c client_connection_check_interval=1000"},
-		"options in the URL":         {fromURL: "-c work_mem=64MB", urlHas: true, want: "-c client_connection_check_interval=1000 -c work_mem=64MB"},
+		"options in the URL":         {fromURL: "-c work_mem=64MB", want: "-c client_connection_check_interval=1000 -c work_mem=64MB"},
 		"PGOPTIONS only":             {fromEnv: "-c work_mem=32MB", want: "-c client_connection_check_interval=1000 -c work_mem=32MB"},
-		"the URL replaces PGOPTIONS": {fromURL: "-c work_mem=64MB", urlHas: true, fromEnv: "-c work_mem=32MB", want: "-c client_connection_check_interval=1000 -c work_mem=64MB"},
-		"an empty options key":       {urlHas: true, fromEnv: "-c work_mem=32MB", want: "-c client_connection_check_interval=1000"},
+		"the URL replaces PGOPTIONS": {fromURL: "-c work_mem=64MB", fromEnv: "-c work_mem=32MB", want: "-c client_connection_check_interval=1000 -c work_mem=64MB"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			assert.Equal(t, tc.want, sessionOptions(tc.fromURL, tc.urlHas, tc.fromEnv))
+			assert.Equal(t, tc.want, sessionOptions(tc.fromURL, tc.fromEnv))
+		})
+	}
+}
+
+// driverOption returns the value lib/pq holds for key after parsing driverURL's form of rawURL, or "" if it holds none.
+func driverOption(t *testing.T, rawURL, key string) string {
+	t.Helper()
+	u, err := url.Parse(rawURL)
+	require.NoError(t, err)
+	c, err := pq.NewConnector(driverURL(u))
+	require.NoError(t, err)
+	opts := reflect.ValueOf(c).Elem().FieldByName("opts")
+	require.True(t, opts.IsValid(), "lib/pq's Connector has no opts field to read")
+	v := opts.MapIndex(reflect.ValueOf(key))
+	if !v.IsValid() {
+		return ""
+	}
+	return v.String()
+}
+
+func TestDriverURL_WhatLibPQReceives(t *testing.T) {
+	const base = "postgres://u:p@h/d?sslmode=disable"
+	cases := map[string]struct {
+		rawURL, pgOptions, key, want string
+	}{
+		"the interval alone":                    {rawURL: base, key: "options", want: "-c client_connection_check_interval=1000"},
+		"an empty URL options keeps PGOPTIONS":  {rawURL: base + "&options=", pgOptions: "-c search_path=ops", key: "options", want: "-c client_connection_check_interval=1000 -c search_path=ops"},
+		"the URL's options replace PGOPTIONS":   {rawURL: base + "&options=-c%20work_mem%3D64MB", pgOptions: "-c search_path=ops", key: "options", want: "-c client_connection_check_interval=1000 -c work_mem=64MB"},
+		"the default application name":          {rawURL: base, key: "application_name", want: "mlmforge-migrate"},
+		"the operator's fallback name is kept":  {rawURL: base + "&fallback_application_name=ops", key: "application_name", want: "ops"},
+		"golang-migrate's settings are removed": {rawURL: base + "&x-multi-statement=true", key: "x-multi-statement", want: ""},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			testutil.ClearLibPQEnv(t)
+			t.Setenv("PGAPPNAME", "")
+			require.NoError(t, os.Unsetenv("PGAPPNAME"))
+			t.Setenv("PGOPTIONS", tc.pgOptions)
+
+			assert.Equal(t, tc.want, driverOption(t, tc.rawURL, tc.key))
 		})
 	}
 }
@@ -111,7 +147,7 @@ func TestMigrateUp_NamesItsConnection(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv("PGAPPNAME", tc.env)
 			if tc.env == "" {
-				// lib/pq treats an empty PGAPPNAME as a name, which would mask the fallback.
+				// An empty PGAPPNAME would name the connection "".
 				require.NoError(t, os.Unsetenv("PGAPPNAME"))
 			}
 			dsn := newResetDatabase(t)

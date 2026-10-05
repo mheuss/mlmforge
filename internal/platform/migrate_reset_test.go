@@ -47,7 +47,7 @@ func (d *recordingDriver) SetVersion(version int, dirty bool) error {
 func resetMigration(t *testing.T, driver *recordingDriver) *migration {
 	t.Helper()
 	mg := sourceOnlyMigration(t)
-	mg.db = releaseTagged{Driver: driver}
+	mg.db = releaseTagged{Driver: driver, held: new(bool)}
 	return mg
 }
 
@@ -108,7 +108,7 @@ func TestResetDirty_AFailedWriteReReadsTheRecordInsideTheLock(t *testing.T) {
 func resetMigrationIn(t *testing.T, dir string, driver *recordingDriver) *migration {
 	t.Helper()
 	mg := sourceMigration(t, dir)
-	mg.db = releaseTagged{Driver: driver}
+	mg.db = releaseTagged{Driver: driver, held: new(bool)}
 	return mg
 }
 

@@ -30,7 +30,7 @@ func endedContext() context.Context {
 func stopMigration(t *testing.T, driver *recordingDriver) *migration {
 	t.Helper()
 	mg := sourceMigration(t, writeMigrations(t, twoFastMigrations))
-	mg.db = releaseTagged{Driver: driver}
+	mg.db = releaseTagged{Driver: driver, held: new(bool)}
 	return mg
 }
 
@@ -392,7 +392,7 @@ func TestUpStopped_JudgesTheLastMigrationLikeTheLoop(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			mg := sourceMigration(t, writeMigrations(t, tc.files))
-			mg.db = releaseTagged{Driver: &recordingDriver{record: tc.record}}
+			mg.db = releaseTagged{Driver: &recordingDriver{record: tc.record}, held: new(bool)}
 
 			err := mg.upStopped(RecordRead{Record: Record{Version: -1}})
 
@@ -403,7 +403,7 @@ func TestUpStopped_JudgesTheLastMigrationLikeTheLoop(t *testing.T) {
 }
 
 func TestHoldingDriverLock_AFailedHoldRunsNothing(t *testing.T) {
-	mg := &migration{drv: releaseTagged{Driver: lockFails{}, held: new(bool)}}
+	mg := &migration{db: releaseTagged{Driver: lockFails{}, held: new(bool)}}
 	ran := false
 
 	err := mg.holdingDriverLock(func() error { ran = true; return nil })

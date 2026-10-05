@@ -157,9 +157,9 @@ func openMigration(ctx context.Context, dbURL, migrationsPath string, wait LockW
 	if err != nil {
 		return nil, fmt.Errorf("open migrations source %s: %w", absPath, err)
 	}
-	sess, err := dialSession(ctx, dbURL)
+	sess, err := connectSession(ctx, dbURL)
 	if err != nil {
-		return nil, errors.Join(fmt.Errorf("open database: %w", err),
+		return nil, errors.Join(openFailure(err),
 			releaseErr("closing the migrations source failed", src.Close()))
 	}
 	db, err := openDriver(ctx, sess)

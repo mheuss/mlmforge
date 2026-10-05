@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 
@@ -109,4 +110,43 @@ func releaseSession(unlock func() error, closeMigrator func() (error, error), cl
 		errs = append(errs, &ReleaseError{What: "closing the database connection failed", Err: err})
 	}
 	return errors.Join(errs...)
+}
+
+// sessionResult is one dial's outcome.
+type sessionResult struct {
+	s   session
+	err error
+}
+
+// connectSession dials one session and stops waiting for it when ctx ends.
+func connectSession(ctx context.Context, dbURL string) (session, error) {
+	results := make(chan sessionResult, 1)
+	go func() {
+		s, err := dialSession(ctx, dbURL)
+		results <- sessionResult{s: s, err: err}
+	}()
+	// Whoever receives from results owns the session it carries, so it is closed exactly once.
+	select {
+	case r := <-results:
+		if r.err != nil && ctx.Err() != nil {
+			return session{}, &InterruptedError{During: duringConnect}
+		}
+		return r.s, r.err
+	case <-ctx.Done():
+		go func() {
+			if r := <-results; r.err == nil {
+				_ = r.s.close()
+			}
+		}()
+		return session{}, &InterruptedError{During: duringConnect}
+	}
+}
+
+// openFailure prefixes err with "open database: " unless it reports an interrupt.
+func openFailure(err error) error {
+	var interrupted *InterruptedError
+	if errors.As(err, &interrupted) {
+		return err
+	}
+	return fmt.Errorf("open database: %w", err)
 }

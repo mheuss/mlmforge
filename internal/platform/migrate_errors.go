@@ -297,3 +297,19 @@ type InvalidSettingError struct {
 func (e *InvalidSettingError) Error() string {
 	return fmt.Sprintf("migrate %s refused: the database URL sets %s=%s, which is neither true nor false", e.Command, e.Name, e.Value)
 }
+
+// The phases an InterruptedError names.
+const (
+	duringConnect    = "connecting to the database"
+	duringLockWait   = "waiting for the migration lock"
+	duringDriverOpen = "opening the migration driver"
+)
+
+// InterruptedError reports a migrate command whose context ended before it could write anything.
+type InterruptedError struct {
+	During string
+}
+
+func (e *InterruptedError) Error() string {
+	return "stopped while " + e.During + "; nothing was changed"
+}

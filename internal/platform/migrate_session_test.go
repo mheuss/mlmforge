@@ -7,6 +7,7 @@ import (
 	"os"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/lib/pq"
@@ -175,4 +176,36 @@ func TestDialSession_HoldsAtMostOneConnection(t *testing.T) {
 	defer func() { _ = s.close() }()
 
 	assert.Equal(t, 1, s.db.Stats().MaxOpenConnections)
+}
+
+func TestConnectSession_AnEndedContextAbandonsAStalledConnect(t *testing.T) {
+	testutil.ClearTimeoutEnv(t)
+	addr := testutil.SilentListener(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(200*time.Millisecond, cancel)
+
+	start := time.Now()
+	_, err := connectSession(ctx, "postgres://app:s3cret@"+addr+"/app?sslmode=disable&connect_timeout=0")
+
+	assert.Less(t, time.Since(start), 2*time.Second)
+	assert.Equal(t, &InterruptedError{During: duringConnect}, err)
+}
+
+// Run under -race. The cancel lands before, during and after the dial across iterations.
+func TestConnectSession_CancellingAroundAConnectLeavesNoSession(t *testing.T) {
+	dsn := newResetDatabase(t)
+	for i := range 40 {
+		ctx, cancel := context.WithCancel(context.Background())
+		time.AfterFunc(time.Duration(i)*250*time.Microsecond, cancel)
+
+		s, err := connectSession(ctx, dsn)
+		if err == nil {
+			require.NoError(t, s.close())
+		} else {
+			require.Equal(t, &InterruptedError{During: duringConnect}, err)
+		}
+		cancel()
+	}
+
+	testutil.RequireNoSessionsNamed(t, dsn, migrateApplicationName)
 }

@@ -136,6 +136,7 @@ type migration struct {
 	path   string
 	sess   session
 	unlock func() error
+	drv    releaseTagged
 }
 
 // releaseTagged marks the database driver's Lock and Unlock failures with their own error types.
@@ -234,7 +235,7 @@ func openMigration(ctx context.Context, dbURL, migrationsPath string, wait LockW
 			releaseErr("closing the migrations source failed", src.Close()),
 			releaseErr("closing the database failed", sess.close()))
 	}
-	return &migration{m: m, source: src, db: tagged, path: absPath, sess: sess, unlock: func() error { return unlockMigrations(sess.conn) }}, nil
+	return &migration{m: m, source: src, db: tagged, path: absPath, drv: tagged, sess: sess, unlock: func() error { return unlockMigrations(sess.conn) }}, nil
 }
 
 // closeInto releases the migration lock, closes the migrator and the session, and joins any failure into *errp as a ReleaseError.

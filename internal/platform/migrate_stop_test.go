@@ -295,7 +295,7 @@ func TestMigrateUp_ASecondFailingFileKeepsItsApplyError(t *testing.T) {
 	assert.True(t, testutil.TableExists(t, dsn, "ok_a"))
 }
 
-// foreignDriverLockGranted keeps trying golang-migrate's own key for dsn's database on another session until a backend runs a query containing until, and reports whether it was ever granted.
+// foreignDriverLockGranted reports whether another session ever got golang-migrate's lock for dsn's database before a backend ran a query containing until.
 func foreignDriverLockGranted(t *testing.T, dsn, until string) bool {
 	t.Helper()
 	u, err := url.Parse(dsn)
@@ -400,4 +400,14 @@ func TestUpStopped_JudgesTheLastMigrationLikeTheLoop(t *testing.T) {
 			assert.Equal(t, tc.stopped, errors.As(err, &stopped), "err: %v", err)
 		})
 	}
+}
+
+func TestHoldingDriverLock_AFailedHoldRunsNothing(t *testing.T) {
+	mg := &migration{drv: releaseTagged{Driver: lockFails{}, held: new(bool)}}
+	ran := false
+
+	err := mg.holdingDriverLock(func() error { ran = true; return nil })
+
+	assert.False(t, ran)
+	assert.Equal(t, &LockNotTakenError{Err: errors.New("l")}, err)
 }

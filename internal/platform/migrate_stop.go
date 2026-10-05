@@ -29,14 +29,10 @@ func (mg *migration) upInSteps(ctx context.Context) error {
 
 // holdingDriverLock runs op while holding the database driver's own lock, and joins any release failure to op's result.
 func (mg *migration) holdingDriverLock(op func() error) error {
-	tagged, ok := mg.db.(releaseTagged)
-	if !ok || tagged.held == nil {
-		return op()
-	}
-	if err := tagged.holdLock(); err != nil {
+	if err := mg.drv.holdLock(); err != nil {
 		return err
 	}
-	return errors.Join(op(), tagged.releaseHold())
+	return errors.Join(op(), mg.drv.releaseHold())
 }
 
 // upToDate reports whether the record reads as the last migration in the source.

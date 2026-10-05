@@ -652,3 +652,10 @@ func TestMigrateError_RendersSettingRefusals(t *testing.T) {
 	invalid := migrateError("up", &platform.InvalidSettingError{Command: "up", Name: "x-multi-statement", Value: "yes"})
 	require.EqualError(t, invalid, "migrate up refused: the database URL sets x-multi-statement=yes, which is neither true nor false.")
 }
+
+func TestMigrateError_ALockNotTakenSaysNothingWasWritten(t *testing.T) {
+	err := migrateError("up", fmt.Errorf("apply migrations: %w", &platform.LockNotTakenError{Err: errors.New("try lock failed")}))
+
+	require.EqualError(t, err, "apply migrations: try lock failed\nThis run did not take the migration lock and did not write the record.")
+	require.NotContains(t, err.Error(), "reset-dirty")
+}

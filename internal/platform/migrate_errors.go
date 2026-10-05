@@ -313,3 +313,12 @@ type InterruptedError struct {
 func (e *InterruptedError) Error() string {
 	return "stopped while " + e.During + "; nothing was changed"
 }
+
+// LockNotTakenError reports that golang-migrate's own migration lock was not taken.
+type LockNotTakenError struct {
+	Err error
+}
+
+func (e *LockNotTakenError) Error() string { return migrationErrorText(e.Err) }
+
+func (e *LockNotTakenError) Unwrap() error { return e.Err }

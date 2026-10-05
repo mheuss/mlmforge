@@ -59,6 +59,10 @@ func (mg *migration) upResult(upErr error) error {
 	if errors.Is(upErr, migrate.ErrLockTimeout) {
 		return fmt.Errorf("apply migrations: %w", upErr)
 	}
+	var notTaken *LockNotTakenError
+	if errors.As(upErr, &notTaken) {
+		return fmt.Errorf("apply migrations: %w", upErr)
+	}
 	if dirty, ok := mg.dirtyError(upErr); ok {
 		return dirty
 	}
@@ -96,6 +100,7 @@ func (mg *migration) downOutcome(before RecordRead, raw error) error {
 
 // downResult classifies the result of golang-migrate's Steps(-1).
 func (mg *migration) downResult(before RecordRead, downErr error) error {
+	var notTaken *LockNotTakenError
 	switch {
 	case downErr == nil:
 		return nil
@@ -103,6 +108,8 @@ func (mg *migration) downResult(before RecordRead, downErr error) error {
 		return ErrNoChange
 	// No lock means this run wrote nothing, so a record read now says nothing about it.
 	case errors.Is(downErr, migrate.ErrLockTimeout):
+		return fmt.Errorf("rollback migration: %w", downErr)
+	case errors.As(downErr, &notTaken):
 		return fmt.Errorf("rollback migration: %w", downErr)
 	case errors.Is(downErr, os.ErrNotExist) && before.Err == nil && before.Record == Record{Version: database.NilVersion}:
 		return ErrNoChange
@@ -124,9 +131,16 @@ type migration struct {
 	unlock func() error
 }
 
-// releaseTagged marks the database driver's Unlock failures as ReleaseError.
+// releaseTagged marks the database driver's Lock and Unlock failures with their own error types.
 type releaseTagged struct {
 	database.Driver
+}
+
+func (d releaseTagged) Lock() error {
+	if err := d.Driver.Lock(); err != nil {
+		return &LockNotTakenError{Err: err}
+	}
+	return nil
 }
 
 func (d releaseTagged) Unlock() error {

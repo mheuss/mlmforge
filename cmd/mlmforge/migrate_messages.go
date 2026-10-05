@@ -219,6 +219,7 @@ func migrateErrorText(command string, err error) (string, bool) {
 		write    *platform.WriteError
 		unused   *platform.UnusedSettingError
 		invalid  *platform.InvalidSettingError
+		notTaken *platform.LockNotTakenError
 	)
 	switch {
 	case errors.As(err, &multi):
@@ -254,6 +255,8 @@ func migrateErrorText(command string, err error) (string, bool) {
 			describeRecord(noDown.Record), noDown.Path, noDown.Version, unchangedText), true
 	case errors.As(err, &notWrote):
 		return notWrote.Error() + "\nThis run did not write the record.", true
+	case errors.As(err, &notTaken):
+		return err.Error() + "\nThis run did not take the migration lock and did not write the record.", true
 	case errors.As(err, &write):
 		return writeFailureText(write), true
 	}

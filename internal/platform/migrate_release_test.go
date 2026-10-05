@@ -26,3 +26,15 @@ func TestReleaseTagged_AnUnlockFailureIsAReleaseError(t *testing.T) {
 	assert.Equal(t, &ReleaseError{What: "releasing the migration lock failed", Err: errors.New("u")}, err)
 	assert.NoError(t, releaseTagged{Driver: unlockSucceeds{}}.Unlock())
 }
+
+type lockFails struct {
+	database.Driver
+}
+
+func (lockFails) Lock() error { return errors.New("l") }
+
+func TestReleaseTagged_ALockFailureIsALockNotTakenError(t *testing.T) {
+	err := releaseTagged{Driver: lockFails{}}.Lock()
+
+	assert.Equal(t, &LockNotTakenError{Err: errors.New("l")}, err)
+}

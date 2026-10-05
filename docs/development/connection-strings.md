@@ -67,7 +67,7 @@ A raw `&` in a `?password=` value splits it. Each piece after the `&` becomes it
   Observed on the CLI, 2026-09-30. Not pinned, because the fix withholds the text.
 - The driver name is the text before the first `:`, matched exactly. For an unknown name, the error quotes that text. A keyword-form string with a `:` after the password printed the password.
   Read in source, not pinned. The scheme check refuses these strings first.
-- mlmforge no longer calls golang-migrate's `database.Open`. `dialSession` hands lib/pq `migrate.FilterCustomQuery(purl)` with `fallback_application_name=mlmforge-migrate` added when the URL sets no `fallback_application_name`, or an empty one, and `options` led by `-c client_connection_check_interval=1000`. `migrateDriverParseError` builds the string without those additions.
+- mlmforge no longer calls golang-migrate's `database.Open`. `dialSession` hands lib/pq `migrate.FilterCustomQuery(purl)` with two additions. It adds `fallback_application_name=mlmforge-migrate` when the URL sets none or an empty one. It leads `options` with `-c client_connection_check_interval=1000`. `migrateDriverParseError` builds the string without those additions.
 
 ## lib/pq v1.10.9
 

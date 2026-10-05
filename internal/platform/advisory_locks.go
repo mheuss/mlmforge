@@ -9,5 +9,5 @@ const (
 	MigrateLockNamespace int32 = 0x6d696772
 )
 
-// advisoryLockNamespaces holds the constants above, for the test that keeps them distinct.
+// advisoryLockNamespaces lists the namespace constants above.
 var advisoryLockNamespaces = []int32{TreeLockNamespace, MigrateLockNamespace}

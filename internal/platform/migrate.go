@@ -145,7 +145,7 @@ type releaseTagged struct {
 	held *bool
 }
 
-// holding reports whether holdLock holds the driver's lock, so each step's Lock and Unlock leave it in place.
+// holding reports whether holdLock holds the driver's lock.
 func (d releaseTagged) holding() bool {
 	return d.held != nil && *d.held
 }

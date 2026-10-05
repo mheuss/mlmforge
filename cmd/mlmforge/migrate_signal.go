@@ -26,7 +26,7 @@ func migrateSignalContext(parent context.Context, stderr io.Writer) (context.Con
 		defer close(exited)
 		select {
 		case <-signals:
-			// With no channel left registered, the next signal takes Go's default action and ends the process.
+			// Stop registration so the next signal ends the process.
 			signal.Stop(signals)
 			_, _ = fmt.Fprintln(stderr, stoppingText)
 			cancel()

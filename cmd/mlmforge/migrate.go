@@ -110,8 +110,7 @@ func runMigrateCommand(cmd *cobra.Command, command, flagURL string, run migrateR
 	if err != nil {
 		return err
 	}
-	// Established here rather than on the root command, which would disable the
-	// default SIGINT kill for every command in the binary.
+	// Registering this on the root command disables the default SIGINT kill for every command.
 	ctx, stop := migrateSignalContext(cmd.Context(), cmd.ErrOrStderr())
 	defer stop()
 	return migrateError(command, connectError(run(ctx, target.url, lockWaitNotice(cmd.ErrOrStderr())), target))

@@ -112,7 +112,7 @@ func TestUpAndDownResults_AnUnknownStatementOutcomeIsNotBodyFailed(t *testing.T)
 	assert.False(t, rollback.BodyFailed)
 }
 
-// tryLockFailed is the error golang-migrate's Postgres driver returns when the server ends its lock request.
+// tryLockFailed is a LockNotTakenError carrying a lock-timeout failure.
 var tryLockFailed = &LockNotTakenError{Err: &database.Error{
 	OrigErr: errors.New("pq: canceling statement due to lock timeout"),
 	Err:     "try lock failed",

@@ -154,3 +154,20 @@ func TestMigrateResetDirtyAfterFailedDown_RefusesMultiStatementModeBeforeConnect
 
 	require.EqualError(t, root.Execute(), "migrate reset-dirty --after-failed-down refused: the database URL sets x-multi-statement=t.")
 }
+
+func TestMigrateVersion_RefusesURLSettingsBeforeConnecting(t *testing.T) {
+	cases := map[string]string{
+		"&x-statement-timeout=1": "migrate version refused: the database URL sets x-statement-timeout, which mlmforge migrate does not support.",
+		"&x-multi-statement=yes": "migrate version refused: the database URL sets x-multi-statement=yes, which is neither true nor false.",
+	}
+	for param, want := range cases {
+		t.Run(param, func(t *testing.T) {
+			root := newRootCmd()
+			root.SetOut(io.Discard)
+			root.SetErr(io.Discard)
+			root.SetArgs([]string{"migrate", "version", "--db-url", refusedDBURL + param})
+
+			require.EqualError(t, root.Execute(), want)
+		})
+	}
+}

@@ -20,6 +20,12 @@ func TestRefuseUnusedSettings_RefusesEachUnusedSetting(t *testing.T) {
 	}
 }
 
+func TestRefuseUnusedSettings_RefusesAnUnusedSettingWithAnEmptyValue(t *testing.T) {
+	var unused *UnusedSettingError
+	require.ErrorAs(t, refuseUnusedSettings("up", settingsBase+"&x-statement-timeout="), &unused)
+	assert.Equal(t, &UnusedSettingError{Command: "up", Name: "x-statement-timeout"}, unused)
+}
+
 func TestRefuseUnusedSettings_RefusesAMultiStatementValueThatIsNeitherTrueNorFalse(t *testing.T) {
 	for _, value := range []string{"yes", "on", "2"} {
 		err := refuseUnusedSettings("version", settingsBase+"&x-multi-statement="+value)
@@ -70,7 +76,7 @@ func TestMigrateCommands_RefuseUnusedSettingsBeforeOpeningAnything(t *testing.T)
 
 			var invalid *InvalidSettingError
 			require.ErrorAs(t, call(refusedURL+"&x-multi-statement=yes", FindMigrationsDir(t)), &invalid)
-			assert.Equal(t, command, invalid.Command)
+			assert.Equal(t, &InvalidSettingError{Command: command, Name: "x-multi-statement", Value: "yes"}, invalid)
 		})
 	}
 }

@@ -147,6 +147,6 @@ func TestMigrateUpIdempotent(t *testing.T) {
 	// The container already has migrations applied by StartPostgres.
 	// Running MigrateUp again should not error (ErrNoChange is swallowed).
 	migrationsPath := FindMigrationsDir(t)
-	err := MigrateUp(pgContainer.DSN, migrationsPath)
+	err := MigrateUp(context.Background(), pgContainer.DSN, migrationsPath, nil)
 	require.NoError(t, err)
 }

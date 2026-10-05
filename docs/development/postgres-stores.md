@@ -1,7 +1,7 @@
 # Postgres Stores
 
 How to write a Go store against Postgres in this codebase. Every entry below
-cost real debugging on HEU-555 and is invisible until it bites.
+cost real debugging on HEU-555 or HEU-855 and is invisible until it bites.
 
 For the store *shape* — one interface, two implementations, a shared suite —
 see UC-NET-008 in [`../use-cases/network-engine.md`](../use-cases/network-engine.md).
@@ -276,3 +276,39 @@ tests.
 ```
 go test ./internal/networkengine/ -v -count=1 2>&1 | grep -cE '^ *--- SKIP'
 ```
+
+## lib/pq v1.10.9 stops honouring ctx after the dial
+
+A cancelled ctx ends a dial. On an open connection, lib/pq answers a cancelled
+ctx by sending a cancel request. It does not unblock the read the query is
+waiting on.
+
+A link that goes silent without a FIN or an RST shows the gap. The query blocks
+on the read until TCP gives up. That takes minutes. On HEU-855 a proxy stopped
+forwarding. A lock poll was still blocked 15s after its ctx ended.
+
+Run a wait that must end on a signal in a goroutine. Return when ctx ends and
+leave the goroutine behind. Whoever receives its result closes the connection.
+That way it is closed exactly once.
+
+## golang-migrate v4.19.1 talks to Postgres on context.Background
+
+The Postgres driver's `Lock`, `Run` and `SetVersion` ignore any ctx you hold.
+`Lock` is a blocking `pg_advisory_lock` with no bound of its own.
+
+- `postgres.WithConnection` runs `ensureVersionTable`. That call takes the lock.
+  So opening the driver waits behind any client holding golang-migrate's lock.
+- `Migrate.GracefulStop` races. `go test -race` reported a write in
+  `runMigrations` against a read in `readUp`. Call `Steps(1)` in a loop and
+  check ctx between calls instead.
+
+## A killed client's statement commits unless the server checks
+
+Postgres does not notice a closed client connection while a statement runs. A
+SIGKILLed client's migration file ran to completion and committed on Postgres
+16.
+
+`client_connection_check_interval` makes the server check. With it set, the file
+rolled back within about a second of the kill. Pass it as `-c` in the
+connection's `options`. Postgres 13 refuses the parameter at startup. It needs
+Postgres 14 or later.

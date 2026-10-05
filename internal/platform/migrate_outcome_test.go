@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"context"
 	"database/sql/driver"
 	"errors"
 	"testing"
@@ -25,14 +26,14 @@ func sourceOnlyMigration(t *testing.T) *migration {
 var unlockFailed = &ReleaseError{What: "releasing the migration lock failed", Err: errors.New("u")}
 
 func TestUpOutcome_NoChangeWithAnUnlockFailureKeepsOnlyTheRelease(t *testing.T) {
-	releases, rest := SplitRelease(sourceOnlyMigration(t).upOutcome(errors.Join(migrate.ErrNoChange, unlockFailed)))
+	releases, rest := SplitRelease(sourceOnlyMigration(t).upOutcome(context.Background(), RecordRead{}, errors.Join(migrate.ErrNoChange, unlockFailed)))
 
 	assert.NoError(t, rest)
 	assert.Equal(t, []error{unlockFailed}, releases)
 }
 
 func TestUpOutcome_ADirtyRecordWithAnUnlockFailureKeepsBoth(t *testing.T) {
-	releases, rest := SplitRelease(sourceOnlyMigration(t).upOutcome(errors.Join(migrate.ErrDirty{Version: 6}, unlockFailed)))
+	releases, rest := SplitRelease(sourceOnlyMigration(t).upOutcome(context.Background(), RecordRead{}, errors.Join(migrate.ErrDirty{Version: 6}, unlockFailed)))
 
 	var dirty *DirtyError
 	require.ErrorAs(t, rest, &dirty)
@@ -51,14 +52,14 @@ func TestUpResult_ALockTimeoutReadsNoRecord(t *testing.T) {
 }
 
 func TestDownOutcome_NoChangeWithAnUnlockFailureKeepsOnlyTheRelease(t *testing.T) {
-	releases, rest := SplitRelease(sourceOnlyMigration(t).downOutcome(RecordRead{}, errors.Join(migrate.ErrNoChange, unlockFailed)))
+	releases, rest := SplitRelease(sourceOnlyMigration(t).downOutcome(context.Background(), RecordRead{}, errors.Join(migrate.ErrNoChange, unlockFailed)))
 
 	assert.ErrorIs(t, rest, ErrNoChange)
 	assert.Equal(t, []error{unlockFailed}, releases)
 }
 
 func TestDownOutcome_ADirtyRecordWithAnUnlockFailureKeepsBoth(t *testing.T) {
-	releases, rest := SplitRelease(sourceOnlyMigration(t).downOutcome(RecordRead{}, errors.Join(migrate.ErrDirty{Version: 6}, unlockFailed)))
+	releases, rest := SplitRelease(sourceOnlyMigration(t).downOutcome(context.Background(), RecordRead{}, errors.Join(migrate.ErrDirty{Version: 6}, unlockFailed)))
 
 	var dirty *DirtyError
 	require.ErrorAs(t, rest, &dirty)
@@ -109,4 +110,33 @@ func TestUpAndDownResults_AnUnknownStatementOutcomeIsNotBodyFailed(t *testing.T)
 	var rollback *RollbackError
 	require.ErrorAs(t, mg.downResult(RecordRead{Record: Record{Version: 7}}, unknown), &rollback)
 	assert.False(t, rollback.BodyFailed)
+}
+
+// tryLockFailed is a LockNotTakenError carrying a lock-timeout failure.
+var tryLockFailed = &LockNotTakenError{Err: &database.Error{
+	OrigErr: errors.New("pq: canceling statement due to lock timeout"),
+	Err:     "try lock failed",
+	Query:   []byte("SELECT pg_advisory_lock($1)"),
+}}
+
+func TestUpResult_ALockNotTakenReadsNoRecord(t *testing.T) {
+	driver := &recordingDriver{record: Record{Version: 6, Dirty: true}}
+
+	err := resetMigration(t, driver).upResult(tryLockFailed)
+
+	var apply *ApplyError
+	assert.False(t, errors.As(err, &apply))
+	assert.Empty(t, driver.calls)
+	assert.EqualError(t, err, "apply migrations: try lock failed (details: pq: canceling statement due to lock timeout)")
+}
+
+func TestDownResult_ALockNotTakenReadsNoRecord(t *testing.T) {
+	driver := &recordingDriver{record: Record{Version: 6, Dirty: true}}
+
+	err := resetMigration(t, driver).downResult(RecordRead{Record: Record{Version: 7}}, tryLockFailed)
+
+	var rollback *RollbackError
+	assert.False(t, errors.As(err, &rollback))
+	assert.Empty(t, driver.calls)
+	assert.EqualError(t, err, "rollback migration: try lock failed (details: pq: canceling statement due to lock timeout)")
 }

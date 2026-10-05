@@ -9,7 +9,6 @@ import (
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database"
-	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/golang-migrate/migrate/v4/source"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 )
@@ -24,33 +23,48 @@ func (mg *migration) dirtyError(err error) (*DirtyError, bool) {
 	return &DirtyError{Record: rec, Source: mg.sourceInfo(rec.Version)}, true
 }
 
-// MigrateUp applies all pending database migrations from the given directory.
-func MigrateUp(dbURL, migrationsPath string) (err error) {
+// LockWait is told which backend holds the migration lock when a command has to wait for it.
+// A PID of 0 means the holder's PID was not read.
+type LockWait func(holderPID int)
+
+// MigrateUp applies the pending database migrations from the given directory, stopping between migrations once ctx ends.
+func MigrateUp(ctx context.Context, dbURL, migrationsPath string, wait LockWait) (err error) {
+	if err = refuseUnusedSettings("up", dbURL); err != nil {
+		return err
+	}
 	if err = refuseMultiStatement("up", dbURL); err != nil {
 		return err
 	}
-	mg, err := openMigration(dbURL, migrationsPath)
+	mg, err := openMigration(ctx, dbURL, migrationsPath, wait)
 	if err != nil {
 		return err
 	}
 	defer mg.closeInto(&err)
 
-	return mg.upOutcome(mg.m.Up())
+	before := mg.recordRead()
+	return mg.upOutcome(ctx, before, mg.holdingDriverLock(func() error { return mg.upInSteps(ctx) }))
 }
 
-// upOutcome classifies the result of Up.
-func (mg *migration) upOutcome(raw error) error {
+// upOutcome classifies the result of applying the pending migrations.
+func (mg *migration) upOutcome(ctx context.Context, before RecordRead, raw error) error {
 	releases, upErr := SplitRelease(raw)
+	if upErr == nil && ctx.Err() != nil {
+		return withReleases(mg.upStopped(before), releases)
+	}
 	return withReleases(mg.upResult(upErr), releases)
 }
 
-// upResult classifies the result of golang-migrate's Up.
+// upResult classifies an error from applying the pending migrations.
 func (mg *migration) upResult(upErr error) error {
 	if upErr == nil || errors.Is(upErr, migrate.ErrNoChange) {
 		return nil
 	}
 	// No lock means this run wrote nothing, so a record read now says nothing about it.
 	if errors.Is(upErr, migrate.ErrLockTimeout) {
+		return fmt.Errorf("apply migrations: %w", upErr)
+	}
+	var notTaken *LockNotTakenError
+	if errors.As(upErr, &notTaken) {
 		return fmt.Errorf("apply migrations: %w", upErr)
 	}
 	if dirty, ok := mg.dirtyError(upErr); ok {
@@ -65,28 +79,35 @@ var ErrNoChange = migrate.ErrNoChange
 
 // MigrateDown rolls back the most recent migration.
 // Returns ErrNoChange when there are no migrations left to roll back.
-func MigrateDown(dbURL, migrationsPath string) (err error) {
+func MigrateDown(ctx context.Context, dbURL, migrationsPath string, wait LockWait) (err error) {
+	if err = refuseUnusedSettings("down", dbURL); err != nil {
+		return err
+	}
 	if err = refuseMultiStatement("down", dbURL); err != nil {
 		return err
 	}
-	mg, err := openMigration(dbURL, migrationsPath)
+	mg, err := openMigration(ctx, dbURL, migrationsPath, wait)
 	if err != nil {
 		return err
 	}
 	defer mg.closeInto(&err)
 
-	before := mg.recordRead()
-	return mg.downOutcome(before, mg.m.Steps(-1))
+	before, raw := mg.downStep(ctx)
+	return mg.downOutcome(ctx, before, raw)
 }
 
 // downOutcome classifies the result of Steps(-1).
-func (mg *migration) downOutcome(before RecordRead, raw error) error {
+func (mg *migration) downOutcome(ctx context.Context, before RecordRead, raw error) error {
 	releases, downErr := SplitRelease(raw)
+	if downErr == nil && ctx.Err() != nil {
+		return withReleases(mg.downStopped(before), releases)
+	}
 	return withReleases(mg.downResult(before, downErr), releases)
 }
 
 // downResult classifies the result of golang-migrate's Steps(-1).
 func (mg *migration) downResult(before RecordRead, downErr error) error {
+	var notTaken *LockNotTakenError
 	switch {
 	case downErr == nil:
 		return nil
@@ -94,6 +115,8 @@ func (mg *migration) downResult(before RecordRead, downErr error) error {
 		return ErrNoChange
 	// No lock means this run wrote nothing, so a record read now says nothing about it.
 	case errors.Is(downErr, migrate.ErrLockTimeout):
+		return fmt.Errorf("rollback migration: %w", downErr)
+	case errors.As(downErr, &notTaken):
 		return fmt.Errorf("rollback migration: %w", downErr)
 	case errors.Is(downErr, os.ErrNotExist) && before.Err == nil && before.Record == Record{Version: database.NilVersion}:
 		return ErrNoChange
@@ -109,16 +132,58 @@ func (mg *migration) downResult(before RecordRead, downErr error) error {
 type migration struct {
 	m      *migrate.Migrate
 	source source.Driver
-	db     database.Driver
+	db     releaseTagged
 	path   string
+	sess   session
+	unlock func() error
 }
 
-// releaseTagged marks the database driver's Unlock failures as ReleaseError.
+// releaseTagged marks the database driver's Lock and Unlock failures with their own error types.
 type releaseTagged struct {
 	database.Driver
+	held *bool
+}
+
+// holding reports whether holdLock holds the driver's lock.
+func (d releaseTagged) holding() bool {
+	return d.held != nil && *d.held
+}
+
+func (d releaseTagged) Lock() error {
+	if d.holding() {
+		return nil
+	}
+	if err := d.Driver.Lock(); err != nil {
+		return &LockNotTakenError{Err: err}
+	}
+	return nil
 }
 
 func (d releaseTagged) Unlock() error {
+	if d.holding() {
+		return nil
+	}
+	if err := d.Driver.Unlock(); err != nil {
+		return &ReleaseError{What: "releasing the migration lock failed", Err: err}
+	}
+	return nil
+}
+
+// holdLock takes the driver's lock for a run of several steps.
+func (d releaseTagged) holdLock() error {
+	if err := d.Driver.Lock(); err != nil {
+		return &LockNotTakenError{Err: err}
+	}
+	*d.held = true
+	return nil
+}
+
+// releaseHold releases the lock holdLock took.
+func (d releaseTagged) releaseHold() error {
+	if !d.holding() {
+		return nil
+	}
+	*d.held = false
 	if err := d.Driver.Unlock(); err != nil {
 		return &ReleaseError{What: "releasing the migration lock failed", Err: err}
 	}
@@ -134,7 +199,7 @@ func releaseErr(what string, err error) error {
 }
 
 // openMigration opens the drivers one migrate command uses.
-func openMigration(dbURL, migrationsPath string) (*migration, error) {
+func openMigration(ctx context.Context, dbURL, migrationsPath string, wait LockWait) (*migration, error) {
 	if err := refuseUnsupportedEnv(); err != nil {
 		return nil, err
 	}
@@ -146,37 +211,29 @@ func openMigration(dbURL, migrationsPath string) (*migration, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open migrations source %s: %w", absPath, err)
 	}
-	var db database.Driver
-	err = TimeConnect(context.Background(), dbURL, func() error {
-		if schemeErr := migrateSchemeError(dbURL); schemeErr != nil {
-			return schemeErr
-		}
-		if parseErr := migrateDriverParseError(dbURL); parseErr != nil {
-			return parseErr
-		}
-		var openErr error
-		db, openErr = database.Open(dbURL)
-		return migrateConnStringError(openErr)
-	})
+	sess, err := connectSession(ctx, dbURL)
 	if err != nil {
-		return nil, errors.Join(fmt.Errorf("open database: %w", err),
+		return nil, errors.Join(openFailure(err),
 			releaseErr("closing the migrations source failed", src.Close()))
 	}
-	tagged := releaseTagged{Driver: db}
+	db, err := lockAndOpen(ctx, sess, wait)
+	if err != nil {
+		return nil, errors.Join(err, releaseErr("closing the migrations source failed", src.Close()))
+	}
+	tagged := releaseTagged{Driver: db, held: new(bool)}
 	m, err := migrate.NewWithInstance("file", src, "postgres", tagged)
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("create migrator: %w", err),
 			releaseErr("closing the migrations source failed", src.Close()),
-			releaseErr("closing the database failed", db.Close()))
+			releaseErr("closing the database failed", sess.close()))
 	}
-	return &migration{m: m, source: src, db: tagged, path: absPath}, nil
+	return &migration{m: m, source: src, db: tagged, path: absPath, sess: sess, unlock: func() error { return unlockMigrations(sess.conn) }}, nil
 }
 
-// closeInto closes the migrator and both drivers, joining any failure into *errp as a ReleaseError.
+// closeInto releases the migration lock, closes the migrator and the session, and joins any failure into *errp as a ReleaseError.
 func (mg *migration) closeInto(errp *error) {
-	srcErr, dbErr := mg.m.Close()
-	if err := errors.Join(srcErr, dbErr); err != nil {
-		*errp = errors.Join(*errp, &ReleaseError{What: "closing the migration drivers failed", Err: err})
+	if err := releaseSession(mg.unlock, mg.m.Close, mg.sess.db.Close); err != nil {
+		*errp = errors.Join(*errp, err)
 	}
 }
 
@@ -258,8 +315,11 @@ func (mg *migration) sourceFor(read RecordRead) SourceInfo {
 }
 
 // MigrateVersion returns the migration record and where a dirty record's version sits in the migrations directory.
-func MigrateVersion(dbURL, migrationsPath string) (st Status, err error) {
-	mg, err := openMigration(dbURL, migrationsPath)
+func MigrateVersion(ctx context.Context, dbURL, migrationsPath string, wait LockWait) (st Status, err error) {
+	if err = refuseUnusedSettings("version", dbURL); err != nil {
+		return Status{}, err
+	}
+	mg, err := openMigration(ctx, dbURL, migrationsPath, wait)
 	if err != nil {
 		return Status{}, err
 	}
@@ -273,11 +333,14 @@ func MigrateVersion(dbURL, migrationsPath string) (st Status, err error) {
 }
 
 // ResetDirty changes a dirty migration record to the migration before it, clean.
-func ResetDirty(dbURL, migrationsPath string) (res ResetResult, err error) {
+func ResetDirty(ctx context.Context, dbURL, migrationsPath string, wait LockWait) (res ResetResult, err error) {
+	if err = refuseUnusedSettings("reset-dirty", dbURL); err != nil {
+		return ResetResult{}, err
+	}
 	if err = refuseMultiStatement("reset-dirty", dbURL); err != nil {
 		return ResetResult{}, err
 	}
-	mg, err := openMigration(dbURL, migrationsPath)
+	mg, err := openMigration(ctx, dbURL, migrationsPath, wait)
 	if err != nil {
 		return ResetResult{}, err
 	}
@@ -287,11 +350,14 @@ func ResetDirty(dbURL, migrationsPath string) (res ResetResult, err error) {
 }
 
 // ResetAfterFailedDown changes a dirty migration record to the migration after it, clean.
-func ResetAfterFailedDown(dbURL, migrationsPath string) (res ResetResult, err error) {
+func ResetAfterFailedDown(ctx context.Context, dbURL, migrationsPath string, wait LockWait) (res ResetResult, err error) {
+	if err = refuseUnusedSettings("reset-dirty --after-failed-down", dbURL); err != nil {
+		return ResetResult{}, err
+	}
 	if err = refuseMultiStatement("reset-dirty --after-failed-down", dbURL); err != nil {
 		return ResetResult{}, err
 	}
-	mg, err := openMigration(dbURL, migrationsPath)
+	mg, err := openMigration(ctx, dbURL, migrationsPath, wait)
 	if err != nil {
 		return ResetResult{}, err
 	}

@@ -276,3 +276,64 @@ func isBodyFailure(err error) bool {
 	}
 	return true
 }
+
+// UnusedSettingError reports a database URL setting mlmforge migrate refuses.
+type UnusedSettingError struct {
+	Command string
+	Name    string
+}
+
+func (e *UnusedSettingError) Error() string {
+	return fmt.Sprintf("migrate %s refused: the database URL sets %s, which mlmforge migrate does not support", e.Command, e.Name)
+}
+
+// InvalidSettingError reports a database URL setting whose value is neither true nor false.
+type InvalidSettingError struct {
+	Command string
+	Name    string
+	Value   string
+}
+
+func (e *InvalidSettingError) Error() string {
+	return fmt.Sprintf("migrate %s refused: the database URL sets %s=%s, which is neither true nor false", e.Command, e.Name, e.Value)
+}
+
+// The phases an InterruptedError names.
+const (
+	duringConnect    = "connecting to the database"
+	duringLockWait   = "waiting for the migration lock"
+	duringDriverOpen = "opening the migration driver"
+)
+
+// InterruptedError reports a migrate command whose context ended before it could write anything.
+type InterruptedError struct {
+	During string
+}
+
+func (e *InterruptedError) Error() string {
+	return "stopped while " + e.During + "; nothing was changed"
+}
+
+// LockNotTakenError reports that golang-migrate's own migration lock was not taken.
+type LockNotTakenError struct {
+	Err error
+}
+
+func (e *LockNotTakenError) Error() string { return migrationErrorText(e.Err) }
+
+func (e *LockNotTakenError) Unwrap() error { return e.Err }
+
+// StoppedError reports a migrate up or down that ended before its last migration.
+type StoppedError struct {
+	Command string
+	Before  RecordRead
+	After   RecordRead
+	Source  SourceInfo
+}
+
+func (e *StoppedError) Error() string {
+	if e.After.Err != nil {
+		return fmt.Sprintf("migrate %s stopped; the record could not be read afterwards: %v", e.Command, e.After.Err)
+	}
+	return fmt.Sprintf("migrate %s stopped; the record reads %s", e.Command, e.After.Record)
+}

@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"context"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -105,18 +106,18 @@ func TestRefuseUnsupportedEnv_NothingSetPasses(t *testing.T) {
 
 func TestMigrateCommands_RefuseAnUnsupportedVariableBeforeOpeningAnything(t *testing.T) {
 	calls := map[string]func(dir string) error{
-		"up":   func(dir string) error { return MigrateUp(refusedURL, dir) },
-		"down": func(dir string) error { return MigrateDown(refusedURL, dir) },
+		"up":   func(dir string) error { return MigrateUp(context.Background(), refusedURL, dir, nil) },
+		"down": func(dir string) error { return MigrateDown(context.Background(), refusedURL, dir, nil) },
 		"version": func(dir string) error {
-			_, err := MigrateVersion(refusedURL, dir)
+			_, err := MigrateVersion(context.Background(), refusedURL, dir, nil)
 			return err
 		},
 		"reset-dirty": func(dir string) error {
-			_, err := ResetDirty(refusedURL, dir)
+			_, err := ResetDirty(context.Background(), refusedURL, dir, nil)
 			return err
 		},
 		"reset-dirty --after-failed-down": func(dir string) error {
-			_, err := ResetAfterFailedDown(refusedURL, dir)
+			_, err := ResetAfterFailedDown(context.Background(), refusedURL, dir, nil)
 			return err
 		},
 	}
@@ -135,7 +136,7 @@ func TestMigrateVersion_RefusesTheEnvironmentBeforeOpeningTheSource(t *testing.T
 	testutil.ClearLibPQEnv(t)
 	t.Setenv("PGSERVICE", "svc-value-7f3")
 
-	_, err := MigrateVersion(refusedURL, filepath.Join(t.TempDir(), "missing"))
+	_, err := MigrateVersion(context.Background(), refusedURL, filepath.Join(t.TempDir(), "missing"), nil)
 
 	var unsupported *UnsupportedEnvError
 	require.ErrorAs(t, err, &unsupported)

@@ -15,11 +15,12 @@ import (
 // recordingDriver records each lock and record call and answers Version with a fixed record.
 type recordingDriver struct {
 	database.Driver
-	calls     []string
-	record    Record
-	lockErr   error
-	setErr    error
-	unlockErr error
+	calls      []string
+	record     Record
+	lockErr    error
+	setErr     error
+	unlockErr  error
+	versionErr error
 }
 
 func (d *recordingDriver) Lock() error {
@@ -34,7 +35,7 @@ func (d *recordingDriver) Unlock() error {
 
 func (d *recordingDriver) Version() (int, bool, error) {
 	d.calls = append(d.calls, "Version")
-	return d.record.Version, d.record.Dirty, nil
+	return d.record.Version, d.record.Dirty, d.versionErr
 }
 
 func (d *recordingDriver) SetVersion(version int, dirty bool) error {

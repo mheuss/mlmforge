@@ -322,3 +322,18 @@ type LockNotTakenError struct {
 func (e *LockNotTakenError) Error() string { return migrationErrorText(e.Err) }
 
 func (e *LockNotTakenError) Unwrap() error { return e.Err }
+
+// StoppedError reports a migrate up or down that ended early because its context ended.
+type StoppedError struct {
+	Command string
+	Before  RecordRead
+	After   RecordRead
+	Source  SourceInfo
+}
+
+func (e *StoppedError) Error() string {
+	if e.After.Err != nil {
+		return fmt.Sprintf("migrate %s stopped; the record could not be read afterwards: %v", e.Command, e.After.Err)
+	}
+	return fmt.Sprintf("migrate %s stopped; the record reads %s", e.Command, e.After.Record)
+}

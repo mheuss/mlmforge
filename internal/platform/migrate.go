@@ -41,12 +41,16 @@ func MigrateUp(ctx context.Context, dbURL, migrationsPath string, wait LockWait)
 	}
 	defer mg.closeInto(&err)
 
-	return mg.upOutcome(mg.m.Up())
+	before := mg.recordRead()
+	return mg.upOutcome(ctx, before, mg.upInSteps(ctx))
 }
 
 // upOutcome classifies the result of Up.
-func (mg *migration) upOutcome(raw error) error {
+func (mg *migration) upOutcome(ctx context.Context, before RecordRead, raw error) error {
 	releases, upErr := SplitRelease(raw)
+	if upErr == nil && ctx.Err() != nil {
+		return withReleases(mg.upStopped(before), releases)
+	}
 	return withReleases(mg.upResult(upErr), releases)
 }
 
@@ -89,12 +93,15 @@ func MigrateDown(ctx context.Context, dbURL, migrationsPath string, wait LockWai
 	defer mg.closeInto(&err)
 
 	before := mg.recordRead()
-	return mg.downOutcome(before, mg.m.Steps(-1))
+	return mg.downOutcome(ctx, before, mg.downOnce(ctx))
 }
 
 // downOutcome classifies the result of Steps(-1).
-func (mg *migration) downOutcome(before RecordRead, raw error) error {
+func (mg *migration) downOutcome(ctx context.Context, before RecordRead, raw error) error {
 	releases, downErr := SplitRelease(raw)
+	if downErr == nil && ctx.Err() != nil {
+		return withReleases(mg.downStopped(before), releases)
+	}
 	return withReleases(mg.downResult(before, downErr), releases)
 }
 

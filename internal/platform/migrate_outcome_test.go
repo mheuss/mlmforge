@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"context"
 	"database/sql/driver"
 	"errors"
 	"testing"
@@ -25,14 +26,14 @@ func sourceOnlyMigration(t *testing.T) *migration {
 var unlockFailed = &ReleaseError{What: "releasing the migration lock failed", Err: errors.New("u")}
 
 func TestUpOutcome_NoChangeWithAnUnlockFailureKeepsOnlyTheRelease(t *testing.T) {
-	releases, rest := SplitRelease(sourceOnlyMigration(t).upOutcome(errors.Join(migrate.ErrNoChange, unlockFailed)))
+	releases, rest := SplitRelease(sourceOnlyMigration(t).upOutcome(context.Background(), RecordRead{}, errors.Join(migrate.ErrNoChange, unlockFailed)))
 
 	assert.NoError(t, rest)
 	assert.Equal(t, []error{unlockFailed}, releases)
 }
 
 func TestUpOutcome_ADirtyRecordWithAnUnlockFailureKeepsBoth(t *testing.T) {
-	releases, rest := SplitRelease(sourceOnlyMigration(t).upOutcome(errors.Join(migrate.ErrDirty{Version: 6}, unlockFailed)))
+	releases, rest := SplitRelease(sourceOnlyMigration(t).upOutcome(context.Background(), RecordRead{}, errors.Join(migrate.ErrDirty{Version: 6}, unlockFailed)))
 
 	var dirty *DirtyError
 	require.ErrorAs(t, rest, &dirty)
@@ -51,14 +52,14 @@ func TestUpResult_ALockTimeoutReadsNoRecord(t *testing.T) {
 }
 
 func TestDownOutcome_NoChangeWithAnUnlockFailureKeepsOnlyTheRelease(t *testing.T) {
-	releases, rest := SplitRelease(sourceOnlyMigration(t).downOutcome(RecordRead{}, errors.Join(migrate.ErrNoChange, unlockFailed)))
+	releases, rest := SplitRelease(sourceOnlyMigration(t).downOutcome(context.Background(), RecordRead{}, errors.Join(migrate.ErrNoChange, unlockFailed)))
 
 	assert.ErrorIs(t, rest, ErrNoChange)
 	assert.Equal(t, []error{unlockFailed}, releases)
 }
 
 func TestDownOutcome_ADirtyRecordWithAnUnlockFailureKeepsBoth(t *testing.T) {
-	releases, rest := SplitRelease(sourceOnlyMigration(t).downOutcome(RecordRead{}, errors.Join(migrate.ErrDirty{Version: 6}, unlockFailed)))
+	releases, rest := SplitRelease(sourceOnlyMigration(t).downOutcome(context.Background(), RecordRead{}, errors.Join(migrate.ErrDirty{Version: 6}, unlockFailed)))
 
 	var dirty *DirtyError
 	require.ErrorAs(t, rest, &dirty)

@@ -26,7 +26,7 @@ Then each call site does its own mapping.
 - golang-migrate, at `openMigration`, in this order:
   1. The environment is checked before the string. If any of the eleven variables lib/pq panics on is set, even to an empty value, `openMigration` returns `UnsupportedEnvError`. It names each variable that is set and never its value (HEU-862). Pinned by `TestMigrateCommands_RefuseAnUnsupportedVariableBeforeOpeningAnything` and `TestMigrateVersion_RefusesTheEnvironmentBeforeOpeningTheSource`. The empty value is pinned by `TestRefuseUnsupportedEnv_AnEmptyValueCounts`, `TestRefuseUnsupportedEnv_NamesEveryVariableSetInListOrder` and `TestMigrateVersion_NamesEveryUnsupportedVariableAndNoValue`.
   2. A string without an exact `postgres://` or `postgresql://` prefix is refused as stage `scheme`.
-  3. lib/pq's own parse runs on the string golang-migrate would hand it. A refusal becomes stage `refused`. If lib/pq also refuses a neutral probe string, the environment is at fault, and lib/pq's own error is returned instead.
+  3. lib/pq's own parse runs on the URL with golang-migrate's `x-` settings removed. A refusal becomes stage `refused`. If lib/pq also refuses a neutral probe string, the environment is at fault, and lib/pq's own error is returned instead.
   4. A `*url.Error` from parsing the URL in `dialSession` becomes stage `parse`.
 
 A raw `@` alone in a password does not split the string. A raw `/`, `?` or `#` in a password does. It puts the userinfo's closing `@` after the host part. The `raw-at` stage refuses that shape (HEU-875).
@@ -67,7 +67,8 @@ A raw `&` in a `?password=` value splits it. Each piece after the `&` becomes it
   Observed on the CLI, 2026-09-30. Not pinned, because the fix withholds the text.
 - The driver name is the text before the first `:`, matched exactly. For an unknown name, the error quotes that text. A keyword-form string with a `:` after the password printed the password.
   Read in source, not pinned. The scheme check refuses these strings first.
-- mlmforge no longer calls golang-migrate's `database.Open`. `dialSession` hands lib/pq `migrate.FilterCustomQuery(purl)` with `fallback_application_name=mlmforge-migrate` added when the URL sets no `fallback_application_name`, or an empty one, and `options` led by `-c client_connection_check_interval=1000`. `migrateDriverParseError` builds the string without those two keys.
+- mlmforge no longer calls golang-migrate's `database.Open`. `dialSession` hands lib/pq `migrate.FilterCustomQuery(purl)` with `fallback_application_name=mlmforge-migrate` added when the URL sets no `fallback_application_name`, or an empty one, and `options` led by `-c client_connection_check_interval=1000`. `migrateDriverParseError` builds the string without those additions.
+  Pinned by `TestDriverURL_WhatLibPQReceives`.
 
 ## lib/pq v1.10.9
 

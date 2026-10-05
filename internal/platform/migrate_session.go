@@ -179,7 +179,9 @@ func lockAndOpen(ctx context.Context, s session, wait LockWait) (database.Driver
 	for {
 		select {
 		case pid := <-holders:
-			wait(pid)
+			if ctx.Err() == nil {
+				wait(pid)
+			}
 		case r := <-results:
 			if r.err != nil {
 				return nil, errors.Join(openFailure(r.err), closeAfter(r.err, s))

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-migrate/migrate/v4/database"
 	"github.com/jackc/pgx/v5"
 	"github.com/mlmforge/mlmforge/internal/testutil"
 	"github.com/stretchr/testify/assert"
@@ -180,7 +181,6 @@ func TestMigrateVersion_AnEndedContextStopsTheLockWaitAndNamesTheHolder(t *testi
 	assert.False(t, testutil.TableExists(t, dsn, "schema_migrations"), "nothing was written")
 }
 
-// The pause after freezing outlasts one poll interval, so a poll is waiting on the frozen link when ctx ends.
 func TestMigrateVersion_AnEndedContextStopsALockWaitOnAStalledLink(t *testing.T) {
 	testutil.ClearLibPQEnv(t)
 	dsn := newResetDatabase(t)
@@ -210,6 +210,37 @@ func TestMigrateVersion_AnEndedContextStopsALockWaitOnAStalledLink(t *testing.T)
 	}
 	cut()
 	testutil.RequireNoSessionsNamed(t, dsn, migrateApplicationName)
+}
+
+func TestMigrateVersion_AnEndedContextStopsTheDriverOpenBehindAForeignGolangMigrateLock(t *testing.T) {
+	dsn := newResetDatabase(t)
+	u, err := url.Parse(dsn)
+	require.NoError(t, err)
+	key, err := database.GenerateAdvisoryLockId(u.Path, "public", "schema_migrations")
+	require.NoError(t, err)
+	holder, err := pgx.Connect(context.Background(), dsn)
+	require.NoError(t, err)
+	_, err = holder.Exec(context.Background(), "SELECT pg_advisory_lock($1::bigint)", key)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		_, err := MigrateVersion(ctx, dsn, FindMigrationsDir(t), nil)
+		result <- err
+	}()
+	testutil.WaitForActiveQuery(t, pgContainer.DSN, "pg_advisory_lock(")
+
+	cancel()
+
+	select {
+	case err := <-result:
+		requireOnlyInterrupted(t, err, duringDriverOpen)
+	case <-time.After(2 * time.Second):
+		t.Fatal("MigrateVersion had not returned 2s after its context ended")
+	}
+	require.NoError(t, holder.Close(context.Background()))
+	testutil.RequireNoAdvisoryLocks(t, dsn)
 }
 
 func TestOpenDriver_AnEndedContextIsAnInterrupt(t *testing.T) {

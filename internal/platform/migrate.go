@@ -42,7 +42,7 @@ func MigrateUp(ctx context.Context, dbURL, migrationsPath string, wait LockWait)
 	defer mg.closeInto(&err)
 
 	before := mg.recordRead()
-	return mg.upOutcome(ctx, before, mg.upInSteps(ctx))
+	return mg.upOutcome(ctx, before, mg.holdingDriverLock(func() error { return mg.upInSteps(ctx) }))
 }
 
 // upOutcome classifies the result of applying the pending migrations.
@@ -141,9 +141,18 @@ type migration struct {
 // releaseTagged marks the database driver's Lock and Unlock failures with their own error types.
 type releaseTagged struct {
 	database.Driver
+	held *bool
+}
+
+// holding reports whether holdLock holds the driver's lock, so each step's Lock and Unlock leave it in place.
+func (d releaseTagged) holding() bool {
+	return d.held != nil && *d.held
 }
 
 func (d releaseTagged) Lock() error {
+	if d.holding() {
+		return nil
+	}
 	if err := d.Driver.Lock(); err != nil {
 		return &LockNotTakenError{Err: err}
 	}
@@ -151,6 +160,30 @@ func (d releaseTagged) Lock() error {
 }
 
 func (d releaseTagged) Unlock() error {
+	if d.holding() {
+		return nil
+	}
+	if err := d.Driver.Unlock(); err != nil {
+		return &ReleaseError{What: "releasing the migration lock failed", Err: err}
+	}
+	return nil
+}
+
+// holdLock takes the driver's lock for a run of several steps.
+func (d releaseTagged) holdLock() error {
+	if err := d.Driver.Lock(); err != nil {
+		return &LockNotTakenError{Err: err}
+	}
+	*d.held = true
+	return nil
+}
+
+// releaseHold releases the lock holdLock took.
+func (d releaseTagged) releaseHold() error {
+	if !d.holding() {
+		return nil
+	}
+	*d.held = false
 	if err := d.Driver.Unlock(); err != nil {
 		return &ReleaseError{What: "releasing the migration lock failed", Err: err}
 	}
@@ -194,7 +227,7 @@ func openMigration(ctx context.Context, dbURL, migrationsPath string, wait LockW
 			releaseErr("closing the migrations source failed", src.Close()),
 			closeAfter(err, sess))
 	}
-	tagged := releaseTagged{Driver: db}
+	tagged := releaseTagged{Driver: db, held: new(bool)}
 	m, err := migrate.NewWithInstance("file", src, "postgres", tagged)
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("create migrator: %w", err),

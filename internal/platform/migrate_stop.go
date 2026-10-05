@@ -27,6 +27,18 @@ func (mg *migration) upInSteps(ctx context.Context) error {
 	return nil
 }
 
+// holdingDriverLock runs op while holding the database driver's own lock, and joins any release failure to op's result.
+func (mg *migration) holdingDriverLock(op func() error) error {
+	tagged, ok := mg.db.(releaseTagged)
+	if !ok || tagged.held == nil {
+		return op()
+	}
+	if err := tagged.holdLock(); err != nil {
+		return err
+	}
+	return errors.Join(op(), tagged.releaseHold())
+}
+
 // upToDate reports whether the record reads as the last migration in the source.
 func (mg *migration) upToDate() bool {
 	rec, err := mg.readRecord()
@@ -48,11 +60,16 @@ func (mg *migration) isLast(rec Record) bool {
 }
 
 // sourceHolds reports whether the source has an up file or a down file for version n.
+// It reports false when a read fails for any reason other than a missing file.
 func (mg *migration) sourceHolds(n uint) bool {
 	for _, read := range []func(uint) (io.ReadCloser, string, error){mg.source.ReadUp, mg.source.ReadDown} {
-		if body, _, err := read(n); err == nil {
+		body, _, err := read(n)
+		if err == nil {
 			_ = body.Close()
 			return true
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return false
 		}
 	}
 	return false
@@ -66,7 +83,7 @@ func (mg *migration) downOnce(ctx context.Context) error {
 	return mg.m.Steps(-1)
 }
 
-// upStopped is the outcome of an up that ended early: nil when no migration is left, a StoppedError otherwise.
+// upStopped is the outcome of an up that ended early: nil when the record reads as the last migration in the source, a StoppedError otherwise.
 func (mg *migration) upStopped(before RecordRead) error {
 	after := mg.recordRead()
 	if after.Err != nil {

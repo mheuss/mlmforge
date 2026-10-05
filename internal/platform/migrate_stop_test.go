@@ -3,11 +3,17 @@ package platform
 import (
 	"context"
 	"errors"
+	"io"
+	"net/url"
 	"os"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database"
+	"github.com/golang-migrate/migrate/v4/source"
+	"github.com/jackc/pgx/v5"
 	"github.com/mlmforge/mlmforge/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -287,4 +293,111 @@ func TestMigrateUp_ASecondFailingFileKeepsItsApplyError(t *testing.T) {
 	assert.True(t, apply.BodyFailed)
 	assert.Equal(t, RecordRead{Record: Record{Version: 2, Dirty: true}}, apply.After)
 	assert.True(t, testutil.TableExists(t, dsn, "ok_a"))
+}
+
+// foreignDriverLockGranted keeps trying golang-migrate's own key for dsn's database on another session until a backend runs a query containing until, and reports whether it was ever granted.
+func foreignDriverLockGranted(t *testing.T, dsn, until string) bool {
+	t.Helper()
+	u, err := url.Parse(dsn)
+	require.NoError(t, err)
+	key, err := database.GenerateAdvisoryLockId(u.Path, "public", "schema_migrations")
+	require.NoError(t, err)
+	conn, err := pgx.Connect(context.Background(), dsn)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close(context.Background()) }()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		var running bool
+		require.NoError(t, conn.QueryRow(context.Background(),
+			"SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE state = 'active' AND pid <> pg_backend_pid() AND strpos(query, $1) > 0)", until).Scan(&running))
+		if running {
+			return false
+		}
+		var granted bool
+		require.NoError(t, conn.QueryRow(context.Background(), "SELECT pg_try_advisory_lock($1::bigint)", key).Scan(&granted))
+		if granted {
+			_, _ = conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1::bigint)", key)
+			return true
+		}
+	}
+	t.Fatalf("no backend ran a query containing %q within 10s", until)
+	return false
+}
+
+// Polling runs from file 1 starting until file 2 starts, so it spans the gap between them.
+func TestMigrateUp_HoldsGolangMigratesLockBetweenFiles(t *testing.T) {
+	dsn := newResetDatabase(t)
+	dir := testutil.SlowMigrations(t, 1)
+	result := make(chan error, 1)
+	go func() { result <- MigrateUp(context.Background(), dsn, dir, nil) }()
+	testutil.WaitForActiveQuery(t, pgContainer.DSN, "slow_one")
+
+	granted := foreignDriverLockGranted(t, dsn, "CREATE TABLE slow_two")
+
+	require.NoError(t, <-result)
+	assert.False(t, granted, "another session got golang-migrate's lock between files")
+}
+
+// fakeSource is a source.Driver whose reads return the errors it is given.
+type fakeSource struct {
+	source.Driver
+	upErr, downErr, nextErr error
+}
+
+func (f fakeSource) ReadUp(uint) (io.ReadCloser, string, error) {
+	if f.upErr != nil {
+		return nil, "", f.upErr
+	}
+	return io.NopCloser(strings.NewReader("")), "", nil
+}
+
+func (f fakeSource) ReadDown(uint) (io.ReadCloser, string, error) {
+	if f.downErr != nil {
+		return nil, "", f.downErr
+	}
+	return io.NopCloser(strings.NewReader("")), "", nil
+}
+
+func (f fakeSource) Next(uint) (uint, error) { return 0, f.nextErr }
+
+func TestIsLast_StopsAtAnUpReadThatFailsForAnotherReason(t *testing.T) {
+	cases := map[string]struct {
+		src  fakeSource
+		want bool
+	}{
+		"an up file":                     {src: fakeSource{nextErr: os.ErrNotExist}, want: true},
+		"only a down file":               {src: fakeSource{upErr: os.ErrNotExist, nextErr: os.ErrNotExist}, want: true},
+		"an up file that cannot be read": {src: fakeSource{upErr: os.ErrPermission, nextErr: os.ErrNotExist}, want: false},
+		"neither file":                   {src: fakeSource{upErr: os.ErrNotExist, downErr: os.ErrNotExist, nextErr: os.ErrNotExist}, want: false},
+		"a migration after it":           {src: fakeSource{}, want: false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			mg := &migration{source: tc.src}
+
+			assert.Equal(t, tc.want, mg.isLast(Record{Version: 2}))
+		})
+	}
+}
+
+func TestUpStopped_JudgesTheLastMigrationLikeTheLoop(t *testing.T) {
+	cases := map[string]struct {
+		files   map[string]string
+		record  Record
+		stopped bool
+	}{
+		"minus one with an empty directory":    {files: map[string]string{}, record: Record{Version: -1}, stopped: true},
+		"a last version with only a down file": {files: map[string]string{"1_a.up.sql": "SELECT 1;", "1_a.down.sql": "SELECT 1;", "2_b.down.sql": "SELECT 1;"}, record: Record{Version: 2}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			mg := sourceMigration(t, writeMigrations(t, tc.files))
+			mg.db = releaseTagged{Driver: &recordingDriver{record: tc.record}}
+
+			err := mg.upStopped(RecordRead{Record: Record{Version: -1}})
+
+			var stopped *StoppedError
+			assert.Equal(t, tc.stopped, errors.As(err, &stopped), "err: %v", err)
+		})
+	}
 }

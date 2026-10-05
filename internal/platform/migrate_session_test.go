@@ -112,7 +112,7 @@ func TestDialSession_ACutConnectionRollsTheFileBack(t *testing.T) {
 			dsn := newResetDatabase(t)
 			target, err := url.Parse(dsn)
 			require.NoError(t, err)
-			addr, cut := testutil.CuttableProxy(t, target.Host)
+			addr, cut, _ := testutil.CuttableProxy(t, target.Host)
 			s, err := dialSession(context.Background(), throughProxy(t, dsn, addr)+tc.options)
 			require.NoError(t, err)
 			defer func() { _ = s.close() }()

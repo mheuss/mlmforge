@@ -216,16 +216,9 @@ func openMigration(ctx context.Context, dbURL, migrationsPath string, wait LockW
 		return nil, errors.Join(openFailure(err),
 			releaseErr("closing the migrations source failed", src.Close()))
 	}
-	if err := lockMigrations(ctx, sess.conn, wait); err != nil {
-		return nil, errors.Join(openFailure(err),
-			releaseErr("closing the migrations source failed", src.Close()),
-			closeAfter(err, sess))
-	}
-	db, err := openDriver(ctx, sess)
+	db, err := lockAndOpen(ctx, sess, wait)
 	if err != nil {
-		return nil, errors.Join(openFailure(err),
-			releaseErr("closing the migrations source failed", src.Close()),
-			closeAfter(err, sess))
+		return nil, errors.Join(err, releaseErr("closing the migrations source failed", src.Close()))
 	}
 	tagged := releaseTagged{Driver: db, held: new(bool)}
 	m, err := migrate.NewWithInstance("file", src, "postgres", tagged)

@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -189,8 +189,8 @@ func WaitForQueryGone(t *testing.T, dsn, text string) {
 	t.Fatalf("a backend's query still contained %q after 10s", text)
 }
 
-// CuttableProxy forwards loopback connections to target, and returns its address and a function that closes every connection it carries.
-func CuttableProxy(t *testing.T, target string) (string, func()) {
+// CuttableProxy forwards loopback connections to target, and returns its address, a function that closes every connection it carries, and a function that stops it forwarding without closing anything.
+func CuttableProxy(t *testing.T, target string) (string, func(), func()) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -198,6 +198,7 @@ func CuttableProxy(t *testing.T, target string) (string, func()) {
 	}
 	var mu sync.Mutex
 	var conns []net.Conn
+	var frozen atomic.Bool
 	keep := func(c net.Conn) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -224,7 +225,18 @@ func CuttableProxy(t *testing.T, target string) (string, func()) {
 			keep(client)
 			keep(server)
 			pipe := func(dst, src net.Conn) {
-				_, _ = io.Copy(dst, src)
+				buf := make([]byte, 32*1024)
+				for {
+					n, err := src.Read(buf)
+					if n > 0 && !frozen.Load() {
+						if _, werr := dst.Write(buf[:n]); werr != nil {
+							break
+						}
+					}
+					if err != nil {
+						break
+					}
+				}
 				_ = dst.Close()
 				_ = src.Close()
 			}
@@ -236,7 +248,7 @@ func CuttableProxy(t *testing.T, target string) (string, func()) {
 		_ = ln.Close()
 		cut()
 	})
-	return ln.Addr().String(), cut
+	return ln.Addr().String(), cut, func() { frozen.Store(true) }
 }
 
 // RequireNoAdvisoryLocks fails unless dsn's database holds no advisory lock within 3s.

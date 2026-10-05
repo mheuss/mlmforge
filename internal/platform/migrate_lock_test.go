@@ -180,6 +180,38 @@ func TestMigrateVersion_AnEndedContextStopsTheLockWaitAndNamesTheHolder(t *testi
 	assert.False(t, testutil.TableExists(t, dsn, "schema_migrations"), "nothing was written")
 }
 
+// The pause after freezing outlasts one poll interval, so a poll is waiting on the frozen link when ctx ends.
+func TestMigrateVersion_AnEndedContextStopsALockWaitOnAStalledLink(t *testing.T) {
+	testutil.ClearLibPQEnv(t)
+	dsn := newResetDatabase(t)
+	testutil.HoldAdvisoryLock(t, dsn, MigrateLockNamespace, 0)
+	target, err := url.Parse(dsn)
+	require.NoError(t, err)
+	addr, cut, freeze := testutil.CuttableProxy(t, target.Host)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	told := make(chan int, 1)
+	result := make(chan error, 1)
+	go func() {
+		_, err := MigrateVersion(ctx, throughProxy(t, dsn, addr), FindMigrationsDir(t), func(pid int) { told <- pid })
+		result <- err
+	}()
+	<-told
+	freeze()
+	time.Sleep(300 * time.Millisecond)
+
+	cancel()
+
+	select {
+	case err := <-result:
+		requireOnlyInterrupted(t, err, duringLockWait)
+	case <-time.After(2 * time.Second):
+		t.Fatal("MigrateVersion had not returned 2s after its context ended")
+	}
+	cut()
+	testutil.RequireNoSessionsNamed(t, dsn, migrateApplicationName)
+}
+
 func TestOpenDriver_AnEndedContextIsAnInterrupt(t *testing.T) {
 	dsn := newResetDatabase(t)
 	s, err := dialSession(context.Background(), dsn)

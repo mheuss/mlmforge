@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -146,6 +147,53 @@ func connectSession(ctx context.Context, dbURL string) (session, error) {
 			}
 		}()
 		return session{}, &InterruptedError{During: duringConnect}
+	}
+}
+
+// lockedDriver is one lock-and-open's outcome.
+type lockedDriver struct {
+	db  database.Driver
+	err error
+}
+
+// lockAndOpen takes the mlmforge migration lock on s and opens golang-migrate's driver on it, and stops waiting for either when ctx ends.
+func lockAndOpen(ctx context.Context, s session, wait LockWait) (database.Driver, error) {
+	results := make(chan lockedDriver, 1)
+	holders := make(chan int, 1)
+	var phase atomic.Pointer[string]
+	phase.Store(new(string(duringLockWait)))
+	var notice LockWait
+	if wait != nil {
+		notice = func(pid int) { holders <- pid }
+	}
+	go func() {
+		if err := lockMigrations(ctx, s.conn, notice); err != nil {
+			results <- lockedDriver{err: err}
+			return
+		}
+		phase.Store(new(string(duringDriverOpen)))
+		db, err := openDriver(ctx, s)
+		results <- lockedDriver{db: db, err: err}
+	}()
+	// Whoever receives from results owns s, so it is closed exactly once.
+	for {
+		select {
+		case pid := <-holders:
+			wait(pid)
+		case r := <-results:
+			if r.err != nil {
+				return nil, errors.Join(openFailure(r.err), closeAfter(r.err, s))
+			}
+			return r.db, nil
+		case <-ctx.Done():
+			go func() {
+				if r := <-results; r.err == nil {
+					_ = r.db.Close()
+				}
+				_ = s.close()
+			}()
+			return nil, &InterruptedError{During: *phase.Load()}
+		}
 	}
 }
 

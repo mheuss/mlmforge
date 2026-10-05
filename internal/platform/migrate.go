@@ -48,7 +48,7 @@ func MigrateUp(ctx context.Context, dbURL, migrationsPath string, wait LockWait)
 // upOutcome classifies the result of applying the pending migrations.
 func (mg *migration) upOutcome(ctx context.Context, before RecordRead, raw error) error {
 	releases, upErr := SplitRelease(raw)
-	if upErr == nil && (ctx.Err() != nil || len(releases) > 0) {
+	if upErr == nil && ctx.Err() != nil {
 		return withReleases(mg.upStopped(before), releases)
 	}
 	return withReleases(mg.upResult(upErr), releases)

@@ -265,17 +265,9 @@ func TestMigrateUp_AFailingFileKeepsItsApplyError(t *testing.T) {
 	assert.Equal(t, RecordRead{Record: Record{Version: 1, Dirty: true}}, apply.After)
 }
 
-func TestUpOutcome_AReleaseFailureWithMigrationsLeftIsAStop(t *testing.T) {
+// Record 1 of 2 would read as a stop, so success here means the release failure alone was not taken for one.
+func TestUpOutcome_AReleaseFailureWithoutAStopIsSuccessWithTheFailure(t *testing.T) {
 	err := stopMigration(t, &recordingDriver{record: Record{Version: 1}}).upOutcome(context.Background(), RecordRead{}, errors.Join(nil, unlockFailed))
-
-	releases, rest := SplitRelease(err)
-	var stopped *StoppedError
-	assert.ErrorAs(t, rest, &stopped)
-	assert.Equal(t, []error{unlockFailed}, releases)
-}
-
-func TestUpOutcome_AReleaseFailureWithNothingLeftIsSuccess(t *testing.T) {
-	err := stopMigration(t, &recordingDriver{record: Record{Version: 2}}).upOutcome(context.Background(), RecordRead{}, errors.Join(nil, unlockFailed))
 
 	releases, rest := SplitRelease(err)
 	assert.NoError(t, rest)

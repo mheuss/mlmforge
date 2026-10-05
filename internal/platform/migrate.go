@@ -162,11 +162,16 @@ func openMigration(ctx context.Context, dbURL, migrationsPath string, wait LockW
 		return nil, errors.Join(openFailure(err),
 			releaseErr("closing the migrations source failed", src.Close()))
 	}
+	if err := lockMigrations(ctx, sess.conn, wait); err != nil {
+		return nil, errors.Join(openFailure(err),
+			releaseErr("closing the migrations source failed", src.Close()),
+			closeAfter(err, sess))
+	}
 	db, err := openDriver(ctx, sess)
 	if err != nil {
-		return nil, errors.Join(fmt.Errorf("open database: %w", err),
+		return nil, errors.Join(openFailure(err),
 			releaseErr("closing the migrations source failed", src.Close()),
-			releaseErr("closing the database failed", sess.close()))
+			closeAfter(err, sess))
 	}
 	tagged := releaseTagged{Driver: db}
 	m, err := migrate.NewWithInstance("file", src, "postgres", tagged)
@@ -175,7 +180,7 @@ func openMigration(ctx context.Context, dbURL, migrationsPath string, wait LockW
 			releaseErr("closing the migrations source failed", src.Close()),
 			releaseErr("closing the database failed", sess.close()))
 	}
-	return &migration{m: m, source: src, db: tagged, path: absPath, sess: sess, unlock: func() error { return nil }}, nil
+	return &migration{m: m, source: src, db: tagged, path: absPath, sess: sess, unlock: func() error { return unlockMigrations(sess.conn) }}, nil
 }
 
 // closeInto releases the migration lock, closes the migrator and the session, and joins any failure into *errp as a ReleaseError.

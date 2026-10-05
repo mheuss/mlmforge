@@ -193,6 +193,8 @@ func TestConnectSession_AnEndedContextAbandonsAStalledConnect(t *testing.T) {
 
 // Run under -race. The cancel lands before, during and after the dial across iterations.
 func TestConnectSession_CancellingAroundAConnectLeavesNoSession(t *testing.T) {
+	t.Setenv("PGAPPNAME", "")
+	require.NoError(t, os.Unsetenv("PGAPPNAME"))
 	dsn := newResetDatabase(t)
 	for i := range 40 {
 		ctx, cancel := context.WithCancel(context.Background())

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database"
@@ -89,8 +90,14 @@ func sessionOptions(fromURL, fromEnv string) string {
 
 // openDriver hands the session's connection to golang-migrate's Postgres driver.
 func openDriver(ctx context.Context, s session) (database.Driver, error) {
+	if ctx.Err() != nil {
+		return nil, &InterruptedError{During: duringDriverOpen}
+	}
 	driver, err := postgres.WithConnection(ctx, s.conn, &postgres.Config{DatabaseName: s.databaseName})
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, &InterruptedError{During: duringDriverOpen}
+		}
 		return nil, err
 	}
 	return driver, nil
@@ -149,4 +156,75 @@ func openFailure(err error) error {
 		return err
 	}
 	return fmt.Errorf("open database: %w", err)
+}
+
+// migrateLockPollInterval is the pause between two attempts on a held migration lock.
+const migrateLockPollInterval = 100 * time.Millisecond
+
+// migrateUnlockTimeout bounds the unlock call.
+const migrateUnlockTimeout = 5 * time.Second
+
+// lockMigrations polls for the mlmforge migration lock on conn until it is granted or ctx ends.
+func lockMigrations(ctx context.Context, conn *sql.Conn, wait LockWait) error {
+	told := false
+	for {
+		var granted bool
+		err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1, 0)", MigrateLockNamespace).Scan(&granted)
+		if ctx.Err() != nil {
+			return &InterruptedError{During: duringLockWait}
+		}
+		if err != nil {
+			return fmt.Errorf("take the migration lock: %w", err)
+		}
+		if granted {
+			return nil
+		}
+		if !told && wait != nil {
+			wait(lockHolder(ctx, conn))
+			told = true
+		}
+		select {
+		case <-ctx.Done():
+			return &InterruptedError{During: duringLockWait}
+		case <-time.After(migrateLockPollInterval):
+		}
+	}
+}
+
+// lockHolder returns the backend PID holding the mlmforge migration lock in this database, or 0 when none is found.
+func lockHolder(ctx context.Context, conn *sql.Conn) int {
+	var pid int
+	err := conn.QueryRowContext(ctx, `SELECT pid FROM pg_locks
+		WHERE locktype = 'advisory'
+		  AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+		  AND classid = $1 AND objid = 0 AND objsubid = 2 AND granted
+		LIMIT 1`, MigrateLockNamespace).Scan(&pid)
+	if err != nil {
+		return 0
+	}
+	return pid
+}
+
+// unlockMigrations releases the mlmforge migration lock on conn.
+func unlockMigrations(conn *sql.Conn) error {
+	ctx, cancel := context.WithTimeout(context.Background(), migrateUnlockTimeout)
+	defer cancel()
+	var released bool
+	if err := conn.QueryRowContext(ctx, "SELECT pg_advisory_unlock($1, 0)", MigrateLockNamespace).Scan(&released); err != nil {
+		return err
+	}
+	if !released {
+		return errors.New("pg_advisory_unlock returned false")
+	}
+	return nil
+}
+
+// closeAfter closes s after a failed open, and reports a close failure unless err is an interrupt.
+func closeAfter(err error, s session) error {
+	closeErr := s.close()
+	var interrupted *InterruptedError
+	if errors.As(err, &interrupted) {
+		return nil
+	}
+	return releaseErr("closing the database failed", closeErr)
 }

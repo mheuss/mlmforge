@@ -53,7 +53,7 @@ func TestMigrateUpDown(t *testing.T) {
 
 	// Roll all migrations down, then back up to verify the full cycle.
 	for {
-		err := MigrateDown(pgContainer.DSN, migrationsPath)
+		err := MigrateDown(context.Background(), pgContainer.DSN, migrationsPath, nil)
 		if err == nil {
 			continue
 		}
@@ -68,7 +68,7 @@ func TestMigrateUpDown(t *testing.T) {
 	assert.False(t, tableExists(t, pool, "tree_projections"), "tree_projections table should not exist after full rollback")
 
 	// Re-apply migrations so subsequent tests still have tables.
-	err = MigrateUp(pgContainer.DSN, migrationsPath)
+	err = MigrateUp(context.Background(), pgContainer.DSN, migrationsPath, nil)
 	require.NoError(t, err)
 	assert.True(t, tableExists(t, pool, "events"), "events table should exist after up")
 	assert.True(t, tableExists(t, pool, "tree_nodes"), "tree_nodes table should exist after up")

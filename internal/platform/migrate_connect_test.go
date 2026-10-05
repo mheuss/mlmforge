@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -12,7 +13,7 @@ func TestMigrateVersion_ReportsAConnectTimeout(t *testing.T) {
 	testutil.ClearTimeoutEnv(t)
 	addr := testutil.SilentListener(t)
 
-	_, err := MigrateVersion("postgres://app:s3cret@"+addr+"/app?sslmode=disable&connect_timeout=1", FindMigrationsDir(t))
+	_, err := MigrateVersion(context.Background(), "postgres://app:s3cret@"+addr+"/app?sslmode=disable&connect_timeout=1", FindMigrationsDir(t), nil)
 
 	var cte *ConnectTimeoutError
 	require.ErrorAs(t, err, &cte)

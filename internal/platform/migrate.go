@@ -24,12 +24,16 @@ func (mg *migration) dirtyError(err error) (*DirtyError, bool) {
 	return &DirtyError{Record: rec, Source: mg.sourceInfo(rec.Version)}, true
 }
 
+// LockWait is told which backend holds the migration lock when a command has to wait for it.
+// A PID of 0 means the holder was not found.
+type LockWait func(holderPID int)
+
 // MigrateUp applies all pending database migrations from the given directory.
-func MigrateUp(dbURL, migrationsPath string) (err error) {
+func MigrateUp(ctx context.Context, dbURL, migrationsPath string, wait LockWait) (err error) {
 	if err = refuseMultiStatement("up", dbURL); err != nil {
 		return err
 	}
-	mg, err := openMigration(dbURL, migrationsPath)
+	mg, err := openMigration(ctx, dbURL, migrationsPath, wait)
 	if err != nil {
 		return err
 	}
@@ -65,11 +69,11 @@ var ErrNoChange = migrate.ErrNoChange
 
 // MigrateDown rolls back the most recent migration.
 // Returns ErrNoChange when there are no migrations left to roll back.
-func MigrateDown(dbURL, migrationsPath string) (err error) {
+func MigrateDown(ctx context.Context, dbURL, migrationsPath string, wait LockWait) (err error) {
 	if err = refuseMultiStatement("down", dbURL); err != nil {
 		return err
 	}
-	mg, err := openMigration(dbURL, migrationsPath)
+	mg, err := openMigration(ctx, dbURL, migrationsPath, wait)
 	if err != nil {
 		return err
 	}
@@ -134,7 +138,7 @@ func releaseErr(what string, err error) error {
 }
 
 // openMigration opens the drivers one migrate command uses.
-func openMigration(dbURL, migrationsPath string) (*migration, error) {
+func openMigration(ctx context.Context, dbURL, migrationsPath string, wait LockWait) (*migration, error) {
 	if err := refuseUnsupportedEnv(); err != nil {
 		return nil, err
 	}
@@ -147,7 +151,7 @@ func openMigration(dbURL, migrationsPath string) (*migration, error) {
 		return nil, fmt.Errorf("open migrations source %s: %w", absPath, err)
 	}
 	var db database.Driver
-	err = TimeConnect(context.Background(), dbURL, func() error {
+	err = TimeConnect(ctx, dbURL, func() error {
 		if schemeErr := migrateSchemeError(dbURL); schemeErr != nil {
 			return schemeErr
 		}
@@ -258,8 +262,8 @@ func (mg *migration) sourceFor(read RecordRead) SourceInfo {
 }
 
 // MigrateVersion returns the migration record and where a dirty record's version sits in the migrations directory.
-func MigrateVersion(dbURL, migrationsPath string) (st Status, err error) {
-	mg, err := openMigration(dbURL, migrationsPath)
+func MigrateVersion(ctx context.Context, dbURL, migrationsPath string, wait LockWait) (st Status, err error) {
+	mg, err := openMigration(ctx, dbURL, migrationsPath, wait)
 	if err != nil {
 		return Status{}, err
 	}
@@ -273,11 +277,11 @@ func MigrateVersion(dbURL, migrationsPath string) (st Status, err error) {
 }
 
 // ResetDirty changes a dirty migration record to the migration before it, clean.
-func ResetDirty(dbURL, migrationsPath string) (res ResetResult, err error) {
+func ResetDirty(ctx context.Context, dbURL, migrationsPath string, wait LockWait) (res ResetResult, err error) {
 	if err = refuseMultiStatement("reset-dirty", dbURL); err != nil {
 		return ResetResult{}, err
 	}
-	mg, err := openMigration(dbURL, migrationsPath)
+	mg, err := openMigration(ctx, dbURL, migrationsPath, wait)
 	if err != nil {
 		return ResetResult{}, err
 	}
@@ -287,11 +291,11 @@ func ResetDirty(dbURL, migrationsPath string) (res ResetResult, err error) {
 }
 
 // ResetAfterFailedDown changes a dirty migration record to the migration after it, clean.
-func ResetAfterFailedDown(dbURL, migrationsPath string) (res ResetResult, err error) {
+func ResetAfterFailedDown(ctx context.Context, dbURL, migrationsPath string, wait LockWait) (res ResetResult, err error) {
 	if err = refuseMultiStatement("reset-dirty --after-failed-down", dbURL); err != nil {
 		return ResetResult{}, err
 	}
-	mg, err := openMigration(dbURL, migrationsPath)
+	mg, err := openMigration(ctx, dbURL, migrationsPath, wait)
 	if err != nil {
 		return ResetResult{}, err
 	}

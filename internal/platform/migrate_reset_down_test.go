@@ -42,7 +42,7 @@ func newResetDatabase(t *testing.T) string {
 // storeRecord creates the version table through MigrateVersion and replaces its row.
 func storeRecord(t *testing.T, dsn, dir string, version int, dirty bool) {
 	t.Helper()
-	_, err := MigrateVersion(dsn, dir)
+	_, err := MigrateVersion(context.Background(), dsn, dir, nil)
 	require.NoError(t, err)
 	conn, err := pgx.Connect(t.Context(), dsn)
 	require.NoError(t, err)
@@ -56,7 +56,7 @@ func storeRecord(t *testing.T, dsn, dir string, version int, dirty bool) {
 // storedRecord reads the version table through MigrateVersion.
 func storedRecord(t *testing.T, dsn, dir string) Record {
 	t.Helper()
-	st, err := MigrateVersion(dsn, dir)
+	st, err := MigrateVersion(context.Background(), dsn, dir, nil)
 	require.NoError(t, err)
 	return st.Record
 }
@@ -75,7 +75,7 @@ func TestResetAfterFailedDown_TakesTheNextMigrationFromTheDirectory(t *testing.T
 			dsn := newResetDatabase(t)
 			storeRecord(t, dsn, dir, tc.from, true)
 
-			res, err := ResetAfterFailedDown(dsn, dir)
+			res, err := ResetAfterFailedDown(context.Background(), dsn, dir, nil)
 
 			require.NoError(t, err)
 			assert.Equal(t, ResetResult{From: Record{Version: tc.from, Dirty: true}, To: tc.want}, res)
@@ -89,7 +89,7 @@ func TestResetAfterFailedDown_TheLastMigrationHasNothingAfterIt(t *testing.T) {
 	dsn := newResetDatabase(t)
 	storeRecord(t, dsn, dir, 7, true)
 
-	_, err := ResetAfterFailedDown(dsn, dir)
+	_, err := ResetAfterFailedDown(context.Background(), dsn, dir, nil)
 
 	var noNext *NoNextMigrationError
 	require.ErrorAs(t, err, &noNext)
@@ -101,7 +101,7 @@ func TestResetAfterFailedDown_RefusesANextMigrationWithNoDownFile(t *testing.T) 
 	dsn := newResetDatabase(t)
 	storeRecord(t, dsn, dir, 2, true)
 
-	_, err := ResetAfterFailedDown(dsn, dir)
+	_, err := ResetAfterFailedDown(context.Background(), dsn, dir, nil)
 
 	var noDown *NoDownFileError
 	require.ErrorAs(t, err, &noDown)

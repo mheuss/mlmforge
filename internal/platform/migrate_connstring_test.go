@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -19,7 +20,7 @@ func TestMigrateVersion_ARefusedConnStringHoldsNoPassword(t *testing.T) {
 			testutil.ClearLibPQEnv(t)
 			want := "open database: " + testutil.RefusalText(t, "golang-migrate", tc.MigrateStage)
 
-			_, err := MigrateVersion(tc.ConnString, FindMigrationsDir(t))
+			_, err := MigrateVersion(context.Background(), tc.ConnString, FindMigrationsDir(t), nil)
 
 			require.Error(t, err)
 			testutil.RequireNoPasswordWindow(t, fmt.Sprintf("%v\n%+v", err, err), tc.Password, want, tc.WithoutPassword())
@@ -42,7 +43,7 @@ func TestMigrateVersion_APostgresURLReachesTheDriver(t *testing.T) {
 			testutil.ClearTimeoutEnv(t)
 			testutil.ClearLibPQEnv(t)
 
-			_, err := MigrateVersion(url, FindMigrationsDir(t))
+			_, err := MigrateVersion(context.Background(), url, FindMigrationsDir(t), nil)
 
 			require.ErrorContains(t, err, "dial tcp 127.0.0.1:1")
 			var cse *ConnStringError
@@ -62,7 +63,7 @@ func TestMigrateVersion_AStringMigrateAcceptsReachesTheDialWithNoPassword(t *tes
 			testutil.ClearTimeoutEnv(t)
 			testutil.ClearLibPQEnv(t)
 
-			_, err := MigrateVersion(tc.ConnString, FindMigrationsDir(t))
+			_, err := MigrateVersion(context.Background(), tc.ConnString, FindMigrationsDir(t), nil)
 
 			require.Error(t, err)
 			testutil.RequireNoPasswordWindow(t, fmt.Sprintf("%v\n%+v", err, err), tc.Password, tc.WithoutPassword())
@@ -80,7 +81,7 @@ func TestMigrateVersion_ARefusedEnvironmentWithARefusedStringHoldsNoPassword(t *
 	connString := "postgres://app:" + password + "@127.0.0.1:1/app?p%3D%27a=z%3D"
 	want := "open database: client_encoding must be absent or 'UTF8'"
 
-	_, err := MigrateVersion(connString, FindMigrationsDir(t))
+	_, err := MigrateVersion(context.Background(), connString, FindMigrationsDir(t), nil)
 
 	require.Error(t, err)
 	testutil.RequireNoPasswordWindow(t, fmt.Sprintf("%v\n%+v", err, err), password, want, "postgres://app:@127.0.0.1:1/app?p%3D%27a=z%3D")
@@ -96,7 +97,7 @@ func TestMigrateVersion_AStringThatReachedTheDriverStillDoes(t *testing.T) {
 				t.Setenv(name, value)
 			}
 
-			_, err := MigrateVersion(tc.ConnString, FindMigrationsDir(t))
+			_, err := MigrateVersion(context.Background(), tc.ConnString, FindMigrationsDir(t), nil)
 
 			require.ErrorContains(t, err, tc.Dial+":")
 			var cse *ConnStringError

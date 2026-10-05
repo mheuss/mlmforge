@@ -40,7 +40,7 @@ func newMigrateCmd() *cobra.Command {
 			if afterFailedDown {
 				command, reset, next = afterDownCommandName, platform.ResetAfterFailedDown, downCommand
 			}
-			res, err := reset(target.url, *migrationsPath)
+			res, err := reset(cmd.Context(), target.url, *migrationsPath, nil)
 			if err = withoutReleaseErrors(cmd.ErrOrStderr(), "the record was written", err); err != nil {
 				return migrateError(command, connectError(err, target))
 			}
@@ -62,7 +62,7 @@ func newMigrateCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				err = withoutReleaseErrors(cmd.ErrOrStderr(), "migrate up finished", platform.MigrateUp(target.url, *migrationsPath))
+				err = withoutReleaseErrors(cmd.ErrOrStderr(), "migrate up finished", platform.MigrateUp(cmd.Context(), target.url, *migrationsPath, nil))
 				return migrateError("up", connectError(err, target))
 			},
 		},
@@ -76,7 +76,7 @@ func newMigrateCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				err = withoutReleaseErrors(cmd.ErrOrStderr(), "one migration was rolled back", platform.MigrateDown(target.url, *migrationsPath))
+				err = withoutReleaseErrors(cmd.ErrOrStderr(), "one migration was rolled back", platform.MigrateDown(cmd.Context(), target.url, *migrationsPath, nil))
 				if errors.Is(err, platform.ErrNoChange) {
 					_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No migrations to roll back.")
 					return nil
@@ -98,7 +98,7 @@ func newMigrateCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				st, err := platform.MigrateVersion(target.url, *migrationsPath)
+				st, err := platform.MigrateVersion(cmd.Context(), target.url, *migrationsPath, nil)
 				if err = withoutReleaseErrors(cmd.ErrOrStderr(), "the record was read", err); err != nil {
 					return connectError(err, target)
 				}

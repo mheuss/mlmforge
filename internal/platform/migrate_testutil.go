@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -14,7 +15,7 @@ func RunMigrationsForTest(t *testing.T, dbURL string) func() {
 
 	migrationsPath := FindMigrationsDir(t)
 
-	releases, err := SplitRelease(MigrateUp(dbURL, migrationsPath))
+	releases, err := SplitRelease(MigrateUp(context.Background(), dbURL, migrationsPath, nil))
 	for _, release := range releases {
 		t.Logf("MigrateUp: %v", release)
 	}
@@ -24,7 +25,7 @@ func RunMigrationsForTest(t *testing.T, dbURL string) func() {
 
 	return func() {
 		for {
-			releases, err := SplitRelease(MigrateDown(dbURL, migrationsPath))
+			releases, err := SplitRelease(MigrateDown(context.Background(), dbURL, migrationsPath, nil))
 			for _, release := range releases {
 				t.Logf("MigrateDown: %v", release)
 			}

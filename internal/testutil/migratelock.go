@@ -138,9 +138,11 @@ func AcceptingListener(t *testing.T) (string, <-chan struct{}) {
 		t.Fatalf("listen on the loopback: %v", err)
 	}
 	accepted := make(chan struct{})
+	done := make(chan struct{})
 	var mu sync.Mutex
 	var held []net.Conn
 	go func() {
+		defer close(done)
 		first := true
 		for {
 			conn, err := ln.Accept()
@@ -158,6 +160,7 @@ func AcceptingListener(t *testing.T) (string, <-chan struct{}) {
 	}()
 	t.Cleanup(func() {
 		_ = ln.Close()
+		<-done
 		mu.Lock()
 		defer mu.Unlock()
 		for _, conn := range held {

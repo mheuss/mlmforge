@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -15,14 +16,25 @@ import (
 )
 
 // startMigrate runs one migrate subcommand in a goroutine and returns the channel its error arrives on.
-func startMigrate(stderr io.Writer, dsn, dir string, args ...string) <-chan error {
+// The command is cancelled and awaited when the test ends.
+func startMigrate(t *testing.T, stderr io.Writer, dsn, dir string, args ...string) <-chan error {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
 	root := newRootCmd()
 	root.SetOut(io.Discard)
 	root.SetErr(stderr)
 	root.SetArgs(append(append([]string{"migrate"}, args...), "--db-url", dsn, "--migrations", dir))
-	done := make(chan error, 1)
-	go func() { done <- root.Execute() }()
-	return done
+	result := make(chan error, 1)
+	exited := make(chan struct{})
+	go func() {
+		defer close(exited)
+		result <- root.ExecuteContext(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-exited
+	})
+	return result
 }
 
 // awaitText polls b until it contains text or 5s pass.
@@ -58,7 +70,7 @@ func TestMigrateUp_ASignalDuringTheLockWaitChangesNothing(t *testing.T) {
 			holder, release := testutil.HoldAdvisoryLock(t, dsn, platform.MigrateLockNamespace, 0)
 			defer release()
 			var stderr syncBuffer
-			done := startMigrate(&stderr, dsn, platform.FindMigrationsDir(t), "up")
+			done := startMigrate(t, &stderr, dsn, platform.FindMigrationsDir(t), "up")
 			awaitText(t, &stderr, "Waiting for the migration lock.")
 
 			require.NoError(t, syscall.Kill(syscall.Getpid(), sig))
@@ -78,7 +90,7 @@ func TestMigrateUp_ASignalDuringAStalledConnectStopsAtOnce(t *testing.T) {
 	testutil.ClearTimeoutEnv(t)
 	addr, accepted := testutil.AcceptingListener(t)
 	var stderr syncBuffer
-	done := startMigrate(&stderr, "postgres://app:s3cretpw@"+addr+"/app?sslmode=disable&connect_timeout=0", platform.FindMigrationsDir(t), "up")
+	done := startMigrate(t, &stderr, "postgres://app:s3cretpw@"+addr+"/app?sslmode=disable&connect_timeout=0", platform.FindMigrationsDir(t), "up")
 	select {
 	case <-accepted:
 	case <-time.After(5 * time.Second):
@@ -89,6 +101,8 @@ func TestMigrateUp_ASignalDuringAStalledConnectStopsAtOnce(t *testing.T) {
 	err := awaitDone(t, done, 2*time.Second)
 
 	require.EqualError(t, err, "Stopped while connecting to the database. Nothing was changed.")
+	assert.Equal(t, 1, exitCode(err))
+	assert.Contains(t, stderr.String(), stoppingText)
 	assert.NotContains(t, stderr.String(), "s3cretpw")
 }
 
@@ -96,7 +110,7 @@ func TestMigrateUp_ASignalDuringAFileStopsAfterIt(t *testing.T) {
 	keepSignalAlive(t, syscall.SIGTERM)
 	dsn := newMigrateDatabase(t)
 	var stderr syncBuffer
-	done := startMigrate(&stderr, dsn, testutil.SlowMigrations(t, 2), "up")
+	done := startMigrate(t, &stderr, dsn, testutil.SlowMigrations(t, 2), "up")
 	testutil.WaitForActiveQuery(t, pgContainer.DSN, "slow_one")
 
 	require.NoError(t, syscall.Kill(syscall.Getpid(), syscall.SIGTERM))
@@ -113,13 +127,14 @@ func TestMigrateUp_ASignalDuringTheLastFileSucceeds(t *testing.T) {
 	keepSignalAlive(t, syscall.SIGINT)
 	dsn := newMigrateDatabase(t)
 	var stderr syncBuffer
-	done := startMigrate(&stderr, dsn, testutil.SlowMigrations(t, 2), "up")
+	done := startMigrate(t, &stderr, dsn, testutil.SlowMigrations(t, 2), "up")
 	testutil.WaitForActiveQuery(t, pgContainer.DSN, "slow_two")
 
 	require.NoError(t, syscall.Kill(syscall.Getpid(), syscall.SIGINT))
 	err := awaitDone(t, done, 5*time.Second)
 
 	require.NoError(t, err)
+	assert.Contains(t, stderr.String(), stoppingText)
 	version, dirty := testutil.ReadRecord(t, dsn)
 	assert.Equal(t, platform.Record{Version: 2}, platform.Record{Version: version, Dirty: dirty})
 }
@@ -127,17 +142,19 @@ func TestMigrateUp_ASignalDuringTheLastFileSucceeds(t *testing.T) {
 func TestMigrateDown_ASignalDuringItsFileFinishesTheRollback(t *testing.T) {
 	keepSignalAlive(t, syscall.SIGINT)
 	dsn := newMigrateDatabase(t)
-	dir := testutil.SlowMigrations(t, 1)
-	require.NoError(t, awaitDone(t, startMigrate(io.Discard, dsn, dir, "up"), 10*time.Second))
+	sleepSeconds := 2
+	dir := testutil.SlowMigrations(t, sleepSeconds)
+	require.NoError(t, awaitDone(t, startMigrate(t, io.Discard, dsn, dir, "up"), 10*time.Second))
 	var stderr syncBuffer
-	done := startMigrate(&stderr, dsn, dir, "down")
+	done := startMigrate(t, &stderr, dsn, dir, "down")
 	testutil.WaitForActiveQuery(t, pgContainer.DSN, "DROP TABLE slow_two")
 
 	require.NoError(t, syscall.Kill(syscall.Getpid(), syscall.SIGINT))
 	err := awaitDone(t, done, 5*time.Second)
 
 	require.NoError(t, err)
-	assert.Equal(t, 0, exitCode(err))
+	assert.Contains(t, stderr.String(), stoppingText)
 	version, dirty := testutil.ReadRecord(t, dsn)
 	assert.Equal(t, platform.Record{Version: 1}, platform.Record{Version: version, Dirty: dirty})
+	assert.False(t, testutil.TableExists(t, dsn, "slow_two"))
 }

@@ -100,7 +100,7 @@ func newMigrateCmd() *cobra.Command {
 				}
 				st, err := platform.MigrateVersion(cmd.Context(), target.url, *migrationsPath, nil)
 				if err = withoutReleaseErrors(cmd.ErrOrStderr(), "the record was read", err); err != nil {
-					return connectError(err, target)
+					return migrateError("version", connectError(err, target))
 				}
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), versionText(st))
 				return nil

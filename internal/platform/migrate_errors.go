@@ -276,3 +276,24 @@ func isBodyFailure(err error) bool {
 	}
 	return true
 }
+
+// UnusedSettingError reports a database URL setting mlmforge migrate refuses.
+type UnusedSettingError struct {
+	Command string
+	Name    string
+}
+
+func (e *UnusedSettingError) Error() string {
+	return fmt.Sprintf("migrate %s refused: the database URL sets %s, which mlmforge migrate does not support", e.Command, e.Name)
+}
+
+// InvalidSettingError reports a database URL setting whose value is neither true nor false.
+type InvalidSettingError struct {
+	Command string
+	Name    string
+	Value   string
+}
+
+func (e *InvalidSettingError) Error() string {
+	return fmt.Sprintf("migrate %s refused: the database URL sets %s=%s, which is neither true nor false", e.Command, e.Name, e.Value)
+}

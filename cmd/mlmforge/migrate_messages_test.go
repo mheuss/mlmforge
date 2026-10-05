@@ -644,3 +644,11 @@ func TestRollbackFailureText_NeverContainsTheUpTrigger(t *testing.T) {
 		}
 	}
 }
+
+func TestMigrateError_RendersSettingRefusals(t *testing.T) {
+	unused := migrateError("version", &platform.UnusedSettingError{Command: "version", Name: "x-statement-timeout"})
+	require.EqualError(t, unused, "migrate version refused: the database URL sets x-statement-timeout, which mlmforge migrate does not support.")
+
+	invalid := migrateError("up", &platform.InvalidSettingError{Command: "up", Name: "x-multi-statement", Value: "yes"})
+	require.EqualError(t, invalid, "migrate up refused: the database URL sets x-multi-statement=yes, which is neither true nor false.")
+}

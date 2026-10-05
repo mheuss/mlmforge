@@ -30,6 +30,9 @@ type LockWait func(holderPID int)
 
 // MigrateUp applies all pending database migrations from the given directory.
 func MigrateUp(ctx context.Context, dbURL, migrationsPath string, wait LockWait) (err error) {
+	if err = refuseUnusedSettings("up", dbURL); err != nil {
+		return err
+	}
 	if err = refuseMultiStatement("up", dbURL); err != nil {
 		return err
 	}
@@ -70,6 +73,9 @@ var ErrNoChange = migrate.ErrNoChange
 // MigrateDown rolls back the most recent migration.
 // Returns ErrNoChange when there are no migrations left to roll back.
 func MigrateDown(ctx context.Context, dbURL, migrationsPath string, wait LockWait) (err error) {
+	if err = refuseUnusedSettings("down", dbURL); err != nil {
+		return err
+	}
 	if err = refuseMultiStatement("down", dbURL); err != nil {
 		return err
 	}
@@ -263,6 +269,9 @@ func (mg *migration) sourceFor(read RecordRead) SourceInfo {
 
 // MigrateVersion returns the migration record and where a dirty record's version sits in the migrations directory.
 func MigrateVersion(ctx context.Context, dbURL, migrationsPath string, wait LockWait) (st Status, err error) {
+	if err = refuseUnusedSettings("version", dbURL); err != nil {
+		return Status{}, err
+	}
 	mg, err := openMigration(ctx, dbURL, migrationsPath, wait)
 	if err != nil {
 		return Status{}, err
@@ -278,6 +287,9 @@ func MigrateVersion(ctx context.Context, dbURL, migrationsPath string, wait Lock
 
 // ResetDirty changes a dirty migration record to the migration before it, clean.
 func ResetDirty(ctx context.Context, dbURL, migrationsPath string, wait LockWait) (res ResetResult, err error) {
+	if err = refuseUnusedSettings("reset-dirty", dbURL); err != nil {
+		return ResetResult{}, err
+	}
 	if err = refuseMultiStatement("reset-dirty", dbURL); err != nil {
 		return ResetResult{}, err
 	}
@@ -292,6 +304,9 @@ func ResetDirty(ctx context.Context, dbURL, migrationsPath string, wait LockWait
 
 // ResetAfterFailedDown changes a dirty migration record to the migration after it, clean.
 func ResetAfterFailedDown(ctx context.Context, dbURL, migrationsPath string, wait LockWait) (res ResetResult, err error) {
+	if err = refuseUnusedSettings("reset-dirty --after-failed-down", dbURL); err != nil {
+		return ResetResult{}, err
+	}
 	if err = refuseMultiStatement("reset-dirty --after-failed-down", dbURL); err != nil {
 		return ResetResult{}, err
 	}

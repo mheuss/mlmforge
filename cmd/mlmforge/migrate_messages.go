@@ -217,10 +217,16 @@ func migrateErrorText(command string, err error) (string, bool) {
 		noNext   *platform.NoNextMigrationError
 		noDown   *platform.NoDownFileError
 		write    *platform.WriteError
+		unused   *platform.UnusedSettingError
+		invalid  *platform.InvalidSettingError
 	)
 	switch {
 	case errors.As(err, &multi):
 		return multiStatementText(multi), true
+	case errors.As(err, &unused):
+		return unused.Error() + ".", true
+	case errors.As(err, &invalid):
+		return invalid.Error() + ".", true
 	case errors.As(err, &dirty):
 		return fmt.Sprintf("migrate %s did not run. %s", command, dirtyText(dirty.Record, dirty.Source)), true
 	case errors.As(err, &apply):

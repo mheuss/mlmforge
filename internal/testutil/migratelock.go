@@ -80,7 +80,9 @@ func HoldAdvisoryLock(t *testing.T, dsn string, key1, key2 int32) (int, func()) 
 	if err := conn.QueryRow(context.Background(), "SELECT pg_backend_pid()").Scan(&pid); err != nil {
 		t.Fatalf("read the holder's PID: %v", err)
 	}
-	if _, err := conn.Exec(context.Background(), "SELECT pg_advisory_lock($1, $2)", key1, key2); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1, $2)", key1, key2); err != nil {
 		t.Fatalf("take advisory lock (%d, %d): %v", key1, key2, err)
 	}
 	return pid, release
@@ -165,7 +167,7 @@ func AcceptingListener(t *testing.T) (string, <-chan struct{}) {
 	return ln.Addr().String(), accepted
 }
 
-// WaitForQueryGone polls pg_stat_activity until no backend runs a query containing text.
+// WaitForQueryGone polls pg_stat_activity until no backend's current or last query contains text.
 func WaitForQueryGone(t *testing.T, dsn, text string) {
 	t.Helper()
 	conn := connectFor(t, dsn)
@@ -218,8 +220,13 @@ func CuttableProxy(t *testing.T, target string) (string, func()) {
 			}
 			keep(client)
 			keep(server)
-			go func() { _, _ = io.Copy(server, client) }()
-			go func() { _, _ = io.Copy(client, server) }()
+			pipe := func(dst, src net.Conn) {
+				_, _ = io.Copy(dst, src)
+				_ = dst.Close()
+				_ = src.Close()
+			}
+			go pipe(server, client)
+			go pipe(client, server)
 		}
 	}()
 	t.Cleanup(func() {
@@ -240,17 +247,17 @@ func RequireNoAdvisoryLocks(t *testing.T, dsn string) {
 func RequireNoSessionsNamed(t *testing.T, dsn, name string) {
 	t.Helper()
 	requireCountReachesZero(t, dsn, "sessions named "+name,
-		"SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND application_name = '"+name+"'")
+		"SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND application_name = $1", name)
 }
 
 // requireCountReachesZero polls query until it returns 0 or 3s pass.
-func requireCountReachesZero(t *testing.T, dsn, what, query string) {
+func requireCountReachesZero(t *testing.T, dsn, what, query string, args ...any) {
 	t.Helper()
 	conn := connectFor(t, dsn)
 	var n int
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if err := conn.QueryRow(context.Background(), query).Scan(&n); err != nil {
+		if err := conn.QueryRow(context.Background(), query, args...).Scan(&n); err != nil {
 			t.Fatalf("count %s: %v", what, err)
 		}
 		if n == 0 {

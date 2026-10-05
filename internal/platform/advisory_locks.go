@@ -1,7 +1,7 @@
 package platform
 
-// Every advisory lock mlmforge takes uses the two-key form, with one of these as
-// the first key. Changing a value stops old and new binaries excluding each other.
+// Use one of these as the first key of a two-key advisory lock. Changing a value
+// stops old and new binaries excluding each other.
 const (
 	// TreeLockNamespace spells "tree" in ASCII.
 	TreeLockNamespace int32 = 0x74726565

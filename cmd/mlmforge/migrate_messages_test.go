@@ -659,3 +659,40 @@ func TestMigrateError_ALockNotTakenSaysNothingWasWritten(t *testing.T) {
 	require.EqualError(t, err, "apply migrations: try lock failed\nThis run did not get golang-migrate's advisory lock and did not write the record.")
 	require.NotContains(t, err.Error(), "reset-dirty")
 }
+
+func TestMigrateError_RendersAnInterrupt(t *testing.T) {
+	err := migrateError("up", &platform.InterruptedError{During: "waiting for the migration lock"})
+
+	require.EqualError(t, err, "Stopped while waiting for the migration lock. Nothing was changed.")
+}
+
+func TestStoppedText(t *testing.T) {
+	none := platform.RecordRead{Record: platform.Record{Version: -1}}
+	one := platform.RecordRead{Record: platform.Record{Version: 1}}
+	cases := map[string]struct {
+		err  *platform.StoppedError
+		want string
+	}{
+		"up with migrations left": {&platform.StoppedError{Command: "up", Before: none, After: one},
+			"Stopped after migration 1. Run `mlmforge migrate up` again to apply the rest."},
+		"up before any file": {&platform.StoppedError{Command: "up", Before: none, After: none},
+			"Stopped before applying a migration. Nothing was changed."},
+		"down before its file": {&platform.StoppedError{Command: "down", Before: one, After: one},
+			"Stopped before rolling back. Nothing was changed."},
+		"the record cannot be read": {&platform.StoppedError{Command: "up", Before: none, After: platform.RecordRead{Err: errors.New("r")}},
+			"Stopped. The record could not be read after the stop: r."},
+		"the directory cannot be read": {&platform.StoppedError{Command: "up", Before: none, After: one,
+			Source: platform.SourceInfo{Path: "/m", Err: errors.New("d")}},
+			"Stopped. The record reads 1, clean. The migrations directory /m could not be read: d."},
+		"the record before the run cannot be read": {&platform.StoppedError{Command: "down", Before: platform.RecordRead{Err: errors.New("b")}, After: one},
+			"Stopped. The record could not be read before this run: b. The record now reads 1, clean."},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := migrateError(tc.err.Command, tc.err)
+
+			require.EqualError(t, err, tc.want)
+			require.Equal(t, 1, exitCode(err))
+		})
+	}
+}

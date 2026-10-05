@@ -206,22 +206,28 @@ func applyFailureText(e *platform.ApplyError) string {
 // migrateErrorText returns the operator text for the typed migrate error err holds.
 func migrateErrorText(command string, err error) (string, bool) {
 	var (
-		multi    *platform.MultiStatementError
-		dirty    *platform.DirtyError
-		apply    *platform.ApplyError
-		rollback *platform.RollbackError
-		notDirty *platform.NotDirtyError
-		negative *platform.NegativeVersionError
-		missing  *platform.VersionNotInSourceError
-		notWrote *platform.NotWrittenError
-		noNext   *platform.NoNextMigrationError
-		noDown   *platform.NoDownFileError
-		write    *platform.WriteError
-		unused   *platform.UnusedSettingError
-		invalid  *platform.InvalidSettingError
-		notTaken *platform.LockNotTakenError
+		multi       *platform.MultiStatementError
+		dirty       *platform.DirtyError
+		apply       *platform.ApplyError
+		rollback    *platform.RollbackError
+		notDirty    *platform.NotDirtyError
+		negative    *platform.NegativeVersionError
+		missing     *platform.VersionNotInSourceError
+		notWrote    *platform.NotWrittenError
+		noNext      *platform.NoNextMigrationError
+		noDown      *platform.NoDownFileError
+		write       *platform.WriteError
+		unused      *platform.UnusedSettingError
+		invalid     *platform.InvalidSettingError
+		notTaken    *platform.LockNotTakenError
+		interrupted *platform.InterruptedError
+		stopped     *platform.StoppedError
 	)
 	switch {
+	case errors.As(err, &interrupted):
+		return interruptedText(interrupted), true
+	case errors.As(err, &stopped):
+		return stoppedText(stopped), true
 	case errors.As(err, &multi):
 		return multiStatementText(multi), true
 	case errors.As(err, &unused):
@@ -369,4 +375,28 @@ func writeFailureText(e *platform.WriteError) string {
 		return e.Error() + "\n" + unreadAfter(e.After.Err)
 	}
 	return fmt.Sprintf("%s\nThe record now %s.", e.Error(), describeRecord(e.After.Record))
+}
+
+// interruptedText is the text for a command stopped before it could write anything.
+func interruptedText(e *platform.InterruptedError) string {
+	return fmt.Sprintf("Stopped while %s. Nothing was changed.", e.During)
+}
+
+// stoppedText is the text for an up or down stopped between migrations.
+func stoppedText(e *platform.StoppedError) string {
+	switch {
+	case e.After.Err != nil:
+		return fmt.Sprintf("Stopped. The record could not be read after the stop: %v.", e.After.Err)
+	case e.Source.Err != nil:
+		return fmt.Sprintf("Stopped. The record %s. The migrations directory %s could not be read: %v.",
+			describeRecord(e.After.Record), e.Source.Path, e.Source.Err)
+	case e.Before.Err != nil:
+		return fmt.Sprintf("Stopped. The record could not be read before this run: %v. The record now %s.",
+			e.Before.Err, describeRecord(e.After.Record))
+	case e.After.Record == e.Before.Record && e.Command == "down":
+		return "Stopped before rolling back. Nothing was changed."
+	case e.After.Record == e.Before.Record:
+		return "Stopped before applying a migration. Nothing was changed."
+	}
+	return fmt.Sprintf("Stopped after migration %d. Run %s again to apply the rest.", e.After.Record.Version, upCommand)
 }

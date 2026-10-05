@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -31,21 +32,18 @@ func newMigrateCmd() *cobra.Command {
 			"With --after-failed-down, it moves the record forward to the next migration. Run it only when a failed `mlmforge migrate down` printed the instruction to.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cmd.SilenceUsage = true
-			target, err := resolveDBURL(*dbURL)
-			if err != nil {
-				return err
-			}
 			command, reset, next := "reset-dirty", platform.ResetDirty, upCommand
 			if afterFailedDown {
 				command, reset, next = afterDownCommandName, platform.ResetAfterFailedDown, downCommand
 			}
-			res, err := reset(cmd.Context(), target.url, *migrationsPath, nil)
-			if err = withoutReleaseErrors(cmd.ErrOrStderr(), "the record was written", err); err != nil {
-				return migrateError(command, connectError(err, target))
-			}
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), resetText(res, next))
-			return nil
+			return runMigrateCommand(cmd, command, *dbURL, func(ctx context.Context, url string, wait platform.LockWait) error {
+				res, err := reset(ctx, url, *migrationsPath, wait)
+				if err = withoutReleaseErrors(cmd.ErrOrStderr(), "the record was written", err); err != nil {
+					return err
+				}
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), resetText(res, next))
+				return nil
+			})
 		},
 	}
 	resetDirtyCmd.Flags().BoolVar(&afterFailedDown, "after-failed-down", false,
@@ -57,13 +55,9 @@ func newMigrateCmd() *cobra.Command {
 			Short: "Apply all pending migrations",
 			Args:  cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, args []string) error {
-				cmd.SilenceUsage = true
-				target, err := resolveDBURL(*dbURL)
-				if err != nil {
-					return err
-				}
-				err = withoutReleaseErrors(cmd.ErrOrStderr(), "migrate up finished", platform.MigrateUp(cmd.Context(), target.url, *migrationsPath, nil))
-				return migrateError("up", connectError(err, target))
+				return runMigrateCommand(cmd, "up", *dbURL, func(ctx context.Context, url string, wait platform.LockWait) error {
+					return withoutReleaseErrors(cmd.ErrOrStderr(), "migrate up finished", platform.MigrateUp(ctx, url, *migrationsPath, wait))
+				})
 			},
 		},
 		&cobra.Command{
@@ -71,21 +65,18 @@ func newMigrateCmd() *cobra.Command {
 			Short: "Roll back the most recent migration",
 			Args:  cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, args []string) error {
-				cmd.SilenceUsage = true
-				target, err := resolveDBURL(*dbURL)
-				if err != nil {
-					return err
-				}
-				err = withoutReleaseErrors(cmd.ErrOrStderr(), "one migration was rolled back", platform.MigrateDown(cmd.Context(), target.url, *migrationsPath, nil))
-				if errors.Is(err, platform.ErrNoChange) {
-					_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No migrations to roll back.")
+				return runMigrateCommand(cmd, "down", *dbURL, func(ctx context.Context, url string, wait platform.LockWait) error {
+					err := withoutReleaseErrors(cmd.ErrOrStderr(), "one migration was rolled back", platform.MigrateDown(ctx, url, *migrationsPath, wait))
+					if errors.Is(err, platform.ErrNoChange) {
+						_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No migrations to roll back.")
+						return nil
+					}
+					if err != nil {
+						return err
+					}
+					_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Rolled back one migration.")
 					return nil
-				}
-				if err != nil {
-					return migrateError("down", connectError(err, target))
-				}
-				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Rolled back one migration.")
-				return nil
+				})
 			},
 		},
 		&cobra.Command{
@@ -93,21 +84,35 @@ func newMigrateCmd() *cobra.Command {
 			Short: "Show current migration version",
 			Args:  cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, args []string) error {
-				cmd.SilenceUsage = true
-				target, err := resolveDBURL(*dbURL)
-				if err != nil {
-					return err
-				}
-				st, err := platform.MigrateVersion(cmd.Context(), target.url, *migrationsPath, nil)
-				if err = withoutReleaseErrors(cmd.ErrOrStderr(), "the record was read", err); err != nil {
-					return migrateError("version", connectError(err, target))
-				}
-				_, _ = fmt.Fprintln(cmd.OutOrStdout(), versionText(st))
-				return nil
+				return runMigrateCommand(cmd, "version", *dbURL, func(ctx context.Context, url string, wait platform.LockWait) error {
+					st, err := platform.MigrateVersion(ctx, url, *migrationsPath, wait)
+					if err = withoutReleaseErrors(cmd.ErrOrStderr(), "the record was read", err); err != nil {
+						return err
+					}
+					_, _ = fmt.Fprintln(cmd.OutOrStdout(), versionText(st))
+					return nil
+				})
 			},
 		},
 		resetDirtyCmd,
 	)
 
 	return migrateCmd
+}
+
+// migrateRunner is one migrate leaf command's work against a resolved database URL.
+type migrateRunner func(ctx context.Context, dbURL string, wait platform.LockWait) error
+
+// runMigrateCommand resolves the database URL and runs one migrate command under its own signal context.
+func runMigrateCommand(cmd *cobra.Command, command, flagURL string, run migrateRunner) error {
+	cmd.SilenceUsage = true
+	target, err := resolveDBURL(flagURL)
+	if err != nil {
+		return err
+	}
+	// Established here rather than on the root command, which would disable the
+	// default SIGINT kill for every command in the binary.
+	ctx, stop := migrateSignalContext(cmd.Context(), cmd.ErrOrStderr())
+	defer stop()
+	return migrateError(command, connectError(run(ctx, target.url, lockWaitNotice(cmd.ErrOrStderr())), target))
 }

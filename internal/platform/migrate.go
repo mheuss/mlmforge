@@ -24,7 +24,7 @@ func (mg *migration) dirtyError(err error) (*DirtyError, bool) {
 }
 
 // LockWait is told which backend holds the migration lock when a command has to wait for it.
-// A PID of 0 means the holder was not found.
+// A PID of 0 means the holder's PID was not read.
 type LockWait func(holderPID int)
 
 // MigrateUp applies all pending database migrations from the given directory.

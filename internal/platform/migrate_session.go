@@ -161,7 +161,7 @@ func openFailure(err error) error {
 // migrateLockPollInterval is the pause between two attempts on a held migration lock.
 const migrateLockPollInterval = 100 * time.Millisecond
 
-// migrateUnlockTimeout bounds the unlock call.
+// migrateUnlockTimeout bounds the unlock query.
 const migrateUnlockTimeout = 5 * time.Second
 
 // lockMigrations polls for the mlmforge migration lock on conn until it is granted or ctx ends.

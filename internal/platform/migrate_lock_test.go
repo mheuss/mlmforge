@@ -28,7 +28,7 @@ func requireOnlyInterrupted(t *testing.T, err error, during string) {
 	require.Equal(t, &InterruptedError{During: during}, rest)
 }
 
-// requireBlockedUntilRelease fails unless done stays empty for 2s and then receives within 1s of release.
+// requireBlockedUntilRelease fails unless done stays empty for 2s and then receives within 500ms of release.
 func requireBlockedUntilRelease(t *testing.T, done <-chan error, release func(), whileHeld func()) error {
 	t.Helper()
 	select {

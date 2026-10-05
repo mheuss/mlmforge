@@ -67,12 +67,13 @@ func TestDriverURL_WhatLibPQReceives(t *testing.T) {
 	cases := map[string]struct {
 		rawURL, pgOptions, key, want string
 	}{
-		"the interval alone":                    {rawURL: base, key: "options", want: "-c client_connection_check_interval=1000"},
-		"an empty URL options keeps PGOPTIONS":  {rawURL: base + "&options=", pgOptions: "-c search_path=ops", key: "options", want: "-c client_connection_check_interval=1000 -c search_path=ops"},
-		"the URL's options replace PGOPTIONS":   {rawURL: base + "&options=-c%20work_mem%3D64MB", pgOptions: "-c search_path=ops", key: "options", want: "-c client_connection_check_interval=1000 -c work_mem=64MB"},
-		"the default application name":          {rawURL: base, key: "application_name", want: "mlmforge-migrate"},
-		"the operator's fallback name is kept":  {rawURL: base + "&fallback_application_name=ops", key: "application_name", want: "ops"},
-		"golang-migrate's settings are removed": {rawURL: base + "&x-multi-statement=true", key: "x-multi-statement", want: ""},
+		"the interval alone":                      {rawURL: base, key: "options", want: "-c client_connection_check_interval=1000"},
+		"an empty URL options keeps PGOPTIONS":    {rawURL: base + "&options=", pgOptions: "-c search_path=ops", key: "options", want: "-c client_connection_check_interval=1000 -c search_path=ops"},
+		"the URL's options replace PGOPTIONS":     {rawURL: base + "&options=-c%20work_mem%3D64MB", pgOptions: "-c search_path=ops", key: "options", want: "-c client_connection_check_interval=1000 -c work_mem=64MB"},
+		"the default application name":            {rawURL: base, key: "application_name", want: "mlmforge-migrate"},
+		"the operator's fallback name is kept":    {rawURL: base + "&fallback_application_name=ops", key: "application_name", want: "ops"},
+		"an empty fallback name gets the default": {rawURL: base + "&fallback_application_name=", key: "application_name", want: "mlmforge-migrate"},
+		"golang-migrate's settings are removed":   {rawURL: base + "&x-multi-statement=true", key: "x-multi-statement", want: ""},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -166,4 +167,12 @@ func TestMigrateUp_NamesItsConnection(t *testing.T) {
 			require.NoError(t, <-done)
 		})
 	}
+}
+
+func TestDialSession_HoldsAtMostOneConnection(t *testing.T) {
+	s, err := dialSession(context.Background(), newResetDatabase(t))
+	require.NoError(t, err)
+	defer func() { _ = s.close() }()
+
+	assert.Equal(t, 1, s.db.Stats().MaxOpenConnections)
 }

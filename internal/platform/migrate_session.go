@@ -66,7 +66,7 @@ const checkIntervalOption = "-c client_connection_check_interval=1000"
 func driverURL(purl *url.URL) string {
 	filtered := migrate.FilterCustomQuery(purl)
 	q := filtered.Query()
-	if !q.Has("fallback_application_name") {
+	if q.Get("fallback_application_name") == "" {
 		q.Set("fallback_application_name", migrateApplicationName)
 	}
 	q.Set("options", sessionOptions(q.Get("options"), os.Getenv("PGOPTIONS")))
@@ -74,7 +74,7 @@ func driverURL(purl *url.URL) string {
 	return filtered.String()
 }
 
-// sessionOptions puts the check interval ahead of the URL's options, or of PGOPTIONS when the URL's are empty.
+// sessionOptions puts the check interval ahead of fromURL, or of fromEnv when fromURL is empty.
 func sessionOptions(fromURL, fromEnv string) string {
 	theirs := fromURL
 	if theirs == "" {

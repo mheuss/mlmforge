@@ -9,7 +9,6 @@ import (
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database"
-	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/golang-migrate/migrate/v4/source"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 )
@@ -121,6 +120,8 @@ type migration struct {
 	source source.Driver
 	db     database.Driver
 	path   string
+	sess   session
+	unlock func() error
 }
 
 // releaseTagged marks the database driver's Unlock failures as ReleaseError.
@@ -156,37 +157,31 @@ func openMigration(ctx context.Context, dbURL, migrationsPath string, wait LockW
 	if err != nil {
 		return nil, fmt.Errorf("open migrations source %s: %w", absPath, err)
 	}
-	var db database.Driver
-	err = TimeConnect(ctx, dbURL, func() error {
-		if schemeErr := migrateSchemeError(dbURL); schemeErr != nil {
-			return schemeErr
-		}
-		if parseErr := migrateDriverParseError(dbURL); parseErr != nil {
-			return parseErr
-		}
-		var openErr error
-		db, openErr = database.Open(dbURL)
-		return migrateConnStringError(openErr)
-	})
+	sess, err := dialSession(ctx, dbURL)
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("open database: %w", err),
 			releaseErr("closing the migrations source failed", src.Close()))
+	}
+	db, err := openDriver(ctx, sess)
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("open database: %w", err),
+			releaseErr("closing the migrations source failed", src.Close()),
+			releaseErr("closing the database failed", sess.close()))
 	}
 	tagged := releaseTagged{Driver: db}
 	m, err := migrate.NewWithInstance("file", src, "postgres", tagged)
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("create migrator: %w", err),
 			releaseErr("closing the migrations source failed", src.Close()),
-			releaseErr("closing the database failed", db.Close()))
+			releaseErr("closing the database failed", sess.close()))
 	}
-	return &migration{m: m, source: src, db: tagged, path: absPath}, nil
+	return &migration{m: m, source: src, db: tagged, path: absPath, sess: sess, unlock: func() error { return nil }}, nil
 }
 
-// closeInto closes the migrator and both drivers, joining any failure into *errp as a ReleaseError.
+// closeInto releases the migration lock, closes the migrator and the session, and joins any failure into *errp as a ReleaseError.
 func (mg *migration) closeInto(errp *error) {
-	srcErr, dbErr := mg.m.Close()
-	if err := errors.Join(srcErr, dbErr); err != nil {
-		*errp = errors.Join(*errp, &ReleaseError{What: "closing the migration drivers failed", Err: err})
+	if err := releaseSession(mg.unlock, mg.m.Close, mg.sess.db.Close); err != nil {
+		*errp = errors.Join(*errp, err)
 	}
 }
 

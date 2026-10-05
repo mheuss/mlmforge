@@ -256,7 +256,7 @@ func migrateErrorText(command string, err error) (string, bool) {
 	case errors.As(err, &notWrote):
 		return notWrote.Error() + "\nThis run did not write the record.", true
 	case errors.As(err, &notTaken):
-		return err.Error() + "\nThis run did not take the migration lock and did not write the record.", true
+		return err.Error() + "\nThis run did not get golang-migrate's advisory lock and did not write the record.", true
 	case errors.As(err, &write):
 		return writeFailureText(write), true
 	}

@@ -550,6 +550,7 @@ func TestMigrateUp_AServerLockTimeoutPrintsNoRecovery(t *testing.T) {
 	out, err := runMigrate(t, withParam(t, dsn, "lock_timeout", "500"), "up")
 
 	require.Error(t, err)
+	require.True(t, strings.HasPrefix(err.Error(), "open database: "), "the lock must fail while the driver opens: %v", err)
 	require.Contains(t, err.Error(), "try lock failed")
 	require.NotContains(t, err.Error()+out.stderr.String(), "reset-dirty")
 	version, dirty := testutil.ReadRecord(t, dsn)

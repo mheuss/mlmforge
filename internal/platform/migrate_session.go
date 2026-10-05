@@ -51,7 +51,7 @@ func dialSession(ctx context.Context, dbURL string) (session, error) {
 		}
 		db := sql.OpenDB(connector)
 		db.SetMaxOpenConns(1)
-		conn, err := db.Conn(context.Background())
+		conn, err := db.Conn(ctx)
 		if err != nil {
 			_ = db.Close()
 			return migrateConnStringError(err)

@@ -1,5 +1,5 @@
 {
-    "description": "board_dissolve reports cycle_events, which protocol 13 added. No board is full here, so the drain cycles nothing and the field is an empty list. Cross-language lock for the field's name and presence. Setup restores one 2x1 board with an opening by hand, so the board id in the request is known.",
+    "description": "board_dissolve reports cycle_events. No board is full here, so the drain cycles nothing and the field is an empty list. Cross-language lock for the field's name and presence. Setup restores one 2x1 board with an opening by hand, so the board id in the request is known.",
     "setup": [
         {
             "id": "bdc-s1",

@@ -6496,7 +6496,7 @@ fn board_dissolve_refuses_a_full_board() {
     assert_eq!(
         take_snapshot_data(&mut worker, "BpFull"),
         before,
-        "a refused dissolve should change nothing"
+        "take_snapshot differs after a refused dissolve"
     );
 
     drop(worker.stdin.take());
@@ -6525,13 +6525,17 @@ fn board_dissolve_reports_the_drain_that_followed() {
             "cccccccc-0000-0000-0000-000000000005"
         ])
     );
-    let events = result["cycle_events"]
-        .as_array()
-        .expect("board_dissolve reports cycle_events");
+    let events = result["cycle_events"].as_array().unwrap_or_else(|| {
+        panic!(
+            "board_dissolve result has no cycle_events array: {}",
+            result
+        )
+    });
     assert_eq!(
         events.len(),
         1,
-        "one pending board should have cycled: {}",
+        "expected 1 cycle event, got {}: {}",
+        events.len(),
         result
     );
     assert_eq!(events[0]["board_id"], BP_FULL);

@@ -1,5 +1,5 @@
 {
-    "description": "board_dissolve refuses a board whose positions are all filled, with BOARD_FULL, and the message reports the filled and total counts it read. Cross-language lock for the code protocol 13 added. Setup restores a 2x1 board plan by hand, because no public operation is guaranteed to leave a board full. The payload spells out the BoardPlanEngine shape, so a new required field fails setup rather than reaching the request.",
+    "description": "board_dissolve refuses a board whose positions are all filled, with BOARD_FULL, and the message reports the filled and total counts it read. Cross-language lock for the code. Setup restores a 2x1 board plan by hand, so the board id in the request is known. The payload spells out the BoardPlanEngine shape, so a new required field fails setup rather than reaching the request.",
     "setup": [
         {
             "id": "bdf-s1",

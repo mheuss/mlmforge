@@ -189,7 +189,8 @@ impl Arena {
             }
         }
 
-        // Must run after the edge pass, which range-checks every target these index by.
+        // Must run after the edge pass, which range-checks every target the checks
+        // below index by.
         self.check_reciprocal("children", "parent", children_of, parent_of)?;
         self.check_single_root()?;
         self.check_reciprocal("sponsored", "sponsor", sponsored_of, sponsor_of)?;

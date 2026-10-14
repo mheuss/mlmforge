@@ -246,6 +246,26 @@ pub enum SnapshotConsistencyError {
     )]
     MemberNotOnBoard { user_id: Uuid, board_id: Uuid },
 
+    #[error("boards {first_board} and {second_board} both carry seq {seq}")]
+    BoardSeqRepeated {
+        seq: u64,
+        first_board: Uuid,
+        second_board: Uuid,
+    },
+
+    #[error("board {board_id} carries seq {seq}; the engine will assign seq {next_board_seq} next")]
+    BoardSeqNotBelowCounter {
+        board_id: Uuid,
+        seq: u64,
+        next_board_seq: u64,
+    },
+
+    #[error(
+        "the engine will assign board seq {next_board_seq} next; a restored counter above {limit} is refused",
+        limit = u64::MAX / 2
+    )]
+    BoardSeqCounterExhausted { next_board_seq: u64 },
+
     #[error("user_streams lists no streams for {user_id}")]
     UserStreamsEntryEmpty { user_id: Uuid },
 

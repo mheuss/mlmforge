@@ -1,6 +1,6 @@
 //! Board plan engine — manages all boards for one board plan structure.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -291,6 +291,42 @@ impl BoardPlanEngine {
         }
         if let Some((_, err)) = gap {
             return Err(err);
+        }
+        // Not u64::MAX: a counter that close overflows within a single split.
+        if self.next_board_seq > u64::MAX / 2 {
+            return Err(SnapshotConsistencyError::BoardSeqCounterExhausted {
+                next_board_seq: self.next_board_seq,
+            });
+        }
+        // Lowest board id wins: boards iterates in hash order.
+        let mut above: Option<(Uuid, SnapshotConsistencyError)> = None;
+        let mut holders: BTreeMap<u64, Vec<Uuid>> = BTreeMap::new();
+        for (board_id, board) in &self.boards {
+            if board.seq >= self.next_board_seq
+                && above.as_ref().is_none_or(|(held, _)| board_id < held)
+            {
+                above = Some((
+                    *board_id,
+                    SnapshotConsistencyError::BoardSeqNotBelowCounter {
+                        board_id: *board_id,
+                        seq: board.seq,
+                        next_board_seq: self.next_board_seq,
+                    },
+                ));
+            }
+            holders.entry(board.seq).or_default().push(*board_id);
+        }
+        if let Some((_, err)) = above {
+            return Err(err);
+        }
+        // The lowest repeated seq, named by its two lowest boards.
+        if let Some((seq, mut held)) = holders.into_iter().find(|(_, held)| held.len() > 1) {
+            held.sort_unstable();
+            return Err(SnapshotConsistencyError::BoardSeqRepeated {
+                seq,
+                first_board: held[0],
+                second_board: held[1],
+            });
         }
         Ok(())
     }
@@ -1505,6 +1541,173 @@ mod tests {
         engine.member_boards.insert(test_uuid(3), board_id);
 
         assert_eq!(engine.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_repeated_board_seq() {
+        let mut engine = BoardPlanEngine::new(2, 2, test_config_no_reentry(), 1000).unwrap();
+        let (_, last) = fill_2x2_board(&mut engine);
+        let first = last.cycle_events[0].new_boards[0];
+        let second = last.cycle_events[0].new_boards[1];
+        let seq = engine.boards[&first].seq;
+        engine.boards.get_mut(&second).unwrap().seq = seq;
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::BoardSeqRepeated {
+                seq,
+                first_board: first.min(second),
+                second_board: first.max(second),
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_board_seq_at_the_counter() {
+        let (mut engine, member) = seeded_engine();
+        let board_id = *engine.member_boards.get(&member).unwrap();
+        let counter = engine.next_board_seq;
+        engine.boards.get_mut(&board_id).unwrap().seq = counter;
+
+        let err = engine.validate_restored().unwrap_err();
+
+        assert_eq!(
+            err,
+            SnapshotConsistencyError::BoardSeqNotBelowCounter {
+                board_id,
+                seq: counter,
+                next_board_seq: counter,
+            }
+        );
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "board {board_id} carries seq {counter}; the engine will assign seq {counter} next"
+            )
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_board_seq_above_the_counter() {
+        let (mut engine, member) = seeded_engine();
+        let board_id = *engine.member_boards.get(&member).unwrap();
+        let counter = engine.next_board_seq;
+        engine.boards.get_mut(&board_id).unwrap().seq = counter + 5;
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::BoardSeqNotBelowCounter {
+                board_id,
+                seq: counter + 5,
+                next_board_seq: counter,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_board_seq_counter_above_half_the_range() {
+        let (mut engine, _) = seeded_engine();
+        engine.next_board_seq = u64::MAX / 2 + 1;
+
+        let err = engine.validate_restored().unwrap_err();
+
+        assert_eq!(
+            err,
+            SnapshotConsistencyError::BoardSeqCounterExhausted {
+                next_board_seq: u64::MAX / 2 + 1,
+            }
+        );
+        assert_eq!(
+            err.to_string(),
+            "the engine will assign board seq 9223372036854775808 next; \
+             a restored counter above 9223372036854775807 is refused"
+        );
+    }
+
+    #[test]
+    fn validate_restored_accepts_a_board_seq_counter_at_half_the_range() {
+        let (mut engine, _) = seeded_engine();
+        engine.next_board_seq = u64::MAX / 2;
+
+        assert_eq!(engine.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_board_above_the_counter_every_run() {
+        for _ in 0..64 {
+            let (mut engine, _) = seeded_engine();
+            let template = engine.boards.values().next().unwrap().clone();
+            let counter = engine.next_board_seq;
+            for (id, seq) in [(test_uuid(4), counter), (test_uuid(1), counter + 1)] {
+                let mut board = template.clone();
+                board.id = id;
+                board.positions = vec![None; 7];
+                board.seq = seq;
+                engine.boards.insert(id, board);
+            }
+
+            assert_eq!(
+                engine.validate_restored(),
+                Err(SnapshotConsistencyError::BoardSeqNotBelowCounter {
+                    board_id: test_uuid(1),
+                    seq: counter + 1,
+                    next_board_seq: counter,
+                }),
+                "the lowest board id should win regardless of hash order"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_repeated_seq_every_run() {
+        for _ in 0..64 {
+            let (mut engine, _) = seeded_engine();
+            let template = engine.boards.values().next().unwrap().clone();
+            engine.next_board_seq = 100;
+            for (id, seq) in [
+                (test_uuid(4), 7),
+                (test_uuid(5), 7),
+                (test_uuid(3), 6),
+                (test_uuid(2), 6),
+                (test_uuid(1), 6),
+            ] {
+                let mut board = template.clone();
+                board.id = id;
+                board.positions = vec![None; 7];
+                board.seq = seq;
+                engine.boards.insert(id, board);
+            }
+
+            assert_eq!(
+                engine.validate_restored(),
+                Err(SnapshotConsistencyError::BoardSeqRepeated {
+                    seq: 6,
+                    first_board: test_uuid(1),
+                    second_board: test_uuid(2),
+                }),
+                "the lowest repeated seq and its two lowest boards should win regardless of hash order"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_restored_reports_a_repeated_seq_by_the_boards_it_read() {
+        let mut engine = BoardPlanEngine::new(2, 2, test_config_no_reentry(), 1000).unwrap();
+        let (_, last) = fill_2x2_board(&mut engine);
+        let first = last.cycle_events[0].new_boards[0];
+        let second = last.cycle_events[0].new_boards[1];
+        engine.boards.get_mut(&second).unwrap().seq = 1;
+
+        let message = engine.validate_restored().unwrap_err().to_string();
+
+        assert_eq!(
+            message,
+            format!(
+                "boards {} and {} both carry seq 1",
+                first.min(second),
+                first.max(second)
+            )
+        );
     }
 
     /// Creates a standard BoardPlanConfig for testing.

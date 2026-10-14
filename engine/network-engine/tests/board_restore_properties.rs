@@ -32,11 +32,21 @@ fn occupied_boards(engine: &BoardPlanEngine) -> Vec<Uuid> {
     boards.into_iter().map(|(_, id)| id).collect()
 }
 
+/// The member every run starts with, which removal never picks.
+fn anchor() -> Uuid {
+    uuid_from_index(0)
+}
+
 fn board_step(engine: &mut BoardPlanEngine, next: &mut usize, op: Op) {
     let (kind, a, b) = op;
     *next += 1;
     let timestamp = *next as i64;
     let present = members(engine);
+    let removable: Vec<Uuid> = present
+        .iter()
+        .copied()
+        .filter(|member| *member != anchor())
+        .collect();
     match kind {
         0 | 1 => {
             let id = uuid_from_index(*next);
@@ -47,11 +57,15 @@ fn board_step(engine: &mut BoardPlanEngine, next: &mut usize, op: Op) {
             };
             let _ = engine.add_member(id, sponsor, timestamp);
         }
-        2 if !present.is_empty() => {
-            let _ = engine.remove_member(present[a % present.len()], timestamp);
+        2 => {
+            if !removable.is_empty() {
+                let _ = engine.remove_member(removable[a % removable.len()], timestamp);
+            }
         }
-        3 if !present.is_empty() => {
-            let _ = engine.compress_inactive(vec![present[a % present.len()]], timestamp);
+        3 => {
+            if !removable.is_empty() {
+                let _ = engine.compress_inactive(vec![removable[a % removable.len()]], timestamp);
+            }
         }
         _ => {
             let boards = occupied_boards(engine);
@@ -86,6 +100,7 @@ proptest! {
             inactive_compression: false,
         };
         let mut engine = BoardPlanEngine::new(width, height, config, 0).unwrap();
+        engine.add_member(anchor(), anchor(), 0).unwrap();
         let mut next = 0;
         for op in ops {
             board_step(&mut engine, &mut next, op);

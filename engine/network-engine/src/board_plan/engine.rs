@@ -98,7 +98,7 @@ impl BoardPlanEngine {
     /// holds users who are on no board by design. Checking it against `boards`
     /// would reject engines this crate itself produces.
     pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
-        // Six walks, each depending on the ones before it having returned.
+        // The walks run in order, each depending on the ones before it having returned.
         // Two of those dependencies are load-bearing rather than cosmetic: the
         // key check must precede anything that treats a key as an identity,
         // and the duplicate check must precede the reverse membership walk,

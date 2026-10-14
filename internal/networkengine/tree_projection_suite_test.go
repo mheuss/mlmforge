@@ -498,6 +498,20 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		assert.Equal(t, []string{root, child}, nodeUserIDs(rows))
 	})
 
+	t.Run("ProjectedRows leaves out a removed row", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+		require.NoError(t, s.ProjectRemoval(ctx, tree, child, testNodeUUID(9), 3, nil))
+
+		version, _, rows, err := s.ProjectedRows(ctx, tree)
+
+		require.NoError(t, err)
+		assert.Equal(t, int64(3), version)
+		assert.Equal(t, []string{root}, nodeUserIDs(rows))
+	})
+
 	t.Run("ProjectedRows on a tree with no projection row reports none", func(t *testing.T) {
 		s := newStore(t)
 

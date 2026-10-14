@@ -526,9 +526,13 @@ func TestPostgresTreeStore_ProjectedRowsIgnoresAProjectionBetweenItsReads(t *tes
 			makeUUIDNode(testNodeUUID(2), tree, child, 1, ptr(root), ptr(root), nil), 2))
 	}
 
-	version, _, rows, err := store.ProjectedRows(ctx, tree)
+	version, found, rows, err := store.ProjectedRows(ctx, tree)
 
 	require.NoError(t, err)
+	assert.True(t, found)
 	assert.Equal(t, int64(1), version)
 	assert.Equal(t, []string{root}, nodeUserIDs(rows))
+	after, _, err := store.ProjectedVersion(ctx, tree)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), after, "the projection between the reads never committed")
 }

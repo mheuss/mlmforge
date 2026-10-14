@@ -19,6 +19,15 @@ pub struct HoldingTankEntry {
     pub enrolled_at: i64,
 }
 
+/// A surviving node a removal moved, and where it now sits.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Relocation {
+    pub user_id: Uuid,
+    pub parent_id: Uuid,
+    pub position: u8,
+    pub depth: u32,
+}
+
 /// Result of a remove_node operation, describing what changed.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RemovalResult {
@@ -26,6 +35,7 @@ pub struct RemovalResult {
     pub promoted: Option<Uuid>,
     pub repositioned: Vec<Uuid>,
     pub moved_to_tank: Vec<Uuid>,
+    pub relocated: Vec<Relocation>,
     pub responsored: Vec<Responsored>,
 }
 
@@ -435,6 +445,7 @@ impl MatrixTree {
                 promoted: None,
                 repositioned: Vec::new(),
                 moved_to_tank: Vec::new(),
+                relocated: Vec::new(),
                 responsored,
             });
         }
@@ -451,6 +462,12 @@ impl MatrixTree {
             .iter()
             .copied()
             .filter(|&c| c != promoted_idx)
+            .collect();
+
+        let before: HashMap<NodeIndex, (Uuid, u8, u32)> = self
+            .descendants(idx)
+            .into_iter()
+            .map(|n| (n, self.placement_of(n)))
             .collect();
 
         // Step 1: Detach promoted child from removed node's slots.
@@ -530,12 +547,14 @@ impl MatrixTree {
 
         // Step 5: Recalculate depths for promoted node and all its descendants.
         self.recalculate_depths(promoted_idx);
+        let relocated = self.relocations_from(promoted_idx, &before);
 
         Ok(RemovalResult {
             removed: user_id,
             promoted: Some(promoted_user_id),
             repositioned: repositioned_ids,
             moved_to_tank: Vec::new(),
+            relocated,
             responsored,
         })
     }
@@ -637,6 +656,7 @@ impl MatrixTree {
             promoted: None,
             repositioned: Vec::new(),
             moved_to_tank,
+            relocated: Vec::new(),
             responsored,
         })
     }
@@ -790,6 +810,50 @@ impl MatrixTree {
                 queue.push_back(child_idx);
             }
         }
+    }
+
+    /// The parent, slot and depth of a node that is not the root.
+    fn placement_of(&self, idx: NodeIndex) -> (Uuid, u8, u32) {
+        let parent_idx = self
+            .arena
+            .node(idx)
+            .parent
+            .expect("placement_of called on the root");
+        let position = self.find_slot_position(parent_idx, idx) as u8;
+        (
+            self.arena.node(parent_idx).user_id,
+            position,
+            self.arena.node(idx).depth,
+        )
+    }
+
+    /// Each node under `start`, `start` included, whose placement differs from
+    /// `before`, in breadth-first slot order.
+    fn relocations_from(
+        &self,
+        start: NodeIndex,
+        before: &HashMap<NodeIndex, (Uuid, u8, u32)>,
+    ) -> Vec<Relocation> {
+        let mut moved = Vec::new();
+        let mut queue = VecDeque::from([start]);
+        while let Some(current) = queue.pop_front() {
+            let now = self.placement_of(current);
+            if before.get(&current) != Some(&now) {
+                let (parent_id, position, depth) = now;
+                moved.push(Relocation {
+                    user_id: self.arena.node(current).user_id,
+                    parent_id,
+                    position,
+                    depth,
+                });
+            }
+            let slots = self
+                .slots
+                .get(&current)
+                .expect("slots entry missing for node -- arena and slots map out of sync");
+            queue.extend(slots.iter().flatten().copied());
+        }
+        moved
     }
 
     /// The nodes a removal of `idx` in `mode` takes out of the tree.
@@ -2963,5 +3027,149 @@ mod tests {
             assert_eq!(tree.check_remove_node(test_uuid(2), mode), Ok(()));
         }
         assert_eq!(serialized(&tree), before);
+    }
+
+    /// root(1) -> X(2); X -> A(3), B(4); A -> C(5), D(6). A's slots are full.
+    fn spillover_promotion_tree() -> MatrixTree {
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
+            .unwrap();
+        tree.add_node_at(test_uuid(3), test_uuid(2), test_uuid(2), 0, 3000)
+            .unwrap();
+        tree.add_node_at(test_uuid(4), test_uuid(2), test_uuid(2), 1, 4000)
+            .unwrap();
+        tree.add_node_at(test_uuid(5), test_uuid(3), test_uuid(3), 0, 5000)
+            .unwrap();
+        tree.add_node_at(test_uuid(6), test_uuid(3), test_uuid(3), 1, 6000)
+            .unwrap();
+        tree
+    }
+
+    fn relocation(user: u8, parent: u8, position: u8, depth: u32) -> Relocation {
+        Relocation {
+            user_id: test_uuid(user),
+            parent_id: test_uuid(parent),
+            position,
+            depth,
+        }
+    }
+
+    /// Each live node's parent, slot and depth, keyed by user.
+    fn placements(tree: &MatrixTree) -> HashMap<Uuid, (Option<Uuid>, usize, u32)> {
+        let root = tree.arena.node(tree.arena.root.unwrap()).user_id;
+        std::iter::once(root)
+            .chain(
+                tree.get_downline(root, 0)
+                    .unwrap()
+                    .iter()
+                    .map(|n| n.user_id),
+            )
+            .map(|u| {
+                let p = tree.get_position(u).unwrap();
+                (u, (p.parent_user_id, p.position, p.depth))
+            })
+            .collect()
+    }
+
+    /// The survivors whose placement differs between two whole-tree walks,
+    /// sorted by user.
+    fn walk_diff(
+        before: &HashMap<Uuid, (Option<Uuid>, usize, u32)>,
+        after: &HashMap<Uuid, (Option<Uuid>, usize, u32)>,
+    ) -> Vec<Relocation> {
+        let mut moved: Vec<Relocation> = after
+            .iter()
+            .filter(|(user, now)| before.get(*user) != Some(*now))
+            .map(|(user, (parent, position, depth))| Relocation {
+                user_id: *user,
+                parent_id: parent.expect("only the root has no parent"),
+                position: *position as u8,
+                depth: *depth,
+            })
+            .collect();
+        moved.sort_by_key(|r| r.user_id);
+        moved
+    }
+
+    #[test]
+    fn promote_earliest_reports_every_moved_survivor_in_breadth_first_order() {
+        let mut tree = spillover_promotion_tree();
+
+        let result = tree
+            .remove_node(test_uuid(2), PruningMode::PromoteEarliest)
+            .unwrap();
+
+        // A takes X's slot. B spills under C. C and D move up a level.
+        assert_eq!(
+            result.relocated,
+            vec![
+                relocation(3, 1, 0, 1),
+                relocation(5, 3, 0, 2),
+                relocation(6, 3, 1, 2),
+                relocation(4, 5, 0, 3),
+            ]
+        );
+    }
+
+    #[test]
+    fn promote_earliest_relocations_match_a_whole_tree_walk() {
+        let mut tree = spillover_promotion_tree();
+        let before = placements(&tree);
+
+        let result = tree
+            .remove_node(test_uuid(2), PruningMode::PromoteEarliest)
+            .unwrap();
+
+        let mut reported = result.relocated.clone();
+        reported.sort_by_key(|r| r.user_id);
+        assert_eq!(reported, walk_diff(&before, &placements(&tree)));
+    }
+
+    #[test]
+    fn promote_earliest_leaves_out_a_survivor_whose_placement_did_not_change() {
+        // root(1) -> R(2); R -> P(3), S(4); S -> T(5). S lands under P at the
+        // depth it had, so T keeps its parent, slot and depth.
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
+            .unwrap();
+        tree.add_node_at(test_uuid(3), test_uuid(2), test_uuid(2), 0, 3000)
+            .unwrap();
+        tree.add_node_at(test_uuid(4), test_uuid(2), test_uuid(2), 1, 4000)
+            .unwrap();
+        tree.add_node_at(test_uuid(5), test_uuid(4), test_uuid(4), 0, 5000)
+            .unwrap();
+
+        let result = tree
+            .remove_node(test_uuid(2), PruningMode::PromoteEarliest)
+            .unwrap();
+
+        assert_eq!(
+            result.relocated,
+            vec![relocation(3, 1, 0, 1), relocation(4, 3, 0, 2)]
+        );
+    }
+
+    #[test]
+    fn a_promote_earliest_leaf_removal_reports_no_relocations() {
+        let (mut tree, _) = matrix_pair();
+
+        let result = tree
+            .remove_node(test_uuid(2), PruningMode::PromoteEarliest)
+            .unwrap();
+
+        assert!(result.relocated.is_empty());
+    }
+
+    #[test]
+    fn a_holding_tank_removal_reports_no_relocations() {
+        let mut tree = spillover_promotion_tree();
+
+        let result = tree
+            .remove_node(test_uuid(2), PruningMode::HoldingTank)
+            .unwrap();
+
+        assert!(result.relocated.is_empty());
     }
 }

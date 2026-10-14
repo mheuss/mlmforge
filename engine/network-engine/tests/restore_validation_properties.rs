@@ -133,15 +133,23 @@ fn matrix_step(tree: &mut MatrixTree, live: &mut Vec<Uuid>, next: &mut usize, op
 fn streamline_step(engine: &mut StreamlineEngine, live: &mut Vec<Uuid>, next: &mut usize, op: Op) {
     let (kind, a, b, c) = op;
     let timestamp = 1000 + *next as i64;
-    if live.is_empty() || kind <= 3 {
+    if live.is_empty() || kind <= 5 {
         let id = fresh_id(next);
+        let owners: Vec<Uuid> = engine
+            .list_streams()
+            .iter()
+            .map(|stream| stream.owner_id)
+            .filter(|owner| live.contains(owner))
+            .collect();
         let sponsor = if live.is_empty() {
             uuid_from_index(0)
+        } else if b % 2 == 0 && !owners.is_empty() {
+            owners[b / 2 % owners.len()]
         } else {
             live[b % live.len()]
         };
         let stream_override = if c % 3 == 0 {
-            Some((c / 3) as u32 % 4 + 1)
+            Some((c / 3) as u32 + 1)
         } else {
             None
         };
@@ -155,10 +163,10 @@ fn streamline_step(engine: &mut StreamlineEngine, live: &mut Vec<Uuid>, next: &m
     }
     let target = live[a % live.len()];
     match kind {
-        4 | 5 => {
+        6 => {
             let _ = engine.remove_member(target, timestamp);
         }
-        6 => {
+        _ if c % 2 == 0 => {
             let _ = engine.expand_streams(target, (c % 4) as u32 + 1, timestamp);
         }
         _ => {

@@ -601,18 +601,18 @@ func (w *TreeWriter) build(ctx context.Context, tree string, shape treeShape, pr
 	if !ok {
 		return w.buildFromStream(ctx, tree, shape, projected, rows)
 	}
-	restored, err := w.buildFromSnapshot(ctx, tree, shape, projected, rows, snap)
-	if err == nil {
+	restored, buildErr := w.buildFromSnapshot(ctx, tree, shape, projected, rows, snap)
+	if buildErr == nil {
 		return nil
 	}
-	if !snapshotFallsBack(err) {
-		return fmt.Errorf("load tree %s; nothing was appended: %w", tree, err)
+	if !snapshotFallsBack(buildErr) {
+		return fmt.Errorf("load tree %s; nothing was appended: %w", tree, buildErr)
 	}
-	if err := w.dropBuilt(ctx, tree, projected, restored); err != nil {
+	if err := w.dropBuilt(ctx, tree, projected, restored, buildErr); err != nil {
 		return fmt.Errorf("load tree %s; nothing was appended: %w", tree, err)
 	}
 	w.discardSnapshot(ctx, tree, snap.Version, prep, fmt.Sprintf(
-		"the snapshot of tree %s at version %d could not be used (%s); dropped the structure", tree, snap.Version, err))
+		"the snapshot of tree %s at version %d could not be used (%s); dropped the structure", tree, snap.Version, buildErr))
 	return w.buildFromStream(ctx, tree, shape, projected, rows)
 }
 
@@ -651,6 +651,9 @@ func (w *TreeWriter) unusableReason(ctx context.Context, tree string, shape tree
 	if snap.TreeType != shape.treeType {
 		return fmt.Sprintf("records tree type %s, and version 1 of stream %s records %s",
 			snap.TreeType, stream, shape.treeType), nil
+	}
+	if !json.Valid(snap.Data) {
+		return fmt.Sprintf("at version %d holds %d bytes that are not valid JSON", snap.Version, len(snap.Data)), nil
 	}
 	if snap.Version == projected {
 		return "", nil
@@ -709,23 +712,30 @@ func snapshotFallsBack(err error) bool {
 	if !errors.As(err, &engineErr) {
 		return false
 	}
-	// The structure was in the worker before this load, so the load does not
-	// own it and must not drop it.
+	// Dropping here would remove a structure this load did not create.
 	if replay != nil && replay.Stage == TreeReplayStageRestore && engineErr.Code == engineCodeTreeExists {
 		return false
 	}
 	return true
 }
 
-// dropBuilt drops the structure a failed snapshot build left.
-func (w *TreeWriter) dropBuilt(ctx context.Context, tree string, projected int64, restored bool) error {
+// dropBuilt drops the structure a failed snapshot build left. cause is that
+// failure, kept on any error the drop returns.
+func (w *TreeWriter) dropBuilt(ctx context.Context, tree string, projected int64, restored bool, cause error) error {
+	var reached int64
+	var replay *TreeReplayError
+	if errors.As(cause, &replay) {
+		reached = replay.ReachedVersion
+	}
 	dropped, err := w.engine.DropStructure(ctx, tree)
 	if err != nil {
-		return &TreeReplayError{TreeID: tree, Stage: TreeReplayStageDrop, ProjectedVersion: projected, Err: err}
+		return &TreeReplayError{TreeID: tree, Stage: TreeReplayStageDrop, ReachedVersion: reached,
+			ProjectedVersion: projected, Err: errors.Join(err, cause)}
 	}
 	if restored && !dropped {
-		return &TreeReplayError{TreeID: tree, Stage: TreeReplayStageDrop, ProjectedVersion: projected,
-			Observed: "the restore succeeded, and drop_structure reported no structure named " + tree}
+		return &TreeReplayError{TreeID: tree, Stage: TreeReplayStageDrop, ReachedVersion: reached,
+			ProjectedVersion: projected, Observed: "the restore succeeded, and drop_structure reported no structure named " + tree,
+			Err: cause}
 	}
 	return nil
 }

@@ -75,6 +75,11 @@ func TestTreeWriterSnapshot_AStrayWritersSnapshotMatchesTheStreamAtItsVersion(t 
 	_, err = replayStream(ctx, it.events, replayed, tree, treeShape{treeType: treeTypeUnilevel}, 1, snap.Version)
 	require.NoError(t, err)
 
+	wantDown, err := replayed.GetDownline(ctx, tree, root, 0)
+	require.NoError(t, err)
+	gotDown, err := restored.GetDownline(ctx, tree, root, 0)
+	require.NoError(t, err)
+	require.Len(t, gotDown, len(wantDown), "the restored engine holds a different number of nodes")
 	for i := 1; i <= snapshotInterval; i++ {
 		user := testUserUUID(i)
 		want, err := replayed.GetPosition(ctx, tree, user)

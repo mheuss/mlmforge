@@ -206,6 +206,7 @@ func TestTreeWriterSnapshotLoad_RecoversFromAnEngineRefusalMidReplay(t *testing.
 		res.Warnings[0])
 	assert.True(t, strings.HasSuffix(res.Warnings[0], "); dropped the structure; deleted it and replayed the stream"),
 		res.Warnings[0])
+	assert.Contains(t, res.Warnings[0], "SPONSOR_NOT_FOUND")
 	assert.Equal(t, 3, res.Nodes)
 	assert.False(t, snapshotStored(t, env))
 }
@@ -246,7 +247,8 @@ func TestTreeWriterSnapshotLoad_RecoversFromASnapshotThatDisagreesWithTheStore(t
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, countCalls(engine, "drop_structure"))
-	assert.Len(t, res.Warnings, 1)
+	require.Len(t, res.Warnings, 1)
+	assert.Contains(t, res.Warnings[0], "first user IDs only in the engine: ["+writerOther+"]")
 	assert.Equal(t, 2, res.Nodes)
 }
 
@@ -334,10 +336,13 @@ func TestTreeWriterSnapshotLoad_CountsARefusedMembershipQueryAsAMismatch(t *test
 	w, engine := env.writer()
 	engine.downlineErrOnce = fakeEngineError(engineCodeUserNotFound, "refused by the test")
 
-	_, err := w.Load(context.Background(), loadRequest())
+	res, err := w.Load(context.Background(), loadRequest())
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, countCalls(engine, "drop_structure"))
+	require.Len(t, res.Warnings, 1)
+	assert.Contains(t, res.Warnings[0], "refused by the test")
+	assert.False(t, snapshotStored(t, env))
 }
 
 func TestTreeWriterSnapshotLoad_FailsWithoutADropWhenTheMembershipQueryLosesItsTransport(t *testing.T) {
@@ -425,10 +430,12 @@ func TestTreeWriterSnapshotLoad_CountsZeroRowsAsAMismatchOnTheSnapshotPath(t *te
 	require.NoError(t, env.store.DeleteNode(context.Background(), writerTree, writerRoot))
 	w, engine := env.writer()
 
-	_, err := w.Load(context.Background(), loadRequest())
+	res, err := w.Load(context.Background(), loadRequest())
 
 	assert.Equal(t, 1, countCalls(engine, "drop_structure"))
 	requireReplayStage(t, err, TreeReplayStageMembership)
+	require.Len(t, res.Warnings, 1)
+	assert.Contains(t, res.Warnings[0], "the store holds no active rows")
 	assert.False(t, snapshotStored(t, env))
 }
 
@@ -560,4 +567,34 @@ func TestTreeWriterSnapshotLoad_RecordsTheSnapshotVersionForTheWrite(t *testing.
 			assert.Equal(t, tc.want, prep.snapshotVersion)
 		})
 	}
+}
+
+func TestTreeWriterSnapshotLoad_DeletesASnapshotThatIsNotJSON(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	require.NoError(t, env.snapshots.Put(context.Background(),
+		Snapshot{TreeID: writerTree, Version: 1, TreeType: treeTypeUnilevel, Data: []byte("not json")}))
+	w, engine := env.writer()
+
+	res, err := w.Load(context.Background(), loadRequest())
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"the snapshot of tree " + writerTree +
+		" at version 1 holds 8 bytes that are not valid JSON; deleted it and replayed the stream"}, res.Warnings)
+	assert.NotContains(t, engine.calls, "restore_snapshot")
+	assert.False(t, snapshotStored(t, env))
+}
+
+func TestTreeWriterSnapshotLoad_AFailedDropKeepsWhyItDropped(t *testing.T) {
+	_, w, engine := midReplayLoad(t)
+	engine.dropReportsAbsent = true
+
+	_, err := w.Load(context.Background(), loadRequest())
+
+	replay := replayAtStage(t, err, TreeReplayStageDrop)
+	assert.Equal(t, int64(2), replay.ReachedVersion)
+	assert.ErrorContains(t, err, "SPONSOR_NOT_FOUND")
+	var engineErr *EngineError
+	require.ErrorAs(t, err, &engineErr)
+	assert.Equal(t, "SPONSOR_NOT_FOUND", engineErr.Code)
 }

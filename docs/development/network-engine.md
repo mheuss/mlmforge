@@ -1339,9 +1339,10 @@ The literals live in `network-engine-worker/src/protocol.rs`,
 `engine/testdata/contracts/ping.json`, `internal/networkengine/engine_client.go`,
 and more than once in `internal/networkengine/transport_test.go`.
 
-The version history lives in the Version allocation table of the hub contract
-`contracts/ndjson-engine-protocol.md`. The `Moved to N by ...` block above the
-Go constant is not extended. The prose to check is the ticket list in
+The version history lives in the Version allocation table of
+`contracts/ndjson-engine-protocol.md` in the hub repository, not this one. The
+`Moved to N by ...` block above the Go constant is not extended. The prose to
+check is the ticket list in
 `content/design-rationale/017-commission-calculation-architecture.md`, when the
 change is one that note tracks.
 

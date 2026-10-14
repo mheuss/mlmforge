@@ -80,7 +80,7 @@ pub struct CompressedMember {
     /// The member who was compressed.
     pub user_id: Uuid,
 
-    /// The board they were removed from.
+    /// The board the member held when the call started.
     pub board_id: Uuid,
 }
 

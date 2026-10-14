@@ -841,31 +841,38 @@ impl BoardPlanEngine {
     /// Removes inactive members from their boards and compacts the
     /// remaining members.
     ///
-    /// For each member in `inactive_members`: if they occupy a board
-    /// position, `remove_member` is called (which handles compaction
-    /// and may trigger cycling). Members not on any board are silently
-    /// skipped.
+    /// Cycles every full board first. Members not on a board when the call
+    /// starts are skipped.
     pub fn compress_inactive(
         &mut self,
         inactive_members: Vec<Uuid>,
         timestamp: i64,
     ) -> Result<super::types::CompressionResult, BoardPlanError> {
-        let mut compressed = Vec::new();
+        let seated: Vec<(Uuid, Uuid)> = inactive_members
+            .into_iter()
+            .filter_map(|member_id| {
+                self.member_boards
+                    .get(&member_id)
+                    .map(|&board_id| (member_id, board_id))
+            })
+            .collect();
+
         let mut cycle_events = Vec::new();
+        self.drain_full_boards(timestamp, &mut cycle_events);
 
-        for member_id in inactive_members {
-            // Skip members not on any board.
-            let board_id = match self.member_boards.get(&member_id) {
-                Some(&bid) => bid,
-                None => continue,
-            };
-
-            let result = self.remove_member(member_id, timestamp)?;
+        let mut compressed = Vec::new();
+        for (member_id, board_id) in seated {
+            // A repeated id is already out after its first appearance.
+            if !self.member_boards.contains_key(&member_id)
+                && !self.displaced_members.contains(&member_id)
+            {
+                continue;
+            }
+            self.take_member_out(member_id, timestamp, &mut cycle_events)?;
             compressed.push(super::types::CompressedMember {
                 user_id: member_id,
                 board_id,
             });
-            cycle_events.extend(result.cycle_events);
         }
 
         Ok(super::types::CompressionResult {
@@ -3052,6 +3059,103 @@ mod tests {
 
         // The existing member is unaffected.
         assert!(engine.get_member_board(test_uuid(10)).is_some());
+    }
+
+    #[test]
+    fn compress_inactive_cycles_a_pending_board_first() {
+        let (mut engine, pending) = engine_with_a_pending_full_board();
+        let held = engine.get_member_board(test_uuid(5)).unwrap();
+
+        let result = engine.compress_inactive(vec![test_uuid(5)], 6).unwrap();
+
+        assert_eq!(
+            result.cycle_events.first().map(|e| e.board_id),
+            Some(pending)
+        );
+        assert_eq!(result.compressed.len(), 1);
+        assert_eq!(result.compressed[0].user_id, test_uuid(5));
+        assert_eq!(result.compressed[0].board_id, held);
+    }
+
+    #[test]
+    fn compress_with_only_unknown_members_still_cycles_a_pending_board() {
+        let (mut engine, pending) = engine_with_a_pending_full_board();
+
+        let result = engine.compress_inactive(vec![test_uuid(99)], 6).unwrap();
+
+        assert!(result.compressed.is_empty());
+        assert_eq!(
+            result.cycle_events.first().map(|e| e.board_id),
+            Some(pending)
+        );
+    }
+
+    #[test]
+    fn compress_names_the_starting_board_of_a_member_the_drain_displaced() {
+        let (mut engine, full, _) = engine_with_two_boards(test_config_no_reentry());
+
+        let result = engine.compress_inactive(vec![test_uuid(1)], 10).unwrap();
+
+        assert_eq!(result.compressed.len(), 1);
+        assert_eq!(result.compressed[0].user_id, test_uuid(1));
+        assert_eq!(result.compressed[0].board_id, full);
+        assert_eq!(engine.get_member_board(test_uuid(1)), None);
+        assert!(!engine.displaced_members().contains(&test_uuid(1)));
+    }
+
+    #[test]
+    fn compress_drains_once_for_all_its_members() {
+        let config = BoardPlanConfig {
+            max_cascade_depth: NonZeroU32::new(1).unwrap(),
+            ..test_config_sponsor_board()
+        };
+        let (mut engine, ids) = engine_from_rows(
+            config,
+            &[
+                [Some(1), Some(2), Some(3)],
+                [Some(4), Some(5), None],
+                [Some(6), Some(7), None],
+                [Some(8), None, None],
+            ],
+            &[
+                (1, 4),
+                (2, 1),
+                (3, 1),
+                (4, 6),
+                (5, 4),
+                (6, 6),
+                (7, 6),
+                (8, 8),
+            ],
+        );
+
+        let result = engine
+            .compress_inactive(vec![test_uuid(5), test_uuid(8)], 10)
+            .unwrap();
+
+        let cycled: Vec<Uuid> = result.cycle_events.iter().map(|e| e.board_id).collect();
+        assert_eq!(cycled, vec![ids[0], ids[1]]);
+        assert!(
+            engine.get_board(ids[2]).unwrap().is_full(),
+            "a board this call filled should wait for the next operation"
+        );
+    }
+
+    #[test]
+    fn compress_inactive_takes_a_repeated_member_out_once() {
+        let mut engine = BoardPlanEngine::new(2, 2, test_config(), 1000).unwrap();
+        engine
+            .add_member(test_uuid(10), test_uuid(1), 2000)
+            .unwrap();
+        engine
+            .add_member(test_uuid(11), test_uuid(10), 2001)
+            .unwrap();
+
+        let result = engine
+            .compress_inactive(vec![test_uuid(11), test_uuid(11)], 3000)
+            .unwrap();
+
+        assert_eq!(result.compressed.len(), 1);
     }
 
     // --- commission run integration test ---

@@ -589,7 +589,6 @@ impl BoardPlanEngine {
 
         let compacted = self.compact_board(board_id);
 
-        // Check if compaction filled the board.
         let board = self
             .boards
             .get(&board_id)

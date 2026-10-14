@@ -502,7 +502,7 @@ type storeReadError struct {
 func (e *storeReadError) Error() string { return e.what + ": " + e.err.Error() }
 func (e *storeReadError) Unwrap() error { return e.err }
 
-// prepared is what a load leaves for the write, load or reject that ran it.
+// prepared is the result of building a tree for one operation.
 type prepared struct {
 	loaded   int64
 	found    bool
@@ -552,14 +552,22 @@ func (w *TreeWriter) checkStream(ctx context.Context, tree string, last *platfor
 	}
 	if last != nil && last.Type == EventTypeEventRejected && last.Version == loaded {
 		if err := w.checkRejectionTarget(ctx, TreeStreamName(tree), *last); err != nil {
-			return fmt.Errorf("%w; nothing was appended", err)
+			return withBuildErr(fmt.Errorf("%w; nothing was appended", err), buildErr)
 		}
 	}
 	var lastVersion int64
 	if last != nil {
 		lastVersion = last.Version
 	}
-	return checkLoadedVersion(tree, loaded, found, lastVersion)
+	return withBuildErr(checkLoadedVersion(tree, loaded, found, lastVersion), buildErr)
+}
+
+// withBuildErr adds a failed build to a stream refusal.
+func withBuildErr(streamErr, buildErr error) error {
+	if streamErr == nil || buildErr == nil {
+		return streamErr
+	}
+	return &RefusedAfterFailedBuildError{Refusal: streamErr, Build: buildErr}
 }
 
 // build checks the store's rows, then builds the tree in the engine from the
@@ -611,6 +619,12 @@ func (w *TreeWriter) checkReplayed(ctx context.Context, tree string, projected i
 	if res.root == "" {
 		return &TreeReplayError{TreeID: tree, Stage: TreeReplayStageMembership, ReachedVersion: res.reached,
 			ProjectedVersion: projected, Mismatch: fmt.Sprintf("the replay left no root; the store holds %d active rows", len(rows))}
+	}
+	for _, row := range rows {
+		if row.Depth == 0 && !sameUUID(row.UserID, res.root) {
+			return &TreeReplayError{TreeID: tree, Stage: TreeReplayStageMembership, ReachedVersion: res.reached,
+				ProjectedVersion: projected, Mismatch: "the replay left root " + res.root + "; the store's root is " + row.UserID}
+		}
 	}
 	mismatch, err := checkMembership(ctx, w.engine, tree, rows)
 	if err != nil {

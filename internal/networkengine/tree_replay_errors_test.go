@@ -47,3 +47,15 @@ func TestTreeReplayError_UnwrapsItsCause(t *testing.T) {
 	assert.True(t, errors.As(&TreeReplayError{Err: cause}, &engineErr))
 	assert.Equal(t, cause, engineErr)
 }
+
+func TestRefusedAfterFailedBuildError_StatesBothAndUnwrapsBoth(t *testing.T) {
+	refusal := &StreamMovedError{TreeID: "t", LoadedVersion: 1, LastVersion: 3}
+	build := &TreeReplayError{TreeID: "t", Stage: TreeReplayStageMembership, Err: errors.New("pipe closed")}
+	err := &RefusedAfterFailedBuildError{Refusal: refusal, Build: build}
+
+	assert.Equal(t, refusal.Error()+"; the build had also failed: "+build.Error(), err.Error())
+	var moved *StreamMovedError
+	assert.True(t, errors.As(err, &moved))
+	var replay *TreeReplayError
+	assert.True(t, errors.As(err, &replay))
+}

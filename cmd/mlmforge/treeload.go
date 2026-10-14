@@ -127,6 +127,12 @@ func treeLoadFailureMessage(err error) string {
 	if errors.As(err, &pending) {
 		return fmt.Sprintf("load stopped: %s%s", pending, interrupted(err))
 	}
+	// Checked before the replay branch, which would print the build failure
+	// alone and drop the refusal.
+	var refused *networkengine.RefusedAfterFailedBuildError
+	if errors.As(err, &refused) {
+		return fmt.Sprintf("load failed: %s", err)
+	}
 	var replay *networkengine.TreeReplayError
 	if errors.As(err, &replay) {
 		return fmt.Sprintf("load stopped at the %s stage while building the tree from its stream: %s%s",

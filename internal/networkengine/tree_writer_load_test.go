@@ -338,7 +338,8 @@ func TestTreeWriter_LoadTypesAFailedProjectedRowsReadAsARejection(t *testing.T) 
 	mustAddRoot(t, env, treeTypeUnilevel)
 	cause := errors.New("connection reset")
 	store := &readCountingStore{TreeStore: env.store, rowsErr: cause}
-	w := NewTreeWriter(env.events, store, newFakeWriterEngine(), env.locker)
+	engine := newFakeWriterEngine()
+	w := NewTreeWriter(env.events, store, engine, env.locker)
 
 	_, err := w.Load(context.Background(), loadRequest())
 
@@ -346,6 +347,7 @@ func TestTreeWriter_LoadTypesAFailedProjectedRowsReadAsARejection(t *testing.T) 
 	require.ErrorAs(t, err, &rejected)
 	assert.Equal(t, TreeLoadStoreReadFailed, rejected.Kind)
 	assert.Equal(t, cause, rejected.Err)
+	assert.Empty(t, engine.calls, "an engine call ran after the failed read")
 }
 
 func TestTreeWriter_LoadTypesAFailedVersion1ReadAsARejection(t *testing.T) {

@@ -2,6 +2,7 @@ package networkengine
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -195,4 +196,72 @@ func TestTreeWriter_AFailedMatrixCreateIsACreateStageFailure(t *testing.T) {
 	require.ErrorAs(t, err, &replay)
 	assert.Equal(t, TreeReplayStageCreate, replay.Stage)
 	assert.ErrorContains(t, err, "TREE_EXISTS")
+}
+
+func TestTreeWriter_AFailedMembershipReadFailsTheLoad(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	w, engine := env.writer()
+	readErr := errors.New("worker pipe closed")
+	engine.positionErr = readErr
+
+	_, err := w.Load(context.Background(), loadRequest())
+
+	var replay *TreeReplayError
+	require.ErrorAs(t, err, &replay)
+	assert.Equal(t, TreeReplayStageMembership, replay.Stage)
+	assert.ErrorIs(t, err, readErr)
+}
+
+func TestTreeWriter_LoadRefusesARootTheStoreDoesNotHold(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	require.NoError(t, env.store.DeleteNode(context.Background(), writerTree, writerRoot))
+	w, _ := env.writer()
+
+	_, err := w.Load(context.Background(), loadRequest())
+
+	var replay *TreeReplayError
+	require.ErrorAs(t, err, &replay)
+	assert.Equal(t, TreeReplayStageMembership, replay.Stage)
+	assert.Equal(t, "the replay left root "+writerRoot+"; the store holds no active rows", replay.Mismatch)
+}
+
+func TestTreeWriter_LoadRefusesAStoreRootTheReplayDidNotLeave(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	ctx := context.Background()
+	require.NoError(t, env.store.DeleteNode(ctx, writerTree, writerRoot))
+	require.NoError(t, env.store.InsertNode(ctx, TreeNodeRow{
+		ID: testNodeUUID(9), TreeID: writerTree, UserID: writerOther, SponsorID: &writerOther, EnrolledAt: writeTime,
+	}))
+	w, _ := env.writer()
+
+	_, err := w.Load(ctx, loadRequest())
+
+	var replay *TreeReplayError
+	require.ErrorAs(t, err, &replay)
+	assert.Equal(t, TreeReplayStageMembership, replay.Stage)
+	assert.Equal(t, "the replay left root "+writerRoot+"; the store's root is "+writerOther, replay.Mismatch)
+}
+
+func TestTreeWriter_AFenceRefusalKeepsTheFailedBuild(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	appendDirect(t, env.events, EventTypeNodePlaced, childPlacedPayload(writerChild))
+	appendDirect(t, env.events, EventTypeNodePlaced, childPlacedPayload(writerOther))
+	w, engine := env.writer()
+	readErr := errors.New("worker pipe closed")
+	engine.positionErr = readErr
+
+	_, err := w.Load(context.Background(), loadRequest())
+
+	var both *RefusedAfterFailedBuildError
+	require.ErrorAs(t, err, &both)
+	var moved *StreamMovedError
+	require.ErrorAs(t, err, &moved)
+	var replay *TreeReplayError
+	require.ErrorAs(t, err, &replay)
+	assert.Equal(t, TreeReplayStageMembership, replay.Stage)
+	assert.ErrorIs(t, err, readErr)
 }

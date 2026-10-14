@@ -54,3 +54,16 @@ func (e *TreeReplayError) Error() string {
 }
 
 func (e *TreeReplayError) Unwrap() error { return e.Err }
+
+// RefusedAfterFailedBuildError reports a stream refusal found after the build
+// had already failed, keeping both.
+type RefusedAfterFailedBuildError struct {
+	Refusal error
+	Build   error
+}
+
+func (e *RefusedAfterFailedBuildError) Error() string {
+	return e.Refusal.Error() + "; the build had also failed: " + e.Build.Error()
+}
+
+func (e *RefusedAfterFailedBuildError) Unwrap() []error { return []error{e.Refusal, e.Build} }

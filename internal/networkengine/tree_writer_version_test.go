@@ -112,7 +112,7 @@ func (s *projectingLoadStore) ProjectedRows(ctx context.Context, treeID string) 
 
 // runLateProjection places writerOther while the projection of a pending
 // placement lands before or after the load's read.
-func runLateProjection(t *testing.T, before bool) (*writerEnv, *projectingLoadStore, platform.Event, WriteResult) {
+func runLateProjection(t *testing.T, before bool) (*writerEnv, *projectingLoadStore, *fakeWriterEngine, platform.Event, WriteResult) {
 	t.Helper()
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
@@ -123,18 +123,20 @@ func runLateProjection(t *testing.T, before bool) (*writerEnv, *projectingLoadSt
 			ParentID: &writerRoot, SponsorID: &writerRoot, Depth: 1, EnrolledAt: writeTime,
 		}, pending.Version))
 	}}
-	w := NewTreeWriter(env.events, store, newFakeWriterEngine(), env.locker)
+	engine := newFakeWriterEngine()
+	w := NewTreeWriter(env.events, store, engine, env.locker)
 	res, err := w.Place(context.Background(), placeRequest(writerOther, nil))
 	require.NoError(t, err)
 	require.NoError(t, res.ProjectionErr)
-	return env, store, pending, res
+	return env, store, engine, pending, res
 }
 
 func TestTreeWriter_ConvergesWhenTheLastEventProjectsAfterTheLoadRead(t *testing.T) {
-	env, store, pending, res := runLateProjection(t, false)
+	env, store, engine, pending, res := runLateProjection(t, false)
 
 	assert.Equal(t, []string{"ProjectedRows"}, store.calls)
 	assert.Equal(t, &CaughtUpEvent{EventID: pending.ID, Version: 2, Type: EventTypeNodePlaced}, res.CaughtUp)
+	assert.Equal(t, []string{writerChild, writerOther}, placementUsers(engine), "only the redelivery placed the child")
 	assert.Equal(t, int64(3), res.Version)
 	version, _, err := env.store.ProjectedVersion(context.Background(), writerTree)
 	require.NoError(t, err)
@@ -142,10 +144,12 @@ func TestTreeWriter_ConvergesWhenTheLastEventProjectsAfterTheLoadRead(t *testing
 }
 
 func TestTreeWriter_ConvergesWhenTheLastEventProjectsBeforeTheLoadRead(t *testing.T) {
-	env, store, pending, res := runLateProjection(t, true)
+	env, store, engine, pending, res := runLateProjection(t, true)
 
 	assert.Equal(t, []string{"ProjectedRows"}, store.calls)
 	assert.Equal(t, &CaughtUpEvent{EventID: pending.ID, Version: 2, Type: EventTypeNodePlaced}, res.CaughtUp)
+	assert.Equal(t, []string{writerChild, writerChild, writerOther}, placementUsers(engine),
+		"the replay placed the child, then the redelivery placed it again")
 	assert.Equal(t, int64(3), res.Version)
 	version, _, err := env.store.ProjectedVersion(context.Background(), writerTree)
 	require.NoError(t, err)

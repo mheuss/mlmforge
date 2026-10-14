@@ -615,6 +615,18 @@ func TestTreeLoadFailureMessage_NamesTheReplayStage(t *testing.T) {
 	require.Equal(t, "load stopped at the membership stage while building the tree from its stream: "+replay.Error(), got)
 }
 
+func TestTreeLoadFailureMessage_KeepsAStreamRefusalAheadOfAFailedBuild(t *testing.T) {
+	err := &networkengine.RefusedAfterFailedBuildError{
+		Refusal: &networkengine.ProjectionMissingError{TreeID: "t", LastVersion: 2},
+		Build: &networkengine.TreeReplayError{TreeID: "t", Stage: networkengine.TreeReplayStageMembership,
+			Mismatch: "the replay left no root; the store holds 2 active rows"},
+	}
+
+	got := treeLoadFailureMessage(err)
+
+	require.Equal(t, "load failed: "+err.Error(), got)
+}
+
 func TestRunTreeLoad_PrintsAFailedLoadsWarningsBeforeTheReleaseWarning(t *testing.T) {
 	var both bytes.Buffer
 	loader := &stubLoader{warnings: []string{"first"}, releaseErr: errors.New("unlock failed"),

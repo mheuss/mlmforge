@@ -465,8 +465,8 @@ for _, tree := range trees {
 	case errors.As(err, &incomplete):
 		// The structure may be partly built. After a refusal past the create
 		// stage, drop it, and load again once the cause has changed
-		// (UC-NET-032). If the transport failed, start a new worker. Stage and Confirmed are what an operator reads to
-		// size the damage.
+		// (UC-NET-032). If the transport failed, start a new worker. Stage
+		// and Confirmed are what an operator reads to size the damage.
 		return fmt.Errorf("%s stopped at %s with %d of %d non-root placements acknowledged: %w",
 			incomplete.TreeID, incomplete.Stage, incomplete.Confirmed, incomplete.Total, err)
 
@@ -1217,7 +1217,7 @@ if errors.As(err, &incomplete) && incomplete.Stage != networkengine.TreeLoadStag
 	// Drop the partial structure. Load again only once the cause has
 	// changed, because the engine refuses the same input the same way.
 	if _, derr := dropper.DropStructure(ctx, treeID); derr != nil {
-		return derr
+		return errors.Join(err, derr)
 	}
 }
 return err
@@ -1225,6 +1225,7 @@ return err
 
 **Notes:**
 - Take `StructureDropper`, not a wider interface. The `TreeMutator` family does not carry it.
+- Preflight is meant to catch engine refusals before the create. This path should be rare.
 - A drop recovers only from an engine refusal. After a timeout, a cancellation or a worker crash, the client is closed or the worker is gone. Start a new worker instead. It starts empty.
 - Hold the client exclusively from the drop to the end of the rebuild. Nothing else enforces that.
 - The caller owns the structure name, not whatever an earlier holder built under it. A refusal at the create stage built nothing. A `TREE_EXISTS` there means another structure already held the name, so do not drop it.

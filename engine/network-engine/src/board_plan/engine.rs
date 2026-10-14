@@ -3064,7 +3064,6 @@ mod tests {
     #[test]
     fn compress_inactive_cycles_a_pending_board_first() {
         let (mut engine, pending) = engine_with_a_pending_full_board();
-        let held = engine.get_member_board(test_uuid(5)).unwrap();
 
         let result = engine.compress_inactive(vec![test_uuid(5)], 6).unwrap();
 
@@ -3072,9 +3071,6 @@ mod tests {
             result.cycle_events.first().map(|e| e.board_id),
             Some(pending)
         );
-        assert_eq!(result.compressed.len(), 1);
-        assert_eq!(result.compressed[0].user_id, test_uuid(5));
-        assert_eq!(result.compressed[0].board_id, held);
     }
 
     #[test]

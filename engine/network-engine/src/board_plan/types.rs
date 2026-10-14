@@ -90,7 +90,7 @@ pub struct CompressionResult {
     /// Members who were compressed out of their boards.
     pub compressed: Vec<CompressedMember>,
 
-    /// Cycle events triggered by compaction after compression.
+    /// Cycle events from this call, drained boards first.
     pub cycle_events: Vec<CycleEvent>,
 }
 

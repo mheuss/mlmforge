@@ -408,6 +408,22 @@ func TestReplayStream_LeavesNoRootWhenTheRootIsRejected(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, replayResult{reached: 2}, res)
+	assert.Empty(t, engine.trees[writerTree].nodes, "the rejected root reached the engine")
+}
+
+func TestReplayStream_ReportsTheStartWhenTheFirstEventFails(t *testing.T) {
+	env := newReplayEnv(t)
+	env.place(t, writerChild)
+	env.place(t, writerOther)
+	require.NoError(t, env.engine.AddRoot(context.Background(), writerTree, writerRoot, writeTime.Unix()))
+	env.engine.failAdd[writerChild] = fakeEngineError("SPONSOR_NOT_FOUND", "refused")
+
+	_, err := env.replay(2, 3)
+
+	var replay *TreeReplayError
+	require.ErrorAs(t, err, &replay)
+	assert.Equal(t, int64(1), replay.ReachedVersion)
+	assert.Equal(t, int64(2), replay.FailedVersion)
 }
 
 func TestReplayStream_RefusesAPayloadForAnotherTree(t *testing.T) {

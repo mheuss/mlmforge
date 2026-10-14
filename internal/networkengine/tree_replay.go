@@ -76,8 +76,8 @@ func (r *replayer) accept(ctx context.Context, ev platform.Event) error {
 		r.res.reached = ev.Version
 		return nil
 	}
-	// The payload checks wait for flush. Run here, they would refuse a stream
-	// whose bad event a later rejection skips.
+	// Checking the payload here would refuse a stream whose bad event a later
+	// rejection skips.
 	if !rejectableEventTypes[ev.Type] {
 		return r.invariantAt(ev, "a tree event type", fmt.Sprintf("type %q", ev.Type))
 	}

@@ -1640,13 +1640,29 @@ mod tests {
             .iter()
             .map(|id| engine.get_board(*id).unwrap().seq)
             .collect();
-        assert_eq!(seqs, vec![1, 2], "the initial board holds seq 0");
+        assert_eq!(
+            seqs,
+            vec![1, 2],
+            "split children's seqs, in new_boards order"
+        );
+    }
+
+    #[test]
+    fn placement_orders_by_created_at_before_seq() {
+        let mut engine = BoardPlanEngine::new(2, 2, test_config(), 1000).unwrap();
+        engine.boards.clear();
+        let later = engine.new_board(3000, None);
+        let earlier = engine.new_board(2000, None);
+        let earlier_id = earlier.id;
+        engine.boards.insert(later.id, later);
+        engine.boards.insert(earlier_id, earlier);
+
+        assert_eq!(engine.oldest_board_with_opening(), Ok(earlier_id));
     }
 
     #[test]
     fn the_first_child_board_takes_the_next_placement_after_a_split() {
-        // A fresh engine per iteration. One engine repeats its own hash
-        // order, so it would pass half the time without the tie-break.
+        // A fresh engine per iteration.
         for _ in 0..64 {
             let mut engine = BoardPlanEngine::new(2, 2, test_config_no_reentry(), 1000).unwrap();
             let (_, last) = fill_2x2_board(&mut engine);
@@ -1658,7 +1674,7 @@ mod tests {
 
             assert_eq!(
                 next.board_id, first_child,
-                "both children share a created_at, so seq should decide"
+                "placement chose a board other than new_boards[0]"
             );
         }
     }

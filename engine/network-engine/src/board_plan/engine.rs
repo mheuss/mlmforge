@@ -2751,6 +2751,27 @@ mod tests {
     }
 
     #[test]
+    fn a_drain_breaks_a_created_at_tie_by_seq() {
+        for _ in 0..64 {
+            let (mut engine, ids) = engine_from_rows(
+                test_config_no_reentry(),
+                &[
+                    [Some(1), Some(2), Some(3)],
+                    [Some(4), Some(5), Some(6)],
+                    [Some(7), None, None],
+                ],
+                &[(1, 1), (2, 1), (3, 1), (4, 4), (5, 4), (6, 4), (7, 7)],
+            );
+            engine.boards.get_mut(&ids[1]).unwrap().created_at = 1;
+
+            let result = engine.add_member(test_uuid(8), test_uuid(7), 10).unwrap();
+
+            let cycled: Vec<Uuid> = result.cycle_events.iter().map(|e| e.board_id).collect();
+            assert_eq!(cycled[..2], [ids[0], ids[1]]);
+        }
+    }
+
+    #[test]
     fn an_add_gives_each_drained_board_its_own_cascade_budget() {
         let config = BoardPlanConfig {
             max_cascade_depth: NonZeroU32::new(1).unwrap(),

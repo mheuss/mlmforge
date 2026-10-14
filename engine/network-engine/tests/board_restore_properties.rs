@@ -133,8 +133,8 @@ proptest! {
     fn board_mutators_leave_a_restorable_engine(
         width in 2u8..4,
         height in 1u8..3,
-        cascade in 1u32..4,
-        re_entry in any::<bool>(),
+        cascade in prop_oneof![3 => Just(1u32), 1 => 2u32..4],
+        re_entry in prop::bool::weighted(0.8),
         sponsor_board in any::<bool>(),
         ops in prop::collection::vec((0u8..5, 0usize..64, 0usize..64), 1..120),
     ) {
@@ -179,8 +179,7 @@ proptest! {
         sponsor_board in any::<bool>(),
         ops in prop::collection::vec((0u8..5, 0usize..64, 0usize..64), 1..120),
     ) {
-        let mut first: Option<Vec<Layout>> = None;
-        // A fresh engine per replay.
+        let mut first: Option<Vec<(bool, Layout)>> = None;
         for _ in 0..4 {
             let mut engine = BoardPlanEngine::new(
                 width,
@@ -193,8 +192,8 @@ proptest! {
             let mut next = 0;
             let mut layouts = Vec::new();
             for op in &ops {
-                board_step(&mut engine, &mut next, *op);
-                layouts.push(layout(&engine));
+                let succeeded = board_step(&mut engine, &mut next, *op);
+                layouts.push((succeeded, layout(&engine)));
             }
             match &first {
                 None => first = Some(layouts),

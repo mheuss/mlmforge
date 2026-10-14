@@ -250,6 +250,29 @@ Proptest writes a `.proptest-regressions` seed file next to a test the first tim
 
 Two gotchas show up when hardening these tests. A vacuity check deliberately breaks an assertion to confirm it fails, then reverts. That leaves a stray regression file for the artificial failure. Delete it before committing. Scope the delete to the exact file. A `rm tests/*.proptest-regressions` glob also wipes the checked-in ones. Separately, the `FileFailurePersistence::SourceParallel set, but failed to find lib.rs or main.rs` line during integration-test runs is benign. Proptest just cannot locate the crate root from the test binary.
 
+### A property net can go quiet without failing
+
+A property test that only asserts something holds after each op passes just as
+well when the ops stop doing anything. Twice on the restore-validation branch,
+the net looked complete and mostly tested an empty engine.
+
+* Streamline. Only a stream owner can sponsor an enrolment. With sponsors drawn
+  from all members, about half of adds failed and runs stayed near four members.
+* Board plan. Removed members stay in `sponsor_map`. Once every member was
+  removed, no later add had a sponsor, and 205 of 256 runs sat on an empty
+  engine.
+
+Neither showed up as a failure. A probe that counted peak members, cycles and
+full boards found both.
+
+Before trusting a new property net, measure what it reaches. Count the states
+its name claims, not only that it passed.
+
+A test that picks among engine objects by iteration order can also replay
+differently, when the engine breaks ties in `HashMap` order. Pick by a key the
+strategy controls, such as the lowest occupant, and print the serialized state
+on failure. HEU-915 tracks the engine-side tie.
+
 ### Completeness gate for commission ops
 
 `every_structure_type_has_a_dispatchable_commission_op` (in `network-engine-worker/tests/worker_integration.rs`) stops a new plan type from shipping with an orphaned calculator. It has two halves. `commission_op` is a wildcard-free `match` over every `StructureConfig` variant. Adding a variant without an arm fails to compile the test crate, which forces you to name the op. A runtime loop then sends each named op to a real worker and asserts it never returns `UNKNOWN_OP`, confirming the op is wired into dispatch.

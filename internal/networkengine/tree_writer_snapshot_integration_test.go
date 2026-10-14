@@ -126,10 +126,16 @@ func TestTreeWriterSnapshot_AStraySnapshotOfARejectedEventIsDeletedAtLoad(t *tes
 	assert.True(t, isEngineCode(err, engineCodeUserNotFound), "GetPosition returned %v", err)
 }
 
-// restoreCountingEngine counts RestoreSnapshot calls.
+// restoreCountingEngine counts RestoreSnapshot and CreateTree calls.
 type restoreCountingEngine struct {
 	TreeRebuilder
 	restores int
+	creates  int
+}
+
+func (e *restoreCountingEngine) CreateTree(ctx context.Context, structure, treeType string) error {
+	e.creates++
+	return e.TreeRebuilder.CreateTree(ctx, structure, treeType)
 }
 
 func (e *restoreCountingEngine) RestoreSnapshot(ctx context.Context, structure, treeType string, data json.RawMessage) error {
@@ -146,13 +152,15 @@ func TestTreeWriter_ALoadRestoresAStoredSnapshotAndReplaysTheRest(t *testing.T) 
 		res, err := it.writer(t).Place(ctx, PlaceRequest{TreeID: tree, UserID: user, ParentID: root, SponsorID: root, EnrolledAt: writeTime})
 		require.NoError(t, err)
 		require.NoError(t, res.ProjectionErr)
+		assert.Empty(t, res.Warnings, "placing %s", user)
 	}
 	place(testUserUUID(2))
 	place(testUserUUID(3))
 	seeding := it.engine(t)
-	_, err := NewTreeWriter(it.events, it.store, it.snapshots, seeding, NewPostgresTreeLocker(it.dsn)).
+	seeded, err := NewTreeWriter(it.events, it.store, it.snapshots, seeding, NewPostgresTreeLocker(it.dsn)).
 		Load(ctx, LoadRequest{TreeID: tree, TreeType: treeTypeUnilevel})
 	require.NoError(t, err)
+	require.Empty(t, seeded.Warnings)
 	taken, err := seeding.TakeSnapshot(ctx, tree)
 	require.NoError(t, err)
 	require.NoError(t, it.snapshots.Put(ctx, Snapshot{TreeID: tree, Version: 3, TreeType: taken.TreeType, Data: taken.Data}))
@@ -164,9 +172,11 @@ func TestTreeWriter_ALoadRestoresAStoredSnapshotAndReplaysTheRest(t *testing.T) 
 		Load(ctx, LoadRequest{TreeID: tree, TreeType: treeTypeUnilevel})
 
 	require.NoError(t, err)
+	require.NoError(t, res.ReleaseErr)
 	assert.Empty(t, res.Warnings)
 	assert.Equal(t, 5, res.Nodes)
 	assert.Equal(t, 1, engine.restores)
+	assert.Zero(t, engine.creates, "the load created the structure rather than building on the restore")
 	down, err := engine.GetDownline(ctx, tree, root, 0)
 	require.NoError(t, err)
 	assert.Len(t, down, 4)

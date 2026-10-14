@@ -829,6 +829,8 @@ absent still fails. See `board_calculate_accepts_null_collections` and
 
 ## Tree Reload: What `LoadTree` Restores, and What It Does Not
 
+Tree loads no longer go through `LoadTree`. See "Building A Tree From Its Stream". This section describes `LoadTree` itself.
+
 `LoadTree` rebuilds a tree in the engine from the `tree_nodes` adjacency rows. The invariants below are not obvious from the code and matter to anyone touching the loader, the projection, or the worker's tree handlers.
 
 ### A root's stored sponsor is dropped on reload
@@ -926,7 +928,7 @@ Each write holds a per-tree Postgres advisory lock from before the load until pr
 
 ### The engine is scratch
 
-Each invocation starts a worker. It rebuilds the tree in the worker from the store, under the lock. It discards the worker on exit. The engine's jobs in a write are to check the mutation and to compute a removal's moved recruits. What HEU-789 and HEU-813 record as unreachable under the writer holds only while the engine is scratch. So does HEU-777's repair, which redelivers a removal to an engine rebuilt from the store. A service that keeps an engine in memory reopens HEU-789, HEU-813 and that repair.
+Each invocation starts a worker. It rebuilds the tree in the worker from the tree's event stream, under the lock, starting from a stored snapshot when one is usable. It discards the worker on exit. The engine's jobs in a write are to check the mutation and to compute a removal's moved recruits. What HEU-789 and HEU-813 record as unreachable under the writer holds only while the engine is scratch. So does HEU-777's repair, which redelivers a removal to an engine rebuilt from the stream. A service that keeps an engine in memory reopens HEU-789, HEU-813 and that repair.
 
 ### The projected version
 
@@ -937,7 +939,7 @@ The store records one version per tree, the stream version its rows reflect, in 
 - Version 1 of a tree's stream records the tree type. For a matrix it also records the width and spillover. Every later write reads the shape from there. A version 1 that is not a complete `root_added` refuses the write.
 - `add-root` on a stream that already has a version 1 is refused when its type, matrix width or spillover differs from what version 1 records. A matrix flag on a non-matrix tree is refused. Matrix flags left off the request match. On an empty stream the check runs again under the lock. A root that landed between the first check and the lock is what the second check compares against.
 - Removing a tree's only root is allowed. A later `add-root` roots the tree again (Michael, 2026-09-23).
-- The writer reads the tree's projected version before it loads the rows. After the load it reads the stream's last version. It goes ahead only when the last version is the projected version or one past it. A tree with no projection row whose stream ends past version 1 is refused with `ProjectionMissingError`, unless the stream ends with a pending rejection. Any other mismatch is refused with `StreamMovedError`. Neither appends anything.
+- The writer reads the tree's projected version and its active rows in one consistent read. It builds the tree from the stream through that version, then reads the stream's last version. It goes ahead only when the last version is the projected version or one past it. A tree with no projection row whose stream ends past version 1 is refused with `ProjectionMissingError`, unless the stream ends with a pending rejection. Any other mismatch is refused with `StreamMovedError`. Neither appends anything.
 - The stream's last event is redelivered through `HandleEvent`. Under the lock it is the only event that can be unprojected. The one exception is the event a pending rejection names. Catch-up redelivers only `tree.root_added`, `tree.node_placed`, `tree.node_removed` and `tree.event_rejected`. A rejection is redelivered only when the store has applied it. A write or `tree load` on a stream ending in a rejection the store is one or two versions behind is refused with `RejectionPendingError`, which names `tree reject-event`. A wider gap is refused with `StreamMovedError`, or `ProjectionMissingError` when the tree has no projection row (HEU-850). A last event of any other type refuses the write before `HandleEvent` is called. `HandleEvent` returns nil for a type it does not project. Calling it would report that event as projected.
 - `check_mutation` asks the engine whether the mutation would succeed. The worker runs the check functions the mutating ops call first. That is why no refusal rule is copied into Go.
 
@@ -964,16 +966,34 @@ What `WriteResult` carries:
 - `CaughtUp`, the redelivered last event.
 - `ProjectionErr`, any failure after the append was confirmed.
 - `Observed`, the projected version read after a projection error, or the read's error.
+- `Warnings`, what the write observed and carried on past, in order: load fallbacks and snapshot outcomes.
 - `ReleaseErr`, set on every path after the lock is taken, including when the write returns an error.
 
 ### Loading through the writer
 
-`tree load` calls `TreeWriter.Load`. It takes the tree's lock and runs the same fence as a write. When the stream's last version is the projected version plus one, it redelivers that event through `HandleEvent`. When the stream ends with a rejection one or two past the store, it refuses with `RejectionPendingError` instead (HEU-850). When they are equal it redelivers nothing, so a load with nothing behind prints what it printed before HEU-777. After a redelivery it reads the projected version again and reports it when the redelivery did not advance it. The node count is the loader's when nothing was redelivered, and a fresh read when something was.
+`tree load` calls `TreeWriter.Load`. It takes the tree's lock and runs the same fence as a write. When the stream's last version is the projected version plus one, it redelivers that event through `HandleEvent`. When the stream ends with a rejection one or two past the store, it refuses with `RejectionPendingError` instead (HEU-850). When they are equal it redelivers nothing, so a load with nothing behind prints what it printed before HEU-777. After a redelivery it reads the projected version again and reports it when the redelivery did not advance it. The node count is the active row count from the load's read when nothing was redelivered, and a fresh read when something was. `LoadResult` carries `Warnings` the same way `WriteResult` does.
 
 - Load's `--tree-type` and matrix flags must match version 1, with `add-root`'s rule. Matrix flags left off match.
 - A fence refusal exits 1 and changes no store rows or projected version. The scratch engine may already be loaded, and is discarded.
-- A failed read of version 1 or the first read of the projected version comes before any engine call, so it is a `TreeLoadRejectedError` of kind `store_read_failed` and follows the retry rule. Anything after the engine load is not retried.
+- A failed read of version 1, or of the projected version and rows, comes before any engine call, so it is a `TreeLoadRejectedError` of kind `store_read_failed` and follows the retry rule. Anything after the engine load is not retried.
 - A tree created before migration 000009 has no projection row, and load refuses it once its stream passes version 1.
+
+### Building A Tree From Its Stream
+
+Every load builds the tree in the engine from the tree's events, not from `tree_nodes`.
+
+- The projected version and the active rows come from one consistent read, `TreeStore.ProjectedRows`. A writer that lost its lock can still project late (HEU-857). Two separate reads could pair an old version with newer rows.
+- The store preflight still runs over the rows first, and still blocks the load with `TreeLoadRejectedError`. It is the only check on the rows themselves.
+- With a usable snapshot, the load restores it and replays the events after it through the projected version. Otherwise it replays the whole stream. Replay stops at the projected version. `catchUp` keeps the stream's last event.
+- Replay skips an event when the next event is a rejection naming it. Only a rejection at or below the projected version counts. One at the projected version plus one is a pending rejection, as before.
+- Replay never calls `HandleEvent` and never writes the store. HEU-789 stays parked while `git grep -n HandleEvent -- '*.go' ':!*_test.go'` shows only the consumer's declaration and `TreeWriter`'s two calls.
+- After the build, the load compares the engine's root and downline with the rows on user, depth and enrolment second. It does not compare parent, position or sponsor, and it does not look at the matrix holding tank.
+- An engine refusal during restore or replay, or a mismatch, drops the structure, deletes the snapshot and replays the whole stream, with one warning. A transport or context failure fails the load with `TreeReplayError` and attempts no drop. So does a restore refused with `TREE_EXISTS`, because the load did not build that structure.
+- A snapshot above the projected version, of another tree type, whose bytes are not valid JSON, or followed by a rejection naming it, is deleted with a warning.
+- A snapshot warning states what the load observed and what happened to the snapshot. The replay that follows reports its own result.
+- A write whose projection succeeded takes a snapshot when the stream is 1000 events past the stored one. The write that crosses the threshold pays the whole snapshot cost while it holds the lock. A put that fails is a warning, and every later write tries again until one succeeds (HEU-914). A snapshot read or delete that keeps failing has the same effect.
+- A full replay that fails after a drop leaves a partly built structure in the worker. That is safe only because each command owns its worker. A long-lived caller, such as HEU-298's reconciliation, must drop the structure before reusing the worker.
+- A snapshot must fit in one `bytea` field, which caps at 1 GB. At about 230 bytes per matrix node, that is near 4.3M nodes.
 
 ## Worker Shutdown
 

@@ -36,6 +36,7 @@ Use-cases for the Network Engine bounded context.
 - [UC-NET-030: Loading a tree whose store may be one event behind its stream](#uc-net-030-loading-a-tree-whose-store-may-be-one-event-behind-its-stream)
 - [UC-NET-031: Recovering a tree stuck behind an event that cannot apply](#uc-net-031-recovering-a-tree-stuck-behind-an-event-that-cannot-apply)
 - [UC-NET-032: Start a structure over in the same worker](#uc-net-032-start-a-structure-over-in-the-same-worker)
+- [UC-NET-033: Rebuilding a tree from a snapshot and its stream](#uc-net-033-rebuilding-a-tree-from-a-snapshot-and-its-stream)
 
 ---
 
@@ -66,7 +67,7 @@ let ctx = walk::build_pass_up_context(tree, &pass_up_config, &participant_ids);
 
 **Problem:** Board plan engines manage many small boards with cycling history. Full event replay becomes expensive over time. All tree-layer data structures must support serialization for snapshot persistence.
 
-**Solution:** All types in the tree layer (Arena, Node, UnilevelTree, BinaryTree, MatrixTree, BoardPlanEngine, Board) derive `serde::Serialize` and `serde::Deserialize`. Snapshot persistence uses `serde_json`. Go handles storage scheduling and recovery flow (restore snapshot, replay events after snapshot sequence number).
+**Solution:** All types in the tree layer (Arena, Node, UnilevelTree, BinaryTree, MatrixTree, BoardPlanEngine, Board) derive `serde::Serialize` and `serde::Deserialize`. Snapshot persistence uses `serde_json`. Go stores one snapshot per tree in `tree_snapshots` and restores it on load, replaying the events after it (UC-NET-033).
 
 **Usage:**
 ```rust
@@ -1041,7 +1042,7 @@ if alreadyProjected {
 
 **Problem:** A caller that retries a `TreeWriter.Load` failure has to tell an infrastructure blip apart from a failure that will fail the same way forever. The error kind alone does not carry enough to decide.
 
-**Solution:** `treeLoadRetryable` allowlists rather than denylists. A cause nobody enumerated defaults to stopping. It retries one case: a `TreeLoadRejectedError` whose `Kind` is `TreeLoadStoreReadFailed` and whose wrapped error `pgconn.SafeToRetry` reports never reached the server. Everything else stops. Cancellation is checked first and separately. `TreeLoadStoreReadFailed` covers a refused connection, a cancelled context and a row that will not decode. Only the first of those can succeed on a second attempt. A `TreeLoadIncompleteError` is never retried at all. The structure may exist in the engine. A retry in the same worker then reports `TREE_EXISTS` unless the structure is dropped first. The CLI never drops and retries. Each command starts its own worker, and a failed load ends with it. `tree load` goes through `TreeWriter.Load`. Its read of version 1 and its first read of the projected version also fail as `TreeLoadStoreReadFailed`. Both come before any engine call.
+**Solution:** `treeLoadRetryable` allowlists rather than denylists. A cause nobody enumerated defaults to stopping. It retries one case: a `TreeLoadRejectedError` whose `Kind` is `TreeLoadStoreReadFailed` and whose wrapped error `pgconn.SafeToRetry` reports never reached the server. Everything else stops. Cancellation is checked first and separately. `TreeLoadStoreReadFailed` covers a refused connection, a cancelled context and a row that will not decode. Only the first of those can succeed on a second attempt. A `TreeLoadIncompleteError` is never retried at all. The structure may exist in the engine. A retry in the same worker then reports `TREE_EXISTS` unless the structure is dropped first. The CLI never drops and retries. Each command starts its own worker, and a failed load ends with it. `tree load` goes through `TreeWriter.Load`. Its read of version 1 and its read of the projected version and rows also fail as `TreeLoadStoreReadFailed`. Both come before any engine call.
 
 **Usage:**
 ```go
@@ -1055,7 +1056,7 @@ if err != nil && treeLoadRetryable(err) {
 }
 ```
 
-**Notes:** The allowlist is the load-bearing part. Denylisting would mean a new failure mode is retried by default. The failure modes here include ones that never terminate. Related: UC-NET-012 owns the preflight half of these two error types, which is what runs before any engine call. This entry owns the retry half, which runs after one has failed. Neither restates the other.
+**Notes:** A `TreeReplayError` is never retried. The allowlist is the load-bearing part. Denylisting would mean a new failure mode is retried by default. The failure modes here include ones that never terminate. Related: UC-NET-012 owns the preflight half of these two error types, which is what runs before any engine call. This entry owns the retry half, which runs after one has failed. Neither restates the other.
 
 ---
 
@@ -1070,7 +1071,7 @@ if err != nil && treeLoadRetryable(err) {
 
 **Usage:**
 ```go
-w := networkengine.NewTreeWriter(events, store, engine, networkengine.NewPostgresTreeLocker(dbURL))
+w := networkengine.NewTreeWriter(events, store, snapshots, engine, networkengine.NewPostgresTreeLocker(dbURL))
 res, err := w.Place(ctx, networkengine.PlaceRequest{
     TreeID: tree, UserID: user, ParentID: parent, SponsorID: sponsor, Position: &slot, EnrolledAt: at,
 })
@@ -1146,13 +1147,16 @@ if errors.As(err, &refused) {
 
 **Usage:**
 ```go
-w := networkengine.NewTreeWriter(events, store, engine, networkengine.NewPostgresTreeLocker(dbURL))
+w := networkengine.NewTreeWriter(events, store, snapshots, engine, networkengine.NewPostgresTreeLocker(dbURL))
 res, err := w.Load(ctx, networkengine.LoadRequest{TreeID: tree, TreeType: "unilevel"})
 if res.CaughtUp != nil {
     // Report the redelivery, even when err is set.
 }
 if res.ReleaseErr != nil {
     // Report it, on the error path too.
+}
+for _, warning := range res.Warnings {
+    // Report each one, on the error path too.
 }
 if err != nil {
     return err
@@ -1175,7 +1179,7 @@ if err != nil {
 
 **Usage:**
 ```go
-w := networkengine.NewTreeWriter(events, store, engine, networkengine.NewPostgresTreeLocker(dbURL))
+w := networkengine.NewTreeWriter(events, store, snapshots, engine, networkengine.NewPostgresTreeLocker(dbURL))
 res, err := w.Reject(ctx, networkengine.RejectRequest{TreeID: tree, EventID: stuck, Reason: "sponsor never enrolled"})
 if res.ReleaseErr != nil {
     // Report it, on the error path too.
@@ -1229,3 +1233,16 @@ return err
 - A drop recovers only from an engine refusal. After a timeout, a cancellation or a worker crash, the client is closed or the worker is gone. Start a new worker instead. It starts empty.
 - Hold the client exclusively from the drop to the end of the rebuild. Nothing else enforces that.
 - The caller owns the structure name, not whatever an earlier holder built under it. A refusal at the create stage built nothing. A `TREE_EXISTS` there means another structure already held the name, so do not drop it.
+
+---
+
+### UC-NET-033: Rebuilding a tree from a snapshot and its stream
+
+**Added:** Unreleased
+**Files:** `internal/networkengine/tree_writer.go`, `internal/networkengine/tree_replay.go`, `internal/networkengine/snapshot_store.go`
+
+**Problem:** A tree load must rebuild engine state the adjacency table cannot hold, such as a matrix holding tank, and must not grow with the stream's length forever.
+
+**Solution:** Restore the latest snapshot at version S, replay events S+1 through the projected version into the engine only, then compare the engine's membership with the store's rows. Fall back to replaying the whole stream on an engine refusal or a mismatch.
+
+**Notes:** A drop and full replay follow two causes only: an engine refusal, or a mismatch on the snapshot path. After a transport or context failure the client is closed, and the next command starts a new worker. Read the projected version and the rows in one consistent read. The event after the snapshot decides whether the snapshot is usable. A snapshot whose bytes are not valid JSON is unusable, because the client cannot send it.

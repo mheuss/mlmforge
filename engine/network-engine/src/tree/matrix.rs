@@ -69,8 +69,9 @@ impl MatrixTree {
     }
 
     /// Prove a restored tree's stored values are in range and live, that each
-    /// live non-root node is a child in exactly one child slot, and that the
-    /// holding tank names no placed or repeated user.
+    /// live non-root node is a child in exactly one child slot, that each
+    /// parent's slots match its children, and that the holding tank names no
+    /// placed or repeated user.
     pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
         // A restore does not run the constructor, so the range it enforces has
         // to be re-established here. A width below 2 is not inert: placement
@@ -137,6 +138,7 @@ impl MatrixTree {
         self.arena.check_every_live_node_has_a_slot(&self.slots)?;
         self.arena
             .check_every_live_node_is_slotted_once(&self.slots)?;
+        self.arena.check_children_match_slots(&self.slots)?;
         Ok(())
     }
 
@@ -1131,6 +1133,49 @@ mod tests {
                 slot: child.0,
                 target: root.0,
                 reverse_field: "children",
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_slot_holding_a_node_children_omits() {
+        for _ in 0..64 {
+            let (mut tree, child) = matrix_pair();
+            let root = tree.arena.root.expect("matrix_pair sets a root");
+            tree.add_node_at(test_uuid(3), test_uuid(1), test_uuid(2), 0, 0)
+                .unwrap();
+            let grandchild = tree.arena.resolve(test_uuid(3)).unwrap();
+            tree.slots.get_mut(&child).unwrap()[0] = None;
+            tree.slots.get_mut(&root).unwrap()[1] = Some(grandchild);
+
+            assert_eq!(
+                tree.validate_restored(),
+                Err(SnapshotConsistencyError::ChildrenDisagreeWithSlots {
+                    slot: root.0,
+                    children: vec![child.0],
+                    slotted: vec![child.0, grandchild.0],
+                }),
+                "the lowest parent slot should win regardless of hash order"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_restored_rejects_children_naming_a_node_no_slot_of_the_parent_holds() {
+        let (mut tree, child) = matrix_pair();
+        let root = tree.arena.root.expect("matrix_pair sets a root");
+        tree.add_node_at(test_uuid(3), test_uuid(1), test_uuid(1), 1, 0)
+            .unwrap();
+        let second = tree.arena.resolve(test_uuid(3)).unwrap();
+        tree.slots.get_mut(&root).unwrap()[1] = None;
+        tree.slots.get_mut(&child).unwrap()[0] = Some(second);
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::ChildrenDisagreeWithSlots {
+                slot: root.0,
+                children: vec![child.0, second.0],
+                slotted: vec![child.0],
             })
         );
     }

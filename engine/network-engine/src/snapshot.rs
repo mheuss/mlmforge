@@ -166,6 +166,13 @@ pub enum SnapshotConsistencyError {
         width: u8,
     },
 
+    #[error("node slot {slot} lists children {children:?}; its child slots hold {slotted:?}")]
+    ChildrenDisagreeWithSlots {
+        slot: usize,
+        children: Vec<usize>,
+        slotted: Vec<usize>,
+    },
+
     #[error("the tree declares a width of {width}; a matrix width is at least 2")]
     MatrixWidthTooSmall { width: u8 },
 

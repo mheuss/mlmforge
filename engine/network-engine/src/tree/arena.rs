@@ -319,6 +319,36 @@ impl Arena {
         Ok(())
     }
 
+    /// Prove each parent's occupied child slots, in slot order, equal its children.
+    pub(crate) fn check_children_match_slots<C>(
+        &self,
+        slots: &HashMap<NodeIndex, C>,
+    ) -> Result<(), SnapshotConsistencyError>
+    where
+        for<'a> &'a C: IntoIterator<Item = &'a Option<NodeIndex>>,
+    {
+        // Lowest parent slot wins: slots is a HashMap with a randomized hasher.
+        let mut fault: Option<(usize, SnapshotConsistencyError)> = None;
+        for (parent, entry) in slots {
+            let slotted: Vec<NodeIndex> = entry.into_iter().flatten().copied().collect();
+            let children = &self.nodes[parent.0].children;
+            if slotted != *children && fault.as_ref().is_none_or(|(held, _)| parent.0 < *held) {
+                fault = Some((
+                    parent.0,
+                    SnapshotConsistencyError::ChildrenDisagreeWithSlots {
+                        slot: parent.0,
+                        children: children.iter().map(|c| c.0).collect(),
+                        slotted: slotted.iter().map(|c| c.0).collect(),
+                    },
+                ));
+            }
+        }
+        match fault {
+            Some((_, err)) => Err(err),
+            None => Ok(()),
+        }
+    }
+
     fn check_edge(
         &self,
         field: &'static str,

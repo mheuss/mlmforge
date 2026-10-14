@@ -1256,7 +1256,7 @@ The steps, in source order, and what each gives the ones after it.
 | 6 | `displaced_members` | Runs after step 4, so a user the index puts on a board that does not exist is reported by step 4 instead |
 | 7 | Gap check: every board fills from position 0 | Nothing. No step depends on it |
 
-Step 1 is a pair of `if`s. Steps 2 through 7 are one `for` each. Sizing and
+Step 1 is a pair of `if`s. Every later step is one `for`. Sizing and
 duplicate detection share step 3 because both read the same positions, and the
 two membership passes are separate loops over different maps.
 
@@ -1310,7 +1310,7 @@ that mutator.
 ## A Test Helper That Does Not Call The Thing Under Test
 
 `assert_board_invariants` checked three properties by hand: map key equals board
-id, no occupant on two boards, every occupant indexed. Three of the six guards in
+id, no occupant on two boards, every occupant indexed. Three of the guards in
 `validate_restored` check the same three things.
 
 It never called `validate_restored`.

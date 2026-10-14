@@ -431,7 +431,7 @@ go test ./internal/config/ && (cd engine && cargo test --test config_width_contr
 
 **Problem:** `LoadTree` replays a persisted tree into the Rust worker one node at a time. A replay that fails partway leaves a half-built tree. A retry under the same name needs the structure dropped and rebuilt in full.
 
-**Solution:** Prove the input is reconstructable *before* the first call to the external system, in two phases split by what they read. `validateTreeConfig` checks configuration — tree type, matrix width and spillover — and reads no rows, so it runs before the store query and a misconfigured load costs no query. `validateNodes` then checks the node set — empty user IDs, duplicate IDs, exactly one depth-0 root, root parent and position, self-references, reference existence, depth consistency, slot occupancy, no position on a unilevel node — and `orderForReplay` proves a workable order exists. Only then does the first mutation happen. Replay failures also report how far they got, as a typed error carrying the stage the load reached and how many placements the engine acknowledged. Every exit after the create says what survived it, not just the replay loop. A failed `AddRoot` says the tree was created and root placement did not report success. A caller that wants to retry in the same worker drops the structure first.
+**Solution:** Prove the input is reconstructable *before* the first call to the external system, in two phases split by what they read. `validateTreeConfig` checks configuration — tree type, matrix width and spillover — and reads no rows, so it runs before the store query and a misconfigured load costs no query. `validateNodes` then checks the node set — empty user IDs, duplicate IDs, exactly one depth-0 root, root parent and position, self-references, reference existence, depth consistency, slot occupancy, no position on a unilevel node — and `orderForReplay` proves a workable order exists. Only then does the first mutation happen. Replay failures also report how far they got, as a typed error carrying the stage the load reached and how many placements the engine acknowledged. Every exit after the create says what survived it, not just the replay loop. A failed `AddRoot` says the tree was created and root placement did not report success. A caller that wants to retry in the same worker drops the structure first, under the conditions in UC-NET-032.
 
 **Usage:**
 ```go
@@ -463,10 +463,10 @@ for _, tree := range trees {
 		return err
 
 	case errors.As(err, &incomplete):
-		// The structure may be partly built. If the engine refused the call and
-		// the worker is still usable, drop it before loading it again. Otherwise
-		// start a new worker. Stage and Confirmed are what an operator reads to
-		// size the damage.
+		// The structure may be partly built. If the engine refused a call after
+		// the create stage and the worker is still usable, drop it before
+		// loading it again (UC-NET-032). Otherwise start a new worker. Stage and
+		// Confirmed are what an operator reads to size the damage.
 		return fmt.Errorf("%s stopped at %s with %d of %d non-root placements acknowledged: %w",
 			incomplete.TreeID, incomplete.Stage, incomplete.Confirmed, incomplete.Total, err)
 
@@ -476,7 +476,7 @@ for _, tree := range trees {
 }
 ```
 
-**Notes:** The pattern generalises to any external system with no undo: a worker without a delete op, an API without a rollback, a third party that charges on first call. Two things make it worth the duplication of engine rules in Go. First, the validation must mirror what the remote actually enforces, so it is only as good as that audit — `TestTreePersistence_RejectedTreeLeavesEngineLoadable` proves the guarantee against the real worker rather than a stub, and asserts a *corrected retry succeeds*, which is the part no fake can demonstrate. Second, the mirroring drifts silently if the remote adds a rule; the Rust side keeps its own runtime checks, so preflight is a second line of defence rather than a replacement. Deliberately not covered: divergence between what the store recorded and what the remote actually did — both can be internally consistent, so no read-side validation can detect it. HEU-553 closed the write-side contract for placement; removal still diverges (HEU-582), and the type-label trust boundary (HEU-554) remains open. Related: UC-NET-013, which supplies the ordering half.
+**Notes:** The pattern generalises to any external system with no undo: an engine that cannot undo a lost reply, an API without a rollback, a third party that charges on first call. Two things make it worth the duplication of engine rules in Go. First, the validation must mirror what the remote actually enforces, so it is only as good as that audit — `TestTreePersistence_RejectedTreeLeavesEngineLoadable` proves the guarantee against the real worker rather than a stub, and asserts a *corrected retry succeeds*, which is the part no fake can demonstrate. Second, the mirroring drifts silently if the remote adds a rule; the Rust side keeps its own runtime checks, so preflight is a second line of defence rather than a replacement. Deliberately not covered: divergence between what the store recorded and what the remote actually did — both can be internally consistent, so no read-side validation can detect it. HEU-553 closed the write-side contract for placement; removal still diverges (HEU-582), and the type-label trust boundary (HEU-554) remains open. Related: UC-NET-013, which supplies the ordering half.
 
 One ordering trap the split exists to avoid: an empty-input short circuit placed above the configuration checks hides configuration errors for as long as the input stays empty. HEU-566 found `LoadTree(ctx, id, "matrix")` with no `WithMatrixParams`, and `LoadTree(ctx, id, "streamline")` with an unsupported type, both returning nil on a zero-row tree. Configuration describes the structure, not its contents, so its validity never depends on row count. Put the config phase above both the query and the empty check.
 
@@ -1226,4 +1226,4 @@ return err
 - Take `StructureDropper`, not a wider interface. The `TreeMutator` family does not carry it.
 - A drop recovers only from an engine refusal. After a timeout, a cancellation or a worker crash, the client is closed or the worker is gone. Start a new worker instead. It starts empty.
 - Hold the client exclusively from the drop to the end of the rebuild. Nothing else enforces that.
-- The caller owns the structure name. A refusal at the create stage means the name was already held and the load built nothing, so do not drop it.
+- The caller owns the structure name, not whatever an earlier holder built under it. A refusal at the create stage built nothing. A `TREE_EXISTS` there means another structure already held the name, so do not drop it.

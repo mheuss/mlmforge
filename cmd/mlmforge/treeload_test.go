@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"testing"
 	"time"
@@ -595,4 +596,32 @@ func TestRunTreeLoad_PrintsWarningsAfterItsOutputAndBeforeTheReleaseWarning(t *t
 
 	require.Equal(t, "loaded tree "+tree+" (1 nodes)\nwarning: first\nwarning: releasing the tree lock reported: unlock failed\n",
 		both.String())
+}
+
+func TestTreeLoadRetryable_NeverRetriesAReplayFailure(t *testing.T) {
+	err := fmt.Errorf("load tree t; nothing was appended: %w", &networkengine.TreeReplayError{
+		TreeID: "t", Stage: networkengine.TreeReplayStageReplay, Err: errors.New("x"),
+	})
+
+	require.False(t, treeLoadRetryable(err))
+}
+
+func TestTreeLoadFailureMessage_NamesTheReplayStage(t *testing.T) {
+	replay := &networkengine.TreeReplayError{TreeID: "t", Stage: networkengine.TreeReplayStageMembership,
+		ReachedVersion: 3, ProjectedVersion: 3, Mismatch: "the engine holds 1 nodes"}
+
+	got := treeLoadFailureMessage(fmt.Errorf("load tree t; nothing was appended: %w", replay))
+
+	require.Equal(t, "load stopped at the membership stage while building the tree from its stream: "+replay.Error(), got)
+}
+
+func TestRunTreeLoad_PrintsAFailedLoadsWarningsBeforeTheReleaseWarning(t *testing.T) {
+	var both bytes.Buffer
+	loader := &stubLoader{warnings: []string{"first"}, releaseErr: errors.New("unlock failed"),
+		err: &networkengine.TreeReplayError{TreeID: "t", Stage: networkengine.TreeReplayStageReplay}}
+
+	err := runTreeLoad(t.Context(), &both, &both, loader, unilevelLoad(testTreeID(62)))
+
+	require.Error(t, err)
+	require.Equal(t, "warning: first\nwarning: releasing the tree lock reported: unlock failed\n", both.String())
 }

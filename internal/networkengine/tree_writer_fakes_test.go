@@ -197,9 +197,8 @@ func (f *fakeWriterEngine) GetPosition(_ context.Context, structure, userID stri
 	return &pos, nil
 }
 
-// GetDownline walks the fake's parent links breadth first, visiting siblings
-// in user ID order, to depth levels below userID, or every level when depth is
-// 0.
+// GetDownline returns the fake's nodes up to depth levels below userID, or
+// every level when depth is 0.
 func (f *fakeWriterEngine) GetDownline(_ context.Context, structure, userID string, depth uint32) ([]EngineNode, error) {
 	if err := f.downlineErrOnce; err != nil {
 		f.downlineErrOnce = nil

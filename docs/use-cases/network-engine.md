@@ -1241,7 +1241,7 @@ return err
 **Added:** Unreleased
 **Files:** `internal/networkengine/tree_writer.go`, `internal/networkengine/tree_replay.go`, `internal/networkengine/snapshot_store.go`
 
-**Problem:** A tree load must rebuild engine state the adjacency table cannot hold, such as a matrix holding tank, and must not grow with the stream's length forever.
+**Problem:** A tree load must rebuild engine state the adjacency table cannot hold. A matrix holding tank is one example. The load must also not grow with the stream's length forever.
 
 **Solution:** Restore the latest snapshot at version S, replay events S+1 through the projected version into the engine only, then compare the engine's membership with the store's rows. Fall back to replaying the whole stream on an engine refusal or a mismatch.
 

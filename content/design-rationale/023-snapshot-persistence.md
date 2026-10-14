@@ -22,7 +22,7 @@ JSON via `serde_json`. Debuggable and adequate for the data sizes involved. Form
 
 1. A write whose projection succeeded takes a snapshot once the stream is 1000 events past the stored one.
 2. Go stores the snapshot bytes with the stream version they were taken at.
-3. A load restores the snapshot and replays the events after it, through the tree's projected version. Without a usable snapshot it replays the whole stream.
+3. A load restores the snapshot and replays the events after it, through the tree's projected version.
 4. A load that cannot use a snapshot deletes it and replays the whole stream.
 
 ## What This Enables

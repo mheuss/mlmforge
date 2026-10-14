@@ -1159,9 +1159,17 @@ run-time assertion failures, so building was not enough to find them.
 
 ## What `validate_restored` Still Does Not Check
 
-All four arms above the arena now check their own structures against each other.
-HEU-750 closed the last of them. The board plan arm closed in its first slice.
-Matrix and binary closed in its second. Streamline was never one-way.
+All four arms above the arena check their own structures against each other.
+HEU-750 closed the last of them.
+
+The arena proves one rooted tree. Parent and child edges name each other, and
+so do sponsor and sponsored edges. Exactly one live node has no parent, and it
+is the root. Every sponsor chain ends. Binary and matrix also prove each
+parent's occupied slots, in slot order, equal its `children`. HEU-732, HEU-712,
+HEU-744 and HEU-734 added these.
+
+A cycle through `parent` edges never needed its own check. The depth pass
+requires a child to sit one below its parent, so a parent chain cannot return.
 
 Two gaps remain. Both are recorded rather than fixed.
 
@@ -1170,19 +1178,9 @@ tombstoned slot. No tombstone has to appear in the free list. A tombstone left
 out is leaked. `node_count` counts it live. Its reach today is three `Debug`
 impls.
 
-No arm compares its slot map against `Node.children`. The matrix and binary
-arms count: every live non-root node is a child in exactly one child slot. They
-do not prove the slot that names a node is the same parent the node's own edges
-name. That is HEU-732, along with reciprocal edges.
-
-Two cycle shapes are rejected here rather than left to HEU-732. Both are
-decidable from the slot map alone. A child slot naming the root is rejected. A
-child slot naming its own parent is rejected. Both were accepted before. Both
-produced a wrong answer rather than a disagreement. A leg containing its own
-ancestor makes `count_branch` report more nodes than the tree holds.
-
-The cycles that need a traversal are still open. Two nodes naming each other,
-with the root's own slots empty, is accepted. That is HEU-732.
+A restored board that is already full is accepted. The cascade bound leaves full
+boards standing in a live engine, so rejecting one would reject engines the
+crate produces. HEU-911 holds it.
 
 Read a `validate_restored` docblock as the boundary of what that arm proves. An
 arm that proves less than its name suggests is the failure this file already
@@ -1241,12 +1239,12 @@ which tree in the answer.
 
 ## The Board Plan Validator's Walk Order
 
-`BoardPlanEngine::validate_restored` runs six walks and each depends on the ones
-before it having returned. The comment in the function names the two that are
-load-bearing. The full list is here, because it is a paragraph and a paragraph
-does not belong above a function.
+`BoardPlanEngine::validate_restored` runs its walks in order, and each depends
+on the ones before it having returned. The comment in the function names the two
+that are load-bearing. The full list is here, because it is a paragraph and a
+paragraph does not belong above a function.
 
-The six steps, in source order, and what each gives the ones after it.
+The steps, in source order, and what each gives the ones after it.
 
 | Step | Walk | What it gives the steps after it |
 |---|---|---|
@@ -1255,9 +1253,10 @@ The six steps, in source order, and what each gives the ones after it.
 | 3 | One pass over `boards`, doing sizing and duplicate detection together | A mis-sized board is skipped, so its occupants never reach the seat maps. Then exactly one board per occupant in those maps |
 | 4 | Membership, forward | Every case where the index names a board is already reported |
 | 5 | Membership, reverse | Left with the one case the forward pass does not own: a seat the index names nowhere |
-| 6 | `displaced_members` | Runs last, so a user the index puts on a board that does not exist is reported by step 4 instead |
+| 6 | `displaced_members` | Runs after step 4, so a user the index puts on a board that does not exist is reported by step 4 instead |
+| 7 | Gap check: every board fills from position 0 | Nothing. No step depends on it |
 
-Step 1 is a pair of `if`s. Steps 2 through 6 are one `for` each. Sizing and
+Step 1 is a pair of `if`s. Steps 2 through 7 are one `for` each. Sizing and
 duplicate detection share step 3 because both read the same positions, and the
 two membership passes are separate loops over different maps.
 
@@ -1265,7 +1264,7 @@ Two of these change behavior rather than message wording if moved. Step 2 before
 anything that treats a key as an identity, and step 3's duplicate half before
 step 5.
 
-Reordering the rest changes which fault a payload reports. All six faults reach
+Reordering the rest changes which fault a payload reports. Every fault reaches
 the wire as `INCONSISTENT_SNAPSHOT`, so no fixture pins a different code. What a
 fixture pins is the message, by substring.
 
@@ -1290,11 +1289,11 @@ that matters is the one the engine reaches on its own.
 
 A restored structure can be wrong in three ways, and they need different checks.
 
-| Class | What is wrong | Owned by |
-|---|---|---|
-| Structures disagree | Two structures in one type describe different states | HEU-750 |
-| The graph is wrong | An edge, a root, or a cycle | HEU-732, HEU-744 |
-| A shape is violated | One structure breaks a rule the engine's own mutators keep | HEU-760 |
+| Class | What is wrong | Closed by | Still open |
+|---|---|---|---|
+| Structures disagree | Two structures in one type describe different states | HEU-750 | |
+| The graph is wrong | An edge, a root, or a cycle | HEU-732, HEU-712, HEU-744, HEU-734 | |
+| A shape is violated | One structure breaks a rule the engine's own mutators keep | HEU-760, for a gap above an occupant | HEU-911, a board that is already full |
 
 The third is the one that hides. Nothing disagrees with anything, so a
 structure-to-structure check passes and the payload looks consistent.

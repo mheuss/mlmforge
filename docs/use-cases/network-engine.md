@@ -35,6 +35,7 @@ Use-cases for the Network Engine bounded context.
 - [UC-NET-029: Refusing a projection that arrives out of order](#uc-net-029-refusing-a-projection-that-arrives-out-of-order)
 - [UC-NET-030: Loading a tree whose store may be one event behind its stream](#uc-net-030-loading-a-tree-whose-store-may-be-one-event-behind-its-stream)
 - [UC-NET-031: Recovering a tree stuck behind an event that cannot apply](#uc-net-031-recovering-a-tree-stuck-behind-an-event-that-cannot-apply)
+- [UC-NET-032: Start a structure over in the same worker](#uc-net-032-start-a-structure-over-in-the-same-worker)
 
 ---
 
@@ -1191,3 +1192,38 @@ if res.ProjectionErr != nil {
 ```
 
 **Notes:** A rejected event did not happen. Rejecting a removal leaves the user in the tree. Version 1 still sets the tree's shape after its root is rejected. Build a new writer over a new worker for each call, as UC-NET-027 says for writes. A write or load that meets a pending rejection refuses with `RejectionPendingError`. Related: UC-NET-027, UC-NET-030.
+
+---
+
+### UC-NET-032: Start a structure over in the same worker
+
+**Added:** Unreleased
+**Files:** `internal/networkengine/structure_dropper.go`, `internal/networkengine/engine_client.go`, `engine/network-engine-worker/src/handlers/tree.rs`
+
+**Problem:** A structure left partly built by a load or replay that the engine refused blocks a retry under its name.
+
+**Solution:** `DropStructure` removes the named structure of any kind through `drop_structure` and answers whether it existed. Absence is not an error, so a caller can drop unconditionally before a rebuild without first asking whether the structure exists. The loaded plan stays in place.
+
+**Usage:**
+```go
+_, err := loader.LoadTree(ctx, treeID, treeType)
+
+var incomplete *networkengine.TreeLoadIncompleteError
+var refused *networkengine.EngineError
+if errors.As(err, &incomplete) && incomplete.Stage != networkengine.TreeLoadStageCreate &&
+	errors.As(err, &refused) {
+	// The engine refused a call after this load created the structure.
+	// The worker and transport are intact, and this caller owns the name.
+	if _, err := dropper.DropStructure(ctx, treeID); err != nil {
+		return err
+	}
+	_, err = loader.LoadTree(ctx, treeID, treeType)
+}
+return err
+```
+
+**Notes:**
+- Take `StructureDropper`, not a wider interface. The `TreeMutator` family does not carry it.
+- A drop recovers only from an engine refusal. After a timeout, a cancellation or a worker crash, the client is closed or the worker is gone. Start a new worker instead. It starts empty.
+- Hold the client exclusively from the drop to the end of the rebuild. Nothing else enforces that.
+- The caller owns the structure name. A refusal at the create stage means the name was already held and the load built nothing, so do not drop it.

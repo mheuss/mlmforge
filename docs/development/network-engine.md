@@ -1295,7 +1295,7 @@ The steps, in source order, and what each gives the ones after it.
 | 7 | Gap check: every board fills from position 0 | Nothing. No step depends on it |
 | 8 | Board `seq`: the counter is at most half the u64 range, every `seq` is below it, and no two boards share one | Nothing. No step depends on it |
 
-Step 1 is a pair of `if`s. Step 8 is one `if` and then one `for`. Every other step is one `for`. Sizing and
+Step 1 is a pair of `if`s. Step 8 opens with an `if` and then one `for`. Every other step is one `for`. Sizing and
 duplicate detection share step 3 because both read the same positions, and the
 two membership passes are separate loops over different maps.
 

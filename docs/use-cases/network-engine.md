@@ -942,7 +942,7 @@ The engine is not the only holder of these edges. `tree_nodes.sponsor_id` holds 
 ### UC-NET-024: Adding a response field a caller must not ignore
 
 **Added:** Unreleased (HEU-766)
-**Files:** `engine/network-engine-worker/src/protocol.rs` (`PROTOCOL_VERSION`), `engine/network-engine-worker/src/handlers/tree.rs` (`responsored_json`), `internal/networkengine/wire_types.go` (`RemovalResult`, `MatrixRemovalResult`, `Responsored`), `internal/networkengine/engine_client.go` (`expectedProtocolVersion`, `RemoveNode`, `RemoveMatrixNode`)
+**Files:** `engine/network-engine-worker/src/protocol.rs` (`PROTOCOL_VERSION`), `engine/network-engine-worker/src/handlers/tree.rs` (`responsored_json`), `internal/networkengine/wire_types.go` (`RemovalResult`, `MatrixRemovalResult`, `Responsored`, `BoardAddMemberResultDTO`, `BoardRemoveMemberResultDTO`, `CompressionResultDTO`, `DissolutionResultDTO`), `internal/networkengine/engine_client.go` (`expectedProtocolVersion`, `RemoveNode`, `RemoveMatrixNode`, `BoardAddMember`, `BoardRemoveMember`, `BoardCompressInactive`, `BoardDissolve`)
 
 **Problem:** Adding a field to a response is normally free. A client that ignores it is still correct, so the protocol version does not have to move.
 

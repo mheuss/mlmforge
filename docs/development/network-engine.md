@@ -346,7 +346,11 @@ The board plan engine (`board_plan/engine.rs`) manages multiple small boards. It
 
 Board dimensions are capped: width 2-5, height 1-4. Boards use flat BFS-ordered position arrays, not arena storage.
 
-The displaced member pool (`displaced_members`) holds members removed via dissolution or cycling without re-entry. They are placed before new enrollees in `add_member`. The `place_displaced_members` method must push unplaced members back to the pool if no boards have openings. Never propagate errors that would drop them.
+Boards order by `(created_at, seq)`. The engine assigns `seq` from `next_board_seq` when it creates a board, and a split numbers its new boards in child order. Board ids are random per run, so they never break a tie. Placement, `list_boards` and the drain all use this order.
+
+Every mutating operation checks its preconditions, then cycles every full board, oldest first, each with a fresh cascade budget. `max_cascade_depth` limits recursion depth within one cascade, so a cascade can leave a board full. The next mutating operation pays it. Remove and compress also cycle the member's own board if it is full before taking the member off it. Dissolve removes its board first and drains after, and refuses a full board with `BOARD_FULL`. Restore never drains.
+
+The displaced member pool (`displaced_members`) holds members removed via dissolution or cycling without re-entry. They are placed before new enrollees in `add_member`. `remove_member` takes a displaced member out of the pool. The `place_displaced_members` method must push unplaced members back to the pool if no boards have openings. Never propagate errors that would drop them.
 
 All tree-layer types (including BoardPlanEngine) must remain serde-serializable. See design-rationale 023.
 
@@ -1211,9 +1215,10 @@ tombstoned slot. No tombstone has to appear in the free list. A tombstone left
 out is leaked. `node_count` counts it live. Its reach today is three `Debug`
 impls.
 
-A restored board that is already full is accepted. The cascade bound leaves full
-boards standing in a live engine, so rejecting one would reject engines the
-crate produces. HEU-911 holds it.
+A restored board that is already full is accepted. A cascade that reaches
+`max_cascade_depth` leaves a full board standing until the next mutating
+operation pays it, so rejecting one would reject engines the crate produces.
+Restore does not pay it.
 
 Read a `validate_restored` docblock as the boundary of what that arm proves. An
 arm that proves less than its name suggests is the failure this file already
@@ -1288,8 +1293,9 @@ The steps, in source order, and what each gives the ones after it.
 | 5 | Membership, reverse | Left with the one case the forward pass does not own: a seat the index names nowhere |
 | 6 | `displaced_members` | Runs after step 4, so a user the index puts on a board that does not exist is reported by step 4 instead |
 | 7 | Gap check: every board fills from position 0 | Nothing. No step depends on it |
+| 8 | Board `seq`: the counter is at most half the u64 range, every `seq` is below it, and no two boards share one | Nothing. No step depends on it |
 
-Step 1 is a pair of `if`s. Every later step is one `for`. Sizing and
+Step 1 is a pair of `if`s. Step 8 is one `if` and then one `for`. Every other step is one `for`. Sizing and
 duplicate detection share step 3 because both read the same positions, and the
 two membership passes are separate loops over different maps.
 

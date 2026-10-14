@@ -181,7 +181,7 @@ func (f *fakeWriterEngine) GetDownline(_ context.Context, structure, userID stri
 	if _, ok := t.nodes[userID]; !ok {
 		return nil, fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", userID)
 	}
-	// A children index keeps this linear.
+	// A children index avoids a scan of every node per level.
 	children := map[string][]string{}
 	for _, id := range slices.Sorted(maps.Keys(t.nodes)) {
 		if parent := t.nodes[id].ParentUserID; parent != nil {

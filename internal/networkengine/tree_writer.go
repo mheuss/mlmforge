@@ -730,7 +730,7 @@ func (w *TreeWriter) dropBuilt(ctx context.Context, tree string, projected int64
 	dropped, err := w.engine.DropStructure(ctx, tree)
 	if err != nil {
 		return &TreeReplayError{TreeID: tree, Stage: TreeReplayStageDrop, ReachedVersion: reached,
-			ProjectedVersion: projected, Err: errors.Join(err, cause)}
+			ProjectedVersion: projected, Err: fmt.Errorf("%w; the drop followed: %w", err, cause)}
 	}
 	if restored && !dropped {
 		return &TreeReplayError{TreeID: tree, Stage: TreeReplayStageDrop, ReachedVersion: reached,

@@ -317,6 +317,8 @@ func TestTreeWriterSnapshotLoad_FailsWhenTheDropIsRefused(t *testing.T) {
 	_, err := w.Load(context.Background(), loadRequest())
 
 	requireReplayStage(t, err, TreeReplayStageDrop)
+	assert.ErrorContains(t, err, "SPONSOR_NOT_FOUND")
+	assert.NotContains(t, err.Error(), "\n")
 }
 
 func TestTreeWriterSnapshotLoad_FailsWhenTheDropFindsNoStructureAfterARestore(t *testing.T) {

@@ -32,7 +32,7 @@ fn occupied_boards(engine: &BoardPlanEngine) -> Vec<Uuid> {
     boards.into_iter().map(|(_, id)| id).collect()
 }
 
-/// The member every run starts with, which removal never picks.
+/// The member each run seeds the engine with.
 fn anchor() -> Uuid {
     uuid_from_index(0)
 }
@@ -50,11 +50,7 @@ fn board_step(engine: &mut BoardPlanEngine, next: &mut usize, op: Op) {
     match kind {
         0 | 1 => {
             let id = uuid_from_index(*next);
-            let sponsor = if present.is_empty() {
-                id
-            } else {
-                present[b % present.len()]
-            };
+            let sponsor = present[b % present.len()];
             let _ = engine.add_member(id, sponsor, timestamp);
         }
         2 => {

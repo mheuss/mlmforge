@@ -31,7 +31,8 @@ impl Arena {
         }
     }
 
-    /// Prove every stored `NodeIndex` is in range and live, and that the edges form one rooted tree.
+    /// Prove every stored `NodeIndex` is in range and live, that the parent
+    /// edges form one rooted tree, and that every sponsor chain ends.
     pub(crate) fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
         let node_count = self.nodes.len();
 
@@ -191,6 +192,8 @@ impl Arena {
         // Must run after the edge pass: it indexes nodes by edge target.
         self.check_reciprocal("children", "parent", children_of, parent_of)?;
         self.check_single_root()?;
+        self.check_reciprocal("sponsored", "sponsor", sponsored_of, sponsor_of)?;
+        self.check_sponsor_chains_end()?;
 
         Ok(())
     }
@@ -415,6 +418,43 @@ impl Arena {
                 user_id: node.user_id,
                 root: root.0,
             });
+        }
+        Ok(())
+    }
+
+    /// Prove every sponsor chain ends.
+    fn check_sponsor_chains_end(&self) -> Result<(), SnapshotConsistencyError> {
+        #[derive(Clone, Copy, PartialEq)]
+        enum Visit {
+            Unseen,
+            OnWalk,
+            Done,
+        }
+        let mut visits = vec![Visit::Unseen; self.nodes.len()];
+        for (start, node) in self.nodes.iter().enumerate() {
+            if node.user_id == Uuid::nil() || visits[start] == Visit::Done {
+                continue;
+            }
+            let mut walk = Vec::new();
+            let mut current = Some(NodeIndex(start));
+            while let Some(idx) = current {
+                match visits[idx.0] {
+                    Visit::Done => break,
+                    Visit::OnWalk => {
+                        return Err(SnapshotConsistencyError::SponsorChainRevisits {
+                            start,
+                            revisited: idx.0,
+                        });
+                    }
+                    Visit::Unseen => {}
+                }
+                visits[idx.0] = Visit::OnWalk;
+                walk.push(idx.0);
+                current = self.nodes[idx.0].sponsor;
+            }
+            for slot in walk {
+                visits[slot] = Visit::Done;
+            }
         }
         Ok(())
     }
@@ -871,6 +911,14 @@ fn parent_of(node: &Node) -> Option<NodeIndex> {
 
 fn children_of(node: &Node) -> &[NodeIndex] {
     &node.children
+}
+
+fn sponsor_of(node: &Node) -> Option<NodeIndex> {
+    node.sponsor
+}
+
+fn sponsored_of(node: &Node) -> &[NodeIndex] {
+    &node.sponsored
 }
 
 /// Generates shared UUID-accepting query methods that delegate to Arena.
@@ -1589,6 +1637,140 @@ mod tests {
         arena.index.clear();
         arena.root = None;
         arena.tombstone(NodeIndex(0));
+
+        assert!(arena.validate_restored().is_ok());
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_parent_cycle_by_depth() {
+        let mut arena = live_arena();
+        let a = arena.alloc_slot(make_node(test_uuid(2), Some(NodeIndex(2)), 1));
+        let b = arena.alloc_slot(make_node(test_uuid(3), Some(NodeIndex(1)), 1));
+        arena.index.insert(test_uuid(2), a);
+        arena.index.insert(test_uuid(3), b);
+        arena.nodes[a.0].children.push(b);
+        arena.nodes[b.0].children.push(a);
+
+        assert_eq!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::NodeDepthMismatch {
+                slot: 1,
+                user_id: test_uuid(2),
+                depth: 1,
+                parent_slot: 2,
+                parent_depth: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_children_cycle() {
+        let mut arena = arena_with_a_child(1);
+        arena.nodes[1].children.push(NodeIndex(0));
+
+        assert_eq!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::EdgeNotReciprocated {
+                field: "children",
+                slot: 1,
+                target: 0,
+                reverse_field: "parent",
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_sponsor_edge_the_sponsor_does_not_list() {
+        let mut arena = arena_with_a_child(1);
+        arena.nodes[1].sponsor = Some(NodeIndex(0));
+
+        assert_eq!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::EdgeNotReciprocated {
+                field: "sponsor",
+                slot: 1,
+                target: 0,
+                reverse_field: "sponsored",
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_sponsored_edge_the_recruit_does_not_name() {
+        let mut arena = arena_with_a_child(1);
+        arena.nodes[0].sponsored.push(NodeIndex(1));
+
+        assert_eq!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::EdgeNotReciprocated {
+                field: "sponsored",
+                slot: 0,
+                target: 1,
+                reverse_field: "sponsor",
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_recruit_listed_twice() {
+        let mut arena = arena_with_a_child(1);
+        arena.nodes[1].sponsor = Some(NodeIndex(0));
+        arena.nodes[0].sponsored = vec![NodeIndex(1), NodeIndex(1)];
+
+        assert_eq!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::EdgeRepeated {
+                field: "sponsored",
+                slot: 0,
+                target: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_sponsor_cycle() {
+        let mut arena = arena_with_a_child(1);
+        let leaf = arena.alloc_slot(make_node(test_uuid(3), Some(NodeIndex(1)), 2));
+        arena.index.insert(test_uuid(3), leaf);
+        arena.nodes[1].children.push(leaf);
+        arena.nodes[1].sponsor = Some(leaf);
+        arena.nodes[1].sponsored = vec![leaf];
+        arena.nodes[leaf.0].sponsor = Some(NodeIndex(1));
+        arena.nodes[leaf.0].sponsored = vec![NodeIndex(1)];
+
+        assert_eq!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::SponsorChainRevisits {
+                start: 1,
+                revisited: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_node_that_sponsors_itself() {
+        let mut arena = arena_with_a_child(1);
+        arena.nodes[1].sponsor = Some(NodeIndex(1));
+        arena.nodes[1].sponsored = vec![NodeIndex(1)];
+
+        assert_eq!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::SponsorChainRevisits {
+                start: 1,
+                revisited: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_accepts_sponsor_chains_that_meet() {
+        let mut arena = arena_with_a_child(1);
+        let second = arena.alloc_slot(make_node(test_uuid(3), Some(NodeIndex(0)), 1));
+        arena.index.insert(test_uuid(3), second);
+        arena.nodes[0].children.push(second);
+        arena.nodes[1].sponsor = Some(NodeIndex(0));
+        arena.nodes[second.0].sponsor = Some(NodeIndex(0));
+        arena.nodes[0].sponsored = vec![NodeIndex(1), second];
 
         assert!(arena.validate_restored().is_ok());
     }

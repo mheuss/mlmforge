@@ -6216,6 +6216,26 @@ fn restore_rejects_a_unilevel_index_on_a_tombstone() {
 }
 
 #[test]
+fn restore_rejects_a_unilevel_sponsor_cycle() {
+    let mut worker = common::spawn_worker();
+    build_three_node_chain(&mut worker);
+
+    let mut data = take_snapshot_data(&mut worker, TREE_NAME);
+    data["arena"]["nodes"][0]["sponsored"] = serde_json::json!([]);
+    data["arena"]["nodes"][1]["sponsor"] = serde_json::json!(2);
+    data["arena"]["nodes"][2]["sponsored"] = serde_json::json!([1]);
+
+    let resp = restore_under(&mut worker, "Cycle", "unilevel", data);
+    assert_inconsistent(
+        &resp,
+        &["the sponsor chain from node slot 1 reaches node slot 1 twice"],
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
 fn restore_rejects_a_binary_child_slot_past_the_end() {
     let mut worker = common::spawn_worker();
     create_binary_tree(&mut worker, "BinTree");

@@ -122,6 +122,9 @@ pub enum SnapshotConsistencyError {
         root: usize,
     },
 
+    #[error("the sponsor chain from node slot {start} reaches node slot {revisited} twice")]
+    SponsorChainRevisits { start: usize, revisited: usize },
+
     #[error("the child slot map names node slot {slot}; the arena holds {node_count} slots")]
     ChildSlotOutOfRange { slot: usize, node_count: usize },
 

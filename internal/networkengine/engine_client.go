@@ -802,7 +802,7 @@ func (c *EngineClient) BoardAddMember(ctx context.Context, structure, userID, sp
 		return nil, err
 	}
 	if r.CycleEvents == nil {
-		return nil, fmt.Errorf("board_add_member: response has no \"cycle_events\" key")
+		return nil, fmt.Errorf("board_add_member: response has no \"cycle_events\" list (the key is missing or null)")
 	}
 	return &r, nil
 }
@@ -819,7 +819,7 @@ func (c *EngineClient) BoardRemoveMember(ctx context.Context, structure, userID 
 		return nil, err
 	}
 	if r.CycleEvents == nil {
-		return nil, fmt.Errorf("board_remove_member: response has no \"cycle_events\" key")
+		return nil, fmt.Errorf("board_remove_member: response has no \"cycle_events\" list (the key is missing or null)")
 	}
 	return &r, nil
 }
@@ -836,7 +836,7 @@ func (c *EngineClient) BoardCompressInactive(ctx context.Context, structure stri
 		return nil, err
 	}
 	if r.CycleEvents == nil {
-		return nil, fmt.Errorf("board_compress_inactive: response has no \"cycle_events\" key")
+		return nil, fmt.Errorf("board_compress_inactive: response has no \"cycle_events\" list (the key is missing or null)")
 	}
 	return &r, nil
 }
@@ -860,7 +860,7 @@ func (c *EngineClient) BoardDissolve(ctx context.Context, structure, boardID str
 		return nil, err
 	}
 	if r.CycleEvents == nil {
-		return nil, fmt.Errorf("board_dissolve: response has no \"cycle_events\" key")
+		return nil, fmt.Errorf("board_dissolve: response has no \"cycle_events\" list (the key is missing or null)")
 	}
 	return &r, nil
 }

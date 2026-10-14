@@ -40,6 +40,9 @@ pub struct BoardPlanEngine {
     /// Members displaced by dissolution who need reassignment.
     displaced_members: Vec<Uuid>,
 
+    /// The `seq` the next new board receives.
+    next_board_seq: u64,
+
     /// Board plan cycling configuration.
     config: BoardPlanConfig,
 }
@@ -71,7 +74,7 @@ impl BoardPlanEngine {
         }
 
         let total_positions = board::total_positions(width, height);
-        let initial_board = Board::new(total_positions, timestamp, None);
+        let initial_board = Board::new(total_positions, timestamp, None, 0);
 
         let mut boards = HashMap::new();
         boards.insert(initial_board.id, initial_board);
@@ -84,6 +87,7 @@ impl BoardPlanEngine {
             member_boards: HashMap::new(),
             sponsor_map: HashMap::new(),
             displaced_members: Vec::new(),
+            next_board_seq: 1,
             config,
         })
     }
@@ -311,11 +315,12 @@ impl BoardPlanEngine {
         self.member_boards.get(&user_id).copied()
     }
 
-    /// Returns summaries of all boards, sorted by created_at ascending.
+    /// Returns summaries of all boards, ordered by `created_at`, then `seq`.
     pub fn list_boards(&self) -> Vec<BoardSummary> {
-        let mut summaries: Vec<BoardSummary> = self
-            .boards
-            .values()
+        let mut boards: Vec<&Board> = self.boards.values().collect();
+        boards.sort_by_key(|b| (b.created_at, b.seq));
+        boards
+            .into_iter()
             .map(|b| BoardSummary {
                 id: b.id,
                 filled_count: b.filled_count(),
@@ -324,9 +329,7 @@ impl BoardPlanEngine {
                 last_activity_at: b.last_activity_at,
                 parent_board_id: b.parent_board_id,
             })
-            .collect();
-        summaries.sort_by_key(|s| s.created_at);
-        summaries
+            .collect()
     }
 
     /// Returns the list of displaced members awaiting reassignment.
@@ -431,12 +434,12 @@ impl BoardPlanEngine {
     }
 
     /// Returns the id of the oldest board that has at least one open
-    /// position. Boards are compared by `created_at` ascending.
+    /// position. Boards are compared by `created_at`, then `seq`.
     fn oldest_board_with_opening(&self) -> Result<Uuid, BoardPlanError> {
         self.boards
             .values()
             .filter(|b| b.first_open_position().is_some())
-            .min_by_key(|b| b.created_at)
+            .min_by_key(|b| (b.created_at, b.seq))
             .map(|b| b.id)
             .ok_or(BoardPlanError::NoBoardsAvailable)
     }
@@ -689,6 +692,13 @@ impl BoardPlanEngine {
         }
     }
 
+    /// Creates an empty board carrying the next `seq`.
+    fn new_board(&mut self, timestamp: i64, parent_board_id: Option<Uuid>) -> Board {
+        let seq = self.next_board_seq;
+        self.next_board_seq += 1;
+        Board::new(self.total_positions, timestamp, parent_board_id, seq)
+    }
+
     /// Splits a full board into `width` new boards, one per child
     /// subtree of the root.
     ///
@@ -708,7 +718,7 @@ impl BoardPlanEngine {
             let subtree = board::subtree_indices(child_index, self.width, max_index);
 
             // Create a new board with the same total_positions.
-            let mut new_board = Board::new(self.total_positions, timestamp, Some(board.id));
+            let mut new_board = self.new_board(timestamp, Some(board.id));
 
             // Map each subtree member to sequential positions in the
             // new board, preserving BFS order.
@@ -1606,8 +1616,8 @@ mod tests {
         // to verify sort order.
         let mut engine = BoardPlanEngine::new(2, 2, test_config(), 1000).unwrap();
 
-        let board_b = Board::new(engine.total_positions, 3000, None);
-        let board_a = Board::new(engine.total_positions, 2000, None);
+        let board_b = engine.new_board(3000, None);
+        let board_a = engine.new_board(2000, None);
 
         engine.boards.insert(board_b.id, board_b);
         engine.boards.insert(board_a.id, board_a);
@@ -1617,6 +1627,52 @@ mod tests {
         assert_eq!(summaries[0].created_at, 1000);
         assert_eq!(summaries[1].created_at, 2000);
         assert_eq!(summaries[2].created_at, 3000);
+    }
+
+    #[test]
+    fn a_split_assigns_seq_in_child_order() {
+        let mut engine = BoardPlanEngine::new(2, 2, test_config_no_reentry(), 1000).unwrap();
+
+        let (_, last) = fill_2x2_board(&mut engine);
+
+        let seqs: Vec<u64> = last.cycle_events[0]
+            .new_boards
+            .iter()
+            .map(|id| engine.get_board(*id).unwrap().seq)
+            .collect();
+        assert_eq!(seqs, vec![1, 2], "the initial board holds seq 0");
+    }
+
+    #[test]
+    fn the_first_child_board_takes_the_next_placement_after_a_split() {
+        // A fresh engine per iteration. One engine repeats its own hash
+        // order, so it would pass half the time without the tie-break.
+        for _ in 0..64 {
+            let mut engine = BoardPlanEngine::new(2, 2, test_config_no_reentry(), 1000).unwrap();
+            let (_, last) = fill_2x2_board(&mut engine);
+            let first_child = last.cycle_events[0].new_boards[0];
+
+            let next = engine
+                .add_member(test_uuid(30), test_uuid(11), 5000)
+                .unwrap();
+
+            assert_eq!(
+                next.board_id, first_child,
+                "both children share a created_at, so seq should decide"
+            );
+        }
+    }
+
+    #[test]
+    fn list_boards_orders_boards_from_one_split_by_seq() {
+        for _ in 0..64 {
+            let mut engine = BoardPlanEngine::new(2, 2, test_config_no_reentry(), 1000).unwrap();
+            let (_, last) = fill_2x2_board(&mut engine);
+
+            let listed: Vec<Uuid> = engine.list_boards().iter().map(|s| s.id).collect();
+
+            assert_eq!(listed, last.cycle_events[0].new_boards);
+        }
     }
 
     // --- add_member tests ---
@@ -1780,7 +1836,7 @@ mod tests {
         }
 
         // Add a fallback board with open slots.
-        let fallback_board = Board::new(engine.total_positions, 3000, None);
+        let fallback_board = engine.new_board(3000, None);
         let fallback_id = fallback_board.id;
         engine.boards.insert(fallback_id, fallback_board);
 
@@ -2117,7 +2173,7 @@ mod tests {
         // bootstrap path but is not on any board yet. Place the
         // sponsor on a second board so SponsorBoard mode has a
         // target to find.
-        let sponsor_board = Board::new(engine.total_positions, 1500, None);
+        let sponsor_board = engine.new_board(1500, None);
         let sponsor_board_id = sponsor_board.id;
         engine.boards.insert(sponsor_board_id, sponsor_board);
         engine.boards.get_mut(&sponsor_board_id).unwrap().positions[0] = Some(sponsor);

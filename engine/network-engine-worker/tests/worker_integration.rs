@@ -6995,9 +6995,7 @@ fn board_plan_snapshot_round_trip_survives_a_cycled_board() {
         &mut worker,
         r#"{"id":"bl0","op":"board_list","params":{"structure":"BPRT"}}"#,
     );
-    // More than the one board it started with, so a cycle split it. The exact
-    // count varies with placement among boards sharing a timestamp, so it is
-    // not asserted.
+    // More than the one board it started with, so a cycle split it.
     assert!(
         boards
             .as_array()
@@ -7046,27 +7044,21 @@ fn board_plan_snapshot_round_trip_survives_a_cycled_board() {
     );
     restore_expecting_success(&mut worker, "BPRT2", "board_plan", data);
 
-    // A cycle creates two boards in the same instant, so their relative
-    // order is not guaranteed. Compare the set, not the order.
-    let by_id = |v: serde_json::Value| {
-        let mut boards = v.as_array().expect("board_list returns an array").clone();
-        boards.sort_by_key(|b| b["id"].as_str().unwrap_or_default().to_string());
-        boards
-    };
-    let before = by_id(query(
+    // Compared in order: the listing order is part of what a restore keeps.
+    let before = query(
         &mut worker,
         r#"{"id":"bl1","op":"board_list","params":{"structure":"BPRT"}}"#,
-    ));
-    let after = by_id(query(
+    );
+    let after = query(
         &mut worker,
         r#"{"id":"bl2","op":"board_list","params":{"structure":"BPRT2"}}"#,
-    ));
+    );
     assert_eq!(
         before, after,
         "the restored board list differs from the original"
     );
     assert!(
-        !before.is_empty(),
+        before.as_array().is_some_and(|boards| !boards.is_empty()),
         "the restored engine should still hold boards"
     );
 

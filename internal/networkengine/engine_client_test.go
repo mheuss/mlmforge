@@ -2082,11 +2082,13 @@ func TestEngineClient_BoardAddMember_MockResponse(t *testing.T) {
 	assert.Equal(t, "board_add_member", mock.lastOp)
 	assert.Equal(t, "board-001", result.BoardID)
 	assert.Equal(t, 3, result.Position)
-	require.Len(t, result.CycleEvents, 1)
-	assert.Equal(t, "00000000-0000-0000-0000-000000000001", result.CycleEvents[0].CycledMember)
-	assert.Equal(t, []string{"board-002"}, result.CycleEvents[0].NewBoards)
-	require.NotNil(t, result.CycleEvents[0].ReEntryBoard)
-	assert.Equal(t, "board-003", *result.CycleEvents[0].ReEntryBoard)
+	require.NotNil(t, result.CycleEvents)
+	events := *result.CycleEvents
+	require.Len(t, events, 1)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000001", events[0].CycledMember)
+	assert.Equal(t, []string{"board-002"}, events[0].NewBoards)
+	require.NotNil(t, events[0].ReEntryBoard)
+	assert.Equal(t, "board-003", *events[0].ReEntryBoard)
 }
 
 func TestEngineClient_BoardRemoveMember_MockResponse(t *testing.T) {
@@ -2108,7 +2110,8 @@ func TestEngineClient_BoardRemoveMember_MockResponse(t *testing.T) {
 		"00000000-0000-0000-0000-000000000002",
 		"00000000-0000-0000-0000-000000000003",
 	}, result.Compacted)
-	assert.Empty(t, result.CycleEvents)
+	require.NotNil(t, result.CycleEvents)
+	assert.Empty(t, *result.CycleEvents)
 }
 
 func TestEngineClient_BoardCompressInactive_MockResponse(t *testing.T) {
@@ -2134,9 +2137,11 @@ func TestEngineClient_BoardCompressInactive_MockResponse(t *testing.T) {
 	require.Len(t, result.Compressed, 1)
 	assert.Equal(t, "00000000-0000-0000-0000-000000000001", result.Compressed[0].UserID)
 	assert.Equal(t, "board-001", result.Compressed[0].BoardID)
-	require.Len(t, result.CycleEvents, 1)
-	assert.Equal(t, "00000000-0000-0000-0000-000000000002", result.CycleEvents[0].CycledMember)
-	assert.Nil(t, result.CycleEvents[0].ReEntryBoard)
+	require.NotNil(t, result.CycleEvents)
+	events := *result.CycleEvents
+	require.Len(t, events, 1)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000002", events[0].CycledMember)
+	assert.Nil(t, events[0].ReEntryBoard)
 }
 
 func TestEngineClient_BoardDetectStalled_MockResponse(t *testing.T) {
@@ -2167,7 +2172,8 @@ func TestEngineClient_BoardDissolve_MockResponse(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`{
 			"dissolved_board_id":"board-001",
-			"displaced_members":["00000000-0000-0000-0000-000000000001","00000000-0000-0000-0000-000000000002"]
+			"displaced_members":["00000000-0000-0000-0000-000000000001","00000000-0000-0000-0000-000000000002"],
+			"cycle_events":[]
 		}`),
 	}
 	client := newEngineClientWithTransport(mock)
@@ -2182,6 +2188,63 @@ func TestEngineClient_BoardDissolve_MockResponse(t *testing.T) {
 		"00000000-0000-0000-0000-000000000001",
 		"00000000-0000-0000-0000-000000000002",
 	}, result.DisplacedMembers)
+	require.NotNil(t, result.CycleEvents)
+	assert.Empty(t, *result.CycleEvents)
+}
+
+func TestEngineClient_BoardOps_RejectMissingCycleEvents(t *testing.T) {
+	cases := []struct {
+		name     string
+		response string
+		call     func(*EngineClient) error
+	}{
+		{
+			name:     "board_add_member",
+			response: `{"board_id":"board-001","position":0}`,
+			call: func(c *EngineClient) error {
+				_, err := c.BoardAddMember(context.Background(), "BoardTest",
+					"00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002", 1000)
+				return err
+			},
+		},
+		{
+			name:     "board_remove_member",
+			response: `{"compacted":[]}`,
+			call: func(c *EngineClient) error {
+				_, err := c.BoardRemoveMember(context.Background(), "BoardTest",
+					"00000000-0000-0000-0000-000000000001", 2000)
+				return err
+			},
+		},
+		{
+			name:     "board_compress_inactive",
+			response: `{"compressed":[]}`,
+			call: func(c *EngineClient) error {
+				_, err := c.BoardCompressInactive(context.Background(), "BoardTest",
+					[]string{"00000000-0000-0000-0000-000000000001"}, 3000)
+				return err
+			},
+		},
+		{
+			name:     "board_dissolve",
+			response: `{"dissolved_board_id":"board-001","displaced_members":[]}`,
+			call: func(c *EngineClient) error {
+				_, err := c.BoardDissolve(context.Background(), "BoardTest", "board-001", 4000)
+				return err
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := newEngineClientWithTransport(&mockTransport{response: json.RawMessage(tc.response)})
+
+			err := tc.call(client)
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.name)
+			assert.Contains(t, err.Error(), `"cycle_events"`)
+		})
+	}
 }
 
 func TestEngineClient_BoardGetState_MockResponse(t *testing.T) {

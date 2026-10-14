@@ -218,9 +218,10 @@ type HoldingTankEntryDTO struct {
 // BoardAddMemberResultDTO is the wire format for adding a member to a board.
 // Matches the Rust AddMemberResult struct.
 type BoardAddMemberResultDTO struct {
-	BoardID     string          `json:"board_id"`
-	Position    int             `json:"position"`
-	CycleEvents []CycleEventDTO `json:"cycle_events"`
+	BoardID  string `json:"board_id"`
+	Position int    `json:"position"`
+	// A pointer, so an absent key is distinguishable from an empty list.
+	CycleEvents *[]CycleEventDTO `json:"cycle_events"`
 }
 
 // CycleEventDTO is the wire format for a board cycle event.
@@ -235,8 +236,9 @@ type CycleEventDTO struct {
 // BoardRemoveMemberResultDTO is the wire format for removing a member from a board.
 // Matches the Rust RemoveMemberResult struct.
 type BoardRemoveMemberResultDTO struct {
-	Compacted   []string        `json:"compacted"`
-	CycleEvents []CycleEventDTO `json:"cycle_events"`
+	Compacted []string `json:"compacted"`
+	// A pointer, so an absent key is distinguishable from an empty list.
+	CycleEvents *[]CycleEventDTO `json:"cycle_events"`
 }
 
 // BoardSummaryDTO is the wire format for a board summary.
@@ -265,13 +267,16 @@ type StalledBoardDTO struct {
 type DissolutionResultDTO struct {
 	DissolvedBoardID string   `json:"dissolved_board_id"`
 	DisplacedMembers []string `json:"displaced_members"`
+	// A pointer, so an absent key is distinguishable from an empty list.
+	CycleEvents *[]CycleEventDTO `json:"cycle_events"`
 }
 
 // CompressionResultDTO is the wire format for inactive compression results.
 // Matches the Rust CompressionResult struct.
 type CompressionResultDTO struct {
-	Compressed  []CompressedMemberDTO `json:"compressed"`
-	CycleEvents []CycleEventDTO       `json:"cycle_events"`
+	Compressed []CompressedMemberDTO `json:"compressed"`
+	// A pointer, so an absent key is distinguishable from an empty list.
+	CycleEvents *[]CycleEventDTO `json:"cycle_events"`
 }
 
 // CompressedMemberDTO is the wire format for a compressed member entry.

@@ -375,14 +375,14 @@ func TestContractBoardPlan_CreateAndAddMembers(t *testing.T) {
 	result1, err := client.BoardAddMember(ctx, structure, member1, sponsor, 1000)
 	require.NoError(t, err)
 	assert.Equal(t, 0, result1.Position, "first member should get position 0")
-	assert.Empty(t, result1.CycleEvents, "no cycling on first add")
+	assert.Empty(t, *result1.CycleEvents, "no cycling on first add")
 
 	// Add second member.
 	member2 := "00000000-0000-0000-0000-000000000002"
 	result2, err := client.BoardAddMember(ctx, structure, member2, member1, 2000)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result2.Position, "second member should get position 1")
-	assert.Empty(t, result2.CycleEvents, "no cycling on second add")
+	assert.Empty(t, *result2.CycleEvents, "no cycling on second add")
 
 	// Verify member lookup.
 	info, err := client.BoardGetMember(ctx, structure, member1)
@@ -424,10 +424,10 @@ func TestContractBoardPlan_CycleOnFill(t *testing.T) {
 	result, err := client.BoardAddMember(ctx, structure, member3, member1, 3000)
 	require.NoError(t, err)
 
-	require.NotEmpty(t, result.CycleEvents, "filling the board should produce cycle events")
+	require.NotEmpty(t, *result.CycleEvents, "filling the board should produce cycle events")
 
 	// The cycled member is the one at position 0 (the top). That's member1.
-	cycleEvent := result.CycleEvents[0]
+	cycleEvent := (*result.CycleEvents)[0]
 	assert.Equal(t, member1, cycleEvent.CycledMember, "top position should cycle out")
 
 	// After cycling, new boards should be created from the split.

@@ -149,7 +149,14 @@ func TestTreeWriter_ConvergesWhenTheLastEventProjectsBeforeTheLoadRead(t *testin
 	assert.Equal(t, []string{"ProjectedRows"}, store.calls)
 	assert.Equal(t, &CaughtUpEvent{EventID: pending.ID, Version: 2, Type: EventTypeNodePlaced}, res.CaughtUp)
 	assert.Equal(t, []string{writerChild, writerChild, writerOther}, placementUsers(engine),
-		"the replay placed the child, then the redelivery placed it again")
+		"the replay placed the child, then the redelivery asked to place it again")
+	down, err := engine.GetDownline(context.Background(), writerTree, writerRoot, 0)
+	require.NoError(t, err)
+	var held []string
+	for _, n := range down {
+		held = append(held, n.UserID)
+	}
+	assert.ElementsMatch(t, []string{writerChild, writerOther}, held, "the engine holds the child once")
 	assert.Equal(t, int64(3), res.Version)
 	version, _, err := env.store.ProjectedVersion(context.Background(), writerTree)
 	require.NoError(t, err)

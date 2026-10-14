@@ -207,6 +207,15 @@ pub enum SnapshotConsistencyError {
         expected: usize,
     },
 
+    #[error(
+        "board {board_id} has position {open_position} open and position {occupied_position} occupied"
+    )]
+    BoardOccupantAboveOpening {
+        board_id: Uuid,
+        open_position: usize,
+        occupied_position: usize,
+    },
+
     #[error("the boards map files board {board_id} under key {key}")]
     BoardIdMismatch { key: Uuid, board_id: Uuid },
 

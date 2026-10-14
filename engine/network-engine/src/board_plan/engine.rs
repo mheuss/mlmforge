@@ -88,8 +88,8 @@ impl BoardPlanEngine {
         })
     }
 
-    /// Prove a restored engine's stored values are in range and its boards
-    /// agree with its membership index.
+    /// Prove a restored engine's stored values are in range, its boards
+    /// agree with its membership index, and every board fills from position 0.
     ///
     /// Membership is checked in both directions.
     ///
@@ -264,6 +264,29 @@ impl BoardPlanEngine {
                     board_id: *board_id,
                 });
             }
+        }
+        // Lowest board id wins: boards iterates in hash order.
+        let mut gap: Option<(Uuid, SnapshotConsistencyError)> = None;
+        for (board_id, board) in &self.boards {
+            let Some(open) = board.first_open_position() else {
+                continue;
+            };
+            let Some(offset) = board.positions[open..].iter().position(Option::is_some) else {
+                continue;
+            };
+            if gap.as_ref().is_none_or(|(held, _)| board_id < held) {
+                gap = Some((
+                    *board_id,
+                    SnapshotConsistencyError::BoardOccupantAboveOpening {
+                        board_id: *board_id,
+                        open_position: open,
+                        occupied_position: open + offset,
+                    },
+                ));
+            }
+        }
+        if let Some((_, err)) = gap {
+            return Err(err);
         }
         Ok(())
     }
@@ -1411,6 +1434,63 @@ mod tests {
         let (mut engine, member) = seeded_engine();
         let departed = Uuid::from_bytes([8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
         engine.sponsor_map.insert(departed, member);
+
+        assert_eq!(engine.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_rejects_an_occupant_above_an_open_position() {
+        let mut engine = BoardPlanEngine::new(2, 1, test_config(), 0).unwrap();
+        engine.add_member(test_uuid(1), test_uuid(1), 1).unwrap();
+        engine.add_member(test_uuid(2), test_uuid(1), 2).unwrap();
+        let board_id = *engine.member_boards.get(&test_uuid(1)).unwrap();
+        engine.boards.get_mut(&board_id).unwrap().positions =
+            vec![None, Some(test_uuid(1)), Some(test_uuid(2))];
+
+        assert_eq!(
+            engine.validate_restored(),
+            Err(SnapshotConsistencyError::BoardOccupantAboveOpening {
+                board_id,
+                open_position: 0,
+                occupied_position: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_names_the_same_gapped_board_every_run() {
+        for _ in 0..64 {
+            let (mut engine, _) = seeded_engine();
+            let template = engine.boards.values().next().unwrap().clone();
+            for (id, occupant) in [(test_uuid(1), test_uuid(11)), (test_uuid(4), test_uuid(14))] {
+                let mut board = template.clone();
+                board.id = id;
+                board.positions = vec![None; 7];
+                board.positions[2] = Some(occupant);
+                engine.boards.insert(id, board);
+                engine.member_boards.insert(occupant, id);
+            }
+
+            assert_eq!(
+                engine.validate_restored(),
+                Err(SnapshotConsistencyError::BoardOccupantAboveOpening {
+                    board_id: test_uuid(1),
+                    open_position: 0,
+                    occupied_position: 2,
+                }),
+                "the lowest board id should win regardless of hash order"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_restored_accepts_a_full_board() {
+        let mut engine = BoardPlanEngine::new(2, 1, test_config(), 0).unwrap();
+        engine.add_member(test_uuid(1), test_uuid(1), 1).unwrap();
+        engine.add_member(test_uuid(2), test_uuid(1), 2).unwrap();
+        let board_id = *engine.member_boards.get(&test_uuid(1)).unwrap();
+        engine.boards.get_mut(&board_id).unwrap().positions[2] = Some(test_uuid(3));
+        engine.member_boards.insert(test_uuid(3), board_id);
 
         assert_eq!(engine.validate_restored(), Ok(()));
     }

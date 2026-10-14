@@ -6374,6 +6374,57 @@ fn restore_rejects_a_board_member_on_an_absent_board() {
 }
 
 #[test]
+fn restore_rejects_a_board_occupant_above_an_open_position() {
+    let mut worker = common::spawn_worker();
+    let create = serde_json::json!({
+        "id": "bp-create",
+        "op": "create_board_plan",
+        "params": {
+            "structure": "BpGap", "width": 2, "height": 2,
+            "config": {
+                "cycle_commission": 500.0, "re_entry_enabled": true,
+                "re_entry_position": "bottom", "max_cycles_per_period": 4,
+                "max_cascade_depth": 10, "stall_threshold_periods": 3,
+                "inactive_compression": false
+            },
+            "timestamp": 0
+        }
+    });
+    let resp = common::send_receive(&mut worker, &create.to_string());
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "create_board_plan failed: {}",
+        resp
+    );
+    let member = "cccccccc-0000-0000-0000-000000000001";
+    let add = serde_json::json!({
+        "id": "bp-add", "op": "board_add_member",
+        "params": { "structure": "BpGap", "user_id": member, "sponsor_id": member, "timestamp": 1 }
+    });
+    let resp = common::send_receive(&mut worker, &add.to_string());
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "board_add_member failed: {}",
+        resp
+    );
+
+    let mut data = take_snapshot_data(&mut worker, "BpGap");
+    let board = data["boards"]
+        .as_object_mut()
+        .expect("board plan carries boards")
+        .values_mut()
+        .next()
+        .expect("one board");
+    board["positions"] = serde_json::json!([null, member, null, null, null, null, null]);
+
+    let resp = restore_under(&mut worker, "BpGap2", "board_plan", data);
+    assert_inconsistent(&resp, &["has position 0 open and position 1 occupied"]);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
 fn restore_rejects_a_streamline_user_not_in_the_stream_tree() {
     // The state HEU-706 was filed for: user_streams names a stream whose tree
     // does not hold the user.

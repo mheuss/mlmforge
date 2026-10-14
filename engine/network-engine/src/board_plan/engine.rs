@@ -530,25 +530,53 @@ impl BoardPlanEngine {
     /// Removes a member from their board and compacts the remaining members
     /// to fill the gap, or takes them out of the displaced pool.
     ///
-    /// Returns the list of members who were shifted during compaction
-    /// and any cycle events.
+    /// Cycles every full board first. Returns the members compaction moved
+    /// and every cycle event.
     pub fn remove_member(
         &mut self,
         user_id: Uuid,
         timestamp: i64,
     ) -> Result<RemoveMemberResult, BoardPlanError> {
+        if !self.member_boards.contains_key(&user_id) && !self.displaced_members.contains(&user_id)
+        {
+            return Err(BoardPlanError::MemberNotFound(user_id));
+        }
+
+        let mut cycle_events = Vec::new();
+        self.drain_full_boards(timestamp, &mut cycle_events);
+        let compacted = self.take_member_out(user_id, timestamp, &mut cycle_events)?;
+
+        Ok(RemoveMemberResult {
+            compacted,
+            cycle_events,
+        })
+    }
+
+    /// Takes a member off their board, or out of the displaced pool, and
+    /// returns the members compaction moved.
+    ///
+    /// A full board is cycled before a seat is taken off it.
+    fn take_member_out(
+        &mut self,
+        user_id: Uuid,
+        timestamp: i64,
+        cycle_events: &mut Vec<CycleEvent>,
+    ) -> Result<Vec<Uuid>, BoardPlanError> {
+        let full_board = self
+            .member_boards
+            .get(&user_id)
+            .copied()
+            .filter(|board_id| self.boards.get(board_id).is_some_and(Board::is_full));
+        if let Some(board_id) = full_board {
+            self.process_cycles(board_id, timestamp, cycle_events, 0);
+        }
+
+        // Cycling can move the member, so their place is read again.
         let Some(board_id) = self.member_boards.get(&user_id).copied() else {
-            if !self.displaced_members.contains(&user_id) {
-                return Err(BoardPlanError::MemberNotFound(user_id));
-            }
             self.displaced_members.retain(|m| *m != user_id);
-            return Ok(RemoveMemberResult {
-                compacted: Vec::new(),
-                cycle_events: Vec::new(),
-            });
+            return Ok(Vec::new());
         };
 
-        // Find their position and clear it.
         let board = self
             .boards
             .get_mut(&board_id)
@@ -556,34 +584,21 @@ impl BoardPlanEngine {
         if let Some(pos) = board.positions.iter().position(|p| *p == Some(user_id)) {
             board.positions[pos] = None;
         }
-
-        // Remove from member_boards.
+        board.last_activity_at = timestamp;
         self.member_boards.remove(&user_id);
 
-        // Update last activity.
-        let board = self
-            .boards
-            .get_mut(&board_id)
-            .ok_or(BoardPlanError::BoardNotFound(board_id))?;
-        board.last_activity_at = timestamp;
-
-        // Compact the board.
         let compacted = self.compact_board(board_id);
 
         // Check if compaction filled the board.
-        let mut cycle_events = Vec::new();
         let board = self
             .boards
             .get(&board_id)
             .ok_or(BoardPlanError::BoardNotFound(board_id))?;
         if board.is_full() {
-            self.process_cycles(board_id, timestamp, &mut cycle_events, 0);
+            self.process_cycles(board_id, timestamp, cycle_events, 0);
         }
 
-        Ok(RemoveMemberResult {
-            compacted,
-            cycle_events,
-        })
+        Ok(compacted)
     }
 
     /// Compacts a board after a removal by shifting remaining members
@@ -2137,9 +2152,127 @@ mod tests {
         let result = engine.remove_member(displaced, 100).unwrap();
 
         assert!(result.compacted.is_empty());
+        assert!(result.cycle_events.is_empty());
         assert!(!engine.displaced_members().contains(&displaced));
         assert_eq!(engine.get_member_board(displaced), None);
         assert_eq!(engine.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn remove_member_cycles_a_pending_board_first() {
+        let (mut engine, pending) = engine_with_a_pending_full_board();
+
+        let result = engine.remove_member(test_uuid(5), 6).unwrap();
+
+        assert_eq!(
+            result.cycle_events.first().map(|e| e.board_id),
+            Some(pending)
+        );
+        assert_eq!(engine.get_member_board(test_uuid(5)), None);
+    }
+
+    #[test]
+    fn a_removal_pays_the_members_board_when_the_drain_filled_it() {
+        let config = BoardPlanConfig {
+            max_cascade_depth: NonZeroU32::new(1).unwrap(),
+            ..test_config_sponsor_board()
+        };
+        let (mut engine, full, open) = engine_with_two_boards(config);
+
+        let result = engine.remove_member(test_uuid(5), 10).unwrap();
+
+        let cycled: Vec<Uuid> = result.cycle_events.iter().map(|e| e.board_id).collect();
+        assert_eq!(cycled, vec![full, open]);
+        assert_eq!(engine.get_member_board(test_uuid(5)), None);
+        assert!(!engine.displaced_members().contains(&test_uuid(5)));
+    }
+
+    #[test]
+    fn a_removal_takes_a_member_the_drain_displaced_out_of_the_pool() {
+        let (mut engine, full, _) = engine_with_two_boards(test_config_no_reentry());
+
+        let result = engine.remove_member(test_uuid(1), 10).unwrap();
+
+        let cycled: Vec<Uuid> = result.cycle_events.iter().map(|e| e.board_id).collect();
+        assert_eq!(cycled, vec![full]);
+        assert_eq!(engine.get_member_board(test_uuid(1)), None);
+        assert!(!engine.displaced_members().contains(&test_uuid(1)));
+    }
+
+    #[test]
+    fn a_drain_cycles_full_boards_oldest_first() {
+        // A fresh engine per iteration. One engine repeats its own hash order.
+        for _ in 0..64 {
+            let (mut engine, ids) = engine_from_rows(
+                test_config_no_reentry(),
+                &[
+                    [Some(1), Some(2), Some(3)],
+                    [Some(4), Some(5), Some(6)],
+                    [Some(7), None, None],
+                ],
+                &[(1, 1), (2, 1), (3, 1), (4, 4), (5, 4), (6, 4), (7, 7)],
+            );
+            // The newer seq gets the older timestamp, so the keys disagree.
+            engine.boards.get_mut(&ids[1]).unwrap().created_at = 0;
+
+            let result = engine.remove_member(test_uuid(7), 10).unwrap();
+
+            let cycled: Vec<Uuid> = result.cycle_events.iter().map(|e| e.board_id).collect();
+            assert_eq!(cycled, vec![ids[1], ids[0]]);
+        }
+    }
+
+    #[test]
+    fn each_drained_board_gets_its_own_cascade_budget() {
+        let config = BoardPlanConfig {
+            max_cascade_depth: NonZeroU32::new(1).unwrap(),
+            ..test_config_sponsor_board()
+        };
+        let (mut engine, ids) = engine_from_rows(
+            config,
+            &[
+                [Some(1), Some(2), Some(3)],
+                [Some(4), Some(5), Some(6)],
+                [Some(7), Some(8), None],
+                [Some(9), Some(10), None],
+                [Some(11), None, None],
+            ],
+            &[
+                (1, 7),
+                (2, 1),
+                (3, 1),
+                (4, 9),
+                (5, 4),
+                (6, 4),
+                (7, 7),
+                (8, 7),
+                (9, 9),
+                (10, 9),
+                (11, 11),
+            ],
+        );
+
+        let result = engine.remove_member(test_uuid(11), 10).unwrap();
+
+        let cycled: Vec<Uuid> = result.cycle_events.iter().map(|e| e.board_id).collect();
+        assert_eq!(
+            cycled,
+            vec![ids[0], ids[1]],
+            "both drained boards should cycle at bound 1"
+        );
+        assert!(engine.get_board(ids[2]).unwrap().is_full());
+        assert!(engine.get_board(ids[3]).unwrap().is_full());
+    }
+
+    #[test]
+    fn a_refused_removal_leaves_a_pending_board_full() {
+        let (mut engine, _) = engine_with_a_pending_full_board();
+        let before = serde_json::to_value(&engine).unwrap();
+
+        let err = engine.remove_member(test_uuid(99), 6).unwrap_err();
+
+        assert_eq!(err, BoardPlanError::MemberNotFound(test_uuid(99)));
+        assert_eq!(serde_json::to_value(&engine).unwrap(), before);
     }
 
     #[test]
@@ -2551,6 +2684,18 @@ mod tests {
         }
         assert_eq!(engine.validate_restored(), Ok(()));
         (engine, ids)
+    }
+
+    /// A 2x1 engine holding a full board, `[1, 2, 3]`, and a board with one
+    /// opening, `[4, 5, _]`. Member 4 sponsors member 1. Returns the engine,
+    /// the full board's id and the open board's id.
+    fn engine_with_two_boards(config: BoardPlanConfig) -> (BoardPlanEngine, Uuid, Uuid) {
+        let (engine, ids) = engine_from_rows(
+            config,
+            &[[Some(1), Some(2), Some(3)], [Some(4), Some(5), None]],
+            &[(1, 4), (2, 1), (3, 1), (4, 4), (5, 4)],
+        );
+        (engine, ids[0], ids[1])
     }
 
     #[test]

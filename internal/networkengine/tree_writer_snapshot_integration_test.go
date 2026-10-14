@@ -3,6 +3,7 @@ package networkengine
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -117,7 +118,7 @@ func TestTreeWriterSnapshot_AStraySnapshotOfARejectedEventIsDeletedAtLoad(t *tes
 	require.NoError(t, err)
 	require.Len(t, res.Warnings, 1)
 	assert.Contains(t, res.Warnings[0], "rejection "+rejection.ID)
-	assert.Contains(t, res.Warnings[0], "deleted it and replayed the stream")
+	assert.True(t, strings.HasSuffix(res.Warnings[0], "; deleted it"), res.Warnings[0])
 	assert.Equal(t, snapshotInterval-1, res.Nodes)
 	_, found, err = it.snapshots.Get(ctx, tree)
 	require.NoError(t, err)

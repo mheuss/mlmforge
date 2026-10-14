@@ -623,7 +623,7 @@ func (w *TreeWriter) usableSnapshot(ctx context.Context, tree string, shape tree
 	snap, found, err := w.snapshots.Get(ctx, tree)
 	if err != nil {
 		prep.warnings = append(prep.warnings,
-			fmt.Sprintf("reading the snapshot of tree %s returned: %s; replayed the stream", tree, err))
+			fmt.Sprintf("reading the snapshot of tree %s returned: %s", tree, err))
 		return Snapshot{}, false, nil
 	}
 	if !found {
@@ -746,10 +746,10 @@ func (w *TreeWriter) discardSnapshot(ctx context.Context, tree string, version i
 	prep.snapshotVersion = 0
 	if err := w.snapshots.Delete(ctx, tree, version); err != nil {
 		prep.warnings = append(prep.warnings,
-			fmt.Sprintf("%s; deleting it returned: %s; replayed the stream", observed, err))
+			fmt.Sprintf("%s; deleting it returned: %s", observed, err))
 		return
 	}
-	prep.warnings = append(prep.warnings, fmt.Sprintf("%s; deleted it and replayed the stream", observed))
+	prep.warnings = append(prep.warnings, fmt.Sprintf("%s; deleted it", observed))
 }
 
 // buildFromStream creates the structure, replays events 1 through projected,

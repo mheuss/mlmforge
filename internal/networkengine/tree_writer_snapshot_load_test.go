@@ -61,7 +61,7 @@ func TestTreeWriterSnapshotLoad_DeletesASnapshotAboveTheProjectedVersion(t *test
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"the snapshot of tree " + writerTree +
-		" is at version 9, above the projected version 1; deleted it and replayed the stream"}, res.Warnings)
+		" is at version 9, above the projected version 1; deleted it"}, res.Warnings)
 	assert.NotContains(t, engine.calls, "restore_snapshot")
 	_, found, err := env.snapshots.Get(context.Background(), writerTree)
 	require.NoError(t, err)
@@ -173,7 +173,7 @@ func TestTreeWriterSnapshotLoad_DeletesASnapshotWhoseNextEventRejectsIt(t *testi
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"the snapshot of tree " + writerTree + " is at version 2, and rejection " + rejection.ID +
-		" at version 3 names that version; deleted it and replayed the stream"}, res.Warnings)
+		" at version 3 names that version; deleted it"}, res.Warnings)
 	assert.Equal(t, 1, res.Nodes)
 	assert.False(t, snapshotStored(t, env))
 }
@@ -189,7 +189,7 @@ func TestTreeWriterSnapshotLoad_DeletesASnapshotOfAnotherType(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"the snapshot of tree " + writerTree + " records tree type binary, and version 1 of stream " +
-		TreeStreamName(writerTree) + " records unilevel; deleted it and replayed the stream"}, res.Warnings)
+		TreeStreamName(writerTree) + " records unilevel; deleted it"}, res.Warnings)
 	assert.NotContains(t, engine.calls, "restore_snapshot")
 	assert.False(t, snapshotStored(t, env))
 }
@@ -204,7 +204,7 @@ func TestTreeWriterSnapshotLoad_RecoversFromAnEngineRefusalMidReplay(t *testing.
 	require.Len(t, res.Warnings, 1)
 	assert.True(t, strings.HasPrefix(res.Warnings[0], "the snapshot of tree "+writerTree+" at version 2 could not be used ("),
 		res.Warnings[0])
-	assert.True(t, strings.HasSuffix(res.Warnings[0], "); dropped the structure; deleted it and replayed the stream"),
+	assert.True(t, strings.HasSuffix(res.Warnings[0], "); dropped the structure; deleted it"),
 		res.Warnings[0])
 	assert.Contains(t, res.Warnings[0], "SPONSOR_NOT_FOUND")
 	assert.Equal(t, 3, res.Nodes)
@@ -292,7 +292,7 @@ func TestTreeWriterSnapshotLoad_ReadsTheFullStreamWhenTheSnapshotReadFails(t *te
 	res, err := w.Load(context.Background(), loadRequest())
 
 	require.NoError(t, err)
-	assert.Equal(t, []string{"reading the snapshot of tree " + writerTree + " returned: connection reset; replayed the stream"},
+	assert.Equal(t, []string{"reading the snapshot of tree " + writerTree + " returned: connection reset"},
 		res.Warnings)
 }
 
@@ -307,7 +307,7 @@ func TestTreeWriterSnapshotLoad_ContinuesWhenADeleteFails(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"the snapshot of tree " + writerTree +
-		" is at version 9, above the projected version 1; deleting it returned: connection reset; replayed the stream"}, res.Warnings)
+		" is at version 9, above the projected version 1; deleting it returned: connection reset"}, res.Warnings)
 }
 
 func TestTreeWriterSnapshotLoad_FailsWhenTheDropIsRefused(t *testing.T) {
@@ -582,7 +582,7 @@ func TestTreeWriterSnapshotLoad_DeletesASnapshotThatIsNotJSON(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"the snapshot of tree " + writerTree +
-		" at version 1 holds 8 bytes that are not valid JSON; deleted it and replayed the stream"}, res.Warnings)
+		" at version 1 holds 8 bytes that are not valid JSON; deleted it"}, res.Warnings)
 	assert.NotContains(t, engine.calls, "restore_snapshot")
 	assert.False(t, snapshotStored(t, env))
 }

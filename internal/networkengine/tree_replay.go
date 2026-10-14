@@ -8,7 +8,7 @@ import (
 	"github.com/mlmforge/mlmforge/internal/platform"
 )
 
-// replayPageSize is how many events one stream read returns during replay.
+// replayPageSize is how many events one stream read asks for during replay.
 const replayPageSize = 500
 
 // replayResult is how far a replay got.
@@ -33,6 +33,10 @@ func replayStream(ctx context.Context, events platform.EventStore, engine TreeMu
 			break
 		}
 		for _, ev := range page {
+			if ev.Version > to {
+				return r.res, r.invariant(fmt.Sprintf("events through version %d", to),
+					fmt.Sprintf("event at version %d", ev.Version))
+			}
 			if ev.Version != next {
 				return r.res, r.invariant(fmt.Sprintf("version %d", next), fmt.Sprintf("version %d", ev.Version))
 			}
@@ -52,21 +56,13 @@ func replayStream(ctx context.Context, events platform.EventStore, engine TreeMu
 	return r.res, nil
 }
 
-// heldEvent is an event already checked against the stream, with its engine
-// call built and not yet made.
-type heldEvent struct {
-	ev   platform.Event
-	call engineCall
-	root string
-}
-
 // replayer holds one event back until the next shows whether it was rejected.
 type replayer struct {
 	engine  TreeMutator
 	tree    string
 	shape   treeShape
 	to      int64
-	pending *heldEvent
+	pending *platform.Event
 	res     replayResult
 }
 
@@ -80,36 +76,40 @@ func (r *replayer) accept(ctx context.Context, ev platform.Event) error {
 		r.res.reached = ev.Version
 		return nil
 	}
-	// Checked before it is held, so an event a rejection later names is
-	// still held to every invariant.
-	call, root, err := r.call(ev)
-	if err != nil {
-		return err
+	// The payload checks wait for flush. Run here, they would refuse a stream
+	// whose bad event a later rejection skips.
+	if !rejectableEventTypes[ev.Type] {
+		return r.invariantAt(ev, "a tree event type", fmt.Sprintf("type %q", ev.Type))
 	}
 	if err := r.flush(ctx); err != nil {
 		return err
 	}
-	r.pending = &heldEvent{ev: ev, call: call, root: root}
+	held := ev
+	r.pending = &held
 	return nil
 }
 
-// flush makes the held event's engine call.
+// flush checks the held event against the stream and makes its engine call.
 func (r *replayer) flush(ctx context.Context) error {
 	if r.pending == nil {
 		return nil
 	}
-	held := *r.pending
+	ev := *r.pending
 	r.pending = nil
-	if _, err := held.call.apply(ctx, r.engine); err != nil {
-		return r.failEvent(held.ev, fmt.Errorf("engine %s for %s: %w", held.call.op, held.call.userID, err))
+	call, root, err := r.call(ev)
+	if err != nil {
+		return err
+	}
+	if _, err := call.apply(ctx, r.engine); err != nil {
+		return r.failEvent(ev, fmt.Errorf("engine %s for %s: %w", call.op, call.userID, err))
 	}
 	switch {
-	case held.ev.Type == EventTypeRootAdded:
-		r.res.root = held.root
-	case held.ev.Type == EventTypeNodeRemoved && sameUUID(held.call.userID, r.res.root):
+	case ev.Type == EventTypeRootAdded:
+		r.res.root = root
+	case ev.Type == EventTypeNodeRemoved && sameUUID(call.userID, r.res.root):
 		r.res.root = ""
 	}
-	r.res.reached = held.ev.Version
+	r.res.reached = ev.Version
 	return nil
 }
 
@@ -123,10 +123,10 @@ func (r *replayer) checkRejection(ev platform.Event) error {
 		return err
 	}
 	if r.pending == nil {
-		return r.invariantAt(ev, "a rejection of an event this replay read",
-			fmt.Sprintf("rejection at version %d names version %d, which this replay did not read", ev.Version, p.RejectedVersion))
+		return r.invariantAt(ev, "a held event for the rejection to name",
+			fmt.Sprintf("rejection at version %d names version %d; no event is held", ev.Version, p.RejectedVersion))
 	}
-	prev := r.pending.ev
+	prev := *r.pending
 	if p.RejectedVersion != prev.Version || !sameUUID(p.RejectedEventID, prev.ID) || p.RejectedType != prev.Type {
 		return r.invariantAt(ev,
 			fmt.Sprintf("event %s (%s) at version %d", prev.ID, prev.Type, prev.Version),
@@ -135,9 +135,9 @@ func (r *replayer) checkRejection(ev platform.Event) error {
 	return nil
 }
 
-// call decodes ev, checks it against the stream, and returns its engine call.
-// root is the user a root_added names.
-func (r *replayer) call(ev platform.Event) (call engineCall, root string, err error) {
+// call decodes ev, checks it against the stream, and returns its engine call
+// and, for a root_added, the user it names.
+func (r *replayer) call(ev platform.Event) (engineCall, string, error) {
 	switch ev.Type {
 	case EventTypeRootAdded:
 		var p RootAddedPayload

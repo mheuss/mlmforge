@@ -145,8 +145,44 @@ func TestReplayStream_RefusesARejectionNamingAnEventItDidNotRead(t *testing.T) {
 
 	_, err := env.replay(3, 3)
 
-	requireReplayInvariant(t, err, "a rejection of an event this replay read",
-		"rejection at version 3 names version 2, which this replay did not read")
+	requireReplayInvariant(t, err, "a held event for the rejection to name",
+		"rejection at version 3 names version 2; no event is held")
+}
+
+func TestReplayStream_RefusesARejectionOfARejection(t *testing.T) {
+	env := newReplayEnv(t)
+	child := env.place(t, writerChild)
+	first := env.reject(t, child)
+	env.reject(t, first)
+
+	_, err := env.replay(1, 4)
+
+	requireReplayInvariant(t, err, "a held event for the rejection to name",
+		"rejection at version 4 names version 3; no event is held")
+}
+
+func TestReplayStream_RefusesARejectionWhoseVersionOrTypeDiffers(t *testing.T) {
+	cases := map[string]func(p *EventRejectedPayload){
+		"another version": func(p *EventRejectedPayload) { p.RejectedVersion = 1 },
+		"another type":    func(p *EventRejectedPayload) { p.RejectedType = EventTypeNodeRemoved },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			env := newReplayEnv(t)
+			child := env.place(t, writerChild)
+			p := EventRejectedPayload{TreeID: writerTree, RejectedEventID: child.ID, RejectedVersion: child.Version,
+				RejectedType: child.Type, Reason: "test"}
+			mutate(&p)
+			appendDirect(t, env.events, EventTypeEventRejected, p)
+
+			_, err := env.replay(1, 3)
+
+			var replay *TreeReplayError
+			require.ErrorAs(t, err, &replay)
+			assert.Equal(t, TreeReplayStageReplay, replay.Stage)
+			assert.Equal(t, "event "+child.ID+" (tree.node_placed) at version 2", replay.Expected)
+		})
+	}
 }
 
 func TestReplayStream_RefusesARejectionWhoseTargetDiffers(t *testing.T) {
@@ -217,35 +253,65 @@ func (e *failingReadEvents) ReadStream(ctx context.Context, stream string, from,
 	return e.MemoryEventStore.ReadStream(ctx, stream, from, limit)
 }
 
-func TestReplayStream_ChecksAnEventARejectionNames(t *testing.T) {
+func TestReplayStream_SkipsARejectedEventWithABadPayload(t *testing.T) {
 	one := 1
 	wrongShape := childPlacedPayload(writerChild)
 	wrongShape.TreeType, wrongShape.Position = treeTypeBinary, &one
 	foreign := childPlacedPayload(writerChild)
 	foreign.TreeID = testTreeUUID(2)
-	cases := map[string]struct {
-		eventType string
-		payload   any
-	}{
-		"a payload for another tree":   {EventTypeNodePlaced, foreign},
-		"a placement of another shape": {EventTypeNodePlaced, wrongShape},
-		"an unknown type":              {"tree.something", map[string]string{"tree_id": writerTree}},
-		"a malformed payload":          {EventTypeNodePlaced, "not an object"},
+	unilevelWithPosition := childPlacedPayload(writerChild)
+	unilevelWithPosition.Position = &one
+	cases := map[string]any{
+		"a payload for another tree":             foreign,
+		"a placement of another shape":           wrongShape,
+		"a placement that fails its shape check": unilevelWithPosition,
+		"a malformed payload":                    "not an object",
 	}
-	for name, tc := range cases {
+	for name, payload := range cases {
 		t.Run(name, func(t *testing.T) {
 			env := newReplayEnv(t)
-			bad := appendDirect(t, env.events, tc.eventType, tc.payload)
+			bad := appendDirect(t, env.events, EventTypeNodePlaced, payload)
 			env.reject(t, bad)
 
-			_, err := env.replay(1, 3)
+			res, err := env.replay(1, 3)
 
-			var replay *TreeReplayError
-			require.ErrorAs(t, err, &replay)
-			assert.Equal(t, TreeReplayStageReplay, replay.Stage)
-			assert.Equal(t, int64(2), replay.FailedVersion)
+			require.NoError(t, err)
+			assert.Equal(t, int64(3), res.reached)
+			assert.ElementsMatch(t, []string{writerRoot}, env.users())
 		})
 	}
+}
+
+func TestReplayStream_RefusesARejectedUnknownType(t *testing.T) {
+	env := newReplayEnv(t)
+	bad := appendDirect(t, env.events, "tree.something", map[string]string{"tree_id": writerTree})
+	env.reject(t, bad)
+
+	_, err := env.replay(1, 3)
+
+	requireReplayInvariant(t, err, "a tree event type", `type "tree.something"`)
+}
+
+func TestReplayStream_ReplaysAStreamAfterRejectEventSkipsABadPlacement(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	one := 1
+	bad := childPlacedPayload(writerChild)
+	bad.Position = &one
+	stuck := appendDirect(t, env.events, EventTypeNodePlaced, bad)
+	w, _ := env.writer()
+	rejected, err := w.Reject(context.Background(), rejectRequest(stuck.ID))
+	require.NoError(t, err)
+	require.Equal(t, RejectOutcomeRejected, rejected.Outcome)
+	require.NoError(t, rejected.ProjectionErr)
+	engine := newFakeWriterEngine()
+	require.NoError(t, engine.CreateTree(context.Background(), writerTree, treeTypeUnilevel))
+
+	res, err := replayStream(context.Background(), env.events, engine, writerTree, unilevelShape, 1, 3)
+
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), res.reached)
+	assert.Equal(t, writerRoot, res.root)
 }
 
 func TestReplayStream_ReportsAFailedStreamRead(t *testing.T) {
@@ -259,7 +325,89 @@ func TestReplayStream_ReportsAFailedStreamRead(t *testing.T) {
 	var replay *TreeReplayError
 	require.ErrorAs(t, err, &replay)
 	assert.Equal(t, TreeReplayStageReplay, replay.Stage)
+	assert.Equal(t, int64(0), replay.ReachedVersion)
 	assert.ErrorIs(t, err, cause)
+	assert.Empty(t, env.users(), "the engine was changed before the failed read")
+}
+
+// unlimitedEvents ignores the limit on every read.
+type unlimitedEvents struct {
+	*platform.MemoryEventStore
+}
+
+func (e unlimitedEvents) ReadStream(ctx context.Context, stream string, from, _ int64) ([]platform.Event, error) {
+	return e.MemoryEventStore.ReadStream(ctx, stream, from, 0)
+}
+
+func TestReplayStream_RefusesAnEventPastTo(t *testing.T) {
+	env := newReplayEnv(t)
+	env.place(t, writerChild)
+	env.place(t, writerOther)
+
+	_, err := replayStream(context.Background(), unlimitedEvents{env.events}, env.engine, writerTree, unilevelShape, 1, 2)
+
+	requireReplayInvariant(t, err, "events through version 2", "event at version 3")
+	assert.NotContains(t, env.users(), writerOther)
+}
+
+func TestReplayStream_ReportsAnEngineRefusalBeforeTheLastEvent(t *testing.T) {
+	env := newReplayEnv(t)
+	env.place(t, writerChild)
+	env.place(t, writerOther)
+	env.engine.failAdd[writerChild] = fakeEngineError("SPONSOR_NOT_FOUND", "refused")
+
+	_, err := env.replay(1, 3)
+
+	var replay *TreeReplayError
+	require.ErrorAs(t, err, &replay)
+	assert.Equal(t, int64(2), replay.FailedVersion)
+	assert.Equal(t, int64(1), replay.ReachedVersion)
+	assert.NotContains(t, env.users(), writerOther)
+}
+
+func TestReplayStream_StartsPartWayThroughAStream(t *testing.T) {
+	env := newReplayEnv(t)
+	env.place(t, writerChild)
+	env.place(t, writerOther)
+	require.NoError(t, env.engine.AddRoot(context.Background(), writerTree, writerRoot, writeTime.Unix()))
+
+	res, err := env.replay(2, 3)
+
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), res.reached)
+	assert.ElementsMatch(t, []string{writerRoot, writerChild, writerOther}, env.users())
+}
+
+func TestReplayStream_ReportsReachedFromAPartWayStart(t *testing.T) {
+	env := newReplayEnv(t)
+	env.place(t, writerChild)
+	env.place(t, writerOther)
+	require.NoError(t, env.engine.AddRoot(context.Background(), writerTree, writerRoot, writeTime.Unix()))
+	env.engine.failAdd[writerOther] = fakeEngineError("SPONSOR_NOT_FOUND", "refused")
+
+	_, err := env.replay(2, 3)
+
+	var replay *TreeReplayError
+	require.ErrorAs(t, err, &replay)
+	assert.Equal(t, int64(2), replay.ReachedVersion)
+	assert.Equal(t, int64(3), replay.FailedVersion)
+}
+
+func TestReplayStream_LeavesNoRootWhenTheRootIsRejected(t *testing.T) {
+	events := platform.NewMemoryEventStore()
+	root := appendDirect(t, events, EventTypeRootAdded, RootAddedPayload{
+		TreeID: writerTree, UserID: writerRoot, SponsorID: writerRoot, EnrolledAt: writeTime, TreeType: treeTypeUnilevel,
+	})
+	appendDirect(t, events, EventTypeEventRejected, EventRejectedPayload{
+		TreeID: writerTree, RejectedEventID: root.ID, RejectedVersion: 1, RejectedType: EventTypeRootAdded, Reason: "test",
+	})
+	engine := newFakeWriterEngine()
+	require.NoError(t, engine.CreateTree(context.Background(), writerTree, treeTypeUnilevel))
+
+	res, err := replayStream(context.Background(), events, engine, writerTree, unilevelShape, 1, 2)
+
+	require.NoError(t, err)
+	assert.Equal(t, replayResult{reached: 2}, res)
 }
 
 func TestReplayStream_RefusesAPayloadForAnotherTree(t *testing.T) {

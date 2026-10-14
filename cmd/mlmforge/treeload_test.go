@@ -600,7 +600,7 @@ func TestRunTreeLoad_PrintsWarningsAfterItsOutputAndBeforeTheReleaseWarning(t *t
 
 func TestTreeLoadRetryable_NeverRetriesAReplayFailure(t *testing.T) {
 	err := fmt.Errorf("load tree t; nothing was appended: %w", &networkengine.TreeReplayError{
-		TreeID: "t", Stage: networkengine.TreeReplayStageReplay, Err: errors.New("x"),
+		TreeID: "t", Stage: networkengine.TreeReplayStageReplay, Err: retryable(),
 	})
 
 	require.False(t, treeLoadRetryable(err))
@@ -623,5 +623,7 @@ func TestRunTreeLoad_PrintsAFailedLoadsWarningsBeforeTheReleaseWarning(t *testin
 	err := runTreeLoad(t.Context(), &both, &both, loader, unilevelLoad(testTreeID(62)))
 
 	require.Error(t, err)
+	require.Equal(t, 1, exitCode(err))
+	require.Contains(t, err.Error(), "load stopped at the replay stage while building the tree from its stream: ")
 	require.Equal(t, "warning: first\nwarning: releasing the tree lock reported: unlock failed\n", both.String())
 }

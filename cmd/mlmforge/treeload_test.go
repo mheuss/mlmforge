@@ -380,9 +380,8 @@ func TestRunTreeLoad_DoesNotClaimALoadForZeroRows(t *testing.T) {
 // the outer format already printed, so this case would pass without the fix.
 func TestRunTreeLoad_KeepsTheCause(t *testing.T) {
 	render := func(req networkengine.LoadRequest) string {
-		w := networkengine.NewTreeWriter(platform.NewMemoryEventStore(), networkengine.NewMemoryTreeStore(), networkengine.NewMemorySnapshotStore(),
-			nil, networkengine.NewMemoryTreeLocker())
-
+		w := networkengine.NewTreeWriter(platform.NewMemoryEventStore(), networkengine.NewMemoryTreeStore(),
+			networkengine.NewMemorySnapshotStore(), nil, networkengine.NewMemoryTreeLocker())
 		var out bytes.Buffer
 		err := runTreeLoad(t.Context(), &out, io.Discard, w, req)
 		require.Error(t, err)
@@ -554,9 +553,8 @@ func (e *flakyFirstReadEvents) ReadStream(ctx context.Context, stream string, fr
 func TestRunTreeLoad_RetriesASafeProjectedRowsFailureOverTheWriter(t *testing.T) {
 	noRetryDelay(t)
 	store := &flakyRowsStore{TreeStore: networkengine.NewMemoryTreeStore()}
-	w := networkengine.NewTreeWriter(platform.NewMemoryEventStore(), store, networkengine.NewMemorySnapshotStore(), createOnlyEngine{},
-		networkengine.NewMemoryTreeLocker())
-
+	w := networkengine.NewTreeWriter(platform.NewMemoryEventStore(), store, networkengine.NewMemorySnapshotStore(),
+		createOnlyEngine{}, networkengine.NewMemoryTreeLocker())
 	tree := testTreeID(51)
 	var out bytes.Buffer
 
@@ -568,9 +566,8 @@ func TestRunTreeLoad_RetriesASafeProjectedRowsFailureOverTheWriter(t *testing.T)
 func TestRunTreeLoad_RetriesASafeVersion1ReadFailureOverTheWriter(t *testing.T) {
 	noRetryDelay(t)
 	events := &flakyFirstReadEvents{MemoryEventStore: platform.NewMemoryEventStore()}
-	w := networkengine.NewTreeWriter(events, networkengine.NewMemoryTreeStore(), networkengine.NewMemorySnapshotStore(), createOnlyEngine{},
-		networkengine.NewMemoryTreeLocker())
-
+	w := networkengine.NewTreeWriter(events, networkengine.NewMemoryTreeStore(), networkengine.NewMemorySnapshotStore(),
+		createOnlyEngine{}, networkengine.NewMemoryTreeLocker())
 	tree := testTreeID(52)
 	var out bytes.Buffer
 

@@ -155,7 +155,7 @@ func (depthReadFailingStore) GetByTreeDepthOrdered(context.Context, string) ([]T
 
 func TestRejectionEvidence_ReportsAFailedRowRead(t *testing.T) {
 	env := newWriterEnv()
-	w := NewTreeWriter(env.events, depthReadFailingStore{env.store}, NewMemorySnapshotStore(), newFakeWriterEngine(), env.locker)
+	w := NewTreeWriter(env.events, depthReadFailingStore{env.store}, env.snapshots, newFakeWriterEngine(), env.locker)
 	last := platform.Event{ID: testNodeUUID(5), Type: EventTypeNodePlaced, Version: 2}
 
 	_, err := w.rejectionEvidence(context.Background(), writerTree, unilevelShape, last,

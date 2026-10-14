@@ -112,7 +112,7 @@ func TestTreeWriterAddRoot_RefusesBeforeTheLock(t *testing.T) {
 				mustAddRoot(t, env, treeTypeUnilevel)
 			}
 			before := len(streamEvents(t, env.events, TreeStreamName(writerTree)))
-			w := NewTreeWriter(env.events, env.store, NewMemorySnapshotStore(), newFakeWriterEngine(), refusingLocker{t})
+			w := NewTreeWriter(env.events, env.store, env.snapshots, newFakeWriterEngine(), refusingLocker{t})
 			req := unilevelRootRequest()
 			tc.edit(&req)
 
@@ -165,7 +165,7 @@ func TestTreeWriterAddRoot_RefusesMatrixParametersThatDifferFromVersion1(t *test
 		t.Run(tc.name, func(t *testing.T) {
 			env := newWriterEnv()
 			mustAddRoot(t, env, tc.recorded)
-			w := NewTreeWriter(env.events, env.store, NewMemorySnapshotStore(), newFakeWriterEngine(), refusingLocker{t})
+			w := NewTreeWriter(env.events, env.store, env.snapshots, newFakeWriterEngine(), refusingLocker{t})
 			req := unilevelRootRequest()
 			req.UserID, req.SponsorID, req.TreeType = writerOther, writerOther, tc.recorded
 			req.MatrixWidth, req.MatrixSpillover = tc.width, tc.spillover
@@ -209,7 +209,7 @@ func TestTreeWriterAddRoot_LocksThenCreatesThenChecks(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			env := newWriterEnv()
 			engine := newFakeWriterEngine()
-			w := NewTreeWriter(env.events, env.store, NewMemorySnapshotStore(), engine, recordingLocker{inner: env.locker, engine: engine})
+			w := NewTreeWriter(env.events, env.store, env.snapshots, engine, recordingLocker{inner: env.locker, engine: engine})
 			req := unilevelRootRequest()
 			req.TreeType = tc.treeType
 			if tc.treeType == treeTypeMatrix {
@@ -244,7 +244,7 @@ func TestTreeWriterAddRoot_ReportsAProjectionFailureInTheResult(t *testing.T) {
 func TestTreeWriterAddRoot_ReportsAReleaseFailureInTheResult(t *testing.T) {
 	env := newWriterEnv()
 	unlockErr := errors.New("pg_advisory_unlock for tree x returned false")
-	w := NewTreeWriter(env.events, env.store, NewMemorySnapshotStore(), newFakeWriterEngine(), releaseFailingLocker{err: unlockErr})
+	w := NewTreeWriter(env.events, env.store, env.snapshots, newFakeWriterEngine(), releaseFailingLocker{err: unlockErr})
 
 	res, err := w.AddRoot(context.Background(), unilevelRootRequest())
 
@@ -258,7 +258,7 @@ func TestTreeWriterAddRoot_ReportsAReleaseFailureAlongsideARefusal(t *testing.T)
 	unlockErr := errors.New("pg_advisory_unlock for tree x returned false")
 	engine := newFakeWriterEngine()
 	engine.checkErr = &EngineError{Code: engineCodeRootAlreadyExists, Message: "tree already has a root node"}
-	w := NewTreeWriter(env.events, env.store, NewMemorySnapshotStore(), engine, releaseFailingLocker{err: unlockErr})
+	w := NewTreeWriter(env.events, env.store, env.snapshots, engine, releaseFailingLocker{err: unlockErr})
 
 	res, err := w.AddRoot(context.Background(), unilevelRootRequest())
 
@@ -273,7 +273,7 @@ func TestTreeWriterAddRoot_ReportsAnEngineThatAlreadyHoldsTheTree(t *testing.T) 
 		mustAddRoot(t, env, treeTypeUnilevel)
 		engine := newFakeWriterEngine()
 		require.NoError(t, engine.CreateTree(context.Background(), writerTree, treeTypeUnilevel))
-		w := NewTreeWriter(env.events, env.store, NewMemorySnapshotStore(), engine, env.locker)
+		w := NewTreeWriter(env.events, env.store, env.snapshots, engine, env.locker)
 		req := unilevelRootRequest()
 		req.UserID = writerOther
 
@@ -290,7 +290,7 @@ func TestTreeWriterAddRoot_ReportsAnEngineThatAlreadyHoldsTheTree(t *testing.T) 
 		env := newWriterEnv()
 		engine := newFakeWriterEngine()
 		require.NoError(t, engine.CreateTree(context.Background(), writerTree, treeTypeUnilevel))
-		w := NewTreeWriter(env.events, env.store, NewMemorySnapshotStore(), engine, env.locker)
+		w := NewTreeWriter(env.events, env.store, env.snapshots, engine, env.locker)
 
 		_, err := w.AddRoot(context.Background(), unilevelRootRequest())
 
@@ -322,7 +322,7 @@ func TestTreeWriterLock_TimeoutStatesTheTreeAndTheWait(t *testing.T) {
 func TestTreeWriterLock_TimeoutCarriesTheLockersOwnError(t *testing.T) {
 	env := newWriterEnv()
 	connReset := errors.New("conn reset")
-	w := NewTreeWriter(env.events, env.store, NewMemorySnapshotStore(), newFakeWriterEngine(), deadlineErrLocker{err: connReset},
+	w := NewTreeWriter(env.events, env.store, env.snapshots, newFakeWriterEngine(), deadlineErrLocker{err: connReset},
 		WithLockWait(30*time.Millisecond))
 
 	_, err := w.AddRoot(context.Background(), unilevelRootRequest())
@@ -439,7 +439,7 @@ func TestTreeWriterPlace_ChecksTheEngineCallTheConsumerMakes(t *testing.T) {
 
 func TestTreeWriterPlace_RefusesAnEmptyStreamBeforeTheLock(t *testing.T) {
 	env := newWriterEnv()
-	w := NewTreeWriter(env.events, env.store, NewMemorySnapshotStore(), newFakeWriterEngine(), refusingLocker{t})
+	w := NewTreeWriter(env.events, env.store, env.snapshots, newFakeWriterEngine(), refusingLocker{t})
 
 	_, err := w.Place(context.Background(), placeRequest(writerChild, nil))
 
@@ -449,7 +449,7 @@ func TestTreeWriterPlace_RefusesAnEmptyStreamBeforeTheLock(t *testing.T) {
 
 func TestTreeWriterRemove_RefusesAnEmptyStreamBeforeTheLock(t *testing.T) {
 	env := newWriterEnv()
-	w := NewTreeWriter(env.events, env.store, NewMemorySnapshotStore(), newFakeWriterEngine(), refusingLocker{t})
+	w := NewTreeWriter(env.events, env.store, env.snapshots, newFakeWriterEngine(), refusingLocker{t})
 
 	_, err := w.Remove(context.Background(), RemoveRequest{TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime})
 
@@ -462,7 +462,7 @@ func TestTreeWriterRemove_RefusesAMatrixTreeBeforeTheLock(t *testing.T) {
 	mustAddRoot(t, env, treeTypeMatrix)
 	two := 2
 	mustPlace(t, env, writerChild, &two)
-	w := NewTreeWriter(env.events, env.store, NewMemorySnapshotStore(), newFakeWriterEngine(), refusingLocker{t})
+	w := NewTreeWriter(env.events, env.store, env.snapshots, newFakeWriterEngine(), refusingLocker{t})
 
 	_, err := w.Remove(context.Background(), RemoveRequest{TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime})
 
@@ -487,7 +487,7 @@ func TestTreeWriterPlace_EnforcesThePositionRuleBeforeTheLock(t *testing.T) {
 		t.Run(tc.treeType, func(t *testing.T) {
 			env := newWriterEnv()
 			mustAddRoot(t, env, tc.treeType)
-			w := NewTreeWriter(env.events, env.store, NewMemorySnapshotStore(), newFakeWriterEngine(), refusingLocker{t})
+			w := NewTreeWriter(env.events, env.store, env.snapshots, newFakeWriterEngine(), refusingLocker{t})
 
 			_, err := w.Place(context.Background(), placeRequest(writerChild, tc.position))
 
@@ -656,7 +656,7 @@ func TestTreeWriterCatchUp_ProjectsAnUnprojectedLastEventBeforeAppending(t *test
 	})
 	log := &orderLog{}
 	w := NewTreeWriter(&loggingEvents{EventStore: env.events, log: log},
-		&loggingStore{TreeStore: env.store, log: log, name: "w"}, NewMemorySnapshotStore(),
+		&loggingStore{TreeStore: env.store, log: log, name: "w"}, env.snapshots,
 		newFakeWriterEngine(), env.locker)
 
 	res, err := w.Place(context.Background(), placeRequest(writerOther, nil))
@@ -899,7 +899,7 @@ func TestTreeWriterAddRoot_UsesTheTypeRecordedUnderTheLock(t *testing.T) {
 			EnrolledAt: writeTime, TreeType: treeTypeBinary,
 		})
 	}}
-	w := NewTreeWriter(env.events, &loggingStore{TreeStore: env.store, log: log, name: "w"}, NewMemorySnapshotStore(),
+	w := NewTreeWriter(env.events, &loggingStore{TreeStore: env.store, log: log, name: "w"}, env.snapshots,
 		newFakeWriterEngine(), locker)
 
 	_, err := w.AddRoot(context.Background(), unilevelRootRequest())
@@ -920,7 +920,7 @@ func TestTreeWriterAddRoot_UsesTheMatrixShapeRecordedUnderTheLock(t *testing.T) 
 			MatrixWidth: &recordedWidth, MatrixSpillover: &spillover,
 		})
 	}}
-	w := NewTreeWriter(env.events, env.store, NewMemorySnapshotStore(), newFakeWriterEngine(), locker)
+	w := NewTreeWriter(env.events, env.store, env.snapshots, newFakeWriterEngine(), locker)
 	width := 3
 	req := unilevelRootRequest()
 	req.TreeType, req.MatrixWidth, req.MatrixSpillover = treeTypeMatrix, &width, &spillover
@@ -942,7 +942,7 @@ func TestTreeWriterAddRoot_ChecksARootOfTheSameShapeThatLandedBeforeTheLock(t *t
 	}}
 	engine := newFakeWriterEngine()
 	engine.checkErr = &EngineError{Code: engineCodeRootAlreadyExists, Message: "tree already has a root node"}
-	w := NewTreeWriter(env.events, env.store, NewMemorySnapshotStore(), engine, locker)
+	w := NewTreeWriter(env.events, env.store, env.snapshots, engine, locker)
 
 	res, err := w.AddRoot(context.Background(), unilevelRootRequest())
 
@@ -963,7 +963,7 @@ func TestTreeWriterAddRoot_ReportsAReleaseFailureAlongsideAnUnderLockRefusal(t *
 			EnrolledAt: writeTime, TreeType: treeTypeBinary,
 		})
 	}}
-	w := NewTreeWriter(env.events, env.store, NewMemorySnapshotStore(), newFakeWriterEngine(), locker)
+	w := NewTreeWriter(env.events, env.store, env.snapshots, newFakeWriterEngine(), locker)
 
 	res, err := w.AddRoot(context.Background(), unilevelRootRequest())
 
@@ -974,7 +974,7 @@ func TestTreeWriterAddRoot_ReportsAReleaseFailureAlongsideAnUnderLockRefusal(t *
 func TestTreeWriterLock_KeepsAConnectTimeoutReachable(t *testing.T) {
 	env := newWriterEnv()
 	cte := &platform.ConnectTimeoutError{Hosts: "db:5432", Waited: time.Second, Err: context.DeadlineExceeded}
-	w := NewTreeWriter(env.events, env.store, NewMemorySnapshotStore(), newFakeWriterEngine(), immediateErrLocker{err: cte})
+	w := NewTreeWriter(env.events, env.store, env.snapshots, newFakeWriterEngine(), immediateErrLocker{err: cte})
 
 	_, err := w.AddRoot(context.Background(), unilevelRootRequest())
 

@@ -134,12 +134,10 @@ func assertTwoWritersSerialise(t *testing.T, it *writerIntegration, firstTreeID,
 	ctx := context.Background()
 	log := &orderLog{}
 	gate := newHeldEngine(it.engine(t), log, "w1")
-	w1 := NewTreeWriter(it.events, &loggingStore{TreeStore: it.store, log: log, name: "w1"}, NewMemorySnapshotStore(),
+	w1 := NewTreeWriter(it.events, &loggingStore{TreeStore: it.store, log: log, name: "w1"}, it.snapshots,
 		gate, NewPostgresTreeLocker(it.dsn))
-
-	w2 := NewTreeWriter(it.events, &loggingStore{TreeStore: it.store, log: log, name: "w2"}, NewMemorySnapshotStore(),
+	w2 := NewTreeWriter(it.events, &loggingStore{TreeStore: it.store, log: log, name: "w2"}, it.snapshots,
 		it.engine(t), &loggingLocker{TreeLocker: NewPostgresTreeLocker(it.dsn), log: log, name: "w2"})
-
 	place := func(w *TreeWriter, tree, user string, out chan error) {
 		res, err := w.Place(ctx, PlaceRequest{TreeID: tree, UserID: user, ParentID: root, SponsorID: root, EnrolledAt: writeTime})
 		if err == nil {
@@ -326,7 +324,7 @@ func TestTreeWriter_ProjectsAnUnprojectedEventBeforeAppending(t *testing.T) {
 	})
 	log := &orderLog{}
 	w := NewTreeWriter(&loggingEvents{EventStore: it.events, log: log},
-		&loggingStore{TreeStore: it.store, log: log, name: "w"}, NewMemorySnapshotStore(),
+		&loggingStore{TreeStore: it.store, log: log, name: "w"}, it.snapshots,
 		it.engine(t), NewPostgresTreeLocker(it.dsn))
 
 	res, err := w.Place(ctx, PlaceRequest{TreeID: tree, UserID: other, ParentID: root, SponsorID: root, EnrolledAt: writeTime})
@@ -349,7 +347,7 @@ func TestTreeWriter_CompletesOnAOneConnectionPool(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
 	require.EqualValues(t, 1, pool.Config().MaxConns)
-	events, store := platform.NewPostgresEventStore(pool), NewPostgresTreeStore(pool)
+	events, store, snapshots := platform.NewPostgresEventStore(pool), NewPostgresTreeStore(pool), NewPostgresSnapshotStore(pool)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	tree, root := testTreeUUID(307), testUserUUID(1)
@@ -363,7 +361,7 @@ func TestTreeWriter_CompletesOnAOneConnectionPool(t *testing.T) {
 		},
 	}
 	for i, write := range writes {
-		res, err := write(NewTreeWriter(events, store, NewMemorySnapshotStore(), it.engine(t), NewPostgresTreeLocker(url)))
+		res, err := write(NewTreeWriter(events, store, snapshots, it.engine(t), NewPostgresTreeLocker(url)))
 		require.NoError(t, err, "write %d", i)
 		require.NoError(t, res.ProjectionErr, "write %d", i)
 		require.NoError(t, res.ReleaseErr, "write %d", i)

@@ -59,7 +59,7 @@ func TestTreeWriter_AWriteKeepsItsProjectedRowsReadError(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
 	store := &readCountingStore{TreeStore: env.store, rowsErr: errors.New("connection reset")}
-	w := NewTreeWriter(env.events, store, NewMemorySnapshotStore(), newFakeWriterEngine(), env.locker)
+	w := NewTreeWriter(env.events, store, env.snapshots, newFakeWriterEngine(), env.locker)
 
 	_, err := w.Place(context.Background(), placeRequest(writerChild, nil))
 
@@ -87,7 +87,7 @@ func TestTreeWriter_LoadsATreeWithNothingBehindWithoutRedelivering(t *testing.T)
 	mustAddRoot(t, env, treeTypeUnilevel)
 	mustPlace(t, env, writerChild, nil)
 	store := &readCountingStore{TreeStore: env.store}
-	w := NewTreeWriter(env.events, store, NewMemorySnapshotStore(), newFakeWriterEngine(), env.locker)
+	w := NewTreeWriter(env.events, store, env.snapshots, newFakeWriterEngine(), env.locker)
 
 	res, err := w.Load(context.Background(), loadRequest())
 
@@ -244,7 +244,7 @@ func TestTreeWriter_LoadKeepsAReleaseFailureAlongsideAnError(t *testing.T) {
 	appendDirect(t, env.events, EventTypeNodePlaced, childPlacedPayload(writerChild))
 	store := &readCountingStore{TreeStore: env.store, treeErr: errors.New("connection reset")}
 	release := errors.New("pg_advisory_unlock returned false")
-	w := NewTreeWriter(env.events, store, NewMemorySnapshotStore(), newFakeWriterEngine(), releaseFailingLocker{err: release})
+	w := NewTreeWriter(env.events, store, env.snapshots, newFakeWriterEngine(), releaseFailingLocker{err: release})
 
 	res, err := w.Load(context.Background(), loadRequest())
 
@@ -258,7 +258,7 @@ func TestTreeWriter_LoadReturnsTheRedeliveryWhenTheCountFails(t *testing.T) {
 	mustAddRoot(t, env, treeTypeUnilevel)
 	pending := appendDirect(t, env.events, EventTypeNodePlaced, childPlacedPayload(writerChild))
 	store := &readCountingStore{TreeStore: env.store, treeErr: errors.New("connection reset")}
-	w := NewTreeWriter(env.events, store, NewMemorySnapshotStore(), newFakeWriterEngine(), env.locker)
+	w := NewTreeWriter(env.events, store, env.snapshots, newFakeWriterEngine(), env.locker)
 
 	res, err := w.Load(context.Background(), loadRequest())
 
@@ -324,7 +324,7 @@ func TestTreeWriter_LoadWaitsForTheLockBeforeReadingTheStore(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = release() }()
 	store := &readCountingStore{TreeStore: env.store}
-	w := NewTreeWriter(env.events, store, NewMemorySnapshotStore(), newFakeWriterEngine(), env.locker, WithLockWait(10*time.Millisecond))
+	w := NewTreeWriter(env.events, store, env.snapshots, newFakeWriterEngine(), env.locker, WithLockWait(10*time.Millisecond))
 
 	_, err = w.Load(context.Background(), loadRequest())
 
@@ -339,7 +339,7 @@ func TestTreeWriter_LoadTypesAFailedProjectedRowsReadAsARejection(t *testing.T) 
 	cause := errors.New("connection reset")
 	store := &readCountingStore{TreeStore: env.store, rowsErr: cause}
 	engine := newFakeWriterEngine()
-	w := NewTreeWriter(env.events, store, NewMemorySnapshotStore(), engine, env.locker)
+	w := NewTreeWriter(env.events, store, env.snapshots, engine, env.locker)
 
 	_, err := w.Load(context.Background(), loadRequest())
 
@@ -355,7 +355,7 @@ func TestTreeWriter_LoadTypesAFailedVersion1ReadAsARejection(t *testing.T) {
 	mustAddRoot(t, env, treeTypeUnilevel)
 	cause := errors.New("connection reset")
 	events := &scriptedEvents{MemoryEventStore: env.events.(*platform.MemoryEventStore), failed: true, readErr: cause}
-	w := NewTreeWriter(events, env.store, NewMemorySnapshotStore(), newFakeWriterEngine(), env.locker)
+	w := NewTreeWriter(events, env.store, env.snapshots, newFakeWriterEngine(), env.locker)
 
 	_, err := w.Load(context.Background(), loadRequest())
 
@@ -374,7 +374,7 @@ func TestTreeWriter_LoadUsesTheTypeRecordedUnderTheLock(t *testing.T) {
 			EnrolledAt: writeTime, TreeType: treeTypeBinary,
 		})
 	}}
-	w := NewTreeWriter(env.events, &loggingStore{TreeStore: env.store, log: log, name: "w"}, NewMemorySnapshotStore(),
+	w := NewTreeWriter(env.events, &loggingStore{TreeStore: env.store, log: log, name: "w"}, env.snapshots,
 		newFakeWriterEngine(), locker)
 
 	_, err := w.Load(context.Background(), loadRequest())
@@ -389,7 +389,7 @@ func TestTreeWriter_LoadLeavesAFailedVersionReadAfterTheRedeliveryUntyped(t *tes
 	mustAddRoot(t, env, treeTypeUnilevel)
 	pending := appendDirect(t, env.events, EventTypeNodePlaced, childPlacedPayload(writerChild))
 	store := &readCountingStore{TreeStore: env.store, versionErr: errors.New("connection reset"), versionErrFrom: 1}
-	w := NewTreeWriter(env.events, store, NewMemorySnapshotStore(), newFakeWriterEngine(), env.locker)
+	w := NewTreeWriter(env.events, store, env.snapshots, newFakeWriterEngine(), env.locker)
 
 	res, err := w.Load(context.Background(), loadRequest())
 
@@ -417,7 +417,7 @@ func TestTreeWriter_LoadLeavesAFailedLastEventReadUntyped(t *testing.T) {
 	events := &lastEventFailingEvents{MemoryEventStore: env.events.(*platform.MemoryEventStore),
 		err: errors.New("connection reset")}
 	engine := newFakeWriterEngine()
-	w := NewTreeWriter(events, env.store, NewMemorySnapshotStore(), engine, env.locker)
+	w := NewTreeWriter(events, env.store, env.snapshots, engine, env.locker)
 
 	_, err := w.Load(context.Background(), loadRequest())
 

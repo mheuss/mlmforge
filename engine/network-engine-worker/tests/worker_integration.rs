@@ -6216,6 +6216,26 @@ fn restore_rejects_a_unilevel_index_on_a_tombstone() {
 }
 
 #[test]
+fn restore_rejects_a_unilevel_sponsor_cycle() {
+    let mut worker = common::spawn_worker();
+    build_three_node_chain(&mut worker);
+
+    let mut data = take_snapshot_data(&mut worker, TREE_NAME);
+    data["arena"]["nodes"][0]["sponsored"] = serde_json::json!([]);
+    data["arena"]["nodes"][1]["sponsor"] = serde_json::json!(2);
+    data["arena"]["nodes"][2]["sponsored"] = serde_json::json!([1]);
+
+    let resp = restore_under(&mut worker, "Cycle", "unilevel", data);
+    assert_inconsistent(
+        &resp,
+        &["the sponsor chain from node slot 1 reaches node slot 1 twice"],
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
 fn restore_rejects_a_binary_child_slot_past_the_end() {
     let mut worker = common::spawn_worker();
     create_binary_tree(&mut worker, "BinTree");
@@ -6234,6 +6254,34 @@ fn restore_rejects_a_binary_child_slot_past_the_end() {
     assert_inconsistent(
         &resp,
         &["the child slot map names node slot", "the arena holds"],
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_rejects_a_binary_child_its_parent_does_not_list() {
+    let mut worker = common::spawn_worker();
+    create_binary_tree(&mut worker, "BinEdge");
+    for req in [
+        r#"{"id":"e1","op":"add_root","params":{"structure":"BinEdge","user_id":"aaaaaaaa-0000-0000-0000-000000000001","enrolled_at":100}}"#,
+        r#"{"id":"e2","op":"add_node","params":{"structure":"BinEdge","user_id":"aaaaaaaa-0000-0000-0000-000000000002","parent_id":"aaaaaaaa-0000-0000-0000-000000000001","position":0,"sponsor_id":"aaaaaaaa-0000-0000-0000-000000000001","enrolled_at":200}}"#,
+    ] {
+        let resp = common::send_receive(&mut worker, req);
+        assert!(resp.contains(r#""ok":true"#), "setup failed: {}", resp);
+    }
+
+    let mut data = take_snapshot_data(&mut worker, "BinEdge");
+    data["arena"]["nodes"][0]["children"] = serde_json::json!([]);
+
+    let resp = restore_under(&mut worker, "BinEdge2", "binary", data);
+    assert_inconsistent(
+        &resp,
+        &[
+            "parent on node slot 1 names node slot 0",
+            "children on node slot 0 does not name node slot 1",
+        ],
     );
 
     drop(worker.stdin.take());
@@ -6320,6 +6368,57 @@ fn restore_rejects_a_board_member_on_an_absent_board() {
 
     let resp = restore_under(&mut worker, "R5", "board_plan", data);
     assert_inconsistent(&resp, &["the engine holds no such board"]);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_rejects_a_board_occupant_above_an_open_position() {
+    let mut worker = common::spawn_worker();
+    let create = serde_json::json!({
+        "id": "bp-create",
+        "op": "create_board_plan",
+        "params": {
+            "structure": "BpGap", "width": 2, "height": 2,
+            "config": {
+                "cycle_commission": 500.0, "re_entry_enabled": true,
+                "re_entry_position": "bottom", "max_cycles_per_period": 4,
+                "max_cascade_depth": 10, "stall_threshold_periods": 3,
+                "inactive_compression": false
+            },
+            "timestamp": 0
+        }
+    });
+    let resp = common::send_receive(&mut worker, &create.to_string());
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "create_board_plan failed: {}",
+        resp
+    );
+    let member = "cccccccc-0000-0000-0000-000000000001";
+    let add = serde_json::json!({
+        "id": "bp-add", "op": "board_add_member",
+        "params": { "structure": "BpGap", "user_id": member, "sponsor_id": member, "timestamp": 1 }
+    });
+    let resp = common::send_receive(&mut worker, &add.to_string());
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "board_add_member failed: {}",
+        resp
+    );
+
+    let mut data = take_snapshot_data(&mut worker, "BpGap");
+    let board = data["boards"]
+        .as_object_mut()
+        .expect("board plan carries boards")
+        .values_mut()
+        .next()
+        .expect("one board");
+    board["positions"] = serde_json::json!([null, member, null, null, null, null, null]);
+
+    let resp = restore_under(&mut worker, "BpGap2", "board_plan", data);
+    assert_inconsistent(&resp, &["has position 0 open and position 1 occupied"]);
 
     drop(worker.stdin.take());
     worker.wait().unwrap();

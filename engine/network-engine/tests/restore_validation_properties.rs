@@ -171,7 +171,7 @@ fn streamline_step(engine: &mut StreamlineEngine, live: &mut Vec<Uuid>, next: &m
             let _ = engine.expand_streams(target, (c / 2) as u32 + 1, timestamp);
         }
         _ => {
-            let _ = engine.update_stream_allowance(target, (c / 2) as u32 + 1, timestamp);
+            let _ = engine.update_stream_allowance(target, (b % 5) as u32, timestamp);
         }
     }
     live.retain(|u| engine.contains_member(*u));

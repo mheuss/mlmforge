@@ -78,7 +78,7 @@ func TestCheckMembership_ListsAtMostFiveIDsInSortedOrder(t *testing.T) {
 		testUserUUID(105)+", "+testUserUUID(106)+", "+testUserUUID(107)+"]")
 }
 
-func TestCheckMembership_ReturnsAFailedQuery(t *testing.T) {
+func TestCheckMembership_ReturnsAFailedDownlineQuery(t *testing.T) {
 	engine := membershipEngine(t)
 	engine.downlineErr = errors.New("transport is closed")
 	rows := []TreeNodeRow{memberRow(writerRoot, 0, writeTime)}

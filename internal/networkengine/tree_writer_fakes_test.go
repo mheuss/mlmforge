@@ -507,3 +507,17 @@ func TestFakeWriterEngine_GetDownlineReturnsEveryDescendant(t *testing.T) {
 		{UserID: writerOther, Depth: 2, EnrolledAt: 3},
 	}, got)
 }
+
+func TestFakeWriterEngine_GetDownlineStopsAtTheDepthAsked(t *testing.T) {
+	engine := newFakeWriterEngine()
+	ctx := context.Background()
+	require.NoError(t, engine.CreateTree(ctx, writerTree, treeTypeUnilevel))
+	require.NoError(t, engine.AddRoot(ctx, writerTree, writerRoot, 1))
+	require.NoError(t, engine.AddNode(ctx, writerTree, writerChild, writerRoot, writerRoot, 2))
+	require.NoError(t, engine.AddNode(ctx, writerTree, writerOther, writerChild, writerChild, 3))
+
+	got, err := engine.GetDownline(ctx, writerTree, writerRoot, 1)
+
+	require.NoError(t, err)
+	assert.Equal(t, []EngineNode{{UserID: writerChild, Depth: 1, EnrolledAt: 2}}, got)
+}

@@ -834,11 +834,11 @@ Unilevel carries no position. It appends to the parent's child list. Preflight r
 
 ### Why preflight validates everything before mutating anything
 
-The worker has **no operation to remove a structure** (HEU-557). A load that fails partway leaves the tree stuck until the process restarts. So `LoadTree` proves a load is sound before the first engine call. Its replay failures return `TreeLoadIncompleteError`. That error carries the stage the load reached and how many placements the engine acknowledged.
+A load that fails partway leaves a partly built tree in the worker. When the engine refused a call and the worker is still usable, a caller may drop the tree with `drop_structure` and load it again. After a timeout, a cancellation or a crash, the client is closed or the worker is gone, so starting over means a new worker. The CLI never drops, because each command starts its own worker and a failed load ends with it. Either way, a partial load costs a full rebuild. So `LoadTree` proves a load is sound before the first engine call. Its replay failures return `TreeLoadIncompleteError`. That error carries the stage the load reached and how many placements the engine acknowledged.
 
 `Confirmed` counts acknowledgements, not what landed. At `TreeLoadStageNodes` the call that failed may also have taken effect, with the reply lost rather than the work undone. The structure then holds at least `Confirmed` placements and possibly one more. That carve-out does not apply when `Err` is nil, which means the load stopped before the call was sent. At the create stage all three counters are zero. At the root stage, `Total` carries the non-root placement count the load set out to make. The other two counters are zero. The operation in doubt is the root placement, which none of the three counters counts.
 
-The loader cannot tell which happened. It holds a `TreeMutator`. That interface carries only mutations. Nothing on this path can read back whether the placement landed. HEU-557 would supply a remedy rather than an answer: being able to drop the structure lets a caller start over without knowing. HEU-777 and HEU-784 are the same lost-reply shape on the removal path rather than the replay path.
+The loader cannot tell which happened. It holds a `TreeMutator`. That interface carries only mutations. Nothing on this path can read back whether the placement landed. A caller does not need that answer to start over. A lost reply leaves the client closed, so starting over means a new worker, which starts empty. HEU-777 and HEU-784 are the same lost-reply shape on the removal path rather than the replay path.
 
 Preflight runs in two phases with different inputs. `validateTreeConfig` checks the tree type, and for a matrix the width and spillover. It reads no rows, so it runs before the store query. A misconfigured load costs no query. `validateNodes` runs after the query and proves the node set is structurally consistent.
 
@@ -1337,9 +1337,12 @@ because nothing checks this paragraph against the tree.
 The literals live in `network-engine-worker/src/protocol.rs`,
 `network-engine-worker/tests/worker_integration.rs`,
 `engine/testdata/contracts/ping.json`, `internal/networkengine/engine_client.go`,
-and more than once in `internal/networkengine/transport_test.go`. The prose is the
-`Moved to N by ...` block above the Go constant, plus the ticket list in
-`content/design-rationale/017-commission-calculation-architecture.md` when the
+and more than once in `internal/networkengine/transport_test.go`.
+
+The version history lives in the Version allocation table of the hub contract
+`contracts/ndjson-engine-protocol.md`. The `Moved to N by ...` block above the
+Go constant is not extended. The prose to check is the ticket list in
+`content/design-rationale/017-commission-calculation-architecture.md`, when the
 change is one that note tracks.
 
 The other `protocol_version` literals in `transport_test.go` are stub-worker

@@ -428,9 +428,9 @@ go test ./internal/config/ && (cd engine && cargo test --test config_width_contr
 **Added:** Unreleased (HEU-534, refined HEU-566)
 **Files:** `internal/networkengine/tree_loader.go`, `internal/networkengine/tree_loader_errors.go`
 
-**Problem:** `LoadTree` replays a persisted tree into the Rust worker one node at a time, but the worker has no operation to remove a structure — so a replay that fails partway leaves a half-built tree that cannot be dropped or retried until the process restarts.
+**Problem:** `LoadTree` replays a persisted tree into the Rust worker one node at a time. A replay that fails partway leaves a half-built tree. A retry under the same name needs the structure dropped and rebuilt in full.
 
-**Solution:** Prove the input is reconstructable *before* the first call to the external system, in two phases split by what they read. `validateTreeConfig` checks configuration — tree type, matrix width and spillover — and reads no rows, so it runs before the store query and a misconfigured load costs no query. `validateNodes` then checks the node set — empty user IDs, duplicate IDs, exactly one depth-0 root, root parent and position, self-references, reference existence, depth consistency, slot occupancy, no position on a unilevel node — and `orderForReplay` proves a workable order exists. Only then does the first mutation happen. Replay failures also report how far they got, as a typed error carrying the stage the load reached and how many placements the engine acknowledged. Every exit after the create says what survived it, not just the replay loop. A failed `AddRoot` says the tree was created and root placement did not report success. The worker has no operation to drop the structure (HEU-557). Only a process restart clears it.
+**Solution:** Prove the input is reconstructable *before* the first call to the external system, in two phases split by what they read. `validateTreeConfig` checks configuration — tree type, matrix width and spillover — and reads no rows, so it runs before the store query and a misconfigured load costs no query. `validateNodes` then checks the node set — empty user IDs, duplicate IDs, exactly one depth-0 root, root parent and position, self-references, reference existence, depth consistency, slot occupancy, no position on a unilevel node — and `orderForReplay` proves a workable order exists. Only then does the first mutation happen. Replay failures also report how far they got, as a typed error carrying the stage the load reached and how many placements the engine acknowledged. Every exit after the create says what survived it, not just the replay loop. A failed `AddRoot` says the tree was created and root placement did not report success. A caller that wants to retry in the same worker drops the structure first.
 
 **Usage:**
 ```go
@@ -462,9 +462,11 @@ for _, tree := range trees {
 		return err
 
 	case errors.As(err, &incomplete):
-		// The structure may be partly built. Nothing can drop it. Stage and
-		// Confirmed are what an operator reads to size the damage.
-		return fmt.Errorf("restart required, %s stopped at %s with %d of %d non-root placements acknowledged: %w",
+		// The structure may be partly built. If the engine refused the call and
+		// the worker is still usable, drop it before loading it again. Otherwise
+		// start a new worker. Stage and Confirmed are what an operator reads to
+		// size the damage.
+		return fmt.Errorf("%s stopped at %s with %d of %d non-root placements acknowledged: %w",
 			incomplete.TreeID, incomplete.Stage, incomplete.Confirmed, incomplete.Total, err)
 
 	default:
@@ -1038,7 +1040,7 @@ if alreadyProjected {
 
 **Problem:** A caller that retries a `TreeWriter.Load` failure has to tell an infrastructure blip apart from a failure that will fail the same way forever. The error kind alone does not carry enough to decide.
 
-**Solution:** `treeLoadRetryable` allowlists rather than denylists. A cause nobody enumerated defaults to stopping. It retries one case: a `TreeLoadRejectedError` whose `Kind` is `TreeLoadStoreReadFailed` and whose wrapped error `pgconn.SafeToRetry` reports never reached the server. Everything else stops. Cancellation is checked first and separately. `TreeLoadStoreReadFailed` covers a refused connection, a cancelled context and a row that will not decode. Only the first of those can succeed on a second attempt. A `TreeLoadIncompleteError` is never retried at all. The structure may exist in the engine. A retry may then report `TREE_EXISTS`. The only real remedy is a process restart. `tree load` goes through `TreeWriter.Load`. Its read of version 1 and its first read of the projected version also fail as `TreeLoadStoreReadFailed`. Both come before any engine call.
+**Solution:** `treeLoadRetryable` allowlists rather than denylists. A cause nobody enumerated defaults to stopping. It retries one case: a `TreeLoadRejectedError` whose `Kind` is `TreeLoadStoreReadFailed` and whose wrapped error `pgconn.SafeToRetry` reports never reached the server. Everything else stops. Cancellation is checked first and separately. `TreeLoadStoreReadFailed` covers a refused connection, a cancelled context and a row that will not decode. Only the first of those can succeed on a second attempt. A `TreeLoadIncompleteError` is never retried at all. The structure may exist in the engine. A retry in the same worker then reports `TREE_EXISTS` unless the structure is dropped first. The CLI never drops and retries. Each command starts its own worker, and a failed load ends with it. `tree load` goes through `TreeWriter.Load`. Its read of version 1 and its first read of the projected version also fail as `TreeLoadStoreReadFailed`. Both come before any engine call.
 
 **Usage:**
 ```go
@@ -1084,7 +1086,7 @@ if res.ProjectionErr != nil {
 }
 ```
 
-**Notes:** A writer makes one write per tree per engine. Each write rebuilds its tree in the engine. The worker cannot drop a structure. A second write through the same engine is refused with `TREE_EXISTS`. Build a new writer over a new worker for each write, as the CLI does. The lock is cheap only because a CLI invocation lasts seconds. The scratch engine is what makes several HEU-789 and HEU-813 conclusions hold. It is also what lets HEU-777's repair redeliver a removal to an engine rebuilt from the store. A long-lived service re-examines both. The engine check shares its rules with the mutation through Rust `check_*` functions the mutating functions call first. Nothing is copied into Go. See `docs/development/network-engine.md`, "Tree Writes Go Through `TreeWriter`". To test a writer that loses its lock partway through, see `lockKillingEvents`, `lockKillingLoadStore` and `terminateTreeLockHolder` in `internal/networkengine/tree_writer_lost_lock_integration_test.go`.
+**Notes:** A writer makes one write per tree per engine. Each write rebuilds its tree in the engine. A second write through the same engine is refused with `TREE_EXISTS`. Build a new writer over a new worker for each write, as the CLI does. The lock is cheap only because a CLI invocation lasts seconds. The scratch engine is what makes several HEU-789 and HEU-813 conclusions hold. It is also what lets HEU-777's repair redeliver a removal to an engine rebuilt from the store. A long-lived service re-examines both. The engine check shares its rules with the mutation through Rust `check_*` functions the mutating functions call first. Nothing is copied into Go. See `docs/development/network-engine.md`, "Tree Writes Go Through `TreeWriter`". To test a writer that loses its lock partway through, see `lockKillingEvents`, `lockKillingLoadStore` and `terminateTreeLockHolder` in `internal/networkengine/tree_writer_lost_lock_integration_test.go`.
 
 ---
 

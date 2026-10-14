@@ -505,10 +505,6 @@ impl StreamlineEngine {
     }
 
     /// Adds a member to the engine.
-    ///
-    /// Bootstrap: the first member auto-creates stream 1 and becomes
-    /// both the root and the owner. Subsequent members are appended to
-    /// the bottom of the target stream's linear chain.
     pub fn add_member(
         &mut self,
         user_id: Uuid,
@@ -586,11 +582,11 @@ impl StreamlineEngine {
         _sponsor_id: Uuid,
         timestamp: i64,
     ) -> Result<AddMemberResult, StreamlineError> {
-        // A fresh id, not 1 again, so a destroyed stream's id never names a new one.
         let stream_id = if self.streams.contains_key(&1) {
             self.stream_owners.entry(user_id).or_default().push(1);
             1
         } else {
+            // Stream 1 is gone. Allocate a new id rather than recreate it.
             self.create_stream(user_id, timestamp)
         };
         let stream = self

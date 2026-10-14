@@ -1239,7 +1239,7 @@ which tree in the answer.
 
 ## The Board Plan Validator's Walk Order
 
-`BoardPlanEngine::validate_restored` runs its walks in order, and each depends
+`BoardPlanEngine::validate_restored` runs its walks in order. Each depends
 on the ones before it having returned. The comment in the function names the two
 that are load-bearing. The full list is here, because it is a paragraph and a
 paragraph does not belong above a function.

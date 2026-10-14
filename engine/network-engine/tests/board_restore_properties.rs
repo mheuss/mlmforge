@@ -20,7 +20,7 @@ fn members(engine: &BoardPlanEngine) -> Vec<Uuid> {
     found
 }
 
-/// Occupied boards ordered by their lowest occupant, which the strategy controls.
+/// Occupied boards ordered by their lowest occupant, so the order does not follow hash order.
 fn occupied_boards(engine: &BoardPlanEngine) -> Vec<Uuid> {
     let mut boards: Vec<(Uuid, Uuid)> = engine
         .list_boards()
@@ -32,7 +32,6 @@ fn occupied_boards(engine: &BoardPlanEngine) -> Vec<Uuid> {
     boards.into_iter().map(|(_, id)| id).collect()
 }
 
-/// The member each run seeds the engine with.
 fn anchor() -> Uuid {
     uuid_from_index(0)
 }

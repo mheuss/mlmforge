@@ -300,6 +300,23 @@ func TestTreeWriterAddRoot_ReportsAnEngineThatAlreadyHoldsTheTree(t *testing.T) 
 		assert.Equal(t, TreeReplayStageCreate, replay.Stage)
 		assert.Empty(t, streamEvents(t, env.events, TreeStreamName(writerTree)))
 	})
+	t.Run("when a snapshot is stored", func(t *testing.T) {
+		env := newWriterEnv()
+		mustAddRoot(t, env, treeTypeUnilevel)
+		seedSnapshot(t, env, 1)
+		engine := newFakeWriterEngine()
+		require.NoError(t, engine.CreateTree(context.Background(), writerTree, treeTypeUnilevel))
+		w := NewTreeWriter(env.events, env.store, env.snapshots, engine, env.locker)
+		req := unilevelRootRequest()
+		req.UserID = writerOther
+
+		_, err := w.AddRoot(context.Background(), req)
+
+		require.ErrorContains(t, err, "load tree "+writerTree+"; nothing was appended: ")
+		require.ErrorContains(t, err, "TREE_EXISTS")
+		assert.NotContains(t, engine.calls, "drop_structure")
+		assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 1)
+	})
 }
 
 func TestTreeWriterLock_TimeoutStatesTheTreeAndTheWait(t *testing.T) {

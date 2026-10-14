@@ -524,7 +524,7 @@ type prepared struct {
 	last     *platform.Event
 	nodes    int
 	warnings []string
-	// the snapshot version, or 0 for none
+	// the version of the snapshot this load kept, or 0 when it kept none
 	snapshotVersion int64
 }
 
@@ -587,14 +587,159 @@ func withBuildErr(streamErr, buildErr error) error {
 	return &RefusedAfterFailedBuildError{Refusal: streamErr, Build: buildErr}
 }
 
-// build checks the store's rows, then builds the tree in the engine from the
-// stream's events through projected.
+// build checks the store's rows, then builds the tree in the engine from a
+// usable snapshot and the events after it, or from the whole stream.
 func (w *TreeWriter) build(ctx context.Context, tree string, shape treeShape, projected int64,
-	rows []TreeNodeRow, _ *prepared) error {
+	rows []TreeNodeRow, prep *prepared) error {
 	if err := preflight(tree, shape.treeType, shape.config(), rows); err != nil {
 		return fmt.Errorf("load tree %s; nothing was appended: %w", tree, err)
 	}
+	snap, ok, err := w.usableSnapshot(ctx, tree, shape, projected, prep)
+	if err != nil {
+		return fmt.Errorf("load tree %s; nothing was appended: %w", tree, err)
+	}
+	if !ok {
+		return w.buildFromStream(ctx, tree, shape, projected, rows)
+	}
+	restored, err := w.buildFromSnapshot(ctx, tree, shape, projected, rows, snap)
+	if err == nil {
+		return nil
+	}
+	if !snapshotFallsBack(err) {
+		return fmt.Errorf("load tree %s; nothing was appended: %w", tree, err)
+	}
+	if err := w.dropBuilt(ctx, tree, projected, restored); err != nil {
+		return fmt.Errorf("load tree %s; nothing was appended: %w", tree, err)
+	}
+	w.discardSnapshot(ctx, tree, snap.Version, prep, fmt.Sprintf(
+		"the snapshot of tree %s at version %d could not be used (%s); dropped the structure", tree, snap.Version, err))
 	return w.buildFromStream(ctx, tree, shape, projected, rows)
+}
+
+// usableSnapshot returns the stored snapshot when a load can restore it, and
+// deletes one it cannot.
+func (w *TreeWriter) usableSnapshot(ctx context.Context, tree string, shape treeShape, projected int64,
+	prep *prepared) (Snapshot, bool, error) {
+	snap, found, err := w.snapshots.Get(ctx, tree)
+	if err != nil {
+		prep.warnings = append(prep.warnings,
+			fmt.Sprintf("reading the snapshot of tree %s returned: %s; replayed the stream", tree, err))
+		return Snapshot{}, false, nil
+	}
+	if !found {
+		return Snapshot{}, false, nil
+	}
+	prep.snapshotVersion = snap.Version
+	reason, err := w.unusableReason(ctx, tree, shape, projected, snap)
+	if err != nil {
+		return Snapshot{}, false, err
+	}
+	if reason != "" {
+		w.discardSnapshot(ctx, tree, snap.Version, prep, fmt.Sprintf("the snapshot of tree %s %s", tree, reason))
+		return Snapshot{}, false, nil
+	}
+	return snap, true, nil
+}
+
+// unusableReason states why snap cannot seed a load, or returns "".
+func (w *TreeWriter) unusableReason(ctx context.Context, tree string, shape treeShape, projected int64,
+	snap Snapshot) (string, error) {
+	stream := TreeStreamName(tree)
+	if snap.Version > projected {
+		return fmt.Sprintf("is at version %d, above the projected version %d", snap.Version, projected), nil
+	}
+	if snap.TreeType != shape.treeType {
+		return fmt.Sprintf("records tree type %s, and version 1 of stream %s records %s",
+			snap.TreeType, stream, shape.treeType), nil
+	}
+	if snap.Version == projected {
+		return "", nil
+	}
+	next, err := w.events.ReadStream(ctx, stream, snap.Version+1, 1)
+	if err != nil {
+		return "", &TreeReplayError{TreeID: tree, Stage: TreeReplayStageReplay, ProjectedVersion: projected,
+			Err: fmt.Errorf("read version %d of stream %s after the snapshot: %w", snap.Version+1, stream, err)}
+	}
+	if len(next) == 1 && next[0].Type == EventTypeEventRejected {
+		if p, err := rejectionPayload(next[0]); err == nil && p.RejectedVersion == snap.Version {
+			return fmt.Sprintf("is at version %d, and rejection %s at version %d names that version",
+				snap.Version, next[0].ID, next[0].Version), nil
+		}
+	}
+	return "", nil
+}
+
+// buildFromSnapshot restores snap, replays the events after it through
+// projected, and checks the result against rows. restored reports whether the
+// restore landed.
+func (w *TreeWriter) buildFromSnapshot(ctx context.Context, tree string, shape treeShape, projected int64,
+	rows []TreeNodeRow, snap Snapshot) (restored bool, err error) {
+	if err := w.engine.RestoreSnapshot(ctx, tree, snap.TreeType, json.RawMessage(snap.Data)); err != nil {
+		return false, &TreeReplayError{TreeID: tree, Stage: TreeReplayStageRestore, ProjectedVersion: projected,
+			Err: fmt.Errorf("restore the snapshot at version %d: %w", snap.Version, err)}
+	}
+	res, err := replayStream(ctx, w.events, w.engine, tree, shape, snap.Version+1, projected)
+	if err != nil {
+		return true, err
+	}
+	if len(rows) == 0 {
+		return true, &TreeReplayError{TreeID: tree, Stage: TreeReplayStageMembership, ReachedVersion: res.reached,
+			ProjectedVersion: projected, Mismatch: "the store holds no active rows, and the engine was restored from a snapshot"}
+	}
+	mismatch, err := checkMembership(ctx, w.engine, tree, rows)
+	if err != nil {
+		return true, &TreeReplayError{TreeID: tree, Stage: TreeReplayStageMembership, ReachedVersion: res.reached,
+			ProjectedVersion: projected, Err: err}
+	}
+	if mismatch != "" {
+		return true, &TreeReplayError{TreeID: tree, Stage: TreeReplayStageMembership, ReachedVersion: res.reached,
+			ProjectedVersion: projected, Mismatch: mismatch}
+	}
+	return true, nil
+}
+
+// snapshotFallsBack reports whether a failed snapshot build may be dropped and
+// replaced by a full replay.
+func snapshotFallsBack(err error) bool {
+	var replay *TreeReplayError
+	if errors.As(err, &replay) && replay.Mismatch != "" {
+		return true
+	}
+	var engineErr *EngineError
+	if !errors.As(err, &engineErr) {
+		return false
+	}
+	// The structure was in the worker before this load, so the load does not
+	// own it and must not drop it.
+	if replay != nil && replay.Stage == TreeReplayStageRestore && engineErr.Code == engineCodeTreeExists {
+		return false
+	}
+	return true
+}
+
+// dropBuilt drops the structure a failed snapshot build left.
+func (w *TreeWriter) dropBuilt(ctx context.Context, tree string, projected int64, restored bool) error {
+	dropped, err := w.engine.DropStructure(ctx, tree)
+	if err != nil {
+		return &TreeReplayError{TreeID: tree, Stage: TreeReplayStageDrop, ProjectedVersion: projected, Err: err}
+	}
+	if restored && !dropped {
+		return &TreeReplayError{TreeID: tree, Stage: TreeReplayStageDrop, ProjectedVersion: projected,
+			Observed: "the restore succeeded, and drop_structure reported no structure named " + tree}
+	}
+	return nil
+}
+
+// discardSnapshot deletes the tree's snapshot at version, and records one
+// warning stating what was observed and what the delete did.
+func (w *TreeWriter) discardSnapshot(ctx context.Context, tree string, version int64, prep *prepared, observed string) {
+	prep.snapshotVersion = 0
+	if err := w.snapshots.Delete(ctx, tree, version); err != nil {
+		prep.warnings = append(prep.warnings,
+			fmt.Sprintf("%s; deleting it returned: %s; replayed the stream", observed, err))
+		return
+	}
+	prep.warnings = append(prep.warnings, fmt.Sprintf("%s; deleted it and replayed the stream", observed))
 }
 
 // buildFromStream creates the structure, replays events 1 through projected,

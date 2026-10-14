@@ -41,6 +41,8 @@ type fakeWriterEngine struct {
 	failAdd map[string]error
 	// downlineErr is what every GetDownline returns.
 	downlineErr error
+	// downlineErrOnce is what the next GetDownline returns, once.
+	downlineErrOnce error
 	// positionErr is what every GetPosition returns.
 	positionErr error
 	// failAddOnce fails the keyed user's next add, then forgets it.
@@ -199,6 +201,10 @@ func (f *fakeWriterEngine) GetPosition(_ context.Context, structure, userID stri
 // in user ID order, to depth levels below userID, or every level when depth is
 // 0.
 func (f *fakeWriterEngine) GetDownline(_ context.Context, structure, userID string, depth uint32) ([]EngineNode, error) {
+	if err := f.downlineErrOnce; err != nil {
+		f.downlineErrOnce = nil
+		return nil, err
+	}
 	if f.downlineErr != nil {
 		return nil, f.downlineErr
 	}

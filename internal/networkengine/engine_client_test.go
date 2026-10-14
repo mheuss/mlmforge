@@ -2247,6 +2247,18 @@ func TestEngineClient_BoardOps_RejectMissingCycleEvents(t *testing.T) {
 	}
 }
 
+func TestEngineClient_BoardDissolve_RejectsNullCycleEvents(t *testing.T) {
+	mock := &mockTransport{
+		response: json.RawMessage(`{"dissolved_board_id":"board-001","displaced_members":[],"cycle_events":null}`),
+	}
+	client := newEngineClientWithTransport(mock)
+
+	_, err := client.BoardDissolve(context.Background(), "BoardTest", "board-001", 4000)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `"cycle_events"`)
+}
+
 func TestEngineClient_BoardGetState_MockResponse(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`{"board_id":"board-001","positions":[null,"00000000-0000-0000-0000-000000000001"]}`),

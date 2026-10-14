@@ -220,7 +220,7 @@ type HoldingTankEntryDTO struct {
 type BoardAddMemberResultDTO struct {
 	BoardID  string `json:"board_id"`
 	Position int    `json:"position"`
-	// A pointer, so an absent key is distinguishable from an empty list.
+	// A pointer, so an absent or null key is distinguishable from an empty list.
 	CycleEvents *[]CycleEventDTO `json:"cycle_events"`
 }
 
@@ -237,7 +237,7 @@ type CycleEventDTO struct {
 // Matches the Rust RemoveMemberResult struct.
 type BoardRemoveMemberResultDTO struct {
 	Compacted []string `json:"compacted"`
-	// A pointer, so an absent key is distinguishable from an empty list.
+	// A pointer, so an absent or null key is distinguishable from an empty list.
 	CycleEvents *[]CycleEventDTO `json:"cycle_events"`
 }
 
@@ -267,7 +267,7 @@ type StalledBoardDTO struct {
 type DissolutionResultDTO struct {
 	DissolvedBoardID string   `json:"dissolved_board_id"`
 	DisplacedMembers []string `json:"displaced_members"`
-	// A pointer, so an absent key is distinguishable from an empty list.
+	// A pointer, so an absent or null key is distinguishable from an empty list.
 	CycleEvents *[]CycleEventDTO `json:"cycle_events"`
 }
 
@@ -275,7 +275,7 @@ type DissolutionResultDTO struct {
 // Matches the Rust CompressionResult struct.
 type CompressionResultDTO struct {
 	Compressed []CompressedMemberDTO `json:"compressed"`
-	// A pointer, so an absent key is distinguishable from an empty list.
+	// A pointer, so an absent or null key is distinguishable from an empty list.
 	CycleEvents *[]CycleEventDTO `json:"cycle_events"`
 }
 

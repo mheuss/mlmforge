@@ -7312,3 +7312,38 @@ fn drop_structure_leaves_the_loaded_plan_in_place() {
     drop(worker.stdin.take());
     worker.wait().unwrap();
 }
+
+#[test]
+fn streamline_enrols_again_after_its_last_stream_was_destroyed() {
+    let mut worker = common::spawn_worker();
+    for (id, req) in [
+        (
+            "c",
+            r#"{"id":"c","op":"create_streamline","params":{"structure":"Gone","assignment_mode":"sponsor_stream","freeze_on_demotion":false,"timestamp":1000}}"#,
+        ),
+        (
+            "a1",
+            r#"{"id":"a1","op":"streamline_add_member","params":{"structure":"Gone","user_id":"00000000-0000-0000-0000-000000000011","sponsor_id":"00000000-0000-0000-0000-000000000099","timestamp":1001}}"#,
+        ),
+        (
+            "u",
+            r#"{"id":"u","op":"streamline_update_allowance","params":{"structure":"Gone","user_id":"00000000-0000-0000-0000-000000000011","total_allowed":0,"timestamp":1002}}"#,
+        ),
+    ] {
+        let resp = common::send_receive(&mut worker, req);
+        assert!(resp.contains(r#""ok":true"#), "{} failed: {}", id, resp);
+    }
+
+    let resp = common::send_receive(
+        &mut worker,
+        r#"{"id":"a2","op":"streamline_add_member","params":{"structure":"Gone","user_id":"00000000-0000-0000-0000-000000000012","sponsor_id":"00000000-0000-0000-0000-000000000011","timestamp":1003}}"#,
+    );
+    assert!(
+        resp.contains(r#""ok":true"#) && resp.contains(r#""stream_id":2"#),
+        "expected the member seated in a new stream 2, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}

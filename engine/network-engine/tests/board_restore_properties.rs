@@ -4,6 +4,7 @@ use common::uuid_from_index;
 use network_engine::board_plan::BoardPlanEngine;
 use network_engine::config::board_plan::{BoardPlanConfig, ReEntryPosition};
 use proptest::prelude::*;
+use std::num::NonZeroU32;
 use uuid::Uuid;
 
 type Op = (u8, usize, usize);
@@ -90,7 +91,7 @@ proptest! {
                 ReEntryPosition::Bottom
             },
             max_cycles_per_period: 5,
-            max_cascade_depth: cascade,
+            max_cascade_depth: NonZeroU32::new(cascade).unwrap(),
             stall_threshold_periods: 3,
             inactive_compression: false,
         };

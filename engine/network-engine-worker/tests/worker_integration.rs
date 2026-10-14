@@ -3777,6 +3777,60 @@ fn load_plan_rejects_board_cycle_commission_negative() {
     worker.wait().unwrap();
 }
 
+#[test]
+fn create_board_plan_rejects_a_zero_cascade_bound() {
+    let mut worker = common::spawn_worker();
+    let create = serde_json::json!({
+        "id": "bp-zero", "op": "create_board_plan",
+        "params": {
+            "structure": "BPZero", "width": 2, "height": 1,
+            "config": {
+                "cycle_commission": 500.0, "re_entry_enabled": true,
+                "re_entry_position": "bottom", "max_cycles_per_period": 4,
+                "max_cascade_depth": 0, "stall_threshold_periods": 3,
+                "inactive_compression": false
+            },
+            "timestamp": 0
+        }
+    });
+
+    let resp = common::send_receive(&mut worker, &create.to_string());
+
+    assert!(
+        resp.contains(r#""ok":false"#)
+            && resp.contains("INVALID_PARAMS")
+            && resp.contains("expected a nonzero u32"),
+        "expected INVALID_PARAMS naming the zero bound, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn load_plan_rejects_a_zero_cascade_bound() {
+    let mut worker = common::spawn_worker();
+    let bad = BOARD_TEST_PLAN_JSON.replace("\"max_cascade_depth\": 10", "\"max_cascade_depth\": 0");
+    assert!(
+        bad.contains("\"max_cascade_depth\": 0"),
+        "the max_cascade_depth replacement did not match; the plan constant changed shape"
+    );
+
+    let resp = send_load_plan(&mut worker, &bad);
+
+    assert!(
+        resp.contains(r#""ok":false"#)
+            && resp.contains("INVALID_PLAN")
+            && resp.contains("expected a nonzero u32"),
+        "expected INVALID_PLAN naming the zero bound, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 /// The exact legacy shape: config, no structure. An unmigrated caller must
 /// fail, not silently continue. This is the case that proves the compatibility
 /// requirement; the hybrid test below does not, because it supplies `structure`.
@@ -6419,6 +6473,45 @@ fn restore_rejects_a_board_occupant_above_an_open_position() {
 
     let resp = restore_under(&mut worker, "BpGap2", "board_plan", data);
     assert_inconsistent(&resp, &["has position 0 open and position 1 occupied"]);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_rejects_a_zero_cascade_bound() {
+    let mut worker = common::spawn_worker();
+    let create = serde_json::json!({
+        "id": "bp-create", "op": "create_board_plan",
+        "params": {
+            "structure": "BpZeroSnap", "width": 2, "height": 1,
+            "config": {
+                "cycle_commission": 500.0, "re_entry_enabled": true,
+                "re_entry_position": "bottom", "max_cycles_per_period": 4,
+                "max_cascade_depth": 10, "stall_threshold_periods": 3,
+                "inactive_compression": false
+            },
+            "timestamp": 0
+        }
+    });
+    let resp = common::send_receive(&mut worker, &create.to_string());
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "create_board_plan failed: {}",
+        resp
+    );
+    let mut data = take_snapshot_data(&mut worker, "BpZeroSnap");
+    data["config"]["max_cascade_depth"] = serde_json::json!(0);
+
+    let resp = restore_under(&mut worker, "BpZeroSnap2", "board_plan", data);
+
+    assert!(
+        resp.contains(r#""ok":false"#)
+            && resp.contains("INVALID_PARAMS")
+            && resp.contains("expected a nonzero u32"),
+        "expected INVALID_PARAMS naming the zero bound, got: {}",
+        resp
+    );
 
     drop(worker.stdin.take());
     worker.wait().unwrap();

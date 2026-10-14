@@ -596,7 +596,7 @@ impl BoardPlanEngine {
         depth: u32,
     ) {
         // Cascade bound: prevent runaway chain reactions.
-        if depth >= self.config.max_cascade_depth {
+        if depth >= self.config.max_cascade_depth.get() {
             return;
         }
 
@@ -813,6 +813,8 @@ impl BoardPlanEngine {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroU32;
+
     use super::*;
     use crate::config::board_plan::ReEntryPosition;
 
@@ -1502,7 +1504,7 @@ mod tests {
             re_entry_enabled: true,
             re_entry_position: ReEntryPosition::Bottom,
             max_cycles_per_period: 4,
-            max_cascade_depth: 10,
+            max_cascade_depth: NonZeroU32::new(10).unwrap(),
             stall_threshold_periods: 3,
             inactive_compression: false,
         }
@@ -1631,7 +1633,7 @@ mod tests {
             re_entry_enabled: true,
             re_entry_position: ReEntryPosition::SponsorBoard,
             max_cycles_per_period: 4,
-            max_cascade_depth: 10,
+            max_cascade_depth: NonZeroU32::new(10).unwrap(),
             stall_threshold_periods: 3,
             inactive_compression: false,
         }
@@ -1916,7 +1918,7 @@ mod tests {
             re_entry_enabled: false,
             re_entry_position: ReEntryPosition::Bottom,
             max_cycles_per_period: 4,
-            max_cascade_depth: 10,
+            max_cascade_depth: NonZeroU32::new(10).unwrap(),
             stall_threshold_periods: 3,
             inactive_compression: false,
         }
@@ -2169,7 +2171,7 @@ mod tests {
             re_entry_enabled: true,
             re_entry_position: ReEntryPosition::Bottom,
             max_cycles_per_period: 4,
-            max_cascade_depth: 1,
+            max_cascade_depth: NonZeroU32::new(1).unwrap(),
             stall_threshold_periods: 3,
             inactive_compression: false,
         };

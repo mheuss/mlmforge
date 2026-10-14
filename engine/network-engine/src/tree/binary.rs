@@ -715,6 +715,25 @@ mod tests {
     }
 
     #[test]
+    fn validate_restored_rejects_children_out_of_slot_order() {
+        let (mut tree, left) = binary_pair();
+        let root = tree.arena.root.expect("binary_pair sets a root");
+        tree.add_node(test_uuid(3), test_uuid(1), 1, test_uuid(1), 0)
+            .unwrap();
+        let right = tree.arena.resolve(test_uuid(3)).unwrap();
+        tree.arena.nodes[root.0].children = vec![right, left];
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::ChildrenDisagreeWithSlots {
+                slot: root.0,
+                children: vec![right.0, left.0],
+                slotted: vec![left.0, right.0],
+            })
+        );
+    }
+
+    #[test]
     fn validate_restored_names_the_same_slots_offender_every_run() {
         // self.slots is a HashMap with a randomized hasher. Fresh tree each
         // iteration, so each gets its own seed.

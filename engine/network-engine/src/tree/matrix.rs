@@ -1181,6 +1181,25 @@ mod tests {
     }
 
     #[test]
+    fn validate_restored_rejects_children_out_of_slot_order() {
+        let (mut tree, left) = matrix_pair();
+        let root = tree.arena.root.expect("matrix_pair sets a root");
+        tree.add_node_at(test_uuid(3), test_uuid(1), test_uuid(1), 1, 0)
+            .unwrap();
+        let right = tree.arena.resolve(test_uuid(3)).unwrap();
+        tree.arena.nodes[root.0].children = vec![right, left];
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::ChildrenDisagreeWithSlots {
+                slot: root.0,
+                children: vec![right.0, left.0],
+                slotted: vec![left.0, right.0],
+            })
+        );
+    }
+
+    #[test]
     fn validate_restored_rejects_a_width_below_two() {
         // The constructor rejects this; a restore does not run it. A width of
         // 1 is a chain, and add_node succeeds on it.

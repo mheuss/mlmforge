@@ -31,7 +31,7 @@ impl Arena {
         }
     }
 
-    /// Prove every stored `NodeIndex` is in range and live, and that parent and child edges agree.
+    /// Prove every stored `NodeIndex` is in range and live, and that the edges form one rooted tree.
     pub(crate) fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
         let node_count = self.nodes.len();
 
@@ -190,6 +190,7 @@ impl Arena {
 
         // Must run after the edge pass: it indexes nodes by edge target.
         self.check_reciprocal("children", "parent", children_of, parent_of)?;
+        self.check_single_root()?;
 
         Ok(())
     }
@@ -388,6 +389,32 @@ impl Arena {
                     });
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// Prove a populated arena names a root and holds no other parentless node.
+    fn check_single_root(&self) -> Result<(), SnapshotConsistencyError> {
+        let live_count = self
+            .nodes
+            .iter()
+            .filter(|node| node.user_id != Uuid::nil())
+            .count();
+        let Some(root) = self.root else {
+            if live_count > 0 {
+                return Err(SnapshotConsistencyError::RootMissing { live_count });
+            }
+            return Ok(());
+        };
+        for (slot, node) in self.nodes.iter().enumerate() {
+            if node.user_id == Uuid::nil() || node.parent.is_some() || slot == root.0 {
+                continue;
+            }
+            return Err(SnapshotConsistencyError::ParentlessNodeNotRoot {
+                slot,
+                user_id: node.user_id,
+                root: root.0,
+            });
         }
         Ok(())
     }
@@ -1527,6 +1554,43 @@ mod tests {
                 target: 1,
             })
         );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_populated_arena_with_no_root() {
+        let mut arena = arena_with_a_child(1);
+        arena.root = None;
+
+        assert_eq!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::RootMissing { live_count: 2 })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_parentless_node_that_is_not_the_root() {
+        let mut arena = live_arena();
+        let stray = arena.alloc_slot(make_node(test_uuid(2), None, 0));
+        arena.index.insert(test_uuid(2), stray);
+
+        assert_eq!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::ParentlessNodeNotRoot {
+                slot: 1,
+                user_id: test_uuid(2),
+                root: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_accepts_an_arena_of_tombstones_with_no_root() {
+        let mut arena = live_arena();
+        arena.index.clear();
+        arena.root = None;
+        arena.tombstone(NodeIndex(0));
+
+        assert!(arena.validate_restored().is_ok());
     }
 
     #[test]

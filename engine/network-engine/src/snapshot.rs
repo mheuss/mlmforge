@@ -112,6 +112,16 @@ pub enum SnapshotConsistencyError {
         target: usize,
     },
 
+    #[error("the arena holds {live_count} live nodes and names no root")]
+    RootMissing { live_count: usize },
+
+    #[error("node slot {slot} holds {user_id} and names no parent; root names node slot {root}")]
+    ParentlessNodeNotRoot {
+        slot: usize,
+        user_id: Uuid,
+        root: usize,
+    },
+
     #[error("the child slot map names node slot {slot}; the arena holds {node_count} slots")]
     ChildSlotOutOfRange { slot: usize, node_count: usize },
 

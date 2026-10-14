@@ -30,7 +30,8 @@ impl UnilevelTree {
         }
     }
 
-    /// Prove a restored tree's stored indexes are in range and live.
+    /// Prove a restored tree's stored indexes are in range and live, that the
+    /// parent edges form one rooted tree, and that every sponsor chain ends.
     pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
         self.arena.validate_restored()
     }
@@ -245,6 +246,25 @@ mod tests {
             tree.validate_restored(),
             Err(SnapshotConsistencyError::IndexSlotOutOfRange { .. })
         ));
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_child_its_parent_does_not_list() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+        tree.arena.nodes[0].children.clear();
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::EdgeNotReciprocated {
+                field: "parent",
+                slot: 1,
+                target: 0,
+                reverse_field: "children",
+            })
+        );
     }
 
     #[test]

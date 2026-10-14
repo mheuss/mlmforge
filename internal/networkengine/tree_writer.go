@@ -621,10 +621,14 @@ func (w *TreeWriter) checkReplayed(ctx context.Context, tree string, projected i
 			ProjectedVersion: projected, Mismatch: fmt.Sprintf("the replay left no root; the store holds %d active rows", len(rows))}
 	}
 	for _, row := range rows {
-		if row.Depth == 0 && !sameUUID(row.UserID, res.root) {
+		if row.Depth != 0 {
+			continue
+		}
+		if !sameUUID(row.UserID, res.root) {
 			return &TreeReplayError{TreeID: tree, Stage: TreeReplayStageMembership, ReachedVersion: res.reached,
 				ProjectedVersion: projected, Mismatch: "the replay left root " + res.root + "; the store's root is " + row.UserID}
 		}
+		break
 	}
 	mismatch, err := checkMembership(ctx, w.engine, tree, rows)
 	if err != nil {

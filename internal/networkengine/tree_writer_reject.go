@@ -100,6 +100,12 @@ func (w *TreeWriter) rejectionEvidence(ctx context.Context, tree string, shape t
 	if errors.Is(retryErr, context.Canceled) || errors.Is(retryErr, context.DeadlineExceeded) {
 		return false, nil
 	}
+	// A stream refusal outranks the failed build it carries, so that build
+	// failure is not evidence.
+	var refused *RefusedAfterFailedBuildError
+	if errors.As(retryErr, &refused) {
+		return false, nil
+	}
 	var failed *CatchUpFailedError
 	if errors.As(retryErr, &failed) {
 		if !sameUUID(failed.EventID, last.ID) {

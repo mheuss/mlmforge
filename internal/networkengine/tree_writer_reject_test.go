@@ -1167,3 +1167,20 @@ func TestTreeWriterReject_KeepsAReleaseFailureAlongsideTheRejection(t *testing.T
 	assert.Equal(t, RejectOutcomeRejected, res.Outcome)
 	assert.Equal(t, release, res.ReleaseErr)
 }
+
+func TestTreeWriterReject_AFencedRetryIsNotEvidence(t *testing.T) {
+	env := newWriterEnv()
+	stuck := stuckPlacement(t, env)
+	require.NoError(t, env.store.ProjectInsert(context.Background(),
+		makeUUIDNode(testNodeUUID(60), writerTree, testUserUUID(6), 1, ptr(writerRoot), ptr(writerRoot), nil), 9))
+	before := streamEvents(t, env.events, TreeStreamName(writerTree))
+	w, _ := env.writer()
+
+	res, err := w.Reject(context.Background(), rejectRequest(stuck.ID))
+
+	require.ErrorContains(t, err, "returned an error that is not one reject-event accepts as evidence; nothing was appended: ")
+	var moved *StreamMovedError
+	require.ErrorAs(t, err, &moved)
+	assert.Empty(t, res.Outcome)
+	assert.Equal(t, before, streamEvents(t, env.events, TreeStreamName(writerTree)))
+}

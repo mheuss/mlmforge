@@ -131,7 +131,7 @@ func treeLoadFailureMessage(err error) string {
 	// reported as the build failure alone.
 	var refused *networkengine.RefusedAfterFailedBuildError
 	if errors.As(err, &refused) {
-		return fmt.Sprintf("load failed: %s", err)
+		return fmt.Sprintf("load failed: %s%s", err, interrupted(err))
 	}
 	var replay *networkengine.TreeReplayError
 	if errors.As(err, &replay) {

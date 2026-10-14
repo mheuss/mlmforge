@@ -60,6 +60,7 @@ type WriteResult struct {
 	CaughtUp      *CaughtUpEvent         // the stream's last event, redelivered and handled without error
 	ProjectionErr error                  // any failure after the append was confirmed
 	Observed      *ProjectionObservation // the projected version, re-read after a projection error
+	Warnings      []string               // what a fallback during the load observed, in order
 	ReleaseErr    error                  // the unlock failed
 }
 
@@ -85,6 +86,7 @@ type LoadResult struct {
 	CaughtUp       *CaughtUpEvent         // the stream's last event, redelivered and handled without error
 	ProjectedAfter *ProjectionObservation // the projected version read after a redelivery
 	Nodes          int                    // the active rows the load leaves, set only when Load returns no error
+	Warnings       []string               // what a fallback during the load observed, in order
 	ReleaseErr     error                  // the unlock failed
 }
 

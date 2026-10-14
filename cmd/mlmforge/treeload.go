@@ -52,6 +52,7 @@ func runTreeLoad(ctx context.Context, out, warn io.Writer, loader treeLoadWriter
 		var res networkengine.LoadResult
 		res, err = loader.Load(ctx, req)
 		printRedelivered(out, res.CaughtUp, stillBehind(res))
+		printWarnings(warn, res.Warnings)
 		if err == nil {
 			// Zero rows and a tree that is not in the database are the same
 			// read, so this must not claim a load that did not happen.

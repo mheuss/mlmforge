@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -472,4 +473,24 @@ func TestTreeWriteCmds_RequireTheirFlags(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestReportWrite_PrintsEachWarning(t *testing.T) {
+	var out, warn bytes.Buffer
+	res := networkengine.WriteResult{Stream: "tree-t", EventID: "e", Version: 2, Warnings: []string{"first", "second"}}
+
+	require.NoError(t, reportWrite(t.Context(), &out, &warn, res, nil))
+
+	assert.Contains(t, warn.String(), "warning: first\nwarning: second\n")
+}
+
+func TestReportWrite_AFailedSnapshotPutExitsZeroAndNamesTheTreeAndVersion(t *testing.T) {
+	var out, warn bytes.Buffer
+	res := networkengine.WriteResult{Stream: "tree-t", EventID: "e", Version: 1000,
+		Warnings: []string{"storing the snapshot of tree t at version 1000 returned: disk full"}}
+
+	err := reportWrite(t.Context(), &out, &warn, res, nil)
+
+	require.NoError(t, err)
+	assert.Contains(t, warn.String(), "warning: storing the snapshot of tree t at version 1000 returned: disk full\n")
 }

@@ -176,6 +176,7 @@ type RejectResult struct {
 	Version         int64                  // the rejection's version
 	ProjectionErr   error                  // any failure projecting the rejection
 	Observed        *ProjectionObservation // the projected version, re-read after a projection error
+	Warnings        []string               // what a fallback during the retry's load observed, in order
 	ReleaseErr      error                  // the unlock failed
 }
 

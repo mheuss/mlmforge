@@ -289,3 +289,16 @@ func TestTreeRejectEventCmd_RefusesAnOutcomeItDoesNotReport(t *testing.T) {
 	require.EqualError(t, err, `reject returned no error and outcome "", which this command does not report`)
 	assert.Empty(t, out.stdout.String())
 }
+
+func TestReportReject_PrintsEachWarning(t *testing.T) {
+	for name, err := range map[string]error{"on success": nil, "on an error": errors.New("refused")} {
+		t.Run(name, func(t *testing.T) {
+			var out, warn bytes.Buffer
+			res := networkengine.RejectResult{Outcome: networkengine.RejectOutcomeRejected, Warnings: []string{"first"}}
+
+			_ = reportReject(t.Context(), &out, &warn, res, err)
+
+			assert.Contains(t, warn.String(), "warning: first\n")
+		})
+	}
+}

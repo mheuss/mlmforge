@@ -17,6 +17,7 @@ import (
 // stubLoader counts attempts and returns a fixed error.
 type stubLoader struct {
 	size     int
+	warnings []string
 	err      error
 	attempts int
 	onCall   func(attempt int)
@@ -27,7 +28,7 @@ func (s *stubLoader) Load(context.Context, networkengine.LoadRequest) (networken
 	if s.onCall != nil {
 		s.onCall(s.attempts)
 	}
-	return networkengine.LoadResult{Nodes: s.size}, s.err
+	return networkengine.LoadResult{Nodes: s.size, Warnings: s.warnings}, s.err
 }
 
 // unilevelLoad asks for tree as a unilevel tree.
@@ -573,4 +574,13 @@ func TestRunTreeLoad_RetriesASafeVersion1ReadFailureOverTheWriter(t *testing.T) 
 	require.NoError(t, runTreeLoad(t.Context(), &out, io.Discard, w, unilevelLoad(tree)))
 	require.Greater(t, events.reads, 1, "the failed version-1 read was not retried")
 	require.Equal(t, "tree "+tree+" holds no rows; nothing was loaded\n", out.String())
+}
+
+func TestRunTreeLoad_PrintsEachWarning(t *testing.T) {
+	var out, warn bytes.Buffer
+	loader := &stubLoader{size: 1, warnings: []string{"first"}}
+
+	require.NoError(t, runTreeLoad(t.Context(), &out, &warn, loader, unilevelLoad(testTreeID(60))))
+
+	require.Contains(t, warn.String(), "warning: first\n")
 }

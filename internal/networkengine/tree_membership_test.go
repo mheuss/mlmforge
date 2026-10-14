@@ -3,6 +3,7 @@ package networkengine
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -85,4 +86,50 @@ func TestCheckMembership_ReturnsAFailedQuery(t *testing.T) {
 	_, err := checkMembership(context.Background(), engine, writerTree, rows)
 
 	assert.EqualError(t, err, "transport is closed")
+}
+
+func TestCheckMembership_ComparesEveryLevelOfTheDownline(t *testing.T) {
+	engine := membershipEngine(t)
+	require.NoError(t, engine.AddNode(context.Background(), writerTree, writerOther, writerChild, writerChild, writeTime.Unix()))
+	rows := []TreeNodeRow{memberRow(writerRoot, 0, writeTime), memberRow(writerChild, 1, writeTime),
+		memberRow(writerOther, 2, writeTime)}
+
+	got, err := checkMembership(context.Background(), engine, writerTree, rows)
+
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+func TestCheckMembership_NamesADepthDifference(t *testing.T) {
+	rows := []TreeNodeRow{memberRow(writerRoot, 0, writeTime), memberRow(writerChild, 2, writeTime)}
+
+	got, err := checkMembership(context.Background(), membershipEngine(t), writerTree, rows)
+
+	require.NoError(t, err)
+	assert.Contains(t, got, "depth or enrolled_at differs for: ["+writerChild+"]")
+}
+
+func TestCheckMembership_ReturnsAFailedRootQuery(t *testing.T) {
+	engine := membershipEngine(t)
+	engine.positionErr = errors.New("transport is closed")
+	rows := []TreeNodeRow{memberRow(writerRoot, 0, writeTime)}
+
+	_, err := checkMembership(context.Background(), engine, writerTree, rows)
+
+	assert.EqualError(t, err, "transport is closed")
+}
+
+func TestCheckMembership_MatchesUserIDsInAnySpelling(t *testing.T) {
+	root, child := "abcdef00-0000-0000-0000-00000000000a", "abcdef00-0000-0000-0000-00000000000b"
+	engine := newFakeWriterEngine()
+	ctx := context.Background()
+	require.NoError(t, engine.CreateTree(ctx, writerTree, treeTypeUnilevel))
+	require.NoError(t, engine.AddRoot(ctx, writerTree, root, writeTime.Unix()))
+	require.NoError(t, engine.AddNode(ctx, writerTree, child, root, root, writeTime.Unix()))
+	rows := []TreeNodeRow{memberRow(strings.ToUpper(root), 0, writeTime), memberRow(strings.ToUpper(child), 1, writeTime)}
+
+	got, err := checkMembership(ctx, engine, writerTree, rows)
+
+	require.NoError(t, err)
+	assert.Empty(t, got)
 }

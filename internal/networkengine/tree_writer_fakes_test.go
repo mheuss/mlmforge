@@ -41,6 +41,8 @@ type fakeWriterEngine struct {
 	failAdd map[string]error
 	// downlineErr is what every GetDownline returns.
 	downlineErr error
+	// positionErr is what every GetPosition returns.
+	positionErr error
 }
 
 type fakeEngineTree struct {
@@ -157,6 +159,9 @@ func (f *fakeWriterEngine) RemoveNode(_ context.Context, structure, userID strin
 }
 
 func (f *fakeWriterEngine) GetPosition(_ context.Context, structure, userID string) (*EnginePosition, error) {
+	if f.positionErr != nil {
+		return nil, f.positionErr
+	}
 	t, err := f.tree(structure)
 	if err != nil {
 		return nil, err
@@ -169,8 +174,9 @@ func (f *fakeWriterEngine) GetPosition(_ context.Context, structure, userID stri
 }
 
 // GetDownline walks the fake's parent links breadth first, visiting siblings
-// in user ID order. depth is ignored.
-func (f *fakeWriterEngine) GetDownline(_ context.Context, structure, userID string, _ uint32) ([]EngineNode, error) {
+// in user ID order, to depth levels below userID, or every level when depth is
+// 0.
+func (f *fakeWriterEngine) GetDownline(_ context.Context, structure, userID string, depth uint32) ([]EngineNode, error) {
 	if f.downlineErr != nil {
 		return nil, f.downlineErr
 	}
@@ -188,15 +194,22 @@ func (f *fakeWriterEngine) GetDownline(_ context.Context, structure, userID stri
 			children[*parent] = append(children[*parent], id)
 		}
 	}
+	type visit struct {
+		id    string
+		level uint32
+	}
 	var out []EngineNode
-	queue := []string{userID}
+	queue := []visit{{id: userID}}
 	for len(queue) > 0 {
-		id := queue[0]
+		v := queue[0]
 		queue = queue[1:]
-		for _, child := range children[id] {
+		if depth != 0 && v.level >= depth {
+			continue
+		}
+		for _, child := range children[v.id] {
 			pos := t.nodes[child]
 			out = append(out, EngineNode{UserID: child, Depth: pos.Depth, EnrolledAt: pos.EnrolledAt})
-			queue = append(queue, child)
+			queue = append(queue, visit{id: child, level: v.level + 1})
 		}
 	}
 	return out, nil

@@ -12,7 +12,7 @@ import (
 // membershipListCap is how many user IDs one mismatch list names.
 const membershipListCap = 5
 
-// memberState is what the membership check compares for one user.
+// memberState holds one user's depth and enrolment second.
 type memberState struct {
 	depth      int
 	enrolledAt int64
@@ -26,7 +26,7 @@ func checkMembership(ctx context.Context, engine TreeRebuilder, tree string, row
 	store := make(map[string]memberState, len(rows))
 	for _, row := range rows {
 		if row.Depth == 0 {
-			root = row.UserID
+			root = canonicalUser(row.UserID)
 		}
 		store[canonicalUser(row.UserID)] = memberState{depth: row.Depth, enrolledAt: row.EnrolledAt.Unix()}
 	}
@@ -65,7 +65,7 @@ func checkMembership(ctx context.Context, engine TreeRebuilder, tree string, row
 	}
 	return fmt.Sprintf("the engine holds %d nodes under root %s; the store holds %d active rows; "+
 		"first user IDs only in the engine: %s; only in the store: %s; depth or enrolled_at differs for: %s",
-		len(held), root, len(rows), firstIDs(onlyEngine), firstIDs(onlyStore), firstIDs(differs)), nil
+		len(held), root, len(store), firstIDs(onlyEngine), firstIDs(onlyStore), firstIDs(differs)), nil
 }
 
 // canonicalUser returns id in canonical UUID form, or unchanged when it does not parse.

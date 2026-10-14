@@ -53,13 +53,14 @@ func TestTreeLoad_RetriesInTheSameWorkerAfterADrop(t *testing.T) {
 	var incomplete *TreeLoadIncompleteError
 	require.ErrorAs(t, err, &incomplete)
 	assert.Equal(t, TreeLoadStageNodes, incomplete.Stage)
+	assert.Equal(t, 1, incomplete.Confirmed, "expected one child placed before the refusal")
 	var refused *EngineError
 	require.ErrorAs(t, err, &refused)
 	assert.Equal(t, "USER_NOT_FOUND", refused.Code)
 
 	dropped, err := client.DropStructure(ctx, treeID)
 	require.NoError(t, err)
-	assert.True(t, dropped, "the refused load left a structure to drop")
+	assert.True(t, dropped, "expected DropStructure to report a structure after the refused load")
 
 	n, err := NewTreeLoader(store, client).LoadTree(ctx, treeID, treeTypeUnilevel)
 	require.NoError(t, err)

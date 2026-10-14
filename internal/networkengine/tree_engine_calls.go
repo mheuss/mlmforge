@@ -5,9 +5,6 @@ import (
 	"fmt"
 )
 
-// engineCodeTreeExists is the worker's code for a structure name already in use.
-const engineCodeTreeExists = "TREE_EXISTS"
-
 // engineOutcome is what an engine call returned beyond its error.
 type engineOutcome struct {
 	responsored []Responsored

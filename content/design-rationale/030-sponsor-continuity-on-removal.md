@@ -37,7 +37,7 @@ A validator cannot be the fix. Once a freed slot is reused the stale index names
 
 ### The engine is not the only holder of a sponsor edge
 
-`tree_nodes.sponsor_id` holds one too. Before this decision, the Go store soft-deleted the removed row and touched no other row. The startup bulk load selects only rows where `removed_at` is null. So a repair that lives only in the engine leaves the store naming a user the load will not return, and the tree stops rebuilding after a restart.
+`tree_nodes.sponsor_id` holds one too. Before this decision, the Go store soft-deleted the removed row and touched no other row. The startup bulk load selected only rows where `removed_at` is null. So a repair that lived only in the engine left the store naming a user the load would not return, and the tree stopped rebuilding after a restart.
 
 Repairing one holder and not the other is worse than repairing neither, because the two then disagree and nothing reconciles them.
 

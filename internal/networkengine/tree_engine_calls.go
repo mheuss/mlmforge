@@ -5,8 +5,7 @@ import (
 	"fmt"
 )
 
-// engineCodeTreeExists is the engine's refusal to create or restore a
-// structure that already exists.
+// engineCodeTreeExists names the TREE_EXISTS engine error code.
 const engineCodeTreeExists = "TREE_EXISTS"
 
 // engineOutcome is what an engine call returned beyond its error.

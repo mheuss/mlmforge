@@ -5,6 +5,10 @@ import (
 	"fmt"
 )
 
+// engineCodeTreeExists is the engine's refusal to create or restore a
+// structure that already exists.
+const engineCodeTreeExists = "TREE_EXISTS"
+
 // engineOutcome is what an engine call returned beyond its error.
 type engineOutcome struct {
 	responsored []Responsored

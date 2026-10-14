@@ -1,6 +1,9 @@
 package networkengine
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+)
 
 // TreeMutator is the command interface for tree lifecycle and mutation
 // operations. Defined by the needs of TreeEventConsumer and TreeLoader.
@@ -53,7 +56,10 @@ var _ TreeEngineChecker = (*EngineClient)(nil)
 // TreeRebuilder is the engine a TreeWriter builds trees in.
 type TreeRebuilder interface {
 	TreeEngineChecker
+	StructureDropper
 	GetDownline(ctx context.Context, structure, userID string, depth uint32) ([]EngineNode, error)
+	TakeSnapshot(ctx context.Context, structure string) (*SnapshotResultDTO, error)
+	RestoreSnapshot(ctx context.Context, structure, treeType string, data json.RawMessage) error
 }
 
 var _ TreeRebuilder = (*EngineClient)(nil)

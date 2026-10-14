@@ -5,7 +5,6 @@ import (
 	"fmt"
 )
 
-// engineCodeTreeExists names the TREE_EXISTS engine error code.
 const engineCodeTreeExists = "TREE_EXISTS"
 
 // engineOutcome is what an engine call returned beyond its error.

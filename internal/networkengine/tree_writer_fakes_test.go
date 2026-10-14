@@ -53,7 +53,8 @@ type fakeWriterEngine struct {
 	restoreErr error
 	// dropErr is what every DropStructure returns.
 	dropErr error
-	// dropReportsAbsent makes DropStructure report no structure and drop nothing.
+	// dropReportsAbsent makes DropStructure report no structure, as if another
+	// call had dropped it first.
 	dropReportsAbsent bool
 }
 
@@ -88,7 +89,7 @@ func (f *fakeWriterEngine) CreateTree(_ context.Context, structure, treeType str
 
 func (f *fakeWriterEngine) createTree(structure, treeType string) error {
 	if _, ok := f.trees[structure]; ok {
-		return fakeEngineError("TREE_EXISTS", "tree '%s' already exists", structure)
+		return fakeEngineError(engineCodeTreeExists, "tree '%s' already exists", structure)
 	}
 	f.trees[structure] = &fakeEngineTree{treeType: treeType, nodes: map[string]EnginePosition{}}
 	return nil
@@ -594,6 +595,7 @@ func (f *fakeWriterEngine) DropStructure(_ context.Context, structure string) (b
 		return false, f.dropErr
 	}
 	if f.dropReportsAbsent {
+		delete(f.trees, structure)
 		return false, nil
 	}
 	_, ok := f.trees[structure]
@@ -618,6 +620,7 @@ func TestFakeWriterEngine_RestoresWhatItSnapshotted(t *testing.T) {
 	pos, err := engine.GetPosition(ctx, writerTree, writerRoot)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), pos.EnrolledAt)
+	assert.True(t, isEngineCode(engine.AddRoot(ctx, writerTree, writerOther, 2), engineCodeRootAlreadyExists))
 	err = engine.RestoreSnapshot(ctx, writerTree, taken.TreeType, taken.Data)
 	assert.True(t, isEngineCode(err, engineCodeTreeExists))
 }

@@ -6,6 +6,9 @@
 use thiserror::Error;
 use uuid::Uuid;
 
+/// The highest board `next_board_seq` a restore accepts.
+pub(crate) const MAX_RESTORED_BOARD_SEQ: u64 = u64::MAX / 2;
+
 /// A restored structure whose stored references disagree with what they name.
 #[derive(Debug, PartialEq, Error)]
 pub enum SnapshotConsistencyError {
@@ -262,7 +265,7 @@ pub enum SnapshotConsistencyError {
 
     #[error(
         "the engine will assign board seq {next_board_seq} next; a restored counter above {limit} is refused",
-        limit = u64::MAX / 2
+        limit = MAX_RESTORED_BOARD_SEQ
     )]
     BoardSeqCounterExhausted { next_board_seq: u64 },
 

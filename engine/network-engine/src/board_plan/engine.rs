@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::config::board_plan::{BoardPlanConfig, ReEntryPosition};
-use crate::snapshot::SnapshotConsistencyError;
+use crate::snapshot::{MAX_RESTORED_BOARD_SEQ, SnapshotConsistencyError};
 
 use super::board::{self, Board};
 use super::error::BoardPlanError;
@@ -292,8 +292,7 @@ impl BoardPlanEngine {
         if let Some((_, err)) = gap {
             return Err(err);
         }
-        // Not u64::MAX: a counter that close overflows within a single split.
-        if self.next_board_seq > u64::MAX / 2 {
+        if self.next_board_seq > MAX_RESTORED_BOARD_SEQ {
             return Err(SnapshotConsistencyError::BoardSeqCounterExhausted {
                 next_board_seq: self.next_board_seq,
             });
@@ -1696,16 +1695,18 @@ mod tests {
         let (_, last) = fill_2x2_board(&mut engine);
         let first = last.cycle_events[0].new_boards[0];
         let second = last.cycle_events[0].new_boards[1];
-        engine.boards.get_mut(&second).unwrap().seq = 1;
+        let seq = engine.boards[&first].seq;
+        engine.boards.get_mut(&second).unwrap().seq = seq;
 
         let message = engine.validate_restored().unwrap_err().to_string();
 
         assert_eq!(
             message,
             format!(
-                "boards {} and {} both carry seq 1",
+                "boards {} and {} both carry seq {}",
                 first.min(second),
-                first.max(second)
+                first.max(second),
+                seq
             )
         );
     }

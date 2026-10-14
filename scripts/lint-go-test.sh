@@ -70,7 +70,7 @@ expect_with() {
   PATH="$dir:$PATH" expect "$@"
 }
 
-ok_line='golangci-lint has version 2.13.2 built with go1.27.0 from abc1234 on 2026-08-27T23:01:12Z'
+ok_line='golangci-lint has version 2.14.0 built with go1.27.0 from abc1234 on 2026-08-27T23:01:12Z'
 old_line='golangci-lint has version 2.11.4 built with go1.26.1 from def5678 on 2026-06-01T00:00:00Z'
 
 expect 1 "cannot read" "unreadable pin file" \
@@ -117,7 +117,7 @@ expect_with "$drift_dir" 1 "installed  2.11.4" "version differs from the pin" \
   --check-only --version-file "$data/lintver-ok"
 expect_with "$drift_dir" 1 "$drift_dir/golangci-lint" "the mismatch names the resolved path" \
   --check-only --version-file "$data/lintver-ok"
-expect_with "$drift_dir" 1 "pinned     v2.13.2" "the mismatch names the pin" \
+expect_with "$drift_dir" 1 "pinned     v2.14.0" "the mismatch names the pin" \
   --check-only --version-file "$data/lintver-ok"
 expect_with "$drift_dir" 1 "does not match the pin; not linting" "the mismatch names itself" \
   --check-only --version-file "$data/lintver-ok"
@@ -131,7 +131,7 @@ noisy=$work/noisy
 mkdir -p "$noisy"
 cat > "$noisy/golangci-lint" <<'NOISY'
 #!/usr/bin/env bash
-printf '%s\n' 'warn: plugin has version 2.13.2 built with go1.27.0 (cached)' >&2
+printf '%s\n' 'warn: plugin has version 2.14.0 built with go1.27.0 (cached)' >&2
 printf '%s\n' 'golangci-lint has version 2.11.4 built with go1.26.1 from x on y'
 NOISY
 chmod +x "$noisy/golangci-lint"
@@ -144,7 +144,7 @@ mkdir -p "$twolines"
 cat > "$twolines/golangci-lint" <<'TWOV'
 #!/usr/bin/env bash
 printf '%s\n' 'golangci-lint has version 9.9.9 built with go1.20.0 from x on y'
-printf '%s\n' 'golangci-lint has version 2.13.2 built with go1.27.0 from x on y'
+printf '%s\n' 'golangci-lint has version 2.14.0 built with go1.27.0 from x on y'
 TWOV
 chmod +x "$twolines/golangci-lint"
 expect_with "$twolines" 1 "has 2 version lines" "two version lines are refused" \
@@ -156,7 +156,7 @@ mkdir -p "$indented"
 cat > "$indented/golangci-lint" <<'IND'
 #!/usr/bin/env bash
 printf '%s\n' '  golangci-lint has version 9.9.9 built with go1.20.0 (from a plugin)'
-printf '%s\n' 'golangci-lint has version 2.13.2 built with go1.27.0 from x on y'
+printf '%s\n' 'golangci-lint has version 2.14.0 built with go1.27.0 from x on y'
 IND
 chmod +x "$indented/golangci-lint"
 expect_with "$indented" 0 "" "an indented decoy line is not a version line" \
@@ -168,7 +168,7 @@ mkdir -p "$errdecoy"
 cat > "$errdecoy/golangci-lint" <<'ERRD'
 #!/usr/bin/env bash
 printf '%s\n' 'golangci-lint has version 9.9.9 built with go1.20.0 from x on y' >&2
-printf '%s\n' 'golangci-lint has version 2.13.2 built with go1.27.0 from x on y'
+printf '%s\n' 'golangci-lint has version 2.14.0 built with go1.27.0 from x on y'
 ERRD
 chmod +x "$errdecoy/golangci-lint"
 expect_with "$errdecoy" 0 "" "a version line on stderr is not the binary's version" \
@@ -192,16 +192,16 @@ mkdir -p "$empty"
 out=$(PATH="$empty:/usr/bin:/bin" "$check" --check-only --version-file "$data/lintver-ok" 2>&1)
 rc=$?
 if [ "$rc" = 1 ] && [[ $out == *"no golangci-lint on PATH"* ]] \
-  && [[ $out == *"command -v golangci-lint found nothing"* ]] && [[ $out == *"v2.13.2"* ]]; then
+  && [[ $out == *"command -v golangci-lint found nothing"* ]] && [[ $out == *"v2.14.0"* ]]; then
   record yes "no binary on PATH" ""
 else
   record no "no binary on PATH" "rc=$rc: $out"
 fi
 # Real golangci-lint prints no leading v.
-v_line='golangci-lint has version v2.13.2 built with go1.27.0 from abc1234 on 2026-08-27T23:01:12Z'
+v_line='golangci-lint has version v2.14.0 built with go1.27.0 from abc1234 on 2026-08-27T23:01:12Z'
 expect_with "$(stub_dir vprefixed "$v_line")" 0 "" "a binary reporting a leading v still matches" \
   --check-only --version-file "$data/lintver-ok"
-expect_with "$(stub_dir drift2 "$old_line")" 1 "go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2" \
+expect_with "$(stub_dir drift2 "$old_line")" 1 "go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0" \
   "the mismatch names the install command" --check-only --version-file "$data/lintver-ok"
 
 # Compare the whole output. A guard can exit 1 correctly while stderr changes.
@@ -240,23 +240,23 @@ expect_with "$bw_dir" 1 "cannot read a go directive from" "a missing go.mod refu
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-nonexistent"
 
 # A prerelease built-with whose version matches the pin.
-rc_match='golangci-lint has version 2.13.2 built with go1.28rc1 from x on y'
+rc_match='golangci-lint has version 2.14.0 built with go1.28rc1 from x on y'
 expect_silent "$(stub_dir bwrc "$rc_match")" "a prerelease built-with above the directive is not a mismatch" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
 
 expect_with "$bw_dir" 1 "go directive is 2.0.0" "a directive a major ahead refuses" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-major-ahead"
-major_ahead='golangci-lint has version 2.13.2 built with go2.0.0 from x on y'
+major_ahead='golangci-lint has version 2.14.0 built with go2.0.0 from x on y'
 expect_silent "$(stub_dir bwmajor "$major_ahead")" "a binary a major ahead is not a mismatch" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ahead"
 
 expect_with "$drift_dir" 1 "go directive not read yet" "a mismatch outranks an unread directive" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-nodirective"
-expect_with "$drift_dir" 1 "go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2" \
+expect_with "$drift_dir" 1 "go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0" \
   "a mismatch prints the install command even with no directive" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-nodirective"
 # Go writes rcN and betaN. Any other trailing text is not a suffix to discard.
-expect_with "$(stub_dir bwgarbage 'golangci-lint has version 2.13.2 built with go1.27garbage from x on y')" \
+expect_with "$(stub_dir bwgarbage 'golangci-lint has version 2.14.0 built with go1.27garbage from x on y')" \
   1 "cannot compare the built-with Go line" "an unrecognised built-with suffix refuses" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
 
@@ -269,16 +269,16 @@ expect_with "$bw_dir" 1 "cannot compare the built-with Go line" "an unparsable d
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-unparsable"
 
 # A prerelease on the binary's side, below the directive.
-bw_rc_behind='golangci-lint has version 2.13.2 built with go1.26rc1 from x on y'
+bw_rc_behind='golangci-lint has version 2.14.0 built with go1.26rc1 from x on y'
 expect_with "$(stub_dir bwrcbehind "$bw_rc_behind")" 1 "older Go line than this module targets" \
   "a prerelease binary below the directive refuses" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
 
 # One unparsable component each, with the other three parsable.
-expect_with "$(stub_dir bwmajorbad 'golangci-lint has version 2.13.2 built with gox.27 from x on y')" \
+expect_with "$(stub_dir bwmajorbad 'golangci-lint has version 2.14.0 built with gox.27 from x on y')" \
   1 "cannot compare the built-with Go line" "an unparsable built-with major refuses" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
-expect_with "$(stub_dir bwminorbad 'golangci-lint has version 2.13.2 built with go1.rc from x on y')" \
+expect_with "$(stub_dir bwminorbad 'golangci-lint has version 2.14.0 built with go1.rc from x on y')" \
   1 "cannot compare the built-with Go line" "an unparsable built-with minor refuses" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
 expect_with "$bw_dir" 1 "cannot compare the built-with Go line" "an unparsable directive major refuses" \
@@ -288,17 +288,17 @@ expect_with "$bw_dir" 1 "cannot compare the built-with Go line" "an unparsable d
 expect_with "$bw_dir" 1 "cannot compare the built-with Go line" "a directive too long to compare refuses" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-huge"
 # Trailing text after a prerelease suffix. Stripping it would leave a number.
-expect_with "$(stub_dir bwrcjunk 'golangci-lint has version 2.13.2 built with go1.27rc1junk from x on y')" \
+expect_with "$(stub_dir bwrcjunk 'golangci-lint has version 2.14.0 built with go1.27rc1junk from x on y')" \
   1 "cannot compare the built-with Go line" "trailing text after a prerelease suffix refuses" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
 # No dot at all. Splitting it yields the same string for major and minor.
-expect_with "$(stub_dir bwnodot 'golangci-lint has version 2.13.2 built with go127 from x on y')" \
+expect_with "$(stub_dir bwnodot 'golangci-lint has version 2.14.0 built with go127 from x on y')" \
   1 "cannot compare the built-with Go line" "a built-with line with no dot refuses" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
 expect_with "$bw_dir" 1 "cannot compare the built-with Go line" "a directive with no dot refuses" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-nodot"
 # The refusal reports both pairs rather than concluding about both sides.
-expect_with "$(stub_dir bwmajorbad2 'golangci-lint has version 2.13.2 built with gox.27 from x on y')" \
+expect_with "$(stub_dir bwmajorbad2 'golangci-lint has version 2.14.0 built with gox.27 from x on y')" \
   1 "directive  major/minor  1/27" "the refusal reports the directive it did parse" \
   --check-only --version-file "$data/lintver-ok" --go-mod "$data/lintmod-ok"
 

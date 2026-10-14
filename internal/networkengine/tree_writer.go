@@ -746,10 +746,10 @@ func (w *TreeWriter) discardSnapshot(ctx context.Context, tree string, version i
 	prep.snapshotVersion = 0
 	if err := w.snapshots.Delete(ctx, tree, version); err != nil {
 		prep.warnings = append(prep.warnings,
-			fmt.Sprintf("%s; deleting it returned: %s", observed, err))
+			fmt.Sprintf("%s; deleting the snapshot returned: %s", observed, err))
 		return
 	}
-	prep.warnings = append(prep.warnings, fmt.Sprintf("%s; deleted it", observed))
+	prep.warnings = append(prep.warnings, fmt.Sprintf("%s; deleted the snapshot", observed))
 }
 
 // buildFromStream creates the structure, replays events 1 through projected,

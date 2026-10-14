@@ -398,11 +398,7 @@ impl BoardPlanEngine {
         // The first member's sponsor is not enrolled, so only later adds
         // check it.
         let bootstrap = self.member_boards.is_empty() && self.sponsor_map.is_empty();
-        // Validate: sponsor must be an active participant. Check
-        // member_boards (on a board) or displaced_members (awaiting
-        // reassignment). The sponsor_map is permanent enrollment
-        // data and can't be used for validation because removed
-        // members remain in it for re-entry routing.
+        // Validate: sponsor must be on a board or awaiting reassignment.
         if !bootstrap
             && !self.member_boards.contains_key(&sponsor_id)
             && !self.displaced_members.contains(&sponsor_id)
@@ -2510,6 +2506,95 @@ mod tests {
             "the cascade bound should have left {pending} full"
         );
         (engine, pending)
+    }
+
+    /// A 2x1 engine holding one board per row, oldest first, and `sponsors`
+    /// as (member, sponsor) pairs. Returns the engine and the board ids in
+    /// row order.
+    fn engine_from_rows(
+        config: BoardPlanConfig,
+        rows: &[[Option<u8>; 3]],
+        sponsors: &[(u8, u8)],
+    ) -> (BoardPlanEngine, Vec<Uuid>) {
+        let mut engine = BoardPlanEngine::new(2, 1, config, 0).unwrap();
+        engine.boards.clear();
+        let mut ids = Vec::new();
+        for (i, row) in rows.iter().enumerate() {
+            let mut board = engine.new_board(i as i64 + 1, None);
+            board.positions = row.iter().map(|m| m.map(test_uuid)).collect();
+            for member in row.iter().flatten() {
+                engine.member_boards.insert(test_uuid(*member), board.id);
+            }
+            ids.push(board.id);
+            engine.boards.insert(board.id, board);
+        }
+        for (member, sponsor) in sponsors {
+            engine
+                .sponsor_map
+                .insert(test_uuid(*member), test_uuid(*sponsor));
+        }
+        assert_eq!(engine.validate_restored(), Ok(()));
+        (engine, ids)
+    }
+
+    #[test]
+    fn an_add_drains_full_boards_oldest_first() {
+        for _ in 0..64 {
+            let (mut engine, ids) = engine_from_rows(
+                test_config_no_reentry(),
+                &[
+                    [Some(1), Some(2), Some(3)],
+                    [Some(4), Some(5), Some(6)],
+                    [Some(7), None, None],
+                ],
+                &[(1, 1), (2, 1), (3, 1), (4, 4), (5, 4), (6, 4), (7, 7)],
+            );
+
+            let result = engine.add_member(test_uuid(8), test_uuid(7), 10).unwrap();
+
+            let cycled: Vec<Uuid> = result.cycle_events.iter().map(|e| e.board_id).collect();
+            assert_eq!(cycled[..2], [ids[0], ids[1]]);
+        }
+    }
+
+    #[test]
+    fn an_add_gives_each_drained_board_its_own_cascade_budget() {
+        let config = BoardPlanConfig {
+            max_cascade_depth: NonZeroU32::new(1).unwrap(),
+            ..test_config_sponsor_board()
+        };
+        let (mut engine, ids) = engine_from_rows(
+            config,
+            &[
+                [Some(1), Some(2), Some(3)],
+                [Some(4), Some(5), Some(6)],
+                [Some(7), Some(8), None],
+                [Some(9), Some(10), None],
+                [Some(11), None, None],
+            ],
+            &[
+                (1, 7),
+                (2, 1),
+                (3, 1),
+                (4, 9),
+                (5, 4),
+                (6, 4),
+                (7, 7),
+                (8, 7),
+                (9, 9),
+                (10, 9),
+                (11, 11),
+            ],
+        );
+
+        let result = engine.add_member(test_uuid(12), test_uuid(11), 10).unwrap();
+
+        let cycled: Vec<Uuid> = result.cycle_events.iter().map(|e| e.board_id).collect();
+        assert_eq!(cycled, vec![ids[0], ids[1]]);
+        assert!(
+            engine.get_board(ids[1]).is_none(),
+            "the second drained board should have cycled"
+        );
     }
 
     #[test]

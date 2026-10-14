@@ -524,7 +524,7 @@ type prepared struct {
 	last     *platform.Event
 	nodes    int
 	warnings []string
-	// the stored snapshot's version, or 0 when none is stored or the load deleted it
+	// the version of the snapshot the build started from, or 0 for none
 	snapshotVersion int64
 }
 

@@ -1763,6 +1763,29 @@ mod tests {
     }
 
     #[test]
+    fn validate_restored_names_where_a_chain_enters_a_sponsor_cycle() {
+        let mut arena = arena_with_a_child(1);
+        let a = arena.alloc_slot(make_node(test_uuid(3), Some(NodeIndex(0)), 1));
+        let b = arena.alloc_slot(make_node(test_uuid(4), Some(NodeIndex(0)), 1));
+        arena.index.insert(test_uuid(3), a);
+        arena.index.insert(test_uuid(4), b);
+        arena.nodes[0].children.extend([a, b]);
+        arena.nodes[1].sponsor = Some(a);
+        arena.nodes[a.0].sponsor = Some(b);
+        arena.nodes[b.0].sponsor = Some(a);
+        arena.nodes[a.0].sponsored = vec![NodeIndex(1), b];
+        arena.nodes[b.0].sponsored = vec![a];
+
+        assert_eq!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::SponsorChainRevisits {
+                start: 1,
+                revisited: 2,
+            })
+        );
+    }
+
+    #[test]
     fn validate_restored_accepts_sponsor_chains_that_meet() {
         let mut arena = arena_with_a_child(1);
         let second = arena.alloc_slot(make_node(test_uuid(3), Some(NodeIndex(0)), 1));

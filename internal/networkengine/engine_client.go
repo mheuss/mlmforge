@@ -317,6 +317,20 @@ func (c *EngineClient) CreateMatrixTree(ctx context.Context, structure string, w
 	return err
 }
 
+// DropStructure removes a named structure and reports whether it existed.
+func (c *EngineClient) DropStructure(ctx context.Context, structure string) (bool, error) {
+	r, err := callInto[struct {
+		Dropped *bool `json:"dropped"`
+	}](c, ctx, "drop_structure", map[string]string{"structure": structure})
+	if err != nil {
+		return false, err
+	}
+	if r.Dropped == nil {
+		return false, errors.New(`drop_structure: response has no "dropped" key`)
+	}
+	return *r.Dropped, nil
+}
+
 // --- Tree mutation methods ---
 
 // addRootParams are the add_root params other than the structure.

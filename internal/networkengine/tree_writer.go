@@ -60,7 +60,7 @@ type WriteResult struct {
 	CaughtUp      *CaughtUpEvent         // the stream's last event, redelivered and handled without error
 	ProjectionErr error                  // any failure after the append was confirmed
 	Observed      *ProjectionObservation // the projected version, re-read after a projection error
-	Warnings      []string               // what the write observed and recovered from, in order
+	Warnings      []string               // what the write observed and carried on past, in order
 	ReleaseErr    error                  // the unlock failed
 }
 

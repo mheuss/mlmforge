@@ -494,3 +494,14 @@ func TestReportWrite_AFailedSnapshotPutExitsZeroAndNamesTheTreeAndVersion(t *tes
 	require.NoError(t, err)
 	assert.Contains(t, warn.String(), "warning: storing the snapshot of tree t at version 1000 returned: disk full\n")
 }
+
+func TestReportWrite_PrintsWarningsAfterItsOutputAndBeforeTheReleaseWarning(t *testing.T) {
+	var both bytes.Buffer
+	res := networkengine.WriteResult{Stream: "tree-t", EventID: "e", Version: 2, Warnings: []string{"first"},
+		ReleaseErr: errors.New("unlock failed")}
+
+	require.NoError(t, reportWrite(t.Context(), &both, &both, res, nil))
+
+	assert.Equal(t, "appended event e at version 2 to stream tree-t; projected\nwarning: first\n"+
+		"warning: releasing the tree lock reported: unlock failed\n", both.String())
+}

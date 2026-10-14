@@ -16,11 +16,12 @@ import (
 
 // stubLoader counts attempts and returns a fixed error.
 type stubLoader struct {
-	size     int
-	warnings []string
-	err      error
-	attempts int
-	onCall   func(attempt int)
+	size       int
+	warnings   []string
+	releaseErr error
+	err        error
+	attempts   int
+	onCall     func(attempt int)
 }
 
 func (s *stubLoader) Load(context.Context, networkengine.LoadRequest) (networkengine.LoadResult, error) {
@@ -28,7 +29,7 @@ func (s *stubLoader) Load(context.Context, networkengine.LoadRequest) (networken
 	if s.onCall != nil {
 		s.onCall(s.attempts)
 	}
-	return networkengine.LoadResult{Nodes: s.size, Warnings: s.warnings}, s.err
+	return networkengine.LoadResult{Nodes: s.size, Warnings: s.warnings, ReleaseErr: s.releaseErr}, s.err
 }
 
 // unilevelLoad asks for tree as a unilevel tree.
@@ -583,4 +584,15 @@ func TestRunTreeLoad_PrintsEachWarning(t *testing.T) {
 	require.NoError(t, runTreeLoad(t.Context(), &out, &warn, loader, unilevelLoad(testTreeID(60))))
 
 	require.Contains(t, warn.String(), "warning: first\n")
+}
+
+func TestRunTreeLoad_PrintsWarningsAfterItsOutputAndBeforeTheReleaseWarning(t *testing.T) {
+	var both bytes.Buffer
+	tree := testTreeID(61)
+	loader := &stubLoader{size: 1, warnings: []string{"first"}, releaseErr: errors.New("unlock failed")}
+
+	require.NoError(t, runTreeLoad(t.Context(), &both, &both, loader, unilevelLoad(tree)))
+
+	require.Equal(t, "loaded tree "+tree+" (1 nodes)\nwarning: first\nwarning: releasing the tree lock reported: unlock failed\n",
+		both.String())
 }

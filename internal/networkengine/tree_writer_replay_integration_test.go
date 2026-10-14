@@ -74,10 +74,11 @@ func TestTreeWriter_LoadRefusesAStoreMissingARowTheStreamPlaced(t *testing.T) {
 	_, err := it.pool.Exec(ctx, "DELETE FROM tree_nodes WHERE tree_id = $1 AND user_id = $2", tree, testUserUUID(3))
 	require.NoError(t, err)
 
-	_, err = NewTreeWriter(it.events, it.store, it.engine(t), NewPostgresTreeLocker(it.dsn)).
+	loaded, err := NewTreeWriter(it.events, it.store, it.engine(t), NewPostgresTreeLocker(it.dsn)).
 		Load(ctx, LoadRequest{TreeID: tree, TreeType: treeTypeUnilevel})
 
 	var replay *TreeReplayError
 	require.ErrorAs(t, err, &replay)
 	assert.Equal(t, TreeReplayStageMembership, replay.Stage)
+	require.NoError(t, loaded.ReleaseErr)
 }

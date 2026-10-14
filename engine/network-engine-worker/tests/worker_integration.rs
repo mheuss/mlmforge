@@ -3814,7 +3814,7 @@ fn load_plan_rejects_a_zero_cascade_bound() {
     let bad = BOARD_TEST_PLAN_JSON.replace("\"max_cascade_depth\": 10", "\"max_cascade_depth\": 0");
     assert!(
         bad.contains("\"max_cascade_depth\": 0"),
-        "the max_cascade_depth replacement did not match; the plan constant changed shape"
+        "the max_cascade_depth replacement did not match: the plan constant has no \"max_cascade_depth\": 10"
     );
 
     let resp = send_load_plan(&mut worker, &bad);
@@ -7221,7 +7221,7 @@ fn board_plan_snapshot_round_trip_survives_a_cycled_board() {
     );
     restore_expecting_success(&mut worker, "BPRT2", "board_plan", data);
 
-    // Compared in order: the listing order is part of what a restore keeps.
+    // Compared in order.
     let before = query(
         &mut worker,
         r#"{"id":"bl1","op":"board_list","params":{"structure":"BPRT"}}"#,

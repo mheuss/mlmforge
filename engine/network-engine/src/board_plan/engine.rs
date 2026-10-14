@@ -398,7 +398,6 @@ impl BoardPlanEngine {
         // The first member's sponsor is not enrolled, so only later adds
         // check it.
         let bootstrap = self.member_boards.is_empty() && self.sponsor_map.is_empty();
-        // Validate: sponsor must be on a board or awaiting reassignment.
         if !bootstrap
             && !self.member_boards.contains_key(&sponsor_id)
             && !self.displaced_members.contains(&sponsor_id)

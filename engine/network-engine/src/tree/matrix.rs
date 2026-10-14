@@ -555,11 +555,8 @@ impl MatrixTree {
 
         let parent_slot_pos = self.find_slot_position(parent_idx, idx);
 
-        let descendants = self.descendants(idx);
-
-        // Collect IDs that are being removed (the node + all descendants).
-        let mut removed_set: Vec<NodeIndex> = vec![idx];
-        removed_set.extend(&descendants);
+        let removed_set = self.removal_set(idx, PruningMode::HoldingTank);
+        let descendants = removed_set[1..].to_vec();
 
         let responsored = self.arena.reparent_sponsored(&removed_set);
 
@@ -2914,11 +2911,13 @@ mod tests {
     #[test]
     fn check_remove_node_passes_a_sponsorless_recruiter_whose_recruits_leave_with_it() {
         let tree = sponsorless_recruiter();
+        let before = serialized(&tree);
 
         assert_eq!(
             tree.check_remove_node(test_uuid(3), PruningMode::HoldingTank),
             Ok(())
         );
+        assert_eq!(serialized(&tree), before);
     }
 
     #[test]

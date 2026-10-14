@@ -23,7 +23,7 @@ func TestTreeWriter_ObservesTheStoreCurrentWhenTheEngineFailsAfterTheInsert(t *t
 	ctx := context.Background()
 	tree, root, child := testTreeUUID(320), testUserUUID(1), testUserUUID(2)
 	it.addUnilevelRoot(t, tree, root)
-	w := NewTreeWriter(it.events, it.store, failingAddEngine{TreeRebuilder: it.engine(t)}, NewPostgresTreeLocker(it.dsn))
+	w := NewTreeWriter(it.events, it.store, NewMemorySnapshotStore(), failingAddEngine{TreeRebuilder: it.engine(t)}, NewPostgresTreeLocker(it.dsn))
 
 	res, err := w.Place(ctx, PlaceRequest{TreeID: tree, UserID: child, ParentID: root, SponsorID: root, EnrolledAt: writeTime})
 

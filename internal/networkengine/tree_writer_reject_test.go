@@ -132,7 +132,7 @@ func TestTreeWriter_AFailedReadAfterAFailedLoadLeavesTheLoadError(t *testing.T) 
 	stuckPlacement(t, env)
 	events := &lastEventFailingEvents{MemoryEventStore: env.events.(*platform.MemoryEventStore),
 		err: errors.New("connection reset")}
-	w := NewTreeWriter(events, env.store, newFakeWriterEngine(), env.locker)
+	w := NewTreeWriter(events, env.store, NewMemorySnapshotStore(), newFakeWriterEngine(), env.locker)
 
 	_, err := w.Place(context.Background(), placeRequest(testUserUUID(4), nil))
 
@@ -551,7 +551,7 @@ func TestReject_RemovalLeavesUserActive(t *testing.T) {
 	removal := appendDirect(t, env.events, EventTypeNodeRemoved, NodeRemovedPayload{
 		TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime,
 	})
-	w := NewTreeWriter(env.events, env.store, refusingRemovalEngine{newFakeWriterEngine()}, env.locker)
+	w := NewTreeWriter(env.events, env.store, NewMemorySnapshotStore(), refusingRemovalEngine{newFakeWriterEngine()}, env.locker)
 
 	res, err := w.Reject(context.Background(), rejectRequest(removal.ID))
 
@@ -632,7 +632,7 @@ func TestTreeWriterReject_RefusesARetryErrorThatIsNotEvidence(t *testing.T) {
 			return w
 		}},
 		{"a store error", func(env *writerEnv) *TreeWriter {
-			return NewTreeWriter(env.events, insertFailingStore{env.store}, newFakeWriterEngine(), env.locker)
+			return NewTreeWriter(env.events, insertFailingStore{env.store}, NewMemorySnapshotStore(), newFakeWriterEngine(), env.locker)
 		}},
 	}
 	for _, c := range cases {
@@ -659,7 +659,7 @@ func TestTreeWriterReject_RefusesALoadFailureTheTieRuleDoesNotAccept(t *testing.
 		{"a load whose store read failed", func(t *testing.T, env *writerEnv) (*TreeWriter, platform.Event) {
 			stuck := stuckPlacement(t, env)
 			store := &readCountingStore{TreeStore: env.store, rowsErr: errors.New("connection reset")}
-			return NewTreeWriter(env.events, store, newFakeWriterEngine(), env.locker), stuck
+			return NewTreeWriter(env.events, store, NewMemorySnapshotStore(), newFakeWriterEngine(), env.locker), stuck
 		}},
 		{"no row carries the event's ID", func(t *testing.T, env *writerEnv) (*TreeWriter, platform.Event) {
 			mustAddRoot(t, env, treeTypeUnilevel)
@@ -760,7 +760,7 @@ func TestTreeWriterReject_RefusesBeforeTheLock(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			env := newWriterEnv()
-			w := NewTreeWriter(env.events, env.store, newFakeWriterEngine(), refusingLocker{t})
+			w := NewTreeWriter(env.events, env.store, NewMemorySnapshotStore(), newFakeWriterEngine(), refusingLocker{t})
 
 			_, err := w.Reject(context.Background(), c.req)
 
@@ -799,7 +799,7 @@ func TestTreeWriterReject_RefusesAnEventOfAnotherType(t *testing.T) {
 func TestTreeWriterReject_RefusesWhenTheLockIsNotAcquired(t *testing.T) {
 	env := newWriterEnv()
 	stuck := stuckPlacement(t, env)
-	w := NewTreeWriter(env.events, env.store, newFakeWriterEngine(), immediateErrLocker{err: errors.New("lock refused")})
+	w := NewTreeWriter(env.events, env.store, NewMemorySnapshotStore(), newFakeWriterEngine(), immediateErrLocker{err: errors.New("lock refused")})
 
 	_, err := w.Reject(context.Background(), rejectRequest(stuck.ID))
 
@@ -885,7 +885,7 @@ func TestTreeWriterReject_RefusesWhenTheRetryFindsAnotherLastEvent(t *testing.T)
 			stream := TreeStreamName(writerTree)
 			before := streamEvents(t, env.events, stream)
 			events := &secondLastEventRead{MemoryEventStore: env.events.(*platform.MemoryEventStore), replace: c.replace}
-			w := NewTreeWriter(events, env.store, newFakeWriterEngine(), env.locker)
+			w := NewTreeWriter(events, env.store, NewMemorySnapshotStore(), newFakeWriterEngine(), env.locker)
 
 			res, err := w.Reject(context.Background(), rejectRequest(stuck.ID))
 
@@ -915,7 +915,7 @@ func TestTreeWriterReject_ARerunProjectsAPendingRejectionAndAppendsNothing(t *te
 	env := newWriterEnv()
 	stuck := stuckPlacement(t, env)
 	store := &rejectionFailingStore{TreeStore: env.store, failures: 2}
-	w := NewTreeWriter(env.events, store, newFakeWriterEngine(), env.locker)
+	w := NewTreeWriter(env.events, store, NewMemorySnapshotStore(), newFakeWriterEngine(), env.locker)
 	ctx := context.Background()
 	stream := TreeStreamName(writerTree)
 
@@ -1129,7 +1129,7 @@ func TestTreeWriterReject_AFailedProjectedVersionReadUnderTheLockAppendsNothing(
 	env := newWriterEnv()
 	stuck := stuckPlacement(t, env)
 	store := &readCountingStore{TreeStore: env.store, versionErr: errors.New("connection reset")}
-	w := NewTreeWriter(env.events, store, newFakeWriterEngine(), env.locker)
+	w := NewTreeWriter(env.events, store, NewMemorySnapshotStore(), newFakeWriterEngine(), env.locker)
 
 	res, err := w.Reject(context.Background(), rejectRequest(stuck.ID))
 
@@ -1144,7 +1144,7 @@ func TestTreeWriterReject_AFailedLastEventReadUnderTheLockAppendsNothing(t *test
 	mem, ok := env.events.(*platform.MemoryEventStore)
 	require.True(t, ok)
 	events := &lastEventFailingEvents{MemoryEventStore: mem, err: errors.New("connection reset")}
-	w := NewTreeWriter(events, env.store, newFakeWriterEngine(), env.locker)
+	w := NewTreeWriter(events, env.store, NewMemorySnapshotStore(), newFakeWriterEngine(), env.locker)
 
 	res, err := w.Reject(context.Background(), rejectRequest(stuck.ID))
 
@@ -1159,7 +1159,7 @@ func TestTreeWriterReject_KeepsAReleaseFailureAlongsideTheRejection(t *testing.T
 	release := errors.New("pg_advisory_unlock returned false")
 	engine := newFakeWriterEngine()
 	engine.failAdd[writerChild] = fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", writerOther)
-	w := NewTreeWriter(env.events, env.store, engine, releaseFailingLocker{err: release})
+	w := NewTreeWriter(env.events, env.store, NewMemorySnapshotStore(), engine, releaseFailingLocker{err: release})
 
 	res, err := w.Reject(context.Background(), rejectRequest(stuck.ID))
 

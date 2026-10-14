@@ -89,7 +89,7 @@ func TestTreeWriter_ALoadWithNothingBehindWritesNothingToTheStore(t *testing.T) 
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
 	mustPlace(t, env, writerChild, nil)
-	w := NewTreeWriter(env.events, writeCountingStore{TreeStore: env.store, t: t}, newFakeWriterEngine(), env.locker)
+	w := NewTreeWriter(env.events, writeCountingStore{TreeStore: env.store, t: t}, NewMemorySnapshotStore(), newFakeWriterEngine(), env.locker)
 
 	_, err := w.Load(context.Background(), loadRequest())
 
@@ -185,7 +185,7 @@ func TestTreeWriter_AFailedMatrixCreateIsACreateStageFailure(t *testing.T) {
 	env := newWriterEnv()
 	engine := newFakeWriterEngine()
 	require.NoError(t, engine.CreateMatrixTree(context.Background(), writerTree, 3, "breadth_first"))
-	w := NewTreeWriter(env.events, env.store, engine, env.locker)
+	w := NewTreeWriter(env.events, env.store, NewMemorySnapshotStore(), engine, env.locker)
 	width, spillover := 3, "breadth_first"
 
 	_, err := w.Load(context.Background(), LoadRequest{

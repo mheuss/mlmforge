@@ -254,23 +254,25 @@ func (f *fakeWriterEngine) CheckMutation(_ context.Context, structure string, m 
 
 // writerEnv holds the stores one test's writes share.
 type writerEnv struct {
-	events platform.EventStore
-	store  *MemoryTreeStore
-	locker *MemoryTreeLocker
+	events    platform.EventStore
+	store     *MemoryTreeStore
+	snapshots *MemorySnapshotStore
+	locker    *MemoryTreeLocker
 }
 
 func newWriterEnv() *writerEnv {
 	return &writerEnv{
-		events: platform.NewMemoryEventStore(),
-		store:  NewMemoryTreeStore(),
-		locker: NewMemoryTreeLocker(),
+		events:    platform.NewMemoryEventStore(),
+		store:     NewMemoryTreeStore(),
+		snapshots: NewMemorySnapshotStore(),
+		locker:    NewMemoryTreeLocker(),
 	}
 }
 
 // writer builds a TreeWriter over a fresh engine.
 func (e *writerEnv) writer(opts ...TreeWriterOption) (*TreeWriter, *fakeWriterEngine) {
 	engine := newFakeWriterEngine()
-	return NewTreeWriter(e.events, e.store, engine, e.locker, opts...), engine
+	return NewTreeWriter(e.events, e.store, e.snapshots, engine, e.locker, opts...), engine
 }
 
 // mustAddRoot adds writerRoot as the root of writerTree through a writer.

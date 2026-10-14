@@ -124,7 +124,7 @@ func runLateProjection(t *testing.T, before bool) (*writerEnv, *projectingLoadSt
 		}, pending.Version))
 	}}
 	engine := newFakeWriterEngine()
-	w := NewTreeWriter(env.events, store, engine, env.locker)
+	w := NewTreeWriter(env.events, store, NewMemorySnapshotStore(), engine, env.locker)
 	res, err := w.Place(context.Background(), placeRequest(writerOther, nil))
 	require.NoError(t, err)
 	require.NoError(t, res.ProjectionErr)

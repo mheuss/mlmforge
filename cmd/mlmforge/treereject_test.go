@@ -186,7 +186,7 @@ func TestTreeRejectEventCmd_ExitsThreeUntilARerunProjects(t *testing.T) {
 	require.NoError(t, store.ProjectInsert(t.Context(), networkengine.TreeNodeRow{
 		ID: stuck.ID, TreeID: tree, UserID: child, ParentID: &root, SponsorID: &absent, Depth: 1, EnrolledAt: at,
 	}, 2))
-	w := networkengine.NewTreeWriter(events, &cmdRejectionFailingStore{TreeStore: store, failures: 2},
+	w := networkengine.NewTreeWriter(events, &cmdRejectionFailingStore{TreeStore: store, failures: 2}, networkengine.NewMemorySnapshotStore(),
 		createOnlyEngine{}, networkengine.NewMemoryTreeLocker())
 
 	var exits []int
@@ -220,7 +220,7 @@ func TestTreeRejectEventCmd_ARejectionNamingTheWrongEventExitsOne(t *testing.T) 
 		TreeID: tree, RejectedEventID: other, RejectedVersion: 2,
 		RejectedType: networkengine.EventTypeNodePlaced, Reason: "appended by the test",
 	})
-	w := networkengine.NewTreeWriter(events, store, createOnlyEngine{}, networkengine.NewMemoryTreeLocker())
+	w := networkengine.NewTreeWriter(events, store, networkengine.NewMemorySnapshotStore(), createOnlyEngine{}, networkengine.NewMemoryTreeLocker())
 
 	out, err := runWriteCmd(t, w, "reject-event", "--tree-id", tree, "--event-id", other, "--reason", "r")
 

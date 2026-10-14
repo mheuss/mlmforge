@@ -89,7 +89,7 @@ func TestTreeWriter_ARemovalProjectedAfterItsLockWasLostLeavesNoStaleSponsor(t *
 	events := &lockKillingEvents{EventStore: it.events, t: t, pool: it.pool, meanwhile: func() {
 		second, secondErr = it.writer(t).Remove(ctx, RemoveRequest{TreeID: tree, UserID: a, RemovedAt: writeTime.Add(5 * time.Hour)})
 	}}
-	first, firstErr := NewTreeWriter(events, it.store, it.engine(t), NewPostgresTreeLocker(it.dsn)).
+	first, firstErr := NewTreeWriter(events, it.store, NewMemorySnapshotStore(), it.engine(t), NewPostgresTreeLocker(it.dsn)).
 		Remove(ctx, RemoveRequest{TreeID: tree, UserID: b, RemovedAt: writeTime.Add(4 * time.Hour)})
 
 	require.NoError(t, firstErr)
@@ -150,7 +150,7 @@ func TestTreeWriter_ACatchUpBehindALateProjectionAppendsNothing(t *testing.T) {
 	}
 	second := make(chan outcome, 1)
 	events := &lockKillingEvents{EventStore: it.events, t: t, pool: it.pool, meanwhile: func() {
-		w2 := NewTreeWriter(it.events, it.store, parked, NewPostgresTreeLocker(it.dsn))
+		w2 := NewTreeWriter(it.events, it.store, NewMemorySnapshotStore(), parked, NewPostgresTreeLocker(it.dsn))
 		go func() {
 			res, err := w2.Remove(ctx, RemoveRequest{TreeID: tree, UserID: a, RemovedAt: writeTime.Add(5 * time.Hour)})
 			second <- outcome{res, err}
@@ -163,7 +163,7 @@ func TestTreeWriter_ACatchUpBehindALateProjectionAppendsNothing(t *testing.T) {
 			t.Fatal("within 30s the second writer had not returned and the parked engine had not begun its delay")
 		}
 	}}
-	first, firstErr := NewTreeWriter(events, it.store, it.engine(t), NewPostgresTreeLocker(it.dsn)).
+	first, firstErr := NewTreeWriter(events, it.store, NewMemorySnapshotStore(), it.engine(t), NewPostgresTreeLocker(it.dsn)).
 		Remove(ctx, RemoveRequest{TreeID: tree, UserID: b, RemovedAt: writeTime.Add(4 * time.Hour)})
 	require.NoError(t, firstErr)
 	parked.open()
@@ -204,7 +204,7 @@ func TestTreeWriter_APlacementProjectedAfterItsLockWasLostIsRefused(t *testing.T
 		second, secondErr = it.writer(t).Remove(ctx, RemoveRequest{TreeID: tree, UserID: x, RemovedAt: writeTime.Add(2 * time.Hour)})
 	}}
 	lateEngine := it.engine(t)
-	first, firstErr := NewTreeWriter(events, it.store, lateEngine, NewPostgresTreeLocker(it.dsn)).
+	first, firstErr := NewTreeWriter(events, it.store, NewMemorySnapshotStore(), lateEngine, NewPostgresTreeLocker(it.dsn)).
 		Place(ctx, PlaceRequest{TreeID: tree, UserID: x, ParentID: root, SponsorID: root, EnrolledAt: writeTime.Add(time.Hour)})
 
 	require.NoError(t, firstErr)
@@ -244,7 +244,7 @@ func TestTreeWriter_ALateRemovalLeavesAUserPlacedAgainActive(t *testing.T) {
 			TreeID: tree, UserID: b, ParentID: root, SponsorID: root, EnrolledAt: writeTime.Add(5 * time.Hour)})
 		removedA, removedAErr = it.writer(t).Remove(ctx, RemoveRequest{TreeID: tree, UserID: a, RemovedAt: writeTime.Add(6 * time.Hour)})
 	}}
-	first, firstErr := NewTreeWriter(events, it.store, it.engine(t), NewPostgresTreeLocker(it.dsn)).
+	first, firstErr := NewTreeWriter(events, it.store, NewMemorySnapshotStore(), it.engine(t), NewPostgresTreeLocker(it.dsn)).
 		Remove(ctx, RemoveRequest{TreeID: tree, UserID: b, RemovedAt: writeTime.Add(4 * time.Hour)})
 
 	require.NoError(t, firstErr)
@@ -300,7 +300,7 @@ func TestTreeWriter_ARemovalAfterALockLostBeforeItsAppendMovesEveryRecruit(t *te
 		placedE, placedEErr = it.writer(t).Place(ctx, PlaceRequest{
 			TreeID: tree, UserID: e, ParentID: root, SponsorID: root, EnrolledAt: writeTime.Add(6 * time.Hour)})
 	}}
-	first, firstErr := NewTreeWriter(it.events, store, it.engine(t), NewPostgresTreeLocker(it.dsn)).
+	first, firstErr := NewTreeWriter(it.events, store, NewMemorySnapshotStore(), it.engine(t), NewPostgresTreeLocker(it.dsn)).
 		Remove(ctx, RemoveRequest{TreeID: tree, UserID: b, RemovedAt: writeTime.Add(7 * time.Hour)})
 
 	require.NoError(t, placedDErr)
@@ -349,7 +349,7 @@ func TestTreeWriter_APlacementAfterALockLostBeforeItsAppendLeavesTheTreeWritable
 		placedE, placedEErr = it.writer(t).Place(ctx, PlaceRequest{
 			TreeID: tree, UserID: e, ParentID: root, SponsorID: root, EnrolledAt: writeTime.Add(6 * time.Hour)})
 	}}
-	first, firstErr := NewTreeWriter(it.events, store, it.engine(t), NewPostgresTreeLocker(it.dsn)).
+	first, firstErr := NewTreeWriter(it.events, store, NewMemorySnapshotStore(), it.engine(t), NewPostgresTreeLocker(it.dsn)).
 		Place(ctx, PlaceRequest{TreeID: tree, UserID: x, ParentID: b, SponsorID: b, EnrolledAt: writeTime.Add(7 * time.Hour)})
 
 	require.NoError(t, removedBErr)

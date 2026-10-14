@@ -12,11 +12,12 @@ import (
 
 // treeDeps is what one tree subcommand needs for one invocation.
 type treeDeps struct {
-	events  platform.EventStore
-	store   networkengine.TreeStore
-	engine  networkengine.TreeRebuilder
-	locker  networkengine.TreeLocker
-	release func() error
+	events    platform.EventStore
+	store     networkengine.TreeStore
+	snapshots networkengine.SnapshotStore
+	engine    networkengine.TreeRebuilder
+	locker    networkengine.TreeLocker
+	release   func() error
 }
 
 // depsOpener builds the dependencies for one invocation. A non-nil treeDeps
@@ -74,11 +75,12 @@ func openTreeDeps(ctx context.Context, dbURL, workerPath string) (*treeDeps, err
 		return nil, err
 	}
 	return &treeDeps{
-		events:  platform.NewPostgresEventStore(pool),
-		store:   networkengine.NewPostgresTreeStore(pool),
-		engine:  engine,
-		locker:  networkengine.NewPostgresTreeLocker(dbURL),
-		release: func() error { return releaseDeps(engine, pool) },
+		events:    platform.NewPostgresEventStore(pool),
+		store:     networkengine.NewPostgresTreeStore(pool),
+		snapshots: networkengine.NewPostgresSnapshotStore(pool),
+		engine:    engine,
+		locker:    networkengine.NewPostgresTreeLocker(dbURL),
+		release:   func() error { return releaseDeps(engine, pool) },
 	}, nil
 }
 

@@ -134,8 +134,9 @@ func TestTreeLoad_RedeliversARemovalWhoseStoreWriteFailed(t *testing.T) {
 	t.Cleanup(func() { _ = engine.Stop() })
 	store := networkengine.NewPostgresTreeStore(pool)
 	failing := &failingRemovalStore{TreeStore: store}
-	w := networkengine.NewTreeWriter(platform.NewPostgresEventStore(pool), failing, engine,
+	w := networkengine.NewTreeWriter(platform.NewPostgresEventStore(pool), failing, networkengine.NewMemorySnapshotStore(), engine,
 		networkengine.NewPostgresTreeLocker(pgContainer.DSN))
+
 	res, err := w.Remove(t.Context(), networkengine.RemoveRequest{TreeID: tree, UserID: b,
 		RemovedAt: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)})
 	require.NoError(t, err)
@@ -304,8 +305,9 @@ func TestTreePlace_ExitsZeroWhenTheEngineFailsAfterTheInsertCommits(t *testing.T
 	engine, err := networkengine.NewEngineClient(t.Context(), worker)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Stop() })
-	w := networkengine.NewTreeWriter(platform.NewPostgresEventStore(pool), networkengine.NewPostgresTreeStore(pool),
+	w := networkengine.NewTreeWriter(platform.NewPostgresEventStore(pool), networkengine.NewPostgresTreeStore(pool), networkengine.NewMemorySnapshotStore(),
 		failingAddEngine{TreeRebuilder: engine}, networkengine.NewPostgresTreeLocker(pgContainer.DSN))
+
 	res, err := w.Place(t.Context(), networkengine.PlaceRequest{TreeID: tree, UserID: child, ParentID: root,
 		SponsorID: root, EnrolledAt: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)})
 	var stdout, stderr bytes.Buffer

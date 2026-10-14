@@ -60,7 +60,7 @@ func TestTreeWriter_ObservesTheStoreBehindAfterAStoreFailure(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
 	mustPlace(t, env, writerChild, nil)
-	w := NewTreeWriter(env.events, failingRemovalStore{TreeStore: env.store}, newFakeWriterEngine(), env.locker)
+	w := NewTreeWriter(env.events, failingRemovalStore{TreeStore: env.store}, NewMemorySnapshotStore(), newFakeWriterEngine(), env.locker)
 
 	res, err := w.Remove(context.Background(), RemoveRequest{TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime})
 
@@ -76,7 +76,7 @@ func TestTreeWriter_ReportsAnObservationThatFailed(t *testing.T) {
 	mustPlace(t, env, writerChild, nil)
 	cause := errors.New("connection reset")
 	store := &readCountingStore{TreeStore: failingRemovalStore{TreeStore: env.store}, versionErr: cause, versionErrFrom: 1}
-	w := NewTreeWriter(env.events, store, newFakeWriterEngine(), env.locker)
+	w := NewTreeWriter(env.events, store, NewMemorySnapshotStore(), newFakeWriterEngine(), env.locker)
 
 	res, err := w.Remove(context.Background(), RemoveRequest{TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime})
 
@@ -91,7 +91,7 @@ func TestTreeWriter_ObservesAfterTheCallersContextEnded(t *testing.T) {
 	mustAddRoot(t, env, treeTypeUnilevel)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	w := NewTreeWriter(env.events, cancellingInsertStore{TreeStore: env.store, user: writerChild, cancel: cancel},
+	w := NewTreeWriter(env.events, cancellingInsertStore{TreeStore: env.store, user: writerChild, cancel: cancel}, NewMemorySnapshotStore(),
 		newFakeWriterEngine(), env.locker)
 
 	res, err := w.Place(ctx, placeRequest(writerChild, nil))

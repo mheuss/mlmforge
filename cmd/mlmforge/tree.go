@@ -17,10 +17,10 @@ type loadWriterFor func(deps *treeDeps) treeLoadWriter
 func newTreeCmd() *cobra.Command {
 	return newTreeCmdWith(openTreeDeps,
 		func(d *treeDeps) treeLoadWriter {
-			return networkengine.NewTreeWriter(d.events, d.store, d.engine, d.locker)
+			return networkengine.NewTreeWriter(d.events, d.store, d.snapshots, d.engine, d.locker)
 		},
 		func(d *treeDeps) treeWriter {
-			return networkengine.NewTreeWriter(d.events, d.store, d.engine, d.locker)
+			return networkengine.NewTreeWriter(d.events, d.store, d.snapshots, d.engine, d.locker)
 		},
 	)
 }

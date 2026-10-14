@@ -92,12 +92,13 @@ type LoadResult struct {
 
 // TreeWriter appends tree events and projects them, one tree at a time.
 type TreeWriter struct {
-	events   platform.EventStore
-	store    TreeStore
-	engine   TreeRebuilder
-	locker   TreeLocker
-	consumer *TreeEventConsumer
-	lockWait time.Duration
+	events    platform.EventStore
+	store     TreeStore
+	snapshots SnapshotStore
+	engine    TreeRebuilder
+	locker    TreeLocker
+	consumer  *TreeEventConsumer
+	lockWait  time.Duration
 }
 
 // TreeWriterOption configures a TreeWriter.
@@ -113,17 +114,18 @@ func WithLockWait(d time.Duration) TreeWriterOption {
 	}
 }
 
-// NewTreeWriter creates a writer over one event store, tree store, engine and
-// locker.
-func NewTreeWriter(events platform.EventStore, store TreeStore, engine TreeRebuilder,
+// NewTreeWriter creates a writer over one event store, tree store, snapshot
+// store, engine and locker.
+func NewTreeWriter(events platform.EventStore, store TreeStore, snapshots SnapshotStore, engine TreeRebuilder,
 	locker TreeLocker, opts ...TreeWriterOption) *TreeWriter {
 	w := &TreeWriter{
-		events:   events,
-		store:    store,
-		engine:   engine,
-		locker:   locker,
-		consumer: NewTreeEventConsumer(store, engine),
-		lockWait: defaultTreeLockWait,
+		events:    events,
+		store:     store,
+		snapshots: snapshots,
+		engine:    engine,
+		locker:    locker,
+		consumer:  NewTreeEventConsumer(store, engine),
+		lockWait:  defaultTreeLockWait,
 	}
 	for _, opt := range opts {
 		opt(w)

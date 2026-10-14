@@ -126,3 +126,53 @@ func TestTreeWriterSnapshot_AStraySnapshotOfARejectedEventIsDeletedAtLoad(t *tes
 	_, err = engine.GetPosition(ctx, tree, testUserUUID(snapshotInterval))
 	assert.True(t, isEngineCode(err, engineCodeUserNotFound), "GetPosition returned %v", err)
 }
+
+// restoreCountingEngine counts RestoreSnapshot calls.
+type restoreCountingEngine struct {
+	TreeRebuilder
+	restores int
+}
+
+func (e *restoreCountingEngine) RestoreSnapshot(ctx context.Context, structure, treeType string, data json.RawMessage) error {
+	e.restores++
+	return e.TreeRebuilder.RestoreSnapshot(ctx, structure, treeType, data)
+}
+
+func TestTreeWriter_ALoadRestoresAStoredSnapshotAndReplaysTheRest(t *testing.T) {
+	it := newWriterIntegration(t)
+	ctx := context.Background()
+	tree, root := testTreeUUID(2975), testUserUUID(1)
+	it.addUnilevelRoot(t, tree, root)
+	place := func(user string) {
+		res, err := it.writer(t).Place(ctx, PlaceRequest{TreeID: tree, UserID: user, ParentID: root, SponsorID: root, EnrolledAt: writeTime})
+		require.NoError(t, err)
+		require.NoError(t, res.ProjectionErr)
+	}
+	place(testUserUUID(2))
+	place(testUserUUID(3))
+	seeding := it.engine(t)
+	_, err := NewTreeWriter(it.events, it.store, it.snapshots, seeding, NewPostgresTreeLocker(it.dsn)).
+		Load(ctx, LoadRequest{TreeID: tree, TreeType: treeTypeUnilevel})
+	require.NoError(t, err)
+	taken, err := seeding.TakeSnapshot(ctx, tree)
+	require.NoError(t, err)
+	require.NoError(t, it.snapshots.Put(ctx, Snapshot{TreeID: tree, Version: 3, TreeType: taken.TreeType, Data: taken.Data}))
+	place(testUserUUID(4))
+	place(testUserUUID(5))
+
+	engine := &restoreCountingEngine{TreeRebuilder: it.engine(t)}
+	res, err := NewTreeWriter(it.events, it.store, it.snapshots, engine, NewPostgresTreeLocker(it.dsn)).
+		Load(ctx, LoadRequest{TreeID: tree, TreeType: treeTypeUnilevel})
+
+	require.NoError(t, err)
+	assert.Empty(t, res.Warnings)
+	assert.Equal(t, 5, res.Nodes)
+	assert.Equal(t, 1, engine.restores)
+	down, err := engine.GetDownline(ctx, tree, root, 0)
+	require.NoError(t, err)
+	assert.Len(t, down, 4)
+	snap, found, err := it.snapshots.Get(ctx, tree)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, int64(3), snap.Version)
+}

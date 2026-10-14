@@ -179,6 +179,7 @@ func TestTreeWriter_APreflightFailureBeforeAPendingRejectionReportsThePendingRej
 	var pending *RejectionPendingError
 	require.ErrorAs(t, err, &pending)
 }
+
 func TestTreeWriter_AFailedMatrixCreateIsACreateStageFailure(t *testing.T) {
 	env := newWriterEnv()
 	engine := newFakeWriterEngine()

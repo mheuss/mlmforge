@@ -266,8 +266,8 @@ func TestTreeWriter_ALateRemovalLeavesAUserPlacedAgainActive(t *testing.T) {
 	assert.NoError(t, next.ProjectionErr)
 }
 
-// lockKillingLoadStore ends the tree lock's backend after its first full-tree
-// load, then runs meanwhile before returning.
+// lockKillingLoadStore ends the tree lock's backend after its first load read,
+// then runs meanwhile before returning.
 type lockKillingLoadStore struct {
 	TreeStore
 	t         *testing.T
@@ -276,13 +276,13 @@ type lockKillingLoadStore struct {
 	once      sync.Once
 }
 
-func (s *lockKillingLoadStore) GetByTreeDepthOrdered(ctx context.Context, treeID string) ([]TreeNodeRow, error) {
-	rows, err := s.TreeStore.GetByTreeDepthOrdered(ctx, treeID)
+func (s *lockKillingLoadStore) ProjectedRows(ctx context.Context, treeID string) (int64, bool, []TreeNodeRow, error) {
+	version, found, rows, err := s.TreeStore.ProjectedRows(ctx, treeID)
 	s.once.Do(func() {
 		terminateTreeLockHolder(s.t, s.pool)
 		s.meanwhile()
 	})
-	return rows, err
+	return version, found, rows, err
 }
 
 func TestTreeWriter_ARemovalAfterALockLostBeforeItsAppendMovesEveryRecruit(t *testing.T) {

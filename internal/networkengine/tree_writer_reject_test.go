@@ -650,7 +650,8 @@ func TestTreeWriterReject_RefusesALoadFailureTheTieRuleDoesNotAccept(t *testing.
 	}{
 		{"a load whose store read failed", func(t *testing.T, env *writerEnv) (*TreeWriter, platform.Event) {
 			stuck := stuckPlacement(t, env)
-			return NewTreeWriter(env.events, depthReadFailingStore{env.store}, newFakeWriterEngine(), env.locker), stuck
+			store := &readCountingStore{TreeStore: env.store, rowsErr: errors.New("connection reset")}
+			return NewTreeWriter(env.events, store, newFakeWriterEngine(), env.locker), stuck
 		}},
 		{"no row carries the event's ID", func(t *testing.T, env *writerEnv) (*TreeWriter, platform.Event) {
 			mustAddRoot(t, env, treeTypeUnilevel)

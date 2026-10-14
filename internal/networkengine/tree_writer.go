@@ -96,7 +96,6 @@ type TreeWriter struct {
 	store    TreeStore
 	engine   TreeRebuilder
 	locker   TreeLocker
-	loader   *TreeLoader
 	consumer *TreeEventConsumer
 	lockWait time.Duration
 }
@@ -123,7 +122,6 @@ func NewTreeWriter(events platform.EventStore, store TreeStore, engine TreeRebui
 		store:    store,
 		engine:   engine,
 		locker:   locker,
-		loader:   NewTreeLoader(store, engine),
 		consumer: NewTreeEventConsumer(store, engine),
 		lockWait: defaultTreeLockWait,
 	}
@@ -386,10 +384,12 @@ func (w *TreeWriter) write(ctx context.Context, spec writeSpec) (result WriteRes
 	if err != nil {
 		return result, err
 	}
-	loaded, found, last, _, err := w.prepare(ctx, tree, shape)
+	prep, err := w.prepare(ctx, tree, shape)
+	result.Warnings = prep.warnings
 	if err != nil {
 		return result, err
 	}
+	loaded, found, last := prep.loaded, prep.found, prep.last
 	var expected int64
 	if last != nil {
 		expected = last.Version
@@ -441,12 +441,14 @@ func (w *TreeWriter) Load(ctx context.Context, r LoadRequest) (result LoadResult
 		}
 	}
 
-	loaded, found, last, nodes, err := w.prepare(ctx, tree, shape)
+	prep, err := w.prepare(ctx, tree, shape)
+	result.Warnings = prep.warnings
 	if err != nil {
 		return result, rejectEarlyRead(tree, err)
 	}
+	loaded, found, last := prep.loaded, prep.found, prep.last
 	if last == nil || last.Version != loaded+1 {
-		result.Nodes = nodes
+		result.Nodes = prep.nodes
 		return result, nil
 	}
 	if result.CaughtUp, err = w.catchUp(ctx, tree, stream, *last, loaded, found); err != nil {
@@ -500,50 +502,126 @@ type storeReadError struct {
 func (e *storeReadError) Error() string { return e.what + ": " + e.err.Error() }
 func (e *storeReadError) Unwrap() error { return e.err }
 
-// prepare loads the tree and refuses a stream the store cannot be brought
-// level with by one redelivery. nodes is the loader's row count.
-func (w *TreeWriter) prepare(ctx context.Context, tree string, shape treeShape) (
-	loaded int64, found bool, last *platform.Event, nodes int, err error) {
-	// Read before the rows. A projection landing between the two reads then
-	// leaves the rows newer than loaded.
-	loaded, found, err = w.store.ProjectedVersion(ctx, tree)
+// prepared is what a load leaves for the write, load or reject that ran it.
+type prepared struct {
+	loaded   int64
+	found    bool
+	last     *platform.Event
+	nodes    int
+	warnings []string
+}
+
+// prepare builds the tree in the engine and refuses a stream the store cannot
+// be brought level with by one redelivery.
+func (w *TreeWriter) prepare(ctx context.Context, tree string, shape treeShape) (prepared, error) {
+	var prep prepared
+	stream := TreeStreamName(tree)
+	loaded, found, rows, err := w.store.ProjectedRows(ctx, tree)
 	if err != nil {
-		return 0, false, nil, 0, &storeReadError{
-			what: fmt.Sprintf("read the projected version of tree %s; nothing was appended", tree), err: err,
+		return prep, &storeReadError{
+			what: fmt.Sprintf("read the projected version and active rows of tree %s; nothing was appended", tree), err: err,
 		}
 	}
-	stream := TreeStreamName(tree)
-	nodes, loadErr := w.load(ctx, tree, shape)
-	if loadErr != nil {
-		// Read only to name a pending rejection. A failed read leaves the load
-		// error as the report.
+	if buildErr := w.build(ctx, tree, shape, loaded, rows, &prep); buildErr != nil {
+		// Read only to name a stream the store cannot be brought level with. A
+		// failed read leaves the build error as the report.
 		if last, readErr := w.events.ReadLastEvent(ctx, stream); readErr == nil {
-			if pending := pendingRejection(tree, last, loaded, found, loadErr); pending != nil {
-				return 0, false, nil, 0, pending
+			if err := w.checkStream(ctx, tree, last, loaded, found, buildErr); err != nil {
+				return prep, err
 			}
 		}
-		return 0, false, nil, 0, loadErr
+		return prep, buildErr
 	}
-	last, err = w.events.ReadLastEvent(ctx, stream)
+	last, err := w.events.ReadLastEvent(ctx, stream)
 	if err != nil {
-		return 0, false, nil, 0, fmt.Errorf("read the last event of stream %s; nothing was appended: %w", stream, err)
+		return prep, fmt.Errorf("read the last event of stream %s; nothing was appended: %w", stream, err)
 	}
-	if pending := pendingRejection(tree, last, loaded, found, nil); pending != nil {
-		return 0, false, nil, 0, pending
+	if err := w.checkStream(ctx, tree, last, loaded, found, nil); err != nil {
+		return prep, err
+	}
+	prep.loaded, prep.found, prep.last, prep.nodes = loaded, found, last, len(rows)
+	return prep, nil
+}
+
+// checkStream refuses a stream whose last event the store cannot be brought
+// level with by one redelivery.
+func (w *TreeWriter) checkStream(ctx context.Context, tree string, last *platform.Event, loaded int64, found bool,
+	buildErr error) error {
+	if pending := pendingRejection(tree, last, loaded, found, buildErr); pending != nil {
+		return pending
 	}
 	if last != nil && last.Type == EventTypeEventRejected && last.Version == loaded {
-		if err := w.checkRejectionTarget(ctx, stream, *last); err != nil {
-			return 0, false, nil, 0, fmt.Errorf("%w; nothing was appended", err)
+		if err := w.checkRejectionTarget(ctx, TreeStreamName(tree), *last); err != nil {
+			return fmt.Errorf("%w; nothing was appended", err)
 		}
 	}
 	var lastVersion int64
 	if last != nil {
 		lastVersion = last.Version
 	}
-	if err := checkLoadedVersion(tree, loaded, found, lastVersion); err != nil {
-		return 0, false, nil, 0, err
+	return checkLoadedVersion(tree, loaded, found, lastVersion)
+}
+
+// build checks the store's rows, then builds the tree in the engine from the
+// stream's events through projected.
+func (w *TreeWriter) build(ctx context.Context, tree string, shape treeShape, projected int64,
+	rows []TreeNodeRow, _ *prepared) error {
+	if err := preflight(tree, shape.treeType, shape.config(), rows); err != nil {
+		return fmt.Errorf("load tree %s; nothing was appended: %w", tree, err)
 	}
-	return loaded, found, last, nodes, nil
+	return w.buildFromStream(ctx, tree, shape, projected, rows)
+}
+
+// buildFromStream creates the structure, replays events 1 through projected,
+// and checks the result against rows.
+func (w *TreeWriter) buildFromStream(ctx context.Context, tree string, shape treeShape, projected int64,
+	rows []TreeNodeRow) error {
+	if err := w.create(ctx, tree, shape); err != nil {
+		return fmt.Errorf("create tree %s in the engine; nothing was appended: %w", tree,
+			&TreeReplayError{TreeID: tree, Stage: TreeReplayStageCreate, ProjectedVersion: projected, Err: err})
+	}
+	res, err := replayStream(ctx, w.events, w.engine, tree, shape, 1, projected)
+	if err != nil {
+		return fmt.Errorf("load tree %s; nothing was appended: %w", tree, err)
+	}
+	if err := w.checkReplayed(ctx, tree, projected, res, rows); err != nil {
+		return fmt.Errorf("load tree %s; nothing was appended: %w", tree, err)
+	}
+	return nil
+}
+
+// create creates the structure the shape describes.
+func (w *TreeWriter) create(ctx context.Context, tree string, shape treeShape) error {
+	if shape.treeType == treeTypeMatrix {
+		return w.engine.CreateMatrixTree(ctx, tree, shape.width, shape.spillover)
+	}
+	return w.engine.CreateTree(ctx, tree, shape.treeType)
+}
+
+// checkReplayed compares a full replay's engine with the store's active rows.
+func (w *TreeWriter) checkReplayed(ctx context.Context, tree string, projected int64, res replayResult,
+	rows []TreeNodeRow) error {
+	if len(rows) == 0 {
+		if res.root == "" {
+			return nil
+		}
+		return &TreeReplayError{TreeID: tree, Stage: TreeReplayStageMembership, ReachedVersion: res.reached,
+			ProjectedVersion: projected, Mismatch: "the replay left root " + res.root + "; the store holds no active rows"}
+	}
+	if res.root == "" {
+		return &TreeReplayError{TreeID: tree, Stage: TreeReplayStageMembership, ReachedVersion: res.reached,
+			ProjectedVersion: projected, Mismatch: fmt.Sprintf("the replay left no root; the store holds %d active rows", len(rows))}
+	}
+	mismatch, err := checkMembership(ctx, w.engine, tree, rows)
+	if err != nil {
+		return &TreeReplayError{TreeID: tree, Stage: TreeReplayStageMembership, ReachedVersion: res.reached,
+			ProjectedVersion: projected, Err: err}
+	}
+	if mismatch != "" {
+		return &TreeReplayError{TreeID: tree, Stage: TreeReplayStageMembership, ReachedVersion: res.reached,
+			ProjectedVersion: projected, Mismatch: mismatch}
+	}
+	return nil
 }
 
 // observe reads the tree's projected version with a context the caller's
@@ -573,27 +651,6 @@ func (w *TreeWriter) lock(ctx context.Context, treeID uuid.UUID) (func() error, 
 		return nil, &TreeLockWaitError{TreeID: treeID.String(), Waited: w.lockWait, Err: err}
 	}
 	return nil, fmt.Errorf("lock tree %s: %w", treeID, err)
-}
-
-// load rebuilds the tree in the engine from the store, or creates it empty
-// when the store holds no rows. It returns the rows loaded.
-func (w *TreeWriter) load(ctx context.Context, tree string, shape treeShape) (int, error) {
-	n, err := w.loader.LoadTree(ctx, tree, shape.treeType, shape.loadOptions()...)
-	if err != nil {
-		return 0, fmt.Errorf("load tree %s; nothing was appended: %w", tree, err)
-	}
-	if n > 0 {
-		return n, nil
-	}
-	if shape.treeType == treeTypeMatrix {
-		err = w.engine.CreateMatrixTree(ctx, tree, shape.width, shape.spillover)
-	} else {
-		err = w.engine.CreateTree(ctx, tree, shape.treeType)
-	}
-	if err != nil {
-		return 0, fmt.Errorf("create tree %s in the engine; nothing was appended: %w", tree, err)
-	}
-	return 0, nil
 }
 
 // checkLoadedVersion refuses a stream whose last version is neither the

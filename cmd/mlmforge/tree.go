@@ -88,7 +88,7 @@ func newTreeLoadCmd(resolve flagResolver, open depsOpener, loader loadWriterFor)
 		Use:   "load",
 		Short: "Replay a stored tree into the engine",
 		Long: "Opens a database pool, starts the engine worker, replays one stored tree, and exits. " +
-			"When the tree's store is one event behind its stream, it replays the store, then redelivers the stream's last event " +
+			"When the tree's store is one event behind its stream, it builds the tree from its event stream through the store's projected version, then redelivers the stream's last event " +
 			"and prints a redelivered line. " +
 			"When the stream ends with a rejection one or two events past the store, it refuses instead and names tree reject-event. " +
 			"Exits 0 when the load finished, including after a redelivery, with any warnings on stderr. " +

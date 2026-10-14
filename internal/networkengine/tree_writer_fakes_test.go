@@ -453,9 +453,9 @@ func (s *loggingStore) ProjectInsert(ctx context.Context, node TreeNodeRow, even
 	return s.TreeStore.ProjectInsert(ctx, node, eventVersion)
 }
 
-func (s *loggingStore) GetByTreeDepthOrdered(ctx context.Context, treeID string) ([]TreeNodeRow, error) {
+func (s *loggingStore) ProjectedRows(ctx context.Context, treeID string) (int64, bool, []TreeNodeRow, error) {
 	s.log.add(s.name + " load")
-	return s.TreeStore.GetByTreeDepthOrdered(ctx, treeID)
+	return s.TreeStore.ProjectedRows(ctx, treeID)
 }
 
 // loggingEvents records each append by the version it asks for.

@@ -22,6 +22,8 @@ type readCountingStore struct {
 	versionErr     error
 	versionErrFrom int
 	treeErr        error
+	rowsReads      int
+	rowsErr        error
 }
 
 func (s *readCountingStore) ProjectedVersion(ctx context.Context, treeID string) (int64, bool, error) {
@@ -37,6 +39,14 @@ func (s *readCountingStore) GetByTreeDepthOrdered(ctx context.Context, treeID st
 	return s.TreeStore.GetByTreeDepthOrdered(ctx, treeID)
 }
 
+func (s *readCountingStore) ProjectedRows(ctx context.Context, treeID string) (int64, bool, []TreeNodeRow, error) {
+	s.rowsReads++
+	if s.rowsErr != nil {
+		return 0, false, nil, s.rowsErr
+	}
+	return s.TreeStore.ProjectedRows(ctx, treeID)
+}
+
 func (s *readCountingStore) GetByTree(ctx context.Context, treeID string) ([]TreeNodeRow, error) {
 	s.treeReads++
 	if s.treeErr != nil {
@@ -45,15 +55,15 @@ func (s *readCountingStore) GetByTree(ctx context.Context, treeID string) ([]Tre
 	return s.TreeStore.GetByTree(ctx, treeID)
 }
 
-func TestTreeWriter_AWriteKeepsItsProjectedVersionReadError(t *testing.T) {
+func TestTreeWriter_AWriteKeepsItsProjectedRowsReadError(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
-	store := &readCountingStore{TreeStore: env.store, versionErr: errors.New("connection reset"), versionErrFrom: 1}
+	store := &readCountingStore{TreeStore: env.store, rowsErr: errors.New("connection reset")}
 	w := NewTreeWriter(env.events, store, newFakeWriterEngine(), env.locker)
 
 	_, err := w.Place(context.Background(), placeRequest(writerChild, nil))
 
-	require.EqualError(t, err, "read the projected version of tree "+writerTree+
+	require.EqualError(t, err, "read the projected version and active rows of tree "+writerTree+
 		"; nothing was appended: connection reset")
 	var rejected *TreeLoadRejectedError
 	assert.False(t, errors.As(err, &rejected), "a write's read failure was typed as a load rejection")
@@ -83,7 +93,7 @@ func TestTreeWriter_LoadsATreeWithNothingBehindWithoutRedelivering(t *testing.T)
 
 	require.NoError(t, err)
 	assert.Equal(t, LoadResult{Nodes: 2}, res)
-	assert.Equal(t, 1, store.depthReads, "a load with nothing behind read the rows a different number of times")
+	assert.Equal(t, 1, store.rowsReads, "a load with nothing behind read the rows a different number of times")
 	assert.Zero(t, store.treeReads, "a load with nothing behind read the rows again after loading")
 }
 
@@ -211,7 +221,7 @@ func TestTreeWriter_LoadReportsARedeliveryThatLeftTheVersionBehind(t *testing.T)
 	}, res)
 }
 
-func TestTreeWriter_LoadReportsATreeThatStillHasNoProjectionRow(t *testing.T) {
+func TestTreeWriter_LoadRefusesRowsTheStreamDoesNotReach(t *testing.T) {
 	env := newWriterEnv()
 	root := appendDirect(t, env.events, EventTypeRootAdded, rootAddedPayload())
 	require.NoError(t, env.store.InsertNode(context.Background(), TreeNodeRow{
@@ -221,12 +231,11 @@ func TestTreeWriter_LoadReportsATreeThatStillHasNoProjectionRow(t *testing.T) {
 
 	res, err := w.Load(context.Background(), loadRequest())
 
-	require.NoError(t, err)
-	assert.Equal(t, LoadResult{
-		CaughtUp:       &CaughtUpEvent{EventID: root.ID, Version: 1, Type: EventTypeRootAdded},
-		ProjectedAfter: &ProjectionObservation{},
-		Nodes:          1,
-	}, res)
+	var replay *TreeReplayError
+	require.ErrorAs(t, err, &replay)
+	assert.Equal(t, TreeReplayStageMembership, replay.Stage)
+	assert.Equal(t, "the replay left no root; the store holds 1 active rows", replay.Mismatch)
+	assert.Nil(t, res.CaughtUp)
 }
 
 func TestTreeWriter_LoadKeepsAReleaseFailureAlongsideAnError(t *testing.T) {
@@ -321,14 +330,14 @@ func TestTreeWriter_LoadWaitsForTheLockBeforeReadingTheStore(t *testing.T) {
 
 	var wait *TreeLockWaitError
 	require.ErrorAs(t, err, &wait)
-	assert.Zero(t, store.versionReads+store.depthReads+store.treeReads, "the load read the store without the lock")
+	assert.Zero(t, store.versionReads+store.depthReads+store.treeReads+store.rowsReads, "the load read the store without the lock")
 }
 
-func TestTreeWriter_LoadTypesAFailedProjectedVersionReadAsARejection(t *testing.T) {
+func TestTreeWriter_LoadTypesAFailedProjectedRowsReadAsARejection(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
 	cause := errors.New("connection reset")
-	store := &readCountingStore{TreeStore: env.store, versionErr: cause, versionErrFrom: 1}
+	store := &readCountingStore{TreeStore: env.store, rowsErr: cause}
 	w := NewTreeWriter(env.events, store, newFakeWriterEngine(), env.locker)
 
 	_, err := w.Load(context.Background(), loadRequest())
@@ -337,7 +346,6 @@ func TestTreeWriter_LoadTypesAFailedProjectedVersionReadAsARejection(t *testing.
 	require.ErrorAs(t, err, &rejected)
 	assert.Equal(t, TreeLoadStoreReadFailed, rejected.Kind)
 	assert.Equal(t, cause, rejected.Err)
-	assert.Zero(t, store.depthReads, "the rows were read after the version read failed")
 }
 
 func TestTreeWriter_LoadTypesAFailedVersion1ReadAsARejection(t *testing.T) {
@@ -378,7 +386,7 @@ func TestTreeWriter_LoadLeavesAFailedVersionReadAfterTheRedeliveryUntyped(t *tes
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
 	pending := appendDirect(t, env.events, EventTypeNodePlaced, childPlacedPayload(writerChild))
-	store := &readCountingStore{TreeStore: env.store, versionErr: errors.New("connection reset"), versionErrFrom: 2}
+	store := &readCountingStore{TreeStore: env.store, versionErr: errors.New("connection reset"), versionErrFrom: 1}
 	w := NewTreeWriter(env.events, store, newFakeWriterEngine(), env.locker)
 
 	res, err := w.Load(context.Background(), loadRequest())

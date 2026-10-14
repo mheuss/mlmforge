@@ -522,19 +522,19 @@ type createOnlyEngine struct {
 
 func (createOnlyEngine) CreateTree(context.Context, string, string) error { return nil }
 
-// flakyVersionStore fails its first ProjectedVersion with a cause that is safe
-// to retry.
-type flakyVersionStore struct {
+// flakyRowsStore fails its first ProjectedRows with a cause that is safe to
+// retry.
+type flakyRowsStore struct {
 	networkengine.TreeStore
 	reads int
 }
 
-func (s *flakyVersionStore) ProjectedVersion(ctx context.Context, treeID string) (int64, bool, error) {
+func (s *flakyRowsStore) ProjectedRows(ctx context.Context, treeID string) (int64, bool, []networkengine.TreeNodeRow, error) {
 	s.reads++
 	if s.reads == 1 {
-		return 0, false, safeToRetryErr{errors.New("wrote no bytes")}
+		return 0, false, nil, safeToRetryErr{errors.New("wrote no bytes")}
 	}
-	return s.TreeStore.ProjectedVersion(ctx, treeID)
+	return s.TreeStore.ProjectedRows(ctx, treeID)
 }
 
 // flakyFirstReadEvents fails its first ReadStream with a cause that is safe to
@@ -552,9 +552,9 @@ func (e *flakyFirstReadEvents) ReadStream(ctx context.Context, stream string, fr
 	return e.MemoryEventStore.ReadStream(ctx, stream, from, limit)
 }
 
-func TestRunTreeLoad_RetriesASafeProjectedVersionFailureOverTheWriter(t *testing.T) {
+func TestRunTreeLoad_RetriesASafeProjectedRowsFailureOverTheWriter(t *testing.T) {
 	noRetryDelay(t)
-	store := &flakyVersionStore{TreeStore: networkengine.NewMemoryTreeStore()}
+	store := &flakyRowsStore{TreeStore: networkengine.NewMemoryTreeStore()}
 	w := networkengine.NewTreeWriter(platform.NewMemoryEventStore(), store, createOnlyEngine{},
 		networkengine.NewMemoryTreeLocker())
 	tree := testTreeID(51)

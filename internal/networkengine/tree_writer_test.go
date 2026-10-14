@@ -279,8 +279,11 @@ func TestTreeWriterAddRoot_ReportsAnEngineThatAlreadyHoldsTheTree(t *testing.T) 
 
 		_, err := w.AddRoot(context.Background(), req)
 
-		require.ErrorContains(t, err, "load tree "+writerTree+"; nothing was appended: ")
+		require.ErrorContains(t, err, "create tree "+writerTree+" in the engine; nothing was appended: ")
 		require.ErrorContains(t, err, "TREE_EXISTS")
+		var replay *TreeReplayError
+		require.ErrorAs(t, err, &replay)
+		assert.Equal(t, TreeReplayStageCreate, replay.Stage)
 		assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 1)
 	})
 	t.Run("when the store is empty", func(t *testing.T) {
@@ -292,6 +295,9 @@ func TestTreeWriterAddRoot_ReportsAnEngineThatAlreadyHoldsTheTree(t *testing.T) 
 		_, err := w.AddRoot(context.Background(), unilevelRootRequest())
 
 		require.ErrorContains(t, err, "create tree "+writerTree+" in the engine; nothing was appended: ")
+		var replay *TreeReplayError
+		require.ErrorAs(t, err, &replay)
+		assert.Equal(t, TreeReplayStageCreate, replay.Stage)
 		assert.Empty(t, streamEvents(t, env.events, TreeStreamName(writerTree)))
 	})
 }

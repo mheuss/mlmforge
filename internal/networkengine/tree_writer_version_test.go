@@ -5,6 +5,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/mlmforge/mlmforge/internal/platform"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -86,43 +87,64 @@ func TestTreeWriter_RefusesAStreamTwoEventsPastTheLoad(t *testing.T) {
 	}
 }
 
-// projectingLoadStore records its version reads and full-tree loads, and runs
-// meanwhile once, before its first full-tree load.
+// projectingLoadStore records its load reads, and runs meanwhile once, either
+// before or after its first read.
 type projectingLoadStore struct {
 	TreeStore
 	meanwhile func()
-	once      sync.Once
-	calls     []string
+	// before runs meanwhile ahead of the read instead of after it.
+	before bool
+	once   sync.Once
+	calls  []string
 }
 
-func (s *projectingLoadStore) ProjectedVersion(ctx context.Context, treeID string) (int64, bool, error) {
-	s.calls = append(s.calls, "ProjectedVersion")
-	return s.TreeStore.ProjectedVersion(ctx, treeID)
+func (s *projectingLoadStore) ProjectedRows(ctx context.Context, treeID string) (int64, bool, []TreeNodeRow, error) {
+	s.calls = append(s.calls, "ProjectedRows")
+	if s.before {
+		s.once.Do(s.meanwhile)
+	}
+	version, found, rows, err := s.TreeStore.ProjectedRows(ctx, treeID)
+	if !s.before {
+		s.once.Do(s.meanwhile)
+	}
+	return version, found, rows, err
 }
 
-func (s *projectingLoadStore) GetByTreeDepthOrdered(ctx context.Context, treeID string) ([]TreeNodeRow, error) {
-	s.calls = append(s.calls, "GetByTreeDepthOrdered")
-	s.once.Do(s.meanwhile)
-	return s.TreeStore.GetByTreeDepthOrdered(ctx, treeID)
-}
-
-func TestTreeWriter_ConvergesWhenTheLastEventProjectsBetweenTheVersionReadAndTheLoad(t *testing.T) {
+// runLateProjection places writerOther while the projection of a pending
+// placement lands before or after the load's read.
+func runLateProjection(t *testing.T, before bool) (*writerEnv, *projectingLoadStore, platform.Event, WriteResult) {
+	t.Helper()
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
 	pending := appendDirect(t, env.events, EventTypeNodePlaced, childPlacedPayload(writerChild))
-	store := &projectingLoadStore{TreeStore: env.store, meanwhile: func() {
+	store := &projectingLoadStore{TreeStore: env.store, before: before, meanwhile: func() {
 		require.NoError(t, env.store.ProjectInsert(context.Background(), TreeNodeRow{
 			ID: pending.ID, TreeID: writerTree, UserID: writerChild,
 			ParentID: &writerRoot, SponsorID: &writerRoot, Depth: 1, EnrolledAt: writeTime,
 		}, pending.Version))
 	}}
 	w := NewTreeWriter(env.events, store, newFakeWriterEngine(), env.locker)
-
 	res, err := w.Place(context.Background(), placeRequest(writerOther, nil))
-
 	require.NoError(t, err)
 	require.NoError(t, res.ProjectionErr)
-	assert.Equal(t, []string{"ProjectedVersion", "GetByTreeDepthOrdered"}, store.calls)
+	return env, store, pending, res
+}
+
+func TestTreeWriter_ConvergesWhenTheLastEventProjectsAfterTheLoadRead(t *testing.T) {
+	env, store, pending, res := runLateProjection(t, false)
+
+	assert.Equal(t, []string{"ProjectedRows"}, store.calls)
+	assert.Equal(t, &CaughtUpEvent{EventID: pending.ID, Version: 2, Type: EventTypeNodePlaced}, res.CaughtUp)
+	assert.Equal(t, int64(3), res.Version)
+	version, _, err := env.store.ProjectedVersion(context.Background(), writerTree)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), version)
+}
+
+func TestTreeWriter_ConvergesWhenTheLastEventProjectsBeforeTheLoadRead(t *testing.T) {
+	env, store, pending, res := runLateProjection(t, true)
+
+	assert.Equal(t, []string{"ProjectedRows"}, store.calls)
 	assert.Equal(t, &CaughtUpEvent{EventID: pending.ID, Version: 2, Type: EventTypeNodePlaced}, res.CaughtUp)
 	assert.Equal(t, int64(3), res.Version)
 	version, _, err := env.store.ProjectedVersion(context.Background(), writerTree)

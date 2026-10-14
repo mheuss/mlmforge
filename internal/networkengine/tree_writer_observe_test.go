@@ -75,7 +75,7 @@ func TestTreeWriter_ReportsAnObservationThatFailed(t *testing.T) {
 	mustAddRoot(t, env, treeTypeUnilevel)
 	mustPlace(t, env, writerChild, nil)
 	cause := errors.New("connection reset")
-	store := &readCountingStore{TreeStore: failingRemovalStore{TreeStore: env.store}, versionErr: cause, versionErrFrom: 2}
+	store := &readCountingStore{TreeStore: failingRemovalStore{TreeStore: env.store}, versionErr: cause, versionErrFrom: 1}
 	w := NewTreeWriter(env.events, store, newFakeWriterEngine(), env.locker)
 
 	res, err := w.Remove(context.Background(), RemoveRequest{TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime})

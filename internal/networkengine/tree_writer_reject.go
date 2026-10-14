@@ -239,7 +239,8 @@ func (w *TreeWriter) Reject(ctx context.Context, r RejectRequest) (result Reject
 	}
 	result.RejectedEventID, result.RejectedVersion = last.ID, last.Version
 
-	retryErr := w.retry(ctx, tree, stream, shape, *last)
+	warnings, retryErr := w.retry(ctx, tree, stream, shape, *last)
+	result.Warnings = warnings
 	if retryErr == nil {
 		return result, fmt.Errorf("retrying event %s at version %d in stream %s returned no error; nothing was appended",
 			last.ID, last.Version, stream)
@@ -273,19 +274,20 @@ func (w *TreeWriter) Reject(ctx context.Context, r RejectRequest) (result Reject
 }
 
 // retry loads the tree and redelivers expected, the stream's last event.
-func (w *TreeWriter) retry(ctx context.Context, tree, stream string, shape treeShape, expected platform.Event) error {
-	loaded, found, last, _, err := w.prepare(ctx, tree, shape)
+func (w *TreeWriter) retry(ctx context.Context, tree, stream string, shape treeShape, expected platform.Event) ([]string, error) {
+	prep, err := w.prepare(ctx, tree, shape)
 	if err != nil {
-		return err
+		return prep.warnings, err
 	}
+	last := prep.last
 	if last == nil {
-		return fmt.Errorf("a read of stream %s for the retry returned no last event, where event %s was expected", stream, expected.ID)
+		return prep.warnings, fmt.Errorf("a read of stream %s for the retry returned no last event, where event %s was expected", stream, expected.ID)
 	}
 	if !sameUUID(last.ID, expected.ID) {
-		return fmt.Errorf("a read of stream %s for the retry returned last event %s, where event %s was expected", stream, last.ID, expected.ID)
+		return prep.warnings, fmt.Errorf("a read of stream %s for the retry returned last event %s, where event %s was expected", stream, last.ID, expected.ID)
 	}
-	_, err = w.catchUp(ctx, tree, stream, *last, loaded, found)
-	return err
+	_, err = w.catchUp(ctx, tree, stream, *last, prep.loaded, prep.found)
+	return prep.warnings, err
 }
 
 // resumeRejection handles a stream that already ends with a rejection.

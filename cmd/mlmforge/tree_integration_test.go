@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mlmforge/mlmforge/internal/networkengine"
 	"github.com/mlmforge/mlmforge/internal/platform"
 	"github.com/stretchr/testify/require"
@@ -132,24 +131,18 @@ func runTreeCmd(t *testing.T, args ...string) (*cmdOutput, error) {
 	return out, cmd.Execute()
 }
 
-// seedTree writes a root and n children straight to tree_nodes.
-//
-// The rows are seeded through the store rather than through a command.
-func seedTree(t *testing.T, pool *pgxpool.Pool, treeID string, children int) {
+// seedTree adds a unilevel root and n children under it through the commands.
+func seedTree(t *testing.T, worker, treeID string, children int) {
 	t.Helper()
-	store := networkengine.NewPostgresTreeStore(pool)
+	conn := []string{"--db-url", pgContainer.DSN, "--worker", worker, "--tree-id", treeID}
 	root := testUserID(1)
-	require.NoError(t, store.InsertNode(t.Context(), networkengine.TreeNodeRow{
-		ID: testTreeID(90), TreeID: treeID, UserID: root, SponsorID: &root,
-		Depth: 0, EnrolledAt: time.Unix(1, 0).UTC(),
-	}))
+	out, err := runTreeCmd(t, append([]string{"add-root", "--user-id", root, "--sponsor-id", root,
+		"--tree-type", "unilevel", "--enrolled-at", "2026-09-23T12:00:00Z"}, conn...)...)
+	require.NoError(t, err, out.stderr.String())
 	for i := range children {
-		user := testUserID(i + 2)
-		require.NoError(t, store.InsertNode(t.Context(), networkengine.TreeNodeRow{
-			ID: testTreeID(100 + i), TreeID: treeID, UserID: user,
-			ParentID: &root, SponsorID: &root,
-			Depth: 1, EnrolledAt: time.Unix(int64(i+2), 0).UTC(),
-		}))
+		out, err := runTreeCmd(t, append([]string{"place", "--user-id", testUserID(i + 2), "--parent-id", root,
+			"--sponsor-id", root, "--enrolled-at", "2026-09-23T13:00:00Z"}, conn...)...)
+		require.NoError(t, err, out.stderr.String())
 	}
 }
 
@@ -159,9 +152,9 @@ func TestTreeLoad_SucceedsForAWellFormedTree(t *testing.T) {
 		t.Skip("Postgres container not available")
 	}
 	worker := requireWorker(t)
-	pool := pgContainer.NewPool(t)
+	_ = pgContainer.NewPool(t)
 	tree := testTreeID(1)
-	seedTree(t, pool, tree, 2)
+	seedTree(t, worker, tree, 2)
 
 	out, err := runTreeCmd(t,
 		"load",

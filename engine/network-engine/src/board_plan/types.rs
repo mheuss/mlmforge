@@ -40,7 +40,7 @@ pub struct RemoveMemberResult {
     /// Members who were compacted (moved up) to fill the gap.
     pub compacted: Vec<Uuid>,
 
-    /// Cycle events triggered by compaction.
+    /// Cycle events from this removal, drained boards first.
     pub cycle_events: Vec<CycleEvent>,
 }
 

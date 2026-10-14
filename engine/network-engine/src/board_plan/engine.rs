@@ -555,7 +555,7 @@ impl BoardPlanEngine {
     /// Takes a member off their board, or out of the displaced pool, and
     /// returns the members compaction moved.
     ///
-    /// A full board is cycled before a seat is taken off it.
+    /// Cycles the member's board first if it is full.
     fn take_member_out(
         &mut self,
         user_id: Uuid,
@@ -587,17 +587,7 @@ impl BoardPlanEngine {
         board.last_activity_at = timestamp;
         self.member_boards.remove(&user_id);
 
-        let compacted = self.compact_board(board_id);
-
-        let board = self
-            .boards
-            .get(&board_id)
-            .ok_or(BoardPlanError::BoardNotFound(board_id))?;
-        if board.is_full() {
-            self.process_cycles(board_id, timestamp, cycle_events, 0);
-        }
-
-        Ok(compacted)
+        Ok(self.compact_board(board_id))
     }
 
     /// Compacts a board after a removal by shifting remaining members
@@ -2261,6 +2251,32 @@ mod tests {
         );
         assert!(engine.get_board(ids[2]).unwrap().is_full());
         assert!(engine.get_board(ids[3]).unwrap().is_full());
+    }
+
+    #[test]
+    fn a_removal_empties_a_board_the_leaving_members_re_entry_filled() {
+        let config = BoardPlanConfig {
+            max_cascade_depth: NonZeroU32::new(1).unwrap(),
+            ..test_config_sponsor_board()
+        };
+        let (mut engine, ids) = engine_from_rows(
+            config,
+            &[
+                [Some(1), Some(2), Some(3)],
+                [Some(4), Some(5), None],
+                [Some(6), Some(7), None],
+            ],
+            &[(1, 4), (2, 1), (3, 1), (4, 6), (5, 4), (6, 6), (7, 6)],
+        );
+
+        let result = engine.remove_member(test_uuid(4), 10).unwrap();
+
+        let cycled: Vec<Uuid> = result.cycle_events.iter().map(|e| e.board_id).collect();
+        assert_eq!(cycled, vec![ids[0], ids[1]]);
+        assert_eq!(
+            engine.get_board(ids[2]).unwrap().positions,
+            vec![Some(test_uuid(6)), Some(test_uuid(7)), None]
+        );
     }
 
     #[test]

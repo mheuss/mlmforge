@@ -973,6 +973,8 @@ A plain `[]Responsored` cannot express the difference. `encoding/json` leaves it
 
 **Notes:** This is the mirror of UC-NET-016, which covers removing a *request* field without a red interval. The technique is the one UC-NET-018 uses on `protocol_version`, reached for a different reason: there it separates two failure causes so the message can name the fix, here it separates silence from an answer.
 
+The board ops' `cycle_events` use the same pointer and nil check, at their four decode sites.
+
 Absence and emptiness are different claims. An empty list says the engine looked and moved nobody, which a caller can act on. A missing key says nothing at all. Letting it default turns silence into the one answer that requires no work.
 
 ---

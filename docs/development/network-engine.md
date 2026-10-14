@@ -271,7 +271,7 @@ its name claims, not only that it passed.
 A test that picks among engine objects by iteration order can also replay
 differently, when the engine breaks ties in `HashMap` order. Pick by a key the
 strategy controls, such as the lowest occupant, and print the serialized state
-on failure. HEU-915 tracks the engine-side tie.
+on failure. The board plan engine breaks its own ties on `seq`.
 
 ### Completeness gate for commission ops
 
@@ -348,7 +348,9 @@ Board dimensions are capped: width 2-5, height 1-4. Boards use flat BFS-ordered 
 
 Boards order by `(created_at, seq)`. The engine assigns `seq` from `next_board_seq` when it creates a board, and a split numbers its new boards in child order. Board ids are random per run, so they never break a tie. Placement, `list_boards` and the drain all use this order.
 
-Every mutating operation checks its preconditions, then cycles every full board, oldest first, each with a fresh cascade budget. `max_cascade_depth` limits recursion depth within one cascade, so a cascade can leave a board full. The next mutating operation pays it. Remove and compress also cycle the member's own board if it is full before taking the member off it. Dissolve removes its board first and drains after, and refuses a full board with `BOARD_FULL`. Restore never drains.
+Add, remove and compress check their preconditions, then cycle every full board, oldest first, each with a fresh cascade budget. Dissolve refuses a full board with `BOARD_FULL`, removes its board, and then drains. `max_cascade_depth` limits recursion depth within one cascade, so a cascade can leave a board full. A later operation that passes its preconditions pays it. Restore never drains.
+
+Remove and compress also cycle the member's own board once, if it is full, then take the member off whatever board they are on. If that cycle re-enters the member and fills a board, the removal empties it instead of paying it.
 
 The displaced member pool (`displaced_members`) holds members removed via dissolution or cycling without re-entry. They are placed before new enrollees in `add_member`. `remove_member` takes a displaced member out of the pool. The `place_displaced_members` method must push unplaced members back to the pool if no boards have openings. Never propagate errors that would drop them.
 
@@ -1295,8 +1297,8 @@ The steps, in source order, and what each gives the ones after it.
 | 7 | Gap check: every board fills from position 0 | Nothing. No step depends on it |
 | 8 | Board `seq`: the counter is at most half the u64 range, every `seq` is below it, and no two boards share one | Nothing. No step depends on it |
 
-Step 1 is a pair of `if`s. Step 8 opens with an `if` and then one `for`. Every other step is one `for`. Sizing and
-duplicate detection share step 3 because both read the same positions, and the
+Step 1 is a pair of `if`s. Step 8 opens with an `if` and then one `for`. Every
+other step is one `for`. Sizing and duplicate detection share step 3 because both read the same positions, and the
 two membership passes are separate loops over different maps.
 
 Two of these change behavior rather than message wording if moved. Step 2 before
@@ -1332,7 +1334,7 @@ A restored structure can be wrong in three ways, and they need different checks.
 |---|---|---|---|
 | Structures disagree | Two structures in one type describe different states | HEU-750 | |
 | The graph is wrong | An edge, a root, or a cycle | HEU-732, HEU-712, HEU-744, HEU-734 | |
-| A shape is violated | One structure breaks a rule the engine's own mutators keep | HEU-760, for a gap above an occupant | HEU-911, a board that is already full |
+| A shape is violated | One structure breaks a rule the engine's own mutators keep | HEU-760, for a gap above an occupant | |
 
 The third is the one that hides. Nothing disagrees with anything, so a
 structure-to-structure check passes and the payload looks consistent.

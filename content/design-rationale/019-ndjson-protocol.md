@@ -109,7 +109,7 @@ which maps every `TreeError` variant, plus a few handler-level checks.
 | `MEMBER_ALREADY_EXISTS` | Member is already on the board. Also raised by streamline |
 | `MEMBER_NOT_DISPLACED` | Operation requires a displaced member and this one is not displaced |
 | `NO_BOARDS_AVAILABLE` | No board has an open slot for placement |
-| `BOARD_FULL` | `board_dissolve` named a board whose positions are all filled. The next mutating operation cycles it |
+| `BOARD_FULL` | `board_dissolve` named a board whose positions are all filled. A later operation that passes its preconditions cycles it |
 | `INVALID_DIMENSIONS` | Board width or height is outside the allowed bounds |
 | `MEMBER_AWAITING_REASSIGNMENT` | Member is held for reassignment and cannot be placed |
 

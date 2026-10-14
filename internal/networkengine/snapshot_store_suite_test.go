@@ -101,7 +101,7 @@ func runSnapshotStoreSuite(t *testing.T, newStore func(t *testing.T) SnapshotSto
 		assert.Equal(t, []byte(`"two"`), got.Data)
 	})
 
-	t.Run("a put below version 1 or of an unknown type is refused", func(t *testing.T) {
+	t.Run("an invalid put is refused and stores nothing", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
 
@@ -120,8 +120,9 @@ func runSnapshotStoreSuite(t *testing.T, newStore func(t *testing.T) SnapshotSto
 		in := []byte(`"abc"`)
 		require.NoError(t, s.Put(ctx, Snapshot{TreeID: tree, Version: 1000, TreeType: treeTypeUnilevel, Data: in}))
 		in[1] = 'z'
-		first, _, err := s.Get(ctx, tree)
+		first, found, err := s.Get(ctx, tree)
 		require.NoError(t, err)
+		require.True(t, found)
 		first.Data[1] = 'y'
 
 		got, _, err := s.Get(ctx, tree)

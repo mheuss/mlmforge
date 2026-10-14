@@ -98,13 +98,7 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 	}
 
 	// Every failure from here on says what survived it. The structure now
-	// exists and the worker has no operation to drop it (HEU-557), so a retry
-	// reports TREE_EXISTS and the only real remedy is a process restart. How
-	// much the engine acknowledged is the operator's sole input to that call,
-	// and the call that failed may also have taken effect. Validation
-	// pre-empts every logical error the engine can raise below, so what
-	// actually reaches these paths is transport failure: a worker crash, an
-	// IPC timeout, a cancelled context.
+	// exists, and the call that failed may also have taken effect.
 	//
 	// ordered[0] is the root: validation proved exactly one depth-0 node exists
 	// and every other node has a non-nil parent that is not itself, so the root
@@ -221,9 +215,7 @@ func validateTreeConfig(treeID, treeType string, cfg loadTreeConfig) error {
 
 // validateNodes proves the node set is structurally consistent before any
 // engine mutation. A tree that fails here leaves the engine untouched, so the
-// load can be retried once the data is corrected. This matters because the
-// worker has no operation to drop a structure (HEU-557): a partially built
-// tree would be stuck until the process restarts.
+// load can be retried once the data is corrected.
 //
 // Structural consistency is only half of "reconstructable". This function
 // proves every non-root node's parent and sponsor exists in the set; it does

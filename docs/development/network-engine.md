@@ -250,6 +250,29 @@ Proptest writes a `.proptest-regressions` seed file next to a test the first tim
 
 Two gotchas show up when hardening these tests. A vacuity check deliberately breaks an assertion to confirm it fails, then reverts. That leaves a stray regression file for the artificial failure. Delete it before committing. Scope the delete to the exact file. A `rm tests/*.proptest-regressions` glob also wipes the checked-in ones. Separately, the `FileFailurePersistence::SourceParallel set, but failed to find lib.rs or main.rs` line during integration-test runs is benign. Proptest just cannot locate the crate root from the test binary.
 
+### A property net can go quiet without failing
+
+A property test that only asserts something holds after each op passes just as
+well when the ops stop doing anything. Twice on the restore-validation branch,
+the net looked complete and mostly tested an empty engine.
+
+* Streamline. Only a stream owner can sponsor an enrolment. With sponsors drawn
+  from all members, about half of adds failed and runs stayed near four members.
+* Board plan. Removed members stay in `sponsor_map`. Once every member was
+  removed, no later add had a sponsor, and 205 of 256 runs sat on an empty
+  engine.
+
+Neither showed up as a failure. A probe that counted peak members, cycles and
+full boards found both.
+
+Before trusting a new property net, measure what it reaches. Count the states
+its name claims, not only that it passed.
+
+A test that picks among engine objects by iteration order can also replay
+differently, when the engine breaks ties in `HashMap` order. Pick by a key the
+strategy controls, such as the lowest occupant, and print the serialized state
+on failure. HEU-915 tracks the engine-side tie.
+
 ### Completeness gate for commission ops
 
 `every_structure_type_has_a_dispatchable_commission_op` (in `network-engine-worker/tests/worker_integration.rs`) stops a new plan type from shipping with an orphaned calculator. It has two halves. `commission_op` is a wildcard-free `match` over every `StructureConfig` variant. Adding a variant without an arm fails to compile the test crate, which forces you to name the op. A runtime loop then sends each named op to a real worker and asserts it never returns `UNKNOWN_OP`, confirming the op is wired into dispatch.
@@ -834,11 +857,11 @@ Unilevel carries no position. It appends to the parent's child list. Preflight r
 
 ### Why preflight validates everything before mutating anything
 
-The worker has **no operation to remove a structure** (HEU-557). A load that fails partway leaves the tree stuck until the process restarts. So `LoadTree` proves a load is sound before the first engine call. Its replay failures return `TreeLoadIncompleteError`. That error carries the stage the load reached and how many placements the engine acknowledged.
+A load that fails partway leaves a partly built tree in the worker. The engine may refuse a call after the create stage while the worker stays usable. A caller may then drop the tree with `drop_structure`. The engine refuses the same input the same way. A reload succeeds only once the cause has changed. UC-NET-032 covers this. Preflight is meant to catch engine refusals before the create. This path should be rare. After a timeout, a cancellation or a crash, the client is closed or the worker is gone. Starting over then means a new worker. The CLI never drops. Each command starts its own worker, and a failed load ends with it. Either way, a partial load costs a full rebuild. So `LoadTree` proves a load is sound before the first engine call. Its replay failures return `TreeLoadIncompleteError`. That error carries the stage the load reached and how many placements the engine acknowledged.
 
 `Confirmed` counts acknowledgements, not what landed. At `TreeLoadStageNodes` the call that failed may also have taken effect, with the reply lost rather than the work undone. The structure then holds at least `Confirmed` placements and possibly one more. That carve-out does not apply when `Err` is nil, which means the load stopped before the call was sent. At the create stage all three counters are zero. At the root stage, `Total` carries the non-root placement count the load set out to make. The other two counters are zero. The operation in doubt is the root placement, which none of the three counters counts.
 
-The loader cannot tell which happened. It holds a `TreeMutator`. That interface carries only mutations. Nothing on this path can read back whether the placement landed. HEU-557 would supply a remedy rather than an answer: being able to drop the structure lets a caller start over without knowing. HEU-777 and HEU-784 are the same lost-reply shape on the removal path rather than the replay path.
+The loader cannot tell which happened. It holds a `TreeMutator`. That interface carries only mutations. Nothing on this path can read back whether the placement landed. A caller does not need that answer to start over. After a lost reply, starting over means a new worker. A new worker starts empty. HEU-777 and HEU-784 are the same lost-reply shape on the removal path rather than the replay path.
 
 Preflight runs in two phases with different inputs. `validateTreeConfig` checks the tree type, and for a matrix the width and spillover. It reads no rows, so it runs before the store query. A misconfigured load costs no query. `validateNodes` runs after the query and proves the node set is structurally consistent.
 
@@ -1032,6 +1055,16 @@ Three lines here were each deletable with the whole suite green until tests were
 written specifically to fail without them. A shutdown path that is only
 exercised by well-behaved workers is not exercised at all.
 
+## Reply Errors Do Not Close The Transport
+
+Inside a call, `StdioTransport` marks itself closed only when the call's context
+ends. An unmarshal failure or a response-ID mismatch returns an error and leaves
+the transport open. The worker may already have run the request. The stream may
+now be out of step.
+
+So an error that is not an `*EngineError` says nothing about whether the client
+is usable. Only an `*EngineError` comes from a reply that was read in step.
+
 ## The Three Consuming Branches In The Level Walk
 
 The Shared Walk Module section above says the walk records a step at each of the
@@ -1159,9 +1192,17 @@ run-time assertion failures, so building was not enough to find them.
 
 ## What `validate_restored` Still Does Not Check
 
-All four arms above the arena now check their own structures against each other.
-HEU-750 closed the last of them. The board plan arm closed in its first slice.
-Matrix and binary closed in its second. Streamline was never one-way.
+All four arms above the arena check their own structures against each other.
+HEU-750 closed the last of them.
+
+The arena proves one rooted tree. Parent and child edges name each other, and
+so do sponsor and sponsored edges. Exactly one live node has no parent, and it
+is the root. Every sponsor chain ends. Binary and matrix also prove each
+parent's occupied slots, in slot order, equal its `children`. HEU-732, HEU-712,
+HEU-744 and HEU-734 added these.
+
+A cycle through `parent` edges never needed its own check. The depth pass
+requires a child to sit one below its parent, so a parent chain cannot return.
 
 Two gaps remain. Both are recorded rather than fixed.
 
@@ -1170,19 +1211,9 @@ tombstoned slot. No tombstone has to appear in the free list. A tombstone left
 out is leaked. `node_count` counts it live. Its reach today is three `Debug`
 impls.
 
-No arm compares its slot map against `Node.children`. The matrix and binary
-arms count: every live non-root node is a child in exactly one child slot. They
-do not prove the slot that names a node is the same parent the node's own edges
-name. That is HEU-732, along with reciprocal edges.
-
-Two cycle shapes are rejected here rather than left to HEU-732. Both are
-decidable from the slot map alone. A child slot naming the root is rejected. A
-child slot naming its own parent is rejected. Both were accepted before. Both
-produced a wrong answer rather than a disagreement. A leg containing its own
-ancestor makes `count_branch` report more nodes than the tree holds.
-
-The cycles that need a traversal are still open. Two nodes naming each other,
-with the root's own slots empty, is accepted. That is HEU-732.
+A restored board that is already full is accepted. The cascade bound leaves full
+boards standing in a live engine, so rejecting one would reject engines the
+crate produces. HEU-911 holds it.
 
 Read a `validate_restored` docblock as the boundary of what that arm proves. An
 arm that proves less than its name suggests is the failure this file already
@@ -1241,12 +1272,12 @@ which tree in the answer.
 
 ## The Board Plan Validator's Walk Order
 
-`BoardPlanEngine::validate_restored` runs six walks and each depends on the ones
-before it having returned. The comment in the function names the two that are
-load-bearing. The full list is here, because it is a paragraph and a paragraph
-does not belong above a function.
+`BoardPlanEngine::validate_restored` runs its walks in order. Each depends
+on the ones before it having returned. The comment in the function names the two
+that are load-bearing. The full list is here, because it is a paragraph and a
+paragraph does not belong above a function.
 
-The six steps, in source order, and what each gives the ones after it.
+The steps, in source order, and what each gives the ones after it.
 
 | Step | Walk | What it gives the steps after it |
 |---|---|---|
@@ -1255,9 +1286,10 @@ The six steps, in source order, and what each gives the ones after it.
 | 3 | One pass over `boards`, doing sizing and duplicate detection together | A mis-sized board is skipped, so its occupants never reach the seat maps. Then exactly one board per occupant in those maps |
 | 4 | Membership, forward | Every case where the index names a board is already reported |
 | 5 | Membership, reverse | Left with the one case the forward pass does not own: a seat the index names nowhere |
-| 6 | `displaced_members` | Runs last, so a user the index puts on a board that does not exist is reported by step 4 instead |
+| 6 | `displaced_members` | Runs after step 4, so a user the index puts on a board that does not exist is reported by step 4 instead |
+| 7 | Gap check: every board fills from position 0 | Nothing. No step depends on it |
 
-Step 1 is a pair of `if`s. Steps 2 through 6 are one `for` each. Sizing and
+Step 1 is a pair of `if`s. Every later step is one `for`. Sizing and
 duplicate detection share step 3 because both read the same positions, and the
 two membership passes are separate loops over different maps.
 
@@ -1265,7 +1297,7 @@ Two of these change behavior rather than message wording if moved. Step 2 before
 anything that treats a key as an identity, and step 3's duplicate half before
 step 5.
 
-Reordering the rest changes which fault a payload reports. All six faults reach
+Reordering the rest changes which fault a payload reports. Every fault reaches
 the wire as `INCONSISTENT_SNAPSHOT`, so no fixture pins a different code. What a
 fixture pins is the message, by substring.
 
@@ -1290,11 +1322,11 @@ that matters is the one the engine reaches on its own.
 
 A restored structure can be wrong in three ways, and they need different checks.
 
-| Class | What is wrong | Owned by |
-|---|---|---|
-| Structures disagree | Two structures in one type describe different states | HEU-750 |
-| The graph is wrong | An edge, a root, or a cycle | HEU-732, HEU-744 |
-| A shape is violated | One structure breaks a rule the engine's own mutators keep | HEU-760 |
+| Class | What is wrong | Closed by | Still open |
+|---|---|---|---|
+| Structures disagree | Two structures in one type describe different states | HEU-750 | |
+| The graph is wrong | An edge, a root, or a cycle | HEU-732, HEU-712, HEU-744, HEU-734 | |
+| A shape is violated | One structure breaks a rule the engine's own mutators keep | HEU-760, for a gap above an occupant | HEU-911, a board that is already full |
 
 The third is the one that hides. Nothing disagrees with anything, so a
 structure-to-structure check passes and the payload looks consistent.
@@ -1311,13 +1343,13 @@ that mutator.
 ## A Test Helper That Does Not Call The Thing Under Test
 
 `assert_board_invariants` checked three properties by hand: map key equals board
-id, no occupant on two boards, every occupant indexed. Three of the six guards in
+id, no occupant on two boards, every occupant indexed. Three of the guards in
 `validate_restored` check the same three things.
 
 It never called `validate_restored`.
 
 So the constraint that the validator must accept engine output was asserted by
-nothing, and three of the six guards had never run against a real engine at all.
+nothing, and three of the guards had never run against a real engine at all.
 The helper looked like coverage and reported on something else.
 
 If a helper exists to prove a function behaves on real data, it has to call that
@@ -1329,17 +1361,20 @@ Moving `PROTOCOL_VERSION` means changing every site in one commit. A partial
 move rejects a worker that is otherwise correct, because `engine_client.go`
 compares the version by exact equality.
 
-It was six numeric literals across five files plus two prose blocks when this
-was written. Treat that as a starting point rather than a checklist. The count
+Treat the sites below as a starting point rather than a checklist. The list
 goes stale the first time a site is added or dropped, and it will do so quietly,
-because nothing checks this paragraph against the tree.
+because nothing checks the list against the tree.
 
 The literals live in `network-engine-worker/src/protocol.rs`,
 `network-engine-worker/tests/worker_integration.rs`,
 `engine/testdata/contracts/ping.json`, `internal/networkengine/engine_client.go`,
-and more than once in `internal/networkengine/transport_test.go`. The prose is the
-`Moved to N by ...` block above the Go constant, plus the ticket list in
-`content/design-rationale/017-commission-calculation-architecture.md` when the
+and more than once in `internal/networkengine/transport_test.go`.
+
+The version history lives in the Version allocation table of
+`contracts/ndjson-engine-protocol.md` in the hub repository, not this one. The
+`Moved to N by ...` block above the Go constant is not extended. The prose to
+check is the ticket list in
+`content/design-rationale/017-commission-calculation-architecture.md`, when the
 change is one that note tracks.
 
 The other `protocol_version` literals in `transport_test.go` are stub-worker

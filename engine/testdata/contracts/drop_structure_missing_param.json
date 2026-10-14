@@ -1,0 +1,16 @@
+{
+    "description": "drop_structure without a structure param is refused with MISSING_PARAM",
+    "request": {
+        "id": "ds-missing",
+        "op": "drop_structure",
+        "params": {}
+    },
+    "expected_response": {
+        "id": "ds-missing",
+        "ok": false,
+        "error": {
+            "code": "MISSING_PARAM",
+            "message_contains": "missing structure name"
+        }
+    }
+}

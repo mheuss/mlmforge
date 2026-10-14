@@ -146,8 +146,6 @@ func TestTreeLoadRetryable(t *testing.T) {
 			want: false,
 		},
 		{
-			// Retrying this is the outcome the whole policy exists to
-			// prevent: the worker may hold a structure nothing can drop.
 			name: "an incomplete load wrapping a retryable rejection is not retryable",
 			err: &networkengine.TreeLoadIncompleteError{
 				Stage: networkengine.TreeLoadStageNodes,

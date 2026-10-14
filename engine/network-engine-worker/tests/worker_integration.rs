@@ -63,7 +63,7 @@ fn ping_returns_protocol_version() {
 
     let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
     assert_eq!(parsed["id"], "1");
-    assert_eq!(parsed["result"]["protocol_version"], 11);
+    assert_eq!(parsed["result"]["protocol_version"], 12);
 
     drop(child.stdin.take());
     child.wait().unwrap();
@@ -6216,6 +6216,26 @@ fn restore_rejects_a_unilevel_index_on_a_tombstone() {
 }
 
 #[test]
+fn restore_rejects_a_unilevel_sponsor_cycle() {
+    let mut worker = common::spawn_worker();
+    build_three_node_chain(&mut worker);
+
+    let mut data = take_snapshot_data(&mut worker, TREE_NAME);
+    data["arena"]["nodes"][0]["sponsored"] = serde_json::json!([]);
+    data["arena"]["nodes"][1]["sponsor"] = serde_json::json!(2);
+    data["arena"]["nodes"][2]["sponsored"] = serde_json::json!([1]);
+
+    let resp = restore_under(&mut worker, "Cycle", "unilevel", data);
+    assert_inconsistent(
+        &resp,
+        &["the sponsor chain from node slot 1 reaches node slot 1 twice"],
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
 fn restore_rejects_a_binary_child_slot_past_the_end() {
     let mut worker = common::spawn_worker();
     create_binary_tree(&mut worker, "BinTree");
@@ -6234,6 +6254,34 @@ fn restore_rejects_a_binary_child_slot_past_the_end() {
     assert_inconsistent(
         &resp,
         &["the child slot map names node slot", "the arena holds"],
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_rejects_a_binary_child_its_parent_does_not_list() {
+    let mut worker = common::spawn_worker();
+    create_binary_tree(&mut worker, "BinEdge");
+    for req in [
+        r#"{"id":"e1","op":"add_root","params":{"structure":"BinEdge","user_id":"aaaaaaaa-0000-0000-0000-000000000001","enrolled_at":100}}"#,
+        r#"{"id":"e2","op":"add_node","params":{"structure":"BinEdge","user_id":"aaaaaaaa-0000-0000-0000-000000000002","parent_id":"aaaaaaaa-0000-0000-0000-000000000001","position":0,"sponsor_id":"aaaaaaaa-0000-0000-0000-000000000001","enrolled_at":200}}"#,
+    ] {
+        let resp = common::send_receive(&mut worker, req);
+        assert!(resp.contains(r#""ok":true"#), "setup failed: {}", resp);
+    }
+
+    let mut data = take_snapshot_data(&mut worker, "BinEdge");
+    data["arena"]["nodes"][0]["children"] = serde_json::json!([]);
+
+    let resp = restore_under(&mut worker, "BinEdge2", "binary", data);
+    assert_inconsistent(
+        &resp,
+        &[
+            "parent on node slot 1 names node slot 0",
+            "children on node slot 0 does not name node slot 1",
+        ],
     );
 
     drop(worker.stdin.take());
@@ -6320,6 +6368,57 @@ fn restore_rejects_a_board_member_on_an_absent_board() {
 
     let resp = restore_under(&mut worker, "R5", "board_plan", data);
     assert_inconsistent(&resp, &["the engine holds no such board"]);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_rejects_a_board_occupant_above_an_open_position() {
+    let mut worker = common::spawn_worker();
+    let create = serde_json::json!({
+        "id": "bp-create",
+        "op": "create_board_plan",
+        "params": {
+            "structure": "BpGap", "width": 2, "height": 2,
+            "config": {
+                "cycle_commission": 500.0, "re_entry_enabled": true,
+                "re_entry_position": "bottom", "max_cycles_per_period": 4,
+                "max_cascade_depth": 10, "stall_threshold_periods": 3,
+                "inactive_compression": false
+            },
+            "timestamp": 0
+        }
+    });
+    let resp = common::send_receive(&mut worker, &create.to_string());
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "create_board_plan failed: {}",
+        resp
+    );
+    let member = "cccccccc-0000-0000-0000-000000000001";
+    let add = serde_json::json!({
+        "id": "bp-add", "op": "board_add_member",
+        "params": { "structure": "BpGap", "user_id": member, "sponsor_id": member, "timestamp": 1 }
+    });
+    let resp = common::send_receive(&mut worker, &add.to_string());
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "board_add_member failed: {}",
+        resp
+    );
+
+    let mut data = take_snapshot_data(&mut worker, "BpGap");
+    let board = data["boards"]
+        .as_object_mut()
+        .expect("board plan carries boards")
+        .values_mut()
+        .next()
+        .expect("one board");
+    board["positions"] = serde_json::json!([null, member, null, null, null, null, null]);
+
+    let resp = restore_under(&mut worker, "BpGap2", "board_plan", data);
+    assert_inconsistent(&resp, &["has position 0 open and position 1 occupied"]);
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -6435,7 +6534,7 @@ fn restore_over_an_existing_structure_is_refused_and_leaves_it_unchanged() {
     assert_eq!(
         parsed["error"]["message"],
         format!(
-            "structure '{}' already exists; restore_snapshot does not replace an existing structure",
+            "structure '{}' already exists; drop it with drop_structure before restoring",
             TREE_NAME
         ),
         "response: {}",
@@ -7033,6 +7132,216 @@ fn restore_snapshot_accepts_deep_nesting_under_an_ignored_field() {
     assert!(
         resp.contains(r#""ok":true"#),
         "expected the restore to succeed, got: {resp}"
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+// ---- drop_structure ----------------------------------------------------------
+
+/// Sends `drop_structure` for `name` and returns the parsed response.
+fn drop_structure(worker: &mut std::process::Child, name: &str) -> serde_json::Value {
+    let resp = common::send_receive(
+        worker,
+        &format!(
+            r#"{{"id":"drop","op":"drop_structure","params":{{"structure":"{}"}}}}"#,
+            name
+        ),
+    );
+    serde_json::from_str(&resp).unwrap()
+}
+
+/// Sends `take_snapshot` for `name` and returns the parsed response.
+fn snapshot_response(worker: &mut std::process::Child, name: &str) -> serde_json::Value {
+    let resp = common::send_receive(
+        worker,
+        &format!(
+            r#"{{"id":"snap","op":"take_snapshot","params":{{"structure":"{}"}}}}"#,
+            name
+        ),
+    );
+    serde_json::from_str(&resp).unwrap()
+}
+
+#[test]
+fn drop_structure_removes_a_board_plan() {
+    let mut worker = common::spawn_worker();
+    let create = serde_json::json!({
+        "id": "bp-create",
+        "op": "create_board_plan",
+        "params": {
+            "structure": "BpDrop", "width": 2, "height": 2,
+            "config": {
+                "cycle_commission": 500.0, "re_entry_enabled": true,
+                "re_entry_position": "bottom", "max_cycles_per_period": 4,
+                "max_cascade_depth": 10, "stall_threshold_periods": 3,
+                "inactive_compression": false
+            },
+            "timestamp": 0
+        }
+    });
+    let resp = common::send_receive(&mut worker, &create.to_string());
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "create_board_plan failed: {}",
+        resp
+    );
+
+    let dropped = drop_structure(&mut worker, "BpDrop");
+    assert_eq!(dropped["ok"], true, "response: {}", dropped);
+    assert_eq!(dropped["result"]["dropped"], true, "response: {}", dropped);
+
+    let snap = snapshot_response(&mut worker, "BpDrop");
+    assert_eq!(snap["ok"], false, "response: {}", snap);
+    assert_eq!(
+        snap["error"]["code"], "STRUCTURE_NOT_FOUND",
+        "response: {}",
+        snap
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn drop_structure_of_an_unknown_name_reports_false_and_keeps_others() {
+    let mut worker = common::spawn_worker();
+    create_tree(&mut worker, TREE_NAME);
+
+    let dropped = drop_structure(&mut worker, "Missing");
+    assert_eq!(dropped["ok"], true, "response: {}", dropped);
+    assert_eq!(dropped["result"]["dropped"], false, "response: {}", dropped);
+
+    take_snapshot_data(&mut worker, TREE_NAME);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn drop_structure_without_a_name_is_refused_and_changes_nothing() {
+    let mut worker = common::spawn_worker();
+    create_tree(&mut worker, TREE_NAME);
+
+    let resp = common::send_receive(
+        &mut worker,
+        r#"{"id":"drop","op":"drop_structure","params":{}}"#,
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(parsed["ok"], false, "response: {}", resp);
+    assert_eq!(
+        parsed["error"]["code"], "MISSING_PARAM",
+        "response: {}",
+        resp
+    );
+
+    take_snapshot_data(&mut worker, TREE_NAME);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn drop_structure_then_restore_under_the_same_name_succeeds() {
+    let mut worker = common::spawn_worker();
+    build_three_node_chain(&mut worker);
+    let data = take_snapshot_data(&mut worker, TREE_NAME);
+
+    let first: serde_json::Value = serde_json::from_str(&restore_under(
+        &mut worker,
+        "Copy",
+        "unilevel",
+        data.clone(),
+    ))
+    .unwrap();
+    assert_eq!(first["ok"], true, "first restore: {}", first);
+
+    let dropped = drop_structure(&mut worker, "Copy");
+    assert_eq!(dropped["result"]["dropped"], true, "response: {}", dropped);
+
+    let second: serde_json::Value =
+        serde_json::from_str(&restore_under(&mut worker, "Copy", "unilevel", data)).unwrap();
+    assert_eq!(second["ok"], true, "second restore: {}", second);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn drop_structure_leaves_the_loaded_plan_in_place() {
+    let mut worker = common::spawn_worker();
+    load_test_plan(&mut worker);
+    build_three_node_chain(&mut worker);
+
+    let dropped = drop_structure(&mut worker, TREE_NAME);
+    assert_eq!(dropped["result"]["dropped"], true, "response: {}", dropped);
+    build_three_node_chain(&mut worker);
+
+    let snap =
+        r#"{"rank":"member","personal_volume":100.0,"status":"active","has_order_in_period":true}"#;
+    let params = format!(
+        r#"{{"structure":"{tree}","snapshots":{{"{root}":{snap},"{child}":{snap},"{gc}":{snap}}},"volume":[{{"source_id":"{gc}","cv_amount":100.0}}]}}"#,
+        tree = TREE_NAME,
+        root = ROOT,
+        child = CHILD,
+        gc = GRANDCHILD,
+        snap = snap,
+    );
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"calc","op":"calculate_unilevel","params":{}}}"#,
+            params
+        ),
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(parsed["ok"], true, "calculate failed: {}", resp);
+    let plan_json: serde_json::Value = serde_json::from_str(TEST_PLAN_JSON).unwrap();
+    assert_eq!(
+        parsed["result"]["plan"],
+        serde_json::json!({
+            "name": plan_json["name"],
+            "version": plan_json["version"],
+            "hash": expected_plan_hash(TEST_PLAN_JSON),
+        }),
+        "the plan identity changed across the drop: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn streamline_enrols_again_after_its_last_stream_was_destroyed() {
+    let mut worker = common::spawn_worker();
+    for (id, req) in [
+        (
+            "c",
+            r#"{"id":"c","op":"create_streamline","params":{"structure":"Gone","assignment_mode":"sponsor_stream","freeze_on_demotion":false,"timestamp":1000}}"#,
+        ),
+        (
+            "a1",
+            r#"{"id":"a1","op":"streamline_add_member","params":{"structure":"Gone","user_id":"00000000-0000-0000-0000-000000000011","sponsor_id":"00000000-0000-0000-0000-000000000099","timestamp":1001}}"#,
+        ),
+        (
+            "u",
+            r#"{"id":"u","op":"streamline_update_allowance","params":{"structure":"Gone","user_id":"00000000-0000-0000-0000-000000000011","total_allowed":0,"timestamp":1002}}"#,
+        ),
+    ] {
+        let resp = common::send_receive(&mut worker, req);
+        assert!(resp.contains(r#""ok":true"#), "{} failed: {}", id, resp);
+    }
+
+    let resp = common::send_receive(
+        &mut worker,
+        r#"{"id":"a2","op":"streamline_add_member","params":{"structure":"Gone","user_id":"00000000-0000-0000-0000-000000000012","sponsor_id":"00000000-0000-0000-0000-000000000011","timestamp":1003}}"#,
+    );
+    assert!(
+        resp.contains(r#""ok":true"#) && resp.contains(r#""stream_id":2"#),
+        "expected the member seated in a new stream 2, got: {}",
+        resp
     );
 
     drop(worker.stdin.take());

@@ -95,6 +95,36 @@ pub enum SnapshotConsistencyError {
     #[error("root names node slot {slot}; that slot is a tombstone")]
     RootTombstoned { slot: usize },
 
+    #[error(
+        "{field} on node slot {slot} names node slot {target}; {reverse_field} on node slot {target} does not name node slot {slot}"
+    )]
+    EdgeNotReciprocated {
+        field: &'static str,
+        slot: usize,
+        target: usize,
+        reverse_field: &'static str,
+    },
+
+    #[error("{field} on node slot {slot} names node slot {target} more than once")]
+    EdgeRepeated {
+        field: &'static str,
+        slot: usize,
+        target: usize,
+    },
+
+    #[error("the arena names no root; its live node count is {live_count}")]
+    RootMissing { live_count: usize },
+
+    #[error("node slot {slot} holds {user_id} and names no parent; root names node slot {root}")]
+    ParentlessNodeNotRoot {
+        slot: usize,
+        user_id: Uuid,
+        root: usize,
+    },
+
+    #[error("the sponsor chain from node slot {start} reaches node slot {revisited} twice")]
+    SponsorChainRevisits { start: usize, revisited: usize },
+
     #[error("the child slot map names node slot {slot}; the arena holds {node_count} slots")]
     ChildSlotOutOfRange { slot: usize, node_count: usize },
 
@@ -136,6 +166,13 @@ pub enum SnapshotConsistencyError {
         width: u8,
     },
 
+    #[error("node slot {slot} lists children {children:?}; its child slots hold {slotted:?}")]
+    ChildrenDisagreeWithSlots {
+        slot: usize,
+        children: Vec<usize>,
+        slotted: Vec<usize>,
+    },
+
     #[error("the tree declares a width of {width}; a matrix width is at least 2")]
     MatrixWidthTooSmall { width: u8 },
 
@@ -168,6 +205,15 @@ pub enum SnapshotConsistencyError {
         board_id: Uuid,
         found: usize,
         expected: usize,
+    },
+
+    #[error(
+        "board {board_id} has position {open_position} open and position {occupied_position} occupied"
+    )]
+    BoardOccupantAboveOpening {
+        board_id: Uuid,
+        open_position: usize,
+        occupied_position: usize,
     },
 
     #[error("the boards map files board {board_id} under key {key}")]

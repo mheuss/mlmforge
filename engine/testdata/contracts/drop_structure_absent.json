@@ -1,0 +1,13 @@
+{
+    "description": "drop_structure on a name the worker does not hold succeeds and reports that nothing was dropped",
+    "request": {
+        "id": "ds-absent",
+        "op": "drop_structure",
+        "params": {"structure": "missing"}
+    },
+    "expected_response": {
+        "id": "ds-absent",
+        "ok": true,
+        "result": {"dropped": false}
+    }
+}

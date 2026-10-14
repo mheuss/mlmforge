@@ -35,6 +35,7 @@ Use-cases for the Network Engine bounded context.
 - [UC-NET-029: Refusing a projection that arrives out of order](#uc-net-029-refusing-a-projection-that-arrives-out-of-order)
 - [UC-NET-030: Loading a tree whose store may be one event behind its stream](#uc-net-030-loading-a-tree-whose-store-may-be-one-event-behind-its-stream)
 - [UC-NET-031: Recovering a tree stuck behind an event that cannot apply](#uc-net-031-recovering-a-tree-stuck-behind-an-event-that-cannot-apply)
+- [UC-NET-032: Start a structure over in the same worker](#uc-net-032-start-a-structure-over-in-the-same-worker)
 
 ---
 
@@ -428,9 +429,9 @@ go test ./internal/config/ && (cd engine && cargo test --test config_width_contr
 **Added:** Unreleased (HEU-534, refined HEU-566)
 **Files:** `internal/networkengine/tree_loader.go`, `internal/networkengine/tree_loader_errors.go`
 
-**Problem:** `LoadTree` replays a persisted tree into the Rust worker one node at a time, but the worker has no operation to remove a structure — so a replay that fails partway leaves a half-built tree that cannot be dropped or retried until the process restarts.
+**Problem:** `LoadTree` replays a persisted tree into the Rust worker one node at a time. A replay that fails partway leaves a half-built tree. A retry under the same name needs the structure dropped and rebuilt in full.
 
-**Solution:** Prove the input is reconstructable *before* the first call to the external system, in two phases split by what they read. `validateTreeConfig` checks configuration — tree type, matrix width and spillover — and reads no rows, so it runs before the store query and a misconfigured load costs no query. `validateNodes` then checks the node set — empty user IDs, duplicate IDs, exactly one depth-0 root, root parent and position, self-references, reference existence, depth consistency, slot occupancy, no position on a unilevel node — and `orderForReplay` proves a workable order exists. Only then does the first mutation happen. Replay failures also report how far they got, as a typed error carrying the stage the load reached and how many placements the engine acknowledged. Every exit after the create says what survived it, not just the replay loop. A failed `AddRoot` says the tree was created and root placement did not report success. The worker has no operation to drop the structure (HEU-557). Only a process restart clears it.
+**Solution:** Prove the input is reconstructable *before* the first call to the external system, in two phases split by what they read. `validateTreeConfig` checks configuration — tree type, matrix width and spillover — and reads no rows, so it runs before the store query and a misconfigured load costs no query. `validateNodes` then checks the node set — empty user IDs, duplicate IDs, exactly one depth-0 root, root parent and position, self-references, reference existence, depth consistency, slot occupancy, no position on a unilevel node — and `orderForReplay` proves a workable order exists. Only then does the first mutation happen. Replay failures also report how far they got, as a typed error carrying the stage the load reached and how many placements the engine acknowledged. Every exit after the create says what survived it, not just the replay loop. A failed `AddRoot` says the tree was created and root placement did not report success. A caller that wants to retry in the same worker drops the structure first, under the conditions in UC-NET-032.
 
 **Usage:**
 ```go
@@ -462,9 +463,11 @@ for _, tree := range trees {
 		return err
 
 	case errors.As(err, &incomplete):
-		// The structure may be partly built. Nothing can drop it. Stage and
-		// Confirmed are what an operator reads to size the damage.
-		return fmt.Errorf("restart required, %s stopped at %s with %d of %d non-root placements acknowledged: %w",
+		// The structure may be partly built. After a refusal past the create
+		// stage, drop it, and load again once the cause has changed
+		// (UC-NET-032). If the transport failed, start a new worker. Stage
+		// and Confirmed are what an operator reads to size the damage.
+		return fmt.Errorf("%s stopped at %s with %d of %d non-root placements acknowledged: %w",
 			incomplete.TreeID, incomplete.Stage, incomplete.Confirmed, incomplete.Total, err)
 
 	default:
@@ -473,7 +476,7 @@ for _, tree := range trees {
 }
 ```
 
-**Notes:** The pattern generalises to any external system with no undo: a worker without a delete op, an API without a rollback, a third party that charges on first call. Two things make it worth the duplication of engine rules in Go. First, the validation must mirror what the remote actually enforces, so it is only as good as that audit — `TestTreePersistence_RejectedTreeLeavesEngineLoadable` proves the guarantee against the real worker rather than a stub, and asserts a *corrected retry succeeds*, which is the part no fake can demonstrate. Second, the mirroring drifts silently if the remote adds a rule; the Rust side keeps its own runtime checks, so preflight is a second line of defence rather than a replacement. Deliberately not covered: divergence between what the store recorded and what the remote actually did — both can be internally consistent, so no read-side validation can detect it. HEU-553 closed the write-side contract for placement; removal still diverges (HEU-582), and the type-label trust boundary (HEU-554) remains open. Related: UC-NET-013, which supplies the ordering half.
+**Notes:** The pattern generalises to any external system with no undo: an engine that cannot undo a lost reply, an API without a rollback, a third party that charges on first call. Two things make it worth the duplication of engine rules in Go. First, the validation must mirror what the remote actually enforces, so it is only as good as that audit — `TestTreePersistence_RejectedTreeLeavesEngineLoadable` proves the guarantee against the real worker rather than a stub, and asserts a *corrected retry succeeds*, which is the part no fake can demonstrate. Second, the mirroring drifts silently if the remote adds a rule; the Rust side keeps its own runtime checks, so preflight is a second line of defence rather than a replacement. Deliberately not covered: divergence between what the store recorded and what the remote actually did — both can be internally consistent, so no read-side validation can detect it. HEU-553 closed the write-side contract for placement; removal still diverges (HEU-582), and the type-label trust boundary (HEU-554) remains open. Related: UC-NET-013, which supplies the ordering half.
 
 One ordering trap the split exists to avoid: an empty-input short circuit placed above the configuration checks hides configuration errors for as long as the input stays empty. HEU-566 found `LoadTree(ctx, id, "matrix")` with no `WithMatrixParams`, and `LoadTree(ctx, id, "streamline")` with an unsupported type, both returning nil on a zero-row tree. Configuration describes the structure, not its contents, so its validity never depends on row count. Put the config phase above both the query and the empty check.
 
@@ -1038,7 +1041,7 @@ if alreadyProjected {
 
 **Problem:** A caller that retries a `TreeWriter.Load` failure has to tell an infrastructure blip apart from a failure that will fail the same way forever. The error kind alone does not carry enough to decide.
 
-**Solution:** `treeLoadRetryable` allowlists rather than denylists. A cause nobody enumerated defaults to stopping. It retries one case: a `TreeLoadRejectedError` whose `Kind` is `TreeLoadStoreReadFailed` and whose wrapped error `pgconn.SafeToRetry` reports never reached the server. Everything else stops. Cancellation is checked first and separately. `TreeLoadStoreReadFailed` covers a refused connection, a cancelled context and a row that will not decode. Only the first of those can succeed on a second attempt. A `TreeLoadIncompleteError` is never retried at all. The structure may exist in the engine. A retry may then report `TREE_EXISTS`. The only real remedy is a process restart. `tree load` goes through `TreeWriter.Load`. Its read of version 1 and its first read of the projected version also fail as `TreeLoadStoreReadFailed`. Both come before any engine call.
+**Solution:** `treeLoadRetryable` allowlists rather than denylists. A cause nobody enumerated defaults to stopping. It retries one case: a `TreeLoadRejectedError` whose `Kind` is `TreeLoadStoreReadFailed` and whose wrapped error `pgconn.SafeToRetry` reports never reached the server. Everything else stops. Cancellation is checked first and separately. `TreeLoadStoreReadFailed` covers a refused connection, a cancelled context and a row that will not decode. Only the first of those can succeed on a second attempt. A `TreeLoadIncompleteError` is never retried at all. The structure may exist in the engine. A retry in the same worker then reports `TREE_EXISTS` unless the structure is dropped first. The CLI never drops and retries. Each command starts its own worker, and a failed load ends with it. `tree load` goes through `TreeWriter.Load`. Its read of version 1 and its first read of the projected version also fail as `TreeLoadStoreReadFailed`. Both come before any engine call.
 
 **Usage:**
 ```go
@@ -1084,7 +1087,7 @@ if res.ProjectionErr != nil {
 }
 ```
 
-**Notes:** A writer makes one write per tree per engine. Each write rebuilds its tree in the engine. The worker cannot drop a structure. A second write through the same engine is refused with `TREE_EXISTS`. Build a new writer over a new worker for each write, as the CLI does. The lock is cheap only because a CLI invocation lasts seconds. The scratch engine is what makes several HEU-789 and HEU-813 conclusions hold. It is also what lets HEU-777's repair redeliver a removal to an engine rebuilt from the store. A long-lived service re-examines both. The engine check shares its rules with the mutation through Rust `check_*` functions the mutating functions call first. Nothing is copied into Go. See `docs/development/network-engine.md`, "Tree Writes Go Through `TreeWriter`". To test a writer that loses its lock partway through, see `lockKillingEvents`, `lockKillingLoadStore` and `terminateTreeLockHolder` in `internal/networkengine/tree_writer_lost_lock_integration_test.go`.
+**Notes:** A writer makes one write per tree per engine. Each write rebuilds its tree in the engine. A second write through the same engine is refused with `TREE_EXISTS`. Build a new writer over a new worker for each write, as the CLI does. The lock is cheap only because a CLI invocation lasts seconds. The scratch engine is what makes several HEU-789 and HEU-813 conclusions hold. It is also what lets HEU-777's repair redeliver a removal to an engine rebuilt from the store. A long-lived service re-examines both. The engine check shares its rules with the mutation through Rust `check_*` functions the mutating functions call first. Nothing is copied into Go. See `docs/development/network-engine.md`, "Tree Writes Go Through `TreeWriter`". To test a writer that loses its lock partway through, see `lockKillingEvents`, `lockKillingLoadStore` and `terminateTreeLockHolder` in `internal/networkengine/tree_writer_lost_lock_integration_test.go`.
 
 ---
 
@@ -1189,3 +1192,40 @@ if res.ProjectionErr != nil {
 ```
 
 **Notes:** A rejected event did not happen. Rejecting a removal leaves the user in the tree. Version 1 still sets the tree's shape after its root is rejected. Build a new writer over a new worker for each call, as UC-NET-027 says for writes. A write or load that meets a pending rejection refuses with `RejectionPendingError`. Related: UC-NET-027, UC-NET-030.
+
+---
+
+### UC-NET-032: Start a structure over in the same worker
+
+**Added:** Unreleased
+**Files:** `internal/networkengine/structure_dropper.go`, `internal/networkengine/engine_client.go`, `engine/network-engine-worker/src/handlers/tree.rs`
+
+**Problem:** A structure left partly built by a load or replay that the engine refused blocks a retry under its name.
+
+**Solution:** `DropStructure` removes the named structure of any kind through `drop_structure` and answers whether it existed. Absence is not an error, so a caller can drop unconditionally before a rebuild without first asking whether the structure exists. The loaded plan stays in place.
+
+**Usage:**
+```go
+_, err := loader.LoadTree(ctx, treeID, treeType)
+
+var incomplete *networkengine.TreeLoadIncompleteError
+var refused *networkengine.EngineError
+if errors.As(err, &incomplete) && incomplete.Stage != networkengine.TreeLoadStageCreate &&
+	errors.As(err, &refused) {
+	// The engine refused a call after this load created the structure.
+	// The worker and transport are intact, and this caller owns the name.
+	// Drop the partial structure. Load again only once the cause has
+	// changed, because the engine refuses the same input the same way.
+	if _, derr := dropper.DropStructure(ctx, treeID); derr != nil {
+		return errors.Join(err, derr)
+	}
+}
+return err
+```
+
+**Notes:**
+- Take `StructureDropper`, not a wider interface. The `TreeMutator` family does not carry it.
+- Preflight is meant to catch engine refusals before the create. This path should be rare.
+- A drop recovers only from an engine refusal. After a timeout, a cancellation or a worker crash, the client is closed or the worker is gone. Start a new worker instead. It starts empty.
+- Hold the client exclusively from the drop to the end of the rebuild. Nothing else enforces that.
+- The caller owns the structure name, not whatever an earlier holder built under it. A refusal at the create stage built nothing. A `TREE_EXISTS` there means another structure already held the name, so do not drop it.

@@ -617,15 +617,9 @@ func TestTreePersistence_DuplicateDeliveryConverges(t *testing.T) {
 	assert.Len(t, downline, 1, "redelivery added no second engine node")
 }
 
-// TestTreePersistence_RejectedTreeLeavesEngineLoadable proves the operational
-// claim preflight exists for, which no stub can: after a tree is refused, the
-// worker is clean enough that a corrected load succeeds.
-//
-// The unit tests assert "preflight failure must make no engine calls" against
-// a fake mutator. That pins the Go-side mechanism but not the consequence. If
-// CreateMatrixTree ever leaked ahead of validation, the retry would hit
-// TREE_EXISTS and the tree would be unloadable until the process restarted —
-// the worker has no operation to drop a structure (HEU-557).
+// TestTreePersistence_RejectedTreeLeavesEngineLoadable proves that after a
+// tree is refused, a corrected load succeeds in the same worker without a
+// drop.
 func TestTreePersistence_RejectedTreeLeavesEngineLoadable(t *testing.T) {
 	_, treeStore, engine, _ := newIntegrationDeps(t)
 	ctx := context.Background()

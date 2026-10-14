@@ -51,7 +51,7 @@ import (
 // format. Two other numbers nearby are also called a version: `detailVersion`
 // in commission_detail.go, and the plan schema version in
 // schemas/compensation-plan.schema.json. None is coupled to the others.
-const expectedProtocolVersion = 11
+const expectedProtocolVersion = 12
 
 // maxPingResponseInError bounds how much of an unexpected ping response is
 // quoted back in an error. The response is wire data and is otherwise
@@ -315,6 +315,20 @@ func (c *EngineClient) CreateMatrixTree(ctx context.Context, structure string, w
 		"spillover": spillover,
 	})
 	return err
+}
+
+// DropStructure removes a named structure and reports whether it existed.
+func (c *EngineClient) DropStructure(ctx context.Context, structure string) (bool, error) {
+	r, err := callInto[struct {
+		Dropped *bool `json:"dropped"`
+	}](c, ctx, "drop_structure", map[string]string{"structure": structure})
+	if err != nil {
+		return false, err
+	}
+	if r.Dropped == nil {
+		return false, errors.New(`drop_structure: response "dropped" is absent or null`)
+	}
+	return *r.Dropped, nil
 }
 
 // --- Tree mutation methods ---

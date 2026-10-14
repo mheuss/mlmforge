@@ -6435,7 +6435,7 @@ fn restore_over_an_existing_structure_is_refused_and_leaves_it_unchanged() {
     assert_eq!(
         parsed["error"]["message"],
         format!(
-            "structure '{}' already exists; restore_snapshot does not replace an existing structure",
+            "structure '{}' already exists; drop it with drop_structure before restoring",
             TREE_NAME
         ),
         "response: {}",

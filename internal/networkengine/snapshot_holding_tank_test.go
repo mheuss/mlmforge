@@ -24,7 +24,7 @@ func TestSnapshotStore_CarriesAMatrixHoldingTankThroughARestore(t *testing.T) {
 	require.NoError(t, err)
 	before, err := first.GetHoldingTank(ctx, tree, "")
 	require.NoError(t, err)
-	require.Len(t, before, 2, "the removal left the tank empty, so a round trip would prove nothing")
+	require.Len(t, before, 2, "expected removing %s to put %s and %s in the holding tank", a, a, b)
 
 	taken, err := first.TakeSnapshot(ctx, tree)
 	require.NoError(t, err)

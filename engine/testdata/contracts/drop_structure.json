@@ -1,0 +1,16 @@
+{
+    "description": "drop_structure removes an existing structure and reports that it existed",
+    "setup": [
+        {"id": "s-1", "op": "create_tree", "params": {"structure": "test", "tree_type": "unilevel"}}
+    ],
+    "request": {
+        "id": "ds-1",
+        "op": "drop_structure",
+        "params": {"structure": "test"}
+    },
+    "expected_response": {
+        "id": "ds-1",
+        "ok": true,
+        "result": {"dropped": true}
+    }
+}

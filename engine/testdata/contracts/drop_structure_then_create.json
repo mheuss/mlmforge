@@ -1,0 +1,17 @@
+{
+    "description": "a name freed by drop_structure can be created again in the same worker",
+    "setup": [
+        {"id": "s-1", "op": "create_tree", "params": {"structure": "test", "tree_type": "unilevel"}},
+        {"id": "s-2", "op": "drop_structure", "params": {"structure": "test"}}
+    ],
+    "request": {
+        "id": "ds-recreate",
+        "op": "create_tree",
+        "params": {"structure": "test", "tree_type": "unilevel"}
+    },
+    "expected_response": {
+        "id": "ds-recreate",
+        "ok": true,
+        "result": {"created": true}
+    }
+}

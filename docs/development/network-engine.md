@@ -857,11 +857,11 @@ Unilevel carries no position. It appends to the parent's child list. Preflight r
 
 ### Why preflight validates everything before mutating anything
 
-The worker has **no operation to remove a structure** (HEU-557). A load that fails partway leaves the tree stuck until the process restarts. So `LoadTree` proves a load is sound before the first engine call. Its replay failures return `TreeLoadIncompleteError`. That error carries the stage the load reached and how many placements the engine acknowledged.
+A load that fails partway leaves a partly built tree in the worker. The engine may refuse a call after the create stage while the worker stays usable. A caller may then drop the tree with `drop_structure`. The engine refuses the same input the same way. A reload succeeds only once the cause has changed. UC-NET-032 covers this. Preflight is meant to catch engine refusals before the create. This path should be rare. After a timeout, a cancellation or a crash, the client is closed or the worker is gone. Starting over then means a new worker. The CLI never drops. Each command starts its own worker, and a failed load ends with it. Either way, a partial load costs a full rebuild. So `LoadTree` proves a load is sound before the first engine call. Its replay failures return `TreeLoadIncompleteError`. That error carries the stage the load reached and how many placements the engine acknowledged.
 
 `Confirmed` counts acknowledgements, not what landed. At `TreeLoadStageNodes` the call that failed may also have taken effect, with the reply lost rather than the work undone. The structure then holds at least `Confirmed` placements and possibly one more. That carve-out does not apply when `Err` is nil, which means the load stopped before the call was sent. At the create stage all three counters are zero. At the root stage, `Total` carries the non-root placement count the load set out to make. The other two counters are zero. The operation in doubt is the root placement, which none of the three counters counts.
 
-The loader cannot tell which happened. It holds a `TreeMutator`. That interface carries only mutations. Nothing on this path can read back whether the placement landed. HEU-557 would supply a remedy rather than an answer: being able to drop the structure lets a caller start over without knowing. HEU-777 and HEU-784 are the same lost-reply shape on the removal path rather than the replay path.
+The loader cannot tell which happened. It holds a `TreeMutator`. That interface carries only mutations. Nothing on this path can read back whether the placement landed. A caller does not need that answer to start over. After a lost reply, starting over means a new worker. A new worker starts empty. HEU-777 and HEU-784 are the same lost-reply shape on the removal path rather than the replay path.
 
 Preflight runs in two phases with different inputs. `validateTreeConfig` checks the tree type, and for a matrix the width and spillover. It reads no rows, so it runs before the store query. A misconfigured load costs no query. `validateNodes` runs after the query and proves the node set is structurally consistent.
 
@@ -1054,6 +1054,16 @@ payload has to exceed both the channel and the pipe.
 Three lines here were each deletable with the whole suite green until tests were
 written specifically to fail without them. A shutdown path that is only
 exercised by well-behaved workers is not exercised at all.
+
+## Reply Errors Do Not Close The Transport
+
+Inside a call, `StdioTransport` marks itself closed only when the call's context
+ends. An unmarshal failure or a response-ID mismatch returns an error and leaves
+the transport open. The worker may already have run the request. The stream may
+now be out of step.
+
+So an error that is not an `*EngineError` says nothing about whether the client
+is usable. Only an `*EngineError` comes from a reply that was read in step.
 
 ## The Three Consuming Branches In The Level Walk
 
@@ -1351,17 +1361,20 @@ Moving `PROTOCOL_VERSION` means changing every site in one commit. A partial
 move rejects a worker that is otherwise correct, because `engine_client.go`
 compares the version by exact equality.
 
-It was six numeric literals across five files plus two prose blocks when this
-was written. Treat that as a starting point rather than a checklist. The count
+Treat the sites below as a starting point rather than a checklist. The list
 goes stale the first time a site is added or dropped, and it will do so quietly,
-because nothing checks this paragraph against the tree.
+because nothing checks the list against the tree.
 
 The literals live in `network-engine-worker/src/protocol.rs`,
 `network-engine-worker/tests/worker_integration.rs`,
 `engine/testdata/contracts/ping.json`, `internal/networkengine/engine_client.go`,
-and more than once in `internal/networkengine/transport_test.go`. The prose is the
-`Moved to N by ...` block above the Go constant, plus the ticket list in
-`content/design-rationale/017-commission-calculation-architecture.md` when the
+and more than once in `internal/networkengine/transport_test.go`.
+
+The version history lives in the Version allocation table of
+`contracts/ndjson-engine-protocol.md` in the hub repository, not this one. The
+`Moved to N by ...` block above the Go constant is not extended. The prose to
+check is the ticket list in
+`content/design-rationale/017-commission-calculation-architecture.md`, when the
 change is one that note tracks.
 
 The other `protocol_version` literals in `transport_test.go` are stub-worker

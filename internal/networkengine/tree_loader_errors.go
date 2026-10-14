@@ -83,8 +83,7 @@ const (
 )
 
 // TreeLoadIncompleteError reports a load that failed after the engine was
-// called. The structure may be partly built, and the worker has no operation
-// to drop it (HEU-557), so a process restart is the only remedy.
+// called. The structure may be partly built.
 //
 // Confirmed and Total count non-root placements. Attempted is the one-based
 // index the message carries, so within TreeLoadStageNodes Confirmed is

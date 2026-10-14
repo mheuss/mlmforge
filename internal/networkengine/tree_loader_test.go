@@ -820,10 +820,7 @@ func (m *failAfterNMutator) AddNodeAt(ctx context.Context, structure, userID, pa
 }
 
 // TestTreeLoader_ReplayFailureReportsProgress pins the counter in the replay
-// failure message. The worker has no operation to drop a structure (HEU-557),
-// so a replay that dies partway leaves the tree stuck until the process
-// restarts, and how far it got is the only signal an operator has for deciding
-// whether to restart.
+// failure message.
 //
 // The counter is 1-based over non-root nodes: the root replays through AddRoot
 // before the loop, so it is excluded from both the index and the total.

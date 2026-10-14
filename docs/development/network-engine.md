@@ -350,7 +350,7 @@ Boards order by `(created_at, seq)`. The engine assigns `seq` from `next_board_s
 
 Add, remove and compress check their preconditions, then cycle every full board, oldest first, each with a fresh cascade budget. Dissolve refuses a full board with `BOARD_FULL`, removes its board, and then drains. `max_cascade_depth` limits recursion depth within one cascade, so a cascade can leave a board full. A later operation that passes its preconditions pays it. Restore never drains.
 
-Remove and compress also cycle the member's own board once, if it is full, then take the member off whatever board they are on, or out of the displaced pool. If that cycle re-enters the member and fills a board, the removal takes them back off it, so it is no longer full and is not paid.
+Remove and compress also cycle the member's own board once, if it is full, then take the member off whatever board they are on, or out of the displaced pool. If that cycle re-enters the member onto a board and the cascade bound leaves that board full, the removal takes them back off it, so it is no longer full and is not paid.
 
 The displaced member pool (`displaced_members`) holds members removed via dissolution or cycling without re-entry. They are placed before new enrollees in `add_member`. `remove_member` takes a displaced member out of the pool. The `place_displaced_members` method must push unplaced members back to the pool if no boards have openings. Never propagate errors that would drop them.
 

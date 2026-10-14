@@ -395,25 +395,29 @@ impl BoardPlanEngine {
             return Err(BoardPlanError::MemberAwaitingReassignment(user_id));
         }
 
-        // Bootstrap: first member auto-registers the sponsor.
-        if self.member_boards.is_empty() && self.sponsor_map.is_empty() {
-            self.sponsor_map.insert(user_id, sponsor_id);
-        } else {
-            // Validate: sponsor must be an active participant. Check
-            // member_boards (on a board) or displaced_members (awaiting
-            // reassignment). The sponsor_map is permanent enrollment
-            // data and can't be used for validation because removed
-            // members remain in it for re-entry routing.
-            if !self.member_boards.contains_key(&sponsor_id)
-                && !self.displaced_members.contains(&sponsor_id)
-            {
-                return Err(BoardPlanError::SponsorNotFound(sponsor_id));
-            }
-            self.sponsor_map.insert(user_id, sponsor_id);
+        // The first member's sponsor is not enrolled, so only later adds
+        // check it.
+        let bootstrap = self.member_boards.is_empty() && self.sponsor_map.is_empty();
+        // Validate: sponsor must be an active participant. Check
+        // member_boards (on a board) or displaced_members (awaiting
+        // reassignment). The sponsor_map is permanent enrollment
+        // data and can't be used for validation because removed
+        // members remain in it for re-entry routing.
+        if !bootstrap
+            && !self.member_boards.contains_key(&sponsor_id)
+            && !self.displaced_members.contains(&sponsor_id)
+        {
+            return Err(BoardPlanError::SponsorNotFound(sponsor_id));
         }
+        if self.boards.is_empty() {
+            return Err(BoardPlanError::NoBoardsAvailable);
+        }
+        self.sponsor_map.insert(user_id, sponsor_id);
+
+        let mut cycle_events = Vec::new();
+        self.drain_full_boards(timestamp, &mut cycle_events);
 
         // Place displaced members first.
-        let mut cycle_events = Vec::new();
         self.place_displaced_members(timestamp, &mut cycle_events);
 
         // Find the board to place this member on.
@@ -477,6 +481,17 @@ impl BoardPlanEngine {
             .min_by_key(|b| (b.created_at, b.seq))
             .map(|b| b.id)
             .ok_or(BoardPlanError::NoBoardsAvailable)
+    }
+
+    /// Cycles every board that is full when called, oldest first, each with
+    /// a fresh cascade budget.
+    fn drain_full_boards(&mut self, timestamp: i64, cycle_events: &mut Vec<CycleEvent>) {
+        let mut full: Vec<&Board> = self.boards.values().filter(|b| b.is_full()).collect();
+        full.sort_by_key(|b| (b.created_at, b.seq));
+        let full: Vec<Uuid> = full.into_iter().map(|b| b.id).collect();
+        for board_id in full {
+            self.process_cycles(board_id, timestamp, cycle_events, 0);
+        }
     }
 
     /// Drains displaced members and places each in the oldest board
@@ -2060,14 +2075,9 @@ mod tests {
         let fallback_id = fallback_board.id;
         engine.boards.insert(fallback_id, fallback_board);
 
-        // New member with sponsor whose board is full.
-        let member = test_uuid(4);
-        let result = engine.add_member(member, sponsor, 4000).unwrap();
-
         // SponsorBoard mode tries sponsor's board first, but it's
         // full, so it falls back to the oldest board with an opening.
-        assert_eq!(result.board_id, fallback_id);
-        assert_eq!(result.position, 0);
+        assert_eq!(engine.find_placement_board(sponsor), Ok(fallback_id));
     }
 
     // --- remove_member tests ---
@@ -2479,6 +2489,75 @@ mod tests {
             !all_cycle_events.is_empty(),
             "cycles should still fire, just bounded per add"
         );
+    }
+
+    /// A 2x1 SponsorBoard engine at cascade bound 1 whose last add left one
+    /// board full. Returns the engine and that board's id.
+    fn engine_with_a_pending_full_board() -> (BoardPlanEngine, Uuid) {
+        let config = BoardPlanConfig {
+            max_cascade_depth: NonZeroU32::new(1).unwrap(),
+            ..test_config_sponsor_board()
+        };
+        let mut engine = BoardPlanEngine::new(2, 1, config, 0).unwrap();
+        engine.add_member(test_uuid(1), test_uuid(1), 1).unwrap();
+        engine.add_member(test_uuid(2), test_uuid(1), 2).unwrap();
+        engine.add_member(test_uuid(3), test_uuid(1), 3).unwrap();
+        engine.add_member(test_uuid(4), test_uuid(3), 4).unwrap();
+        engine.add_member(test_uuid(5), test_uuid(3), 5).unwrap();
+        let pending = engine.get_member_board(test_uuid(2)).unwrap();
+        assert!(
+            engine.get_board(pending).unwrap().is_full(),
+            "the cascade bound should have left {pending} full"
+        );
+        (engine, pending)
+    }
+
+    #[test]
+    fn a_board_left_full_at_the_bound_cycles_on_the_next_add() {
+        let (mut engine, pending) = engine_with_a_pending_full_board();
+
+        let result = engine.add_member(test_uuid(6), test_uuid(4), 6).unwrap();
+
+        assert_eq!(
+            result
+                .cycle_events
+                .first()
+                .map(|e| (e.board_id, e.cycled_member)),
+            Some((pending, test_uuid(2)))
+        );
+        assert!(
+            engine.get_board(pending).is_none(),
+            "the pending board should have split"
+        );
+    }
+
+    #[test]
+    fn a_refused_add_leaves_a_pending_board_full() {
+        let (mut engine, _) = engine_with_a_pending_full_board();
+        let before = serde_json::to_value(&engine).unwrap();
+
+        let err = engine
+            .add_member(test_uuid(6), test_uuid(99), 6)
+            .unwrap_err();
+
+        assert_eq!(err, BoardPlanError::SponsorNotFound(test_uuid(99)));
+        assert_eq!(serde_json::to_value(&engine).unwrap(), before);
+    }
+
+    #[test]
+    fn an_add_with_no_board_left_is_refused_before_it_changes_anything() {
+        let mut engine = BoardPlanEngine::new(2, 2, test_config(), 0).unwrap();
+        engine.add_member(test_uuid(1), test_uuid(1), 1).unwrap();
+        let board_id = engine.get_member_board(test_uuid(1)).unwrap();
+        engine.dissolve_board(board_id, 2).unwrap();
+        let before = serde_json::to_value(&engine).unwrap();
+
+        let err = engine
+            .add_member(test_uuid(2), test_uuid(1), 3)
+            .unwrap_err();
+
+        assert_eq!(err, BoardPlanError::NoBoardsAvailable);
+        assert_eq!(serde_json::to_value(&engine).unwrap(), before);
     }
 
     #[test]

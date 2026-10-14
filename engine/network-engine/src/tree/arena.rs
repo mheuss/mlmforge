@@ -31,7 +31,7 @@ impl Arena {
         }
     }
 
-    /// Prove every stored `NodeIndex` is in range and points at a live slot.
+    /// Prove every stored `NodeIndex` is in range and live, and that parent and child edges agree.
     pub(crate) fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
         let node_count = self.nodes.len();
 
@@ -188,6 +188,9 @@ impl Arena {
             }
         }
 
+        // Must run after the edge pass: it indexes nodes by edge target.
+        self.check_reciprocal("children", "parent", children_of, parent_of)?;
+
         Ok(())
     }
 
@@ -336,6 +339,55 @@ impl Arena {
                 slot,
                 target: target.0,
             });
+        }
+        Ok(())
+    }
+
+    /// Prove every edge listed downward is named back upward exactly once, and the reverse.
+    fn check_reciprocal(
+        &self,
+        down_field: &'static str,
+        up_field: &'static str,
+        down: fn(&Node) -> &[NodeIndex],
+        up: fn(&Node) -> Option<NodeIndex>,
+    ) -> Result<(), SnapshotConsistencyError> {
+        let mut listed: HashSet<(usize, usize)> = HashSet::new();
+        for (slot, node) in self.nodes.iter().enumerate() {
+            if node.user_id == Uuid::nil() {
+                continue;
+            }
+            for target in down(node) {
+                if !listed.insert((slot, target.0)) {
+                    return Err(SnapshotConsistencyError::EdgeRepeated {
+                        field: down_field,
+                        slot,
+                        target: target.0,
+                    });
+                }
+                if up(&self.nodes[target.0]) != Some(NodeIndex(slot)) {
+                    return Err(SnapshotConsistencyError::EdgeNotReciprocated {
+                        field: down_field,
+                        slot,
+                        target: target.0,
+                        reverse_field: up_field,
+                    });
+                }
+            }
+        }
+        for (slot, node) in self.nodes.iter().enumerate() {
+            if node.user_id == Uuid::nil() {
+                continue;
+            }
+            if let Some(target) = up(node) {
+                if !listed.contains(&(target.0, slot)) {
+                    return Err(SnapshotConsistencyError::EdgeNotReciprocated {
+                        field: up_field,
+                        slot,
+                        target: target.0,
+                        reverse_field: down_field,
+                    });
+                }
+            }
         }
         Ok(())
     }
@@ -784,6 +836,14 @@ impl Arena {
             .map(|&child_idx| &self.nodes[child_idx.0])
             .collect()
     }
+}
+
+fn parent_of(node: &Node) -> Option<NodeIndex> {
+    node.parent
+}
+
+fn children_of(node: &Node) -> &[NodeIndex] {
+    &node.children
 }
 
 /// Generates shared UUID-accepting query methods that delegate to Arena.
@@ -1417,6 +1477,56 @@ mod tests {
         arena.tombstone(dead);
 
         assert!(arena.validate_restored().is_ok());
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_parent_edge_the_parent_does_not_list() {
+        let mut arena = arena_with_a_child(1);
+        arena.nodes[0].children.clear();
+
+        assert_eq!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::EdgeNotReciprocated {
+                field: "parent",
+                slot: 1,
+                target: 0,
+                reverse_field: "children",
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_child_edge_the_child_does_not_name() {
+        let mut arena = arena_with_a_child(1);
+        let leaf = arena.alloc_slot(make_node(test_uuid(3), Some(NodeIndex(1)), 2));
+        arena.index.insert(test_uuid(3), leaf);
+        arena.nodes[1].children.push(leaf);
+        arena.nodes[0].children.push(leaf);
+
+        assert_eq!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::EdgeNotReciprocated {
+                field: "children",
+                slot: 0,
+                target: 2,
+                reverse_field: "parent",
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_child_listed_twice() {
+        let mut arena = arena_with_a_child(1);
+        arena.nodes[0].children.push(NodeIndex(1));
+
+        assert_eq!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::EdgeRepeated {
+                field: "children",
+                slot: 0,
+                target: 1,
+            })
+        );
     }
 
     #[test]

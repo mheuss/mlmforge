@@ -6241,6 +6241,34 @@ fn restore_rejects_a_binary_child_slot_past_the_end() {
 }
 
 #[test]
+fn restore_rejects_a_binary_child_its_parent_does_not_list() {
+    let mut worker = common::spawn_worker();
+    create_binary_tree(&mut worker, "BinEdge");
+    for req in [
+        r#"{"id":"e1","op":"add_root","params":{"structure":"BinEdge","user_id":"aaaaaaaa-0000-0000-0000-000000000001","enrolled_at":100}}"#,
+        r#"{"id":"e2","op":"add_node","params":{"structure":"BinEdge","user_id":"aaaaaaaa-0000-0000-0000-000000000002","parent_id":"aaaaaaaa-0000-0000-0000-000000000001","position":0,"sponsor_id":"aaaaaaaa-0000-0000-0000-000000000001","enrolled_at":200}}"#,
+    ] {
+        let resp = common::send_receive(&mut worker, req);
+        assert!(resp.contains(r#""ok":true"#), "setup failed: {}", resp);
+    }
+
+    let mut data = take_snapshot_data(&mut worker, "BinEdge");
+    data["arena"]["nodes"][0]["children"] = serde_json::json!([]);
+
+    let resp = restore_under(&mut worker, "BinEdge2", "binary", data);
+    assert_inconsistent(
+        &resp,
+        &[
+            "parent on node slot 1 names node slot 0",
+            "children on node slot 0 does not name node slot 1",
+        ],
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
 fn restore_rejects_a_matrix_slot_vector_of_the_wrong_width() {
     let mut worker = common::spawn_worker();
     create_matrix_tree(&mut worker, "MatTree");

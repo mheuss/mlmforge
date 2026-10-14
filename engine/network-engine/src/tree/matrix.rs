@@ -1119,6 +1119,23 @@ mod tests {
     }
 
     #[test]
+    fn validate_restored_rejects_a_child_its_parent_does_not_list() {
+        let (mut tree, child) = matrix_pair();
+        let root = tree.arena.root.expect("matrix_pair sets a root");
+        tree.arena.nodes[root.0].children.clear();
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::EdgeNotReciprocated {
+                field: "parent",
+                slot: child.0,
+                target: root.0,
+                reverse_field: "children",
+            })
+        );
+    }
+
+    #[test]
     fn validate_restored_rejects_a_width_below_two() {
         // The constructor rejects this; a restore does not run it. A width of
         // 1 is a chain, and add_node succeeds on it.

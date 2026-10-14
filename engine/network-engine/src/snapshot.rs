@@ -95,6 +95,23 @@ pub enum SnapshotConsistencyError {
     #[error("root names node slot {slot}; that slot is a tombstone")]
     RootTombstoned { slot: usize },
 
+    #[error(
+        "{field} on node slot {slot} names node slot {target}; {reverse_field} on node slot {target} does not name node slot {slot}"
+    )]
+    EdgeNotReciprocated {
+        field: &'static str,
+        slot: usize,
+        target: usize,
+        reverse_field: &'static str,
+    },
+
+    #[error("{field} on node slot {slot} names node slot {target} more than once")]
+    EdgeRepeated {
+        field: &'static str,
+        slot: usize,
+        target: usize,
+    },
+
     #[error("the child slot map names node slot {slot}; the arena holds {node_count} slots")]
     ChildSlotOutOfRange { slot: usize, node_count: usize },
 

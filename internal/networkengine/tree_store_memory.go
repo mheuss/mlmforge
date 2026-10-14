@@ -290,6 +290,18 @@ func (s *MemoryTreeStore) ProjectedVersion(ctx context.Context, treeID string) (
 	return version, found, nil
 }
 
+func (s *MemoryTreeStore) ProjectedRows(ctx context.Context, treeID string) (int64, bool, []TreeNodeRow, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, false, nil, err
+	}
+	version, found := s.projected[treeID]
+	rows, err := s.GetByTreeDepthOrdered(ctx, treeID)
+	if err != nil {
+		return 0, false, nil, err
+	}
+	return version, found, rows, nil
+}
+
 func (s *MemoryTreeStore) ProjectInsert(ctx context.Context, node TreeNodeRow, eventVersion int64) error {
 	if err := checkEventVersion(node.TreeID, eventVersion); err != nil {
 		return err

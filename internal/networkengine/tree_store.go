@@ -103,6 +103,11 @@ type TreeStore interface {
 	// found is false when the tree has no projection row.
 	ProjectedVersion(ctx context.Context, treeID string) (version int64, found bool, err error)
 
+	// ProjectedRows returns the tree's projected version and its active rows,
+	// read together, with the rows ordered as GetByTreeDepthOrdered orders them.
+	// found is false when the tree has no projection row.
+	ProjectedRows(ctx context.Context, treeID string) (version int64, found bool, rows []TreeNodeRow, err error)
+
 	// ProjectInsert inserts the row that the event at eventVersion projects,
 	// and records eventVersion as the tree's projected version.
 	ProjectInsert(ctx context.Context, node TreeNodeRow, eventVersion int64) error

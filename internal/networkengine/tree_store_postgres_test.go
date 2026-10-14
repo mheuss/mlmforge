@@ -510,3 +510,25 @@ func TestPostgresTreeStore_Suite(t *testing.T) {
 		require.EqualValues(t, 1, tag.RowsAffected(), "rows updated for id %s", nodeID)
 	})
 }
+
+func TestPostgresTreeStore_ProjectedRowsIgnoresAProjectionBetweenItsReads(t *testing.T) {
+	if pgContainer == nil {
+		t.Skip("Postgres container not available")
+	}
+	pool := pgContainer.NewPool(t)
+	store := NewPostgresTreeStore(pool)
+	other := NewPostgresTreeStore(pool)
+	ctx := context.Background()
+	tree, root, child := testTreeUUID(1), testUserUUID(1), testUserUUID(2)
+	require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
+	store.afterVersionRead = func() {
+		require.NoError(t, other.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(2), tree, child, 1, ptr(root), ptr(root), nil), 2))
+	}
+
+	version, _, rows, err := store.ProjectedRows(ctx, tree)
+
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), version)
+	assert.Equal(t, []string{root}, nodeUserIDs(rows))
+}

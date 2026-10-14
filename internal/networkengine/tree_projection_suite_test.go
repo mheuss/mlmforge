@@ -66,6 +66,10 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 				_, _, err := s.ProjectedVersion(ctx, tree)
 				return err
 			}},
+			{"ProjectedRows", func() error {
+				_, _, _, err := s.ProjectedRows(ctx, tree)
+				return err
+			}},
 			{"ProjectInsert", func() error { return s.ProjectInsert(ctx, childRow, 2) }},
 			{"ProjectRemoval", func() error {
 				return s.ProjectRemoval(ctx, tree, child, testNodeUUID(9), 2, nil)
@@ -478,6 +482,45 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		for _, conflict := range []error{ErrActiveUserConflict, ErrSlotConflict, ErrRootConflict} {
 			assert.NotErrorIs(t, err, conflict)
 		}
+	})
+
+	t.Run("ProjectedRows returns the version and the active rows in depth order", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+
+		version, found, rows, err := s.ProjectedRows(ctx, tree)
+
+		require.NoError(t, err)
+		assert.True(t, found)
+		assert.Equal(t, int64(2), version)
+		assert.Equal(t, []string{root, child}, nodeUserIDs(rows))
+	})
+
+	t.Run("ProjectedRows on a tree with no projection row reports none", func(t *testing.T) {
+		s := newStore(t)
+
+		version, found, rows, err := s.ProjectedRows(context.Background(), tree)
+
+		require.NoError(t, err)
+		assert.False(t, found)
+		assert.Zero(t, version)
+		assert.Empty(t, rows)
+	})
+
+	t.Run("a projection after ProjectedRows returns does not show in what it returned", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+
+		version, _, rows, err := s.ProjectedRows(ctx, tree)
+		require.NoError(t, err)
+		require.NoError(t, s.ProjectInsert(ctx, recruitRow, 3))
+
+		assert.Equal(t, int64(2), version)
+		assert.Equal(t, []string{root, child}, nodeUserIDs(rows))
 	})
 }
 

@@ -350,7 +350,7 @@ Boards order by `(created_at, seq)`. The engine assigns `seq` from `next_board_s
 
 Add, remove and compress check their preconditions, then cycle every full board, oldest first, each with a fresh cascade budget. Dissolve refuses a full board with `BOARD_FULL`, removes its board, and then drains. `max_cascade_depth` limits recursion depth within one cascade, so a cascade can leave a board full. A later operation that passes its preconditions pays it. Restore never drains.
 
-Remove and compress also cycle the member's own board once, if it is full, then take the member off whatever board they are on. If that cycle re-enters the member and fills a board, the removal empties it instead of paying it.
+Remove and compress also cycle the member's own board once, if it is full, then take the member off whatever board they are on, or out of the displaced pool. If that cycle re-enters the member and fills a board, the removal takes them back off it, so it is no longer full and is not paid.
 
 The displaced member pool (`displaced_members`) holds members removed via dissolution or cycling without re-entry. They are placed before new enrollees in `add_member`. `remove_member` takes a displaced member out of the pool. The `place_displaced_members` method must push unplaced members back to the pool if no boards have openings. Never propagate errors that would drop them.
 
@@ -1298,8 +1298,9 @@ The steps, in source order, and what each gives the ones after it.
 | 8 | Board `seq`: the counter is at most half the u64 range, every `seq` is below it, and no two boards share one | Nothing. No step depends on it |
 
 Step 1 is a pair of `if`s. Step 8 opens with an `if` and then one `for`. Every
-other step is one `for`. Sizing and duplicate detection share step 3 because both read the same positions, and the
-two membership passes are separate loops over different maps.
+other step is one `for`. Sizing and duplicate detection share step 3 because
+both read the same positions, and the two membership passes are separate loops
+over different maps.
 
 Two of these change behavior rather than message wording if moved. Step 2 before
 anything that treats a key as an identity, and step 3's duplicate half before

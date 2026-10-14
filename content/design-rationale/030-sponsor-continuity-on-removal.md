@@ -107,7 +107,7 @@ The engine has to answer before the store can be written. A removal whose reply 
 
 Two removals in one tree have to reach the store in the order the engine applied them. The engine answers each removal with the recruits it moved, and the store write happens afterwards in Go. If two store writes landed in the opposite order, the later write would carry the earlier answer.
 
-Take root, then A, then B, with C recruited by B. Removing B and then A has the engine move C to A and then to root. If B's store write landed after A's, the store would say C is sponsored by A. Both writes would have done what they were told and neither would fail. The disagreement would surface at the next load of the tree from the store.
+Take root, then A, then B, with C recruited by B. Removing B and then A has the engine move C to A and then to root. If B's store write landed after A's, the store would say C is sponsored by A. Both writes would have done what they were told and neither would fail. The disagreement would surface at the next load of the tree.
 
 This is a different failure class from the lost reply above, and the two should not be read as one problem. That one fails loudly, through a retry that exhausts or a transaction that rolls back. This one would produce no signal at all. A loud failure gets fixed. A silent one gets inherited.
 
@@ -121,6 +121,6 @@ If the first writer's write is the one refused, it reports a projection error. T
 
 The version check also covers a user placed again before the late write lands. The soft delete matches the user's active row, not the row the removal targeted. If B is placed again after the first writer appends, the late removal would match B's new row. The placement that put B back carries a higher version, so the store refuses the late removal before its soft delete runs. An integration test covers this.
 
-If the first writer had only loaded the tree, other writers' events can land before it reads the stream's last event. The writer reads the tree's projected version before it loads the rows. It goes ahead only when the stream's last event is at that version or one past it. Otherwise it refuses and appends nothing. Two integration tests cover this. In one, a removal would have left a recruit placed in the meantime sponsored by the removed user. In the other, a placement would have gone under a user removed in the meantime.
+If the first writer had only loaded the tree, other writers' events can land before it reads the stream's last event. The writer reads the tree's projected version and its rows in one read before it builds the tree. It goes ahead only when the stream's last event is at that version or one past it. Otherwise it refuses and appends nothing. Two integration tests cover this. In one, a removal would have left a recruit placed in the meantime sponsored by the removed user. In the other, a placement would have gone under a user removed in the meantime.
 
 The three matrix repair sites have no path to the store. Matrix removal never reaches the engine through the consumer, so nothing carries their moved recruits to `tree_nodes`. The engine half is done and the store half is not, which is the shape the rule two sections up warns about. Whoever wires matrix removal up has to wire both. HEU-582 carries the missing dispatch.

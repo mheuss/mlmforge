@@ -811,16 +811,22 @@ impl BoardPlanEngine {
             .collect()
     }
 
-    /// Dissolves a board, moving all its members to the displaced pool.
+    /// Dissolves a board, moving all its members to the displaced pool, then
+    /// cycles every board left full.
     ///
-    /// Removes the board from the engine and pushes every occupant
-    /// into `displaced_members`. Returns a `DissolutionResult`
-    /// listing the dissolved board and the displaced members.
+    /// Refuses a board that is full.
     pub fn dissolve_board(
         &mut self,
         board_id: Uuid,
-        _timestamp: i64,
+        timestamp: i64,
     ) -> Result<super::types::DissolutionResult, BoardPlanError> {
+        if let Some(board) = self.boards.get(&board_id).filter(|b| b.is_full()) {
+            return Err(BoardPlanError::BoardFull {
+                board_id,
+                filled: board.filled_count(),
+                total: board.positions.len(),
+            });
+        }
         let board = self
             .boards
             .remove(&board_id)
@@ -832,9 +838,13 @@ impl BoardPlanEngine {
             self.displaced_members.push(member);
         }
 
+        let mut cycle_events = Vec::new();
+        self.drain_full_boards(timestamp, &mut cycle_events);
+
         Ok(super::types::DissolutionResult {
             dissolved_board_id: board_id,
             displaced_members: members,
+            cycle_events,
         })
     }
 
@@ -2998,6 +3008,56 @@ mod tests {
             result.unwrap_err(),
             BoardPlanError::BoardNotFound(id) if id == unknown
         ));
+    }
+
+    #[test]
+    fn dissolve_refuses_a_full_board_and_changes_nothing() {
+        let (mut engine, pending) = engine_with_a_pending_full_board();
+        let before = serde_json::to_value(&engine).unwrap();
+
+        let err = engine.dissolve_board(pending, 6).unwrap_err();
+
+        assert_eq!(
+            err,
+            BoardPlanError::BoardFull {
+                board_id: pending,
+                filled: 3,
+                total: 3,
+            }
+        );
+        assert_eq!(
+            err.to_string(),
+            format!("board {pending} has 3 of 3 positions filled")
+        );
+        assert_eq!(serde_json::to_value(&engine).unwrap(), before);
+    }
+
+    #[test]
+    fn a_refused_dissolve_leaves_a_pending_board_full() {
+        let (mut engine, _) = engine_with_a_pending_full_board();
+        let before = serde_json::to_value(&engine).unwrap();
+
+        let err = engine.dissolve_board(test_uuid(99), 6).unwrap_err();
+
+        assert_eq!(err, BoardPlanError::BoardNotFound(test_uuid(99)));
+        assert_eq!(serde_json::to_value(&engine).unwrap(), before);
+    }
+
+    #[test]
+    fn dissolve_reports_the_dissolution_and_the_drain_after_it() {
+        let config = BoardPlanConfig {
+            max_cascade_depth: NonZeroU32::new(1).unwrap(),
+            ..test_config_sponsor_board()
+        };
+        let (mut engine, full, open) = engine_with_two_boards(config);
+
+        let result = engine.dissolve_board(open, 10).unwrap();
+
+        assert_eq!(result.dissolved_board_id, open);
+        assert_eq!(result.displaced_members, vec![test_uuid(4), test_uuid(5)]);
+        let cycled: Vec<Uuid> = result.cycle_events.iter().map(|e| e.board_id).collect();
+        assert_eq!(cycled, vec![full]);
+        assert!(engine.get_member_board(test_uuid(1)).is_some());
     }
 
     // --- inactive compression tests ---

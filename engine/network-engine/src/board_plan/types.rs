@@ -72,6 +72,9 @@ pub struct DissolutionResult {
 
     /// Members displaced by the dissolution.
     pub displaced_members: Vec<Uuid>,
+
+    /// Cycle events from boards cycled after the dissolution.
+    pub cycle_events: Vec<CycleEvent>,
 }
 
 /// A member who was compressed out of a board due to inactivity.

@@ -1,0 +1,69 @@
+{
+    "description": "board_dissolve reports cycle_events, which protocol 13 added. No board is full here, so the drain cycles nothing and the field is an empty list. Cross-language lock for the field's name and presence. Setup restores one 2x1 board with an opening by hand, so the board id in the request is known.",
+    "setup": [
+        {
+            "id": "bdc-s1",
+            "op": "restore_snapshot",
+            "params": {
+                "structure": "OpenBoards",
+                "tree_type": "board_plan",
+                "data": {
+                    "width": 2,
+                    "height": 1,
+                    "total_positions": 3,
+                    "boards": {
+                        "aaaaaaaa-0000-0000-0000-000000000002": {
+                            "id": "aaaaaaaa-0000-0000-0000-000000000002",
+                            "positions": [
+                                "cccccccc-0000-0000-0000-000000000004",
+                                "cccccccc-0000-0000-0000-000000000005",
+                                null
+                            ],
+                            "created_at": 2,
+                            "seq": 0,
+                            "last_activity_at": 2,
+                            "parent_board_id": null
+                        }
+                    },
+                    "member_boards": {
+                        "cccccccc-0000-0000-0000-000000000004": "aaaaaaaa-0000-0000-0000-000000000002",
+                        "cccccccc-0000-0000-0000-000000000005": "aaaaaaaa-0000-0000-0000-000000000002"
+                    },
+                    "sponsor_map": {},
+                    "displaced_members": [],
+                    "next_board_seq": 1,
+                    "config": {
+                        "cycle_commission": 500.0,
+                        "re_entry_enabled": true,
+                        "re_entry_position": "bottom",
+                        "max_cycles_per_period": 4,
+                        "max_cascade_depth": 10,
+                        "stall_threshold_periods": 3,
+                        "inactive_compression": false
+                    }
+                }
+            }
+        }
+    ],
+    "request": {
+        "id": "bdc-1",
+        "op": "board_dissolve",
+        "params": {
+            "structure": "OpenBoards",
+            "board_id": "aaaaaaaa-0000-0000-0000-000000000002",
+            "timestamp": 10
+        }
+    },
+    "expected_response": {
+        "id": "bdc-1",
+        "ok": true,
+        "result": {
+            "dissolved_board_id": "aaaaaaaa-0000-0000-0000-000000000002",
+            "displaced_members": [
+                "cccccccc-0000-0000-0000-000000000004",
+                "cccccccc-0000-0000-0000-000000000005"
+            ],
+            "cycle_events": []
+        }
+    }
+}

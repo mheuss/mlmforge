@@ -6472,6 +6472,79 @@ fn restore_rejects_a_repeated_board_seq() {
 }
 
 #[test]
+fn board_dissolve_refuses_a_full_board() {
+    let mut worker = common::spawn_worker();
+    let data: serde_json::Value = serde_json::from_str(BP_PENDING_SNAPSHOT).unwrap();
+    restore_expecting_success(&mut worker, "BpFull", "board_plan", data);
+    let before = take_snapshot_data(&mut worker, "BpFull");
+
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"bd","op":"board_dissolve","params":{{"structure":"BpFull","board_id":"{}","timestamp":10}}}}"#,
+            BP_FULL
+        ),
+    );
+
+    assert!(
+        resp.contains(r#""ok":false"#)
+            && resp.contains("BOARD_FULL")
+            && resp.contains("has 3 of 3 positions filled"),
+        "expected BOARD_FULL with the counts it read, got: {}",
+        resp
+    );
+    assert_eq!(
+        take_snapshot_data(&mut worker, "BpFull"),
+        before,
+        "a refused dissolve should change nothing"
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn board_dissolve_reports_the_drain_that_followed() {
+    let mut worker = common::spawn_worker();
+    let data: serde_json::Value = serde_json::from_str(BP_PENDING_SNAPSHOT).unwrap();
+    restore_expecting_success(&mut worker, "BpDrain", "board_plan", data);
+
+    let result = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"bd","op":"board_dissolve","params":{{"structure":"BpDrain","board_id":"{}","timestamp":10}}}}"#,
+            BP_OPEN
+        ),
+    );
+
+    assert_eq!(result["dissolved_board_id"], BP_OPEN);
+    assert_eq!(
+        result["displaced_members"],
+        serde_json::json!([
+            "cccccccc-0000-0000-0000-000000000004",
+            "cccccccc-0000-0000-0000-000000000005"
+        ])
+    );
+    let events = result["cycle_events"]
+        .as_array()
+        .expect("board_dissolve reports cycle_events");
+    assert_eq!(
+        events.len(),
+        1,
+        "one pending board should have cycled: {}",
+        result
+    );
+    assert_eq!(events[0]["board_id"], BP_FULL);
+    assert_eq!(
+        events[0]["cycled_member"],
+        "cccccccc-0000-0000-0000-000000000001"
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
 fn restore_rejects_a_board_member_on_an_absent_board() {
     let mut worker = common::spawn_worker();
     let create = serde_json::json!({

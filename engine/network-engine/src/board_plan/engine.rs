@@ -3057,7 +3057,10 @@ mod tests {
         assert_eq!(result.displaced_members, vec![test_uuid(4), test_uuid(5)]);
         let cycled: Vec<Uuid> = result.cycle_events.iter().map(|e| e.board_id).collect();
         assert_eq!(cycled, vec![full]);
-        assert!(engine.get_member_board(test_uuid(1)).is_some());
+        assert!(
+            engine.get_member_board(test_uuid(1)).is_some(),
+            "member 1 is on no board after the dissolve"
+        );
     }
 
     // --- inactive compression tests ---

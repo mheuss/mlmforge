@@ -326,7 +326,7 @@ func (c *EngineClient) DropStructure(ctx context.Context, structure string) (boo
 		return false, err
 	}
 	if r.Dropped == nil {
-		return false, errors.New(`drop_structure: response has no "dropped" key`)
+		return false, errors.New(`drop_structure: response "dropped" is absent or null`)
 	}
 	return *r.Dropped, nil
 }

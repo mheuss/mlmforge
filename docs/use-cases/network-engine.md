@@ -464,8 +464,8 @@ for _, tree := range trees {
 
 	case errors.As(err, &incomplete):
 		// The structure may be partly built. After a refusal past the create
-		// stage, drop it and load again (UC-NET-032). If the transport failed,
-		// start a new worker. Stage and Confirmed are what an operator reads to
+		// stage, drop it, and load again once the cause has changed
+		// (UC-NET-032). If the transport failed, start a new worker. Stage and Confirmed are what an operator reads to
 		// size the damage.
 		return fmt.Errorf("%s stopped at %s with %d of %d non-root placements acknowledged: %w",
 			incomplete.TreeID, incomplete.Stage, incomplete.Confirmed, incomplete.Total, err)
@@ -1214,10 +1214,11 @@ if errors.As(err, &incomplete) && incomplete.Stage != networkengine.TreeLoadStag
 	errors.As(err, &refused) {
 	// The engine refused a call after this load created the structure.
 	// The worker and transport are intact, and this caller owns the name.
-	if _, err := dropper.DropStructure(ctx, treeID); err != nil {
-		return err
+	// Drop the partial structure. Load again only once the cause has
+	// changed, because the engine refuses the same input the same way.
+	if _, derr := dropper.DropStructure(ctx, treeID); derr != nil {
+		return derr
 	}
-	_, err = loader.LoadTree(ctx, treeID, treeType)
 }
 return err
 ```

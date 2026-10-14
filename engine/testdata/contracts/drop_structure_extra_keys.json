@@ -1,5 +1,5 @@
 {
-    "description": "drop_structure reads only structure and ignores other keys; the structure here is a matrix tree",
+    "description": "drop_structure reads only structure and ignores other keys. The tree_type key names unilevel on purpose, while the structure is a matrix tree",
     "setup": [
         {"id": "s-1", "op": "create_tree", "params": {"structure": "mx", "tree_type": "matrix", "width": 3, "spillover": "breadth_first"}}
     ],

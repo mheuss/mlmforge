@@ -85,9 +85,18 @@ func TestEngineClient_DropStructureRejectsAResponseWithoutDropped(t *testing.T) 
 
 	_, err := client.DropStructure(context.Background(), "Any")
 
-	require.EqualError(t, err, `drop_structure: response has no "dropped" key`)
+	require.EqualError(t, err, `drop_structure: response "dropped" is absent or null`)
 	assert.Equal(t, "drop_structure", mock.lastOp)
 	assert.JSONEq(t, `{"structure":"Any"}`, string(mock.lastParams))
+}
+
+func TestEngineClient_DropStructureRejectsANullDropped(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`{"dropped":null}`)}
+	client := newEngineClientWithTransport(mock)
+
+	_, err := client.DropStructure(context.Background(), "Any")
+
+	require.EqualError(t, err, `drop_structure: response "dropped" is absent or null`)
 }
 
 func TestEngineClient_CallMarshalError(t *testing.T) {

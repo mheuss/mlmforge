@@ -112,7 +112,7 @@ pub enum SnapshotConsistencyError {
         target: usize,
     },
 
-    #[error("the arena holds {live_count} live nodes and names no root")]
+    #[error("the arena names no root; its live node count is {live_count}")]
     RootMissing { live_count: usize },
 
     #[error("node slot {slot} holds {user_id} and names no parent; root names node slot {root}")]

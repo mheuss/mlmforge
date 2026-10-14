@@ -1316,7 +1316,7 @@ id, no occupant on two boards, every occupant indexed. Three of the guards in
 It never called `validate_restored`.
 
 So the constraint that the validator must accept engine output was asserted by
-nothing, and three of the six guards had never run against a real engine at all.
+nothing, and three of the guards had never run against a real engine at all.
 The helper looked like coverage and reported on something else.
 
 If a helper exists to prove a function behaves on real data, it has to call that

@@ -30,7 +30,8 @@ impl UnilevelTree {
         }
     }
 
-    /// Prove a restored tree's stored indexes are in range and live.
+    /// Prove a restored tree's stored indexes are in range and live, that the
+    /// parent edges form one rooted tree, and that every sponsor chain ends.
     pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
         self.arena.validate_restored()
     }

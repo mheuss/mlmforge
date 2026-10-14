@@ -14,6 +14,10 @@ import (
 // defaultTreeLockWait bounds how long a TreeWriter waits for a tree's lock.
 const defaultTreeLockWait = 30 * time.Second
 
+// snapshotInterval is how many events a tree's stream moves past its stored
+// snapshot before a write takes a new one.
+const snapshotInterval = 1000
+
 // AddRootRequest asks for a tree's root. The type and matrix parameters shape
 // the tree when its stream is empty.
 type AddRootRequest struct {
@@ -118,6 +122,11 @@ func WithLockWait(d time.Duration) TreeWriterOption {
 // store, engine and locker.
 func NewTreeWriter(events platform.EventStore, store TreeStore, snapshots SnapshotStore, engine TreeRebuilder,
 	locker TreeLocker, opts ...TreeWriterOption) *TreeWriter {
+	// A panic rather than an error: a nil store is a wiring mistake, not a
+	// runtime condition.
+	if snapshots == nil {
+		panic("NewTreeWriter was given a nil SnapshotStore")
+	}
 	w := &TreeWriter{
 		events:    events,
 		store:     store,
@@ -411,6 +420,10 @@ func (w *TreeWriter) write(ctx context.Context, spec writeSpec) (result WriteRes
 	result.ProjectionErr = w.project(ctx, stream, event.ID, version)
 	if result.ProjectionErr != nil {
 		result.Observed = w.observe(ctx, tree)
+	} else if version-prep.snapshotVersion >= snapshotInterval {
+		if warning := w.takeSnapshot(ctx, tree, shape, version); warning != "" {
+			result.Warnings = append(result.Warnings, warning)
+		}
 	}
 	return result, nil
 }
@@ -511,6 +524,8 @@ type prepared struct {
 	last     *platform.Event
 	nodes    int
 	warnings []string
+	// the stored snapshot's version, or 0 when none is stored or the load deleted it
+	snapshotVersion int64
 }
 
 // prepare builds the tree in the engine and refuses a stream the store cannot
@@ -642,6 +657,32 @@ func (w *TreeWriter) checkReplayed(ctx context.Context, tree string, projected i
 			ProjectedVersion: projected, Mismatch: mismatch}
 	}
 	return nil
+}
+
+// takeSnapshot stores the engine's snapshot of tree at version, and returns a
+// warning when it stores none.
+func (w *TreeWriter) takeSnapshot(ctx context.Context, tree string, shape treeShape, version int64) string {
+	projected, found, err := w.store.ProjectedVersion(ctx, tree)
+	if err != nil {
+		return fmt.Sprintf("reading the projected version of tree %s before a snapshot returned: %s; no snapshot was stored",
+			tree, err)
+	}
+	if !found || projected != version {
+		return fmt.Sprintf("tree %s has projected version %d (projection row found: %t) after the write at version %d; no snapshot was stored",
+			tree, projected, found, version)
+	}
+	taken, err := w.engine.TakeSnapshot(ctx, tree)
+	if err != nil {
+		return fmt.Sprintf("taking a snapshot of tree %s at version %d returned: %s", tree, version, err)
+	}
+	if taken.TreeType != shape.treeType {
+		return fmt.Sprintf("take_snapshot for tree %s at version %d returned tree type %s, and version 1 records %s; no snapshot was stored",
+			tree, version, taken.TreeType, shape.treeType)
+	}
+	if err := w.snapshots.Put(ctx, Snapshot{TreeID: tree, Version: version, TreeType: taken.TreeType, Data: taken.Data}); err != nil {
+		return fmt.Sprintf("storing the snapshot of tree %s at version %d returned: %s", tree, version, err)
+	}
+	return ""
 }
 
 // observe reads the tree's projected version with a context the caller's

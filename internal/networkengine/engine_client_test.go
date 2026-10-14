@@ -62,6 +62,43 @@ func TestEngineClient_LoadPlan(t *testing.T) {
 	assert.JSONEq(t, `{"structures":[]}`, string(mock.lastParams))
 }
 
+func TestEngineClient_DropStructureReportsWhetherTheStructureExisted(t *testing.T) {
+	client, err := NewEngineClient(context.Background(), findWorkerBinary(t))
+	require.NoError(t, err)
+	defer func() { _ = client.Stop() }()
+	ctx := context.Background()
+
+	require.NoError(t, client.CreateTree(ctx, "DropMe", "unilevel"))
+
+	dropped, err := client.DropStructure(ctx, "DropMe")
+	require.NoError(t, err)
+	assert.True(t, dropped, "the first drop removes an existing structure")
+
+	dropped, err = client.DropStructure(ctx, "DropMe")
+	require.NoError(t, err)
+	assert.False(t, dropped, "a second drop finds nothing and is not an error")
+}
+
+func TestEngineClient_DropStructureRejectsAResponseWithoutDropped(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`{}`)}
+	client := newEngineClientWithTransport(mock)
+
+	_, err := client.DropStructure(context.Background(), "Any")
+
+	require.EqualError(t, err, `drop_structure: response "dropped" is absent or null`)
+	assert.Equal(t, "drop_structure", mock.lastOp)
+	assert.JSONEq(t, `{"structure":"Any"}`, string(mock.lastParams))
+}
+
+func TestEngineClient_DropStructureRejectsANullDropped(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`{"dropped":null}`)}
+	client := newEngineClientWithTransport(mock)
+
+	_, err := client.DropStructure(context.Background(), "Any")
+
+	require.EqualError(t, err, `drop_structure: response "dropped" is absent or null`)
+}
+
 func TestEngineClient_CallMarshalError(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`null`),
@@ -653,10 +690,23 @@ func TestNewCheckedClient_RefusesAVersion10Worker(t *testing.T) {
 	assert.True(t, mock.closed, "a rejected worker must be closed")
 }
 
+func TestNewCheckedClient_RefusesAVersion11Worker(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`{"protocol_version":11}`)}
+
+	client, err := newCheckedClient(context.Background(), mock)
+
+	var mismatch *ProtocolVersionMismatchError
+	require.ErrorAs(t, err, &mismatch)
+	assert.Nil(t, client)
+	assert.Equal(t, expectedProtocolVersion, mismatch.Expected)
+	assert.Equal(t, 11, mismatch.Reported)
+	assert.True(t, mock.closed, "a rejected worker must be closed")
+}
+
 // TestNewEngineClient_RejectsWorkerWithWrongVersion proves the PUBLIC
 // constructor performs the check.
 //
-// The three tests above call newCheckedClient directly, and all of them would
+// The tests above call newCheckedClient directly, and all of them would
 // still pass if the helper were added and NewEngineClient never rewired: the
 // real worker reports the matching version, so nothing else would notice.
 //

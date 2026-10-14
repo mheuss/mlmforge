@@ -109,6 +109,25 @@ pub(crate) fn handle_create_tree(state: &mut WorkerState, request: &Request) -> 
     Response::success(request.id.clone(), serde_json::json!({"created": true}))
 }
 
+/// Removes a named structure of any kind and reports whether it existed.
+///
+/// Params: structure.
+pub(crate) fn handle_drop_structure(state: &mut WorkerState, request: &Request) -> Response {
+    let params = match parse_params(request) {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    let structure = match extract_structure_name(&params, &request.id) {
+        Ok(s) => s,
+        Err(resp) => return resp,
+    };
+    let dropped = state.trees.remove(&structure).is_some();
+    Response::success(
+        request.id.clone(),
+        serde_json::json!({ "dropped": dropped }),
+    )
+}
+
 // --- Mutation effects ---
 
 /// Whether a mutation handler applies its mutation or only runs its checks.

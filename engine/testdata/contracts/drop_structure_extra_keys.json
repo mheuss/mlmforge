@@ -1,0 +1,16 @@
+{
+    "description": "drop_structure reads only structure and ignores other keys. The tree_type key names unilevel on purpose. The structure is a matrix tree",
+    "setup": [
+        {"id": "s-1", "op": "create_tree", "params": {"structure": "mx", "tree_type": "matrix", "width": 3, "spillover": "breadth_first"}}
+    ],
+    "request": {
+        "id": "ds-extra",
+        "op": "drop_structure",
+        "params": {"structure": "mx", "tree_type": "unilevel", "bogus": true}
+    },
+    "expected_response": {
+        "id": "ds-extra",
+        "ok": true,
+        "result": {"dropped": true}
+    }
+}

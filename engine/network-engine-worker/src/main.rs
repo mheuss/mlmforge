@@ -21,6 +21,7 @@ fn dispatch(state: &mut WorkerState, request: &Request) -> Response {
         "load_plan" => handlers::common::handle_load_plan(state, request),
         // Tree lifecycle
         "create_tree" => handlers::tree::handle_create_tree(state, request),
+        "drop_structure" => handlers::tree::handle_drop_structure(state, request),
         // Tree mutations
         "add_root" => handlers::tree::handle_add_root(state, request),
         "add_node" => handlers::tree::handle_add_node(state, request),

@@ -109,7 +109,7 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
             request.id.clone(),
             "TREE_EXISTS",
             format!(
-                "structure '{}' already exists; restore_snapshot does not replace an existing structure",
+                "structure '{}' already exists; drop it with drop_structure before restoring",
                 params.structure
             ),
         );

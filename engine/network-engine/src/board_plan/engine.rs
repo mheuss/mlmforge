@@ -527,22 +527,26 @@ impl BoardPlanEngine {
         }
     }
 
-    /// Removes a member from their board and compacts the remaining
-    /// members to fill the gap.
+    /// Removes a member from their board and compacts the remaining members
+    /// to fill the gap, or takes them out of the displaced pool.
     ///
     /// Returns the list of members who were shifted during compaction
-    /// and any cycle events triggered if compaction filled the board.
+    /// and any cycle events.
     pub fn remove_member(
         &mut self,
         user_id: Uuid,
         timestamp: i64,
     ) -> Result<RemoveMemberResult, BoardPlanError> {
-        // Find the member's board.
-        let board_id = self
-            .member_boards
-            .get(&user_id)
-            .copied()
-            .ok_or(BoardPlanError::MemberNotFound(user_id))?;
+        let Some(board_id) = self.member_boards.get(&user_id).copied() else {
+            if !self.displaced_members.contains(&user_id) {
+                return Err(BoardPlanError::MemberNotFound(user_id));
+            }
+            self.displaced_members.retain(|m| *m != user_id);
+            return Ok(RemoveMemberResult {
+                compacted: Vec::new(),
+                cycle_events: Vec::new(),
+            });
+        };
 
         // Find their position and clear it.
         let board = self
@@ -2124,6 +2128,18 @@ mod tests {
             result.unwrap_err(),
             BoardPlanError::MemberNotFound(id) if id == nonexistent
         ));
+    }
+
+    #[test]
+    fn remove_member_removes_a_displaced_member() {
+        let (mut engine, displaced) = engine_with_a_displaced_member();
+
+        let result = engine.remove_member(displaced, 100).unwrap();
+
+        assert!(result.compacted.is_empty());
+        assert!(!engine.displaced_members().contains(&displaced));
+        assert_eq!(engine.get_member_board(displaced), None);
+        assert_eq!(engine.validate_restored(), Ok(()));
     }
 
     #[test]

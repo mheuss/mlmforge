@@ -10,11 +10,11 @@ use network_engine::tree::unilevel::UnilevelTree;
 use proptest::prelude::*;
 use uuid::Uuid;
 
-/// One random operation: a kind and three picks resolved against live members.
+/// One random operation: a kind and three random picks.
 type Op = (u8, usize, usize, usize);
 
 fn ops() -> impl Strategy<Value = Vec<Op>> {
-    prop::collection::vec((0u8..4, 0usize..64, 0usize..64, 0usize..8), 1..80)
+    prop::collection::vec((0u8..8, 0usize..64, 0usize..64, 0usize..8), 1..80)
 }
 
 fn fresh_id(next: &mut usize) -> Uuid {
@@ -30,7 +30,7 @@ fn unilevel_step(tree: &mut UnilevelTree, live: &mut Vec<Uuid>, next: &mut usize
         live.push(id);
         return;
     }
-    if kind % 2 == 0 {
+    if kind < 5 {
         let id = fresh_id(next);
         let parent = live[a % live.len()];
         let sponsor = live[b % live.len()];
@@ -53,7 +53,7 @@ fn binary_step(tree: &mut BinaryTree, live: &mut Vec<Uuid>, next: &mut usize, op
         live.push(id);
         return;
     }
-    if kind % 2 == 0 {
+    if kind < 5 {
         let id = fresh_id(next);
         let parent = live[a % live.len()];
         let sponsor = live[b % live.len()];
@@ -81,14 +81,14 @@ fn matrix_step(tree: &mut MatrixTree, live: &mut Vec<Uuid>, next: &mut usize, op
     }
     let width = tree.width();
     match kind {
-        0 => {
+        0..=2 => {
             let id = fresh_id(next);
             let sponsor = live[b % live.len()];
             if tree.add_node(id, sponsor, *next as i64).is_ok() {
                 live.push(id);
             }
         }
-        1 => {
+        3 | 4 => {
             let id = fresh_id(next);
             let sponsor = live[b % live.len()];
             let parent = live[a % live.len()];
@@ -100,7 +100,7 @@ fn matrix_step(tree: &mut MatrixTree, live: &mut Vec<Uuid>, next: &mut usize, op
                 live.push(id);
             }
         }
-        2 => {
+        5 => {
             let target = live[a % live.len()];
             let mode = if c % 2 == 0 {
                 PruningMode::PromoteEarliest
@@ -133,7 +133,7 @@ fn matrix_step(tree: &mut MatrixTree, live: &mut Vec<Uuid>, next: &mut usize, op
 fn streamline_step(engine: &mut StreamlineEngine, live: &mut Vec<Uuid>, next: &mut usize, op: Op) {
     let (kind, a, b, c) = op;
     let timestamp = 1000 + *next as i64;
-    if live.is_empty() || kind == 0 {
+    if live.is_empty() || kind <= 3 {
         let id = fresh_id(next);
         let sponsor = if live.is_empty() {
             uuid_from_index(0)
@@ -141,7 +141,7 @@ fn streamline_step(engine: &mut StreamlineEngine, live: &mut Vec<Uuid>, next: &m
             live[b % live.len()]
         };
         let stream_override = if c % 3 == 0 {
-            Some((c % 4) as u32 + 1)
+            Some((c / 3) as u32 % 4 + 1)
         } else {
             None
         };
@@ -155,18 +155,17 @@ fn streamline_step(engine: &mut StreamlineEngine, live: &mut Vec<Uuid>, next: &m
     }
     let target = live[a % live.len()];
     match kind {
-        1 => {
-            if engine.remove_member(target, timestamp).is_ok() {
-                live.retain(|&u| u != target);
-            }
+        4 | 5 => {
+            let _ = engine.remove_member(target, timestamp);
         }
-        2 => {
+        6 => {
             let _ = engine.expand_streams(target, (c % 4) as u32 + 1, timestamp);
         }
         _ => {
             let _ = engine.update_stream_allowance(target, (c % 4) as u32 + 1, timestamp);
         }
     }
+    live.retain(|u| engine.contains_member(*u));
 }
 
 proptest! {

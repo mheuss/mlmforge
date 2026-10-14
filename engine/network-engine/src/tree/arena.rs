@@ -1994,9 +1994,7 @@ mod tests {
 
     #[test]
     fn a_recruit_is_never_made_its_own_sponsor() {
-        // Two siblings sponsoring each other. Unreachable through add_node,
-        // which resolves a sponsor before allocating, but a restored snapshot
-        // can hold it because nothing rejects a sponsor cycle yet.
+        // Two siblings sponsoring each other.
         let mut arena = Arena::new();
         let r = arena.alloc_slot(make_node(test_uuid(1), None, 0));
         let a = arena.alloc_slot(make_node(test_uuid(2), Some(r), 1));

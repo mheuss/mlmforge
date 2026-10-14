@@ -524,7 +524,7 @@ type prepared struct {
 	last     *platform.Event
 	nodes    int
 	warnings []string
-	// the version of the snapshot the build started from, or 0 for none
+	// the snapshot version, or 0 for none
 	snapshotVersion int64
 }
 
@@ -660,7 +660,7 @@ func (w *TreeWriter) checkReplayed(ctx context.Context, tree string, projected i
 }
 
 // takeSnapshot stores the engine's snapshot of tree at version, and returns a
-// warning when it stores none.
+// warning when a step fails.
 func (w *TreeWriter) takeSnapshot(ctx context.Context, tree string, shape treeShape, version int64) string {
 	projected, found, err := w.store.ProjectedVersion(ctx, tree)
 	if err != nil {

@@ -2,6 +2,7 @@ package networkengine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -34,6 +35,28 @@ func TestTreeWriterSnapshot_TakesTheFirstSnapshotAtVersion1000(t *testing.T) {
 	require.True(t, found)
 	assert.Equal(t, int64(snapshotInterval), snap.Version)
 	assert.Equal(t, treeTypeUnilevel, snap.TreeType)
+	var held fakeSnapshot
+	require.NoError(t, json.Unmarshal(snap.Data, &held))
+	assert.Len(t, held.Nodes, snapshotInterval)
+	assert.Contains(t, held.Nodes, testUserUUID(9000))
+}
+
+func TestTreeWriterSnapshot_StoresNothingWhenTheProjectionFails(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	placeUnderRoot(t, env, 10, snapshotInterval-2)
+	w, engine := env.writer()
+	user := testUserUUID(9000)
+	engine.failAdd[user] = fakeEngineError("INVALID_PARAMS", "refused by the test")
+
+	res, err := w.Place(context.Background(), placeRequest(user, nil))
+
+	require.NoError(t, err)
+	require.Error(t, res.ProjectionErr)
+	assert.NotContains(t, engine.calls, "take_snapshot")
+	_, found, err := env.snapshots.Get(context.Background(), writerTree)
+	require.NoError(t, err)
+	assert.False(t, found)
 }
 
 // failingPutStore fails every Put.

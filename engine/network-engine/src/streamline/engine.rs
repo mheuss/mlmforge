@@ -579,14 +579,24 @@ impl StreamlineEngine {
         })
     }
 
-    /// Bootstrap the first member into stream 1.
+    /// Seat the first member of an engine that holds no member.
     fn bootstrap_first_member(
         &mut self,
         user_id: Uuid,
         _sponsor_id: Uuid,
         timestamp: i64,
     ) -> Result<AddMemberResult, StreamlineError> {
-        let stream = self.streams.get_mut(&1).expect("stream 1 exists");
+        // A fresh id, not 1 again, so a destroyed stream's id never names a new one.
+        let stream_id = if self.streams.contains_key(&1) {
+            self.stream_owners.entry(user_id).or_default().push(1);
+            1
+        } else {
+            self.create_stream(user_id, timestamp)
+        };
+        let stream = self
+            .streams
+            .get_mut(&stream_id)
+            .expect("stream_id was just found or created");
         stream
             .tree
             .add_root(user_id, timestamp)
@@ -594,11 +604,13 @@ impl StreamlineEngine {
         stream.owner_id = user_id;
         stream.bottom = Some(user_id);
 
-        self.user_streams.entry(user_id).or_default().push(1);
-        self.stream_owners.entry(user_id).or_default().push(1);
+        self.user_streams
+            .entry(user_id)
+            .or_default()
+            .push(stream_id);
 
         Ok(AddMemberResult {
-            stream_id: 1,
+            stream_id,
             position: 0,
         })
     }
@@ -1351,6 +1363,77 @@ mod tests {
             .add_member(test_uuid(2), test_uuid(50), 1001, None)
             .unwrap_err();
         assert_eq!(err, StreamlineError::SponsorNotFound(test_uuid(50)));
+    }
+
+    fn destroying_config() -> StreamlineConfig {
+        StreamlineConfig {
+            assignment_mode: StreamAssignmentMode::SponsorStream,
+            enrollment_stream_choice: false,
+            freeze_on_demotion: false,
+        }
+    }
+
+    fn engine_with_its_last_stream_destroyed() -> StreamlineEngine {
+        let mut engine = StreamlineEngine::new(destroying_config(), 1000);
+        engine
+            .add_member(test_uuid(1), test_uuid(99), 1000, None)
+            .unwrap();
+        let result = engine
+            .update_stream_allowance(test_uuid(1), 0, 1001)
+            .unwrap();
+        assert_eq!(result.destroyed, vec![1]);
+        engine
+    }
+
+    #[test]
+    fn add_member_after_the_last_stream_was_destroyed_starts_a_new_stream() {
+        let mut engine = engine_with_its_last_stream_destroyed();
+
+        let result = engine
+            .add_member(test_uuid(2), test_uuid(1), 1002, None)
+            .unwrap();
+
+        assert_eq!(result.stream_id, 2);
+        assert_eq!(result.position, 0);
+        assert!(engine.get_stream(1).is_none());
+        assert_eq!(engine.get_stream(2).unwrap().owner_id, test_uuid(2));
+        assert_eq!(engine.get_member_streams(test_uuid(2)), Some(&vec![2]));
+        assert_eq!(engine.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn a_new_stream_after_the_last_was_destroyed_takes_later_enrolments() {
+        let mut engine = engine_with_its_last_stream_destroyed();
+        engine
+            .add_member(test_uuid(2), test_uuid(1), 1002, None)
+            .unwrap();
+
+        let result = engine
+            .add_member(test_uuid(3), test_uuid(2), 1003, None)
+            .unwrap();
+
+        assert_eq!(result.stream_id, 2);
+        assert_eq!(result.position, 1);
+        assert_eq!(engine.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn a_frozen_zero_allowance_keeps_the_stream_and_refuses_the_next_add() {
+        let mut engine = StreamlineEngine::new(default_config(), 1000);
+        engine
+            .add_member(test_uuid(1), test_uuid(99), 1000, None)
+            .unwrap();
+        engine
+            .update_stream_allowance(test_uuid(1), 0, 1001)
+            .unwrap();
+
+        let result = engine.add_member(test_uuid(2), test_uuid(1), 1002, None);
+
+        assert!(engine.get_stream(1).unwrap().frozen);
+        assert!(
+            matches!(result, Err(StreamlineError::NoStreamsAvailable)),
+            "got {result:?}"
+        );
     }
 
     // --- Task 3: expand_streams and update_stream_allowance ---

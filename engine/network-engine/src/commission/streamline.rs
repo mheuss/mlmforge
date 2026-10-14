@@ -1269,6 +1269,74 @@ mod tests {
         ));
     }
 
+    fn earnings_from_member_three(engine: &StreamlineEngine) -> Vec<(Uuid, Uuid, u8, f64)> {
+        let structure = make_structure(vec![level(1, "associate", 0.10)], 5);
+        let plan = test_helpers::build_test_plan(
+            test_helpers::default_eligibility(),
+            crate::config::StructureConfig::Streamline(structure.clone()),
+            "test_streamline",
+        );
+        let mut snapshots = HashMap::new();
+        for i in [2, 3] {
+            snapshots.insert(test_uuid(i), test_helpers::eligible_snapshot());
+        }
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+        calculate_streamline(
+            engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .expect("expected ok")
+        .earnings
+        .iter()
+        .map(|e| (e.earner_id, e.source_id, e.level, e.dollar_amount))
+        .collect()
+    }
+
+    #[test]
+    fn a_re_bootstrapped_engine_pays_like_a_fresh_one() {
+        let config = StreamlineConfig {
+            assignment_mode: StreamAssignmentMode::SponsorStream,
+            enrollment_stream_choice: false,
+            freeze_on_demotion: false,
+        };
+        let mut fresh = StreamlineEngine::new(config.clone(), 1000);
+        fresh
+            .add_member(test_uuid(2), test_uuid(1), 1002, None)
+            .unwrap();
+        fresh
+            .add_member(test_uuid(3), test_uuid(2), 1003, None)
+            .unwrap();
+
+        let mut rebuilt = StreamlineEngine::new(config, 1000);
+        rebuilt
+            .add_member(test_uuid(1), test_uuid(99), 1001, None)
+            .unwrap();
+        rebuilt
+            .update_stream_allowance(test_uuid(1), 0, 1001)
+            .unwrap();
+        rebuilt
+            .add_member(test_uuid(2), test_uuid(1), 1002, None)
+            .unwrap();
+        rebuilt
+            .add_member(test_uuid(3), test_uuid(2), 1003, None)
+            .unwrap();
+
+        let fresh_earnings = earnings_from_member_three(&fresh);
+        assert_eq!(
+            fresh_earnings,
+            vec![(test_uuid(2), test_uuid(3), 1, 10.0)],
+            "the fresh engine should pay member 2 on member 3's volume"
+        );
+        assert_eq!(earnings_from_member_three(&rebuilt), fresh_earnings);
+    }
+
     /// A source held only by a frozen stream, with no snapshot.
     ///
     /// It sits behind the walk, so the pre-loop is what has to reject it.

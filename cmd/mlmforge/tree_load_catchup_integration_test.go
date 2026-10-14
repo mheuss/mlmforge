@@ -59,7 +59,7 @@ func streamLastVersion(t *testing.T, events platform.EventStore, tree string) in
 
 // failingAddEngine refuses every placement and passes every other call through.
 type failingAddEngine struct {
-	networkengine.TreeEngineChecker
+	networkengine.TreeRebuilder
 }
 
 func (failingAddEngine) AddNode(context.Context, string, string, string, string, int64, ...networkengine.AddNodeOption) error {
@@ -305,7 +305,7 @@ func TestTreePlace_ExitsZeroWhenTheEngineFailsAfterTheInsertCommits(t *testing.T
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Stop() })
 	w := networkengine.NewTreeWriter(platform.NewPostgresEventStore(pool), networkengine.NewPostgresTreeStore(pool),
-		failingAddEngine{TreeEngineChecker: engine}, networkengine.NewPostgresTreeLocker(pgContainer.DSN))
+		failingAddEngine{TreeRebuilder: engine}, networkengine.NewPostgresTreeLocker(pgContainer.DSN))
 	res, err := w.Place(t.Context(), networkengine.PlaceRequest{TreeID: tree, UserID: child, ParentID: root,
 		SponsorID: root, EnrolledAt: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)})
 	var stdout, stderr bytes.Buffer

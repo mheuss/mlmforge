@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sync"
 	"testing"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/mlmforge/mlmforge/internal/platform"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,6 +39,8 @@ type fakeWriterEngine struct {
 	placements []Mutation
 	// failAdd fails every add of the keyed user.
 	failAdd map[string]error
+	// downlineErr is what every GetDownline returns.
+	downlineErr error
 }
 
 type fakeEngineTree struct {
@@ -44,7 +48,7 @@ type fakeEngineTree struct {
 	nodes map[string]EnginePosition
 }
 
-var _ TreeEngineChecker = (*fakeWriterEngine)(nil)
+var _ TreeRebuilder = (*fakeWriterEngine)(nil)
 
 func newFakeWriterEngine() *fakeWriterEngine {
 	return &fakeWriterEngine{trees: map[string]*fakeEngineTree{}, failAdd: map[string]error{}}
@@ -162,6 +166,40 @@ func (f *fakeWriterEngine) GetPosition(_ context.Context, structure, userID stri
 		return nil, fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", userID)
 	}
 	return &pos, nil
+}
+
+// GetDownline walks the fake's parent links breadth first, visiting siblings
+// in user ID order. depth is ignored.
+func (f *fakeWriterEngine) GetDownline(_ context.Context, structure, userID string, _ uint32) ([]EngineNode, error) {
+	if f.downlineErr != nil {
+		return nil, f.downlineErr
+	}
+	t, err := f.tree(structure)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := t.nodes[userID]; !ok {
+		return nil, fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", userID)
+	}
+	// A children index keeps this linear.
+	children := map[string][]string{}
+	for _, id := range slices.Sorted(maps.Keys(t.nodes)) {
+		if parent := t.nodes[id].ParentUserID; parent != nil {
+			children[*parent] = append(children[*parent], id)
+		}
+	}
+	var out []EngineNode
+	queue := []string{userID}
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		for _, child := range children[id] {
+			pos := t.nodes[child]
+			out = append(out, EngineNode{UserID: child, Depth: pos.Depth, EnrolledAt: pos.EnrolledAt})
+			queue = append(queue, child)
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeWriterEngine) CheckMutation(_ context.Context, structure string, m Mutation) error {
@@ -438,4 +476,21 @@ type immediateErrLocker struct{ err error }
 
 func (l immediateErrLocker) Lock(context.Context, uuid.UUID) (func() error, error) {
 	return nil, l.err
+}
+
+func TestFakeWriterEngine_GetDownlineReturnsEveryDescendant(t *testing.T) {
+	engine := newFakeWriterEngine()
+	ctx := context.Background()
+	require.NoError(t, engine.CreateTree(ctx, writerTree, treeTypeUnilevel))
+	require.NoError(t, engine.AddRoot(ctx, writerTree, writerRoot, 1))
+	require.NoError(t, engine.AddNode(ctx, writerTree, writerChild, writerRoot, writerRoot, 2))
+	require.NoError(t, engine.AddNode(ctx, writerTree, writerOther, writerChild, writerChild, 3))
+
+	got, err := engine.GetDownline(ctx, writerTree, writerRoot, 0)
+
+	require.NoError(t, err)
+	assert.Equal(t, []EngineNode{
+		{UserID: writerChild, Depth: 1, EnrolledAt: 2},
+		{UserID: writerOther, Depth: 2, EnrolledAt: 3},
+	}, got)
 }

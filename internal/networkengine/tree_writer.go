@@ -92,7 +92,7 @@ type LoadResult struct {
 type TreeWriter struct {
 	events   platform.EventStore
 	store    TreeStore
-	engine   TreeEngineChecker
+	engine   TreeRebuilder
 	locker   TreeLocker
 	loader   *TreeLoader
 	consumer *TreeEventConsumer
@@ -114,7 +114,7 @@ func WithLockWait(d time.Duration) TreeWriterOption {
 
 // NewTreeWriter creates a writer over one event store, tree store, engine and
 // locker.
-func NewTreeWriter(events platform.EventStore, store TreeStore, engine TreeEngineChecker,
+func NewTreeWriter(events platform.EventStore, store TreeStore, engine TreeRebuilder,
 	locker TreeLocker, opts ...TreeWriterOption) *TreeWriter {
 	w := &TreeWriter{
 		events:   events,

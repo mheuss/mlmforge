@@ -81,7 +81,7 @@ func receive[T any](t *testing.T, ch chan T, timeout time.Duration) T {
 // heldEngine holds its first AddNode until release is closed, and logs when
 // that call returns.
 type heldEngine struct {
-	TreeEngineChecker
+	TreeRebuilder
 	log         *orderLog
 	name        string
 	entered     chan struct{}
@@ -95,9 +95,9 @@ func (g *heldEngine) open() {
 	g.releaseOnce.Do(func() { close(g.release) })
 }
 
-func newHeldEngine(engine TreeEngineChecker, log *orderLog, name string) *heldEngine {
+func newHeldEngine(engine TreeRebuilder, log *orderLog, name string) *heldEngine {
 	return &heldEngine{
-		TreeEngineChecker: engine, log: log, name: name,
+		TreeRebuilder: engine, log: log, name: name,
 		entered: make(chan struct{}), release: make(chan struct{}),
 	}
 }
@@ -107,7 +107,7 @@ func (g *heldEngine) AddNode(ctx context.Context, structure, userID, parentID, s
 		close(g.entered)
 		<-g.release
 	})
-	err := g.TreeEngineChecker.AddNode(ctx, structure, userID, parentID, sponsorID, enrolledAt, opts...)
+	err := g.TreeRebuilder.AddNode(ctx, structure, userID, parentID, sponsorID, enrolledAt, opts...)
 	g.log.add(g.name + " AddNode returned")
 	return err
 }

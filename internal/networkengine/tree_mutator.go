@@ -49,3 +49,11 @@ type TreeEngineChecker interface {
 }
 
 var _ TreeEngineChecker = (*EngineClient)(nil)
+
+// TreeRebuilder is the engine a TreeWriter builds trees in.
+type TreeRebuilder interface {
+	TreeEngineChecker
+	GetDownline(ctx context.Context, structure, userID string, depth uint32) ([]EngineNode, error)
+}
+
+var _ TreeRebuilder = (*EngineClient)(nil)

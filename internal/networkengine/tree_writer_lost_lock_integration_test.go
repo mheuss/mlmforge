@@ -111,15 +111,15 @@ func TestTreeWriter_ARemovalProjectedAfterItsLockWasLostLeavesNoStaleSponsor(t *
 // parkedRemovalEngine delays the return of its first RemoveNode until open is
 // called, and closes parked when the delay begins.
 type parkedRemovalEngine struct {
-	TreeEngineChecker
+	TreeRebuilder
 	parked   chan struct{}
 	release  chan struct{}
 	once     sync.Once
 	openOnce sync.Once
 }
 
-func newParkedRemovalEngine(engine TreeEngineChecker) *parkedRemovalEngine {
-	return &parkedRemovalEngine{TreeEngineChecker: engine, parked: make(chan struct{}), release: make(chan struct{})}
+func newParkedRemovalEngine(engine TreeRebuilder) *parkedRemovalEngine {
+	return &parkedRemovalEngine{TreeRebuilder: engine, parked: make(chan struct{}), release: make(chan struct{})}
 }
 
 // open lets the delayed call return. It is safe to call more than once.
@@ -128,7 +128,7 @@ func (e *parkedRemovalEngine) open() {
 }
 
 func (e *parkedRemovalEngine) RemoveNode(ctx context.Context, structure, userID string) ([]Responsored, error) {
-	moved, err := e.TreeEngineChecker.RemoveNode(ctx, structure, userID)
+	moved, err := e.TreeRebuilder.RemoveNode(ctx, structure, userID)
 	e.once.Do(func() {
 		close(e.parked)
 		<-e.release

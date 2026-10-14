@@ -14,7 +14,7 @@ import (
 type treeDeps struct {
 	events  platform.EventStore
 	store   networkengine.TreeStore
-	engine  networkengine.TreeEngineChecker
+	engine  networkengine.TreeRebuilder
 	locker  networkengine.TreeLocker
 	release func() error
 }

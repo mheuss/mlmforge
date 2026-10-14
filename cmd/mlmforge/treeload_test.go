@@ -514,7 +514,7 @@ func TestRunTreeLoad_ReportsAFailedRedeliveryWithoutALoadedLine(t *testing.T) {
 // createOnlyEngine answers CreateTree. The embedded interface is nil, so any
 // other call panics rather than returning a value a test could pass against.
 type createOnlyEngine struct {
-	networkengine.TreeEngineChecker
+	networkengine.TreeRebuilder
 }
 
 func (createOnlyEngine) CreateTree(context.Context, string, string) error { return nil }

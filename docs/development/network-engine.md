@@ -1055,11 +1055,11 @@ Three lines here were each deletable with the whole suite green until tests were
 written specifically to fail without them. A shutdown path that is only
 exercised by well-behaved workers is not exercised at all.
 
-## Only A Context End Closes The Transport
+## Reply Errors Do Not Close The Transport
 
 Inside a call, `StdioTransport` marks itself closed only when the call's context
-ends. An unmarshal failure or a response-ID mismatch returns an error and leaves the
-transport open. The worker may already have run the request, and the stream may
+ends. An unmarshal failure or a response-ID mismatch returns an error and leaves
+the transport open. The worker may already have run the request. The stream may
 now be out of step.
 
 So an error that is not an `*EngineError` says nothing about whether the client

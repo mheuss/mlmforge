@@ -143,7 +143,6 @@ func TestTreeLoadRetryable(t *testing.T) {
 			want: false,
 		},
 		{
-			// This case pins that an incomplete load is never retried.
 			name: "an incomplete load wrapping a retryable rejection is not retryable",
 			err: &networkengine.TreeLoadIncompleteError{
 				Stage: networkengine.TreeLoadStageNodes,

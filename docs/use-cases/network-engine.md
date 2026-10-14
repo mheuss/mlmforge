@@ -463,10 +463,10 @@ for _, tree := range trees {
 		return err
 
 	case errors.As(err, &incomplete):
-		// The structure may be partly built. If the engine refused a call after
-		// the create stage and the worker is still usable, drop it before
-		// loading it again (UC-NET-032). Otherwise start a new worker. Stage and
-		// Confirmed are what an operator reads to size the damage.
+		// The structure may be partly built. After a refusal past the create
+		// stage, drop it and load again (UC-NET-032). If the transport failed,
+		// start a new worker. Stage and Confirmed are what an operator reads to
+		// size the damage.
 		return fmt.Errorf("%s stopped at %s with %d of %d non-root placements acknowledged: %w",
 			incomplete.TreeID, incomplete.Stage, incomplete.Confirmed, incomplete.Total, err)
 

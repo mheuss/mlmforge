@@ -79,10 +79,26 @@ func runSnapshotStoreSuite(t *testing.T, newStore func(t *testing.T) SnapshotSto
 		require.NoError(t, s.Put(ctx, snap(2000, `"x"`)))
 
 		require.NoError(t, s.Delete(ctx, tree, 1000))
+		require.NoError(t, s.Delete(ctx, tree, 3000))
 
 		_, found, err := s.Get(ctx, tree)
 		require.NoError(t, err)
 		assert.True(t, found)
+	})
+
+	t.Run("Delete removes only the named tree's snapshot", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		other := testTreeUUID(2)
+		require.NoError(t, s.Put(ctx, snap(1000, `"one"`)))
+		require.NoError(t, s.Put(ctx, Snapshot{TreeID: other, Version: 1000, TreeType: treeTypeUnilevel, Data: []byte(`"two"`)}))
+
+		require.NoError(t, s.Delete(ctx, tree, 1000))
+
+		got, found, err := s.Get(ctx, other)
+		require.NoError(t, err)
+		require.True(t, found)
+		assert.Equal(t, []byte(`"two"`), got.Data)
 	})
 
 	t.Run("a put below version 1 or of an unknown type is refused", func(t *testing.T) {
@@ -91,6 +107,27 @@ func runSnapshotStoreSuite(t *testing.T, newStore func(t *testing.T) SnapshotSto
 
 		assert.Error(t, s.Put(ctx, snap(0, `"x"`)))
 		assert.Error(t, s.Put(ctx, Snapshot{TreeID: tree, Version: 1, TreeType: "board_plan", Data: []byte(`"x"`)}))
+		assert.Error(t, s.Put(ctx, Snapshot{TreeID: tree, Version: 1, TreeType: treeTypeUnilevel}))
+
+		_, found, err := s.Get(ctx, tree)
+		require.NoError(t, err)
+		assert.False(t, found)
+	})
+
+	t.Run("bytes are copied on the way in and out", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		in := []byte(`"abc"`)
+		require.NoError(t, s.Put(ctx, Snapshot{TreeID: tree, Version: 1000, TreeType: treeTypeUnilevel, Data: in}))
+		in[1] = 'z'
+		first, _, err := s.Get(ctx, tree)
+		require.NoError(t, err)
+		first.Data[1] = 'y'
+
+		got, _, err := s.Get(ctx, tree)
+
+		require.NoError(t, err)
+		assert.Equal(t, []byte(`"abc"`), got.Data)
 	})
 
 	t.Run("trees keep separate snapshots", func(t *testing.T) {
@@ -101,9 +138,11 @@ func runSnapshotStoreSuite(t *testing.T, newStore func(t *testing.T) SnapshotSto
 		require.NoError(t, s.Put(ctx, Snapshot{TreeID: other, Version: 3000, TreeType: treeTypeBinary, Data: []byte(`"two"`)}))
 
 		got, _, err := s.Get(ctx, tree)
-
 		require.NoError(t, err)
 		assert.Equal(t, snap(1000, `"one"`), got)
+		got, _, err = s.Get(ctx, other)
+		require.NoError(t, err)
+		assert.Equal(t, Snapshot{TreeID: other, Version: 3000, TreeType: treeTypeBinary, Data: []byte(`"two"`)}, got)
 	})
 
 	t.Run("every method refuses a cancelled context", func(t *testing.T) {

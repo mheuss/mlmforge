@@ -135,8 +135,9 @@ fn streamline_step(engine: &mut StreamlineEngine, live: &mut Vec<Uuid>, next: &m
     let timestamp = 1000 + *next as i64;
     if live.is_empty() || kind <= 5 {
         let id = fresh_id(next);
-        let owners: Vec<Uuid> = engine
-            .list_streams()
+        let mut streams = engine.list_streams();
+        streams.sort_by_key(|stream| (stream.created_at, stream.id));
+        let owners: Vec<Uuid> = streams
             .iter()
             .map(|stream| stream.owner_id)
             .filter(|owner| live.contains(owner))
@@ -167,10 +168,10 @@ fn streamline_step(engine: &mut StreamlineEngine, live: &mut Vec<Uuid>, next: &m
             let _ = engine.remove_member(target, timestamp);
         }
         _ if c % 2 == 0 => {
-            let _ = engine.expand_streams(target, (c % 4) as u32 + 1, timestamp);
+            let _ = engine.expand_streams(target, (c / 2) as u32 + 1, timestamp);
         }
         _ => {
-            let _ = engine.update_stream_allowance(target, (c % 4) as u32 + 1, timestamp);
+            let _ = engine.update_stream_allowance(target, (c / 2) as u32 + 1, timestamp);
         }
     }
     live.retain(|u| engine.contains_member(*u));

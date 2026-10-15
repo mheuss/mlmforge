@@ -156,14 +156,14 @@ func TestTreeConsumer_ARedeliveredPlacementConvergesAfterAPromotionMovedItsNode_
 	tree, root, a, b := testTreeUUID(5823), testUserUUID(1), testUserUUID(2), testUserUUID(3)
 	require.NoError(t, engine.CreateMatrixTree(ctx, tree, 2, "breadth_first"))
 	consumer := NewTreeEventConsumer(store, engine)
-	width, spillover, zero := 2, "breadth_first", 0
+	width, spillover, zero, one := 2, "breadth_first", 0, 1
 	events := []platform.Event{
 		versionedEvent(t, tree, 1, EventTypeRootAdded, RootAddedPayload{TreeID: tree, UserID: root, SponsorID: root,
 			EnrolledAt: writeTime, TreeType: treeTypeMatrix, MatrixWidth: &width, MatrixSpillover: &spillover}),
 		versionedEvent(t, tree, 2, EventTypeNodePlaced, NodePlacedPayload{TreeID: tree, UserID: a, ParentID: root,
 			SponsorID: root, Position: &zero, TreeType: treeTypeMatrix, EnrolledAt: writeTime}),
 		versionedEvent(t, tree, 3, EventTypeNodePlaced, NodePlacedPayload{TreeID: tree, UserID: b, ParentID: a,
-			SponsorID: a, Position: &zero, TreeType: treeTypeMatrix, EnrolledAt: writeTime}),
+			SponsorID: a, Position: &one, TreeType: treeTypeMatrix, EnrolledAt: writeTime}),
 	}
 	for _, ev := range events {
 		require.NoError(t, consumer.HandleEvent(ctx, ev))

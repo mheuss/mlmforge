@@ -486,21 +486,16 @@ func TestReplayStream_LeavesNoRootAfterTheRootIsRemoved(t *testing.T) {
 	assert.Empty(t, res.root)
 }
 
-func TestReplayStream_RefusesAMatrixRemoval(t *testing.T) {
-	events := platform.NewMemoryEventStore()
-	engine := newFakeWriterEngine()
-	width, spillover := 3, "breadth_first"
-	appendDirect(t, events, EventTypeRootAdded, RootAddedPayload{
-		TreeID: writerTree, UserID: writerRoot, SponsorID: writerRoot, EnrolledAt: writeTime,
-		TreeType: treeTypeMatrix, MatrixWidth: &width, MatrixSpillover: &spillover,
-	})
-	appendDirect(t, events, EventTypeNodeRemoved, NodeRemovedPayload{TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime})
-	require.NoError(t, engine.CreateMatrixTree(context.Background(), writerTree, 3, "breadth_first"))
+func TestReplayStream_ReplaysAMatrixRemoval(t *testing.T) {
+	events, engine, shape := removalStream(t, treeTypeMatrix)
+	appendDirect(t, events, EventTypeNodeRemoved, NodeRemovedPayload{TreeID: writerTree, UserID: writerChild,
+		RemovedAt: writeTime, TreeType: treeTypeMatrix, PruningMode: PruningHoldingTank})
 
-	_, err := replayStream(context.Background(), events, engine, writerTree,
-		treeShape{treeType: treeTypeMatrix, width: 3, spillover: "breadth_first"}, 1, 2)
+	res, err := replayStream(context.Background(), events, engine, writerTree, shape, 1, 3)
 
-	require.ErrorContains(t, err, "has no tree_type, and the stream records tree type matrix")
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), res.reached)
+	assert.NotContains(t, engine.trees[writerTree].nodes, writerChild)
 }
 
 func TestEngineCalls_ConsumerAndReplayLeaveTheSameEngineState(t *testing.T) {

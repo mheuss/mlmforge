@@ -13,13 +13,19 @@ import (
 // removalStub answers RemoveNode with a fixed list.
 type removalStub struct {
 	TreeMutator
-	moved []Responsored
-	calls []string
+	moved  []Responsored
+	matrix *MatrixRemovalResult
+	calls  []string
 }
 
 func (s *removalStub) RemoveNode(_ context.Context, structure, userID string) ([]Responsored, error) {
 	s.calls = append(s.calls, "remove_node "+structure+" "+userID)
 	return s.moved, nil
+}
+
+func (s *removalStub) RemoveMatrixNode(_ context.Context, structure, userID string, mode PruningMode) (*MatrixRemovalResult, error) {
+	s.calls = append(s.calls, "remove_matrix_node "+structure+" "+userID+" "+string(mode))
+	return s.matrix, nil
 }
 
 func TestNodePlacedCall_SendsAMatrixPlacementThroughAddNodeAt(t *testing.T) {
@@ -54,7 +60,7 @@ func TestNodePlacedCall_SendsABinaryPlacementThroughAddNodeWithItsPosition(t *te
 	assert.Equal(t, []Mutation{CheckAddNode(writerChild, writerRoot, writerRoot, writeTime.Unix(), WithPosition(1))}, engine.placements)
 }
 
-func TestNodeRemovedCall_RefusesATreeItsCallerNamesAsMatrix(t *testing.T) {
+func TestNodeRemovedCall_RefusesAMatrixPayloadWithNoMode(t *testing.T) {
 	p := NodeRemovedPayload{TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime}
 
 	_, err := nodeRemovedCall(p, treeTypeMatrix)
@@ -75,6 +81,49 @@ func TestNodeRemovedCall_ReturnsTheRecruitsRemoveNodeMoved(t *testing.T) {
 	assert.Equal(t, "remove_node", call.op)
 	assert.Equal(t, []string{"remove_node " + writerTree + " " + writerChild}, stub.calls)
 	assert.Equal(t, stub.moved, out.responsored)
+	assert.Equal(t, []string{writerChild}, out.removed)
+}
+
+func TestNodeRemovedCall_SendsAPromoteEarliestRemovalThroughRemoveMatrixNode(t *testing.T) {
+	stub := &removalStub{matrix: &MatrixRemovalResult{
+		Removed:     writerChild,
+		Relocated:   []Relocation{{UserID: writerOther, ParentID: writerRoot, Position: 0, Depth: 1}},
+		Responsored: []Responsored{{UserID: writerOther, NewSponsorID: writerRoot}},
+		MovedToTank: []string{},
+	}}
+	p := NodeRemovedPayload{TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime,
+		TreeType: treeTypeMatrix, PruningMode: PruningPromoteEarliest}
+
+	call, err := nodeRemovedCall(p, treeTypeMatrix)
+	require.NoError(t, err)
+	out, err := call.apply(context.Background(), stub)
+
+	require.NoError(t, err)
+	assert.Equal(t, "remove_node", call.op)
+	assert.Equal(t, []string{"remove_matrix_node " + writerTree + " " + writerChild + " promote_earliest"}, stub.calls)
+	assert.Equal(t, engineOutcome{
+		responsored: stub.matrix.Responsored,
+		relocated:   stub.matrix.Relocated,
+		removed:     []string{writerChild},
+	}, out)
+}
+
+func TestNodeRemovedCall_ReportsAHoldingTankRemovalsWholeSetAsRemoved(t *testing.T) {
+	stub := &removalStub{matrix: &MatrixRemovalResult{
+		Removed:     writerChild,
+		MovedToTank: []string{writerOther, writerChild},
+		Relocated:   []Relocation{},
+		Responsored: []Responsored{},
+	}}
+	p := NodeRemovedPayload{TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime,
+		TreeType: treeTypeMatrix, PruningMode: PruningHoldingTank}
+
+	call, err := nodeRemovedCall(p, treeTypeMatrix)
+	require.NoError(t, err)
+	out, err := call.apply(context.Background(), stub)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{writerOther, writerChild}, out.removed)
 }
 
 func TestTreeConsumer_ARemovalStillLandsTheRecruitsTheEngineMoved(t *testing.T) {

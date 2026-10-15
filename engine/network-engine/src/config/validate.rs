@@ -492,6 +492,7 @@ impl CapsConfig {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+    use std::num::NonZeroU32;
 
     use crate::config::binary::{PairingCalculation, VolumeAfterPayout};
     use crate::config::board_plan::ReEntryPosition;
@@ -877,7 +878,7 @@ mod tests {
             re_entry_enabled: true,
             re_entry_position: ReEntryPosition::Bottom,
             max_cycles_per_period: 3,
-            max_cascade_depth: 10,
+            max_cascade_depth: NonZeroU32::new(10).unwrap(),
             stall_threshold_periods: 2,
             inactive_compression: false,
         };

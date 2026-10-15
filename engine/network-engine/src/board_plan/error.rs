@@ -25,6 +25,13 @@ pub enum BoardPlanError {
     #[error("no boards have open positions")]
     NoBoardsAvailable,
 
+    #[error("board {board_id} has {filled} of {total} positions filled")]
+    BoardFull {
+        board_id: Uuid,
+        filled: usize,
+        total: usize,
+    },
+
     #[error("invalid dimensions {width}x{height}: {reason}")]
     InvalidDimensions {
         width: u8,

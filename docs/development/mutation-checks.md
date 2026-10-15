@@ -412,3 +412,12 @@ require.Equal(t, 1, selected, "cases selected")
 A counter inside the closure fails the parent under `-run`. `t.Run` returns without running a subtest the filter skips, so a count of completed subtests comes up short whenever someone runs one case by name. It also adds a second failure on top of a real one, because `require` stops the subtest before the increment.
 
 HEU-867 hit both. The first version counted inside the closure, and the targeted re-review caught it.
+
+## A cleanup glob can delete tracked files
+
+Delete generated files by exact name, never by pattern. A file a failing run
+writes can share its name pattern with files the repo already tracks. A glob
+meant to remove the new one removes the tracked ones too, and nothing warns.
+
+Run `git status` after any cleanup that matches a pattern. A tracked file the
+cleanup removed shows up as deleted, and `git checkout -- <path>` restores it.

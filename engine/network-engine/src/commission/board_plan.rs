@@ -52,6 +52,8 @@ pub fn calculate_board_commissions(
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroU32;
+
     use super::*;
 
     fn test_uuid(n: u8) -> Uuid {
@@ -64,7 +66,7 @@ mod tests {
             re_entry_enabled: true,
             re_entry_position: crate::config::board_plan::ReEntryPosition::Bottom,
             max_cycles_per_period: 3,
-            max_cascade_depth: 10,
+            max_cascade_depth: NonZeroU32::new(10).unwrap(),
             stall_threshold_periods: 3,
             inactive_compression: false,
         }

@@ -7,6 +7,7 @@ use network_engine::commission::calculate_board_commissions;
 use network_engine::config::board_plan::{BoardPlanConfig, ReEntryPosition};
 use proptest::prelude::*;
 use std::collections::{HashMap, HashSet};
+use std::num::NonZeroU32;
 use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
@@ -20,7 +21,7 @@ fn prop_config() -> BoardPlanConfig {
         re_entry_enabled: true,
         re_entry_position: ReEntryPosition::Bottom,
         max_cycles_per_period: 5,
-        max_cascade_depth: 10,
+        max_cascade_depth: NonZeroU32::new(10).unwrap(),
         stall_threshold_periods: 3,
         inactive_compression: false,
     }
@@ -217,7 +218,7 @@ proptest! {
         max_cascade in 1u32..5,
     ) {
         let config = BoardPlanConfig {
-            max_cascade_depth: max_cascade,
+            max_cascade_depth: NonZeroU32::new(max_cascade).unwrap(),
             ..prop_config()
         };
         let mut engine = BoardPlanEngine::new(width, height, config, 1000).unwrap();
@@ -436,7 +437,7 @@ fn cycled_members_sponsor_was_dissolved_falls_back_to_bottom() {
 fn deep_cascade_from_rapid_adds_respects_bound() {
     // 2x1 boards: 3 positions each, cycle very quickly.
     let config = BoardPlanConfig {
-        max_cascade_depth: 2,
+        max_cascade_depth: NonZeroU32::new(2).unwrap(),
         ..prop_config()
     };
 

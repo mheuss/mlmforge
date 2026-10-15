@@ -942,7 +942,7 @@ The engine is not the only holder of these edges. `tree_nodes.sponsor_id` holds 
 ### UC-NET-024: Adding a response field a caller must not ignore
 
 **Added:** Unreleased (HEU-766)
-**Files:** `engine/network-engine-worker/src/protocol.rs` (`PROTOCOL_VERSION`), `engine/network-engine-worker/src/handlers/tree.rs` (`responsored_json`), `internal/networkengine/wire_types.go` (`RemovalResult`, `MatrixRemovalResult`, `Responsored`), `internal/networkengine/engine_client.go` (`expectedProtocolVersion`, `RemoveNode`, `RemoveMatrixNode`)
+**Files:** `engine/network-engine-worker/src/protocol.rs` (`PROTOCOL_VERSION`), `engine/network-engine-worker/src/handlers/tree.rs` (`responsored_json`), `internal/networkengine/wire_types.go` (`RemovalResult`, `MatrixRemovalResult`, `Responsored`, `BoardAddMemberResultDTO`, `BoardRemoveMemberResultDTO`, `CompressionResultDTO`, `DissolutionResultDTO`), `internal/networkengine/engine_client.go` (`expectedProtocolVersion`, `RemoveNode`, `RemoveMatrixNode`, `BoardAddMember`, `BoardRemoveMember`, `BoardCompressInactive`, `BoardDissolve`)
 
 **Problem:** Adding a field to a response is normally free. A client that ignores it is still correct, so the protocol version does not have to move.
 
@@ -972,6 +972,8 @@ A plain `[]Responsored` cannot express the difference. `encoding/json` leaves it
 **When to use this pattern:** any added response field where ignoring it leaves two systems holding the same fact. Apply it at every decode site for that field, not just the one the feature goes through. `remove_node` has two, and a rule enforced at one of them is not enforced.
 
 **Notes:** This is the mirror of UC-NET-016, which covers removing a *request* field without a red interval. The technique is the one UC-NET-018 uses on `protocol_version`, reached for a different reason: there it separates two failure causes so the message can name the fix, here it separates silence from an answer.
+
+The board ops' `cycle_events` use the same pointer and nil check, at their four decode sites.
 
 Absence and emptiness are different claims. An empty list says the engine looked and moved nobody, which a caller can act on. A missing key says nothing at all. Letting it default turns silence into the one answer that requires no work.
 

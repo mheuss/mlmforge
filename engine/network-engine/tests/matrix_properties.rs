@@ -478,8 +478,8 @@ fn mode_of(holding: bool) -> PruningMode {
     }
 }
 
-/// Removes `user` in `mode` and checks properties (a) to (e) of the design's
-/// Section 9.
+/// Removes `user` in `mode` and checks what the removal reports against what it
+/// did to the tree.
 fn assert_removal_properties(
     mut tree: MatrixTree,
     user: Uuid,
@@ -494,9 +494,9 @@ fn assert_removal_properties(
     let checked = tree.check_remove_node(user, mode);
     let removed = tree.remove_node(user, mode);
 
-    // (c)
+    // The check and the op agree.
     prop_assert_eq!(checked.as_ref().err(), removed.as_ref().err());
-    // (d)
+    // The promotion never runs out of slots.
     prop_assert!(
         !matches!(removed, Err(TreeError::SubtreeFull(_))),
         "SUBTREE_FULL fired removing {}",
@@ -506,8 +506,21 @@ fn assert_removal_properties(
         return Ok(());
     };
 
-    // (a)
+    // Exactly the removed users left the tree.
     let after = placements(&tree);
+    let gone: HashSet<Uuid> = match mode {
+        PruningMode::PromoteEarliest => HashSet::from([user]),
+        PruningMode::HoldingTank => leaving.clone(),
+    };
+    let expected: HashSet<Uuid> = before
+        .keys()
+        .filter(|u| !gone.contains(*u))
+        .copied()
+        .collect();
+    let actual: HashSet<Uuid> = after.keys().copied().collect();
+    prop_assert_eq!(actual, expected, "the survivor set changed");
+
+    // relocated names every survivor whose placement changed, and no other.
     let mut diffed: Vec<(Uuid, Uuid, usize, u32)> = after
         .iter()
         .filter(|(u, now)| before.get(*u) != Some(*now))
@@ -529,7 +542,8 @@ fn assert_removal_properties(
     reported.sort();
     prop_assert_eq!(reported, diffed);
 
-    // (b)
+    // Each move lands on a slot the tombstones freed, and a depth-only move
+    // keeps its own slot.
     let removed_users: HashSet<Uuid> = match mode {
         PruningMode::PromoteEarliest => HashSet::from([user]),
         PruningMode::HoldingTank => result.moved_to_tank.iter().copied().collect(),
@@ -583,7 +597,7 @@ fn assert_removal_properties(
         );
     }
 
-    // (e)
+    // The tank holds exactly the removed subtree, once each.
     if mode == PruningMode::HoldingTank {
         let tank: HashSet<Uuid> = result.moved_to_tank.iter().copied().collect();
         prop_assert_eq!(

@@ -2504,3 +2504,91 @@ func TestTreeConsumer_RefusesARemovalWhoseShapeTheEngineCannotApply(t *testing.T
 		})
 	}
 }
+
+// lostReplyMatrixEngine applies its first matrix removal and reports an error,
+// as if the reply was lost. Its second answers USER_NOT_FOUND.
+type lostReplyMatrixEngine struct {
+	*fakeWriterEngine
+	attempts int
+}
+
+func (e *lostReplyMatrixEngine) RemoveMatrixNode(ctx context.Context, structure, userID string, mode PruningMode) (*MatrixRemovalResult, error) {
+	e.attempts++
+	if e.attempts == 1 {
+		if _, err := e.fakeWriterEngine.RemoveMatrixNode(ctx, structure, userID, mode); err != nil {
+			return nil, err
+		}
+		return nil, errors.New("lostReplyMatrixEngine: the reply to the first removal was lost")
+	}
+	return nil, fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", userID)
+}
+
+// writeSpyStore records every write call that reaches it.
+type writeSpyStore struct {
+	*MemoryTreeStore
+	writes []string
+}
+
+func (s *writeSpyStore) InsertNode(ctx context.Context, n TreeNodeRow) error {
+	s.writes = append(s.writes, "InsertNode")
+	return s.MemoryTreeStore.InsertNode(ctx, n)
+}
+
+func (s *writeSpyStore) DeleteNode(ctx context.Context, treeID, userID string) error {
+	s.writes = append(s.writes, "DeleteNode")
+	return s.MemoryTreeStore.DeleteNode(ctx, treeID, userID)
+}
+
+func (s *writeSpyStore) DeleteNodeAndResponsor(ctx context.Context, treeID, userID, eventID string, moved []Responsored) error {
+	s.writes = append(s.writes, "DeleteNodeAndResponsor")
+	return s.MemoryTreeStore.DeleteNodeAndResponsor(ctx, treeID, userID, eventID, moved)
+}
+
+func (s *writeSpyStore) BulkInsert(ctx context.Context, nodes []TreeNodeRow) error {
+	s.writes = append(s.writes, "BulkInsert")
+	return s.MemoryTreeStore.BulkInsert(ctx, nodes)
+}
+
+func (s *writeSpyStore) ProjectInsert(ctx context.Context, n TreeNodeRow, v int64) error {
+	s.writes = append(s.writes, "ProjectInsert")
+	return s.MemoryTreeStore.ProjectInsert(ctx, n, v)
+}
+
+func (s *writeSpyStore) ProjectRemoval(ctx context.Context, treeID string, r RemovalProjection, eventID string, v int64) error {
+	s.writes = append(s.writes, "ProjectRemoval")
+	return s.MemoryTreeStore.ProjectRemoval(ctx, treeID, r, eventID, v)
+}
+
+func (s *writeSpyStore) UndoRootProjection(ctx context.Context, treeID, userID string, v int64) error {
+	s.writes = append(s.writes, "UndoRootProjection")
+	return s.MemoryTreeStore.UndoRootProjection(ctx, treeID, userID, v)
+}
+
+func (s *writeSpyStore) ProjectRejection(ctx context.Context, treeID, eventID string, v int64) error {
+	s.writes = append(s.writes, "ProjectRejection")
+	return s.MemoryTreeStore.ProjectRejection(ctx, treeID, eventID, v)
+}
+
+func TestTreeConsumer_AMatrixRemovalWhoseReplyWasLostRefusesAndWritesNothing(t *testing.T) {
+	ctx := context.Background()
+	inner := NewMemoryTreeStore()
+	require.NoError(t, inner.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), writerTree, writerRoot, 0, nil, ptr(writerRoot), nil)))
+	require.NoError(t, inner.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), writerTree, writerChild, 1,
+		ptr(writerRoot), ptr(writerRoot), intPtr(0))))
+	store := &writeSpyStore{MemoryTreeStore: inner}
+	engine := &lostReplyMatrixEngine{fakeWriterEngine: newFakeWriterEngine()}
+	require.NoError(t, engine.CreateMatrixTree(ctx, writerTree, 3, "breadth_first"))
+	require.NoError(t, engine.AddRoot(ctx, writerTree, writerRoot, writeTime.Unix()))
+	require.NoError(t, engine.AddNodeAt(ctx, writerTree, writerChild, writerRoot, writerRoot, 0, writeTime.Unix()))
+	consumer := NewTreeEventConsumer(store, engine)
+	consumer.retryDelay = 0
+	event := versionedEvent(t, writerTree, 3, EventTypeNodeRemoved, NodeRemovedPayload{TreeID: writerTree,
+		UserID: writerChild, RemovedAt: writeTime, TreeType: treeTypeMatrix, PruningMode: PruningPromoteEarliest})
+
+	err := consumer.HandleEvent(ctx, event)
+
+	var notProjected *RemovalNotProjectedError
+	require.ErrorAs(t, err, &notProjected)
+	assert.Equal(t, 2, engine.attempts)
+	assert.Empty(t, store.writes)
+}

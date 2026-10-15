@@ -252,11 +252,10 @@ func (e *matrixRestoreCounter) RestoreSnapshot(ctx context.Context, structure, t
 
 // seedRealSnapshot loads tree into a fresh worker, snapshots it, and stores the
 // snapshot at version.
-func seedRealSnapshot(t *testing.T, it *writerIntegration, tree string, width int, version int64) {
+func seedRealSnapshot(t *testing.T, it *writerIntegration, tree string, width int, spillover string, version int64) {
 	t.Helper()
 	ctx := context.Background()
 	engine := it.engine(t)
-	spillover := "breadth_first"
 	_, err := NewTreeWriter(it.events, it.store, NewMemorySnapshotStore(), engine, NewPostgresTreeLocker(it.dsn)).
 		Load(ctx, LoadRequest{TreeID: tree, TreeType: treeTypeMatrix, MatrixWidth: &width, MatrixSpillover: &spillover})
 	require.NoError(t, err)
@@ -298,14 +297,14 @@ func TestTreeWriter_AMatrixRemovalWhoseProjectionFailedConvergesOnTheNextWrite(t
 				require.NoError(t, res.ProjectionErr)
 			}
 			if tc.snapshot {
-				seedRealSnapshot(t, it, tree, width, 4)
+				seedRealSnapshot(t, it, tree, width, spillover, 4)
 			}
 
 			failing := &failOnceRemovalStore{TreeStore: it.store}
 			removal, err := NewTreeWriter(it.events, failing, it.snapshots, it.engine(t), NewPostgresTreeLocker(it.dsn)).
 				Remove(ctx, RemoveRequest{TreeID: tree, UserID: a, RemovedAt: writeTime, PruningMode: tc.mode})
 			require.NoError(t, err)
-			require.Error(t, removal.ProjectionErr, "ProjectionErr of the removal through failOnceRemovalStore")
+			require.ErrorContains(t, removal.ProjectionErr, "failOnceRemovalStore: first ProjectRemoval refused")
 			version, _, err := it.store.ProjectedVersion(ctx, tree)
 			require.NoError(t, err)
 			require.Equal(t, int64(4), version)

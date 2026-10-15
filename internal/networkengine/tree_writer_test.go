@@ -474,18 +474,69 @@ func TestTreeWriterRemove_RefusesAnEmptyStreamBeforeTheLock(t *testing.T) {
 		TreeStreamName(writerTree)+" has no events")
 }
 
-func TestTreeWriterRemove_RefusesAMatrixTreeBeforeTheLock(t *testing.T) {
-	env := newWriterEnv()
-	mustAddRoot(t, env, treeTypeMatrix)
-	two := 2
-	mustPlace(t, env, writerChild, &two)
-	w := NewTreeWriter(env.events, env.store, env.snapshots, newFakeWriterEngine(), refusingLocker{t})
+func TestTreeWriterRemove_RefusesAMismatchedPruningModeBeforeTheLock(t *testing.T) {
+	stream := TreeStreamName(writerTree)
+	cases := []struct {
+		name     string
+		treeType string
+		mode     PruningMode
+		want     string
+	}{
+		{"a matrix tree with no mode", treeTypeMatrix, "",
+			"remove " + writerChild + " from tree " + writerTree + ": stream " + stream +
+				" records tree type matrix at version 1, and the request names no pruning mode"},
+		{"a matrix tree with an unknown mode", treeTypeMatrix, "prune_all",
+			"remove " + writerChild + " from tree " + writerTree + ": stream " + stream +
+				` records tree type matrix at version 1, and the request names pruning mode "prune_all", which is not promote_earliest or holding_tank`},
+		{"a unilevel tree with a mode", treeTypeUnilevel, PruningPromoteEarliest,
+			"remove " + writerChild + " from tree " + writerTree + ": stream " + stream +
+				` records tree type unilevel at version 1, and the request names pruning mode "promote_earliest"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newWriterEnv()
+			mustAddRoot(t, env, tc.treeType)
+			var position *int
+			if tc.treeType == treeTypeMatrix {
+				position = intPtr(2)
+			}
+			mustPlace(t, env, writerChild, position)
+			w := NewTreeWriter(env.events, env.store, env.snapshots, newFakeWriterEngine(), refusingLocker{t})
 
-	_, err := w.Remove(context.Background(), RemoveRequest{TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime})
+			_, err := w.Remove(context.Background(), RemoveRequest{TreeID: writerTree, UserID: writerChild,
+				RemovedAt: writeTime, PruningMode: tc.mode})
 
-	require.EqualError(t, err, "remove "+writerChild+" from tree "+writerTree+": stream "+
-		TreeStreamName(writerTree)+" records tree type matrix at version 1, and this writer does not remove from matrix trees")
-	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 2)
+			require.EqualError(t, err, tc.want)
+			assert.Len(t, streamEvents(t, env.events, stream), 2)
+		})
+	}
+}
+
+func TestTreeWriterRemove_AppendsAndProjectsAMatrixRemoval(t *testing.T) {
+	for _, mode := range []PruningMode{PruningPromoteEarliest, PruningHoldingTank} {
+		t.Run(string(mode), func(t *testing.T) {
+			env := newWriterEnv()
+			mustAddRoot(t, env, treeTypeMatrix)
+			mustPlace(t, env, writerChild, intPtr(2))
+			w, engine := env.writer()
+
+			res, err := w.Remove(context.Background(), RemoveRequest{TreeID: writerTree, UserID: writerChild,
+				RemovedAt: writeTime, PruningMode: mode})
+
+			require.NoError(t, err)
+			require.NoError(t, res.ProjectionErr)
+			assert.Equal(t, []Mutation{CheckRemoveMatrixNode(writerChild, mode)}, engine.checks)
+			events := streamEvents(t, env.events, TreeStreamName(writerTree))
+			require.Len(t, events, 3)
+			var payload NodeRemovedPayload
+			require.NoError(t, json.Unmarshal(events[2].Payload, &payload))
+			assert.Equal(t, treeTypeMatrix, payload.TreeType)
+			assert.Equal(t, mode, payload.PruningMode)
+			row, err := env.store.GetNode(context.Background(), writerTree, writerChild)
+			require.NoError(t, err)
+			assert.Nil(t, row)
+		})
+	}
 }
 
 func TestTreeWriterPlace_EnforcesThePositionRuleBeforeTheLock(t *testing.T) {
@@ -662,6 +713,11 @@ func TestTreeWriterRemove_AppendsAndProjectsARemoval(t *testing.T) {
 	stamped, err := env.store.GetNodeByRemovalEvent(context.Background(), writerTree, res.EventID)
 	require.NoError(t, err)
 	assert.NotNil(t, stamped)
+	events := streamEvents(t, env.events, TreeStreamName(writerTree))
+	var payload NodeRemovedPayload
+	require.NoError(t, json.Unmarshal(events[len(events)-1].Payload, &payload))
+	assert.Equal(t, treeTypeUnilevel, payload.TreeType)
+	assert.Empty(t, payload.PruningMode)
 }
 
 func TestTreeWriterCatchUp_ProjectsAnUnprojectedLastEventBeforeAppending(t *testing.T) {

@@ -41,11 +41,13 @@ type PlaceRequest struct {
 	EnrolledAt time.Time
 }
 
-// RemoveRequest asks for a leaf's removal.
+// RemoveRequest asks for a node's removal. PruningMode is required for a
+// matrix tree and refused for any other.
 type RemoveRequest struct {
-	TreeID    string
-	UserID    string
-	RemovedAt time.Time
+	TreeID      string
+	UserID      string
+	RemovedAt   time.Time
+	PruningMode PruningMode
 }
 
 // CaughtUpEvent names a redelivered last event.
@@ -296,25 +298,49 @@ func (w *TreeWriter) Remove(ctx context.Context, r RemoveRequest) (WriteResult, 
 	if !found {
 		return WriteResult{}, fmt.Errorf("remove %s from tree %s: stream %s has no events", userID, tree, stream)
 	}
-	if shape.treeType == treeTypeMatrix {
-		return WriteResult{}, refuseMatrixRemoval(userID.String(), tree, stream)
+	if err := checkRemovalMode(userID.String(), tree, stream, shape.treeType, r.PruningMode); err != nil {
+		return WriteResult{}, err
 	}
-	payload := NodeRemovedPayload{TreeID: tree, UserID: userID.String(), RemovedAt: r.RemovedAt}
+	payload := NodeRemovedPayload{TreeID: tree, UserID: userID.String(), RemovedAt: r.RemovedAt,
+		TreeType: shape.treeType, PruningMode: r.PruningMode}
 
 	return w.write(ctx, writeSpec{
 		treeID: treeID,
 		shape:  shape,
 		build: func(treeShape) (platform.NewEvent, Mutation, error) {
 			event, err := newTreeEvent(EventTypeNodeRemoved, payload)
-			return event, CheckRemoveNode(payload.UserID), err
+			return event, removalCheck(payload), err
 		},
 	})
 }
 
-// refuseMatrixRemoval refuses a removal from a matrix tree.
-func refuseMatrixRemoval(user, tree, stream string) error {
-	return fmt.Errorf("remove %s from tree %s: stream %s records tree type matrix at version 1, "+
-		"and this writer does not remove from matrix trees", user, tree, stream)
+// checkRemovalMode refuses a pruning mode that does not fit the tree type the
+// stream records.
+func checkRemovalMode(user, tree, stream, treeType string, mode PruningMode) error {
+	prefix := fmt.Sprintf("remove %s from tree %s: stream %s records tree type %s at version 1", user, tree, stream, treeType)
+	if treeType != treeTypeMatrix {
+		if mode != "" {
+			return fmt.Errorf("%s, and the request names pruning mode %q", prefix, mode)
+		}
+		return nil
+	}
+	switch mode {
+	case PruningPromoteEarliest, PruningHoldingTank:
+		return nil
+	case "":
+		return fmt.Errorf("%s, and the request names no pruning mode", prefix)
+	default:
+		return fmt.Errorf("%s, and the request names pruning mode %q, which is not %s or %s",
+			prefix, mode, PruningPromoteEarliest, PruningHoldingTank)
+	}
+}
+
+// removalCheck builds the check for removing p.
+func removalCheck(p NodeRemovedPayload) Mutation {
+	if p.TreeType == treeTypeMatrix {
+		return CheckRemoveMatrixNode(p.UserID, p.PruningMode)
+	}
+	return CheckRemoveNode(p.UserID)
 }
 
 // shapeConflict refuses a requested type or matrix parameter that differs from

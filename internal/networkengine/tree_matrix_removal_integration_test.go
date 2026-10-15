@@ -29,7 +29,8 @@ func orNone(id *string) string {
 }
 
 // requireRowsMatchEngine fails unless every active row in tree agrees with the
-// engine's position for that user on parent, position and depth.
+// engine's position for that user on parent, position and depth, and every
+// non-root row on its sponsor.
 func requireRowsMatchEngine(t *testing.T, store TreeStore, engine TreeInspector, tree string) {
 	t.Helper()
 	ctx := context.Background()
@@ -41,10 +42,15 @@ func requireRowsMatchEngine(t *testing.T, store TreeStore, engine TreeInspector,
 		require.NoError(t, err, "engine position of %s", row.UserID)
 		assert.True(t, samePtrUUID(pos.ParentUserID, row.ParentID),
 			"parent of %s: engine %s, row %s", row.UserID, orNone(pos.ParentUserID), orNone(row.ParentID))
-		if row.Position != nil {
+		assert.Equal(t, int(pos.Depth), row.Depth, "depth of %s", row.UserID)
+		if row.ParentID == nil {
+			continue
+		}
+		if assert.NotNil(t, row.Position, "position of %s", row.UserID) {
 			assert.Equal(t, *row.Position, pos.Position, "position of %s", row.UserID)
 		}
-		assert.Equal(t, int(pos.Depth), row.Depth, "depth of %s", row.UserID)
+		assert.True(t, samePtrUUID(pos.SponsorUserID, row.SponsorID),
+			"sponsor of %s: engine %s, row %s", row.UserID, orNone(pos.SponsorUserID), orNone(row.SponsorID))
 	}
 }
 
@@ -91,8 +97,6 @@ func (e *matrixConsumerEnv) remove(t *testing.T, user string, mode PruningMode) 
 		TreeType: treeTypeMatrix, PruningMode: mode})
 }
 
-// The second delivery finds the user gone from the engine and every row of the
-// removed subtree stamped with this event, so it converges with no write.
 func TestTreeConsumer_ARedeliveredHoldingTankRemovalConverges(t *testing.T) {
 	env := newMatrixConsumerEnv(t, testTreeUUID(5825), 2)
 	root, x, a := testUserUUID(1), testUserUUID(2), testUserUUID(3)

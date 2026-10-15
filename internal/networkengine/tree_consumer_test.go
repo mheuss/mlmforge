@@ -2409,10 +2409,11 @@ func TestTreeConsumer_ARemovalNeverCallsDeleteNodeAndResponsor(t *testing.T) {
 		position *int
 	}{
 		{treeTypeUnilevel, "", nil},
+		{treeTypeBinary, "", intPtr(0)},
 		{treeTypeMatrix, PruningPromoteEarliest, intPtr(0)},
 		{treeTypeMatrix, PruningHoldingTank, intPtr(0)},
 	} {
-		t.Run(tc.treeType+" "+string(tc.mode), func(t *testing.T) {
+		t.Run(strings.TrimSpace(tc.treeType+" "+string(tc.mode)), func(t *testing.T) {
 			ctx := context.Background()
 			store := noDeleteAndResponsorStore{MemoryTreeStore: NewMemoryTreeStore(), t: t}
 			engine := newFakeWriterEngine()
@@ -2436,6 +2437,41 @@ func TestTreeConsumer_ARemovalNeverCallsDeleteNodeAndResponsor(t *testing.T) {
 			row, err := store.GetNode(ctx, writerTree, writerChild)
 			require.NoError(t, err)
 			assert.Nil(t, row, "the removal left %s active", writerChild)
+		})
+	}
+}
+
+func TestTreeConsumer_RefusesARemovalWhoseShapeTheEngineCannotApply(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		treeType string
+		mode     PruningMode
+	}{
+		{"a mode on a unilevel removal", treeTypeUnilevel, PruningHoldingTank},
+		{"an unknown mode on a matrix removal", treeTypeMatrix, "prune_all"},
+		{"an unsupported tree_type", "ternary", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := NewMemoryTreeStore()
+			engine := newFakeWriterEngine()
+			require.NoError(t, engine.CreateTree(ctx, writerTree, treeTypeUnilevel))
+			require.NoError(t, engine.AddRoot(ctx, writerTree, writerRoot, writeTime.Unix()))
+			require.NoError(t, engine.AddNode(ctx, writerTree, writerChild, writerRoot, writerRoot, writeTime.Unix()))
+			require.NoError(t, store.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), writerTree, writerRoot, 0, nil, ptr(writerRoot), nil)))
+			require.NoError(t, store.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), writerTree, writerChild, 1,
+				ptr(writerRoot), ptr(writerRoot), nil)))
+			consumer := NewTreeEventConsumer(store, engine)
+
+			err := consumer.HandleEvent(ctx, versionedEvent(t, writerTree, 3, EventTypeNodeRemoved, NodeRemovedPayload{
+				TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime, TreeType: tc.treeType, PruningMode: tc.mode,
+			}))
+
+			require.ErrorIs(t, err, ErrUnprojectableEvent)
+			assert.Contains(t, engine.trees[writerTree].nodes, writerChild, "the engine removed %s", writerChild)
+			row, err := store.GetNode(ctx, writerTree, writerChild)
+			require.NoError(t, err)
+			assert.NotNil(t, row, "the store removed %s", writerChild)
 		})
 	}
 }

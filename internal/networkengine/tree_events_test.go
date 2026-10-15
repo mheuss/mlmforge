@@ -69,3 +69,63 @@ func TestCheckNodePlacedShape(t *testing.T) {
 		})
 	}
 }
+
+// One row per row of the design's Section 4 compatibility table. A row marked
+// "any" there appears once per value that changes the outcome. An empty
+// expectation accepts. Any other names a phrase only the refusing guard prints.
+func TestNodeRemovedShape_FollowsTheCompatibilityTable(t *testing.T) {
+	const (
+		modeOffMatrix = "only a matrix removal names a mode"
+		noMode        = "has no pruning_mode"
+		unknownMode   = `has unsupported pruning_mode "prune_all"`
+		unknownType   = `has unsupported tree_type "ternary"`
+		missingType   = "has no tree_type, and the stream records tree type matrix"
+	)
+	cases := []struct {
+		name     string
+		stream   string
+		treeType string
+		mode     PruningMode
+		consumer string
+		replay   string
+	}{
+		{"unilevel stream, no tree_type, no mode", treeTypeUnilevel, "", "", "", ""},
+		{"binary stream, no tree_type, no mode", treeTypeBinary, "", "", "", ""},
+		{"unilevel stream, tree_type unilevel, no mode", treeTypeUnilevel, treeTypeUnilevel, "", "", ""},
+		{"unilevel stream, no tree_type, a mode", treeTypeUnilevel, "", PruningPromoteEarliest, modeOffMatrix, modeOffMatrix},
+		{"unilevel stream, tree_type unilevel, a mode", treeTypeUnilevel, treeTypeUnilevel, PruningHoldingTank, modeOffMatrix, modeOffMatrix},
+		{"unilevel stream, tree_type binary", treeTypeUnilevel, treeTypeBinary, "", "",
+			`has tree_type "binary", and the stream records tree type unilevel`},
+		{"unilevel stream, tree_type binary, a mode", treeTypeUnilevel, treeTypeBinary, PruningPromoteEarliest,
+			`carries pruning_mode "promote_earliest"`, `has tree_type "binary", and the stream records tree type unilevel`},
+		{"matrix stream, promote_earliest", treeTypeMatrix, treeTypeMatrix, PruningPromoteEarliest, "", ""},
+		{"matrix stream, holding_tank", treeTypeMatrix, treeTypeMatrix, PruningHoldingTank, "", ""},
+		{"matrix stream, no mode", treeTypeMatrix, treeTypeMatrix, "", noMode, noMode},
+		{"matrix stream, an unknown mode", treeTypeMatrix, treeTypeMatrix, "prune_all", unknownMode, unknownMode},
+		{"matrix stream, no tree_type, no mode", treeTypeMatrix, "", "", "", missingType},
+		{"matrix stream, no tree_type, a mode", treeTypeMatrix, "", PruningPromoteEarliest, modeOffMatrix, missingType},
+		{"matrix stream, tree_type unilevel", treeTypeMatrix, treeTypeUnilevel, "", "",
+			`has tree_type "unilevel", and the stream records tree type matrix`},
+		{"unilevel stream, an unknown tree_type", treeTypeUnilevel, "ternary", "", unknownType, unknownType},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := NodeRemovedPayload{TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime,
+				TreeType: tc.treeType, PruningMode: tc.mode}
+
+			assertShapeVerdict(t, checkNodeRemovedShape(p), tc.consumer)
+			assertShapeVerdict(t, checkNodeRemovedOnStream(p, tc.stream), tc.replay)
+		})
+	}
+}
+
+// assertShapeVerdict passes a nil error when want is empty, and otherwise an
+// error containing want.
+func assertShapeVerdict(t *testing.T, err error, want string) {
+	t.Helper()
+	if want == "" {
+		assert.NoError(t, err)
+		return
+	}
+	assert.ErrorContains(t, err, want)
+}

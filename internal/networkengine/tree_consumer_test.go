@@ -2389,3 +2389,53 @@ func TestCheckReplayedInsert_MessageText(t *testing.T) {
 		})
 	}
 }
+
+// noDeleteAndResponsorStore fails the test if anything calls
+// DeleteNodeAndResponsor.
+type noDeleteAndResponsorStore struct {
+	*MemoryTreeStore
+	t *testing.T
+}
+
+func (s noDeleteAndResponsorStore) DeleteNodeAndResponsor(context.Context, string, string, string, []Responsored) error {
+	s.t.Errorf("the consumer called DeleteNodeAndResponsor")
+	return errors.New("noDeleteAndResponsorStore: DeleteNodeAndResponsor is off the consumer's path")
+}
+
+func TestTreeConsumer_ARemovalNeverCallsDeleteNodeAndResponsor(t *testing.T) {
+	for _, tc := range []struct {
+		treeType string
+		mode     PruningMode
+		position *int
+	}{
+		{treeTypeUnilevel, "", nil},
+		{treeTypeMatrix, PruningPromoteEarliest, intPtr(0)},
+		{treeTypeMatrix, PruningHoldingTank, intPtr(0)},
+	} {
+		t.Run(tc.treeType+" "+string(tc.mode), func(t *testing.T) {
+			ctx := context.Background()
+			store := noDeleteAndResponsorStore{MemoryTreeStore: NewMemoryTreeStore(), t: t}
+			engine := newFakeWriterEngine()
+			if tc.treeType == treeTypeMatrix {
+				require.NoError(t, engine.CreateMatrixTree(ctx, writerTree, 3, "breadth_first"))
+			} else {
+				require.NoError(t, engine.CreateTree(ctx, writerTree, tc.treeType))
+			}
+			require.NoError(t, engine.AddRoot(ctx, writerTree, writerRoot, writeTime.Unix()))
+			require.NoError(t, engine.AddNodeAt(ctx, writerTree, writerChild, writerRoot, writerRoot, 0, writeTime.Unix()))
+			require.NoError(t, store.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), writerTree, writerRoot, 0, nil, ptr(writerRoot), nil)))
+			require.NoError(t, store.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), writerTree, writerChild, 1,
+				ptr(writerRoot), ptr(writerRoot), tc.position)))
+			consumer := NewTreeEventConsumer(store, engine)
+
+			err := consumer.HandleEvent(ctx, versionedEvent(t, writerTree, 3, EventTypeNodeRemoved, NodeRemovedPayload{
+				TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime, TreeType: tc.treeType, PruningMode: tc.mode,
+			}))
+
+			require.NoError(t, err)
+			row, err := store.GetNode(ctx, writerTree, writerChild)
+			require.NoError(t, err)
+			assert.Nil(t, row, "the removal left %s active", writerChild)
+		})
+	}
+}

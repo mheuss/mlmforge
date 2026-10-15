@@ -294,21 +294,24 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 	if err := checkStream(event, "node_removed", payload.TreeID, payload.UserID); err != nil {
 		return unprojectable(err)
 	}
-	call, callErr := nodeRemovedCall(payload, "")
+	if err := checkNodeRemovedShape(payload); err != nil {
+		return unprojectable(err)
+	}
+	call, callErr := nodeRemovedCall(payload, payload.TreeType)
 	if callErr != nil {
 		return unprojectable(callErr)
 	}
 
-	var moved []Responsored
+	var outcome engineOutcome
 
 	// withRetry returning nil cannot say whether this call removed the node or
 	// found it already gone, and the two need different work afterwards. The
-	// flag carries that out, the way moved already does.
+	// flag carries that out, the way outcome already does.
 	alreadyProjected := false
 
 	if err := c.withRetry(ctx, call.op, payload.TreeID, payload.UserID, func() error {
 		out, err := call.apply(ctx, c.engine)
-		moved = out.responsored
+		outcome = out
 		return err
 	}, func(ctx context.Context, err error) (reconcileOutcome, error) {
 		if !isEngineCode(err, engineCodeUserNotFound) {
@@ -333,8 +336,8 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 			// The engine applied the removal and no store write has landed.
 			// This handler is engine-first, so that covers a redelivery and
 			// equally a first delivery whose reply was lost on an earlier
-			// attempt: either way RemoveNode's reply carried the only copy of
-			// the moved list and nothing here can rebuild it.
+			// attempt: either way the engine's reply carried the only copy of
+			// what the removal moved and nothing here can rebuild it.
 			return reconcileDiverged, &RemovalNotProjectedError{
 				TreeID:  payload.TreeID,
 				UserID:  payload.UserID,
@@ -356,11 +359,11 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 		return nil
 	}
 
-	// The moved list cannot be rebuilt here, so giving up is not a clean abort.
+	// The outcome cannot be rebuilt here, so giving up is not a clean abort.
 	writeCtx, cancelWrite := detachedWrite(ctx)
 	defer cancelWrite()
-	if err := c.store.ProjectRemoval(writeCtx, payload.TreeID,
-		RemovalProjection{Users: []string{payload.UserID}, Responsored: moved}, event.ID, event.Version); err != nil {
+	projection := RemovalProjection{Users: outcome.removed, Responsored: outcome.responsored, Relocated: outcome.relocated}
+	if err := c.store.ProjectRemoval(writeCtx, payload.TreeID, projection, event.ID, event.Version); err != nil {
 		return fmt.Errorf("remove node and re-sponsor recruits: %w", err)
 	}
 	return nil

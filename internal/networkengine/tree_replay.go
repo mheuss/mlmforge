@@ -171,6 +171,9 @@ func (r *replayer) call(ev platform.Event) (engineCall, string, error) {
 		if err := r.checkTree(ev, p.TreeID); err != nil {
 			return engineCall{}, "", err
 		}
+		if err := checkNodeRemovedOnStream(p, r.shape.treeType); err != nil {
+			return engineCall{}, "", r.failEvent(ev, err)
+		}
 		call, err := nodeRemovedCall(p, r.shape.treeType)
 		if err != nil {
 			return engineCall{}, "", r.failEvent(ev, err)

@@ -500,7 +500,7 @@ func TestReplayStream_RefusesAMatrixRemoval(t *testing.T) {
 	_, err := replayStream(context.Background(), events, engine, writerTree,
 		treeShape{treeType: treeTypeMatrix, width: 3, spillover: "breadth_first"}, 1, 2)
 
-	require.ErrorContains(t, err, "the caller names the tree matrix, and the payload carries no pruning mode")
+	require.ErrorContains(t, err, "has no tree_type, and the stream records tree type matrix")
 }
 
 func TestEngineCalls_ConsumerAndReplayLeaveTheSameEngineState(t *testing.T) {
@@ -522,4 +522,76 @@ func TestEngineCalls_ConsumerAndReplayLeaveTheSameEngineState(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, consumed.trees[writerTree], env.engine.trees[writerTree])
+}
+
+// removalStream appends a root and one child placement in a tree of
+// streamType. It returns the stream, an engine holding the created tree, and
+// the stream's shape.
+func removalStream(t *testing.T, streamType string) (platform.EventStore, *fakeWriterEngine, treeShape) {
+	t.Helper()
+	ctx := context.Background()
+	events := platform.NewMemoryEventStore()
+	engine := newFakeWriterEngine()
+	root := RootAddedPayload{TreeID: writerTree, UserID: writerRoot, SponsorID: writerRoot,
+		EnrolledAt: writeTime, TreeType: streamType}
+	shape := treeShape{treeType: streamType}
+	var position *int
+	switch streamType {
+	case treeTypeMatrix:
+		width, spillover := 3, "breadth_first"
+		root.MatrixWidth, root.MatrixSpillover = &width, &spillover
+		shape.width, shape.spillover = width, spillover
+		require.NoError(t, engine.CreateMatrixTree(ctx, writerTree, width, spillover))
+		position = intPtr(0)
+	case treeTypeBinary:
+		require.NoError(t, engine.CreateTree(ctx, writerTree, streamType))
+		position = intPtr(0)
+	default:
+		require.NoError(t, engine.CreateTree(ctx, writerTree, streamType))
+	}
+	appendDirect(t, events, EventTypeRootAdded, root)
+	appendDirect(t, events, EventTypeNodePlaced, NodePlacedPayload{TreeID: writerTree, UserID: writerChild,
+		ParentID: writerRoot, SponsorID: writerRoot, Position: position, TreeType: streamType, EnrolledAt: writeTime})
+	return events, engine, shape
+}
+
+func TestReplayStream_RefusesANodeRemovedItsStreamDisagreesWith(t *testing.T) {
+	cases := []struct {
+		name     string
+		stream   string
+		treeType string
+		mode     PruningMode
+		want     string
+	}{
+		{"a mode on a unilevel stream", treeTypeUnilevel, "", PruningPromoteEarliest, `carries pruning_mode "promote_earliest"`},
+		{"a mode with tree_type unilevel", treeTypeUnilevel, treeTypeUnilevel, PruningHoldingTank, `carries pruning_mode "holding_tank"`},
+		{"tree_type binary on a unilevel stream", treeTypeUnilevel, treeTypeBinary, "",
+			`has tree_type "binary", and the stream records tree type unilevel`},
+		{"tree_type binary and a mode on a unilevel stream", treeTypeUnilevel, treeTypeBinary, PruningPromoteEarliest,
+			`has tree_type "binary", and the stream records tree type unilevel`},
+		{"a matrix removal with no mode", treeTypeMatrix, treeTypeMatrix, "", "has no pruning_mode"},
+		{"a matrix removal with an unknown mode", treeTypeMatrix, treeTypeMatrix, "prune_all", `has unsupported pruning_mode "prune_all"`},
+		{"no tree_type on a matrix stream", treeTypeMatrix, "", "", "has no tree_type, and the stream records tree type matrix"},
+		{"no tree_type and a mode on a matrix stream", treeTypeMatrix, "", PruningPromoteEarliest,
+			"has no tree_type, and the stream records tree type matrix"},
+		{"tree_type unilevel on a matrix stream", treeTypeMatrix, treeTypeUnilevel, "",
+			`has tree_type "unilevel", and the stream records tree type matrix`},
+		{"an unknown tree_type", treeTypeUnilevel, "ternary", "", `has unsupported tree_type "ternary"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			events, engine, shape := removalStream(t, tc.stream)
+			appendDirect(t, events, EventTypeNodeRemoved, NodeRemovedPayload{TreeID: writerTree, UserID: writerChild,
+				RemovedAt: writeTime, TreeType: tc.treeType, PruningMode: tc.mode})
+
+			_, err := replayStream(context.Background(), events, engine, writerTree, shape, 1, 3)
+
+			var replayErr *TreeReplayError
+			require.ErrorAs(t, err, &replayErr)
+			assert.Equal(t, TreeReplayStageReplay, replayErr.Stage)
+			assert.Equal(t, int64(3), replayErr.FailedVersion)
+			assert.ErrorContains(t, err, "event at version 3 of type "+EventTypeNodeRemoved+" failed")
+			assert.ErrorContains(t, err, tc.want)
+		})
+	}
 }

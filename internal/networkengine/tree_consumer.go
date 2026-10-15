@@ -427,8 +427,7 @@ func isEngineCode(err error, code string) bool {
 }
 
 // positionMatchesProjection reports whether the engine's view of a placed node
-// agrees with what was projected for it. User and enrolment come from the
-// event. Parent, position, sponsor and depth come from the stored row.
+// agrees with what was projected for it.
 //
 // False means "not confirmed equal", which covers a real disagreement and an
 // identifier either side fails to parse.
@@ -451,7 +450,7 @@ func positionMatchesProjection(pos *EnginePosition, p NodePlacedPayload, stored 
 	if pos.EnrolledAt != p.EnrolledAt.Unix() {
 		return false
 	}
-	// The engine's Position always carries a value, and a unilevel row has none.
+	// A unilevel row has no position to compare.
 	if p.TreeType != treeTypeUnilevel {
 		if stored.Position == nil || pos.Position != *stored.Position {
 			return false

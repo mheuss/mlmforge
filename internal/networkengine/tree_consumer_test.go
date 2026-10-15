@@ -2428,7 +2428,7 @@ type noDeleteAndResponsorStore struct {
 
 func (s noDeleteAndResponsorStore) DeleteNodeAndResponsor(context.Context, string, string, string, []Responsored) error {
 	s.t.Errorf("the consumer called DeleteNodeAndResponsor")
-	return errors.New("noDeleteAndResponsorStore: DeleteNodeAndResponsor is off the consumer's path")
+	return errors.New("noDeleteAndResponsorStore: DeleteNodeAndResponsor was called")
 }
 
 func TestTreeConsumer_ARemovalNeverCallsDeleteNodeAndResponsor(t *testing.T) {

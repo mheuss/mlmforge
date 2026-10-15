@@ -355,7 +355,6 @@ func TestTreeConsumer_SeededMatrixRemovalsKeepEveryRowOnTheEngine(t *testing.T) 
 // consumer, removes one node that is not the root, and compares every active
 // row against the engine.
 func runSeededMatrixRemoval(t *testing.T, store TreeStore, engine *EngineClient, seed uint64) {
-	t.Helper()
 	ctx := context.Background()
 	rng := rand.New(rand.NewPCG(seed, 582))
 	width := 2 + rng.IntN(4)
@@ -378,6 +377,7 @@ func runSeededMatrixRemoval(t *testing.T, store TreeStore, engine *EngineClient,
 	handle(EventTypeRootAdded, RootAddedPayload{TreeID: tree, UserID: user(0), SponsorID: user(0), EnrolledAt: writeTime,
 		TreeType: treeTypeMatrix, MatrixWidth: &width, MatrixSpillover: &spillover})
 	taken := map[int][]bool{0: make([]bool, width)}
+	parentOf := map[int]int{}
 	for i := 1; i < nodes; i++ {
 		var open [][2]int
 		for parent := range i {
@@ -390,13 +390,30 @@ func runSeededMatrixRemoval(t *testing.T, store TreeStore, engine *EngineClient,
 		pick := open[rng.IntN(len(open))]
 		taken[pick[0]][pick[1]] = true
 		taken[i] = make([]bool, width)
+		parentOf[i] = pick[0]
 		position := pick[1]
 		handle(EventTypeNodePlaced, NodePlacedPayload{TreeID: tree, UserID: user(i), ParentID: user(pick[0]),
 			SponsorID: user(rng.IntN(i)), Position: &position, TreeType: treeTypeMatrix,
 			EnrolledAt: writeTime.Add(time.Duration(rng.IntN(50)) * time.Minute)})
 	}
-	handle(EventTypeNodeRemoved, NodeRemovedPayload{TreeID: tree, UserID: user(1 + rng.IntN(nodes-1)),
+	removed := 1 + rng.IntN(nodes-1)
+	handle(EventTypeNodeRemoved, NodeRemovedPayload{TreeID: tree, UserID: user(removed),
 		RemovedAt: writeTime, TreeType: treeTypeMatrix, PruningMode: mode})
 
 	requireRowsMatchEngine(t, store, engine, tree)
+	gone := 1
+	if mode == PruningHoldingTank {
+		gone = 0
+		for i := range nodes {
+			for n := i; n != 0; n = parentOf[n] {
+				if n == removed {
+					gone++
+					break
+				}
+			}
+		}
+	}
+	rows, err := store.GetByTree(ctx, tree)
+	require.NoError(t, err)
+	assert.Len(t, rows, nodes-gone, "seed %d, %s removal of node %d", seed, mode, removed)
 }

@@ -53,6 +53,7 @@ func reportReject(ctx context.Context, out, warn io.Writer, res networkengine.Re
 		if res.RetryErr != nil && !errors.Is(err, res.RetryErr) {
 			_, _ = fmt.Fprintf(warn, "retrying event %s at version %d returned: %s\n", res.RejectedEventID, res.RejectedVersion, res.RetryErr)
 		}
+		printWarnings(warn, res.Warnings)
 		printReleaseWarning(warn, res.ReleaseErr)
 		var unknown *networkengine.AppendOutcomeUnknownError
 		if errors.As(err, &unknown) || ctx.Err() == nil {
@@ -78,6 +79,7 @@ func reportReject(ctx context.Context, out, warn io.Writer, res networkengine.Re
 		_, _ = fmt.Fprintf(out, "rejection %s at version %d for event %s is already projected; nothing was appended\n",
 			res.EventID, res.Version, res.RejectedEventID)
 	default:
+		printWarnings(warn, res.Warnings)
 		printReleaseWarning(warn, res.ReleaseErr)
 		return fmt.Errorf("reject returned no error and outcome %q, which this command does not report", res.Outcome)
 	}
@@ -85,6 +87,7 @@ func reportReject(ctx context.Context, out, warn io.Writer, res networkengine.Re
 	if res.ProjectionErr != nil {
 		notCurrent = warnRejectionProjection(warn, res)
 	}
+	printWarnings(warn, res.Warnings)
 	printReleaseWarning(warn, res.ReleaseErr)
 	return notCurrent
 }

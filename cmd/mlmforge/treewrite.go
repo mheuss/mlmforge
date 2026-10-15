@@ -49,6 +49,7 @@ func reportWrite(ctx context.Context, out, warn io.Writer, res networkengine.Wri
 			notCurrent = warnProjection(warn, res)
 		}
 	}
+	printWarnings(warn, res.Warnings)
 	printReleaseWarning(warn, res.ReleaseErr)
 	if err == nil {
 		return notCurrent
@@ -105,6 +106,13 @@ func printReleaseWarning(warn io.Writer, err error) {
 		return
 	}
 	_, _ = fmt.Fprintf(warn, "warning: releasing the tree lock reported: %s\n", err)
+}
+
+// printWarnings writes each warning a result carries.
+func printWarnings(warn io.Writer, warnings []string) {
+	for _, w := range warnings {
+		_, _ = fmt.Fprintf(warn, "warning: %s\n", w)
+	}
 }
 
 func newTreeAddRootCmd(resolve flagResolver, open depsOpener, writer writerFor) *cobra.Command {

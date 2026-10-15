@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"testing"
 	"time"
@@ -16,10 +17,12 @@ import (
 
 // stubLoader counts attempts and returns a fixed error.
 type stubLoader struct {
-	size     int
-	err      error
-	attempts int
-	onCall   func(attempt int)
+	size       int
+	warnings   []string
+	releaseErr error
+	err        error
+	attempts   int
+	onCall     func(attempt int)
 }
 
 func (s *stubLoader) Load(context.Context, networkengine.LoadRequest) (networkengine.LoadResult, error) {
@@ -27,7 +30,7 @@ func (s *stubLoader) Load(context.Context, networkengine.LoadRequest) (networken
 	if s.onCall != nil {
 		s.onCall(s.attempts)
 	}
-	return networkengine.LoadResult{Nodes: s.size}, s.err
+	return networkengine.LoadResult{Nodes: s.size, Warnings: s.warnings, ReleaseErr: s.releaseErr}, s.err
 }
 
 // unilevelLoad asks for tree as a unilevel tree.
@@ -378,7 +381,7 @@ func TestRunTreeLoad_DoesNotClaimALoadForZeroRows(t *testing.T) {
 func TestRunTreeLoad_KeepsTheCause(t *testing.T) {
 	render := func(req networkengine.LoadRequest) string {
 		w := networkengine.NewTreeWriter(platform.NewMemoryEventStore(), networkengine.NewMemoryTreeStore(),
-			nil, networkengine.NewMemoryTreeLocker())
+			networkengine.NewMemorySnapshotStore(), nil, networkengine.NewMemoryTreeLocker())
 		var out bytes.Buffer
 		err := runTreeLoad(t.Context(), &out, io.Discard, w, req)
 		require.Error(t, err)
@@ -512,24 +515,24 @@ func TestRunTreeLoad_ReportsAFailedRedeliveryWithoutALoadedLine(t *testing.T) {
 // createOnlyEngine answers CreateTree. The embedded interface is nil, so any
 // other call panics rather than returning a value a test could pass against.
 type createOnlyEngine struct {
-	networkengine.TreeEngineChecker
+	networkengine.TreeRebuilder
 }
 
 func (createOnlyEngine) CreateTree(context.Context, string, string) error { return nil }
 
-// flakyVersionStore fails its first ProjectedVersion with a cause that is safe
-// to retry.
-type flakyVersionStore struct {
+// flakyRowsStore fails its first ProjectedRows with a cause that is safe to
+// retry.
+type flakyRowsStore struct {
 	networkengine.TreeStore
 	reads int
 }
 
-func (s *flakyVersionStore) ProjectedVersion(ctx context.Context, treeID string) (int64, bool, error) {
+func (s *flakyRowsStore) ProjectedRows(ctx context.Context, treeID string) (int64, bool, []networkengine.TreeNodeRow, error) {
 	s.reads++
 	if s.reads == 1 {
-		return 0, false, safeToRetryErr{errors.New("wrote no bytes")}
+		return 0, false, nil, safeToRetryErr{errors.New("wrote no bytes")}
 	}
-	return s.TreeStore.ProjectedVersion(ctx, treeID)
+	return s.TreeStore.ProjectedRows(ctx, treeID)
 }
 
 // flakyFirstReadEvents fails its first ReadStream with a cause that is safe to
@@ -547,11 +550,11 @@ func (e *flakyFirstReadEvents) ReadStream(ctx context.Context, stream string, fr
 	return e.MemoryEventStore.ReadStream(ctx, stream, from, limit)
 }
 
-func TestRunTreeLoad_RetriesASafeProjectedVersionFailureOverTheWriter(t *testing.T) {
+func TestRunTreeLoad_RetriesASafeProjectedRowsFailureOverTheWriter(t *testing.T) {
 	noRetryDelay(t)
-	store := &flakyVersionStore{TreeStore: networkengine.NewMemoryTreeStore()}
-	w := networkengine.NewTreeWriter(platform.NewMemoryEventStore(), store, createOnlyEngine{},
-		networkengine.NewMemoryTreeLocker())
+	store := &flakyRowsStore{TreeStore: networkengine.NewMemoryTreeStore()}
+	w := networkengine.NewTreeWriter(platform.NewMemoryEventStore(), store, networkengine.NewMemorySnapshotStore(),
+		createOnlyEngine{}, networkengine.NewMemoryTreeLocker())
 	tree := testTreeID(51)
 	var out bytes.Buffer
 
@@ -563,12 +566,74 @@ func TestRunTreeLoad_RetriesASafeProjectedVersionFailureOverTheWriter(t *testing
 func TestRunTreeLoad_RetriesASafeVersion1ReadFailureOverTheWriter(t *testing.T) {
 	noRetryDelay(t)
 	events := &flakyFirstReadEvents{MemoryEventStore: platform.NewMemoryEventStore()}
-	w := networkengine.NewTreeWriter(events, networkengine.NewMemoryTreeStore(), createOnlyEngine{},
-		networkengine.NewMemoryTreeLocker())
+	w := networkengine.NewTreeWriter(events, networkengine.NewMemoryTreeStore(), networkengine.NewMemorySnapshotStore(),
+		createOnlyEngine{}, networkengine.NewMemoryTreeLocker())
 	tree := testTreeID(52)
 	var out bytes.Buffer
 
 	require.NoError(t, runTreeLoad(t.Context(), &out, io.Discard, w, unilevelLoad(tree)))
 	require.Greater(t, events.reads, 1, "the failed version-1 read was not retried")
 	require.Equal(t, "tree "+tree+" holds no rows; nothing was loaded\n", out.String())
+}
+
+func TestRunTreeLoad_PrintsEachWarning(t *testing.T) {
+	var out, warn bytes.Buffer
+	loader := &stubLoader{size: 1, warnings: []string{"first"}}
+
+	require.NoError(t, runTreeLoad(t.Context(), &out, &warn, loader, unilevelLoad(testTreeID(60))))
+
+	require.Contains(t, warn.String(), "warning: first\n")
+}
+
+func TestRunTreeLoad_PrintsWarningsAfterItsOutputAndBeforeTheReleaseWarning(t *testing.T) {
+	var both bytes.Buffer
+	tree := testTreeID(61)
+	loader := &stubLoader{size: 1, warnings: []string{"first"}, releaseErr: errors.New("unlock failed")}
+
+	require.NoError(t, runTreeLoad(t.Context(), &both, &both, loader, unilevelLoad(tree)))
+
+	require.Equal(t, "loaded tree "+tree+" (1 nodes)\nwarning: first\nwarning: releasing the tree lock reported: unlock failed\n",
+		both.String())
+}
+
+func TestTreeLoadRetryable_NeverRetriesAReplayFailure(t *testing.T) {
+	err := fmt.Errorf("load tree t; nothing was appended: %w", &networkengine.TreeReplayError{
+		TreeID: "t", Stage: networkengine.TreeReplayStageReplay, Err: retryable(),
+	})
+
+	require.False(t, treeLoadRetryable(err))
+}
+
+func TestTreeLoadFailureMessage_NamesTheReplayStage(t *testing.T) {
+	replay := &networkengine.TreeReplayError{TreeID: "t", Stage: networkengine.TreeReplayStageMembership,
+		ReachedVersion: 3, ProjectedVersion: 3, Mismatch: "the engine holds 1 nodes"}
+
+	got := treeLoadFailureMessage(fmt.Errorf("load tree t; nothing was appended: %w", replay))
+
+	require.Equal(t, "load stopped at the membership stage while building the tree from its stream: "+replay.Error(), got)
+}
+
+func TestTreeLoadFailureMessage_KeepsAStreamRefusalAheadOfAFailedBuild(t *testing.T) {
+	err := &networkengine.RefusedAfterFailedBuildError{
+		Refusal: &networkengine.ProjectionMissingError{TreeID: "t", LastVersion: 2},
+		Build: &networkengine.TreeReplayError{TreeID: "t", Stage: networkengine.TreeReplayStageMembership,
+			Mismatch: "the replay left no root; the store holds 2 active rows"},
+	}
+
+	got := treeLoadFailureMessage(err)
+
+	require.Equal(t, "load failed: "+err.Error(), got)
+}
+
+func TestRunTreeLoad_PrintsAFailedLoadsWarningsBeforeTheReleaseWarning(t *testing.T) {
+	var both bytes.Buffer
+	loader := &stubLoader{warnings: []string{"first"}, releaseErr: errors.New("unlock failed"),
+		err: &networkengine.TreeReplayError{TreeID: "t", Stage: networkengine.TreeReplayStageReplay}}
+
+	err := runTreeLoad(t.Context(), &both, &both, loader, unilevelLoad(testTreeID(62)))
+
+	require.Error(t, err)
+	require.Equal(t, 1, exitCode(err))
+	require.Contains(t, err.Error(), "load stopped at the replay stage while building the tree from its stream: ")
+	require.Equal(t, "warning: first\nwarning: releasing the tree lock reported: unlock failed\n", both.String())
 }

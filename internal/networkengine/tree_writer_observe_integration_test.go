@@ -11,7 +11,7 @@ import (
 
 // failingAddEngine refuses every placement and passes every other call through.
 type failingAddEngine struct {
-	TreeEngineChecker
+	TreeRebuilder
 }
 
 func (failingAddEngine) AddNode(context.Context, string, string, string, string, int64, ...AddNodeOption) error {
@@ -23,7 +23,8 @@ func TestTreeWriter_ObservesTheStoreCurrentWhenTheEngineFailsAfterTheInsert(t *t
 	ctx := context.Background()
 	tree, root, child := testTreeUUID(320), testUserUUID(1), testUserUUID(2)
 	it.addUnilevelRoot(t, tree, root)
-	w := NewTreeWriter(it.events, it.store, failingAddEngine{TreeEngineChecker: it.engine(t)}, NewPostgresTreeLocker(it.dsn))
+	w := NewTreeWriter(it.events, it.store, it.snapshots, failingAddEngine{TreeRebuilder: it.engine(t)},
+		NewPostgresTreeLocker(it.dsn))
 
 	res, err := w.Place(ctx, PlaceRequest{TreeID: tree, UserID: child, ParentID: root, SponsorID: root, EnrolledAt: writeTime})
 

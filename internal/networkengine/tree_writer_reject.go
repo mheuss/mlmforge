@@ -31,8 +31,12 @@ func pendingRejection(tree string, last *platform.Event, projected int64, found 
 		if !found {
 			seen = fmt.Sprintf("and tree %s has no projection row", tree)
 		}
-		return errors.Join(fmt.Errorf("stream %s ends with rejection %s at version %d, %s; nothing was appended: %w",
-			TreeStreamName(tree), last.ID, last.Version, seen, err), loadErr)
+		refusal := fmt.Errorf("stream %s ends with rejection %s at version %d, %s; nothing was appended: %w",
+			TreeStreamName(tree), last.ID, last.Version, seen, err)
+		if loadErr == nil {
+			return refusal
+		}
+		return &RefusedAfterFailedBuildError{Refusal: refusal, Build: loadErr}
 	}
 	return &RejectionPendingError{
 		TreeID: tree, RejectionID: last.ID, Version: last.Version,
@@ -98,6 +102,17 @@ var rejectionSentinels = []error{
 // cannot apply.
 func (w *TreeWriter) rejectionEvidence(ctx context.Context, tree string, shape treeShape, last platform.Event, retryErr error) (bool, error) {
 	if errors.Is(retryErr, context.Canceled) || errors.Is(retryErr, context.DeadlineExceeded) {
+		return false, nil
+	}
+	// A stream refusal outranks the failed build it carries, so that build
+	// failure is not evidence.
+	var refused *RefusedAfterFailedBuildError
+	if errors.As(retryErr, &refused) {
+		return false, nil
+	}
+	// A drop-stage failure is not evidence either.
+	var replay *TreeReplayError
+	if errors.As(retryErr, &replay) && replay.Stage == TreeReplayStageDrop {
 		return false, nil
 	}
 	var failed *CatchUpFailedError
@@ -176,6 +191,7 @@ type RejectResult struct {
 	Version         int64                  // the rejection's version
 	ProjectionErr   error                  // any failure projecting the rejection
 	Observed        *ProjectionObservation // the projected version, re-read after a projection error
+	Warnings        []string               // what a fallback during the retry's load observed, in order
 	ReleaseErr      error                  // the unlock failed
 }
 
@@ -238,7 +254,8 @@ func (w *TreeWriter) Reject(ctx context.Context, r RejectRequest) (result Reject
 	}
 	result.RejectedEventID, result.RejectedVersion = last.ID, last.Version
 
-	retryErr := w.retry(ctx, tree, stream, shape, *last)
+	warnings, retryErr := w.retry(ctx, tree, stream, shape, *last)
+	result.Warnings = warnings
 	if retryErr == nil {
 		return result, fmt.Errorf("retrying event %s at version %d in stream %s returned no error; nothing was appended",
 			last.ID, last.Version, stream)
@@ -272,19 +289,20 @@ func (w *TreeWriter) Reject(ctx context.Context, r RejectRequest) (result Reject
 }
 
 // retry loads the tree and redelivers expected, the stream's last event.
-func (w *TreeWriter) retry(ctx context.Context, tree, stream string, shape treeShape, expected platform.Event) error {
-	loaded, found, last, _, err := w.prepare(ctx, tree, shape)
+func (w *TreeWriter) retry(ctx context.Context, tree, stream string, shape treeShape, expected platform.Event) ([]string, error) {
+	prep, err := w.prepare(ctx, tree, shape)
 	if err != nil {
-		return err
+		return prep.warnings, err
 	}
+	last := prep.last
 	if last == nil {
-		return fmt.Errorf("a read of stream %s for the retry returned no last event, where event %s was expected", stream, expected.ID)
+		return prep.warnings, fmt.Errorf("a read of stream %s for the retry returned no last event, where event %s was expected", stream, expected.ID)
 	}
 	if !sameUUID(last.ID, expected.ID) {
-		return fmt.Errorf("a read of stream %s for the retry returned last event %s, where event %s was expected", stream, last.ID, expected.ID)
+		return prep.warnings, fmt.Errorf("a read of stream %s for the retry returned last event %s, where event %s was expected", stream, last.ID, expected.ID)
 	}
-	_, err = w.catchUp(ctx, tree, stream, *last, loaded, found)
-	return err
+	_, err = w.catchUp(ctx, tree, stream, *last, prep.loaded, prep.found)
+	return prep.warnings, err
 }
 
 // resumeRejection handles a stream that already ends with a rejection.

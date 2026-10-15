@@ -18,11 +18,12 @@ import (
 
 // writerIntegration holds what the writer integration tests share.
 type writerIntegration struct {
-	pool   *pgxpool.Pool
-	events *platform.PostgresEventStore
-	store  *PostgresTreeStore
-	dsn    string
-	worker string
+	pool      *pgxpool.Pool
+	events    *platform.PostgresEventStore
+	store     *PostgresTreeStore
+	snapshots *PostgresSnapshotStore
+	dsn       string
+	worker    string
 }
 
 func newWriterIntegration(t *testing.T) *writerIntegration {
@@ -33,11 +34,12 @@ func newWriterIntegration(t *testing.T) *writerIntegration {
 	worker := findWorkerBinary(t)
 	pool := pgContainer.NewPool(t)
 	return &writerIntegration{
-		pool:   pool,
-		events: platform.NewPostgresEventStore(pool),
-		store:  NewPostgresTreeStore(pool),
-		dsn:    pgContainer.DSN,
-		worker: worker,
+		pool:      pool,
+		events:    platform.NewPostgresEventStore(pool),
+		store:     NewPostgresTreeStore(pool),
+		snapshots: NewPostgresSnapshotStore(pool),
+		dsn:       pgContainer.DSN,
+		worker:    worker,
 	}
 }
 
@@ -53,7 +55,7 @@ func (it *writerIntegration) engine(t *testing.T) *EngineClient {
 // writer builds a TreeWriter over a fresh worker and a Postgres lock.
 func (it *writerIntegration) writer(t *testing.T) *TreeWriter {
 	t.Helper()
-	return NewTreeWriter(it.events, it.store, it.engine(t), NewPostgresTreeLocker(it.dsn))
+	return NewTreeWriter(it.events, it.store, it.snapshots, it.engine(t), NewPostgresTreeLocker(it.dsn))
 }
 
 func (it *writerIntegration) addUnilevelRoot(t *testing.T, tree, root string) {
@@ -81,7 +83,7 @@ func receive[T any](t *testing.T, ch chan T, timeout time.Duration) T {
 // heldEngine holds its first AddNode until release is closed, and logs when
 // that call returns.
 type heldEngine struct {
-	TreeEngineChecker
+	TreeRebuilder
 	log         *orderLog
 	name        string
 	entered     chan struct{}
@@ -95,9 +97,9 @@ func (g *heldEngine) open() {
 	g.releaseOnce.Do(func() { close(g.release) })
 }
 
-func newHeldEngine(engine TreeEngineChecker, log *orderLog, name string) *heldEngine {
+func newHeldEngine(engine TreeRebuilder, log *orderLog, name string) *heldEngine {
 	return &heldEngine{
-		TreeEngineChecker: engine, log: log, name: name,
+		TreeRebuilder: engine, log: log, name: name,
 		entered: make(chan struct{}), release: make(chan struct{}),
 	}
 }
@@ -107,7 +109,7 @@ func (g *heldEngine) AddNode(ctx context.Context, structure, userID, parentID, s
 		close(g.entered)
 		<-g.release
 	})
-	err := g.TreeEngineChecker.AddNode(ctx, structure, userID, parentID, sponsorID, enrolledAt, opts...)
+	err := g.TreeRebuilder.AddNode(ctx, structure, userID, parentID, sponsorID, enrolledAt, opts...)
 	g.log.add(g.name + " AddNode returned")
 	return err
 }
@@ -132,9 +134,9 @@ func assertTwoWritersSerialise(t *testing.T, it *writerIntegration, firstTreeID,
 	ctx := context.Background()
 	log := &orderLog{}
 	gate := newHeldEngine(it.engine(t), log, "w1")
-	w1 := NewTreeWriter(it.events, &loggingStore{TreeStore: it.store, log: log, name: "w1"},
+	w1 := NewTreeWriter(it.events, &loggingStore{TreeStore: it.store, log: log, name: "w1"}, it.snapshots,
 		gate, NewPostgresTreeLocker(it.dsn))
-	w2 := NewTreeWriter(it.events, &loggingStore{TreeStore: it.store, log: log, name: "w2"},
+	w2 := NewTreeWriter(it.events, &loggingStore{TreeStore: it.store, log: log, name: "w2"}, it.snapshots,
 		it.engine(t), &loggingLocker{TreeLocker: NewPostgresTreeLocker(it.dsn), log: log, name: "w2"})
 	place := func(w *TreeWriter, tree, user string, out chan error) {
 		res, err := w.Place(ctx, PlaceRequest{TreeID: tree, UserID: user, ParentID: root, SponsorID: root, EnrolledAt: writeTime})
@@ -322,7 +324,8 @@ func TestTreeWriter_ProjectsAnUnprojectedEventBeforeAppending(t *testing.T) {
 	})
 	log := &orderLog{}
 	w := NewTreeWriter(&loggingEvents{EventStore: it.events, log: log},
-		&loggingStore{TreeStore: it.store, log: log, name: "w"}, it.engine(t), NewPostgresTreeLocker(it.dsn))
+		&loggingStore{TreeStore: it.store, log: log, name: "w"}, it.snapshots,
+		it.engine(t), NewPostgresTreeLocker(it.dsn))
 
 	res, err := w.Place(ctx, PlaceRequest{TreeID: tree, UserID: other, ParentID: root, SponsorID: root, EnrolledAt: writeTime})
 
@@ -344,7 +347,7 @@ func TestTreeWriter_CompletesOnAOneConnectionPool(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
 	require.EqualValues(t, 1, pool.Config().MaxConns)
-	events, store := platform.NewPostgresEventStore(pool), NewPostgresTreeStore(pool)
+	events, store, snapshots := platform.NewPostgresEventStore(pool), NewPostgresTreeStore(pool), NewPostgresSnapshotStore(pool)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	tree, root := testTreeUUID(307), testUserUUID(1)
@@ -358,7 +361,7 @@ func TestTreeWriter_CompletesOnAOneConnectionPool(t *testing.T) {
 		},
 	}
 	for i, write := range writes {
-		res, err := write(NewTreeWriter(events, store, it.engine(t), NewPostgresTreeLocker(url)))
+		res, err := write(NewTreeWriter(events, store, snapshots, it.engine(t), NewPostgresTreeLocker(url)))
 		require.NoError(t, err, "write %d", i)
 		require.NoError(t, res.ProjectionErr, "write %d", i)
 		require.NoError(t, res.ReleaseErr, "write %d", i)

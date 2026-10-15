@@ -8,7 +8,7 @@ Tree types in the network engine reconstruct from domain event replay. For the b
 
 All tree-layer data structures must remain serde-serializable. Snapshot persistence uses `serde_json`. Go handles storage and scheduling.
 
-`take_snapshot` and `restore_snapshot` work on one named structure at a time, not on the whole worker. The handler reads a `structure` param and serializes that entry of `WorkerState.trees`. The loaded plan and every other structure are outside the snapshot, so recovering a worker means restoring each structure and calling `load_plan` again. Snapshot scheduling and a Go-side snapshot store are not built.
+`take_snapshot` and `restore_snapshot` work on one named structure at a time, not on the whole worker. The handler reads a `structure` param and serializes that entry of `WorkerState.trees`. The loaded plan and every other structure are outside the snapshot, so recovering a worker means restoring each structure and calling `load_plan` again. Go stores the latest snapshot of each tree in `tree_snapshots`, and a write takes a new one every 1000 events (HEU-297).
 
 ### Constraint
 
@@ -20,10 +20,10 @@ JSON via `serde_json`. Debuggable and adequate for the data sizes involved. Form
 
 ### Recovery Flow
 
-1. Go takes periodic snapshots (after commission runs or every N operations)
-2. Go stores snapshot bytes alongside the event sequence number
-3. On recovery: restore snapshot, replay events after that sequence number
-4. Snapshot scheduling and storage strategy are Go/infrastructure decisions
+1. A write whose projection succeeded takes a snapshot once the stream is 1000 events past the stored one.
+2. Go stores the snapshot bytes with the stream version they were taken at.
+3. A load restores the snapshot and replays the events after it, through the tree's projected version.
+4. A load that cannot use a snapshot deletes it and replays the whole stream.
 
 ## What This Enables
 

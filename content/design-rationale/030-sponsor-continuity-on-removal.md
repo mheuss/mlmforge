@@ -37,7 +37,7 @@ A validator cannot be the fix. Once a freed slot is reused the stale index names
 
 ### The engine is not the only holder of a sponsor edge
 
-`tree_nodes.sponsor_id` holds one too. Before this decision, the Go store soft-deleted the removed row and touched no other row. The startup bulk load selects only rows where `removed_at` is null. So a repair that lives only in the engine leaves the store naming a user the load will not return, and the tree stops rebuilding after a restart.
+`tree_nodes.sponsor_id` holds one too. Before this decision, the Go store soft-deleted the removed row and touched no other row. The startup bulk load selected only rows where `removed_at` is null. So a repair that lived only in the engine left the store naming a user the load would not return, and the tree stopped rebuilding after a restart.
 
 Repairing one holder and not the other is worse than repairing neither, because the two then disagree and nothing reconciles them.
 
@@ -103,11 +103,11 @@ A holding-tank round trip moves a recruit placed outside the subtree onto a surv
 
 The `remove_node` response names the recruits a removal moved, so a caller can see the move happen. It has no way to learn that re-placing from the tank did not undo it. HEU-776 carries that.
 
-The engine has to answer before the store can be written. A removal whose reply is lost, or whose store write fails, leaves the engine and the store disagreeing. The next write or `tree load` redelivers the removal to an engine rebuilt from the store. That engine still holds the user, so it computes the moved recruits again (HEU-777).
+The engine has to answer before the store can be written. A removal whose reply is lost, or whose store write fails, leaves the engine and the store disagreeing. The next write or `tree load` redelivers the removal to an engine rebuilt from the stream. That engine still holds the user, so it computes the moved recruits again (HEU-777).
 
 Two removals in one tree have to reach the store in the order the engine applied them. The engine answers each removal with the recruits it moved, and the store write happens afterwards in Go. If two store writes landed in the opposite order, the later write would carry the earlier answer.
 
-Take root, then A, then B, with C recruited by B. Removing B and then A has the engine move C to A and then to root. If B's store write landed after A's, the store would say C is sponsored by A. Both writes would have done what they were told and neither would fail. The disagreement would surface at the next load of the tree from the store.
+Take root, then A, then B, with C recruited by B. Removing B and then A has the engine move C to A and then to root. If B's store write landed after A's, the store would say C is sponsored by A. Both writes would have done what they were told and neither would fail. The disagreement would surface at the next load of the tree.
 
 This is a different failure class from the lost reply above, and the two should not be read as one problem. That one fails loudly, through a retry that exhausts or a transaction that rolls back. This one would produce no signal at all. A loud failure gets fixed. A silent one gets inherited.
 
@@ -121,6 +121,6 @@ If the first writer's write is the one refused, it reports a projection error. T
 
 The version check also covers a user placed again before the late write lands. The soft delete matches the user's active row, not the row the removal targeted. If B is placed again after the first writer appends, the late removal would match B's new row. The placement that put B back carries a higher version, so the store refuses the late removal before its soft delete runs. An integration test covers this.
 
-If the first writer had only loaded the tree, other writers' events can land before it reads the stream's last event. The writer reads the tree's projected version before it loads the rows. It goes ahead only when the stream's last event is at that version or one past it. Otherwise it refuses and appends nothing. Two integration tests cover this. In one, a removal would have left a recruit placed in the meantime sponsored by the removed user. In the other, a placement would have gone under a user removed in the meantime.
+If the first writer had only loaded the tree, other writers' events can land before it reads the stream's last event. The writer reads the tree's projected version and its rows in one read before it builds the tree. It goes ahead only when the stream's last event is at that version or one past it. Otherwise it refuses and appends nothing. Two integration tests cover this. In one, a removal would have left a recruit placed in the meantime sponsored by the removed user. In the other, a placement would have gone under a user removed in the meantime.
 
 The three matrix repair sites have no path to the store. Matrix removal never reaches the engine through the consumer, so nothing carries their moved recruits to `tree_nodes`. The engine half is done and the store half is not, which is the shape the rule two sections up warns about. Whoever wires matrix removal up has to wire both. HEU-582 carries the missing dispatch.

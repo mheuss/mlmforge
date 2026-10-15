@@ -209,7 +209,7 @@ func TestTreeWriter_ReplaysAHoldingTankRemovalIntoAFreshWorker(t *testing.T) {
 	require.NoError(t, res.ProjectionErr)
 	before, err := first.GetHoldingTank(ctx, tree, "")
 	require.NoError(t, err)
-	require.Len(t, before, 3, "the removal left the tank short, so a replay would prove nothing")
+	require.Len(t, before, 3, "holding tank entries after the holding_tank removal of %s", a)
 
 	fresh := it.engine(t)
 	_, err = writer(fresh).Load(ctx, LoadRequest{TreeID: tree, TreeType: treeTypeMatrix, MatrixWidth: &width, MatrixSpillover: &spillover})

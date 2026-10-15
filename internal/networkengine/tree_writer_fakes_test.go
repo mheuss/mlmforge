@@ -182,6 +182,33 @@ func (f *fakeWriterEngine) RemoveNode(_ context.Context, structure, userID strin
 	return []Responsored{}, nil
 }
 
+// RemoveMatrixNode removes a leaf. It refuses a node with children rather than
+// modelling promotion or the holding tank.
+func (f *fakeWriterEngine) RemoveMatrixNode(_ context.Context, structure, userID string, mode PruningMode) (*MatrixRemovalResult, error) {
+	t, err := f.tree(structure)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := t.nodes[userID]; !ok {
+		return nil, fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", userID)
+	}
+	if t.root == userID {
+		return nil, fakeEngineError("CANNOT_REMOVE_ROOT", "cannot remove root node")
+	}
+	for _, n := range t.nodes {
+		if n.ParentUserID != nil && *n.ParentUserID == userID {
+			return nil, fmt.Errorf("fakeWriterEngine removes only a matrix leaf, and %s has children", userID)
+		}
+	}
+	delete(t.nodes, userID)
+	result := &MatrixRemovalResult{Removed: userID, Repositioned: []string{}, MovedToTank: []string{},
+		Relocated: []Relocation{}, Responsored: []Responsored{}}
+	if mode == PruningHoldingTank {
+		result.MovedToTank = []string{userID}
+	}
+	return result, nil
+}
+
 func (f *fakeWriterEngine) GetPosition(_ context.Context, structure, userID string) (*EnginePosition, error) {
 	if f.positionErr != nil {
 		return nil, f.positionErr

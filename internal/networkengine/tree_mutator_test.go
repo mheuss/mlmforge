@@ -2,6 +2,7 @@ package networkengine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -127,6 +128,14 @@ func (s *stubMutator) totalCalls() int {
 func (s *stubMutator) RemoveNode(_ context.Context, _, userID string) ([]Responsored, error) {
 	s.removed = append(s.removed, userID)
 	return nil, s.failWith
+}
+
+func (s *stubMutator) RemoveMatrixNode(_ context.Context, _, userID string, _ PruningMode) (*MatrixRemovalResult, error) {
+	s.removed = append(s.removed, userID)
+	if s.failWith != nil {
+		return nil, s.failWith
+	}
+	return nil, errors.New("stubMutator: RemoveMatrixNode is not modelled")
 }
 
 // TestTreeMutator_ConsumerAcceptsInterface verifies that TreeEventConsumer

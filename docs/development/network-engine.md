@@ -1473,7 +1473,7 @@ express the state, and they look like they do.
 
 ## A Matrix Removal Projects As One Transaction In Three Steps
 
-A matrix removal can tombstone a whole subtree and move nodes that were not removed. The worker reports both. `removed` and `moved_to_tank` name who left. `relocated` names every survivor whose parent, slot or depth changed, and where it now sits. `responsored` names the recruits whose sponsor moved.
+A matrix removal can tombstone a whole subtree and move nodes that were not removed. The worker reports both. `removed` and `moved_to_tank` name who left. `relocated` names every survivor whose parent, slot or depth changed, and where it now sits. `responsored` names the recruits whose sponsor the removal changed, and their new sponsor.
 
 `ProjectRemoval` writes all of it in one transaction, in this order:
 
@@ -1483,7 +1483,7 @@ A matrix removal can tombstone a whole subtree and move nodes that were not remo
 
 The order matters. `idx_tree_nodes_tree_parent_position_active` is a unique index that is not deferrable, and Postgres checks it row by row. A promoted node takes the slot its removed parent held. That slot is free only after step 1.
 
-Inside step 3 the row order is undefined. So a relocation that changes parent or slot has to target a slot that is free after step 1 and that no other relocation vacates. A relocation that changes only depth keeps its own slot, and no other relocation targets it. The Rust property test in `matrix_properties.rs` checks that against a model of the slot map. The seeded Go test checks it against the real index.
+Inside step 3 the row order is undefined. So a relocation that changes parent or slot has to target a slot that is free after step 1 and that no other relocation vacates. A relocation that changes only depth keeps its own slot, and no other relocation targets it. The Rust property test in `matrix_properties.rs` checks that against a model of the slot map. `TestTreeConsumer_SeededMatrixRemovalsKeepEveryRowOnTheEngine` checks it against the real index.
 
 Each step is one set-based statement, to keep a large removal inside the store's write timeout.
 

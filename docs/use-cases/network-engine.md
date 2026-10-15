@@ -478,7 +478,7 @@ for _, tree := range trees {
 }
 ```
 
-**Notes:** The pattern generalises to any external system with no undo: an engine that cannot undo a lost reply, an API without a rollback, a third party that charges on first call. Two things make it worth the duplication of engine rules in Go. First, the validation must mirror what the remote actually enforces, so it is only as good as that audit — `TestTreePersistence_RejectedTreeLeavesEngineLoadable` proves the guarantee against the real worker rather than a stub, and asserts a *corrected retry succeeds*, which is the part no fake can demonstrate. Second, the mirroring drifts silently if the remote adds a rule; the Rust side keeps its own runtime checks, so preflight is a second line of defence rather than a replacement. Deliberately not covered: divergence between what the store recorded and what the remote actually did — both can be internally consistent, so no read-side validation can detect it. HEU-553 closed the write-side contract for placement; removal still diverges (HEU-582), and the type-label trust boundary (HEU-554) remains open. Related: UC-NET-013, which supplies the ordering half.
+**Notes:** The pattern generalises to any external system with no undo: an engine that cannot undo a lost reply, an API without a rollback, a third party that charges on first call. Two things make it worth the duplication of engine rules in Go. First, the validation must mirror what the remote actually enforces, so it is only as good as that audit — `TestTreePersistence_RejectedTreeLeavesEngineLoadable` proves the guarantee against the real worker rather than a stub, and asserts a *corrected retry succeeds*, which is the part no fake can demonstrate. Second, the mirroring drifts silently if the remote adds a rule; the Rust side keeps its own runtime checks, so preflight is a second line of defence rather than a replacement. Deliberately not covered: divergence between what the store recorded and what the remote actually did — both can be internally consistent, so no read-side validation can detect it. HEU-553 closed the write-side contract for placement, and HEU-582 closed it for matrix removal. The type-label trust boundary (HEU-554) remains open. Related: UC-NET-013, which supplies the ordering half.
 
 One ordering trap the split exists to avoid: an empty-input short circuit placed above the configuration checks hides configuration errors for as long as the input stays empty. HEU-566 found `LoadTree(ctx, id, "matrix")` with no `WithMatrixParams`, and `LoadTree(ctx, id, "streamline")` with an unsupported type, both returning nil on a zero-row tree. Configuration describes the structure, not its contents, so its validity never depends on row count. Put the config phase above both the query and the empty check.
 
@@ -1252,10 +1252,10 @@ return err
 
 ### UC-NET-034: Projecting a removal that moves other nodes
 
-**Added:** Unreleased
+**Added:** Unreleased (HEU-582)
 **Files:** `internal/networkengine/tree_store.go`, `internal/networkengine/tree_store_postgres.go`, `internal/networkengine/tree_engine_calls.go`
 
-**Problem:** A removal can tombstone more than one user and move survivors, and the store has to follow all of it or none of it.
+**Problem:** A removal can tombstone more than one user and move survivors. The store has to follow all of it or none of it.
 
 **Solution:** The engine reports what moved, and `ProjectRemoval` takes it as one `RemovalProjection`. Postgres tombstones the removed set, then repoints sponsors, then moves the relocated rows, in one transaction. The memory twin stages the whole result and validates it before it changes a row.
 

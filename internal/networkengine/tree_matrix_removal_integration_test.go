@@ -3,6 +3,8 @@ package networkengine
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -218,4 +220,121 @@ func TestTreeWriter_ReplaysAHoldingTankRemovalIntoAFreshWorker(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, before, after)
+}
+
+// failOnceRemovalStore fails its first ProjectRemoval and passes every other
+// call through.
+type failOnceRemovalStore struct {
+	TreeStore
+	removals int
+}
+
+func (s *failOnceRemovalStore) ProjectRemoval(ctx context.Context, treeID string, r RemovalProjection,
+	removalEventID string, eventVersion int64) error {
+	s.removals++
+	if s.removals == 1 {
+		return errors.New("failOnceRemovalStore: first ProjectRemoval refused")
+	}
+	return s.TreeStore.ProjectRemoval(ctx, treeID, r, removalEventID, eventVersion)
+}
+
+// matrixRestoreCounter counts RestoreSnapshot calls and passes every call
+// through.
+type matrixRestoreCounter struct {
+	TreeRebuilder
+	restores int
+}
+
+func (e *matrixRestoreCounter) RestoreSnapshot(ctx context.Context, structure, treeType string, data json.RawMessage) error {
+	e.restores++
+	return e.TreeRebuilder.RestoreSnapshot(ctx, structure, treeType, data)
+}
+
+// seedRealSnapshot loads tree into a fresh worker, snapshots it, and stores the
+// snapshot at version.
+func seedRealSnapshot(t *testing.T, it *writerIntegration, tree string, width int, version int64) {
+	t.Helper()
+	ctx := context.Background()
+	engine := it.engine(t)
+	spillover := "breadth_first"
+	_, err := NewTreeWriter(it.events, it.store, NewMemorySnapshotStore(), engine, NewPostgresTreeLocker(it.dsn)).
+		Load(ctx, LoadRequest{TreeID: tree, TreeType: treeTypeMatrix, MatrixWidth: &width, MatrixSpillover: &spillover})
+	require.NoError(t, err)
+	taken, err := engine.TakeSnapshot(ctx, tree)
+	require.NoError(t, err)
+	require.NoError(t, it.snapshots.Put(ctx, Snapshot{TreeID: tree, Version: version, TreeType: taken.TreeType, Data: taken.Data}))
+}
+
+func TestTreeWriter_AMatrixRemovalWhoseProjectionFailedConvergesOnTheNextWrite(t *testing.T) {
+	cases := []struct {
+		mode     PruningMode
+		snapshot bool
+		active   int
+	}{
+		{PruningPromoteEarliest, false, 4},
+		{PruningPromoteEarliest, true, 4},
+		{PruningHoldingTank, false, 2},
+		{PruningHoldingTank, true, 2},
+	}
+	for i, tc := range cases {
+		t.Run(fmt.Sprintf("%s, snapshot %t", tc.mode, tc.snapshot), func(t *testing.T) {
+			it := newWriterIntegration(t)
+			ctx := context.Background()
+			tree := testTreeUUID(5831 + i)
+			root, a, b, c, d := testUserUUID(1), testUserUUID(2), testUserUUID(3), testUserUUID(4), testUserUUID(5)
+			width, spillover := 2, "breadth_first"
+			res, err := it.writer(t).AddRoot(ctx, AddRootRequest{TreeID: tree, UserID: root, SponsorID: root,
+				TreeType: treeTypeMatrix, MatrixWidth: &width, MatrixSpillover: &spillover, EnrolledAt: writeTime})
+			require.NoError(t, err)
+			require.NoError(t, res.ProjectionErr)
+			for _, p := range []struct {
+				user, parent string
+				position     int
+				after        time.Duration
+			}{{a, root, 0, time.Hour}, {b, a, 0, 2 * time.Hour}, {c, a, 1, 3 * time.Hour}} {
+				res, err := it.writer(t).Place(ctx, PlaceRequest{TreeID: tree, UserID: p.user, ParentID: p.parent,
+					SponsorID: p.parent, Position: intPtr(p.position), EnrolledAt: writeTime.Add(p.after)})
+				require.NoError(t, err)
+				require.NoError(t, res.ProjectionErr)
+			}
+			if tc.snapshot {
+				seedRealSnapshot(t, it, tree, width, 4)
+			}
+
+			failing := &failOnceRemovalStore{TreeStore: it.store}
+			removal, err := NewTreeWriter(it.events, failing, it.snapshots, it.engine(t), NewPostgresTreeLocker(it.dsn)).
+				Remove(ctx, RemoveRequest{TreeID: tree, UserID: a, RemovedAt: writeTime, PruningMode: tc.mode})
+			require.NoError(t, err)
+			require.Error(t, removal.ProjectionErr, "ProjectionErr of the removal through failOnceRemovalStore")
+			version, _, err := it.store.ProjectedVersion(ctx, tree)
+			require.NoError(t, err)
+			require.Equal(t, int64(4), version)
+
+			engine := &matrixRestoreCounter{TreeRebuilder: it.engine(t)}
+			next, err := NewTreeWriter(it.events, it.store, it.snapshots, engine, NewPostgresTreeLocker(it.dsn)).
+				Place(ctx, PlaceRequest{TreeID: tree, UserID: d, ParentID: root, SponsorID: root,
+					Position: intPtr(1), EnrolledAt: writeTime.Add(4 * time.Hour)})
+
+			require.NoError(t, err)
+			require.NoError(t, next.ProjectionErr)
+			require.NotNil(t, next.CaughtUp)
+			assert.Equal(t, removal.EventID, next.CaughtUp.EventID)
+			wantRestores := 0
+			if tc.snapshot {
+				wantRestores = 1
+			}
+			assert.Equal(t, wantRestores, engine.restores, "load path")
+			if tc.snapshot {
+				assert.Empty(t, next.Warnings, "warnings from the next write")
+				stored, found, err := it.snapshots.Get(ctx, tree)
+				require.NoError(t, err)
+				require.True(t, found, "a stored snapshot of %s after the next write", tree)
+				assert.Equal(t, int64(4), stored.Version)
+			}
+			requireRowsMatchEngine(t, it.store, engine, tree)
+			rows, err := it.store.GetByTree(ctx, tree)
+			require.NoError(t, err)
+			assert.Len(t, rows, tc.active)
+		})
+	}
 }

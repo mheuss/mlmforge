@@ -31,8 +31,12 @@ func pendingRejection(tree string, last *platform.Event, projected int64, found 
 		if !found {
 			seen = fmt.Sprintf("and tree %s has no projection row", tree)
 		}
-		return errors.Join(fmt.Errorf("stream %s ends with rejection %s at version %d, %s; nothing was appended: %w",
-			TreeStreamName(tree), last.ID, last.Version, seen, err), loadErr)
+		refusal := fmt.Errorf("stream %s ends with rejection %s at version %d, %s; nothing was appended: %w",
+			TreeStreamName(tree), last.ID, last.Version, seen, err)
+		if loadErr == nil {
+			return refusal
+		}
+		return &RefusedAfterFailedBuildError{Refusal: refusal, Build: loadErr}
 	}
 	return &RejectionPendingError{
 		TreeID: tree, RejectionID: last.ID, Version: last.Version,
@@ -104,6 +108,12 @@ func (w *TreeWriter) rejectionEvidence(ctx context.Context, tree string, shape t
 	// failure is not evidence.
 	var refused *RefusedAfterFailedBuildError
 	if errors.As(retryErr, &refused) {
+		return false, nil
+	}
+	// A failed drop carries the snapshot failure that led to it, which is not
+	// evidence either.
+	var replay *TreeReplayError
+	if errors.As(retryErr, &replay) && replay.Stage == TreeReplayStageDrop {
 		return false, nil
 	}
 	var failed *CatchUpFailedError

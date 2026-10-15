@@ -266,3 +266,20 @@ func TestTreeWriter_AFenceRefusalKeepsTheFailedBuild(t *testing.T) {
 	assert.Equal(t, TreeReplayStageMembership, replay.Stage)
 	assert.ErrorIs(t, err, readErr)
 }
+
+func TestTreeWriter_AMalformedPendingRejectionKeepsTheFailedBuild(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	appendDirect(t, env.events, EventTypeEventRejected, "not an object")
+	w, engine := env.writer()
+	readErr := errors.New("worker pipe closed")
+	engine.positionErr = readErr
+
+	_, err := w.Load(context.Background(), loadRequest())
+
+	var both *RefusedAfterFailedBuildError
+	require.ErrorAs(t, err, &both)
+	assert.ErrorContains(t, err, "ends with rejection")
+	assert.ErrorIs(t, err, readErr)
+	assert.NotContains(t, err.Error(), "\n")
+}

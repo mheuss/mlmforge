@@ -27,8 +27,7 @@ type TreeNodeRow struct {
 
 // TreeStore is the repository interface for tree node persistence.
 // The adjacency table is a read model projected from events. The Rust
-// engine is the runtime authority for topology queries. This interface
-// serves reporting and admin tools.
+// engine is the runtime authority for topology queries.
 type TreeStore interface {
 	// InsertNode adds a node to the adjacency table.
 	InsertNode(ctx context.Context, node TreeNodeRow) error
@@ -71,7 +70,7 @@ type TreeStore interface {
 	// GetByTreeDepthOrdered returns all active nodes in a tree ordered by
 	// depth ascending, then enrolled_at.
 	//
-	// Replay does not depend on this order. orderForReplay sorts by
+	// Row replay does not depend on this order. orderForReplay sorts by
 	// (Depth, EnrolledAt, UserID), a total order over a set whose duplicate
 	// user IDs validateNodes already rejected. So both the replay sequence and
 	// its "%d of %d" progress counter are fixed by the node set alone.

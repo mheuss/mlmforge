@@ -1185,3 +1185,41 @@ func TestTreeWriterReject_AFencedRetryIsNotEvidence(t *testing.T) {
 	assert.Empty(t, res.Outcome)
 	assert.Equal(t, before, streamEvents(t, env.events, TreeStreamName(writerTree)))
 }
+
+func TestTreeWriterReject_CarriesTheLoadsWarnings(t *testing.T) {
+	env := newWriterEnv()
+	removal := unprojectedRemoval(t, env)
+	require.NoError(t, env.snapshots.Put(context.Background(),
+		Snapshot{TreeID: writerTree, Version: 9, TreeType: treeTypeUnilevel, Data: []byte(`{}`)}))
+	w, _ := env.writer()
+
+	res, _ := w.Reject(context.Background(), rejectRequest(removal.ID))
+
+	assert.Equal(t, []string{"the snapshot of tree " + writerTree +
+		" is at version 9, above the projected version 2; deleted the snapshot"}, res.Warnings)
+}
+
+func TestTreeWriterReject_AFailedDropIsNotEvidence(t *testing.T) {
+	env := newWriterEnv()
+	ctx := context.Background()
+	stuck := unprojectedRemoval(t, env)
+	seeding := newFakeWriterEngine()
+	require.NoError(t, seeding.CreateTree(ctx, writerTree, treeTypeUnilevel))
+	require.NoError(t, seeding.AddRoot(ctx, writerTree, writerRoot, writeTime.Unix()))
+	taken, err := seeding.TakeSnapshot(ctx, writerTree)
+	require.NoError(t, err)
+	require.NoError(t, env.snapshots.Put(ctx, Snapshot{TreeID: writerTree, Version: 2, TreeType: taken.TreeType, Data: taken.Data}))
+	before := streamEvents(t, env.events, TreeStreamName(writerTree))
+	w, engine := env.writer()
+	engine.restoreErr = fakeEngineError("INCONSISTENT_SNAPSHOT", "refused by the test")
+	engine.dropErr = fakeEngineError("HAS_CHILDREN", "refused by the test")
+
+	res, err := w.Reject(ctx, rejectRequest(stuck.ID))
+
+	require.ErrorContains(t, err, "returned an error that is not one reject-event accepts as evidence; nothing was appended: ")
+	var replay *TreeReplayError
+	require.ErrorAs(t, err, &replay)
+	assert.Equal(t, TreeReplayStageDrop, replay.Stage)
+	assert.Empty(t, res.Outcome)
+	assert.Equal(t, before, streamEvents(t, env.events, TreeStreamName(writerTree)))
+}

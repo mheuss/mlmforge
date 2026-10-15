@@ -496,7 +496,7 @@ fn assert_removal_properties(
 
     // The check and the op agree.
     prop_assert_eq!(checked.as_ref().err(), removed.as_ref().err());
-    // The promotion never runs out of slots.
+    // No removal fails for want of a slot.
     prop_assert!(
         !matches!(removed, Err(TreeError::SubtreeFull(_))),
         "SUBTREE_FULL fired removing {}",
@@ -542,8 +542,8 @@ fn assert_removal_properties(
     reported.sort();
     prop_assert_eq!(reported, diffed);
 
-    // Each move lands on a slot the tombstones freed, and a depth-only move
-    // keeps its own slot.
+    // Each move lands on a slot no survivor holds after the tombstone step, and
+    // a depth-only move keeps its own slot.
     let removed_users: HashSet<Uuid> = match mode {
         PruningMode::PromoteEarliest => HashSet::from([user]),
         PruningMode::HoldingTank => result.moved_to_tank.iter().copied().collect(),

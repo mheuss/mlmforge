@@ -37,6 +37,7 @@ Use-cases for the Network Engine bounded context.
 - [UC-NET-031: Recovering a tree stuck behind an event that cannot apply](#uc-net-031-recovering-a-tree-stuck-behind-an-event-that-cannot-apply)
 - [UC-NET-032: Start a structure over in the same worker](#uc-net-032-start-a-structure-over-in-the-same-worker)
 - [UC-NET-033: Rebuilding a tree from a snapshot and its stream](#uc-net-033-rebuilding-a-tree-from-a-snapshot-and-its-stream)
+- [UC-NET-034: Projecting a removal that moves other nodes](#uc-net-034-projecting-a-removal-that-moves-other-nodes)
 
 ---
 
@@ -1248,3 +1249,31 @@ return err
 **Solution:** Restore the latest snapshot at version S, replay events S+1 through the projected version into the engine only, then compare the engine's membership with the store's rows. Fall back to replaying the whole stream on an engine refusal or a mismatch.
 
 **Notes:** A drop and full replay follow two causes only: an engine refusal, or a mismatch on the snapshot path. After a transport or context failure the client is closed, and the next command starts a new worker. Read the projected version and the rows in one consistent read. The event after the snapshot decides whether the snapshot is usable. A snapshot whose bytes are not valid JSON is unusable, because the client cannot send it.
+
+### UC-NET-034: Projecting a removal that moves other nodes
+
+**Added:** Unreleased
+**Files:** `internal/networkengine/tree_store.go`, `internal/networkengine/tree_store_postgres.go`, `internal/networkengine/tree_engine_calls.go`
+
+**Problem:** A removal can tombstone more than one user and move survivors, and the store has to follow all of it or none of it.
+
+**Solution:** The engine reports what moved, and `ProjectRemoval` takes it as one `RemovalProjection`. Postgres tombstones the removed set, then repoints sponsors, then moves the relocated rows, in one transaction. The memory twin stages the whole result and validates it before it changes a row.
+
+**Usage:**
+```go
+r, err := engine.RemoveMatrixNode(ctx, treeID, userID, networkengine.PruningHoldingTank)
+if err != nil {
+	return err
+}
+projection := networkengine.RemovalProjection{
+	Users:       r.MovedToTank,
+	Responsored: r.Responsored,
+	Relocated:   r.Relocated,
+}
+return store.ProjectRemoval(ctx, treeID, projection, eventID, eventVersion)
+```
+
+**Notes:**
+- A promote_earliest removal removes only `userID`. Pass `[]string{userID}` as `Users`.
+- An empty `Users` is refused.
+- A relocation that changes parent or slot must target a slot that is free once the removed rows are tombstoned, and that no other relocation vacates. A depth-only relocation keeps its own slot.

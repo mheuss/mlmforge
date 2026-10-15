@@ -65,6 +65,7 @@
 - Handlers module split. Restructured monolithic `handlers.rs` (2,444 lines, 41 functions) into domain sub-modules: `handlers/{common,tree,commission,board_plan,streamline,snapshot}.rs`. Extracted `require_plan`, `require_unilevel_tree`, `require_binary_tree` helpers to deduplicate commission handler boilerplate. Dispatch table updated to qualified paths. (`engine/network-engine-worker/src/handlers/`)
 - Design rationale documents 021-024: sponsor vs placement in commission walks, shared commission walk extraction, snapshot persistence for tree-layer types, generation calculator reuse of `count_generations_upward`.
 - Tree loads build the engine from the event stream, restoring a stored snapshot when one is usable. `tree_snapshots` (migration 000010) keeps one snapshot per tree, taken every 1000 events (HEU-297).
+- Matrix removal through the event path. `tree remove --pruning-mode promote_earliest|holding_tank` appends a matrix removal, and the consumer projects every removed user, re-sponsored recruit and relocated survivor in one transaction. The worker answers `check_mutation` for a matrix `remove_node` and reports `relocated`. Protocol 14. Replay rebuilds the holding tank. (HEU-582)
 
 ### Changed
 - Doc block accuracy fixes in `error.rs` (panic documentation), `unilevel.rs` (get_node description, downline count terminology)

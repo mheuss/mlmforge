@@ -2505,8 +2505,8 @@ func TestTreeConsumer_RefusesARemovalWhoseShapeTheEngineCannotApply(t *testing.T
 	}
 }
 
-// lostReplyMatrixEngine applies its first matrix removal and reports an error,
-// as if the reply was lost. Its second answers USER_NOT_FOUND.
+// lostReplyMatrixEngine passes every matrix removal to its fake, and replaces
+// the reply to the first one that succeeds with an error, as if it was lost.
 type lostReplyMatrixEngine struct {
 	*fakeWriterEngine
 	attempts int
@@ -2514,16 +2514,14 @@ type lostReplyMatrixEngine struct {
 
 func (e *lostReplyMatrixEngine) RemoveMatrixNode(ctx context.Context, structure, userID string, mode PruningMode) (*MatrixRemovalResult, error) {
 	e.attempts++
-	if e.attempts == 1 {
-		if _, err := e.fakeWriterEngine.RemoveMatrixNode(ctx, structure, userID, mode); err != nil {
-			return nil, err
-		}
+	r, err := e.fakeWriterEngine.RemoveMatrixNode(ctx, structure, userID, mode)
+	if err == nil && e.attempts == 1 {
 		return nil, errors.New("lostReplyMatrixEngine: the reply to the first removal was lost")
 	}
-	return nil, fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", userID)
+	return r, err
 }
 
-// writeSpyStore records every write call that reaches it.
+// writeSpyStore records each write it overrides before delegating.
 type writeSpyStore struct {
 	*MemoryTreeStore
 	writes []string
@@ -2584,11 +2582,16 @@ func TestTreeConsumer_AMatrixRemovalWhoseReplyWasLostRefusesAndWritesNothing(t *
 	consumer.retryDelay = 0
 	event := versionedEvent(t, writerTree, 3, EventTypeNodeRemoved, NodeRemovedPayload{TreeID: writerTree,
 		UserID: writerChild, RemovedAt: writeTime, TreeType: treeTypeMatrix, PruningMode: PruningPromoteEarliest})
+	before := readProjectionState(t, inner, writerTree, writerRoot, writerChild)
 
 	err := consumer.HandleEvent(ctx, event)
 
 	var notProjected *RemovalNotProjectedError
 	require.ErrorAs(t, err, &notProjected)
+	assert.Equal(t, writerTree, notProjected.TreeID)
+	assert.Equal(t, writerChild, notProjected.UserID)
+	assert.Equal(t, event.ID, notProjected.EventID)
 	assert.Equal(t, 2, engine.attempts)
 	assert.Empty(t, store.writes)
+	assert.Equal(t, before, readProjectionState(t, inner, writerTree, writerRoot, writerChild))
 }

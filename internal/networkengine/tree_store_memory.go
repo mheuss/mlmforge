@@ -412,19 +412,28 @@ func (s *MemoryTreeStore) stageRemoval(treeID string, r RemovalProjection, remov
 
 // checkRelocationTargets refuses a relocation that moves a row into a slot an
 // active row of treeID holds before any relocation runs. A row that keeps its
-// own slot passes.
+// own slot passes, and a relocation of a user with no active row is left to
+// the count check.
 func checkRelocationTargets(rows []TreeNodeRow, treeID string, relocated []Relocation) error {
 	type slot struct {
 		parent   string
 		position int
 	}
 	held := map[slot]string{}
+	active := map[string]bool{}
 	for _, n := range rows {
-		if n.TreeID == treeID && n.RemovedAt == nil && n.ParentID != nil && n.Position != nil {
+		if n.TreeID != treeID || n.RemovedAt != nil {
+			continue
+		}
+		active[n.UserID] = true
+		if n.ParentID != nil && n.Position != nil {
 			held[slot{*n.ParentID, *n.Position}] = n.UserID
 		}
 	}
 	for _, m := range relocated {
+		if !active[m.UserID] {
+			continue
+		}
 		holder, ok := held[slot{m.ParentID, m.Position}]
 		if ok && holder != m.UserID {
 			return fmt.Errorf("%w: tree=%s parent=%s position=%d (held by %s, relocating %s)",

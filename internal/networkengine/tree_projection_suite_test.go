@@ -608,8 +608,12 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		require.NoError(t, s.ProjectInsert(ctx, secondRow, 5))
 
 		require.NoError(t, s.ProjectRemoval(ctx, tree, RemovalProjection{
-			Users:       []string{child},
-			Responsored: []Responsored{{UserID: recruit, NewSponsorID: root}},
+			Users: []string{child},
+			Responsored: []Responsored{
+				{UserID: recruit, NewSponsorID: root},
+				{UserID: grand, NewSponsorID: root},
+				{UserID: second, NewSponsorID: root},
+			},
 			Relocated: []Relocation{
 				{UserID: grand, ParentID: root, Position: 0, Depth: 1},
 				{UserID: second, ParentID: root, Position: 2, Depth: 1},
@@ -636,7 +640,7 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		wantIs error
 	}{
 		{"a relocation names no active row", RemovalProjection{Users: []string{child},
-			Relocated: []Relocation{{UserID: testUserUUID(7), ParentID: root, Position: 0, Depth: 1}}}, nil},
+			Relocated: []Relocation{{UserID: testUserUUID(7), ParentID: root, Position: 1, Depth: 1}}}, nil},
 		{"a re-sponsored user has no active row", RemovalProjection{Users: []string{child},
 			Responsored: []Responsored{{UserID: testUserUUID(7), NewSponsorID: root}}}, nil},
 		{"a relocation targets an occupied slot", RemovalProjection{Users: []string{child},
@@ -662,6 +666,8 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 			require.Error(t, err)
 			if tc.wantIs != nil {
 				assert.ErrorIs(t, err, tc.wantIs)
+			} else {
+				assert.NotErrorIs(t, err, ErrSlotConflict)
 			}
 			assert.Equal(t, before, readProjectionState(t, s, tree, root, child, recruit, grand))
 		})

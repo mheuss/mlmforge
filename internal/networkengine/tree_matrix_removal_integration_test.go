@@ -183,3 +183,39 @@ func TestTreeConsumer_ARedeliveredPlacementConvergesAfterAPromotionMovedItsNode_
 	require.NoError(t, err)
 	requireRowsMatchEngine(t, store, engine, tree)
 }
+
+func TestTreeWriter_ReplaysAHoldingTankRemovalIntoAFreshWorker(t *testing.T) {
+	it := newWriterIntegration(t)
+	ctx := context.Background()
+	tree, root, a, b, c := testTreeUUID(5824), testUserUUID(1), testUserUUID(2), testUserUUID(3), testUserUUID(4)
+	width, spillover := 3, "breadth_first"
+	// Each write gets its own writer over a fresh worker.
+	writer := func(engine TreeRebuilder) *TreeWriter {
+		return NewTreeWriter(it.events, it.store, NewMemorySnapshotStore(), engine, NewPostgresTreeLocker(it.dsn))
+	}
+	res, err := writer(it.engine(t)).AddRoot(ctx, AddRootRequest{TreeID: tree, UserID: root, SponsorID: root,
+		TreeType: treeTypeMatrix, MatrixWidth: &width, MatrixSpillover: &spillover, EnrolledAt: writeTime})
+	require.NoError(t, err)
+	require.NoError(t, res.ProjectionErr)
+	for i, p := range []struct{ user, parent string }{{a, root}, {b, a}, {c, a}} {
+		res, err := writer(it.engine(t)).Place(ctx, PlaceRequest{TreeID: tree, UserID: p.user, ParentID: p.parent,
+			SponsorID: p.parent, Position: intPtr(i % 2), EnrolledAt: writeTime.Add(time.Duration(i+1) * time.Hour)})
+		require.NoError(t, err)
+		require.NoError(t, res.ProjectionErr)
+	}
+	first := it.engine(t)
+	res, err = writer(first).Remove(ctx, RemoveRequest{TreeID: tree, UserID: a, RemovedAt: writeTime, PruningMode: PruningHoldingTank})
+	require.NoError(t, err)
+	require.NoError(t, res.ProjectionErr)
+	before, err := first.GetHoldingTank(ctx, tree, "")
+	require.NoError(t, err)
+	require.Len(t, before, 3, "the removal left the tank short, so a replay would prove nothing")
+
+	fresh := it.engine(t)
+	_, err = writer(fresh).Load(ctx, LoadRequest{TreeID: tree, TreeType: treeTypeMatrix, MatrixWidth: &width, MatrixSpillover: &spillover})
+	require.NoError(t, err)
+	after, err := fresh.GetHoldingTank(ctx, tree, "")
+	require.NoError(t, err)
+
+	assert.Equal(t, before, after)
+}

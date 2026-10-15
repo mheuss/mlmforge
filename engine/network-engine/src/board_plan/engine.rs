@@ -2165,6 +2165,19 @@ mod tests {
     }
 
     #[test]
+    fn a_removed_displaced_member_is_not_seated_by_the_next_add() {
+        let (mut engine, displaced) = engine_with_a_displaced_member();
+        engine.remove_member(displaced, 100).unwrap();
+        let sponsor = *engine.member_boards.keys().next().unwrap();
+        let newcomer = Uuid::from_bytes([0xF2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
+
+        engine.add_member(newcomer, sponsor, 101).unwrap();
+
+        assert_eq!(engine.get_member_board(displaced), None);
+        assert!(!engine.displaced_members().contains(&displaced));
+    }
+
+    #[test]
     fn remove_member_cycles_a_pending_board_first() {
         let (mut engine, pending) = engine_with_a_pending_full_board();
 

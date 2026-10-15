@@ -90,9 +90,8 @@ func TestCheckNodePlacedShape(t *testing.T) {
 	}
 }
 
-// Each row is a stream type, tree_type and mode, with one row per value that
-// changes either outcome. An empty expectation accepts. Any other names a
-// phrase only the refusing guard prints.
+// Each row is a stream type, tree_type and mode. An empty expectation accepts.
+// Any other is a phrase the error must contain.
 func TestNodeRemovedShape_FollowsTheCompatibilityTable(t *testing.T) {
 	const (
 		modeOffMatrix = "only a matrix removal names a mode"

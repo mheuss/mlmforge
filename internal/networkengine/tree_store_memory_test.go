@@ -283,3 +283,28 @@ func TestMemoryTreeStore_Suite(t *testing.T) {
 		require.Failf(t, "no row", "no row with id %s", nodeID)
 	})
 }
+
+func TestMemoryTreeStore_RefusesARelocationIntoASlotAnotherRelocationVacates(t *testing.T) {
+	s := NewMemoryTreeStore()
+	ctx := context.Background()
+	tree, root, child, recruit, grand := testTreeUUID(1), testUserUUID(1), testUserUUID(2), testUserUUID(3), testUserUUID(4)
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(2), tree, child, 1, ptr(root), ptr(root), intPtr(0)), 2))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(3), tree, recruit, 1, ptr(root), ptr(child), intPtr(1)), 3))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(4), tree, grand, 2, ptr(child), ptr(child), intPtr(0)), 4))
+	before, err := s.GetByTree(ctx, tree)
+	require.NoError(t, err)
+
+	err = s.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{grand},
+		Relocated: []Relocation{
+			{UserID: recruit, ParentID: root, Position: 2, Depth: 1},
+			{UserID: child, ParentID: root, Position: 1, Depth: 1},
+		}}, testNodeUUID(9), 5)
+
+	require.ErrorIs(t, err, ErrSlotConflict)
+	assert.ErrorContains(t, err, "parent="+root+" position=1")
+	assert.ErrorContains(t, err, "held by "+recruit)
+	after, err := s.GetByTree(ctx, tree)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+}

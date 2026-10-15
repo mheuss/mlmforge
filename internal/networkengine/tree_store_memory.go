@@ -388,6 +388,9 @@ func (s *MemoryTreeStore) stageRemoval(treeID string, r RemovalProjection, remov
 			len(r.Responsored), treeID, len(responsored))
 	}
 
+	if err := checkRelocationTargets(rows, treeID, r.Relocated); err != nil {
+		return nil, err
+	}
 	relocated := map[int]bool{}
 	for _, m := range r.Relocated {
 		if i := active(m.UserID); i >= 0 {
@@ -405,6 +408,30 @@ func (s *MemoryTreeStore) stageRemoval(treeID string, r RemovalProjection, remov
 		return nil, err
 	}
 	return rows, nil
+}
+
+// checkRelocationTargets refuses a relocation that moves a row into a slot an
+// active row of treeID holds before any relocation runs. A row that keeps its
+// own slot passes.
+func checkRelocationTargets(rows []TreeNodeRow, treeID string, relocated []Relocation) error {
+	type slot struct {
+		parent   string
+		position int
+	}
+	held := map[slot]string{}
+	for _, n := range rows {
+		if n.TreeID == treeID && n.RemovedAt == nil && n.ParentID != nil && n.Position != nil {
+			held[slot{*n.ParentID, *n.Position}] = n.UserID
+		}
+	}
+	for _, m := range relocated {
+		holder, ok := held[slot{m.ParentID, m.Position}]
+		if ok && holder != m.UserID {
+			return fmt.Errorf("%w: tree=%s parent=%s position=%d (held by %s, relocating %s)",
+				ErrSlotConflict, treeID, m.ParentID, m.Position, holder, m.UserID)
+		}
+	}
+	return nil
 }
 
 // checkActiveSlots reports two active rows of treeID that claim one slot.

@@ -279,6 +279,9 @@ func (f *fakeWriterEngine) CheckMutation(_ context.Context, structure string, m 
 	if err != nil {
 		return err
 	}
+	if _, ok := m.params["pruning_mode"]; m.op == "remove_node" && t.treeType == treeTypeMatrix && !ok {
+		return fakeEngineError("MISSING_PARAM", "a matrix remove_node needs pruning_mode")
+	}
 	if parent, ok := m.params["parent_id"].(string); ok {
 		if _, found := t.nodes[parent]; !found {
 			return fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", parent)
@@ -660,4 +663,15 @@ func TestFakeWriterEngine_RestoresWhatItSnapshotted(t *testing.T) {
 	assert.True(t, isEngineCode(engine.AddRoot(ctx, writerTree, writerOther, 2), engineCodeRootAlreadyExists))
 	err = engine.RestoreSnapshot(ctx, writerTree, taken.TreeType, taken.Data)
 	assert.True(t, isEngineCode(err, engineCodeTreeExists))
+}
+
+func TestFakeWriterEngine_RefusesAMatrixRemovalCheckWithNoMode(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeWriterEngine()
+	require.NoError(t, f.CreateMatrixTree(ctx, writerTree, 3, "breadth_first"))
+	require.NoError(t, f.AddRoot(ctx, writerTree, writerRoot, writeTime.Unix()))
+	require.NoError(t, f.AddNodeAt(ctx, writerTree, writerChild, writerRoot, writerRoot, 0, writeTime.Unix()))
+
+	assert.True(t, isEngineCode(f.CheckMutation(ctx, writerTree, CheckRemoveNode(writerChild)), "MISSING_PARAM"))
+	assert.NoError(t, f.CheckMutation(ctx, writerTree, CheckRemoveMatrixNode(writerChild, PruningHoldingTank)))
 }

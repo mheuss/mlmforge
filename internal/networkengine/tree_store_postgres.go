@@ -16,6 +16,8 @@ var _ TreeStore = (*PostgresTreeStore)(nil)
 // PostgresTreeStore is a TreeStore backed by PostgreSQL.
 type PostgresTreeStore struct {
 	pool *pgxpool.Pool
+	// afterVersionRead runs between ProjectedRows' two reads when set.
+	afterVersionRead func()
 }
 
 // ON CONFLICT targets the primary key, which carries the event ID. A
@@ -304,6 +306,41 @@ func (s *PostgresTreeStore) ProjectedVersion(ctx context.Context, treeID string)
 		return 0, false, err
 	}
 	return version, true, nil
+}
+
+func (s *PostgresTreeStore) ProjectedRows(ctx context.Context, treeID string) (int64, bool, []TreeNodeRow, error) {
+	// One snapshot for both reads. A projection committing between two
+	// separate reads would pair an old version with newer rows.
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return 0, false, nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var version int64
+	found := true
+	err = tx.QueryRow(ctx, `SELECT projected_version FROM tree_projections WHERE tree_id = $1`, treeID).Scan(&version)
+	if errors.Is(err, pgx.ErrNoRows) {
+		found = false
+	} else if err != nil {
+		return 0, false, nil, err
+	}
+	if s.afterVersionRead != nil {
+		s.afterVersionRead()
+	}
+	rows, err := tx.Query(ctx, getByTreeDepthOrderedSQL, treeID)
+	if err != nil {
+		return 0, false, nil, err
+	}
+	nodes, err := scanTreeNodes(rows)
+	rows.Close()
+	if err != nil {
+		return 0, false, nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, false, nil, err
+	}
+	return version, found, nodes, nil
 }
 
 func (s *PostgresTreeStore) ProjectInsert(ctx context.Context, node TreeNodeRow, eventVersion int64) error {

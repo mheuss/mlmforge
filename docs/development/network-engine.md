@@ -271,7 +271,7 @@ its name claims, not only that it passed.
 A test that picks among engine objects by iteration order can also replay
 differently, when the engine breaks ties in `HashMap` order. Pick by a key the
 strategy controls, such as the lowest occupant, and print the serialized state
-on failure. HEU-915 tracks the engine-side tie.
+on failure. The board plan engine breaks its own ties on `seq`.
 
 ### Completeness gate for commission ops
 
@@ -346,7 +346,13 @@ The board plan engine (`board_plan/engine.rs`) manages multiple small boards. It
 
 Board dimensions are capped: width 2-5, height 1-4. Boards use flat BFS-ordered position arrays, not arena storage.
 
-The displaced member pool (`displaced_members`) holds members removed via dissolution or cycling without re-entry. They are placed before new enrollees in `add_member`. The `place_displaced_members` method must push unplaced members back to the pool if no boards have openings. Never propagate errors that would drop them.
+Boards order by `(created_at, seq)`. The engine assigns `seq` from `next_board_seq` when it creates a board. A split numbers its new boards in child order. Board ids are random per run, so they never break a tie. Placement, `list_boards` and the drain all use this order.
+
+Add, remove and compress check their preconditions. Then they cycle every full board, oldest first. Each cycle gets a fresh cascade budget. Dissolve refuses a full board with `BOARD_FULL`. Otherwise it removes the board and then drains. `max_cascade_depth` limits recursion depth within one cascade, so a cascade can leave a board full. A later operation that passes its preconditions cycles it. Restore never drains.
+
+Remove and compress also cycle the member's own board once, if it is full. Then they take the member off whatever board they are on, or out of the displaced pool. Sometimes that cycle re-enters the member onto a board, and the cascade bound leaves that board full. In that case the removal takes the member back off it. The board is then no longer full, so it does not cycle.
+
+The displaced member pool (`displaced_members`) holds members removed via dissolution or cycling without re-entry. They are placed before new enrollees in `add_member`. `remove_member` takes a displaced member out of the pool. The `place_displaced_members` method must push unplaced members back to the pool if no boards have openings. Never propagate errors that would drop them.
 
 All tree-layer types (including BoardPlanEngine) must remain serde-serializable. See design-rationale 023.
 
@@ -829,6 +835,8 @@ absent still fails. See `board_calculate_accepts_null_collections` and
 
 ## Tree Reload: What `LoadTree` Restores, and What It Does Not
 
+Tree loads no longer go through `LoadTree`. See "Building A Tree From Its Stream". This section describes `LoadTree` itself.
+
 `LoadTree` rebuilds a tree in the engine from the `tree_nodes` adjacency rows. The invariants below are not obvious from the code and matter to anyone touching the loader, the projection, or the worker's tree handlers.
 
 ### A root's stored sponsor is dropped on reload
@@ -881,7 +889,7 @@ Four limits remain:
 
 - The consumer trusts the `tree_type` label. No registry exists to verify it against. `TreeWriter` does not take the label from its caller. It copies it from the stream's version-1 event.
 - The gate rejects matrix positions above the u8 ceiling (255), which no width can accept. The real bound is the tree's width, which the placement payload does not carry. Under `TreeWriter`, `check_mutation` refuses such a position before the append. An event appended without the writer is stored, refused loudly by the engine, and then makes the next reload preflight reject the whole tree. HEU-554 decides the direction for both gaps. The fix ships under it.
-- Redelivery is bounded (HEU-576). The scope is the event in flight. `TreeWriter` provides it by calling `HandleEvent` synchronously, in process, under the tree's lock. A redelivered placement whose projection is still current completes, however old it is. It stops being current once its node was removed, or once a later event re-placed the user, and is then refused rather than reapplied. It is also refused when its parent's row was since removed, because the parent lookup runs before the guard (HEU-813). A redelivered removal that the engine refuses converges when its own tombstone is in the store (HEU-811). That holds even when a later placement of the user never reached the engine. One whose store write never landed fails typed. The next write or `tree load` redelivers it to an engine rebuilt from the store. One arriving after a later placement landed in full is below the tree's projected version. The store refuses it (HEU-857). The engine may still have applied it. HEU-789 tracks that for when a caller redelivers old events. `TreeWriter` does not reach that case. Catch-up redelivers only the stream's last event. A removal followed by a later placement is no longer the last event. When a redelivery reaches its store write, the store refuses it if it is below the tree's projected version (HEU-857). The parent lookup and a removal's engine call run before that write.
+- Redelivery is bounded (HEU-576). The scope is the event in flight. `TreeWriter` provides it by calling `HandleEvent` synchronously, in process, under the tree's lock. A redelivered placement whose projection is still current completes, however old it is. It stops being current once its node was removed, or once a later event re-placed the user, and is then refused rather than reapplied. It is also refused when its parent's row was since removed, because the parent lookup runs before the guard (HEU-813). A redelivered removal that the engine refuses converges when its own tombstone is in the store (HEU-811). That holds even when a later placement of the user never reached the engine. One whose store write never landed fails typed. The next write or `tree load` redelivers it to an engine rebuilt from the stream. One arriving after a later placement landed in full is below the tree's projected version. The store refuses it (HEU-857). The engine may still have applied it. HEU-789 tracks that for when a caller redelivers old events. `TreeWriter` does not reach that case. Catch-up redelivers only the stream's last event. A removal followed by a later placement is no longer the last event. When a redelivery reaches its store write, the store refuses it if it is below the tree's projected version (HEU-857). The parent lookup and a removal's engine call run before that write.
 - The agreement claim covers placement only. No tree event path calls `RemoveMatrixNode`. A matrix removal cannot project (HEU-582). `TreeWriter.Remove` refuses a removal from a matrix tree before it appends anything. A matrix `node_removed` appended without the writer reaches `handleNodeRemoved`. That handler calls `RemoveNode` with no pruning mode. The worker refuses it with `MISSING_PARAM`. The handler retries, writes nothing to the store, and returns the error.
 
 Matrix startup reload is no longer blocked by the placement divergence HEU-553 fixed.
@@ -919,14 +927,14 @@ Each write holds a per-tree Postgres advisory lock from before the load until pr
 - The lock needs a direct Postgres session. Behind a pooler in transaction mode, the lock and the unlock can run on different server sessions. Then the lock excludes nothing.
 - The writer does not re-check the lock while it holds it. If the server ends the lock's session mid-write, another writer can take the lock. The first writer learns of it only at unlock, as `ReleaseErr`.
 - A test that simulates a lost lock ends the lock's backend with `pg_terminate_backend(pid, timeout)`. The one-argument form returns once the signal is sent, not once the backend has exited. The waiting form returns false if the backend outlives the timeout.
-- In the two HEU-784 removal tests, a store write that left a sponsor naming a removed user made the next write refuse to load the tree, and it appended nothing. That holds while every command loads the tree fresh from the store, as the CLI does today.
+- In the two HEU-784 removal tests, a store write that left a sponsor naming a removed user made the next write refuse to load the tree, and it appended nothing. That holds while every command reads the tree's rows fresh and preflights them, as the CLI does today.
 - The wait is bounded, 30 seconds by default. The timeout names the tree and the wait. It does not say another process holds the lock, because the writer cannot see that.
 - The timeout is a `TreeLockWaitError` wrapping the locker's own error. That error is often `context.DeadlineExceeded`. Match `TreeLockWaitError` with `errors.As` before testing for a context error. Otherwise a lock timeout reads as the caller's own deadline.
 - The lock is cheap because a CLI invocation lasts seconds. A long-lived service that holds a connection for every tree operation re-examines it rather than inheriting it.
 
 ### The engine is scratch
 
-Each invocation starts a worker. It rebuilds the tree in the worker from the store, under the lock. It discards the worker on exit. The engine's jobs in a write are to check the mutation and to compute a removal's moved recruits. What HEU-789 and HEU-813 record as unreachable under the writer holds only while the engine is scratch. So does HEU-777's repair, which redelivers a removal to an engine rebuilt from the store. A service that keeps an engine in memory reopens HEU-789, HEU-813 and that repair.
+Each invocation starts a worker. It rebuilds the tree in the worker from the tree's event stream, under the lock, starting from a stored snapshot when one is usable. It discards the worker on exit. The engine's jobs in a write are to check the mutation and to compute a removal's moved recruits. What HEU-789 and HEU-813 record as unreachable under the writer holds only while the engine is scratch. So does HEU-777's repair, which redelivers a removal to an engine rebuilt from the stream. A service that keeps an engine in memory reopens HEU-789, HEU-813 and that repair.
 
 ### The projected version
 
@@ -937,7 +945,7 @@ The store records one version per tree, the stream version its rows reflect, in 
 - Version 1 of a tree's stream records the tree type. For a matrix it also records the width and spillover. Every later write reads the shape from there. A version 1 that is not a complete `root_added` refuses the write.
 - `add-root` on a stream that already has a version 1 is refused when its type, matrix width or spillover differs from what version 1 records. A matrix flag on a non-matrix tree is refused. Matrix flags left off the request match. On an empty stream the check runs again under the lock. A root that landed between the first check and the lock is what the second check compares against.
 - Removing a tree's only root is allowed. A later `add-root` roots the tree again (Michael, 2026-09-23).
-- The writer reads the tree's projected version before it loads the rows. After the load it reads the stream's last version. It goes ahead only when the last version is the projected version or one past it. A tree with no projection row whose stream ends past version 1 is refused with `ProjectionMissingError`, unless the stream ends with a pending rejection. Any other mismatch is refused with `StreamMovedError`. Neither appends anything.
+- The writer reads the tree's projected version and its active rows in one consistent read. It builds the tree from the stream through that version, then reads the stream's last version. It goes ahead only when the last version is the projected version or one past it. A tree with no projection row whose stream ends past version 1 is refused with `ProjectionMissingError`, unless the stream ends with a pending rejection. Any other mismatch is refused with `StreamMovedError`. Neither appends anything.
 - The stream's last event is redelivered through `HandleEvent`. Under the lock it is the only event that can be unprojected. The one exception is the event a pending rejection names. Catch-up redelivers only `tree.root_added`, `tree.node_placed`, `tree.node_removed` and `tree.event_rejected`. A rejection is redelivered only when the store has applied it. A write or `tree load` on a stream ending in a rejection the store is one or two versions behind is refused with `RejectionPendingError`, which names `tree reject-event`. A wider gap is refused with `StreamMovedError`, or `ProjectionMissingError` when the tree has no projection row (HEU-850). A last event of any other type refuses the write before `HandleEvent` is called. `HandleEvent` returns nil for a type it does not project. Calling it would report that event as projected.
 - `check_mutation` asks the engine whether the mutation would succeed. The worker runs the check functions the mutating ops call first. That is why no refusal rule is copied into Go.
 
@@ -964,16 +972,49 @@ What `WriteResult` carries:
 - `CaughtUp`, the redelivered last event.
 - `ProjectionErr`, any failure after the append was confirmed.
 - `Observed`, the projected version read after a projection error, or the read's error.
+- `Warnings`, what the write observed and carried on past, in order: load fallbacks and snapshot outcomes.
 - `ReleaseErr`, set on every path after the lock is taken, including when the write returns an error.
 
 ### Loading through the writer
 
-`tree load` calls `TreeWriter.Load`. It takes the tree's lock and runs the same fence as a write. When the stream's last version is the projected version plus one, it redelivers that event through `HandleEvent`. When the stream ends with a rejection one or two past the store, it refuses with `RejectionPendingError` instead (HEU-850). When they are equal it redelivers nothing, so a load with nothing behind prints what it printed before HEU-777. After a redelivery it reads the projected version again and reports it when the redelivery did not advance it. The node count is the loader's when nothing was redelivered, and a fresh read when something was.
+`tree load` calls `TreeWriter.Load`. It takes the tree's lock and runs the same fence as a write. When the stream's last version is the projected version plus one, it redelivers that event through `HandleEvent`. When the stream ends with a rejection one or two past the store, it refuses with `RejectionPendingError` instead (HEU-850). When they are equal it redelivers nothing, so a load with nothing behind prints what it printed before HEU-777. After a redelivery it reads the projected version again and reports it when the redelivery did not advance it. The node count is the active row count from the load's read when nothing was redelivered, and a fresh read when something was. `LoadResult` carries `Warnings` the same way `WriteResult` does.
 
 - Load's `--tree-type` and matrix flags must match version 1, with `add-root`'s rule. Matrix flags left off match.
 - A fence refusal exits 1 and changes no store rows or projected version. The scratch engine may already be loaded, and is discarded.
-- A failed read of version 1 or the first read of the projected version comes before any engine call, so it is a `TreeLoadRejectedError` of kind `store_read_failed` and follows the retry rule. Anything after the engine load is not retried.
+- A failed read of version 1, or of the projected version and rows, comes before any engine call, so it is a `TreeLoadRejectedError` of kind `store_read_failed` and follows the retry rule. Anything after the engine load is not retried.
 - A tree created before migration 000009 has no projection row, and load refuses it once its stream passes version 1.
+
+### Building A Tree From Its Stream
+
+Every load builds the tree in the engine from the tree's events, not from `tree_nodes`.
+
+- The projected version and the active rows come from one consistent read, `TreeStore.ProjectedRows`. A writer that lost its lock can still project late (HEU-857). Two separate reads could pair an old version with newer rows.
+- The store preflight still runs over the rows first, and still blocks the load with `TreeLoadRejectedError`. It is the only check on the rows themselves.
+- With a usable snapshot, the load restores it and replays the events after it through the projected version. Otherwise it replays the whole stream. Replay stops at the projected version. `catchUp` keeps the stream's last event.
+- Replay skips an event when the next event is a rejection naming it. Only a rejection at or below the projected version counts. One at the projected version plus one is a pending rejection, as before.
+- Replay never calls `HandleEvent` and never writes the store. HEU-789 stays parked while only `TreeWriter` calls `HandleEvent`. Check it with `git grep -n 'HandleEvent(' -- '*.go' ':!*_test.go'`.
+- After the build, the load compares the engine's root and downline with the rows on user, depth and enrolment second. It does not compare parent, position or sponsor, and it does not look at the matrix holding tank.
+- On the snapshot path, an engine refusal during restore or replay drops the structure. So does a mismatch. The load then deletes the snapshot and replays the whole stream. It reports one warning. On the full path, either fails the load with `TreeReplayError` and attempts no drop. A transport or context failure fails the load with `TreeReplayError` and attempts no drop. So does a restore refused with `TREE_EXISTS`, because the load did not build that structure.
+- The load deletes a snapshot and warns when any of these hold. The snapshot is above the projected version. It is of another tree type. Its bytes are not valid JSON. The next event is a rejection naming its version.
+- A snapshot warning states what the load observed and what happened to the snapshot. The replay that follows reports its own result.
+- A write whose projection succeeded takes a snapshot when the stream is 1000 events past the stored one. The write that crosses the threshold pays the whole snapshot cost while it holds the lock. A put that fails is a warning. Every later write tries again until one succeeds (HEU-914). A snapshot read or delete that keeps failing has the same effect.
+- A full replay that fails after a drop leaves a partly built structure in the worker. That is safe only because each command owns its worker. A long-lived caller, such as HEU-298's reconciliation, must drop the structure before reusing the worker.
+- A snapshot must fit in one `bytea` field, which caps at 1 GB. At about 230 bytes per matrix node, that is near 4.3M nodes.
+
+### An error that wraps another reaches every `errors.As`
+
+A wrapper with `Unwrap() []error`, or a `fmt.Errorf` with two `%w`, exposes both errors to every `errors.As` call down the chain. A dispatch written for one error type finds it inside the wrapper too.
+
+- HEU-297 found this the hard way. A fence refusal was wrapped beside the failed build so the operator would see both. `rejectionEvidence` then found the build's preflight `TreeLoadRejectedError` inside the wrapper and counted it as evidence. `Reject` appended a rejection through the fence.
+- Before adding a wrapper that carries a second error, list every `errors.As` dispatch the chain can reach. For the load error types, today that means `rejectionEvidence`, `treeLoadRetryable` and `treeLoadFailureMessage`. Confirm each one handles the wrapper on purpose.
+- A wrapper that carries a build failure is never reject evidence. `rejectionEvidence` gives each such type its own early "no evidence" return, with a test. `RefusedAfterFailedBuildError` and the drop-stage `TreeReplayError` have one.
+
+### A `json.RawMessage` parameter fails before the worker sees it
+
+`EngineClient` marshals each request before it writes to the worker. A `json.RawMessage` field holding bytes that are not valid JSON fails that marshal. The error is a client-side encoding error, not an `EngineError`, so code that dispatches on engine refusals does not see a refusal.
+
+- The writer test fakes never marshal, so a unit test over them cannot show this. HEU-297's snapshot restore hit it: a stored snapshot whose bytes were not JSON failed every load of the tree with no fallback.
+- Validate the bytes with `json.Valid` before the call when they come from storage. The load treats a snapshot that fails the check as unusable and deletes it.
 
 ## Worker Shutdown
 
@@ -1211,9 +1252,10 @@ tombstoned slot. No tombstone has to appear in the free list. A tombstone left
 out is leaked. `node_count` counts it live. Its reach today is three `Debug`
 impls.
 
-A restored board that is already full is accepted. The cascade bound leaves full
-boards standing in a live engine, so rejecting one would reject engines the
-crate produces. HEU-911 holds it.
+A restored board that is already full is accepted. A cascade that reaches
+`max_cascade_depth` leaves a full board standing until a later operation
+cycles it, so rejecting one would reject engines the crate produces. Restore
+does not cycle it.
 
 Read a `validate_restored` docblock as the boundary of what that arm proves. An
 arm that proves less than its name suggests is the failure this file already
@@ -1288,10 +1330,12 @@ The steps, in source order, and what each gives the ones after it.
 | 5 | Membership, reverse | Left with the one case the forward pass does not own: a seat the index names nowhere |
 | 6 | `displaced_members` | Runs after step 4, so a user the index puts on a board that does not exist is reported by step 4 instead |
 | 7 | Gap check: every board fills from position 0 | Nothing. No step depends on it |
+| 8 | Board `seq`: the counter is at most half the u64 range, every `seq` is below it, and no two boards share one | Nothing. No step depends on it |
 
-Step 1 is a pair of `if`s. Every later step is one `for`. Sizing and
-duplicate detection share step 3 because both read the same positions, and the
-two membership passes are separate loops over different maps.
+Step 1 is a pair of `if`s. Step 8 opens with an `if` and then one `for`. Every
+other step is one `for`. Sizing and duplicate detection share step 3 because
+both read the same positions, and the two membership passes are separate loops
+over different maps.
 
 Two of these change behavior rather than message wording if moved. Step 2 before
 anything that treats a key as an identity, and step 3's duplicate half before
@@ -1326,7 +1370,7 @@ A restored structure can be wrong in three ways, and they need different checks.
 |---|---|---|---|
 | Structures disagree | Two structures in one type describe different states | HEU-750 | |
 | The graph is wrong | An edge, a root, or a cycle | HEU-732, HEU-712, HEU-744, HEU-734 | |
-| A shape is violated | One structure breaks a rule the engine's own mutators keep | HEU-760, for a gap above an occupant | HEU-911, a board that is already full |
+| A shape is violated | One structure breaks a rule the engine's own mutators keep | HEU-760, for a gap above an occupant | |
 
 The third is the one that hides. Nothing disagrees with anything, so a
 structure-to-structure check passes and the payload looks consistent.

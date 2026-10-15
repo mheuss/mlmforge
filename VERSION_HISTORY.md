@@ -64,6 +64,7 @@
 - Streamline engine in Rust. Linear chain structures with multiple streams per structure. Dynamic compression, stream expansion/freezing, member allowance management, stream assignment modes (round-robin, least-full). Streamline commission calculator. Snapshot serialization. `TreeInstance::Streamline` variant. Worker handlers for all streamline operations. Go `EngineClient` methods. 50+ tests. (`engine/network-engine/src/streamline/`, `engine/network-engine-worker/src/handlers/streamline.rs`)
 - Handlers module split. Restructured monolithic `handlers.rs` (2,444 lines, 41 functions) into domain sub-modules: `handlers/{common,tree,commission,board_plan,streamline,snapshot}.rs`. Extracted `require_plan`, `require_unilevel_tree`, `require_binary_tree` helpers to deduplicate commission handler boilerplate. Dispatch table updated to qualified paths. (`engine/network-engine-worker/src/handlers/`)
 - Design rationale documents 021-024: sponsor vs placement in commission walks, shared commission walk extraction, snapshot persistence for tree-layer types, generation calculator reuse of `count_generations_upward`.
+- Tree loads build the engine from the event stream, restoring a stored snapshot when one is usable. `tree_snapshots` (migration 000010) keeps one snapshot per tree, taken every 1000 events (HEU-297).
 
 ### Changed
 - Doc block accuracy fixes in `error.rs` (panic documentation), `unilevel.rs` (get_node description, downline count terminology)

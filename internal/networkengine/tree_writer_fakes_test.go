@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sync"
 	"testing"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/mlmforge/mlmforge/internal/platform"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,17 +39,37 @@ type fakeWriterEngine struct {
 	placements []Mutation
 	// failAdd fails every add of the keyed user.
 	failAdd map[string]error
+	// downlineErr is what every GetDownline returns.
+	downlineErr error
+	// downlineErrOnce is what the next GetDownline returns, once.
+	downlineErrOnce error
+	// positionErr is what every GetPosition returns.
+	positionErr error
+	// failAddOnce fails the keyed user's next add, then forgets it.
+	failAddOnce map[string]error
+	// takeErr is what every TakeSnapshot returns.
+	takeErr error
+	// snapshotType replaces the tree type TakeSnapshot reports when set.
+	snapshotType string
+	// restoreErr is what every RestoreSnapshot returns.
+	restoreErr error
+	// dropErr is what every DropStructure returns.
+	dropErr error
+	// dropReportsAbsent makes DropStructure report no structure, as if another
+	// call had dropped it first.
+	dropReportsAbsent bool
 }
 
 type fakeEngineTree struct {
-	root  string
-	nodes map[string]EnginePosition
+	treeType string
+	root     string
+	nodes    map[string]EnginePosition
 }
 
-var _ TreeEngineChecker = (*fakeWriterEngine)(nil)
+var _ TreeRebuilder = (*fakeWriterEngine)(nil)
 
 func newFakeWriterEngine() *fakeWriterEngine {
-	return &fakeWriterEngine{trees: map[string]*fakeEngineTree{}, failAdd: map[string]error{}}
+	return &fakeWriterEngine{trees: map[string]*fakeEngineTree{}, failAdd: map[string]error{}, failAddOnce: map[string]error{}}
 }
 
 func fakeEngineError(code, format string, args ...any) error {
@@ -64,23 +86,27 @@ func (f *fakeWriterEngine) tree(structure string) (*fakeEngineTree, error) {
 
 func (f *fakeWriterEngine) CreateTree(_ context.Context, structure, treeType string) error {
 	f.calls = append(f.calls, "create_tree "+treeType)
-	return f.createTree(structure)
+	return f.createTree(structure, treeType)
 }
 
-func (f *fakeWriterEngine) createTree(structure string) error {
+func (f *fakeWriterEngine) createTree(structure, treeType string) error {
 	if _, ok := f.trees[structure]; ok {
-		return fakeEngineError("TREE_EXISTS", "tree '%s' already exists", structure)
+		return fakeEngineError(engineCodeTreeExists, "tree '%s' already exists", structure)
 	}
-	f.trees[structure] = &fakeEngineTree{nodes: map[string]EnginePosition{}}
+	f.trees[structure] = &fakeEngineTree{treeType: treeType, nodes: map[string]EnginePosition{}}
 	return nil
 }
 
 func (f *fakeWriterEngine) CreateMatrixTree(_ context.Context, structure string, width int, spillover string) error {
 	f.calls = append(f.calls, fmt.Sprintf("create_matrix_tree %d %s", width, spillover))
-	return f.createTree(structure)
+	return f.createTree(structure, treeTypeMatrix)
 }
 
 func (f *fakeWriterEngine) AddRoot(_ context.Context, structure, userID string, enrolledAt int64) error {
+	if err, ok := f.failAddOnce[userID]; ok {
+		delete(f.failAddOnce, userID)
+		return err
+	}
 	if err, ok := f.failAdd[userID]; ok {
 		return err
 	}
@@ -100,6 +126,10 @@ func (f *fakeWriterEngine) AddRoot(_ context.Context, structure, userID string, 
 }
 
 func (f *fakeWriterEngine) place(structure, userID, parentID, sponsorID string, position int, enrolledAt int64) error {
+	if err, ok := f.failAddOnce[userID]; ok {
+		delete(f.failAddOnce, userID)
+		return err
+	}
 	if err, ok := f.failAdd[userID]; ok {
 		return err
 	}
@@ -153,6 +183,9 @@ func (f *fakeWriterEngine) RemoveNode(_ context.Context, structure, userID strin
 }
 
 func (f *fakeWriterEngine) GetPosition(_ context.Context, structure, userID string) (*EnginePosition, error) {
+	if f.positionErr != nil {
+		return nil, f.positionErr
+	}
 	t, err := f.tree(structure)
 	if err != nil {
 		return nil, err
@@ -162,6 +195,51 @@ func (f *fakeWriterEngine) GetPosition(_ context.Context, structure, userID stri
 		return nil, fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", userID)
 	}
 	return &pos, nil
+}
+
+// GetDownline returns the fake's nodes up to depth levels below userID, or
+// every level when depth is 0.
+func (f *fakeWriterEngine) GetDownline(_ context.Context, structure, userID string, depth uint32) ([]EngineNode, error) {
+	if err := f.downlineErrOnce; err != nil {
+		f.downlineErrOnce = nil
+		return nil, err
+	}
+	if f.downlineErr != nil {
+		return nil, f.downlineErr
+	}
+	t, err := f.tree(structure)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := t.nodes[userID]; !ok {
+		return nil, fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", userID)
+	}
+	// A children index avoids a scan of every node per level.
+	children := map[string][]string{}
+	for _, id := range slices.Sorted(maps.Keys(t.nodes)) {
+		if parent := t.nodes[id].ParentUserID; parent != nil {
+			children[*parent] = append(children[*parent], id)
+		}
+	}
+	type visit struct {
+		id    string
+		level uint32
+	}
+	var out []EngineNode
+	queue := []visit{{id: userID}}
+	for len(queue) > 0 {
+		v := queue[0]
+		queue = queue[1:]
+		if depth != 0 && v.level >= depth {
+			continue
+		}
+		for _, child := range children[v.id] {
+			pos := t.nodes[child]
+			out = append(out, EngineNode{UserID: child, Depth: pos.Depth, EnrolledAt: pos.EnrolledAt})
+			queue = append(queue, visit{id: child, level: v.level + 1})
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeWriterEngine) CheckMutation(_ context.Context, structure string, m Mutation) error {
@@ -181,23 +259,25 @@ func (f *fakeWriterEngine) CheckMutation(_ context.Context, structure string, m 
 
 // writerEnv holds the stores one test's writes share.
 type writerEnv struct {
-	events platform.EventStore
-	store  *MemoryTreeStore
-	locker *MemoryTreeLocker
+	events    platform.EventStore
+	store     *MemoryTreeStore
+	snapshots *MemorySnapshotStore
+	locker    *MemoryTreeLocker
 }
 
 func newWriterEnv() *writerEnv {
 	return &writerEnv{
-		events: platform.NewMemoryEventStore(),
-		store:  NewMemoryTreeStore(),
-		locker: NewMemoryTreeLocker(),
+		events:    platform.NewMemoryEventStore(),
+		store:     NewMemoryTreeStore(),
+		snapshots: NewMemorySnapshotStore(),
+		locker:    NewMemoryTreeLocker(),
 	}
 }
 
 // writer builds a TreeWriter over a fresh engine.
 func (e *writerEnv) writer(opts ...TreeWriterOption) (*TreeWriter, *fakeWriterEngine) {
 	engine := newFakeWriterEngine()
-	return NewTreeWriter(e.events, e.store, engine, e.locker, opts...), engine
+	return NewTreeWriter(e.events, e.store, e.snapshots, engine, e.locker, opts...), engine
 }
 
 // mustAddRoot adds writerRoot as the root of writerTree through a writer.
@@ -402,9 +482,9 @@ func (s *loggingStore) ProjectInsert(ctx context.Context, node TreeNodeRow, even
 	return s.TreeStore.ProjectInsert(ctx, node, eventVersion)
 }
 
-func (s *loggingStore) GetByTreeDepthOrdered(ctx context.Context, treeID string) ([]TreeNodeRow, error) {
+func (s *loggingStore) ProjectedRows(ctx context.Context, treeID string) (int64, bool, []TreeNodeRow, error) {
 	s.log.add(s.name + " load")
-	return s.TreeStore.GetByTreeDepthOrdered(ctx, treeID)
+	return s.TreeStore.ProjectedRows(ctx, treeID)
 }
 
 // loggingEvents records each append by the version it asks for.
@@ -438,4 +518,116 @@ type immediateErrLocker struct{ err error }
 
 func (l immediateErrLocker) Lock(context.Context, uuid.UUID) (func() error, error) {
 	return nil, l.err
+}
+
+func TestFakeWriterEngine_GetDownlineReturnsEveryDescendant(t *testing.T) {
+	engine := newFakeWriterEngine()
+	ctx := context.Background()
+	require.NoError(t, engine.CreateTree(ctx, writerTree, treeTypeUnilevel))
+	require.NoError(t, engine.AddRoot(ctx, writerTree, writerRoot, 1))
+	require.NoError(t, engine.AddNode(ctx, writerTree, writerChild, writerRoot, writerRoot, 2))
+	require.NoError(t, engine.AddNode(ctx, writerTree, writerOther, writerChild, writerChild, 3))
+
+	got, err := engine.GetDownline(ctx, writerTree, writerRoot, 0)
+
+	require.NoError(t, err)
+	assert.Equal(t, []EngineNode{
+		{UserID: writerChild, Depth: 1, EnrolledAt: 2},
+		{UserID: writerOther, Depth: 2, EnrolledAt: 3},
+	}, got)
+}
+
+func TestFakeWriterEngine_GetDownlineStopsAtTheDepthAsked(t *testing.T) {
+	engine := newFakeWriterEngine()
+	ctx := context.Background()
+	require.NoError(t, engine.CreateTree(ctx, writerTree, treeTypeUnilevel))
+	require.NoError(t, engine.AddRoot(ctx, writerTree, writerRoot, 1))
+	require.NoError(t, engine.AddNode(ctx, writerTree, writerChild, writerRoot, writerRoot, 2))
+	require.NoError(t, engine.AddNode(ctx, writerTree, writerOther, writerChild, writerChild, 3))
+
+	got, err := engine.GetDownline(ctx, writerTree, writerRoot, 1)
+
+	require.NoError(t, err)
+	assert.Equal(t, []EngineNode{{UserID: writerChild, Depth: 1, EnrolledAt: 2}}, got)
+}
+
+// fakeSnapshot is the fake engine's snapshot payload.
+type fakeSnapshot struct {
+	Root  string                    `json:"root"`
+	Nodes map[string]EnginePosition `json:"nodes"`
+}
+
+func (f *fakeWriterEngine) TakeSnapshot(_ context.Context, structure string) (*SnapshotResultDTO, error) {
+	f.calls = append(f.calls, "take_snapshot")
+	if f.takeErr != nil {
+		return nil, f.takeErr
+	}
+	t, err := f.tree(structure)
+	if err != nil {
+		return nil, err
+	}
+	data, err := json.Marshal(fakeSnapshot{Root: t.root, Nodes: t.nodes})
+	if err != nil {
+		return nil, err
+	}
+	treeType := t.treeType
+	if f.snapshotType != "" {
+		treeType = f.snapshotType
+	}
+	return &SnapshotResultDTO{TreeType: treeType, Data: data}, nil
+}
+
+func (f *fakeWriterEngine) RestoreSnapshot(_ context.Context, structure, treeType string, data json.RawMessage) error {
+	f.calls = append(f.calls, "restore_snapshot")
+	if f.restoreErr != nil {
+		return f.restoreErr
+	}
+	if _, ok := f.trees[structure]; ok {
+		return fakeEngineError(engineCodeTreeExists, "structure '%s' already exists", structure)
+	}
+	var snap fakeSnapshot
+	if err := json.Unmarshal(data, &snap); err != nil {
+		return fakeEngineError("INVALID_PARAMS", "%s", err)
+	}
+	if snap.Nodes == nil {
+		snap.Nodes = map[string]EnginePosition{}
+	}
+	f.trees[structure] = &fakeEngineTree{treeType: treeType, root: snap.Root, nodes: snap.Nodes}
+	return nil
+}
+
+func (f *fakeWriterEngine) DropStructure(_ context.Context, structure string) (bool, error) {
+	f.calls = append(f.calls, "drop_structure")
+	if f.dropErr != nil {
+		return false, f.dropErr
+	}
+	if f.dropReportsAbsent {
+		delete(f.trees, structure)
+		return false, nil
+	}
+	_, ok := f.trees[structure]
+	delete(f.trees, structure)
+	return ok, nil
+}
+
+func TestFakeWriterEngine_RestoresWhatItSnapshotted(t *testing.T) {
+	engine := newFakeWriterEngine()
+	ctx := context.Background()
+	require.NoError(t, engine.CreateTree(ctx, writerTree, treeTypeUnilevel))
+	require.NoError(t, engine.AddRoot(ctx, writerTree, writerRoot, 1))
+	taken, err := engine.TakeSnapshot(ctx, writerTree)
+	require.NoError(t, err)
+	assert.Equal(t, treeTypeUnilevel, taken.TreeType)
+	dropped, err := engine.DropStructure(ctx, writerTree)
+	require.NoError(t, err)
+	require.True(t, dropped)
+
+	require.NoError(t, engine.RestoreSnapshot(ctx, writerTree, taken.TreeType, taken.Data))
+
+	pos, err := engine.GetPosition(ctx, writerTree, writerRoot)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), pos.EnrolledAt)
+	assert.True(t, isEngineCode(engine.AddRoot(ctx, writerTree, writerOther, 2), engineCodeRootAlreadyExists))
+	err = engine.RestoreSnapshot(ctx, writerTree, taken.TreeType, taken.Data)
+	assert.True(t, isEngineCode(err, engineCodeTreeExists))
 }

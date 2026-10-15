@@ -857,6 +857,9 @@ func (c *EngineClient) BoardAddMember(ctx context.Context, structure, userID, sp
 	if err != nil {
 		return nil, err
 	}
+	if r.CycleEvents == nil {
+		return nil, fmt.Errorf("board_add_member: response has no \"cycle_events\" list (the key is missing or null)")
+	}
 	return &r, nil
 }
 
@@ -871,11 +874,14 @@ func (c *EngineClient) BoardRemoveMember(ctx context.Context, structure, userID 
 	if err != nil {
 		return nil, err
 	}
+	if r.CycleEvents == nil {
+		return nil, fmt.Errorf("board_remove_member: response has no \"cycle_events\" list (the key is missing or null)")
+	}
 	return &r, nil
 }
 
 // BoardCompressInactive compresses inactive members out of their boards.
-// Returns which members were removed and any cycle events from compaction.
+// Returns which members were removed and any cycle events from the call.
 func (c *EngineClient) BoardCompressInactive(ctx context.Context, structure string, memberIDs []string, timestamp int64) (*CompressionResultDTO, error) {
 	r, err := callInto[CompressionResultDTO](c, ctx, "board_compress_inactive", map[string]any{
 		"structure":  structure,
@@ -884,6 +890,9 @@ func (c *EngineClient) BoardCompressInactive(ctx context.Context, structure stri
 	})
 	if err != nil {
 		return nil, err
+	}
+	if r.CycleEvents == nil {
+		return nil, fmt.Errorf("board_compress_inactive: response has no \"cycle_events\" list (the key is missing or null)")
 	}
 	return &r, nil
 }
@@ -896,7 +905,9 @@ func (c *EngineClient) BoardDetectStalled(ctx context.Context, structure string,
 	})
 }
 
-// BoardDissolve dissolves a stalled board, displacing its members.
+// BoardDissolve dissolves a stalled board, displacing its members, and returns
+// the cycle events of the drain that followed. A full board is refused with
+// BOARD_FULL.
 func (c *EngineClient) BoardDissolve(ctx context.Context, structure, boardID string, timestamp int64) (*DissolutionResultDTO, error) {
 	r, err := callInto[DissolutionResultDTO](c, ctx, "board_dissolve", map[string]any{
 		"structure": structure,
@@ -905,6 +916,9 @@ func (c *EngineClient) BoardDissolve(ctx context.Context, structure, boardID str
 	})
 	if err != nil {
 		return nil, err
+	}
+	if r.CycleEvents == nil {
+		return nil, fmt.Errorf("board_dissolve: response has no \"cycle_events\" list (the key is missing or null)")
 	}
 	return &r, nil
 }

@@ -3777,6 +3777,60 @@ fn load_plan_rejects_board_cycle_commission_negative() {
     worker.wait().unwrap();
 }
 
+#[test]
+fn create_board_plan_rejects_a_zero_cascade_bound() {
+    let mut worker = common::spawn_worker();
+    let create = serde_json::json!({
+        "id": "bp-zero", "op": "create_board_plan",
+        "params": {
+            "structure": "BPZero", "width": 2, "height": 1,
+            "config": {
+                "cycle_commission": 500.0, "re_entry_enabled": true,
+                "re_entry_position": "bottom", "max_cycles_per_period": 4,
+                "max_cascade_depth": 0, "stall_threshold_periods": 3,
+                "inactive_compression": false
+            },
+            "timestamp": 0
+        }
+    });
+
+    let resp = common::send_receive(&mut worker, &create.to_string());
+
+    assert!(
+        resp.contains(r#""ok":false"#)
+            && resp.contains("INVALID_PARAMS")
+            && resp.contains("expected a nonzero u32"),
+        "expected INVALID_PARAMS naming the zero bound, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn load_plan_rejects_a_zero_cascade_bound() {
+    let mut worker = common::spawn_worker();
+    let bad = BOARD_TEST_PLAN_JSON.replace("\"max_cascade_depth\": 10", "\"max_cascade_depth\": 0");
+    assert!(
+        bad.contains("\"max_cascade_depth\": 0"),
+        "the max_cascade_depth replacement did not match: the plan constant has no \"max_cascade_depth\": 10"
+    );
+
+    let resp = send_load_plan(&mut worker, &bad);
+
+    assert!(
+        resp.contains(r#""ok":false"#)
+            && resp.contains("INVALID_PLAN")
+            && resp.contains("expected a nonzero u32"),
+        "expected INVALID_PLAN naming the zero bound, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 /// The exact legacy shape: config, no structure. An unmigrated caller must
 /// fail, not silently continue. This is the case that proves the compatibility
 /// requirement; the hybrid test below does not, because it supplies `structure`.
@@ -6317,6 +6371,183 @@ fn restore_rejects_a_matrix_slot_vector_of_the_wrong_width() {
     worker.wait().unwrap();
 }
 
+/// Board ids in `BP_PENDING_SNAPSHOT`.
+const BP_FULL: &str = "aaaaaaaa-0000-0000-0000-000000000001";
+const BP_OPEN: &str = "aaaaaaaa-0000-0000-0000-000000000002";
+
+/// A 2x1 SponsorBoard engine at cascade bound 1. Board `BP_FULL` is full. Its
+/// root is sponsored by the root of board `BP_OPEN`, which has one opening.
+const BP_PENDING_SNAPSHOT: &str = r#"{
+    "width": 2, "height": 1, "total_positions": 3,
+    "boards": {
+        "aaaaaaaa-0000-0000-0000-000000000001": {
+            "id": "aaaaaaaa-0000-0000-0000-000000000001",
+            "positions": [
+                "cccccccc-0000-0000-0000-000000000001",
+                "cccccccc-0000-0000-0000-000000000002",
+                "cccccccc-0000-0000-0000-000000000003"
+            ],
+            "created_at": 1, "seq": 1, "last_activity_at": 1, "parent_board_id": null
+        },
+        "aaaaaaaa-0000-0000-0000-000000000002": {
+            "id": "aaaaaaaa-0000-0000-0000-000000000002",
+            "positions": [
+                "cccccccc-0000-0000-0000-000000000004",
+                "cccccccc-0000-0000-0000-000000000005",
+                null
+            ],
+            "created_at": 2, "seq": 2, "last_activity_at": 2, "parent_board_id": null
+        }
+    },
+    "member_boards": {
+        "cccccccc-0000-0000-0000-000000000001": "aaaaaaaa-0000-0000-0000-000000000001",
+        "cccccccc-0000-0000-0000-000000000002": "aaaaaaaa-0000-0000-0000-000000000001",
+        "cccccccc-0000-0000-0000-000000000003": "aaaaaaaa-0000-0000-0000-000000000001",
+        "cccccccc-0000-0000-0000-000000000004": "aaaaaaaa-0000-0000-0000-000000000002",
+        "cccccccc-0000-0000-0000-000000000005": "aaaaaaaa-0000-0000-0000-000000000002"
+    },
+    "sponsor_map": {
+        "cccccccc-0000-0000-0000-000000000001": "cccccccc-0000-0000-0000-000000000004",
+        "cccccccc-0000-0000-0000-000000000002": "cccccccc-0000-0000-0000-000000000001",
+        "cccccccc-0000-0000-0000-000000000003": "cccccccc-0000-0000-0000-000000000001",
+        "cccccccc-0000-0000-0000-000000000004": "cccccccc-0000-0000-0000-000000000004",
+        "cccccccc-0000-0000-0000-000000000005": "cccccccc-0000-0000-0000-000000000004"
+    },
+    "displaced_members": [],
+    "next_board_seq": 3,
+    "config": {
+        "cycle_commission": 500.0, "re_entry_enabled": true,
+        "re_entry_position": "sponsor_board", "max_cycles_per_period": 4,
+        "max_cascade_depth": 1, "stall_threshold_periods": 3,
+        "inactive_compression": false
+    }
+}"#;
+
+#[test]
+fn restore_keeps_a_full_board_full() {
+    let mut worker = common::spawn_worker();
+    let data: serde_json::Value = serde_json::from_str(BP_PENDING_SNAPSHOT).unwrap();
+    restore_expecting_success(&mut worker, "BpPending", "board_plan", data);
+
+    let board = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"bs","op":"board_get_state","params":{{"structure":"BpPending","board_id":"{}"}}}}"#,
+            BP_FULL
+        ),
+    );
+
+    assert_eq!(
+        board["positions"],
+        serde_json::json!([
+            "cccccccc-0000-0000-0000-000000000001",
+            "cccccccc-0000-0000-0000-000000000002",
+            "cccccccc-0000-0000-0000-000000000003"
+        ]),
+        "restore should not cycle a full board: {}",
+        board
+    );
+    assert_eq!(
+        board["seq"], 1,
+        "board_get_state should report seq: {}",
+        board
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_rejects_a_repeated_board_seq() {
+    let mut worker = common::spawn_worker();
+    let mut data: serde_json::Value = serde_json::from_str(BP_PENDING_SNAPSHOT).unwrap();
+    data["boards"][BP_OPEN]["seq"] = serde_json::json!(1);
+
+    let resp = restore_under(&mut worker, "BpSeq", "board_plan", data);
+
+    assert_inconsistent(&resp, &["both carry seq 1"]);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn board_dissolve_refuses_a_full_board() {
+    let mut worker = common::spawn_worker();
+    let data: serde_json::Value = serde_json::from_str(BP_PENDING_SNAPSHOT).unwrap();
+    restore_expecting_success(&mut worker, "BpFull", "board_plan", data);
+    let before = take_snapshot_data(&mut worker, "BpFull");
+
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"bd","op":"board_dissolve","params":{{"structure":"BpFull","board_id":"{}","timestamp":10}}}}"#,
+            BP_FULL
+        ),
+    );
+
+    assert!(
+        resp.contains(r#""ok":false"#)
+            && resp.contains("BOARD_FULL")
+            && resp.contains("has 3 of 3 positions filled"),
+        "expected BOARD_FULL with the counts it read, got: {}",
+        resp
+    );
+    assert_eq!(
+        take_snapshot_data(&mut worker, "BpFull"),
+        before,
+        "take_snapshot differs after a refused dissolve"
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn board_dissolve_reports_the_drain_that_followed() {
+    let mut worker = common::spawn_worker();
+    let data: serde_json::Value = serde_json::from_str(BP_PENDING_SNAPSHOT).unwrap();
+    restore_expecting_success(&mut worker, "BpDrain", "board_plan", data);
+
+    let result = query(
+        &mut worker,
+        &format!(
+            r#"{{"id":"bd","op":"board_dissolve","params":{{"structure":"BpDrain","board_id":"{}","timestamp":10}}}}"#,
+            BP_OPEN
+        ),
+    );
+
+    assert_eq!(result["dissolved_board_id"], BP_OPEN);
+    assert_eq!(
+        result["displaced_members"],
+        serde_json::json!([
+            "cccccccc-0000-0000-0000-000000000004",
+            "cccccccc-0000-0000-0000-000000000005"
+        ])
+    );
+    let events = result["cycle_events"].as_array().unwrap_or_else(|| {
+        panic!(
+            "board_dissolve result has no cycle_events array: {}",
+            result
+        )
+    });
+    assert_eq!(
+        events.len(),
+        1,
+        "expected 1 cycle event, got {}: {}",
+        events.len(),
+        result
+    );
+    assert_eq!(events[0]["board_id"], BP_FULL);
+    assert_eq!(
+        events[0]["cycled_member"],
+        "cccccccc-0000-0000-0000-000000000001"
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 #[test]
 fn restore_rejects_a_board_member_on_an_absent_board() {
     let mut worker = common::spawn_worker();
@@ -6419,6 +6650,45 @@ fn restore_rejects_a_board_occupant_above_an_open_position() {
 
     let resp = restore_under(&mut worker, "BpGap2", "board_plan", data);
     assert_inconsistent(&resp, &["has position 0 open and position 1 occupied"]);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_rejects_a_zero_cascade_bound() {
+    let mut worker = common::spawn_worker();
+    let create = serde_json::json!({
+        "id": "bp-create", "op": "create_board_plan",
+        "params": {
+            "structure": "BpZeroSnap", "width": 2, "height": 1,
+            "config": {
+                "cycle_commission": 500.0, "re_entry_enabled": true,
+                "re_entry_position": "bottom", "max_cycles_per_period": 4,
+                "max_cascade_depth": 10, "stall_threshold_periods": 3,
+                "inactive_compression": false
+            },
+            "timestamp": 0
+        }
+    });
+    let resp = common::send_receive(&mut worker, &create.to_string());
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "create_board_plan failed: {}",
+        resp
+    );
+    let mut data = take_snapshot_data(&mut worker, "BpZeroSnap");
+    data["config"]["max_cascade_depth"] = serde_json::json!(0);
+
+    let resp = restore_under(&mut worker, "BpZeroSnap2", "board_plan", data);
+
+    assert!(
+        resp.contains(r#""ok":false"#)
+            && resp.contains("INVALID_PARAMS")
+            && resp.contains("expected a nonzero u32"),
+        "expected INVALID_PARAMS naming the zero bound, got: {}",
+        resp
+    );
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -6902,9 +7172,7 @@ fn board_plan_snapshot_round_trip_survives_a_cycled_board() {
         &mut worker,
         r#"{"id":"bl0","op":"board_list","params":{"structure":"BPRT"}}"#,
     );
-    // More than the one board it started with, so a cycle split it. The exact
-    // count varies with placement among boards sharing a timestamp, so it is
-    // not asserted.
+    // More than the one board it started with, so a cycle split it.
     assert!(
         boards
             .as_array()
@@ -6953,27 +7221,21 @@ fn board_plan_snapshot_round_trip_survives_a_cycled_board() {
     );
     restore_expecting_success(&mut worker, "BPRT2", "board_plan", data);
 
-    // A cycle creates two boards in the same instant, so their relative
-    // order is not guaranteed. Compare the set, not the order.
-    let by_id = |v: serde_json::Value| {
-        let mut boards = v.as_array().expect("board_list returns an array").clone();
-        boards.sort_by_key(|b| b["id"].as_str().unwrap_or_default().to_string());
-        boards
-    };
-    let before = by_id(query(
+    // Compared in order.
+    let before = query(
         &mut worker,
         r#"{"id":"bl1","op":"board_list","params":{"structure":"BPRT"}}"#,
-    ));
-    let after = by_id(query(
+    );
+    let after = query(
         &mut worker,
         r#"{"id":"bl2","op":"board_list","params":{"structure":"BPRT2"}}"#,
-    ));
+    );
     assert_eq!(
         before, after,
         "the restored board list differs from the original"
     );
     assert!(
-        !before.is_empty(),
+        before.as_array().is_some_and(|boards| !boards.is_empty()),
         "the restored engine should still hold boards"
     );
 

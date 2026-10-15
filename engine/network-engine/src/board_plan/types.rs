@@ -13,12 +13,12 @@ pub struct AddMemberResult {
     /// Position index within the board.
     pub position: usize,
 
-    /// Cycle events triggered by the placement (if the board filled).
+    /// Cycle events from this add, drained boards first.
     pub cycle_events: Vec<CycleEvent>,
 }
 
-/// A single cycle event. Produced when a board fills and the top
-/// position cycles out.
+/// A single cycle event. Produced when a board cycles and its top
+/// position leaves.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CycleEvent {
     /// The board that cycled.
@@ -40,7 +40,7 @@ pub struct RemoveMemberResult {
     /// Members who were compacted (moved up) to fill the gap.
     pub compacted: Vec<Uuid>,
 
-    /// Cycle events triggered by compaction.
+    /// Cycle events from this removal, drained boards first.
     pub cycle_events: Vec<CycleEvent>,
 }
 
@@ -72,6 +72,9 @@ pub struct DissolutionResult {
 
     /// Members displaced by the dissolution.
     pub displaced_members: Vec<Uuid>,
+
+    /// Cycle events from boards cycled after the dissolution.
+    pub cycle_events: Vec<CycleEvent>,
 }
 
 /// A member who was compressed out of a board due to inactivity.
@@ -80,7 +83,7 @@ pub struct CompressedMember {
     /// The member who was compressed.
     pub user_id: Uuid,
 
-    /// The board they were removed from.
+    /// The board the member held when the call started.
     pub board_id: Uuid,
 }
 
@@ -90,7 +93,7 @@ pub struct CompressionResult {
     /// Members who were compressed out of their boards.
     pub compressed: Vec<CompressedMember>,
 
-    /// Cycle events triggered by compaction after compression.
+    /// Cycle events from this call, drained boards first.
     pub cycle_events: Vec<CycleEvent>,
 }
 

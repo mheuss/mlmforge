@@ -22,6 +22,10 @@ pub struct Board {
     /// Unix timestamp (seconds) when this board was created.
     pub created_at: i64,
 
+    /// Engine-assigned creation order. Breaks ties between boards created at
+    /// the same timestamp.
+    pub seq: u64,
+
     /// Unix timestamp (seconds) of the most recent activity on this board.
     pub last_activity_at: i64,
 
@@ -31,11 +35,17 @@ pub struct Board {
 
 impl Board {
     /// Creates a new empty board with the given number of positions.
-    pub fn new(total_positions: usize, timestamp: i64, parent_board_id: Option<Uuid>) -> Self {
+    pub fn new(
+        total_positions: usize,
+        timestamp: i64,
+        parent_board_id: Option<Uuid>,
+        seq: u64,
+    ) -> Self {
         Self {
             id: Uuid::new_v4(),
             positions: vec![None; total_positions],
             created_at: timestamp,
+            seq,
             last_activity_at: timestamp,
             parent_board_id,
         }
@@ -301,7 +311,7 @@ mod tests {
 
     #[test]
     fn new_board_is_empty() {
-        let board = Board::new(7, 1000, None);
+        let board = Board::new(7, 1000, None, 0);
         assert_eq!(board.positions.len(), 7);
         assert!(board.positions.iter().all(|p| p.is_none()));
         assert!(!board.is_full());
@@ -315,7 +325,7 @@ mod tests {
 
     #[test]
     fn board_fill_detection() {
-        let mut board = Board::new(3, 1000, None);
+        let mut board = Board::new(3, 1000, None, 0);
 
         let a = Uuid::new_v4();
         let b = Uuid::new_v4();
@@ -339,7 +349,7 @@ mod tests {
 
     #[test]
     fn board_members_returns_filled_in_order() {
-        let mut board = Board::new(5, 1000, None);
+        let mut board = Board::new(5, 1000, None, 0);
 
         let a = Uuid::new_v4();
         let b = Uuid::new_v4();
@@ -355,7 +365,7 @@ mod tests {
     #[test]
     fn board_parent_board_id_set() {
         let parent_id = Uuid::new_v4();
-        let board = Board::new(7, 2000, Some(parent_id));
+        let board = Board::new(7, 2000, Some(parent_id), 0);
         assert_eq!(board.parent_board_id, Some(parent_id));
     }
 

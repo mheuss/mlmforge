@@ -172,8 +172,10 @@ func (c *TreeEventConsumer) handleRootAdded(ctx context.Context, event platform.
 			payload.TreeID, held)
 	}
 
-	err := c.withRetry(ctx, "add_root", payload.TreeID, payload.UserID, func() error {
-		return c.engine.AddRoot(ctx, payload.TreeID, payload.UserID, payload.EnrolledAt.Unix())
+	call := rootAddedCall(payload)
+	err := c.withRetry(ctx, call.op, payload.TreeID, payload.UserID, func() error {
+		_, err := call.apply(ctx, c.engine)
+		return err
 	}, reconcile)
 	if err == nil || !inserted {
 		return err
@@ -276,24 +278,10 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform
 		return reconcileConverged, nil
 	}
 
-	// Matrix placements go through add_node_at so the engine applies exactly
-	// the parent and position the event recorded. Matrix add_node would
-	// re-derive placement by spillover and diverge from the row just written.
-	// The Position deref is safe: the gate above rejects a nil matrix
-	// position before anything is written.
-	if payload.TreeType == treeTypeMatrix {
-		return c.withRetry(ctx, "add_node_at", payload.TreeID, payload.UserID, func() error {
-			return c.engine.AddNodeAt(ctx, payload.TreeID, payload.UserID,
-				payload.ParentID, payload.SponsorID, *payload.Position, payload.EnrolledAt.Unix())
-		}, reconcile)
-	}
-	return c.withRetry(ctx, "add_node", payload.TreeID, payload.UserID, func() error {
-		var opts []AddNodeOption
-		if payload.Position != nil {
-			opts = append(opts, WithPosition(*payload.Position))
-		}
-		return c.engine.AddNode(ctx, payload.TreeID, payload.UserID,
-			payload.ParentID, payload.SponsorID, payload.EnrolledAt.Unix(), opts...)
+	call := nodePlacedCall(payload)
+	return c.withRetry(ctx, call.op, payload.TreeID, payload.UserID, func() error {
+		_, err := call.apply(ctx, c.engine)
+		return err
 	}, reconcile)
 }
 
@@ -306,6 +294,10 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 	if err := checkStream(event, "node_removed", payload.TreeID, payload.UserID); err != nil {
 		return unprojectable(err)
 	}
+	call, callErr := nodeRemovedCall(payload, "")
+	if callErr != nil {
+		return unprojectable(callErr)
+	}
 
 	var moved []Responsored
 
@@ -314,9 +306,9 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 	// flag carries that out, the way moved already does.
 	alreadyProjected := false
 
-	if err := c.withRetry(ctx, "remove_node", payload.TreeID, payload.UserID, func() error {
-		m, err := c.engine.RemoveNode(ctx, payload.TreeID, payload.UserID)
-		moved = m
+	if err := c.withRetry(ctx, call.op, payload.TreeID, payload.UserID, func() error {
+		out, err := call.apply(ctx, c.engine)
+		moved = out.responsored
 		return err
 	}, func(ctx context.Context, err error) (reconcileOutcome, error) {
 		if !isEngineCode(err, engineCodeUserNotFound) {

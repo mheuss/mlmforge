@@ -187,7 +187,7 @@ func TestTreeRejectEventCmd_ExitsThreeUntilARerunProjects(t *testing.T) {
 		ID: stuck.ID, TreeID: tree, UserID: child, ParentID: &root, SponsorID: &absent, Depth: 1, EnrolledAt: at,
 	}, 2))
 	w := networkengine.NewTreeWriter(events, &cmdRejectionFailingStore{TreeStore: store, failures: 2},
-		createOnlyEngine{}, networkengine.NewMemoryTreeLocker())
+		networkengine.NewMemorySnapshotStore(), createOnlyEngine{}, networkengine.NewMemoryTreeLocker())
 
 	var exits []int
 	for range 4 {
@@ -220,7 +220,8 @@ func TestTreeRejectEventCmd_ARejectionNamingTheWrongEventExitsOne(t *testing.T) 
 		TreeID: tree, RejectedEventID: other, RejectedVersion: 2,
 		RejectedType: networkengine.EventTypeNodePlaced, Reason: "appended by the test",
 	})
-	w := networkengine.NewTreeWriter(events, store, createOnlyEngine{}, networkengine.NewMemoryTreeLocker())
+	w := networkengine.NewTreeWriter(events, store, networkengine.NewMemorySnapshotStore(), createOnlyEngine{},
+		networkengine.NewMemoryTreeLocker())
 
 	out, err := runWriteCmd(t, w, "reject-event", "--tree-id", tree, "--event-id", other, "--reason", "r")
 
@@ -288,4 +289,17 @@ func TestTreeRejectEventCmd_RefusesAnOutcomeItDoesNotReport(t *testing.T) {
 
 	require.EqualError(t, err, `reject returned no error and outcome "", which this command does not report`)
 	assert.Empty(t, out.stdout.String())
+}
+
+func TestReportReject_PrintsEachWarning(t *testing.T) {
+	for name, err := range map[string]error{"on success": nil, "on an error": errors.New("refused")} {
+		t.Run(name, func(t *testing.T) {
+			var out, warn bytes.Buffer
+			res := networkengine.RejectResult{Outcome: networkengine.RejectOutcomeRejected, Warnings: []string{"first"}}
+
+			_ = reportReject(t.Context(), &out, &warn, res, err)
+
+			assert.Contains(t, warn.String(), "warning: first\n")
+		})
+	}
 }

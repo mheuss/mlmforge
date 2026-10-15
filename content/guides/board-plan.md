@@ -72,7 +72,7 @@ Board plan structures require a companion unilevel structure. The board plan han
 
 Go drives stall detection by passing a cutoff timestamp. The engine returns boards that haven't had activity since that time. Go converts the configured `stall_threshold_periods` into a timestamp.
 
-Stalled boards can be dissolved. All members go to a displaced pool and are placed before new enrollees.
+A stalled board can be dissolved unless it is full. A full one returns `BOARD_FULL` until another mutating operation cycles it. All members of a dissolved board go to a displaced pool and are placed before new enrollees.
 
 ## Inactive Compression
 

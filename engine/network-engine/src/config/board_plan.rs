@@ -5,6 +5,8 @@
 //! Re-entry rules control whether cycled-out members rejoin new boards.
 //! Cascade limits prevent runaway chain reactions from a single add.
 
+use std::num::NonZeroU32;
+
 use serde::{Deserialize, Serialize};
 
 /// Board plan cycling configuration.
@@ -25,9 +27,9 @@ pub struct BoardPlanConfig {
     /// Maximum times a member can earn cycle commission per period.
     pub max_cycles_per_period: u32,
 
-    /// Maximum chained cycles from a single add_member operation.
+    /// Maximum recursion depth of one cascade of cycles.
     #[serde(default = "default_max_cascade_depth")]
-    pub max_cascade_depth: u32,
+    pub max_cascade_depth: NonZeroU32,
 
     /// Stall threshold in periods. Go converts to timestamp at detection time.
     pub stall_threshold_periods: u32,
@@ -46,8 +48,8 @@ pub enum ReEntryPosition {
     SponsorBoard,
 }
 
-fn default_max_cascade_depth() -> u32 {
-    10
+fn default_max_cascade_depth() -> NonZeroU32 {
+    NonZeroU32::new(10).expect("10 is nonzero")
 }
 
 #[cfg(test)]
@@ -73,7 +75,7 @@ mod tests {
             ReEntryPosition::SponsorBoard
         ));
         assert_eq!(config.max_cycles_per_period, 4);
-        assert_eq!(config.max_cascade_depth, 15);
+        assert_eq!(config.max_cascade_depth.get(), 15);
         assert_eq!(config.stall_threshold_periods, 3);
         assert!(config.inactive_compression);
     }
@@ -100,6 +102,26 @@ mod tests {
             "inactive_compression": false
         }"#;
         let config: BoardPlanConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.max_cascade_depth, 10);
+        assert_eq!(config.max_cascade_depth.get(), 10);
+    }
+
+    #[test]
+    fn max_cascade_depth_rejects_zero() {
+        let json = r#"{
+            "cycle_commission": 250.0,
+            "re_entry_enabled": false,
+            "re_entry_position": "bottom",
+            "max_cycles_per_period": 2,
+            "max_cascade_depth": 0,
+            "stall_threshold_periods": 5,
+            "inactive_compression": false
+        }"#;
+
+        let err = serde_json::from_str::<BoardPlanConfig>(json).unwrap_err();
+
+        assert!(
+            err.to_string().contains("expected a nonzero u32"),
+            "got: {err}"
+        );
     }
 }

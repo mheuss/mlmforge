@@ -14,6 +14,10 @@ import (
 // defaultTreeLockWait bounds how long a TreeWriter waits for a tree's lock.
 const defaultTreeLockWait = 30 * time.Second
 
+// snapshotInterval is how many events a tree's stream moves past its stored
+// snapshot before a write takes a new one.
+const snapshotInterval = 1000
+
 // AddRootRequest asks for a tree's root. The type and matrix parameters shape
 // the tree when its stream is empty.
 type AddRootRequest struct {
@@ -60,6 +64,7 @@ type WriteResult struct {
 	CaughtUp      *CaughtUpEvent         // the stream's last event, redelivered and handled without error
 	ProjectionErr error                  // any failure after the append was confirmed
 	Observed      *ProjectionObservation // the projected version, re-read after a projection error
+	Warnings      []string               // what the write observed and carried on past, in order
 	ReleaseErr    error                  // the unlock failed
 }
 
@@ -85,18 +90,19 @@ type LoadResult struct {
 	CaughtUp       *CaughtUpEvent         // the stream's last event, redelivered and handled without error
 	ProjectedAfter *ProjectionObservation // the projected version read after a redelivery
 	Nodes          int                    // the active rows the load leaves, set only when Load returns no error
+	Warnings       []string               // what a fallback during the load observed, in order
 	ReleaseErr     error                  // the unlock failed
 }
 
 // TreeWriter appends tree events and projects them, one tree at a time.
 type TreeWriter struct {
-	events   platform.EventStore
-	store    TreeStore
-	engine   TreeEngineChecker
-	locker   TreeLocker
-	loader   *TreeLoader
-	consumer *TreeEventConsumer
-	lockWait time.Duration
+	events    platform.EventStore
+	store     TreeStore
+	snapshots SnapshotStore
+	engine    TreeRebuilder
+	locker    TreeLocker
+	consumer  *TreeEventConsumer
+	lockWait  time.Duration
 }
 
 // TreeWriterOption configures a TreeWriter.
@@ -112,18 +118,23 @@ func WithLockWait(d time.Duration) TreeWriterOption {
 	}
 }
 
-// NewTreeWriter creates a writer over one event store, tree store, engine and
-// locker.
-func NewTreeWriter(events platform.EventStore, store TreeStore, engine TreeEngineChecker,
+// NewTreeWriter creates a writer over one event store, tree store, snapshot
+// store, engine and locker.
+func NewTreeWriter(events platform.EventStore, store TreeStore, snapshots SnapshotStore, engine TreeRebuilder,
 	locker TreeLocker, opts ...TreeWriterOption) *TreeWriter {
+	// A panic rather than an error: a nil store is a wiring mistake, not a
+	// runtime condition.
+	if snapshots == nil {
+		panic("NewTreeWriter was given a nil SnapshotStore")
+	}
 	w := &TreeWriter{
-		events:   events,
-		store:    store,
-		engine:   engine,
-		locker:   locker,
-		loader:   NewTreeLoader(store, engine),
-		consumer: NewTreeEventConsumer(store, engine),
-		lockWait: defaultTreeLockWait,
+		events:    events,
+		store:     store,
+		snapshots: snapshots,
+		engine:    engine,
+		locker:    locker,
+		consumer:  NewTreeEventConsumer(store, engine),
+		lockWait:  defaultTreeLockWait,
 	}
 	for _, opt := range opts {
 		opt(w)
@@ -384,10 +395,12 @@ func (w *TreeWriter) write(ctx context.Context, spec writeSpec) (result WriteRes
 	if err != nil {
 		return result, err
 	}
-	loaded, found, last, _, err := w.prepare(ctx, tree, shape)
+	prep, err := w.prepare(ctx, tree, shape)
+	result.Warnings = prep.warnings
 	if err != nil {
 		return result, err
 	}
+	loaded, found, last := prep.loaded, prep.found, prep.last
 	var expected int64
 	if last != nil {
 		expected = last.Version
@@ -407,6 +420,10 @@ func (w *TreeWriter) write(ctx context.Context, spec writeSpec) (result WriteRes
 	result.ProjectionErr = w.project(ctx, stream, event.ID, version)
 	if result.ProjectionErr != nil {
 		result.Observed = w.observe(ctx, tree)
+	} else if version-prep.snapshotVersion >= snapshotInterval {
+		if warning := w.takeSnapshot(ctx, tree, shape, version); warning != "" {
+			result.Warnings = append(result.Warnings, warning)
+		}
 	}
 	return result, nil
 }
@@ -439,12 +456,14 @@ func (w *TreeWriter) Load(ctx context.Context, r LoadRequest) (result LoadResult
 		}
 	}
 
-	loaded, found, last, nodes, err := w.prepare(ctx, tree, shape)
+	prep, err := w.prepare(ctx, tree, shape)
+	result.Warnings = prep.warnings
 	if err != nil {
 		return result, rejectEarlyRead(tree, err)
 	}
+	loaded, found, last := prep.loaded, prep.found, prep.last
 	if last == nil || last.Version != loaded+1 {
-		result.Nodes = nodes
+		result.Nodes = prep.nodes
 		return result, nil
 	}
 	if result.CaughtUp, err = w.catchUp(ctx, tree, stream, *last, loaded, found); err != nil {
@@ -498,50 +517,327 @@ type storeReadError struct {
 func (e *storeReadError) Error() string { return e.what + ": " + e.err.Error() }
 func (e *storeReadError) Unwrap() error { return e.err }
 
-// prepare loads the tree and refuses a stream the store cannot be brought
-// level with by one redelivery. nodes is the loader's row count.
-func (w *TreeWriter) prepare(ctx context.Context, tree string, shape treeShape) (
-	loaded int64, found bool, last *platform.Event, nodes int, err error) {
-	// Read before the rows. A projection landing between the two reads then
-	// leaves the rows newer than loaded.
-	loaded, found, err = w.store.ProjectedVersion(ctx, tree)
+// prepared is the result of building a tree for one operation.
+type prepared struct {
+	loaded   int64
+	found    bool
+	last     *platform.Event
+	nodes    int
+	warnings []string
+	// the version of the snapshot this load kept, or 0 when it kept none
+	snapshotVersion int64
+}
+
+// prepare builds the tree in the engine and refuses a stream the store cannot
+// be brought level with by one redelivery.
+func (w *TreeWriter) prepare(ctx context.Context, tree string, shape treeShape) (prepared, error) {
+	var prep prepared
+	stream := TreeStreamName(tree)
+	loaded, found, rows, err := w.store.ProjectedRows(ctx, tree)
 	if err != nil {
-		return 0, false, nil, 0, &storeReadError{
-			what: fmt.Sprintf("read the projected version of tree %s; nothing was appended", tree), err: err,
+		return prep, &storeReadError{
+			what: fmt.Sprintf("read the projected version and active rows of tree %s; nothing was appended", tree), err: err,
 		}
 	}
-	stream := TreeStreamName(tree)
-	nodes, loadErr := w.load(ctx, tree, shape)
-	if loadErr != nil {
-		// Read only to name a pending rejection. A failed read leaves the load
-		// error as the report.
+	if buildErr := w.build(ctx, tree, shape, loaded, rows, &prep); buildErr != nil {
+		// Read only to name a stream the store cannot be brought level with. A
+		// failed read leaves the build error as the report.
 		if last, readErr := w.events.ReadLastEvent(ctx, stream); readErr == nil {
-			if pending := pendingRejection(tree, last, loaded, found, loadErr); pending != nil {
-				return 0, false, nil, 0, pending
+			if err := w.checkStream(ctx, tree, last, loaded, found, buildErr); err != nil {
+				return prep, err
 			}
 		}
-		return 0, false, nil, 0, loadErr
+		return prep, buildErr
 	}
-	last, err = w.events.ReadLastEvent(ctx, stream)
+	last, err := w.events.ReadLastEvent(ctx, stream)
 	if err != nil {
-		return 0, false, nil, 0, fmt.Errorf("read the last event of stream %s; nothing was appended: %w", stream, err)
+		return prep, fmt.Errorf("read the last event of stream %s; nothing was appended: %w", stream, err)
 	}
-	if pending := pendingRejection(tree, last, loaded, found, nil); pending != nil {
-		return 0, false, nil, 0, pending
+	if err := w.checkStream(ctx, tree, last, loaded, found, nil); err != nil {
+		return prep, err
+	}
+	prep.loaded, prep.found, prep.last, prep.nodes = loaded, found, last, len(rows)
+	return prep, nil
+}
+
+// checkStream refuses a stream whose last event the store cannot be brought
+// level with by one redelivery.
+func (w *TreeWriter) checkStream(ctx context.Context, tree string, last *platform.Event, loaded int64, found bool,
+	buildErr error) error {
+	if pending := pendingRejection(tree, last, loaded, found, buildErr); pending != nil {
+		return pending
 	}
 	if last != nil && last.Type == EventTypeEventRejected && last.Version == loaded {
-		if err := w.checkRejectionTarget(ctx, stream, *last); err != nil {
-			return 0, false, nil, 0, fmt.Errorf("%w; nothing was appended", err)
+		if err := w.checkRejectionTarget(ctx, TreeStreamName(tree), *last); err != nil {
+			return withBuildErr(fmt.Errorf("%w; nothing was appended", err), buildErr)
 		}
 	}
 	var lastVersion int64
 	if last != nil {
 		lastVersion = last.Version
 	}
-	if err := checkLoadedVersion(tree, loaded, found, lastVersion); err != nil {
-		return 0, false, nil, 0, err
+	return withBuildErr(checkLoadedVersion(tree, loaded, found, lastVersion), buildErr)
+}
+
+// withBuildErr adds a failed build to a stream refusal.
+func withBuildErr(streamErr, buildErr error) error {
+	if streamErr == nil || buildErr == nil {
+		return streamErr
 	}
-	return loaded, found, last, nodes, nil
+	return &RefusedAfterFailedBuildError{Refusal: streamErr, Build: buildErr}
+}
+
+// build checks the store's rows, then builds the tree in the engine from a
+// usable snapshot and the events after it, or from the whole stream.
+func (w *TreeWriter) build(ctx context.Context, tree string, shape treeShape, projected int64,
+	rows []TreeNodeRow, prep *prepared) error {
+	if err := preflight(tree, shape.treeType, shape.config(), rows); err != nil {
+		return fmt.Errorf("load tree %s; nothing was appended: %w", tree, err)
+	}
+	snap, ok, err := w.usableSnapshot(ctx, tree, shape, projected, prep)
+	if err != nil {
+		return fmt.Errorf("load tree %s; nothing was appended: %w", tree, err)
+	}
+	if !ok {
+		return w.buildFromStream(ctx, tree, shape, projected, rows)
+	}
+	restored, buildErr := w.buildFromSnapshot(ctx, tree, shape, projected, rows, snap)
+	if buildErr == nil {
+		return nil
+	}
+	if !snapshotFallsBack(buildErr) {
+		return fmt.Errorf("load tree %s; nothing was appended: %w", tree, buildErr)
+	}
+	if err := w.dropBuilt(ctx, tree, projected, restored, buildErr); err != nil {
+		return fmt.Errorf("load tree %s; nothing was appended: %w", tree, err)
+	}
+	w.discardSnapshot(ctx, tree, snap.Version, prep, fmt.Sprintf(
+		"the snapshot of tree %s at version %d could not be used (%s); dropped the structure", tree, snap.Version, buildErr))
+	return w.buildFromStream(ctx, tree, shape, projected, rows)
+}
+
+// usableSnapshot returns the stored snapshot when a load can restore it, and
+// deletes one it cannot.
+func (w *TreeWriter) usableSnapshot(ctx context.Context, tree string, shape treeShape, projected int64,
+	prep *prepared) (Snapshot, bool, error) {
+	snap, found, err := w.snapshots.Get(ctx, tree)
+	if err != nil {
+		prep.warnings = append(prep.warnings,
+			fmt.Sprintf("reading the snapshot of tree %s returned: %s", tree, err))
+		return Snapshot{}, false, nil
+	}
+	if !found {
+		return Snapshot{}, false, nil
+	}
+	prep.snapshotVersion = snap.Version
+	reason, err := w.unusableReason(ctx, tree, shape, projected, snap)
+	if err != nil {
+		return Snapshot{}, false, err
+	}
+	if reason != "" {
+		w.discardSnapshot(ctx, tree, snap.Version, prep, fmt.Sprintf("the snapshot of tree %s %s", tree, reason))
+		return Snapshot{}, false, nil
+	}
+	return snap, true, nil
+}
+
+// unusableReason states why snap cannot seed a load, or returns "".
+func (w *TreeWriter) unusableReason(ctx context.Context, tree string, shape treeShape, projected int64,
+	snap Snapshot) (string, error) {
+	stream := TreeStreamName(tree)
+	if snap.Version > projected {
+		return fmt.Sprintf("is at version %d, above the projected version %d", snap.Version, projected), nil
+	}
+	if snap.TreeType != shape.treeType {
+		return fmt.Sprintf("records tree type %s, and version 1 of stream %s records %s",
+			snap.TreeType, stream, shape.treeType), nil
+	}
+	if !json.Valid(snap.Data) {
+		return fmt.Sprintf("at version %d holds %d bytes that are not valid JSON", snap.Version, len(snap.Data)), nil
+	}
+	if snap.Version == projected {
+		return "", nil
+	}
+	next, err := w.events.ReadStream(ctx, stream, snap.Version+1, 1)
+	if err != nil {
+		return "", &TreeReplayError{TreeID: tree, Stage: TreeReplayStageReplay, ProjectedVersion: projected,
+			Err: fmt.Errorf("read version %d of stream %s after the snapshot: %w", snap.Version+1, stream, err)}
+	}
+	if len(next) == 1 && next[0].Type == EventTypeEventRejected {
+		if p, err := rejectionPayload(next[0]); err == nil && p.RejectedVersion == snap.Version {
+			return fmt.Sprintf("is at version %d, and rejection %s at version %d names that version",
+				snap.Version, next[0].ID, next[0].Version), nil
+		}
+	}
+	return "", nil
+}
+
+// buildFromSnapshot restores snap, replays the events after it through
+// projected, and checks the result against rows. restored reports whether the
+// restore landed.
+func (w *TreeWriter) buildFromSnapshot(ctx context.Context, tree string, shape treeShape, projected int64,
+	rows []TreeNodeRow, snap Snapshot) (restored bool, err error) {
+	if err := w.engine.RestoreSnapshot(ctx, tree, snap.TreeType, json.RawMessage(snap.Data)); err != nil {
+		return false, &TreeReplayError{TreeID: tree, Stage: TreeReplayStageRestore, ProjectedVersion: projected,
+			Err: fmt.Errorf("restore the snapshot at version %d: %w", snap.Version, err)}
+	}
+	res, err := replayStream(ctx, w.events, w.engine, tree, shape, snap.Version+1, projected)
+	if err != nil {
+		return true, err
+	}
+	if len(rows) == 0 {
+		return true, &TreeReplayError{TreeID: tree, Stage: TreeReplayStageMembership, ReachedVersion: res.reached,
+			ProjectedVersion: projected, Mismatch: "the store holds no active rows, and the engine was restored from a snapshot"}
+	}
+	mismatch, err := checkMembership(ctx, w.engine, tree, rows)
+	if err != nil {
+		return true, &TreeReplayError{TreeID: tree, Stage: TreeReplayStageMembership, ReachedVersion: res.reached,
+			ProjectedVersion: projected, Err: err}
+	}
+	if mismatch != "" {
+		return true, &TreeReplayError{TreeID: tree, Stage: TreeReplayStageMembership, ReachedVersion: res.reached,
+			ProjectedVersion: projected, Mismatch: mismatch}
+	}
+	return true, nil
+}
+
+// snapshotFallsBack reports whether a failed snapshot build may be dropped and
+// replaced by a full replay.
+func snapshotFallsBack(err error) bool {
+	var replay *TreeReplayError
+	if errors.As(err, &replay) && replay.Mismatch != "" {
+		return true
+	}
+	var engineErr *EngineError
+	if !errors.As(err, &engineErr) {
+		return false
+	}
+	// Dropping here would remove a structure this load did not create.
+	if replay != nil && replay.Stage == TreeReplayStageRestore && engineErr.Code == engineCodeTreeExists {
+		return false
+	}
+	return true
+}
+
+// dropBuilt drops the structure a failed snapshot build left. cause is that
+// failure, kept on any error the drop returns.
+func (w *TreeWriter) dropBuilt(ctx context.Context, tree string, projected int64, restored bool, cause error) error {
+	var reached int64
+	var replay *TreeReplayError
+	if errors.As(cause, &replay) {
+		reached = replay.ReachedVersion
+	}
+	dropped, err := w.engine.DropStructure(ctx, tree)
+	if err != nil {
+		return &TreeReplayError{TreeID: tree, Stage: TreeReplayStageDrop, ReachedVersion: reached,
+			ProjectedVersion: projected, Err: fmt.Errorf("%w; the drop followed: %w", err, cause)}
+	}
+	if restored && !dropped {
+		return &TreeReplayError{TreeID: tree, Stage: TreeReplayStageDrop, ReachedVersion: reached,
+			ProjectedVersion: projected, Observed: "the restore succeeded, and drop_structure reported no structure named " + tree,
+			Err: cause}
+	}
+	return nil
+}
+
+// discardSnapshot deletes the tree's snapshot at version, and records one
+// warning stating what was observed and what the delete did.
+func (w *TreeWriter) discardSnapshot(ctx context.Context, tree string, version int64, prep *prepared, observed string) {
+	prep.snapshotVersion = 0
+	if err := w.snapshots.Delete(ctx, tree, version); err != nil {
+		prep.warnings = append(prep.warnings,
+			fmt.Sprintf("%s; deleting the snapshot returned: %s", observed, err))
+		return
+	}
+	prep.warnings = append(prep.warnings, fmt.Sprintf("%s; deleted the snapshot", observed))
+}
+
+// buildFromStream creates the structure, replays events 1 through projected,
+// and checks the result against rows.
+func (w *TreeWriter) buildFromStream(ctx context.Context, tree string, shape treeShape, projected int64,
+	rows []TreeNodeRow) error {
+	if err := w.create(ctx, tree, shape); err != nil {
+		return fmt.Errorf("create tree %s in the engine; nothing was appended: %w", tree,
+			&TreeReplayError{TreeID: tree, Stage: TreeReplayStageCreate, ProjectedVersion: projected, Err: err})
+	}
+	res, err := replayStream(ctx, w.events, w.engine, tree, shape, 1, projected)
+	if err != nil {
+		return fmt.Errorf("load tree %s; nothing was appended: %w", tree, err)
+	}
+	if err := w.checkReplayed(ctx, tree, projected, res, rows); err != nil {
+		return fmt.Errorf("load tree %s; nothing was appended: %w", tree, err)
+	}
+	return nil
+}
+
+// create creates the structure the shape describes.
+func (w *TreeWriter) create(ctx context.Context, tree string, shape treeShape) error {
+	if shape.treeType == treeTypeMatrix {
+		return w.engine.CreateMatrixTree(ctx, tree, shape.width, shape.spillover)
+	}
+	return w.engine.CreateTree(ctx, tree, shape.treeType)
+}
+
+// checkReplayed compares a full replay's engine with the store's active rows.
+func (w *TreeWriter) checkReplayed(ctx context.Context, tree string, projected int64, res replayResult,
+	rows []TreeNodeRow) error {
+	if len(rows) == 0 {
+		if res.root == "" {
+			return nil
+		}
+		return &TreeReplayError{TreeID: tree, Stage: TreeReplayStageMembership, ReachedVersion: res.reached,
+			ProjectedVersion: projected, Mismatch: "the replay left root " + res.root + "; the store holds no active rows"}
+	}
+	if res.root == "" {
+		return &TreeReplayError{TreeID: tree, Stage: TreeReplayStageMembership, ReachedVersion: res.reached,
+			ProjectedVersion: projected, Mismatch: fmt.Sprintf("the replay left no root; the store holds %d active rows", len(rows))}
+	}
+	for _, row := range rows {
+		if row.Depth != 0 {
+			continue
+		}
+		if !sameUUID(row.UserID, res.root) {
+			return &TreeReplayError{TreeID: tree, Stage: TreeReplayStageMembership, ReachedVersion: res.reached,
+				ProjectedVersion: projected, Mismatch: "the replay left root " + res.root + "; the store's root is " + row.UserID}
+		}
+		break
+	}
+	mismatch, err := checkMembership(ctx, w.engine, tree, rows)
+	if err != nil {
+		return &TreeReplayError{TreeID: tree, Stage: TreeReplayStageMembership, ReachedVersion: res.reached,
+			ProjectedVersion: projected, Err: err}
+	}
+	if mismatch != "" {
+		return &TreeReplayError{TreeID: tree, Stage: TreeReplayStageMembership, ReachedVersion: res.reached,
+			ProjectedVersion: projected, Mismatch: mismatch}
+	}
+	return nil
+}
+
+// takeSnapshot stores the engine's snapshot of tree at version, and returns a
+// warning when a step fails.
+func (w *TreeWriter) takeSnapshot(ctx context.Context, tree string, shape treeShape, version int64) string {
+	projected, found, err := w.store.ProjectedVersion(ctx, tree)
+	if err != nil {
+		return fmt.Sprintf("reading the projected version of tree %s before a snapshot returned: %s; no snapshot was stored",
+			tree, err)
+	}
+	if !found || projected != version {
+		return fmt.Sprintf("tree %s has projected version %d (projection row found: %t) after the write at version %d; no snapshot was stored",
+			tree, projected, found, version)
+	}
+	taken, err := w.engine.TakeSnapshot(ctx, tree)
+	if err != nil {
+		return fmt.Sprintf("taking a snapshot of tree %s at version %d returned: %s", tree, version, err)
+	}
+	if taken.TreeType != shape.treeType {
+		return fmt.Sprintf("take_snapshot for tree %s at version %d returned tree type %s, and version 1 records %s; no snapshot was stored",
+			tree, version, taken.TreeType, shape.treeType)
+	}
+	if err := w.snapshots.Put(ctx, Snapshot{TreeID: tree, Version: version, TreeType: taken.TreeType, Data: taken.Data}); err != nil {
+		return fmt.Sprintf("storing the snapshot of tree %s at version %d returned: %s", tree, version, err)
+	}
+	return ""
 }
 
 // observe reads the tree's projected version with a context the caller's
@@ -571,27 +867,6 @@ func (w *TreeWriter) lock(ctx context.Context, treeID uuid.UUID) (func() error, 
 		return nil, &TreeLockWaitError{TreeID: treeID.String(), Waited: w.lockWait, Err: err}
 	}
 	return nil, fmt.Errorf("lock tree %s: %w", treeID, err)
-}
-
-// load rebuilds the tree in the engine from the store, or creates it empty
-// when the store holds no rows. It returns the rows loaded.
-func (w *TreeWriter) load(ctx context.Context, tree string, shape treeShape) (int, error) {
-	n, err := w.loader.LoadTree(ctx, tree, shape.treeType, shape.loadOptions()...)
-	if err != nil {
-		return 0, fmt.Errorf("load tree %s; nothing was appended: %w", tree, err)
-	}
-	if n > 0 {
-		return n, nil
-	}
-	if shape.treeType == treeTypeMatrix {
-		err = w.engine.CreateMatrixTree(ctx, tree, shape.width, shape.spillover)
-	} else {
-		err = w.engine.CreateTree(ctx, tree, shape.treeType)
-	}
-	if err != nil {
-		return 0, fmt.Errorf("create tree %s in the engine; nothing was appended: %w", tree, err)
-	}
-	return 0, nil
 }
 
 // checkLoadedVersion refuses a stream whose last version is neither the

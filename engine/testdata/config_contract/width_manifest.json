@@ -65,7 +65,7 @@
       "schema_pointer": "#/$defs/BoardCyclingConfig/properties/max_cycles_per_period",
       "go_fixture": "board-plan", "go_pointer": "/structures/1/commission/board_cycling/max_cycles_per_period",
       "engine_fixture": "board", "engine_pointer": "/structures/1/config/board_cycling/max_cycles_per_period" },
-    { "go_struct": "BoardCyclingConfig", "go_field": "MaxCascadeDepth", "go_type": "uint32", "rust_type": "u32", "over_max": 4294967296,
+    { "go_struct": "BoardCyclingConfig", "go_field": "MaxCascadeDepth", "go_type": "uint32", "rust_type": "NonZeroU32", "over_max": 4294967296,
       "schema_pointer": "#/$defs/BoardCyclingConfig/properties/max_cascade_depth",
       "go_fixture": "board-plan", "go_pointer": "/structures/1/commission/board_cycling/max_cascade_depth",
       "engine_fixture": "board", "engine_pointer": "/structures/1/config/board_cycling/max_cascade_depth" },

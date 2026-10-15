@@ -29,6 +29,26 @@ func TestRootAddedPayload_RecordsTheTreeShape(t *testing.T) {
 		"tree_type":"unilevel"}`, string(unilevel))
 }
 
+func TestNodeRemovedPayload_RecordsTheTreeTypeAndMode(t *testing.T) {
+	at := time.Unix(0, 0).UTC()
+
+	matrix, err := json.Marshal(NodeRemovedPayload{
+		TreeID: "t", UserID: "u", RemovedAt: at, TreeType: "matrix", PruningMode: PruningHoldingTank,
+	})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"tree_id":"t","user_id":"u","removed_at":"1970-01-01T00:00:00Z",
+		"tree_type":"matrix","pruning_mode":"holding_tank"}`, string(matrix))
+
+	unilevel, err := json.Marshal(NodeRemovedPayload{TreeID: "t", UserID: "u", RemovedAt: at, TreeType: "unilevel"})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"tree_id":"t","user_id":"u","removed_at":"1970-01-01T00:00:00Z",
+		"tree_type":"unilevel"}`, string(unilevel))
+
+	var old NodeRemovedPayload
+	require.NoError(t, json.Unmarshal([]byte(`{"tree_id":"t","user_id":"u","removed_at":"1970-01-01T00:00:00Z"}`), &old))
+	assert.Equal(t, NodeRemovedPayload{TreeID: "t", UserID: "u", RemovedAt: at}, old)
+}
+
 func TestCheckNodePlacedShape(t *testing.T) {
 	pos := func(n int) *int { return &n }
 	cases := []struct {
@@ -70,9 +90,9 @@ func TestCheckNodePlacedShape(t *testing.T) {
 	}
 }
 
-// One row per row of the design's Section 4 compatibility table. A row marked
-// "any" there appears once per value that changes the outcome. An empty
-// expectation accepts. Any other names a phrase only the refusing guard prints.
+// Each row is a stream type, tree_type and mode, with one row per value that
+// changes either outcome. An empty expectation accepts. Any other names a
+// phrase only the refusing guard prints.
 func TestNodeRemovedShape_FollowsTheCompatibilityTable(t *testing.T) {
 	const (
 		modeOffMatrix = "only a matrix removal names a mode"

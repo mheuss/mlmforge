@@ -631,6 +631,8 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 			assert.Equal(t, root, *got.rows[user].ParentID, user)
 			assert.Equal(t, position, *got.rows[user].Position, user)
 			assert.Equal(t, 1, got.rows[user].Depth, user)
+			require.NotNil(t, got.rows[user].SponsorID)
+			assert.Equal(t, root, *got.rows[user].SponsorID, user)
 		}
 	})
 

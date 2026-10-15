@@ -44,7 +44,7 @@ func TestEngineClient_CheckMutation_WireParams(t *testing.T) {
 
 func TestEngineClient_CheckMutation_SendsTheParamsTheRealOpSends(t *testing.T) {
 	ctx := context.Background()
-	const applied = `{"added":true,"removed":true,"responsored":[]}`
+	const addOrRemoveResponse = `{"added":true,"removed":true,"responsored":[]}`
 	cases := []struct {
 		name     string
 		op       string
@@ -52,16 +52,16 @@ func TestEngineClient_CheckMutation_SendsTheParamsTheRealOpSends(t *testing.T) {
 		apply    func(*EngineClient) error
 		check    Mutation
 	}{
-		{"add_root", "add_root", applied,
+		{"add_root", "add_root", addOrRemoveResponse,
 			func(c *EngineClient) error { return c.AddRoot(ctx, "t", "u1", 100) },
 			CheckAddRoot("u1", 100)},
-		{"add_node", "add_node", applied,
+		{"add_node", "add_node", addOrRemoveResponse,
 			func(c *EngineClient) error { return c.AddNode(ctx, "t", "u2", "u1", "u3", 200, WithPosition(1)) },
 			CheckAddNode("u2", "u1", "u3", 200, WithPosition(1))},
-		{"add_node_at", "add_node_at", applied,
+		{"add_node_at", "add_node_at", addOrRemoveResponse,
 			func(c *EngineClient) error { return c.AddNodeAt(ctx, "t", "u2", "u1", "u3", 2, 200) },
 			CheckAddNodeAt("u2", "u1", "u3", 2, 200)},
-		{"remove_node", "remove_node", applied,
+		{"remove_node", "remove_node", addOrRemoveResponse,
 			func(c *EngineClient) error { _, err := c.RemoveNode(ctx, "t", "u2"); return err },
 			CheckRemoveNode("u2")},
 		{"matrix remove_node", "remove_node",

@@ -1000,7 +1000,7 @@ Every load builds the tree in the engine from the tree's events, not from `tree_
 A wrapper with `Unwrap() []error`, or a `fmt.Errorf` with two `%w`, exposes both errors to every `errors.As` call down the chain. A dispatch written for one error type finds it inside the wrapper too.
 
 - HEU-297 found this the hard way. A fence refusal was wrapped beside the failed build so the operator would see both. `rejectionEvidence` then found the build's preflight `TreeLoadRejectedError` inside the wrapper and counted it as evidence. `Reject` appended a rejection through the fence.
-- Before adding a wrapper that carries a second error, list every `errors.As` dispatch the chain can reach. Today that means `rejectionEvidence`, `treeLoadRetryable` and `treeLoadFailureMessage`. Confirm each one handles the wrapper on purpose.
+- Before adding a wrapper that carries a second error, list every `errors.As` dispatch the chain can reach. For the load error types, today that means `rejectionEvidence`, `treeLoadRetryable` and `treeLoadFailureMessage`. Confirm each one handles the wrapper on purpose.
 - A wrapper that carries a build failure is never reject evidence. `rejectionEvidence` gives each such type its own early "no evidence" return, with a test. `RefusedAfterFailedBuildError` and the drop-stage `TreeReplayError` have one.
 
 ### A `json.RawMessage` parameter fails before the worker sees it

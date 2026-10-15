@@ -70,9 +70,9 @@ type TreeStore interface {
 	// GetByTreeDepthOrdered returns all active nodes in a tree ordered by
 	// depth ascending, then enrolled_at.
 	//
-	// Row replay does not depend on this order. orderForReplay sorts by
-	// (Depth, EnrolledAt, UserID), a total order over a set whose duplicate
-	// user IDs validateNodes already rejected. So both the replay sequence and
+	// Row replay does not depend on this order. orderForReplay orders by
+	// dependency, breaking ties by (Depth, EnrolledAt, UserID), a total order
+	// over a set whose duplicate user IDs validateNodes already rejected. So both the replay sequence and
 	// its "%d of %d" progress counter are fixed by the node set alone.
 	// TestOrderForReplay_IsIndependentOfInputOrder pins that. GetByTree returns
 	// the same set unordered and would replay identically.

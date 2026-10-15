@@ -110,8 +110,7 @@ func (w *TreeWriter) rejectionEvidence(ctx context.Context, tree string, shape t
 	if errors.As(retryErr, &refused) {
 		return false, nil
 	}
-	// A failed drop carries the snapshot failure that led to it, which is not
-	// evidence either.
+	// A drop-stage failure is not evidence either.
 	var replay *TreeReplayError
 	if errors.As(retryErr, &replay) && replay.Stage == TreeReplayStageDrop {
 		return false, nil

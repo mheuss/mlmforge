@@ -143,3 +143,43 @@ func TestTreeConsumer_ProjectsAMatrixRemovalTheEngineAgreesWith(t *testing.T) {
 		})
 	}
 }
+
+// The removed parent is placed again before the redelivery, so the parent the
+// redelivered event names has an active row. The redelivered event is at the
+// projected version.
+func TestTreeConsumer_ARedeliveredPlacementConvergesAfterAPromotionMovedItsNode_NotReachableThroughCatchUpToday(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryTreeStore()
+	engine, err := NewEngineClient(ctx, findWorkerBinary(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = engine.Stop() })
+	tree, root, a, b := testTreeUUID(5823), testUserUUID(1), testUserUUID(2), testUserUUID(3)
+	require.NoError(t, engine.CreateMatrixTree(ctx, tree, 2, "breadth_first"))
+	consumer := NewTreeEventConsumer(store, engine)
+	width, spillover, zero := 2, "breadth_first", 0
+	events := []platform.Event{
+		versionedEvent(t, tree, 1, EventTypeRootAdded, RootAddedPayload{TreeID: tree, UserID: root, SponsorID: root,
+			EnrolledAt: writeTime, TreeType: treeTypeMatrix, MatrixWidth: &width, MatrixSpillover: &spillover}),
+		versionedEvent(t, tree, 2, EventTypeNodePlaced, NodePlacedPayload{TreeID: tree, UserID: a, ParentID: root,
+			SponsorID: root, Position: &zero, TreeType: treeTypeMatrix, EnrolledAt: writeTime}),
+		versionedEvent(t, tree, 3, EventTypeNodePlaced, NodePlacedPayload{TreeID: tree, UserID: b, ParentID: a,
+			SponsorID: a, Position: &zero, TreeType: treeTypeMatrix, EnrolledAt: writeTime}),
+	}
+	for _, ev := range events {
+		require.NoError(t, consumer.HandleEvent(ctx, ev))
+	}
+	// Promote b into a's slot, then place a again at the root's slot 1, in the
+	// engine and the store alike.
+	moved, err := engine.RemoveMatrixNode(ctx, tree, a, PruningPromoteEarliest)
+	require.NoError(t, err)
+	require.NoError(t, store.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{a},
+		Responsored: moved.Responsored, Relocated: moved.Relocated}, uuid.NewString(), 3))
+	require.NoError(t, engine.AddNodeAt(ctx, tree, a, root, root, 1, writeTime.Unix()))
+	require.NoError(t, store.InsertNode(ctx, TreeNodeRow{ID: uuid.NewString(), TreeID: tree, UserID: a,
+		ParentID: ptr(root), SponsorID: ptr(root), Position: intPtr(1), Depth: 1, EnrolledAt: writeTime}))
+
+	err = consumer.HandleEvent(ctx, events[2])
+
+	require.NoError(t, err)
+	requireRowsMatchEngine(t, store, engine, tree)
+}

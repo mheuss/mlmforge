@@ -1058,11 +1058,17 @@ func enginePos(mutate func(*EnginePosition)) *EnginePosition {
 // storedRow is the projected row the engine's view is compared against. Only
 // the fields that comparison reads are set.
 func storedRow(depth int, sponsor *string) *TreeNodeRow {
+	return storedAt(depth, sponsor, intPtr(1))
+}
+
+// storedAt is storedRow with an explicit position.
+func storedAt(depth int, sponsor *string, position *int) *TreeNodeRow {
 	return &TreeNodeRow{
 		TreeID:    posTree,
 		UserID:    posUser,
 		ParentID:  ptr(posParent),
 		SponsorID: sponsor,
+		Position:  position,
 		Depth:     depth,
 	}
 }
@@ -1125,12 +1131,11 @@ func TestPositionMatchesProjection(t *testing.T) {
 		{
 			// The position rule names unilevel rather than naming binary and
 			// matrix, so a fourth tree type is compared rather than skipped.
-			// It then fails for want of a position, which is the same
-			// fail-closed stance handleNodePlaced's default branch takes.
+			// It then fails for want of a position.
 			name:    "an unknown tree type is compared, not skipped",
 			pos:     enginePos(nil),
 			payload: payloadFor("board", nil),
-			stored:  storedRow(2, ptr(posSponsor)),
+			stored:  storedAt(2, ptr(posSponsor), nil),
 			want:    false,
 		},
 		{
@@ -1158,7 +1163,7 @@ func TestPositionMatchesProjection(t *testing.T) {
 			name:    "matrix matches",
 			pos:     enginePos(func(p *EnginePosition) { p.Position = 5 }),
 			payload: payloadFor(treeTypeMatrix, intPtr(5)),
-			stored:  storedRow(2, ptr(posSponsor)),
+			stored:  storedAt(2, ptr(posSponsor), intPtr(5)),
 			want:    true,
 		},
 		{
@@ -1206,7 +1211,7 @@ func TestPositionMatchesProjection(t *testing.T) {
 		{
 			name:    "a different position does not match for binary",
 			pos:     enginePos(func(p *EnginePosition) { p.Position = 0 }),
-			payload: payloadFor(treeTypeBinary, intPtr(1)),
+			payload: payloadFor(treeTypeBinary, intPtr(0)),
 			stored:  storedRow(2, ptr(posSponsor)),
 			want:    false,
 		},
@@ -1275,13 +1280,12 @@ func TestPositionMatchesProjection(t *testing.T) {
 			want:    false,
 		},
 		{
-			// A binary payload reaching here with no position cannot be
-			// confirmed. The comparison must report that rather than
-			// dereferencing the nil.
-			name:    "a binary payload with no position does not match",
+			// A binary row with no position cannot be confirmed. The
+			// comparison must report that rather than dereferencing the nil.
+			name:    "a binary row with no position does not match",
 			pos:     enginePos(nil),
-			payload: payloadFor(treeTypeBinary, nil),
-			stored:  storedRow(2, ptr(posSponsor)),
+			payload: payloadFor(treeTypeBinary, intPtr(1)),
+			stored:  storedAt(2, ptr(posSponsor), nil),
 			want:    false,
 		},
 		{
@@ -1290,6 +1294,31 @@ func TestPositionMatchesProjection(t *testing.T) {
 			name:    "an unparseable id from the engine does not match",
 			pos:     enginePos(func(p *EnginePosition) { p.UserID = "not-a-uuid" }),
 			payload: payloadFor(treeTypeBinary, intPtr(1)),
+			stored:  storedRow(2, ptr(posSponsor)),
+			want:    false,
+		},
+		{
+			name: "a parent the event no longer names matches the row",
+			pos:  enginePos(nil),
+			payload: func() NodePlacedPayload {
+				p := payloadFor(treeTypeMatrix, intPtr(1))
+				p.ParentID = posOther
+				return p
+			}(),
+			stored: storedRow(2, ptr(posSponsor)),
+			want:   true,
+		},
+		{
+			name:    "a position the event no longer names matches the row",
+			pos:     enginePos(nil),
+			payload: payloadFor(treeTypeMatrix, intPtr(0)),
+			stored:  storedRow(2, ptr(posSponsor)),
+			want:    true,
+		},
+		{
+			name:    "a row parent the engine does not hold does not match",
+			pos:     enginePos(func(p *EnginePosition) { p.ParentUserID = ptr(posOther) }),
+			payload: payloadFor(treeTypeMatrix, intPtr(1)),
 			stored:  storedRow(2, ptr(posSponsor)),
 			want:    false,
 		},

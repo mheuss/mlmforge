@@ -427,26 +427,11 @@ func isEngineCode(err error, code string) bool {
 }
 
 // positionMatchesProjection reports whether the engine's view of a placed node
-// agrees with what was projected for it.
-//
-// Two sources, because they answer different questions. The event is
-// authoritative for what was asked: user, parent, position and enrolment. The
-// stored row is authoritative for what is current: sponsor and depth.
-//
-// Sponsor comes from the row because it is the one compared field a later
-// event can change. Removing a user re-sponsors everyone they recruited, and
-// the event that placed the node still names the original sponsor. Comparing
-// against the event would report divergence for a node the engine placed
-// exactly as asked.
-//
-// Depth comes from the row because the event does not carry one. It is
-// derived from the parent row when the placement is projected.
+// agrees with what was projected for it. User and enrolment come from the
+// event. Parent, position, sponsor and depth come from the stored row.
 //
 // False means "not confirmed equal", which covers a real disagreement and an
-// identifier either side fails to parse. The caller treats both the same way,
-// which is safe only because no unparseable identifier reaches here: the
-// engine emits canonical uuids, and every payload identifier is rejected
-// upstream by the worker or by the parent lookup before this is called.
+// identifier either side fails to parse.
 func positionMatchesProjection(pos *EnginePosition, p NodePlacedPayload, stored *TreeNodeRow) bool {
 	if pos == nil || stored == nil {
 		return false
@@ -454,7 +439,7 @@ func positionMatchesProjection(pos *EnginePosition, p NodePlacedPayload, stored 
 	if !sameUUID(pos.UserID, p.UserID) {
 		return false
 	}
-	if !samePtrUUID(pos.ParentUserID, &p.ParentID) {
+	if !samePtrUUID(pos.ParentUserID, stored.ParentID) {
 		return false
 	}
 	if !samePtrUUID(pos.SponsorUserID, stored.SponsorID) {
@@ -466,10 +451,9 @@ func positionMatchesProjection(pos *EnginePosition, p NodePlacedPayload, stored 
 	if pos.EnrolledAt != p.EnrolledAt.Unix() {
 		return false
 	}
-	// EnginePosition.Position is an int and always carries a value. Unilevel
-	// events must omit position, so comparing it would never match.
+	// The engine's Position always carries a value, and a unilevel row has none.
 	if p.TreeType != treeTypeUnilevel {
-		if p.Position == nil || pos.Position != *p.Position {
+		if stored.Position == nil || pos.Position != *stored.Position {
 			return false
 		}
 	}

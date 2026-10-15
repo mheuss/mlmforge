@@ -10,7 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// removalStub answers RemoveNode with a fixed list.
+// removalStub answers RemoveNode and RemoveMatrixNode with fixed results and
+// records each call.
 type removalStub struct {
 	TreeMutator
 	moved  []Responsored

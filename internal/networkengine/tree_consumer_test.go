@@ -2505,9 +2505,8 @@ func TestTreeConsumer_RefusesARemovalWhoseShapeTheEngineCannotApply(t *testing.T
 	}
 }
 
-// lostReplyMatrixEngine passes every matrix removal to its fake, and replaces
-// the reply to the first removal with an error, if that removal succeeds, as
-// if the reply was lost.
+// lostReplyMatrixEngine passes every matrix removal to its fake. If the first
+// removal succeeds, it replaces the reply with an error, as if it was lost.
 type lostReplyMatrixEngine struct {
 	*fakeWriterEngine
 	attempts int

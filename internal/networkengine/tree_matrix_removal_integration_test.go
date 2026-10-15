@@ -29,8 +29,8 @@ func orNone(id *string) string {
 }
 
 // requireRowsMatchEngine fails unless every active row in tree agrees with the
-// engine's position for that user on parent, position and depth, and every
-// non-root row on its sponsor.
+// engine's position for that user on parent and depth, and every non-root row
+// on position and sponsor.
 func requireRowsMatchEngine(t *testing.T, store TreeStore, engine TreeInspector, tree string) {
 	t.Helper()
 	ctx := context.Background()

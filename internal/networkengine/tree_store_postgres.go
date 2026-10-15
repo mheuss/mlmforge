@@ -349,15 +349,79 @@ func (s *PostgresTreeStore) ProjectInsert(ctx context.Context, node TreeNodeRow,
 	})
 }
 
+const (
+	tombstoneRemovedSQL = `UPDATE tree_nodes SET removed_at = now(), updated_at = now(), removed_by_event_id = $3
+		 WHERE tree_id = $1 AND user_id = ANY($2::text[]::uuid[]) AND removed_at IS NULL`
+	responsorRemovedSQL = `UPDATE tree_nodes AS n SET sponsor_id = m.new_sponsor_id, updated_at = now()
+		 FROM unnest($2::text[]::uuid[], $3::text[]::uuid[]) AS m(user_id, new_sponsor_id)
+		 WHERE n.tree_id = $1 AND n.user_id = m.user_id AND n.removed_at IS NULL`
+	relocateSurvivorsSQL = `UPDATE tree_nodes AS n SET parent_id = r.parent_id, position = r.position, depth = r.depth, updated_at = now()
+		 FROM unnest($2::text[]::uuid[], $3::text[]::uuid[], $4::int[], $5::int[]) AS r(user_id, parent_id, position, depth)
+		 WHERE n.tree_id = $1 AND n.user_id = r.user_id AND n.removed_at IS NULL`
+)
+
 func (s *PostgresTreeStore) ProjectRemoval(
 	ctx context.Context,
-	treeID, userID, removalEventID string,
+	treeID string,
+	r RemovalProjection,
+	removalEventID string,
 	eventVersion int64,
-	moved []Responsored,
 ) error {
+	if len(r.Users) == 0 {
+		return fmt.Errorf("project removal in tree %s: the removal names no users", treeID)
+	}
 	return s.project(ctx, treeID, eventVersion, func(tx pgx.Tx) error {
-		return deleteNodeAndResponsor(ctx, tx, treeID, userID, removalEventID, moved)
+		return projectRemoval(ctx, tx, treeID, r, removalEventID)
 	})
+}
+
+// projectRemoval runs a removal's three writes in tx.
+func projectRemoval(ctx context.Context, tx pgx.Tx, treeID string, r RemovalProjection, removalEventID string) error {
+	// Tombstones first. A relocation run before them collides with the slot a
+	// removed row still holds.
+	tag, err := tx.Exec(ctx, tombstoneRemovedSQL, treeID, r.Users, removalEventID)
+	if err != nil {
+		return fmt.Errorf("tombstone removed users in tree %s: %w", treeID, err)
+	}
+	if tag.RowsAffected() != int64(len(r.Users)) {
+		return fmt.Errorf("tombstoning removed users %v in tree %s matched %d of %d active rows",
+			r.Users, treeID, tag.RowsAffected(), len(r.Users))
+	}
+
+	if len(r.Responsored) > 0 {
+		users := make([]string, len(r.Responsored))
+		sponsors := make([]string, len(r.Responsored))
+		for i, m := range r.Responsored {
+			users[i], sponsors[i] = m.UserID, m.NewSponsorID
+		}
+		tag, err := tx.Exec(ctx, responsorRemovedSQL, treeID, users, sponsors)
+		if err != nil {
+			return fmt.Errorf("re-sponsor recruits in tree %s: %w", treeID, err)
+		}
+		if tag.RowsAffected() != int64(len(r.Responsored)) {
+			return fmt.Errorf("re-sponsoring %d recruits in tree %s updated %d active rows",
+				len(r.Responsored), treeID, tag.RowsAffected())
+		}
+	}
+
+	if len(r.Relocated) > 0 {
+		users := make([]string, len(r.Relocated))
+		parents := make([]string, len(r.Relocated))
+		positions := make([]int, len(r.Relocated))
+		depths := make([]int, len(r.Relocated))
+		for i, m := range r.Relocated {
+			users[i], parents[i], positions[i], depths[i] = m.UserID, m.ParentID, m.Position, m.Depth
+		}
+		tag, err := tx.Exec(ctx, relocateSurvivorsSQL, treeID, users, parents, positions, depths)
+		if err != nil {
+			return fmt.Errorf("relocate survivors in tree %s: %w", treeID, err)
+		}
+		if tag.RowsAffected() != int64(len(r.Relocated)) {
+			return fmt.Errorf("relocating %d survivors in tree %s updated %d active rows",
+				len(r.Relocated), treeID, tag.RowsAffected())
+		}
+	}
+	return nil
 }
 
 const softDeleteRejectedSQL = `UPDATE tree_nodes SET removed_at = now(), updated_at = now()

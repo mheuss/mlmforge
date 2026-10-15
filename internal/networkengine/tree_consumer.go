@@ -359,7 +359,8 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 	// The moved list cannot be rebuilt here, so giving up is not a clean abort.
 	writeCtx, cancelWrite := detachedWrite(ctx)
 	defer cancelWrite()
-	if err := c.store.ProjectRemoval(writeCtx, payload.TreeID, payload.UserID, event.ID, event.Version, moved); err != nil {
+	if err := c.store.ProjectRemoval(writeCtx, payload.TreeID,
+		RemovalProjection{Users: []string{payload.UserID}, Responsored: moved}, event.ID, event.Version); err != nil {
 		return fmt.Errorf("remove node and re-sponsor recruits: %w", err)
 	}
 	return nil

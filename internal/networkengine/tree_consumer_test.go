@@ -1616,14 +1616,14 @@ type deleteRecordingStore struct {
 }
 
 func (c *deleteRecordingStore) ProjectRemoval(
-	ctx context.Context, treeID, userID, removalEventID string, eventVersion int64, moved []Responsored,
+	ctx context.Context, treeID string, r RemovalProjection, removalEventID string, eventVersion int64,
 ) error {
-	c.responsors = append(c.responsors, userID)
+	c.responsors = append(c.responsors, r.Users...)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	c.wroteResponsors = append(c.wroteResponsors, userID)
-	return c.MemoryTreeStore.ProjectRemoval(ctx, treeID, userID, removalEventID, eventVersion, moved)
+	c.wroteResponsors = append(c.wroteResponsors, r.Users...)
+	return c.MemoryTreeStore.ProjectRemoval(ctx, treeID, r, removalEventID, eventVersion)
 }
 
 func (c *deleteRecordingStore) UndoRootProjection(ctx context.Context, treeID, userID string, eventVersion int64) error {

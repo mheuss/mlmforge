@@ -186,7 +186,7 @@ func TestTreeWriter_ACatchUpBehindALateProjectionAppendsNothing(t *testing.T) {
 	if assert.ErrorAs(t, got.err, &catchUp) {
 		assert.Equal(t, first.EventID, catchUp.EventID)
 	}
-	assert.ErrorContains(t, got.err, "soft delete for user "+b+" in tree "+tree+" matched 0 active rows")
+	assert.ErrorContains(t, got.err, "tombstoning removed users ["+b+"] in tree "+tree+" matched 0 of 1 active rows")
 }
 
 // TestTreeWriter_APlacementProjectedAfterItsLockWasLostIsRefused pins the

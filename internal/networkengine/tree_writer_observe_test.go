@@ -14,7 +14,7 @@ type failingRemovalStore struct {
 	TreeStore
 }
 
-func (s failingRemovalStore) ProjectRemoval(context.Context, string, string, string, int64, []Responsored) error {
+func (s failingRemovalStore) ProjectRemoval(context.Context, string, RemovalProjection, string, int64) error {
 	return errors.New("failingRemovalStore: ProjectRemoval refused")
 }
 

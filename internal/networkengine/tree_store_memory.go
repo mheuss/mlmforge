@@ -3,6 +3,7 @@ package networkengine
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -321,10 +322,14 @@ func (s *MemoryTreeStore) ProjectInsert(ctx context.Context, node TreeNodeRow, e
 
 func (s *MemoryTreeStore) ProjectRemoval(
 	ctx context.Context,
-	treeID, userID, removalEventID string,
+	treeID string,
+	r RemovalProjection,
+	removalEventID string,
 	eventVersion int64,
-	moved []Responsored,
 ) error {
+	if len(r.Users) == 0 {
+		return fmt.Errorf("project removal in tree %s: the removal names no users", treeID)
+	}
 	if err := checkEventVersion(treeID, eventVersion); err != nil {
 		return err
 	}
@@ -334,10 +339,92 @@ func (s *MemoryTreeStore) ProjectRemoval(
 	if err := s.refuseBelow(treeID, eventVersion); err != nil {
 		return err
 	}
-	if err := s.DeleteNodeAndResponsor(ctx, treeID, userID, removalEventID, moved); err != nil {
+	staged, err := s.stageRemoval(treeID, r, removalEventID)
+	if err != nil {
 		return err
 	}
+	s.nodes = staged
 	s.advance(treeID, eventVersion)
+	return nil
+}
+
+// stageRemoval returns the rows as the removal leaves them, or the first fault
+// it finds. It changes nothing in s.
+func (s *MemoryTreeStore) stageRemoval(treeID string, r RemovalProjection, removalEventID string) ([]TreeNodeRow, error) {
+	rows := slices.Clone(s.nodes)
+	now := time.Now()
+	active := func(user string) int {
+		for i := range rows {
+			if rows[i].TreeID == treeID && rows[i].UserID == user && rows[i].RemovedAt == nil {
+				return i
+			}
+		}
+		return -1
+	}
+
+	tombstoned := map[int]bool{}
+	for _, u := range r.Users {
+		if i := active(u); i >= 0 {
+			event := removalEventID
+			rows[i].RemovedAt, rows[i].UpdatedAt, rows[i].RemovedByEventID = &now, now, &event
+			tombstoned[i] = true
+		}
+	}
+	if len(tombstoned) != len(r.Users) {
+		return nil, fmt.Errorf("tombstoning removed users %v in tree %s matched %d of %d active rows",
+			r.Users, treeID, len(tombstoned), len(r.Users))
+	}
+
+	responsored := map[int]bool{}
+	for _, m := range r.Responsored {
+		if i := active(m.UserID); i >= 0 {
+			sponsor := m.NewSponsorID
+			rows[i].SponsorID, rows[i].UpdatedAt = &sponsor, now
+			responsored[i] = true
+		}
+	}
+	if len(responsored) != len(r.Responsored) {
+		return nil, fmt.Errorf("re-sponsoring %d recruits in tree %s updated %d active rows",
+			len(r.Responsored), treeID, len(responsored))
+	}
+
+	relocated := map[int]bool{}
+	for _, m := range r.Relocated {
+		if i := active(m.UserID); i >= 0 {
+			parent, position := m.ParentID, m.Position
+			rows[i].ParentID, rows[i].Position, rows[i].Depth, rows[i].UpdatedAt = &parent, &position, m.Depth, now
+			relocated[i] = true
+		}
+	}
+	if len(relocated) != len(r.Relocated) {
+		return nil, fmt.Errorf("relocating %d survivors in tree %s updated %d active rows",
+			len(r.Relocated), treeID, len(relocated))
+	}
+
+	if err := checkActiveSlots(rows, treeID); err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// checkActiveSlots reports two active rows of treeID that claim one slot.
+func checkActiveSlots(rows []TreeNodeRow, treeID string) error {
+	type slot struct {
+		parent   string
+		position int
+	}
+	held := map[slot]string{}
+	for _, n := range rows {
+		if n.TreeID != treeID || n.RemovedAt != nil || n.ParentID == nil || n.Position == nil {
+			continue
+		}
+		key := slot{*n.ParentID, *n.Position}
+		if other, ok := held[key]; ok {
+			return fmt.Errorf("%w: tree=%s parent=%s position=%d (held by %s and %s)",
+				ErrSlotConflict, treeID, *n.ParentID, *n.Position, other, n.UserID)
+		}
+		held[key] = n.UserID
+	}
 	return nil
 }
 

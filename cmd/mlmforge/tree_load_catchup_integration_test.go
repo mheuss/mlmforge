@@ -36,13 +36,13 @@ type failingRemovalStore struct {
 	removals int
 }
 
-func (s *failingRemovalStore) ProjectRemoval(ctx context.Context, treeID, userID, removalEventID string,
-	eventVersion int64, moved []networkengine.Responsored) error {
+func (s *failingRemovalStore) ProjectRemoval(ctx context.Context, treeID string, r networkengine.RemovalProjection,
+	removalEventID string, eventVersion int64) error {
 	s.removals++
 	if s.removals == 1 {
 		return errors.New("failingRemovalStore: first ProjectRemoval refused")
 	}
-	return s.TreeStore.ProjectRemoval(ctx, treeID, userID, removalEventID, eventVersion, moved)
+	return s.TreeStore.ProjectRemoval(ctx, treeID, r, removalEventID, eventVersion)
 }
 
 // streamLastVersion reads the version of a tree stream's last event, or 0 for

@@ -25,6 +25,13 @@ type TreeNodeRow struct {
 	RemovedByEventID *string
 }
 
+// RemovalProjection is what one removal changes in the store.
+type RemovalProjection struct {
+	Users       []string
+	Responsored []Responsored
+	Relocated   []Relocation
+}
+
 // TreeStore is the repository interface for tree node persistence.
 // The adjacency table is a read model projected from events. The Rust
 // engine is the runtime authority for topology queries.
@@ -111,10 +118,11 @@ type TreeStore interface {
 	// and records eventVersion as the tree's projected version.
 	ProjectInsert(ctx context.Context, node TreeNodeRow, eventVersion int64) error
 
-	// ProjectRemoval soft-deletes the user's row and repoints the moved
-	// recruits for the removal event at eventVersion, and records eventVersion
-	// as the tree's projected version.
-	ProjectRemoval(ctx context.Context, treeID, userID, removalEventID string, eventVersion int64, moved []Responsored) error
+	// ProjectRemoval tombstones each removed user's row and stamps the removal
+	// event on it, repoints the re-sponsored recruits, and moves the relocated
+	// rows, for the removal event at eventVersion. It records eventVersion as
+	// the tree's projected version. All of it lands or none of it does.
+	ProjectRemoval(ctx context.Context, treeID string, r RemovalProjection, removalEventID string, eventVersion int64) error
 
 	// UndoRootProjection soft-deletes the root row that the event at
 	// eventVersion inserted, and returns the tree's projected version to

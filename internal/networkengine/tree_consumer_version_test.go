@@ -38,7 +38,7 @@ func TestHandleRootAdded_CompensationRestoresTheVersionBeforeALaterRoot(t *testi
 		ID: "eeeeeeee-eeee-eeee-eeee-000000000001", TreeID: "tree1", UserID: earlier,
 		SponsorID: &earlier, EnrolledAt: posEnrolled,
 	}, 1))
-	require.NoError(t, store.ProjectRemoval(ctx, "tree1", earlier, "eeeeeeee-eeee-eeee-eeee-000000000002", 2, nil))
+	require.NoError(t, store.ProjectRemoval(ctx, "tree1", RemovalProjection{Users: []string{earlier}}, "eeeeeeee-eeee-eeee-eeee-000000000002", 2))
 	event := makeEvent(EventTypeRootAdded, rootPayload())
 	event.Version = 3
 

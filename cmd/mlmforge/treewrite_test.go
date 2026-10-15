@@ -525,4 +525,7 @@ func TestTreeRemoveCmd_HelpNamesThePruningMode(t *testing.T) {
 	assert.NotContains(t, cmd.Short, "Append a leaf's removal")
 	assert.NotContains(t, cmd.Long, "Removal from a matrix tree is refused")
 	assert.Contains(t, cmd.Long, "A matrix tree needs --pruning-mode, promote_earliest or holding_tank.")
+	flag := cmd.Flags().Lookup("pruning-mode")
+	require.NotNil(t, flag)
+	assert.Contains(t, flag.Usage, "Required for a matrix tree, refused for any other")
 }

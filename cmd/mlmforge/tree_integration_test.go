@@ -347,6 +347,7 @@ func TestTreeRemove_AMatrixTreeNeedsAPruningMode(t *testing.T) {
 
 	out, err = runTreeCmd(t, append([]string{"remove", "--user-id", child}, conn...)...)
 	require.Error(t, err)
+	require.Equal(t, 1, exitCode(err))
 	require.Contains(t, out.stderr.String(), "records tree type matrix at version 1, and the request names no pruning mode")
 
 	out, err = runTreeCmd(t, append([]string{"remove", "--user-id", child, "--pruning-mode", "holding_tank"}, conn...)...)
@@ -362,7 +363,7 @@ func TestTreeRemove_AUnilevelTreeRefusesAPruningMode(t *testing.T) {
 		t.Skip("Postgres container not available")
 	}
 	worker := requireWorker(t)
-	_ = pgContainer.NewPool(t)
+	pool := pgContainer.NewPool(t)
 	tree := testTreeID(583)
 	seedTree(t, worker, tree, 1)
 	conn := []string{"--db-url", pgContainer.DSN, "--worker", worker, "--tree-id", tree}
@@ -370,5 +371,9 @@ func TestTreeRemove_AUnilevelTreeRefusesAPruningMode(t *testing.T) {
 	out, err := runTreeCmd(t, append([]string{"remove", "--user-id", testUserID(2), "--pruning-mode", "promote_earliest"}, conn...)...)
 
 	require.Error(t, err)
+	require.Equal(t, 1, exitCode(err))
 	require.Contains(t, out.stderr.String(), `records tree type unilevel at version 1, and the request names pruning mode "promote_earliest"`)
+	stored, err := platform.NewPostgresEventStore(pool).ReadStream(t.Context(), "tree-"+tree, 1, 0)
+	require.NoError(t, err)
+	require.Len(t, stored, 2, "the refused removal appended an event")
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"testing"
 	"time"
 
@@ -336,4 +337,66 @@ func TestTreeWriter_AMatrixRemovalWhoseProjectionFailedConvergesOnTheNextWrite(t
 			assert.Len(t, rows, tc.active)
 		})
 	}
+}
+
+func TestTreeConsumer_SeededMatrixRemovalsKeepEveryRowOnTheEngine(t *testing.T) {
+	store := newTestPostgresTreeStore(t)
+	engine, err := NewEngineClient(context.Background(), findWorkerBinary(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = engine.Stop() })
+	for seed := uint64(1); seed <= 100; seed++ {
+		t.Run(fmt.Sprintf("seed %d", seed), func(t *testing.T) {
+			runSeededMatrixRemoval(t, store, engine, seed)
+		})
+	}
+}
+
+// runSeededMatrixRemoval builds one explicit-placement matrix tree through the
+// consumer, removes one node that is not the root, and compares every active
+// row against the engine.
+func runSeededMatrixRemoval(t *testing.T, store TreeStore, engine *EngineClient, seed uint64) {
+	t.Helper()
+	ctx := context.Background()
+	rng := rand.New(rand.NewPCG(seed, 582))
+	width := 2 + rng.IntN(4)
+	nodes := 2 + rng.IntN(39)
+	mode := PruningPromoteEarliest
+	if rng.IntN(2) == 1 {
+		mode = PruningHoldingTank
+	}
+	tree := fmt.Sprintf("eeeeeeee-eeee-eeee-5820-%012d", seed)
+	user := func(i int) string { return fmt.Sprintf("00000000-0000-0000-%04d-%012d", seed, i) }
+	require.NoError(t, engine.CreateMatrixTree(ctx, tree, width, "breadth_first"))
+	consumer := NewTreeEventConsumer(store, engine)
+	version := int64(0)
+	handle := func(eventType string, payload any) {
+		version++
+		require.NoError(t, consumer.HandleEvent(ctx, versionedEvent(t, tree, version, eventType, payload)),
+			"seed %d, event at version %d", seed, version)
+	}
+	spillover := "breadth_first"
+	handle(EventTypeRootAdded, RootAddedPayload{TreeID: tree, UserID: user(0), SponsorID: user(0), EnrolledAt: writeTime,
+		TreeType: treeTypeMatrix, MatrixWidth: &width, MatrixSpillover: &spillover})
+	taken := map[int][]bool{0: make([]bool, width)}
+	for i := 1; i < nodes; i++ {
+		var open [][2]int
+		for parent := range i {
+			for slot, used := range taken[parent] {
+				if !used {
+					open = append(open, [2]int{parent, slot})
+				}
+			}
+		}
+		pick := open[rng.IntN(len(open))]
+		taken[pick[0]][pick[1]] = true
+		taken[i] = make([]bool, width)
+		position := pick[1]
+		handle(EventTypeNodePlaced, NodePlacedPayload{TreeID: tree, UserID: user(i), ParentID: user(pick[0]),
+			SponsorID: user(rng.IntN(i)), Position: &position, TreeType: treeTypeMatrix,
+			EnrolledAt: writeTime.Add(time.Duration(rng.IntN(50)) * time.Minute)})
+	}
+	handle(EventTypeNodeRemoved, NodeRemovedPayload{TreeID: tree, UserID: user(1 + rng.IntN(nodes-1)),
+		RemovedAt: writeTime, TreeType: treeTypeMatrix, PruningMode: mode})
+
+	requireRowsMatchEngine(t, store, engine, tree)
 }

@@ -1,9 +1,14 @@
 mod common;
 
+use std::collections::{HashMap, HashSet};
+
 use common::uuid_from_index;
 use network_engine::config::matrix::SpilloverDirection;
+use network_engine::tree::error::TreeError;
 use network_engine::tree::matrix::{MatrixTree, PruningMode};
 use proptest::prelude::*;
+use proptest::test_runner::TestCaseError;
+use uuid::Uuid;
 
 /// Builds a random matrix tree by adding `node_count` nodes.
 /// Each node is sponsored by a random existing node (determined by sponsor_hints).
@@ -371,5 +376,253 @@ proptest! {
                 entry.user_id
             );
         }
+    }
+}
+
+/// One placement choice per node after the root.
+#[derive(Debug, Clone)]
+struct PlacementPick {
+    slot: usize,
+    sponsor: usize,
+    enrolled_at: i64,
+}
+
+fn placement_picks() -> impl Strategy<Value = Vec<PlacementPick>> {
+    proptest::collection::vec(
+        (0usize..10_000, 0usize..10_000, 0i64..50).prop_map(|(slot, sponsor, enrolled_at)| {
+            PlacementPick {
+                slot,
+                sponsor,
+                enrolled_at,
+            }
+        }),
+        0..60,
+    )
+}
+
+/// Every free (parent, slot) among the first `count` users.
+fn open_slots(tree: &MatrixTree, count: usize) -> Vec<(Uuid, u8)> {
+    let mut open = Vec::new();
+    for i in 0..count {
+        let parent = uuid_from_index(i);
+        let taken: HashSet<usize> = tree
+            .get_children(parent)
+            .unwrap()
+            .iter()
+            .map(|c| tree.get_position(c.user_id).unwrap().position)
+            .collect();
+        for slot in 0..tree.width() {
+            if !taken.contains(&(slot as usize)) {
+                open.push((parent, slot));
+            }
+        }
+    }
+    open
+}
+
+/// Builds a matrix tree by explicit placement. Each node takes the open slot
+/// its pick names, anywhere in the tree.
+fn build_placed_matrix_tree(width: u8, picks: &[PlacementPick]) -> MatrixTree {
+    let mut tree = MatrixTree::new(width, SpilloverDirection::BreadthFirst).unwrap();
+    tree.add_root(uuid_from_index(0), 0).unwrap();
+    for (i, pick) in picks.iter().enumerate() {
+        let user = i + 1;
+        let open = open_slots(&tree, user);
+        let (parent, position) = open[pick.slot % open.len()];
+        tree.add_node_at(
+            uuid_from_index(user),
+            uuid_from_index(pick.sponsor % user),
+            parent,
+            position,
+            pick.enrolled_at,
+        )
+        .unwrap();
+    }
+    tree
+}
+
+/// Each live node's parent, slot and depth, keyed by user.
+fn placements(tree: &MatrixTree) -> HashMap<Uuid, (Option<Uuid>, usize, u32)> {
+    let root = uuid_from_index(0);
+    std::iter::once(root)
+        .chain(
+            tree.get_downline(root, 0)
+                .unwrap()
+                .iter()
+                .map(|n| n.user_id),
+        )
+        .map(|u| {
+            let p = tree.get_position(u).unwrap();
+            (u, (p.parent_user_id, p.position, p.depth))
+        })
+        .collect()
+}
+
+/// `user` and everyone below it.
+fn subtree(tree: &MatrixTree, user: Uuid) -> HashSet<Uuid> {
+    std::iter::once(user)
+        .chain(
+            tree.get_downline(user, 0)
+                .unwrap()
+                .iter()
+                .map(|n| n.user_id),
+        )
+        .collect()
+}
+
+fn mode_of(holding: bool) -> PruningMode {
+    if holding {
+        PruningMode::HoldingTank
+    } else {
+        PruningMode::PromoteEarliest
+    }
+}
+
+/// Removes `user` in `mode` and checks properties (a) to (e) of the design's
+/// Section 9.
+fn assert_removal_properties(
+    mut tree: MatrixTree,
+    user: Uuid,
+    mode: PruningMode,
+) -> Result<(), TestCaseError> {
+    let before = placements(&tree);
+    let leaving = if tree.contains(user) {
+        subtree(&tree, user)
+    } else {
+        HashSet::new()
+    };
+    let checked = tree.check_remove_node(user, mode);
+    let removed = tree.remove_node(user, mode);
+
+    // (c)
+    prop_assert_eq!(checked.as_ref().err(), removed.as_ref().err());
+    // (d)
+    prop_assert!(
+        !matches!(removed, Err(TreeError::SubtreeFull(_))),
+        "SUBTREE_FULL fired removing {}",
+        user
+    );
+    let Ok(result) = removed else {
+        return Ok(());
+    };
+
+    // (a)
+    let after = placements(&tree);
+    let mut diffed: Vec<(Uuid, Uuid, usize, u32)> = after
+        .iter()
+        .filter(|(u, now)| before.get(*u) != Some(*now))
+        .map(|(u, (parent, position, depth))| {
+            (
+                *u,
+                parent.expect("only the root has no parent"),
+                *position,
+                *depth,
+            )
+        })
+        .collect();
+    diffed.sort();
+    let mut reported: Vec<(Uuid, Uuid, usize, u32)> = result
+        .relocated
+        .iter()
+        .map(|r| (r.user_id, r.parent_id, r.position as usize, r.depth))
+        .collect();
+    reported.sort();
+    prop_assert_eq!(reported, diffed);
+
+    // (b)
+    let removed_users: HashSet<Uuid> = match mode {
+        PruningMode::PromoteEarliest => HashSet::from([user]),
+        PruningMode::HoldingTank => result.moved_to_tank.iter().copied().collect(),
+    };
+    let occupied: HashMap<(Uuid, usize), Uuid> = before
+        .iter()
+        .filter(|(u, _)| !removed_users.contains(*u))
+        .filter_map(|(u, (parent, position, _))| parent.map(|p| ((p, *position), *u)))
+        .collect();
+    let slot_before = |u: &Uuid| {
+        let (parent, position, _) = before[u];
+        (parent.expect("only the root has no parent"), position)
+    };
+    let vacated: HashSet<(Uuid, usize)> = result
+        .relocated
+        .iter()
+        .map(|r| (slot_before(&r.user_id), (r.parent_id, r.position as usize)))
+        .filter(|(from, to)| from != to)
+        .map(|(from, _)| from)
+        .collect();
+    let kept: HashSet<(Uuid, usize)> = result
+        .relocated
+        .iter()
+        .filter(|r| slot_before(&r.user_id) == (r.parent_id, r.position as usize))
+        .map(|r| (r.parent_id, r.position as usize))
+        .collect();
+    for r in &result.relocated {
+        let target = (r.parent_id, r.position as usize);
+        if slot_before(&r.user_id) == target {
+            prop_assert_eq!(occupied.get(&target), Some(&r.user_id));
+            continue;
+        }
+        prop_assert!(
+            !kept.contains(&target),
+            "relocation of {} targets {:?}, which a depth-only relocation holds",
+            r.user_id,
+            target
+        );
+        prop_assert!(
+            !occupied.contains_key(&target),
+            "relocation of {} targets {:?}, which {:?} holds after the tombstone step",
+            r.user_id,
+            target,
+            occupied.get(&target)
+        );
+        prop_assert!(
+            !vacated.contains(&target),
+            "relocation of {} targets {:?}, which another relocation vacates",
+            r.user_id,
+            target
+        );
+    }
+
+    // (e)
+    if mode == PruningMode::HoldingTank {
+        let tank: HashSet<Uuid> = result.moved_to_tank.iter().copied().collect();
+        prop_assert_eq!(
+            tank.len(),
+            result.moved_to_tank.len(),
+            "moved_to_tank repeats a user"
+        );
+        prop_assert_eq!(tank, leaving);
+    }
+    Ok(())
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(2000))]
+
+    #[test]
+    fn a_removal_from_a_placed_tree_reports_what_it_moved(
+        width in 2u8..6,
+        picks in placement_picks(),
+        target in 0usize..10_000,
+        holding in any::<bool>(),
+    ) {
+        let tree = build_placed_matrix_tree(width, &picks);
+        // The root, each placed node, or an id one past the last.
+        let user = uuid_from_index(target % (picks.len() + 2));
+        assert_removal_properties(tree, user, mode_of(holding))?;
+    }
+
+    #[test]
+    fn a_removal_from_a_spillover_tree_reports_what_it_moved(
+        width in 2u8..6,
+        node_count in 1usize..=60,
+        sponsor_hints in proptest::collection::vec(0usize..100, 60),
+        target in 0usize..10_000,
+        holding in any::<bool>(),
+    ) {
+        let tree = build_random_matrix_tree(width, node_count, sponsor_hints);
+        // The root, each placed node, or an id one past the last.
+        let user = uuid_from_index(target % (node_count + 1));
+        assert_removal_properties(tree, user, mode_of(holding))?;
     }
 }

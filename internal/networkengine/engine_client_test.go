@@ -238,7 +238,7 @@ func TestEngineClient_RemoveMatrixNode_RejectsMissingResponsored(t *testing.T) {
 	client := newEngineClientWithTransport(mock)
 
 	_, err := client.RemoveMatrixNode(context.Background(), "Test",
-		"00000000-0000-0000-0000-000000000001", "promote_earliest")
+		"00000000-0000-0000-0000-000000000001", PruningPromoteEarliest)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "responsored")

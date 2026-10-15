@@ -26,6 +26,8 @@ func TestEngineClient_CheckMutation_WireParams(t *testing.T) {
 			`{"structure":"t","mutation":"add_node_at","user_id":"u2","parent_id":"u1","sponsor_id":"u3","position":2,"enrolled_at":200}`},
 		{"remove_node", CheckRemoveNode("u2"),
 			`{"structure":"t","mutation":"remove_node","user_id":"u2"}`},
+		{"matrix remove_node", CheckRemoveMatrixNode("u2", PruningHoldingTank),
+			`{"structure":"t","mutation":"remove_node","user_id":"u2","pruning_mode":"holding_tank"}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -150,6 +152,21 @@ func TestEngineClient_CheckMutation_AgreesWithTheRealOp(t *testing.T) {
 			func(c *EngineClient) error { _, err := c.RemoveNode(ctx, tree, child); return err }, ""},
 		{"remove_node of a parent", withChild(treeTypeUnilevel), CheckRemoveNode(root),
 			func(c *EngineClient) error { _, err := c.RemoveNode(ctx, tree, root); return err }, "HAS_CHILDREN"},
+		{"matrix remove_node, promote_earliest", withChild(treeTypeMatrix), CheckRemoveMatrixNode(child, PruningPromoteEarliest),
+			func(c *EngineClient) error {
+				_, err := c.RemoveMatrixNode(ctx, tree, child, PruningPromoteEarliest)
+				return err
+			}, ""},
+		{"matrix remove_node, holding_tank", withChild(treeTypeMatrix), CheckRemoveMatrixNode(child, PruningHoldingTank),
+			func(c *EngineClient) error {
+				_, err := c.RemoveMatrixNode(ctx, tree, child, PruningHoldingTank)
+				return err
+			}, ""},
+		{"matrix remove_node of the root", withChild(treeTypeMatrix), CheckRemoveMatrixNode(root, PruningPromoteEarliest),
+			func(c *EngineClient) error {
+				_, err := c.RemoveMatrixNode(ctx, tree, root, PruningPromoteEarliest)
+				return err
+			}, "CANNOT_REMOVE_ROOT"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

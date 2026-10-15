@@ -995,6 +995,21 @@ Every load builds the tree in the engine from the tree's events, not from `tree_
 - A full replay that fails after a drop leaves a partly built structure in the worker. That is safe only because each command owns its worker. A long-lived caller, such as HEU-298's reconciliation, must drop the structure before reusing the worker.
 - A snapshot must fit in one `bytea` field, which caps at 1 GB. At about 230 bytes per matrix node, that is near 4.3M nodes.
 
+### An error that wraps another reaches every `errors.As`
+
+A wrapper with `Unwrap() []error`, or a `fmt.Errorf` with two `%w`, exposes both errors to every `errors.As` call down the chain. A dispatch written for one error type finds it inside the wrapper too.
+
+- HEU-297 found this the hard way. A fence refusal was wrapped beside the failed build so the operator would see both. `rejectionEvidence` then found the build's preflight `TreeLoadRejectedError` inside the wrapper and counted it as evidence. `Reject` appended a rejection through the fence.
+- Before adding a wrapper that carries a second error, list every `errors.As` dispatch the chain can reach. Today that means `rejectionEvidence`, `treeLoadRetryable` and `treeLoadFailureMessage`. Confirm each one handles the wrapper on purpose.
+- A wrapper that carries a build failure is never reject evidence. `rejectionEvidence` gives each such type its own early "no evidence" return, with a test. `RefusedAfterFailedBuildError` and the drop-stage `TreeReplayError` have one.
+
+### A `json.RawMessage` parameter fails before the worker sees it
+
+`EngineClient` marshals each request before it writes to the worker. A `json.RawMessage` field holding bytes that are not valid JSON fails that marshal. The error is a client-side encoding error, not an `EngineError`, so code that dispatches on engine refusals does not see a refusal.
+
+- The writer test fakes never marshal, so a unit test over them cannot show this. HEU-297's snapshot restore hit it: a stored snapshot whose bytes were not JSON failed every load of the tree with no fallback.
+- Validate the bytes with `json.Valid` before the call when they come from storage. The load treats a snapshot that fails the check as unusable and deletes it.
+
 ## Worker Shutdown
 
 Three things about closing a worker that are not obvious from the code, all

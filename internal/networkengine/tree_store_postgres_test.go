@@ -579,15 +579,13 @@ func TestPostgresTreeStore_ProjectsALargeRemovalInsideTheWriteTimeout(t *testing
 		t.Run(tc.name, func(t *testing.T) {
 			store := newTestPostgresTreeStore(t)
 			require.NoError(t, store.BulkInsert(context.Background(), rows))
-			ctx, cancel := detachedWrite(context.Background())
-			defer cancel()
 
 			start := time.Now()
-			err := store.ProjectRemoval(ctx, tree, tc.r, testNodeUUID(999_999), 2)
+			err := store.ProjectRemoval(context.Background(), tree, tc.r, testNodeUUID(999_999), 2)
 			elapsed := time.Since(start)
 
+			t.Logf("N2: %s projected in %s, against a %s timeout", tc.name, elapsed, storeWriteTimeout)
 			require.NoError(t, err)
-			t.Logf("N2: %s projected in %s, under a %s timeout", tc.name, elapsed, storeWriteTimeout)
 			assert.Less(t, elapsed, storeWriteTimeout)
 		})
 	}

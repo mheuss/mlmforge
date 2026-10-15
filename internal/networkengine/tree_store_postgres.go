@@ -414,6 +414,9 @@ func projectRemoval(ctx context.Context, tx pgx.Tx, treeID string, r RemovalProj
 		}
 		tag, err := tx.Exec(ctx, relocateSurvivorsSQL, treeID, users, parents, positions, depths)
 		if err != nil {
+			if c := conflictError(err); c != nil {
+				return fmt.Errorf("relocate survivors in tree %s: %w", treeID, c)
+			}
 			return fmt.Errorf("relocate survivors in tree %s: %w", treeID, err)
 		}
 		if tag.RowsAffected() != int64(len(r.Relocated)) {

@@ -597,16 +597,17 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 	})
 
 	for _, tc := range []struct {
-		name string
-		r    RemovalProjection
+		name   string
+		r      RemovalProjection
+		wantIs error
 	}{
 		{"a relocation names no active row", RemovalProjection{Users: []string{child},
-			Relocated: []Relocation{{UserID: testUserUUID(7), ParentID: root, Position: 0, Depth: 1}}}},
+			Relocated: []Relocation{{UserID: testUserUUID(7), ParentID: root, Position: 0, Depth: 1}}}, nil},
 		{"a re-sponsored user has no active row", RemovalProjection{Users: []string{child},
-			Responsored: []Responsored{{UserID: testUserUUID(7), NewSponsorID: root}}}},
+			Responsored: []Responsored{{UserID: testUserUUID(7), NewSponsorID: root}}}, nil},
 		{"a relocation targets an occupied slot", RemovalProjection{Users: []string{child},
-			Relocated: []Relocation{{UserID: grand, ParentID: root, Position: 1, Depth: 1}}}},
-		{"a removed user has no active row", RemovalProjection{Users: []string{child, testUserUUID(7)}}},
+			Relocated: []Relocation{{UserID: grand, ParentID: root, Position: 1, Depth: 1}}}, ErrSlotConflict},
+		{"a removed user has no active row", RemovalProjection{Users: []string{child, testUserUUID(7)}}, nil},
 	} {
 		t.Run("a removal fails after the tombstone step and writes nothing when "+tc.name, func(t *testing.T) {
 			s := newStore(t)
@@ -620,6 +621,9 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 			err := s.ProjectRemoval(ctx, tree, tc.r, testNodeUUID(9), 5)
 
 			require.Error(t, err)
+			if tc.wantIs != nil {
+				assert.ErrorIs(t, err, tc.wantIs)
+			}
 			assert.Equal(t, before, readProjectionState(t, s, tree, root, child, recruit, grand))
 		})
 	}

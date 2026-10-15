@@ -375,5 +375,5 @@ func TestTreeRemove_AUnilevelTreeRefusesAPruningMode(t *testing.T) {
 	require.Contains(t, out.stderr.String(), `records tree type unilevel at version 1, and the request names pruning mode "promote_earliest"`)
 	stored, err := platform.NewPostgresEventStore(pool).ReadStream(t.Context(), "tree-"+tree, 1, 0)
 	require.NoError(t, err)
-	require.Len(t, stored, 2, "the refused removal appended an event")
+	require.Len(t, stored, 2)
 }

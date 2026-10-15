@@ -104,6 +104,18 @@ func TestEngineClient_RemoveMatrixNode_RefusesAnIncompleteHoldingTank(t *testing
 	}
 }
 
+// The caller spells the id in uppercase and the tank spells it in lowercase.
+func TestEngineClient_RemoveMatrixNode_MatchesTheTankByUUIDValue(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`{"removed":"0000000a-0000-0000-0000-000000000002",
+		"promoted":null,"repositioned":[],"moved_to_tank":["0000000a-0000-0000-0000-000000000002"],
+		"relocated":[],"responsored":[]}`)}
+
+	_, err := newEngineClientWithTransport(mock).RemoveMatrixNode(context.Background(), "Test",
+		"0000000A-0000-0000-0000-000000000002", PruningHoldingTank)
+
+	require.NoError(t, err)
+}
+
 func TestEngineClient_RemoveMatrixNode_RefusesATankOnPromoteEarliest(t *testing.T) {
 	_, _, err := removeMatrixNodeWith(t, `{"removed":"`+removedUser+`","promoted":null,"repositioned":[],
 		"moved_to_tank":["`+removedUser+`"],"relocated":[],"responsored":[]}`, PruningPromoteEarliest)

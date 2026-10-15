@@ -493,13 +493,14 @@ func (w matrixRemovalWire) result(userID string, mode PruningMode) (*MatrixRemov
 		if r.UserID == nil {
 			return nil, fmt.Errorf("remove_node: relocation %d has no \"user_id\"", i)
 		}
-		for _, m := range []struct {
-			name    string
-			missing bool
-		}{{"parent_id", r.ParentID == nil}, {"position", r.Position == nil}, {"depth", r.Depth == nil}} {
-			if m.missing {
-				return nil, fmt.Errorf("remove_node: relocation of %s has no %q", *r.UserID, m.name)
-			}
+		if r.ParentID == nil {
+			return nil, fmt.Errorf("remove_node: relocation of %s has no \"parent_id\"", *r.UserID)
+		}
+		if r.Position == nil {
+			return nil, fmt.Errorf("remove_node: relocation of %s has no \"position\"", *r.UserID)
+		}
+		if r.Depth == nil {
+			return nil, fmt.Errorf("remove_node: relocation of %s has no \"depth\"", *r.UserID)
 		}
 		relocated = append(relocated, Relocation{UserID: *r.UserID, ParentID: *r.ParentID,
 			Position: *r.Position, Depth: *r.Depth})

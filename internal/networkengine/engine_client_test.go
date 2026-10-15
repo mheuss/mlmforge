@@ -233,15 +233,14 @@ func TestEngineClient_RemoveNode_RejectsMissingResponsored(t *testing.T) {
 
 func TestEngineClient_RemoveMatrixNode_RejectsMissingResponsored(t *testing.T) {
 	mock := &mockTransport{
-		response: json.RawMessage(`{"removed":"00000000-0000-0000-0000-000000000001","promoted":null,"repositioned":[],"moved_to_tank":[]}`),
+		response: json.RawMessage(`{"removed":"00000000-0000-0000-0000-000000000001","promoted":null,"repositioned":[],"moved_to_tank":[],"relocated":[]}`),
 	}
 	client := newEngineClientWithTransport(mock)
 
 	_, err := client.RemoveMatrixNode(context.Background(), "Test",
 		"00000000-0000-0000-0000-000000000001", PruningPromoteEarliest)
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "responsored")
+	require.EqualError(t, err, `remove_node: response has no "responsored" key`)
 }
 
 // Pins the Go struct tags to the key names that decode the wire response.

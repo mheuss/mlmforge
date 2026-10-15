@@ -41,8 +41,8 @@ type PlaceRequest struct {
 	EnrolledAt time.Time
 }
 
-// RemoveRequest asks for a node's removal. PruningMode is required for a
-// matrix tree and refused for any other.
+// RemoveRequest asks for a node's removal. PruningMode names how a matrix
+// removal treats the subtree. It is empty for any other tree type.
 type RemoveRequest struct {
 	TreeID      string
 	UserID      string

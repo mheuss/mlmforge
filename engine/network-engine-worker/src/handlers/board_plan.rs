@@ -322,7 +322,8 @@ pub(crate) fn handle_board_detect_stalled(state: &WorkerState, request: &Request
     Response::success(request.id.clone(), &stalled)
 }
 
-/// Dissolves a board, moving its members to the displaced pool.
+/// Dissolves a board, moving its members to the displaced pool, and reports
+/// the boards the drain then cycled. Refuses a full board with `BOARD_FULL`.
 ///
 /// Params: structure, board_id, timestamp.
 pub(crate) fn handle_board_dissolve(state: &mut WorkerState, request: &Request) -> Response {

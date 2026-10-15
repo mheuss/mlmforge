@@ -849,7 +849,9 @@ func (c *EngineClient) BoardDetectStalled(ctx context.Context, structure string,
 	})
 }
 
-// BoardDissolve dissolves a stalled board, displacing its members.
+// BoardDissolve dissolves a stalled board, displacing its members, and returns
+// the cycle events of the drain that followed. A full board is refused with
+// BOARD_FULL.
 func (c *EngineClient) BoardDissolve(ctx context.Context, structure, boardID string, timestamp int64) (*DissolutionResultDTO, error) {
 	r, err := callInto[DissolutionResultDTO](c, ctx, "board_dissolve", map[string]any{
 		"structure": structure,

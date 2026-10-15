@@ -13,12 +13,12 @@ pub struct AddMemberResult {
     /// Position index within the board.
     pub position: usize,
 
-    /// Cycle events triggered by the placement (if the board filled).
+    /// Cycle events from this add, drained boards first.
     pub cycle_events: Vec<CycleEvent>,
 }
 
-/// A single cycle event. Produced when a board fills and the top
-/// position cycles out.
+/// A single cycle event. Produced when a board cycles and its top
+/// position leaves.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CycleEvent {
     /// The board that cycled.

@@ -93,7 +93,8 @@ impl BoardPlanEngine {
     }
 
     /// Prove a restored engine's stored values are in range, its boards
-    /// agree with its membership index, and every board fills from position 0.
+    /// agree with its membership index, every board fills from position 0,
+    /// and its board `seq` values are unique and below a counter in range.
     ///
     /// Membership is checked in both directions.
     ///
@@ -2270,7 +2271,7 @@ mod tests {
     }
 
     #[test]
-    fn a_removal_empties_a_board_the_leaving_members_re_entry_filled() {
+    fn a_removal_unfills_a_board_the_leaving_members_re_entry_filled() {
         let config = BoardPlanConfig {
             max_cascade_depth: NonZeroU32::new(1).unwrap(),
             ..test_config_sponsor_board()

@@ -130,8 +130,6 @@ func TestTreeConsumer_ProjectsAMatrixRemovalTheEngineAgreesWith(t *testing.T) {
 			env.place(t, c, a, 0, 4*time.Hour)
 			env.place(t, d, a, 1, 5*time.Hour)
 
-			// Promotion moves A into X's slot, spills B under C, and lifts C
-			// and D a level.
 			env.remove(t, x, tc.mode)
 
 			requireRowsMatchEngine(t, env.store, env.engine, env.tree)

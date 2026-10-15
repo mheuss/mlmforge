@@ -172,6 +172,9 @@ func (f *fakeWriterEngine) RemoveNode(_ context.Context, structure, userID strin
 	if err != nil {
 		return nil, err
 	}
+	if t.treeType == treeTypeMatrix {
+		return nil, fakeEngineError("MISSING_PARAM", "a matrix remove_node needs pruning_mode")
+	}
 	if _, ok := t.nodes[userID]; !ok {
 		return nil, fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", userID)
 	}

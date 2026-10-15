@@ -124,7 +124,12 @@ func TestNodeRemovedCall_ReportsAHoldingTankRemovalsWholeSetAsRemoved(t *testing
 	out, err := call.apply(context.Background(), stub)
 
 	require.NoError(t, err)
-	assert.Equal(t, []string{writerOther, writerChild}, out.removed)
+	assert.Equal(t, []string{"remove_matrix_node " + writerTree + " " + writerChild + " holding_tank"}, stub.calls)
+	assert.Equal(t, engineOutcome{
+		responsored: stub.matrix.Responsored,
+		relocated:   stub.matrix.Relocated,
+		removed:     []string{writerOther, writerChild},
+	}, out)
 }
 
 func TestTreeConsumer_ARemovalStillLandsTheRecruitsTheEngineMoved(t *testing.T) {

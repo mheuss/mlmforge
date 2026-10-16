@@ -359,3 +359,39 @@ func TestMemoryTreeStore_RefusesARelocationIntoAHeldSlotWhateverTheCase(t *testi
 
 	require.ErrorIs(t, err, ErrSlotConflict)
 }
+
+// Two relocations into one empty slot, the second spelled in upper case.
+func TestMemoryTreeStore_TwoRelocationsIntoOneEmptySlotWhateverTheCase(t *testing.T) {
+	s := NewMemoryTreeStore()
+	ctx := context.Background()
+	tree, root, x, a, c := testTreeUUID(1), hexUser(1), hexUser(2), hexUser(3), hexUser(5)
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(2), tree, x, 1, ptr(root), ptr(root), intPtr(0)), 2))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(3), tree, a, 2, ptr(x), ptr(x), intPtr(0)), 3))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(4), tree, c, 2, ptr(x), ptr(x), intPtr(1)), 4))
+
+	err := s.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{x},
+		Responsored: []Responsored{{UserID: a, NewSponsorID: root}, {UserID: c, NewSponsorID: root}},
+		Relocated: []Relocation{{UserID: a, ParentID: root, Position: 1, Depth: 1},
+			{UserID: c, ParentID: strings.ToUpper(root), Position: 1, Depth: 1}}}, testNodeUUID(9), 5)
+
+	require.ErrorIs(t, err, ErrSlotConflict)
+}
+
+// A relocation into a slot another relocation vacates, spelled in upper case.
+func TestMemoryTreeStore_RelocationIntoAVacatedSlotWhateverTheCase(t *testing.T) {
+	s := NewMemoryTreeStore()
+	ctx := context.Background()
+	tree, root, x, a, b := testTreeUUID(1), hexUser(1), hexUser(2), hexUser(3), hexUser(4)
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(2), tree, x, 1, ptr(root), ptr(root), intPtr(0)), 2))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(3), tree, b, 1, ptr(root), ptr(root), intPtr(1)), 3))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(4), tree, a, 2, ptr(x), ptr(x), intPtr(0)), 4))
+
+	err := s.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{x},
+		Responsored: []Responsored{{UserID: a, NewSponsorID: root}},
+		Relocated: []Relocation{{UserID: a, ParentID: strings.ToUpper(root), Position: 1, Depth: 1},
+			{UserID: b, ParentID: root, Position: 0, Depth: 1}}}, testNodeUUID(9), 5)
+
+	require.ErrorIs(t, err, ErrSlotConflict)
+}

@@ -572,6 +572,8 @@ func TestReplayStream_RefusesANodeRemovedItsStreamDisagreesWith(t *testing.T) {
 		{"tree_type unilevel on a matrix stream", treeTypeMatrix, treeTypeUnilevel, "",
 			`has tree_type "unilevel", and the stream records tree type matrix`},
 		{"an unknown tree_type", treeTypeUnilevel, "ternary", "", `has unsupported tree_type "ternary"`},
+		{"tree_type unilevel on a binary stream", treeTypeBinary, treeTypeUnilevel, "",
+			`has tree_type "unilevel", and the stream records tree type binary`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

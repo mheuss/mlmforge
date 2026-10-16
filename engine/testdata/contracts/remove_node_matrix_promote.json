@@ -1,5 +1,5 @@
 {
-    "description": "remove_node with promote_earliest promotes the earliest child",
+    "description": "remove_node with promote_earliest promotes the earliest child and reports what moved",
     "setup": [
         {"id": "s-1", "op": "create_tree", "params": {"structure": "test", "tree_type": "matrix", "width": 2, "spillover": "breadth_first"}},
         {"id": "s-2", "op": "add_root", "params": {"structure": "test", "user_id": "00000000-0000-0000-0000-000000000001", "enrolled_at": 1000}},
@@ -18,6 +18,16 @@
     },
     "expected_response": {
         "id": "rp-1",
-        "ok": true
+        "ok": true,
+        "result": {
+            "removed": "00000000-0000-0000-0000-000000000002",
+            "promoted": "00000000-0000-0000-0000-000000000004",
+            "repositioned": [],
+            "moved_to_tank": [],
+            "relocated": [
+                {"user_id": "00000000-0000-0000-0000-000000000004", "parent_id": "00000000-0000-0000-0000-000000000001", "position": 0, "depth": 1}
+            ],
+            "responsored": []
+        }
     }
 }

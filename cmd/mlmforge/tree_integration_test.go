@@ -329,3 +329,51 @@ func TestTreeWrite_ARefusedPlacementExitsNonZeroAndAppendsNothing(t *testing.T) 
 	require.NoError(t, err)
 	require.Len(t, stored, 1)
 }
+
+func TestTreeRemove_AMatrixTreeNeedsAPruningMode(t *testing.T) {
+	if pgContainer == nil {
+		t.Skip("Postgres container not available")
+	}
+	worker := requireWorker(t)
+	pool := pgContainer.NewPool(t)
+	tree, root, child := testTreeID(582), testUserID(1), testUserID(2)
+	conn := []string{"--db-url", pgContainer.DSN, "--worker", worker, "--tree-id", tree}
+	out, err := runTreeCmd(t, append([]string{"add-root", "--user-id", root, "--sponsor-id", root,
+		"--tree-type", "matrix", "--matrix-width", "2", "--matrix-spillover", "breadth_first"}, conn...)...)
+	require.NoError(t, err, out.stderr.String())
+	out, err = runTreeCmd(t, append([]string{"place", "--user-id", child, "--parent-id", root,
+		"--sponsor-id", root, "--position", "0"}, conn...)...)
+	require.NoError(t, err, out.stderr.String())
+
+	out, err = runTreeCmd(t, append([]string{"remove", "--user-id", child}, conn...)...)
+	require.Error(t, err)
+	require.Equal(t, 1, exitCode(err))
+	require.Contains(t, out.stderr.String(), "records tree type matrix at version 1, and the request names no pruning mode")
+
+	out, err = runTreeCmd(t, append([]string{"remove", "--user-id", child, "--pruning-mode", "holding_tank"}, conn...)...)
+	require.NoError(t, err, out.stderr.String())
+	require.Contains(t, out.stdout.String(), "at version 3 to stream tree-"+tree+"; projected")
+	stored, err := platform.NewPostgresEventStore(pool).ReadStream(t.Context(), "tree-"+tree, 1, 0)
+	require.NoError(t, err)
+	require.Len(t, stored, 3)
+}
+
+func TestTreeRemove_AUnilevelTreeRefusesAPruningMode(t *testing.T) {
+	if pgContainer == nil {
+		t.Skip("Postgres container not available")
+	}
+	worker := requireWorker(t)
+	pool := pgContainer.NewPool(t)
+	tree := testTreeID(583)
+	seedTree(t, worker, tree, 1)
+	conn := []string{"--db-url", pgContainer.DSN, "--worker", worker, "--tree-id", tree}
+
+	out, err := runTreeCmd(t, append([]string{"remove", "--user-id", testUserID(2), "--pruning-mode", "promote_earliest"}, conn...)...)
+
+	require.Error(t, err)
+	require.Equal(t, 1, exitCode(err))
+	require.Contains(t, out.stderr.String(), `records tree type unilevel at version 1, and the request names pruning mode "promote_earliest"`)
+	stored, err := platform.NewPostgresEventStore(pool).ReadStream(t.Context(), "tree-"+tree, 1, 0)
+	require.NoError(t, err)
+	require.Len(t, stored, 2)
+}

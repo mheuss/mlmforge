@@ -179,14 +179,50 @@ type BinaryCalculationResultDTO struct {
 	CarryForward map[string]LegVolumesDTO     `json:"carry_forward"`
 }
 
-// MatrixRemovalResult is the wire format for matrix node removal results.
-// Matches the Rust RemovalResult struct serialized in handle_remove_node.
+// PruningMode names how a matrix removal treats the removed node's subtree.
+type PruningMode string
+
+const (
+	PruningPromoteEarliest PruningMode = "promote_earliest"
+	PruningHoldingTank     PruningMode = "holding_tank"
+)
+
+// Relocation is a surviving node a matrix removal moved, and where it now sits.
+type Relocation struct {
+	UserID   string `json:"user_id"`
+	ParentID string `json:"parent_id"`
+	Position int    `json:"position"`
+	Depth    int    `json:"depth"`
+}
+
+// MatrixRemovalResult is what a matrix node removal changed.
 type MatrixRemovalResult struct {
-	Removed      string         `json:"removed"`
-	Promoted     *string        `json:"promoted"`
-	Repositioned []string       `json:"repositioned"`
-	MovedToTank  []string       `json:"moved_to_tank"`
-	Responsored  *[]Responsored `json:"responsored"`
+	Removed      string
+	Promoted     *string
+	Repositioned []string
+	MovedToTank  []string
+	Relocated    []Relocation
+	Responsored  []Responsored
+}
+
+// matrixRemovalWire is the matrix remove_node response as decoded. A nil
+// pointer is an absent or null key.
+type matrixRemovalWire struct {
+	Removed      string            `json:"removed"`
+	Promoted     *string           `json:"promoted"`
+	Repositioned []string          `json:"repositioned"`
+	MovedToTank  *[]string         `json:"moved_to_tank"`
+	Relocated    *[]relocationWire `json:"relocated"`
+	Responsored  *[]Responsored    `json:"responsored"`
+}
+
+// relocationWire is one relocation as decoded. A nil member is an absent or
+// null key.
+type relocationWire struct {
+	UserID   *string `json:"user_id"`
+	ParentID *string `json:"parent_id"`
+	Position *int    `json:"position"`
+	Depth    *int    `json:"depth"`
 }
 
 // Responsored is one recruit a removal moved, and who it moved them to.

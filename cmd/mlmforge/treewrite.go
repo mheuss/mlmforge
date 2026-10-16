@@ -207,13 +207,13 @@ func newTreePlaceCmd(resolve flagResolver, open depsOpener, writer writerFor) *c
 }
 
 func newTreeRemoveCmd(resolve flagResolver, open depsOpener, writer writerFor) *cobra.Command {
-	var treeID, userID, removedAt string
+	var treeID, userID, removedAt, pruningMode string
 
 	cmd := &cobra.Command{
 		Use:   "remove",
-		Short: "Append a leaf's removal and try to project it",
+		Short: "Append a node's removal and try to project it",
 		Long: "Opens a database pool, starts the engine worker, appends one tree.node_removed event, tries to project it, and exits. " +
-			"Removal from a matrix tree is refused. " +
+			"A matrix tree needs --pruning-mode, promote_earliest or holding_tank. Any other tree refuses it. " +
 			"Exits 0 when the event was appended and the store was observed current, with any warnings on stderr. " +
 			"Exits 3 when the event was appended and the store was not observed current. Exits 1 when no append was confirmed.",
 		Args:         cobra.NoArgs,
@@ -223,7 +223,8 @@ func newTreeRemoveCmd(resolve flagResolver, open depsOpener, writer writerFor) *
 			if err != nil {
 				return err
 			}
-			req := networkengine.RemoveRequest{TreeID: treeID, UserID: userID, RemovedAt: at}
+			req := networkengine.RemoveRequest{TreeID: treeID, UserID: userID, RemovedAt: at,
+				PruningMode: networkengine.PruningMode(pruningMode)}
 			return runTreeCommand(cmd, resolve, open, func(ctx context.Context, deps *treeDeps) error {
 				res, err := writer(deps).Remove(ctx, req)
 				return reportWrite(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), res, err)
@@ -233,6 +234,8 @@ func newTreeRemoveCmd(resolve flagResolver, open depsOpener, writer writerFor) *
 	cmd.Flags().StringVar(&treeID, "tree-id", "", "Tree to write (UUID)")
 	cmd.Flags().StringVar(&userID, "user-id", "", "User to remove (UUID)")
 	cmd.Flags().StringVar(&removedAt, "removed-at", "", "Removal time recorded in the event, RFC 3339 (default now, in UTC)")
+	cmd.Flags().StringVar(&pruningMode, "pruning-mode", "",
+		"Matrix removal mode, promote_earliest or holding_tank. Required for a matrix tree, refused for any other")
 	for _, name := range []string{"tree-id", "user-id"} {
 		_ = cmd.MarkFlagRequired(name)
 	}

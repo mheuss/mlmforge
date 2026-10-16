@@ -68,6 +68,10 @@ func (m *failAtCallMutator) RemoveNode(context.Context, string, string) ([]Respo
 	return nil, m.next("RemoveNode")
 }
 
+func (m *failAtCallMutator) RemoveMatrixNode(context.Context, string, string, PruningMode) (*MatrixRemovalResult, error) {
+	return nil, m.next("RemoveMatrixNode")
+}
+
 // loadWithMutator seeds an in-memory store and runs a load against a
 // caller-supplied mutator.
 func loadWithMutator(t *testing.T, treeType string, nodes []TreeNodeRow, m TreeMutator, opts ...LoadTreeOption) error {

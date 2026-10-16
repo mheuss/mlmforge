@@ -171,7 +171,7 @@ func TestTreeConsumer_ARedeliveryMeetsItsOwnTombstoneBeforeAnotherEventsRow(t *t
 	ctx := context.Background()
 	require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
 	require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(2), tree, child, 1, ptr(root), ptr(root), intPtr(0)), 2))
-	require.NoError(t, store.ProjectRemoval(ctx, tree, child, testNodeUUID(9), 3, nil))
+	require.NoError(t, store.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{child}}, testNodeUUID(9), 3))
 	require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(5), tree, child, 1, ptr(root), ptr(root), intPtr(0)), 4))
 	transport := newRecordingTransport()
 	consumer := NewTreeEventConsumer(store, newEngineClientWithTransport(transport))

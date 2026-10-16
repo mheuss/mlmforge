@@ -537,7 +537,7 @@ func TestTreeWriterReject_RejectsACompensatedRoot(t *testing.T) {
 	assert.Equal(t, int64(3), added.Version)
 }
 
-// refusingRemovalEngine refuses every removal with HAS_CHILDREN.
+// refusingRemovalEngine refuses every RemoveNode with HAS_CHILDREN.
 type refusingRemovalEngine struct{ *fakeWriterEngine }
 
 func (refusingRemovalEngine) RemoveNode(context.Context, string, string) ([]Responsored, error) {

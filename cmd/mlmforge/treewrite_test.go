@@ -505,3 +505,27 @@ func TestReportWrite_PrintsWarningsAfterItsOutputAndBeforeTheReleaseWarning(t *t
 	assert.Equal(t, "appended event e at version 2 to stream tree-t; projected\nwarning: first\n"+
 		"warning: releasing the tree lock reported: unlock failed\n", both.String())
 }
+
+func TestTreeRemoveCmd_PassesThePruningModeToTheWriter(t *testing.T) {
+	for _, mode := range []networkengine.PruningMode{networkengine.PruningPromoteEarliest, networkengine.PruningHoldingTank} {
+		t.Run(string(mode), func(t *testing.T) {
+			w := &recordingWriter{}
+
+			_, err := runWriteCmd(t, w, "remove", "--tree-id", "t", "--user-id", "u", "--pruning-mode", string(mode))
+
+			require.NoError(t, err)
+			assert.Equal(t, mode, w.remove.PruningMode)
+		})
+	}
+}
+
+func TestTreeRemoveCmd_HelpNamesThePruningMode(t *testing.T) {
+	cmd := newTreeRemoveCmd(nil, nil, nil)
+
+	assert.NotContains(t, cmd.Short, "Append a leaf's removal")
+	assert.NotContains(t, cmd.Long, "Removal from a matrix tree is refused")
+	assert.Contains(t, cmd.Long, "A matrix tree needs --pruning-mode, promote_earliest or holding_tank.")
+	flag := cmd.Flags().Lookup("pruning-mode")
+	require.NotNil(t, flag)
+	assert.Contains(t, flag.Usage, "Required for a matrix tree, refused for any other")
+}

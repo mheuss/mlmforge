@@ -21,6 +21,9 @@ type TreeMutator interface {
 	// RemoveNode removes a node and returns the recruits whose sponsor the
 	// removal moved.
 	RemoveNode(ctx context.Context, structure, userID string) ([]Responsored, error)
+	// RemoveMatrixNode removes a node from a matrix tree in the given pruning
+	// mode and returns what the removal changed.
+	RemoveMatrixNode(ctx context.Context, structure, userID string, mode PruningMode) (*MatrixRemovalResult, error)
 }
 
 // Compile-time check: EngineClient must satisfy TreeMutator.

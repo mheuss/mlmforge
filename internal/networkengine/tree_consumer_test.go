@@ -1058,11 +1058,17 @@ func enginePos(mutate func(*EnginePosition)) *EnginePosition {
 // storedRow is the projected row the engine's view is compared against. Only
 // the fields that comparison reads are set.
 func storedRow(depth int, sponsor *string) *TreeNodeRow {
+	return storedAt(depth, sponsor, intPtr(1))
+}
+
+// storedAt is storedRow with an explicit position.
+func storedAt(depth int, sponsor *string, position *int) *TreeNodeRow {
 	return &TreeNodeRow{
 		TreeID:    posTree,
 		UserID:    posUser,
 		ParentID:  ptr(posParent),
 		SponsorID: sponsor,
+		Position:  position,
 		Depth:     depth,
 	}
 }
@@ -1125,12 +1131,11 @@ func TestPositionMatchesProjection(t *testing.T) {
 		{
 			// The position rule names unilevel rather than naming binary and
 			// matrix, so a fourth tree type is compared rather than skipped.
-			// It then fails for want of a position, which is the same
-			// fail-closed stance handleNodePlaced's default branch takes.
+			// It then fails for want of a position.
 			name:    "an unknown tree type is compared, not skipped",
 			pos:     enginePos(nil),
 			payload: payloadFor("board", nil),
-			stored:  storedRow(2, ptr(posSponsor)),
+			stored:  storedAt(2, ptr(posSponsor), nil),
 			want:    false,
 		},
 		{
@@ -1158,7 +1163,7 @@ func TestPositionMatchesProjection(t *testing.T) {
 			name:    "matrix matches",
 			pos:     enginePos(func(p *EnginePosition) { p.Position = 5 }),
 			payload: payloadFor(treeTypeMatrix, intPtr(5)),
-			stored:  storedRow(2, ptr(posSponsor)),
+			stored:  storedAt(2, ptr(posSponsor), intPtr(5)),
 			want:    true,
 		},
 		{
@@ -1206,7 +1211,7 @@ func TestPositionMatchesProjection(t *testing.T) {
 		{
 			name:    "a different position does not match for binary",
 			pos:     enginePos(func(p *EnginePosition) { p.Position = 0 }),
-			payload: payloadFor(treeTypeBinary, intPtr(1)),
+			payload: payloadFor(treeTypeBinary, intPtr(0)),
 			stored:  storedRow(2, ptr(posSponsor)),
 			want:    false,
 		},
@@ -1275,13 +1280,12 @@ func TestPositionMatchesProjection(t *testing.T) {
 			want:    false,
 		},
 		{
-			// A binary payload reaching here with no position cannot be
-			// confirmed. The comparison must report that rather than
-			// dereferencing the nil.
-			name:    "a binary payload with no position does not match",
+			// A binary row with no position cannot be confirmed. The
+			// comparison must report that rather than dereferencing the nil.
+			name:    "a binary row with no position does not match",
 			pos:     enginePos(nil),
-			payload: payloadFor(treeTypeBinary, nil),
-			stored:  storedRow(2, ptr(posSponsor)),
+			payload: payloadFor(treeTypeBinary, intPtr(1)),
+			stored:  storedAt(2, ptr(posSponsor), nil),
 			want:    false,
 		},
 		{
@@ -1290,6 +1294,31 @@ func TestPositionMatchesProjection(t *testing.T) {
 			name:    "an unparseable id from the engine does not match",
 			pos:     enginePos(func(p *EnginePosition) { p.UserID = "not-a-uuid" }),
 			payload: payloadFor(treeTypeBinary, intPtr(1)),
+			stored:  storedRow(2, ptr(posSponsor)),
+			want:    false,
+		},
+		{
+			name: "a parent the event no longer names matches the row",
+			pos:  enginePos(nil),
+			payload: func() NodePlacedPayload {
+				p := payloadFor(treeTypeMatrix, intPtr(1))
+				p.ParentID = posOther
+				return p
+			}(),
+			stored: storedRow(2, ptr(posSponsor)),
+			want:   true,
+		},
+		{
+			name:    "a position the event no longer names matches the row",
+			pos:     enginePos(nil),
+			payload: payloadFor(treeTypeMatrix, intPtr(0)),
+			stored:  storedRow(2, ptr(posSponsor)),
+			want:    true,
+		},
+		{
+			name:    "a row parent the engine does not hold does not match",
+			pos:     enginePos(func(p *EnginePosition) { p.ParentUserID = ptr(posOther) }),
+			payload: payloadFor(treeTypeMatrix, intPtr(1)),
 			stored:  storedRow(2, ptr(posSponsor)),
 			want:    false,
 		},
@@ -1616,14 +1645,14 @@ type deleteRecordingStore struct {
 }
 
 func (c *deleteRecordingStore) ProjectRemoval(
-	ctx context.Context, treeID, userID, removalEventID string, eventVersion int64, moved []Responsored,
+	ctx context.Context, treeID string, r RemovalProjection, removalEventID string, eventVersion int64,
 ) error {
-	c.responsors = append(c.responsors, userID)
+	c.responsors = append(c.responsors, r.Users...)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	c.wroteResponsors = append(c.wroteResponsors, userID)
-	return c.MemoryTreeStore.ProjectRemoval(ctx, treeID, userID, removalEventID, eventVersion, moved)
+	c.wroteResponsors = append(c.wroteResponsors, r.Users...)
+	return c.MemoryTreeStore.ProjectRemoval(ctx, treeID, r, removalEventID, eventVersion)
 }
 
 func (c *deleteRecordingStore) UndoRootProjection(ctx context.Context, treeID, userID string, eventVersion int64) error {
@@ -2388,4 +2417,181 @@ func TestCheckReplayedInsert_MessageText(t *testing.T) {
 				err.Error())
 		})
 	}
+}
+
+// noDeleteAndResponsorStore fails the test if anything calls
+// DeleteNodeAndResponsor.
+type noDeleteAndResponsorStore struct {
+	*MemoryTreeStore
+	t *testing.T
+}
+
+func (s noDeleteAndResponsorStore) DeleteNodeAndResponsor(context.Context, string, string, string, []Responsored) error {
+	s.t.Errorf("the consumer called DeleteNodeAndResponsor")
+	return errors.New("noDeleteAndResponsorStore: DeleteNodeAndResponsor was called")
+}
+
+func TestTreeConsumer_ARemovalNeverCallsDeleteNodeAndResponsor(t *testing.T) {
+	for _, tc := range []struct {
+		treeType string
+		mode     PruningMode
+		position *int
+	}{
+		{treeTypeUnilevel, "", nil},
+		{treeTypeBinary, "", intPtr(0)},
+		{treeTypeMatrix, PruningPromoteEarliest, intPtr(0)},
+		{treeTypeMatrix, PruningHoldingTank, intPtr(0)},
+	} {
+		t.Run(strings.TrimSpace(tc.treeType+" "+string(tc.mode)), func(t *testing.T) {
+			ctx := context.Background()
+			store := noDeleteAndResponsorStore{MemoryTreeStore: NewMemoryTreeStore(), t: t}
+			engine := newFakeWriterEngine()
+			if tc.treeType == treeTypeMatrix {
+				require.NoError(t, engine.CreateMatrixTree(ctx, writerTree, 3, "breadth_first"))
+			} else {
+				require.NoError(t, engine.CreateTree(ctx, writerTree, tc.treeType))
+			}
+			require.NoError(t, engine.AddRoot(ctx, writerTree, writerRoot, writeTime.Unix()))
+			require.NoError(t, engine.AddNodeAt(ctx, writerTree, writerChild, writerRoot, writerRoot, 0, writeTime.Unix()))
+			require.NoError(t, store.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), writerTree, writerRoot, 0, nil, ptr(writerRoot), nil)))
+			require.NoError(t, store.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), writerTree, writerChild, 1,
+				ptr(writerRoot), ptr(writerRoot), tc.position)))
+			consumer := NewTreeEventConsumer(store, engine)
+
+			err := consumer.HandleEvent(ctx, versionedEvent(t, writerTree, 3, EventTypeNodeRemoved, NodeRemovedPayload{
+				TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime, TreeType: tc.treeType, PruningMode: tc.mode,
+			}))
+
+			require.NoError(t, err)
+			row, err := store.GetNode(ctx, writerTree, writerChild)
+			require.NoError(t, err)
+			assert.Nil(t, row, "the removal left %s active", writerChild)
+		})
+	}
+}
+
+func TestTreeConsumer_RefusesARemovalWhoseShapeTheEngineCannotApply(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		treeType string
+		mode     PruningMode
+	}{
+		{"a mode on a unilevel removal", treeTypeUnilevel, PruningHoldingTank},
+		{"an unknown mode on a matrix removal", treeTypeMatrix, "prune_all"},
+		{"an unsupported tree_type", "ternary", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := NewMemoryTreeStore()
+			engine := newFakeWriterEngine()
+			require.NoError(t, engine.CreateTree(ctx, writerTree, treeTypeUnilevel))
+			require.NoError(t, engine.AddRoot(ctx, writerTree, writerRoot, writeTime.Unix()))
+			require.NoError(t, engine.AddNode(ctx, writerTree, writerChild, writerRoot, writerRoot, writeTime.Unix()))
+			require.NoError(t, store.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), writerTree, writerRoot, 0, nil, ptr(writerRoot), nil)))
+			require.NoError(t, store.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), writerTree, writerChild, 1,
+				ptr(writerRoot), ptr(writerRoot), nil)))
+			consumer := NewTreeEventConsumer(store, engine)
+
+			err := consumer.HandleEvent(ctx, versionedEvent(t, writerTree, 3, EventTypeNodeRemoved, NodeRemovedPayload{
+				TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime, TreeType: tc.treeType, PruningMode: tc.mode,
+			}))
+
+			require.ErrorIs(t, err, ErrUnprojectableEvent)
+			assert.Contains(t, engine.trees[writerTree].nodes, writerChild, "the engine removed %s", writerChild)
+			row, err := store.GetNode(ctx, writerTree, writerChild)
+			require.NoError(t, err)
+			assert.NotNil(t, row, "the store removed %s", writerChild)
+		})
+	}
+}
+
+// lostReplyMatrixEngine passes every matrix removal to its fake. If the first
+// removal succeeds, it replaces the reply with an error, as if it was lost.
+type lostReplyMatrixEngine struct {
+	*fakeWriterEngine
+	attempts int
+}
+
+func (e *lostReplyMatrixEngine) RemoveMatrixNode(ctx context.Context, structure, userID string, mode PruningMode) (*MatrixRemovalResult, error) {
+	e.attempts++
+	r, err := e.fakeWriterEngine.RemoveMatrixNode(ctx, structure, userID, mode)
+	if err == nil && e.attempts == 1 {
+		return nil, errors.New("lostReplyMatrixEngine: the reply to the first removal was lost")
+	}
+	return r, err
+}
+
+// writeSpyStore records each write it overrides before delegating.
+type writeSpyStore struct {
+	*MemoryTreeStore
+	writes []string
+}
+
+func (s *writeSpyStore) InsertNode(ctx context.Context, n TreeNodeRow) error {
+	s.writes = append(s.writes, "InsertNode")
+	return s.MemoryTreeStore.InsertNode(ctx, n)
+}
+
+func (s *writeSpyStore) DeleteNode(ctx context.Context, treeID, userID string) error {
+	s.writes = append(s.writes, "DeleteNode")
+	return s.MemoryTreeStore.DeleteNode(ctx, treeID, userID)
+}
+
+func (s *writeSpyStore) DeleteNodeAndResponsor(ctx context.Context, treeID, userID, eventID string, moved []Responsored) error {
+	s.writes = append(s.writes, "DeleteNodeAndResponsor")
+	return s.MemoryTreeStore.DeleteNodeAndResponsor(ctx, treeID, userID, eventID, moved)
+}
+
+func (s *writeSpyStore) BulkInsert(ctx context.Context, nodes []TreeNodeRow) error {
+	s.writes = append(s.writes, "BulkInsert")
+	return s.MemoryTreeStore.BulkInsert(ctx, nodes)
+}
+
+func (s *writeSpyStore) ProjectInsert(ctx context.Context, n TreeNodeRow, v int64) error {
+	s.writes = append(s.writes, "ProjectInsert")
+	return s.MemoryTreeStore.ProjectInsert(ctx, n, v)
+}
+
+func (s *writeSpyStore) ProjectRemoval(ctx context.Context, treeID string, r RemovalProjection, eventID string, v int64) error {
+	s.writes = append(s.writes, "ProjectRemoval")
+	return s.MemoryTreeStore.ProjectRemoval(ctx, treeID, r, eventID, v)
+}
+
+func (s *writeSpyStore) UndoRootProjection(ctx context.Context, treeID, userID string, v int64) error {
+	s.writes = append(s.writes, "UndoRootProjection")
+	return s.MemoryTreeStore.UndoRootProjection(ctx, treeID, userID, v)
+}
+
+func (s *writeSpyStore) ProjectRejection(ctx context.Context, treeID, eventID string, v int64) error {
+	s.writes = append(s.writes, "ProjectRejection")
+	return s.MemoryTreeStore.ProjectRejection(ctx, treeID, eventID, v)
+}
+
+func TestTreeConsumer_AMatrixRemovalWhoseReplyWasLostRefusesAndWritesNothing(t *testing.T) {
+	ctx := context.Background()
+	inner := NewMemoryTreeStore()
+	require.NoError(t, inner.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), writerTree, writerRoot, 0, nil, ptr(writerRoot), nil)))
+	require.NoError(t, inner.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), writerTree, writerChild, 1,
+		ptr(writerRoot), ptr(writerRoot), intPtr(0))))
+	store := &writeSpyStore{MemoryTreeStore: inner}
+	engine := &lostReplyMatrixEngine{fakeWriterEngine: newFakeWriterEngine()}
+	require.NoError(t, engine.CreateMatrixTree(ctx, writerTree, 3, "breadth_first"))
+	require.NoError(t, engine.AddRoot(ctx, writerTree, writerRoot, writeTime.Unix()))
+	require.NoError(t, engine.AddNodeAt(ctx, writerTree, writerChild, writerRoot, writerRoot, 0, writeTime.Unix()))
+	consumer := NewTreeEventConsumer(store, engine)
+	consumer.retryDelay = 0
+	event := versionedEvent(t, writerTree, 3, EventTypeNodeRemoved, NodeRemovedPayload{TreeID: writerTree,
+		UserID: writerChild, RemovedAt: writeTime, TreeType: treeTypeMatrix, PruningMode: PruningPromoteEarliest})
+	before := readProjectionState(t, inner, writerTree, writerRoot, writerChild)
+
+	err := consumer.HandleEvent(ctx, event)
+
+	var notProjected *RemovalNotProjectedError
+	require.ErrorAs(t, err, &notProjected)
+	assert.Equal(t, writerTree, notProjected.TreeID)
+	assert.Equal(t, writerChild, notProjected.UserID)
+	assert.Equal(t, event.ID, notProjected.EventID)
+	assert.Equal(t, 2, engine.attempts)
+	assert.Empty(t, store.writes)
+	assert.Equal(t, before, readProjectionState(t, inner, writerTree, writerRoot, writerChild))
 }

@@ -19,6 +19,15 @@ pub struct HoldingTankEntry {
     pub enrolled_at: i64,
 }
 
+/// A surviving node a removal moved, and where it now sits.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Relocation {
+    pub user_id: Uuid,
+    pub parent_id: Uuid,
+    pub position: u8,
+    pub depth: u32,
+}
+
 /// Result of a remove_node operation, describing what changed.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RemovalResult {
@@ -26,6 +35,7 @@ pub struct RemovalResult {
     pub promoted: Option<Uuid>,
     pub repositioned: Vec<Uuid>,
     pub moved_to_tank: Vec<Uuid>,
+    pub relocated: Vec<Relocation>,
     pub responsored: Vec<Responsored>,
 }
 
@@ -160,6 +170,9 @@ impl MatrixTree {
         if self.arena.index.contains_key(&user_id) {
             return Err(TreeError::UserAlreadyExists(user_id));
         }
+        if self.holding_tank.iter().any(|e| e.user_id == user_id) {
+            return Err(TreeError::UserInHoldingTank(user_id));
+        }
         Ok(())
     }
 
@@ -223,6 +236,9 @@ impl MatrixTree {
         }
         if self.arena.index.contains_key(&user_id) {
             return Err(TreeError::UserAlreadyExists(user_id));
+        }
+        if self.holding_tank.iter().any(|e| e.user_id == user_id) {
+            return Err(TreeError::UserInHoldingTank(user_id));
         }
         let parent_idx = self.arena.resolve(parent_id)?;
         self.arena.resolve(sponsor_id).map_err(|e| match e {
@@ -333,6 +349,9 @@ impl MatrixTree {
         if self.arena.index.contains_key(&user_id) {
             return Err(TreeError::UserAlreadyExists(user_id));
         }
+        if self.holding_tank.iter().any(|e| e.user_id == user_id) {
+            return Err(TreeError::UserInHoldingTank(user_id));
+        }
         let sponsor_idx = self.arena.resolve(sponsor_id).map_err(|e| match e {
             TreeError::UserNotFound(id) => TreeError::SponsorNotFound(id),
             other => other,
@@ -371,6 +390,16 @@ impl MatrixTree {
 
     // --- Node removal ---
 
+    /// Refuses a removal this tree cannot make in `mode`. Changes nothing.
+    pub fn check_remove_node(&self, user_id: Uuid, mode: PruningMode) -> Result<(), TreeError> {
+        let idx = self.arena.resolve(user_id)?;
+        if self.arena.root == Some(idx) {
+            return Err(TreeError::CannotRemoveRoot);
+        }
+        self.arena
+            .check_sponsored_removable(&self.removal_set(idx, mode))
+    }
+
     /// Removes a node from the tree using the given pruning mode.
     ///
     /// PromoteEarliest: promotes the earliest-enrolled child to
@@ -384,12 +413,8 @@ impl MatrixTree {
         user_id: Uuid,
         mode: PruningMode,
     ) -> Result<RemovalResult, TreeError> {
+        self.check_remove_node(user_id, mode)?;
         let idx = self.arena.resolve(user_id)?;
-
-        // Cannot remove root.
-        if self.arena.root == Some(idx) {
-            return Err(TreeError::CannotRemoveRoot);
-        }
 
         match mode {
             PruningMode::PromoteEarliest => self.remove_promote_earliest(idx, user_id),
@@ -414,8 +439,6 @@ impl MatrixTree {
         // Find this node's slot position in parent.
         let parent_slot_pos = self.find_slot_position(parent_idx, idx);
 
-        self.arena.check_sponsored_removable(&[idx])?;
-
         let child_slots = self
             .slots
             .get(&idx)
@@ -431,6 +454,7 @@ impl MatrixTree {
                 promoted: None,
                 repositioned: Vec::new(),
                 moved_to_tank: Vec::new(),
+                relocated: Vec::new(),
                 responsored,
             });
         }
@@ -447,6 +471,12 @@ impl MatrixTree {
             .iter()
             .copied()
             .filter(|&c| c != promoted_idx)
+            .collect();
+
+        let before: HashMap<NodeIndex, (Uuid, u8, u32)> = self
+            .descendants(idx)
+            .into_iter()
+            .map(|n| (n, self.placement_of(n)))
             .collect();
 
         // Step 1: Detach promoted child from removed node's slots.
@@ -526,12 +556,14 @@ impl MatrixTree {
 
         // Step 5: Recalculate depths for promoted node and all its descendants.
         self.recalculate_depths(promoted_idx);
+        let relocated = self.relocations_from(promoted_idx, &before);
 
         Ok(RemovalResult {
             removed: user_id,
             promoted: Some(promoted_user_id),
             repositioned: repositioned_ids,
             moved_to_tank: Vec::new(),
+            relocated,
             responsored,
         })
     }
@@ -551,24 +583,9 @@ impl MatrixTree {
 
         let parent_slot_pos = self.find_slot_position(parent_idx, idx);
 
-        // BFS collect all descendants of the removed node.
-        let mut descendants = Vec::new();
-        let mut queue = VecDeque::new();
-        for &child_idx in &self.arena.node(idx).children {
-            queue.push_back(child_idx);
-        }
-        while let Some(current) = queue.pop_front() {
-            descendants.push(current);
-            for &child_idx in &self.arena.node(current).children {
-                queue.push_back(child_idx);
-            }
-        }
+        let removed_set = self.removal_set(idx, PruningMode::HoldingTank);
+        let descendants = removed_set[1..].to_vec();
 
-        // Collect IDs that are being removed (the node + all descendants).
-        let mut removed_set: Vec<NodeIndex> = vec![idx];
-        removed_set.extend(&descendants);
-
-        self.arena.check_sponsored_removable(&removed_set)?;
         let responsored = self.arena.reparent_sponsored(&removed_set);
 
         // Pass 1: Build holding tank entries while all nodes are still live.
@@ -648,6 +665,7 @@ impl MatrixTree {
             promoted: None,
             repositioned: Vec::new(),
             moved_to_tank,
+            relocated: Vec::new(),
             responsored,
         })
     }
@@ -801,6 +819,74 @@ impl MatrixTree {
                 queue.push_back(child_idx);
             }
         }
+    }
+
+    /// The parent, slot and depth of a node that is not the root.
+    fn placement_of(&self, idx: NodeIndex) -> (Uuid, u8, u32) {
+        let parent_idx = self
+            .arena
+            .node(idx)
+            .parent
+            .expect("placement_of called on the root");
+        let position = self.find_slot_position(parent_idx, idx) as u8;
+        (
+            self.arena.node(parent_idx).user_id,
+            position,
+            self.arena.node(idx).depth,
+        )
+    }
+
+    /// Each node under `start`, `start` included, whose placement differs from
+    /// `before`, in breadth-first slot order.
+    fn relocations_from(
+        &self,
+        start: NodeIndex,
+        before: &HashMap<NodeIndex, (Uuid, u8, u32)>,
+    ) -> Vec<Relocation> {
+        let mut moved = Vec::new();
+        let mut queue = VecDeque::from([start]);
+        while let Some(current) = queue.pop_front() {
+            let now = self.placement_of(current);
+            if before.get(&current) != Some(&now) {
+                let (parent_id, position, depth) = now;
+                moved.push(Relocation {
+                    user_id: self.arena.node(current).user_id,
+                    parent_id,
+                    position,
+                    depth,
+                });
+            }
+            let slots = self
+                .slots
+                .get(&current)
+                .expect("slots entry missing for node -- arena and slots map out of sync");
+            queue.extend(slots.iter().flatten().copied());
+        }
+        moved
+    }
+
+    /// The nodes a removal of `idx` in `mode` takes out of the tree.
+    fn removal_set(&self, idx: NodeIndex, mode: PruningMode) -> Vec<NodeIndex> {
+        match mode {
+            PruningMode::PromoteEarliest => vec![idx],
+            PruningMode::HoldingTank => {
+                let mut set = vec![idx];
+                set.extend(self.descendants(idx));
+                set
+            }
+        }
+    }
+
+    /// Every live node under `idx`, breadth first, not counting `idx`.
+    fn descendants(&self, idx: NodeIndex) -> Vec<NodeIndex> {
+        let mut found = Vec::new();
+        let mut queue: VecDeque<NodeIndex> =
+            self.arena.node(idx).children.iter().copied().collect();
+        while let Some(current) = queue.pop_front() {
+            found.push(current);
+            queue.extend(self.arena.node(current).children.iter().copied());
+        }
+        found
     }
 
     /// Finds the slot position of a child within a parent's slots.
@@ -2188,6 +2274,74 @@ mod tests {
         assert_eq!(tank[0].user_id, test_uuid(2));
     }
 
+    fn tree_with_tanked_user() -> MatrixTree {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
+            .unwrap();
+        tree
+    }
+
+    #[test]
+    fn check_add_node_at_refuses_a_user_in_the_holding_tank() {
+        let tree = tree_with_tanked_user();
+
+        let result = tree.check_add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 1);
+
+        assert_eq!(result, Err(TreeError::UserInHoldingTank(test_uuid(2))));
+    }
+
+    #[test]
+    fn add_node_at_refuses_a_user_in_the_holding_tank() {
+        let mut tree = tree_with_tanked_user();
+
+        let result = tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 1, 3000);
+
+        assert_eq!(result, Err(TreeError::UserInHoldingTank(test_uuid(2))));
+        assert!(!tree.contains(test_uuid(2)));
+        assert_eq!(tree.get_holding_tank(None).len(), 1);
+    }
+
+    #[test]
+    fn add_node_refuses_a_user_in_the_holding_tank() {
+        let mut tree = tree_with_tanked_user();
+
+        let result = tree.add_node(test_uuid(2), test_uuid(1), 3000);
+
+        assert_eq!(result, Err(TreeError::UserInHoldingTank(test_uuid(2))));
+        assert!(!tree.contains(test_uuid(2)));
+        assert_eq!(tree.get_holding_tank(None).len(), 1);
+    }
+
+    #[test]
+    fn add_root_refuses_a_user_in_a_restored_holding_tank() {
+        let mut crafted = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        crafted.holding_tank.push(HoldingTankEntry {
+            user_id: test_uuid(2),
+            sponsor_user_id: None,
+            enrolled_at: 0,
+        });
+        let json = serde_json::to_string(&crafted).unwrap();
+        let mut tree: MatrixTree = serde_json::from_str(&json).unwrap();
+        assert_eq!(tree.validate_restored(), Ok(()));
+
+        let result = tree.add_root(test_uuid(2), 1000);
+
+        assert_eq!(result, Err(TreeError::UserInHoldingTank(test_uuid(2))));
+        assert!(!tree.contains(test_uuid(2)));
+    }
+
+    #[test]
+    fn place_from_tank_still_places_a_tanked_user() {
+        let mut tree = tree_with_tanked_user();
+
+        tree.place_from_tank(test_uuid(2), test_uuid(1), 0).unwrap();
+
+        assert!(tree.contains(test_uuid(2)));
+        assert!(tree.get_holding_tank(None).is_empty());
+    }
+
     #[test]
     fn remove_node_moves_subtree_to_holding_tank() {
         // root -> [node2]
@@ -2829,5 +2983,270 @@ mod tests {
             tree.check_add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 1),
             Err(TreeError::UserAlreadyExists(test_uuid(2)))
         );
+    }
+
+    /// The tree's serialized form, for comparing before and after a call that
+    /// must change nothing.
+    fn serialized(tree: &MatrixTree) -> serde_json::Value {
+        serde_json::to_value(tree).unwrap()
+    }
+
+    /// Node 3 back under the root with no sponsor, recruiting node 4 below it.
+    fn sponsorless_recruiter() -> MatrixTree {
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 1).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), 2).unwrap();
+        tree.remove_node(test_uuid(3), PruningMode::HoldingTank)
+            .unwrap();
+        tree.remove_node(test_uuid(2), PruningMode::PromoteEarliest)
+            .unwrap();
+        tree.place_from_tank(test_uuid(3), test_uuid(1), 1).unwrap();
+        tree.add_node(test_uuid(4), test_uuid(3), 4).unwrap();
+        tree
+    }
+
+    #[test]
+    fn check_remove_node_refuses_the_root_and_changes_nothing() {
+        let (tree, _) = matrix_pair();
+        let before = serialized(&tree);
+
+        for mode in [PruningMode::PromoteEarliest, PruningMode::HoldingTank] {
+            assert_eq!(
+                tree.check_remove_node(test_uuid(1), mode),
+                Err(TreeError::CannotRemoveRoot)
+            );
+        }
+        assert_eq!(serialized(&tree), before);
+    }
+
+    #[test]
+    fn check_remove_node_refuses_an_unknown_user_and_changes_nothing() {
+        let (tree, _) = matrix_pair();
+        let before = serialized(&tree);
+
+        for mode in [PruningMode::PromoteEarliest, PruningMode::HoldingTank] {
+            assert_eq!(
+                tree.check_remove_node(test_uuid(99), mode),
+                Err(TreeError::UserNotFound(test_uuid(99)))
+            );
+        }
+        assert_eq!(serialized(&tree), before);
+    }
+
+    #[test]
+    fn check_remove_node_refuses_a_sponsorless_recruiter_and_changes_nothing() {
+        let tree = sponsorless_recruiter();
+        let before = serialized(&tree);
+
+        assert_eq!(
+            tree.check_remove_node(test_uuid(3), PruningMode::PromoteEarliest),
+            Err(TreeError::SponsorlessWithRecruits {
+                user_id: test_uuid(3),
+                surviving_sponsored: 1,
+            })
+        );
+        assert_eq!(serialized(&tree), before);
+    }
+
+    #[test]
+    fn check_remove_node_passes_a_sponsorless_recruiter_whose_recruits_leave_with_it() {
+        let tree = sponsorless_recruiter();
+        let before = serialized(&tree);
+
+        assert_eq!(
+            tree.check_remove_node(test_uuid(3), PruningMode::HoldingTank),
+            Ok(())
+        );
+        assert_eq!(serialized(&tree), before);
+    }
+
+    #[test]
+    fn check_remove_node_refuses_a_sponsor_cycle_and_changes_nothing() {
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 1)
+            .unwrap();
+        tree.add_node_at(test_uuid(3), test_uuid(1), test_uuid(1), 1, 2)
+            .unwrap();
+        let root = tree.arena.resolve(test_uuid(1)).unwrap();
+        let a = tree.arena.resolve(test_uuid(2)).unwrap();
+        let b = tree.arena.resolve(test_uuid(3)).unwrap();
+        // Two siblings sponsoring each other.
+        tree.arena.nodes[a.0].sponsor = Some(b);
+        tree.arena.nodes[b.0].sponsor = Some(a);
+        tree.arena.nodes[a.0].sponsored = vec![b];
+        tree.arena.nodes[b.0].sponsored = vec![a];
+        tree.arena.nodes[root.0].sponsored.clear();
+        let before = serialized(&tree);
+
+        assert_eq!(
+            tree.check_remove_node(test_uuid(2), PruningMode::PromoteEarliest),
+            Err(TreeError::SponsorCycle {
+                user_id: test_uuid(2),
+                bound: 3,
+            })
+        );
+        assert_eq!(serialized(&tree), before);
+    }
+
+    #[test]
+    fn a_passing_check_remove_node_changes_nothing() {
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 1)
+            .unwrap();
+        tree.add_node_at(test_uuid(3), test_uuid(2), test_uuid(2), 0, 2)
+            .unwrap();
+        let before = serialized(&tree);
+
+        for mode in [PruningMode::PromoteEarliest, PruningMode::HoldingTank] {
+            assert_eq!(tree.check_remove_node(test_uuid(2), mode), Ok(()));
+        }
+        assert_eq!(serialized(&tree), before);
+    }
+
+    /// root(1) -> X(2); X -> A(3), B(4); A -> C(5), D(6). A's slots are full.
+    fn spillover_promotion_tree() -> MatrixTree {
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
+            .unwrap();
+        tree.add_node_at(test_uuid(3), test_uuid(2), test_uuid(2), 0, 3000)
+            .unwrap();
+        tree.add_node_at(test_uuid(4), test_uuid(2), test_uuid(2), 1, 4000)
+            .unwrap();
+        tree.add_node_at(test_uuid(5), test_uuid(3), test_uuid(3), 0, 5000)
+            .unwrap();
+        tree.add_node_at(test_uuid(6), test_uuid(3), test_uuid(3), 1, 6000)
+            .unwrap();
+        tree
+    }
+
+    fn relocation(user: u8, parent: u8, position: u8, depth: u32) -> Relocation {
+        Relocation {
+            user_id: test_uuid(user),
+            parent_id: test_uuid(parent),
+            position,
+            depth,
+        }
+    }
+
+    /// Each live node's parent, slot and depth, keyed by user.
+    fn placements(tree: &MatrixTree) -> HashMap<Uuid, (Option<Uuid>, usize, u32)> {
+        let root = tree.arena.node(tree.arena.root.unwrap()).user_id;
+        std::iter::once(root)
+            .chain(
+                tree.get_downline(root, 0)
+                    .unwrap()
+                    .iter()
+                    .map(|n| n.user_id),
+            )
+            .map(|u| {
+                let p = tree.get_position(u).unwrap();
+                (u, (p.parent_user_id, p.position, p.depth))
+            })
+            .collect()
+    }
+
+    /// The survivors whose placement differs between two whole-tree walks,
+    /// sorted by user.
+    fn walk_diff(
+        before: &HashMap<Uuid, (Option<Uuid>, usize, u32)>,
+        after: &HashMap<Uuid, (Option<Uuid>, usize, u32)>,
+    ) -> Vec<Relocation> {
+        let mut moved: Vec<Relocation> = after
+            .iter()
+            .filter(|(user, now)| before.get(*user) != Some(*now))
+            .map(|(user, (parent, position, depth))| Relocation {
+                user_id: *user,
+                parent_id: parent.expect("only the root has no parent"),
+                position: *position as u8,
+                depth: *depth,
+            })
+            .collect();
+        moved.sort_by_key(|r| r.user_id);
+        moved
+    }
+
+    #[test]
+    fn promote_earliest_reports_every_moved_survivor_in_breadth_first_order() {
+        let mut tree = spillover_promotion_tree();
+
+        let result = tree
+            .remove_node(test_uuid(2), PruningMode::PromoteEarliest)
+            .unwrap();
+
+        // A takes X's slot. B spills under C. C and D move up a level.
+        assert_eq!(
+            result.relocated,
+            vec![
+                relocation(3, 1, 0, 1),
+                relocation(5, 3, 0, 2),
+                relocation(6, 3, 1, 2),
+                relocation(4, 5, 0, 3),
+            ]
+        );
+    }
+
+    #[test]
+    fn promote_earliest_relocations_match_a_whole_tree_walk() {
+        let mut tree = spillover_promotion_tree();
+        let before = placements(&tree);
+
+        let result = tree
+            .remove_node(test_uuid(2), PruningMode::PromoteEarliest)
+            .unwrap();
+
+        let mut reported = result.relocated.clone();
+        reported.sort_by_key(|r| r.user_id);
+        assert_eq!(reported, walk_diff(&before, &placements(&tree)));
+    }
+
+    #[test]
+    fn promote_earliest_leaves_out_a_survivor_whose_placement_did_not_change() {
+        // root(1) -> R(2); R -> P(3), S(4); S -> T(5). S lands under P at the
+        // depth it had, so T keeps its parent, slot and depth.
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 2000)
+            .unwrap();
+        tree.add_node_at(test_uuid(3), test_uuid(2), test_uuid(2), 0, 3000)
+            .unwrap();
+        tree.add_node_at(test_uuid(4), test_uuid(2), test_uuid(2), 1, 4000)
+            .unwrap();
+        tree.add_node_at(test_uuid(5), test_uuid(4), test_uuid(4), 0, 5000)
+            .unwrap();
+
+        let result = tree
+            .remove_node(test_uuid(2), PruningMode::PromoteEarliest)
+            .unwrap();
+
+        assert_eq!(
+            result.relocated,
+            vec![relocation(3, 1, 0, 1), relocation(4, 3, 0, 2)]
+        );
+    }
+
+    #[test]
+    fn a_promote_earliest_leaf_removal_reports_no_relocations() {
+        let (mut tree, _) = matrix_pair();
+
+        let result = tree
+            .remove_node(test_uuid(2), PruningMode::PromoteEarliest)
+            .unwrap();
+
+        assert!(result.relocated.is_empty());
+    }
+
+    #[test]
+    fn a_holding_tank_removal_reports_no_relocations() {
+        let mut tree = spillover_promotion_tree();
+
+        let result = tree
+            .remove_node(test_uuid(2), PruningMode::HoldingTank)
+            .unwrap();
+
+        assert!(result.relocated.is_empty());
     }
 }

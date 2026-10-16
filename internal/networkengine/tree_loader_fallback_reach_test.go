@@ -52,6 +52,10 @@ func (m failingMutator) RemoveNode(context.Context, string, string) ([]networken
 	return nil, m.fail("RemoveNode")
 }
 
+func (m failingMutator) RemoveMatrixNode(context.Context, string, string, networkengine.PruningMode) (*networkengine.MatrixRemovalResult, error) {
+	return nil, m.fail("RemoveMatrixNode")
+}
+
 var _ networkengine.TreeStore = twoRootStore{}
 
 // twoRootStore serves a fixed row set from GetByTreeDepthOrdered. It answers for

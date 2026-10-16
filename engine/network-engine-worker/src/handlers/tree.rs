@@ -499,7 +499,7 @@ fn remove_node(state: &mut WorkerState, request: &Request, effect: Effect) -> Re
             // After the pruning-mode parse, so a check without one answers
             // MISSING_PARAM as remove_node does.
             match effect {
-                Effect::Check => return uncheckable(rid, "remove_node on matrix trees"),
+                Effect::Check => return checked_response(rid, t.check_remove_node(user_id, mode)),
                 Effect::Apply => {}
             }
             match t.remove_node(user_id, mode) {
@@ -509,6 +509,18 @@ fn remove_node(state: &mut WorkerState, request: &Request, effect: Effect) -> Re
                         result.repositioned.iter().map(|u| u.to_string()).collect();
                     let moved_to_tank: Vec<String> =
                         result.moved_to_tank.iter().map(|u| u.to_string()).collect();
+                    let relocated: Vec<serde_json::Value> = result
+                        .relocated
+                        .iter()
+                        .map(|r| {
+                            serde_json::json!({
+                                "user_id": r.user_id.to_string(),
+                                "parent_id": r.parent_id.to_string(),
+                                "position": r.position,
+                                "depth": r.depth,
+                            })
+                        })
+                        .collect();
                     Response::success(
                         request.id.clone(),
                         serde_json::json!({
@@ -516,6 +528,7 @@ fn remove_node(state: &mut WorkerState, request: &Request, effect: Effect) -> Re
                             "promoted": promoted,
                             "repositioned": repositioned,
                             "moved_to_tank": moved_to_tank,
+                            "relocated": relocated,
                             "responsored": responsored_json(&result.responsored),
                         }),
                     )

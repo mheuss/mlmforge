@@ -88,7 +88,7 @@ pub(crate) fn tree_error_to_response(request_id: &str, e: TreeError) -> Response
         TreeError::PositionOccupied { .. } => "POSITION_OCCUPIED",
         TreeError::PositionOutOfRange { .. } => "INVALID_POSITION",
         TreeError::UserNotFound(_) => "USER_NOT_FOUND",
-        TreeError::UserAlreadyExists(_) => "USER_ALREADY_EXISTS",
+        TreeError::UserAlreadyExists(_) | TreeError::UserInHoldingTank(_) => "USER_ALREADY_EXISTS",
         TreeError::RootAlreadyExists => "ROOT_ALREADY_EXISTS",
         TreeError::HasChildren(_, _) => "HAS_CHILDREN",
         TreeError::InvalidWidth(_) => "INVALID_WIDTH",
@@ -456,6 +456,17 @@ mod tests {
             message.contains("outlive it"),
             "the count is of recruits outliving this batch, not of all recruits: {message}"
         );
+    }
+
+    #[test]
+    fn a_tanked_user_maps_to_the_existing_user_code_and_says_where_it_is() {
+        let e = TreeError::UserInHoldingTank(Uuid::nil());
+
+        let response = tree_error_to_response("req-1", e);
+        let error = response.error.as_ref().unwrap();
+
+        assert_eq!(error.code, "USER_ALREADY_EXISTS");
+        assert!(error.message.contains("holding tank"), "{}", error.message);
     }
 
     #[test]

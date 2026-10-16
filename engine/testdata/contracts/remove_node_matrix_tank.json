@@ -16,6 +16,14 @@
     },
     "expected_response": {
         "id": "rt-1",
-        "ok": true
+        "ok": true,
+        "result": {
+            "removed": "00000000-0000-0000-0000-000000000002",
+            "promoted": null,
+            "repositioned": [],
+            "moved_to_tank": ["00000000-0000-0000-0000-000000000002"],
+            "relocated": [],
+            "responsored": []
+        }
     }
 }

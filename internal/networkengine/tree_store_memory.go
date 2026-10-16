@@ -3,9 +3,12 @@ package networkengine
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Compile-time check.
@@ -321,10 +324,14 @@ func (s *MemoryTreeStore) ProjectInsert(ctx context.Context, node TreeNodeRow, e
 
 func (s *MemoryTreeStore) ProjectRemoval(
 	ctx context.Context,
-	treeID, userID, removalEventID string,
+	treeID string,
+	r RemovalProjection,
+	removalEventID string,
 	eventVersion int64,
-	moved []Responsored,
 ) error {
+	if len(r.Users) == 0 {
+		return fmt.Errorf("project removal in tree %s: the removal names no users", treeID)
+	}
 	if err := checkEventVersion(treeID, eventVersion); err != nil {
 		return err
 	}
@@ -334,10 +341,137 @@ func (s *MemoryTreeStore) ProjectRemoval(
 	if err := s.refuseBelow(treeID, eventVersion); err != nil {
 		return err
 	}
-	if err := s.DeleteNodeAndResponsor(ctx, treeID, userID, removalEventID, moved); err != nil {
+	staged, err := s.stageRemoval(treeID, r, removalEventID)
+	if err != nil {
 		return err
 	}
+	s.nodes = staged
 	s.advance(treeID, eventVersion)
+	return nil
+}
+
+// stageRemoval returns the rows as the removal leaves them, or the first fault
+// it finds. It changes nothing in s.
+func (s *MemoryTreeStore) stageRemoval(treeID string, r RemovalProjection, removalEventID string) ([]TreeNodeRow, error) {
+	rows := slices.Clone(s.nodes)
+	now := time.Now()
+	active := func(user string) int {
+		for i := range rows {
+			if rows[i].TreeID == treeID && uuidKey(rows[i].UserID) == uuidKey(user) && rows[i].RemovedAt == nil {
+				return i
+			}
+		}
+		return -1
+	}
+
+	tombstoned := map[int]bool{}
+	for _, u := range r.Users {
+		if i := active(u); i >= 0 {
+			event := removalEventID
+			rows[i].RemovedAt, rows[i].UpdatedAt, rows[i].RemovedByEventID = &now, now, &event
+			tombstoned[i] = true
+		}
+	}
+	if len(tombstoned) != len(r.Users) {
+		return nil, fmt.Errorf("tombstoning removed users %v in tree %s matched %d of %d active rows",
+			r.Users, treeID, len(tombstoned), len(r.Users))
+	}
+
+	responsored := map[int]bool{}
+	for _, m := range r.Responsored {
+		if i := active(m.UserID); i >= 0 {
+			sponsor := m.NewSponsorID
+			rows[i].SponsorID, rows[i].UpdatedAt = &sponsor, now
+			responsored[i] = true
+		}
+	}
+	if len(responsored) != len(r.Responsored) {
+		return nil, fmt.Errorf("re-sponsoring %d recruits in tree %s updated %d active rows",
+			len(r.Responsored), treeID, len(responsored))
+	}
+
+	if err := checkRelocationTargets(rows, treeID, r.Relocated); err != nil {
+		return nil, err
+	}
+	relocated := map[int]bool{}
+	for _, m := range r.Relocated {
+		if i := active(m.UserID); i >= 0 {
+			parent, position := m.ParentID, m.Position
+			rows[i].ParentID, rows[i].Position, rows[i].Depth, rows[i].UpdatedAt = &parent, &position, m.Depth, now
+			relocated[i] = true
+		}
+	}
+	if len(relocated) != len(r.Relocated) {
+		return nil, fmt.Errorf("relocating %d survivors in tree %s updated %d active rows",
+			len(r.Relocated), treeID, len(relocated))
+	}
+
+	if err := checkActiveSlots(rows, treeID); err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// checkRelocationTargets refuses a relocation that moves a row into a slot an
+// active row of treeID holds before any relocation runs. A row that keeps its
+// own slot passes. A relocation whose user has no active row is skipped.
+func checkRelocationTargets(rows []TreeNodeRow, treeID string, relocated []Relocation) error {
+	type slot struct {
+		parent   string
+		position int
+	}
+	held := map[slot]string{}
+	active := map[string]bool{}
+	for _, n := range rows {
+		if n.TreeID != treeID || n.RemovedAt != nil {
+			continue
+		}
+		active[uuidKey(n.UserID)] = true
+		if n.ParentID != nil && n.Position != nil {
+			held[slot{uuidKey(*n.ParentID), *n.Position}] = n.UserID
+		}
+	}
+	for _, m := range relocated {
+		if !active[uuidKey(m.UserID)] {
+			continue
+		}
+		holder, ok := held[slot{uuidKey(m.ParentID), m.Position}]
+		if ok && uuidKey(holder) != uuidKey(m.UserID) {
+			return fmt.Errorf("%w: tree=%s parent=%s position=%d (held by %s, relocating %s)",
+				ErrSlotConflict, treeID, m.ParentID, m.Position, holder, m.UserID)
+		}
+	}
+	return nil
+}
+
+// uuidKey returns id in canonical form, so two spellings of one uuid compare equal. An id
+// that does not parse is returned unchanged.
+func uuidKey(id string) string {
+	u, err := uuid.Parse(id)
+	if err != nil {
+		return id
+	}
+	return u.String()
+}
+
+// checkActiveSlots reports two active rows of treeID that claim one slot.
+func checkActiveSlots(rows []TreeNodeRow, treeID string) error {
+	type slot struct {
+		parent   string
+		position int
+	}
+	held := map[slot]string{}
+	for _, n := range rows {
+		if n.TreeID != treeID || n.RemovedAt != nil || n.ParentID == nil || n.Position == nil {
+			continue
+		}
+		key := slot{uuidKey(*n.ParentID), *n.Position}
+		if other, ok := held[key]; ok {
+			return fmt.Errorf("%w: tree=%s parent=%s position=%d (held by %s and %s)",
+				ErrSlotConflict, treeID, *n.ParentID, *n.Position, other, n.UserID)
+		}
+		held[key] = n.UserID
+	}
 	return nil
 }
 

@@ -233,15 +233,14 @@ func TestEngineClient_RemoveNode_RejectsMissingResponsored(t *testing.T) {
 
 func TestEngineClient_RemoveMatrixNode_RejectsMissingResponsored(t *testing.T) {
 	mock := &mockTransport{
-		response: json.RawMessage(`{"removed":"00000000-0000-0000-0000-000000000001","promoted":null,"repositioned":[],"moved_to_tank":[]}`),
+		response: json.RawMessage(`{"removed":"00000000-0000-0000-0000-000000000001","promoted":null,"repositioned":[],"moved_to_tank":[],"relocated":[]}`),
 	}
 	client := newEngineClientWithTransport(mock)
 
 	_, err := client.RemoveMatrixNode(context.Background(), "Test",
-		"00000000-0000-0000-0000-000000000001", "promote_earliest")
+		"00000000-0000-0000-0000-000000000001", PruningPromoteEarliest)
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "responsored")
+	require.EqualError(t, err, `remove_node: response has no "responsored" key`)
 }
 
 // Pins the Go struct tags to the key names that decode the wire response.
@@ -713,6 +712,19 @@ func TestNewCheckedClient_RefusesAVersion12Worker(t *testing.T) {
 	assert.Nil(t, client)
 	assert.Equal(t, expectedProtocolVersion, mismatch.Expected)
 	assert.Equal(t, 12, mismatch.Reported)
+	assert.True(t, mock.closed, "a rejected worker must be closed")
+}
+
+func TestNewCheckedClient_RefusesAVersion13Worker(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`{"protocol_version":13}`)}
+
+	client, err := newCheckedClient(context.Background(), mock)
+
+	var mismatch *ProtocolVersionMismatchError
+	require.ErrorAs(t, err, &mismatch)
+	assert.Nil(t, client)
+	assert.Equal(t, expectedProtocolVersion, mismatch.Expected)
+	assert.Equal(t, 13, mismatch.Reported)
 	assert.True(t, mock.closed, "a rejected worker must be closed")
 }
 

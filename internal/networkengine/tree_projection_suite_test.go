@@ -42,6 +42,9 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 	rootRow := makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil)
 	childRow := makeUUIDNode(testNodeUUID(2), tree, child, 1, ptr(root), ptr(root), intPtr(0))
 	recruitRow := makeUUIDNode(testNodeUUID(3), tree, recruit, 1, ptr(root), ptr(child), intPtr(1))
+	grand := testUserUUID(4)
+	grandRow := makeUUIDNode(testNodeUUID(4), tree, grand, 2, ptr(child), ptr(child), intPtr(0))
+	onlyChild := RemovalProjection{Users: []string{child}}
 
 	t.Run("a tree with no projection has no projection row", func(t *testing.T) {
 		s := newStore(t)
@@ -72,7 +75,7 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 			}},
 			{"ProjectInsert", func() error { return s.ProjectInsert(ctx, childRow, 2) }},
 			{"ProjectRemoval", func() error {
-				return s.ProjectRemoval(ctx, tree, child, testNodeUUID(9), 2, nil)
+				return s.ProjectRemoval(ctx, tree, onlyChild, testNodeUUID(9), 2)
 			}},
 			{"UndoRootProjection", func() error { return s.UndoRootProjection(ctx, tree, root, 1) }},
 			{"ProjectRejection", func() error { return s.ProjectRejection(ctx, tree, childRow.ID, 4) }},
@@ -119,8 +122,9 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		require.NoError(t, s.ProjectInsert(ctx, recruitRow, 4))
 		before := readProjectionState(t, s, tree, root, child, recruit)
 
-		err := s.ProjectRemoval(ctx, tree, child, testNodeUUID(9), 3,
-			[]Responsored{{UserID: recruit, NewSponsorID: root}})
+		err := s.ProjectRemoval(ctx, tree,
+			RemovalProjection{Users: []string{child}, Responsored: []Responsored{{UserID: recruit, NewSponsorID: root}}},
+			testNodeUUID(9), 3)
 
 		var refused *ProjectionRefusedError
 		require.ErrorAs(t, err, &refused)
@@ -134,7 +138,7 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
 		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
 
-		require.NoError(t, s.ProjectRemoval(ctx, tree, child, testNodeUUID(9), 3, nil))
+		require.NoError(t, s.ProjectRemoval(ctx, tree, onlyChild, testNodeUUID(9), 3))
 
 		got := readProjectionState(t, s, tree, child)
 		assert.Equal(t, int64(3), got.version)
@@ -149,8 +153,9 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
 		require.NoError(t, s.ProjectInsert(ctx, recruitRow, 3))
 
-		require.NoError(t, s.ProjectRemoval(ctx, tree, child, testNodeUUID(9), 4,
-			[]Responsored{{UserID: recruit, NewSponsorID: root}}))
+		require.NoError(t, s.ProjectRemoval(ctx, tree,
+			RemovalProjection{Users: []string{child}, Responsored: []Responsored{{UserID: recruit, NewSponsorID: root}}},
+			testNodeUUID(9), 4))
 
 		got := readProjectionState(t, s, tree, recruit)
 		assert.Equal(t, int64(4), got.version)
@@ -168,10 +173,10 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		absent := testUserUUID(7)
 		before := readProjectionState(t, s, tree, root, child, recruit)
 
-		err := s.ProjectRemoval(ctx, tree, child, testNodeUUID(9), 4, []Responsored{
+		err := s.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{child}, Responsored: []Responsored{
 			{UserID: recruit, NewSponsorID: root},
 			{UserID: absent, NewSponsorID: root},
-		})
+		}}, testNodeUUID(9), 4)
 
 		require.Error(t, err)
 		assert.Equal(t, before, readProjectionState(t, s, tree, root, child, recruit))
@@ -210,12 +215,12 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
 		require.NoError(t, s.ProjectInsert(ctx, recruitRow, 3))
 		moved := []Responsored{{UserID: recruit, NewSponsorID: root}}
-		require.NoError(t, s.ProjectRemoval(ctx, tree, child, removal, 4, moved))
+		require.NoError(t, s.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{child}, Responsored: moved}, removal, 4))
 		before := readProjectionState(t, s, tree, root, child, recruit)
 
-		err := s.ProjectRemoval(ctx, tree, child, removal, 4, moved)
+		err := s.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{child}, Responsored: moved}, removal, 4)
 
-		require.ErrorContains(t, err, "soft delete for user "+child+" in tree "+tree+" matched 0 active rows")
+		require.ErrorContains(t, err, "tombstoning removed users ["+child+"] in tree "+tree+" matched 0 of 1 active rows")
 		assert.Equal(t, before, readProjectionState(t, s, tree, root, child, recruit))
 	})
 
@@ -303,7 +308,7 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		ctx := context.Background()
 
 		insertErr := s.ProjectInsert(ctx, rootRow, 0)
-		removeErr := s.ProjectRemoval(ctx, tree, root, testNodeUUID(9), 0, nil)
+		removeErr := s.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{root}}, testNodeUUID(9), 0)
 		undoErr := s.UndoRootProjection(ctx, tree, root, 0)
 
 		want := "tree " + tree + " was given event version 0, below 1; nothing was written"
@@ -401,7 +406,7 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		ctx := context.Background()
 		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
 		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
-		require.NoError(t, s.ProjectRemoval(ctx, tree, child, testNodeUUID(9), 3, nil))
+		require.NoError(t, s.ProjectRemoval(ctx, tree, onlyChild, testNodeUUID(9), 3))
 		before := readProjectionState(t, s, tree, child)
 
 		require.NoError(t, s.ProjectRejection(ctx, tree, childRow.ID, 4))
@@ -473,7 +478,7 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		ctx := context.Background()
 		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
 		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
-		require.NoError(t, s.ProjectRemoval(ctx, tree, child, testNodeUUID(9), 3, nil))
+		require.NoError(t, s.ProjectRemoval(ctx, tree, onlyChild, testNodeUUID(9), 3))
 		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(5), tree, child, 1, ptr(root), ptr(root), intPtr(0)), 4))
 
 		err := s.ProjectInsert(ctx, childRow, 4)
@@ -503,7 +508,7 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		ctx := context.Background()
 		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
 		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
-		require.NoError(t, s.ProjectRemoval(ctx, tree, child, testNodeUUID(9), 3, nil))
+		require.NoError(t, s.ProjectRemoval(ctx, tree, onlyChild, testNodeUUID(9), 3))
 
 		version, _, rows, err := s.ProjectedRows(ctx, tree)
 
@@ -536,6 +541,139 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		assert.Equal(t, int64(2), version)
 		assert.Equal(t, []string{root, child}, nodeUserIDs(rows))
 	})
+	t.Run("a removal that names no users is refused and writes nothing", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+		before := readProjectionState(t, s, tree, root, child)
+
+		err := s.ProjectRemoval(ctx, tree, RemovalProjection{}, testNodeUUID(9), 3)
+
+		require.EqualError(t, err, "project removal in tree "+tree+": the removal names no users")
+		assert.Equal(t, before, readProjectionState(t, s, tree, root, child))
+	})
+
+	t.Run("a removal tombstones and stamps every removed user", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+		require.NoError(t, s.ProjectInsert(ctx, grandRow, 3))
+
+		require.NoError(t, s.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{grand, child}}, testNodeUUID(9), 4))
+
+		got := readProjectionState(t, s, tree, child, grand)
+		assert.Equal(t, int64(4), got.version)
+		for _, u := range []string{child, grand} {
+			require.NotNil(t, got.rows[u])
+			require.NotNil(t, got.rows[u].RemovedAt, "%s is still active", u)
+			require.NotNil(t, got.rows[u].RemovedByEventID)
+			assert.Equal(t, testNodeUUID(9), *got.rows[u].RemovedByEventID)
+		}
+		assert.True(t, got.rows[child].RemovedAt.Equal(*got.rows[grand].RemovedAt),
+			"one removal's tombstones carry one removed_at: %s and %s", got.rows[child].RemovedAt, got.rows[grand].RemovedAt)
+	})
+
+	t.Run("a removal moves every relocated row", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+		require.NoError(t, s.ProjectInsert(ctx, grandRow, 3))
+
+		require.NoError(t, s.ProjectRemoval(ctx, tree, RemovalProjection{
+			Users:     []string{child},
+			Relocated: []Relocation{{UserID: grand, ParentID: root, Position: 0, Depth: 1}},
+		}, testNodeUUID(9), 4))
+
+		got := readProjectionState(t, s, tree, grand)
+		require.NotNil(t, got.rows[grand])
+		require.NotNil(t, got.rows[grand].ParentID)
+		require.NotNil(t, got.rows[grand].Position)
+		assert.Equal(t, root, *got.rows[grand].ParentID)
+		assert.Equal(t, 0, *got.rows[grand].Position)
+		assert.Equal(t, 1, got.rows[grand].Depth)
+	})
+
+	t.Run("a removal runs its tombstones, re-sponsors and relocations together", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		second := testUserUUID(5)
+		secondRow := makeUUIDNode(testNodeUUID(5), tree, second, 2, ptr(child), ptr(child), intPtr(1))
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+		require.NoError(t, s.ProjectInsert(ctx, recruitRow, 3))
+		require.NoError(t, s.ProjectInsert(ctx, grandRow, 4))
+		require.NoError(t, s.ProjectInsert(ctx, secondRow, 5))
+
+		require.NoError(t, s.ProjectRemoval(ctx, tree, RemovalProjection{
+			Users: []string{child},
+			Responsored: []Responsored{
+				{UserID: recruit, NewSponsorID: root},
+				{UserID: grand, NewSponsorID: root},
+				{UserID: second, NewSponsorID: root},
+			},
+			Relocated: []Relocation{
+				{UserID: grand, ParentID: root, Position: 0, Depth: 1},
+				{UserID: second, ParentID: root, Position: 2, Depth: 1},
+			},
+		}, testNodeUUID(9), 6))
+
+		got := readProjectionState(t, s, tree, child, recruit, grand, second)
+		assert.Equal(t, int64(6), got.version)
+		require.NotNil(t, got.rows[child].RemovedAt)
+		require.NotNil(t, got.rows[recruit].SponsorID)
+		assert.Equal(t, root, *got.rows[recruit].SponsorID)
+		for user, position := range map[string]int{grand: 0, second: 2} {
+			require.NotNil(t, got.rows[user].ParentID)
+			require.NotNil(t, got.rows[user].Position)
+			assert.Equal(t, root, *got.rows[user].ParentID, user)
+			assert.Equal(t, position, *got.rows[user].Position, user)
+			assert.Equal(t, 1, got.rows[user].Depth, user)
+			require.NotNil(t, got.rows[user].SponsorID)
+			assert.Equal(t, root, *got.rows[user].SponsorID, user)
+		}
+	})
+
+	for _, tc := range []struct {
+		name   string
+		r      RemovalProjection
+		wantIs error
+	}{
+		{"a relocation names no active row", RemovalProjection{Users: []string{child},
+			Relocated: []Relocation{{UserID: testUserUUID(7), ParentID: root, Position: 1, Depth: 1}}}, nil},
+		{"a re-sponsored user has no active row", RemovalProjection{Users: []string{child},
+			Responsored: []Responsored{{UserID: testUserUUID(7), NewSponsorID: root}}}, nil},
+		{"a relocation targets an occupied slot", RemovalProjection{Users: []string{child},
+			Relocated: []Relocation{{UserID: grand, ParentID: root, Position: 1, Depth: 1}}}, ErrSlotConflict},
+		{"a removed user has no active row", RemovalProjection{Users: []string{child, testUserUUID(7)}}, nil},
+		{"two relocations swap their slots", RemovalProjection{Users: []string{grand},
+			Relocated: []Relocation{
+				{UserID: child, ParentID: root, Position: 1, Depth: 1},
+				{UserID: recruit, ParentID: root, Position: 0, Depth: 1},
+			}}, ErrSlotConflict},
+	} {
+		t.Run("a removal fails after the tombstone step and writes nothing when "+tc.name, func(t *testing.T) {
+			s := newStore(t)
+			ctx := context.Background()
+			require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+			require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+			require.NoError(t, s.ProjectInsert(ctx, recruitRow, 3))
+			require.NoError(t, s.ProjectInsert(ctx, grandRow, 4))
+			before := readProjectionState(t, s, tree, root, child, recruit, grand)
+
+			err := s.ProjectRemoval(ctx, tree, tc.r, testNodeUUID(9), 5)
+
+			require.Error(t, err)
+			if tc.wantIs != nil {
+				assert.ErrorIs(t, err, tc.wantIs)
+			} else {
+				assert.NotErrorIs(t, err, ErrSlotConflict)
+			}
+			assert.Equal(t, before, readProjectionState(t, s, tree, root, child, recruit, grand))
+		})
+	}
 }
 
 func TestMemoryTreeStore_ProjectionSuite(t *testing.T) {

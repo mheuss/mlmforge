@@ -111,11 +111,58 @@ func checkNodePlacedShape(payload NodePlacedPayload) error {
 	return nil
 }
 
-// NodeRemovedPayload is the event payload when a leaf node is removed.
+// NodeRemovedPayload is the event payload when a node is removed.
+// PruningMode is set exactly when TreeType is matrix.
 type NodeRemovedPayload struct {
-	TreeID    string    `json:"tree_id"`
-	UserID    string    `json:"user_id"`
-	RemovedAt time.Time `json:"removed_at"`
+	TreeID      string      `json:"tree_id"`
+	UserID      string      `json:"user_id"`
+	RemovedAt   time.Time   `json:"removed_at"`
+	TreeType    string      `json:"tree_type"`
+	PruningMode PruningMode `json:"pruning_mode,omitempty"`
+}
+
+// checkNodeRemovedShape refuses a node_removed payload whose tree type or
+// pruning mode the engine cannot apply as written. A payload without a tree
+// type reads as a removal from a tree that is not matrix.
+func checkNodeRemovedShape(p NodeRemovedPayload) error {
+	if p.TreeType != "" && !supportedTreeTypes[p.TreeType] {
+		return fmt.Errorf("node_removed for %s in tree %s has unsupported tree_type %q",
+			p.UserID, p.TreeID, p.TreeType)
+	}
+	if p.TreeType != treeTypeMatrix {
+		if p.PruningMode != "" {
+			return fmt.Errorf("node_removed for %s in tree %s carries pruning_mode %q with tree_type %q; only a matrix removal names a mode",
+				p.UserID, p.TreeID, p.PruningMode, p.TreeType)
+		}
+		return nil
+	}
+	switch p.PruningMode {
+	case PruningPromoteEarliest, PruningHoldingTank:
+		return nil
+	case "":
+		return fmt.Errorf("matrix node_removed for %s in tree %s has no pruning_mode", p.UserID, p.TreeID)
+	default:
+		return fmt.Errorf("matrix node_removed for %s in tree %s has unsupported pruning_mode %q",
+			p.UserID, p.TreeID, p.PruningMode)
+	}
+}
+
+// checkNodeRemovedOnStream refuses a node_removed payload that disagrees with
+// the tree type its stream records at version 1, or that checkNodeRemovedShape
+// refuses.
+func checkNodeRemovedOnStream(p NodeRemovedPayload, streamType string) error {
+	if p.TreeType != "" && !supportedTreeTypes[p.TreeType] {
+		return checkNodeRemovedShape(p)
+	}
+	if p.TreeType == "" && streamType == treeTypeMatrix {
+		return fmt.Errorf("node_removed for %s in tree %s has no tree_type, and the stream records tree type matrix",
+			p.UserID, p.TreeID)
+	}
+	if p.TreeType != "" && p.TreeType != streamType {
+		return fmt.Errorf("node_removed for %s in tree %s has tree_type %q, and the stream records tree type %s",
+			p.UserID, p.TreeID, p.TreeType, streamType)
+	}
+	return checkNodeRemovedShape(p)
 }
 
 // EventRejectedPayload is the event payload when an operator rejects a

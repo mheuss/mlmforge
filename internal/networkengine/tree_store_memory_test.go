@@ -2,6 +2,8 @@ package networkengine
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -282,4 +284,114 @@ func TestMemoryTreeStore_Suite(t *testing.T) {
 		}
 		require.Failf(t, "no row", "no row with id %s", nodeID)
 	})
+}
+
+func TestMemoryTreeStore_RefusesARelocationIntoASlotAnotherRelocationVacates(t *testing.T) {
+	s := NewMemoryTreeStore()
+	ctx := context.Background()
+	tree, root, child, recruit, grand := testTreeUUID(1), testUserUUID(1), testUserUUID(2), testUserUUID(3), testUserUUID(4)
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(2), tree, child, 1, ptr(root), ptr(root), intPtr(0)), 2))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(3), tree, recruit, 1, ptr(root), ptr(child), intPtr(1)), 3))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(4), tree, grand, 2, ptr(child), ptr(child), intPtr(0)), 4))
+	before, err := s.GetByTree(ctx, tree)
+	require.NoError(t, err)
+
+	err = s.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{grand},
+		Relocated: []Relocation{
+			{UserID: recruit, ParentID: root, Position: 2, Depth: 1},
+			{UserID: child, ParentID: root, Position: 1, Depth: 1},
+		}}, testNodeUUID(9), 5)
+
+	require.ErrorIs(t, err, ErrSlotConflict)
+	assert.ErrorContains(t, err, "parent="+root+" position=1")
+	assert.ErrorContains(t, err, "held by "+recruit)
+	after, err := s.GetByTree(ctx, tree)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+}
+
+// hexUser returns a user id whose spelling changes under strings.ToUpper.
+func hexUser(n int) string { return fmt.Sprintf("0000000a-0000-0000-0000-%012d", n) }
+
+// Postgres compares uuid columns by value, so the memory twin must too.
+func TestMemoryTreeStore_ProjectRemovalMatchesRowsWhateverTheCase(t *testing.T) {
+	s := NewMemoryTreeStore()
+	ctx := context.Background()
+	tree, root, x, a, b := testTreeUUID(1), hexUser(1), hexUser(2), hexUser(3), hexUser(4)
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(2), tree, x, 1, ptr(root), ptr(root), intPtr(0)), 2))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(3), tree, a, 2, ptr(x), ptr(x), intPtr(0)), 3))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(4), tree, b, 1, ptr(root), ptr(x), intPtr(1)), 4))
+	up := strings.ToUpper
+
+	err := s.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{up(x)},
+		Responsored: []Responsored{{UserID: up(b), NewSponsorID: root}},
+		Relocated:   []Relocation{{UserID: up(a), ParentID: root, Position: 0, Depth: 1}}}, testNodeUUID(9), 5)
+
+	require.NoError(t, err)
+	rows, err := s.GetByTree(ctx, tree)
+	require.NoError(t, err)
+	assert.Len(t, rows, 3)
+	for _, row := range rows {
+		switch row.UserID {
+		case a:
+			assert.Equal(t, root, *row.ParentID)
+			assert.Equal(t, 0, *row.Position)
+		case b:
+			assert.Equal(t, root, *row.SponsorID)
+		}
+	}
+}
+
+func TestMemoryTreeStore_RefusesARelocationIntoAHeldSlotWhateverTheCase(t *testing.T) {
+	s := NewMemoryTreeStore()
+	ctx := context.Background()
+	tree, root, x, a, b := testTreeUUID(1), hexUser(1), hexUser(2), hexUser(3), hexUser(4)
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(2), tree, x, 1, ptr(root), ptr(root), intPtr(0)), 2))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(3), tree, b, 1, ptr(root), ptr(root), intPtr(1)), 3))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(4), tree, a, 2, ptr(x), ptr(x), intPtr(0)), 4))
+
+	err := s.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{x},
+		Responsored: []Responsored{{UserID: a, NewSponsorID: root}},
+		Relocated:   []Relocation{{UserID: a, ParentID: strings.ToUpper(root), Position: 1, Depth: 1}}}, testNodeUUID(9), 5)
+
+	require.ErrorIs(t, err, ErrSlotConflict)
+}
+
+// Two relocations into one empty slot, the second spelled in upper case.
+func TestMemoryTreeStore_TwoRelocationsIntoOneEmptySlotWhateverTheCase(t *testing.T) {
+	s := NewMemoryTreeStore()
+	ctx := context.Background()
+	tree, root, x, a, c := testTreeUUID(1), hexUser(1), hexUser(2), hexUser(3), hexUser(5)
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(2), tree, x, 1, ptr(root), ptr(root), intPtr(0)), 2))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(3), tree, a, 2, ptr(x), ptr(x), intPtr(0)), 3))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(4), tree, c, 2, ptr(x), ptr(x), intPtr(1)), 4))
+
+	err := s.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{x},
+		Responsored: []Responsored{{UserID: a, NewSponsorID: root}, {UserID: c, NewSponsorID: root}},
+		Relocated: []Relocation{{UserID: a, ParentID: root, Position: 1, Depth: 1},
+			{UserID: c, ParentID: strings.ToUpper(root), Position: 1, Depth: 1}}}, testNodeUUID(9), 5)
+
+	require.ErrorIs(t, err, ErrSlotConflict)
+}
+
+// A relocation into a slot another relocation vacates, spelled in upper case.
+func TestMemoryTreeStore_RelocationIntoAVacatedSlotWhateverTheCase(t *testing.T) {
+	s := NewMemoryTreeStore()
+	ctx := context.Background()
+	tree, root, x, a, b := testTreeUUID(1), hexUser(1), hexUser(2), hexUser(3), hexUser(4)
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(2), tree, x, 1, ptr(root), ptr(root), intPtr(0)), 2))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(3), tree, b, 1, ptr(root), ptr(root), intPtr(1)), 3))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(4), tree, a, 2, ptr(x), ptr(x), intPtr(0)), 4))
+
+	err := s.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{x},
+		Responsored: []Responsored{{UserID: a, NewSponsorID: root}},
+		Relocated: []Relocation{{UserID: a, ParentID: strings.ToUpper(root), Position: 1, Depth: 1},
+			{UserID: b, ParentID: root, Position: 0, Depth: 1}}}, testNodeUUID(9), 5)
+
+	require.ErrorIs(t, err, ErrSlotConflict)
 }

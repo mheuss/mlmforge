@@ -885,12 +885,11 @@ Harmless today: every other read of that vec is a `retain`, and the adjacency ta
 
 `node_placed` events are the single statement of placement. The payload requires `tree_type`. Matrix and binary events require an explicit `position`. Unilevel events must omit it. The consumer rejects an event that fails a payload check before either projection, so those rejections land nowhere. The rejected payload classes: wrong stream, unknown type, missing position, negative position, matrix position above the u8 ceiling (255), binary position outside 0..1, unilevel position present. All but the first are `node_placed`'s own. The stream check is shared: `root_added` and `node_removed` reject a mismatched stream too, through the same helper. Matrix placements project through `add_node_at`, so the engine applies exactly the stored parent and position. A partial unique index (migration 000004) makes a double-claimed slot fail at the insert instead of poisoning reload.
 
-Four limits remain:
+These limits remain:
 
 - The consumer trusts the `tree_type` label. No registry exists to verify it against. `TreeWriter` does not take the label from its caller. It copies it from the stream's version-1 event.
 - The gate rejects matrix positions above the u8 ceiling (255), which no width can accept. The real bound is the tree's width, which the placement payload does not carry. Under `TreeWriter`, `check_mutation` refuses such a position before the append. An event appended without the writer is stored, refused loudly by the engine, and then makes the next reload preflight reject the whole tree. HEU-554 decides the direction for both gaps. The fix ships under it.
 - Redelivery is bounded (HEU-576). The scope is the event in flight. `TreeWriter` provides it by calling `HandleEvent` synchronously, in process, under the tree's lock. A redelivered placement whose projection is still current completes, however old it is. It stops being current once its node was removed, or once a later event re-placed the user, and is then refused rather than reapplied. It is also refused when its parent's row was since removed, because the parent lookup runs before the guard (HEU-813). A redelivered removal that the engine refuses converges when its own tombstone is in the store (HEU-811). That holds even when a later placement of the user never reached the engine. One whose store write never landed fails typed. The next write or `tree load` redelivers it to an engine rebuilt from the stream. One arriving after a later placement landed in full is below the tree's projected version. The store refuses it (HEU-857). The engine may still have applied it. HEU-789 tracks that for when a caller redelivers old events. `TreeWriter` does not reach that case. Catch-up redelivers only the stream's last event. A removal followed by a later placement is no longer the last event. When a redelivery reaches its store write, the store refuses it if it is below the tree's projected version (HEU-857). The parent lookup and a removal's engine call run before that write.
-- The agreement claim covers placement only. No tree event path calls `RemoveMatrixNode`. A matrix removal cannot project (HEU-582). `TreeWriter.Remove` refuses a removal from a matrix tree before it appends anything. A matrix `node_removed` appended without the writer reaches `handleNodeRemoved`. That handler calls `RemoveNode` with no pruning mode. The worker refuses it with `MISSING_PARAM`. The handler retries, writes nothing to the store, and returns the error.
 
 Matrix startup reload is no longer blocked by the placement divergence HEU-553 fixed.
 
@@ -1471,3 +1470,23 @@ load-bearing.
 
 Fixtures written on `add_node` for this case are not merely awkward. They cannot
 express the state, and they look like they do.
+
+## A Matrix Removal Projects As One Transaction In Three Steps
+
+A matrix removal can tombstone a whole subtree and move nodes that were not removed. The worker reports both. `removed` and `moved_to_tank` name who left. `relocated` names every survivor whose parent, slot or depth changed, and where it now sits. `responsored` names the recruits whose sponsor the removal changed, and their new sponsor.
+
+`ProjectRemoval` writes all of it in one transaction, in this order:
+
+1. Tombstone and stamp every removed user's row.
+2. Repoint every re-sponsored row.
+3. Move every relocated row.
+
+The order matters. `idx_tree_nodes_tree_parent_position_active` is a unique index that is not deferrable, and Postgres checks it row by row. A promoted node takes the slot its removed parent held. That slot is free only after step 1.
+
+Inside step 3 the row order is undefined. So a relocation that changes parent or slot has to target a slot that is free after step 1 and that no other relocation vacates. A relocation that changes only depth keeps its own slot, and no other relocation targets it. The Rust property test in `matrix_properties.rs` checks that against a model of the slot map. `TestTreeConsumer_SeededMatrixRemovalsKeepEveryRowOnTheEngine` checks it against the real index.
+
+Each step is one set-based statement, to keep a large removal inside the store's write timeout.
+
+The store does not show the holding tank. The engine rebuilt by replay or from a snapshot does.
+
+The engine refuses to place a user who is in the holding tank. `add_root`, `add_node`, `add_node_at` and a `check_mutation` for `add_root` or `add_node_at` answer `USER_ALREADY_EXISTS`. `place_from_tank` is the only way out of the tank, and the event path has no event for it.

@@ -10,6 +10,8 @@ const engineCodeTreeExists = "TREE_EXISTS"
 // engineOutcome is what an engine call returned beyond its error.
 type engineOutcome struct {
 	responsored []Responsored
+	relocated   []Relocation
+	removed     []string
 }
 
 // engineCall is the engine mutation one tree event makes.
@@ -50,16 +52,30 @@ func nodePlacedCall(p NodePlacedPayload) engineCall {
 }
 
 // nodeRemovedCall returns the engine call a node_removed event makes in a tree
-// of treeType. An empty treeType means the caller does not know it.
+// of treeType.
 func nodeRemovedCall(p NodeRemovedPayload, treeType string) (engineCall, error) {
 	if treeType == treeTypeMatrix {
-		return engineCall{}, fmt.Errorf(
-			"node_removed for %s in tree %s: the caller names the tree matrix, and the payload carries no pruning mode",
-			p.UserID, p.TreeID)
+		if p.PruningMode == "" {
+			return engineCall{}, fmt.Errorf(
+				"node_removed for %s in tree %s: the caller names the tree matrix, and the payload carries no pruning mode",
+				p.UserID, p.TreeID)
+		}
+		return engineCall{op: "remove_node", userID: p.UserID,
+			apply: func(ctx context.Context, engine TreeMutator) (engineOutcome, error) {
+				r, err := engine.RemoveMatrixNode(ctx, p.TreeID, p.UserID, p.PruningMode)
+				if err != nil {
+					return engineOutcome{}, err
+				}
+				removed := []string{p.UserID}
+				if p.PruningMode == PruningHoldingTank {
+					removed = r.MovedToTank
+				}
+				return engineOutcome{responsored: r.Responsored, relocated: r.Relocated, removed: removed}, nil
+			}}, nil
 	}
 	return engineCall{op: "remove_node", userID: p.UserID,
 		apply: func(ctx context.Context, engine TreeMutator) (engineOutcome, error) {
 			moved, err := engine.RemoveNode(ctx, p.TreeID, p.UserID)
-			return engineOutcome{responsored: moved}, err
+			return engineOutcome{responsored: moved, removed: []string{p.UserID}}, err
 		}}, nil
 }

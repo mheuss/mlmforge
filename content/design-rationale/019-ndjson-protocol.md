@@ -75,7 +75,7 @@ which maps every `TreeError` variant, plus a few handler-level checks.
 |------|---------|
 | `STRUCTURE_NOT_FOUND` | Named structure does not exist in the loaded plan, or no tree has been created |
 | `USER_NOT_FOUND` | Referenced user does not exist in the tree |
-| `USER_ALREADY_EXISTS` | User already exists in the tree |
+| `USER_ALREADY_EXISTS` | User already exists in the tree, or sits in a matrix tree's holding tank |
 | `ROOT_ALREADY_EXISTS` | Tree already has a root node |
 | `POSITION_OCCUPIED` | Target position in the tree is already taken |
 | `INVALID_POSITION` | Position value is out of range for this tree type |

@@ -536,3 +536,60 @@ func TestPostgresTreeStore_ProjectedRowsIgnoresAProjectionBetweenItsReads(t *tes
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), after, "the projection between the reads never committed")
 }
+
+// largeRemovalRows is a root, a node R in its slot 0, R's only child P, and
+// 10,000 nodes under P in a width-5 tree.
+func largeRemovalRows(tree string) (rows []TreeNodeRow, r, p string, under []TreeNodeRow) {
+	root, r, p := testUserUUID(1), testUserUUID(2), testUserUUID(3)
+	rows = []TreeNodeRow{
+		makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil),
+		makeUUIDNode(testNodeUUID(2), tree, r, 1, ptr(root), ptr(root), intPtr(0)),
+		makeUUIDNode(testNodeUUID(3), tree, p, 2, ptr(r), ptr(root), intPtr(0)),
+	}
+	for k := range 10_000 {
+		parent, depth := p, 3
+		if k >= 5 {
+			parent, depth = testUserUUID(10+k/5-1), under[k/5-1].Depth+1
+		}
+		n := makeUUIDNode(testNodeUUID(10+k), tree, testUserUUID(10+k), depth, ptr(parent), ptr(root), intPtr(k%5))
+		under = append(under, n)
+	}
+	return append(rows, under...), r, p, under
+}
+
+func TestPostgresTreeStore_ProjectsALargeRemovalInsideTheWriteTimeout(t *testing.T) {
+	tree := testTreeUUID(5840)
+	rows, r, p, under := largeRemovalRows(tree)
+	root := testUserUUID(1)
+	promote := RemovalProjection{Users: []string{r},
+		Relocated: []Relocation{{UserID: p, ParentID: root, Position: 0, Depth: 1}}}
+	tank := RemovalProjection{Users: []string{r, p}}
+	for _, n := range under {
+		promote.Relocated = append(promote.Relocated,
+			Relocation{UserID: n.UserID, ParentID: *n.ParentID, Position: *n.Position, Depth: n.Depth - 1})
+		tank.Users = append(tank.Users, n.UserID)
+	}
+	for _, tc := range []struct {
+		name string
+		r    RemovalProjection
+	}{
+		{"a promotion relocating 10,001 rows", promote},
+		{"a holding-tank removal tombstoning 10,002 rows", tank},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newTestPostgresTreeStore(t)
+			require.NoError(t, store.BulkInsert(context.Background(), rows))
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*storeWriteTimeout)
+			defer cancel()
+
+			start := time.Now()
+			err := store.ProjectRemoval(ctx, tree, tc.r, testNodeUUID(999_999), 2)
+			elapsed := time.Since(start)
+
+			t.Logf("N2: %s projected in %s, against a %s timeout", tc.name, elapsed, storeWriteTimeout)
+			require.NoError(t, err)
+			assert.Less(t, elapsed, storeWriteTimeout)
+		})
+	}
+}

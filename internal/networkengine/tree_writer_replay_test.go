@@ -50,7 +50,7 @@ func (s writeCountingStore) ProjectInsert(context.Context, TreeNodeRow, int64) e
 	return nil
 }
 
-func (s writeCountingStore) ProjectRemoval(context.Context, string, string, string, int64, []Responsored) error {
+func (s writeCountingStore) ProjectRemoval(context.Context, string, RemovalProjection, string, int64) error {
 	s.t.Error("the load wrote a removal")
 	return nil
 }

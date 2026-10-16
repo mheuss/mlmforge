@@ -294,21 +294,24 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 	if err := checkStream(event, "node_removed", payload.TreeID, payload.UserID); err != nil {
 		return unprojectable(err)
 	}
-	call, callErr := nodeRemovedCall(payload, "")
+	if err := checkNodeRemovedShape(payload); err != nil {
+		return unprojectable(err)
+	}
+	call, callErr := nodeRemovedCall(payload, payload.TreeType)
 	if callErr != nil {
 		return unprojectable(callErr)
 	}
 
-	var moved []Responsored
+	var outcome engineOutcome
 
 	// withRetry returning nil cannot say whether this call removed the node or
 	// found it already gone, and the two need different work afterwards. The
-	// flag carries that out, the way moved already does.
+	// flag carries that out, the way outcome already does.
 	alreadyProjected := false
 
 	if err := c.withRetry(ctx, call.op, payload.TreeID, payload.UserID, func() error {
 		out, err := call.apply(ctx, c.engine)
-		moved = out.responsored
+		outcome = out
 		return err
 	}, func(ctx context.Context, err error) (reconcileOutcome, error) {
 		if !isEngineCode(err, engineCodeUserNotFound) {
@@ -331,10 +334,7 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 		}
 		if existing != nil && existing.RemovedAt == nil {
 			// The engine applied the removal and no store write has landed.
-			// This handler is engine-first, so that covers a redelivery and
-			// equally a first delivery whose reply was lost on an earlier
-			// attempt: either way RemoveNode's reply carried the only copy of
-			// the moved list and nothing here can rebuild it.
+			// Converging here would skip the store write for that removal.
 			return reconcileDiverged, &RemovalNotProjectedError{
 				TreeID:  payload.TreeID,
 				UserID:  payload.UserID,
@@ -356,10 +356,11 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 		return nil
 	}
 
-	// The moved list cannot be rebuilt here, so giving up is not a clean abort.
+	// The outcome cannot be rebuilt here, so giving up is not a clean abort.
 	writeCtx, cancelWrite := detachedWrite(ctx)
 	defer cancelWrite()
-	if err := c.store.ProjectRemoval(writeCtx, payload.TreeID, payload.UserID, event.ID, event.Version, moved); err != nil {
+	projection := RemovalProjection{Users: outcome.removed, Responsored: outcome.responsored, Relocated: outcome.relocated}
+	if err := c.store.ProjectRemoval(writeCtx, payload.TreeID, projection, event.ID, event.Version); err != nil {
 		return fmt.Errorf("remove node and re-sponsor recruits: %w", err)
 	}
 	return nil
@@ -425,24 +426,8 @@ func isEngineCode(err error, code string) bool {
 // positionMatchesProjection reports whether the engine's view of a placed node
 // agrees with what was projected for it.
 //
-// Two sources, because they answer different questions. The event is
-// authoritative for what was asked: user, parent, position and enrolment. The
-// stored row is authoritative for what is current: sponsor and depth.
-//
-// Sponsor comes from the row because it is the one compared field a later
-// event can change. Removing a user re-sponsors everyone they recruited, and
-// the event that placed the node still names the original sponsor. Comparing
-// against the event would report divergence for a node the engine placed
-// exactly as asked.
-//
-// Depth comes from the row because the event does not carry one. It is
-// derived from the parent row when the placement is projected.
-//
 // False means "not confirmed equal", which covers a real disagreement and an
-// identifier either side fails to parse. The caller treats both the same way,
-// which is safe only because no unparseable identifier reaches here: the
-// engine emits canonical uuids, and every payload identifier is rejected
-// upstream by the worker or by the parent lookup before this is called.
+// identifier either side fails to parse.
 func positionMatchesProjection(pos *EnginePosition, p NodePlacedPayload, stored *TreeNodeRow) bool {
 	if pos == nil || stored == nil {
 		return false
@@ -450,7 +435,7 @@ func positionMatchesProjection(pos *EnginePosition, p NodePlacedPayload, stored 
 	if !sameUUID(pos.UserID, p.UserID) {
 		return false
 	}
-	if !samePtrUUID(pos.ParentUserID, &p.ParentID) {
+	if !samePtrUUID(pos.ParentUserID, stored.ParentID) {
 		return false
 	}
 	if !samePtrUUID(pos.SponsorUserID, stored.SponsorID) {
@@ -462,10 +447,9 @@ func positionMatchesProjection(pos *EnginePosition, p NodePlacedPayload, stored 
 	if pos.EnrolledAt != p.EnrolledAt.Unix() {
 		return false
 	}
-	// EnginePosition.Position is an int and always carries a value. Unilevel
-	// events must omit position, so comparing it would never match.
+	// A unilevel row has no position to compare.
 	if p.TreeType != treeTypeUnilevel {
-		if p.Position == nil || pos.Position != *p.Position {
+		if stored.Position == nil || pos.Position != *stored.Position {
 			return false
 		}
 	}

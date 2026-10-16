@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 )
 
@@ -51,7 +52,7 @@ import (
 // format. Two other numbers nearby are also called a version: `detailVersion`
 // in commission_detail.go, and the plan schema version in
 // schemas/compensation-plan.schema.json. None is coupled to the others.
-const expectedProtocolVersion = 13
+const expectedProtocolVersion = 14
 
 // maxPingResponseInError bounds how much of an unexpected ping response is
 // quoted back in an error. The response is wire data and is otherwise
@@ -441,21 +442,73 @@ func addNodeAtParams(userID, parentID, sponsorID string, position int, enrolledA
 	}
 }
 
-// RemoveMatrixNode removes a node from a matrix tree using the specified pruning mode.
-// pruningMode must be "promote_earliest" or "holding_tank".
-func (c *EngineClient) RemoveMatrixNode(ctx context.Context, structure, userID, pruningMode string) (*MatrixRemovalResult, error) {
-	r, err := callInto[MatrixRemovalResult](c, ctx, "remove_node", map[string]any{
-		"structure":    structure,
-		"user_id":      userID,
-		"pruning_mode": pruningMode,
-	})
+// RemoveMatrixNode removes a node from a matrix tree in the given pruning mode
+// and reports what the removal changed.
+func (c *EngineClient) RemoveMatrixNode(ctx context.Context, structure, userID string, mode PruningMode) (*MatrixRemovalResult, error) {
+	params := removeMatrixNodeParams(userID, mode)
+	params["structure"] = structure
+	w, err := callInto[matrixRemovalWire](c, ctx, "remove_node", params)
 	if err != nil {
 		return nil, err
 	}
-	if r.Responsored == nil {
+	return w.result(userID, mode)
+}
+
+// removeMatrixNodeParams are the matrix remove_node params other than the
+// structure.
+func removeMatrixNodeParams(userID string, mode PruningMode) map[string]any {
+	return map[string]any{"user_id": userID, "pruning_mode": string(mode)}
+}
+
+// result checks a decoded response to the removal of userID in mode, and
+// returns what it reports.
+func (w matrixRemovalWire) result(userID string, mode PruningMode) (*MatrixRemovalResult, error) {
+	if w.Responsored == nil {
 		return nil, fmt.Errorf("remove_node: response has no \"responsored\" key")
 	}
-	return &r, nil
+	if w.MovedToTank == nil {
+		return nil, fmt.Errorf("remove_node: response \"moved_to_tank\" is absent or null")
+	}
+	if w.Relocated == nil {
+		return nil, fmt.Errorf("remove_node: response \"relocated\" is absent or null")
+	}
+	tank := *w.MovedToTank
+	switch mode {
+	case PruningHoldingTank:
+		if len(tank) == 0 {
+			return nil, fmt.Errorf("remove_node: holding_tank removal of %s answered an empty \"moved_to_tank\"", userID)
+		}
+		if !slices.ContainsFunc(tank, func(u string) bool { return sameUUID(u, userID) }) {
+			return nil, fmt.Errorf("remove_node: holding_tank removal of %s answered a \"moved_to_tank\" that lacks it: %v",
+				userID, tank)
+		}
+	case PruningPromoteEarliest:
+		if len(tank) != 0 {
+			return nil, fmt.Errorf("remove_node: promote_earliest removal of %s answered a non-empty \"moved_to_tank\": %v",
+				userID, tank)
+		}
+	default:
+		return nil, fmt.Errorf("remove_node: removal of %s in pruning mode %q has no response check", userID, mode)
+	}
+	relocated := make([]Relocation, 0, len(*w.Relocated))
+	for i, r := range *w.Relocated {
+		if r.UserID == nil {
+			return nil, fmt.Errorf("remove_node: relocation %d has no \"user_id\"", i)
+		}
+		if r.ParentID == nil {
+			return nil, fmt.Errorf("remove_node: relocation of %s has no \"parent_id\"", *r.UserID)
+		}
+		if r.Position == nil {
+			return nil, fmt.Errorf("remove_node: relocation of %s has no \"position\"", *r.UserID)
+		}
+		if r.Depth == nil {
+			return nil, fmt.Errorf("remove_node: relocation of %s has no \"depth\"", *r.UserID)
+		}
+		relocated = append(relocated, Relocation{UserID: *r.UserID, ParentID: *r.ParentID,
+			Position: *r.Position, Depth: *r.Depth})
+	}
+	return &MatrixRemovalResult{Removed: w.Removed, Promoted: w.Promoted, Repositioned: w.Repositioned,
+		MovedToTank: tank, Relocated: relocated, Responsored: *w.Responsored}, nil
 }
 
 // --- Mutation checks ---
@@ -484,6 +537,11 @@ func CheckAddNodeAt(userID, parentID, sponsorID string, position int, enrolledAt
 // CheckRemoveNode describes a RemoveNode call for CheckMutation.
 func CheckRemoveNode(userID string) Mutation {
 	return Mutation{op: "remove_node", params: removeNodeParams(userID)}
+}
+
+// CheckRemoveMatrixNode describes a RemoveMatrixNode call for CheckMutation.
+func CheckRemoveMatrixNode(userID string, mode PruningMode) Mutation {
+	return Mutation{op: "remove_node", params: removeMatrixNodeParams(userID, mode)}
 }
 
 // CheckMutation asks the worker whether a mutation would succeed on the named

@@ -200,3 +200,10 @@ func TestEngineClient_RemoveMatrixNode_OverARealWorker(t *testing.T) {
 		}, got)
 	})
 }
+
+func TestEngineClient_RemoveMatrixNode_RefusesAModeItDoesNotKnow(t *testing.T) {
+	_, _, err := removeMatrixNodeWith(t, `{"removed":"`+removedUser+`","promoted":null,"repositioned":[],
+		"moved_to_tank":[],"relocated":[],"responsored":[]}`, PruningMode("sideways"))
+
+	require.EqualError(t, err, `remove_node: removal of `+removedUser+` in pruning mode "sideways" has no response check`)
+}

@@ -487,6 +487,8 @@ func (w matrixRemovalWire) result(userID string, mode PruningMode) (*MatrixRemov
 			return nil, fmt.Errorf("remove_node: promote_earliest removal of %s answered a non-empty \"moved_to_tank\": %v",
 				userID, tank)
 		}
+	default:
+		return nil, fmt.Errorf("remove_node: removal of %s in pruning mode %q has no response check", userID, mode)
 	}
 	relocated := make([]Relocation, 0, len(*w.Relocated))
 	for i, r := range *w.Relocated {

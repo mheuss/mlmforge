@@ -170,6 +170,9 @@ impl MatrixTree {
         if self.arena.index.contains_key(&user_id) {
             return Err(TreeError::UserAlreadyExists(user_id));
         }
+        if self.holding_tank.iter().any(|e| e.user_id == user_id) {
+            return Err(TreeError::UserInHoldingTank(user_id));
+        }
         Ok(())
     }
 
@@ -2309,6 +2312,24 @@ mod tests {
         assert_eq!(result, Err(TreeError::UserInHoldingTank(test_uuid(2))));
         assert!(!tree.contains(test_uuid(2)));
         assert_eq!(tree.get_holding_tank(None).len(), 1);
+    }
+
+    #[test]
+    fn add_root_refuses_a_user_in_a_restored_holding_tank() {
+        let mut crafted = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        crafted.holding_tank.push(HoldingTankEntry {
+            user_id: test_uuid(2),
+            sponsor_user_id: None,
+            enrolled_at: 0,
+        });
+        let json = serde_json::to_string(&crafted).unwrap();
+        let mut tree: MatrixTree = serde_json::from_str(&json).unwrap();
+        assert_eq!(tree.validate_restored(), Ok(()));
+
+        let result = tree.add_root(test_uuid(2), 1000);
+
+        assert_eq!(result, Err(TreeError::UserInHoldingTank(test_uuid(2))));
+        assert!(!tree.contains(test_uuid(2)));
     }
 
     #[test]

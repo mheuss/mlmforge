@@ -2,6 +2,8 @@ package networkengine
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -307,4 +309,53 @@ func TestMemoryTreeStore_RefusesARelocationIntoASlotAnotherRelocationVacates(t *
 	after, err := s.GetByTree(ctx, tree)
 	require.NoError(t, err)
 	assert.Equal(t, before, after)
+}
+
+// hexUser returns a user id whose spelling changes under strings.ToUpper.
+func hexUser(n int) string { return fmt.Sprintf("0000000a-0000-0000-0000-%012d", n) }
+
+// Postgres compares uuid columns by value, so the memory twin must too.
+func TestMemoryTreeStore_ProjectRemovalMatchesRowsWhateverTheCase(t *testing.T) {
+	s := NewMemoryTreeStore()
+	ctx := context.Background()
+	tree, root, x, a, b := testTreeUUID(1), hexUser(1), hexUser(2), hexUser(3), hexUser(4)
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(2), tree, x, 1, ptr(root), ptr(root), intPtr(0)), 2))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(3), tree, a, 2, ptr(x), ptr(x), intPtr(0)), 3))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(4), tree, b, 1, ptr(root), ptr(x), intPtr(1)), 4))
+	up := strings.ToUpper
+
+	err := s.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{up(x)},
+		Responsored: []Responsored{{UserID: up(b), NewSponsorID: root}},
+		Relocated:   []Relocation{{UserID: up(a), ParentID: root, Position: 0, Depth: 1}}}, testNodeUUID(9), 5)
+
+	require.NoError(t, err)
+	rows, err := s.GetByTree(ctx, tree)
+	require.NoError(t, err)
+	assert.Len(t, rows, 3)
+	for _, row := range rows {
+		switch row.UserID {
+		case a:
+			assert.Equal(t, root, *row.ParentID)
+			assert.Equal(t, 0, *row.Position)
+		case b:
+			assert.Equal(t, root, *row.SponsorID)
+		}
+	}
+}
+
+func TestMemoryTreeStore_RefusesARelocationIntoAHeldSlotWhateverTheCase(t *testing.T) {
+	s := NewMemoryTreeStore()
+	ctx := context.Background()
+	tree, root, x, a, b := testTreeUUID(1), hexUser(1), hexUser(2), hexUser(3), hexUser(4)
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(2), tree, x, 1, ptr(root), ptr(root), intPtr(0)), 2))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(3), tree, b, 1, ptr(root), ptr(root), intPtr(1)), 3))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(4), tree, a, 2, ptr(x), ptr(x), intPtr(0)), 4))
+
+	err := s.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{x},
+		Responsored: []Responsored{{UserID: a, NewSponsorID: root}},
+		Relocated:   []Relocation{{UserID: a, ParentID: strings.ToUpper(root), Position: 1, Depth: 1}}}, testNodeUUID(9), 5)
+
+	require.ErrorIs(t, err, ErrSlotConflict)
 }

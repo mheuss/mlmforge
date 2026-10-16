@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Compile-time check.
@@ -355,7 +357,7 @@ func (s *MemoryTreeStore) stageRemoval(treeID string, r RemovalProjection, remov
 	now := time.Now()
 	active := func(user string) int {
 		for i := range rows {
-			if rows[i].TreeID == treeID && rows[i].UserID == user && rows[i].RemovedAt == nil {
+			if rows[i].TreeID == treeID && uuidKey(rows[i].UserID) == uuidKey(user) && rows[i].RemovedAt == nil {
 				return i
 			}
 		}
@@ -424,22 +426,32 @@ func checkRelocationTargets(rows []TreeNodeRow, treeID string, relocated []Reloc
 		if n.TreeID != treeID || n.RemovedAt != nil {
 			continue
 		}
-		active[n.UserID] = true
+		active[uuidKey(n.UserID)] = true
 		if n.ParentID != nil && n.Position != nil {
-			held[slot{*n.ParentID, *n.Position}] = n.UserID
+			held[slot{uuidKey(*n.ParentID), *n.Position}] = n.UserID
 		}
 	}
 	for _, m := range relocated {
-		if !active[m.UserID] {
+		if !active[uuidKey(m.UserID)] {
 			continue
 		}
-		holder, ok := held[slot{m.ParentID, m.Position}]
-		if ok && holder != m.UserID {
+		holder, ok := held[slot{uuidKey(m.ParentID), m.Position}]
+		if ok && uuidKey(holder) != uuidKey(m.UserID) {
 			return fmt.Errorf("%w: tree=%s parent=%s position=%d (held by %s, relocating %s)",
 				ErrSlotConflict, treeID, m.ParentID, m.Position, holder, m.UserID)
 		}
 	}
 	return nil
+}
+
+// uuidKey returns id in canonical form, so two spellings of one uuid compare equal. An id
+// that does not parse is returned unchanged.
+func uuidKey(id string) string {
+	u, err := uuid.Parse(id)
+	if err != nil {
+		return id
+	}
+	return u.String()
 }
 
 // checkActiveSlots reports two active rows of treeID that claim one slot.
@@ -453,7 +465,7 @@ func checkActiveSlots(rows []TreeNodeRow, treeID string) error {
 		if n.TreeID != treeID || n.RemovedAt != nil || n.ParentID == nil || n.Position == nil {
 			continue
 		}
-		key := slot{*n.ParentID, *n.Position}
+		key := slot{uuidKey(*n.ParentID), *n.Position}
 		if other, ok := held[key]; ok {
 			return fmt.Errorf("%w: tree=%s parent=%s position=%d (held by %s and %s)",
 				ErrSlotConflict, treeID, *n.ParentID, *n.Position, other, n.UserID)

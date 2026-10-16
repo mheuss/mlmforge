@@ -421,3 +421,24 @@ meant to remove the new one removes the tracked ones too, and nothing warns.
 
 Run `git status` after any cleanup that matches a pattern. A tracked file the
 cleanup removed shows up as deleted, and `git checkout -- <path>` restores it.
+
+## Mutating the worker under a Go integration test
+
+Mutate a copy of the engine, never the tracked `.rs` files. Editing the tracked
+source leaves `engine/target/` built from a mutant, and the next honest run uses
+it.
+
+1. Copy `engine/` without `target/` into a scratch directory.
+2. Apply the mutation to the copy.
+3. Build the copy with its own `CARGO_TARGET_DIR`.
+4. Copy `internal/networkengine/transport_test.go` into the scratch directory.
+   Point both `workerBinaryPath` and `engineSourceRoot` at the scratch copy.
+5. Run `go test -overlay` with an overlay that replaces `transport_test.go` with
+   that copy.
+
+Overlaying only the binary path works until a tracked `.rs` file changes. The
+suite refuses a worker binary older than the sources under `engineSourceRoot`.
+With that root still on the tracked tree, the scratch binary is compared against
+sources it was not built from. A fix committed after the scratch build makes the
+binary read as stale, and the run stops before any test asserts. Pointing the
+root at the copy compares the binary with the sources it was built from.

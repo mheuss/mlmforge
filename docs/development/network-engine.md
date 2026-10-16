@@ -1488,3 +1488,5 @@ Inside step 3 the row order is undefined. So a relocation that changes parent or
 Each step is one set-based statement, to keep a large removal inside the store's write timeout.
 
 The store does not show the holding tank. The engine rebuilt by replay or from a snapshot does.
+
+The engine refuses to place a user who is in the holding tank. `add_node`, `add_node_at` and a `check_mutation` for `add_node_at` answer `USER_ALREADY_EXISTS`. `place_from_tank` is the only way out of the tank, and the event path has no event for it.

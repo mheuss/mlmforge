@@ -49,6 +49,9 @@ pub enum TreeError {
     #[error("user {0} not in holding tank")]
     UserNotInHoldingTank(Uuid),
 
+    #[error("user {0} is in the holding tank")]
+    UserInHoldingTank(Uuid),
+
     #[error("spillover direction not supported")]
     UnsupportedSpillover,
 

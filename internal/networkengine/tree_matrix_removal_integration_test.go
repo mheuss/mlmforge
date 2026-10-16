@@ -414,3 +414,44 @@ func runSeededMatrixRemoval(t *testing.T, store TreeStore, engine *EngineClient,
 	require.NoError(t, err)
 	assert.Len(t, rows, nodes-gone, "seed %d, %s removal of node %d", seed, mode, removed)
 }
+
+func TestTreeWriter_RefusesToPlaceAUserInTheHoldingTank(t *testing.T) {
+	it := newWriterIntegration(t)
+	ctx := context.Background()
+	tree, root, a, b := testTreeUUID(5841), testUserUUID(1), testUserUUID(2), testUserUUID(3)
+	width, spillover := 2, "breadth_first"
+	res, err := it.writer(t).AddRoot(ctx, AddRootRequest{TreeID: tree, UserID: root, SponsorID: root,
+		TreeType: treeTypeMatrix, MatrixWidth: &width, MatrixSpillover: &spillover, EnrolledAt: writeTime})
+	require.NoError(t, err)
+	require.NoError(t, res.ProjectionErr)
+	res, err = it.writer(t).Place(ctx, PlaceRequest{TreeID: tree, UserID: a, ParentID: root, SponsorID: root,
+		Position: intPtr(0), EnrolledAt: writeTime.Add(time.Hour)})
+	require.NoError(t, err)
+	require.NoError(t, res.ProjectionErr)
+	res, err = it.writer(t).Remove(ctx, RemoveRequest{TreeID: tree, UserID: a, RemovedAt: writeTime, PruningMode: PruningHoldingTank})
+	require.NoError(t, err)
+	require.NoError(t, res.ProjectionErr)
+
+	_, err = it.writer(t).Place(ctx, PlaceRequest{TreeID: tree, UserID: a, ParentID: root, SponsorID: root,
+		Position: intPtr(1), EnrolledAt: writeTime.Add(2 * time.Hour)})
+
+	var engineErr *EngineError
+	require.ErrorAs(t, err, &engineErr)
+	assert.Equal(t, "USER_ALREADY_EXISTS", engineErr.Code)
+	assert.Contains(t, engineErr.Message, "holding tank")
+	stored, err := it.events.ReadStream(ctx, TreeStreamName(tree), 1, 0)
+	require.NoError(t, err)
+	assert.Len(t, stored, 3)
+
+	res, err = it.writer(t).Place(ctx, PlaceRequest{TreeID: tree, UserID: b, ParentID: root, SponsorID: root,
+		Position: intPtr(1), EnrolledAt: writeTime.Add(3 * time.Hour)})
+	require.NoError(t, err)
+	require.NoError(t, res.ProjectionErr)
+	loaded := it.engine(t)
+	_, err = NewTreeWriter(it.events, it.store, NewMemorySnapshotStore(), loaded, NewPostgresTreeLocker(it.dsn)).
+		Load(ctx, LoadRequest{TreeID: tree, TreeType: treeTypeMatrix, MatrixWidth: &width, MatrixSpillover: &spillover})
+	require.NoError(t, err)
+	taken, err := loaded.TakeSnapshot(ctx, tree)
+	require.NoError(t, err)
+	assert.NoError(t, it.engine(t).RestoreSnapshot(ctx, tree, taken.TreeType, taken.Data))
+}

@@ -234,6 +234,9 @@ impl MatrixTree {
         if self.arena.index.contains_key(&user_id) {
             return Err(TreeError::UserAlreadyExists(user_id));
         }
+        if self.holding_tank.iter().any(|e| e.user_id == user_id) {
+            return Err(TreeError::UserInHoldingTank(user_id));
+        }
         let parent_idx = self.arena.resolve(parent_id)?;
         self.arena.resolve(sponsor_id).map_err(|e| match e {
             TreeError::UserNotFound(id) => TreeError::SponsorNotFound(id),
@@ -342,6 +345,9 @@ impl MatrixTree {
         }
         if self.arena.index.contains_key(&user_id) {
             return Err(TreeError::UserAlreadyExists(user_id));
+        }
+        if self.holding_tank.iter().any(|e| e.user_id == user_id) {
+            return Err(TreeError::UserInHoldingTank(user_id));
         }
         let sponsor_idx = self.arena.resolve(sponsor_id).map_err(|e| match e {
             TreeError::UserNotFound(id) => TreeError::SponsorNotFound(id),
@@ -2263,6 +2269,56 @@ mod tests {
         let tank = tree.get_holding_tank(None);
         assert_eq!(tank.len(), 1);
         assert_eq!(tank[0].user_id, test_uuid(2));
+    }
+
+    fn tree_with_tanked_user() -> MatrixTree {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
+            .unwrap();
+        tree
+    }
+
+    #[test]
+    fn check_add_node_at_refuses_a_user_in_the_holding_tank() {
+        let tree = tree_with_tanked_user();
+
+        let result = tree.check_add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 1);
+
+        assert_eq!(result, Err(TreeError::UserInHoldingTank(test_uuid(2))));
+    }
+
+    #[test]
+    fn add_node_at_refuses_a_user_in_the_holding_tank() {
+        let mut tree = tree_with_tanked_user();
+
+        let result = tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 1, 3000);
+
+        assert_eq!(result, Err(TreeError::UserInHoldingTank(test_uuid(2))));
+        assert!(!tree.contains(test_uuid(2)));
+        assert_eq!(tree.get_holding_tank(None).len(), 1);
+    }
+
+    #[test]
+    fn add_node_refuses_a_user_in_the_holding_tank() {
+        let mut tree = tree_with_tanked_user();
+
+        let result = tree.add_node(test_uuid(2), test_uuid(1), 3000);
+
+        assert_eq!(result, Err(TreeError::UserInHoldingTank(test_uuid(2))));
+        assert!(!tree.contains(test_uuid(2)));
+        assert_eq!(tree.get_holding_tank(None).len(), 1);
+    }
+
+    #[test]
+    fn place_from_tank_still_places_a_tanked_user() {
+        let mut tree = tree_with_tanked_user();
+
+        tree.place_from_tank(test_uuid(2), test_uuid(1), 0).unwrap();
+
+        assert!(tree.contains(test_uuid(2)));
+        assert!(tree.get_holding_tank(None).is_empty());
     }
 
     #[test]

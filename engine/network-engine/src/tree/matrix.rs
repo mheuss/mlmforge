@@ -2712,7 +2712,7 @@ mod tests {
 
     #[test]
     fn holding_tank_removal_reports_moved_recruits_in_breadth_first_order() {
-        // A fresh tree per iteration. One tree repeats its own hash order.
+        // Removal is destructive, so each iteration builds its own tree.
         for _ in 0..256 {
             let mut tree = tree_with_recruits_outside_a_subtree();
 
@@ -2727,7 +2727,7 @@ mod tests {
 
     #[test]
     fn holding_tank_removal_appends_recruits_to_the_new_sponsor_in_breadth_first_order() {
-        // A fresh tree per iteration. One tree repeats its own hash order.
+        // Removal is destructive, so each iteration builds its own tree.
         for _ in 0..256 {
             let mut tree = tree_with_recruits_outside_a_subtree();
 
@@ -2746,7 +2746,7 @@ mod tests {
 
     #[test]
     fn holding_tank_removal_reports_the_breadth_first_sponsorless_recruiter() {
-        // A fresh tree per iteration. One tree repeats its own hash order.
+        // Removal is destructive, so each iteration builds its own tree.
         for _ in 0..256 {
             let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
             tree.add_root(test_uuid(1), 0).unwrap();

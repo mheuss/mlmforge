@@ -589,16 +589,15 @@ impl Arena {
     ///
     /// Call before any mutation.
     pub(crate) fn check_sponsored_removable(&self, removed: &[NodeIndex]) -> Result<(), TreeError> {
-        let order = removed;
-        let removed: HashSet<NodeIndex> = order.iter().copied().collect();
+        let removed_set: HashSet<NodeIndex> = removed.iter().copied().collect();
         // The first failing node in the caller's order is the one reported, so
         // the error does not depend on hash order.
-        for &idx in order {
-            let survivors = self.surviving_recruits(idx, &removed);
+        for &idx in removed {
+            let survivors = self.surviving_recruits(idx, &removed_set);
             if survivors.is_empty() {
                 continue;
             }
-            let Some(target) = self.surviving_sponsor(idx, &removed)? else {
+            let Some(target) = self.surviving_sponsor(idx, &removed_set)? else {
                 return Err(TreeError::SponsorlessWithRecruits {
                     user_id: self.nodes[idx.0].user_id,
                     surviving_sponsored: survivors.len(),
@@ -619,28 +618,27 @@ impl Arena {
     /// Moves the recruits of every node in `removed` onto their nearest
     /// surviving sponsor, and reports who moved.
     pub(crate) fn reparent_sponsored(&mut self, removed: &[NodeIndex]) -> Vec<Responsored> {
-        // A duplicate would move the same recruits twice and push them onto
-        // the target's list twice. Collecting deduplicates in release too,
-        // where a debug_assert would not.
-        let order = removed;
-        let removed: HashSet<NodeIndex> = order.iter().copied().collect();
-        // Plan in the caller's order, skipping repeats, so the moves come out
-        // in that order rather than hash order.
+        let removed_set: HashSet<NodeIndex> = removed.iter().copied().collect();
+        // Plan in the caller's order, so the moves come out in that order
+        // rather than hash order.
         let mut planned: HashSet<NodeIndex> = HashSet::new();
         // Resolve every target before moving anything. The apply loop writes
         // the sponsor field this walk reads, so folding the two together
         // would change the answer for later entries.
-        let plan: Vec<(NodeIndex, Vec<NodeIndex>, Option<NodeIndex>)> = order
+        let plan: Vec<(NodeIndex, Vec<NodeIndex>, Option<NodeIndex>)> = removed
             .iter()
             .copied()
+            // A repeat would move the same recruits twice and push them onto
+            // the target's list twice, so it is skipped here, in release too,
+            // where a debug_assert would not catch it.
             .filter(|idx| planned.insert(*idx))
             .map(|idx| {
-                let survivors = self.surviving_recruits(idx, &removed);
+                let survivors = self.surviving_recruits(idx, &removed_set);
                 // Skip the sponsor walk when there is nothing to move.
                 let target = if survivors.is_empty() {
                     None
                 } else {
-                    self.surviving_sponsor(idx, &removed)
+                    self.surviving_sponsor(idx, &removed_set)
                         .expect("sponsor chain did not terminate")
                 };
                 (idx, survivors, target)
@@ -1958,6 +1956,28 @@ mod tests {
         assert_eq!(arena.nodes[leaf.0].sponsor, Some(root));
         assert!(arena.nodes[root.0].sponsored.contains(&leaf));
         assert!(arena.nodes[mid.0].sponsored.is_empty());
+    }
+
+    #[test]
+    fn reparent_sponsored_moves_a_repeated_node_s_recruits_once() {
+        let mut arena = Arena::new();
+        let root = arena.alloc_slot(make_node(test_uuid(1), None, 0));
+        let mid = arena.alloc_slot(make_node(test_uuid(2), Some(root), 1));
+        let leaf = arena.alloc_slot(make_node(test_uuid(3), Some(mid), 2));
+        arena.nodes[root.0].sponsored = vec![mid];
+        arena.nodes[mid.0].sponsor = Some(root);
+        arena.nodes[mid.0].sponsored = vec![leaf];
+        arena.nodes[leaf.0].sponsor = Some(mid);
+
+        let moved = arena.reparent_sponsored(&[mid, mid]);
+
+        assert_eq!(moved.len(), 1);
+        let times_listed = arena.nodes[root.0]
+            .sponsored
+            .iter()
+            .filter(|s| **s == leaf)
+            .count();
+        assert_eq!(times_listed, 1);
     }
 
     #[test]

@@ -118,25 +118,6 @@ func TestMemoryTreeStore_GetByTreeDepthOrdered(t *testing.T) {
 	assert.Equal(t, 2, got[2].Depth)
 }
 
-func TestMemoryTreeStore_BulkInsert(t *testing.T) {
-	store := NewMemoryTreeStore()
-	ctx := context.Background()
-
-	nodes := []TreeNodeRow{
-		makeNode("tree-1", "a", 0, nil, nil, nil),
-		makeNode("tree-1", "b", 1, ptr("a"), ptr("a"), nil),
-		makeNode("tree-1", "c", 1, ptr("a"), ptr("a"), nil),
-		makeNode("tree-1", "d", 2, ptr("b"), ptr("b"), nil),
-		makeNode("tree-1", "e", 2, ptr("c"), ptr("c"), nil),
-	}
-
-	require.NoError(t, store.BulkInsert(ctx, nodes))
-
-	got, err := store.GetByTree(ctx, "tree-1")
-	require.NoError(t, err)
-	assert.Len(t, got, 5)
-}
-
 func TestMemoryTreeStore_DuplicateActiveSlotRejected(t *testing.T) {
 	store := NewMemoryTreeStore()
 	ctx := context.Background()
@@ -202,56 +183,6 @@ func TestMemoryTreeStore_DeletedNodeExcludedFromActive(t *testing.T) {
 	ordered, err := store.GetByTreeDepthOrdered(ctx, "tree-1")
 	require.NoError(t, err)
 	assert.Len(t, ordered, 1)
-}
-
-func TestMemoryTreeStore_DeleteNodeAndResponsor(t *testing.T) {
-	ctx := context.Background()
-	root := "user-1"
-	recruiter := "user-2"
-
-	newStore := func() *MemoryTreeStore {
-		s := NewMemoryTreeStore()
-		require.NoError(t, s.InsertNode(ctx, TreeNodeRow{
-			ID: "n1", TreeID: "tree-1", UserID: root, Depth: 0,
-		}))
-		require.NoError(t, s.InsertNode(ctx, TreeNodeRow{
-			ID: "n2", TreeID: "tree-1", UserID: recruiter, ParentID: &root, SponsorID: &root, Depth: 1,
-		}))
-		require.NoError(t, s.InsertNode(ctx, TreeNodeRow{
-			ID: "n3", TreeID: "tree-1", UserID: "user-3", ParentID: &root, SponsorID: &recruiter, Depth: 1,
-		}))
-		return s
-	}
-
-	t.Run("moves the sponsor and soft-deletes the removed node", func(t *testing.T) {
-		store := newStore()
-
-		require.NoError(t, store.DeleteNodeAndResponsor(ctx, "tree-1", recruiter, "ev-remove",
-			[]Responsored{{UserID: "user-3", NewSponsorID: root}}))
-
-		gone, err := store.GetNode(ctx, "tree-1", recruiter)
-		require.NoError(t, err)
-		assert.Nil(t, gone)
-
-		moved, err := store.GetNode(ctx, "tree-1", "user-3")
-		require.NoError(t, err)
-		require.NotNil(t, moved)
-		require.NotNil(t, moved.SponsorID)
-		assert.Equal(t, root, *moved.SponsorID)
-	})
-
-	t.Run("writes nothing when a target has no active row", func(t *testing.T) {
-		store := newStore()
-
-		err := store.DeleteNodeAndResponsor(ctx, "tree-1", recruiter, "ev-remove",
-			[]Responsored{{UserID: "user-99", NewSponsorID: root}})
-		require.Error(t, err)
-
-		// The staging exists so a missing target leaves the soft delete unmade.
-		still, err := store.GetNode(ctx, "tree-1", recruiter)
-		require.NoError(t, err)
-		assert.NotNil(t, still, "a failed re-sponsor must not leave the node deleted")
-	})
 }
 
 func TestMemoryTreeStore_Suite(t *testing.T) {

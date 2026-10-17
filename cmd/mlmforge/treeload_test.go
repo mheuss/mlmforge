@@ -417,7 +417,7 @@ func TestRunTreeLoad_ReportsARedeliveryAheadOfTheLoadedLine(t *testing.T) {
 
 func TestRunTreeLoad_ReportsARedeliveryThatLeftTheVersionBehind(t *testing.T) {
 	loader := &resultLoader{res: networkengine.LoadResult{
-		CaughtUp:       &networkengine.CaughtUpEvent{EventID: "e2", Version: 2, Type: networkengine.EventTypeNodeRemoved},
+		CaughtUp:       &networkengine.CaughtUpEvent{EventID: "e2", Version: 2, Type: networkengine.EventTypeNodePlaced},
 		ProjectedAfter: &networkengine.ProjectionObservation{Version: 1, Found: true}, Nodes: 1,
 	}}
 	var out bytes.Buffer

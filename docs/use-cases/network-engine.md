@@ -519,7 +519,7 @@ for _, node := range ordered[1:] {
 
 **Solution:** Three layers. A gate at the top of the handler rejects everything checkable from the payload alone (stream identity, known `tree_type`, per-type position rules) before either projection, so a rejected event leaves no trace outside the EventStore. Partial unique indexes arbitrate what the gate cannot see. `idx_tree_nodes_tree_parent_position_active` (migration 000004) resolves two events claiming one slot. `idx_tree_nodes_tree_root_active` (migration 000006) resolves two claiming to root one tree. Both resolve at the insert, loudly, with the store still reloadable. A root is outside the slot index. That index covers only rows carrying a position. That is why the root needed its own index. The insert names the primary key as its `ON CONFLICT` arbiter and does nothing on a match. A row already carrying this event's id is skipped and reported rather than raising. A row conflicting only on one of the partial unique indexes raises. `BulkInsert` shares that statement inside one transaction. A raised primary-key violation there would abort the batch before the store could report the skip. The batch is still discarded on any conflict it does report. The layers do not make the two projections atomic. The store insert still lands before the engine call. An engine failure leaves a stored row whose engine side is unconfirmed. Since HEU-576 a redelivery of that event completes the engine side rather than failing at the insert.
 
-**Notes:** Distinct from UC-NET-012, which preflights an irreversible bulk replay. Here each event is individually recoverable, so the gate stays thin (payload-checkable rules only) and the database owns cross-event races. The gate cannot check the matrix width bound. The placement payload does not carry the width, which lives on the stream's first event (HEU-554). The u8 ceiling is gated. The width..255 band is the documented residual. Redelivering a placement whose projection is still current succeeds (HEU-576), however old it is. It stops being current once its node was removed, or once a later event re-placed the user, and is then refused rather than reapplied. It is also refused when its parent's row was since removed (HEU-813). That scope is the event in flight. `TreeWriter` provides it (UC-NET-027). A redelivered removal that the engine refuses converges when its own tombstone is in the store (HEU-811). That holds even when a later placement of the user never reached the engine. One arriving after a later placement landed in full is below the tree's projected version. The store refuses it (HEU-857). The engine may still have applied it. HEU-789 tracks that for when a caller redelivers old events. `TreeWriter` does not reach that case. Catch-up redelivers only the stream's last event. A removal followed by a later placement is no longer the last event. `MemoryTreeStore` mirrors all four constraints and checks the row id in its own pass. That makes the discriminator unit-testable against the double. The two stores do not agree on which constraint they name when several are violated at once (HEU-794).
+**Notes:** Distinct from UC-NET-012, which preflights an irreversible bulk replay. Here each event is individually recoverable, so the gate stays thin (payload-checkable rules only) and the database owns cross-event races. The gate cannot check the matrix width bound. The placement payload does not carry the width, which lives on the stream's first event (HEU-554). The u8 ceiling is gated. The width..255 band is the documented residual. Redelivering a placement whose projection is still current succeeds (HEU-576), however old it is. It stops being current once its node was removed, or once a later event re-placed the user, and is then refused rather than reapplied. It is also refused when its parent's row was since removed (HEU-813). That scope is the event in flight. `TreeWriter` provides it (UC-NET-027). A redelivered removal that the engine refuses converges when its own tombstone is in the store (HEU-811). That holds even when a later placement of the user never reached the engine. A removal with no stamp follows the redelivery rules in `docs/development/network-engine.md` (HEU-868). One arriving after a later placement landed in full is below the tree's projected version. The store refuses it (HEU-857). The engine may still have applied it. HEU-789 tracks that for when a caller redelivers old events. `TreeWriter` does not reach that case. Catch-up redelivers only the stream's last event. A removal followed by a later placement is no longer the last event. `MemoryTreeStore` mirrors all four constraints and checks the row id in its own pass. That makes the discriminator unit-testable against the double. The two stores do not agree on which constraint they name when several are violated at once (HEU-794).
 
 ---
 
@@ -1020,13 +1020,18 @@ err := c.withRetry(ctx, op, treeID, userID, func() error {
     if gerr != nil {
         return reconcileInconclusive, gerr
     }
-    // Only an active row is divergence. A tombstone and an absent row both
-    // mean the store agrees the user is gone.
+    // Without this event's stamp, an active row is divergence.
     if row != nil && row.RemovedAt == nil {
         return reconcileDiverged, fmt.Errorf("the store holds an active row the engine refused")
     }
-    alreadyProjected = true
-    return reconcileConverged, nil
+    // This read runs second, so it can see a stamp another writer committed
+    // after the stamp read. Trust the later read.
+    if row != nil && row.RemovedByEventID != nil && sameUUID(*row.RemovedByEventID, eventID) {
+        alreadyProjected = true
+        return reconcileConverged, nil
+    }
+    // Any other tombstone, or no row, is an event that replay cannot apply.
+    return reconcileDiverged, unprojectable(fmt.Errorf("no row carries this removal's stamp, and the read returned %s", describeExistingRow(row)))
 })
 if err != nil {
     return err
@@ -1038,7 +1043,7 @@ if alreadyProjected {
 
 **When to use this pattern:** any retry loop over a remote mutation where the remote can refuse a call because it already did the work. Reach for it once "this failed" and "this was already done" arrive as the same error.
 
-**Notes:** Four outcomes rather than two, because each pair splits on a different question. `notApplicable` and `inconclusive` both retry, but the first says the error is not one reconcile can speak to and the second says the inspection itself failed. Keeping `inconclusive` apart from `diverged` is what stops a timed-out query being reported as the engine disagreeing. `diverged` returning a nil error is backfilled with the engine error at the call site, because reporting the one outcome that means the two systems disagree as success is the worst answer the loop can give. The three handlers in `tree_consumer.go` are the worked examples, and `handleNodeRemoved` is the one that needs the flag, since its engine reply carries the only copy of the moved list. Related: UC-NET-014, which owns the gate and the database backstop this sits behind. The Usage block is the removal path's shape. The stamp read comes before the tree-and-user read. That order lets a refused redelivery converge on its own tombstone when a later placement never reached the engine (HEU-811). A placement redelivered after its parent was removed is refused before it reaches its guard (HEU-813). The root path's damage is refused at the store by migration 000006 (HEU-810).
+**Notes:** Four outcomes rather than two, because each pair splits on a different question. `notApplicable` and `inconclusive` both retry, but the first says the error is not one reconcile can speak to and the second says the inspection itself failed. Keeping `inconclusive` apart from `diverged` is what stops a timed-out query being reported as the engine disagreeing. `diverged` returning a nil error is backfilled with the engine error at the call site, because reporting the one outcome that means the two systems disagree as success is the worst answer the loop can give. The three handlers in `tree_consumer.go` are the worked examples, and `handleNodeRemoved` is the one that needs the flag, since its engine reply carries the only copy of the moved list. Related: UC-NET-014, which owns the gate and the database backstop this sits behind. The Usage block is the removal path's shape. The stamp read comes before the tree-and-user read. That order lets a refused redelivery converge on its own tombstone when a later placement never reached the engine (HEU-811). The tree-and-user read checks the stamp again, because another writer can project the removal between the two reads (HEU-868). A placement redelivered after its parent was removed is refused before it reaches its guard (HEU-813). The root path's damage is refused at the store by migration 000006 (HEU-810).
 
 ---
 
@@ -1202,7 +1207,7 @@ if res.ProjectionErr != nil {
 }
 ```
 
-**Notes:** A rejected event did not happen. Rejecting a removal leaves the user in the tree. Version 1 still sets the tree's shape after its root is rejected. Build a new writer over a new worker for each call, as UC-NET-027 says for writes. A write or load that meets a pending rejection refuses with `RejectionPendingError`. Related: UC-NET-027, UC-NET-030.
+**Notes:** A rejected event did not happen. Rejecting a removal leaves the user in the tree. Version 1 still sets the tree's shape after its root is rejected. Build a new writer over a new worker for each call, as UC-NET-027 says for writes. A write or load that meets a pending rejection refuses with `RejectionPendingError`. The consumer refuses a removal as unprojectable when the engine answers user-not-found, no row carries this removal's stamp, and the store holds no row for the user or only tombstones. `Reject` clears it (HEU-868). Related: UC-NET-027, UC-NET-030.
 
 ---
 

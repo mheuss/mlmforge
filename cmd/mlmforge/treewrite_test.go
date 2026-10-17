@@ -293,6 +293,27 @@ func TestTreePlaceCmd_ExitsZeroForAStoreObservedPastARefusedEvent(t *testing.T) 
 		"the event at version 2 was not projected. The tree's projected version is 3.\n", out.stderr.String())
 }
 
+// The result a removal reports when another writer's catch-up projected its
+// event first.
+func TestTreeRemoveCmd_PromisesNoRedeliveryForAnEventAnotherWriterProjected(t *testing.T) {
+	w := &recordingWriter{result: networkengine.WriteResult{
+		Stream: "tree-t", EventID: "e5", Version: 5,
+		ProjectionErr: errors.New("project event e5 at version 5 in stream tree-t: remove node and re-sponsor recruits: " +
+			"tombstoning removed users [u] in tree t matched 0 of 1 active rows"),
+		Observed: &networkengine.ProjectionObservation{Version: 5, Found: true},
+	}}
+
+	out, err := runWriteCmd(t, w, "remove", "--tree-id", "t", "--user-id", "u")
+
+	require.NoError(t, err, "a store observed at the event's version exits 0")
+	assert.Equal(t, "appended event e5 at version 5 to stream tree-t; projection returned an error\n", out.stdout.String())
+	assert.Equal(t, "warning: event e5 at version 5 was appended and its projection returned an error: "+
+		"project event e5 at version 5 in stream tree-t: remove node and re-sponsor recruits: "+
+		"tombstoning removed users [u] in tree t matched 0 of 1 active rows. The tree's projected version is 5.\n",
+		out.stderr.String())
+	assert.NotContains(t, out.stderr.String(), "redelivers")
+}
+
 func TestTreeWriteCmds_NameTheirExitCodesInTheirHelp(t *testing.T) {
 	var named []string
 	for _, c := range newTreeCmd().Commands() {

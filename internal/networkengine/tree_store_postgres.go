@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -30,6 +31,18 @@ const insertNodeSQL = `INSERT INTO tree_nodes (id, tree_id, user_id, parent_id, 
 
 const softDeleteNodeSQL = `UPDATE tree_nodes SET removed_at = now(), updated_at = now()
 		 WHERE tree_id = $1 AND user_id = $2 AND removed_at IS NULL`
+
+const softDeleteRootSQL = `UPDATE tree_nodes SET removed_at = $3, updated_at = $3
+		 WHERE tree_id = $1 AND user_id = $2 AND removed_at IS NULL`
+
+// tombstoneTime reads the clock once inside tx.
+func tombstoneTime(ctx context.Context, tx pgx.Tx) (time.Time, error) {
+	var at time.Time
+	if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&at); err != nil {
+		return time.Time{}, fmt.Errorf("read the tombstone time: %w", err)
+	}
+	return at, nil
+}
 
 // Partial unique index names on tree_nodes. pgx reports the index name in
 // ConstraintName, which is what tells them apart.
@@ -350,7 +363,7 @@ func (s *PostgresTreeStore) ProjectInsert(ctx context.Context, node TreeNodeRow,
 }
 
 const (
-	tombstoneRemovedSQL = `UPDATE tree_nodes SET removed_at = now(), updated_at = now(), removed_by_event_id = $3
+	tombstoneRemovedSQL = `UPDATE tree_nodes SET removed_at = $4, updated_at = $4, removed_by_event_id = $3
 		 WHERE tree_id = $1 AND user_id = ANY($2::text[]::uuid[]) AND removed_at IS NULL`
 	responsorRemovedSQL = `UPDATE tree_nodes AS n SET sponsor_id = m.new_sponsor_id, updated_at = now()
 		 FROM unnest($2::text[]::uuid[], $3::text[]::uuid[]) AS m(user_id, new_sponsor_id)
@@ -379,7 +392,11 @@ func (s *PostgresTreeStore) ProjectRemoval(
 func projectRemoval(ctx context.Context, tx pgx.Tx, treeID string, r RemovalProjection, removalEventID string) error {
 	// Tombstones first. A relocation run before them collides with the slot a
 	// removed row still holds.
-	tag, err := tx.Exec(ctx, tombstoneRemovedSQL, treeID, r.Users, removalEventID)
+	at, err := tombstoneTime(ctx, tx)
+	if err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, tombstoneRemovedSQL, treeID, r.Users, removalEventID, at)
 	if err != nil {
 		return fmt.Errorf("tombstone removed users in tree %s: %w", treeID, err)
 	}
@@ -427,12 +444,16 @@ func projectRemoval(ctx context.Context, tx pgx.Tx, treeID string, r RemovalProj
 	return nil
 }
 
-const softDeleteRejectedSQL = `UPDATE tree_nodes SET removed_at = now(), updated_at = now()
+const softDeleteRejectedSQL = `UPDATE tree_nodes SET removed_at = $3, updated_at = $3
 		 WHERE tree_id = $1 AND id = $2 AND removed_at IS NULL`
 
 func (s *PostgresTreeStore) ProjectRejection(ctx context.Context, treeID, rejectedEventID string, eventVersion int64) error {
 	return s.project(ctx, treeID, eventVersion, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, softDeleteRejectedSQL, treeID, rejectedEventID)
+		at, err := tombstoneTime(ctx, tx)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, softDeleteRejectedSQL, treeID, rejectedEventID, at)
 		return err
 	})
 }
@@ -492,11 +513,15 @@ func (s *PostgresTreeStore) UndoRootProjection(ctx context.Context, treeID, user
 	if err != nil {
 		return err
 	}
+	at, err := tombstoneTime(ctx, tx)
+	if err != nil {
+		return err
+	}
 	if projected != eventVersion {
 		return fmt.Errorf("tree %s has projected version %d, not %d; the root row for %s was not deleted",
 			treeID, projected, eventVersion, userID)
 	}
-	tag, err := tx.Exec(ctx, softDeleteNodeSQL, treeID, userID)
+	tag, err := tx.Exec(ctx, softDeleteRootSQL, treeID, userID, at)
 	if err != nil {
 		return err
 	}

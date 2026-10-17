@@ -221,6 +221,19 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			wantKind:         TreeLoadDataInvalid,
 		},
 		{
+			// The empty row and b form a sponsor cycle.
+			name:     "empty user ID inside a sponsor cycle",
+			treeType: treeTypeUnilevel,
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+				makeNode("t", "", 1, ptr("u0"), ptr("b"), nil),
+				makeNode("t", "b", 1, ptr("u0"), ptr(""), nil),
+			},
+			engineFailsAfter: -1,
+			want:             `tree t has a row with an empty user ID (row ID "id-")`,
+			wantKind:         TreeLoadDataInvalid,
+		},
+		{
 			name:     "two roots",
 			treeType: treeTypeUnilevel,
 			nodes: spacedNodes([]TreeNodeRow{

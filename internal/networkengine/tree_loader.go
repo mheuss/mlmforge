@@ -592,6 +592,8 @@ func cycleError(treeID string, nodes []TreeNodeRow, ordered []*TreeNodeRow, byID
 
 	seenAt := make(map[string]int, len(stuck))
 	var path []string
+	// "" ends the walk, so a stuck node with an empty user ID would stop it
+	// before any cycle is named.
 	for cur := stuck[0]; cur != ""; cur = unmet(cur) {
 		if idx, ok := seenAt[cur]; ok {
 			cycle := append(append([]string{}, path[idx:]...), cur)

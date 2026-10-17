@@ -853,3 +853,38 @@ fn stairstep_walk_two_amounts_do_not_depend_on_snapshot_map_order() {
         "distinct (cv_amount, dollar_amount) across runs: {shown:?}"
     );
 }
+
+proptest! {
+    #[test]
+    fn stairstep_breakaway_group_volume_sums_in_user_id_order(
+        pvs in prop::array::uniform4(0.01..1000.0f64),
+    ) {
+        let tree = heu_936_chain();
+        let (plan, structure) = heu_936_plan();
+        let volume = vec![VolumeSource {
+            source_id: uuid_from_index(4),
+            cv_amount: 100.0,
+        }];
+        let snapshots = heu_936_snapshots([150.0, pvs[0], pvs[1], pvs[2], pvs[3]]);
+        let mut expected = 0.0;
+        for pv in pvs {
+            expected += pv;
+        }
+        let earnings = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
+        let from_breakaway: Vec<_> = earnings
+            .iter()
+            .filter(|e| e.source_id == uuid_from_index(1))
+            .collect();
+        prop_assert_eq!(from_breakaway.len(), 1);
+        prop_assert_eq!(from_breakaway[0].cv_amount.to_bits(), expected.to_bits());
+    }
+}

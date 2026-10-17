@@ -92,7 +92,7 @@ func TestTreeWriter_LoadsATreeWithNothingBehindWithoutRedelivering(t *testing.T)
 	res, err := w.Load(context.Background(), loadRequest())
 
 	require.NoError(t, err)
-	assert.Equal(t, LoadResult{Nodes: 2}, res)
+	assert.Equal(t, LoadResult{TreeID: writerTree, Nodes: 2}, res)
 	assert.Equal(t, 1, store.rowsReads, "a load with nothing behind read the rows a different number of times")
 	assert.Zero(t, store.treeReads, "a load with nothing behind read the rows again after loading")
 }
@@ -107,6 +107,7 @@ func TestTreeWriter_LoadRedeliversTheLastEventWhenTheStoreIsOneBehind(t *testing
 
 	require.NoError(t, err)
 	assert.Equal(t, LoadResult{
+		TreeID:         writerTree,
 		CaughtUp:       &CaughtUpEvent{EventID: pending.ID, Version: 2, Type: EventTypeNodePlaced},
 		ProjectedAfter: &ProjectionObservation{Version: 2, Found: true},
 		Nodes:          2,
@@ -125,7 +126,7 @@ func TestTreeWriter_LoadLeavesAnEmptyStreamAsItFindsIt(t *testing.T) {
 	res, err := w.Load(context.Background(), loadRequest())
 
 	require.NoError(t, err)
-	assert.Equal(t, LoadResult{}, res)
+	assert.Equal(t, LoadResult{TreeID: writerTree}, res)
 	_, found := projectedVersion(t, env)
 	assert.False(t, found, "the load created a projection row")
 }
@@ -215,6 +216,7 @@ func TestTreeWriter_LoadReportsARedeliveryThatLeftTheVersionBehind(t *testing.T)
 
 	require.NoError(t, err)
 	assert.Equal(t, LoadResult{
+		TreeID:         writerTree,
 		CaughtUp:       &CaughtUpEvent{EventID: pending.ID, Version: 2, Type: EventTypeNodeRemoved},
 		ProjectedAfter: &ProjectionObservation{Version: 1, Found: true},
 		Nodes:          1,

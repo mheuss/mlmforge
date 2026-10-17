@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -169,6 +170,27 @@ func TestTreeLoad_SucceedsForAWellFormedTree(t *testing.T) {
 	// one at a terminal. Root plus two children.
 	require.Equal(t, "loaded tree "+tree+" (3 nodes)\n", out.stdout.String())
 	require.Empty(t, out.stderr.String())
+}
+
+func TestTreeLoad_PrintsTheCanonicalTreeID(t *testing.T) {
+	if pgContainer == nil {
+		t.Skip("Postgres container not available")
+	}
+	worker := requireWorker(t)
+	_ = pgContainer.NewPool(t)
+	tree := testTreeID(5)
+	seedTree(t, worker, tree, 1)
+
+	out, err := runTreeCmd(t,
+		"load",
+		"--db-url", pgContainer.DSN,
+		"--worker", worker,
+		"--tree-id", strings.ToUpper(tree),
+		"--tree-type", "unilevel",
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, "loaded tree "+tree+" (2 nodes)\n", out.stdout.String())
 }
 
 // The rows have to leave Postgres and reach the loader. A tree holding only a

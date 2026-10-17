@@ -142,6 +142,22 @@ fn accumulate_leg_volumes(
     leg_volumes
 }
 
+/// Scales each owner's earnings pro rata when their total exceeds `cap`.
+fn apply_aggregate_cap(earnings: &mut [BinaryCommissionEarning], cap: f64) {
+    let mut owner_totals: HashMap<Uuid, f64> = HashMap::new();
+    for e in earnings.iter() {
+        *owner_totals.entry(e.earner_id).or_insert(0.0) += e.dollar_amount;
+    }
+    for e in earnings.iter_mut() {
+        let total = owner_totals[&e.earner_id];
+        if total > cap {
+            let scale = cap / total;
+            e.dollar_amount *= scale;
+            e.capped = true;
+        }
+    }
+}
+
 /// Calculate binary pairing commissions for a commission period.
 ///
 /// Pure function. Takes a binary tree, config, distributor snapshots,
@@ -288,18 +304,7 @@ pub fn calculate_binary_pairing(
             MultiPositionCapMode::Aggregate
         ) && ownership.is_some()
         {
-            let mut owner_totals: HashMap<Uuid, f64> = HashMap::new();
-            for e in &earnings {
-                *owner_totals.entry(e.earner_id).or_insert(0.0) += e.dollar_amount;
-            }
-            for e in &mut earnings {
-                let total = owner_totals[&e.earner_id];
-                if total > cap {
-                    let scale = cap / total;
-                    e.dollar_amount *= scale;
-                    e.capped = true;
-                }
-            }
+            apply_aggregate_cap(&mut earnings, cap);
         }
     }
 
@@ -509,18 +514,7 @@ fn calculate_binary_cycle_step(
             MultiPositionCapMode::Aggregate
         ) && ownership.is_some()
         {
-            let mut owner_totals: HashMap<Uuid, f64> = HashMap::new();
-            for e in &earnings {
-                *owner_totals.entry(e.earner_id).or_insert(0.0) += e.dollar_amount;
-            }
-            for e in &mut earnings {
-                let total = owner_totals[&e.earner_id];
-                if total > cap {
-                    let scale = cap / total;
-                    e.dollar_amount *= scale;
-                    e.capped = true;
-                }
-            }
+            apply_aggregate_cap(&mut earnings, cap);
         }
     }
 

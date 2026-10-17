@@ -2036,8 +2036,8 @@ func TestHandleNodeRemoved_RefusesWhenOnlyAnUnstampedTombstoneExists(t *testing.
 	assert.Empty(t, store.deleted, "a refused removal writes nothing")
 	_, found, verr := store.ProjectedVersion(ctx, "tree1")
 	require.NoError(t, verr)
-	assert.False(t, found, "a refused removal recorded a projected version")
-	assert.Len(t, tr.mutationOps, 1, "a refusal does not retry")
+	assert.False(t, found, "ProjectedVersion found a row for tree1")
+	assert.Len(t, tr.mutationOps, 1, "engine mutation calls")
 }
 
 // The engine applied the removal and the store write never landed. The moved
@@ -2077,7 +2077,37 @@ func TestHandleNodeRemoved_RefusesWhenOnlyAnotherRemovalsTombstoneExists(t *test
 		event.ID+", and the read for that user returned a row carrying event cafe0000-0000-4000-8000-0000000000aa, removed at "+
 		tomb.RemovedAt.UTC().Format(time.RFC3339Nano)+", stamped by removal event "+earlier.ID)
 	assert.Empty(t, store.responsors, "a refused removal writes nothing")
-	assert.Len(t, tr.mutationOps, 1, "a refusal does not retry")
+	assert.Len(t, tr.mutationOps, 1, "engine mutation calls")
+}
+
+// staleStampReadStore answers the stamp read with no row, and every other read
+// from the embedded store.
+type staleStampReadStore struct {
+	*MemoryTreeStore
+}
+
+func (staleStampReadStore) GetNodeByRemovalEvent(context.Context, string, string) (*TreeNodeRow, error) {
+	return nil, nil
+}
+
+func TestHandleNodeRemoved_ConvergesWhenTheUserReadFindsThisRemovalsStamp(t *testing.T) {
+	tr := &reconcileTransport{mutationErr: &EngineError{Code: engineCodeUserNotFound}}
+	mem := NewMemoryTreeStore()
+	c := NewTreeEventConsumer(staleStampReadStore{mem}, newEngineClientWithTransport(tr))
+	c.retryDelay = 0
+	ctx := context.Background()
+	require.NoError(t, mem.InsertNode(ctx, TreeNodeRow{
+		ID: "cafe0000-0000-4000-8000-0000000000aa", TreeID: "tree1",
+		UserID: posUser, Depth: 1, ParentID: ptr(posParent), EnrolledAt: posEnrolled,
+	}))
+	event := makeEvent(EventTypeNodeRemoved, removedPayload())
+	require.NoError(t, mem.DeleteNodeAndResponsor(ctx, "tree1", posUser, event.ID, nil))
+
+	err := c.HandleEvent(ctx, event)
+
+	require.NoError(t, err)
+	assert.Len(t, tr.mutationOps, 1, "engine mutation calls")
+	assert.Nil(t, activeRow(t, mem, posUser))
 }
 
 func TestHandleNodeRemoved_RefusesWhenTheStoreHoldsNoRow(t *testing.T) {
@@ -2095,7 +2125,7 @@ func TestHandleNodeRemoved_RefusesWhenTheStoreHoldsNoRow(t *testing.T) {
 	rows, rerr := store.GetByTree(context.Background(), "tree1")
 	require.NoError(t, rerr)
 	assert.Empty(t, rows, "a refused removal wrote a row")
-	assert.Len(t, tr.mutationOps, 1, "a refusal does not retry")
+	assert.Len(t, tr.mutationOps, 1, "engine mutation calls")
 }
 
 func TestHandleNodeRemoved_ReconcileSkipsOtherEngineErrors(t *testing.T) {

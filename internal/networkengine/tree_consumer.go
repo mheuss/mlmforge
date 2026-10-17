@@ -355,6 +355,12 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 				EventID: event.ID,
 			}
 		}
+		// The user read runs after the stamp read, so it can see a stamp another
+		// writer committed in between. When it does, trust the later read.
+		if existing != nil && existing.RemovedByEventID != nil && sameUUID(*existing.RemovedByEventID, event.ID) {
+			alreadyProjected = true
+			return reconcileConverged, nil
+		}
 		stamp := ""
 		if existing != nil {
 			stamp = ", with no removal stamp"

@@ -1201,7 +1201,7 @@ if res.ProjectionErr != nil {
 }
 ```
 
-**Notes:** A rejected event did not happen. Rejecting a removal leaves the user in the tree. Version 1 still sets the tree's shape after its root is rejected. Build a new writer over a new worker for each call, as UC-NET-027 says for writes. A write or load that meets a pending rejection refuses with `RejectionPendingError`. The consumer refuses a removal as unprojectable when the store never held the user or holds only a tombstone this removal did not stamp. `Reject` clears it (HEU-868). Related: UC-NET-027, UC-NET-030.
+**Notes:** A rejected event did not happen. Rejecting a removal leaves the user in the tree. Version 1 still sets the tree's shape after its root is rejected. Build a new writer over a new worker for each call, as UC-NET-027 says for writes. A write or load that meets a pending rejection refuses with `RejectionPendingError`. The consumer refuses a removal as unprojectable when the engine answers user-not-found, no row carries this removal's stamp, and the store holds no row for the user or only tombstones. `Reject` clears it (HEU-868). Related: UC-NET-027, UC-NET-030.
 
 ---
 

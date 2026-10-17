@@ -191,6 +191,7 @@ func TestTreeLoad_PrintsTheCanonicalTreeID(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "loaded tree "+tree+" (2 nodes)\n", out.stdout.String())
+	require.Empty(t, out.stderr.String())
 }
 
 // The rows have to leave Postgres and reach the loader. A tree holding only a

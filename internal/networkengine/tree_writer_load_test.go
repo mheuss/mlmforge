@@ -3,6 +3,7 @@ package networkengine
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -117,6 +118,20 @@ func TestTreeWriter_LoadRedeliversTheLastEventWhenTheStoreIsOneBehind(t *testing
 	assert.NotNil(t, row, "the redelivered placement left no row")
 	version, _ := projectedVersion(t, env)
 	assert.Equal(t, int64(2), version)
+}
+
+func TestTreeWriter_LoadReportsTheCanonicalTreeID(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	mustPlace(t, env, writerChild, nil)
+	w, _ := env.writer()
+
+	res, err := w.Load(context.Background(),
+		LoadRequest{TreeID: strings.ToUpper(writerTree), TreeType: treeTypeUnilevel})
+
+	require.NoError(t, err)
+	assert.Equal(t, writerTree, res.TreeID)
+	assert.Equal(t, 2, res.Nodes)
 }
 
 func TestTreeWriter_LoadLeavesAnEmptyStreamAsItFindsIt(t *testing.T) {

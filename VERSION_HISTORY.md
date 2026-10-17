@@ -88,6 +88,7 @@
 - Duplicate rate-key spellings are rejected. The schema's `propertyNames` patterns are `^0*(...)`, so `"1"` and `"01"` are both valid and name the same Rust `u8` map entry, and one rate silently won. Caught in Go validation with a `duplicate_value` error naming both spellings, and in the engine as a parse error. Accepted spellings are otherwise unchanged. (HEU-648)
 - `tree load` prints the canonical lowercase tree ID it loaded. It used to print `--tree-id` as typed, so an uppercase ID printed one string and loaded another. `LoadResult` carries the canonical ID. The startup example in UC-NET-012 reports a failed create on its own instead of as "0 of 0 non-root placements". (HEU-879, HEU-881)
 - Markdown always diffs as text. `.gitattributes` sets `*.md diff`, so a markdown file holding a stray NUL byte no longer renders as binary. `git grep` now prints its matching lines, and gitleaks now reads its added lines. Without the attribute gitleaks skipped the whole file, while still counting the commit as scanned. (HEU-802)
+- `docs/development/postgres-stores.md` states the paired-store rule itself: a new memory/Postgres store pair has one test body that runs against both twins. Its opening pointer named UC-NET-008. That use case is about rank result persistence. It covers neither paired twins nor a shared suite. (HEU-792)
 
 ### Removed
 - None.

@@ -9,6 +9,16 @@ use network_engine::tree::unilevel::UnilevelTree;
 use proptest::prelude::*;
 use std::collections::HashMap;
 
+use network_engine::config::commission::LevelCommissionConfig;
+use network_engine::config::eligibility::CommissionEligibility;
+use network_engine::config::stairstep::{
+    BreakawayConfig, DifferentialConfig, MinOverride, OverrideMode, OverrideStrategy,
+};
+use network_engine::config::{CompensationPlan, StairstepStructureConfig, StructureConfig};
+use network_engine::test_support::{build_test_plan, make_rank, test_plan_identity};
+use std::collections::{BTreeMap, BTreeSet};
+use uuid::Uuid;
+
 /// Tolerance for floating-point rate-bound comparisons.
 const FP_TOL: f64 = 1e-10;
 
@@ -708,4 +718,138 @@ fn single_node_no_earnings() {
     .unwrap()
     .earnings;
     assert!(result.is_empty());
+}
+
+/// A stairstep plan with associate, director and senior_director ranks and a
+/// differential override on director breakaways.
+fn heu_936_plan() -> (CompensationPlan, StairstepStructureConfig) {
+    let mut rate_table = BTreeMap::new();
+    for rank in ["associate", "director"] {
+        let rates: BTreeMap<u8, f64> = (1u8..=5).map(|level| (level, 0.05)).collect();
+        rate_table.insert(rank.to_string(), rates);
+    }
+    let structure = StairstepStructureConfig {
+        name: "Test".to_string(),
+        level_commission: LevelCommissionConfig {
+            broad_commission_percent: 0.40,
+            volume_to_dollar_multiplier: None,
+            max_depth: 5,
+            rate_table,
+        },
+        compression: None,
+        breakaway: Some(BreakawayConfig {
+            threshold_rank: "director".to_string(),
+            exclude_breakaway_gv: true,
+            overrides: OverrideStrategy::SingleWalk {
+                mode: OverrideMode::Differential(DifferentialConfig {
+                    rank_rates: BTreeMap::from([
+                        ("director".to_string(), 0.10),
+                        ("senior_director".to_string(), 0.15),
+                    ]),
+                    min_override: MinOverride::Rate { value: 0.02 },
+                }),
+                generation_overrides: None,
+            },
+        }),
+    };
+    let eligibility = CommissionEligibility {
+        minimum_pv: 100.0,
+        require_order_in_period: false,
+        eligible_statuses: vec!["active".to_string()],
+        active_leg_tiers: vec![],
+    };
+    let mut plan = build_test_plan(
+        eligibility,
+        StructureConfig::Stairstep(structure.clone()),
+        "Test",
+    );
+    plan.ranks = vec![
+        make_rank("associate", 1, vec!["Test".to_string()]),
+        make_rank("director", 2, vec!["Test".to_string()]),
+        make_rank("senior_director", 3, vec!["Test".to_string()]),
+    ];
+    (plan, structure)
+}
+
+/// A chain of nodes 0 to 4, each sponsored and placed under the one before.
+fn heu_936_chain() -> UnilevelTree {
+    let mut tree = UnilevelTree::new();
+    tree.add_root(uuid_from_index(0), 0).unwrap();
+    for i in 1..5 {
+        tree.add_node(
+            uuid_from_index(i),
+            uuid_from_index(i - 1),
+            uuid_from_index(i - 1),
+            i as i64,
+        )
+        .unwrap();
+    }
+    tree
+}
+
+/// Snapshots for the chain: senior_director, director, then three associates.
+fn heu_936_snapshots(pvs: [f64; 5]) -> HashMap<Uuid, DistributorSnapshot> {
+    let ranks = [
+        "senior_director",
+        "director",
+        "associate",
+        "associate",
+        "associate",
+    ];
+    (0..5)
+        .map(|i| {
+            (
+                uuid_from_index(i),
+                DistributorSnapshot {
+                    rank: ranks[i].to_string(),
+                    personal_volume: pvs[i],
+                    status: "active".to_string(),
+                    has_order_in_period: true,
+                },
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn stairstep_walk_two_amounts_do_not_depend_on_snapshot_map_order() {
+    let tree = heu_936_chain();
+    let (plan, structure) = heu_936_plan();
+    let volume = vec![VolumeSource {
+        source_id: uuid_from_index(4),
+        cv_amount: 100.0,
+    }];
+    let mut seen = BTreeSet::new();
+    for _ in 0..256 {
+        let snapshots = heu_936_snapshots([150.0, 0.1, 0.2, 0.3, 0.7]);
+        let earnings = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
+        let from_breakaway: Vec<_> = earnings
+            .iter()
+            .filter(|e| e.source_id == uuid_from_index(1))
+            .collect();
+        assert_eq!(from_breakaway.len(), 1);
+        assert_eq!(from_breakaway[0].earner_id, uuid_from_index(0));
+        seen.insert((
+            from_breakaway[0].cv_amount.to_bits(),
+            from_breakaway[0].dollar_amount.to_bits(),
+        ));
+    }
+    let shown: Vec<(f64, f64)> = seen
+        .iter()
+        .map(|(cv, dollar)| (f64::from_bits(*cv), f64::from_bits(*dollar)))
+        .collect();
+    assert_eq!(
+        seen,
+        BTreeSet::from([(1.3f64.to_bits(), 0.025999999999999995f64.to_bits())]),
+        "distinct (cv_amount, dollar_amount) across runs: {shown:?}"
+    );
 }

@@ -142,7 +142,8 @@ fn accumulate_leg_volumes(
     leg_volumes
 }
 
-/// Scales each owner's earnings pro rata when their total exceeds `cap`.
+/// Sorts `earnings` by `(earner_id, position_id)`, then scales each owner's
+/// earnings pro rata when their total exceeds `cap`.
 fn apply_aggregate_cap(earnings: &mut [BinaryCommissionEarning], cap: f64) {
     // Float addition depends on order, so each owner's total is summed in
     // position order rather than in the order the earnings were built.
@@ -4030,6 +4031,7 @@ mod tests {
                 pinned.to_vec(),
                 "input order {order:?} gave {amounts:?}"
             );
+            assert!(earnings.iter().all(|e| e.capped));
         }
     }
 }

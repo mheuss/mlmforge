@@ -439,7 +439,7 @@ Verified by deleting the sort and watching which tests failed. (HEU-641)
 
 ## A Float Sum Takes A Defined Order
 
-Float addition depends on order. `(0.1 + 0.2) + 0.3` and `0.1 + (0.2 + 0.3)` give different bits. So commission code that adds floats does it in a defined order, never in `HashMap` order.
+Float addition depends on order. `(0.1 + 0.2) + 0.3` and `0.1 + (0.2 + 0.3)` give different bits. So commission code that adds floats must do it in a defined order, never in `HashMap` order.
 
 - `build_group_volumes` adds personal volumes in ascending user-id order.
 - `apply_aggregate_cap` adds each owner's earnings in `(earner_id, position_id)` order.

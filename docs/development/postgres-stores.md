@@ -31,7 +31,7 @@ func TestPostgresCommissionRunStore(t *testing.T) {
 ```
 
 `runCommissionRunStoreSuite` is the worked example. Each case asks the
-constructor for a fresh store, so neither twin sees the other's rows.
+constructor for a fresh store, so no case sees rows an earlier case wrote.
 
 Twins tested separately drift without anyone noticing. These defects shipped
 that way. Each passed against memory and failed against Postgres:

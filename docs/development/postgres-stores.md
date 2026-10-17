@@ -6,8 +6,12 @@ cost real debugging and is invisible until it bites.
 ## Pair the implementations through one suite
 
 A store here usually comes as a pair. One interface has a memory twin for unit tests
-and a Postgres twin for production. Where a pair shares a test body, that body
-takes a constructor and runs once against each twin.
+and a Postgres twin for production.
+
+**A new memory/Postgres store pair has one test body that takes a constructor and runs against both twins.**
+
+The body asks the constructor for each store it needs, and each twin's test
+function hands it that twin's constructor.
 
 ```go
 func TestMemoryCommissionRunStore(t *testing.T) {
@@ -39,6 +43,14 @@ that way. Each passed against memory and failed against Postgres:
 
 A shared body catches this class by construction, because one assertion runs
 against both twins.
+
+Some twins promise different things by design. The memory tree locker excludes
+within one process, and the Postgres one excludes across processes. For a pair
+like that, the shared body covers what both twins promise. Tests that run only
+against Postgres cover the rest.
+
+HEU-938 brings the qualification history store under the rule, and HEU-939
+brings in the tree lockers.
 
 ## pgx sends only a nil slice as SQL NULL
 

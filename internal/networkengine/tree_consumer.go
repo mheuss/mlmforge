@@ -58,6 +58,14 @@ func checkStream(event platform.Event, eventName, treeID, userID string) error {
 	return nil
 }
 
+// checkUserID rejects an event that names no user.
+func checkUserID(eventName, treeID, userID string) error {
+	if userID == "" {
+		return fmt.Errorf("%s in tree %s has an empty user_id", eventName, treeID)
+	}
+	return nil
+}
+
 // checkReplayedInsert decides whether an add whose insert was skipped may
 // continue to its engine call.
 func (c *TreeEventConsumer) checkReplayedInsert(
@@ -97,6 +105,9 @@ func (c *TreeEventConsumer) handleRootAdded(ctx context.Context, event platform.
 	}
 
 	if err := checkStream(event, "root_added", payload.TreeID, payload.UserID); err != nil {
+		return unprojectable(err)
+	}
+	if err := checkUserID("root_added", payload.TreeID, payload.UserID); err != nil {
 		return unprojectable(err)
 	}
 
@@ -209,6 +220,9 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform
 	// cannot be applied faithfully must not land anywhere: a stored row the
 	// engine never honored is the divergence this consumer exists to prevent.
 	if err := checkStream(event, "node_placed", payload.TreeID, payload.UserID); err != nil {
+		return unprojectable(err)
+	}
+	if err := checkUserID("node_placed", payload.TreeID, payload.UserID); err != nil {
 		return unprojectable(err)
 	}
 	if err := checkNodePlacedShape(payload); err != nil {

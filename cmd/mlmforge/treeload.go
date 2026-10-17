@@ -60,9 +60,9 @@ func runTreeLoad(ctx context.Context, out, warn io.Writer, loader treeLoadWriter
 			// Zero rows and a tree that is not in the database are the same
 			// read, so this must not claim a load that did not happen.
 			if res.Nodes == 0 {
-				_, _ = fmt.Fprintf(out, "tree %s holds no rows; nothing was loaded\n", req.TreeID)
+				_, _ = fmt.Fprintf(out, "tree %s holds no rows; nothing was loaded\n", res.TreeID)
 			} else {
-				_, _ = fmt.Fprintf(out, "loaded tree %s (%d nodes)\n", req.TreeID, res.Nodes)
+				_, _ = fmt.Fprintf(out, "loaded tree %s (%d nodes)\n", res.TreeID, res.Nodes)
 			}
 			printWarnings(warn, res.Warnings)
 			printReleaseWarning(warn, res.ReleaseErr)

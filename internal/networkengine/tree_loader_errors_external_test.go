@@ -58,7 +58,7 @@ func TestTreeLoadIncompleteError_ExternalLiteralRendersEveryField(t *testing.T) 
 	}
 
 	assert.Equal(t,
-		"tree load incomplete: tree t2: stage nodes: placement 3 of 4, 2 acknowledged: nodes u9: worker said no",
+		"tree load incomplete: tree t2: stage nodes: non-root placement 3 of 4, 2 acknowledged: nodes u9: worker said no",
 		err.Error())
 }
 
@@ -111,7 +111,7 @@ func TestTreeLoadErrors_UnsetFieldsAreOmitted(t *testing.T) {
 			err: &networkengine.TreeLoadIncompleteError{
 				TreeID: "t2", Stage: networkengine.TreeLoadStageNodes, Attempted: 1, Total: 4,
 			},
-			want: "tree load incomplete: tree t2: stage nodes: placement 1 of 4, 0 acknowledged",
+			want: "tree load incomplete: tree t2: stage nodes: non-root placement 1 of 4, 0 acknowledged",
 		},
 		{
 			name: "incomplete, acknowledged count with no placement index",

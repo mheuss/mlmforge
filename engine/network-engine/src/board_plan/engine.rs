@@ -794,13 +794,17 @@ impl BoardPlanEngine {
     /// timestamp.
     ///
     /// Returns a list of `StalledBoard` summaries for boards where
-    /// `last_activity_at < cutoff_timestamp`. The Go layer converts
-    /// the `stall_threshold_periods` config value into a concrete
-    /// timestamp before calling this method.
+    /// `last_activity_at < cutoff_timestamp`, ordered by `created_at`,
+    /// then `seq`.
     pub fn detect_stalled_boards(&self, cutoff_timestamp: i64) -> Vec<super::types::StalledBoard> {
-        self.boards
+        let mut stalled: Vec<&Board> = self
+            .boards
             .values()
             .filter(|b| b.last_activity_at < cutoff_timestamp)
+            .collect();
+        stalled.sort_by_key(|b| (b.created_at, b.seq));
+        stalled
+            .into_iter()
             .map(|b| super::types::StalledBoard {
                 board_id: b.id,
                 last_activity_at: b.last_activity_at,
@@ -1928,6 +1932,22 @@ mod tests {
             let listed: Vec<Uuid> = engine.list_boards().iter().map(|s| s.id).collect();
 
             assert_eq!(listed, last.cycle_events[0].new_boards);
+        }
+    }
+
+    #[test]
+    fn detect_stalled_boards_orders_boards_from_one_split_by_seq() {
+        for _ in 0..64 {
+            let mut engine = BoardPlanEngine::new(2, 2, test_config_no_reentry(), 1000).unwrap();
+            let (_, last) = fill_2x2_board(&mut engine);
+
+            let stalled: Vec<Uuid> = engine
+                .detect_stalled_boards(i64::MAX)
+                .iter()
+                .map(|s| s.board_id)
+                .collect();
+
+            assert_eq!(stalled, last.cycle_events[0].new_boards);
         }
     }
 

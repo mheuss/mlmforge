@@ -38,7 +38,4 @@ pub enum BoardPlanError {
         height: u8,
         reason: String,
     },
-
-    #[error("member not in displaced pool: {0}")]
-    MemberNotDisplaced(Uuid),
 }

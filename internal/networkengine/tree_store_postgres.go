@@ -108,8 +108,8 @@ func insertNode(ctx context.Context, db execer, node TreeNodeRow) error {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("%w: tree=%s user=%s id=%s",
-			ErrNodeAlreadyProjected, node.TreeID, node.UserID, node.ID)
+		return fmt.Errorf("%w: id=%s; this insert was for tree=%s user=%s",
+			ErrNodeAlreadyProjected, node.ID, node.TreeID, node.UserID)
 	}
 	return nil
 }

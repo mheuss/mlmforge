@@ -146,7 +146,7 @@ fn accumulate_leg_volumes(
 /// earnings pro rata when their total exceeds `cap`.
 fn apply_aggregate_cap(earnings: &mut [BinaryCommissionEarning], cap: f64) {
     // Float addition depends on order, so each owner's total is summed in
-    // position order rather than in the order the earnings were built.
+    // position order.
     earnings.sort_by(|a, b| {
         a.earner_id
             .cmp(&b.earner_id)

@@ -219,7 +219,7 @@ func TestTreeWriter_LoadReportsARedeliveryThatFailed(t *testing.T) {
 	assert.Zero(t, res.Nodes)
 }
 
-func TestTreeWriter_LoadReportsARedeliveryThatLeftTheVersionBehind(t *testing.T) {
+func TestTreeWriter_LoadRefusesARedeliveredRemovalOfAUserTheStoreNeverHeld(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
 	pending := appendDirect(t, env.events, EventTypeNodeRemoved, NodeRemovedPayload{
@@ -229,13 +229,15 @@ func TestTreeWriter_LoadReportsARedeliveryThatLeftTheVersionBehind(t *testing.T)
 
 	res, err := w.Load(context.Background(), loadRequest())
 
-	require.NoError(t, err)
-	assert.Equal(t, LoadResult{
-		TreeID:         writerTree,
-		CaughtUp:       &CaughtUpEvent{EventID: pending.ID, Version: 2, Type: EventTypeNodeRemoved},
-		ProjectedAfter: &ProjectionObservation{Version: 1, Found: true},
-		Nodes:          1,
-	}, res)
+	var failed *CatchUpFailedError
+	require.ErrorAs(t, err, &failed)
+	assert.Equal(t, pending.ID, failed.EventID)
+	assert.ErrorIs(t, err, ErrUnprojectableEvent)
+	assert.Nil(t, res.CaughtUp)
+	version, found, verr := env.store.ProjectedVersion(context.Background(), writerTree)
+	require.NoError(t, verr)
+	assert.True(t, found)
+	assert.Equal(t, int64(1), version)
 }
 
 func TestTreeWriter_LoadRefusesRowsTheStreamDoesNotReach(t *testing.T) {

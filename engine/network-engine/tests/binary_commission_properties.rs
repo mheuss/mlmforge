@@ -9,9 +9,11 @@ use network_engine::config::binary::{
     CycleStep, CycleStepConfig, MultiPositionCapMode, PairingCalculation, PairingConfig,
     VolumeAfterPayout,
 };
+use network_engine::config::{BinaryStructureConfig, CompensationPlan};
 use network_engine::tree::binary::BinaryTree;
 use proptest::prelude::*;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
+use uuid::Uuid;
 
 /// Build a 3-node binary tree (root with left and right children).
 fn three_node_tree() -> BinaryTree {
@@ -1024,4 +1026,230 @@ proptest! {
             );
         }
     }
+}
+
+/// Root 1 with positions 2 and 3, and two children under each.
+fn multi_position_owner_tree() -> BinaryTree {
+    let mut tree = BinaryTree::new();
+    tree.add_root(uuid_from_index(1), 1000).unwrap();
+    tree.add_node(
+        uuid_from_index(2),
+        uuid_from_index(1),
+        0,
+        uuid_from_index(1),
+        2000,
+    )
+    .unwrap();
+    tree.add_node(
+        uuid_from_index(3),
+        uuid_from_index(1),
+        1,
+        uuid_from_index(1),
+        3000,
+    )
+    .unwrap();
+    tree.add_node(
+        uuid_from_index(4),
+        uuid_from_index(2),
+        0,
+        uuid_from_index(2),
+        4000,
+    )
+    .unwrap();
+    tree.add_node(
+        uuid_from_index(5),
+        uuid_from_index(2),
+        1,
+        uuid_from_index(2),
+        5000,
+    )
+    .unwrap();
+    tree.add_node(
+        uuid_from_index(6),
+        uuid_from_index(3),
+        0,
+        uuid_from_index(3),
+        6000,
+    )
+    .unwrap();
+    tree.add_node(
+        uuid_from_index(7),
+        uuid_from_index(3),
+        1,
+        uuid_from_index(3),
+        7000,
+    )
+    .unwrap();
+    tree
+}
+
+/// Runs the calculator 256 times on fresh maps, with positions 1, 2 and 3
+/// owned by one owner, and asserts the owner's capped amounts are `pinned`.
+fn assert_owner_capped_bits(
+    plan: &CompensationPlan,
+    structure: &BinaryStructureConfig,
+    left_cv: f64,
+    right_cv: f64,
+    pinned: [f64; 3],
+) {
+    let tree = multi_position_owner_tree();
+    let owner = uuid_from_index(100);
+    let volume = vec![
+        VolumeSource {
+            source_id: uuid_from_index(4),
+            cv_amount: left_cv,
+        },
+        VolumeSource {
+            source_id: uuid_from_index(5),
+            cv_amount: left_cv,
+        },
+        VolumeSource {
+            source_id: uuid_from_index(6),
+            cv_amount: right_cv,
+        },
+        VolumeSource {
+            source_id: uuid_from_index(7),
+            cv_amount: right_cv,
+        },
+    ];
+    let mut seen = BTreeSet::new();
+    for _ in 0..256 {
+        let ownership: HashMap<Uuid, Uuid> = (1..=3).map(|i| (uuid_from_index(i), owner)).collect();
+        let mut snapshots = HashMap::new();
+        snapshots.insert(owner, member_snapshot());
+        for i in 4..=7 {
+            snapshots.insert(uuid_from_index(i), member_snapshot());
+        }
+        let result = calculate_binary_pairing(
+            &tree,
+            plan,
+            structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            Some(&ownership),
+        )
+        .unwrap();
+        let mine: Vec<_> = result
+            .earnings
+            .iter()
+            .filter(|e| e.earner_id == owner)
+            .collect();
+        let positions: Vec<Uuid> = mine.iter().map(|e| e.position_id).collect();
+        assert_eq!(
+            positions,
+            vec![uuid_from_index(1), uuid_from_index(2), uuid_from_index(3)]
+        );
+        assert!(mine.iter().all(|e| e.capped));
+        seen.insert(
+            mine.iter()
+                .map(|e| e.dollar_amount.to_bits())
+                .collect::<Vec<u64>>(),
+        );
+    }
+    let shown: Vec<Vec<f64>> = seen
+        .iter()
+        .map(|bits| bits.iter().map(|b| f64::from_bits(*b)).collect())
+        .collect();
+    assert_eq!(
+        seen,
+        BTreeSet::from([pinned.map(f64::to_bits).to_vec()]),
+        "distinct capped amounts across runs: {shown:?}"
+    );
+}
+
+/// A pairing plan in aggregate cap mode with the given cap.
+fn aggregate_cap_pairing_plan(cap: f64) -> (CompensationPlan, BinaryStructureConfig) {
+    build_binary_plan(PairingConfig {
+        cap_per_period: Some(cap),
+        multi_position_cap_mode: MultiPositionCapMode::Aggregate,
+        ..default_pairing()
+    })
+}
+
+#[test]
+fn aggregate_cap_pairing_left_1_right_3_does_not_depend_on_map_order() {
+    let (plan, structure) = aggregate_cap_pairing_plan(0.1);
+    assert_owner_capped_bits(
+        &plan,
+        &structure,
+        1.0,
+        3.0,
+        [0.03333333333333333, 0.016666666666666666, 0.05],
+    );
+}
+
+#[test]
+fn aggregate_cap_pairing_left_0_7_right_1_1_does_not_depend_on_map_order() {
+    let (plan, structure) = aggregate_cap_pairing_plan(0.13);
+    assert_owner_capped_bits(
+        &plan,
+        &structure,
+        0.7,
+        1.1,
+        [0.056875, 0.0284375, 0.04468750000000001],
+    );
+}
+
+#[test]
+fn aggregate_cap_pairing_left_1_3_right_2_9_does_not_depend_on_map_order() {
+    let (plan, structure) = aggregate_cap_pairing_plan(0.37);
+    assert_owner_capped_bits(
+        &plan,
+        &structure,
+        1.3,
+        2.9,
+        [
+            0.14147058823529413,
+            0.07073529411764706,
+            0.15779411764705883,
+        ],
+    );
+}
+
+#[test]
+fn aggregate_cap_pairing_left_3_right_7_does_not_depend_on_map_order() {
+    let (plan, structure) = aggregate_cap_pairing_plan(1.1);
+    assert_owner_capped_bits(
+        &plan,
+        &structure,
+        3.0,
+        7.0,
+        [0.4125000000000001, 0.20625000000000004, 0.48125000000000007],
+    );
+}
+
+#[test]
+fn aggregate_cap_cycle_step_does_not_depend_on_map_order() {
+    let (plan, structure) = build_binary_cycle_step_plan(CycleStepConfig {
+        steps: vec![
+            CycleStep {
+                threshold: 1.0,
+                amount: 0.1,
+            },
+            CycleStep {
+                threshold: 2.0,
+                amount: 0.2,
+            },
+            CycleStep {
+                threshold: 3.0,
+                amount: 0.7,
+            },
+        ],
+        volume_after_cycle: VolumeAfterPayout::FullFlush,
+        cap_per_period: Some(0.13),
+        carry_forward_cap: None,
+        multi_position_cap_mode: MultiPositionCapMode::Aggregate,
+    });
+    assert_owner_capped_bits(
+        &plan,
+        &structure,
+        1.0,
+        3.0,
+        [
+            0.02785714285714286,
+            0.009285714285714286,
+            0.09285714285714286,
+        ],
+    );
 }

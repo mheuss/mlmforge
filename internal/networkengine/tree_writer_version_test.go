@@ -2,6 +2,7 @@ package networkengine
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 
@@ -161,4 +162,73 @@ func TestTreeWriter_ConvergesWhenTheLastEventProjectsBeforeTheLoadRead(t *testin
 	version, _, err := env.store.ProjectedVersion(context.Background(), writerTree)
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), version)
+}
+
+// countingRemoveEngine counts RemoveNode calls and passes each one on.
+type countingRemoveEngine struct {
+	TreeRebuilder
+	removes int
+}
+
+func (e *countingRemoveEngine) RemoveNode(ctx context.Context, structure, userID string) ([]Responsored, error) {
+	e.removes++
+	return e.TreeRebuilder.RemoveNode(ctx, structure, userID)
+}
+
+func TestTreeWriter_RefusesATreeWithNoProjectionRowBeforeRedeliveringItsLastRemoval(t *testing.T) {
+	env := newWriterEnv()
+	ctx := context.Background()
+	root := appendDirect(t, env.events, EventTypeRootAdded, rootAddedPayload())
+	placed := appendDirect(t, env.events, EventTypeNodePlaced, childPlacedPayload(writerChild))
+	appendDirect(t, env.events, EventTypeNodeRemoved, NodeRemovedPayload{TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime})
+	require.NoError(t, env.store.InsertNode(ctx, TreeNodeRow{
+		ID: root.ID, TreeID: writerTree, UserID: writerRoot, SponsorID: &writerRoot, EnrolledAt: writeTime}))
+	require.NoError(t, env.store.InsertNode(ctx, TreeNodeRow{
+		ID: placed.ID, TreeID: writerTree, UserID: writerChild, ParentID: &writerRoot, SponsorID: &writerRoot,
+		Depth: 1, EnrolledAt: writeTime}))
+	require.NoError(t, env.store.DeleteNode(ctx, writerTree, writerChild))
+	engine := &countingRemoveEngine{TreeRebuilder: newFakeWriterEngine()}
+	w := NewTreeWriter(env.events, env.store, env.snapshots, engine, env.locker)
+
+	res, err := w.Place(ctx, placeRequest(writerOther, nil))
+
+	var afterBuild *RefusedAfterFailedBuildError
+	require.ErrorAs(t, err, &afterBuild, "the refusal carried no failed build: %v", err)
+	var missing *ProjectionMissingError
+	require.ErrorAs(t, err, &missing)
+	assert.Equal(t, ProjectionMissingError{TreeID: writerTree, LastVersion: 3}, *missing)
+	assert.Nil(t, res.CaughtUp, "the refused write reported a caught-up event")
+	assert.Zero(t, engine.removes, "RemoveNode calls before the refusal")
+	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 3)
+	_, found, verr := env.store.ProjectedVersion(ctx, writerTree)
+	require.NoError(t, verr)
+	assert.False(t, found, "the refused write left a projection row behind")
+}
+
+func TestTreeWriter_RefusesATreeWithNoProjectionRowOrActiveRowsBeforeRedeliveringItsLastRemoval(t *testing.T) {
+	env := newWriterEnv()
+	ctx := context.Background()
+	appendDirect(t, env.events, EventTypeRootAdded, rootAddedPayload())
+	placed := appendDirect(t, env.events, EventTypeNodePlaced, childPlacedPayload(writerChild))
+	appendDirect(t, env.events, EventTypeNodeRemoved, NodeRemovedPayload{TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime})
+	require.NoError(t, env.store.InsertNode(ctx, TreeNodeRow{
+		ID: placed.ID, TreeID: writerTree, UserID: writerChild, ParentID: &writerRoot, SponsorID: &writerRoot,
+		Depth: 1, EnrolledAt: writeTime}))
+	require.NoError(t, env.store.DeleteNode(ctx, writerTree, writerChild))
+	engine := &countingRemoveEngine{TreeRebuilder: newFakeWriterEngine()}
+	w := NewTreeWriter(env.events, env.store, env.snapshots, engine, env.locker)
+
+	res, err := w.Place(ctx, placeRequest(writerOther, nil))
+
+	assert.Zero(t, engine.removes, "RemoveNode calls before the refusal")
+	var afterBuild *RefusedAfterFailedBuildError
+	assert.False(t, errors.As(err, &afterBuild), "the refusal carried a failed build: %v", err)
+	var missing *ProjectionMissingError
+	require.ErrorAs(t, err, &missing)
+	assert.Equal(t, ProjectionMissingError{TreeID: writerTree, LastVersion: 3}, *missing)
+	assert.Nil(t, res.CaughtUp, "the refused write reported a caught-up event")
+	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 3)
+	_, found, verr := env.store.ProjectedVersion(ctx, writerTree)
+	require.NoError(t, verr)
+	assert.False(t, found, "the refused write left a projection row behind")
 }

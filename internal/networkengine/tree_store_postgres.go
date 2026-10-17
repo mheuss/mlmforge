@@ -35,7 +35,7 @@ const softDeleteNodeSQL = `UPDATE tree_nodes SET removed_at = now(), updated_at 
 const softDeleteRootSQL = `UPDATE tree_nodes SET removed_at = $3, updated_at = $3
 		 WHERE tree_id = $1 AND user_id = $2 AND removed_at IS NULL`
 
-// tombstoneTime reads the clock once inside tx, for every tombstone tx writes.
+// tombstoneTime reads the clock once inside tx.
 func tombstoneTime(ctx context.Context, tx pgx.Tx) (time.Time, error) {
 	var at time.Time
 	if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&at); err != nil {

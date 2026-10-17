@@ -294,7 +294,7 @@ func TestTreePlaceCmd_ExitsZeroForAStoreObservedPastARefusedEvent(t *testing.T) 
 }
 
 // The result a removal reports when another writer's catch-up projected its
-// event first, as the lost-lock integration test observes it.
+// event first.
 func TestTreeRemoveCmd_PromisesNoRedeliveryForAnEventAnotherWriterProjected(t *testing.T) {
 	w := &recordingWriter{result: networkengine.WriteResult{
 		Stream: "tree-t", EventID: "e5", Version: 5,

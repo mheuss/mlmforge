@@ -6,8 +6,8 @@ is invisible until it bites.
 
 ## Pair the implementations through one suite
 
-Every store interface here that has an implementation has a memory twin for
-unit tests and a Postgres twin for production.
+Every implemented store interface here has a memory twin for unit tests and a
+Postgres twin for production.
 
 **A new memory/Postgres store pair has one test body that takes a constructor and runs against both twins.**
 
@@ -231,8 +231,8 @@ if !utf8.ValidString(s) || strings.ContainsRune(s, 0) { ... }
 
 ## A NOT NULL column does not make a branch unreachable
 
-Every store interface here that has an implementation has two. Postgres carries
-the constraint. The in-memory one does not.
+Every implemented store interface here has two implementations. Postgres
+carries the constraint. The in-memory one does not.
 
 HEU-562 deleted a guard on an empty `user_id` in the tree loader, reasoning that
 the column is `UUID NOT NULL` so no row can hold one. That reasoning checked one

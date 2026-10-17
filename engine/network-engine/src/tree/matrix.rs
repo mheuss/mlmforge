@@ -2696,18 +2696,25 @@ mod tests {
         assert_eq!(sponsor.user_id, test_uuid(1));
     }
 
+    /// Root 1, with 2 under it and 3 under 2. Node 4 is sponsored by 2 but
+    /// placed under 1, and node 5 is sponsored by 3 but placed under 4.
+    fn tree_with_recruits_outside_a_subtree() -> MatrixTree {
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 1).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), 2).unwrap();
+        tree.add_node_at(test_uuid(4), test_uuid(2), test_uuid(1), 1, 3)
+            .unwrap();
+        tree.add_node_at(test_uuid(5), test_uuid(3), test_uuid(4), 0, 4)
+            .unwrap();
+        tree
+    }
+
     #[test]
-    fn holding_tank_removal_moves_recruits_in_breadth_first_order() {
+    fn holding_tank_removal_reports_moved_recruits_in_breadth_first_order() {
         // A fresh tree per iteration. One tree repeats its own hash order.
         for _ in 0..256 {
-            let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
-            tree.add_root(test_uuid(1), 0).unwrap();
-            tree.add_node(test_uuid(2), test_uuid(1), 1).unwrap();
-            tree.add_node(test_uuid(3), test_uuid(2), 2).unwrap();
-            tree.add_node_at(test_uuid(4), test_uuid(2), test_uuid(1), 1, 3)
-                .unwrap();
-            tree.add_node_at(test_uuid(5), test_uuid(3), test_uuid(4), 0, 4)
-                .unwrap();
+            let mut tree = tree_with_recruits_outside_a_subtree();
 
             let result = tree
                 .remove_node(test_uuid(2), PruningMode::HoldingTank)
@@ -2715,6 +2722,18 @@ mod tests {
 
             let moved: Vec<Uuid> = result.responsored.iter().map(|r| r.user_id).collect();
             assert_eq!(moved, vec![test_uuid(4), test_uuid(5)]);
+        }
+    }
+
+    #[test]
+    fn holding_tank_removal_appends_recruits_to_the_new_sponsor_in_breadth_first_order() {
+        // A fresh tree per iteration. One tree repeats its own hash order.
+        for _ in 0..256 {
+            let mut tree = tree_with_recruits_outside_a_subtree();
+
+            tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
+                .unwrap();
+
             let sponsored: Vec<Uuid> = tree
                 .get_sponsored(test_uuid(1))
                 .unwrap()

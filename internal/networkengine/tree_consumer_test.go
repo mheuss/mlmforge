@@ -2469,6 +2469,35 @@ func TestCheckReplayedInsert_MessageText(t *testing.T) {
 	}
 }
 
+// The whole assembled message on the Postgres store, for an event whose row is
+// active under another user.
+func TestCheckReplayedInsert_PostgresMessageText(t *testing.T) {
+	store := newTestPostgresTreeStore(t)
+	ctx := context.Background()
+	const evID = "ffffffff-ffff-4fff-8fff-ffffffffffff"
+	tree := testTreeUUID(77)
+
+	require.NoError(t, store.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, posParent, 0, nil, nil, nil)))
+	require.NoError(t, store.InsertNode(ctx, makeUUIDNode(evID, tree, posOther, 1, ptr(posParent), ptr(posSponsor), intPtr(0))))
+
+	c := NewTreeEventConsumer(store, newEngineClientWithTransport(&reconcileTransport{}))
+	c.retryDelay = 0
+	payload := placedPayload(treeTypeBinary, intPtr(1))
+	payload.TreeID = tree
+	ev := makeEvent(EventTypeNodePlaced, payload)
+	ev.ID = evID
+	ev.Stream = TreeStreamName(tree)
+
+	err := c.HandleEvent(ctx, ev)
+
+	require.Error(t, err)
+	assert.Equal(t,
+		"no active row for this tree and user carries this event: the read for "+posUser+
+			" in tree "+tree+" returned no row (insert affected no rows; a row with this event id exists: id="+evID+
+			"; this insert was for tree="+tree+" user="+posUser+")",
+		err.Error())
+}
+
 // noDeleteAndResponsorStore fails the test if anything calls
 // DeleteNodeAndResponsor.
 type noDeleteAndResponsorStore struct {

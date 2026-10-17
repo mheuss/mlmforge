@@ -464,7 +464,7 @@ impl StreamlineEngine {
         Ok(RemoveMemberResult { removed_from })
     }
 
-    /// Returns summaries of all streams, sorted by created_at.
+    /// Returns summaries of all streams, sorted by created_at, then id.
     pub fn list_streams(&self) -> Vec<StreamSummary> {
         let mut summaries: Vec<StreamSummary> = self
             .streams
@@ -477,7 +477,7 @@ impl StreamlineEngine {
                 created_at: s.created_at,
             })
             .collect();
-        summaries.sort_by_key(|s| s.created_at);
+        summaries.sort_by_key(|s| (s.created_at, s.id));
         summaries
     }
 
@@ -1653,6 +1653,21 @@ mod tests {
         assert!(summaries[0].created_at <= summaries[1].created_at);
         assert!(summaries[1].created_at <= summaries[2].created_at);
         assert_eq!(summaries[0].id, 1);
+    }
+
+    #[test]
+    fn list_streams_orders_streams_from_one_expansion_by_id() {
+        for _ in 0..64 {
+            let mut engine = StreamlineEngine::new(default_config(), 1000);
+            engine
+                .add_member(test_uuid(1), test_uuid(99), 1000, None)
+                .unwrap();
+            engine.expand_streams(test_uuid(1), 6, 1001).unwrap();
+
+            let listed: Vec<u32> = engine.list_streams().iter().map(|s| s.id).collect();
+
+            assert_eq!(listed, vec![1, 2, 3, 4, 5, 6]);
+        }
     }
 
     #[test]

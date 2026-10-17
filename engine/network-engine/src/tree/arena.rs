@@ -589,8 +589,11 @@ impl Arena {
     ///
     /// Call before any mutation.
     pub(crate) fn check_sponsored_removable(&self, removed: &[NodeIndex]) -> Result<(), TreeError> {
-        let removed: HashSet<NodeIndex> = removed.iter().copied().collect();
-        for &idx in &removed {
+        let order = removed;
+        let removed: HashSet<NodeIndex> = order.iter().copied().collect();
+        // The first failing node in the caller's order is the one reported, so
+        // the error does not depend on hash order.
+        for &idx in order {
             let survivors = self.surviving_recruits(idx, &removed);
             if survivors.is_empty() {
                 continue;
@@ -619,13 +622,19 @@ impl Arena {
         // A duplicate would move the same recruits twice and push them onto
         // the target's list twice. Collecting deduplicates in release too,
         // where a debug_assert would not.
-        let removed: HashSet<NodeIndex> = removed.iter().copied().collect();
+        let order = removed;
+        let removed: HashSet<NodeIndex> = order.iter().copied().collect();
+        // Plan in the caller's order, skipping repeats, so the moves and the
+        // report come out in that order rather than hash order.
+        let mut planned: HashSet<NodeIndex> = HashSet::new();
         // Resolve every target before moving anything. The apply loop writes
         // the sponsor field this walk reads, so folding the two together
         // would change the answer for later entries.
-        let plan: Vec<(NodeIndex, Vec<NodeIndex>, Option<NodeIndex>)> = removed
+        let plan: Vec<(NodeIndex, Vec<NodeIndex>, Option<NodeIndex>)> = order
             .iter()
-            .map(|&idx| {
+            .copied()
+            .filter(|idx| planned.insert(*idx))
+            .map(|idx| {
                 let survivors = self.surviving_recruits(idx, &removed);
                 // Skip the sponsor walk when there is nothing to move.
                 let target = if survivors.is_empty() {

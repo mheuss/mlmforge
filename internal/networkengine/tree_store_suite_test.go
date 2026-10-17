@@ -1328,4 +1328,99 @@ func runTreeStoreSuite(
 		assert.Equal(t, testNodeUUID(1), byEvent.ID,
 			"GetNodeByRemovalEvent returned id %s, want %s, the later removal", byEvent.ID, testNodeUUID(1))
 	})
+
+	// An older tombstone for the same user, plus a later active placement.
+	t.Run("a removal stamps the active row, not an older tombstone", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		rootUser := testUserUUID(1)
+		user := testUserUUID(2)
+		removalEvent := testNodeUUID(9)
+
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
+			makeUUIDNode(testNodeUUID(2), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
+		require.NoError(t, tombstoneUser(ctx, s, tree, user))
+		require.NoError(t, insertRow(ctx, s,
+			makeUUIDNode(testNodeUUID(3), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(1))))
+
+		require.NoError(t, stampRemoval(ctx, s, tree, user, removalEvent, 1))
+
+		assert.Nil(t, stampOf(t, s, testNodeUUID(2)), "the older tombstone gains no stamp")
+		got, err := s.GetNodeIncludingRemoved(ctx, tree, user)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, testNodeUUID(3), got.ID, "the later placement is the one removed")
+		require.NotNil(t, got.RemovedByEventID)
+		assert.Equal(t, removalEvent, *got.RemovedByEventID)
+	})
+
+	t.Run("a removal moves UpdatedAt forward on the removed row and the recruit", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		rootUser := testUserUUID(1)
+		removedUser := testUserUUID(2)
+		recruit := testUserUUID(3)
+		stale := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
+			makeUUIDNode(testNodeUUID(2), tree, removedUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
+		require.NoError(t, insertRow(ctx, s,
+			makeUUIDNode(testNodeUUID(3), tree, recruit, 2, ptr(removedUser), ptr(removedUser), intPtr(0))))
+		setUpdatedAt(t, s, testNodeUUID(2), stale)
+		setUpdatedAt(t, s, testNodeUUID(3), stale)
+		for _, u := range []string{removedUser, recruit} {
+			backdated, err := s.GetNode(ctx, tree, u)
+			require.NoError(t, err)
+			require.NotNil(t, backdated)
+			require.True(t, backdated.UpdatedAt.Equal(stale),
+				"%s's UpdatedAt read back as %v after setUpdatedAt, want %v", u, backdated.UpdatedAt, stale)
+		}
+
+		require.NoError(t, s.ProjectRemoval(ctx, tree, RemovalProjection{
+			Users:       []string{removedUser},
+			Responsored: []Responsored{{UserID: recruit, NewSponsorID: rootUser}},
+		}, testNodeUUID(9), 1))
+
+		removed, err := s.GetNodeIncludingRemoved(ctx, tree, removedUser)
+		require.NoError(t, err)
+		require.NotNil(t, removed)
+		assert.True(t, removed.UpdatedAt.After(stale),
+			"removed row's UpdatedAt read back as %v, want later than %v", removed.UpdatedAt, stale)
+
+		moved, err := s.GetNode(ctx, tree, recruit)
+		require.NoError(t, err)
+		require.NotNil(t, moved)
+		assert.True(t, moved.UpdatedAt.After(stale),
+			"recruit's UpdatedAt read back as %v, want later than %v", moved.UpdatedAt, stale)
+	})
+
+	t.Run("a removal does not cross tree boundaries", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		treeA := testTreeUUID(1)
+		treeB := testTreeUUID(2)
+		sharedUser := testUserUUID(1)
+
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), treeA, sharedUser, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(2), treeB, sharedUser, 0, nil, nil, nil)))
+
+		// Removing from treeB, the row inserted second. A scan that ignores the
+		// tree lands on treeA's row first.
+		require.NoError(t, stampRemoval(ctx, s, treeB, sharedUser, testNodeUUID(9), 1))
+
+		survivor, err := s.GetNode(ctx, treeA, sharedUser)
+		require.NoError(t, err)
+		assert.NotNil(t, survivor, "treeA's row read back after a removal in treeB")
+
+		removed, err := s.GetNode(ctx, treeB, sharedUser)
+		require.NoError(t, err)
+		assert.Nil(t, removed, "treeB's active row read back after its removal")
+	})
 }

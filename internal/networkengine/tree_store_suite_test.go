@@ -1329,7 +1329,6 @@ func runTreeStoreSuite(
 			"GetNodeByRemovalEvent returned id %s, want %s, the later removal", byEvent.ID, testNodeUUID(1))
 	})
 
-	// An older tombstone for the same user, plus a later active placement.
 	t.Run("a removal stamps the active row, not an older tombstone", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
@@ -1348,12 +1347,14 @@ func runTreeStoreSuite(
 
 		require.NoError(t, stampRemoval(ctx, s, tree, user, removalEvent, 1))
 
-		assert.Nil(t, stampOf(t, s, testNodeUUID(2)), "the older tombstone gains no stamp")
+		assert.Nil(t, stampOf(t, s, testNodeUUID(2)), "removal stamp read back on the older tombstone")
 		got, err := s.GetNodeIncludingRemoved(ctx, tree, user)
 		require.NoError(t, err)
 		require.NotNil(t, got)
-		assert.Equal(t, testNodeUUID(3), got.ID, "the later placement is the one removed")
-		require.NotNil(t, got.RemovedByEventID)
+		require.Equal(t, testNodeUUID(3), got.ID,
+			"GetNodeIncludingRemoved returned id %s, want %s, the later placement", got.ID, testNodeUUID(3))
+		assert.NotNil(t, got.RemovedAt, "no removed_at read back on the user's latest row")
+		require.NotNil(t, got.RemovedByEventID, "no removal stamp read back on the user's latest row")
 		assert.Equal(t, removalEvent, *got.RemovedByEventID)
 	})
 
@@ -1411,13 +1412,13 @@ func runTreeStoreSuite(
 		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), treeA, sharedUser, 0, nil, nil, nil)))
 		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(2), treeB, sharedUser, 0, nil, nil, nil)))
 
-		// Removing from treeB, the row inserted second. A scan that ignores the
-		// tree lands on treeA's row first.
+		// Removing from treeB, the row inserted second, so a removal that lands
+		// on the first row it finds does not pass.
 		require.NoError(t, stampRemoval(ctx, s, treeB, sharedUser, testNodeUUID(9), 1))
 
 		survivor, err := s.GetNode(ctx, treeA, sharedUser)
 		require.NoError(t, err)
-		assert.NotNil(t, survivor, "treeA's row read back after a removal in treeB")
+		assert.NotNil(t, survivor, "no active row read back in treeA after a removal in treeB")
 
 		removed, err := s.GetNode(ctx, treeB, sharedUser)
 		require.NoError(t, err)

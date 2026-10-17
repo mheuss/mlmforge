@@ -53,6 +53,6 @@ func TestTreeLoadIncomplete_RootStageFallbackString(t *testing.T) {
 	}
 
 	require.Equal(t,
-		"tree load incomplete: tree t7: stage root: placement 0 of 47, 0 acknowledged",
+		"tree load incomplete: tree t7: stage root: non-root placement 0 of 47, 0 acknowledged",
 		e.Error())
 }

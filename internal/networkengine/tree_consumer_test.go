@@ -2423,7 +2423,7 @@ func TestCheckReplayedInsert_MessageText(t *testing.T) {
 		reads string
 	}{
 		{
-			name:  "no row for this tree and user",
+			name:  "this event's row is active under another user",
 			seed:  func(t *testing.T, s *MemoryTreeStore) { seedRow(t, s, evID, posOther, nil) },
 			reads: "no row",
 		},

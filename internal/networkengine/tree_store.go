@@ -175,7 +175,7 @@ var (
 	// ErrRootConflict reports an active depth-0 row already rooting this tree.
 	ErrRootConflict = errors.New("an active row already roots this tree")
 
-	// ErrReplayedPlacement reports an event that holds no active row for its
+	// ErrReplayedPlacement reports an event that carries no active row for its
 	// tree and user.
 	ErrReplayedPlacement = errors.New("no active row for this tree and user carries this event")
 

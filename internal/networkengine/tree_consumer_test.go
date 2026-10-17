@@ -2014,20 +2014,30 @@ func newRemovalConsumer(tr *reconcileTransport) (*TreeEventConsumer, *deleteReco
 	return c, store
 }
 
-// The removal ran to completion and the event came back. The engine no longer
-// holds the user and the store's row is already a tombstone.
-func TestHandleNodeRemoved_ReconcileConvergesOnAProjectedRemoval(t *testing.T) {
+func TestHandleNodeRemoved_RefusesWhenOnlyAnUnstampedTombstoneExists(t *testing.T) {
 	tr := &reconcileTransport{mutationErr: &EngineError{Code: engineCodeUserNotFound}}
 	c, store := newRemovalConsumer(tr)
 	ctx := context.Background()
 	seedRemovable(t, store)
 	require.NoError(t, store.DeleteNode(ctx, "tree1", posUser))
+	tomb, err := store.GetNodeIncludingRemoved(ctx, "tree1", posUser)
+	require.NoError(t, err)
+	require.NotNil(t, tomb)
+	require.NotNil(t, tomb.RemovedAt)
+	event := makeEvent(EventTypeNodeRemoved, removedPayload())
 
-	err := c.HandleEvent(ctx, makeEvent(EventTypeNodeRemoved, removedPayload()))
+	err = c.HandleEvent(ctx, event)
 
-	require.NoError(t, err, "the whole event was already projected")
-	assert.Empty(t, store.responsors, "the store write must not run a second time")
-	assert.Len(t, tr.mutationOps, 1, "converged does not retry")
+	require.ErrorIs(t, err, ErrUnprojectableEvent)
+	assert.EqualError(t, err, "engine remove_node for "+posUser+" in tree tree1 returned USER_NOT_FOUND; no row carries removal event "+
+		event.ID+", and the read for that user returned a row carrying event cafe0000-0000-4000-8000-0000000000aa, removed at "+
+		tomb.RemovedAt.UTC().Format(time.RFC3339Nano))
+	assert.Empty(t, store.responsors, "a refused removal writes nothing")
+	assert.Empty(t, store.deleted, "a refused removal writes nothing")
+	_, found, verr := store.ProjectedVersion(ctx, "tree1")
+	require.NoError(t, verr)
+	assert.False(t, found, "a refused removal recorded a projected version")
+	assert.Len(t, tr.mutationOps, 1, "a refusal does not retry")
 }
 
 // The engine applied the removal and the store write never landed. The moved
@@ -2047,16 +2057,22 @@ func TestHandleNodeRemoved_ReconcileFailsWhenAnActiveRowRemains(t *testing.T) {
 	assert.Empty(t, store.responsors, "an unrepairable removal writes nothing")
 }
 
-// Neither side holds the user. There is nothing to remove and nothing to
-// disagree about.
-func TestHandleNodeRemoved_ReconcileConvergesWhenNoRowExists(t *testing.T) {
+func TestHandleNodeRemoved_RefusesWhenTheStoreHoldsNoRow(t *testing.T) {
 	tr := &reconcileTransport{mutationErr: &EngineError{Code: engineCodeUserNotFound}}
 	c, store := newRemovalConsumer(tr)
+	event := makeEvent(EventTypeNodeRemoved, removedPayload())
 
-	err := c.HandleEvent(context.Background(), makeEvent(EventTypeNodeRemoved, removedPayload()))
+	err := c.HandleEvent(context.Background(), event)
 
-	require.NoError(t, err)
-	assert.Empty(t, store.responsors)
+	require.ErrorIs(t, err, ErrUnprojectableEvent)
+	assert.EqualError(t, err, "engine remove_node for "+posUser+" in tree tree1 returned USER_NOT_FOUND; no row carries removal event "+
+		event.ID+", and the read for that user returned no row")
+	assert.Empty(t, store.responsors, "a refused removal writes nothing")
+	assert.Empty(t, store.deleted, "a refused removal writes nothing")
+	rows, rerr := store.GetByTree(context.Background(), "tree1")
+	require.NoError(t, rerr)
+	assert.Empty(t, rows, "a refused removal wrote a row")
+	assert.Len(t, tr.mutationOps, 1, "a refusal does not retry")
 }
 
 func TestHandleNodeRemoved_ReconcileSkipsOtherEngineErrors(t *testing.T) {

@@ -355,12 +355,9 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 				EventID: event.ID,
 			}
 		}
-		if existing == nil {
-			log.Printf("WARN tree consumer: node_removed for a user the store never held tree_id=%s user_id=%s event_id=%s",
-				payload.TreeID, payload.UserID, event.ID)
-		}
-		alreadyProjected = true
-		return reconcileConverged, nil
+		return reconcileDiverged, unprojectable(fmt.Errorf(
+			"engine %s for %s in tree %s returned %s; no row carries removal event %s, and the read for that user returned %s",
+			call.op, payload.UserID, payload.TreeID, engineCodeUserNotFound, event.ID, describeExistingRow(existing)))
 	}); err != nil {
 		return err
 	}

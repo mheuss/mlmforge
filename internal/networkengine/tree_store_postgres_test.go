@@ -634,7 +634,7 @@ func TestPostgresTreeStore_ARemovalThatWaitedOnTheLockStampsAfterIt(t *testing.T
 	require.NotNil(t, r1Removed)
 	require.NotNil(t, r2Removed)
 	assert.False(t, r2Removed.Before(*r1Removed),
-		"R2 removed at %s, before R1's %s, which committed while R2's removal waited", r2Removed, r1Removed)
+		"R2 removed at %s, before R1's %s; R1 committed after a lock waiter was seen", r2Removed, r1Removed)
 	assert.True(t, r2Removed.Equal(r2Updated), "R2 removed_at %s, updated_at %s", r2Removed, r2Updated)
 	newest, err := store.GetNodeIncludingRemoved(ctx, tree, u)
 	require.NoError(t, err)
@@ -659,4 +659,38 @@ func TestPostgresTreeStore_ARemovalOfSeveralUsersStampsThemAllAlike(t *testing.T
 	assert.True(t, aRemoved.Equal(*bRemoved), "A removed at %s, B at %s", aRemoved, bRemoved)
 	assert.True(t, aRemoved.Equal(aUpdated), "A removed_at %s, updated_at %s", aRemoved, aUpdated)
 	assert.True(t, bRemoved.Equal(bUpdated), "B removed_at %s, updated_at %s", bRemoved, bUpdated)
+}
+
+func TestPostgresTreeStore_ARejectionThatWaitedOnTheLockStampsAfterIt(t *testing.T) {
+	store := newTestPostgresTreeStore(t)
+	ctx := context.Background()
+	tree, root, u := testTreeUUID(1), testUserUUID(1), testUserUUID(2)
+	r1, r2 := testNodeUUID(2), testNodeUUID(3)
+	require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
+	require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(r1, tree, u, 1, ptr(root), ptr(root), nil), 2))
+
+	holder, err := store.pool.Begin(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = holder.Rollback(context.Background()) })
+	_, err = holder.Exec(ctx, `SELECT 1 FROM tree_projections WHERE tree_id = $1 FOR UPDATE`, tree)
+	require.NoError(t, err)
+	done := make(chan error, 1)
+	go func() {
+		done <- store.ProjectRejection(ctx, tree, r2, 3)
+	}()
+	waitForLockWaiters(t, store.pool, 1)
+	_, err = holder.Exec(ctx,
+		`UPDATE tree_nodes SET removed_at = clock_timestamp(), updated_at = clock_timestamp() WHERE id = $1`, r1)
+	require.NoError(t, err)
+	require.NoError(t, insertNode(ctx, holder, makeUUIDNode(r2, tree, u, 1, ptr(root), ptr(root), nil)))
+	require.NoError(t, holder.Commit(ctx))
+	require.NoError(t, receive(t, done, 10*time.Second))
+
+	r1Removed, _ := tombstoneTimes(t, store, r1)
+	r2Removed, r2Updated := tombstoneTimes(t, store, r2)
+	require.NotNil(t, r1Removed)
+	require.NotNil(t, r2Removed, "the rejection left R2 active")
+	assert.False(t, r2Removed.Before(*r1Removed),
+		"R2 removed at %s, before R1's %s; R1 committed after a lock waiter was seen", r2Removed, r1Removed)
+	assert.True(t, r2Removed.Equal(r2Updated), "R2 removed_at %s, updated_at %s", r2Removed, r2Updated)
 }

@@ -441,12 +441,16 @@ func projectRemoval(ctx context.Context, tx pgx.Tx, treeID string, r RemovalProj
 	return nil
 }
 
-const softDeleteRejectedSQL = `UPDATE tree_nodes SET removed_at = now(), updated_at = now()
+const softDeleteRejectedSQL = `UPDATE tree_nodes SET removed_at = $3, updated_at = $3
 		 WHERE tree_id = $1 AND id = $2 AND removed_at IS NULL`
 
 func (s *PostgresTreeStore) ProjectRejection(ctx context.Context, treeID, rejectedEventID string, eventVersion int64) error {
 	return s.project(ctx, treeID, eventVersion, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, softDeleteRejectedSQL, treeID, rejectedEventID)
+		at, err := tombstoneTime(ctx, tx)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, softDeleteRejectedSQL, treeID, rejectedEventID, at)
 		return err
 	})
 }

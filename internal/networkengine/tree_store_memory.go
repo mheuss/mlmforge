@@ -85,6 +85,9 @@ func (s *MemoryTreeStore) insertNodeAt(node TreeNodeRow, now time.Time) error {
 // appendUnchecked stores a row without any of InsertNode's checks, for a test
 // that needs a row the constraints refuse.
 func (s *MemoryTreeStore) appendUnchecked(node TreeNodeRow) error {
+	node.ID, node.TreeID, node.UserID = uuidKey(node.ID), uuidKey(node.TreeID), uuidKey(node.UserID)
+	node.ParentID, node.SponsorID = uuidKeyPtr(node.ParentID), uuidKeyPtr(node.SponsorID)
+	node.RemovedByEventID = uuidKeyPtr(node.RemovedByEventID)
 	s.nodes = append(s.nodes, node)
 	return nil
 }
@@ -319,6 +322,7 @@ func (s *MemoryTreeStore) ProjectedRows(ctx context.Context, treeID string) (int
 }
 
 func (s *MemoryTreeStore) ProjectInsert(ctx context.Context, node TreeNodeRow, eventVersion int64) error {
+	given := node.TreeID
 	node.TreeID = uuidKey(node.TreeID)
 	if err := checkEventVersion(node.TreeID, eventVersion); err != nil {
 		return err
@@ -326,7 +330,7 @@ func (s *MemoryTreeStore) ProjectInsert(ctx context.Context, node TreeNodeRow, e
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := s.refuseBelow(node.TreeID, eventVersion); err != nil {
+	if err := s.refuseBelow(node.TreeID, given, eventVersion); err != nil {
 		return err
 	}
 	if err := s.InsertNode(ctx, node); err != nil {
@@ -343,6 +347,7 @@ func (s *MemoryTreeStore) ProjectRemoval(
 	removalEventID string,
 	eventVersion int64,
 ) error {
+	given := treeID
 	treeID, removalEventID = uuidKey(treeID), uuidKey(removalEventID)
 	if len(r.Users) == 0 {
 		return fmt.Errorf("project removal in tree %s: the removal names no users", treeID)
@@ -353,7 +358,7 @@ func (s *MemoryTreeStore) ProjectRemoval(
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := s.refuseBelow(treeID, eventVersion); err != nil {
+	if err := s.refuseBelow(treeID, given, eventVersion); err != nil {
 		return err
 	}
 	staged, err := s.stageRemoval(treeID, r, removalEventID)
@@ -500,6 +505,7 @@ func checkActiveSlots(rows []TreeNodeRow, treeID string) error {
 }
 
 func (s *MemoryTreeStore) ProjectRejection(ctx context.Context, treeID, rejectedEventID string, eventVersion int64) error {
+	given := treeID
 	treeID, rejectedEventID = uuidKey(treeID), uuidKey(rejectedEventID)
 	if err := checkEventVersion(treeID, eventVersion); err != nil {
 		return err
@@ -507,7 +513,7 @@ func (s *MemoryTreeStore) ProjectRejection(ctx context.Context, treeID, rejected
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := s.refuseBelow(treeID, eventVersion); err != nil {
+	if err := s.refuseBelow(treeID, given, eventVersion); err != nil {
 		return err
 	}
 	now := time.Now()
@@ -554,13 +560,14 @@ func (s *MemoryTreeStore) UndoRootProjection(ctx context.Context, treeID, userID
 }
 
 // refuseBelow refuses an event version below 1, or below the tree's projected
-// version.
-func (s *MemoryTreeStore) refuseBelow(treeID string, eventVersion int64) error {
+// version. given is the tree id as the caller spelled it, which the refusal
+// reports.
+func (s *MemoryTreeStore) refuseBelow(treeID, given string, eventVersion int64) error {
 	if err := checkEventVersion(treeID, eventVersion); err != nil {
 		return err
 	}
 	if projected := s.projected[treeID]; eventVersion < projected {
-		return &ProjectionRefusedError{TreeID: treeID, EventVersion: eventVersion, ProjectedVersion: projected}
+		return &ProjectionRefusedError{TreeID: given, EventVersion: eventVersion, ProjectedVersion: projected}
 	}
 	return nil
 }

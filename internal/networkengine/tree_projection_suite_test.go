@@ -702,6 +702,29 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		assert.NotNil(t, got.rows[child].RemovedAt)
 	})
 
+	t.Run("a refusal under an uppercase tree id reports the tree id as given", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		upper := strings.ToUpper(tree)
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 3))
+		low := childRow
+		low.TreeID = upper
+
+		calls := []struct {
+			name string
+			call func() error
+		}{
+			{"ProjectInsert", func() error { return s.ProjectInsert(ctx, low, 2) }},
+			{"ProjectRemoval", func() error { return s.ProjectRemoval(ctx, upper, onlyChild, testNodeUUID(9), 2) }},
+			{"ProjectRejection", func() error { return s.ProjectRejection(ctx, upper, childRow.ID, 2) }},
+		}
+		for _, c := range calls {
+			var refused *ProjectionRefusedError
+			require.ErrorAs(t, c.call(), &refused, c.name)
+			assert.Equal(t, upper, refused.TreeID, "%s reported tree %s, want %s as given", c.name, refused.TreeID, upper)
+		}
+	})
+
 	t.Run("a row projected under an uppercase tree id advances the canonical version", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()

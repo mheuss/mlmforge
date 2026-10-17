@@ -2,6 +2,7 @@ package networkengine
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 
@@ -191,6 +192,8 @@ func TestTreeWriter_RefusesATreeWithNoProjectionRowBeforeRedeliveringItsLastRemo
 
 	res, err := w.Place(ctx, placeRequest(writerOther, nil))
 
+	var afterBuild *RefusedAfterFailedBuildError
+	require.ErrorAs(t, err, &afterBuild, "the refusal carried no failed build: %v", err)
 	var missing *ProjectionMissingError
 	require.ErrorAs(t, err, &missing)
 	assert.Equal(t, ProjectionMissingError{TreeID: writerTree, LastVersion: 3}, *missing)
@@ -200,8 +203,32 @@ func TestTreeWriter_RefusesATreeWithNoProjectionRowBeforeRedeliveringItsLastRemo
 	_, found, verr := env.store.ProjectedVersion(ctx, writerTree)
 	require.NoError(t, verr)
 	assert.False(t, found, "the refused write left a projection row behind")
-	tomb, err := env.store.GetNodeIncludingRemoved(ctx, writerTree, writerChild)
-	require.NoError(t, err)
-	require.NotNil(t, tomb)
-	assert.Nil(t, tomb.RemovedByEventID, "the seeded tombstone carries a removal stamp")
+}
+
+func TestTreeWriter_RefusesATreeWithNoProjectionRowOrActiveRowsBeforeRedeliveringItsLastRemoval(t *testing.T) {
+	env := newWriterEnv()
+	ctx := context.Background()
+	appendDirect(t, env.events, EventTypeRootAdded, rootAddedPayload())
+	placed := appendDirect(t, env.events, EventTypeNodePlaced, childPlacedPayload(writerChild))
+	appendDirect(t, env.events, EventTypeNodeRemoved, NodeRemovedPayload{TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime})
+	require.NoError(t, env.store.InsertNode(ctx, TreeNodeRow{
+		ID: placed.ID, TreeID: writerTree, UserID: writerChild, ParentID: &writerRoot, SponsorID: &writerRoot,
+		Depth: 1, EnrolledAt: writeTime}))
+	require.NoError(t, env.store.DeleteNode(ctx, writerTree, writerChild))
+	engine := &countingRemoveEngine{TreeRebuilder: newFakeWriterEngine()}
+	w := NewTreeWriter(env.events, env.store, env.snapshots, engine, env.locker)
+
+	res, err := w.Place(ctx, placeRequest(writerOther, nil))
+
+	assert.Zero(t, engine.removes, "RemoveNode calls before the refusal")
+	var afterBuild *RefusedAfterFailedBuildError
+	assert.False(t, errors.As(err, &afterBuild), "the refusal carried a failed build: %v", err)
+	var missing *ProjectionMissingError
+	require.ErrorAs(t, err, &missing)
+	assert.Equal(t, ProjectionMissingError{TreeID: writerTree, LastVersion: 3}, *missing)
+	assert.Nil(t, res.CaughtUp, "the refused write reported a caught-up event")
+	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 3)
+	_, found, verr := env.store.ProjectedVersion(ctx, writerTree)
+	require.NoError(t, verr)
+	assert.False(t, found, "the refused write left a projection row behind")
 }

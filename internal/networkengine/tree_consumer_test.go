@@ -2091,23 +2091,44 @@ func (staleStampReadStore) GetNodeByRemovalEvent(context.Context, string, string
 }
 
 func TestHandleNodeRemoved_ConvergesWhenTheUserReadFindsThisRemovalsStamp(t *testing.T) {
-	tr := &reconcileTransport{mutationErr: &EngineError{Code: engineCodeUserNotFound}}
-	mem := NewMemoryTreeStore()
-	c := NewTreeEventConsumer(staleStampReadStore{mem}, newEngineClientWithTransport(tr))
-	c.retryDelay = 0
-	ctx := context.Background()
-	require.NoError(t, mem.InsertNode(ctx, TreeNodeRow{
-		ID: "cafe0000-0000-4000-8000-0000000000aa", TreeID: "tree1",
-		UserID: posUser, Depth: 1, ParentID: ptr(posParent), EnrolledAt: posEnrolled,
-	}))
-	event := makeEvent(EventTypeNodeRemoved, removedPayload())
-	require.NoError(t, mem.DeleteNodeAndResponsor(ctx, "tree1", posUser, event.ID, nil))
+	for _, tc := range []struct {
+		name  string
+		spell func(string) string
+	}{
+		{"the stamp spelled as the event id", func(id string) string { return id }},
+		{"the stamp in upper case", strings.ToUpper},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tr := &reconcileTransport{mutationErr: &EngineError{Code: engineCodeUserNotFound}}
+			mem := NewMemoryTreeStore()
+			c := NewTreeEventConsumer(staleStampReadStore{mem}, newEngineClientWithTransport(tr))
+			c.retryDelay = 0
+			ctx := context.Background()
+			require.NoError(t, mem.InsertNode(ctx, TreeNodeRow{
+				ID: "cafe0000-0000-4000-8000-0000000000a0", TreeID: "tree1", UserID: posParent, EnrolledAt: posEnrolled,
+			}))
+			require.NoError(t, mem.InsertNode(ctx, TreeNodeRow{
+				ID: "cafe0000-0000-4000-8000-0000000000aa", TreeID: "tree1",
+				UserID: posUser, Depth: 1, ParentID: ptr(posParent), EnrolledAt: posEnrolled,
+			}))
+			event := makeEvent(EventTypeNodeRemoved, removedPayload())
+			require.NoError(t, mem.DeleteNodeAndResponsor(ctx, "tree1", posUser, tc.spell(event.ID), nil))
+			before, err := mem.GetByTree(ctx, "tree1")
+			require.NoError(t, err)
+			require.Len(t, before, 1, "active rows before HandleEvent")
 
-	err := c.HandleEvent(ctx, event)
+			err = c.HandleEvent(ctx, event)
 
-	require.NoError(t, err)
-	assert.Len(t, tr.mutationOps, 1, "engine mutation calls")
-	assert.Nil(t, activeRow(t, mem, posUser))
+			require.NoError(t, err)
+			assert.Len(t, tr.mutationOps, 1, "engine mutation calls")
+			after, err := mem.GetByTree(ctx, "tree1")
+			require.NoError(t, err)
+			assert.Equal(t, before, after, "active rows after HandleEvent")
+			_, found, verr := mem.ProjectedVersion(ctx, "tree1")
+			require.NoError(t, verr)
+			assert.False(t, found, "ProjectedVersion found a row for tree1")
+		})
+	}
 }
 
 func TestHandleNodeRemoved_RefusesWhenTheStoreHoldsNoRow(t *testing.T) {

@@ -332,8 +332,8 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 			return reconcileNotApplicable, nil
 		}
 		// The stamp read answers whether an earlier delivery of this event
-		// already projected. Without a stamp, the tree-and-user read below it
-		// separates an active row from a tombstone or no row at all.
+		// already projected. The tree-and-user read below it separates an active
+		// row, a tombstone this event stamped, and any other tombstone or no row.
 		stamped, serr := c.store.GetNodeByRemovalEvent(ctx, payload.TreeID, event.ID)
 		if serr != nil {
 			return reconcileInconclusive, fmt.Errorf("read the row this removal stamped: %w", serr)

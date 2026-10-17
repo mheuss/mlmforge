@@ -37,7 +37,7 @@ func runTreeStoreSuite(
 ) {
 	t.Helper()
 
-	t.Run("InsertNode then GetNode returns the row", func(t *testing.T) {
+	t.Run("ProjectInsert then GetNode returns the row", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
 
@@ -45,9 +45,9 @@ func runTreeStoreSuite(
 		rootUser := testUserUUID(1)
 		childUser := testUserUUID(2)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(2), tree, childUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
+		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil), 1))
+		require.NoError(t, s.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(2), tree, childUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0)), 2))
 
 		got, err := s.GetNode(ctx, tree, childUser)
 		require.NoError(t, err)
@@ -699,7 +699,7 @@ func runTreeStoreSuite(
 	// because Postgres returns TIMESTAMPTZ in the session zone while the
 	// memory store returns the value as given. Same instant, different
 	// representation, so assert.Equal fails on Postgres alone. HEU-795.
-	t.Run("InsertNode round-trips EnrolledAt", func(t *testing.T) {
+	t.Run("ProjectInsert round-trips EnrolledAt", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
 
@@ -708,7 +708,7 @@ func runTreeStoreSuite(
 		node := makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)
 		node.EnrolledAt = time.Date(2026, 5, 17, 13, 45, 6, 0, time.UTC)
 
-		require.NoError(t, s.InsertNode(ctx, node))
+		require.NoError(t, s.ProjectInsert(ctx, node, 1))
 
 		got, err := s.GetNode(ctx, tree, user)
 		require.NoError(t, err)
@@ -717,7 +717,7 @@ func runTreeStoreSuite(
 			"EnrolledAt round-trips as the same instant, got %v want %v", got.EnrolledAt, node.EnrolledAt)
 	})
 
-	t.Run("InsertNode stamps CreatedAt and UpdatedAt over the caller's values", func(t *testing.T) {
+	t.Run("ProjectInsert stamps CreatedAt and UpdatedAt over the caller's values", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
 
@@ -728,7 +728,7 @@ func runTreeStoreSuite(
 		node.UpdatedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 		before := time.Now().Add(-time.Second)
-		require.NoError(t, s.InsertNode(ctx, node))
+		require.NoError(t, s.ProjectInsert(ctx, node, 1))
 
 		got, err := s.GetNode(ctx, tree, user)
 		require.NoError(t, err)
@@ -835,15 +835,15 @@ func runTreeStoreSuite(
 
 	// UC-NET-014 rests on the double rejecting the same writes Postgres
 	// rejects, so each constraint below has a case on both stores.
-	t.Run("InsertNode rejects a duplicate row id", func(t *testing.T) {
+	t.Run("ProjectInsert rejects a duplicate row id", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
 
-		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(1), testTreeUUID(1), testUserUUID(1), 0, nil, nil, nil)))
+		require.NoError(t, s.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(1), testTreeUUID(1), testUserUUID(1), 0, nil, nil, nil), 1))
 
-		err := s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(1), testTreeUUID(2), testUserUUID(2), 0, nil, nil, nil))
+		err := s.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(1), testTreeUUID(2), testUserUUID(2), 0, nil, nil, nil), 1)
 		assert.ErrorIs(t, err, ErrNodeAlreadyProjected,
 			"the primary key is not partial, so a different tree and user does not excuse it")
 	})
@@ -852,7 +852,7 @@ func runTreeStoreSuite(
 	// its id. A redelivered event whose row was since removed must still be
 	// refused, or redelivery inserts a second row in memory and is rejected in
 	// Postgres.
-	t.Run("InsertNode rejects a duplicate row id after a soft delete", func(t *testing.T) {
+	t.Run("ProjectInsert rejects a duplicate row id after a soft delete", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
 
@@ -860,14 +860,14 @@ func runTreeStoreSuite(
 		user := testUserUUID(1)
 		node := makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)
 
-		require.NoError(t, s.InsertNode(ctx, node))
-		require.NoError(t, s.DeleteNode(ctx, tree, user))
+		require.NoError(t, s.ProjectInsert(ctx, node, 1))
+		require.NoError(t, tombstoneUser(ctx, s, tree, user))
 
-		err := s.InsertNode(ctx, node)
+		err := s.ProjectInsert(ctx, node, 1)
 		assert.ErrorIs(t, err, ErrNodeAlreadyProjected, "a removed row still holds its id")
 	})
 
-	t.Run("InsertNode rejects a second active row for one user in a tree", func(t *testing.T) {
+	t.Run("ProjectInsert rejects a second active row for one user in a tree", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
 
@@ -875,13 +875,13 @@ func runTreeStoreSuite(
 		rootUser := testUserUUID(1)
 		user := testUserUUID(2)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil), 1))
 		// Depth 1 on the conflicting pair is deliberate; see HEU-810.
-		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(2), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
+		require.NoError(t, s.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(2), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(0)), 2))
 
-		err := s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(3), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(1)))
+		err := s.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(3), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(1)), 3)
 		require.ErrorIs(t, err, ErrActiveUserConflict)
 
 		// The sentinel says which branch. It cannot say which row, and this is
@@ -890,39 +890,39 @@ func runTreeStoreSuite(
 		assert.Contains(t, err.Error(), user, "the message names the user")
 	})
 
-	t.Run("InsertNode rejects a second active claim on one slot", func(t *testing.T) {
+	t.Run("ProjectInsert rejects a second active claim on one slot", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
 
 		tree := testTreeUUID(1)
 		rootUser := testUserUUID(1)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(2), tree, testUserUUID(2), 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
+		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil), 1))
+		require.NoError(t, s.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(2), tree, testUserUUID(2), 1, ptr(rootUser), ptr(rootUser), intPtr(0)), 2))
 
-		err := s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(3), tree, testUserUUID(3), 1, ptr(rootUser), ptr(rootUser), intPtr(0)))
+		err := s.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(3), tree, testUserUUID(3), 1, ptr(rootUser), ptr(rootUser), intPtr(0)), 3)
 		assert.ErrorIs(t, err, ErrSlotConflict, "one active claim per tree, parent and position")
 	})
 
-	t.Run("InsertNode rejects a second active root in a tree", func(t *testing.T) {
+	t.Run("ProjectInsert rejects a second active root in a tree", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
 
 		tree := testTreeUUID(1)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, testUserUUID(1), 0, nil, nil, nil)))
+		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, testUserUUID(1), 0, nil, nil, nil), 1))
 
 		// Two different users, so this row violates the root index alone.
 		// A same-user row would violate the active-user index too, and
 		// Postgres picks which of two violated indexes it reports.
-		err := s.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), tree, testUserUUID(2), 0, nil, nil, nil))
+		err := s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(2), tree, testUserUUID(2), 0, nil, nil, nil), 2)
 		require.ErrorIs(t, err, ErrRootConflict)
 
 		// A removed root does not block its replacement (ADR-023).
-		require.NoError(t, s.DeleteNode(ctx, tree, testUserUUID(1)))
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(3), tree, testUserUUID(3), 0, nil, nil, nil)))
+		require.NoError(t, tombstoneUser(ctx, s, tree, testUserUUID(1)))
+		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(3), tree, testUserUUID(3), 0, nil, nil, nil), 3))
 	})
 
 	// A refused insert must not be a disguised update. On Postgres that is the
@@ -935,10 +935,10 @@ func runTreeStoreSuite(
 
 		tree := testTreeUUID(1)
 		user := testUserUUID(1)
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
+		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil), 1))
 
 		redelivered := makeUUIDNode(testNodeUUID(1), tree, user, 7, nil, nil, nil)
-		require.ErrorIs(t, s.InsertNode(ctx, redelivered), ErrNodeAlreadyProjected)
+		require.ErrorIs(t, s.ProjectInsert(ctx, redelivered, 1), ErrNodeAlreadyProjected)
 
 		got, err := s.GetNode(ctx, tree, user)
 		require.NoError(t, err)
@@ -967,9 +967,9 @@ func runTreeStoreSuite(
 		user := testUserUUID(1)
 		node := makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)
 
-		require.NoError(t, s.InsertNode(ctx, node))
+		require.NoError(t, s.ProjectInsert(ctx, node, 1))
 
-		err := s.InsertNode(ctx, node)
+		err := s.ProjectInsert(ctx, node, 1)
 		assert.ErrorIs(t, err, ErrNodeAlreadyProjected,
 			"the primary key is the branch that means already projected")
 	})

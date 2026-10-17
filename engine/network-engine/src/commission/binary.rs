@@ -142,6 +142,30 @@ fn accumulate_leg_volumes(
     leg_volumes
 }
 
+/// Sorts `earnings` by `(earner_id, position_id)`, then scales each owner's
+/// earnings pro rata when their total exceeds `cap`.
+fn apply_aggregate_cap(earnings: &mut [BinaryCommissionEarning], cap: f64) {
+    // Float addition depends on order, so each owner's total is summed in
+    // position order.
+    earnings.sort_by(|a, b| {
+        a.earner_id
+            .cmp(&b.earner_id)
+            .then_with(|| a.position_id.cmp(&b.position_id))
+    });
+    let mut owner_totals: HashMap<Uuid, f64> = HashMap::new();
+    for e in earnings.iter() {
+        *owner_totals.entry(e.earner_id).or_insert(0.0) += e.dollar_amount;
+    }
+    for e in earnings.iter_mut() {
+        let total = owner_totals[&e.earner_id];
+        if total > cap {
+            let scale = cap / total;
+            e.dollar_amount *= scale;
+            e.capped = true;
+        }
+    }
+}
+
 /// Calculate binary pairing commissions for a commission period.
 ///
 /// Pure function. Takes a binary tree, config, distributor snapshots,
@@ -275,31 +299,13 @@ pub fn calculate_binary_pairing(
 
     // Phase 2b: Aggregate cap post-processing for multi-position mode.
     // Per-position cap was skipped above when aggregate mode is active.
-    // Scale each position's earning pro-rata when the owner's total
-    // exceeds cap, preserving relative distribution across positions.
-    //
-    // For single-position self-owned earners (not in the ownership map),
-    // resolve_owner returns identity, so their "aggregate" total is just
-    // their single earning. The pro-rata scale factor (cap / total)
-    // produces the same result as a hard cap. Mathematically equivalent.
     if let Some(cap) = pairing.cap_per_period {
         if matches!(
             pairing.multi_position_cap_mode,
             MultiPositionCapMode::Aggregate
         ) && ownership.is_some()
         {
-            let mut owner_totals: HashMap<Uuid, f64> = HashMap::new();
-            for e in &earnings {
-                *owner_totals.entry(e.earner_id).or_insert(0.0) += e.dollar_amount;
-            }
-            for e in &mut earnings {
-                let total = owner_totals[&e.earner_id];
-                if total > cap {
-                    let scale = cap / total;
-                    e.dollar_amount *= scale;
-                    e.capped = true;
-                }
-            }
+            apply_aggregate_cap(&mut earnings, cap);
         }
     }
 
@@ -509,18 +515,7 @@ fn calculate_binary_cycle_step(
             MultiPositionCapMode::Aggregate
         ) && ownership.is_some()
         {
-            let mut owner_totals: HashMap<Uuid, f64> = HashMap::new();
-            for e in &earnings {
-                *owner_totals.entry(e.earner_id).or_insert(0.0) += e.dollar_amount;
-            }
-            for e in &mut earnings {
-                let total = owner_totals[&e.earner_id];
-                if total > cap {
-                    let scale = cap / total;
-                    e.dollar_amount *= scale;
-                    e.capped = true;
-                }
-            }
+            apply_aggregate_cap(&mut earnings, cap);
         }
     }
 
@@ -3995,6 +3990,51 @@ mod tests {
                     total_paid, theoretical_max
                 );
             }
+        }
+    }
+
+    #[test]
+    fn apply_aggregate_cap_gives_the_same_bits_in_every_input_order() {
+        let owner = test_uuid(100);
+        let earning = |position: u8, amount: f64| BinaryCommissionEarning {
+            earner_id: owner,
+            position_id: test_uuid(position),
+            left_volume: 0.0,
+            right_volume: 0.0,
+            matched_volume: 0.0,
+            ratio: 1.0,
+            percent: 0.10,
+            dollar_amount: amount,
+            capped: false,
+        };
+        let base = [
+            earning(1, 0.2),
+            earning(2, 0.1),
+            earning(3, 0.30000000000000004),
+        ];
+        let pinned = [0.03333333333333333f64, 0.016666666666666666, 0.05].map(f64::to_bits);
+        for order in [
+            [0, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ] {
+            let mut earnings: Vec<_> = order.iter().map(|&i| base[i].clone()).collect();
+            apply_aggregate_cap(&mut earnings, 0.1);
+            earnings.sort_by_key(|e| e.position_id);
+            let amounts: Vec<f64> = earnings.iter().map(|e| e.dollar_amount).collect();
+            let bits: Vec<u64> = amounts.iter().map(|a| a.to_bits()).collect();
+            assert_eq!(
+                bits,
+                pinned.to_vec(),
+                "input order {order:?} gave {amounts:?}"
+            );
+            assert!(
+                earnings.iter().all(|e| e.capped),
+                "input order {order:?} left an earning uncapped"
+            );
         }
     }
 }

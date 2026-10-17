@@ -100,7 +100,11 @@ fn build_group_volumes(
     let mut group_volumes: HashMap<Uuid, f64> = HashMap::new();
     let mut group_leaders: HashMap<Uuid, Uuid> = HashMap::new();
 
-    for (user_id, snapshot) in snapshots {
+    // Float addition depends on order, so sum in user-id order, not hash order.
+    let mut user_ids: Vec<&Uuid> = snapshots.keys().collect();
+    user_ids.sort();
+    for user_id in user_ids {
+        let snapshot = &snapshots[user_id];
         let leader = find_group_leader(tree, *user_id, breakaways);
         group_leaders.insert(*user_id, leader);
         *group_volumes.entry(leader).or_insert(0.0) += snapshot.personal_volume;

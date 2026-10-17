@@ -294,6 +294,29 @@ This is not in the numbered list above, because it does not look like a clean
 pass. It looks like a catch, which is worse: a clean pass invites suspicion and
 a red does not.
 
+**Run the mutation against the committed test before you write "fails on X".**
+Making a `require` non-fatal in a scratch copy shows what the assertion below it
+would catch. It does not show what the committed test catches. If the claim
+rests on that assertion, move it above the `require` and run again.
+
+HEU-868 hit this twice on one branch. Both times a commit message said a
+mutation failed a named assertion, and both times a reviewer showed the
+committed test stopped at an earlier `require`.
+
+## A SQL mutation that drops a bound parameter fails the statement
+
+Mutate a statement so it no longer uses one of its `$N` parameters and Postgres
+rejects the statement. Every test that runs it goes red at the `require` on its
+error, and none reaches the assertion the mutation was aimed at. It reads like a
+catch.
+
+Keep every parameter referenced. To read the clock per row instead of from `$4`,
+write `removed_at = clock_timestamp(), updated_at = $4`, not
+`removed_at = clock_timestamp(), updated_at = clock_timestamp()`.
+
+HEU-866's plan specified the second form. The run failed at the `require`, and
+the mutation was rewritten to the first form before its result was recorded.
+
 ## A skipped test for an open bug must pass under any fix that closes it
 
 A test that records a known bug and is skipped until a ticket fixes it has one

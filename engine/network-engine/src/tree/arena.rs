@@ -624,8 +624,8 @@ impl Arena {
         // where a debug_assert would not.
         let order = removed;
         let removed: HashSet<NodeIndex> = order.iter().copied().collect();
-        // Plan in the caller's order, skipping repeats, so the moves and the
-        // report come out in that order rather than hash order.
+        // Plan in the caller's order, skipping repeats, so the moves come out
+        // in that order rather than hash order.
         let mut planned: HashSet<NodeIndex> = HashSet::new();
         // Resolve every target before moving anything. The apply loop writes
         // the sponsor field this walk reads, so folding the two together

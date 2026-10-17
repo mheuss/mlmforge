@@ -120,6 +120,29 @@ func TestTreeConsumer_RootAddedRejectsWrongStream(t *testing.T) {
 	assert.Empty(t, transport.calls, "no engine call for a rejected event")
 }
 
+func TestTreeConsumer_RootAddedRejectsEmptyUserID(t *testing.T) {
+	store := NewMemoryTreeStore()
+	transport := newRecordingTransport()
+	engine := newEngineClientWithTransport(transport)
+	consumer := NewTreeEventConsumer(store, engine)
+
+	event := makeEvent(EventTypeRootAdded, RootAddedPayload{
+		TreeID:     "tree1",
+		UserID:     "",
+		SponsorID:  "user-root",
+		EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	})
+
+	err := consumer.HandleEvent(context.Background(), event)
+	require.ErrorIs(t, err, ErrUnprojectableEvent)
+	assert.EqualError(t, err, "root_added in tree tree1 has an empty user_id")
+
+	rows, storeErr := store.GetByTree(context.Background(), "tree1")
+	require.NoError(t, storeErr)
+	assert.Empty(t, rows, "no store projection for a rejected event")
+	assert.Empty(t, transport.calls, "no engine call for a rejected event")
+}
+
 func TestTreeConsumer_HandleNodePlaced(t *testing.T) {
 	store := NewMemoryTreeStore()
 	transport := newRecordingTransport()
@@ -235,6 +258,34 @@ func TestTreeConsumer_NodePlacedRejectsWrongStream(t *testing.T) {
 		`node_placed for user-child in tree tree1 arrived on stream "tree-other", want "tree-tree1"`,
 		"the message names the event, the node, the tree, and both streams")
 
+	assert.Empty(t, transport.calls, "no engine call for a rejected event")
+}
+
+func TestTreeConsumer_NodePlacedRejectsEmptyUserID(t *testing.T) {
+	store := NewMemoryTreeStore()
+	transport := newRecordingTransport()
+	engine := newEngineClientWithTransport(transport)
+	consumer := NewTreeEventConsumer(store, engine)
+
+	parent := makeNode("tree1", "user-root", 0, nil, nil, nil)
+	require.NoError(t, store.InsertNode(context.Background(), parent))
+
+	event := makeEvent(EventTypeNodePlaced, NodePlacedPayload{
+		TreeID:     "tree1",
+		UserID:     "",
+		ParentID:   "user-root",
+		SponsorID:  "user-root",
+		TreeType:   treeTypeUnilevel,
+		EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
+	})
+
+	err := consumer.HandleEvent(context.Background(), event)
+	require.ErrorIs(t, err, ErrUnprojectableEvent)
+	assert.EqualError(t, err, "node_placed in tree tree1 has an empty user_id")
+
+	rows, storeErr := store.GetByTree(context.Background(), "tree1")
+	require.NoError(t, storeErr)
+	assert.Len(t, rows, 1, "only the seeded parent is stored")
 	assert.Empty(t, transport.calls, "no engine call for a rejected event")
 }
 
@@ -2350,12 +2401,11 @@ func TestHandleNodePlaced_SkippedInsertReportsAFailedRead(t *testing.T) {
 	assert.Empty(t, tr.mutationOps, "the engine is not called on an unanswered read")
 }
 
-// The assembled refusal message is pinned as it reads today, which is wrong on
-// three of these four cases: it opens by claiming a soft-deleted row with this
-// event's id and then reports something else. HEU-804 owns the wording and it
-// is unruled, so this pins the string rather than endorsing it. Rewording the
-// message is meant to fail here, so that the change is a decision rather than
-// a side effect.
+// The whole assembled message is pinned, not just the sentinel, because a
+// sentinel match survives any rewording. The opening clause has to hold in
+// every case, including one where this event's row is active under another
+// user. Any change to it or to the wrapper should fail here and be read in
+// every case.
 //
 // The event id is fixed rather than taken from makeEvent, whose counter moves
 // with test selection, and RemovedAt is fixed so the rendered timestamp does
@@ -2373,7 +2423,7 @@ func TestCheckReplayedInsert_MessageText(t *testing.T) {
 		reads string
 	}{
 		{
-			name:  "no row for this tree and user",
+			name:  "this event's row is active under another user",
 			seed:  func(t *testing.T, s *MemoryTreeStore) { seedRow(t, s, evID, posOther, nil) },
 			reads: "no row",
 		},
@@ -2412,11 +2462,40 @@ func TestCheckReplayedInsert_MessageText(t *testing.T) {
 
 			require.Error(t, err)
 			assert.Equal(t,
-				"a row with this event id exists and is soft-deleted: the read for "+
+				"no active row for this tree and user carries this event: the read for "+
 					posUser+" in tree tree1 returned "+tc.reads+" "+skipped,
 				err.Error())
 		})
 	}
+}
+
+// The whole assembled message on the Postgres store, for an event whose row is
+// active under another user.
+func TestCheckReplayedInsert_PostgresMessageText(t *testing.T) {
+	store := newTestPostgresTreeStore(t)
+	ctx := context.Background()
+	const evID = "ffffffff-ffff-4fff-8fff-ffffffffffff"
+	tree := testTreeUUID(77)
+
+	require.NoError(t, store.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, posParent, 0, nil, nil, nil)))
+	require.NoError(t, store.InsertNode(ctx, makeUUIDNode(evID, tree, posOther, 1, ptr(posParent), ptr(posSponsor), intPtr(0))))
+
+	c := NewTreeEventConsumer(store, newEngineClientWithTransport(&reconcileTransport{}))
+	c.retryDelay = 0
+	payload := placedPayload(treeTypeBinary, intPtr(1))
+	payload.TreeID = tree
+	ev := makeEvent(EventTypeNodePlaced, payload)
+	ev.ID = evID
+	ev.Stream = TreeStreamName(tree)
+
+	err := c.HandleEvent(ctx, ev)
+
+	require.Error(t, err)
+	assert.Equal(t,
+		"no active row for this tree and user carries this event: the read for "+posUser+
+			" in tree "+tree+" returned no row (insert affected no rows; a row with this event id exists: id="+evID+
+			"; this insert was for tree="+tree+" user="+posUser+")",
+		err.Error())
 }
 
 // noDeleteAndResponsorStore fails the test if anything calls

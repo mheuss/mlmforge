@@ -64,7 +64,7 @@ The Rust `Request` struct deserializes `params` as `Box<serde_json::value::RawVa
 
 ### Error Code Taxonomy
 
-The worker returns an error code in the `error.code` field. There are 47 of
+The worker returns an error code in the `error.code` field. There are 46 of
 them, grouped below by the area that raises them. Codes are shared across areas
 where the condition is the same, so each one is listed once.
 
@@ -107,7 +107,6 @@ which maps every `TreeError` variant, plus a few handler-level checks.
 | `BOARD_NOT_FOUND` | Named board does not exist in the structure |
 | `MEMBER_NOT_FOUND` | Referenced member is not on the board. Also raised by streamline |
 | `MEMBER_ALREADY_EXISTS` | Member is already on the board. Also raised by streamline |
-| `MEMBER_NOT_DISPLACED` | Operation requires a displaced member and this one is not displaced |
 | `NO_BOARDS_AVAILABLE` | No board has an open slot for placement |
 | `BOARD_FULL` | `board_dissolve` named a board whose positions are all filled. A later operation that passes its preconditions cycles it |
 | `INVALID_DIMENSIONS` | Board width or height is outside the allowed bounds |

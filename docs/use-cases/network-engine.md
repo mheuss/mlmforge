@@ -1021,10 +1021,16 @@ err := c.withRetry(ctx, op, treeID, userID, func() error {
         return reconcileInconclusive, gerr
     }
     // Without this event's stamp, an active row is divergence.
-    // A tombstone or no row is an event that replay cannot apply.
     if row != nil && row.RemovedAt == nil {
         return reconcileDiverged, fmt.Errorf("the store holds an active row the engine refused")
     }
+    // This read runs second, so it can see a stamp another writer committed
+    // after the stamp read. Trust the later read.
+    if row != nil && row.RemovedByEventID != nil && sameUUID(*row.RemovedByEventID, eventID) {
+        alreadyProjected = true
+        return reconcileConverged, nil
+    }
+    // Any other tombstone, or no row, is an event that replay cannot apply.
     return reconcileDiverged, unprojectable(fmt.Errorf("no row carries this removal's stamp, and the read returned %s", describeExistingRow(row)))
 })
 if err != nil {
@@ -1037,7 +1043,7 @@ if alreadyProjected {
 
 **When to use this pattern:** any retry loop over a remote mutation where the remote can refuse a call because it already did the work. Reach for it once "this failed" and "this was already done" arrive as the same error.
 
-**Notes:** Four outcomes rather than two, because each pair splits on a different question. `notApplicable` and `inconclusive` both retry, but the first says the error is not one reconcile can speak to and the second says the inspection itself failed. Keeping `inconclusive` apart from `diverged` is what stops a timed-out query being reported as the engine disagreeing. `diverged` returning a nil error is backfilled with the engine error at the call site, because reporting the one outcome that means the two systems disagree as success is the worst answer the loop can give. The three handlers in `tree_consumer.go` are the worked examples, and `handleNodeRemoved` is the one that needs the flag, since its engine reply carries the only copy of the moved list. Related: UC-NET-014, which owns the gate and the database backstop this sits behind. The Usage block is the removal path's shape. The stamp read comes before the tree-and-user read. That order lets a refused redelivery converge on its own tombstone when a later placement never reached the engine (HEU-811). A placement redelivered after its parent was removed is refused before it reaches its guard (HEU-813). The root path's damage is refused at the store by migration 000006 (HEU-810).
+**Notes:** Four outcomes rather than two, because each pair splits on a different question. `notApplicable` and `inconclusive` both retry, but the first says the error is not one reconcile can speak to and the second says the inspection itself failed. Keeping `inconclusive` apart from `diverged` is what stops a timed-out query being reported as the engine disagreeing. `diverged` returning a nil error is backfilled with the engine error at the call site, because reporting the one outcome that means the two systems disagree as success is the worst answer the loop can give. The three handlers in `tree_consumer.go` are the worked examples, and `handleNodeRemoved` is the one that needs the flag, since its engine reply carries the only copy of the moved list. Related: UC-NET-014, which owns the gate and the database backstop this sits behind. The Usage block is the removal path's shape. The stamp read comes before the tree-and-user read. That order lets a refused redelivery converge on its own tombstone when a later placement never reached the engine (HEU-811). The tree-and-user read checks the stamp again, because another writer can project the removal between the two reads (HEU-868). A placement redelivered after its parent was removed is refused before it reaches its guard (HEU-813). The root path's damage is refused at the store by migration 000006 (HEU-810).
 
 ---
 

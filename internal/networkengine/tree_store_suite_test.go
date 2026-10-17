@@ -70,7 +70,7 @@ func runTreeStoreSuite(
 		s := newStore(t)
 		ctx := context.Background()
 
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(1), testTreeUUID(1), testUserUUID(1), 0, nil, nil, nil)))
 
 		got, err := s.GetNode(ctx, testTreeUUID(1), testUserUUID(99))
@@ -85,7 +85,7 @@ func runTreeStoreSuite(
 		ctx := context.Background()
 
 		user := testUserUUID(1)
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(1), testTreeUUID(1), user, 0, nil, nil, nil)))
 
 		got, err := s.GetNode(ctx, testTreeUUID(2), user)
@@ -100,7 +100,7 @@ func runTreeStoreSuite(
 		tree := testTreeUUID(1)
 		user := testUserUUID(1)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
 
 		got, err := s.GetNode(ctx, tree, user)
 		require.NoError(t, err)
@@ -120,8 +120,8 @@ func runTreeStoreSuite(
 		tree := testTreeUUID(1)
 		user := testUserUUID(1)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
-		require.NoError(t, s.DeleteNode(ctx, tree, user))
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
+		require.NoError(t, tombstoneUser(ctx, s, tree, user))
 
 		got, err := s.GetNode(ctx, tree, user)
 		require.NoError(t, err, "a soft-deleted row reads as absent, not as an error")
@@ -138,16 +138,16 @@ func runTreeStoreSuite(
 		removedUser := testUserUUID(3)
 		grandchildUser := testUserUUID(4)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(2), tree, keptUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(3), tree, removedUser, 1, ptr(rootUser), ptr(rootUser), intPtr(1))))
 		// A grandchild, to prove GetChildren is one level and not a subtree walk.
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(4), tree, grandchildUser, 2, ptr(keptUser), ptr(keptUser), intPtr(0))))
 
-		require.NoError(t, s.DeleteNode(ctx, tree, removedUser))
+		require.NoError(t, tombstoneUser(ctx, s, tree, removedUser))
 
 		children, err := s.GetChildren(ctx, tree, rootUser)
 		require.NoError(t, err)
@@ -165,15 +165,15 @@ func runTreeStoreSuite(
 		keptUser := testUserUUID(2)
 		removedUser := testUserUUID(3)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(2), tree, keptUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(3), tree, removedUser, 1, ptr(rootUser), ptr(rootUser), intPtr(1))))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(4), otherTree, testUserUUID(4), 0, nil, nil, nil)))
 
-		require.NoError(t, s.DeleteNode(ctx, tree, removedUser))
+		require.NoError(t, tombstoneUser(ctx, s, tree, removedUser))
 
 		got, err := s.GetByTree(ctx, tree)
 		require.NoError(t, err)
@@ -181,10 +181,9 @@ func runTreeStoreSuite(
 			"active rows of this tree only")
 	})
 
-	// DeleteNode is asserted through every read path rather than GetNode
-	// alone. A soft delete that one query honors and another ignores is the
-	// shape that breaks startup bulk-load.
-	t.Run("DeleteNode makes the row invisible to every read", func(t *testing.T) {
+	// The tombstone is asserted through every read path rather than GetNode
+	// alone, so a soft delete that one query honors and another ignores fails.
+	t.Run("a tombstoned row is invisible to every read", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
 
@@ -192,11 +191,11 @@ func runTreeStoreSuite(
 		rootUser := testUserUUID(1)
 		childUser := testUserUUID(2)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(2), tree, childUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
 
-		require.NoError(t, s.DeleteNode(ctx, tree, childUser))
+		require.NoError(t, tombstoneUser(ctx, s, tree, childUser))
 
 		got, err := s.GetNode(ctx, tree, childUser)
 		require.NoError(t, err)
@@ -471,13 +470,13 @@ func runTreeStoreSuite(
 		otherRemoved := testUserUUID(3)
 		removalEvent := testNodeUUID(9)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(2), tree, otherRemoved, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(3), tree, removedUser, 1, ptr(rootUser), ptr(rootUser), intPtr(1))))
-		require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, otherRemoved, testNodeUUID(8), nil))
-		require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, removedUser, removalEvent, nil))
+		require.NoError(t, stampRemoval(ctx, s, tree, otherRemoved, testNodeUUID(8), 1))
+		require.NoError(t, stampRemoval(ctx, s, tree, removedUser, removalEvent, 2))
 
 		got, err := s.GetNodeByRemovalEvent(ctx, tree, removalEvent)
 		require.NoError(t, err)
@@ -496,13 +495,13 @@ func runTreeStoreSuite(
 		user := testUserUUID(2)
 		removalEvent := testNodeUUID(9)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(2), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
-		require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, user, removalEvent, nil))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, stampRemoval(ctx, s, tree, user, removalEvent, 1))
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(3), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(1))))
-		require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, user, removalEvent, nil))
+		require.NoError(t, stampRemoval(ctx, s, tree, user, removalEvent, 2))
 
 		got, err := s.GetNodeByRemovalEvent(ctx, tree, removalEvent)
 		require.NoError(t, err)
@@ -518,10 +517,10 @@ func runTreeStoreSuite(
 		rootUser := testUserUUID(1)
 		removedUser := testUserUUID(2)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(2), tree, removedUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
-		require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, removedUser, testNodeUUID(8), nil))
+		require.NoError(t, stampRemoval(ctx, s, tree, removedUser, testNodeUUID(8), 1))
 
 		got, err := s.GetNodeByRemovalEvent(ctx, tree, testNodeUUID(9))
 		require.NoError(t, err, "an event that removed nothing is not an error")
@@ -538,11 +537,11 @@ func runTreeStoreSuite(
 		removedUser := testUserUUID(2)
 		removalEvent := testNodeUUID(9)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), otherTree, rootUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(2), otherTree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(3), otherTree, removedUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
-		require.NoError(t, s.DeleteNodeAndResponsor(ctx, otherTree, removedUser, removalEvent, nil))
+		require.NoError(t, stampRemoval(ctx, s, otherTree, removedUser, removalEvent, 1))
 
 		got, err := s.GetNodeByRemovalEvent(ctx, tree, removalEvent)
 		require.NoError(t, err)
@@ -553,7 +552,7 @@ func runTreeStoreSuite(
 		s := newStore(t)
 		ctx := context.Background()
 
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(1), testTreeUUID(1), testUserUUID(1), 0, nil, nil, nil)))
 
 		got, err := s.GetNodeIncludingRemoved(ctx, testTreeUUID(1), testUserUUID(99))
@@ -566,7 +565,7 @@ func runTreeStoreSuite(
 		ctx := context.Background()
 
 		tree, user := testTreeUUID(1), testUserUUID(1)
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
 
 		got, err := s.GetNodeIncludingRemoved(ctx, tree, user)
 		require.NoError(t, err)
@@ -580,8 +579,8 @@ func runTreeStoreSuite(
 		ctx := context.Background()
 
 		tree, user := testTreeUUID(1), testUserUUID(1)
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
-		require.NoError(t, s.DeleteNode(ctx, tree, user))
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
+		require.NoError(t, tombstoneUser(ctx, s, tree, user))
 
 		got, err := s.GetNodeIncludingRemoved(ctx, tree, user)
 		require.NoError(t, err)
@@ -595,9 +594,9 @@ func runTreeStoreSuite(
 		ctx := context.Background()
 
 		tree, user := testTreeUUID(1), testUserUUID(1)
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
-		require.NoError(t, s.DeleteNode(ctx, tree, user))
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), tree, user, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
+		require.NoError(t, tombstoneUser(ctx, s, tree, user))
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(2), tree, user, 0, nil, nil, nil)))
 
 		got, err := s.GetNodeIncludingRemoved(ctx, tree, user)
 		require.NoError(t, err)
@@ -616,10 +615,10 @@ func runTreeStoreSuite(
 		ctx := context.Background()
 
 		tree, user := testTreeUUID(1), testUserUUID(1)
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
-		require.NoError(t, s.DeleteNode(ctx, tree, user))
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), tree, user, 0, nil, nil, nil)))
-		require.NoError(t, s.DeleteNode(ctx, tree, user))
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
+		require.NoError(t, tombstoneUser(ctx, s, tree, user))
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(2), tree, user, 0, nil, nil, nil)))
+		require.NoError(t, tombstoneUser(ctx, s, tree, user))
 
 		got, err := s.GetNodeIncludingRemoved(ctx, tree, user)
 		require.NoError(t, err)
@@ -677,17 +676,17 @@ func runTreeStoreSuite(
 
 		// Inserted deepest first and with the same-depth pair reversed, so
 		// insertion order cannot produce the expected sequence by accident.
-		require.NoError(t, s.InsertNode(ctx, deep))
-		require.NoError(t, s.InsertNode(ctx, late))
-		require.NoError(t, s.InsertNode(ctx, early))
-		require.NoError(t, s.InsertNode(ctx, root))
+		require.NoError(t, insertRow(ctx, s, deep))
+		require.NoError(t, insertRow(ctx, s, late))
+		require.NoError(t, insertRow(ctx, s, early))
+		require.NoError(t, insertRow(ctx, s, root))
 
 		// Another tree, at a depth that would sort into the middle. A
 		// tree-scope leak here returns another tenant's nodes inside an
 		// ordered read, where the caller has no reason to re-filter.
 		other := makeUUIDNode(testNodeUUID(5), testTreeUUID(2), testUserUUID(5), 1, nil, nil, nil)
 		other.EnrolledAt = time.Date(2026, 2, 15, 0, 0, 0, 0, time.UTC)
-		require.NoError(t, s.InsertNode(ctx, other))
+		require.NoError(t, insertRow(ctx, s, other))
 
 		got, err := s.GetByTreeDepthOrdered(ctx, tree)
 		require.NoError(t, err)
@@ -796,11 +795,11 @@ func runTreeStoreSuite(
 		kidA := testUserUUID(2)
 		kidB := testUserUUID(3)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), treeA, sharedUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), treeB, sharedUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), treeA, sharedUser, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(2), treeB, sharedUser, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(3), treeA, kidA, 1, ptr(sharedUser), ptr(sharedUser), intPtr(0))))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(4), treeB, kidB, 1, ptr(sharedUser), ptr(sharedUser), intPtr(0))))
 
 		children, err := s.GetChildren(ctx, treeA, sharedUser)
@@ -1065,7 +1064,7 @@ func runTreeStoreSuite(
 		assert.Nil(t, stampOf(t, s, testNodeUUID(2)), "removal stamp read back on the row the cancelled delete named")
 	})
 
-	t.Run("DeleteNode moves UpdatedAt forward", func(t *testing.T) {
+	t.Run("a rejection moves UpdatedAt forward", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
 
@@ -1073,7 +1072,7 @@ func runTreeStoreSuite(
 		user := testUserUUID(1)
 		stale := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
+		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil), 1))
 		setUpdatedAt(t, s, testNodeUUID(1), stale)
 		backdated, err := s.GetNode(ctx, tree, user)
 		require.NoError(t, err)
@@ -1081,13 +1080,14 @@ func runTreeStoreSuite(
 		require.True(t, backdated.UpdatedAt.Equal(stale),
 			"UpdatedAt read back as %v after setUpdatedAt, want %v", backdated.UpdatedAt, stale)
 
-		require.NoError(t, s.DeleteNode(ctx, tree, user))
+		require.NoError(t, s.ProjectRejection(ctx, tree, testNodeUUID(1), 2))
 
 		got, err := s.GetNodeIncludingRemoved(ctx, tree, user)
 		require.NoError(t, err)
 		require.NotNil(t, got)
+		assert.NotNil(t, got.RemovedAt, "no removed_at read back after the rejection")
 		assert.True(t, got.UpdatedAt.After(stale),
-			"UpdatedAt read back as %v after the delete, want later than %v", got.UpdatedAt, stale)
+			"UpdatedAt read back as %v after the rejection, want later than %v", got.UpdatedAt, stale)
 	})
 
 	t.Run("DeleteNodeAndResponsor moves UpdatedAt forward on the removed row and the recruit", func(t *testing.T) {
@@ -1188,8 +1188,8 @@ func runTreeStoreSuite(
 			{testNodeUUID(1), userA}, {testNodeUUID(2), userA},
 			{testNodeUUID(4), userB}, {testNodeUUID(3), userB},
 		} {
-			require.NoError(t, s.InsertNode(ctx, makeUUIDNode(p.id, tree, p.user, 1, nil, nil, nil)))
-			require.NoError(t, s.DeleteNode(ctx, tree, p.user))
+			require.NoError(t, insertRow(ctx, s, makeUUIDNode(p.id, tree, p.user, 1, nil, nil, nil)))
+			require.NoError(t, tombstoneUser(ctx, s, tree, p.user))
 			setRemovedAt(t, s, p.id, tie)
 			back, err := s.GetNodeIncludingRemoved(ctx, tree, p.user)
 			require.NoError(t, err)
@@ -1222,12 +1222,12 @@ func runTreeStoreSuite(
 
 		// eventA stamps its higher id second and eventB stamps its higher id
 		// first, so neither a first-found nor a last-found rule returns both.
-		for _, p := range []struct{ id, event string }{
+		for i, p := range []struct{ id, event string }{
 			{testNodeUUID(1), eventA}, {testNodeUUID(2), eventA},
 			{testNodeUUID(4), eventB}, {testNodeUUID(3), eventB},
 		} {
-			require.NoError(t, s.InsertNode(ctx, makeUUIDNode(p.id, tree, user, 1, nil, nil, nil)))
-			require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, user, p.event, nil))
+			require.NoError(t, insertRow(ctx, s, makeUUIDNode(p.id, tree, user, 1, nil, nil, nil)))
+			require.NoError(t, stampRemoval(ctx, s, tree, user, p.event, int64(i+1)))
 			setRemovedAt(t, s, p.id, tie)
 			back, err := s.GetNodeByRemovalEvent(ctx, tree, p.event)
 			require.NoError(t, err)
@@ -1260,9 +1260,9 @@ func runTreeStoreSuite(
 
 		event := testNodeUUID(9)
 
-		for _, id := range []string{lower, upper} {
-			require.NoError(t, s.InsertNode(ctx, makeUUIDNode(id, tree, user, 1, nil, nil, nil)))
-			require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, user, event, nil))
+		for i, id := range []string{lower, upper} {
+			require.NoError(t, insertRow(ctx, s, makeUUIDNode(id, tree, user, 1, nil, nil, nil)))
+			require.NoError(t, stampRemoval(ctx, s, tree, user, event, int64(i+1)))
 			setRemovedAt(t, s, id, tie)
 			back, err := s.GetNodeIncludingRemoved(ctx, tree, user)
 			require.NoError(t, err)
@@ -1298,15 +1298,15 @@ func runTreeStoreSuite(
 		// The higher id gets the earlier removal, so an order on id alone
 		// returns the wrong row. Both stamps are in the past, so a hook that did
 		// not land leaves a later removed_at than either.
-		for _, p := range []struct {
+		for i, p := range []struct {
 			id string
 			at time.Time
 		}{
 			{testNodeUUID(2), earlier},
 			{testNodeUUID(1), later},
 		} {
-			require.NoError(t, s.InsertNode(ctx, makeUUIDNode(p.id, tree, user, 1, nil, nil, nil)))
-			require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, user, event, nil))
+			require.NoError(t, insertRow(ctx, s, makeUUIDNode(p.id, tree, user, 1, nil, nil, nil)))
+			require.NoError(t, stampRemoval(ctx, s, tree, user, event, int64(i+1)))
 			setRemovedAt(t, s, p.id, p.at)
 			back, err := s.GetNodeIncludingRemoved(ctx, tree, user)
 			require.NoError(t, err)

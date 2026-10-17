@@ -294,7 +294,7 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 	t.Run("undoing a root in a tree with no projection row deletes nothing", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
-		require.NoError(t, s.InsertNode(ctx, rootRow))
+		require.NoError(t, insertRow(ctx, s, rootRow))
 		before := readProjectionState(t, s, tree, root)
 
 		err := s.UndoRootProjection(ctx, tree, root, 1)

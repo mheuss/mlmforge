@@ -120,6 +120,22 @@ tx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 Otherwise someone hardening the production pool to REPEATABLE READ breaks the
 error contract with every test still green.
 
+## Two separate reads can straddle another writer's commit
+
+Two queries on the pool, with no transaction or lock around them, each see the
+latest commit at the moment they run. A commit can land between them. The second
+read then disagrees with the first, and code that combines the two answers can
+draw a conclusion neither read supports.
+
+When the second read carries this operation's own evidence, trust it over the
+first. The later read saw more.
+
+HEU-868 hit this in the removal reconcile. The stamp read found nothing. Another
+writer then projected the same removal. The user read returned a tombstone
+stamped by this event. The reconcile refused the event with a message naming it
+twice. It now converges when the user read's tombstone carries this event's
+stamp.
+
 ## `now()` is the transaction timestamp
 
 `now()` is `transaction_timestamp()`, captured at `BEGIN` — before the

@@ -175,9 +175,8 @@ var (
 	// ErrRootConflict reports an active depth-0 row already rooting this tree.
 	ErrRootConflict = errors.New("an active row already roots this tree")
 
-	// ErrReplayedPlacement reports a skipped insert for an event that holds no
-	// active row for its tree and user. The placement is not current and must
-	// not be resumed.
+	// ErrReplayedPlacement reports an event that holds no active row for its
+	// tree and user.
 	ErrReplayedPlacement = errors.New("no active row for this tree and user carries this event")
 
 	// ErrUnprojectableEvent reports an event refused for what it carries.

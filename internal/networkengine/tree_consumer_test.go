@@ -2403,9 +2403,9 @@ func TestHandleNodePlaced_SkippedInsertReportsAFailedRead(t *testing.T) {
 
 // The whole assembled message is pinned, not just the sentinel, because a
 // sentinel match survives any rewording. The opening clause has to hold in
-// all four cases, including the first, where this event's row is active under
-// another user. Any change to it or to the wrapper should fail here and be
-// read in every case.
+// every case, including one where this event's row is active under another
+// user. Any change to it or to the wrapper should fail here and be read in
+// every case.
 //
 // The event id is fixed rather than taken from makeEvent, whose counter moves
 // with test selection, and RemovedAt is fixed so the rendered timestamp does

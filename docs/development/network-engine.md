@@ -346,7 +346,7 @@ The board plan engine (`board_plan/engine.rs`) manages multiple small boards. It
 
 Board dimensions are capped: width 2-5, height 1-4. Boards use flat BFS-ordered position arrays, not arena storage.
 
-Boards order by `(created_at, seq)`. The engine assigns `seq` from `next_board_seq` when it creates a board. A split numbers its new boards in child order. Board ids are random per run, so they never break a tie. Placement, `list_boards` and the drain all use this order.
+Boards order by `(created_at, seq)`. The engine assigns `seq` from `next_board_seq` when it creates a board. A split numbers its new boards in child order. Board ids are random per run, so they never break a tie. Placement, `list_boards`, stall detection and the drain all use this order.
 
 Add, remove and compress check their preconditions. Then they cycle every full board, oldest first. Each cycle gets a fresh cascade budget. Dissolve refuses a full board with `BOARD_FULL`. Otherwise it removes the board and then drains. `max_cascade_depth` limits recursion depth within one cascade, so a cascade can leave a board full. A later operation that passes its preconditions cycles it. Restore never drains.
 

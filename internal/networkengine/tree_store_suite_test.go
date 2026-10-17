@@ -975,7 +975,7 @@ func runTreeStoreSuite(
 
 		err = stampRemoval(ctx, s, tree, goneUser, testNodeUUID(9), 1)
 
-		assert.Error(t, err, "stampRemoval returned nil for a user with no active row")
+		assert.ErrorContains(t, err, "matched 0 of 1 active rows")
 		assert.Nil(t, stampOf(t, s, testNodeUUID(2)), "removal stamp read back on the existing tombstone")
 		after, err := s.GetNodeIncludingRemoved(ctx, tree, goneUser)
 		require.NoError(t, err)

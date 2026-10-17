@@ -421,14 +421,18 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		ctx := context.Background()
 		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
 		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
-		before := readProjectionState(t, s, tree, root, child, recruit)
+		require.NoError(t, s.ProjectInsert(ctx, recruitRow, 3))
+		before := readProjectionState(t, s, tree, root, child, recruit, grand)
 		cancelled, cancel := context.WithCancel(ctx)
 		cancel()
 
-		assert.ErrorIs(t, s.ProjectInsert(cancelled, recruitRow, 3), context.Canceled, "ProjectInsert")
-		assert.ErrorIs(t, s.ProjectRemoval(cancelled, tree, onlyChild, testNodeUUID(9), 3), context.Canceled, "ProjectRemoval")
+		assert.ErrorIs(t, s.ProjectInsert(cancelled, grandRow, 4), context.Canceled, "ProjectInsert")
+		assert.ErrorIs(t, s.ProjectRemoval(cancelled, tree, RemovalProjection{
+			Users:       []string{child},
+			Responsored: []Responsored{{UserID: recruit, NewSponsorID: root}},
+		}, testNodeUUID(9), 4), context.Canceled, "ProjectRemoval")
 
-		assert.Equal(t, before, readProjectionState(t, s, tree, root, child, recruit))
+		assert.Equal(t, before, readProjectionState(t, s, tree, root, child, recruit, grand))
 	})
 
 	t.Run("a rejection with a cancelled context writes nothing", func(t *testing.T) {

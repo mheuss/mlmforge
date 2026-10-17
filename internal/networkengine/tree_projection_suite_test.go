@@ -2,6 +2,7 @@ package networkengine
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -723,6 +724,46 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 			require.ErrorAs(t, c.call(), &refused, c.name)
 			assert.Equal(t, upper, refused.TreeID, "%s reported tree %s, want %s as given", c.name, refused.TreeID, upper)
 		}
+	})
+
+	t.Run("removal and undo messages report uppercase ids as given", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		up := strings.ToUpper
+		r := hexUser(1)
+		upTree, upRoot, upAbsent := up(tree), up(r), up(hexUser(5))
+
+		err := s.ProjectRemoval(ctx, upTree, RemovalProjection{}, testNodeUUID(9), 1)
+		assert.EqualError(t, err, fmt.Sprintf("project removal in tree %s: the removal names no users", upTree))
+
+		err = s.ProjectRemoval(ctx, upTree, onlyChild, testNodeUUID(9), 0)
+		assert.EqualError(t, err, fmt.Sprintf(
+			"tree %s was given event version 0, below 1; nothing was written", upTree))
+
+		err = s.UndoRootProjection(ctx, upTree, upRoot, 1)
+		assert.EqualError(t, err, fmt.Sprintf(
+			"tree %s has no projection row; the root row for %s at version 1 was not deleted", upTree, upRoot))
+
+		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(11), tree, r, 0, nil, ptr(r), nil), 1))
+
+		err = s.UndoRootProjection(ctx, upTree, upRoot, 2)
+		assert.EqualError(t, err, fmt.Sprintf(
+			"tree %s has projected version 1, not 2; the root row for %s was not deleted", upTree, upRoot))
+
+		err = s.UndoRootProjection(ctx, upTree, upAbsent, 1)
+		assert.EqualError(t, err, fmt.Sprintf(
+			"soft delete for root %s in tree %s matched 0 active rows; the projected version was not changed",
+			upAbsent, upTree))
+
+		err = s.ProjectRemoval(ctx, upTree, RemovalProjection{Users: []string{upAbsent}}, testNodeUUID(9), 2)
+		assert.EqualError(t, err, fmt.Sprintf(
+			"tombstoning removed users [%s] in tree %s matched 0 of 1 active rows", upAbsent, upTree))
+
+		below := fmt.Sprintf("tree %s was given event version 0, below 1; nothing was written", upTree)
+		upRow := makeUUIDNode(testNodeUUID(12), upTree, hexUser(2), 1, ptr(r), ptr(r), intPtr(0))
+		assert.EqualError(t, s.ProjectInsert(ctx, upRow, 0), below, "ProjectInsert")
+		assert.EqualError(t, s.ProjectRejection(ctx, upTree, testNodeUUID(12), 0), below, "ProjectRejection")
+		assert.EqualError(t, s.UndoRootProjection(ctx, upTree, upRoot, 0), below, "UndoRootProjection")
 	})
 
 	t.Run("a row projected under an uppercase tree id advances the canonical version", func(t *testing.T) {

@@ -689,8 +689,35 @@ func TestPostgresTreeStore_ARejectionThatWaitedOnTheLockStampsAfterIt(t *testing
 	r1Removed, _ := tombstoneTimes(t, store, r1)
 	r2Removed, r2Updated := tombstoneTimes(t, store, r2)
 	require.NotNil(t, r1Removed)
-	require.NotNil(t, r2Removed, "the rejection left R2 active")
+	require.NotNil(t, r2Removed, "R2's removed_at is NULL after the rejection")
 	assert.False(t, r2Removed.Before(*r1Removed),
 		"R2 removed at %s, before R1's %s; R1 committed after a lock waiter was seen", r2Removed, r1Removed)
 	assert.True(t, r2Removed.Equal(r2Updated), "R2 removed_at %s, updated_at %s", r2Removed, r2Updated)
+}
+
+func TestPostgresTreeStore_ARootUndoThatWaitedOnTheLockStampsAfterIt(t *testing.T) {
+	store := newTestPostgresTreeStore(t)
+	ctx := context.Background()
+	tree, root := testTreeUUID(1), testUserUUID(1)
+	require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
+
+	holder, err := store.pool.Begin(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = holder.Rollback(context.Background()) })
+	_, err = holder.Exec(ctx, `SELECT 1 FROM tree_projections WHERE tree_id = $1 FOR UPDATE`, tree)
+	require.NoError(t, err)
+	done := make(chan error, 1)
+	go func() {
+		done <- store.UndoRootProjection(ctx, tree, root, 1)
+	}()
+	waitForLockWaiters(t, store.pool, 1)
+	var held time.Time
+	require.NoError(t, holder.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&held))
+	require.NoError(t, holder.Commit(ctx))
+	require.NoError(t, receive(t, done, 10*time.Second))
+
+	removed, updated := tombstoneTimes(t, store, testNodeUUID(1))
+	require.NotNil(t, removed, "the root's removed_at is NULL after the undo")
+	assert.False(t, removed.Before(held), "the root removed at %s, before %s, read after a lock waiter was seen", removed, held)
+	assert.True(t, removed.Equal(updated), "the root removed_at %s, updated_at %s", removed, updated)
 }

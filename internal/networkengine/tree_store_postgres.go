@@ -32,6 +32,9 @@ const insertNodeSQL = `INSERT INTO tree_nodes (id, tree_id, user_id, parent_id, 
 const softDeleteNodeSQL = `UPDATE tree_nodes SET removed_at = now(), updated_at = now()
 		 WHERE tree_id = $1 AND user_id = $2 AND removed_at IS NULL`
 
+const softDeleteRootSQL = `UPDATE tree_nodes SET removed_at = $3, updated_at = $3
+		 WHERE tree_id = $1 AND user_id = $2 AND removed_at IS NULL`
+
 // tombstoneTime reads the clock once inside tx, for every tombstone tx writes.
 func tombstoneTime(ctx context.Context, tx pgx.Tx) (time.Time, error) {
 	var at time.Time
@@ -510,11 +513,15 @@ func (s *PostgresTreeStore) UndoRootProjection(ctx context.Context, treeID, user
 	if err != nil {
 		return err
 	}
+	at, err := tombstoneTime(ctx, tx)
+	if err != nil {
+		return err
+	}
 	if projected != eventVersion {
 		return fmt.Errorf("tree %s has projected version %d, not %d; the root row for %s was not deleted",
 			treeID, projected, eventVersion, userID)
 	}
-	tag, err := tx.Exec(ctx, softDeleteNodeSQL, treeID, userID)
+	tag, err := tx.Exec(ctx, softDeleteRootSQL, treeID, userID, at)
 	if err != nil {
 		return err
 	}

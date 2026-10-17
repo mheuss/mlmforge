@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,12 +26,14 @@ type stubLoader struct {
 	onCall     func(attempt int)
 }
 
-func (s *stubLoader) Load(context.Context, networkengine.LoadRequest) (networkengine.LoadResult, error) {
+func (s *stubLoader) Load(_ context.Context, req networkengine.LoadRequest) (networkengine.LoadResult, error) {
 	s.attempts++
 	if s.onCall != nil {
 		s.onCall(s.attempts)
 	}
-	return networkengine.LoadResult{Nodes: s.size, Warnings: s.warnings, ReleaseErr: s.releaseErr}, s.err
+	return networkengine.LoadResult{
+		TreeID: req.TreeID, Nodes: s.size, Warnings: s.warnings, ReleaseErr: s.releaseErr,
+	}, s.err
 }
 
 // unilevelLoad asks for tree as a unilevel tree.
@@ -491,9 +494,11 @@ type resultLoader struct {
 	attempts int
 }
 
-func (r *resultLoader) Load(context.Context, networkengine.LoadRequest) (networkengine.LoadResult, error) {
+func (r *resultLoader) Load(_ context.Context, req networkengine.LoadRequest) (networkengine.LoadResult, error) {
 	r.attempts++
-	return r.res, r.err
+	res := r.res
+	res.TreeID = req.TreeID
+	return res, r.err
 }
 
 func TestRunTreeLoad_ReportsAFailedRedeliveryWithoutALoadedLine(t *testing.T) {
@@ -573,6 +578,16 @@ func TestRunTreeLoad_RetriesASafeVersion1ReadFailureOverTheWriter(t *testing.T) 
 
 	require.NoError(t, runTreeLoad(t.Context(), &out, io.Discard, w, unilevelLoad(tree)))
 	require.Greater(t, events.reads, 1, "the failed version-1 read was not retried")
+	require.Equal(t, "tree "+tree+" holds no rows; nothing was loaded\n", out.String())
+}
+
+func TestRunTreeLoad_PrintsTheCanonicalTreeIDForAnEmptyTree(t *testing.T) {
+	w := networkengine.NewTreeWriter(platform.NewMemoryEventStore(), networkengine.NewMemoryTreeStore(),
+		networkengine.NewMemorySnapshotStore(), createOnlyEngine{}, networkengine.NewMemoryTreeLocker())
+	tree := testTreeID(53)
+	var out bytes.Buffer
+
+	require.NoError(t, runTreeLoad(t.Context(), &out, io.Discard, w, unilevelLoad(strings.ToUpper(tree))))
 	require.Equal(t, "tree "+tree+" holds no rows; nothing was loaded\n", out.String())
 }
 

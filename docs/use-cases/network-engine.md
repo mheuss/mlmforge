@@ -469,6 +469,10 @@ for _, tree := range trees {
 		// stage, drop it, and load again once the cause has changed
 		// (UC-NET-032). If the transport failed, start a new worker. Stage
 		// and Confirmed are what an operator reads to size the damage.
+		if incomplete.Stage == networkengine.TreeLoadStageCreate {
+			return fmt.Errorf("%s stopped at the create stage; the create did not report success: %w",
+				incomplete.TreeID, err)
+		}
 		return fmt.Errorf("%s stopped at %s with %d of %d non-root placements acknowledged: %w",
 			incomplete.TreeID, incomplete.Stage, incomplete.Confirmed, incomplete.Total, err)
 

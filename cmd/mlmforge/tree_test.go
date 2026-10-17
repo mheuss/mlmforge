@@ -33,7 +33,7 @@ type recordingLoader struct {
 
 func (r *recordingLoader) Load(_ context.Context, req networkengine.LoadRequest) (networkengine.LoadResult, error) {
 	r.req = req
-	return networkengine.LoadResult{}, nil
+	return networkengine.LoadResult{TreeID: req.TreeID}, nil
 }
 
 // Executing the command is the only thing that proves the flags reach the

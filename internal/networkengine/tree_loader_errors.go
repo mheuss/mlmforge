@@ -125,7 +125,7 @@ func (e *TreeLoadIncompleteError) Error() string {
 	var seen []string
 	named := e.Attempted != 0 || e.Total != 0
 	if named {
-		seen = append(seen, fmt.Sprintf("placement %d of %d", e.Attempted, e.Total))
+		seen = append(seen, fmt.Sprintf("non-root placement %d of %d", e.Attempted, e.Total))
 	}
 	if named || e.Confirmed != 0 {
 		seen = append(seen, fmt.Sprintf("%d acknowledged", e.Confirmed))

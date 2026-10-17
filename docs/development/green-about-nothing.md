@@ -66,6 +66,23 @@ HEU-798, HEU-817 and HEU-803, 2026-09-29.
   time is already later. Read each hook's write back before the case relies on
   it. A hook turned into a no-op should then fail at the read-back.
 
+## gitleaks counts a commit it did not read
+
+HEU-802, 2026-10-17.
+
+- **A binary-looking file is skipped inside a commit gitleaks still counts.**
+  Commit 1a439c1 added a markdown file holding one NUL byte, alongside seven
+  text files. gitleaks reported 1 commit scanned either way. Without `*.md diff`
+  it read about 5725 bytes, and with it about 12591. The difference is the
+  file's size. Comparing commits scanned against commits in the range does not
+  catch this. Compare the bytes scanned, and know which files the range
+  touched.
+- **A merge commit is counted out, not read.** gitleaks reads `git log -p`,
+  which gives a merge no patch. A range holding a merge reports one fewer
+  commit than it holds. That is harmless when the merge only combines commits
+  scanned elsewhere. When the resolution wrote lines of its own, those lines
+  are not scanned.
+
 ## Naming the trap does not disarm it
 
 The third instance above was written by the person who had named it. Having

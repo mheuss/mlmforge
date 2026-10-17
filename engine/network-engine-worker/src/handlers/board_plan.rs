@@ -95,7 +95,6 @@ fn board_plan_error_to_response(
         network_engine::board_plan::BoardPlanError::InvalidDimensions { .. } => {
             "INVALID_DIMENSIONS"
         }
-        network_engine::board_plan::BoardPlanError::MemberNotDisplaced(_) => "MEMBER_NOT_DISPLACED",
     };
     Response::error(request_id.to_string(), code, e.to_string())
 }

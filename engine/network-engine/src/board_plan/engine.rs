@@ -795,9 +795,7 @@ impl BoardPlanEngine {
     ///
     /// Returns a list of `StalledBoard` summaries for boards where
     /// `last_activity_at < cutoff_timestamp`, ordered by `created_at`,
-    /// then `seq`. The Go layer converts
-    /// the `stall_threshold_periods` config value into a concrete
-    /// timestamp before calling this method.
+    /// then `seq`.
     pub fn detect_stalled_boards(&self, cutoff_timestamp: i64) -> Vec<super::types::StalledBoard> {
         let mut stalled: Vec<&Board> = self
             .boards

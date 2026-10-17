@@ -546,7 +546,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 				assert.Equal(t, tt.wantNodeIDs, incomplete.NodeIDs)
 				if tt.wantStage == TreeLoadStageNodes {
 					assert.Contains(t, err.Error(),
-						fmt.Sprintf("(non-root placement %d of %d,", incomplete.Attempted, incomplete.Total),
+						fmt.Sprintf("non-root placement %d of %d,", incomplete.Attempted, incomplete.Total),
 						"the printed counts must be the typed counts")
 				}
 			default:

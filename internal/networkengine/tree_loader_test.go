@@ -892,6 +892,12 @@ func TestTreeLoader_ReplayFailureReportsProgress(t *testing.T) {
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.wantErr)
 			assert.ErrorIs(t, err, boom, "the transport error must stay wrapped")
+
+			var incomplete *TreeLoadIncompleteError
+			require.ErrorAs(t, err, &incomplete)
+			assert.Contains(t, err.Error(),
+				fmt.Sprintf("non-root placement %d of %d,", incomplete.Attempted, incomplete.Total),
+				"the printed counts must be the typed counts")
 		})
 	}
 }

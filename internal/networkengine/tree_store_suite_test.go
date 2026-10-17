@@ -1443,6 +1443,43 @@ func runTreeStoreSuite(
 		assert.Equal(t, root, *recruit.SponsorID)
 	})
 
+	t.Run("an uppercase row id is refused as a duplicate", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(1), testTreeUUID(1), hexUser(1), 0, nil, nil, nil)))
+
+		err := s.InsertNode(ctx,
+			makeUUIDNode(strings.ToUpper(testNodeUUID(1)), testTreeUUID(2), hexUser(2), 0, nil, nil, nil))
+		assert.ErrorIs(t, err, ErrNodeAlreadyProjected)
+	})
+
+	t.Run("an uppercase removal event id stamps the row in canonical form", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		tree := testTreeUUID(1)
+		root, removed := hexUser(1), hexUser(2)
+		event := testNodeUUID(9)
+
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(2), tree, removed, 1, ptr(root), ptr(root), intPtr(0))))
+
+		require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, removed, strings.ToUpper(event), nil))
+
+		byEvent, err := s.GetNodeByRemovalEvent(ctx, tree, event)
+		require.NoError(t, err)
+		require.NotNil(t, byEvent, "GetNodeByRemovalEvent found no row stamped with %s", event)
+		require.NotNil(t, byEvent.RemovedByEventID)
+		assert.Equal(t, event, *byEvent.RemovedByEventID)
+
+		upper, err := s.GetNodeByRemovalEvent(ctx, tree, strings.ToUpper(event))
+		require.NoError(t, err)
+		require.NotNil(t, upper, "GetNodeByRemovalEvent found no row for %s", strings.ToUpper(event))
+		assert.Equal(t, removed, upper.UserID)
+	})
+
 	t.Run("ids written in uppercase read back in canonical form", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()

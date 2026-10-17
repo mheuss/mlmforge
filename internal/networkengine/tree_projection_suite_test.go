@@ -743,6 +743,34 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		assert.Equal(t, r, *got.rows[g].ParentID)
 	})
 
+	t.Run("an uppercase rejected event id soft-deletes that event's row", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+
+		require.NoError(t, s.ProjectRejection(ctx, tree, strings.ToUpper(childRow.ID), 3))
+
+		got := readProjectionState(t, s, tree, child)
+		require.NotNil(t, got.rows[child])
+		assert.NotNil(t, got.rows[child].RemovedAt, "the rejection of %s left the row active", strings.ToUpper(childRow.ID))
+	})
+
+	t.Run("a removal stamps an uppercase removal event id in canonical form", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		event := testNodeUUID(9)
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+
+		require.NoError(t, s.ProjectRemoval(ctx, tree, onlyChild, strings.ToUpper(event), 3))
+
+		got := readProjectionState(t, s, tree, child)
+		require.NotNil(t, got.rows[child])
+		require.NotNil(t, got.rows[child].RemovedByEventID)
+		assert.Equal(t, event, *got.rows[child].RemovedByEventID)
+	})
+
 	t.Run("an uppercase tree id reaches the same row for a rejection and an undo", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()

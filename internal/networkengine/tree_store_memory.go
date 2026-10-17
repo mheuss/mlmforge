@@ -35,6 +35,7 @@ func (s *MemoryTreeStore) InsertNode(ctx context.Context, node TreeNodeRow) erro
 func (s *MemoryTreeStore) insertNodeAt(node TreeNodeRow, now time.Time) error {
 	node.TreeID, node.UserID = uuidKey(node.TreeID), uuidKey(node.UserID)
 	node.ParentID, node.SponsorID = uuidKeyPtr(node.ParentID), uuidKeyPtr(node.SponsorID)
+	node.ID, node.RemovedByEventID = uuidKey(node.ID), uuidKeyPtr(node.RemovedByEventID)
 	// Primary-key mirror: the row id is the event ID, so a duplicate id is
 	// rejected whatever its tree or removed state. Checked in its own pass
 	// before the partial-index mirrors below, so a caller can tell an id
@@ -109,7 +110,7 @@ func (s *MemoryTreeStore) DeleteNodeAndResponsor(
 	treeID, userID, removalEventID string,
 	moved []Responsored,
 ) error {
-	treeID, userID = uuidKey(treeID), uuidKey(userID)
+	treeID, userID, removalEventID = uuidKey(treeID), uuidKey(userID), uuidKey(removalEventID)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -197,7 +198,7 @@ func (s *MemoryTreeStore) GetNodeIncludingRemoved(ctx context.Context, treeID, u
 }
 
 func (s *MemoryTreeStore) GetNodeByRemovalEvent(ctx context.Context, treeID, removalEventID string) (*TreeNodeRow, error) {
-	treeID = uuidKey(treeID)
+	treeID, removalEventID = uuidKey(treeID), uuidKey(removalEventID)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -342,7 +343,7 @@ func (s *MemoryTreeStore) ProjectRemoval(
 	removalEventID string,
 	eventVersion int64,
 ) error {
-	treeID = uuidKey(treeID)
+	treeID, removalEventID = uuidKey(treeID), uuidKey(removalEventID)
 	if len(r.Users) == 0 {
 		return fmt.Errorf("project removal in tree %s: the removal names no users", treeID)
 	}
@@ -499,7 +500,7 @@ func checkActiveSlots(rows []TreeNodeRow, treeID string) error {
 }
 
 func (s *MemoryTreeStore) ProjectRejection(ctx context.Context, treeID, rejectedEventID string, eventVersion int64) error {
-	treeID = uuidKey(treeID)
+	treeID, rejectedEventID = uuidKey(treeID), uuidKey(rejectedEventID)
 	if err := checkEventVersion(treeID, eventVersion); err != nil {
 		return err
 	}

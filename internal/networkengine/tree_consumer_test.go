@@ -120,6 +120,29 @@ func TestTreeConsumer_RootAddedRejectsWrongStream(t *testing.T) {
 	assert.Empty(t, transport.calls, "no engine call for a rejected event")
 }
 
+func TestTreeConsumer_RootAddedRejectsEmptyUserID(t *testing.T) {
+	store := NewMemoryTreeStore()
+	transport := newRecordingTransport()
+	engine := newEngineClientWithTransport(transport)
+	consumer := NewTreeEventConsumer(store, engine)
+
+	event := makeEvent(EventTypeRootAdded, RootAddedPayload{
+		TreeID:     "tree1",
+		UserID:     "",
+		SponsorID:  "user-root",
+		EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	})
+
+	err := consumer.HandleEvent(context.Background(), event)
+	require.ErrorIs(t, err, ErrUnprojectableEvent)
+	assert.EqualError(t, err, "root_added in tree tree1 has an empty user_id")
+
+	rows, storeErr := store.GetByTree(context.Background(), "tree1")
+	require.NoError(t, storeErr)
+	assert.Empty(t, rows, "no store projection for a rejected event")
+	assert.Empty(t, transport.calls, "no engine call for a rejected event")
+}
+
 func TestTreeConsumer_HandleNodePlaced(t *testing.T) {
 	store := NewMemoryTreeStore()
 	transport := newRecordingTransport()
@@ -235,6 +258,34 @@ func TestTreeConsumer_NodePlacedRejectsWrongStream(t *testing.T) {
 		`node_placed for user-child in tree tree1 arrived on stream "tree-other", want "tree-tree1"`,
 		"the message names the event, the node, the tree, and both streams")
 
+	assert.Empty(t, transport.calls, "no engine call for a rejected event")
+}
+
+func TestTreeConsumer_NodePlacedRejectsEmptyUserID(t *testing.T) {
+	store := NewMemoryTreeStore()
+	transport := newRecordingTransport()
+	engine := newEngineClientWithTransport(transport)
+	consumer := NewTreeEventConsumer(store, engine)
+
+	parent := makeNode("tree1", "user-root", 0, nil, nil, nil)
+	require.NoError(t, store.InsertNode(context.Background(), parent))
+
+	event := makeEvent(EventTypeNodePlaced, NodePlacedPayload{
+		TreeID:     "tree1",
+		UserID:     "",
+		ParentID:   "user-root",
+		SponsorID:  "user-root",
+		TreeType:   treeTypeUnilevel,
+		EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
+	})
+
+	err := consumer.HandleEvent(context.Background(), event)
+	require.ErrorIs(t, err, ErrUnprojectableEvent)
+	assert.EqualError(t, err, "node_placed in tree tree1 has an empty user_id")
+
+	rows, storeErr := store.GetByTree(context.Background(), "tree1")
+	require.NoError(t, storeErr)
+	assert.Len(t, rows, 1, "only the seeded parent is stored")
 	assert.Empty(t, transport.calls, "no engine call for a rejected event")
 }
 

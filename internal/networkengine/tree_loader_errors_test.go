@@ -470,7 +470,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			treeType:         treeTypeUnilevel,
 			nodes:            unilevelFixture(),
 			engineFailsAfter: 4,
-			want:             "add node u3 (3 of 4, tree t left partly built): engine error [BOOM]: worker said no",
+			want:             "add node u3 (non-root placement 3 of 4, tree t left partly built): engine error [BOOM]: worker said no",
 		},
 		{
 			name:             "AddNodeAt fails",
@@ -481,7 +481,7 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			opts:             matrixOpts(3),
 			nodes:            matrixFixture(),
 			engineFailsAfter: 3,
-			want:             "add node u2 (2 of 3, tree t left partly built): engine error [BOOM]: worker said no",
+			want:             "add node u2 (non-root placement 2 of 3, tree t left partly built): engine error [BOOM]: worker said no",
 		},
 	}
 
@@ -544,6 +544,11 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 				assert.Equal(t, tt.wantStage, incomplete.Stage)
 				assert.Equal(t, "t", incomplete.TreeID)
 				assert.Equal(t, tt.wantNodeIDs, incomplete.NodeIDs)
+				if tt.wantStage == TreeLoadStageNodes {
+					assert.Contains(t, err.Error(),
+						fmt.Sprintf("(non-root placement %d of %d,", incomplete.Attempted, incomplete.Total),
+						"the printed counts must be the typed counts")
+				}
 			default:
 				assert.False(t, errors.As(err, &rejected),
 					"this exit is typed now; give the row a wantKind")
@@ -657,7 +662,7 @@ func TestTreeLoadRejectedError_CarriesEveryNamedNode(t *testing.T) {
 func TestTreeLoadIncompleteError_CarriesProgress(t *testing.T) {
 	engineErr := &EngineError{Code: "BOOM", Message: "worker said no"}
 	err := newTreeLoadIncomplete(TreeLoadStageNodes, "t", engineErr, 3, 5,
-		"add node u3 (3 of 5, tree t left partly built): engine error [BOOM]: worker said no",
+		"add node u3 (non-root placement 3 of 5, tree t left partly built): engine error [BOOM]: worker said no",
 		"u3")
 
 	assert.Equal(t, TreeLoadStageNodes, err.Stage)
@@ -674,10 +679,10 @@ func TestTreeLoadIncompleteError_CarriesProgress(t *testing.T) {
 // it is named for what it does.
 func TestTreeLoadIncompleteError_ConstructorStoresWhatItIsGiven(t *testing.T) {
 	nilRefs := newTreeLoadIncomplete(TreeLoadStageNodes, "t", nil, 3, 5,
-		"node u3 in tree t has nil parent or sponsor (data corruption; 3 of 5, tree left partly built)",
+		"node u3 in tree t has nil parent or sponsor (data corruption; non-root placement 3 of 5, tree left partly built)",
 		"u3")
 	assert.Equal(t,
-		"node u3 in tree t has nil parent or sponsor (data corruption; 3 of 5, tree left partly built)",
+		"node u3 in tree t has nil parent or sponsor (data corruption; non-root placement 3 of 5, tree left partly built)",
 		nilRefs.Error())
 
 	assert.Equal(t, TreeLoadStageNodes, nilRefs.Stage)
@@ -738,7 +743,7 @@ func TestTreeLoadErrors_DoNotAliasTheCallersSlice(t *testing.T) {
 	rejected := newTreeLoadRejected(TreeLoadDataInvalid, "t", nil,
 		"tree t has more than one depth-0 root (u0 and u9)", ids...)
 	incomplete := newTreeLoadIncomplete(TreeLoadStageNodes, "t", nil, 3, 5,
-		"add node u0 (3 of 5, tree t left partly built): engine error", ids...)
+		"add node u0 (non-root placement 3 of 5, tree t left partly built): engine error", ids...)
 
 	ids[0] = "mutated"
 
@@ -885,7 +890,9 @@ func TestTreeLoader_ConfirmedTrailsTheMessageIndex(t *testing.T) {
 			require.ErrorAs(t, err, &incomplete)
 			assert.Equal(t, attempt, incomplete.Attempted)
 			assert.Equal(t, attempt-1, incomplete.Confirmed)
-			assert.Contains(t, err.Error(), fmt.Sprintf("(%d of 4,", attempt))
+			assert.Equal(t, 4, incomplete.Total)
+			assert.Contains(t, err.Error(),
+				fmt.Sprintf("(non-root placement %d of %d,", incomplete.Attempted, incomplete.Total))
 		})
 	}
 }

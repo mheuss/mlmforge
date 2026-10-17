@@ -117,7 +117,7 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 		// tree, and the invariant now spans two functions.
 		if node.ParentID == nil || node.SponsorID == nil {
 			return 0, newTreeLoadIncomplete(TreeLoadStageNodes, treeID, nil, i+1, total,
-				fmt.Sprintf("node %s in tree %s has nil parent or sponsor (data corruption; %d of %d, tree left partly built)",
+				fmt.Sprintf("node %s in tree %s has nil parent or sponsor (data corruption; non-root placement %d of %d, tree left partly built)",
 					node.UserID, treeID, i+1, total),
 				node.UserID)
 		}
@@ -129,14 +129,14 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 			// the same reason too — a nil deref here panics startup.
 			if node.Position == nil {
 				return 0, newTreeLoadIncomplete(TreeLoadStageNodes, treeID, nil, i+1, total,
-					fmt.Sprintf("matrix node %s in tree %s has nil position (the adjacency row is incomplete; %d of %d, tree left partly built)",
+					fmt.Sprintf("matrix node %s in tree %s has nil position (the adjacency row is incomplete; non-root placement %d of %d, tree left partly built)",
 						node.UserID, treeID, i+1, total),
 					node.UserID)
 			}
 			if err := l.engine.AddNodeAt(ctx, treeID, node.UserID, parentID, sponsorID,
 				*node.Position, node.EnrolledAt.Unix()); err != nil {
 				return 0, newTreeLoadIncomplete(TreeLoadStageNodes, treeID, err, i+1, total,
-					fmt.Sprintf("add node %s (%d of %d, tree %s left partly built): %s",
+					fmt.Sprintf("add node %s (non-root placement %d of %d, tree %s left partly built): %s",
 						node.UserID, i+1, total, treeID, err),
 					node.UserID)
 			}
@@ -150,7 +150,7 @@ func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts
 		if err := l.engine.AddNode(ctx, treeID, node.UserID, parentID, sponsorID,
 			node.EnrolledAt.Unix(), addOpts...); err != nil {
 			return 0, newTreeLoadIncomplete(TreeLoadStageNodes, treeID, err, i+1, total,
-				fmt.Sprintf("add node %s (%d of %d, tree %s left partly built): %s",
+				fmt.Sprintf("add node %s (non-root placement %d of %d, tree %s left partly built): %s",
 					node.UserID, i+1, total, treeID, err),
 				node.UserID)
 		}

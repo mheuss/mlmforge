@@ -857,20 +857,20 @@ func TestTreeLoader_ReplayFailureReportsProgress(t *testing.T) {
 			treeType: "matrix",
 			opts:     []LoadTreeOption{WithMatrixParams(5, "breadth_first")},
 			failOn:   1,
-			wantErr:  "add node u1 (1 of 5, tree t left partly built)",
+			wantErr:  "add node u1 (non-root placement 1 of 5, tree t left partly built)",
 		},
 		{
 			name:     "matrix fails on the last node",
 			treeType: "matrix",
 			opts:     []LoadTreeOption{WithMatrixParams(5, "breadth_first")},
 			failOn:   5,
-			wantErr:  "add node u5 (5 of 5, tree t left partly built)",
+			wantErr:  "add node u5 (non-root placement 5 of 5, tree t left partly built)",
 		},
 		{
 			name:     "unilevel fails midway",
 			treeType: "unilevel",
 			failOn:   3,
-			wantErr:  "add node u3 (3 of 5, tree t left partly built)",
+			wantErr:  "add node u3 (non-root placement 3 of 5, tree t left partly built)",
 		},
 	}
 

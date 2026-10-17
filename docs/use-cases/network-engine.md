@@ -1020,13 +1020,12 @@ err := c.withRetry(ctx, op, treeID, userID, func() error {
     if gerr != nil {
         return reconcileInconclusive, gerr
     }
-    // Only an active row is divergence. A tombstone and an absent row both
-    // mean the store agrees the user is gone.
+    // Without this event's stamp, an active row is divergence, and a
+    // tombstone or no row is an event replay cannot apply.
     if row != nil && row.RemovedAt == nil {
         return reconcileDiverged, fmt.Errorf("the store holds an active row the engine refused")
     }
-    alreadyProjected = true
-    return reconcileConverged, nil
+    return reconcileDiverged, unprojectable(fmt.Errorf("no row carries this removal's stamp, and the read returned %s", describeExistingRow(row)))
 })
 if err != nil {
     return err
@@ -1202,7 +1201,7 @@ if res.ProjectionErr != nil {
 }
 ```
 
-**Notes:** A rejected event did not happen. Rejecting a removal leaves the user in the tree. Version 1 still sets the tree's shape after its root is rejected. Build a new writer over a new worker for each call, as UC-NET-027 says for writes. A write or load that meets a pending rejection refuses with `RejectionPendingError`. Related: UC-NET-027, UC-NET-030.
+**Notes:** A rejected event did not happen. Rejecting a removal leaves the user in the tree. Version 1 still sets the tree's shape after its root is rejected. Build a new writer over a new worker for each call, as UC-NET-027 says for writes. A write or load that meets a pending rejection refuses with `RejectionPendingError`. A removal the consumer refuses as unprojectable, because the store never held the user or holds only a tombstone this removal did not stamp, is one `Reject` clears (HEU-868). Related: UC-NET-027, UC-NET-030.
 
 ---
 

@@ -593,3 +593,70 @@ func TestPostgresTreeStore_ProjectsALargeRemovalInsideTheWriteTimeout(t *testing
 		})
 	}
 }
+
+// tombstoneTimes returns a row's removed_at and updated_at, read by its id.
+func tombstoneTimes(t *testing.T, store *PostgresTreeStore, id string) (*time.Time, time.Time) {
+	t.Helper()
+	var removedAt *time.Time
+	var updatedAt time.Time
+	require.NoError(t, store.pool.QueryRow(context.Background(),
+		`SELECT removed_at, updated_at FROM tree_nodes WHERE id = $1`, id).Scan(&removedAt, &updatedAt))
+	return removedAt, updatedAt
+}
+
+func TestPostgresTreeStore_ARemovalThatWaitedOnTheLockStampsAfterIt(t *testing.T) {
+	store := newTestPostgresTreeStore(t)
+	ctx := context.Background()
+	tree, root, u := testTreeUUID(1), testUserUUID(1), testUserUUID(2)
+	r1, r2 := testNodeUUID(2), testNodeUUID(3)
+	require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
+	require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(r1, tree, u, 1, ptr(root), ptr(root), nil), 2))
+
+	holder, err := store.pool.Begin(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = holder.Rollback(context.Background()) })
+	_, err = holder.Exec(ctx, `SELECT 1 FROM tree_projections WHERE tree_id = $1 FOR UPDATE`, tree)
+	require.NoError(t, err)
+	done := make(chan error, 1)
+	go func() {
+		done <- store.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{u}}, testNodeUUID(9), 3)
+	}()
+	waitForLockWaiters(t, store.pool, 1)
+	_, err = holder.Exec(ctx,
+		`UPDATE tree_nodes SET removed_at = clock_timestamp(), updated_at = clock_timestamp() WHERE id = $1`, r1)
+	require.NoError(t, err)
+	require.NoError(t, insertNode(ctx, holder, makeUUIDNode(r2, tree, u, 1, ptr(root), ptr(root), nil)))
+	require.NoError(t, holder.Commit(ctx))
+	require.NoError(t, receive(t, done, 10*time.Second))
+
+	r1Removed, _ := tombstoneTimes(t, store, r1)
+	r2Removed, r2Updated := tombstoneTimes(t, store, r2)
+	require.NotNil(t, r1Removed)
+	require.NotNil(t, r2Removed)
+	assert.False(t, r2Removed.Before(*r1Removed),
+		"R2 removed at %s, before R1's %s, which committed while R2's removal waited", r2Removed, r1Removed)
+	assert.True(t, r2Removed.Equal(r2Updated), "R2 removed_at %s, updated_at %s", r2Removed, r2Updated)
+	newest, err := store.GetNodeIncludingRemoved(ctx, tree, u)
+	require.NoError(t, err)
+	require.NotNil(t, newest)
+	assert.Equal(t, r2, newest.ID)
+}
+
+func TestPostgresTreeStore_ARemovalOfSeveralUsersStampsThemAllAlike(t *testing.T) {
+	store := newTestPostgresTreeStore(t)
+	ctx := context.Background()
+	tree, root, a, b := testTreeUUID(1), testUserUUID(1), testUserUUID(2), testUserUUID(3)
+	require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
+	require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(2), tree, a, 1, ptr(root), ptr(root), nil), 2))
+	require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(3), tree, b, 1, ptr(root), ptr(root), nil), 3))
+
+	require.NoError(t, store.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{a, b}}, testNodeUUID(9), 4))
+
+	aRemoved, aUpdated := tombstoneTimes(t, store, testNodeUUID(2))
+	bRemoved, bUpdated := tombstoneTimes(t, store, testNodeUUID(3))
+	require.NotNil(t, aRemoved)
+	require.NotNil(t, bRemoved)
+	assert.True(t, aRemoved.Equal(*bRemoved), "A removed at %s, B at %s", aRemoved, bRemoved)
+	assert.True(t, aRemoved.Equal(aUpdated), "A removed_at %s, updated_at %s", aRemoved, aUpdated)
+	assert.True(t, bRemoved.Equal(bUpdated), "B removed_at %s, updated_at %s", bRemoved, bUpdated)
+}

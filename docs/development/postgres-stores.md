@@ -381,3 +381,16 @@ SIGKILLed client's migration file ran to completion and committed on Postgres
 rolled back within about a second of the kill. Pass it as `-c` in the
 connection's `options`. Postgres 13 refuses the parameter at startup. It needs
 Postgres 14 or later.
+
+## Go's uuid.Parse is not Postgres's uuid input
+
+HEU-931, 2026-10-17.
+
+A memory twin that canonicalises ids with `uuid.Parse` agrees with Postgres on
+the canonical form and on uppercase. It disagrees on other spellings. Postgres
+reads a hyphen after any group of four hex digits, and braces around 32 bare hex
+digits, as a UUID. `uuid.Parse` refuses both. `uuid.Parse` accepts a
+`urn:uuid:` prefix, and a 38-character value whose first and last characters are
+not braces. Postgres refuses both with SQLSTATE 22P02. The memory event store's
+`canonicalEventID` mirrors Postgres's input syntax. HEU-944 asks whether one
+helper should serve both stores.

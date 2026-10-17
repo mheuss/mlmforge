@@ -6,8 +6,8 @@ is invisible until it bites.
 
 ## Pair the implementations through one suite
 
-Every store interface here has a memory twin for unit tests and a Postgres twin
-for production.
+Every store interface here that has an implementation has a memory twin for
+unit tests and a Postgres twin for production.
 
 **A new memory/Postgres store pair has one test body that takes a constructor and runs against both twins.**
 
@@ -45,8 +45,8 @@ against both:
 
 A shared body catches this drift in every behaviour it asserts, because one
 assertion runs against both twins. It catches nothing in a behaviour it leaves
-out. The tree store had a shared suite before HEU-403 was fixed, and that suite
-did not assert timestamps.
+out. The tree store had a shared suite before HEU-403 was fixed. That suite did
+not assert timestamps.
 
 Some twins promise different things by design. The memory tree locker excludes
 within one process. The Postgres one excludes across processes. For a pair
@@ -231,8 +231,8 @@ if !utf8.ValidString(s) || strings.ContainsRune(s, 0) { ... }
 
 ## A NOT NULL column does not make a branch unreachable
 
-Every store interface here has two implementations. Postgres carries the
-constraint. The in-memory one does not.
+Every store interface here that has an implementation has two. Postgres carries
+the constraint. The in-memory one does not.
 
 HEU-562 deleted a guard on an empty `user_id` in the tree loader, reasoning that
 the column is `UUID NOT NULL` so no row can hold one. That reasoning checked one

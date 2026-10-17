@@ -105,7 +105,7 @@ func TestTreeWriter_AForeignRemovalOfAUserNeverHeldIsRefusedAndRejectEventClears
 	require.NoError(t, placedX.ProjectionErr)
 	placedY, err := it.writer(t).Place(ctx, PlaceRequest{
 		TreeID: tree, UserID: y, ParentID: root, SponsorID: root, EnrolledAt: writeTime.Add(4 * time.Hour)})
-	require.NoError(t, err, "the write after the rejection rebuilds the tree through the rejected event")
+	require.NoError(t, err, "the place of Y after the rejection returned an error")
 	require.NoError(t, placedY.ProjectionErr)
 	assert.Equal(t, map[string]string{root: root, a: root, x: root, y: root}, activeSponsors(t, it.store, tree))
 }
@@ -133,7 +133,7 @@ func TestTreeWriter_ARemovalOfAUserWhosePlacementWasRejectedIsRefused(t *testing
 
 	removeRes, removeErr := it.writer(t).Remove(ctx, RemoveRequest{TreeID: tree, UserID: b,
 		RemovedAt: writeTime.Add(2 * time.Hour), PruningMode: PruningPromoteEarliest})
-	require.Error(t, removeErr, "TreeWriter appended a removal of %s", b)
+	require.Error(t, removeErr, "Remove of %s returned no error", b)
 	assert.ErrorContains(t, removeErr, "check_mutation")
 	assert.Empty(t, removeRes.EventID)
 

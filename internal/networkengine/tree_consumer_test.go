@@ -2031,7 +2031,7 @@ func TestHandleNodeRemoved_RefusesWhenOnlyAnUnstampedTombstoneExists(t *testing.
 	require.ErrorIs(t, err, ErrUnprojectableEvent)
 	assert.EqualError(t, err, "engine remove_node for "+posUser+" in tree tree1 returned USER_NOT_FOUND; no row carries removal event "+
 		event.ID+", and the read for that user returned a row carrying event cafe0000-0000-4000-8000-0000000000aa, removed at "+
-		tomb.RemovedAt.UTC().Format(time.RFC3339Nano))
+		tomb.RemovedAt.UTC().Format(time.RFC3339Nano)+", with no removal stamp")
 	assert.Empty(t, store.responsors, "a refused removal writes nothing")
 	assert.Empty(t, store.deleted, "a refused removal writes nothing")
 	_, found, verr := store.ProjectedVersion(ctx, "tree1")
@@ -2055,6 +2055,29 @@ func TestHandleNodeRemoved_ReconcileFailsWhenAnActiveRowRemains(t *testing.T) {
 	assert.Equal(t, "tree1", target.TreeID)
 	assert.NotEmpty(t, target.EventID, "the error carries the event that could not be completed")
 	assert.Empty(t, store.responsors, "an unrepairable removal writes nothing")
+}
+
+func TestHandleNodeRemoved_RefusesWhenOnlyAnotherRemovalsTombstoneExists(t *testing.T) {
+	tr := &reconcileTransport{mutationErr: &EngineError{Code: engineCodeUserNotFound}}
+	c, store := newRemovalConsumer(tr)
+	ctx := context.Background()
+	seedRemovable(t, store)
+	earlier := makeEvent(EventTypeNodeRemoved, removedPayload())
+	require.NoError(t, store.DeleteNodeAndResponsor(ctx, "tree1", posUser, earlier.ID, nil))
+	tomb, err := store.GetNodeIncludingRemoved(ctx, "tree1", posUser)
+	require.NoError(t, err)
+	require.NotNil(t, tomb)
+	require.NotNil(t, tomb.RemovedAt)
+	event := makeEvent(EventTypeNodeRemoved, removedPayload())
+
+	err = c.HandleEvent(ctx, event)
+
+	require.ErrorIs(t, err, ErrUnprojectableEvent)
+	assert.EqualError(t, err, "engine remove_node for "+posUser+" in tree tree1 returned USER_NOT_FOUND; no row carries removal event "+
+		event.ID+", and the read for that user returned a row carrying event cafe0000-0000-4000-8000-0000000000aa, removed at "+
+		tomb.RemovedAt.UTC().Format(time.RFC3339Nano)+", stamped by removal event "+earlier.ID)
+	assert.Empty(t, store.responsors, "a refused removal writes nothing")
+	assert.Len(t, tr.mutationOps, 1, "a refusal does not retry")
 }
 
 func TestHandleNodeRemoved_RefusesWhenTheStoreHoldsNoRow(t *testing.T) {

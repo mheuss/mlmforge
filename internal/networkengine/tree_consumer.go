@@ -333,7 +333,7 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 		}
 		// The stamp read answers whether an earlier delivery of this event
 		// already projected. Without a stamp, the tree-and-user read below it
-		// separates three cases: an active row, a tombstone, and no row at all.
+		// separates an active row from a tombstone or no row at all.
 		stamped, serr := c.store.GetNodeByRemovalEvent(ctx, payload.TreeID, event.ID)
 		if serr != nil {
 			return reconcileInconclusive, fmt.Errorf("read the row this removal stamped: %w", serr)
@@ -355,9 +355,16 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 				EventID: event.ID,
 			}
 		}
+		stamp := ""
+		if existing != nil {
+			stamp = ", with no removal stamp"
+			if existing.RemovedByEventID != nil {
+				stamp = ", stamped by removal event " + *existing.RemovedByEventID
+			}
+		}
 		return reconcileDiverged, unprojectable(fmt.Errorf(
-			"engine %s for %s in tree %s returned %s; no row carries removal event %s, and the read for that user returned %s",
-			call.op, payload.UserID, payload.TreeID, engineCodeUserNotFound, event.ID, describeExistingRow(existing)))
+			"engine %s for %s in tree %s returned %s; no row carries removal event %s, and the read for that user returned %s%s",
+			call.op, payload.UserID, payload.TreeID, engineCodeUserNotFound, event.ID, describeExistingRow(existing), stamp))
 	}); err != nil {
 		return err
 	}

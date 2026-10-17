@@ -1424,4 +1424,69 @@ func runTreeStoreSuite(
 		require.NoError(t, err)
 		assert.Nil(t, removed, "treeB's active row read back after its removal")
 	})
+
+	t.Run("a removal of a user with only a tombstone fails and leaves the tombstone alone", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		rootUser := testUserUUID(1)
+		goneUser := testUserUUID(2)
+
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
+			makeUUIDNode(testNodeUUID(2), tree, goneUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
+		require.NoError(t, tombstoneUser(ctx, s, tree, goneUser))
+		before, err := s.GetNodeIncludingRemoved(ctx, tree, goneUser)
+		require.NoError(t, err)
+		require.NotNil(t, before)
+		require.NotNil(t, before.RemovedAt)
+
+		err = stampRemoval(ctx, s, tree, goneUser, testNodeUUID(9), 1)
+
+		assert.Error(t, err, "stampRemoval returned nil for a user with no active row")
+		assert.Nil(t, stampOf(t, s, testNodeUUID(2)), "removal stamp read back on the existing tombstone")
+		after, err := s.GetNodeIncludingRemoved(ctx, tree, goneUser)
+		require.NoError(t, err)
+		require.NotNil(t, after)
+		require.NotNil(t, after.RemovedAt, "no removed_at read back on the existing tombstone")
+		assert.True(t, before.RemovedAt.Equal(*after.RemovedAt),
+			"removed_at read back as %v, was %v before the removal", *after.RemovedAt, *before.RemovedAt)
+	})
+
+	t.Run("a removal re-sponsors only in its own tree", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		treeA := testTreeUUID(1)
+		treeB := testTreeUUID(2)
+		rootUser := testUserUUID(1)
+		removedUser := testUserUUID(2)
+		recruit := testUserUUID(3)
+
+		// The recruit's treeA row goes in first, so a re-sponsor that ignores
+		// the tree meets it before treeB's row.
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), treeA, recruit, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(2), treeB, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
+			makeUUIDNode(testNodeUUID(3), treeB, removedUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
+		require.NoError(t, insertRow(ctx, s,
+			makeUUIDNode(testNodeUUID(4), treeB, recruit, 2, ptr(removedUser), ptr(removedUser), intPtr(0))))
+
+		require.NoError(t, s.ProjectRemoval(ctx, treeB, RemovalProjection{
+			Users:       []string{removedUser},
+			Responsored: []Responsored{{UserID: recruit, NewSponsorID: rootUser}},
+		}, testNodeUUID(9), 1))
+
+		other, err := s.GetNode(ctx, treeA, recruit)
+		require.NoError(t, err)
+		require.NotNil(t, other, "no active row read back for the recruit in treeA")
+		assert.Nil(t, other.SponsorID, "sponsor read back on treeA's recruit after a removal in treeB")
+
+		moved, err := s.GetNode(ctx, treeB, recruit)
+		require.NoError(t, err)
+		require.NotNil(t, moved, "no active row read back for the recruit in treeB")
+		require.NotNil(t, moved.SponsorID, "no sponsor read back on treeB's recruit")
+		assert.Equal(t, rootUser, *moved.SponsorID)
+	})
 }

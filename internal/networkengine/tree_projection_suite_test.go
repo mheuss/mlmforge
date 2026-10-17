@@ -416,6 +416,21 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		assert.Equal(t, before.rows[child], got.rows[child], "the rejection rewrote a tombstone")
 	})
 
+	t.Run("a cancelled insert or removal writes nothing", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+		before := readProjectionState(t, s, tree, root, child, recruit)
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+
+		assert.ErrorIs(t, s.ProjectInsert(cancelled, recruitRow, 3), context.Canceled, "ProjectInsert")
+		assert.ErrorIs(t, s.ProjectRemoval(cancelled, tree, onlyChild, testNodeUUID(9), 3), context.Canceled, "ProjectRemoval")
+
+		assert.Equal(t, before, readProjectionState(t, s, tree, root, child, recruit))
+	})
+
 	t.Run("a rejection with a cancelled context writes nothing", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()

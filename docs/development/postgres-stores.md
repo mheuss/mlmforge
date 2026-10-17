@@ -49,8 +49,8 @@ within one process, and the Postgres one excludes across processes. For a pair
 like that, the shared body covers what both twins promise. Tests that run only
 against Postgres cover the rest.
 
-HEU-938 brings the qualification history store under the rule, and HEU-939
-brings in the tree lockers.
+HEU-938 brings the qualification history store under the rule, HEU-939 brings
+in the tree lockers, and HEU-941 the event store.
 
 ## pgx sends only a nil slice as SQL NULL
 

@@ -33,6 +33,8 @@ func (s *MemoryTreeStore) InsertNode(ctx context.Context, node TreeNodeRow) erro
 
 // insertNodeAt stores one row, stamped with now.
 func (s *MemoryTreeStore) insertNodeAt(node TreeNodeRow, now time.Time) error {
+	node.TreeID, node.UserID = uuidKey(node.TreeID), uuidKey(node.UserID)
+	node.ParentID, node.SponsorID = uuidKeyPtr(node.ParentID), uuidKeyPtr(node.SponsorID)
 	// Primary-key mirror: the row id is the event ID, so a duplicate id is
 	// rejected whatever its tree or removed state. Checked in its own pass
 	// before the partial-index mirrors below, so a caller can tell an id
@@ -87,6 +89,7 @@ func (s *MemoryTreeStore) appendUnchecked(node TreeNodeRow) error {
 }
 
 func (s *MemoryTreeStore) DeleteNode(ctx context.Context, treeID, userID string) error {
+	treeID, userID = uuidKey(treeID), uuidKey(userID)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -106,6 +109,7 @@ func (s *MemoryTreeStore) DeleteNodeAndResponsor(
 	treeID, userID, removalEventID string,
 	moved []Responsored,
 ) error {
+	treeID, userID = uuidKey(treeID), uuidKey(userID)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -116,7 +120,7 @@ func (s *MemoryTreeStore) DeleteNodeAndResponsor(
 	for _, m := range moved {
 		found := -1
 		for i := range s.nodes {
-			if s.nodes[i].TreeID == treeID && s.nodes[i].UserID == m.UserID && s.nodes[i].RemovedAt == nil {
+			if s.nodes[i].TreeID == treeID && s.nodes[i].UserID == uuidKey(m.UserID) && s.nodes[i].RemovedAt == nil {
 				found = i
 				break
 			}
@@ -150,7 +154,7 @@ func (s *MemoryTreeStore) DeleteNodeAndResponsor(
 	event := removalEventID
 	s.nodes[removing].RemovedByEventID = &event
 	for i, m := range moved {
-		sponsor := m.NewSponsorID
+		sponsor := uuidKey(m.NewSponsorID)
 		s.nodes[targets[i]].SponsorID = &sponsor
 		s.nodes[targets[i]].UpdatedAt = now
 	}
@@ -158,6 +162,7 @@ func (s *MemoryTreeStore) DeleteNodeAndResponsor(
 }
 
 func (s *MemoryTreeStore) GetNode(ctx context.Context, treeID, userID string) (*TreeNodeRow, error) {
+	treeID, userID = uuidKey(treeID), uuidKey(userID)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -171,6 +176,7 @@ func (s *MemoryTreeStore) GetNode(ctx context.Context, treeID, userID string) (*
 }
 
 func (s *MemoryTreeStore) GetNodeIncludingRemoved(ctx context.Context, treeID, userID string) (*TreeNodeRow, error) {
+	treeID, userID = uuidKey(treeID), uuidKey(userID)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -191,6 +197,7 @@ func (s *MemoryTreeStore) GetNodeIncludingRemoved(ctx context.Context, treeID, u
 }
 
 func (s *MemoryTreeStore) GetNodeByRemovalEvent(ctx context.Context, treeID, removalEventID string) (*TreeNodeRow, error) {
+	treeID = uuidKey(treeID)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -219,6 +226,7 @@ func ranksAhead(a, b TreeNodeRow) bool {
 }
 
 func (s *MemoryTreeStore) GetChildren(ctx context.Context, treeID, parentUserID string) ([]TreeNodeRow, error) {
+	treeID, parentUserID = uuidKey(treeID), uuidKey(parentUserID)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -232,6 +240,7 @@ func (s *MemoryTreeStore) GetChildren(ctx context.Context, treeID, parentUserID 
 }
 
 func (s *MemoryTreeStore) GetByTree(ctx context.Context, treeID string) ([]TreeNodeRow, error) {
+	treeID = uuidKey(treeID)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -245,6 +254,7 @@ func (s *MemoryTreeStore) GetByTree(ctx context.Context, treeID string) ([]TreeN
 }
 
 func (s *MemoryTreeStore) GetByTreeDepthOrdered(ctx context.Context, treeID string) ([]TreeNodeRow, error) {
+	treeID = uuidKey(treeID)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -286,6 +296,7 @@ func (s *MemoryTreeStore) BulkInsert(ctx context.Context, nodes []TreeNodeRow) e
 }
 
 func (s *MemoryTreeStore) ProjectedVersion(ctx context.Context, treeID string) (int64, bool, error) {
+	treeID = uuidKey(treeID)
 	if err := ctx.Err(); err != nil {
 		return 0, false, err
 	}
@@ -294,6 +305,7 @@ func (s *MemoryTreeStore) ProjectedVersion(ctx context.Context, treeID string) (
 }
 
 func (s *MemoryTreeStore) ProjectedRows(ctx context.Context, treeID string) (int64, bool, []TreeNodeRow, error) {
+	treeID = uuidKey(treeID)
 	if err := ctx.Err(); err != nil {
 		return 0, false, nil, err
 	}
@@ -306,6 +318,7 @@ func (s *MemoryTreeStore) ProjectedRows(ctx context.Context, treeID string) (int
 }
 
 func (s *MemoryTreeStore) ProjectInsert(ctx context.Context, node TreeNodeRow, eventVersion int64) error {
+	node.TreeID = uuidKey(node.TreeID)
 	if err := checkEventVersion(node.TreeID, eventVersion); err != nil {
 		return err
 	}
@@ -329,6 +342,7 @@ func (s *MemoryTreeStore) ProjectRemoval(
 	removalEventID string,
 	eventVersion int64,
 ) error {
+	treeID = uuidKey(treeID)
 	if len(r.Users) == 0 {
 		return fmt.Errorf("project removal in tree %s: the removal names no users", treeID)
 	}
@@ -380,7 +394,7 @@ func (s *MemoryTreeStore) stageRemoval(treeID string, r RemovalProjection, remov
 	responsored := map[int]bool{}
 	for _, m := range r.Responsored {
 		if i := active(m.UserID); i >= 0 {
-			sponsor := m.NewSponsorID
+			sponsor := uuidKey(m.NewSponsorID)
 			rows[i].SponsorID, rows[i].UpdatedAt = &sponsor, now
 			responsored[i] = true
 		}
@@ -396,7 +410,7 @@ func (s *MemoryTreeStore) stageRemoval(treeID string, r RemovalProjection, remov
 	relocated := map[int]bool{}
 	for _, m := range r.Relocated {
 		if i := active(m.UserID); i >= 0 {
-			parent, position := m.ParentID, m.Position
+			parent, position := uuidKey(m.ParentID), m.Position
 			rows[i].ParentID, rows[i].Position, rows[i].Depth, rows[i].UpdatedAt = &parent, &position, m.Depth, now
 			relocated[i] = true
 		}
@@ -454,6 +468,15 @@ func uuidKey(id string) string {
 	return u.String()
 }
 
+// uuidKeyPtr returns a new pointer to uuidKey of *id, or nil for nil.
+func uuidKeyPtr(id *string) *string {
+	if id == nil {
+		return nil
+	}
+	key := uuidKey(*id)
+	return &key
+}
+
 // checkActiveSlots reports two active rows of treeID that claim one slot.
 func checkActiveSlots(rows []TreeNodeRow, treeID string) error {
 	type slot struct {
@@ -476,6 +499,7 @@ func checkActiveSlots(rows []TreeNodeRow, treeID string) error {
 }
 
 func (s *MemoryTreeStore) ProjectRejection(ctx context.Context, treeID, rejectedEventID string, eventVersion int64) error {
+	treeID = uuidKey(treeID)
 	if err := checkEventVersion(treeID, eventVersion); err != nil {
 		return err
 	}
@@ -497,6 +521,7 @@ func (s *MemoryTreeStore) ProjectRejection(ctx context.Context, treeID, rejected
 }
 
 func (s *MemoryTreeStore) UndoRootProjection(ctx context.Context, treeID, userID string, eventVersion int64) error {
+	treeID, userID = uuidKey(treeID), uuidKey(userID)
 	if err := checkEventVersion(treeID, eventVersion); err != nil {
 		return err
 	}

@@ -1328,4 +1328,140 @@ func runTreeStoreSuite(
 		assert.Equal(t, testNodeUUID(1), byEvent.ID,
 			"GetNodeByRemovalEvent returned id %s, want %s, the later removal", byEvent.ID, testNodeUUID(1))
 	})
+
+	t.Run("an uppercase tree id reads the same tree", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		tree := testTreeUUID(1)
+		upper := strings.ToUpper(tree)
+		root, child := hexUser(1), hexUser(2)
+
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(2), tree, child, 1, ptr(root), ptr(root), intPtr(0))))
+
+		got, err := s.GetNode(ctx, upper, child)
+		require.NoError(t, err)
+		require.NotNil(t, got, "GetNode found no row under tree %s", upper)
+		assert.Equal(t, tree, got.TreeID)
+
+		all, err := s.GetByTree(ctx, upper)
+		require.NoError(t, err)
+		assert.ElementsMatch(t, []string{root, child}, nodeUserIDs(all))
+
+		ordered, err := s.GetByTreeDepthOrdered(ctx, upper)
+		require.NoError(t, err)
+		assert.Equal(t, []string{root, child}, nodeUserIDs(ordered))
+
+		children, err := s.GetChildren(ctx, upper, root)
+		require.NoError(t, err)
+		assert.Equal(t, []string{child}, nodeUserIDs(children))
+	})
+
+	t.Run("an uppercase tree id cannot add a second root", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		tree := testTreeUUID(1)
+
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(1), tree, hexUser(1), 0, nil, nil, nil)))
+
+		err := s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(2), strings.ToUpper(tree), hexUser(2), 0, nil, nil, nil))
+		assert.ErrorIs(t, err, ErrRootConflict)
+	})
+
+	t.Run("an uppercase user or parent id reads the same row", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		tree := testTreeUUID(1)
+		root, child := hexUser(1), hexUser(2)
+
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(2), tree, child, 1, ptr(root), ptr(root), intPtr(0))))
+
+		got, err := s.GetNode(ctx, tree, strings.ToUpper(child))
+		require.NoError(t, err)
+		require.NotNil(t, got, "GetNode found no row for user %s", strings.ToUpper(child))
+		assert.Equal(t, child, got.UserID)
+
+		children, err := s.GetChildren(ctx, tree, strings.ToUpper(root))
+		require.NoError(t, err)
+		assert.Equal(t, []string{child}, nodeUserIDs(children))
+	})
+
+	t.Run("an uppercase id deletes the same row and reads its tombstone", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		tree := testTreeUUID(1)
+		root, child := hexUser(1), hexUser(2)
+		up := strings.ToUpper
+
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(2), tree, child, 1, ptr(root), ptr(root), intPtr(0))))
+
+		require.NoError(t, s.DeleteNode(ctx, up(tree), up(child)))
+
+		active, err := s.GetNode(ctx, tree, child)
+		require.NoError(t, err)
+		assert.Nil(t, active, "DeleteNode under the uppercase ids left the row active")
+
+		tombstone, err := s.GetNodeIncludingRemoved(ctx, up(tree), up(child))
+		require.NoError(t, err)
+		require.NotNil(t, tombstone, "GetNodeIncludingRemoved found no row under the uppercase ids")
+		assert.NotNil(t, tombstone.RemovedAt)
+	})
+
+	t.Run("an uppercase id removes and re-sponsors the same rows", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		tree := testTreeUUID(1)
+		root, removed, moved := hexUser(1), hexUser(2), hexUser(3)
+		event := testNodeUUID(9)
+		up := strings.ToUpper
+
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(2), tree, removed, 1, ptr(root), ptr(root), intPtr(0))))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(3), tree, moved, 2, ptr(removed), ptr(removed), intPtr(0))))
+
+		require.NoError(t, s.DeleteNodeAndResponsor(ctx, up(tree), up(removed), event,
+			[]Responsored{{UserID: up(moved), NewSponsorID: up(root)}}))
+
+		byEvent, err := s.GetNodeByRemovalEvent(ctx, up(tree), event)
+		require.NoError(t, err)
+		require.NotNil(t, byEvent, "GetNodeByRemovalEvent found no row under tree %s", up(tree))
+		assert.Equal(t, removed, byEvent.UserID)
+
+		recruit, err := s.GetNode(ctx, tree, moved)
+		require.NoError(t, err)
+		require.NotNil(t, recruit)
+		require.NotNil(t, recruit.SponsorID)
+		assert.Equal(t, root, *recruit.SponsorID)
+	})
+
+	t.Run("ids written in uppercase read back in canonical form", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		tree := testTreeUUID(1)
+		root, child := hexUser(1), hexUser(2)
+		up := strings.ToUpper
+
+		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), up(tree), up(root), 0, nil, nil, nil)))
+		require.NoError(t, s.InsertNode(ctx,
+			makeUUIDNode(testNodeUUID(2), up(tree), up(child), 1, ptr(up(root)), ptr(up(root)), intPtr(0))))
+
+		got, err := s.GetNode(ctx, tree, child)
+		require.NoError(t, err)
+		require.NotNil(t, got, "GetNode found no row under the canonical ids")
+		assert.Equal(t, tree, got.TreeID)
+		assert.Equal(t, child, got.UserID)
+		require.NotNil(t, got.ParentID)
+		assert.Equal(t, root, *got.ParentID)
+		require.NotNil(t, got.SponsorID)
+		assert.Equal(t, root, *got.SponsorID)
+	})
 }

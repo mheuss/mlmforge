@@ -89,7 +89,7 @@ type LoadRequest struct {
 
 // LoadResult describes one load.
 type LoadResult struct {
-	TreeID         string                 // the canonical form of the requested tree ID, set once it parses
+	TreeID         string                 // the canonical form of the requested tree ID
 	CaughtUp       *CaughtUpEvent         // the stream's last event, redelivered and handled without error
 	ProjectedAfter *ProjectionObservation // the projected version read after a redelivery
 	Nodes          int                    // the active rows the load leaves, set only when Load returns no error

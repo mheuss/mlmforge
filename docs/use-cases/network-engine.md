@@ -468,8 +468,7 @@ for _, tree := range trees {
 		// The structure may be partly built. After a refusal past the create
 		// stage, drop it, and load again once the cause has changed
 		// (UC-NET-032). If the transport failed, start a new worker. Stage
-		// and Confirmed are what an operator reads to size the damage. The
-		// create stage counts nothing, so it is reported on its own.
+		// and Confirmed are what an operator reads to size the damage.
 		if incomplete.Stage == networkengine.TreeLoadStageCreate {
 			return fmt.Errorf("%s stopped at the create stage; the create did not report success: %w",
 				incomplete.TreeID, err)

@@ -444,7 +444,7 @@ Float addition depends on order. `(0.1 + 0.2) + 0.3` and `0.1 + (0.2 + 0.3)` giv
 - `build_group_volumes` adds personal volumes in ascending user-id order.
 - `apply_aggregate_cap` adds each owner's earnings in `(earner_id, position_id)` order.
 
-The engine has to give the same `f64` bits from the same inputs. Go writes `dollar_amount` with the shortest decimal that round-trips the float. Stairstep's `cv_amount` goes into the persisted detail JSON. So a different last bit is a different stored amount. (HEU-936)
+The engine has to give the same `f64` bits from the same inputs. Go persists these values unrounded, so a different last bit is a different stored amount. (HEU-936)
 
 ## sha2 0.11 Returns An Array With No `LowerHex`
 

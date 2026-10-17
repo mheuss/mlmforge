@@ -9,12 +9,10 @@ use network_engine::config::binary::{
     CycleStep, CycleStepConfig, MultiPositionCapMode, PairingCalculation, PairingConfig,
     VolumeAfterPayout,
 };
+use network_engine::config::{BinaryStructureConfig, CompensationPlan};
 use network_engine::tree::binary::BinaryTree;
 use proptest::prelude::*;
-use std::collections::HashMap;
-
-use network_engine::config::{BinaryStructureConfig, CompensationPlan};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use uuid::Uuid;
 
 /// Build a 3-node binary tree (root with left and right children).
@@ -1031,7 +1029,7 @@ proptest! {
 }
 
 /// Root 1 with positions 2 and 3, and two children under each.
-fn heu_936_binary_tree() -> BinaryTree {
+fn multi_position_owner_tree() -> BinaryTree {
     let mut tree = BinaryTree::new();
     tree.add_root(uuid_from_index(1), 1000).unwrap();
     tree.add_node(
@@ -1087,14 +1085,14 @@ fn heu_936_binary_tree() -> BinaryTree {
 
 /// Runs the calculator 256 times on fresh maps, with positions 1, 2 and 3
 /// owned by one owner, and asserts the owner's capped amounts are `pinned`.
-fn assert_heu_936_owner_bits(
+fn assert_owner_capped_bits(
     plan: &CompensationPlan,
     structure: &BinaryStructureConfig,
     left_cv: f64,
     right_cv: f64,
     pinned: [f64; 3],
 ) {
-    let tree = heu_936_binary_tree();
+    let tree = multi_position_owner_tree();
     let owner = uuid_from_index(100);
     let volume = vec![
         VolumeSource {
@@ -1161,7 +1159,7 @@ fn assert_heu_936_owner_bits(
 }
 
 /// A pairing plan in aggregate cap mode with the given cap.
-fn heu_936_pairing_plan(cap: f64) -> (CompensationPlan, BinaryStructureConfig) {
+fn aggregate_cap_pairing_plan(cap: f64) -> (CompensationPlan, BinaryStructureConfig) {
     build_binary_plan(PairingConfig {
         cap_per_period: Some(cap),
         multi_position_cap_mode: MultiPositionCapMode::Aggregate,
@@ -1171,8 +1169,8 @@ fn heu_936_pairing_plan(cap: f64) -> (CompensationPlan, BinaryStructureConfig) {
 
 #[test]
 fn aggregate_cap_pairing_left_1_right_3_does_not_depend_on_map_order() {
-    let (plan, structure) = heu_936_pairing_plan(0.1);
-    assert_heu_936_owner_bits(
+    let (plan, structure) = aggregate_cap_pairing_plan(0.1);
+    assert_owner_capped_bits(
         &plan,
         &structure,
         1.0,
@@ -1183,8 +1181,8 @@ fn aggregate_cap_pairing_left_1_right_3_does_not_depend_on_map_order() {
 
 #[test]
 fn aggregate_cap_pairing_left_0_7_right_1_1_does_not_depend_on_map_order() {
-    let (plan, structure) = heu_936_pairing_plan(0.13);
-    assert_heu_936_owner_bits(
+    let (plan, structure) = aggregate_cap_pairing_plan(0.13);
+    assert_owner_capped_bits(
         &plan,
         &structure,
         0.7,
@@ -1195,8 +1193,8 @@ fn aggregate_cap_pairing_left_0_7_right_1_1_does_not_depend_on_map_order() {
 
 #[test]
 fn aggregate_cap_pairing_left_1_3_right_2_9_does_not_depend_on_map_order() {
-    let (plan, structure) = heu_936_pairing_plan(0.37);
-    assert_heu_936_owner_bits(
+    let (plan, structure) = aggregate_cap_pairing_plan(0.37);
+    assert_owner_capped_bits(
         &plan,
         &structure,
         1.3,
@@ -1211,8 +1209,8 @@ fn aggregate_cap_pairing_left_1_3_right_2_9_does_not_depend_on_map_order() {
 
 #[test]
 fn aggregate_cap_pairing_left_3_right_7_does_not_depend_on_map_order() {
-    let (plan, structure) = heu_936_pairing_plan(1.1);
-    assert_heu_936_owner_bits(
+    let (plan, structure) = aggregate_cap_pairing_plan(1.1);
+    assert_owner_capped_bits(
         &plan,
         &structure,
         3.0,
@@ -1243,7 +1241,7 @@ fn aggregate_cap_cycle_step_does_not_depend_on_map_order() {
         carry_forward_cap: None,
         multi_position_cap_mode: MultiPositionCapMode::Aggregate,
     });
-    assert_heu_936_owner_bits(
+    assert_owner_capped_bits(
         &plan,
         &structure,
         1.0,

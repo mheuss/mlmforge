@@ -4031,7 +4031,10 @@ mod tests {
                 pinned.to_vec(),
                 "input order {order:?} gave {amounts:?}"
             );
-            assert!(earnings.iter().all(|e| e.capped));
+            assert!(
+                earnings.iter().all(|e| e.capped),
+                "input order {order:?} left an earning uncapped"
+            );
         }
     }
 }

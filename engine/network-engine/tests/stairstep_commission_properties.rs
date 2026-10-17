@@ -4,19 +4,16 @@ use common::{
 };
 
 use network_engine::commission::{DistributorSnapshot, VolumeSource, calculate_stairstep};
-use network_engine::config::stairstep::BreakawayTier;
-use network_engine::tree::unilevel::UnilevelTree;
-use proptest::prelude::*;
-use std::collections::HashMap;
-
 use network_engine::config::commission::LevelCommissionConfig;
 use network_engine::config::eligibility::CommissionEligibility;
 use network_engine::config::stairstep::{
-    BreakawayConfig, DifferentialConfig, MinOverride, OverrideMode, OverrideStrategy,
+    BreakawayConfig, BreakawayTier, DifferentialConfig, MinOverride, OverrideMode, OverrideStrategy,
 };
 use network_engine::config::{CompensationPlan, StairstepStructureConfig, StructureConfig};
 use network_engine::test_support::{build_test_plan, make_rank, test_plan_identity};
-use std::collections::{BTreeMap, BTreeSet};
+use network_engine::tree::unilevel::UnilevelTree;
+use proptest::prelude::*;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use uuid::Uuid;
 
 /// Tolerance for floating-point rate-bound comparisons.
@@ -722,7 +719,7 @@ fn single_node_no_earnings() {
 
 /// A stairstep plan with associate, director and senior_director ranks and a
 /// differential override on director breakaways.
-fn heu_936_plan() -> (CompensationPlan, StairstepStructureConfig) {
+fn breakaway_stairstep_plan() -> (CompensationPlan, StairstepStructureConfig) {
     let mut rate_table = BTreeMap::new();
     for rank in ["associate", "director"] {
         let rates: BTreeMap<u8, f64> = (1u8..=5).map(|level| (level, 0.05)).collect();
@@ -772,7 +769,7 @@ fn heu_936_plan() -> (CompensationPlan, StairstepStructureConfig) {
 }
 
 /// A chain of nodes 0 to 4, each sponsored and placed under the one before.
-fn heu_936_chain() -> UnilevelTree {
+fn breakaway_chain() -> UnilevelTree {
     let mut tree = UnilevelTree::new();
     tree.add_root(uuid_from_index(0), 0).unwrap();
     for i in 1..5 {
@@ -788,7 +785,7 @@ fn heu_936_chain() -> UnilevelTree {
 }
 
 /// Snapshots for the chain: senior_director, director, then three associates.
-fn heu_936_snapshots(pvs: [f64; 5]) -> HashMap<Uuid, DistributorSnapshot> {
+fn breakaway_chain_snapshots(pvs: [f64; 5]) -> HashMap<Uuid, DistributorSnapshot> {
     let ranks = [
         "senior_director",
         "director",
@@ -813,15 +810,15 @@ fn heu_936_snapshots(pvs: [f64; 5]) -> HashMap<Uuid, DistributorSnapshot> {
 
 #[test]
 fn stairstep_walk_two_amounts_do_not_depend_on_snapshot_map_order() {
-    let tree = heu_936_chain();
-    let (plan, structure) = heu_936_plan();
+    let tree = breakaway_chain();
+    let (plan, structure) = breakaway_stairstep_plan();
     let volume = vec![VolumeSource {
         source_id: uuid_from_index(4),
         cv_amount: 100.0,
     }];
     let mut seen = BTreeSet::new();
     for _ in 0..256 {
-        let snapshots = heu_936_snapshots([150.0, 0.1, 0.2, 0.3, 0.7]);
+        let snapshots = breakaway_chain_snapshots([150.0, 0.1, 0.2, 0.3, 0.7]);
         let earnings = calculate_stairstep(
             &tree,
             &plan,
@@ -856,7 +853,7 @@ fn stairstep_walk_two_amounts_do_not_depend_on_snapshot_map_order() {
 
 /// Five nodes in a chain, placed so that id order differs from depth order:
 /// 0, then 1, 4, 2 and 3 going down.
-fn heu_936_permuted_chain() -> UnilevelTree {
+fn breakaway_chain_out_of_id_order() -> UnilevelTree {
     let order = [0, 1, 4, 2, 3];
     let mut tree = UnilevelTree::new();
     tree.add_root(uuid_from_index(order[0]), 0).unwrap();
@@ -873,13 +870,13 @@ proptest! {
     fn stairstep_breakaway_group_volume_sums_in_user_id_order(
         pvs in prop::array::uniform4(0.01..1000.0f64),
     ) {
-        let tree = heu_936_permuted_chain();
-        let (plan, structure) = heu_936_plan();
+        let tree = breakaway_chain_out_of_id_order();
+        let (plan, structure) = breakaway_stairstep_plan();
         let volume = vec![VolumeSource {
             source_id: uuid_from_index(4),
             cv_amount: 100.0,
         }];
-        let snapshots = heu_936_snapshots([150.0, pvs[0], pvs[1], pvs[2], pvs[3]]);
+        let snapshots = breakaway_chain_snapshots([150.0, pvs[0], pvs[1], pvs[2], pvs[3]]);
         let mut members: Vec<Uuid> = [1, 4, 2, 3].map(uuid_from_index).to_vec();
         members.sort();
         let mut expected = 0.0;

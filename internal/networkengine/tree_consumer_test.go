@@ -2350,12 +2350,11 @@ func TestHandleNodePlaced_SkippedInsertReportsAFailedRead(t *testing.T) {
 	assert.Empty(t, tr.mutationOps, "the engine is not called on an unanswered read")
 }
 
-// The assembled refusal message is pinned as it reads today, which is wrong on
-// three of these four cases: it opens by claiming a soft-deleted row with this
-// event's id and then reports something else. HEU-804 owns the wording and it
-// is unruled, so this pins the string rather than endorsing it. Rewording the
-// message is meant to fail here, so that the change is a decision rather than
-// a side effect.
+// The whole assembled message is pinned, not just the sentinel, because a
+// sentinel match survives any rewording. The opening clause has to hold in
+// all four cases, including the first, where this event's row is active under
+// another user. Any change to it or to the wrapper should fail here and be
+// read in every case.
 //
 // The event id is fixed rather than taken from makeEvent, whose counter moves
 // with test selection, and RemovedAt is fixed so the rendered timestamp does
@@ -2412,7 +2411,7 @@ func TestCheckReplayedInsert_MessageText(t *testing.T) {
 
 			require.Error(t, err)
 			assert.Equal(t,
-				"a row with this event id exists and is soft-deleted: the read for "+
+				"no active row for this tree and user carries this event: the read for "+
 					posUser+" in tree tree1 returned "+tc.reads+" "+skipped,
 				err.Error())
 		})

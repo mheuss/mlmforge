@@ -63,7 +63,7 @@ func TestTreeRejectEvent_RecoversARefusedPlacement(t *testing.T) {
 	_, err = runTreeCmd(t, place...)
 	var failed *networkengine.CatchUpFailedError
 	require.ErrorAs(t, err, &failed, "the first write after the append")
-	require.ErrorContains(t, err, "USER_NOT_FOUND")
+	require.ErrorContains(t, err, "SPONSOR_NOT_FOUND")
 	_, err = runTreeCmd(t, place...)
 	require.ErrorContains(t, err, "references sponsor "+absent+" that is not in the tree", "the second write")
 	before := readTreeStream(t, events, tree)
@@ -90,6 +90,38 @@ func TestTreeRejectEvent_RecoversARefusedPlacement(t *testing.T) {
 	requireProjectedVersion(t, store, tree, 3)
 
 	out, err = runTreeCmd(t, place...)
+	require.NoError(t, err, out.stderr.String())
+	out, err = runTreeCmd(t, append([]string{"load", "--tree-type", "unilevel"}, conn...)...)
+	require.NoError(t, err, out.stderr.String())
+	require.Equal(t, "loaded tree "+tree+" (2 nodes)\n", out.stdout.String())
+}
+
+func TestTreeRejectEvent_ClearsAnAbsentSponsorPlacementOnTheFirstTry(t *testing.T) {
+	if pgContainer == nil {
+		t.Skip("Postgres container not available")
+	}
+	worker := requireWorker(t)
+	pool := pgContainer.NewPool(t)
+	tree, root, child, next, absent := testTreeID(940), testUserID(1), testUserID(2), testUserID(3), testUserID(9)
+	conn := []string{"--db-url", pgContainer.DSN, "--worker", worker, "--tree-id", tree}
+	out, err := runTreeCmd(t, append([]string{"add-root", "--user-id", root, "--sponsor-id", root, "--tree-type", "unilevel"}, conn...)...)
+	require.NoError(t, err, out.stderr.String())
+	events := platform.NewPostgresEventStore(pool)
+	store := networkengine.NewPostgresTreeStore(pool)
+	stuck := appendUnprojected(t, events, tree, 1, networkengine.EventTypeNodePlaced, networkengine.NodePlacedPayload{
+		TreeID: tree, UserID: child, ParentID: root, SponsorID: absent, TreeType: "unilevel", EnrolledAt: rejectTime,
+	})
+	before := readTreeStream(t, events, tree)
+
+	out, err = runTreeCmd(t, append([]string{"reject-event", "--event-id", stuck.ID, "--reason", "sponsor never enrolled"}, conn...)...)
+
+	require.NoError(t, err, out.stderr.String())
+	requireGrewByTheRejection(t, before, readTreeStream(t, events, tree), stuck.ID)
+	require.Contains(t, out.stderr.String(), "retrying event "+stuck.ID+" at version 2 returned: redelivering event "+stuck.ID)
+	require.Contains(t, out.stderr.String(), "SPONSOR_NOT_FOUND")
+	requireProjectedVersion(t, store, tree, 3)
+
+	out, err = runTreeCmd(t, append([]string{"place", "--user-id", next, "--parent-id", root, "--sponsor-id", root}, conn...)...)
 	require.NoError(t, err, out.stderr.String())
 	out, err = runTreeCmd(t, append([]string{"load", "--tree-type", "unilevel"}, conn...)...)
 	require.NoError(t, err, out.stderr.String())

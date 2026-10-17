@@ -247,9 +247,10 @@ force a different order. A map small enough will come out the same by chance. On
 The restore case is the one to remember. Round-tripping a snapshot does not
 reproduce it.
 
-This section covers object key order. Array element order is a separate
-question. It is not settled here. An array built from a map's iteration order
-has the same problem. HEU-757 is where that one lives.
+This section covers object key order. Array element order is outside the
+contract too, unless the op that returns the array defines one. An array built
+from a map's iteration order has no defined order, so an op that defines one
+has to sort it, or build it from an ordered walk instead of the map.
 
 Nothing consumes those bytes by comparison today. Content-addressing a
 snapshot, diffing two of them, and hashing one for an integrity check all need

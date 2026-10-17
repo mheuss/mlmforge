@@ -1,10 +1,44 @@
 # Postgres Stores
 
 How to write a Go store against Postgres in this codebase. Every entry below
-cost real debugging on HEU-555 or HEU-855 and is invisible until it bites.
+cost real debugging and is invisible until it bites.
 
-For the store *shape* — one interface, two implementations, a shared suite —
-see UC-NET-008 in [`../use-cases/network-engine.md`](../use-cases/network-engine.md).
+## Pair the implementations through one suite
+
+A store here usually comes as a pair. One interface has a memory twin for unit tests
+and a Postgres twin for production. Where a pair shares a test body, that body
+takes a constructor and runs once against each twin.
+
+```go
+func TestMemoryCommissionRunStore(t *testing.T) {
+	runCommissionRunStoreSuite(t, func(t *testing.T) CommissionRunStore {
+		return NewMemoryCommissionRunStore()
+	})
+}
+
+func TestPostgresCommissionRunStore(t *testing.T) {
+	if pgContainer == nil {
+		t.Skip("postgres container unavailable")
+	}
+	runCommissionRunStoreSuite(t, func(t *testing.T) CommissionRunStore {
+		return NewPostgresCommissionRunStore(pgContainer.NewPool(t))
+	})
+}
+```
+
+`runCommissionRunStoreSuite` is the worked example. Each case asks the
+constructor for a fresh store, so neither twin sees the other's rows.
+
+Twins tested separately drift without anyone noticing. These defects shipped
+that way. Each passed against memory and failed against Postgres:
+
+- The memory event store accepted a duplicate event ID that the unique `id`
+  column rejects. HEU-791 fixed it.
+- The memory tree store kept the caller's timestamps, while Postgres applied
+  its own defaults. HEU-403 fixed it.
+
+A shared body catches this class by construction, because one assertion runs
+against both twins.
 
 ## pgx sends only a nil slice as SQL NULL
 
